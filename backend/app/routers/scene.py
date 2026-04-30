@@ -10,6 +10,7 @@ from app.models import (
     Asset3D,
     AssemblyRelation,
     BeamPath,
+    BeamSegment,
     Component,
     Connection,
     DeviceState,
@@ -33,6 +34,7 @@ async def get_scene(session: AsyncSession = Depends(get_session)) -> schemas.Sce
     device_states = list((await session.scalars(select(DeviceState))).all())
     optical_elements = list((await session.scalars(select(OpticalElement))).all())
     optical_links = list((await session.scalars(select(OpticalLink))).all())
+    beam_segments = list((await session.scalars(select(BeamSegment))).all())
 
     return schemas.SceneOut(
         assets=assets,
@@ -45,4 +47,5 @@ async def get_scene(session: AsyncSession = Depends(get_session)) -> schemas.Sce
         device_states=device_states,
         optical_elements=optical_elements,
         optical_links=optical_links,
+        beam_segments=beam_segments,
     )

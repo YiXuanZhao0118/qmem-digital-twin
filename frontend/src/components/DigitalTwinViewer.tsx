@@ -5,6 +5,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { useSceneStore } from "../store/sceneStore";
 import { createBeamPath } from "../three/beamPath";
 import { disposeObject, loadAssetObject } from "../three/loadAsset";
+import { buildBeamSegmentMesh, buildEmitterPreviewRays } from "../three/opticalBeams";
 import { createLabPhotoRoom } from "../three/photoRoom";
 import { applyPlacement } from "../three/transformUtils";
 import { relationTarget, worldAnchor } from "../utils/relationAnchors";
@@ -456,8 +457,19 @@ export function DigitalTwinViewer({ roomDimensions }: DigitalTwinViewerProps) {
       }
     }
 
+    function renderOpticalBeams() {
+      for (const segment of sceneData.beamSegments ?? []) {
+        const mesh = buildBeamSegmentMesh(segment, sceneData);
+        if (mesh) beamGroup.add(mesh);
+      }
+      for (const ray of buildEmitterPreviewRays(sceneData)) {
+        beamGroup.add(ray);
+      }
+    }
+
     void renderComponents();
     renderRelations();
+    renderOpticalBeams();
 
     return () => {
       cancelled = true;

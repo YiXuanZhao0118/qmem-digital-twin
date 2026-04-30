@@ -836,6 +836,7 @@ class SceneOut(CamelModel):
     device_states: list[DeviceStateOut]
     optical_elements: list[OpticalElementOut] = Field(default_factory=list)
     optical_links: list[OpticalLinkOut] = Field(default_factory=list)
+    beam_segments: list[BeamSegmentOut] = Field(default_factory=list)
 
 
 class WebSocketEvent(CamelModel):

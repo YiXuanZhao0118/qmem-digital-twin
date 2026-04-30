@@ -51,4 +51,8 @@ async def run_optical(session: AsyncSession = Depends(get_session)) -> OpticalRu
         "optical_simulation.completed",
         payload.model_dump(mode="json", by_alias=True),
     )
+    # Trigger every connected client to re-pull /api/scene so the new
+    # beam_segments show up.
+    if not result.errors:
+        await manager.broadcast("scene.reload", {"reason": "optical_simulation"})
     return payload

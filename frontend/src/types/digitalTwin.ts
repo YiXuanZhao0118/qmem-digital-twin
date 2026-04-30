@@ -451,6 +451,7 @@ export type SceneData = {
   deviceStates: DeviceState[];
   opticalElements: OpticalElement[];
   opticalLinks: OpticalLink[];
+  beamSegments: BeamSegment[];
 };
 
 export type SceneEvent =

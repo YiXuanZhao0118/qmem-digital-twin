@@ -65,6 +65,7 @@ const emptyScene: SceneData = {
   deviceStates: [],
   opticalElements: [],
   opticalLinks: [],
+  beamSegments: [],
 };
 
 type SceneStore = {

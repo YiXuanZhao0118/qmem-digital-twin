@@ -1,4 +1,4 @@
-import { Activity, Box, MousePointer2, RefreshCw, Settings2, Wifi, WifiOff } from "lucide-react";
+import { Activity, Box, MousePointer2, Play, RefreshCw, Settings2, Wifi, WifiOff } from "lucide-react";
 import { useState } from "react";
 
 import { useSceneStore } from "../store/sceneStore";
@@ -19,9 +19,12 @@ export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneTo
   const [setupOpen, setSetupOpen] = useState(false);
   const [draftDimensions, setDraftDimensions] = useState(roomDimensions);
   const loadScene = useSceneStore((state) => state.loadScene);
+  const runOpticalSimulation = useSceneStore((state) => state.runOpticalSimulation);
   const socketStatus = useSceneStore((state) => state.socketStatus);
   const scene = useSceneStore((state) => state.scene);
   const selectedObjectId = useSceneStore((state) => state.selectedObjectId);
+  const [simBusy, setSimBusy] = useState(false);
+  const [simStatus, setSimStatus] = useState<string>("");
   const opticalTableComponents = scene.components.filter(isOpticalTableComponent);
   const componentById = new Map(scene.components.map((component) => [component.id, component]));
   const opticalTableObjects = scene.objects.filter((placement) => {
@@ -39,6 +42,30 @@ export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneTo
   const applyRoomDimensions = () => {
     onRoomDimensionsChange(draftDimensions);
     setSetupOpen(false);
+  };
+
+  const onRunSolver = async () => {
+    setSimBusy(true);
+    setSimStatus("");
+    try {
+      const result = await runOpticalSimulation();
+      const tone = result.errors.length ? "error" : "ok";
+      const summary = `${result.segmentCount} segments`;
+      const detail =
+        result.errors.length
+          ? ` · ${result.errors.length} errors`
+          : result.warnings.length
+            ? ` · ${result.warnings.length} warnings`
+            : "";
+      setSimStatus(`${tone === "ok" ? "✓" : "✗"} ${summary}${detail}`);
+      // The backend broadcasts scene.reload on success; manual fetch as a safety net.
+      if (!result.errors.length) await loadScene();
+    } catch (e) {
+      setSimStatus(`✗ ${(e as Error).message}`);
+    } finally {
+      setSimBusy(false);
+      window.setTimeout(() => setSimStatus(""), 8000);
+    }
   };
 
   return (
@@ -65,6 +92,18 @@ export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneTo
       </div>
 
       <div className="toolbar-group">
+        <button
+          className="run-solver-button"
+          title="Run optical chain solver"
+          onClick={onRunSolver}
+          disabled={simBusy}
+        >
+          <Play size={15} />
+          {simBusy ? "Running…" : "Run Solver"}
+        </button>
+        {simStatus ? (
+          <span className={`sim-status ${simStatus.startsWith("✗") ? "error" : "ok"}`}>{simStatus}</span>
+        ) : null}
         <span className={connected ? "socket-pill connected" : "socket-pill"}>
           {connected ? <Wifi size={16} /> : <WifiOff size={16} />}
           {socketStatus}

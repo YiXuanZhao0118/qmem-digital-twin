@@ -961,3 +961,35 @@ input:disabled {
   margin-top: 4px;
   margin-bottom: 4px;
 }
+
+/* === Toolbar Run Solver button === */
+.run-solver-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #f97316;
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.run-solver-button:hover:not(:disabled) {
+  background: #ea580c;
+}
+.run-solver-button:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+.sim-status {
+  font-size: 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.05);
+}
+.sim-status.ok { color: #15803d; }
+.sim-status.error { color: #b91c1c; background: rgba(220, 38, 38, 0.1); }
