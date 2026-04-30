@@ -16,6 +16,7 @@ from app.routers import (
     optical_links,
     placements,
     scene,
+    simulations,
 )
 from app.websocket import router as websocket_router
 
@@ -42,6 +43,7 @@ app.include_router(beam_paths.router, prefix="/api/beam-paths", tags=["beam_path
 app.include_router(device_states.router, prefix="/api/device-states", tags=["device_states"])
 app.include_router(optical_elements.router, prefix="/api/optical-elements", tags=["optical_elements"])
 app.include_router(optical_links.router, prefix="/api/optical-links", tags=["optical_links"])
+app.include_router(simulations.router, prefix="/api/simulations", tags=["simulations"])
 app.include_router(scene.router, prefix="/api", tags=["scene"])
 app.include_router(websocket_router, prefix="/ws", tags=["websocket"])
 
