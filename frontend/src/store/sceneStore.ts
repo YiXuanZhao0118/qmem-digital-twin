@@ -2,17 +2,29 @@ import { create } from "zustand";
 
 import {
   createAssemblyRelationApi,
+  createOpticalElementApi,
+  createOpticalLinkApi,
   createPlacementApi,
   createComponentApi,
   deleteAssemblyRelationApi,
   deleteComponentApi,
   deleteObjectApi,
+  deleteOpticalElementApi,
+  deleteOpticalLinkApi,
   fetchScene,
   importLocalComponentAssetApi,
+  runOpticalSimulationApi,
   updateAssemblyRelationApi,
   updateComponentApi,
+  updateOpticalElementApi,
+  updateOpticalLinkApi,
   updatePlacementObjectApi,
   uploadComponentAssetApi,
+} from "../api/client";
+import type {
+  OpticalElementApiPayload,
+  OpticalLinkApiPayload,
+  OpticalRunResponse,
 } from "../api/client";
 import type {
   BeamPath,
@@ -21,6 +33,10 @@ import type {
   GeometrySelector,
   ConnectionItem,
   DeviceState,
+  ElementKind,
+  OpticalElement,
+  OpticalLink,
+  PhysicsCapability,
   PlacementPatch,
   RelationType,
   SceneData,
@@ -102,6 +118,19 @@ type SceneStore = {
   deleteAssemblyRelation: (relationId: string) => Promise<void>;
   updateObjectPlacement: (objectId: string, patch: PlacementPatch) => Promise<void>;
   deleteObject: (objectId: string) => Promise<void>;
+  setComponentCapabilities: (
+    componentId: string,
+    capabilities: PhysicsCapability[],
+  ) => Promise<void>;
+  upsertOpticalElement: (payload: OpticalElementApiPayload) => Promise<OpticalElement>;
+  deleteOpticalElement: (componentId: string) => Promise<void>;
+  createOpticalLink: (payload: OpticalLinkApiPayload) => Promise<OpticalLink>;
+  updateOpticalLink: (
+    linkId: string,
+    patch: Partial<Pick<OpticalLinkApiPayload, "freeSpaceMm" | "properties">>,
+  ) => Promise<OpticalLink>;
+  deleteOpticalLink: (linkId: string) => Promise<void>;
+  runOpticalSimulation: () => Promise<OpticalRunResponse>;
   selectComponent: (componentId: string | null) => void;
   selectObject: (objectId: string | null) => void;
   selectRelation: (relationId: string | null) => void;
@@ -377,6 +406,78 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     });
   },
 
+  async setComponentCapabilities(componentId, capabilities) {
+    const updated = await updateComponentApi(componentId, { physicsCapabilities: capabilities } as Partial<ComponentItem>);
+    set((state) => ({
+      scene: { ...state.scene, components: upsertById(state.scene.components, updated) },
+    }));
+  },
+
+  async upsertOpticalElement(payload) {
+    const existing = get().scene.opticalElements.find((item) => item.componentId === payload.componentId);
+    let element: OpticalElement;
+    if (existing) {
+      const { componentId, ...patch } = payload;
+      element = await updateOpticalElementApi(componentId, patch);
+    } else {
+      element = await createOpticalElementApi(payload);
+    }
+    set((state) => {
+      const others = state.scene.opticalElements.filter(
+        (item) => item.componentId !== element.componentId,
+      );
+      return {
+        scene: { ...state.scene, opticalElements: [...others, element] },
+      };
+    });
+    return element;
+  },
+
+  async deleteOpticalElement(componentId) {
+    await deleteOpticalElementApi(componentId);
+    set((state) => ({
+      scene: {
+        ...state.scene,
+        opticalElements: state.scene.opticalElements.filter(
+          (item) => item.componentId !== componentId,
+        ),
+        opticalLinks: state.scene.opticalLinks.filter(
+          (link) => link.fromComponentId !== componentId && link.toComponentId !== componentId,
+        ),
+      },
+    }));
+  },
+
+  async createOpticalLink(payload) {
+    const link = await createOpticalLinkApi(payload);
+    set((state) => ({
+      scene: { ...state.scene, opticalLinks: [...state.scene.opticalLinks, link] },
+    }));
+    return link;
+  },
+
+  async updateOpticalLink(linkId, patch) {
+    const link = await updateOpticalLinkApi(linkId, patch);
+    set((state) => ({
+      scene: { ...state.scene, opticalLinks: upsertById(state.scene.opticalLinks, link) },
+    }));
+    return link;
+  },
+
+  async deleteOpticalLink(linkId) {
+    await deleteOpticalLinkApi(linkId);
+    set((state) => ({
+      scene: {
+        ...state.scene,
+        opticalLinks: state.scene.opticalLinks.filter((link) => link.id !== linkId),
+      },
+    }));
+  },
+
+  async runOpticalSimulation() {
+    return await runOpticalSimulationApi();
+  },
+
   selectComponent(componentId) {
     set({
       selectedComponentId: componentId,
@@ -531,6 +632,44 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
               deviceStates: upsertDeviceState(scene.deviceStates, event.payload),
             },
           };
+        case "optical_element.updated": {
+          const payload = event.payload as Partial<OpticalElement> & { deleted?: boolean; componentId?: string };
+          const componentId = payload.componentId;
+          if (!componentId) return state;
+          if (payload.deleted) {
+            return {
+              scene: {
+                ...scene,
+                opticalElements: scene.opticalElements.filter((item) => item.componentId !== componentId),
+                opticalLinks: scene.opticalLinks.filter(
+                  (link) => link.fromComponentId !== componentId && link.toComponentId !== componentId,
+                ),
+              },
+            };
+          }
+          const others = scene.opticalElements.filter((item) => item.componentId !== componentId);
+          return {
+            scene: { ...scene, opticalElements: [...others, payload as OpticalElement] },
+          };
+        }
+        case "optical_link.updated": {
+          const payload = event.payload as Partial<OpticalLink> & { deleted?: boolean; id?: string };
+          if (payload.deleted && payload.id) {
+            return {
+              scene: {
+                ...scene,
+                opticalLinks: scene.opticalLinks.filter((item) => item.id !== payload.id),
+              },
+            };
+          }
+          if (!payload.id) return state;
+          return {
+            scene: { ...scene, opticalLinks: upsertById(scene.opticalLinks, payload as OpticalLink) },
+          };
+        }
+        case "optical_simulation.completed":
+          // Currently advisory only; UI listens via runOpticalSimulation return value.
+          return state;
         default:
           return state;
       }

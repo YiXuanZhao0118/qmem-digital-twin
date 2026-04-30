@@ -5,6 +5,8 @@ import { resolveAssetUrl } from "../api/client";
 import { useSceneStore } from "../store/sceneStore";
 import type { AssemblyRelation, GeometrySelector, PlacementPatch, RelationType, Vec3 } from "../types/digitalTwin";
 import { getComponentName } from "../utils/components";
+import { CapabilityPills } from "./optical/CapabilityPills";
+import { OpticalElementPanel } from "./optical/OpticalElementPanel";
 import {
   anchorOptions,
   normalizeAnchorId,
@@ -557,6 +559,12 @@ export function ComponentPanel() {
           </>
         )}
       </dl>
+
+      {!isObjectSelection && component && <CapabilityPills component={component} />}
+
+      {!isObjectSelection && component?.physicsCapabilities?.includes("optical") && (
+        <OpticalElementPanel component={component} />
+      )}
 
       {!isObjectSelection && (
         <section className="edit-section">

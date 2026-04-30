@@ -3,7 +3,11 @@ import axios, { AxiosError } from "axios";
 import type {
   AssemblyRelation,
   ComponentItem,
+  ElementKind,
   GeometrySelector,
+  OpticalElement,
+  OpticalLink,
+  OpticalPort,
   Placement,
   PlacementPatch,
   RelationType,
@@ -223,6 +227,101 @@ export async function importLocalComponentAssetApi(payload: {
     { timeout: 60000 },
   );
   return response.data;
+}
+
+// =============================================================================
+// Optical domain
+// =============================================================================
+
+export type OpticalElementApiPayload = {
+  componentId: string;
+  elementKind: ElementKind;
+  wavelengthRangeNm?: [number, number];
+  inputPorts?: OpticalPort[];
+  outputPorts?: OpticalPort[];
+  kindParams: Record<string, unknown>;
+};
+
+export async function createOpticalElementApi(
+  payload: OpticalElementApiPayload,
+): Promise<OpticalElement> {
+  try {
+    const response = await client.post<OpticalElement>("/api/optical-elements", payload);
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function updateOpticalElementApi(
+  componentId: string,
+  patch: Partial<Omit<OpticalElementApiPayload, "componentId">>,
+): Promise<OpticalElement> {
+  try {
+    const response = await client.put<OpticalElement>(
+      `/api/optical-elements/${componentId}`,
+      patch,
+    );
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function deleteOpticalElementApi(componentId: string): Promise<void> {
+  await client.delete(`/api/optical-elements/${componentId}`);
+}
+
+export type OpticalLinkApiPayload = {
+  fromComponentId: string;
+  fromPort: string;
+  toComponentId: string;
+  toPort: string;
+  freeSpaceMm?: number;
+  properties?: Record<string, unknown>;
+};
+
+export async function createOpticalLinkApi(
+  payload: OpticalLinkApiPayload,
+): Promise<OpticalLink> {
+  try {
+    const response = await client.post<OpticalLink>("/api/optical-links", payload);
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function updateOpticalLinkApi(
+  linkId: string,
+  patch: Partial<Pick<OpticalLinkApiPayload, "freeSpaceMm" | "properties">>,
+): Promise<OpticalLink> {
+  try {
+    const response = await client.put<OpticalLink>(`/api/optical-links/${linkId}`, patch);
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function deleteOpticalLinkApi(linkId: string): Promise<void> {
+  await client.delete(`/api/optical-links/${linkId}`);
+}
+
+export type OpticalRunResponse = {
+  runId: string;
+  segmentCount: number;
+  errors: string[];
+  warnings: string[];
+};
+
+export async function runOpticalSimulationApi(): Promise<OpticalRunResponse> {
+  try {
+    const response = await client.post<OpticalRunResponse>("/api/simulations/optical/run");
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
 }
 
 export function resolveAssetUrl(filePath: string): string {

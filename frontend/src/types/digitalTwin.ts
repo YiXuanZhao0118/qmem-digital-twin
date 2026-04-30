@@ -464,6 +464,9 @@ export type SceneEvent =
   | { type: "beam_path.updated"; payload: BeamPath & { deleted?: boolean } }
   | { type: "connection.updated"; payload: ConnectionItem & { deleted?: boolean } }
   | { type: "device_state.updated"; payload: DeviceState }
+  | { type: "optical_element.updated"; payload: (Partial<OpticalElement> & { componentId?: string; deleted?: boolean }) | OpticalElement }
+  | { type: "optical_link.updated"; payload: (Partial<OpticalLink> & { id?: string; deleted?: boolean }) | OpticalLink }
+  | { type: "optical_simulation.completed"; payload: { runId: string; segmentCount: number; errors: string[]; warnings: string[] } }
   | { type: "scene.reload"; payload: Record<string, unknown> }
   | { type: "scene.connected"; payload: Record<string, unknown> }
   | { type: "pong"; payload: Record<string, unknown> };

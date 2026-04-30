@@ -739,3 +739,225 @@ input:disabled {
     max-width: 100%;
   }
 }
+
+/* === Optical domain panel === */
+.capability-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 12px 0;
+  padding: 10px 12px;
+  background: var(--panel);
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+.capability-label {
+  font-size: 12px;
+  color: #6b6f6c;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-right: 4px;
+}
+.capability-pill {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  color: #6b6f6c;
+  transition: all 0.15s;
+}
+.capability-pill.enabled {
+  background: rgba(0, 0, 0, 0.04);
+}
+.capability-pill:hover {
+  border-color: rgba(0, 0, 0, 0.4);
+}
+
+.optical-panel {
+  margin: 12px 0;
+  padding: 14px;
+  background: var(--panel);
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.optical-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.optical-panel-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+.optical-run-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  background: var(--panel-strong);
+  cursor: pointer;
+}
+.optical-run-btn:hover:not(:disabled) {
+  background: #f97316;
+  color: #fff;
+  border-color: #f97316;
+}
+.optical-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.optical-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+.optical-row > span {
+  font-weight: 600;
+  color: #6b6f6c;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 11px;
+}
+.optical-row select,
+.optical-row input,
+.optical-row textarea {
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  border-radius: 6px;
+  background: var(--panel-strong);
+}
+.optical-row-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.link-btn {
+  font-size: 11px;
+  background: transparent;
+  border: 0;
+  color: #2563eb;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.optical-params-editor {
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  font-size: 11px;
+  resize: vertical;
+  min-height: 120px;
+  white-space: pre;
+  overflow-x: auto;
+}
+.optical-wavelength .number-pair {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.optical-wavelength input {
+  width: 80px;
+}
+.optical-error {
+  background: #fee2e2;
+  color: #991b1b;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.optical-run-output {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.optical-actions {
+  display: flex;
+  gap: 8px;
+}
+.optical-actions .primary {
+  background: #2563eb;
+  color: #fff;
+  border: 0;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.optical-actions .danger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  color: #dc2626;
+  border: 1px solid #dc2626;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.optical-ports table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.optical-ports th,
+.optical-ports td {
+  padding: 4px 6px;
+  text-align: left;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+.optical-ports h4,
+.optical-links h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #6b6f6c;
+  letter-spacing: 0.04em;
+}
+.optical-link-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  padding: 2px 0;
+}
+.optical-link-row code {
+  font-size: 10px;
+  background: rgba(0, 0, 0, 0.05);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.optical-link-distance {
+  margin-left: auto;
+  color: #6b6f6c;
+}
+.optical-links-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b6f6c;
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
