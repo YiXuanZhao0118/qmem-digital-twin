@@ -1,0 +1,600 @@
+﻿{
+    "assets":  [
+                   {
+                       "name":  "primitive_table",
+                       "assetType":  "primitive",
+                       "filePath":  "primitive://table",
+                       "source":  null,
+                       "sourceUrl":  null,
+                       "unit":  "mm",
+                       "scaleFactor":  1.0,
+                       "id":  "3bc01cf4-4c76-4ff2-bbd6-3f86f44e4297",
+                       "createdAt":  "2026-04-28T08:03:44.847729Z"
+                   },
+                   {
+                       "name":  "primitive_box",
+                       "assetType":  "primitive",
+                       "filePath":  "primitive://box",
+                       "source":  null,
+                       "sourceUrl":  null,
+                       "unit":  "mm",
+                       "scaleFactor":  1.0,
+                       "id":  "d5325ca1-d3d3-479e-a6d1-e9eb43e241dc",
+                       "createdAt":  "2026-04-28T08:03:44.847729Z"
+                   },
+                   {
+                       "name":  "primitive_mirror",
+                       "assetType":  "primitive",
+                       "filePath":  "primitive://mirror",
+                       "source":  null,
+                       "sourceUrl":  null,
+                       "unit":  "mm",
+                       "scaleFactor":  1.0,
+                       "id":  "4a8b19b6-8f08-4c37-bfdf-2a7d4f81271b",
+                       "createdAt":  "2026-04-28T08:03:44.847729Z"
+                   },
+                   {
+                       "name":  "primitive_lens",
+                       "assetType":  "primitive",
+                       "filePath":  "primitive://lens",
+                       "source":  null,
+                       "sourceUrl":  null,
+                       "unit":  "mm",
+                       "scaleFactor":  1.0,
+                       "id":  "7c811527-154a-4029-ab67-262deb66de97",
+                       "createdAt":  "2026-04-28T08:03:44.847729Z"
+                   },
+                   {
+                       "name":  "primitive_chamber",
+                       "assetType":  "primitive",
+                       "filePath":  "primitive://vacuum_chamber",
+                       "source":  null,
+                       "sourceUrl":  null,
+                       "unit":  "mm",
+                       "scaleFactor":  1.0,
+                       "id":  "697a0a84-c023-4859-9ae9-f835fcd51712",
+                       "createdAt":  "2026-04-28T08:03:44.847729Z"
+                   },
+                   {
+                       "name":  "primitive_thorlabs_post_holder",
+                       "assetType":  "primitive",
+                       "filePath":  "primitive://thorlabs_post_holder",
+                       "source":  "https://www.thorlabs.com/half-inch-post-holders",
+                       "sourceUrl":  null,
+                       "unit":  "mm",
+                       "scaleFactor":  1.0,
+                       "id":  "a13afbdc-0d95-40db-8741-c4c979fdef48",
+                       "createdAt":  "2026-04-28T23:35:24.873803Z"
+                   },
+                   {
+                       "name":  "primitive_thorlabs_post",
+                       "assetType":  "primitive",
+                       "filePath":  "primitive://thorlabs_post",
+                       "source":  "https://www.thorlabs.com/optical-posts-half-inch-and-12-mm",
+                       "sourceUrl":  null,
+                       "unit":  "mm",
+                       "scaleFactor":  1.0,
+                       "id":  "13d71c7f-18c2-44b9-a1c3-7d1e2f85fcac",
+                       "createdAt":  "2026-04-28T23:35:24.873803Z"
+                   },
+                   {
+                       "name":  "primitive_thorlabs_clamping_fork",
+                       "assetType":  "primitive",
+                       "filePath":  "primitive://thorlabs_clamping_fork",
+                       "source":  "https://www.thorlabs.com/clamping-forks-for-pedestal-posts?pn=CF038C%2FM-P5",
+                       "sourceUrl":  null,
+                       "unit":  "mm",
+                       "scaleFactor":  1.0,
+                       "id":  "aedd6c4c-bc5e-40ff-8e59-8794e786984d",
+                       "createdAt":  "2026-04-28T23:35:24.873803Z"
+                   },
+                   {
+                       "name":  "CF175C_M-P5-Step_asset",
+                       "assetType":  "step",
+                       "filePath":  "uploads/603e2c4d-fe81-497d-9953-9440f722f102_cf175c_m-p5-step.step",
+                       "source":  "local_path",
+                       "sourceUrl":  null,
+                       "unit":  "mm",
+                       "scaleFactor":  1.0,
+                       "id":  "3c2d2376-73b2-4c7b-9432-9f15f8663f54",
+                       "createdAt":  "2026-04-28T23:51:18.203012Z"
+                   },
+                   {
+                       "name":  "CF175C_M-P5-Solidworks_asset",
+                       "assetType":  "sldprt",
+                       "filePath":  "uploads/f3206bc8-98d1-4398-bffc-64765b6f386d_cf175c_m-p5-solidworks.sldprt",
+                       "source":  "local_path",
+                       "sourceUrl":  null,
+                       "unit":  "mm",
+                       "scaleFactor":  1.0,
+                       "id":  "ca309d07-c1e8-4891-8cf5-09f6c10d14e2",
+                       "createdAt":  "2026-04-28T23:51:18.236737Z"
+                   },
+                   {
+                       "name":  "CF175C_M-P5-CAD-DXF_asset",
+                       "assetType":  "dxf",
+                       "filePath":  "uploads/38c83c0f-390d-45f7-9a42-c2436d6948db_cf175c_m-p5-cad-dxf.dxf",
+                       "source":  "local_path",
+                       "sourceUrl":  null,
+                       "unit":  "mm",
+                       "scaleFactor":  1.0,
+                       "id":  "82c0c1bc-d859-4c1c-bdff-d174f8b04e89",
+                       "createdAt":  "2026-04-28T23:51:18.241824Z"
+                   },
+                   {
+                       "name":  "CF175C_M-P5-Solidworks_asset",
+                       "assetType":  "sldprt",
+                       "filePath":  "uploads/3f165d4c-a194-4c98-849a-b4e203079021_cf175c_m-p5-solidworks.sldprt",
+                       "source":  "upload",
+                       "sourceUrl":  null,
+                       "unit":  "mm",
+                       "scaleFactor":  1.0,
+                       "id":  "fdfa7510-1704-4e9f-b2d6-49a2ca5724b6",
+                       "createdAt":  "2026-04-28T23:54:16.584250Z"
+                   },
+                   {
+                       "name":  "CF175C_M-P5-CAD-DXF_asset",
+                       "assetType":  "dxf",
+                       "filePath":  "uploads/d2069ca4-8652-4db6-b9fa-a4979e662e07_cf175c_m-p5-cad-dxf.dxf",
+                       "source":  "upload",
+                       "sourceUrl":  null,
+                       "unit":  "mm",
+                       "scaleFactor":  1.0,
+                       "id":  "e1a03231-970f-4be7-8251-10ecd3f204b8",
+                       "createdAt":  "2026-04-28T23:59:10.054619Z"
+                   },
+                   {
+                       "name":  "thorlabs_cf175cm_p5_edrawing",
+                       "assetType":  "edrawing_html",
+                       "filePath":  "cf175c_m_edrawing.html",
+                       "source":  "Thorlabs eDrawing",
+                       "sourceUrl":  "https://media.thorlabs.com/globalassets/items/c/cf/cf1/cf175c_m/ttn026566-e0w.html?v=0116105356",
+                       "unit":  "mm",
+                       "scaleFactor":  1.0,
+                       "id":  "faf06b5a-d7d9-4a2b-838a-65045b019916",
+                       "createdAt":  "2026-04-29T00:08:34.004041Z"
+                   },
+                   {
+                       "name":  "thorlabs_cf175cm_p5_stl",
+                       "assetType":  "stl",
+                       "filePath":  "uploads/cf175c_m-p5.stl",
+                       "source":  "FreeCAD STEP export",
+                       "sourceUrl":  "https://www.thorlabs.com/item/CF175C_M-P5?aID=4063768eebb43d2e49d40f1ce64ce7a8\u0026aC=2",
+                       "unit":  "mm",
+                       "scaleFactor":  1.0,
+                       "id":  "256636ed-2698-45c9-a484-c7f2c5587650",
+                       "createdAt":  "2026-04-29T00:17:32.943348Z"
+                   }
+               ],
+    "components":  [
+                       {
+                           "name":  "vacuum_chamber_1",
+                           "componentType":  "vacuum_chamber",
+                           "brand":  "QMEM",
+                           "model":  "Rb-memory-cell",
+                           "serialNumber":  null,
+                           "asset3dId":  "697a0a84-c023-4859-9ae9-f835fcd51712",
+                           "properties":  {
+                                              "geometry":  "vacuum_chamber",
+                                              "heightMm":  220,
+                                              "radiusMm":  150
+                                          },
+                           "notes":  null,
+                           "id":  "3d6fa61b-efa6-4c4f-b452-82c0add3185b",
+                           "createdAt":  "2026-04-28T08:03:44.847729Z",
+                           "updatedAt":  "2026-04-28T08:03:44.847729Z",
+                           "componentName":  "vacuum_chamber_1"
+                       },
+                       {
+                           "name":  "laser_852nm_1",
+                           "componentType":  "laser",
+                           "brand":  "Toptica",
+                           "model":  "DL pro 852",
+                           "serialNumber":  null,
+                           "asset3dId":  "d5325ca1-d3d3-479e-a6d1-e9eb43e241dc",
+                           "properties":  {
+                                              "geometry":  "laser",
+                                              "dimensionsMm":  [
+                                                                   260,
+                                                                   90,
+                                                                   80
+                                                               ],
+                                              "wavelengthNm":  852
+                                          },
+                           "notes":  null,
+                           "id":  "eb4f2082-2554-4a41-ab0a-e7b30f0bd510",
+                           "createdAt":  "2026-04-28T08:03:44.847729Z",
+                           "updatedAt":  "2026-04-28T08:03:44.847729Z",
+                           "componentName":  "laser_852nm_1"
+                       },
+                       {
+                           "name":  "laser_894nm_1",
+                           "componentType":  "laser",
+                           "brand":  "Toptica",
+                           "model":  "DL pro 894",
+                           "serialNumber":  null,
+                           "asset3dId":  "d5325ca1-d3d3-479e-a6d1-e9eb43e241dc",
+                           "properties":  {
+                                              "geometry":  "laser",
+                                              "dimensionsMm":  [
+                                                                   260,
+                                                                   90,
+                                                                   80
+                                                               ],
+                                              "wavelengthNm":  894
+                                          },
+                           "notes":  null,
+                           "id":  "9e3219af-0e1f-4ffb-9e0e-8a0b0cfa4a01",
+                           "createdAt":  "2026-04-28T08:03:44.847729Z",
+                           "updatedAt":  "2026-04-28T08:03:44.847729Z",
+                           "componentName":  "laser_894nm_1"
+                       },
+                       {
+                           "name":  "mirror_001",
+                           "componentType":  "mirror",
+                           "brand":  "Thorlabs",
+                           "model":  "PF10-03-P01",
+                           "serialNumber":  null,
+                           "asset3dId":  "4a8b19b6-8f08-4c37-bfdf-2a7d4f81271b",
+                           "properties":  {
+                                              "geometry":  "mirror",
+                                              "diameterMm":  25.4
+                                          },
+                           "notes":  null,
+                           "id":  "c8f8c412-5934-48f1-a46a-d208608b975b",
+                           "createdAt":  "2026-04-28T08:03:44.847729Z",
+                           "updatedAt":  "2026-04-28T08:03:44.847729Z",
+                           "componentName":  "mirror_001"
+                       },
+                       {
+                           "name":  "mirror_002",
+                           "componentType":  "mirror",
+                           "brand":  "Thorlabs",
+                           "model":  "PF10-03-P01",
+                           "serialNumber":  null,
+                           "asset3dId":  "4a8b19b6-8f08-4c37-bfdf-2a7d4f81271b",
+                           "properties":  {
+                                              "geometry":  "mirror",
+                                              "diameterMm":  25.4
+                                          },
+                           "notes":  null,
+                           "id":  "74c06da3-220e-4082-9530-c9ca4cac9788",
+                           "createdAt":  "2026-04-28T08:03:44.847729Z",
+                           "updatedAt":  "2026-04-28T08:03:44.847729Z",
+                           "componentName":  "mirror_002"
+                       },
+                       {
+                           "name":  "lens_001",
+                           "componentType":  "lens",
+                           "brand":  "Edmund Optics",
+                           "model":  "AC254-150-B",
+                           "serialNumber":  null,
+                           "asset3dId":  "7c811527-154a-4029-ab67-262deb66de97",
+                           "properties":  {
+                                              "geometry":  "lens",
+                                              "diameterMm":  25.4,
+                                              "focalLengthMm":  150
+                                          },
+                           "notes":  null,
+                           "id":  "97cdd2f6-e741-469d-980e-f0fc6d71bc25",
+                           "createdAt":  "2026-04-28T08:03:44.847729Z",
+                           "updatedAt":  "2026-04-28T08:03:44.847729Z",
+                           "componentName":  "lens_001"
+                       },
+                       {
+                           "name":  "eom_9ghz_001",
+                           "componentType":  "eom",
+                           "brand":  "Qubig",
+                           "model":  "PM-C9G",
+                           "serialNumber":  null,
+                           "asset3dId":  "d5325ca1-d3d3-479e-a6d1-e9eb43e241dc",
+                           "properties":  {
+                                              "geometry":  "eom",
+                                              "dimensionsMm":  [
+                                                                   140,
+                                                                   80,
+                                                                   70
+                                                               ],
+                                              "frequencyGHz":  9.192
+                                          },
+                           "notes":  null,
+                           "id":  "a9dd30cd-3b8a-49f1-9ee0-5ca2b5c611f4",
+                           "createdAt":  "2026-04-28T08:03:44.847729Z",
+                           "updatedAt":  "2026-04-28T08:03:44.847729Z",
+                           "componentName":  "eom_9ghz_001"
+                       },
+                       {
+                           "name":  "rf_generator_001",
+                           "componentType":  "rf_generator",
+                           "brand":  "Rohde \u0026 Schwarz",
+                           "model":  "SMB100A",
+                           "serialNumber":  null,
+                           "asset3dId":  "d5325ca1-d3d3-479e-a6d1-e9eb43e241dc",
+                           "properties":  {
+                                              "geometry":  "rf_generator",
+                                              "dimensionsMm":  [
+                                                                   280,
+                                                                   220,
+                                                                   100
+                                                               ]
+                                          },
+                           "notes":  null,
+                           "id":  "8d6bbd5b-0875-45ee-9e98-146a4acf5fc3",
+                           "createdAt":  "2026-04-28T08:03:44.847729Z",
+                           "updatedAt":  "2026-04-28T08:03:44.847729Z",
+                           "componentName":  "rf_generator_001"
+                       },
+                       {
+                           "name":  "rf_amp_001",
+                           "componentType":  "rf_amplifier",
+                           "brand":  "Mini-Circuits",
+                           "model":  "ZHL-42W+",
+                           "serialNumber":  null,
+                           "asset3dId":  "d5325ca1-d3d3-479e-a6d1-e9eb43e241dc",
+                           "properties":  {
+                                              "geometry":  "rf_amplifier",
+                                              "dimensionsMm":  [
+                                                                   180,
+                                                                   140,
+                                                                   70
+                                                               ]
+                                          },
+                           "notes":  null,
+                           "id":  "1d3ad4fc-f4e2-49e3-88a0-aa561ed7324e",
+                           "createdAt":  "2026-04-28T08:03:44.847729Z",
+                           "updatedAt":  "2026-04-28T08:03:44.847729Z",
+                           "componentName":  "rf_amp_001"
+                       },
+                       {
+                           "name":  "thorlabs_clamping_fork_cf175cm_p5",
+                           "componentType":  "clamping_fork",
+                           "brand":  "Thorlabs",
+                           "model":  "CF175C/M-P5",
+                           "serialNumber":  null,
+                           "asset3dId":  "256636ed-2698-45c9-a484-c7f2c5587650",
+                           "properties":  {
+                                              "screw":  "M6 x 1.0 captive screw",
+                                              "package":  "5 pack",
+                                              "geometry":  "stl_mesh",
+                                              "sourceUrl":  "https://www.thorlabs.com/item/CF175C_M-P5?aID=4063768eebb43d2e49d40f1ce64ce7a8\u0026aC=2",
+                                              "sourceStep":  "uploads/603e2c4d-fe81-497d-9953-9440f722f102_cf175c_m-p5-step.step",
+                                              "edrawingUrl":  "https://media.thorlabs.com/globalassets/items/c/cf/cf1/cf175c_m/ttn026566-e0w.html?v=0116105356",
+                                              "slotLengthMm":  44.4
+                                          },
+                           "notes":  null,
+                           "id":  "823a09c7-02c6-4c59-b91b-d893c038c329",
+                           "createdAt":  "2026-04-29T00:17:32.943348Z",
+                           "updatedAt":  "2026-04-29T00:17:32.943348Z",
+                           "componentName":  "thorlabs_clamping_fork_cf175cm_p5"
+                       },
+                       {
+                           "name":  "optical_table",
+                           "componentType":  "optical_table",
+                           "brand":  "Newport",
+                           "model":  "RS4000 1200x3600x457 + S-2000A",
+                           "serialNumber":  null,
+                           "asset3dId":  "3bc01cf4-4c76-4ff2-bbd6-3f86f44e4297",
+                           "properties":  {
+                                              "thread":  "M6",
+                                              "geometry":  "newport_rs4000_table",
+                                              "holeGrid":  [
+                                                               144,
+                                                               48
+                                                           ],
+                                              "topHeightMm":  860,
+                                              "dimensionsMm":  [
+                                                                   3600,
+                                                                   1200,
+                                                                   457
+                                                               ],
+                                              "isolatorCount":  6,
+                                              "isolatorModel":  "S-2000A"
+                                          },
+                           "notes":  null,
+                           "id":  "3a8c05d1-757f-47ff-9008-8c3765685983",
+                           "createdAt":  "2026-04-28T08:03:44.847729Z",
+                           "updatedAt":  "2026-04-29T00:33:11.603646Z",
+                           "componentName":  "optical_table"
+                       }
+                   ],
+    "placements":  [
+                       {
+                           "objectName":  "optical_table_1_object_1",
+                           "parentComponentId":  null,
+                           "xMm":  0.0,
+                           "yMm":  0.0,
+                           "zMm":  0.0,
+                           "rxDeg":  0.0,
+                           "ryDeg":  0.0,
+                           "rzDeg":  0.0,
+                           "visible":  true,
+                           "locked":  false,
+                           "id":  "3c6b1c51-cfd0-45a0-88d5-ee41bd0b4b4a",
+                           "componentId":  "3a8c05d1-757f-47ff-9008-8c3765685983",
+                           "updatedAt":  "2026-04-29T00:33:15.615373Z"
+                       }
+                   ],
+    "objects":  [
+                    {
+                        "objectName":  "optical_table_1_object_1",
+                        "parentComponentId":  null,
+                        "xMm":  0.0,
+                        "yMm":  0.0,
+                        "zMm":  0.0,
+                        "rxDeg":  0.0,
+                        "ryDeg":  0.0,
+                        "rzDeg":  0.0,
+                        "visible":  true,
+                        "locked":  false,
+                        "id":  "3c6b1c51-cfd0-45a0-88d5-ee41bd0b4b4a",
+                        "componentId":  "3a8c05d1-757f-47ff-9008-8c3765685983",
+                        "updatedAt":  "2026-04-29T00:33:15.615373Z"
+                    }
+                ],
+    "connections":  [
+                        {
+                            "connectionType":  "rf",
+                            "fromComponentId":  "8d6bbd5b-0875-45ee-9e98-146a4acf5fc3",
+                            "fromPort":  "RF OUT",
+                            "toComponentId":  "1d3ad4fc-f4e2-49e3-88a0-aa561ed7324e",
+                            "toPort":  "RF IN",
+                            "label":  "9.192 GHz drive",
+                            "properties":  {
+                                               "cable":  "SMA"
+                                           },
+                            "id":  "fbb32e6b-4b98-40e4-8b0d-2dabbb7735cb",
+                            "createdAt":  "2026-04-28T08:03:44.847729Z"
+                        },
+                        {
+                            "connectionType":  "rf",
+                            "fromComponentId":  "1d3ad4fc-f4e2-49e3-88a0-aa561ed7324e",
+                            "fromPort":  "RF OUT",
+                            "toComponentId":  "a9dd30cd-3b8a-49f1-9ee0-5ca2b5c611f4",
+                            "toPort":  "RF IN",
+                            "label":  "EOM high power RF",
+                            "properties":  {
+                                               "cable":  "SMA"
+                                           },
+                            "id":  "b7b4d6ef-11e3-4e1e-8b6b-439a979ecd5b",
+                            "createdAt":  "2026-04-28T08:03:44.847729Z"
+                        }
+                    ],
+    "beamPaths":  [
+                      {
+                          "name":  "852 nm cooling/control beam",
+                          "wavelengthNm":  852.0,
+                          "color":  "#22d3ee",
+                          "sourceComponentId":  "eb4f2082-2554-4a41-ab0a-e7b30f0bd510",
+                          "targetComponentId":  "3d6fa61b-efa6-4c4f-b452-82c0add3185b",
+                          "points":  [
+                                         [
+                                             -650.0,
+                                             -220.0,
+                                             95.0
+                                         ],
+                                         [
+                                             -220.0,
+                                             -220.0,
+                                             95.0
+                                         ],
+                                         [
+                                             180.0,
+                                             -220.0,
+                                             95.0
+                                         ],
+                                         [
+                                             330.0,
+                                             -220.0,
+                                             95.0
+                                         ],
+                                         [
+                                             500.0,
+                                             0.0,
+                                             110.0
+                                         ],
+                                         [
+                                             500.0,
+                                             220.0,
+                                             110.0
+                                         ]
+                                     ],
+                          "properties":  {
+                                             "role":  "control"
+                                         },
+                          "visible":  true,
+                          "id":  "5ce6bb53-5492-492c-8863-e688fc521e0f",
+                          "createdAt":  "2026-04-28T08:03:44.847729Z",
+                          "updatedAt":  "2026-04-28T08:03:44.847729Z"
+                      },
+                      {
+                          "name":  "894 nm signal beam",
+                          "wavelengthNm":  894.0,
+                          "color":  "#facc15",
+                          "sourceComponentId":  "9e3219af-0e1f-4ffb-9e0e-8a0b0cfa4a01",
+                          "targetComponentId":  "3d6fa61b-efa6-4c4f-b452-82c0add3185b",
+                          "points":  [
+                                         [
+                                             -650.0,
+                                             180.0,
+                                             95.0
+                                         ],
+                                         [
+                                             120.0,
+                                             180.0,
+                                             95.0
+                                         ],
+                                         [
+                                             500.0,
+                                             180.0,
+                                             110.0
+                                         ],
+                                         [
+                                             500.0,
+                                             220.0,
+                                             110.0
+                                         ]
+                                     ],
+                          "properties":  {
+                                             "role":  "signal"
+                                         },
+                          "visible":  true,
+                          "id":  "95014f96-3585-4295-96e8-ce9e0163d6c0",
+                          "createdAt":  "2026-04-28T08:03:44.847729Z",
+                          "updatedAt":  "2026-04-28T08:03:44.847729Z"
+                      }
+                  ],
+    "deviceStates":  [
+                         {
+                             "componentId":  "3d6fa61b-efa6-4c4f-b452-82c0add3185b",
+                             "state":  {
+                                           "pressurePa":  0.00002,
+                                           "temperatureC":  24.2
+                                       },
+                             "updatedAt":  "2026-04-28T08:03:44.847729Z"
+                         },
+                         {
+                             "componentId":  "eb4f2082-2554-4a41-ab0a-e7b30f0bd510",
+                             "state":  {
+                                           "enabled":  true,
+                                           "powerMw":  18.5,
+                                           "wavelengthNm":  852
+                                       },
+                             "updatedAt":  "2026-04-28T08:03:44.847729Z"
+                         },
+                         {
+                             "componentId":  "9e3219af-0e1f-4ffb-9e0e-8a0b0cfa4a01",
+                             "state":  {
+                                           "enabled":  true,
+                                           "powerMw":  12.0,
+                                           "wavelengthNm":  894
+                                       },
+                             "updatedAt":  "2026-04-28T08:03:44.847729Z"
+                         },
+                         {
+                             "componentId":  "a9dd30cd-3b8a-49f1-9ee0-5ca2b5c611f4",
+                             "state":  {
+                                           "enabled":  true,
+                                           "rfPowerDbm":  19.8
+                                       },
+                             "updatedAt":  "2026-04-28T08:03:44.847729Z"
+                         },
+                         {
+                             "componentId":  "8d6bbd5b-0875-45ee-9e98-146a4acf5fc3",
+                             "state":  {
+                                           "enabled":  true,
+                                           "powerDbm":  5.0,
+                                           "frequencyGHz":  9.192
+                                       },
+                             "updatedAt":  "2026-04-28T08:03:44.847729Z"
+                         },
+                         {
+                             "componentId":  "1d3ad4fc-f4e2-49e3-88a0-aa561ed7324e",
+                             "state":  {
+                                           "enabled":  true,
+                                           "rfPowerDbm":  28.2,
+                                           "temperatureC":  33.5
+                                       },
+                             "updatedAt":  "2026-04-28T08:03:44.847729Z"
+                         }
+                     ]
+}
