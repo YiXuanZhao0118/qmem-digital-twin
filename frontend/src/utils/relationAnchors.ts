@@ -154,6 +154,31 @@ function objectSize(object: SceneObject, component?: ComponentItem): VecObject {
   return vec(dimensions, { x: 100, y: 100, z: 100 });
 }
 
+function rotateVec(v: VecObject, rxDeg: number, ryDeg: number, rzDeg: number): VecObject {
+  // Lab-frame rotation: R = Rz(rz) · Rx(rx) · Ry(ry). Mirrors the YXZ-intrinsic
+  // Euler order applied by the Three.js renderer (transformUtils.ts).
+  const rx = (rxDeg * Math.PI) / 180;
+  const ry = (ryDeg * Math.PI) / 180;
+  const rz = (rzDeg * Math.PI) / 180;
+
+  const cy = Math.cos(ry), sy = Math.sin(ry);
+  const x1 = v.x * cy + v.z * sy;
+  const y1 = v.y;
+  const z1 = -v.x * sy + v.z * cy;
+
+  const cx = Math.cos(rx), sx = Math.sin(rx);
+  const x2 = x1;
+  const y2 = y1 * cx - z1 * sx;
+  const z2 = y1 * sx + z1 * cx;
+
+  const cz = Math.cos(rz), sz = Math.sin(rz);
+  return {
+    x: x2 * cz - y2 * sz,
+    y: x2 * sz + y2 * cz,
+    z: z2,
+  };
+}
+
 export function localAnchor(anchorId: string, size: VecObject): { position: VecObject; direction?: VecObject } {
   const half = { x: size.x / 2, y: size.y / 2, z: size.z / 2 };
   switch (normalizeAnchorId(anchorId)) {
@@ -180,12 +205,16 @@ export function worldAnchor(
   anchorId: string,
 ): { position: VecObject; direction?: VecObject } {
   const anchor = localAnchor(anchorId, objectSize(object, component));
+  const rotatedPosition = rotateVec(anchor.position, object.rxDeg, object.ryDeg, object.rzDeg);
+  const rotatedDirection = anchor.direction
+    ? rotateVec(anchor.direction, object.rxDeg, object.ryDeg, object.rzDeg)
+    : undefined;
   return {
     position: {
-      x: object.xMm + anchor.position.x,
-      y: object.yMm + anchor.position.y,
-      z: object.zMm + anchor.position.z,
+      x: object.xMm + rotatedPosition.x,
+      y: object.yMm + rotatedPosition.y,
+      z: object.zMm + rotatedPosition.z,
     },
-    direction: anchor.direction,
+    direction: rotatedDirection,
   };
 }

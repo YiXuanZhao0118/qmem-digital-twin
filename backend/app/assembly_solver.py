@@ -68,8 +68,41 @@ def normalize(value: Vec) -> Vec | None:
     return mul(value, 1 / size)
 
 
+def rotate_vec(value: Vec, rx_deg: float, ry_deg: float, rz_deg: float) -> Vec:
+    # Lab-frame rotation: R = Rz(rz) · Rx(rx) · Ry(ry). Mirrors the YXZ-intrinsic
+    # Euler order applied by the Three.js renderer (frontend transformUtils.ts).
+    rx = math.radians(rx_deg)
+    ry = math.radians(ry_deg)
+    rz = math.radians(rz_deg)
+
+    cy, sy = math.cos(ry), math.sin(ry)
+    x1 = value["x"] * cy + value["z"] * sy
+    y1 = value["y"]
+    z1 = -value["x"] * sy + value["z"] * cy
+
+    cx, sx = math.cos(rx), math.sin(rx)
+    x2 = x1
+    y2 = y1 * cx - z1 * sx
+    z2 = y1 * sx + z1 * cx
+
+    cz, sz = math.cos(rz), math.sin(rz)
+    return vec(
+        x2 * cz - y2 * sz,
+        x2 * sz + y2 * cz,
+        z2,
+    )
+
+
 def placement_position(placement: Placement) -> Vec:
     return vec(placement.x_mm, placement.y_mm, placement.z_mm)
+
+
+def placement_rotation(placement: Placement) -> tuple[float, float, float]:
+    return (
+        float(placement.rx_deg or 0.0),
+        float(placement.ry_deg or 0.0),
+        float(placement.rz_deg or 0.0),
+    )
 
 
 def placement_size(placement: Placement, component: Component | None) -> Vec:
@@ -175,18 +208,21 @@ async def anchor_for(session: AsyncSession, placement: Placement, anchor_id: str
 
 async def world_anchor_position(session: AsyncSession, placement: Placement, anchor_id: str | None) -> Vec:
     anchor = await anchor_for(session, placement, anchor_id)
-    return add(placement_position(placement), read_vec(anchor.get("localPosition")))
+    local_position = read_vec(anchor.get("localPosition"))
+    rotated = rotate_vec(local_position, *placement_rotation(placement))
+    return add(placement_position(placement), rotated)
 
 
 async def world_anchor_direction(session: AsyncSession, placement: Placement, anchor_id: str | None) -> Vec | None:
     anchor = await anchor_for(session, placement, anchor_id)
     direction = read_vec(anchor.get("localDirection"), fallback=None)
-    if any(direction[axis] for axis in AXES):
-        return normalize(direction)
-    selector_normal = anchor.get("normal")
-    if selector_normal is not None:
-        return normalize(read_vec(selector_normal))
-    return None
+    if not any(direction[axis] for axis in AXES):
+        selector_normal = anchor.get("normal")
+        if selector_normal is None:
+            return None
+        direction = read_vec(selector_normal)
+    rotated = rotate_vec(direction, *placement_rotation(placement))
+    return normalize(rotated)
 
 
 def target_from_relation(relation: AssemblyRelation, key: str) -> dict[str, Any]:
