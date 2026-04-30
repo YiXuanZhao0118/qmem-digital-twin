@@ -32,6 +32,8 @@ export type Asset3D = {
   createdAt?: string;
 };
 
+export type PhysicsCapability = "stress" | "optical" | "rf" | "em" | "thermal" | "fluid" | "quantum";
+
 export type ComponentItem = {
   id: string;
   name: string;
@@ -42,6 +44,7 @@ export type ComponentItem = {
   serialNumber?: string | null;
   asset3dId?: string | null;
   properties: Record<string, unknown>;
+  physicsCapabilities: PhysicsCapability[];
   notes?: string | null;
   createdAt?: string;
   updatedAt?: string;
@@ -146,6 +149,297 @@ export type DeviceState = {
   updatedAt: string;
 };
 
+// =============================================================================
+// Optical domain
+// =============================================================================
+
+// --- Reusable building blocks ------------------------------------------------
+
+export type JonesVector = {
+  exRe: number;
+  exIm: number;
+  eyRe: number;
+  eyIm: number;
+};
+
+export type GaussianMode = {
+  waistUm: number;
+  waistZOffsetMm: number;
+  mSquared: number;
+};
+
+export type TransverseModeKind = "TEM00" | "TEM_mn" | "LG_pl" | "multimode";
+
+export type TransverseMode = {
+  kind: TransverseModeKind;
+  indicesM?: number | null;
+  indicesN?: number | null;
+  indicesP?: number | null;
+  indicesL?: number | null;
+};
+
+export type SpectrumLineshape = "gaussian" | "lorentzian" | "voigt" | "delta";
+export type SpectrumComponentKind = "main" | "sideband" | "ase" | "custom";
+
+export type SpectrumComponent = {
+  kind: SpectrumComponentKind;
+  lineshape: SpectrumLineshape;
+  offsetMhz: number;
+  fwhmMhz?: number | null;
+  voigtGaussianFwhmMhz?: number | null;
+  voigtLorentzianFwhmMhz?: number | null;
+  amplitude: number;
+};
+
+export type Spectrum = {
+  centerThz: number;
+  components: SpectrumComponent[];
+};
+
+export type PortRole = "input" | "output";
+
+export type OpticalPort = {
+  portId: string;
+  role: PortRole;
+  label?: string | null;
+  kind?: string | null;
+};
+
+// --- Element kinds ----------------------------------------------------------
+
+export type ElementKind =
+  | "laser_source"
+  | "tapered_amplifier"
+  | "mirror"
+  | "lens_spherical"
+  | "lens_cylindrical"
+  | "waveplate"
+  | "polarizer"
+  | "beam_splitter"
+  | "dichroic_mirror"
+  | "fiber_coupler"
+  | "isolator"
+  | "aom"
+  | "eom"
+  | "nonlinear_crystal"
+  | "saturable_absorber"
+  | "detector"
+  | "camera"
+  | "spectrometer"
+  | "wavemeter"
+  | "beam_dump";
+
+// --- Per-kind params (discriminated by element_kind) ------------------------
+
+export type LaserSourceParams = {
+  centerWavelengthNm: number;
+  spectrum: Spectrum;
+  spatialModeX: GaussianMode;
+  spatialModeY: GaussianMode;
+  transverseMode: TransverseMode;
+  polarization: JonesVector;
+  nominalPowerMw: number;
+  rinDbcPerHz?: number | null;
+  frequencyNoiseHzPerSqrtHz?: number | null;
+};
+
+export type TaperedAmplifierAse = {
+  powerMw: number;
+  bandwidthNm: number;
+  centerOffsetNm: number;
+};
+
+export type TaperedAmplifierParams = {
+  smallSignalGainDb: number;
+  saturationPowerMw: number;
+  maxInputPowerMw?: number | null;
+  ase: TaperedAmplifierAse;
+  outputSpatialModeX: GaussianMode;
+  outputSpatialModeY: GaussianMode;
+  outputTransverseMode: TransverseMode;
+};
+
+export type MirrorParams = {
+  reflectivity: number;
+  surfaceQualityNm?: number | null;
+  normalLocal: number[];
+};
+
+export type LensSphericalParams = {
+  focalMm: number;
+  numericalAperture?: number | null;
+  transmission: number;
+};
+
+export type LensCylindricalParams = {
+  focalMm: number;
+  cylindricalAxis: "x" | "y";
+  transmission: number;
+};
+
+export type WaveplateParams = {
+  retardanceLambda: number;
+  fastAxisDeg: number;
+  transmission: number;
+};
+
+export type PolarizerParams = {
+  transmissionAxisDeg: number;
+  extinctionRatioDb: number;
+  transmission: number;
+};
+
+export type BeamSplitterParams = {
+  splitRatioTransmitted: number;
+  polarizing: boolean;
+  transmission: number;
+};
+
+export type DichroicMirrorParams = {
+  cutoffWavelengthNm: number;
+  passBand: "short" | "long";
+  transmission: number;
+  reflectivity: number;
+};
+
+export type FiberCouplerParams = {
+  couplingEfficiency: number;
+  modeFieldDiameterUm: number;
+  fiberType: "single_mode" | "polarization_maintaining" | "multi_mode";
+};
+
+export type IsolatorParams = {
+  forwardLossDb: number;
+  isolationDb: number;
+  transmissionAxisDeg: number;
+};
+
+export type AOMParams = {
+  rfDriverComponentId?: string | null;
+  baseEfficiency: number;
+  deflectionPerMhzUrad: number;
+  acousticVelocityMPerS: number;
+  modulationBandwidthMhz: number;
+  centerFreqMhz: number;
+};
+
+export type EOMParams = {
+  rfDriverComponentId?: string | null;
+  vPiV: number;
+  modulationKind: "phase" | "amplitude";
+  modulationBandwidthMhz: number;
+  insertionLossDb: number;
+};
+
+export type NonlinearCrystalParams = {
+  process: "SHG" | "SFG" | "DFG" | "OPO";
+  chi2PmPerV: number;
+  lengthMm: number;
+  phaseMatchTempC?: number | null;
+  phaseMatchAngleDeg?: number | null;
+  walkOffUrad: number;
+};
+
+export type SaturableAbsorberParams = {
+  saturationIntensityWPerCm2: number;
+  modulationDepth: number;
+  nonSaturableLoss: number;
+  recoveryTimePs: number;
+};
+
+export type DetectorParams = {
+  responsivityAPerW: number;
+  quantumEfficiency: number;
+  bandwidthMhz: number;
+  saturationPowerMw: number;
+};
+
+export type CameraParams = {
+  resolutionPx: [number, number];
+  pixelSizeUm: number;
+  quantumEfficiency: number;
+  wellDepthE: number;
+};
+
+export type SpectrometerParams = {
+  resolutionPm: number;
+  wavelengthRangeNm: [number, number];
+};
+
+export type WavemeterParams = {
+  precisionMhz: number;
+};
+
+export type BeamDumpParams = {
+  absorption: number;
+};
+
+// Tagged union: element_kind discriminates which params shape applies.
+export type OpticalElementKindParams =
+  | { elementKind: "laser_source"; kindParams: LaserSourceParams }
+  | { elementKind: "tapered_amplifier"; kindParams: TaperedAmplifierParams }
+  | { elementKind: "mirror"; kindParams: MirrorParams }
+  | { elementKind: "lens_spherical"; kindParams: LensSphericalParams }
+  | { elementKind: "lens_cylindrical"; kindParams: LensCylindricalParams }
+  | { elementKind: "waveplate"; kindParams: WaveplateParams }
+  | { elementKind: "polarizer"; kindParams: PolarizerParams }
+  | { elementKind: "beam_splitter"; kindParams: BeamSplitterParams }
+  | { elementKind: "dichroic_mirror"; kindParams: DichroicMirrorParams }
+  | { elementKind: "fiber_coupler"; kindParams: FiberCouplerParams }
+  | { elementKind: "isolator"; kindParams: IsolatorParams }
+  | { elementKind: "aom"; kindParams: AOMParams }
+  | { elementKind: "eom"; kindParams: EOMParams }
+  | { elementKind: "nonlinear_crystal"; kindParams: NonlinearCrystalParams }
+  | { elementKind: "saturable_absorber"; kindParams: SaturableAbsorberParams }
+  | { elementKind: "detector"; kindParams: DetectorParams }
+  | { elementKind: "camera"; kindParams: CameraParams }
+  | { elementKind: "spectrometer"; kindParams: SpectrometerParams }
+  | { elementKind: "wavemeter"; kindParams: WavemeterParams }
+  | { elementKind: "beam_dump"; kindParams: BeamDumpParams };
+
+export type OpticalElementCommon = {
+  componentId: string;
+  wavelengthRangeNm: [number, number];
+  inputPorts: OpticalPort[];
+  outputPorts: OpticalPort[];
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type OpticalElement = OpticalElementCommon & OpticalElementKindParams;
+
+export type OpticalLink = {
+  id: string;
+  fromComponentId: string;
+  fromPort: string;
+  toComponentId: string;
+  toPort: string;
+  freeSpaceMm: number;
+  properties: Record<string, unknown>;
+  createdAt?: string;
+};
+
+export type BeamSegment = {
+  id: string;
+  simulationRunId?: string | null;
+  opticalLinkId: string;
+  sequenceTMs?: number | null;
+  beamIndex: number;
+  spectrum: Record<string, unknown>;
+  spatialX: Record<string, unknown>;
+  spatialY: Record<string, unknown>;
+  transverseMode: Record<string, unknown>;
+  polarizationJones: Record<string, unknown>;
+  powerMw: number;
+  propagationAxisLocal: number[];
+  createdAt?: string;
+};
+
+export const EMITTER_KINDS: ReadonlySet<ElementKind> = new Set<ElementKind>([
+  "laser_source",
+  "tapered_amplifier",
+]);
+
 export type SceneData = {
   assets: Asset3D[];
   components: ComponentItem[];
@@ -155,6 +449,8 @@ export type SceneData = {
   assemblyRelations: AssemblyRelation[];
   beamPaths: BeamPath[];
   deviceStates: DeviceState[];
+  opticalElements: OpticalElement[];
+  opticalLinks: OpticalLink[];
 };
 
 export type SceneEvent =

@@ -6,7 +6,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import schemas
 from app.db import get_session
-from app.models import Asset3D, AssemblyRelation, BeamPath, Component, Connection, DeviceState, Placement
+from app.models import (
+    Asset3D,
+    AssemblyRelation,
+    BeamPath,
+    Component,
+    Connection,
+    DeviceState,
+    OpticalElement,
+    OpticalLink,
+    Placement,
+)
 
 
 router = APIRouter()
@@ -21,6 +31,8 @@ async def get_scene(session: AsyncSession = Depends(get_session)) -> schemas.Sce
     assembly_relations = list((await session.scalars(select(AssemblyRelation))).all())
     beam_paths = list((await session.scalars(select(BeamPath))).all())
     device_states = list((await session.scalars(select(DeviceState))).all())
+    optical_elements = list((await session.scalars(select(OpticalElement))).all())
+    optical_links = list((await session.scalars(select(OpticalLink))).all())
 
     return schemas.SceneOut(
         assets=assets,
@@ -31,4 +43,6 @@ async def get_scene(session: AsyncSession = Depends(get_session)) -> schemas.Sce
         assembly_relations=assembly_relations,
         beam_paths=beam_paths,
         device_states=device_states,
+        optical_elements=optical_elements,
+        optical_links=optical_links,
     )

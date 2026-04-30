@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Text, func, text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -59,6 +59,9 @@ class Component(Base):
         PG_UUID(as_uuid=True), ForeignKey("assets_3d.id")
     )
     properties: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    physics_capabilities: Mapped[JsonList] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
     notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -77,6 +80,9 @@ class Component(Base):
         foreign_keys="Placement.component_id",
     )
     device_state: Mapped[DeviceState | None] = relationship(
+        back_populates="component", cascade="all, delete-orphan"
+    )
+    optical_element: Mapped[OpticalElement | None] = relationship(
         back_populates="component", cascade="all, delete-orphan"
     )
 
@@ -240,6 +246,108 @@ class Revision(Base):
     label: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     snapshot: Mapped[JsonDict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class OpticalElement(Base):
+    __tablename__ = "optical_elements"
+
+    component_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("components.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    element_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    wavelength_range_nm: Mapped[JsonList] = mapped_column(
+        JSONB, nullable=False, default=lambda: [400.0, 1100.0], server_default="[400, 1100]"
+    )
+    input_ports: Mapped[JsonList] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
+    output_ports: Mapped[JsonList] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
+    kind_params: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    component: Mapped[Component] = relationship(back_populates="optical_element")
+
+
+class OpticalLink(Base):
+    __tablename__ = "optical_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "from_component_id",
+            "from_port",
+            "to_component_id",
+            "to_port",
+            name="uq_optical_link_endpoints",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    from_component_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("components.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    from_port: Mapped[str] = mapped_column(Text, nullable=False)
+    to_component_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("components.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    to_port: Mapped[str] = mapped_column(Text, nullable=False)
+    free_space_mm: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0")
+    properties: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class BeamSegment(Base):
+    __tablename__ = "beam_segments"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    simulation_run_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    optical_link_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("optical_links.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    sequence_t_ms: Mapped[float | None] = mapped_column(Float)
+    beam_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    spectrum: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    spatial_x: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    spatial_y: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    transverse_mode: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    polarization_jones: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    power_mw: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0")
+    propagation_axis_local: Mapped[JsonList] = mapped_column(
+        JSONB, nullable=False, default=lambda: [0.0, 0.0, 1.0], server_default="[0, 0, 1]"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

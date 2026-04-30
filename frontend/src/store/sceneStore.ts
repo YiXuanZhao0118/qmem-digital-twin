@@ -47,6 +47,8 @@ const emptyScene: SceneData = {
   assemblyRelations: [],
   beamPaths: [],
   deviceStates: [],
+  opticalElements: [],
+  opticalLinks: [],
 };
 
 type SceneStore = {

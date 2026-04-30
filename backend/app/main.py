@@ -12,6 +12,8 @@ from app.routers import (
     components,
     connections,
     device_states,
+    optical_elements,
+    optical_links,
     placements,
     scene,
 )
@@ -38,6 +40,8 @@ app.include_router(connections.router, prefix="/api/connections", tags=["connect
 app.include_router(assembly_relations.router, prefix="/api/assembly-relations", tags=["assembly_relations"])
 app.include_router(beam_paths.router, prefix="/api/beam-paths", tags=["beam_paths"])
 app.include_router(device_states.router, prefix="/api/device-states", tags=["device_states"])
+app.include_router(optical_elements.router, prefix="/api/optical-elements", tags=["optical_elements"])
+app.include_router(optical_links.router, prefix="/api/optical-links", tags=["optical_links"])
 app.include_router(scene.router, prefix="/api", tags=["scene"])
 app.include_router(websocket_router, prefix="/ws", tags=["websocket"])
 
