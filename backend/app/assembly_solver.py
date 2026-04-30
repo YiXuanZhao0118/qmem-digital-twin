@@ -8,7 +8,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.models import AssemblyRelation, Component, Placement
+from app.models import Asset3D, AssemblyRelation, Component, Placement
 
 
 Vec = dict[str, float]
@@ -190,19 +190,42 @@ def standard_anchor(anchor_id: str, size: Vec) -> dict[str, object] | None:
     return anchors.get(normalized_id)
 
 async def component_for(session: AsyncSession, placement: Placement) -> Component | None:
+    if session is None:
+        return None
     return await session.get(Component, placement.component_id)
 
 
+async def asset_for(session: AsyncSession, component: Component | None) -> Asset3D | None:
+    if session is None or component is None or component.asset_3d_id is None:
+        return None
+    return await session.get(Asset3D, component.asset_3d_id)
+
+
+def find_anchor_in_list(anchors: object, anchor_id: str) -> dict[str, object] | None:
+    if not isinstance(anchors, list):
+        return None
+    for anchor in anchors:
+        if isinstance(anchor, dict) and normalize_anchor_id(anchor.get("id")) == anchor_id:
+            return anchor
+    return None
+
+
 async def anchor_for(session: AsyncSession, placement: Placement, anchor_id: str | None) -> dict[str, object]:
-    properties = placement.properties if isinstance(placement.properties, dict) else {}
+    # Resolution order: placement override → asset default → standard box anchor.
     anchor_id = normalize_anchor_id(anchor_id)
-    anchors = properties.get("anchors")
-    if isinstance(anchors, list):
-        for anchor in anchors:
-            if isinstance(anchor, dict) and normalize_anchor_id(anchor.get("id")) == anchor_id:
-                return anchor
+    properties = placement.properties if isinstance(placement.properties, dict) else {}
+
+    placement_match = find_anchor_in_list(properties.get("anchors"), anchor_id)
+    if placement_match is not None:
+        return placement_match
 
     component = await component_for(session, placement)
+    asset = await asset_for(session, component)
+    if asset is not None:
+        asset_match = find_anchor_in_list(asset.anchors, anchor_id)
+        if asset_match is not None:
+            return asset_match
+
     return standard_anchor(anchor_id, placement_size(placement, component)) or standard_anchor("center", vec(100, 100, 100))
 
 

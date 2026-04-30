@@ -126,6 +126,10 @@ export function ComponentPanel() {
     () => new Map(scene.components.map((item) => [item.id, item])),
     [scene.components],
   );
+  const assetById = useMemo(
+    () => new Map(scene.assets.map((item) => [item.id, item])),
+    [scene.assets],
+  );
   const component =
     (selectedObject ? componentById.get(selectedObject.componentId) : undefined) ??
     scene.components.find((item) => item.id === selectedComponentId) ??
@@ -416,8 +420,10 @@ export function ComponentPanel() {
     if (!driver || !driven) return;
     const driverComponent = componentById.get(driver.componentId);
     const drivenComponent = componentById.get(driven.componentId);
-    const driverAnchor = worldAnchor(driver, driverComponent, driverTarget.anchorId);
-    const drivenAnchor = worldAnchor(driven, drivenComponent, drivenTarget.anchorId);
+    const driverAsset = driverComponent?.asset3dId ? assetById.get(driverComponent.asset3dId) : null;
+    const drivenAsset = drivenComponent?.asset3dId ? assetById.get(drivenComponent.asset3dId) : null;
+    const driverAnchor = worldAnchor(driver, driverComponent, driverTarget.anchorId, driverAsset);
+    const drivenAnchor = worldAnchor(driven, drivenComponent, drivenTarget.anchorId, drivenAsset);
     const anchorDelta = {
       x: drivenAnchor.position.x - driven.xMm,
       y: drivenAnchor.position.y - driven.yMm,

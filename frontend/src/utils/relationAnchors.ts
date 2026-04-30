@@ -1,4 +1,4 @@
-import type { AssemblyRelation, ComponentItem, GeometrySelector, SceneObject } from "../types/digitalTwin";
+import type { Anchor, Asset3D, AssemblyRelation, ComponentItem, GeometrySelector, SceneObject } from "../types/digitalTwin";
 
 export type VecObject = { x: number; y: number; z: number };
 
@@ -199,15 +199,37 @@ export function localAnchor(anchorId: string, size: VecObject): { position: VecO
   }
 }
 
+function findCustomAnchor(anchors: unknown, anchorId: string): Anchor | null {
+  if (!Array.isArray(anchors)) return null;
+  const target = normalizeAnchorId(anchorId);
+  for (const candidate of anchors) {
+    if (candidate && typeof candidate === "object") {
+      const id = (candidate as { id?: unknown }).id;
+      if (typeof id === "string" && normalizeAnchorId(id) === target) {
+        return candidate as Anchor;
+      }
+    }
+  }
+  return null;
+}
+
 export function worldAnchor(
   object: SceneObject,
   component: ComponentItem | undefined,
   anchorId: string,
+  asset?: Asset3D | null,
 ): { position: VecObject; direction?: VecObject } {
-  const anchor = localAnchor(anchorId, objectSize(object, component));
-  const rotatedPosition = rotateVec(anchor.position, object.rxDeg, object.ryDeg, object.rzDeg);
-  const rotatedDirection = anchor.direction
-    ? rotateVec(anchor.direction, object.rxDeg, object.ryDeg, object.rzDeg)
+  // Resolution: placement override → asset default → standard box anchor.
+  const placementAnchor = findCustomAnchor(object.properties?.anchors, anchorId);
+  const assetAnchor = placementAnchor ? null : findCustomAnchor(asset?.anchors, anchorId);
+  const standard = !placementAnchor && !assetAnchor ? localAnchor(anchorId, objectSize(object, component)) : null;
+
+  const localPosition = placementAnchor?.localPosition ?? assetAnchor?.localPosition ?? standard!.position;
+  const localDirection = placementAnchor?.localDirection ?? assetAnchor?.localDirection ?? standard?.direction;
+
+  const rotatedPosition = rotateVec(localPosition, object.rxDeg, object.ryDeg, object.rzDeg);
+  const rotatedDirection = localDirection
+    ? rotateVec(localDirection, object.rxDeg, object.ryDeg, object.rzDeg)
     : undefined;
   return {
     position: {

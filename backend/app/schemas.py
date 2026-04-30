@@ -32,6 +32,7 @@ class Asset3DBase(CamelModel):
     source_url: str | None = None
     unit: Literal["mm", "m"] = "mm"
     scale_factor: float = 1.0
+    anchors: list[JsonDict] = Field(default_factory=list)
 
 
 class Asset3DCreate(Asset3DBase):
@@ -46,6 +47,7 @@ class Asset3DUpdate(CamelModel):
     source_url: str | None = None
     unit: Literal["mm", "m"] | None = None
     scale_factor: float | None = None
+    anchors: list[JsonDict] | None = None
 
 
 class LocalAssetImport(CamelModel):

@@ -33,6 +33,7 @@ class Asset3D(Base):
     source_url: Mapped[str | None] = mapped_column(Text)
     unit: Mapped[str] = mapped_column(Text, nullable=False, default="mm", server_default="mm")
     scale_factor: Mapped[float] = mapped_column(Float, nullable=False, default=1.0, server_default="1")
+    anchors: Mapped[JsonList] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

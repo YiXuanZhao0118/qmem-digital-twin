@@ -402,8 +402,10 @@ export function DigitalTwinViewer({ roomDimensions }: DigitalTwinViewerProps) {
         const objectA = objectById.get(targetA.objectId);
         const objectB = objectById.get(targetB.objectId);
         if (!objectA || !objectB) continue;
-        const anchorA = worldAnchor(objectA, componentById.get(objectA.componentId), targetA.anchorId);
-        const anchorB = worldAnchor(objectB, componentById.get(objectB.componentId), targetB.anchorId);
+        const compA = componentById.get(objectA.componentId);
+        const compB = componentById.get(objectB.componentId);
+        const anchorA = worldAnchor(objectA, compA, targetA.anchorId, compA?.asset3dId ? assetById.get(compA.asset3dId) : null);
+        const anchorB = worldAnchor(objectB, compB, targetB.anchorId, compB?.asset3dId ? assetById.get(compB.asset3dId) : null);
         const pointA = labToThree(anchorA.position);
         const pointB = labToThree(anchorB.position);
         const material = new THREE.LineBasicMaterial({
@@ -421,8 +423,10 @@ export function DigitalTwinViewer({ roomDimensions }: DigitalTwinViewerProps) {
       const objectA = objectById.get(relationDraftTarget.objectAId);
       const objectB = objectById.get(relationDraftTarget.objectBId);
       if (!objectA || !objectB) return;
-      const anchorA = worldAnchor(objectA, componentById.get(objectA.componentId), relationDraftTarget.anchorAId);
-      const anchorB = worldAnchor(objectB, componentById.get(objectB.componentId), relationDraftTarget.anchorBId);
+      const draftCompA = componentById.get(objectA.componentId);
+      const draftCompB = componentById.get(objectB.componentId);
+      const anchorA = worldAnchor(objectA, draftCompA, relationDraftTarget.anchorAId, draftCompA?.asset3dId ? assetById.get(draftCompA.asset3dId) : null);
+      const anchorB = worldAnchor(objectB, draftCompB, relationDraftTarget.anchorBId, draftCompB?.asset3dId ? assetById.get(draftCompB.asset3dId) : null);
       const pointA = labToThree(anchorA.position);
       const pointB = labToThree(anchorB.position);
       const line = new THREE.Line(

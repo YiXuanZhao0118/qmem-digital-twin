@@ -28,6 +28,7 @@ export type Asset3D = {
   sourceUrl?: string | null;
   unit: "mm" | "m";
   scaleFactor: number;
+  anchors: Anchor[];
   createdAt?: string;
 };
 
