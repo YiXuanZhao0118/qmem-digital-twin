@@ -239,12 +239,22 @@ function addTunedStabilizer(group: THREE.Group, x: number, z: number, tableBotto
 }
 
 function addOpticalTable(group: THREE.Group): void {
-  const bodyCenterY = TABLE_TOP_Y - TABLE_THICKNESS / 2;
+  // Stainless top plate sits flush with TABLE_TOP_Y (its top face at y=0 in
+  // table coords). To avoid z-fighting, the dark body must end BELOW the
+  // stainless plate's bottom (TABLE_TOP_Y - 0.12), not coplanar with the
+  // plate's top. Previously both shared a top face at TABLE_TOP_Y → entire
+  // top surface flickered between the dark body color and the silver top
+  // every frame in Rendered mode. Shortening the body so its top ends at
+  // TABLE_TOP_Y - 0.06 puts it fully under the stainless plate. Body
+  // bottom is unchanged so leg / stabiliser geometry still lines up.
+  const bodyTopY = TABLE_TOP_Y - 0.06;
   const bodyBottomY = TABLE_TOP_Y - TABLE_THICKNESS;
+  const bodyHeight = bodyTopY - bodyBottomY;
+  const bodyCenterY = (bodyTopY + bodyBottomY) / 2;
   const halfLength = TABLE_LENGTH / 2;
   const halfDepth = TABLE_DEPTH / 2;
 
-  addBox(group, [TABLE_LENGTH, TABLE_THICKNESS, TABLE_DEPTH], [0, bodyCenterY, TABLE_CENTER_Z], "#111413", "newport-rs4000-3600x1200x457-body", {
+  addBox(group, [TABLE_LENGTH, bodyHeight, TABLE_DEPTH], [0, bodyCenterY, TABLE_CENTER_Z], "#111413", "newport-rs4000-3600x1200x457-body", {
     metalness: 0.2,
     roughness: 0.52,
   });
@@ -286,10 +296,19 @@ function addOpticalTable(group: THREE.Group): void {
     addTunedStabilizer(group, x, z, bodyBottomY);
   }
 
+  // Hole grid sits a hair above the stainless top plate. Used to use a
+  // 0.004 unit (0.4 mm) offset which was inside the depth-buffer precision
+  // floor at typical scene scale → z-fighting flicker in Rendered mode.
+  // Bumped to 0.025 (2.5 mm) AND added polygonOffset so the GPU forces
+  // these dots in front of the top plate regardless of depth precision.
   const dotMaterial = new THREE.MeshBasicMaterial({
     color: "#d8dcd6",
     transparent: true,
     opacity: 0.55,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
   });
   const holes = new THREE.Group();
   holes.name = "m6-hole-grid-144x48";
@@ -297,6 +316,7 @@ function addOpticalTable(group: THREE.Group): void {
   const holeCountX = 144;
   const holeCountZ = 48;
   const holeMesh = new THREE.InstancedMesh(holeGeometry, dotMaterial, holeCountX * holeCountZ);
+  holeMesh.renderOrder = 1;  // draw after the opaque table top
   const matrix = new THREE.Matrix4();
   let instanceIndex = 0;
   for (let xIndex = 0; xIndex < holeCountX; xIndex += 1) {
@@ -304,7 +324,7 @@ function addOpticalTable(group: THREE.Group): void {
       const x = -17.75 + xIndex * (35.5 / (holeCountX - 1));
       const z = -5.75 + zIndex * (11.5 / (holeCountZ - 1));
       matrix.makeRotationX(-Math.PI / 2);
-      matrix.setPosition(x, TABLE_TOP_Y + 0.004, z);
+      matrix.setPosition(x, TABLE_TOP_Y + 0.025, z);
       holeMesh.setMatrixAt(instanceIndex, matrix);
       instanceIndex += 1;
     }

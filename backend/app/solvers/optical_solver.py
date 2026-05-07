@@ -22,6 +22,9 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field, replace
 from typing import Any, Iterable
 
+import numpy as np
+import numpy.typing as npt
+
 
 SPEED_OF_LIGHT_M_PER_S = 299_792_458.0
 
@@ -67,6 +70,69 @@ def w_at_z_um(q: complex, wavelength_nm: float, m_squared: float) -> float:
 
 def propagate_q(q: complex, distance_mm: float) -> complex:
     return complex(q.real + distance_mm, q.imag)
+
+
+def propagate_envelope(
+    env: PulseEnvelopeArrays,
+    distance_mm: float,
+    refractive_index: float = 1.0,
+    gvd_fs2_per_mm: float = 0.0,
+    tod_fs3_per_mm: float = 0.0,
+) -> PulseEnvelopeArrays:
+    """Propagate a slowly-varying complex envelope through `distance_mm` of
+    medium with the given GVD (β₂) and TOD (β₃) coefficients.
+
+    Implementation: split-step Fourier in the rotating frame. The envelope is
+    transformed to angular-frequency space (ω relative to carrier ω₀), each
+    Fourier component is multiplied by
+
+        H(ω) = exp(i · [(β₂·L·ω²)/2 + (β₃·L·ω³)/6])
+
+    and the inverse FFT brings the result back to time. Carrier phase
+    `exp(i·k₀·n·L)` is absorbed by the rotating frame (no-op on envelope).
+    Group delay (β₁·L) is handled implicitly because we keep the same time
+    grid; if you want absolute pulse arrival shifted, update `env.t0_ns` by
+    `(refractive_index · L) / c · 1e9`.
+
+    For CW envelopes (`is_cw=True`) this is a no-op: a single-sample envelope
+    has no spectral width to disperse, so we just multiply by 1.
+    """
+    if env.is_cw or env.n_samples < 2 or (gvd_fs2_per_mm == 0.0 and tod_fs3_per_mm == 0.0):
+        # No-op for CW or for non-dispersive media; only update t0 to track group delay.
+        new_t0 = env.t0_ns + (refractive_index * distance_mm) / SPEED_OF_LIGHT_M_PER_S * 1e6
+        return PulseEnvelopeArrays(
+            is_cw=env.is_cw,
+            t0_ns=new_t0,
+            dt_ps=env.dt_ps,
+            carrier_thz=env.carrier_thz,
+            e_x=env.e_x.copy(),
+            e_y=env.e_y.copy(),
+        )
+
+    n = env.n_samples
+    dt_s = env.dt_ps * 1e-12  # ps → s
+    # Angular frequency grid in rad/s (centered around 0; carrier is the rotating frame)
+    omega = 2.0 * math.pi * np.fft.fftfreq(n, d=dt_s)
+    # Convert GVD from fs²/mm to s²/mm, then multiply by L (mm)
+    beta2_s2 = gvd_fs2_per_mm * 1e-30 * distance_mm
+    beta3_s3 = tod_fs3_per_mm * 1e-45 * distance_mm
+    phase = 0.5 * beta2_s2 * omega**2 + (1.0 / 6.0) * beta3_s3 * omega**3
+    H = np.exp(1j * phase)
+
+    Ex_w = np.fft.fft(env.e_x)
+    Ey_w = np.fft.fft(env.e_y)
+    Ex_out = np.fft.ifft(Ex_w * H)
+    Ey_out = np.fft.ifft(Ey_w * H)
+
+    new_t0 = env.t0_ns + (refractive_index * distance_mm) / SPEED_OF_LIGHT_M_PER_S * 1e6
+    return PulseEnvelopeArrays(
+        is_cw=False,
+        t0_ns=new_t0,
+        dt_ps=env.dt_ps,
+        carrier_thz=env.carrier_thz,
+        e_x=Ex_out,
+        e_y=Ey_out,
+    )
 
 
 def lens_q(q: complex, focal_mm: float) -> complex:
@@ -138,6 +204,112 @@ def jones_polarizer_matrix(transmission_axis_deg: float, transmission: float, ex
     return (a, b, c, d)
 
 
+# --- PulseEnvelope (numpy-backed for fast math) ----------------------------
+#
+# This is the in-memory companion of the Pydantic `PulseEnvelope` schema. We
+# keep the schema as plain Python lists for JSON portability and use this
+# dataclass with numpy arrays for the math kernels.
+
+
+@dataclass
+class PulseEnvelopeArrays:
+    """Numpy-backed slowly-varying complex envelope of an optical field.
+
+    `e_x` and `e_y` are length-N complex arrays in √mW units (so |E|² is
+    instantaneous power in mW). When `is_cw=True` the arrays are length 1
+    and `dt_ps` is ignored.
+
+    The envelope sits in the rotating frame of `carrier_thz`; the full field
+    is `Re[E(t) · exp(-i·2π·carrier·t)]` for each polarisation.
+    """
+    is_cw: bool
+    t0_ns: float
+    dt_ps: float
+    carrier_thz: float
+    e_x: npt.NDArray[np.complex128]
+    e_y: npt.NDArray[np.complex128]
+
+    @property
+    def n_samples(self) -> int:
+        return int(self.e_x.shape[0])
+
+    def time_axis_ns(self) -> npt.NDArray[np.float64]:
+        if self.is_cw:
+            return np.array([self.t0_ns])
+        return self.t0_ns + np.arange(self.n_samples) * (self.dt_ps * 1e-3)
+
+    def mean_power_mw(self) -> float:
+        """Time-averaged |E_x|² + |E_y|² in mW."""
+        return float(np.mean(np.abs(self.e_x) ** 2 + np.abs(self.e_y) ** 2))
+
+    def to_schema_dict(self) -> dict[str, Any]:
+        """Convert to JSON-friendly dict matching the Pydantic schema."""
+        return {
+            "isCw": self.is_cw,
+            "t0Ns": self.t0_ns,
+            "dtPs": self.dt_ps,
+            "nSamples": self.n_samples,
+            "carrierThz": self.carrier_thz,
+            "eXRe": self.e_x.real.tolist(),
+            "eXIm": self.e_x.imag.tolist(),
+            "eYRe": self.e_y.real.tolist(),
+            "eYIm": self.e_y.imag.tolist(),
+        }
+
+    @classmethod
+    def cw(cls, *, carrier_thz: float, ex: complex, ey: complex) -> "PulseEnvelopeArrays":
+        """Build a CW envelope from two complex polarisation amplitudes."""
+        return cls(
+            is_cw=True,
+            t0_ns=0.0,
+            dt_ps=0.0,
+            carrier_thz=carrier_thz,
+            e_x=np.array([ex], dtype=np.complex128),
+            e_y=np.array([ey], dtype=np.complex128),
+        )
+
+    @classmethod
+    def from_schema_dict(cls, data: dict[str, Any]) -> "PulseEnvelopeArrays":
+        ex = np.asarray(data.get("eXRe", []), dtype=np.float64) + 1j * np.asarray(
+            data.get("eXIm", []), dtype=np.float64
+        )
+        ey = np.asarray(data.get("eYRe", []), dtype=np.float64) + 1j * np.asarray(
+            data.get("eYIm", []), dtype=np.float64
+        )
+        if ex.size == 0:
+            ex = np.array([0.0 + 0.0j])
+        if ey.size == 0:
+            ey = np.array([0.0 + 0.0j])
+        return cls(
+            is_cw=bool(data.get("isCw", True)),
+            t0_ns=float(data.get("t0Ns", 0.0)),
+            dt_ps=float(data.get("dtPs", 0.0)),
+            carrier_thz=float(data["carrierThz"]),
+            e_x=ex,
+            e_y=ey,
+        )
+
+
+def cw_envelope_from_polarization(
+    carrier_thz: float, polarization: JonesArray, total_power_mw: float
+) -> PulseEnvelopeArrays:
+    """Build a CW PulseEnvelopeArrays from existing CW (Jones, power) state.
+
+    Used as a bridge while the rest of the solver still tracks CW fields via
+    `polarization` + `power_mw`. The envelope amplitudes √mW are scaled so
+    that |Ex|² + |Ey|² == total_power_mw and the Jones direction is preserved.
+    """
+    norm = abs(polarization[0]) ** 2 + abs(polarization[1]) ** 2
+    if norm <= 0:
+        return PulseEnvelopeArrays.cw(carrier_thz=carrier_thz, ex=0.0, ey=0.0)
+    scale = math.sqrt(total_power_mw / norm)
+    return PulseEnvelopeArrays.cw(
+        carrier_thz=carrier_thz,
+        ex=complex(polarization[0]) * scale,
+        ey=complex(polarization[1]) * scale,
+    )
+
+
 # --- Beam dataclass ---------------------------------------------------------
 
 
@@ -151,16 +323,39 @@ class Beam:
     power_mw: float
     propagation_axis_local: tuple[float, float, float] = (0.0, 0.0, 1.0)
     wavelength_nm: float = 780.241
+    # ------------------------------------------------------------------ time
+    # Optional pulse envelope. When None the Beam represents a CW field with
+    # `power_mw` and `polarization` carrying all the temporal information.
+    # When present, the envelope IS the temporal information and `power_mw`
+    # becomes a derived quantity (mean of |E|² over the envelope).
+    envelope: "PulseEnvelopeArrays | None" = None
 
     def with_power(self, factor: float) -> "Beam":
-        return replace(self, power_mw=max(self.power_mw * factor, 0.0))
+        scale = math.sqrt(max(factor, 0.0))
+        new_env: PulseEnvelopeArrays | None = None
+        if self.envelope is not None:
+            new_env = PulseEnvelopeArrays(
+                is_cw=self.envelope.is_cw,
+                t0_ns=self.envelope.t0_ns,
+                dt_ps=self.envelope.dt_ps,
+                carrier_thz=self.envelope.carrier_thz,
+                e_x=self.envelope.e_x * scale,
+                e_y=self.envelope.e_y * scale,
+            )
+        return replace(self, power_mw=max(self.power_mw * factor, 0.0), envelope=new_env)
 
-    def to_segment_dict(self, link_id: uuid.UUID, run_id: uuid.UUID, beam_index: int = 0) -> dict[str, Any]:
+    def to_segment_dict(
+        self,
+        link_id: uuid.UUID,
+        run_id: uuid.UUID,
+        beam_index: int = 0,
+        sequence_t_ms: float | None = None,
+    ) -> dict[str, Any]:
         return {
             "id": uuid.uuid4(),
             "simulation_run_id": run_id,
             "optical_link_id": link_id,
-            "sequence_t_ms": None,
+            "sequence_t_ms": sequence_t_ms,
             "beam_index": beam_index,
             "spectrum": self.spectrum,
             "spatial_x": {
@@ -191,6 +386,41 @@ def _m2_of(beam: Beam, axis: str) -> float:
     if isinstance(value, (int, float)) and value > 0:
         return float(value)
     return float(mode.get("mSquared", 1.0))
+
+
+def _gaussian_overlap_1d(seed_q: complex, target_mode: dict[str, Any] | None, wavelength_nm: float, m_squared: float) -> float:
+    if not target_mode:
+        return 1.0
+    seed_w_um = w_at_z_um(seed_q, wavelength_nm, m_squared)
+    target_w_um = float(target_mode.get("waistUm", seed_w_um))
+    if seed_w_um <= 0 or target_w_um <= 0:
+        return 0.0
+    numerator = 2.0 * seed_w_um * target_w_um
+    denominator = seed_w_um * seed_w_um + target_w_um * target_w_um
+    return max(0.0, min(1.0, numerator / max(denominator, 1e-30)))
+
+
+def gaussian_mode_overlap(seed: Beam, target_x: dict[str, Any] | None, target_y: dict[str, Any] | None) -> float:
+    """Approximate TEM00 coupling from seed mode into the TA input mode.
+
+    This intentionally uses the propagated seed beam radius at the TA seed
+    port. Phase-front and lateral offset coupling are left to geometry/ray
+    alignment; this term models the mode-size match the user asked for.
+    """
+
+    x = _gaussian_overlap_1d(seed.q_x, target_x, seed.wavelength_nm, _m2_of(seed, "x"))
+    y = _gaussian_overlap_1d(seed.q_y, target_y, seed.wavelength_nm, _m2_of(seed, "y"))
+    field_overlap = x * y
+    return max(0.0, min(1.0, field_overlap * field_overlap))
+
+
+def polarization_overlap(seed: JonesArray, target: JonesArray) -> float:
+    seed_norm = abs(seed[0]) ** 2 + abs(seed[1]) ** 2
+    target_norm = abs(target[0]) ** 2 + abs(target[1]) ** 2
+    if seed_norm <= 1e-30 or target_norm <= 1e-30:
+        return 0.0
+    inner = seed[0] * target[0].conjugate() + seed[1] * target[1].conjugate()
+    return max(0.0, min(1.0, (abs(inner) ** 2) / (seed_norm * target_norm)))
 
 
 # --- emitters --------------------------------------------------------------
@@ -266,11 +496,20 @@ def emit_from_tapered_amplifier(params: dict[str, Any], seed: Beam | None) -> Be
             wavelength_nm=wavelength_nm,
         )
 
-    # Saturated gain amplifier:  P_out = P_sat·G0·P_in / (P_sat + (G0-1)·P_in)
+    input_mode_x = params.get("inputSpatialModeX") or params.get("backwardSpatialModeX")
+    input_mode_y = params.get("inputSpatialModeY") or params.get("backwardSpatialModeY")
+    mode_eta = gaussian_mode_overlap(seed, input_mode_x, input_mode_y)
+    required_pol = jones_from_dict(params.get("inputPolarization") or {"exRe": 0.0, "eyRe": 1.0})
+    pol_eta = polarization_overlap(seed.polarization, required_pol)
+    effective_seed_power_mw = seed.power_mw * mode_eta * pol_eta
+
+    # Saturated gain amplifier:  P_out = P_sat·G0·P_in / (P_sat + (G0-1)·P_in).
+    # P_in is the *coupled* seed power, not merely the raw beam power hitting
+    # the TA package: mode match and TE/polarization match both matter.
     gain_db = float(params["smallSignalGainDb"])
     p_sat = float(params["saturationPowerMw"])
     g0 = 10.0 ** (gain_db / 10.0)
-    p_in = max(seed.power_mw, 1e-12)
+    p_in = max(effective_seed_power_mw, 1e-12)
     p_out = p_sat * g0 * p_in / (p_sat + (g0 - 1.0) * p_in)
 
     # ASE pedestal added as a separate spectrum component.
@@ -310,6 +549,7 @@ def emit_from_tapered_amplifier(params: dict[str, Any], seed: Beam | None) -> Be
             seed.wavelength_nm,
         ),
         transverse_mode=transverse,
+        polarization=required_pol,
         power_mw=p_out + float(ase["powerMw"]),
     )
 
@@ -353,10 +593,25 @@ def apply_lens_cylindrical(beam: Beam, params: dict[str, Any]) -> dict[str, Beam
     return {"out": out.with_power(transmission)}
 
 
+def _kp_first(params: dict[str, Any], *names: str, default: Any = None) -> Any:
+    """Phase 5 transitional helper: read the first non-None value among
+    the listed JSON keys. Used while kindParams legacy names
+    (`fastAxisDeg`, `transmissionAxisDeg`, ...) are migrated to their
+    frame-suffixed equivalents (`fastAxisDegBeamLocal`,
+    `transmissionAxisDegBeamLocal`, ...). Once alembic 0019 runs,
+    only the new keys exist in DB; the legacy reads remain as a safety
+    net for un-migrated input."""
+    for name in names:
+        v = params.get(name)
+        if v is not None:
+            return v
+    return default
+
+
 def apply_waveplate(beam: Beam, params: dict[str, Any]) -> dict[str, Beam]:
     matrix = jones_waveplate_matrix(
         float(params["retardanceLambda"]),
-        float(params.get("fastAxisDeg", 0.0)),
+        float(_kp_first(params, "fastAxisDegBeamLocal", "fastAxisDeg", default=0.0)),
     )
     j = jones_apply_matrix(beam.polarization, matrix)
     return {"out": replace(beam, polarization=j).with_power(float(params.get("transmission", 0.99)))}
@@ -364,7 +619,7 @@ def apply_waveplate(beam: Beam, params: dict[str, Any]) -> dict[str, Beam]:
 
 def apply_polarizer(beam: Beam, params: dict[str, Any]) -> dict[str, Beam]:
     matrix = jones_polarizer_matrix(
-        float(params.get("transmissionAxisDeg", 0.0)),
+        float(_kp_first(params, "transmissionAxisDegBeamLocal", "transmissionAxisDeg", default=0.0)),
         float(params.get("transmission", 0.95)),
         float(params.get("extinctionRatioDb", 30.0)),
     )
@@ -376,8 +631,49 @@ def apply_polarizer(beam: Beam, params: dict[str, Any]) -> dict[str, Beam]:
 
 
 def apply_beam_splitter(beam: Beam, params: dict[str, Any]) -> dict[str, Beam]:
-    t = float(params.get("splitRatioTransmitted", 0.5))
     transmission = float(params.get("transmission", 0.99))
+    polarizing = bool(params.get("polarizing", False))
+
+    if polarizing:
+        # Polarising beamsplitter cube — diagonal interface between two right-
+        # angle prisms. P-polarised (parallel to plane of incidence) transmits
+        # straight through; S-polarised (perpendicular to plane of incidence)
+        # reflects 90°. The plane of incidence depends on how the PBS is
+        # oriented in the lab, so the PBS frame's P-axis is NOT necessarily
+        # aligned with the beam's Jones x-axis.
+        #
+        # `transmissionAxisDeg` (default 0°) gives the angle of the PBS's
+        # P-axis in the beam's local Jones frame:
+        #   - 0°  → P=Ex (horizontal-incidence plane, reflection sideways)
+        #   - 90° → P=Ey (vertical-incidence plane, reflection up/down — the
+        #            convention shown in the Thorlabs PBS252 product diagram
+        #            where the reflected beam goes "down" out of the cube)
+        # Rotate into the PBS frame for branch powers; output polarization is
+        # then reset to the pure P/S eigenstate in the beam's Jones frame.
+        p_axis_deg = float(_kp_first(params, "transmissionAxisDegBeamLocal", "transmissionAxisDeg", default=0.0))
+        theta_rad = math.radians(p_axis_deg)
+        rot_into = jones_rotation(-theta_rad)  # beam frame → PBS frame
+        rot_back = jones_rotation(theta_rad)   # PBS frame → beam frame
+
+        in_jones = jones_apply_matrix(beam.polarization, rot_into)
+        ip, is_ = in_jones  # Jones in PBS frame: (P-component, S-component)
+
+        ex, ey = beam.polarization
+        in_intensity = abs(ex) ** 2 + abs(ey) ** 2
+        if in_intensity < 1e-30:
+            zero = beam.with_power(0.0)
+            return {"out_t": zero, "out_r": zero}
+        t_factor = (abs(ip) ** 2 / in_intensity) * max(transmission, 0.0)
+        r_factor = (abs(is_) ** 2 / in_intensity) * max(transmission, 0.0)
+        # Branch power follows the input projection, but branch polarization is
+        # the PBS eigenstate itself: transmitted = P-axis, reflected = S-axis.
+        t_jones = jones_apply_matrix((complex(1.0), complex(0.0)), rot_back)
+        r_jones = jones_apply_matrix((complex(0.0), complex(1.0)), rot_back)
+        transmitted = replace(beam, polarization=t_jones).with_power(t_factor)
+        reflected = replace(beam, polarization=r_jones).with_power(r_factor)
+        return {"out_t": transmitted, "out_r": reflected}
+
+    t = float(params.get("splitRatioTransmitted", 0.5))
     transmitted = beam.with_power(t * transmission)
     reflected = beam.with_power((1.0 - t) * transmission)
     return {"out_t": transmitted, "out_r": reflected}
@@ -409,14 +705,16 @@ def apply_isolator(beam: Beam, params: dict[str, Any]) -> dict[str, Beam]:
 def apply_aom(beam: Beam, params: dict[str, Any], port: str) -> Beam | None:
     eta = float(params.get("baseEfficiency", 0.85))
     f_rf_mhz = float(params.get("centerFreqMhz", 80.0))
+    raw_order = params.get("diffractionOrder", 1)
+    selected_order = -1 if raw_order == -1 else 0 if raw_order == 0 else 1
     if port == "0th":
-        return beam.with_power(1.0 - eta)
+        return beam.with_power(1.0 if selected_order == 0 else 1.0 - eta)
     if port == "+1st":
         new_spec = _shift_spectrum(beam.spectrum, +f_rf_mhz)
-        return replace(beam.with_power(eta), spectrum=new_spec)
+        return replace(beam.with_power(eta if selected_order == 1 else 0.0), spectrum=new_spec)
     if port == "-1st":
         new_spec = _shift_spectrum(beam.spectrum, -f_rf_mhz)
-        return replace(beam.with_power(eta), spectrum=new_spec)
+        return replace(beam.with_power(eta if selected_order == -1 else 0.0), spectrum=new_spec)
     return None
 
 
@@ -489,24 +787,36 @@ def solve_chain(
     *,
     run_id: uuid.UUID | None = None,
     emitter_kinds: set[str] | None = None,
+    program_factor_by_object: dict[uuid.UUID, float] | None = None,
+    sequence_t_ms: float | None = None,
 ) -> ChainResult:
     """Pure-function chain solver.
 
     `elements`/`links` may be ORM instances or any object with the matching
-    attribute names (component_id, element_kind, kind_params, input_ports,
-    output_ports, from_component_id, from_port, to_component_id, to_port,
+    attribute names (object_id, element_kind, kind_params, input_ports,
+    output_ports, from_object_id, from_port, to_object_id, to_port,
     free_space_mm).
+
+    `program_factor_by_object`: optional per-OBJECT scalar in [0, ∞) that
+    the solver multiplies into the element's primary scaling factor (laser
+    power, AOM efficiency, EOM modulation depth, etc.). Per-object since
+    timing programs are now keyed by object_id (alembic 0015).
+
+    `sequence_t_ms`: stamped onto every BeamSegment row this run produces, so
+    a transient pass can store one snapshot per timestep into the same
+    `simulation_run_id` and reconstruct a time-series afterwards.
     """
 
     if emitter_kinds is None:
         emitter_kinds = {"laser_source", "tapered_amplifier"}
+    factors = program_factor_by_object or {}
 
-    nodes: dict[uuid.UUID, Any] = {elem.component_id: elem for elem in elements}
+    nodes: dict[uuid.UUID, Any] = {elem.object_id: elem for elem in elements}
     incoming: dict[uuid.UUID, list[Any]] = defaultdict(list)
     outgoing: dict[uuid.UUID, list[Any]] = defaultdict(list)
     for link in links:
-        incoming[link.to_component_id].append(link)
-        outgoing[link.from_component_id].append(link)
+        incoming[link.to_object_id].append(link)
+        outgoing[link.from_object_id].append(link)
 
     result = ChainResult(run_id=run_id or uuid.uuid4())
 
@@ -522,26 +832,41 @@ def solve_chain(
         nid = queue.popleft()
         ordered.append(nid)
         for link in outgoing[nid]:
-            in_degree[link.to_component_id] -= 1
-            if in_degree[link.to_component_id] == 0:
-                queue.append(link.to_component_id)
+            in_degree[link.to_object_id] -= 1
+            if in_degree[link.to_object_id] == 0:
+                queue.append(link.to_object_id)
     if len(ordered) != len(nodes):
         result.errors.append("Optical graph contains a cycle.")
         return result
 
-    # Validate roots are emitters
+    # Validate roots are emitters. A "root" here means an OpticalElement with
+    # no incoming OpticalLink. Non-emitter roots (mirror, lens, …) are dangling
+    # — they exist in the catalog but aren't wired into a beam path. That's a
+    # config issue, not a fatal one; the rest of the graph (anything reachable
+    # from a laser/TA) can still be solved. Demoted to a warning with an
+    # actionable hint so the user knows how to fix it.
     roots = [nid for nid in nodes if not incoming[nid]]
     if not roots:
         result.errors.append("No emitter element found (need a laser_source or tapered_amplifier).")
         return result
+    dangling_root_ids: set[uuid.UUID] = set()
+    has_emitter_root = False
     for root_id in roots:
         kind = nodes[root_id].element_kind
-        if kind not in emitter_kinds:
-            result.errors.append(
-                f"Component {root_id} is a chain root but element_kind '{kind}' cannot emit. "
-                f"Only {sorted(emitter_kinds)} may be roots."
-            )
-    if result.errors:
+        if kind in emitter_kinds:
+            has_emitter_root = True
+            continue
+        dangling_root_ids.add(root_id)
+        result.warnings.append(
+            f"Component {root_id} is registered as '{kind}' but has no input link from a "
+            f"laser/TA — it has no beam to act on. Add an OpticalLink so it receives a beam, "
+            f"or delete its OpticalElement record. Skipping."
+        )
+    if not has_emitter_root:
+        result.errors.append(
+            "No emitter element is connected to the graph (need a laser_source or "
+            "tapered_amplifier with at least one outgoing OpticalLink)."
+        )
         return result
 
     # State: beam at each (target_node_id, target_port) after free-space propagation.
@@ -552,12 +877,18 @@ def solve_chain(
         kind = elem.element_kind
         params = elem.kind_params or {}
 
+        # Per-component timing factor: a scalar in [0, ∞) the timing solver
+        # passed in for this component at the current sequence_t_ms. CW =
+        # everyone gets 1.0 (default), so existing behaviour is preserved.
+        factor = float(factors.get(nid, 1.0))
+        scaled_params = _apply_program_factor(kind, params, factor)
+
         if kind in emitter_kinds:
             if kind == "laser_source":
-                beam_at_output: dict[str, Beam] = {"out": emit_from_laser_source(params)}
+                beam_at_output: dict[str, Beam] = {"out": emit_from_laser_source(scaled_params)}
             else:  # tapered_amplifier; check for seed input
                 seed = beam_at_input.get((nid, "seed"))
-                beam_at_output = {"out": emit_from_tapered_amplifier(params, seed)}
+                beam_at_output = {"out": emit_from_tapered_amplifier(scaled_params, seed)}
         else:
             # Aggregate inputs (for now use the first available input port)
             primary_in: Beam | None = None
@@ -568,10 +899,13 @@ def solve_chain(
                     break
 
             if primary_in is None:
-                result.warnings.append(f"Element {nid} ({kind}) has no incoming beam; skipping.")
+                if nid not in dangling_root_ids:
+                    result.warnings.append(
+                        f"Element {nid} ({kind}) has no incoming beam; skipping."
+                    )
                 continue
 
-            beam_at_output = _dispatch_element(kind, primary_in, elem, params, result)
+            beam_at_output = _dispatch_element(kind, primary_in, elem, scaled_params, result)
 
         # Propagate each outgoing port through its link's free space
         for link in outgoing[nid]:
@@ -581,15 +915,55 @@ def solve_chain(
                     f"Link from {nid}:{link.from_port} has no beam; skipping segment."
                 )
                 continue
+            new_envelope = beam.envelope
+            if new_envelope is not None:
+                # Free space n=1, GVD=0; the envelope just gets group-delay shifted.
+                # Dispersive media (fibers, crystals) are handled inside their
+                # own apply_* functions, not here.
+                new_envelope = propagate_envelope(
+                    new_envelope, link.free_space_mm, refractive_index=1.0,
+                )
             propagated = replace(
                 beam,
                 q_x=propagate_q(beam.q_x, link.free_space_mm),
                 q_y=propagate_q(beam.q_y, link.free_space_mm),
+                envelope=new_envelope,
             )
-            result.segments.append(propagated.to_segment_dict(link.id, result.run_id))
-            beam_at_input[(link.to_component_id, link.to_port)] = propagated
+            result.segments.append(
+                propagated.to_segment_dict(link.id, result.run_id, sequence_t_ms=sequence_t_ms)
+            )
+            beam_at_input[(link.to_object_id, link.to_port)] = propagated
 
     return result
+
+
+def _apply_program_factor(
+    kind: str, params: dict[str, Any], factor: float
+) -> dict[str, Any]:
+    """Multiply a TimingProgram value into the element's primary scalar.
+
+    Per kind:
+      - laser_source / tapered_amplifier:  nominalPowerMw   *= factor
+      - aom:                                baseEfficiency  *= factor (clamped 0..1)
+      - eom:                                kind_params["timingFactor"] = factor
+                                            (consumed when modulation is added)
+      - everything else: pass through unchanged.
+
+    Returns a *new* dict so we don't mutate the caller's params.
+    """
+    if factor == 1.0:
+        return params  # fast path — preserves caller identity for unaffected runs.
+    if kind in ("laser_source", "tapered_amplifier"):
+        nominal = float(params.get("nominalPowerMw", 0.0))
+        return {**params, "nominalPowerMw": nominal * factor}
+    if kind == "aom":
+        eta = float(params.get("baseEfficiency", 0.85))
+        # Clamp factor·eta into [0, 1] so we never claim >100 % diffraction.
+        scaled = max(0.0, min(1.0, eta * factor))
+        return {**params, "baseEfficiency": scaled}
+    if kind == "eom":
+        return {**params, "timingFactor": factor}
+    return params
 
 
 def _dispatch_element(

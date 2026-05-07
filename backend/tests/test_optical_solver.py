@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import math
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as replace_beam
 from typing import Any
 
 import pytest
 
 from app.solvers.optical_solver import (
     Beam,
+    apply_aom,
     apply_beam_splitter,
     apply_dichroic_mirror,
     apply_lens_spherical,
@@ -17,6 +18,7 @@ from app.solvers.optical_solver import (
     apply_polarizer,
     apply_waveplate,
     emit_from_laser_source,
+    emit_from_tapered_amplifier,
     jones_from_dict,
     lens_q,
     nm_to_thz,
@@ -118,6 +120,61 @@ def make_beam(power: float = 50.0) -> Beam:
     )
 
 
+def make_ta_params() -> dict[str, Any]:
+    return {
+        "smallSignalGainDb": 20.0,
+        "saturationPowerMw": 100.0,
+        "maxInputPowerMw": 30.0,
+        "inputSpatialModeX": {"waistUm": 100.0, "waistZOffsetMm": 0.0, "mSquared": 1.0},
+        "inputSpatialModeY": {"waistUm": 100.0, "waistZOffsetMm": 0.0, "mSquared": 1.0},
+        "inputPolarization": {"exRe": 0.0, "exIm": 0.0, "eyRe": 1.0, "eyIm": 0.0},
+        "ase": {"powerMw": 0.0, "bandwidthNm": 1.0, "centerOffsetNm": 0.0},
+        "outputSpatialModeX": {"waistUm": 500.0, "waistZOffsetMm": 0.0, "mSquared": 1.5},
+        "outputSpatialModeY": {"waistUm": 50.0, "waistZOffsetMm": 0.0, "mSquared": 8.0},
+        "outputTransverseMode": {"kind": "TEM00"},
+    }
+
+
+def test_tapered_amplifier_uses_polarization_overlap_for_seed_gain():
+    params = make_ta_params()
+    matched_seed = replace_beam(
+        make_beam(10.0),
+        q_x=q_at_z(100.0, 0.0, 1.0, 780.0),
+        q_y=q_at_z(100.0, 0.0, 1.0, 780.0),
+        polarization=(complex(0.0), complex(1.0)),
+    )
+    wrong_pol_seed = replace_beam(matched_seed, polarization=(complex(1.0), complex(0.0)))
+
+    matched = emit_from_tapered_amplifier(params, matched_seed)
+    rejected = emit_from_tapered_amplifier(params, wrong_pol_seed)
+
+    assert matched.power_mw > 50.0
+    assert rejected.power_mw < 1e-3
+    assert abs(matched.polarization[0]) < 1e-12
+    assert abs(matched.polarization[1] - 1.0) < 1e-12
+
+
+def test_tapered_amplifier_uses_mode_overlap_for_seed_gain():
+    params = make_ta_params()
+    matched_seed = replace_beam(
+        make_beam(10.0),
+        q_x=q_at_z(100.0, 0.0, 1.0, 780.0),
+        q_y=q_at_z(100.0, 0.0, 1.0, 780.0),
+        polarization=(complex(0.0), complex(1.0)),
+    )
+    mismatched_seed = replace_beam(
+        matched_seed,
+        q_x=q_at_z(1000.0, 0.0, 1.0, 780.0),
+        q_y=q_at_z(1000.0, 0.0, 1.0, 780.0),
+    )
+
+    matched = emit_from_tapered_amplifier(params, matched_seed)
+    mismatched = emit_from_tapered_amplifier(params, mismatched_seed)
+
+    assert matched.power_mw > mismatched.power_mw
+    assert mismatched.power_mw < matched.power_mw * 0.2
+
+
 def test_mirror_attenuates_power_by_reflectivity():
     out = apply_mirror(make_beam(50.0), {"reflectivity": 0.95})
     assert math.isclose(out["out"].power_mw, 47.5, abs_tol=1e-9)
@@ -136,6 +193,22 @@ def test_beam_splitter_50_50_splits_power_equally():
     out = apply_beam_splitter(make_beam(100.0), {"splitRatioTransmitted": 0.5, "transmission": 1.0})
     assert math.isclose(out["out_t"].power_mw, 50.0, abs_tol=1e-9)
     assert math.isclose(out["out_r"].power_mw, 50.0, abs_tol=1e-9)
+
+
+def test_pbs_projects_45_degree_input_to_pure_linear_branches():
+    amp = 1.0 / math.sqrt(2.0)
+    beam = replace_beam(make_beam(100.0), polarization=(complex(amp), complex(amp)))
+    out = apply_beam_splitter(
+        beam,
+        {"polarizing": True, "transmissionAxisDeg": 0.0, "transmission": 1.0},
+    )
+
+    assert math.isclose(out["out_t"].power_mw, 50.0, abs_tol=1e-9)
+    assert math.isclose(out["out_r"].power_mw, 50.0, abs_tol=1e-9)
+    assert abs(out["out_t"].polarization[0] - 1.0) < 1e-12
+    assert abs(out["out_t"].polarization[1]) < 1e-12
+    assert abs(out["out_r"].polarization[0]) < 1e-12
+    assert abs(out["out_r"].polarization[1] - 1.0) < 1e-12
 
 
 def test_dichroic_long_pass_routes_by_wavelength():
@@ -184,7 +257,7 @@ def test_polarizer_blocks_orthogonal_polarization():
 
 @dataclass
 class FakeElement:
-    component_id: uuid.UUID
+    object_id: uuid.UUID
     element_kind: str
     kind_params: dict[str, Any]
     input_ports: list[dict[str, Any]]
@@ -194,9 +267,9 @@ class FakeElement:
 @dataclass
 class FakeLink:
     id: uuid.UUID
-    from_component_id: uuid.UUID
+    from_object_id: uuid.UUID
     from_port: str
-    to_component_id: uuid.UUID
+    to_object_id: uuid.UUID
     to_port: str
     free_space_mm: float
 
@@ -218,7 +291,7 @@ def test_solve_chain_empty_scene_returns_warning():
 def test_solve_chain_no_emitter_root_errors():
     mid_id = uuid.uuid4()
     mirror = FakeElement(
-        component_id=mid_id,
+        object_id=mid_id,
         element_kind="mirror",
         kind_params={"reflectivity": 0.99, "normalLocal": [1, 0, 0]},
         input_ports=[in_port("in")],
@@ -235,21 +308,21 @@ def test_solve_chain_simple_laser_to_mirror_to_detector():
     detector_id = uuid.uuid4()
 
     laser = FakeElement(
-        component_id=laser_id,
+        object_id=laser_id,
         element_kind="laser_source",
         kind_params=make_laser_params(power_mw=50.0),
         input_ports=[],
         output_ports=[out_port("out")],
     )
     mirror = FakeElement(
-        component_id=mirror_id,
+        object_id=mirror_id,
         element_kind="mirror",
         kind_params={"reflectivity": 0.9, "normalLocal": [1, 0, 0]},
         input_ports=[in_port("in")],
         output_ports=[out_port("out")],
     )
     detector = FakeElement(
-        component_id=detector_id,
+        object_id=detector_id,
         element_kind="detector",
         kind_params={"responsivityAPerW": 0.5, "quantumEfficiency": 0.8, "bandwidthMhz": 1000.0, "saturationPowerMw": 100.0},
         input_ports=[in_port("in")],
@@ -258,14 +331,14 @@ def test_solve_chain_simple_laser_to_mirror_to_detector():
 
     link1 = FakeLink(
         id=uuid.uuid4(),
-        from_component_id=laser_id, from_port="out",
-        to_component_id=mirror_id, to_port="in",
+        from_object_id=laser_id, from_port="out",
+        to_object_id=mirror_id, to_port="in",
         free_space_mm=100.0,
     )
     link2 = FakeLink(
         id=uuid.uuid4(),
-        from_component_id=mirror_id, from_port="out",
-        to_component_id=detector_id, to_port="in",
+        from_object_id=mirror_id, from_port="out",
+        to_object_id=detector_id, to_port="in",
         free_space_mm=200.0,
     )
 
@@ -282,7 +355,7 @@ def test_solve_chain_simple_laser_to_mirror_to_detector():
     assert math.isclose(seg2["spatial_x"]["qReal"], 100.0 + 200.0, abs_tol=1e-6)
 
 
-def test_solve_chain_aom_three_orders():
+def test_solve_chain_aom_bragg_selected_order():
     laser_id = uuid.uuid4()
     aom_id = uuid.uuid4()
     dump_0_id = uuid.uuid4()
@@ -295,7 +368,8 @@ def test_solve_chain_aom_three_orders():
     aom = FakeElement(
         aom_id, "aom",
         {"baseEfficiency": 0.85, "centerFreqMhz": 80.0, "deflectionPerMhzUrad": 200.0,
-         "acousticVelocityMPerS": 4200.0, "modulationBandwidthMhz": 20.0},
+         "acousticVelocityMPerS": 4200.0, "modulationBandwidthMhz": 20.0,
+         "diffractionOrder": -1},
         [in_port("in")],
         aom_ports_out,
     )
@@ -324,7 +398,7 @@ def test_solve_chain_aom_three_orders():
 
     assert math.isclose(laser_link_power, 100.0, abs_tol=1e-9)
     assert math.isclose(p0_power, 100.0 * (1.0 - 0.85), abs_tol=1e-9)
-    assert math.isclose(pplus_power, 100.0 * 0.85, abs_tol=1e-9)
+    assert math.isclose(pplus_power, 0.0, abs_tol=1e-9)
     assert math.isclose(pminus_power, 100.0 * 0.85, abs_tol=1e-9)
 
     # +1st should have spectrum shifted by +80 MHz, -1st by -80 MHz
@@ -334,6 +408,15 @@ def test_solve_chain_aom_three_orders():
     minus_offset = pminus_seg["spectrum"]["components"][0]["offsetMhz"]
     assert math.isclose(plus_offset, 80.0, abs_tol=1e-9)
     assert math.isclose(minus_offset, -80.0, abs_tol=1e-9)
+
+
+def test_solve_chain_aom_zero_order_is_rf_off():
+    beam = emit_from_laser_source(make_laser_params(power_mw=40.0))
+    params = {"baseEfficiency": 0.85, "centerFreqMhz": 80.0, "diffractionOrder": 0}
+
+    assert math.isclose(apply_aom(beam, params, "0th").power_mw, 40.0, abs_tol=1e-9)
+    assert math.isclose(apply_aom(beam, params, "+1st").power_mw, 0.0, abs_tol=1e-9)
+    assert math.isclose(apply_aom(beam, params, "-1st").power_mw, 0.0, abs_tol=1e-9)
 
 
 def test_solve_chain_detects_cycle():

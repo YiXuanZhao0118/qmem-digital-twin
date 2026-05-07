@@ -9,7 +9,7 @@ from sqlalchemy import select
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.db import AsyncSessionLocal  # noqa: E402
-from app.models import Asset3D, Component, Placement  # noqa: E402
+from app.models import Asset3D, Component, SceneObject  # noqa: E402
 
 
 ASSET = {
@@ -37,8 +37,8 @@ COMPONENT = {
     },
 }
 
-PLACEMENT = {
-    "object_name": "optical_table_1_object_1",
+SCENE_OBJECT = {
+    "name": "optical_table_1_object_1",
     "x_mm": 0,
     "y_mm": 0,
     "z_mm": 0,
@@ -72,18 +72,18 @@ async def main() -> None:
             component.asset_3d_id = asset.id
             await session.flush()
 
-        placements = (
-            await session.scalars(select(Placement).where(Placement.component_id == component.id))
+        scene_objects = (
+            await session.scalars(select(SceneObject).where(SceneObject.component_id == component.id))
         ).all()
-        placement = next(
-            (item for item in placements if item.object_name == PLACEMENT["object_name"]),
-            placements[0] if placements else None,
+        scene_object = next(
+            (item for item in scene_objects if item.name == SCENE_OBJECT["name"]),
+            scene_objects[0] if scene_objects else None,
         )
-        if placement is None:
-            session.add(Placement(component_id=component.id, **PLACEMENT))
+        if scene_object is None:
+            session.add(SceneObject(component_id=component.id, **SCENE_OBJECT))
         else:
-            for key, value in PLACEMENT.items():
-                setattr(placement, key, value)
+            for key, value in SCENE_OBJECT.items():
+                setattr(scene_object, key, value)
 
         await session.commit()
         print("Upserted locked optical table component.")

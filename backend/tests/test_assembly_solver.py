@@ -11,7 +11,7 @@ from app.assembly_solver import (
     mul,
     normalize,
     normalize_anchor_id,
-    placement_rotation,
+    object_rotation,
     rotate_vec,
     standard_anchor,
     sub,
@@ -19,7 +19,7 @@ from app.assembly_solver import (
     world_anchor_direction,
     world_anchor_position,
 )
-from app.models import Asset3D, Component, Placement
+from app.models import Asset3D, Component, SceneObject
 
 
 def approx(a: dict, b: dict, tol: float = 1e-9) -> bool:
@@ -126,7 +126,12 @@ def test_normalize_anchor_id(alias, expected):
 def test_standard_anchor_center():
     a = standard_anchor("center", vec(100, 100, 100))
     assert a is not None
-    assert a["localPosition"] == vec(0, 0, 0)
+    # Phase 4 unification: standard_anchor emits the new frame/unit-suffixed
+    # field names (`positionMmBodyLocal` / `directionBodyLocal`) so it's
+    # consistent with what alembic 0018 writes into JSONB. The reader path
+    # (`_anchor_position_local`) still accepts the legacy `localPosition`
+    # name for backward-compat with un-migrated input.
+    assert a["positionMmBodyLocal"] == vec(0, 0, 0)
     assert a["type"] == "center"
 
 
@@ -143,28 +148,28 @@ def test_standard_anchor_faces_use_half_size():
     for anchor_id, (pos, direction) in expected.items():
         a = standard_anchor(anchor_id, size)
         assert a is not None, anchor_id
-        assert a["localPosition"] == pos
-        assert a["localDirection"] == direction
+        assert a["positionMmBodyLocal"] == pos
+        assert a["directionBodyLocal"] == direction
 
 
 def test_standard_anchor_unknown_returns_none():
     assert standard_anchor("not_a_real_anchor", vec(10, 10, 10)) is None
 
 
-# --- placement_rotation -------------------------------------------------------
+# --- object_rotation -------------------------------------------------------
 
 
-def test_placement_rotation_reads_floats():
-    p = Placement(rx_deg=10, ry_deg=20, rz_deg=30)
-    assert placement_rotation(p) == (10.0, 20.0, 30.0)
+def test_object_rotation_reads_floats():
+    p = SceneObject(rx_deg=10, ry_deg=20, rz_deg=30)
+    assert object_rotation(p) == (10.0, 20.0, 30.0)
 
 
-def test_placement_rotation_handles_none_axes():
-    p = Placement()
+def test_object_rotation_handles_none_axes():
+    p = SceneObject()
     p.rx_deg = None  # SQLAlchemy default not applied outside session
     p.ry_deg = None
     p.rz_deg = None
-    assert placement_rotation(p) == (0.0, 0.0, 0.0)
+    assert object_rotation(p) == (0.0, 0.0, 0.0)
 
 
 # --- world anchor position/direction with rotation ---------------------------
@@ -181,8 +186,8 @@ def make_placement(
     rz: float = 0,
     size: tuple[float, float, float] = (100, 100, 100),
     anchors: list[dict] | None = None,
-) -> Placement:
-    """Build a Placement with `properties.anchors` pre-populated so anchor_for
+) -> SceneObject:
+    """Build a SceneObject with `properties.anchors` pre-populated so anchor_for
     skips the DB lookup. session=None is fine."""
     sx, sy, sz = size
     base_anchors = [
@@ -194,7 +199,7 @@ def make_placement(
         {"id": "+z", "name": "+Z", "type": "face", "localPosition": vec(0, 0, sz / 2), "localDirection": vec(0, 0, 1)},
         {"id": "-z", "name": "-Z", "type": "face", "localPosition": vec(0, 0, -sz / 2), "localDirection": vec(0, 0, -1)},
     ]
-    return Placement(
+    return SceneObject(
         id=uuid.uuid4(),
         component_id=uuid.uuid4(),
         x_mm=x,
@@ -219,7 +224,7 @@ async def test_world_anchor_position_no_rotation():
 
 @pytest.mark.asyncio
 async def test_world_anchor_position_with_rotation():
-    # Placement rotated 90° around lab Z. Local +X face should move to +Y world.
+    # SceneObject rotated 90° around lab Z. Local +X face should move to +Y world.
     p = make_placement(x=0, y=0, z=0, rz=90, size=(40, 40, 40))
     pos = await world_anchor_position(None, p, "+x")
     # local +X (20,0,0) rotated by Rz(90) → (0,20,0). Plus placement origin = (0,20,0).
@@ -271,10 +276,10 @@ class FakeSession:
         return None
 
 
-def make_bare_placement(component_id, *, size=(40, 40, 40)) -> Placement:
-    """Placement with no properties.anchors so resolution falls through."""
+def make_bare_placement(component_id, *, size=(40, 40, 40)) -> SceneObject:
+    """SceneObject with no properties.anchors so resolution falls through."""
     sx, sy, sz = size
-    return Placement(
+    return SceneObject(
         id=uuid.uuid4(),
         component_id=component_id,
         x_mm=0,
@@ -299,8 +304,9 @@ async def test_anchor_for_falls_back_to_standard_when_no_overrides():
     placement = make_bare_placement(component_id, size=(40, 40, 40))
     anchor = await anchor_for(session, placement, "+x")
 
-    assert anchor["localPosition"] == vec(20, 0, 0)
-    assert anchor["localDirection"] == vec(1, 0, 0)
+    # Phase 4: standard_anchor emits the new field names.
+    assert anchor["positionMmBodyLocal"] == vec(20, 0, 0)
+    assert anchor["directionBodyLocal"] == vec(1, 0, 0)
 
 
 @pytest.mark.asyncio
@@ -346,7 +352,7 @@ async def test_anchor_for_placement_override_beats_asset():
     )
     session = FakeSession({component_id: component}, {asset_id: asset})
 
-    placement = Placement(
+    placement = SceneObject(
         id=uuid.uuid4(),
         component_id=component_id,
         x_mm=0, y_mm=0, z_mm=0,
@@ -376,8 +382,8 @@ async def test_anchor_for_falls_through_asset_to_standard_when_id_not_in_asset()
 
     placement = make_bare_placement(component_id, size=(40, 40, 40))
     anchor = await anchor_for(session, placement, "+x")
-    # No "+x" in asset → standard box +x at half-size.
-    assert anchor["localPosition"] == vec(20, 0, 0)
+    # No "+x" in asset → standard box +x at half-size (Phase 4 names).
+    assert anchor["positionMmBodyLocal"] == vec(20, 0, 0)
 
 
 @pytest.mark.asyncio
@@ -385,4 +391,4 @@ async def test_anchor_for_handles_none_session():
     # No session → can't load component/asset. Should still return standard box.
     placement = make_bare_placement(uuid.uuid4(), size=(40, 40, 40))
     anchor = await anchor_for(None, placement, "+x")
-    assert anchor["localPosition"] == vec(20, 0, 0)
+    assert anchor["positionMmBodyLocal"] == vec(20, 0, 0)

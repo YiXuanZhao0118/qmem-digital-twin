@@ -104,6 +104,23 @@ function vec(value: unknown, fallback: VecObject = { x: 0, y: 0, z: 0 }): VecObj
   return fallback;
 }
 
+function addVec(a: VecObject, b: VecObject): VecObject {
+  return { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z };
+}
+
+function scaleVec(v: VecObject, scale: number): VecObject {
+  return { x: v.x * scale, y: v.y * scale, z: v.z * scale };
+}
+
+function objectOriginOffset(object: SceneObject): VecObject {
+  return vec(object.properties?.originOffsetMm);
+}
+
+function objectScale(object: SceneObject): number {
+  const value = object.properties?.objectScale;
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 1;
+}
+
 export function relationTarget(
   relation: AssemblyRelation,
   side: "a" | "b",
@@ -224,10 +241,15 @@ export function worldAnchor(
   const assetAnchor = placementAnchor ? null : findCustomAnchor(asset?.anchors, anchorId);
   const standard = !placementAnchor && !assetAnchor ? localAnchor(anchorId, objectSize(object, component)) : null;
 
-  const localPosition = placementAnchor?.localPosition ?? assetAnchor?.localPosition ?? standard!.position;
-  const localDirection = placementAnchor?.localDirection ?? assetAnchor?.localDirection ?? standard?.direction;
+  const localPosition = placementAnchor?.positionMmBodyLocal ?? assetAnchor?.positionMmBodyLocal ?? standard!.position;
+  const localDirection = placementAnchor?.directionBodyLocal ?? assetAnchor?.directionBodyLocal ?? standard?.direction;
 
-  const rotatedPosition = rotateVec(localPosition, object.rxDeg, object.ryDeg, object.rzDeg);
+  const rotatedPosition = rotateVec(
+    scaleVec(addVec(objectOriginOffset(object), localPosition), objectScale(object)),
+    object.rxDeg,
+    object.ryDeg,
+    object.rzDeg,
+  );
   const rotatedDirection = localDirection
     ? rotateVec(localDirection, object.rxDeg, object.ryDeg, object.rzDeg)
     : undefined;

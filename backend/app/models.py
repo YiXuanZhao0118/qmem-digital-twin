@@ -54,7 +54,8 @@ class Component(Base):
     component_type: Mapped[str] = mapped_column(Text, nullable=False)
     brand: Mapped[str | None] = mapped_column(Text)
     model: Mapped[str | None] = mapped_column(Text)
-    serial_number: Mapped[str | None] = mapped_column(Text)
+    # serial_number lives on SceneObject now (alembic 0015) — a serial
+    # uniquely identifies a physical unit, which maps to one instance.
     asset_3d_id: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("assets_3d.id")
     )
@@ -72,23 +73,22 @@ class Component(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     asset: Mapped[Asset3D | None] = relationship(back_populates="components")
-    placements: Mapped[list[Placement]] = relationship(
+    objects: Mapped[list[SceneObject]] = relationship(
         back_populates="component",
         cascade="all, delete-orphan",
-        foreign_keys="Placement.component_id",
+        foreign_keys="SceneObject.component_id",
     )
-    device_state: Mapped[DeviceState | None] = relationship(
-        back_populates="component", cascade="all, delete-orphan"
-    )
-    optical_element: Mapped[OpticalElement | None] = relationship(
-        back_populates="component", cascade="all, delete-orphan"
-    )
+    # DeviceState, TimingProgram, OpticalElement are all per-OBJECT now
+    # (alembic 0014 + 0015). Reach them via SceneObject.{device_state,
+    # timing_program, optical_element}. Component is purely a catalog row.
 
 
-class Placement(Base):
-    __tablename__ = "placements"
+class SceneObject(Base):
+    __tablename__ = "objects"
+    __table_args__ = (UniqueConstraint("name", name="uq_objects_name"),)
 
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -101,10 +101,7 @@ class Placement(Base):
         ForeignKey("components.id", ondelete="CASCADE"),
         nullable=False,
     )
-    object_name: Mapped[str] = mapped_column(Text, nullable=False, default="object", server_default="object")
-    parent_component_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("components.id")
-    )
+    name: Mapped[str] = mapped_column(Text, nullable=False, default="object", server_default="object")
     x_mm: Mapped[float] = mapped_column(Float, nullable=False, default=0, server_default="0")
     y_mm: Mapped[float] = mapped_column(Float, nullable=False, default=0, server_default="0")
     z_mm: Mapped[float] = mapped_column(Float, nullable=False, default=0, server_default="0")
@@ -113,6 +110,10 @@ class Placement(Base):
     rz_deg: Mapped[float] = mapped_column(Float, nullable=False, default=0, server_default="0")
     visible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     locked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    # Per-physical-unit serial. Migrated from components.serial_number in
+    # alembic 0015 — two SceneObjects of the same Component model can have
+    # different serials (or one with a serial, others NULL).
+    serial_number: Mapped[str | None] = mapped_column(Text)
     properties: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -121,12 +122,24 @@ class Placement(Base):
         onupdate=func.now(),
     )
 
-    component: Mapped[Component] = relationship(back_populates="placements", foreign_keys=[component_id])
+    component: Mapped[Component] = relationship(back_populates="objects", foreign_keys=[component_id])
+    optical_element: Mapped[OpticalElement | None] = relationship(
+        back_populates="object", cascade="all, delete-orphan",
+        primaryjoin="SceneObject.id == OpticalElement.object_id",
+    )
+    device_state: Mapped[DeviceState | None] = relationship(
+        back_populates="object", cascade="all, delete-orphan"
+    )
+    timing_program: Mapped[TimingProgram | None] = relationship(
+        back_populates="object", cascade="all, delete-orphan"
+    )
 
 
 class Connection(Base):
     __tablename__ = "connections"
 
+    # Per-OBJECT cabling (alembic 0015) — two physical units of the same
+    # component model each have their own RF / USB / coax connections.
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
@@ -134,12 +147,16 @@ class Connection(Base):
         server_default=text("gen_random_uuid()"),
     )
     connection_type: Mapped[str] = mapped_column(Text, nullable=False)
-    from_component_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("components.id"), nullable=False
+    from_object_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("objects.id", ondelete="CASCADE"),
+        nullable=False,
     )
     from_port: Mapped[str | None] = mapped_column(Text)
-    to_component_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("components.id"), nullable=False
+    to_object_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("objects.id", ondelete="CASCADE"),
+        nullable=False,
     )
     to_port: Mapped[str | None] = mapped_column(Text)
     label: Mapped[str | None] = mapped_column(Text)
@@ -161,10 +178,10 @@ class AssemblyRelation(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     relation_type: Mapped[str] = mapped_column(Text, nullable=False)
     object_a_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("placements.id", ondelete="CASCADE"), nullable=False
+        PG_UUID(as_uuid=True), ForeignKey("objects.id", ondelete="CASCADE"), nullable=False
     )
     object_b_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("placements.id", ondelete="CASCADE"), nullable=False
+        PG_UUID(as_uuid=True), ForeignKey("objects.id", ondelete="CASCADE"), nullable=False
     )
     selector_a: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
     selector_b: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
@@ -197,11 +214,14 @@ class BeamPath(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     wavelength_nm: Mapped[float | None] = mapped_column(Float)
     color: Mapped[str] = mapped_column(Text, nullable=False, default="#ff0000", server_default="#ff0000")
-    source_component_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("components.id")
+    # Per-OBJECT endpoints (alembic 0015). Nullable: a beam path may be
+    # authored before either endpoint instance exists, and surviving an
+    # endpoint deletion is more useful than cascading a path away.
+    source_object_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("objects.id", ondelete="SET NULL")
     )
-    target_component_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("components.id")
+    target_object_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("objects.id", ondelete="SET NULL")
     )
     points: Mapped[JsonList] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
     properties: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
@@ -220,8 +240,13 @@ class BeamPath(Base):
 class DeviceState(Base):
     __tablename__ = "device_states"
 
-    component_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("components.id", ondelete="CASCADE"), primary_key=True
+    # Per-OBJECT runtime state (alembic 0015). Two physical units of the
+    # same component model each have their own state — independent
+    # power-on, lock state, temperature, etc.
+    object_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("objects.id", ondelete="CASCADE"),
+        primary_key=True,
     )
     state: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
     updated_at: Mapped[datetime] = mapped_column(
@@ -231,7 +256,7 @@ class DeviceState(Base):
         onupdate=func.now(),
     )
 
-    component: Mapped[Component] = relationship(back_populates="device_state")
+    object: Mapped[SceneObject] = relationship(back_populates="device_state")
 
 
 class Revision(Base):
@@ -254,10 +279,21 @@ class Revision(Base):
 class OpticalElement(Base):
     __tablename__ = "optical_elements"
 
-    component_id: Mapped[uuid.UUID] = mapped_column(
+    # Optical participation is per-OBJECT (instance), not per-Component
+    # (template). Two SceneObjects of the same Component (e.g. two BB1
+    # mirrors) each get their own OpticalElement row with independent
+    # kind_params, ports, and chain participation. See alembic 0014.
+    id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("components.id", ondelete="CASCADE"),
         primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    object_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("objects.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
     )
     element_kind: Mapped[str] = mapped_column(Text, nullable=False)
     wavelength_range_nm: Mapped[JsonList] = mapped_column(
@@ -282,18 +318,21 @@ class OpticalElement(Base):
         onupdate=func.now(),
     )
 
-    component: Mapped[Component] = relationship(back_populates="optical_element")
+    # Note: relationship to Component goes via the SceneObject (object → component).
+    # No direct OpticalElement.component relationship anymore — the row is
+    # keyed by object, components are reachable via the object.
+    object: Mapped[SceneObject] = relationship(back_populates="optical_element")
 
 
 class OpticalLink(Base):
     __tablename__ = "optical_links"
     __table_args__ = (
         UniqueConstraint(
-            "from_component_id",
+            "from_object_id",
             "from_port",
-            "to_component_id",
+            "to_object_id",
             "to_port",
-            name="uq_optical_link_endpoints",
+            name="uq_optical_link_object_endpoints",
         ),
     )
 
@@ -303,15 +342,15 @@ class OpticalLink(Base):
         default=uuid.uuid4,
         server_default=text("gen_random_uuid()"),
     )
-    from_component_id: Mapped[uuid.UUID] = mapped_column(
+    from_object_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("components.id", ondelete="CASCADE"),
+        ForeignKey("objects.id", ondelete="CASCADE"),
         nullable=False,
     )
     from_port: Mapped[str] = mapped_column(Text, nullable=False)
-    to_component_id: Mapped[uuid.UUID] = mapped_column(
+    to_object_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("components.id", ondelete="CASCADE"),
+        ForeignKey("objects.id", ondelete="CASCADE"),
         nullable=False,
     )
     to_port: Mapped[str] = mapped_column(Text, nullable=False)
@@ -319,6 +358,139 @@ class OpticalLink(Base):
     properties: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class SceneView(Base):
+    __tablename__ = "scene_views"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    icon: Mapped[str | None] = mapped_column(Text)
+    color: Mapped[str] = mapped_column(Text, nullable=False, default="#0f766e", server_default="#0f766e")
+    filter_kind: Mapped[str] = mapped_column(Text, nullable=False, default="leaf", server_default="leaf")
+    filter_expr: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    overlay_overrides: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_by: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class Collection(Base):
+    """Recursive Outliner node — purely organizational, never affects geometry.
+
+    A NULL ``parent_id`` denotes the Master Collection (there is exactly one
+    such row per project after the bootstrap in app startup).
+    """
+
+    __tablename__ = "collections"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("collections.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    color: Mapped[str] = mapped_column(Text, nullable=False, default="#0f766e", server_default="#0f766e")
+    visible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    locked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    exclude: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    holdout: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    indirect_only: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    properties: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class CollectionMember(Base):
+    """Single collection home for an object.
+
+    No ``is_primary`` flag — every membership is equal, exactly like Blender's
+    only, never as repeated linked rows.
+    """
+
+    __tablename__ = "collection_members"
+    __table_args__ = (
+        UniqueConstraint("object_id", name="uq_collection_members_object_home"),
+    )
+
+    collection_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("collections.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    object_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("objects.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class SceneViewCollectionOverride(Base):
+    """Sparse per-view override for collection visibility / mask flags.
+
+    Reserved for v2; v1 reads no rows from this table. NULL columns mean
+    "inherit from collection". Only collections that differ from their default
+    state in a given view need a row here.
+    """
+
+    __tablename__ = "scene_view_collection_overrides"
+
+    scene_view_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("scene_views.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    collection_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("collections.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    visible: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    exclude: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    holdout: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    indirect_only: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )
 
 
@@ -351,3 +523,96 @@ class BeamSegment(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class TimingProgram(Base):
+    """A per-OBJECT timed sequence program (alembic 0015).
+
+    Owned by exactly one SceneObject (1:1). Two physical units of the same
+    Component model each have their own program — they can run different
+    sequences on different days. Only objects whose component has an
+    appropriate physics capability are expected to have a TimingProgram
+    (laser_source / tapered_amplifier always; AOM/EOM only when an RF
+    driver is wired up). The DB enforces 1:1 — UI gates creation by the
+    object's element kind / RF wiring.
+    """
+
+    __tablename__ = "timing_programs"
+
+    object_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("objects.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False, default="program", server_default="program")
+    spin_core_start: Mapped[str] = mapped_column(
+        Text, nullable=False, default="WAIT", server_default="WAIT"
+    )  # "WAIT" | "CONTINUE"
+    duration_ns: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0, server_default="0"
+    )
+    properties: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    object: Mapped[SceneObject] = relationship(back_populates="timing_program")
+    blocks: Mapped[list[TimingBlock]] = relationship(
+        back_populates="program",
+        cascade="all, delete-orphan",
+        order_by="TimingBlock.t_start_ns",
+    )
+
+
+class TimingBlock(Base):
+    """A single block on the component's timeline.
+
+    Each block describes the component's action over `[t_start_ns, t_end_ns)`.
+    `waveform_kind` chooses how `params` is interpreted:
+
+    - "const":      params={"value": float}    (e.g. power=0.7)
+    - "linear_ramp": params={"start": float, "end": float}
+    - "arbitrary":  params={"samples": [float], "dt_ns": float}  (RF-bearing AOM/EOM only)
+    - "gate_on":    params={}  (boolean ON for the duration; AOM/EOM no-RF)
+    - "gate_off":   params={}  (boolean OFF — usually only emitted from solver merging)
+
+    Times are float ns; the UI snaps inputs to 10 ns and the API validator
+    rounds on write.
+    """
+
+    __tablename__ = "timing_blocks"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    program_object_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("timing_programs.object_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    label: Mapped[str | None] = mapped_column(Text)
+    t_start_ns: Mapped[float] = mapped_column(Float, nullable=False)
+    t_end_ns: Mapped[float] = mapped_column(Float, nullable=False)
+    waveform_kind: Mapped[str] = mapped_column(Text, nullable=False, default="const", server_default="const")
+    params: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    program: Mapped[TimingProgram] = relationship(back_populates="blocks")

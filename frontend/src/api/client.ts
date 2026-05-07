@@ -2,17 +2,28 @@ import axios, { AxiosError } from "axios";
 
 import type {
   AssemblyRelation,
+  Collection,
+  CollectionMember,
   ComponentItem,
   ElementKind,
   GeometrySelector,
   OpticalElement,
   OpticalLink,
   OpticalPort,
-  Placement,
-  PlacementPatch,
   RelationType,
   SceneData,
+  SceneObject,
+  SceneObjectPatch,
+  TimingProgram,
+  TimingProgramUpsert,
+  TransientRunRequest,
+  TransientRunResponse,
 } from "../types/digitalTwin";
+import type {
+  SceneView,
+  SceneViewCreatePayload,
+  SceneViewUpdatePayload,
+} from "../types/visibility";
 
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:8010";
@@ -54,38 +65,41 @@ function apiErrorMessage(error: unknown): string {
 
 export async function fetchScene(): Promise<SceneData> {
   const response = await client.get<SceneData>("/api/scene");
-  const objects = response.data.objects ?? response.data.placements ?? [];
   return {
     ...response.data,
-    objects,
-    placements: response.data.placements ?? objects,
+    objects: response.data.objects ?? [],
     assemblyRelations: response.data.assemblyRelations ?? [],
+    sceneViews: response.data.sceneViews ?? [],
+    collections: response.data.collections ?? [],
+    collectionMembers: response.data.collectionMembers ?? [],
   };
 }
 
-export async function updatePlacementApi(
+export async function upsertObjectForComponentApi(
   componentId: string,
-  patch: PlacementPatch,
-): Promise<Placement> {
-  const response = await client.put<Placement>(`/api/placements/${componentId}`, patch);
+  patch: SceneObjectPatch,
+): Promise<SceneObject> {
+  const response = await client.put<SceneObject>(`/api/objects/by-component/${componentId}`, patch);
   return response.data;
 }
 
-export async function createPlacementApi(payload: PlacementPatch & { componentId: string }): Promise<Placement> {
-  const response = await client.post<Placement>("/api/placements", payload);
+export async function createObjectApi(
+  payload: SceneObjectPatch & { componentId: string; collectionId?: string | null },
+): Promise<SceneObject> {
+  const response = await client.post<SceneObject>("/api/objects", payload);
   return response.data;
 }
 
-export async function updatePlacementObjectApi(
+export async function updateObjectApi(
   objectId: string,
-  patch: PlacementPatch,
-): Promise<Placement> {
-  const response = await client.put<Placement>(`/api/placements/objects/${objectId}`, patch);
+  patch: SceneObjectPatch,
+): Promise<SceneObject> {
+  const response = await client.put<SceneObject>(`/api/objects/${objectId}`, patch);
   return response.data;
 }
 
 export async function deleteObjectApi(objectId: string): Promise<void> {
-  await client.delete(`/api/placements/objects/${objectId}`);
+  await client.delete(`/api/objects/${objectId}`);
 }
 
 export async function createComponentApi(payload: {
@@ -186,6 +200,17 @@ export async function deleteAssemblyRelationApi(relationId: string): Promise<voi
   await client.delete(`/api/assembly-relations/${relationId}`);
 }
 
+export async function applyRelationOnceApi(relationId: string): Promise<SceneObject | null> {
+  try {
+    const response = await client.post<SceneObject | null>(
+      `/api/assembly-relations/${relationId}/apply-once`,
+    );
+    return response.data ?? null;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
 export async function uploadComponentAssetApi(payload: {
   file: File;
   name: string;
@@ -234,7 +259,8 @@ export async function importLocalComponentAssetApi(payload: {
 // =============================================================================
 
 export type OpticalElementApiPayload = {
-  componentId: string;
+  /** Per-OBJECT optical participation (alembic 0014). */
+  objectId: string;
   elementKind: ElementKind;
   wavelengthRangeNm?: [number, number];
   inputPorts?: OpticalPort[];
@@ -254,12 +280,12 @@ export async function createOpticalElementApi(
 }
 
 export async function updateOpticalElementApi(
-  componentId: string,
-  patch: Partial<Omit<OpticalElementApiPayload, "componentId">>,
+  objectId: string,
+  patch: Partial<Omit<OpticalElementApiPayload, "objectId">>,
 ): Promise<OpticalElement> {
   try {
     const response = await client.put<OpticalElement>(
-      `/api/optical-elements/${componentId}`,
+      `/api/optical-elements/${objectId}`,
       patch,
     );
     return response.data;
@@ -268,14 +294,48 @@ export async function updateOpticalElementApi(
   }
 }
 
-export async function deleteOpticalElementApi(componentId: string): Promise<void> {
-  await client.delete(`/api/optical-elements/${componentId}`);
+export async function deleteOpticalElementApi(objectId: string): Promise<void> {
+  await client.delete(`/api/optical-elements/${objectId}`);
+}
+
+export async function autoRegisterOpticalApi(
+  componentId: string,
+): Promise<OpticalElement[]> {
+  try {
+    // Auto-register endpoint now creates one OpticalElement per scene
+    // object of this component (was: 1 per component). Returns the list
+    // of newly-created rows (empty if all objects already had OEs).
+    const response = await client.post<OpticalElement[]>(
+      `/api/components/${componentId}/auto-register-optical`,
+    );
+    return response.data ?? [];
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export type AutoRegisterAllResponse = {
+  createdCount: number;
+  scanned: number;
+  elements: OpticalElement[];
+};
+
+export async function autoRegisterOpticalAllApi(): Promise<AutoRegisterAllResponse> {
+  try {
+    const response = await client.post<AutoRegisterAllResponse>(
+      "/api/components/auto-register-optical/all",
+    );
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
 }
 
 export type OpticalLinkApiPayload = {
-  fromComponentId: string;
+  /** Per-OBJECT chain participation (alembic 0014). */
+  fromObjectId: string;
   fromPort: string;
-  toComponentId: string;
+  toObjectId: string;
   toPort: string;
   freeSpaceMm?: number;
   properties?: Record<string, unknown>;
@@ -294,7 +354,9 @@ export async function createOpticalLinkApi(
 
 export async function updateOpticalLinkApi(
   linkId: string,
-  patch: Partial<Pick<OpticalLinkApiPayload, "freeSpaceMm" | "properties">>,
+  patch: Partial<
+    Pick<OpticalLinkApiPayload, "fromObjectId" | "fromPort" | "toObjectId" | "toPort" | "freeSpaceMm" | "properties">
+  >,
 ): Promise<OpticalLink> {
   try {
     const response = await client.put<OpticalLink>(`/api/optical-links/${linkId}`, patch);
@@ -319,6 +381,227 @@ export async function runOpticalSimulationApi(): Promise<OpticalRunResponse> {
   try {
     const response = await client.post<OpticalRunResponse>("/api/simulations/optical/run");
     return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function runOpticalTransientApi(
+  payload: TransientRunRequest,
+): Promise<TransientRunResponse> {
+  try {
+    const response = await client.post<TransientRunResponse>(
+      "/api/simulations/optical/transient/run",
+      payload,
+    );
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+// =============================================================================
+// Scene Views (visibility L3)
+// =============================================================================
+
+export async function listSceneViewsApi(): Promise<SceneView[]> {
+  try {
+    const response = await client.get<SceneView[]>("/api/scene-views");
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function createSceneViewApi(payload: SceneViewCreatePayload): Promise<SceneView> {
+  try {
+    const response = await client.post<SceneView>("/api/scene-views", payload);
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function updateSceneViewApi(
+  viewId: string,
+  patch: SceneViewUpdatePayload,
+): Promise<SceneView> {
+  try {
+    const response = await client.put<SceneView>(`/api/scene-views/${viewId}`, patch);
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function deleteSceneViewApi(viewId: string): Promise<void> {
+  try {
+    await client.delete(`/api/scene-views/${viewId}`);
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function duplicateSceneViewApi(viewId: string): Promise<SceneView> {
+  try {
+    const response = await client.post<SceneView>(`/api/scene-views/${viewId}/duplicate`);
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function moveSceneViewApi(viewId: string, sortOrder: number): Promise<SceneView> {
+  try {
+    const response = await client.put<SceneView>(`/api/scene-views/${viewId}/move`, { sortOrder });
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+// =============================================================================
+// Collections (Outliner)
+// =============================================================================
+
+export type CollectionCreatePayload = {
+  name: string;
+  parentId?: string | null;
+  color?: string;
+  visible?: boolean;
+  locked?: boolean;
+  exclude?: boolean;
+  holdout?: boolean;
+  indirectOnly?: boolean;
+  sortOrder?: number;
+  properties?: Record<string, unknown>;
+};
+
+export type CollectionUpdatePayload = Partial<CollectionCreatePayload>;
+
+export async function listCollectionsApi(): Promise<Collection[]> {
+  try {
+    const response = await client.get<Collection[]>("/api/collections");
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function listAllCollectionMembersApi(): Promise<CollectionMember[]> {
+  try {
+    const response = await client.get<CollectionMember[]>("/api/collections/members");
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function createCollectionApi(payload: CollectionCreatePayload): Promise<Collection> {
+  try {
+    const response = await client.post<Collection>("/api/collections", payload);
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function updateCollectionApi(
+  collectionId: string,
+  patch: CollectionUpdatePayload,
+): Promise<Collection> {
+  try {
+    const response = await client.put<Collection>(`/api/collections/${collectionId}`, patch);
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function moveCollectionApi(
+  collectionId: string,
+  payload: { parentId: string | null; sortOrder?: number | null },
+): Promise<Collection> {
+  try {
+    const response = await client.put<Collection>(
+      `/api/collections/${collectionId}/move`,
+      payload,
+    );
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function deleteCollectionApi(collectionId: string): Promise<void> {
+  try {
+    await client.delete(`/api/collections/${collectionId}`);
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function moveObjectToCollectionApi(
+  collectionId: string,
+  objectId: string,
+  sortOrder?: number,
+): Promise<CollectionMember> {
+  try {
+    const response = await client.post<CollectionMember>(
+      `/api/collections/${collectionId}/objects/${objectId}`,
+      sortOrder !== undefined ? { sortOrder } : {},
+    );
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function unlinkObjectFromCollectionApi(
+  collectionId: string,
+  objectId: string,
+): Promise<void> {
+  try {
+    await client.delete(`/api/collections/${collectionId}/objects/${objectId}`);
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+// =============================================================================
+// Timing programs
+// =============================================================================
+
+export async function fetchTimingProgramApi(objectId: string): Promise<TimingProgram | null> {
+  try {
+    const response = await client.get<TimingProgram>(`/api/timing-programs/${objectId}`);
+    return response.data;
+  } catch (error) {
+    if (error instanceof AxiosError && error.response?.status === 404) {
+      return null;
+    }
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function upsertTimingProgramApi(
+  objectId: string,
+  payload: TimingProgramUpsert,
+): Promise<TimingProgram> {
+  try {
+    const response = await client.put<TimingProgram>(
+      `/api/timing-programs/${objectId}`,
+      payload,
+    );
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function deleteTimingProgramApi(objectId: string): Promise<void> {
+  try {
+    await client.delete(`/api/timing-programs/${objectId}`);
   } catch (error) {
     throw new Error(apiErrorMessage(error));
   }

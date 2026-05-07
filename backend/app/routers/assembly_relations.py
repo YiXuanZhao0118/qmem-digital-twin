@@ -7,9 +7,9 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import crud, schemas
-from app.assembly_solver import relation_creates_cycle, solve_relation
+from app.assembly_solver import apply_relations_for_object, relation_creates_cycle, solve_relation
 from app.db import get_session
-from app.models import AssemblyRelation, Placement
+from app.models import AssemblyRelation, SceneObject
 from app.websocket import manager
 
 
@@ -20,17 +20,29 @@ def relation_payload(relation: AssemblyRelation) -> dict[str, object]:
     return schemas.AssemblyRelationOut.model_validate(relation).model_dump(mode="json", by_alias=True)
 
 
-def placement_payload(placement: Placement) -> dict[str, object]:
-    return schemas.PlacementOut.model_validate(placement).model_dump(mode="json", by_alias=True)
+def object_payload(scene_object: SceneObject) -> dict[str, object]:
+    return schemas.SceneObjectOut.model_validate(scene_object).model_dump(mode="json", by_alias=True)
 
 
-async def broadcast_changed_placement(session: AsyncSession, placement: Placement | None) -> None:
-    if placement is None:
+async def broadcast_changed_object(session: AsyncSession, scene_object: SceneObject | None) -> None:
+    if scene_object is None:
         return
-    await session.refresh(placement)
-    payload = placement_payload(placement)
-    await manager.broadcast("placement.updated", payload)
-    await manager.broadcast("object.updated", payload)
+    await session.refresh(scene_object)
+    await manager.broadcast("object.updated", object_payload(scene_object))
+
+
+async def cascade_after_relation_change(
+    session: AsyncSession, driven: SceneObject | None
+) -> list[SceneObject]:
+    """Re-run downstream relations after a relation edit moves `driven`.
+
+    Without this, editing the A↔B offset would only update B; any B→C, C→D, …
+    chains would still hold their stale positions until the user manually
+    re-applied each one.
+    """
+    if driven is None:
+        return []
+    return await apply_relations_for_object(session, driven)
 
 
 async def validate_relation_objects(
@@ -38,8 +50,8 @@ async def validate_relation_objects(
     object_a_id: uuid.UUID,
     object_b_id: uuid.UUID,
 ) -> None:
-    await crud.get_or_404(session, Placement, object_a_id)
-    await crud.get_or_404(session, Placement, object_b_id)
+    await crud.get_or_404(session, SceneObject, object_a_id)
+    await crud.get_or_404(session, SceneObject, object_b_id)
 
 
 def current_relation_values(relation: AssemblyRelation) -> dict[str, Any]:
@@ -76,10 +88,13 @@ async def create_assembly_relation(
     if relation.enabled and await relation_creates_cycle(session, relation):
         raise HTTPException(status_code=409, detail="Circular relation detected")
     changed = await solve_relation(session, relation)
+    cascaded = await cascade_after_relation_change(session, changed)
     await session.commit()
     await session.refresh(relation)
     await manager.broadcast("assembly_relation.updated", relation_payload(relation))
-    await broadcast_changed_placement(session, changed)
+    await broadcast_changed_object(session, changed)
+    for item in cascaded:
+        await broadcast_changed_object(session, item)
     return relation
 
 
@@ -107,10 +122,13 @@ async def update_assembly_relation(
     if relation.enabled and await relation_creates_cycle(session, relation):
         raise HTTPException(status_code=409, detail="Circular relation detected")
     changed = await solve_relation(session, relation)
+    cascaded = await cascade_after_relation_change(session, changed)
     await session.commit()
     await session.refresh(relation)
     await manager.broadcast("assembly_relation.updated", relation_payload(relation))
-    await broadcast_changed_placement(session, changed)
+    await broadcast_changed_object(session, changed)
+    for item in cascaded:
+        await broadcast_changed_object(session, item)
     return relation
 
 
@@ -126,3 +144,29 @@ async def delete_assembly_relation(
     payload["deleted"] = True
     await manager.broadcast("assembly_relation.updated", payload)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/{relation_id}/apply-once",
+    response_model=schemas.SceneObjectOut | None,
+)
+async def apply_relation_once(
+    relation_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+) -> SceneObject | None:
+    """Compute the relation's pose, write it to the driven object, then delete
+    the relation. Treats AssemblyRelation as a one-shot positioning aid rather
+    than a persistent constraint — see PUT /api/objects/{id} for the rationale.
+    """
+    relation = await crud.get_or_404(session, AssemblyRelation, relation_id)
+    changed = await solve_relation(session, relation)
+    relation_payload_snapshot = relation_payload(relation)
+    relation_payload_snapshot["deleted"] = True
+    await session.delete(relation)
+    await session.commit()
+    await manager.broadcast("assembly_relation.updated", relation_payload_snapshot)
+    if changed is None:
+        return None
+    await session.refresh(changed)
+    await manager.broadcast("object.updated", object_payload(changed))
+    return changed

@@ -2,6 +2,20 @@
 
 Quantum memory optical-table digital twin MVP.
 
+## Glossary
+
+The data model has three tiers, used consistently across DB, API, and UI:
+
+| Term | Meaning | DB table | API path |
+|------|---------|----------|----------|
+| **Asset** | An underlying 3D file (`.stl` / `.step` / primitive geometry) registered in the asset library | `assets_3d` | `/api/assets` |
+| **Component** | A part type from the catalog (e.g. "AOMO 3080", "DBR-852-TOSA-HighPower"). Backed by an Asset. | `components` | `/api/components` |
+| **Object** | An instance of a Component placed in the scene (has position, rotation, name, visibility, etc.). The same Component can have many Objects. | `objects` | `/api/objects` |
+
+**Asset → Component → Object** is the canonical hierarchy. The left panel shows `Components` (catalog) and `Objects` (in scene). The underlying `Assets` are managed indirectly through Component upload/import, which is why the panel doesn't list them separately.
+
+> Historical note: the `objects` table was named `placements` and the `name` column was `object_name` in earlier migrations (≤0008). Migration `0009_rename_objects` aligned the schema with the user-facing naming. The word "placement" no longer appears as a domain term in code or API.
+
 ## Stack
 
 - Frontend: Vite + React + TypeScript + Three.js

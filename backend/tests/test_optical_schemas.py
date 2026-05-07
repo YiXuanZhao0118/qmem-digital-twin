@@ -13,6 +13,8 @@ from app.schemas import (
     SpectrumComponent,
     TransverseMode,
 )
+from app.models import Component
+from app.routers.components import default_kind_params_for_component
 
 
 # --- per-kind defaults / dispatch -------------------------------------------
@@ -40,6 +42,35 @@ def test_aom_has_three_output_ports():
     aom_defaults = DEFAULT_PORTS["aom"]
     port_ids = [p["portId"] for p in aom_defaults["output"]]
     assert port_ids == ["0th", "+1st", "-1st"]
+
+
+def test_pbs_component_defaults_to_polarizing_beam_splitter():
+    component = Component(
+        name="thorlabs_pbs252",
+        component_type="beam_splitter",
+        model="PBS252",
+        properties={"sourceUrl": "https://www.thorlabs.com/item/PBS252"},
+        notes="Polarizing beamsplitter cube.",
+    )
+    params = default_kind_params_for_component("beam_splitter", component)
+
+    assert params["polarizing"] is True
+    # Phase 5: renamed transmissionAxisDeg → transmissionAxisDegBeamLocal.
+    assert params["transmissionAxisDegBeamLocal"] == 0.0
+    assert params["extinctionRatioDb"] == 30.0
+
+
+def test_generic_beam_splitter_defaults_to_non_polarizing():
+    component = Component(
+        name="generic_beam_splitter",
+        component_type="beam_splitter",
+        model="BS",
+        properties={},
+        notes="Generic non-polarizing cube.",
+    )
+    params = default_kind_params_for_component("beam_splitter", component)
+
+    assert params["polarizing"] is False
 
 
 def test_sink_kinds_have_no_outputs():
@@ -94,7 +125,7 @@ def test_delta_must_not_have_fwhm():
 
 def laser_payload(**overrides):
     base = {
-        "componentId": str(uuid.uuid4()),
+        "objectId": str(uuid.uuid4()),
         "elementKind": "laser_source",
         "kindParams": {
             "centerWavelengthNm": 780.241,
@@ -125,7 +156,7 @@ def test_laser_source_validates_full_payload():
 
 def test_default_ports_filled_when_omitted():
     mirror = OpticalElementCreate.model_validate({
-        "componentId": str(uuid.uuid4()),
+        "objectId": str(uuid.uuid4()),
         "elementKind": "mirror",
         "kindParams": {"reflectivity": 0.99, "normalLocal": [1, 0, 0]},
     })
@@ -135,7 +166,7 @@ def test_default_ports_filled_when_omitted():
 
 def test_custom_ports_preserved():
     aom = OpticalElementCreate.model_validate({
-        "componentId": str(uuid.uuid4()),
+        "objectId": str(uuid.uuid4()),
         "elementKind": "aom",
         "kindParams": {
             "centerFreqMhz": 80.0,
@@ -155,7 +186,7 @@ def test_custom_ports_preserved():
 
 def test_aom_default_ports_have_three_output_orders():
     aom = OpticalElementCreate.model_validate({
-        "componentId": str(uuid.uuid4()),
+        "objectId": str(uuid.uuid4()),
         "elementKind": "aom",
         "kindParams": {
             "centerFreqMhz": 80.0,
@@ -171,7 +202,7 @@ def test_aom_default_ports_have_three_output_orders():
 def test_unknown_element_kind_rejected():
     with pytest.raises(ValidationError):
         OpticalElementCreate.model_validate({
-            "componentId": str(uuid.uuid4()),
+            "objectId": str(uuid.uuid4()),
             "elementKind": "not_a_real_kind",
             "kindParams": {},
         })
@@ -181,7 +212,7 @@ def test_invalid_kind_params_rejected():
     # MirrorParams.reflectivity must be in [0, 1]
     with pytest.raises(ValidationError):
         OpticalElementCreate.model_validate({
-            "componentId": str(uuid.uuid4()),
+            "objectId": str(uuid.uuid4()),
             "elementKind": "mirror",
             "kindParams": {"reflectivity": 1.5, "normalLocal": [1, 0, 0]},
         })
@@ -202,13 +233,13 @@ def test_wavelength_range_invariants():
 
 def test_lens_cylindrical_axis_constrained():
     OpticalElementCreate.model_validate({
-        "componentId": str(uuid.uuid4()),
+        "objectId": str(uuid.uuid4()),
         "elementKind": "lens_cylindrical",
         "kindParams": {"focalMm": 100.0, "cylindricalAxis": "x", "transmission": 0.99},
     })
     with pytest.raises(ValidationError):
         OpticalElementCreate.model_validate({
-            "componentId": str(uuid.uuid4()),
+            "objectId": str(uuid.uuid4()),
             "elementKind": "lens_cylindrical",
             "kindParams": {"focalMm": 100.0, "cylindricalAxis": "z", "transmission": 0.99},
         })
@@ -217,12 +248,12 @@ def test_lens_cylindrical_axis_constrained():
 def test_nonlinear_crystal_process_required():
     with pytest.raises(ValidationError):
         OpticalElementCreate.model_validate({
-            "componentId": str(uuid.uuid4()),
+            "objectId": str(uuid.uuid4()),
             "elementKind": "nonlinear_crystal",
             "kindParams": {"chi2PmPerV": 4.5, "lengthMm": 10.0},  # missing process
         })
     OpticalElementCreate.model_validate({
-        "componentId": str(uuid.uuid4()),
+        "objectId": str(uuid.uuid4()),
         "elementKind": "nonlinear_crystal",
         "kindParams": {"process": "SHG", "chi2PmPerV": 4.5, "lengthMm": 10.0},
     })
@@ -233,9 +264,9 @@ def test_nonlinear_crystal_process_required():
 
 def test_optical_link_basic_validation():
     link = OpticalLinkCreate.model_validate({
-        "fromComponentId": str(uuid.uuid4()),
+        "fromObjectId": str(uuid.uuid4()),
         "fromPort": "out",
-        "toComponentId": str(uuid.uuid4()),
+        "toObjectId": str(uuid.uuid4()),
         "toPort": "in",
         "freeSpaceMm": 150.0,
     })
@@ -245,9 +276,9 @@ def test_optical_link_basic_validation():
 def test_optical_link_negative_distance_rejected():
     with pytest.raises(ValidationError):
         OpticalLinkCreate.model_validate({
-            "fromComponentId": str(uuid.uuid4()),
+            "fromObjectId": str(uuid.uuid4()),
             "fromPort": "out",
-            "toComponentId": str(uuid.uuid4()),
+            "toObjectId": str(uuid.uuid4()),
             "toPort": "in",
             "freeSpaceMm": -1.0,
         })
@@ -258,7 +289,7 @@ def test_optical_link_negative_distance_rejected():
 
 def test_tapered_amplifier_full():
     ta = OpticalElementCreate.model_validate({
-        "componentId": str(uuid.uuid4()),
+        "objectId": str(uuid.uuid4()),
         "elementKind": "tapered_amplifier",
         "kindParams": {
             "smallSignalGainDb": 30.0,

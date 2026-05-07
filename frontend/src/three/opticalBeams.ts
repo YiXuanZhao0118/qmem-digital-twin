@@ -46,7 +46,7 @@ function rotateVecLab(v: THREE.Vector3, rxDeg: number, ryDeg: number, rzDeg: num
 
 /** Map a wavelength in nm to an approximate visible-light RGB tuple,
  * with a rolled-off red for IR (>700 nm) so users can still see the beam. */
-function wavelengthToColor(wavelengthNm: number): THREE.Color {
+export function wavelengthToColor(wavelengthNm: number): THREE.Color {
   let r = 0;
   let g = 0;
   let b = 0;
@@ -100,22 +100,22 @@ function findEmitterAnchor(asset: Asset3D | undefined): Anchor | null {
 /** World-space emission origin and direction (lab coords) for a placement.
  * Falls back to placement origin + rotated +X axis when the asset has no
  * dedicated emitter anchor. */
-export function emissionFromPlacement(
+export function emissionFromObject(
   placement: SceneObject,
   asset: Asset3D | undefined,
 ): { origin: THREE.Vector3; direction: THREE.Vector3 } {
   const anchor = findEmitterAnchor(asset);
-  const localPosition = anchor?.localPosition ?? { x: 0, y: 0, z: 0 };
-  const localDirection = anchor?.localDirection ?? { x: 1, y: 0, z: 0 };
+  const positionMmBodyLocal = anchor?.positionMmBodyLocal ?? { x: 0, y: 0, z: 0 };
+  const directionBodyLocal = anchor?.directionBodyLocal ?? { x: 1, y: 0, z: 0 };
 
   const offset = rotateVecLab(
-    new THREE.Vector3(localPosition.x, localPosition.y, localPosition.z),
+    new THREE.Vector3(positionMmBodyLocal.x, positionMmBodyLocal.y, positionMmBodyLocal.z),
     placement.rxDeg,
     placement.ryDeg,
     placement.rzDeg,
   );
   const direction = rotateVecLab(
-    new THREE.Vector3(localDirection.x, localDirection.y, localDirection.z),
+    new THREE.Vector3(directionBodyLocal.x, directionBodyLocal.y, directionBodyLocal.z),
     placement.rxDeg,
     placement.ryDeg,
     placement.rzDeg,
@@ -133,18 +133,20 @@ export function emissionFromPlacement(
   };
 }
 
-function placementForComponent(
-  componentId: string,
+function objectById(
+  objectId: string,
   scene: { objects: SceneObject[] },
 ): SceneObject | undefined {
-  return scene.objects.find((object) => object.componentId === componentId);
+  return scene.objects.find((object) => object.id === objectId);
 }
 
-function assetForComponent(
-  componentId: string,
-  scene: { components: ComponentItem[]; assets: Asset3D[] },
+function assetForObject(
+  objectId: string,
+  scene: { components: ComponentItem[]; assets: Asset3D[]; objects: SceneObject[] },
 ): Asset3D | undefined {
-  const component = scene.components.find((item) => item.id === componentId);
+  const obj = objectById(objectId, scene);
+  if (!obj) return undefined;
+  const component = scene.components.find((item) => item.id === obj.componentId);
   if (!component?.asset3dId) return undefined;
   return scene.assets.find((asset) => asset.id === component.asset3dId);
 }
@@ -191,14 +193,14 @@ export function buildBeamSegmentMesh(
   const link = scene.opticalLinks.find((item) => item.id === segment.opticalLinkId);
   if (!link) return null;
 
-  const fromPlacement = placementForComponent(link.fromComponentId, scene);
-  const toPlacement = placementForComponent(link.toComponentId, scene);
-  if (!fromPlacement || !toPlacement) return null;
+  const fromObject = objectById(link.fromObjectId, scene);
+  const toObject = objectById(link.toObjectId, scene);
+  if (!fromObject || !toObject) return null;
 
-  const fromAsset = assetForComponent(link.fromComponentId, scene);
-  const fromEmission = emissionFromPlacement(fromPlacement, fromAsset);
+  const fromAsset = assetForObject(link.fromObjectId, scene);
+  const fromEmission = emissionFromObject(fromObject, fromAsset);
   const fromVec = labToThreeVector([fromEmission.origin.x, fromEmission.origin.y, fromEmission.origin.z]);
-  const toVec = labToThreeVector([toPlacement.xMm, toPlacement.yMm, toPlacement.zMm]);
+  const toVec = labToThreeVector([toObject.xMm, toObject.yMm, toObject.zMm]);
 
   const distance = fromVec.distanceTo(toVec);
   if (distance < 1e-4) return null;
@@ -252,18 +254,18 @@ export function buildEmitterPreviewRays(scene: {
   opticalLinks: OpticalLink[];
 }): THREE.Object3D[] {
   const outgoingLinkSources = new Set(
-    scene.opticalLinks.map((link) => link.fromComponentId),
+    scene.opticalLinks.map((link) => link.fromObjectId),
   );
   const meshes: THREE.Object3D[] = [];
 
   for (const element of scene.opticalElements) {
     if (!PREVIEW_RAY_KINDS.has(element.elementKind)) continue;
-    if (outgoingLinkSources.has(element.componentId)) continue;
-    const placement = placementForComponent(element.componentId, scene);
+    if (outgoingLinkSources.has(element.objectId)) continue;
+    const placement = objectById(element.objectId, scene);
     if (!placement) continue;
 
-    const asset = assetForComponent(element.componentId, scene);
-    const { origin, direction } = emissionFromPlacement(placement, asset);
+    const asset = assetForObject(element.objectId, scene);
+    const { origin, direction } = emissionFromObject(placement, asset);
     const tip = origin.clone().add(direction.multiplyScalar(DEFAULT_RAY_LENGTH_MM));
 
     const fromVec = labToThreeVector([origin.x, origin.y, origin.z]);
@@ -301,7 +303,7 @@ export function buildEmitterPreviewRays(scene: {
     );
     dashed.computeLineDistances();
     mesh.add(dashed);
-    mesh.userData.previewRayFor = element.componentId;
+    mesh.userData.previewRayFor = element.objectId;
     meshes.push(mesh);
   }
 

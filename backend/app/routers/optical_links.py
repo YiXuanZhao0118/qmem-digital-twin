@@ -5,6 +5,8 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import select
+
 from app import crud, schemas
 from app.db import get_session
 from app.models import OpticalElement, OpticalLink
@@ -28,12 +30,28 @@ def _port_ids(ports: list, role: str) -> set[str]:
     return ids
 
 
+async def _get_optical_element_by_object(session: AsyncSession, object_id) -> OpticalElement | None:
+    stmt = select(OpticalElement).where(OpticalElement.object_id == object_id)
+    return (await session.scalars(stmt)).one_or_none()
+
+
 async def validate_ports(session: AsyncSession, payload: schemas.OpticalLinkBase) -> None:
-    source = await session.get(OpticalElement, payload.from_component_id)
+    # Reject self-loops outright — an optical link cannot have the same
+    # SCENE OBJECT as both source and target. The chain solver treats this
+    # as a cycle and refuses to run, so we catch it at insert time.
+    if payload.from_object_id == payload.to_object_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Optical link cannot loop back to the same object "
+                f"({payload.from_object_id}). Pick a different target."
+            ),
+        )
+    source = await _get_optical_element_by_object(session, payload.from_object_id)
     if source is None:
         raise HTTPException(
             status_code=400,
-            detail="from_component_id has no optical element record.",
+            detail="from_object_id has no optical element record.",
         )
     if payload.from_port not in _port_ids(source.output_ports, "output"):
         raise HTTPException(
@@ -41,11 +59,11 @@ async def validate_ports(session: AsyncSession, payload: schemas.OpticalLinkBase
             detail=f"from_port '{payload.from_port}' is not an output of the source element.",
         )
 
-    target = await session.get(OpticalElement, payload.to_component_id)
+    target = await _get_optical_element_by_object(session, payload.to_object_id)
     if target is None:
         raise HTTPException(
             status_code=400,
-            detail="to_component_id has no optical element record.",
+            detail="to_object_id has no optical element record.",
         )
     if payload.to_port not in _port_ids(target.input_ports, "input"):
         raise HTTPException(
@@ -79,7 +97,19 @@ async def update_optical_link(
     session: AsyncSession = Depends(get_session),
 ) -> OpticalLink:
     link = await crud.get_or_404(session, OpticalLink, link_id)
-    crud.apply_updates(link, payload.model_dump(exclude_unset=True))
+    updates = payload.model_dump(exclude_unset=True)
+    # Same self-loop guard as create — re-checked against the merged result.
+    new_from = updates.get("from_object_id", link.from_object_id)
+    new_to = updates.get("to_object_id", link.to_object_id)
+    if new_from == new_to:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Optical link cannot loop back to the same object "
+                f"({new_from}). Pick a different target."
+            ),
+        )
+    crud.apply_updates(link, updates)
     await session.commit()
     await session.refresh(link)
     await manager.broadcast("optical_link.updated", link_payload(link))

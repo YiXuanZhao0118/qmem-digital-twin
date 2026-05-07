@@ -6,6 +6,40 @@ function nmToThz(nm: number): number {
   return C / (nm * 1e-9) / 1e12;
 }
 
+// Mirror of backend `OPTICAL_COMPONENT_TYPE_TO_KIND` from
+// app/routers/components.py — keep in sync.
+const COMPONENT_TYPE_TO_KIND: Record<string, ElementKind> = {
+  laser: "laser_source",
+  laser_source: "laser_source",
+  tapered_amplifier: "tapered_amplifier",
+  mirror: "mirror",
+  lens: "lens_spherical",
+  lens_spherical: "lens_spherical",
+  lens_cylindrical: "lens_cylindrical",
+  waveplate: "waveplate",
+  polarizer: "polarizer",
+  beam_splitter: "beam_splitter",
+  dichroic_mirror: "dichroic_mirror",
+  fiber_coupler: "fiber_coupler",
+  isolator: "isolator",
+  aom: "aom",
+  eom: "eom",
+  nonlinear_crystal: "nonlinear_crystal",
+  saturable_absorber: "saturable_absorber",
+  detector: "detector",
+  camera: "camera",
+  spectrometer: "spectrometer",
+  wavemeter: "wavemeter",
+  beam_dump: "beam_dump",
+};
+
+export function componentTypeToOpticalKind(
+  componentType: string | null | undefined,
+): ElementKind | null {
+  if (!componentType) return null;
+  return COMPONENT_TYPE_TO_KIND[componentType.trim()] ?? null;
+}
+
 export const KIND_LABELS: Record<ElementKind, string> = {
   laser_source: "Laser Source",
   tapered_amplifier: "Tapered Amplifier",
@@ -73,18 +107,37 @@ export const DEFAULT_KIND_PARAMS: Record<ElementKind, Record<string, unknown>> =
   tapered_amplifier: {
     smallSignalGainDb: 30.0,
     saturationPowerMw: 500.0,
+    minInputPowerMw: 10.0,
     maxInputPowerMw: 30.0,
+    inputAcceptanceRadiusMm: 25.0,
     ase: { powerMw: 5.0, bandwidthNm: 1.0, centerOffsetNm: 0.0 },
+    inputSpatialModeX: { waistUm: 600, waistZOffsetMm: 0, mSquared: 1.5 },
+    inputSpatialModeY: { waistUm: 600, waistZOffsetMm: 0, mSquared: 1.5 },
+    inputPolarization: { exRe: 0, exIm: 0, eyRe: 1, eyIm: 0 },
     outputSpatialModeX: { waistUm: 500, waistZOffsetMm: 0, mSquared: 1.5 },
     outputSpatialModeY: { waistUm: 50, waistZOffsetMm: 0, mSquared: 8.0 },
     outputTransverseMode: { kind: "TEM00" },
   },
-  mirror: { reflectivity: 0.99, normalLocal: [1, 0, 0] },
+  mirror: { reflectivity: 0.99, surfaceNormalBodyLocal: [1, 0, 0] },
   lens_spherical: { focalMm: 100.0, transmission: 0.99 },
   lens_cylindrical: { focalMm: 100.0, cylindricalAxis: "x", transmission: 0.99 },
-  waveplate: { retardanceLambda: 0.5, fastAxisDeg: 0.0, transmission: 0.99 },
-  polarizer: { transmissionAxisDeg: 0.0, extinctionRatioDb: 30.0, transmission: 0.95 },
-  beam_splitter: { splitRatioTransmitted: 0.5, polarizing: false, transmission: 0.99 },
+  waveplate: { retardanceLambda: 0.5, fastAxisDegBeamLocal: 0.0, transmission: 0.99 },
+  polarizer: { transmissionAxisDegBeamLocal: 0.0, extinctionRatioDb: 30.0, transmission: 0.95 },
+  beam_splitter: {
+    splitRatioTransmitted: 0.5,
+    polarizing: false,
+    transmissionAxisDegBeamLocal: 0.0,
+    extinctionRatioDb: 30.0,
+    transmission: 0.99,
+    // Internal 45° coating normal in the SceneObject's local frame. The
+    // geometric ray-tracer reflects off THIS normal — NOT the mesh's outer-
+    // face normal — because the outer face has a normal along the beam
+    // direction (which would back-reflect the beam, breaking the chain).
+    // Default `(1, 1, 0)/√2` reflects a +X incoming beam to +Y (and a -X
+    // beam to +Y as well — both upper-quadrant). Matches the orientation of
+    // the Thorlabs PBS252 STL in our scene.
+    coatingNormalBodyLocal: [0.7071067811865475, 0.7071067811865475, 0],
+  },
   dichroic_mirror: {
     cutoffWavelengthNm: 700.0,
     passBand: "long",
@@ -92,13 +145,23 @@ export const DEFAULT_KIND_PARAMS: Record<ElementKind, Record<string, unknown>> =
     reflectivity: 0.95,
   },
   fiber_coupler: { couplingEfficiency: 0.7, modeFieldDiameterUm: 5.0, fiberType: "single_mode" },
-  isolator: { forwardLossDb: 0.5, isolationDb: 40.0, transmissionAxisDeg: 0.0 },
+  isolator: { forwardLossDb: 0.5, isolationDb: 40.0, transmissionAxisDegBeamLocal: 0.0 },
   aom: {
     baseEfficiency: 0.85,
     deflectionPerMhzUrad: 200.0,
     acousticVelocityMPerS: 4200.0,
     modulationBandwidthMhz: 20.0,
     centerFreqMhz: 80.0,
+    refractiveIndex: 2.26,
+    figureOfMeritM2: 34e-15,
+    crystalLengthMm: 25.0,
+    acousticBeamWidthMm: 1.5,
+    rfDrivePowerW: 1.0,
+    rfPowerMaxW: 2.0,
+    acousticAxisBodyLocal: [0, 0, 1],
+    rfPropagationDirectionBodyLocal: [0, 0, 1],
+    diffractionOrder: 1,
+    braggAngularAcceptanceMrad: 2.0,
   },
   eom: {
     vPiV: 5.0,

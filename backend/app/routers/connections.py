@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import crud, schemas
 from app.db import get_session
-from app.models import Component, Connection
+from app.models import Connection, SceneObject
 from app.websocket import manager
 
 
@@ -27,8 +27,8 @@ async def list_connections(session: AsyncSession = Depends(get_session)) -> list
 async def create_connection(
     payload: schemas.ConnectionCreate, session: AsyncSession = Depends(get_session)
 ) -> Connection:
-    await crud.get_or_404(session, Component, payload.from_component_id)
-    await crud.get_or_404(session, Component, payload.to_component_id)
+    await crud.get_or_404(session, SceneObject, payload.from_object_id)
+    await crud.get_or_404(session, SceneObject, payload.to_object_id)
     connection = Connection(**payload.model_dump())
     session.add(connection)
     await session.commit()

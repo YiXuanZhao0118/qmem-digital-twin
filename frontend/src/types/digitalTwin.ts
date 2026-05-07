@@ -11,12 +11,20 @@ export type ObjectLock = {
   rotation: AxisLock;
 };
 
+/** A point of interest on a 3D asset, in body-local Z-up frame.
+ *  Phase 4 of the schema unification (2026-05-07): renamed
+ *  `localPosition` → `positionMmBodyLocal` and `localDirection` →
+ *  `directionBodyLocal` so the field names embed frame and unit
+ *  inline. The legacy names are accepted on input by the backend
+ *  Pydantic validator during the transition; once alembic 0018 has
+ *  run, every stored row uses the new names. */
 export type Anchor = {
   id: string;
-  name: string;
-  type: "center" | "face" | "edge" | "custom" | string;
-  localPosition: { x: number; y: number; z: number };
-  localDirection?: { x: number; y: number; z: number };
+  name?: string;
+  type?: "center" | "face" | "edge" | "custom" | string;
+  positionMmBodyLocal: { x: number; y: number; z: number };
+  directionBodyLocal?: { x: number; y: number; z: number };
+  apertureMm?: number;
 };
 
 export type Asset3D = {
@@ -41,7 +49,7 @@ export type ComponentItem = {
   componentType: string;
   brand?: string | null;
   model?: string | null;
-  serialNumber?: string | null;
+  // serialNumber moved to SceneObject in alembic 0015 (per-physical-unit).
   asset3dId?: string | null;
   properties: Record<string, unknown>;
   physicsCapabilities: PhysicsCapability[];
@@ -52,9 +60,8 @@ export type ComponentItem = {
 
 export type SceneObject = {
   id: string;
-  objectName: string;
+  name: string;
   componentId: string;
-  parentComponentId?: string | null;
   xMm: number;
   yMm: number;
   zMm: number;
@@ -63,23 +70,24 @@ export type SceneObject = {
   rzDeg: number;
   visible: boolean;
   locked: boolean;
+  serialNumber?: string | null;
   properties: {
     size?: { x: number; y: number; z: number };
     locked?: ObjectLock;
     anchors?: Anchor[];
+    originOffsetMm?: { x: number; y: number; z: number };
+    objectScale?: number;
     [key: string]: unknown;
   };
   updatedAt?: string;
 };
 
-export type Placement = SceneObject;
-
 export type ConnectionItem = {
   id: string;
   connectionType: string;
-  fromComponentId: string;
+  fromObjectId: string;
   fromPort?: string | null;
-  toComponentId: string;
+  toObjectId: string;
   toPort?: string | null;
   label?: string | null;
   properties: Record<string, unknown>;
@@ -134,8 +142,8 @@ export type BeamPath = {
   name: string;
   wavelengthNm?: number | null;
   color: string;
-  sourceComponentId?: string | null;
-  targetComponentId?: string | null;
+  sourceObjectId?: string | null;
+  targetObjectId?: string | null;
   points: Vec3[];
   properties: Record<string, unknown>;
   visible: boolean;
@@ -144,7 +152,7 @@ export type BeamPath = {
 };
 
 export type DeviceState = {
-  componentId: string;
+  objectId: string;
   state: Record<string, unknown>;
   updatedAt: string;
 };
@@ -252,17 +260,40 @@ export type TaperedAmplifierAse = {
 export type TaperedAmplifierParams = {
   smallSignalGainDb: number;
   saturationPowerMw: number;
+  minInputPowerMw?: number | null;
   maxInputPowerMw?: number | null;
+  inputAcceptanceRadiusMm?: number | null;
   ase: TaperedAmplifierAse;
+  inputSpatialModeX?: GaussianMode | null;
+  inputSpatialModeY?: GaussianMode | null;
+  inputPolarization?: JonesVector | null;
   outputSpatialModeX: GaussianMode;
   outputSpatialModeY: GaussianMode;
   outputTransverseMode: TransverseMode;
+  centerWavelengthNm?: number | null;
+  driveCurrentMa?: number | null;
+  driveCurrentMaxMa?: number | null;
+  aseSamples?: Array<{
+    driveCurrentMa: number;
+    forwardPowerMw: number;
+    backwardPowerMw: number;
+  }>;
+  gainSamples?: Array<{
+    inputPowerMw: number;
+    driveCurrentMa: number;
+    forwardPowerMw: number;
+    backwardPowerMw: number;
+  }>;
+  backwardSpatialModeX?: GaussianMode | null;
+  backwardSpatialModeY?: GaussianMode | null;
 };
 
 export type MirrorParams = {
   reflectivity: number;
   surfaceQualityNm?: number | null;
-  normalLocal: number[];
+  /** Phase 5: renamed from `normalLocal`. Body-local Z-up unit normal of
+   *  the reflective face. */
+  surfaceNormalBodyLocal: number[];
 };
 
 export type LensSphericalParams = {
@@ -279,12 +310,14 @@ export type LensCylindricalParams = {
 
 export type WaveplateParams = {
   retardanceLambda: number;
-  fastAxisDeg: number;
+  /** Phase 5: renamed from `fastAxisDeg`. Beam-local Jones-frame angle. */
+  fastAxisDegBeamLocal: number;
   transmission: number;
 };
 
 export type PolarizerParams = {
-  transmissionAxisDeg: number;
+  /** Phase 5: renamed from `transmissionAxisDeg`. Beam-local Jones-frame. */
+  transmissionAxisDegBeamLocal: number;
   extinctionRatioDb: number;
   transmission: number;
 };
@@ -292,7 +325,13 @@ export type PolarizerParams = {
 export type BeamSplitterParams = {
   splitRatioTransmitted: number;
   polarizing: boolean;
+  /** Phase 5: renamed from `transmissionAxisDeg`. Beam-local Jones-frame. */
+  transmissionAxisDegBeamLocal: number;
+  extinctionRatioDb: number;
   transmission: number;
+  /** Phase 5: renamed from `coatingNormalLocal`. Body-local Z-up unit
+   *  normal of the internal 45° coating. */
+  coatingNormalBodyLocal?: number[];
 };
 
 export type DichroicMirrorParams = {
@@ -311,7 +350,8 @@ export type FiberCouplerParams = {
 export type IsolatorParams = {
   forwardLossDb: number;
   isolationDb: number;
-  transmissionAxisDeg: number;
+  /** Phase 5: renamed from `transmissionAxisDeg`. Beam-local Jones-frame. */
+  transmissionAxisDegBeamLocal: number;
 };
 
 export type AOMParams = {
@@ -321,6 +361,22 @@ export type AOMParams = {
   acousticVelocityMPerS: number;
   modulationBandwidthMhz: number;
   centerFreqMhz: number;
+  refractiveIndex?: number | null;
+  figureOfMeritM2?: number | null;
+  crystalLengthMm?: number | null;
+  acousticBeamWidthMm?: number | null;
+  rfDrivePowerW?: number | null;
+  rfPowerMaxW?: number | null;
+  /** Phase 5: renamed from `acousticAxisLocal`. Body-local Z-up. */
+  acousticAxisBodyLocal?: number[] | null;
+  /** Phase 5: renamed from `rfPropagationDirectionLocal`. Body-local Z-up. */
+  rfPropagationDirectionBodyLocal?: number[] | null;
+  diffractionOrder?: -1 | 0 | 1;
+  braggAngularAcceptanceMrad?: number | null;
+  /** Phase 5: renamed from `braggTiltAxisAngleDeg`. Lab/scene Z-up frame. */
+  braggTiltAxisDegLab?: number;
+  maxDiffractionOrder?: number;
+  sidebandVisibilityThreshold?: number;
 };
 
 export type EOMParams = {
@@ -398,7 +454,12 @@ export type OpticalElementKindParams =
   | { elementKind: "beam_dump"; kindParams: BeamDumpParams };
 
 export type OpticalElementCommon = {
-  componentId: string;
+  /** Per-object PK (alembic 0014). Each scene object that has an optical
+   *  role gets its own OpticalElement row keyed by `objectId`. */
+  id: string;
+  /** SceneObject this element belongs to. Two scene objects of the same
+   *  Component (e.g. two BB1 mirrors) get DIFFERENT OpticalElement rows. */
+  objectId: string;
   wavelengthRangeNm: [number, number];
   inputPorts: OpticalPort[];
   outputPorts: OpticalPort[];
@@ -410,9 +471,9 @@ export type OpticalElement = OpticalElementCommon & OpticalElementKindParams;
 
 export type OpticalLink = {
   id: string;
-  fromComponentId: string;
+  fromObjectId: string;
   fromPort: string;
-  toComponentId: string;
+  toObjectId: string;
   toPort: string;
   freeSpaceMm: number;
   properties: Record<string, unknown>;
@@ -440,10 +501,72 @@ export const EMITTER_KINDS: ReadonlySet<ElementKind> = new Set<ElementKind>([
   "tapered_amplifier",
 ]);
 
+export type SpinCoreStartMode = "WAIT" | "CONTINUE";
+export type WaveformKind = "const" | "linear_ramp" | "arbitrary" | "gate_on" | "gate_off";
+
+export type TimingBlock = {
+  id: string;
+  programObjectId: string;
+  label: string | null;
+  tStartNs: number;
+  tEndNs: number;
+  waveformKind: WaveformKind;
+  params: Record<string, unknown>;
+  sortOrder: number;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type TimingProgram = {
+  objectId: string;
+  name: string;
+  spinCoreStart: SpinCoreStartMode;
+  durationNs: number;
+  properties: Record<string, unknown>;
+  blocks: TimingBlock[];
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type TimingProgramUpsert = {
+  name: string;
+  spinCoreStart: SpinCoreStartMode;
+  durationNs: number;
+  properties?: Record<string, unknown>;
+  blocks: Array<Omit<TimingBlock, "id" | "programObjectId" | "createdAt" | "updatedAt">>;
+};
+
+export type TransientTracePoint = {
+  tNs: number;
+  value: number;
+  kind: string;
+  label: string | null;
+};
+
+export type TransientObjectTrace = {
+  objectId: string;
+  points: TransientTracePoint[];
+};
+
+export type TransientRunRequest = {
+  tStartNs: number;
+  tEndNs: number;
+  dtNs: number;
+  persistSegments?: boolean;
+};
+
+export type TransientRunResponse = {
+  runId: string;
+  sampleCount: number;
+  segmentCount: number;
+  objectTraces: TransientObjectTrace[];
+  errors: string[];
+  warnings: string[];
+};
+
 export type SceneData = {
   assets: Asset3D[];
   components: ComponentItem[];
-  placements: Placement[];
   objects: SceneObject[];
   connections: ConnectionItem[];
   assemblyRelations: AssemblyRelation[];
@@ -452,13 +575,16 @@ export type SceneData = {
   opticalElements: OpticalElement[];
   opticalLinks: OpticalLink[];
   beamSegments: BeamSegment[];
+  sceneViews?: import("./visibility").SceneView[];
+  collections?: Collection[];
+  collectionMembers?: CollectionMember[];
+  timingPrograms?: TimingProgram[];
 };
 
 export type SceneEvent =
   | { type: "component.created"; payload: ComponentItem }
   | { type: "component.updated"; payload: ComponentItem }
   | { type: "component.deleted"; payload: { id?: string; componentId?: string } }
-  | { type: "placement.updated"; payload: Placement }
   | { type: "object.updated"; payload: SceneObject }
   | { type: "object.deleted"; payload: { id?: string; objectId?: string } }
   | { type: "assembly_relation.updated"; payload: AssemblyRelation & { deleted?: boolean } }
@@ -468,15 +594,19 @@ export type SceneEvent =
   | { type: "optical_element.updated"; payload: (Partial<OpticalElement> & { componentId?: string; deleted?: boolean }) | OpticalElement }
   | { type: "optical_link.updated"; payload: (Partial<OpticalLink> & { id?: string; deleted?: boolean }) | OpticalLink }
   | { type: "optical_simulation.completed"; payload: { runId: string; segmentCount: number; errors: string[]; warnings: string[] } }
+  | { type: "scene_view.updated"; payload: (Partial<import("./visibility").SceneView> & { id?: string; deleted?: boolean }) | import("./visibility").SceneView }
+  | { type: "collection.updated"; payload: (Partial<Collection> & { id?: string; deleted?: boolean }) | Collection }
+  | { type: "collection_member.updated"; payload: Partial<CollectionMember> & { collectionId?: string; objectId?: string; deleted?: boolean; resetToMaster?: boolean } }
+  | { type: "timing_program.updated"; payload: TimingProgram }
+  | { type: "timing_program.deleted"; payload: { objectId: string } }
   | { type: "scene.reload"; payload: Record<string, unknown> }
   | { type: "scene.connected"; payload: Record<string, unknown> }
   | { type: "pong"; payload: Record<string, unknown> };
 
-export type PlacementPatch = Partial<
+export type SceneObjectPatch = Partial<
   Pick<
-    Placement,
-    | "objectName"
-    | "parentComponentId"
+    SceneObject,
+    | "name"
     | "xMm"
     | "yMm"
     | "zMm"
@@ -485,6 +615,34 @@ export type PlacementPatch = Partial<
     | "rzDeg"
     | "visible"
     | "locked"
+    | "serialNumber"
     | "properties"
   >
 >;
+
+// =============================================================================
+// Collection (Outliner) types
+// =============================================================================
+
+export type Collection = {
+  id: string;
+  name: string;
+  parentId: string | null;
+  color: string;
+  visible: boolean;
+  locked: boolean;
+  exclude: boolean;
+  holdout: boolean;
+  indirectOnly: boolean;
+  sortOrder: number;
+  properties: Record<string, unknown>;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type CollectionMember = {
+  collectionId: string;
+  objectId: string;
+  sortOrder: number;
+  addedAt?: string;
+};

@@ -1,23 +1,85 @@
-import { Box, Layers3, Plus, Search, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+/**
+ * Floating panel wrappers for the left-side catalog + outliner.
+ *
+ * Components catalog and Outliner each render inside a FloatingPanel chrome
+ * provided by WorkspaceProvider. They share the same scene/visibility state
+ * but are independently movable / resizable / closable.
+ */
+import {
+  Box,
+  ChevronDown,
+  ChevronRight,
+  Plus,
+  Search,
+} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
+import { OutlinerPanel } from "./OutlinerPanel";
 import { useSceneStore } from "../store/sceneStore";
-import { getComponentName } from "../utils/components";
+import type { ComponentItem } from "../types/digitalTwin";
+import { getComponentDisplayLabel, getComponentName } from "../utils/components";
+import { FloatingPanel } from "./workspace/FloatingPanel";
+
+const EXPANDED_GROUPS_STORAGE_KEY = "qmem.componentGroups.expanded";
 
 function isComponentLocked(component?: { properties?: Record<string, unknown> }): boolean {
   return component?.properties?.locked === true;
 }
 
-export function AssetLibraryPanel() {
+function loadStringSet(storageKey: string): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return new Set(
+      Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [],
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function formatGroupLabel(key: string): string {
+  return key
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((word) => word[0].toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+export function ComponentsCatalogPanel() {
+  // Components catalog is a TEMPLATE library — visibility / solo are
+  // instance-level concerns and live on the Outliner (which lists scene
+  // objects). The catalog row only offers selection + "place as new
+  // object" (the +). No eye / EyeOff / Star buttons here.
   const scene = useSceneStore((state) => state.scene);
   const selectComponent = useSceneStore((state) => state.selectComponent);
-  const selectObject = useSceneStore((state) => state.selectObject);
   const ensureObjectForComponent = useSceneStore((state) => state.ensureObjectForComponent);
-  const deleteObject = useSceneStore((state) => state.deleteObject);
   const selectedComponentId = useSceneStore((state) => state.selectedComponentId);
-  const selectedObjectId = useSceneStore((state) => state.selectedObjectId);
 
   const [filter, setFilter] = useState("");
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() =>
+    loadStringSet(EXPANDED_GROUPS_STORAGE_KEY),
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(EXPANDED_GROUPS_STORAGE_KEY, JSON.stringify([...expandedGroups]));
+    } catch {
+      /* ignore storage errors */
+    }
+  }, [expandedGroups]);
+
+  const toggleGroup = (key: string) => {
+    setExpandedGroups((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   const visibleComponents = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -29,100 +91,105 @@ export function AssetLibraryPanel() {
     );
   }, [filter, scene.components]);
 
-  const visibleObjects = useMemo(() => {
-    const componentById = new Map(scene.components.map((component) => [component.id, component]));
-    return scene.objects
-      .map((object) => ({
-        object,
-        component: componentById.get(object.componentId),
-      }))
-      .filter((item) => item.component);
-  }, [scene.components, scene.objects]);
+  const isFiltering = filter.trim().length > 0;
+
+  const componentGroups = useMemo(() => {
+    const groups = new Map<string, ComponentItem[]>();
+    for (const component of visibleComponents) {
+      const key = component.componentType?.trim() || "uncategorized";
+      const bucket = groups.get(key);
+      if (bucket) bucket.push(component);
+      else groups.set(key, [component]);
+    }
+    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [visibleComponents]);
 
   return (
-    <aside className="side-panel left-panel">
-      <div className="panel-header">
-        <div>
-          <p className="eyebrow">Library</p>
-          <h2>Assets & Components</h2>
-        </div>
-        <span className="count-pill">{visibleComponents.length + visibleObjects.length}</span>
-      </div>
-
+    <FloatingPanel id="components" title="Components" badge={visibleComponents.length}>
       <div className="search-row">
         <Search size={16} />
-        <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter" />
+        <input
+          value={filter}
+          onChange={(event) => setFilter(event.target.value)}
+          placeholder="Filter components"
+        />
       </div>
-
-      <section className="library-section components-section">
-        <div className="section-title">
-          <span>Components</span>
-          <small>library</small>
-        </div>
-        <div className="component-list">
-          {visibleComponents.map((component) => (
-            <button
-              key={component.id}
-              className={component.id === selectedComponentId ? "component-row selected" : "component-row"}
-              onClick={() => selectComponent(component.id)}
-            >
-              <Box size={17} />
-              <span>
-                <strong>{getComponentName(component)}</strong>
-                <small>{component.componentType}{isComponentLocked(component) ? " locked" : ""}</small>
-              </span>
-              <span
-                className="row-action"
-                title="Place component as object"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void ensureObjectForComponent(component.id);
-                }}
-              >
-                <Plus size={15} />
-              </span>
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="library-section objects-section">
-        <div className="section-title">
-          <span>Objects</span>
-          <small>in scene</small>
-        </div>
-        <div className="component-list">
-          {visibleObjects.map(({ object, component }) => {
-            return (
-              <button
-                key={object.id}
-                className={object.id === selectedObjectId ? "component-row object-row selected" : "component-row object-row"}
-                onClick={() => selectObject(object.id)}
-              >
-                <Layers3 size={17} />
-                <span>
-                  <strong>{object.objectName}</strong>
-                  <small>
-                    {getComponentName(component!)} {object.visible ? "" : " hidden"}
-                  </small>
-                </span>
-                <span
-                  className="row-action danger-action"
-                  title="Remove object"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (window.confirm(`Remove ${object.objectName} from the scene?`)) {
-                      void deleteObject(object.id);
-                    }
-                  }}
+      <div className="component-list">
+        {componentGroups.map(([groupKey, items]) => {
+          const containsSelected = items.some((item) => item.id === selectedComponentId);
+          const expanded = isFiltering || containsSelected || expandedGroups.has(groupKey);
+          const collapsed = !expanded;
+          return (
+            <div className="component-group" key={groupKey}>
+              <div className="component-group-header-row">
+                <button
+                  type="button"
+                  className="component-group-header"
+                  aria-expanded={!collapsed}
+                  onClick={() => toggleGroup(groupKey)}
                 >
-                  <Trash2 size={15} />
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </section>
-    </aside>
+                  {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                  <span className="group-name">{formatGroupLabel(groupKey)}</span>
+                  <span className="group-count">{items.length}</span>
+                </button>
+              </div>
+              {!collapsed && (
+                <div className="component-group-children">
+                  {items.map((component) => {
+                    return (
+                      <button
+                        key={component.id}
+                        className={
+                          component.id === selectedComponentId
+                            ? "component-row selected"
+                            : "component-row"
+                        }
+                        onClick={() => selectComponent(component.id)}
+                        title={getComponentName(component)}
+                      >
+                        <Box size={17} />
+                        <span>
+                          <strong>{getComponentDisplayLabel(component)}</strong>
+                          {isComponentLocked(component) && <small>locked</small>}
+                        </span>
+                        <span
+                          className="row-action"
+                          title="Place component as object"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void ensureObjectForComponent(component.id);
+                          }}
+                        >
+                          <Plus size={15} />
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </FloatingPanel>
   );
+}
+
+export function OutlinerFloatingPanel() {
+  const objectsCount = useSceneStore((state) => state.scene.objects.length);
+  return (
+    <FloatingPanel id="outliner" title="Outliner" badge={objectsCount}>
+      <OutlinerPanel />
+    </FloatingPanel>
+  );
+}
+
+/**
+ * Backwards-compat shim — App.tsx used to import this name. With the new
+ * workspace it isn't rendered directly; everything is routed through the two
+ * floating-panel components above. Kept as a thin re-export so accidental
+ * imports still type-check.
+ */
+export function AssetLibraryPanel() {
+  return null;
 }
