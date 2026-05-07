@@ -2,6 +2,11 @@
 
 Quantum memory optical-table digital twin MVP.
 
+> **Architecture reference**: see [`docs/vibe coding.md`](docs/vibe%20coding.md) for the
+> full top-down project snapshot — layout, frame/unit conventions, schema,
+> per-kind ParamSchemas, align algorithms, and extension recipes. Updated in
+> place as the codebase evolves (not a chronological changelog — `git log` is).
+
 ## Glossary
 
 The data model has three tiers, used consistently across DB, API, and UI:
