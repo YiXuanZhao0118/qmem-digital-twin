@@ -268,7 +268,8 @@ function computeOutgoingDirection(
   // Pass-through elements (lenses, AOM, EOM, waveplate, etc.) — outgoing
   // direction same as incoming.
   const passThrough = new Set([
-    "lens_spherical",
+    "lens_biconvex",
+    "lens_plano_convex",
     "lens_cylindrical",
     "waveplate",
     "polarizer",
@@ -1188,7 +1189,8 @@ export function enumerateBeamAxesFromEmitters(
   const axes: Array<{ fromObjectId: string; fromPort: string; origin: Vec3; direction: Vec3 }> = [];
 
   const passThrough = new Set<string>([
-    "lens_spherical", "lens_cylindrical", "waveplate", "polarizer", "isolator",
+    "lens_biconvex", "lens_plano_convex", "lens_cylindrical",
+    "waveplate", "polarizer", "isolator",
     "aom", "eom", "fiber_coupler", "saturable_absorber", "nonlinear_crystal",
   ]);
   const absorbing = new Set<string>([

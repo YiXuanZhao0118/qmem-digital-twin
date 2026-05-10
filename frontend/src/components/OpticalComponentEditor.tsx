@@ -2600,7 +2600,8 @@ export function OpticalComponentEditor() {
   // (no flat face to pick ??snap anchor to the body centre and choose
   // X/Y/Z as the optical axis; the arrow renders bidirectional).
   const isLensKind =
-    kindContract?.kind === "lens_spherical" ||
+    kindContract?.kind === "lens_biconvex" ||
+    kindContract?.kind === "lens_plano_convex" ||
     kindContract?.kind === "lens_cylindrical";
   // Waveplate also single-face: pick the flat face (sets intercept_in
   // position), and X/Y/Z buttons set directionBodyLocal as the fast-

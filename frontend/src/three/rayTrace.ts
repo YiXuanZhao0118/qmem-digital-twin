@@ -251,7 +251,8 @@ const ABSORBING_KINDS: ReadonlySet<ElementKind> = new Set<ElementKind>([
 ]);
 
 const PASSTHROUGH_KINDS: ReadonlySet<ElementKind> = new Set<ElementKind>([
-  "lens_spherical",
+  "lens_biconvex",
+  "lens_plano_convex",
   "lens_cylindrical",
   "waveplate",
   "polarizer",
@@ -1334,7 +1335,7 @@ function traceOneRay(
       transmissionAxisDeg?: number;
       extinctionRatioDb?: number;
     };
-    if (kind === "lens_spherical" || kind === "lens_cylindrical") {
+    if (kind === "lens_biconvex" || kind === "lens_plano_convex" || kind === "lens_cylindrical") {
       // Apply the thin-lens ABCD on the running Gaussian state.
       const focalMm = typeof oeParams.focalMm === "number" ? oeParams.focalMm : NaN;
       if (Number.isFinite(focalMm)) {

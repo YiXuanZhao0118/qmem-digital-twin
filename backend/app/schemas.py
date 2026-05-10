@@ -674,7 +674,8 @@ ElementKind = Literal[
     "laser_source",
     "tapered_amplifier",
     "mirror",
-    "lens_spherical",
+    "lens_biconvex",        # V2 Phase 5 (alembic 0031): renamed from lens_spherical.
+    "lens_plano_convex",    # V2 Phase 5: new kind for one-flat-one-curved lenses.
     "lens_cylindrical",
     "waveplate",
     "polarizer",
@@ -1275,7 +1276,13 @@ KIND_PARAMS_MODELS: dict[str, type[CamelModel]] = {
     "laser_source": LaserSourceParams,
     "tapered_amplifier": TaperedAmplifierParams,
     "mirror": MirrorParams,
-    "lens_spherical": LensSphericalParams,
+    # V2 Phase 5 (alembic 0031): lens_spherical renamed to lens_biconvex; the
+    # Pydantic class stays LensSphericalParams as an alias since the field
+    # shape is identical (focalMm, transmission, …). lens_plano_convex
+    # shares the same shape today; thick-lens templates with surface
+    # radius / curvature land in a later phase.
+    "lens_biconvex": LensSphericalParams,
+    "lens_plano_convex": LensSphericalParams,
     "lens_cylindrical": LensCylindricalParams,
     "waveplate": WaveplateParams,
     "polarizer": PolarizerParams,
@@ -1313,7 +1320,11 @@ DEFAULT_PORTS: dict[str, dict[str, list[dict[str, Any]]]] = {
         "input": [_port("in", "input", "In", "main")],
         "output": [_port("out", "output", "Reflected", "reflected")],
     },
-    "lens_spherical": {
+    "lens_biconvex": {
+        "input": [_port("in", "input", "In", "main")],
+        "output": [_port("out", "output", "Refracted", "refracted")],
+    },
+    "lens_plano_convex": {
         "input": [_port("in", "input", "In", "main")],
         "output": [_port("out", "output", "Refracted", "refracted")],
     },

@@ -137,9 +137,9 @@ export const KIND_REGISTRY: Record<ElementKind, KindContract> = {
     alignSummary:
       "Same as mirror — face center + normal direction, then user aims via U/V + rotation.",
   },
-  lens_spherical: {
-    kind: "lens_spherical",
-    displayName: "Spherical Lens",
+  lens_biconvex: {
+    kind: "lens_biconvex",
+    displayName: "Biconvex Lens",
     requiredAnchors: ["intercept_in"],
     optionalAnchors: ["intercept_out"],
     anchorsNeedingDirection: ["intercept_in"],
@@ -147,6 +147,17 @@ export const KIND_REGISTRY: Record<ElementKind, KindContract> = {
     alignToleranceMm: 25,
     alignSummary:
       "intercept_in translates to beam axis. Direction = optical axis (light propagation direction through lens body).",
+  },
+  lens_plano_convex: {
+    kind: "lens_plano_convex",
+    displayName: "Plano-Convex Lens",
+    requiredAnchors: ["intercept_in"],
+    optionalAnchors: ["intercept_out"],
+    anchorsNeedingDirection: ["intercept_in"],
+    alignVariant: "translate_anchor_to_beam",
+    alignToleranceMm: 25,
+    alignSummary:
+      "intercept_in is the plane-side surface center; direction points from plane toward convex side.",
   },
   lens_cylindrical: {
     kind: "lens_cylindrical",

@@ -229,7 +229,8 @@ export type ElementKind =
   | "laser_source"
   | "tapered_amplifier"
   | "mirror"
-  | "lens_spherical"
+  | "lens_biconvex"
+  | "lens_plano_convex"
   | "lens_cylindrical"
   | "waveplate"
   | "polarizer"
@@ -527,7 +528,8 @@ export type OpticalElementKindParams =
   | { elementKind: "laser_source"; kindParams: LaserSourceParams }
   | { elementKind: "tapered_amplifier"; kindParams: TaperedAmplifierParams }
   | { elementKind: "mirror"; kindParams: MirrorParams }
-  | { elementKind: "lens_spherical"; kindParams: LensSphericalParams }
+  | { elementKind: "lens_biconvex"; kindParams: LensSphericalParams }
+  | { elementKind: "lens_plano_convex"; kindParams: LensSphericalParams }
   | { elementKind: "lens_cylindrical"; kindParams: LensCylindricalParams }
   | { elementKind: "waveplate"; kindParams: WaveplateParams }
   | { elementKind: "polarizer"; kindParams: PolarizerParams }

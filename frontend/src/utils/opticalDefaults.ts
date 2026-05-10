@@ -13,8 +13,11 @@ const COMPONENT_TYPE_TO_KIND: Record<string, ElementKind> = {
   laser_source: "laser_source",
   tapered_amplifier: "tapered_amplifier",
   mirror: "mirror",
-  lens: "lens_spherical",
-  lens_spherical: "lens_spherical",
+  // V2 Phase 5 (alembic 0031): catalog "lens" maps to lens_biconvex.
+  lens: "lens_biconvex",
+  lens_spherical: "lens_biconvex",
+  lens_biconvex: "lens_biconvex",
+  lens_plano_convex: "lens_plano_convex",
   lens_cylindrical: "lens_cylindrical",
   waveplate: "waveplate",
   polarizer: "polarizer",
@@ -45,7 +48,8 @@ export const KIND_LABELS: Record<ElementKind, string> = {
   laser_source: "Laser Source",
   tapered_amplifier: "Tapered Amplifier",
   mirror: "Mirror",
-  lens_spherical: "Spherical Lens",
+  lens_biconvex: "Biconvex Lens",
+  lens_plano_convex: "Plano-Convex Lens",
   lens_cylindrical: "Cylindrical Lens",
   waveplate: "Waveplate",
   polarizer: "Polarizer",
@@ -71,7 +75,8 @@ export const KIND_GROUPS: { label: string; kinds: ElementKind[] }[] = [
     label: "Passive",
     kinds: [
       "mirror",
-      "lens_spherical",
+      "lens_biconvex",
+      "lens_plano_convex",
       "lens_cylindrical",
       "waveplate",
       "polarizer",
@@ -124,7 +129,8 @@ export const DEFAULT_KIND_PARAMS: Record<ElementKind, Record<string, unknown>> =
   // V2 Phase 2: surface normal lives on
   // objects.properties.anchorBindings[opticalSurface].payload, not here.
   mirror: { reflectivity: 0.99 },
-  lens_spherical: { focalMm: 100.0, transmission: 0.99 },
+  lens_biconvex: { focalMm: 100.0, transmission: 0.99 },
+  lens_plano_convex: { focalMm: 100.0, transmission: 0.99 },
   lens_cylindrical: { focalMm: 100.0, cylindricalAxis: "x", transmission: 0.99 },
   waveplate: { retardanceLambda: 0.5, fastAxisDegBeamLocal: 0.0, transmission: 0.99 },
   polarizer: { transmissionAxisDegBeamLocal: 0.0, extinctionRatioDb: 30.0, transmission: 0.95 },

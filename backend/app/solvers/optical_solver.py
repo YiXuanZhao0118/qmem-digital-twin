@@ -1027,7 +1027,10 @@ def _dispatch_element(
 ) -> dict[str, Beam]:
     if kind == "mirror":
         return apply_mirror(beam, params)
-    if kind == "lens_spherical":
+    if kind in ("lens_biconvex", "lens_plano_convex"):
+        # V2 Phase 5 (alembic 0031): both V2 lens kinds use the spherical
+        # thin-lens model today. apply_lens_spherical is the shared
+        # implementation; thick-lens-aware dispatch lands later.
         return apply_lens_spherical(beam, params)
     if kind == "lens_cylindrical":
         return apply_lens_cylindrical(beam, params)

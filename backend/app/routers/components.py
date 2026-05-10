@@ -53,8 +53,13 @@ OPTICAL_COMPONENT_TYPE_TO_KIND: dict[str, str] = {
     "laser_source": "laser_source",
     "tapered_amplifier": "tapered_amplifier",
     "mirror": "mirror",
-    "lens": "lens_spherical",
-    "lens_spherical": "lens_spherical",
+    # V2 Phase 5 (alembic 0031): the catalog component_type "lens" maps to
+    # the V2 lens_biconvex (safer default for an unspecified spherical
+    # lens). lens_plano_convex is opt-in via component_type.
+    "lens": "lens_biconvex",
+    "lens_spherical": "lens_biconvex",
+    "lens_biconvex": "lens_biconvex",
+    "lens_plano_convex": "lens_plano_convex",
     "lens_cylindrical": "lens_cylindrical",
     "waveplate": "waveplate",
     "polarizer": "polarizer",
@@ -132,7 +137,9 @@ DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
     # populated either by the migration backfill or by the asset-drop default
     # binding. Not a kindParam any more.
     "mirror": {"reflectivity": 0.99},
-    "lens_spherical": {"focalMm": 100.0, "transmission": 0.99},
+    # V2 Phase 5 (alembic 0031).
+    "lens_biconvex": {"focalMm": 100.0, "transmission": 0.99},
+    "lens_plano_convex": {"focalMm": 100.0, "transmission": 0.99},
     "lens_cylindrical": {"focalMm": 100.0, "cylindricalAxis": "x", "transmission": 0.99},
     # V2 Phase 4 (alembic 0030): axis angles moved to
     # objects.properties.anchorBindings[polarizationReference].payload.axisDegBeamLocal.

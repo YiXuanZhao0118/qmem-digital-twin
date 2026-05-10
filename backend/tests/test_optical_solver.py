@@ -439,7 +439,7 @@ def test_solve_chain_lens_focuses_collimated_beam():
 
     laser = FakeElement(laser_id, "laser_source", make_laser_params(power_mw=10.0, waist_x=2000.0, waist_y=2000.0), [], [out_port("out")])
     lens = FakeElement(
-        lens_id, "lens_spherical",
+        lens_id, "lens_biconvex",  # V2 Phase 5 (alembic 0031): renamed from lens_spherical
         {"focalMm": 100.0, "transmission": 1.0},
         [in_port("in")], [out_port("out")],
     )
