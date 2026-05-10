@@ -82,6 +82,11 @@ export type SceneObject = {
     anchors?: Anchor[];
     originOffsetMm?: { x: number; y: number; z: number };
     objectScale?: number;
+    // V2 (alembic 0027 / docs/optical-schema-v2.md §3): per-instance
+    // geometry-only bindings + per-instance emitted beams. Both default
+    // to empty in Phase 1; populated kind-by-kind in Phase 2+.
+    anchorBindings?: AnchorBindingV2[];
+    opticalSources?: OpticalSourceV2[];
     [key: string]: unknown;
   };
   updatedAt?: string;
@@ -733,4 +738,186 @@ export type CollectionMember = {
   objectId: string;
   sortOrder: number;
   addedAt?: string;
+};
+
+// =============================================================================
+// V2 baseline types (alembic 0027, docs/optical-schema-v2.md §3)
+// =============================================================================
+//
+// Mirror of backend/app/schemas.py V2* classes. These describe the V2 target
+// data shape that lives inside JSONB sub-fields today — they are additive in
+// Phase 1 and progressively enforced in Phase 2+ as each kind cuts over.
+
+// ---- anchor bindings -------------------------------------------------------
+
+export type AnchorBindingKind =
+  | "emissionReference"
+  | "opticalPortSurface"
+  | "opticalSurface"
+  | "detectorArea"
+  | "interactionVolume"
+  | "modeField"
+  | "polarizationReference"
+  | "rfDirection"
+  | "crystalAxis"
+  | "calibrationPoint";
+
+export type BindingFrame = "anchorLocalXY" | "bodyLocal" | "lab";
+
+export type V2ApertureCircle = { shape: "circle"; rMm: number };
+export type V2ApertureEllipse = { shape: "ellipse"; xMm: number; yMm: number };
+export type V2ApertureRectangle = { shape: "rectangle"; xMm: number; yMm: number };
+export type V2Aperture = V2ApertureCircle | V2ApertureEllipse | V2ApertureRectangle;
+
+export type AnchorBindingV2 = {
+  id: string;
+  name?: string;
+  anchorId: string;
+  kind: AnchorBindingKind;
+  frame?: BindingFrame; // defaults to "anchorLocalXY"
+  payload: Record<string, unknown>;
+};
+
+// ---- optical sources -------------------------------------------------------
+
+export type V2Linewidth = {
+  kind: "delta" | "lorentzian" | "gaussian" | "voigt" | "measured";
+  fwhmHz?: number;
+  gaussianFwhmHz?: number;
+  lorentzianFwhmHz?: number;
+};
+
+export type V2Spectrum = {
+  centerWavelengthNm: number;
+  wavelengthReference?: "vacuum" | "air";
+  linewidth: V2Linewidth;
+};
+
+export type V2Jones = { exRe: number; exIm: number; eyRe: number; eyIm: number };
+
+export type V2Polarization = {
+  basis: "beamLocalXY";
+  normalization: "unit_jones";
+  jones: V2Jones;
+};
+
+export type V2GaussianAxis = { waistRadiusUm: number };
+
+export type V2GaussianProfile = {
+  kind: "elliptical_gaussian";
+  x: V2GaussianAxis;
+  y: V2GaussianAxis;
+  hardAperture?: Record<string, unknown> | null;
+};
+
+export type V2M2GaussianAxis = { waistZOffsetMm: number; mSquared: number };
+
+export type V2M2GaussianPropagation = {
+  model: "m2_gaussian";
+  x: V2M2GaussianAxis;
+  y: V2M2GaussianAxis;
+};
+
+export type V2SpatialEnvelope = {
+  transverseProfile: V2GaussianProfile;
+  propagation: V2M2GaussianPropagation;
+};
+
+export type V2TransverseMode = {
+  family: "HG" | "LG" | "measured";
+  m: number;
+  n: number;
+  label?: string;
+};
+
+export type V2BeamSource = {
+  powerMw: number;
+  spectrum: V2Spectrum;
+  polarization: V2Polarization;
+  spatialEnvelope: V2SpatialEnvelope;
+  transverseMode: V2TransverseMode;
+};
+
+export type OpticalSourceV2 = {
+  id: string;
+  bindingId: string;
+  enabled: boolean;
+  beam: V2BeamSource;
+};
+
+// ---- optical ports ---------------------------------------------------------
+
+// PortRole is defined above (line ~217) and reused here.
+export type BranchKind =
+  | "main"
+  | "incident"
+  | "reflected"
+  | "transmitted"
+  | "signal"
+  | "seed"
+  | "amplified"
+  | "forward"
+  | "generated"
+  | "order"
+  | "sideband";
+export type PortSide =
+  | "side_A"
+  | "side_B"
+  | "input_side"
+  | "output_side"
+  | "plane_side"
+  | "convex_side"
+  | "concave_surface";
+export type PortFace = "face_1" | "face_2" | "face_3" | "face_4" | "face_5" | "face_6";
+
+export type OpticalPortV2 = {
+  id: string;
+  name?: string;
+  role: PortRole;
+  branchKind?: BranchKind;
+  side?: PortSide;
+  face?: PortFace;
+  bindingId: string;
+};
+
+// ---- beam state snapshot ---------------------------------------------------
+
+export type V2SpatialAxisState = {
+  qReal: number;
+  qImag: number;
+  wAtZUm?: number;
+};
+
+export type V2BeamState = {
+  powerMw: number;
+  spectrum: V2Spectrum;
+  polarization: V2Polarization;
+  spatialX: V2SpatialAxisState;
+  spatialY: V2SpatialAxisState;
+  transverseMode: V2TransverseMode;
+};
+
+// ---- simulation runs / revisions ------------------------------------------
+
+export type SimulationRunStatus = "completed" | "running" | "failed";
+
+export type SimulationRunV2 = {
+  id: string;
+  revisionId?: string | null;
+  solverVersion: string;
+  status: SimulationRunStatus;
+  sceneHash?: string | null;
+  settings: Record<string, unknown>;
+  warnings: unknown[];
+  startedAt: string;
+  finishedAt?: string | null;
+};
+
+export type RevisionV2 = {
+  id: string;
+  label: string;
+  description?: string | null;
+  snapshot: Record<string, unknown>;
+  sceneHash?: string | null;
+  createdAt: string;
 };

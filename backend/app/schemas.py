@@ -1676,3 +1676,278 @@ class TimingProgramOut(TimingProgramBase):
     blocks: list[TimingBlockOut] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
+
+
+# =============================================================================
+# V2 baseline schemas (alembic 0027, docs/optical-schema-v2.md §3)
+# =============================================================================
+#
+# These are the additive Pydantic shapes for the V2 target schema. They live
+# inside JSONB today (objects.properties.{anchorBindings, opticalSources},
+# optical_elements.input_ports / output_ports) and table rows for
+# revisions / simulation_runs.
+#
+# Phase 1 only validates round-trips for these shapes — no per-kind cutover
+# yet. That happens kind-by-kind in Phase 2+.
+
+
+# ---- shared primitives ------------------------------------------------------
+
+
+class V2Vec3(CamelModel):
+    """A 3-component float vector. Frame is implied by the surrounding
+    field name (e.g. ``normalBodyLocal``).
+    """
+
+    x: float
+    y: float
+    z: float
+
+
+# ---- anchor bindings (objects.properties.anchorBindings[]) ------------------
+
+
+AnchorBindingKind = Literal[
+    "emissionReference",
+    "opticalPortSurface",
+    "opticalSurface",
+    "detectorArea",
+    "interactionVolume",
+    "modeField",
+    "polarizationReference",
+    "rfDirection",
+    "crystalAxis",
+    "calibrationPoint",
+]
+
+BindingFrame = Literal["anchorLocalXY", "bodyLocal", "lab"]
+
+
+class V2ApertureCircle(CamelModel):
+    shape: Literal["circle"] = "circle"
+    r_mm: float
+
+
+class V2ApertureEllipse(CamelModel):
+    shape: Literal["ellipse"] = "ellipse"
+    x_mm: float
+    y_mm: float
+
+
+class V2ApertureRectangle(CamelModel):
+    shape: Literal["rectangle"] = "rectangle"
+    x_mm: float
+    y_mm: float
+
+
+V2Aperture = V2ApertureCircle | V2ApertureEllipse | V2ApertureRectangle
+
+
+class V2AnchorBinding(CamelModel):
+    """One per-instance geometry binding tying an asset anchor to a
+    physical surface / port / detector area / interaction volume.
+
+    Payload is intentionally a loose dict in Phase 1 because per-kind
+    payload shape is still being decided per kind. Tightening happens in
+    Phase 2+ (kind-by-kind).
+    """
+
+    id: str
+    name: str | None = None
+    anchor_id: str
+    kind: AnchorBindingKind
+    frame: BindingFrame = "anchorLocalXY"
+    payload: JsonDict = Field(default_factory=dict)
+
+
+# ---- optical sources (objects.properties.opticalSources[]) -----------------
+
+
+class V2Linewidth(CamelModel):
+    kind: Literal["delta", "lorentzian", "gaussian", "voigt", "measured"] = "delta"
+    fwhm_hz: float | None = None
+    gaussian_fwhm_hz: float | None = None
+    lorentzian_fwhm_hz: float | None = None
+
+
+class V2Spectrum(CamelModel):
+    center_wavelength_nm: float
+    wavelength_reference: Literal["vacuum", "air"] = "vacuum"
+    linewidth: V2Linewidth = Field(default_factory=V2Linewidth)
+
+
+class V2Jones(CamelModel):
+    ex_re: float
+    ex_im: float
+    ey_re: float
+    ey_im: float
+
+
+class V2Polarization(CamelModel):
+    basis: Literal["beamLocalXY"] = "beamLocalXY"
+    normalization: Literal["unit_jones"] = "unit_jones"
+    jones: V2Jones
+
+
+class V2GaussianAxis(CamelModel):
+    waist_radius_um: float
+
+
+class V2GaussianProfile(CamelModel):
+    kind: Literal["elliptical_gaussian"] = "elliptical_gaussian"
+    x: V2GaussianAxis
+    y: V2GaussianAxis
+    hard_aperture: JsonDict | None = None
+
+
+class V2M2GaussianAxis(CamelModel):
+    waist_z_offset_mm: float = 0.0
+    m_squared: float = 1.0
+
+
+class V2M2GaussianPropagation(CamelModel):
+    model: Literal["m2_gaussian"] = "m2_gaussian"
+    x: V2M2GaussianAxis = Field(default_factory=V2M2GaussianAxis)
+    y: V2M2GaussianAxis = Field(default_factory=V2M2GaussianAxis)
+
+
+class V2SpatialEnvelope(CamelModel):
+    transverse_profile: V2GaussianProfile
+    propagation: V2M2GaussianPropagation = Field(default_factory=V2M2GaussianPropagation)
+
+
+class V2TransverseMode(CamelModel):
+    family: Literal["HG", "LG", "measured"] = "HG"
+    m: int = 0
+    n: int = 0
+    label: str | None = None
+
+
+class V2BeamSource(CamelModel):
+    """Editable source-truth for one emitted beam. Lives in
+    ``objects.properties.opticalSources[].beam``.
+    """
+
+    power_mw: float
+    spectrum: V2Spectrum
+    polarization: V2Polarization
+    spatial_envelope: V2SpatialEnvelope
+    transverse_mode: V2TransverseMode = Field(default_factory=V2TransverseMode)
+
+
+class V2OpticalSource(CamelModel):
+    """One emitted beam source on a scene object. Multiple sources per
+    object are allowed (e.g. a TA chip with both forward and backward
+    spontaneous emission).
+    """
+
+    id: str
+    binding_id: str
+    enabled: bool = True
+    beam: V2BeamSource
+
+
+# ---- optical ports (optical_elements.{input,output}_ports[]) ---------------
+
+
+PortRole = Literal["input", "output", "bidirectional"]
+BranchKind = Literal[
+    "main",
+    "incident",
+    "reflected",
+    "transmitted",
+    "signal",
+    "seed",
+    "amplified",
+    "forward",
+    "generated",
+    "order",
+    "sideband",
+]
+PortSide = Literal[
+    "side_A",
+    "side_B",
+    "input_side",
+    "output_side",
+    "plane_side",
+    "convex_side",
+    "concave_surface",
+]
+PortFace = Literal["face_1", "face_2", "face_3", "face_4", "face_5", "face_6"]
+
+
+class V2OpticalPort(CamelModel):
+    """Inline port endpoint on an OpticalElement. Geometry resolves
+    through ``binding_id → anchorBindings[] → assets_3d.anchors[]``.
+    """
+
+    id: str
+    name: str | None = None
+    role: PortRole
+    branch_kind: BranchKind | None = None
+    side: PortSide | None = None
+    face: PortFace | None = None
+    binding_id: str
+
+
+# ---- beam segments (solver output snapshot shape) --------------------------
+
+
+class V2SpatialAxisState(CamelModel):
+    q_real: float
+    q_imag: float
+    w_at_z_um: float | None = None
+
+
+class V2BeamState(CamelModel):
+    """Per-segment beam snapshot. Stored inside
+    ``beam_segments.state_at_start`` / ``state_at_end`` JSONB.
+    """
+
+    power_mw: float
+    spectrum: V2Spectrum
+    polarization: V2Polarization
+    spatial_x: V2SpatialAxisState
+    spatial_y: V2SpatialAxisState
+    transverse_mode: V2TransverseMode = Field(default_factory=V2TransverseMode)
+
+
+# ---- simulation runs / revisions (V2 table-shaped) -------------------------
+
+
+SimulationRunStatus = Literal["completed", "running", "failed"]
+
+
+class V2SimulationRunBase(CamelModel):
+    revision_id: uuid.UUID | None = None
+    solver_version: str = "optical-solver-v1"
+    status: SimulationRunStatus = "completed"
+    scene_hash: str | None = None
+    settings: JsonDict = Field(default_factory=dict)
+    warnings: list[Any] = Field(default_factory=list)
+    finished_at: datetime | None = None
+
+
+class V2SimulationRunCreate(V2SimulationRunBase):
+    pass
+
+
+class V2SimulationRunOut(V2SimulationRunBase):
+    id: uuid.UUID
+    started_at: datetime
+
+
+class V2RevisionBase(CamelModel):
+    label: str
+    description: str | None = None
+    snapshot: JsonDict
+    scene_hash: str | None = None
+
+
+class V2RevisionCreate(V2RevisionBase):
+    pass
+
+
+class V2RevisionOut(V2RevisionBase):
+    id: uuid.UUID
+    created_at: datetime

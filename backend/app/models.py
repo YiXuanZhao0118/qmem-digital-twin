@@ -271,9 +271,60 @@ class Revision(Base):
     label: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     snapshot: Mapped[JsonDict] = mapped_column(JSONB, nullable=False)
+    # V2 (alembic 0027): hash of canonical scene input. Lets us reuse a
+    # previous SimulationRun's beam_segments when the current scene matches
+    # this revision's hash. Nullable for legacy rows created pre-V2.
+    scene_hash: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class SimulationRun(Base):
+    """One solver execution. V2 (alembic 0027).
+
+    Promotes the previously phantom ``beam_segments.simulation_run_id`` to
+    a real referent. A run captures *which* solver computed *which* scene
+    state at *what* time; the per-segment beam states live on
+    ``BeamSegment`` rows pointing back here.
+
+    See docs/optical-schema-v2.md §3 (V2 finalized).
+    """
+
+    __tablename__ = "simulation_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("revisions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    solver_version: Mapped[str] = mapped_column(
+        Text, nullable=False, default="optical-solver-v1", server_default="optical-solver-v1"
+    )
+    # status ∈ {"completed", "running", "failed"}.
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, default="completed", server_default="completed"
+    )
+    # Hash of the canonical source-truth at the moment of solve. Indexed in
+    # alembic 0027 so "is the current scene still the one this run computed?"
+    # is one lookup.
+    scene_hash: Mapped[str | None] = mapped_column(Text)
+    settings: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+    warnings: Mapped[JsonList] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class OpticalElement(Base):
@@ -503,7 +554,14 @@ class BeamSegment(Base):
         default=uuid.uuid4,
         server_default=text("gen_random_uuid()"),
     )
-    simulation_run_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    # V2 (alembic 0027): FK to SimulationRun. Pre-V2 this column existed but
+    # held in-memory uuid4()s with no referent; the migration NULLs them and
+    # adds the constraint.
+    simulation_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("simulation_runs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     optical_link_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("optical_links.id", ondelete="CASCADE"),
