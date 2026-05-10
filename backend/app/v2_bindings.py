@@ -45,6 +45,10 @@ V2_TRACKED_BEAM_SPLITTER_KEYS = ("coatingNormalBodyLocal", "transmissionAxisDegB
 # The duplicate `acousticAxisBodyLocal` legacy field is also stripped.
 V2_TRACKED_AOM_KEYS = ("rfPropagationDirectionBodyLocal", "acousticAxisBodyLocal")
 
+# V2 Phase 8: isolator transmission axis moves to polarizationReference
+# (role="transmission") — same shape / role as the polarizer cutover.
+V2_TRACKED_ISOLATOR_KEYS = ("transmissionAxisDegBeamLocal",)
+
 # Legacy laser kindParams keys that V2 Phase 3 migrates into
 # `objects.properties.opticalSources[].beam`. Solver / UI code must NOT read
 # these from kind_params anymore — the translator below produces them on
@@ -467,6 +471,27 @@ def get_polarizer_axis_deg_beam_local(
         return None
 
 
+# V2 Phase 8: isolator reuses the same role="transmission" binding readers
+# the polarizer uses, since the field semantics are identical.
+get_isolator_axis_deg_beam_local = get_polarizer_axis_deg_beam_local
+
+
+def legacy_isolator_kind_params_from_binding(
+    scene_object: SceneObject | dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Synthesise the legacy isolator transmissionAxisDegBeamLocal
+    kindParams field from the V2 polarizationReference binding
+    (role=transmission)."""
+    angle = get_isolator_axis_deg_beam_local(scene_object)
+    if angle is None:
+        return {}
+    return {"transmissionAxisDegBeamLocal": angle}
+
+
+# V2 Phase 8 isolator writer is defined below after the polarizer writer
+# (they share the same role="transmission" binding).
+
+
 def legacy_waveplate_kind_params_from_binding(
     scene_object: SceneObject | dict[str, Any] | None,
 ) -> dict[str, Any]:
@@ -541,6 +566,22 @@ def write_waveplate_axis_deg_beam_local(scene_object: SceneObject, axis_deg: flo
 def write_polarizer_axis_deg_beam_local(scene_object: SceneObject, axis_deg: float) -> None:
     _upsert_polarization_binding(
         scene_object, role="transmission", axis_deg=axis_deg, name="Transmission axis",
+    )
+
+
+def write_isolator_axis_deg_beam_local(scene_object: SceneObject, axis_deg: float) -> None:  # type: ignore[no-redef]
+    """V2 Phase 8: same write path as the polarizer (shared role)."""
+    _upsert_polarization_binding(
+        scene_object, role="transmission", axis_deg=axis_deg, name="Isolator transmission axis",
+    )
+
+
+async def bootstrap_isolator_default_binding(
+    scene_object: SceneObject,
+    asset: Asset3D | None,
+) -> bool:
+    return await bootstrap_polarization_axis_binding(
+        scene_object, asset, role="transmission", name="Isolator transmission axis",
     )
 
 

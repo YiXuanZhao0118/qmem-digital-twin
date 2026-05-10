@@ -20,6 +20,7 @@ from app.models import (
 from app.v2_bindings import (
     bootstrap_aom_default_binding,
     bootstrap_beam_splitter_default_bindings,
+    bootstrap_isolator_default_binding,
     bootstrap_laser_default_binding_and_source,
     bootstrap_mirror_default_binding,
     bootstrap_polarization_axis_binding,
@@ -218,7 +219,9 @@ DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
         "bandwidthMhzKm": None,
         "randomJonesSeed": None,
     },
-    "isolator": {"forwardLossDb": 0.5, "isolationDb": 40.0, "transmissionAxisDegBeamLocal": 0.0},
+    # V2 Phase 8 (alembic 0034): transmission axis moved to a
+    # polarizationReference binding (role="transmission").
+    "isolator": {"forwardLossDb": 0.5, "isolationDb": 40.0},
     "aom": {
         # Legacy / coarse params (kept; topology solver uses them).
         "baseEfficiency": 0.85,
@@ -471,6 +474,11 @@ async def auto_create_optical_element_for_object(
     if kind == "aom" and component.asset_3d_id is not None:
         asset = await session.get(Asset3D, component.asset_3d_id)
         await bootstrap_aom_default_binding(scene_object, asset)
+
+    # V2 Phase 8 (alembic 0034): isolator transmission axis binding.
+    if kind == "isolator" and component.asset_3d_id is not None:
+        asset = await session.get(Asset3D, component.asset_3d_id)
+        await bootstrap_isolator_default_binding(scene_object, asset)
 
     return optical_element
 

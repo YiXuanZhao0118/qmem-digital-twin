@@ -1103,19 +1103,28 @@ class FiberParams(CamelModel):
 
 
 class IsolatorParams(CamelModel):
+    """V2 Phase 8 (alembic 0034): transmission-axis angle moved to a
+    polarizationReference binding (role="transmission") on the SceneObject.
+    Reuses the polarizer writer / synthesiser pattern from Phase 4.
+    """
+
     forward_loss_db: float = Field(default=0.5, ge=0.0)
     isolation_db: float = Field(default=40.0, ge=0.0)
-    # Phase 5: renamed from `transmission_axis_deg` (beam Jones frame).
-    transmission_axis_deg_beam_local: float = 0.0
     group_delay_ps: float = 0.0
 
     @model_validator(mode="before")
     @classmethod
-    def _accept_legacy_field_names(cls, data: Any) -> Any:
-        return _accept_legacy_keys(data, (
-            ("transmissionAxisDeg", "transmissionAxisDegBeamLocal"),
-            ("transmission_axis_deg", "transmission_axis_deg_beam_local"),
-        ))
+    def _drop_v2_tracked_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data = dict(data)
+            for key in (
+                "transmissionAxisDegBeamLocal",
+                "transmission_axis_deg_beam_local",
+                "transmissionAxisDeg",
+                "transmission_axis_deg",
+            ):
+                data.pop(key, None)
+        return data
 
 
 # Active / Nonlinear -----------------------------------------------------------

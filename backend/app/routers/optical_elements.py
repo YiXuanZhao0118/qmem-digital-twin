@@ -14,6 +14,7 @@ from app.models import OpticalElement, SceneObject
 from app.v2_bindings import (
     V2_TRACKED_AOM_KEYS,
     V2_TRACKED_BEAM_SPLITTER_KEYS,
+    V2_TRACKED_ISOLATOR_KEYS,
     V2_TRACKED_LASER_KEYS,
     V2_TRACKED_POLARIZER_KEYS,
     V2_TRACKED_WAVEPLATE_KEYS,
@@ -21,11 +22,13 @@ from app.v2_bindings import (
     get_optical_source,
     legacy_aom_kind_params_from_binding,
     legacy_beam_splitter_kind_params_from_bindings,
+    legacy_isolator_kind_params_from_binding,
     legacy_laser_kind_params_from_beam,
     legacy_polarizer_kind_params_from_binding,
     legacy_waveplate_kind_params_from_binding,
     write_aom_rf_direction_body_local,
     write_beam_splitter_coating_normal,
+    write_isolator_axis_deg_beam_local,
     write_polarizer_axis_deg_beam_local,
     write_waveplate_axis_deg_beam_local,
 )
@@ -56,7 +59,7 @@ async def _serialize_optical_elements(
     v2_object_ids = [
         el.object_id
         for el in elements
-        if el.element_kind in ("laser_source", "waveplate", "polarizer", "beam_splitter", "aom")
+        if el.element_kind in ("laser_source", "waveplate", "polarizer", "beam_splitter", "aom", "isolator")
     ]
     if not v2_object_ids:
         return payloads
@@ -96,6 +99,10 @@ async def _serialize_optical_elements(
                 payload["kindParams"] = {**existing, **patch}
         elif el.element_kind == "aom":
             patch = legacy_aom_kind_params_from_binding(scene_object)
+            if patch:
+                payload["kindParams"] = {**(payload.get("kindParams") or {}), **patch}
+        elif el.element_kind == "isolator":
+            patch = legacy_isolator_kind_params_from_binding(scene_object)
             if patch:
                 payload["kindParams"] = {**(payload.get("kindParams") or {}), **patch}
     return payloads
@@ -203,6 +210,15 @@ async def update_optical_element(
             scene_object = await session.get(SceneObject, object_id)
             if scene_object is not None:
                 write_polarizer_axis_deg_beam_local(scene_object, axis)
+    if element.element_kind == "isolator" and isinstance(raw_kind_params, dict):
+        if "transmissionAxisDegBeamLocal" in raw_kind_params:
+            try:
+                axis = float(raw_kind_params["transmissionAxisDegBeamLocal"])
+            except (TypeError, ValueError):
+                axis = 0.0
+            scene_object = await session.get(SceneObject, object_id)
+            if scene_object is not None:
+                write_isolator_axis_deg_beam_local(scene_object, axis)
     if element.element_kind == "aom" and isinstance(raw_kind_params, dict):
         # Either V1 field (rfPropagationDirectionBodyLocal or its alias
         # acousticAxisBodyLocal) routes to the same rfDirection binding.
