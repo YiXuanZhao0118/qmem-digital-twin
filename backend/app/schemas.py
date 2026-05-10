@@ -792,21 +792,29 @@ class TaperedAmplifierParams(CamelModel):
 class MirrorParams(CamelModel):
     reflectivity: float = Field(default=0.99, ge=0.0, le=1.0)
     surface_quality_nm: float | None = None
-    # Reflective-face normal in the SceneObject's body-local Z-up frame.
-    # Phase 5 unification (2026-05-07): renamed from `normal_local` →
-    # `surface_normal_body_local` so the field name embeds frame.
-    surface_normal_body_local: list[float] = Field(default_factory=lambda: [1.0, 0.0, 0.0])
     # Time-domain / wave-optics extensions (all optional; missing = ideal):
     clear_aperture_mm: float | None = Field(default=None, gt=0)
     group_delay_ps: float = 0.0
 
+    # V2 Phase 2 (alembic 0028): the reflective-surface normal moved from
+    # `surface_normal_body_local` here to
+    # ``objects.properties.anchorBindings[kind:opticalSurface].payload.normalBodyLocal``.
+    # Inputs that still carry the old field have it silently dropped so V1
+    # client uploads keep working — but it is no longer authoritative and
+    # nobody reads it anymore.
     @model_validator(mode="before")
     @classmethod
-    def _accept_legacy_field_names(cls, data: Any) -> Any:
-        return _accept_legacy_keys(data, (
-            ("normalLocal", "surfaceNormalBodyLocal"),
-            ("normal_local", "surface_normal_body_local"),
-        ))
+    def _drop_v1_normal_field(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data = dict(data)
+            for legacy_key in (
+                "surfaceNormalBodyLocal",
+                "surface_normal_body_local",
+                "normalLocal",
+                "normal_local",
+            ):
+                data.pop(legacy_key, None)
+        return data
 
 
 class LensSphericalParams(CamelModel):

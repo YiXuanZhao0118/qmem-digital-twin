@@ -10,12 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import crud, schemas
 from app.db import get_session
 from app.models import (
+    Asset3D,
     BeamPath,
     Component,
     OpticalElement,
     OpticalLink,
     SceneObject,
 )
+from app.v2_bindings import bootstrap_mirror_default_binding
 from app.websocket import manager
 
 
@@ -129,7 +131,11 @@ DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
         "backwardSpatialModeX": {"waistUm": 600.0, "waistZOffsetMm": 0.0, "mSquared": 1.5},
         "backwardSpatialModeY": {"waistUm": 600.0, "waistZOffsetMm": 0.0, "mSquared": 1.5},
     },
-    "mirror": {"reflectivity": 0.99, "surfaceNormalBodyLocal": [1.0, 0.0, 0.0]},
+    # V2 Phase 2 (alembic 0028): surface normal lives on
+    # objects.properties.anchorBindings[opticalSurface].payload.normalBodyLocal,
+    # populated either by the migration backfill or by the asset-drop default
+    # binding. Not a kindParam any more.
+    "mirror": {"reflectivity": 0.99},
     "lens_spherical": {"focalMm": 100.0, "transmission": 0.99},
     "lens_cylindrical": {"focalMm": 100.0, "cylindricalAxis": "x", "transmission": 0.99},
     "waveplate": {"retardanceLambda": 0.5, "fastAxisDegBeamLocal": 0.0, "transmission": 0.99},
@@ -410,6 +416,15 @@ async def auto_create_optical_element_for_object(
         kind_params=kind_params,
     )
     session.add(optical_element)
+
+    # V2 Phase 2 (alembic 0028): mirror per-instance reflective normal moved
+    # to objects.properties.anchorBindings[opticalSurface]. For
+    # newly-spawned mirrors, attach the default binding so a fresh scene
+    # behaves the same as a backfilled one.
+    if kind in ("mirror", "dichroic_mirror") and component.asset_3d_id is not None:
+        asset = await session.get(Asset3D, component.asset_3d_id)
+        await bootstrap_mirror_default_binding(scene_object, component, asset)
+
     return optical_element
 
 

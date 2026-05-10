@@ -302,9 +302,9 @@ export type TaperedAmplifierParams = {
 export type MirrorParams = {
   reflectivity: number;
   surfaceQualityNm?: number | null;
-  /** Phase 5: renamed from `normalLocal`. Body-local Z-up unit normal of
-   *  the reflective face. */
-  surfaceNormalBodyLocal: number[];
+  // V2 Phase 2 (alembic 0028): the reflective-surface normal moved to
+  // `objects.properties.anchorBindings[opticalSurface].payload.normalBodyLocal`.
+  // Use `getMirrorNormalBodyLocal()` from utils/v2Bindings.ts to read it.
 };
 
 export type LensSphericalParams = {

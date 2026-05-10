@@ -20,6 +20,7 @@ import type {
   SceneObject,
 } from "../types/digitalTwin";
 import { bodyLocalDirToLabDir, threeToLabPointMm } from "../optical/frames";
+import { getMirrorNormalBodyLocal } from "./v2Bindings";
 
 export type Vec3 = { x: number; y: number; z: number };
 
@@ -145,6 +146,15 @@ const DEFAULT_MIRROR_THICKNESS_MM = 6;
  *  already imports from this module, and Vite would error on the cycle.
  */
 function mirrorNormalLocal(obj: SceneObject, scene: SceneData): Vec3 | null {
+  // V2 Phase 2 (alembic 0028) precedence:
+  //   1. objects.properties.anchorBindings[opticalSurface].payload.normalBodyLocal
+  //   2. asset's `optical_anchor` directionBodyLocal (CAD default)
+  //   3. null — caller falls back to "no reflection direction available"
+  const v2 = getMirrorNormalBodyLocal(obj);
+  if (v2) {
+    const len = Math.hypot(v2[0], v2[1], v2[2]);
+    if (len > 1e-9) return { x: v2[0] / len, y: v2[1] / len, z: v2[2] / len };
+  }
   const component = scene.components.find((c) => c.id === obj.componentId);
   const asset = component?.asset3dId
     ? scene.assets.find((a) => a.id === component.asset3dId)
@@ -154,20 +164,6 @@ function mirrorNormalLocal(obj: SceneObject, scene: SceneData): Vec3 | null {
     const d = optical.directionBodyLocal;
     const len = Math.hypot(d.x, d.y, d.z);
     if (len > 1e-9) return { x: d.x / len, y: d.y / len, z: d.z / len };
-  }
-  const el = scene.opticalElements.find((e) => e.objectId === obj.id);
-  const params = (el?.kindParams ?? {}) as { surfaceNormalBodyLocal?: number[]; normalLocal?: number[] };
-  // Phase 5: prefer the new `surfaceNormalBodyLocal` key, fall back to
-  // legacy `normalLocal` for un-migrated rows during the transition.
-  const arr = params.surfaceNormalBodyLocal ?? params.normalLocal;
-  if (arr && arr.length >= 3) {
-    const n: Vec3 = {
-      x: arr[0] ?? 0,
-      y: arr[1] ?? 0,
-      z: arr[2] ?? 0,
-    };
-    const len = Math.hypot(n.x, n.y, n.z);
-    if (len > 1e-9) return { x: n.x / len, y: n.y / len, z: n.z / len };
   }
   return null;
 }
@@ -1199,11 +1195,12 @@ export function enumerateBeamAxesFromEmitters(
     "detector", "camera", "spectrometer", "wavemeter", "beam_dump",
   ]);
 
-  function reflectMirror(elem: OpticalElement, obj: SceneObject, incident: Vec3): Vec3 {
-    const params = (elem.kindParams ?? {}) as { surfaceNormalBodyLocal?: number[]; normalLocal?: number[] };
-    const arr = params.surfaceNormalBodyLocal ?? params.normalLocal;
-    const nLocalArr = arr && arr.length >= 3 ? arr : [0, 0, 1];
-    const nLocal: Vec3 = { x: nLocalArr[0], y: nLocalArr[1], z: nLocalArr[2] };
+  function reflectMirror(_elem: OpticalElement, obj: SceneObject, incident: Vec3): Vec3 {
+    // V2 Phase 2 (alembic 0028): the surface normal lives on the
+    // SceneObject's V2 anchorBindings; mirrorNormalLocal does the
+    // binding → asset_anchor → null precedence so this stays in sync
+    // with every other mirror-normal reader.
+    const nLocal = mirrorNormalLocal(obj, scene) ?? { x: 0, y: 0, z: 1 };
     const nLab = v3norm(rotateLocalToLab(nLocal, obj.rxDeg, obj.ryDeg, obj.rzDeg));
     return v3norm(reflect(incident, nLab));
   }

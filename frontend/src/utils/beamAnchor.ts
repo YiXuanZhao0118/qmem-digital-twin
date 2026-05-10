@@ -10,8 +10,9 @@
 //  2. Per-element-kind default                                  (kind-based)
 //  3. Body center (no offset)                                   (final fallback)
 
-import type { OpticalElement, Asset3D, ComponentItem } from "../types/digitalTwin";
+import type { OpticalElement, Asset3D, ComponentItem, SceneObject } from "../types/digitalTwin";
 import { rotateLocalToLab, type Vec3 } from "./beamPlacement";
+import { getMirrorNormalBodyLocal } from "./v2Bindings";
 
 export const OPTICAL_ANCHOR_ID = "optical_anchor";
 
@@ -30,7 +31,15 @@ export type BeamAnchor = {
  *  local +Z axis (which is the conventional mirror normal). */
 const DEFAULT_MIRROR_THICKNESS_MM = 6;
 
-type SceneObjectLike = { id: string; componentId: string; rxDeg: number; ryDeg: number; rzDeg: number };
+type SceneObjectLike = {
+  id: string;
+  componentId: string;
+  rxDeg: number;
+  ryDeg: number;
+  rzDeg: number;
+  // V2 Phase 2: anchorBindings[opticalSurface] now carries the mirror normal.
+  properties?: SceneObject["properties"];
+};
 
 /** Pick the right BeamAnchor for an OBJECT given the scene. The asset
  *  contributes geometry (anchor offset / normal); the OE contributes kind
@@ -62,24 +71,18 @@ export function getBeamAnchor(
 
   // 2. Mirror default — reflective face sits in front of body center along
   //    the mirror's surface normal. The mirror is symmetric about that
-  //    axis, so the face center is at -thickness/2 of the back-side
-  //    direction. Phase 5: kindParams field renamed
-  //    `normalLocal` → `surfaceNormalBodyLocal`. Reads accept both for
-  //    a one-release transition window.
+  //    axis, so face center = body center + n * thickness/2.
+  //    V2 Phase 2 (alembic 0028): the normal now lives on the SceneObject's
+  //    anchorBindings[opticalSurface].payload.normalBodyLocal — read it via
+  //    the V2 helper so the asset_anchor branch above (case 1) still wins
+  //    when explicit, and this branch only fires when the asset has no
+  //    optical_anchor at all.
   if (el?.elementKind === "mirror") {
-    const params = el.kindParams as { surfaceNormalBodyLocal?: number[]; normalLocal?: number[] };
-    const arr = params.surfaceNormalBodyLocal ?? params.normalLocal;
-    const nLocal: Vec3 =
-      arr && arr.length >= 3
-        ? {
-            x: arr[0] ?? 0,
-            y: arr[1] ?? 0,
-            z: arr[2] ?? 1,
-          }
-        : { x: 0, y: 0, z: 1 };
+    const v2 = getMirrorNormalBodyLocal(obj ?? null);
+    const nLocal: Vec3 = v2
+      ? { x: v2[0], y: v2[1], z: v2[2] }
+      : { x: 0, y: 0, z: 1 };
     const halfThickness = DEFAULT_MIRROR_THICKNESS_MM / 2;
-    // Face is in the +n direction by halfThickness (face normal points OUT
-    // of the front face, so face center = body center + n * thickness/2).
     return {
       offsetLocalMm: { x: nLocal.x * halfThickness, y: nLocal.y * halfThickness, z: nLocal.z * halfThickness },
       normalLocal: nLocal,

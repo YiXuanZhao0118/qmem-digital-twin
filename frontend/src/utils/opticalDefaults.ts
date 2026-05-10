@@ -121,7 +121,9 @@ export const DEFAULT_KIND_PARAMS: Record<ElementKind, Record<string, unknown>> =
     outputSpatialModeY: { waistUm: 50, waistZOffsetMm: 0, mSquared: 8.0 },
     outputTransverseMode: { kind: "TEM00" },
   },
-  mirror: { reflectivity: 0.99, surfaceNormalBodyLocal: [1, 0, 0] },
+  // V2 Phase 2: surface normal lives on
+  // objects.properties.anchorBindings[opticalSurface].payload, not here.
+  mirror: { reflectivity: 0.99 },
   lens_spherical: { focalMm: 100.0, transmission: 0.99 },
   lens_cylindrical: { focalMm: 100.0, cylindricalAxis: "x", transmission: 0.99 },
   waveplate: { retardanceLambda: 0.5, fastAxisDegBeamLocal: 0.0, transmission: 0.99 },
