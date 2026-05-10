@@ -20,7 +20,7 @@ import type {
   SceneObject,
 } from "../types/digitalTwin";
 import { bodyLocalDirToLabDir, threeToLabPointMm } from "../optical/frames";
-import { getMirrorNormalBodyLocal } from "./v2Bindings";
+import { getEffectiveApertureMm, getMirrorNormalBodyLocal } from "./v2Bindings";
 
 export type Vec3 = { x: number; y: number; z: number };
 
@@ -765,9 +765,12 @@ function findInterceptPoint(
         obj.ryDeg,
         obj.rzDeg,
       );
-      const apertureRaw = (anchor as unknown as { apertureMm?: number }).apertureMm;
-      const aperture =
-        typeof apertureRaw === "number" && apertureRaw > 0 ? apertureRaw : DEFAULT_APERTURE_MM;
+      // V2: prefer per-object aperture override
+      // (objects.properties.anchorBindings[].payload.aperture or
+      // perAnchorApertures map); fall back to the asset anchor's
+      // legacy apertureMm seed; final fallback to DEFAULT_APERTURE_MM.
+      const eff = getEffectiveApertureMm(obj, anchor, anchor.id);
+      const aperture = eff && eff > 0 ? eff : DEFAULT_APERTURE_MM;
       return {
         posLab: {
           x: obj.xMm + localOffset.x,

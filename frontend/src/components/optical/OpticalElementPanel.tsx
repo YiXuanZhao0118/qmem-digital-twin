@@ -36,6 +36,12 @@ import {
   rotateLabDir,
   threeToLabPointMm,
 } from "../../optical/frames";
+import {
+  getEffectiveApertureMm,
+  getPerObjectAperture,
+  setPerObjectAperture,
+  type V2Aperture,
+} from "../../utils/v2Bindings";
 
 type Props = {
   component: ComponentItem;
@@ -385,6 +391,9 @@ function AlignToBeamSection({
           {isWaveplate && (
             <WaveplateAdjustControls sceneObject={sceneObject} element={element} />
           )}
+          {/* V2: per-object aperture override (asset apertureMm becomes a
+              default seed; the editable value lives on the SceneObject). */}
+          <PerObjectApertureEditor sceneObject={sceneObject} />
         </>
       ) : (
         <div className="snap-to-beam-empty">
@@ -392,6 +401,119 @@ function AlignToBeamSection({
         </div>
       )}
       {feedback && <div className="snap-to-beam-feedback">{feedback}</div>}
+    </div>
+  );
+}
+
+/** Per-object aperture editor — V2.
+ *
+ *  Aperture used to live on Asset3D.anchors[].apertureMm and was edited in
+ *  the PHY Editor (Layer 2). Per V2 (docs/optical-schema-v2.md §3),
+ *  aperture is per-physical-instance: the asset value is just a default
+ *  seed, and the user overrides it on the SceneObject. We write to
+ *  objects.properties.perAnchorApertures[anchorId] (a transitional
+ *  flat map covering anchors that have no V2 binding yet — AOM
+ *  intercept_in/out, lens intercept_in, etc.). For kinds whose existing
+ *  binding already carries geometry (mirror's opticalSurface), future
+ *  cleanup will fold the aperture into that binding's payload — the
+ *  reader helper getEffectiveApertureMm hides the distinction.
+ */
+function PerObjectApertureEditor({ sceneObject }: { sceneObject: SceneObject }) {
+  const scene = useSceneStore((state) => state.scene);
+  const updateSceneObject = useSceneStore((state) => state.updateSceneObject);
+
+  const component = scene.components.find((c) => c.id === sceneObject.componentId);
+  const asset = component?.asset3dId
+    ? scene.assets.find((a) => a.id === component.asset3dId)
+    : undefined;
+  // Surface every anchor whose asset seed carries an apertureMm — those
+  // are the ones the consumer code reads (beam intercept tests, AOM align,
+  // apertureCheck). Anchors with no apertureMm seed are out of scope here;
+  // a future kind contract may extend the list.
+  const anchors = (asset?.anchors ?? []).filter(
+    (a) =>
+      a.apertureMm != null ||
+      // Always show the aperture editor for AOM intercept ports even if
+      // the seed is missing — that is the canonical kind that needs an
+      // explicit per-instance value.
+      a.id === "intercept_in" ||
+      a.id === "intercept_out",
+  );
+  if (!anchors.length) return null;
+
+  const onChange = async (anchorId: string, rMm: number | null) => {
+    const next: V2Aperture | null = rMm != null && rMm > 0 ? { shape: "circle", rMm } : null;
+    const newProps = setPerObjectAperture(sceneObject.properties, anchorId, next);
+    await updateSceneObject(sceneObject.id, { properties: newProps });
+  };
+
+  return (
+    <div
+      className="snap-to-beam-aperture"
+      style={{
+        marginTop: 8,
+        padding: "6px 8px",
+        borderLeft: "2px solid #facc15",
+        background: "rgba(250, 204, 21, 0.08)",
+        fontSize: 11,
+      }}
+    >
+      <div style={{ color: "#facc15", fontWeight: 600, marginBottom: 4 }}>
+        Aperture (per-object)
+      </div>
+      <div style={{ opacity: 0.7, marginBottom: 6 }}>
+        Asset value is a default seed; per-object override lives on this
+        SceneObject. Set 0 / blank to reuse the asset default.
+      </div>
+      {anchors.map((a) => {
+        const eff = getEffectiveApertureMm(sceneObject, a, a.id);
+        const override = getPerObjectAperture(sceneObject, a.id);
+        const overrideRadius = override && override.shape === "circle" ? override.rMm : null;
+        return (
+          <label
+            key={a.id}
+            className="component-editor-coord"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 80px",
+              gap: 6,
+              alignItems: "center",
+              marginBottom: 4,
+            }}
+          >
+            <span>
+              <code style={{ fontSize: 10 }}>{a.id}</code>
+              {overrideRadius == null && (
+                <span style={{ marginLeft: 6, opacity: 0.55, fontSize: 10 }}>
+                  (asset default {a.apertureMm?.toFixed(2) ?? "—"} mm)
+                </span>
+              )}
+            </span>
+            <input
+              type="number"
+              step={0.1}
+              min={0}
+              placeholder={a.apertureMm?.toFixed(2) ?? ""}
+              value={overrideRadius != null ? overrideRadius.toString() : ""}
+              onChange={(e) => {
+                const raw = e.target.value;
+                if (raw.trim() === "") {
+                  void onChange(a.id, null);
+                  return;
+                }
+                const v = Number(raw);
+                if (!Number.isFinite(v)) return;
+                void onChange(a.id, v);
+              }}
+              title={
+                eff != null
+                  ? `Effective aperture: ${eff.toFixed(2)} mm`
+                  : "No aperture set; consumers fall back to a kind default."
+              }
+            />
+          </label>
+        );
+      })}
     </div>
   );
 }
@@ -872,12 +994,17 @@ function AomAdjustControls({
         );
         return;
       }
-      if (inAnchor!.apertureMm == null) missing.push("intercept_in.apertureMm");
-      if (outAnchor!.apertureMm == null) missing.push("intercept_out.apertureMm");
+      // V2: aperture is per-instance now. Use the effective aperture
+      // (per-object override → asset anchor seed) and only block alignment
+      // if neither path provides one.
+      const inEffAp = getEffectiveApertureMm(sceneObject, inAnchor!, "intercept_in");
+      const outEffAp = getEffectiveApertureMm(sceneObject, outAnchor!, "intercept_out");
+      if (inEffAp == null || inEffAp <= 0) missing.push("intercept_in.aperture");
+      if (outEffAp == null || outEffAp <= 0) missing.push("intercept_out.aperture");
       if (missing.length) {
         setAlignFeedback(
-          `AOM asset ${assetRow.name} has anchor(s) without aperture: ${missing.join(", ")}. ` +
-          "Set apertureMm in PHY Editor before aligning.",
+          `AOM ${sceneObject.name} has anchor(s) without aperture: ${missing.join(", ")}. ` +
+          "Edit per-object aperture in the Object panel before aligning.",
         );
         return;
       }
@@ -1000,7 +1127,9 @@ function AomAdjustControls({
       }
 
       // [5] Ambiguity guard — AOM nearly perpendicular to beam.
-      const entryAp = (best.portId === "intercept_in" ? inAnchor! : outAnchor!).apertureMm ?? 0;
+      // V2: use the effective per-object aperture (already validated > 0
+      // on entry above).
+      const entryAp = best.portId === "intercept_in" ? inEffAp! : outEffAp!;
       const apertureDiamMm = 2 * entryAp;
       if (
         best.otherMiss <= ALIGN_TOLERANCE_MM &&

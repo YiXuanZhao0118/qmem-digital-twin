@@ -1507,18 +1507,23 @@ function useViewport(
 
 /** Editable number-input fields for a single anchor draft.
  *  - Position (xyz, mm body-local)
- *  - Direction (xyz, body-local) ??only when `showDirection` is true
- *  - Aperture: SCALAR (single radius/half-width input) or RECTANGLE
- *    (separate width + height inputs, e.g. for PBS / BS cube diagonal
- *    cement plane that is genuinely rectangular, not square).
+ *  - Direction (xyz, body-local) — only when `showDirection` is true
  *
- *  Lives below the kind-specific status banner so the user can fine-
- *  tune values directly with the keyboard after picking from 3D. */
+ *  Aperture editing has moved out of the PHY Editor (Layer 2): per V2
+ *  schema (docs/optical-schema-v2.md §3) aperture is per-instance and
+ *  lives on `objects.properties.anchorBindings[].payload.aperture`. The
+ *  Asset3D anchor's legacy `apertureMm` survives as a default seed for
+ *  newly-spawned instances; the user edits per-object in the Object
+ *  panel.
+ *
+ *  The `apertureMode` prop is preserved for source compat (some callers
+ *  still pass it) but is now ignored.
+ */
 function EditableAnchorFields({
   draft,
   updateDraft,
   showDirection,
-  apertureMode = "scalar",
+  apertureMode: _apertureMode = "scalar",
 }: {
   draft: AnchorDraft;
   updateDraft: (key: string, patch: Partial<AnchorDraft>) => void;
@@ -1572,58 +1577,9 @@ function EditableAnchorFields({
           ))}
         </div>
       )}
-      {apertureMode === "scalar" && (
-        <label className="component-editor-coord" style={{ marginTop: 6 }}>
-          <span>Aperture (mm)</span>
-          <input
-            type="number"
-            step={0.1}
-            min={0}
-            value={draft.apertureMm ?? 12.5}
-            onChange={(e) => {
-              const v = Number(e.target.value);
-              if (!Number.isFinite(v)) return;
-              updateDraft(draft.__key, { apertureMm: v });
-            }}
-          />
-        </label>
-      )}
-      {apertureMode === "rectangle" && (
-        <div className="component-editor-coord-grid" style={{ marginTop: 6, gridTemplateColumns: "1fr 1fr" }}>
-          <label className="component-editor-coord">
-            <span>Width (mm)</span>
-            <input
-              type="number"
-              step={0.1}
-              min={0}
-              value={(
-                draft.apertureWidthMm ?? (draft.apertureMm != null ? draft.apertureMm * 2 : 12.5)
-              ).toFixed(2)}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                if (!Number.isFinite(v)) return;
-                updateDraft(draft.__key, { apertureWidthMm: v });
-              }}
-            />
-          </label>
-          <label className="component-editor-coord">
-            <span>Height (mm)</span>
-            <input
-              type="number"
-              step={0.1}
-              min={0}
-              value={(
-                draft.apertureHeightMm ?? (draft.apertureMm != null ? draft.apertureMm * 2 : 12.5)
-              ).toFixed(2)}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                if (!Number.isFinite(v)) return;
-                updateDraft(draft.__key, { apertureHeightMm: v });
-              }}
-            />
-          </label>
-        </div>
-      )}
+      {/* Aperture inputs intentionally removed (V2). Edit per-object on
+          the Object panel — the value lives in
+          objects.properties.anchorBindings[].payload.aperture. */}
     </>
   );
 }
@@ -2234,11 +2190,9 @@ function AomFaceSection({
     outDraft.positionMmBodyLocal.y - inDraft.positionMmBodyLocal.y,
     outDraft.positionMmBodyLocal.z - inDraft.positionMmBodyLocal.z,
   );
-  const apertureMatches =
-    inDraft.apertureMm != null &&
-    outDraft.apertureMm != null &&
-    Math.abs(inDraft.apertureMm - outDraft.apertureMm) < 0.01;
-
+  // V2: aperture is per-instance now, so the "aperture matched / differ"
+  // status display has been dropped from the PHY Editor. Per-port
+  // apertures are inspected on the Object panel instead.
   const portBlock = (
     label: string,
     sublabel: string,
@@ -2246,8 +2200,6 @@ function AomFaceSection({
     accentColour: string,
   ) => {
     const isSelected = draft.__key === selectedAnchorKey;
-    const apertureSet =
-      draft.apertureMm != null && Number.isFinite(draft.apertureMm) && draft.apertureMm > 0;
     return (
       <div
         className={
@@ -2281,17 +2233,8 @@ function AomFaceSection({
             {draft.positionMmBodyLocal.y.toFixed(2)},{" "}
             {draft.positionMmBodyLocal.z.toFixed(2)}) mm
           </span>
-          <span
-            style={{
-              marginLeft: 6,
-              color: apertureSet ? "#facc15" : "#f87171",
-              fontSize: 11,
-            }}
-          >
-            {apertureSet
-              ? `aperture ${draft.apertureMm!.toFixed(2)} mm`
-              : "apertureMm not set"}
-          </span>
+          {/* V2: per-port aperture moved to the Object panel
+              (objects.properties.anchorBindings[].payload.aperture). */}
         </div>
         <EditableAnchorFields
           draft={draft}
@@ -2325,8 +2268,7 @@ function AomFaceSection({
           around this point.
         </div>
         <div style={{ opacity: 0.7, fontSize: 11, marginTop: 4 }}>
-          port separation: <strong>{portSep.toFixed(2)} mm</strong> |
-          {" "}aperture {apertureMatches ? "matched" : "differ"}
+          port separation: <strong>{portSep.toFixed(2)} mm</strong>
           {acousticAxisBodyLocal && (
             <>
               {" | "}acoustic axis (read-only):{" "}
@@ -3298,27 +3240,11 @@ export function OpticalComponentEditor() {
 
   const handleSave = async () => {
     if (!editedAsset && !(isFiberKind && selectedComponent)) return;
-    // Block save if the contract requires apertureMm on any anchor that
-    // doesn't have one. AOM ports are the canonical case (both
-    // intercept_in / intercept_out need an active aperture so the
-    // align routine can disambiguate entry vs exit and warn on
-    // beam-clipping). Other kinds opt-in via
-    // KindContract.anchorsNeedingAperture.
-    const apertureRequiredIds = new Set(kindContract?.anchorsNeedingAperture ?? []);
-    if (apertureRequiredIds.size > 0) {
-      const draftsMissingAperture = drafts.filter(
-        (d) => apertureRequiredIds.has(d.id as never) &&
-          (d.apertureMm == null || !Number.isFinite(d.apertureMm) || d.apertureMm <= 0),
-      );
-      if (draftsMissingAperture.length) {
-        setErrorMsg(
-          `Save blocked: ${draftsMissingAperture
-            .map((d) => `${d.id} needs apertureMm > 0`)
-            .join("; ")}.`,
-        );
-        return;
-      }
-    }
+    // V2: aperture editing moved to the per-object panel
+    // (objects.properties.anchorBindings[].payload.aperture). The PHY
+    // Editor save no longer enforces apertureMm on the asset anchor —
+    // the asset value is just a default seed. Per-instance aperture
+    // validation lives in the Object panel's AOM align flow.
     // AOM-specific geometric guards (mirror what runtime alignToLaser
     // checks). Catch the two ways a save could pass aperture validation
     // but still leave align unable to proceed:
@@ -3467,11 +3393,10 @@ export function OpticalComponentEditor() {
   );
   const selectedNeedsDirection =
     selectedDraft != null && dirRequiredIds.has(selectedDraft.id as never);
-  const apertureRequiredIds = new Set(kindContract?.anchorsNeedingAperture ?? []);
-  const draftsMissingAperture = drafts.filter(
-    (d) => apertureRequiredIds.has(d.id as never) &&
-      (d.apertureMm == null || !Number.isFinite(d.apertureMm) || d.apertureMm <= 0),
-  );
+  // V2: aperture is per-instance now; the PHY Editor no longer
+  // surfaces a "missing apertureMm" warning. Per-object aperture is
+  // edited in the Object panel.
+  const draftsMissingAperture: typeof drafts = [];
 
   return (
     <div className="component-editor">
