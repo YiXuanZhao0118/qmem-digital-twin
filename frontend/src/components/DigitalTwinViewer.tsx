@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeftRight, Crosshair, Grid3x3, Move, RotateCw, Sparkles } from "lucide-react";
+import { ArrowLeftRight, Crosshair, Eye, EyeOff, Grid3x3, Move, RotateCw, Sparkles } from "lucide-react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
+import { applyFiberConnectorTransform, buildFiberCurvePath, type FiberNode } from "../three/loadAsset";
 
 import { useSceneStore, TOUCH_OPS, TOUCH_OP_BY_ID, type FeatureKind, type TouchOp } from "../store/sceneStore";
 import { createBeamPath } from "../three/beamPath";
@@ -116,7 +118,8 @@ function buildTraceLine(segment: TraceSegment, maxPowerOnPath: number): THREE.Ob
 import { createLabPhotoRoom } from "../three/photoRoom";
 import { applyObjectGeometryOffset, applyObjectTransform, mmToThree } from "../three/transformUtils";
 import { relationTarget, worldAnchor } from "../utils/relationAnchors";
-import type { ComponentItem, SceneObject } from "../types/digitalTwin";
+import { computeBraggTiltAxisFromRfDirectionBodyLocal } from "../optical/kinds/aom/physics";
+import type { Asset3D, ComponentItem, DeviceState, OpticalElement, SceneObject } from "../types/digitalTwin";
 import {
   isAssemblyRelationVisible,
   isBeamPathVisible,
@@ -452,119 +455,109 @@ function addTaPortLabels(wrapper: THREE.Object3D, _component: ComponentItem): vo
   placeAt(bboxLocal.max.x + labelOffset, "INPUT", "#ffffff", "#ef4444");
 }
 
-/** ABC port markers for AOM components. Visualises the user's body-axis
- *  convention:
- *    A = body +X face center (one optical hole)
- *    B = body -X face center (other optical hole)
- *    C = body +Y face center (SMA / RF input)
- *  The orange arrow is body local +Z = ABC plane normal = the rotation
- *  axis used to swap +1 / -1 diffraction order alignment. Only added when
- *  the AOM is selected so the scene is not permanently decorated. */
-function addAomAbcMarkers(wrapper: THREE.Object3D, _component: ComponentItem): void {
-  wrapper.updateMatrixWorld(true);
-  const bboxLocal = new THREE.Box3();
-  wrapper.traverse((m) => {
-    if (!(m as THREE.Mesh).isMesh) return;
-    const mesh = m as THREE.Mesh;
-    if (!mesh.geometry) return;
-    if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
-    const bb = mesh.geometry.boundingBox;
-    if (!bb) return;
-    mesh.updateMatrixWorld(true);
-    const meshWorld = bb.clone().applyMatrix4(mesh.matrixWorld);
-    const inv = new THREE.Matrix4().copy(wrapper.matrixWorld).invert();
-    for (let i = 0; i < 8; i++) {
-      const corner = new THREE.Vector3(
-        i & 1 ? meshWorld.max.x : meshWorld.min.x,
-        i & 2 ? meshWorld.max.y : meshWorld.min.y,
-        i & 4 ? meshWorld.max.z : meshWorld.min.z,
-      ).applyMatrix4(inv);
-      bboxLocal.expandByPoint(corner);
-    }
-  });
-  if (bboxLocal.isEmpty()) return;
-  const cx = (bboxLocal.min.x + bboxLocal.max.x) / 2;
-  const cy = (bboxLocal.min.y + bboxLocal.max.y) / 2;
-  const cz = (bboxLocal.min.z + bboxLocal.max.z) / 2;
-  const minSpan = Math.min(
-    bboxLocal.max.x - bboxLocal.min.x,
-    bboxLocal.max.y - bboxLocal.min.y,
-    bboxLocal.max.z - bboxLocal.min.z,
-  );
-  const sphereRadius = Math.max(0.0025, minSpan * 0.18);
+/** Bragg tilt-axis indicator for a selected AOM. Phase 7.1 (vibe-coding-
+ *  log 2026-05-08): replaced the previous "ABC + body+Z arrow" markers
+ *  with a single arrow showing the user-selected Bragg tilt axis that the
+ *  AOM align routine actually uses:
+ *
+ *      τ̂_body = cos(α)·ê₀ + sin(α)·(ê₀ × b̂)
+ *
+ *  where b̂ = (intercept_out − intercept_in) / ‖…‖ is the body-local
+ *  port-to-port (= optical) axis, ê₀ is body+X projected onto ⊥-b̂, and
+ *  α is component.properties.braggTiltAngleDegBodyLocal. The arrow is
+ *  anchored at the midpoint pivot — same point the body rocks around
+ *  during align.
+ *
+ *  The OLD ABC markers (A on +X face, B on -X, C on +Y, with an orange
+ *  arrow along body+Z) were misleading on two counts:
+ *    - Sphere positions assumed body axes that don't match GLBs whose
+ *      optical hole runs along Y (e.g. the user's MT80).
+ *    - The orange arrow was drawn along three's wrapper-local (0,0,1)
+ *      = body-local +Y, NOT body-local +Z as the comment claimed; even
+ *      worse, "body+Z" was already not the rotation axis under the new
+ *      Phase 7.1 align (which uses b̂×â, not â).
+ *  Renders only when an AOM is selected, so the scene isn't permanently
+ *  decorated. */
+function addAomTiltAxisMarker(
+  wrapper: THREE.Object3D,
+  asset: Asset3D | undefined,
+  opticalElement: OpticalElement | undefined,
+  component: ComponentItem,
+): void {
+  if (!asset) return;
+  const inAnchor = asset.anchors.find((a) => a.id === "intercept_in");
+  const outAnchor = asset.anchors.find((a) => a.id === "intercept_out");
+  if (!inAnchor || !outAnchor) return;
 
-  const makeSphere = (color: number, label: string): THREE.Mesh => {
-    const sphere = new THREE.Mesh(
-      new THREE.SphereGeometry(sphereRadius, 16, 12),
-      new THREE.MeshBasicMaterial({
-        color,
-        depthTest: false,
-        depthWrite: false,
-        transparent: true,
-        opacity: 0.95,
-      }),
-    );
-    sphere.userData.isAbcMarker = true;
-    sphere.renderOrder = 1000;
+  // Phase 7.3: τ̂(α) is â-independent. Only b̂ + α determine the arrow
+  // direction. acousticAxisBodyLocal is no longer read here; degeneracy
+  // (τ̂ ‖ â) is surfaced as a runtime warning in the align feedback,
+  // not by hiding the arrow.
+  void opticalElement;
+  const compProps = (component.properties ?? {}) as {
+    rfPropagationDirectionBodyLocal?: number[];
+    rfPropagationDirectionLocal?: number[];
+    acousticAxisBodyLocal?: number[];
+    acousticAxisLocal?: number[];
+  };
+  const rfArr =
+    compProps.rfPropagationDirectionBodyLocal ??
+    compProps.rfPropagationDirectionLocal ??
+    compProps.acousticAxisBodyLocal ??
+    compProps.acousticAxisLocal ??
+    [-1, 0, 0];
+  const rfBody = Array.isArray(rfArr) && rfArr.length >= 3
+    ? { x: Number(rfArr[0]) || 0, y: Number(rfArr[1]) || 0, z: Number(rfArr[2]) || 0 }
+    : { x: -1, y: 0, z: 0 };
 
-    const canvas = document.createElement("canvas");
-    canvas.width = 96;
-    canvas.height = 96;
-    const ctx = canvas.getContext("2d");
-    if (ctx) {
-      ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
-      ctx.beginPath();
-      ctx.arc(48, 48, 42, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = `#${color.toString(16).padStart(6, "0")}`;
-      ctx.font = "bold 64px 'Inter', sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(label, 48, 50);
-    }
-    const tex = new THREE.CanvasTexture(canvas);
-    const labelSprite = new THREE.Sprite(
-      new THREE.SpriteMaterial({
-        map: tex,
-        transparent: true,
-        depthTest: false,
-        depthWrite: false,
-      }),
-    );
-    labelSprite.scale.set(sphereRadius * 5, sphereRadius * 5, 1);
-    labelSprite.position.set(0, sphereRadius * 2.4, 0);
-    labelSprite.renderOrder = 1001;
-    labelSprite.userData.isAbcMarker = true;
-    sphere.add(labelSprite);
+  // body-local Z-up vectors (mm for positions, unitless for direction)
+  const inP = inAnchor.positionMmBodyLocal;
+  const outP = outAnchor.positionMmBodyLocal;
+  const bBody = { x: outP.x - inP.x, y: outP.y - inP.y, z: outP.z - inP.z };
+  const bMag = Math.hypot(bBody.x, bBody.y, bBody.z);
+  if (bMag < 1e-6) return;
+  const bUnit = { x: bBody.x / bMag, y: bBody.y / bMag, z: bBody.z / bMag };
+  // τ_body in the ⊥-b̂ plane, parameterised by α. ê₀ = body+X (or
+  // fallback) projected onto ⊥-b̂; ê₁ = ê₀ × b̂. So α=0° → body+X
+  // direction (typical), α=90° → body+Z, etc.
+  const tUnit = computeBraggTiltAxisFromRfDirectionBodyLocal(bUnit, rfBody);
+  if (!tUnit) return;
 
-    return sphere;
+  // Pivot in body-local Z-up mm (midpoint of the two port anchors).
+  const pivotBody = {
+    x: (inP.x + outP.x) / 2,
+    y: (inP.y + outP.y) / 2,
+    z: (inP.z + outP.z) / 2,
   };
 
-  const a = makeSphere(0xef4444, "A");
-  a.position.set(bboxLocal.max.x, cy, cz);
-  wrapper.add(a);
-  const b = makeSphere(0x22c55e, "B");
-  b.position.set(bboxLocal.min.x, cy, cz);
-  wrapper.add(b);
-  const c = makeSphere(0x3b82f6, "C");
-  c.position.set(cx, bboxLocal.max.y, cz);
-  wrapper.add(c);
+  // Body-local Z-up → wrapper three (Y-up) frame swap; positions get
+  // /100 (mm → three units), directions are pure axis swap.
+  const pivotThree = new THREE.Vector3(
+    pivotBody.x / 100,
+    pivotBody.z / 100,
+    -pivotBody.y / 100,
+  );
+  const tiltDirThree = new THREE.Vector3(
+    tUnit.x,
+    tUnit.z,
+    -tUnit.y,
+  ).normalize();
 
-  const arrowLength = Math.max(
-    bboxLocal.max.x - bboxLocal.min.x,
-    bboxLocal.max.y - bboxLocal.min.y,
-  ) * 0.6;
+  // Arrow length scales with the port separation so it stays visible
+  // on small (1–2 mm aperture) AOMs as well as large modules.
+  const portSepMm = bMag;
+  const arrowLength = Math.max(0.05, (portSepMm * 0.6) / 100);
   const arrow = new THREE.ArrowHelper(
-    new THREE.Vector3(0, 0, 1),
-    new THREE.Vector3(cx, cy, cz),
+    tiltDirThree,
+    pivotThree,
     arrowLength,
-    0xf97316,
+    0xf97316,  // orange — distinct from anchor colours (red / green)
     arrowLength * 0.25,
     arrowLength * 0.15,
   );
-  arrow.userData.isAbcMarker = true;
+  arrow.userData.isAomTiltAxisMarker = true;
   arrow.traverse((child) => {
-    child.userData.isAbcMarker = true;
+    child.userData.isAomTiltAxisMarker = true;
   });
   wrapper.add(arrow);
 }
@@ -598,6 +591,148 @@ function addWireframeOutline(wrapper: THREE.Object3D): void {
     lines.renderOrder = 998;
     child.add(lines);
   });
+}
+
+/** Remove all decorations that the rebuild useEffect attaches per-frame
+ *  (selection wireframe outline, TA port labels, AOM Bragg-tilt arrow,
+ *  fiber beam-flow indicators, relation axes / ring markers). Used by
+ *  the incremental rebuild path before re-applying decorations from the
+ *  current selection / relation state — the geometric asset itself stays
+ *  put. Geometries / materials are disposed so we don't leak GPU memory
+ *  across rebuilds.
+ *
+ *  Each of the helpers below tags its own outputs (`userData.isOutline`,
+ *  `userData.isPortLabel`, `userData.isAomTiltAxisMarker`,
+ *  `userData.isBeamFlowIndicator`, plus the four `relation-*` names
+ *  from `addObjectAxesHelper`). Anything not tagged is part of the
+ *  loaded asset and is preserved. */
+function stripDynamicDecorations(wrapper: THREE.Object3D): void {
+  const toRemove: THREE.Object3D[] = [];
+  wrapper.traverse((child) => {
+    if (child === wrapper) return;
+    const ud = child.userData ?? {};
+    if (
+      ud.isOutline ||
+      ud.isPortLabel ||
+      ud.isAomTiltAxisMarker ||
+      ud.isBeamFlowIndicator ||
+      child.name === "relation-driver-axes" ||
+      child.name === "relation-driven-axes" ||
+      child.name === "relation-driver-marker" ||
+      child.name === "relation-driven-marker"
+    ) {
+      toRemove.push(child);
+    }
+  });
+  for (const obj of toRemove) {
+    obj.parent?.remove(obj);
+    disposeObject(obj);
+  }
+}
+
+/** Visual indicator for a fiber's beam-entry / beam-exit assignment.
+ *  The user clicks one of the ferrule connectors to designate which end
+ *  the beam enters from; this helper draws:
+ *    - a green torus around the entry connector ferrule
+ *    - a red torus around the exit connector
+ *    - an orange arrow at the spline midpoint pointing entry → exit
+ *  All children carry `userData.isBeamFlowIndicator = true` so the
+ *  rebuild useEffect's stripDynamicDecorations cleans them up before
+ *  redecorating from the current state. Returns silently if the wrapper
+ *  has no fiber connectors or no beamEntryEnd is set. */
+function addFiberBeamFlowIndicator(
+  wrapper: THREE.Object3D,
+  beamEntryEnd: "A" | "B",
+  fiberAnchors: { id: string; positionMmBodyLocal?: { x: number; y: number; z: number } }[] | undefined,
+): void {
+  // Connectors are children of the loaded asset object (one level below
+  // the wrapper since the rebuild useEffect wraps the asset in a fresh
+  // group). Traverse to find them rather than scanning wrapper.children
+  // directly. The asset object also has a non-identity position from
+  // applyObjectGeometryOffset, so we attach the arrow to assetObject —
+  // not wrapper — to keep the midpoint maths in the same frame as the
+  // connector positions.
+  let connA: THREE.Object3D | null = null;
+  let connB: THREE.Object3D | null = null;
+  let assetObject: THREE.Object3D | null = null;
+  wrapper.traverse((child) => {
+    if (!assetObject && child.userData?.isLoadedAsset) {
+      assetObject = child;
+    }
+    const ep = child.userData?.fiberConnectorEndpoint;
+    if (ep === "A") connA = child;
+    else if (ep === "B") connB = child;
+  });
+  if (!connA || !connB) return;
+  const aObj: THREE.Object3D = assetObject ?? wrapper;
+  const aConn: THREE.Object3D = connA;
+  const bConn: THREE.Object3D = connB;
+
+  const entryConn = beamEntryEnd === "A" ? aConn : bConn;
+  const exitConn = beamEntryEnd === "A" ? bConn : aConn;
+  // Ring haloes the optical port. Position is read from the corresponding
+  // fiberAnchors record in connector body-local mm (default (0, 36.28, 0)
+  // = ferrule tip); falls back to a ferrule-tip approximation if anchors
+  // are missing. Rings are children of the connector group so coordinates
+  // stay connector-local even after the spline rotates / translates.
+  const findAnchorPos = (anchorId: string) => {
+    const a = (fiberAnchors ?? []).find((x) => x.id === anchorId);
+    const p = a?.positionMmBodyLocal;
+    if (p && Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z)) {
+      return { x: p.x, y: p.y, z: p.z };
+    }
+    return { x: 0, y: 36.28, z: 0 };
+  };
+  const entryPosMm = findAnchorPos(beamEntryEnd === "A" ? "intercept_in" : "intercept_out");
+  const exitPosMm = findAnchorPos(beamEntryEnd === "A" ? "intercept_out" : "intercept_in");
+  const ringRadius = 0.035;
+  const ringTube = 0.005;
+  const buildRing = (color: number, posMm: { x: number; y: number; z: number }): THREE.Mesh => {
+    const torus = new THREE.Mesh(
+      new THREE.TorusGeometry(ringRadius, ringTube, 10, 48),
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.85,
+        side: THREE.DoubleSide,
+        depthTest: false,
+      }),
+    );
+    // TorusGeometry's disc lies in the XY plane with axis along +Z. The
+    // connector's outward direction is local +Y, so rotate the torus 90°
+    // about X to face the ring opening along +Y, then position at the
+    // anchor (mm → three units = /100).
+    torus.rotation.x = Math.PI / 2;
+    torus.position.set(posMm.x / 100, posMm.y / 100, posMm.z / 100);
+    torus.renderOrder = 1099;
+    torus.userData.isBeamFlowIndicator = true;
+    return torus;
+  };
+  entryConn.add(buildRing(0x22c55e, entryPosMm)); // green = entry
+  exitConn.add(buildRing(0xef4444, exitPosMm));   // red   = exit
+
+  // Arrow at the straight-line midpoint of the two connector positions
+  // (in assetObject-local frame, where connector.position lives), pointing
+  // entry → exit. Approximate for curved fibers, but a clear flow cue.
+  const mid = entryConn.position.clone().add(exitConn.position).multiplyScalar(0.5);
+  const dir = exitConn.position.clone().sub(entryConn.position);
+  const len = dir.length();
+  if (len < 1e-4) return;
+  dir.divideScalar(len);
+  const shaftLen = Math.min(0.08, len * 0.25);
+  const arrow = new THREE.ArrowHelper(
+    dir,
+    mid.clone().sub(dir.clone().multiplyScalar(shaftLen / 2)),
+    shaftLen,
+    0xf97316, // orange — distinct from anchor / selection swatches
+    shaftLen * 0.4,
+    shaftLen * 0.25,
+  );
+  arrow.userData.isBeamFlowIndicator = true;
+  arrow.traverse((child) => {
+    child.userData.isBeamFlowIndicator = true;
+  });
+  aObj.add(arrow);
 }
 
 function addObjectAxesHelper(object: THREE.Object3D, isDriven = false): void {
@@ -991,6 +1126,8 @@ function ViewerCursorEditor({ panelKey }: { panelKey: "left" | "right" }) {
   const cursor = useSceneStore((state) => state.transformCursorMm[panelKey]);
   const setCursorRaw = useSceneStore((state) => state.setTransformCursorMm);
   const setCursor = (point: { x: number; y: number; z: number }) => setCursorRaw(panelKey, point);
+  const cursorHidden = useSceneStore((state) => state.transformCursorHidden[panelKey]);
+  const toggleCursorHidden = useSceneStore((state) => state.toggleTransformCursorHidden);
   const [draft, setDraft] = useState({
     x: cursor.x.toFixed(1),
     y: cursor.y.toFixed(1),
@@ -1041,6 +1178,16 @@ function ViewerCursorEditor({ panelKey }: { panelKey: "left" | "right" }) {
       {renderField("x")}
       {renderField("y")}
       {renderField("z")}
+      <button
+        type="button"
+        className="viewer-cursor-toggle"
+        onClick={() => toggleCursorHidden(panelKey)}
+        aria-pressed={cursorHidden}
+        aria-label={cursorHidden ? "Show cursor marker" : "Hide cursor marker"}
+        title={cursorHidden ? "Show cursor marker" : "Hide cursor marker"}
+      >
+        {cursorHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+      </button>
     </div>
   );
 }
@@ -1060,12 +1207,35 @@ export function DigitalTwinViewer({
   const controlsRef = useRef<OrbitControls | null>(null);
   const environmentGroupRef = useRef<THREE.Group | null>(null);
   const componentGroupRef = useRef<THREE.Group>(new THREE.Group());
+  // Per-objectId cache of loaded asset wrappers, used by the rebuild useEffect
+  // to avoid re-loading STL / GLB geometry on every dep change. Cache hit when
+  // (component, asset, deviceState) all hold reference equality vs last build —
+  // i.e. only `placement` (transform) or unrelated state changed. Drag, edit,
+  // select, hover all hit the cache and just re-apply transform + decorations.
+  // A full scene reload from the server invalidates everything (new array refs).
+  const objectWrappersRef = useRef<
+    Map<
+      string,
+      {
+        wrapper: THREE.Group;
+        componentRef: ComponentItem | undefined;
+        assetRef: Asset3D | undefined;
+        stateRef: DeviceState | undefined;
+      }
+    >
+  >(new Map());
   const beamGroupRef = useRef<THREE.Group>(new THREE.Group());
   const relationGroupRef = useRef<THREE.Group>(new THREE.Group());
   const viewCenterGroupRef = useRef<THREE.Group>(new THREE.Group());
   const globalAxesGizmoRef = useRef<THREE.Group | null>(null);
   const resolvedViewCenterThreeRef = useRef<THREE.Vector3>(HOME_CAMERA_TARGET.clone());
   const animationFrameRef = useRef<number>();
+  // On-demand rendering. The animate loop only re-renders when this ref's
+  // function is called or when OrbitControls reports the camera moved (damping
+  // settling). Outside callers (gizmo drag, hover highlight, scene rebuild)
+  // call requestRenderRef.current() to schedule a single frame. Default is a
+  // no-op so calls before the init useEffect mounts are safe.
+  const requestRenderRef = useRef<() => void>(() => {});
   const placementGizmoRef = useRef<PlacementGizmo | null>(null);
   const snapOverlayRef = useRef<SnapOverlay | null>(null);
   const faceHighlightRef = useRef<THREE.Group | null>(null);
@@ -1087,6 +1257,10 @@ export function DigitalTwinViewer({
   const sceneData = useSceneStore((state) => state.scene);
   const scopeProbe = useSceneStore((state) => state.scopeProbe);
   const selectedComponentId = useSceneStore((state) => state.selectedComponentId);
+  const fiberEditingComponentId = useSceneStore((state) => state.fiberEditingComponentId);
+  const updateFiberNodes = useSceneStore((state) => state.updateFiberNodes);
+  const insertFiberNode = useSceneStore((state) => state.insertFiberNode);
+  const removeFiberNode = useSceneStore((state) => state.removeFiberNode);
   const selectedObjectId = useSceneStore((state) => state.selectedObjectId);
   const selectedObjectIds = useSceneStore((state) => state.selectedObjectIds);
   const selectedRelationId = useSceneStore((state) => state.selectedRelationId);
@@ -1100,6 +1274,7 @@ export function DigitalTwinViewer({
   const updateSceneObject = useSceneStore((state) => state.updateSceneObject);
   const toggleSoloObject = useSceneStore((state) => state.toggleSoloObject);
   const showAllHidden = useSceneStore((state) => state.showAllHidden);
+  const deleteSceneObject = useSceneStore((state) => state.deleteObject);
   const gizmoOrientation = useSceneStore((state) => state.gizmoOrientation);
   const gizmoMode = useSceneStore((state) => state.gizmoMode[panelKey]);
   const setGizmoModeRaw = useSceneStore((state) => state.setGizmoMode);
@@ -1342,6 +1517,7 @@ export function DigitalTwinViewer({
     [overlayFlags, session, activeView, sceneData],
   );
 
+  const cursorHidden = useSceneStore((state) => state.transformCursorHidden[panelKey]);
   useEffect(() => {
     resolvedViewCenterThreeRef.current.copy(resolvedViewCenterThree);
     const markerGroup = viewCenterGroupRef.current;
@@ -1358,6 +1534,9 @@ export function DigitalTwinViewer({
     }
     return () => clearGroup(markerGroup);
   }, [resolvedViewCenterThree]);
+  useEffect(() => {
+    viewCenterGroupRef.current.visible = !cursorHidden;
+  }, [cursorHidden]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -1388,6 +1567,17 @@ export function DigitalTwinViewer({
     mount.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
+    // PBR environment map — required for `MeshPhysicalMaterial.transmission`
+    // and iridescence to render as glass / colour-shifting reflections rather
+    // than flat opaque surfaces. RoomEnvironment is a procedural neutral IBL
+    // baked once at scene init via PMREMGenerator. environmentIntensity is
+    // dialled down to 0.4 so existing matte/metal materials elsewhere in the
+    // scene don't suddenly look chrome.
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environmentIntensity = 0.4;
+    pmrem.dispose();
+
     const orientationScene = new THREE.Scene();
     const orientationCamera = new THREE.PerspectiveCamera(42, 1, 0.1, 8);
     orientationCamera.position.set(0, 0, 3.6);
@@ -1411,39 +1601,33 @@ export function DigitalTwinViewer({
     controls.target.copy(resolvedViewCenterThreeRef.current);
     controlsRef.current = controls;
 
-    // Blender-style mouse mapping:
-    //   LEFT          : free for object selection (and future marquee).
-    //   LEFT + Shift  : PAN (re-mapped from default MIDDLE+Shift)
-    //   MIDDLE        : ROTATE (was default LEFT)
-    //   MIDDLE + Shift: PAN
-    //   RIGHT         : PAN (kept as fallback / context-menu users)
-    // OrbitControls doesn't natively grok modifier+button combos, so we
-    // toggle the mapping on Shift keydown/keyup. The button assignments
-    // are mutated in place; OrbitControls re-reads mouseButtons each
-    // pointer event.
+    // Mouse mapping (post-rewrite, user request 2026-05-08):
+    //   LEFT     : ROTATE (camera orbit)
+    //   RIGHT    : PAN
+    //   MIDDLE   : marquee select (handled by our pointer handler; null in
+    //              OrbitControls so it doesn't fight us)
+    //   wheel    : zoom (default OrbitControls behaviour)
+    // Modifier+button combos (Shift) are left to OrbitControls' built-in
+    // auto-swap (Shift+ROTATE → PAN) so users can still pan via Shift+LEFT
+    // if they prefer.
     controls.mouseButtons = {
-      LEFT: null,
-      MIDDLE: THREE.MOUSE.ROTATE,
+      LEFT: THREE.MOUSE.ROTATE,
+      MIDDLE: null,
       RIGHT: THREE.MOUSE.PAN,
     };
-    // CRITICAL: OrbitControls has BUILT-IN modifier handling — if the
-    // mouseAction maps to ROTATE and Shift/Ctrl is held, it auto-swaps to
-    // PAN. So we should map MIDDLE → ROTATE (NOT PAN), and let
-    // OrbitControls do the swap. If we tried to set MIDDLE → PAN
-    // ourselves, the same auto-swap inverts it back to ROTATE under
-    // Shift, which is the exact bug we're fixing here.
-    //
-    // Final logic at pointerdown (capture phase):
-    //   - LEFT no Shift  → null    → marquee select handler owns it.
-    //   - LEFT + Shift   → ROTATE  → OrbitControls swaps to PAN  ✓
-    //   - MIDDLE         → ROTATE  → rotate (no shift) / pan (shift) ✓
-    //   - RIGHT          → PAN     → fallback pan.
-    const handleMouseButtonRemap = (e: PointerEvent) => {
-      controls.mouseButtons.LEFT = e.shiftKey ? THREE.MOUSE.ROTATE : null;
-      // MIDDLE stays at ROTATE — OrbitControls' shift auto-swap handles
-      // middle+shift → PAN.
+
+    // On-demand render gate. Initially true so the very first frame paints
+    // the freshly-built scene. controls.update() returns true while damping
+    // is still settling, so we keep rendering the tail of a rotate/pan after
+    // the user releases the mouse. The 'change' listener catches programmatic
+    // camera changes (snapCameraToView) and the resize/scene-rebuild paths
+    // call requestRender() directly.
+    let pendingRender = true;
+    const requestRender = () => {
+      pendingRender = true;
     };
-    renderer.domElement.addEventListener("pointerdown", handleMouseButtonRemap, true);
+    requestRenderRef.current = requestRender;
+    controls.addEventListener("change", requestRender);
 
     // Placement gizmo — drives all object positioning through the smart
     // placement engine. See PLACEMENT_DESIGN.md.
@@ -1586,6 +1770,7 @@ export function DigitalTwinViewer({
         onDraggingChange: (dragging) => {
           controls.enabled = !dragging;
           if (!dragging) snapOverlay.hide();
+          requestRender();
         },
         onDragUpdate: (result) => {
           useSceneStore.getState().setLastPlacementResult(result);
@@ -1607,6 +1792,7 @@ export function DigitalTwinViewer({
               snapOverlay.update(result, w.position.clone());
             }
           }
+          requestRender();
         },
         onDragEnd: ({ primary, followers }) => {
           useSceneStore.getState().setLastPlacementResult(primary.result);
@@ -1719,6 +1905,7 @@ export function DigitalTwinViewer({
       renderer.setSize(width, height);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
+      pendingRender = true;
     };
     resize();
 
@@ -2208,31 +2395,49 @@ export function DigitalTwinViewer({
     const DRAG_THRESHOLD_PX = 5;
     const DOUBLE_CLICK_MS = 350;
     const DOUBLE_CLICK_PX = 6;
-    let pendingPick: { pointerId: number; startX: number; startY: number; dragged: boolean } | null = null;
+    // pendingPick.button distinguishes:
+    //   0 = LEFT  → click-only object pick (drag is owned by OrbitControls = ROTATE)
+    //   1 = MIDDLE → marquee select on drag (OrbitControls.MIDDLE is null)
+    let pendingPick: {
+      pointerId: number;
+      startX: number;
+      startY: number;
+      dragged: boolean;
+      button: 0 | 1;
+    } | null = null;
     // Track the previous click for double-click detection. Beam scope only
     // opens on a double-click on a beam tube (single click → object
     // selection / deselection only).
     let lastClick: { t: number; x: number; y: number } | null = null;
     const handlePointerDown = (event: PointerEvent) => {
-      if (event.button !== 0) return;
+      // LEFT (button 0) drives single-click object pick; MIDDLE (button 1)
+      // drives marquee select. Right button is owned by OrbitControls (PAN).
+      if (event.button !== 0 && event.button !== 1) return;
       setCtxMenu(null);
-      pendingPick = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, dragged: false };
+      pendingPick = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        dragged: false,
+        button: event.button as 0 | 1,
+      };
     };
     const handlePointerMove = (event: PointerEvent) => {
       // Always run hover-preview when face-touch is active so the user sees
       // the yellow highlight regardless of mouse-button state.
       updateHoverHighlight(event);
+      requestRender();
       if (!pendingPick || event.pointerId !== pendingPick.pointerId) return;
       const dx = event.clientX - pendingPick.startX;
       const dy = event.clientY - pendingPick.startY;
       if (dx * dx + dy * dy > DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
         pendingPick.dragged = true;
-        // Show / update the marquee overlay rectangle in DOM. Skipped when
-        // Shift is held (that's a camera-pan drag, OrbitControls handles it)
-        // or face-touch is active (that tool owns the click + hover flow).
+        // Marquee overlay only fires for MIDDLE-button drags now. LEFT
+        // drags are owned by OrbitControls (ROTATE); face-touch tool also
+        // suppresses it because that tool owns the click + hover flow.
         const isFaceTouch = useSceneStore.getState().activeTool === "face-touch";
         const marquee = marqueeRef.current;
-        if (marquee && !event.shiftKey && !isFaceTouch) {
+        if (marquee && pendingPick.button === 1 && !isFaceTouch) {
           const canvasRect = renderer.domElement.getBoundingClientRect();
           const x0 = Math.min(pendingPick.startX, event.clientX) - canvasRect.left;
           const y0 = Math.min(pendingPick.startY, event.clientY) - canvasRect.top;
@@ -2248,24 +2453,24 @@ export function DigitalTwinViewer({
     };
     const handlePointerLeave = () => {
       clearHoverHighlight();
+      requestRender();
     };
     const handlePointerUp = (event: PointerEvent) => {
       if (!pendingPick || event.pointerId !== pendingPick.pointerId) return;
       const wasDrag = pendingPick.dragged;
       const startX = pendingPick.startX;
       const startY = pendingPick.startY;
+      const button = pendingPick.button;
       pendingPick = null;
       if (wasDrag) {
         // Hide the marquee overlay regardless of how we got here.
         const marquee = marqueeRef.current;
         if (marquee) marquee.style.display = "none";
-        // If this drag was a marquee gesture (no Shift, not face-touch tool),
-        // commit the selection by projecting every visible SceneObject's
-        // world position to screen and keeping those inside the rect. Shift
-        // drags are camera pans handled by OrbitControls — they shouldn't
-        // change selection.
+        // Marquee select fires on MIDDLE-button drags only. LEFT-button
+        // drags are camera rotates owned by OrbitControls — don't touch
+        // selection. Face-touch tool intercepts everything.
         const isFaceTouch = useSceneStore.getState().activeTool === "face-touch";
-        if (event.shiftKey || isFaceTouch) return;
+        if (button !== 1 || isFaceTouch) return;
         const canvasRect = renderer.domElement.getBoundingClientRect();
         const x0 = Math.min(startX, event.clientX);
         const x1 = Math.max(startX, event.clientX);
@@ -2310,6 +2515,10 @@ export function DigitalTwinViewer({
         useSceneStore.getState().setSelectedObjects(selected);
         return;
       }
+
+      // No drag — click-only path. Only LEFT-button clicks trigger
+      // selection / beam scope; MIDDLE clicks (without drag) are no-ops.
+      if (button !== 0) return;
 
       // Face-touch tool intercepts clicks before normal selection.
       if (useSceneStore.getState().activeTool === "face-touch") {
@@ -2379,7 +2588,24 @@ export function DigitalTwinViewer({
       // Single click → always object-selection-only. Beam tubes ignored.
       const objectHit = pickObject(event);
       if (objectHit) {
-        selectObject(String(objectHit.object.userData.objectId), {
+        const objectId = String(objectHit.object.userData.objectId);
+        // If the click landed on a fiber connector (housing, ferrule, body
+        // sleeve, …) walk the parent chain to find which endpoint we hit.
+        // userData.fiberConnectorEndpoint is set on the connector group in
+        // createFiberSplineObject. Toggling the beam-entry on this end runs
+        // alongside the normal selection so the panel shows up too.
+        let connectorEnd: "A" | "B" | null = null;
+        for (let n: THREE.Object3D | null = objectHit.object; n; n = n.parent) {
+          const ep = n.userData?.fiberConnectorEndpoint;
+          if (ep === "A" || ep === "B") {
+            connectorEnd = ep;
+            break;
+          }
+        }
+        if (connectorEnd) {
+          void useSceneStore.getState().toggleFiberBeamEntry(objectId, connectorEnd);
+        }
+        selectObject(objectId, {
           additive: event.ctrlKey || event.metaKey || event.shiftKey,
         });
         return;
@@ -2433,6 +2659,16 @@ export function DigitalTwinViewer({
       }
       const objectId = String(hit.object.userData.objectId);
       const componentId = String(hit.object.userData.componentId);
+      // Skip the optical_table — right-click is now used primarily for
+      // camera PAN, and the table fills most of the viewport so popping a
+      // Hide/Solo menu on every pan release is noisy. Other components
+      // still get the menu.
+      const stateNow = useSceneStore.getState();
+      const cmpType = stateNow.scene.components.find((c) => c.id === componentId)?.componentType;
+      if (cmpType === "optical_table") {
+        setCtxMenu(null);
+        return;
+      }
       setCtxMenu({ x: event.clientX, y: event.clientY, objectId, componentId });
     };
     const handleAxisGizmoPointerDown = (event: PointerEvent) => {
@@ -2470,30 +2706,38 @@ export function DigitalTwinViewer({
     orientationRenderer.domElement.addEventListener("click", handleAxisGizmoClick);
 
     const animate = () => {
-      controls.update();
-      if (environmentGroupRef.current) {
-        const halfWidth = roomDimensions.widthMm / 200;
-        const halfDepth = roomDimensions.depthMm / 200;
-        for (const wall of environmentGroupRef.current.children) {
-          const material = wall instanceof THREE.Mesh ? wall.material : null;
-          if (!(material instanceof THREE.MeshStandardMaterial) || !wall.userData.fadeWhenBlocking) continue;
-          const side = wall.userData.roomSide;
-          const isBlocking =
-            (side === "left" && camera.position.x < -halfWidth) ||
-            (side === "right" && camera.position.x > halfWidth) ||
-            (side === "back" && camera.position.z < -halfDepth) ||
-            (side === "ceiling" && camera.position.y > roomDimensions.heightMm / 100);
-          material.opacity = isBlocking ? 0.22 : 0.9;
-          material.transparent = true;
-          material.depthWrite = !isBlocking;
-          material.needsUpdate = true;
+      // controls.update() returns true while the camera is still moving
+      // (active drag or damping settling). Combined with pendingRender — set
+      // by 'change' events, hover, gizmo drag, scene rebuild, and the safety-
+      // net useEffect — this gates rendering so an idle scene draws zero
+      // frames per second instead of 60.
+      const cameraMoved = controls.update();
+      if (cameraMoved || pendingRender) {
+        if (environmentGroupRef.current) {
+          const halfWidth = roomDimensions.widthMm / 200;
+          const halfDepth = roomDimensions.depthMm / 200;
+          for (const wall of environmentGroupRef.current.children) {
+            const material = wall instanceof THREE.Mesh ? wall.material : null;
+            if (!(material instanceof THREE.MeshStandardMaterial) || !wall.userData.fadeWhenBlocking) continue;
+            const side = wall.userData.roomSide;
+            const isBlocking =
+              (side === "left" && camera.position.x < -halfWidth) ||
+              (side === "right" && camera.position.x > halfWidth) ||
+              (side === "back" && camera.position.z < -halfDepth) ||
+              (side === "ceiling" && camera.position.y > roomDimensions.heightMm / 100);
+            material.opacity = isBlocking ? 0.22 : 0.9;
+            material.transparent = true;
+            material.depthWrite = !isBlocking;
+            material.needsUpdate = true;
+          }
         }
+        if (globalAxesGizmoRef.current) {
+          globalAxesGizmoRef.current.quaternion.copy(camera.quaternion).invert();
+        }
+        renderer.render(scene, camera);
+        orientationRenderer.render(orientationScene, orientationCamera);
+        pendingRender = false;
       }
-      renderer.render(scene, camera);
-      if (globalAxesGizmoRef.current) {
-        globalAxesGizmoRef.current.quaternion.copy(camera.quaternion).invert();
-      }
-      orientationRenderer.render(orientationScene, orientationCamera);
       animationFrameRef.current = requestAnimationFrame(animate);
     };
     animate();
@@ -2507,11 +2751,15 @@ export function DigitalTwinViewer({
       renderer.domElement.removeEventListener("pointerleave", handlePointerLeave);
       renderer.domElement.removeEventListener("contextmenu", handleContextMenu);
       window.removeEventListener("keydown", handleEscape);
-      renderer.domElement.removeEventListener("pointerdown", handleMouseButtonRemap, true);
       orientationRenderer.domElement.removeEventListener("pointerdown", handleAxisGizmoPointerDown);
       orientationRenderer.domElement.removeEventListener("click", handleAxisGizmoClick);
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+      controls.removeEventListener("change", requestRender);
+      requestRenderRef.current = () => {};
       clearGroup(componentGroupRef.current);
+      // The wrapper cache references THREE objects that clearGroup just
+      // disposed; drop the map so the next mount starts cold.
+      objectWrappersRef.current.clear();
       clearGroup(beamGroupRef.current);
       clearGroup(relationGroupRef.current);
       clearGroup(viewCenterGroupRef.current);
@@ -2699,8 +2947,12 @@ export function DigitalTwinViewer({
     const componentGroup = componentGroupRef.current;
     const beamGroup = beamGroupRef.current;
     const relationGroup = relationGroupRef.current;
+    const wrapperCache = objectWrappersRef.current;
 
-    clearGroup(componentGroup);
+    // Beams + relations are cheap line-geometry rebuilds — clear and rebuild
+    // them every time. The asset wrappers in componentGroup are NOT cleared;
+    // the diff loop below decides per-object whether to reuse, reload, or
+    // dispose, so STL / GLB geometry survives across most dep changes.
     clearGroup(beamGroup);
     clearGroup(relationGroup);
 
@@ -2726,92 +2978,162 @@ export function DigitalTwinViewer({
       ? String(selectedRelation.properties?.drivenObjectId ?? selectedRelation.objectBId)
       : null;
 
+    /** Apply selection wireframe + port labels + AOM tilt arrow + fiber
+     *  beam-flow indicator + relation axes to a wrapper based on the
+     *  current selection / relation / per-object state. Caller must call
+     *  `stripDynamicDecorations` first if the wrapper is a reused cached
+     *  one. */
+    function decorate(wrapper: THREE.Group, placement: SceneObject, component: ComponentItem): void {
+      if (selectedObjectIdSet.has(placement.id) && component.componentType !== "optical_table") {
+        addWireframeOutline(wrapper);
+      }
+      if (component.componentType === "tapered_amplifier") {
+        addTaPortLabels(wrapper, component);
+      }
+      if (component.componentType === "aom" && selectedObjectIdSet.has(placement.id)) {
+        const aomAsset = component.asset3dId ? assetById.get(component.asset3dId) : undefined;
+        const aomElement = sceneData.opticalElements.find((e) => e.objectId === placement.id);
+        addAomTiltAxisMarker(wrapper, aomAsset, aomElement, component);
+      }
+      if (component.componentType === "fiber") {
+        const beamEntryEnd =
+          (placement.properties as { beamEntryEnd?: "A" | "B" } | undefined)?.beamEntryEnd;
+        if (beamEntryEnd === "A" || beamEntryEnd === "B") {
+          const fiberAnchors =
+            (component.properties as
+              | {
+                  fiberAnchors?: {
+                    id: string;
+                    positionMmBodyLocal?: { x: number; y: number; z: number };
+                  }[];
+                }
+              | undefined)?.fiberAnchors;
+          addFiberBeamFlowIndicator(wrapper, beamEntryEnd, fiberAnchors);
+        }
+      }
+      if (selectedRelationObjectIds.has(placement.id) || draftRelationObjectIds.has(placement.id)) {
+        addObjectAxesHelper(
+          wrapper,
+          placement.id === selectedDrivenObjectId || placement.id === relationDraftTarget?.objectBId,
+        );
+      }
+    }
+
+    /** Idempotent — applies regardless of previous state so toggling
+     *  visibility on a reused cached wrapper works correctly. */
+    function applyVisibilityFlags(wrapper: THREE.Object3D, visible: boolean): void {
+      wrapper.visible = visible;
+      wrapper.traverse((child) => {
+        if (visible) {
+          delete child.userData.physicallyHidden;
+        } else {
+          child.userData.physicallyHidden = true;
+        }
+      });
+    }
+
     async function renderComponents() {
-      if (!renderCtx.overlayFlags.components) return;
+      if (!renderCtx.overlayFlags.components) {
+        // Overlay was just turned off — drop everything from the cache.
+        for (const cached of wrapperCache.values()) {
+          componentGroup.remove(cached.wrapper);
+          disposeObject(cached.wrapper);
+        }
+        wrapperCache.clear();
+        return;
+      }
+
+      const seenObjectIds = new Set<string>();
 
       for (const placement of sceneData.objects) {
-        const preview = previewObjectTransforms[placement.id];
-        const effectivePlacement = preview ? { ...placement, ...preview } : placement;
+        if (cancelled) return;
+        seenObjectIds.add(placement.id);
+
         const component = componentById.get(placement.componentId);
         if (!component) continue;
-        if (!placement) continue;
+
+        const preview = previewObjectTransforms[placement.id];
+        const effectivePlacement = preview ? { ...placement, ...preview } : placement;
         // Visibility: hidden objects are still LOADED into the scene tree
         // (so the ray-tracer can interact with them) but their group is
         // marked invisible — they don't render on screen, but the
         // ray-tracer in `traceBeamsFromLasers` opts in to invisible
         // targets so optical effects (mirror reflection, lens, PBS split,
-        // …) keep working through the hidden element. Earlier we used
-        // `continue` here, which skipped the load entirely and silently
-        // broke the optical chain whenever the user toggled visibility.
+        // …) keep working through the hidden element.
         const visibleInView = isObjectVisible(placement, renderCtx);
-
         const asset = component.asset3dId ? assetById.get(component.asset3dId) : undefined;
         // Per-object device state — look up by the SceneObject's id, not
         // the component template id.
         const deviceState = stateByObjectId.get(placement.id);
-        const assetObject = await loadAssetObject(component, asset, deviceState);
 
-        if (cancelled) {
-          disposeObject(assetObject);
-          return;
-        }
+        const cached = wrapperCache.get(placement.id);
+        const canReuse =
+          cached !== undefined &&
+          cached.componentRef === component &&
+          cached.assetRef === asset &&
+          cached.stateRef === deviceState;
 
-        const object = new THREE.Group();
-        object.name = assetObject.name;
-        object.add(assetObject);
-        applyObjectGeometryOffset(assetObject, effectivePlacement);
-        object.userData.componentId = component.id;
-        object.userData.objectId = placement.id;
-        object.traverse((child) => {
-          child.userData.componentId = component.id;
-          child.userData.objectId = placement.id;
-        });
-        applyObjectTransform(object, effectivePlacement);
-        applyViewerDisplayMode(object, displayMode);
-
-        // Hidden-but-physical: keep the group in the scene graph so the
-        // ray-tracer can pick its meshes up via componentGroup.traverse,
-        // but flag the WRAPPER invisible so it doesn't render. Each child
-        // mesh is tagged with `userData.physicallyHidden = true` so the
-        // ray-tracer can flip visible=true just for the duration of its
-        // raycasts (THREE.Raycaster skips invisible objects by default).
-        if (!visibleInView) {
-          object.visible = false;
-          object.traverse((child) => {
-            child.userData.physicallyHidden = true;
+        let wrapper: THREE.Group;
+        if (canReuse && cached) {
+          // Cache hit — strip prior decorations, re-apply transform / display
+          // mode / decorations against the current selection state. Asset
+          // geometry (the heavy STL/GLB load) is preserved.
+          wrapper = cached.wrapper;
+          stripDynamicDecorations(wrapper);
+          // The asset object is the wrapper's first child (added in the
+          // miss-path below). applyObjectGeometryOffset re-targets the
+          // asset's own offset; it's safe to call repeatedly.
+          const assetObject = wrapper.children.find((c) => c.userData?.isLoadedAsset);
+          if (assetObject) applyObjectGeometryOffset(assetObject, effectivePlacement);
+        } else {
+          // Cache miss — dispose the stale wrapper (if any) and load fresh
+          // geometry. Async; the cancelled flag guards against teardown
+          // races and the cache-key mismatch case where multiple rebuilds
+          // happen back-to-back.
+          if (cached) {
+            componentGroup.remove(cached.wrapper);
+            disposeObject(cached.wrapper);
+            wrapperCache.delete(placement.id);
+          }
+          const assetObject = await loadAssetObject(component, asset, deviceState);
+          if (cancelled) {
+            disposeObject(assetObject);
+            return;
+          }
+          wrapper = new THREE.Group();
+          wrapper.name = assetObject.name;
+          assetObject.userData.isLoadedAsset = true;
+          wrapper.add(assetObject);
+          applyObjectGeometryOffset(assetObject, effectivePlacement);
+          wrapper.userData.componentId = component.id;
+          wrapper.userData.objectId = placement.id;
+          wrapper.traverse((child) => {
+            child.userData.componentId = component.id;
+            child.userData.objectId = placement.id;
+          });
+          componentGroup.add(wrapper);
+          wrapperCache.set(placement.id, {
+            wrapper,
+            componentRef: component,
+            assetRef: asset,
+            stateRef: deviceState,
           });
         }
 
-        // Wireframe-edge outline (yellow) on selected objects. Replaces the
-        // older bounding-box / corner-line markers — sticks tight to the
-        // actual mesh silhouettes via EdgesGeometry rather than a generic
-        // box helper. Optical-table excluded (selecting it is rare and a
-        // full table-grid highlight overwhelms the scene).
-        if (selectedObjectIdSet.has(placement.id) && component.componentType !== "optical_table") {
-          addWireframeOutline(object);
-        }
-
-        // INPUT / OUTPUT port labels for tapered amplifiers. Reads the
-        // same aperture properties the ray-tracer uses, so the labels
-        // sit at the actual seed-input / amplified-output ports rather
-        // than guessed bbox sides. Only the BoosTA pro template carries
-        // these properties; the bare-chip TA shows nothing extra.
-        if (component.componentType === "tapered_amplifier") {
-          addTaPortLabels(object, component);
-        }
-        if (component.componentType === "aom" && selectedObjectIdSet.has(placement.id)) {
-          addAomAbcMarkers(object, component);
-        }
+        applyObjectTransform(wrapper, effectivePlacement);
+        applyViewerDisplayMode(wrapper, displayMode);
+        applyVisibilityFlags(wrapper, visibleInView);
+        decorate(wrapper, placement, component);
         void selectedComponentId;
+      }
 
-        if (selectedRelationObjectIds.has(placement.id) || draftRelationObjectIds.has(placement.id)) {
-          addObjectAxesHelper(
-            object,
-            placement.id === selectedDrivenObjectId || placement.id === relationDraftTarget?.objectBId,
-          );
+      // Drop wrappers for objects that were removed from the scene.
+      for (const [id, entry] of wrapperCache) {
+        if (!seenObjectIds.has(id)) {
+          componentGroup.remove(entry.wrapper);
+          disposeObject(entry.wrapper);
+          wrapperCache.delete(id);
         }
-
-        componentGroup.add(object);
       }
     }
 
@@ -2937,12 +3259,674 @@ export function DigitalTwinViewer({
     renderRelations();
 
     return () => {
+      // Set cancelled so any in-flight async loadAssetObject aborts before
+      // adding to the scene. We deliberately DON'T clear componentGroup or
+      // dispose the wrapper cache here — the cache is what makes the next
+      // rebuild fast. Beams + relations get cleared at the top of the next
+      // run anyway, and the init useEffect's unmount handler tears down the
+      // cache entirely.
       cancelled = true;
-      clearGroup(componentGroup);
-      clearGroup(beamGroup);
-      clearGroup(relationGroup);
     };
   }, [sceneData, selectedComponentId, selectedObjectId, selectedObjectIds, selectedRelationId, previewObjectTransforms, relationDraftTarget, renderCtx, displayMode]);
+
+  // -----------------------------------------------------------------
+  // Fiber Bezier-spline edit overlay. Active only when
+  // fiberEditingComponentId is non-null. Shows:
+  //   - One anchor sphere per node (yellow on endpoints A/B, orange on
+  //     interior). Drag = move the anchor (its handles move with it as
+  //     fixed offsets). Right-click on an interior anchor = delete.
+  //   - Tangent-handle "arrow": a thin line from each anchor to a small
+  //     cyan tip sphere. Endpoint A only carries handleOut (toward B);
+  //     endpoint B only carries handleIn (toward A); interior anchors
+  //     carry both. Drag the tip sphere = adjust that handle's offset
+  //     (tension direction + magnitude).
+  //   - Double-click on the fiber tube body = insert a new interior
+  //     anchor at the click point with default smooth handles.
+  // Live drags mutate tubeMesh.geometry locally; pointer-up commits the
+  // new node array to the store, which triggers an STL-style rebuild.
+  // -----------------------------------------------------------------
+  useEffect(() => {
+    if (!fiberEditingComponentId) return;
+    const renderer = rendererRef.current;
+    const camera = cameraRef.current;
+    const componentGroup = componentGroupRef.current;
+    const controls = controlsRef.current;
+    if (!renderer || !camera || !componentGroup) return;
+
+    let fiberWrapper: THREE.Object3D | null = null;
+    let tubeMesh: THREE.Mesh | null = null;
+    componentGroup.traverse((node) => {
+      if (
+        !fiberWrapper
+        && node.userData?.fiberComponentId === fiberEditingComponentId
+        && node.userData?.fiberRole === undefined
+      ) {
+        fiberWrapper = node;
+      }
+      if (
+        !tubeMesh
+        && (node as THREE.Mesh).isMesh
+        && node.userData?.fiberRole === "tube"
+        && node.parent?.userData?.fiberComponentId === fiberEditingComponentId
+      ) {
+        tubeMesh = node as THREE.Mesh;
+      }
+    });
+    if (!fiberWrapper || !tubeMesh) return;
+
+    const component = sceneData.components.find((c) => c.id === fiberEditingComponentId);
+    if (!component) return;
+    const props = (component.properties ?? {}) as {
+      fiberNodes?: FiberNode[];
+      radiusMm?: number;
+    };
+    // Deep clone so live mutations during a drag don't leak into the store
+    // until pointer-up explicitly commits.
+    const nodes: FiberNode[] = (props.fiberNodes ?? [
+      { posMm: [0, 0, 50], handleOutMm: [100, 0, 0] },
+      { posMm: [300, 0, 50], handleInMm: [-100, 0, 0] },
+    ]).map((n) => ({
+      posMm: [n.posMm[0], n.posMm[1], n.posMm[2]],
+      handleInMm: n.handleInMm ? [n.handleInMm[0], n.handleInMm[1], n.handleInMm[2]] : undefined,
+      handleOutMm: n.handleOutMm ? [n.handleOutMm[0], n.handleOutMm[1], n.handleOutMm[2]] : undefined,
+    }));
+    const radiusMm = typeof props.radiusMm === "number" ? props.radiusMm : 1.0;
+
+    const labMmToLocalThree = (xMm: number, yMm: number, zMm: number) =>
+      new THREE.Vector3(xMm / 100, zMm / 100, -yMm / 100);
+    const offsetMmToLocalThree = (dxMm: number, dyMm: number, dzMm: number) =>
+      new THREE.Vector3(dxMm / 100, dzMm / 100, -dyMm / 100);
+    const localThreeToLabMm = (v: THREE.Vector3): [number, number, number] => [
+      v.x * 100,
+      -v.z * 100,
+      v.y * 100,
+    ];
+    const offsetLocalThreeToLabMm = (v: THREE.Vector3): [number, number, number] => [
+      v.x * 100,
+      -v.z * 100,
+      v.y * 100,
+    ];
+
+    // Dim every component except the fiber being edited.
+    const dimmedRecords: { material: THREE.Material; prevOpacity: number; prevTransparent: boolean }[] = [];
+    componentGroup.traverse((node) => {
+      const mesh = node as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.material) return;
+      let p: THREE.Object3D | null = mesh;
+      while (p) {
+        if (p.userData?.fiberComponentId === fiberEditingComponentId) return;
+        p = p.parent;
+      }
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const m of mats) {
+        const mat = m as THREE.Material & { opacity?: number; transparent?: boolean };
+        if (typeof mat.opacity === "number") {
+          dimmedRecords.push({
+            material: mat,
+            prevOpacity: mat.opacity,
+            prevTransparent: !!mat.transparent,
+          });
+          mat.transparent = true;
+          mat.opacity = 0.18;
+        }
+      }
+    });
+
+    // Materials for the gizmo
+    const anchorEndMat = new THREE.MeshBasicMaterial({ color: 0xffd166, depthTest: false });
+    const anchorInteriorMat = new THREE.MeshBasicMaterial({ color: 0xff8844, depthTest: false });
+    const handleTipMat = new THREE.MeshBasicMaterial({ color: 0x66d9ff, depthTest: false });
+    const handleLineMat = new THREE.LineBasicMaterial({
+      color: 0x66d9ff,
+      depthTest: false,
+      transparent: true,
+      opacity: 0.85,
+    });
+    const anchorGeometry = new THREE.SphereGeometry(0.045, 16, 12); // 4.5 mm
+    const handleTipGeometry = new THREE.SphereGeometry(0.028, 14, 10); // 2.8 mm
+
+    // Track all gizmo meshes so we can find them by raycast.
+    type AnchorRef = { mesh: THREE.Mesh; nodeIndex: number };
+    type HandleRef = {
+      mesh: THREE.Mesh;
+      line: THREE.Line;
+      nodeIndex: number;
+      side: "in" | "out";
+    };
+    const anchorRefs: AnchorRef[] = [];
+    const handleRefs: HandleRef[] = [];
+
+    // Build the gizmo overlay. Re-built from the current `nodes` array each
+    // time we need to refresh after a structural change (insert / delete).
+    const buildGizmo = () => {
+      // Tear down any previous gizmo state.
+      for (const a of anchorRefs) (fiberWrapper as THREE.Object3D).remove(a.mesh);
+      for (const h of handleRefs) {
+        (fiberWrapper as THREE.Object3D).remove(h.mesh);
+        (fiberWrapper as THREE.Object3D).remove(h.line);
+        h.line.geometry.dispose();
+      }
+      anchorRefs.length = 0;
+      handleRefs.length = 0;
+
+      nodes.forEach((node, index) => {
+        const isEnd = index === 0 || index === nodes.length - 1;
+        const anchor = new THREE.Mesh(anchorGeometry, isEnd ? anchorEndMat : anchorInteriorMat);
+        anchor.position.copy(labMmToLocalThree(node.posMm[0], node.posMm[1], node.posMm[2]));
+        anchor.userData.fiberAnchorIndex = index;
+        anchor.renderOrder = 1000;
+        (fiberWrapper as THREE.Object3D).add(anchor);
+        anchorRefs.push({ mesh: anchor, nodeIndex: index });
+
+        const buildHandle = (side: "in" | "out", offsetMm: [number, number, number]) => {
+          const tipPos = labMmToLocalThree(
+            node.posMm[0] + offsetMm[0],
+            node.posMm[1] + offsetMm[1],
+            node.posMm[2] + offsetMm[2],
+          );
+          const tip = new THREE.Mesh(handleTipGeometry, handleTipMat);
+          tip.position.copy(tipPos);
+          tip.userData.fiberHandleNodeIndex = index;
+          tip.userData.fiberHandleSide = side;
+          tip.renderOrder = 1001;
+          (fiberWrapper as THREE.Object3D).add(tip);
+          const lineGeom = new THREE.BufferGeometry().setFromPoints([
+            anchor.position.clone(),
+            tipPos.clone(),
+          ]);
+          const line = new THREE.Line(lineGeom, handleLineMat);
+          line.renderOrder = 999;
+          line.userData.fiberHandleLine = true;
+          (fiberWrapper as THREE.Object3D).add(line);
+          handleRefs.push({ mesh: tip, line, nodeIndex: index, side });
+        };
+        if (node.handleOutMm) buildHandle("out", node.handleOutMm);
+        if (node.handleInMm) buildHandle("in", node.handleInMm);
+      });
+    };
+    buildGizmo();
+
+    // ---------------------------------------------------------------
+    // Phase E: PM slow-axis indicator + aperture overlay rings.
+    //
+    // For PM fibers, draw a thin coloured tube along the connector's
+    // body section in the direction of `slowAxisDegInBodyFrame` so the
+    // user can see the slow axis orientation in 3D. For all fiber
+    // types, draw a semi-transparent ring at each ferrule tip showing
+    // the cladding aperture (Ø typically 125 µm — small at scene
+    // scale; we render at the visible ferrule OD = 2.5 mm with a thin
+    // edge to be perceptible).
+    //
+    // Reads spec from the OpticalElement (kindParams.endA / endB).
+    // No-op if no OpticalElement exists for this SceneObject.
+    // ---------------------------------------------------------------
+    type SpecOverlay = { meshes: THREE.Mesh[] };
+    const specOverlay: SpecOverlay = { meshes: [] };
+    const buildSpecOverlay = () => {
+      // Tear down existing overlay
+      for (const m of specOverlay.meshes) {
+        m.parent?.remove(m);
+        m.geometry.dispose();
+        if (Array.isArray(m.material)) m.material.forEach((mm) => mm.dispose());
+        else (m.material as THREE.Material).dispose();
+      }
+      specOverlay.meshes = [];
+
+      // Find the OpticalElement for this fiber's first SceneObject.
+      // (If multiple instances of the catalog exist, we attach the
+      // overlay to whichever wrapper we picked above.)
+      const objectIdOnWrapper = String(
+        (fiberWrapper as THREE.Object3D).userData?.objectId ?? "",
+      );
+      const opticalElement = sceneData.opticalElements.find(
+        (e) => String(e.objectId) === objectIdOnWrapper,
+      );
+      if (!opticalElement || opticalElement.elementKind !== "fiber") return;
+      const kp = (opticalElement.kindParams ?? {}) as {
+        fiberType?: string;
+        endA?: { slowAxisDegInBodyFrame?: number | null };
+        endB?: { slowAxisDegInBodyFrame?: number | null };
+      };
+      const isPM = kp.fiberType === "polarization_maintaining";
+
+      // Per connector: locate the connector group, build slow-axis line +
+      // aperture ring as children of the connector group so they inherit
+      // the connector's quaternion (already aligned with outward).
+      const connectors: { conn: THREE.Object3D; tag: "A" | "B" }[] = [];
+      (fiberWrapper as THREE.Object3D).traverse((node) => {
+        const tag = node.userData?.fiberConnectorEndpoint;
+        if (tag === "A" || tag === "B") {
+          connectors.push({ conn: node, tag });
+        }
+      });
+
+      const slowAxisMat = new THREE.MeshBasicMaterial({
+        color: 0x66d9ff,
+        depthTest: false,
+        transparent: true,
+        opacity: 0.95,
+      });
+      const apertureRingMat = new THREE.MeshBasicMaterial({
+        color: 0xffd166,
+        depthTest: false,
+        transparent: true,
+        opacity: 0.7,
+        side: THREE.DoubleSide,
+      });
+
+      for (const { conn, tag } of connectors) {
+        // 1. Slow axis indicator — a 1mm-diameter cyan tube running along
+        //    the connector body (between cursorY = bootLen+shoulderLen and
+        //    + nutLen, i.e. y = 32 mm to 41 mm in connector-local space).
+        if (isPM) {
+          const phiDeg = (tag === "A" ? kp.endA?.slowAxisDegInBodyFrame : kp.endB?.slowAxisDegInBodyFrame) ?? 0;
+          const phi = (phiDeg * Math.PI) / 180;
+          const len = 9 / 100; // 9 mm in three units
+          const tubeRadius = 0.5 / 100; // 0.5 mm
+          const lineGeom = new THREE.CylinderGeometry(tubeRadius, tubeRadius, len, 8);
+          const line = new THREE.Mesh(lineGeom, slowAxisMat);
+          // Position along connector +Y at the body section midpoint, offset
+          // outward by the body radius so it sits ON the body surface.
+          const bodyR = 4.05 / 100;
+          line.position.set(
+            bodyR * Math.cos(phi),
+            (32 + 9 / 2) / 100,
+            bodyR * Math.sin(phi),
+          );
+          line.renderOrder = 1002;
+          conn.add(line);
+          specOverlay.meshes.push(line);
+        }
+
+        // 2. Aperture ring — a thin ring at the ferrule tip (y ≈ 56 mm).
+        //    We draw at the ferrule OD (2.5 mm) since the actual cladding
+        //    aperture (125 µm) is too small to perceive.
+        const ringInnerR = 1.25 / 100;
+        const ringOuterR = 1.6 / 100;
+        const ringGeom = new THREE.RingGeometry(ringInnerR, ringOuterR, 32);
+        const ring = new THREE.Mesh(ringGeom, apertureRingMat);
+        // Place at the ferrule tip, facing outward (along connector +Y).
+        // RingGeometry is in the XY plane normal to +Z by default, so we
+        // rotate so its normal is +Y in connector-local frame.
+        ring.rotation.x = Math.PI / 2;
+        ring.position.set(0, 56 / 100, 0);
+        ring.renderOrder = 1003;
+        conn.add(ring);
+        specOverlay.meshes.push(ring);
+      }
+    };
+    buildSpecOverlay();
+
+    // Update the line geometry connecting an anchor to one of its handle
+    // tips, after the anchor or tip has moved.
+    const refreshHandleLine = (handle: HandleRef) => {
+      const anchor = anchorRefs.find((a) => a.nodeIndex === handle.nodeIndex);
+      if (!anchor) return;
+      const points = [anchor.mesh.position.clone(), handle.mesh.position.clone()];
+      handle.line.geometry.dispose();
+      handle.line.geometry = new THREE.BufferGeometry().setFromPoints(points);
+    };
+
+    // Live tube rebuild during a drag. Also re-applies the FC connector
+    // transforms so the heads track the endpoint anchor and tangent
+    // direction as the user drags A.handleOut / B.handleIn.
+    const rebuildTube = () => {
+      const path = buildFiberCurvePath(nodes);
+      const tubularSegments = Math.max(64, (nodes.length - 1) * 32);
+      const newGeom = new THREE.TubeGeometry(path, tubularSegments, radiusMm / 100, 12, false);
+      const old = (tubeMesh as THREE.Mesh).geometry;
+      (tubeMesh as THREE.Mesh).geometry = newGeom;
+      old.dispose();
+      const wrapper = fiberWrapper as THREE.Object3D;
+      for (const child of wrapper.children) {
+        const tag = child.userData?.fiberConnectorEndpoint;
+        if (tag === "A" || tag === "B") applyFiberConnectorTransform(child, nodes, tag);
+      }
+    };
+
+    // Pointer handling
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    type DragKind =
+      | { kind: "anchor"; nodeIndex: number; startAnchorWorld: THREE.Vector3 }
+      | { kind: "handle"; nodeIndex: number; side: "in" | "out" };
+    let drag: DragKind | null = null;
+    let dragPlane: THREE.Plane | null = null;
+
+    const updatePointer = (event: { clientX: number; clientY: number }) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+    };
+
+    const screenAlignedPlaneAt = (worldPos: THREE.Vector3) => {
+      const camDir = new THREE.Vector3();
+      camera.getWorldDirection(camDir);
+      return new THREE.Plane(camDir.clone().negate(), camDir.clone().dot(worldPos));
+    };
+
+    const onContextMenu = (event: MouseEvent) => event.preventDefault();
+
+    const onPointerDown = (event: PointerEvent) => {
+      // Right-click on an interior anchor → delete that node.
+      if (event.button === 2) {
+        updatePointer(event);
+        const anchorMeshes = anchorRefs.map((r) => r.mesh);
+        const hits = raycaster.intersectObjects(anchorMeshes, false);
+        if (hits.length > 0) {
+          const idx = hits[0].object.userData.fiberAnchorIndex as number;
+          event.preventDefault();
+          event.stopPropagation();
+          if (idx > 0 && idx < nodes.length - 1) {
+            void removeFiberNode(fiberEditingComponentId, idx);
+          }
+        }
+        return;
+      }
+      if (event.button !== 0) return;
+      updatePointer(event);
+
+      // 1. Handle tip beats anchor (smaller, sits on top).
+      const handleMeshes = handleRefs.map((r) => r.mesh);
+      const handleHits = raycaster.intersectObjects(handleMeshes, false);
+      if (handleHits.length > 0) {
+        const tip = handleHits[0].object as THREE.Mesh;
+        const nodeIndex = tip.userData.fiberHandleNodeIndex as number;
+        const side = tip.userData.fiberHandleSide as "in" | "out";
+        const wp = new THREE.Vector3();
+        tip.getWorldPosition(wp);
+        dragPlane = screenAlignedPlaneAt(wp);
+        drag = { kind: "handle", nodeIndex, side };
+        if (controls) controls.enabled = false;
+        try { renderer.domElement.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
+      // 2. Anchor.
+      const anchorMeshes = anchorRefs.map((r) => r.mesh);
+      const anchorHits = raycaster.intersectObjects(anchorMeshes, false);
+      if (anchorHits.length > 0) {
+        const anchor = anchorHits[0].object as THREE.Mesh;
+        const nodeIndex = anchor.userData.fiberAnchorIndex as number;
+        const wp = new THREE.Vector3();
+        anchor.getWorldPosition(wp);
+        dragPlane = screenAlignedPlaneAt(wp);
+        drag = { kind: "anchor", nodeIndex, startAnchorWorld: wp.clone() };
+        if (controls) controls.enabled = false;
+        try { renderer.domElement.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+    };
+
+    const onPointerMove = (event: PointerEvent) => {
+      if (!drag || !dragPlane) return;
+      updatePointer(event);
+      const worldHit = new THREE.Vector3();
+      if (!raycaster.ray.intersectPlane(dragPlane, worldHit)) return;
+      const wrapperInv = new THREE.Matrix4().copy((fiberWrapper as THREE.Object3D).matrixWorld).invert();
+      const localHit = worldHit.clone().applyMatrix4(wrapperInv);
+
+      if (drag.kind === "anchor") {
+        const node = nodes[drag.nodeIndex];
+        const oldAnchorLocal = labMmToLocalThree(node.posMm[0], node.posMm[1], node.posMm[2]);
+        const delta = localHit.clone().sub(oldAnchorLocal);
+        // Update anchor position
+        const newPosLab = localThreeToLabMm(localHit);
+        node.posMm = [newPosLab[0], newPosLab[1], newPosLab[2]];
+        // Move the anchor mesh
+        const anchorRef = anchorRefs.find((a) => a.nodeIndex === drag!.nodeIndex);
+        if (anchorRef) anchorRef.mesh.position.copy(localHit);
+        // Move BOTH handle tips with the anchor (handles store offsets).
+        for (const h of handleRefs) {
+          if (h.nodeIndex !== drag.nodeIndex) continue;
+          h.mesh.position.add(delta);
+          refreshHandleLine(h);
+        }
+        rebuildTube();
+        return;
+      }
+
+      // Handle tip drag — adjust the offset on this side only.
+      const node = nodes[drag.nodeIndex];
+      const anchorLocal = labMmToLocalThree(node.posMm[0], node.posMm[1], node.posMm[2]);
+      const offsetLocal = localHit.clone().sub(anchorLocal);
+      const offsetMm = offsetLocalThreeToLabMm(offsetLocal);
+      if (drag.side === "in") {
+        node.handleInMm = offsetMm;
+      } else {
+        node.handleOutMm = offsetMm;
+      }
+      const handleRef = handleRefs.find(
+        (h) => h.nodeIndex === drag!.nodeIndex && h.side === (drag as { side: "in" | "out" }).side,
+      );
+      if (handleRef) {
+        handleRef.mesh.position.copy(localHit);
+        refreshHandleLine(handleRef);
+      }
+      rebuildTube();
+    };
+
+    const onPointerUp = (event: PointerEvent) => {
+      if (!drag) return;
+      drag = null;
+      dragPlane = null;
+      if (controls) controls.enabled = true;
+      try { renderer.domElement.releasePointerCapture(event.pointerId); } catch { /* ignore */ }
+      void updateFiberNodes(
+        fiberEditingComponentId,
+        nodes.map((n) => ({
+          posMm: [n.posMm[0], n.posMm[1], n.posMm[2]],
+          handleInMm: n.handleInMm
+            ? [n.handleInMm[0], n.handleInMm[1], n.handleInMm[2]]
+            : undefined,
+          handleOutMm: n.handleOutMm
+            ? [n.handleOutMm[0], n.handleOutMm[1], n.handleOutMm[2]]
+            : undefined,
+        })),
+      );
+    };
+
+    // Double-click on the tube body inserts a new interior anchor at the
+    // click point. The new anchor's handles are tangent-aligned (1/4 of the
+    // shorter neighbour segment in the curve direction) so the local shape
+    // doesn't pop.
+    const onDoubleClick = (event: MouseEvent) => {
+      updatePointer({ clientX: event.clientX, clientY: event.clientY });
+      const tubeHits = raycaster.intersectObject(tubeMesh as THREE.Mesh, false);
+      if (tubeHits.length === 0) return;
+      const hitWorld = tubeHits[0].point.clone();
+      const wrapperInv = new THREE.Matrix4().copy((fiberWrapper as THREE.Object3D).matrixWorld).invert();
+      const localThree = hitWorld.applyMatrix4(wrapperInv);
+      const labMm = localThreeToLabMm(localThree);
+
+      // Find the segment closest to the hit and its tangent at that t.
+      const path = buildFiberCurvePath(nodes);
+      const cumulativeLen: number[] = [0];
+      for (const c of path.curves) cumulativeLen.push(cumulativeLen[cumulativeLen.length - 1] + c.getLength());
+      // Find which segment got closest in 3D.
+      let bestSegment = 0;
+      let bestDistSq = Infinity;
+      const samples = 24;
+      let bestSegT = 0.5;
+      path.curves.forEach((c, segIdx) => {
+        for (let s = 0; s <= samples; s += 1) {
+          const t = s / samples;
+          const pt = c.getPointAt(t);
+          const d2 = pt.distanceToSquared(localThree);
+          if (d2 < bestDistSq) {
+            bestDistSq = d2;
+            bestSegment = segIdx;
+            bestSegT = t;
+          }
+        }
+      });
+      const tangentLocal = path.curves[bestSegment].getTangentAt(bestSegT).clone();
+      // Tangent in local-three; convert to lab-mm offset of length ~1/4 segment.
+      const segLengthThree = path.curves[bestSegment].getLength();
+      const segLengthMm = segLengthThree * 100;
+      const handleLengthMm = Math.max(20, Math.min(200, segLengthMm * 0.25));
+      const tangentLabUnit = offsetLocalThreeToLabMm(tangentLocal);
+      const tangentLength = Math.hypot(tangentLabUnit[0], tangentLabUnit[1], tangentLabUnit[2]) || 1;
+      const inOffset: [number, number, number] = [
+        -tangentLabUnit[0] / tangentLength * handleLengthMm,
+        -tangentLabUnit[1] / tangentLength * handleLengthMm,
+        -tangentLabUnit[2] / tangentLength * handleLengthMm,
+      ];
+      const outOffset: [number, number, number] = [
+        tangentLabUnit[0] / tangentLength * handleLengthMm,
+        tangentLabUnit[1] / tangentLength * handleLengthMm,
+        tangentLabUnit[2] / tangentLength * handleLengthMm,
+      ];
+      event.preventDefault();
+      event.stopPropagation();
+      void insertFiberNode(fiberEditingComponentId, bestSegment + 1, {
+        posMm: [labMm[0], labMm[1], labMm[2]],
+        handleInMm: inOffset,
+        handleOutMm: outOffset,
+      });
+    };
+
+    const canvas = renderer.domElement;
+    canvas.addEventListener("pointerdown", onPointerDown, true);
+    canvas.addEventListener("pointermove", onPointerMove);
+    canvas.addEventListener("pointerup", onPointerUp);
+    canvas.addEventListener("contextmenu", onContextMenu);
+    canvas.addEventListener("dblclick", onDoubleClick, true);
+
+    return () => {
+      canvas.removeEventListener("pointerdown", onPointerDown, true);
+      canvas.removeEventListener("pointermove", onPointerMove);
+      canvas.removeEventListener("pointerup", onPointerUp);
+      canvas.removeEventListener("contextmenu", onContextMenu);
+      canvas.removeEventListener("dblclick", onDoubleClick, true);
+      if (controls) controls.enabled = true;
+      // Slow-axis + aperture overlay cleanup
+      for (const m of specOverlay.meshes) {
+        m.parent?.remove(m);
+        m.geometry.dispose();
+        if (Array.isArray(m.material)) m.material.forEach((mm) => mm.dispose());
+        else (m.material as THREE.Material).dispose();
+      }
+      specOverlay.meshes = [];
+      for (const a of anchorRefs) a.mesh.parent?.remove(a.mesh);
+      for (const h of handleRefs) {
+        h.mesh.parent?.remove(h.mesh);
+        h.line.parent?.remove(h.line);
+        h.line.geometry.dispose();
+      }
+      anchorGeometry.dispose();
+      handleTipGeometry.dispose();
+      anchorEndMat.dispose();
+      anchorInteriorMat.dispose();
+      handleTipMat.dispose();
+      handleLineMat.dispose();
+      for (const record of dimmedRecords) {
+        (record.material as THREE.Material & { opacity: number; transparent: boolean }).opacity =
+          record.prevOpacity;
+        (record.material as THREE.Material & { opacity: number; transparent: boolean }).transparent =
+          record.prevTransparent;
+      }
+    };
+  }, [
+    fiberEditingComponentId,
+    sceneData.components,
+    componentsBuildVersion,
+    insertFiberNode,
+    removeFiberNode,
+    updateFiberNodes,
+  ]);
+
+  // Fiber endpoint markers — show End A / End B as small read-only yellow
+  // spheres whenever a fiber object is selected (no edit mode required).
+  // Lets the user quickly see where the ports actually sit in the scene,
+  // e.g. to debug "no beam found within 25 mm" alignment warnings. Skips
+  // the fiber currently in edit mode (its own draggable gizmo already
+  // covers the endpoints).
+  useEffect(() => {
+    const componentGroup = componentGroupRef.current;
+    if (!componentGroup) return;
+
+    const ids = new Set<string>();
+    for (const id of selectedObjectIds) ids.add(id);
+    if (selectedObjectId) ids.add(selectedObjectId);
+    if (ids.size === 0) return;
+
+    const labMmToLocalThree = (xMm: number, yMm: number, zMm: number) =>
+      new THREE.Vector3(xMm / 100, zMm / 100, -yMm / 100);
+
+    const markerGeometry = new THREE.SphereGeometry(0.045, 16, 12);
+    const markerMat = new THREE.MeshBasicMaterial({
+      color: 0x3b82f6,
+      depthTest: false,
+      transparent: true,
+      opacity: 0.95,
+    });
+
+    const created: THREE.Mesh[] = [];
+    for (const objectId of ids) {
+      const sceneObject = sceneData.objects.find((o) => o.id === objectId);
+      if (!sceneObject) continue;
+      const component = sceneData.components.find((c) => c.id === sceneObject.componentId);
+      if (!component) continue;
+      const props = (component.properties ?? {}) as { fiberNodes?: FiberNode[] };
+      const nodes = props.fiberNodes;
+      if (!nodes || nodes.length < 2) continue;
+      if (fiberEditingComponentId === component.id) continue;
+
+      let fiberGroup: THREE.Object3D | null = null;
+      componentGroup.traverse((node) => {
+        if (fiberGroup) return;
+        if (
+          node.userData?.objectId === objectId
+          && node.userData?.fiberComponentId === component.id
+        ) {
+          fiberGroup = node;
+        }
+      });
+      if (!fiberGroup) continue;
+
+      for (const idx of [0, nodes.length - 1]) {
+        const n = nodes[idx];
+        const sphere = new THREE.Mesh(markerGeometry, markerMat);
+        sphere.position.copy(labMmToLocalThree(n.posMm[0], n.posMm[1], n.posMm[2]));
+        sphere.renderOrder = 999;
+        sphere.userData.fiberEndpointMarker = true;
+        (fiberGroup as THREE.Object3D).add(sphere);
+        created.push(sphere);
+      }
+    }
+
+    return () => {
+      for (const mesh of created) {
+        mesh.parent?.remove(mesh);
+      }
+      markerGeometry.dispose();
+      markerMat.dispose();
+    };
+  }, [
+    selectedObjectId,
+    selectedObjectIds,
+    sceneData.objects,
+    sceneData.components,
+    fiberEditingComponentId,
+    componentsBuildVersion,
+  ]);
+
+  // Safety net for on-demand rendering: any React commit could have mutated
+  // the Three.js scene through one of the many sibling useEffects above
+  // (gizmo attach, wireframe outline, fiber overlay, fast-axis indicator,
+  // scope probe, hover highlight teardown, etc.). Rather than thread a
+  // requestRender call into every one of them, this no-deps effect runs
+  // after every commit and schedules a single frame. Cost is one render per
+  // React commit — far cheaper than the previous 60 fps continuous loop.
+  useEffect(() => {
+    requestRenderRef.current?.();
+  });
 
   const ctxObject = ctxMenu ? sceneData.objects.find((o) => o.id === ctxMenu.objectId) : null;
   const ctxObjectName = ctxObject?.name ?? "Object";
@@ -3045,6 +4029,30 @@ export function DigitalTwinViewer({
           >
             Show all hidden <kbd>Esc</kbd>
           </button>
+          {(() => {
+            // Delete acts on the union of selectedObjectIds and the right-
+            // clicked object (Blender-style: right-click on something not in
+            // your selection still deletes it). Confirms with the user since
+            // DELETE /api/objects/{id} is a hard-delete and the row can't be
+            // restored without re-creating from scratch.
+            const ids = Array.from(new Set([...selectedObjectIds, ctxMenu.objectId]));
+            const label = ids.length > 1 ? `Delete selected (${ids.length})` : "Delete";
+            return (
+              <button
+                className="context-danger"
+                onClick={() => {
+                  setCtxMenu(null);
+                  const msg = ids.length > 1
+                    ? `Permanently delete ${ids.length} objects? This cannot be undone.`
+                    : `Permanently delete "${ctxObjectName}"? This cannot be undone.`;
+                  if (!window.confirm(msg)) return;
+                  void Promise.all(ids.map((id) => deleteSceneObject(id)));
+                }}
+              >
+                {label} <kbd>Del</kbd>
+              </button>
+            );
+          })()}
         </div>
       )}
     </div>

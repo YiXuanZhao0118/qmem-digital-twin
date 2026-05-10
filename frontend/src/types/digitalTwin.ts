@@ -25,6 +25,11 @@ export type Anchor = {
   positionMmBodyLocal: { x: number; y: number; z: number };
   directionBodyLocal?: { x: number; y: number; z: number };
   apertureMm?: number;
+  /** Rectangular aperture, used by anchors whose active area is
+   *  asymmetric (e.g. PBS / BS cube diagonal cement plane). Falls back
+   *  to 2 × `apertureMm` per side when width / height are unset. */
+  apertureWidthMm?: number;
+  apertureHeightMm?: number;
 };
 
 export type Asset3D = {
@@ -204,7 +209,7 @@ export type Spectrum = {
   components: SpectrumComponent[];
 };
 
-export type PortRole = "input" | "output";
+export type PortRole = "input" | "output" | "bidirectional";
 
 export type OpticalPort = {
   portId: string;
@@ -226,6 +231,7 @@ export type ElementKind =
   | "beam_splitter"
   | "dichroic_mirror"
   | "fiber_coupler"
+  | "fiber"
   | "isolator"
   | "aom"
   | "eom"
@@ -347,6 +353,83 @@ export type FiberCouplerParams = {
   fiberType: "single_mode" | "polarization_maintaining" | "multi_mode";
 };
 
+// --- Fiber (full patch cable) ----------------------------------------------
+//
+// Distinct from `fiber_coupler` which models a single free-space ↔ fiber
+// transition. A `fiber` element is a bidirectional, two-ended optical
+// component with explicit Marcuse / mode-overlap coupling at each face,
+// Fresnel facet losses, length attenuation, and Marcuse curvature loss
+// integrated along the editable Bezier spline (geometry on
+// SceneObject.properties.fiberNodes — same format as before).
+
+export type FiberType = "multi_mode" | "single_mode" | "polarization_maintaining";
+export type FiberConnectorType = "FC" | "SC" | "LC" | "ST" | "BARE";
+export type FiberConnectorPolish = "PC" | "UPC" | "APC" | "AR";
+
+export type FiberAttenuationPoint = {
+  wavelengthNm: number;
+  dbPerKm: number;
+};
+
+export type BendLossConstants = {
+  vNumber: number;
+  coreRadiusUm: number;
+  nCore: number;
+  nClad: number;
+  /** Below this radius, Marcuse predicts >0.1 dB/m loss; UI warning
+   *  threshold and soft floor in the loss integral. */
+  criticalRadiusMm: number;
+};
+
+export type FiberEndSpec = {
+  apertureDiameterMm: number;
+  numericalAperture: number;
+  /** SM/PM only; null on MM. */
+  modeFieldDiameterUm?: number | null;
+  coreDiameterUm: number;
+  claddingDiameterUm: number;
+  connectorType: FiberConnectorType;
+  polish: FiberConnectorPolish;
+  polishAngleDeg: number;
+  /** Multiplier on the bare Fresnel reflectance R(θ): 1.0 = no AR,
+   *  ~0.15 = typical AR coating, 0.0 = perfect AR. */
+  fresnelResidual: number;
+  glassIndexAtDesignLambda: number;
+  /** PM only — slow-axis angle in connector body frame, 0° aligned to
+   *  FC alignment key. Per-instance bodyRoll on SceneObject adds. */
+  slowAxisDegInBodyFrame?: number | null;
+  /** PM only — preferred unsigned slow-axis selector. +X and -X are
+   *  the same optical axis, so UI should use x/y/z instead of signed
+   *  direction buttons. Legacy angle is kept for old data. */
+  slowAxisAxisBodyLocal?: "x" | "y" | "z" | null;
+  /** Optical port face position in connector body-local mm. The connector
+   *  is anchored at the spline endpoint with +Y outward; this offset rides
+   *  along the connector's transform, so moving the spline node moves the
+   *  port world position automatically. Null = ferrule tip (0, 36.28, 0)
+   *  default. */
+  facePositionMmBodyLocal?: { x: number; y: number; z: number } | null;
+};
+
+export type FiberParams = {
+  fiberType: FiberType;
+  endA: FiberEndSpec;
+  endB: FiberEndSpec;
+  cutoffWavelengthNm?: number | null;
+  operatingWavelengthRangeNm: [number, number];
+  designWavelengthNm: number;
+  maxInputPowerMw: number;
+  attenuationCurve: FiberAttenuationPoint[];
+  bendLoss: BendLossConstants;
+  minBendRadiusMm: number;
+  birefringenceDeltaN?: number | null;
+  pmdCoefficientPsPerSqrtKm?: number | null;
+  /** PM only. */
+  polarizationExtinctionRatioDb?: number | null;
+  /** MM only. */
+  bandwidthMhzKm?: number | null;
+  randomJonesSeed?: number | null;
+};
+
 export type IsolatorParams = {
   forwardLossDb: number;
   isolationDb: number;
@@ -375,6 +458,10 @@ export type AOMParams = {
   braggAngularAcceptanceMrad?: number | null;
   /** Phase 5: renamed from `braggTiltAxisAngleDeg`. Lab/scene Z-up frame. */
   braggTiltAxisDegLab?: number;
+  /** Optional body-local pivot for the Bragg rotation. Defaults to the
+   *  midpoint of the asset's `intercept_in` / `intercept_out` anchors —
+   *  override only for asymmetric AOMs. Body-local Z-up mm. */
+  braggInteractionPointMmBodyLocal?: number[] | null;
   maxDiffractionOrder?: number;
   sidebandVisibilityThreshold?: number;
 };
@@ -442,6 +529,7 @@ export type OpticalElementKindParams =
   | { elementKind: "beam_splitter"; kindParams: BeamSplitterParams }
   | { elementKind: "dichroic_mirror"; kindParams: DichroicMirrorParams }
   | { elementKind: "fiber_coupler"; kindParams: FiberCouplerParams }
+  | { elementKind: "fiber"; kindParams: FiberParams }
   | { elementKind: "isolator"; kindParams: IsolatorParams }
   | { elementKind: "aom"; kindParams: AOMParams }
   | { elementKind: "eom"; kindParams: EOMParams }

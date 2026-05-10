@@ -697,6 +697,58 @@ def apply_fiber_coupler(beam: Beam, params: dict[str, Any]) -> dict[str, Beam]:
     return {"out": beam.with_power(eta)}
 
 
+def apply_fiber(beam: Beam, params: dict[str, Any]) -> dict[str, Beam]:
+    """Bidirectional fiber patch cable. Power-budget computation only:
+    multiplies the input beam by η_coupling × η_fresnel_A × η_attenuation
+    × η_bend × η_fresnel_B and emits on the OTHER bidirectional port.
+
+    NOTE (Phase H+): the spline-geometric pieces (η_bend, η_attenuation
+    arcLength) require SceneObject.properties.fiberNodes which the solver
+    doesn't have here. We compute them with placeholder defaults and
+    document a TODO. The frontend Phase B library has the full physics
+    and can over-ride this calculation when invoked from the renderer's
+    coupling display.
+
+    Marcuse-formula η_coupling: closed-form for a perfectly mode-matched
+    Gaussian probe (assumes w_b = w_f, no offset, no tilt) ⇒ η = 1. The
+    real beam state is computed in the frontend per-segment (Phase B).
+    """
+    import math
+    fiber_type = params.get("fiberType", "single_mode")
+    end_a = params.get("endA", {}) or {}
+    end_b = params.get("endB", {}) or {}
+    # Per-face Fresnel for normal incidence (paraxial approximation).
+    n_a = float(end_a.get("glassIndexAtDesignLambda", 1.4506))
+    ar_a = float(end_a.get("fresnelResidual", 1.0))
+    r_a = ((n_a - 1.0) / (n_a + 1.0)) ** 2 * ar_a
+    eta_fresnel_a = max(0.0, 1.0 - r_a)
+    n_b = float(end_b.get("glassIndexAtDesignLambda", 1.4506))
+    ar_b = float(end_b.get("fresnelResidual", 1.0))
+    r_b = ((n_b - 1.0) / (n_b + 1.0)) ** 2 * ar_b
+    eta_fresnel_b = max(0.0, 1.0 - r_b)
+    # Attenuation: assume 1 m default arc length × dB/km from first curve point.
+    atten_curve = params.get("attenuationCurve", [{"wavelengthNm": 780.0, "dbPerKm": 5.0}])
+    db_per_km = float(atten_curve[0]["dbPerKm"]) if atten_curve else 5.0
+    arc_length_m = 1.0  # placeholder; real value from spline arc length
+    eta_atten = 10.0 ** (-(db_per_km * arc_length_m / 1000.0) / 10.0)
+    # Bend: assume straight (1.0)
+    eta_bend = 1.0
+    # Coupling: Marcuse perfect mode-match
+    eta_coupling = 1.0
+    # MM has slightly worse coupling baseline due to mode-resolved aspect
+    if fiber_type == "multi_mode":
+        eta_coupling = 0.9
+    eta_total = eta_coupling * eta_fresnel_a * eta_atten * eta_bend * eta_fresnel_b
+    out = beam.with_power(eta_total)
+    # Emit on BOTH bidirectional ports — solver picks based on input port.
+    # Input on port "a" → emit on port "b", and vice versa. Since this
+    # function is called by-port in dispatch logic, we emit both and
+    # the dispatcher routes correctly via DEFAULT_PORTS.
+    void = math  # keep math import if future expansion needs it
+    del void
+    return {"a": out, "b": out}
+
+
 def apply_isolator(beam: Beam, params: dict[str, Any]) -> dict[str, Beam]:
     forward_loss_db = float(params.get("forwardLossDb", 0.5))
     return {"out": beam.with_power(10.0 ** (-forward_loss_db / 10.0))}
@@ -989,6 +1041,8 @@ def _dispatch_element(
         return apply_dichroic_mirror(beam, params)
     if kind == "fiber_coupler":
         return apply_fiber_coupler(beam, params)
+    if kind == "fiber":
+        return apply_fiber(beam, params)
     if kind == "isolator":
         return apply_isolator(beam, params)
     if kind == "aom":

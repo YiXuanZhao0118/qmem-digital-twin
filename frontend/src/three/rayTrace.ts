@@ -36,35 +36,20 @@ import {
   labDirToThree as labDirToThreeAxisSwap,
 } from "../optical/frames";
 import { emissionFromObject } from "./opticalBeams";
+import {
+  type AomTraversalSign,
+  besselJ,
+  braggAngleRad,
+  diffractedDirection,
+  diffractionEfficiency,
+  expectedInputDotD2,
+  phaseModulationDepth,
+} from "../optical/kinds/aom/physics";
 
 export const DEFAULT_MAX_LENGTH_MM = 1000;
 export const DEFAULT_MAX_BOUNCES = 8;
 const OPTICAL_C_M_PER_S = 299_792_458;
 const RAY_EPS_THREE = 5e-4; // ~0.05 mm — push past the hit face
-
-/** Bessel function of the first kind J_n(x) via series expansion.
- *  Accurate for |x| ≲ 10, which covers all realistic AOM phase
- *  modulation depths (v ≈ π·L·√(2·M₂·Pd/W)/(λ·cosθ_B), typically < 5).
- *  Used for the Raman-Nath multi-order intensity model:
- *      I_n / I_in = J_n²(v)       (sum_n J_n² ≡ 1)
- *  In the deep-Bragg limit (Q ≫ 1) v stays small enough that |n| ≥ 2
- *  contributions fall below the visibility threshold automatically.
- */
-function besselJ(n: number, x: number): number {
-  if (n < 0) return ((-n) % 2 === 0 ? 1 : -1) * besselJ(-n, x);
-  if (Math.abs(x) < 1e-12) return n === 0 ? 1 : 0;
-  let nFact = 1;
-  for (let i = 2; i <= n; i++) nFact *= i;
-  const half = x / 2;
-  let term = Math.pow(half, n) / nFact;
-  let sum = term;
-  for (let k = 1; k < 100; k++) {
-    term *= -(half * half) / (k * (n + k));
-    sum += term;
-    if (Math.abs(term) < 1e-16) break;
-  }
-  return sum;
-}
 
 export type TraceBranch = "main" | "transmitted" | "reflected";
 
@@ -154,6 +139,10 @@ export type TraceSegment = {
     relativeIntensity: number;
     centerFrequencyThz: number;
     centerWavelengthNm: number;
+    requestedOrder?: number;
+    matchedOrder?: number;
+    inputTraversalSign?: -1 | 1;
+    entryPortId?: "intercept_in" | "intercept_out";
   };
 };
 
@@ -287,6 +276,7 @@ type TraceContext = {
   componentGroup: THREE.Group;
   opticalElements: OpticalElement[];
   components: ComponentItem[];
+  assets: Asset3D[];
   /** Scene objects — needed to map a componentId → its instance object_id
    *  so we can look up the per-object OpticalElement (alembic 0014).
    *  Must include the rotation Euler angles so the SPLITTING branch can
@@ -746,6 +736,38 @@ function reflectDirection(incoming: THREE.Vector3, normal: THREE.Vector3): THREE
   return incoming.clone().sub(n.clone().multiplyScalar(2 * dot)).normalize();
 }
 
+function aomTraversalFromRay(
+  obj: SceneObject | undefined,
+  ctx: TraceContext,
+  dir: THREE.Vector3,
+): { sign: AomTraversalSign; entryPortId: "intercept_in" | "intercept_out" } {
+  if (!obj) return { sign: 1, entryPortId: "intercept_in" };
+  const component = ctx.components.find((c) => c.id === obj.componentId);
+  const asset = component?.asset3dId
+    ? ctx.assets.find((a) => a.id === component.asset3dId)
+    : undefined;
+  const inAnchor = asset?.anchors?.find((a) => a.id === "intercept_in");
+  const outAnchor = asset?.anchors?.find((a) => a.id === "intercept_out");
+  const inBody = inAnchor?.positionMmBodyLocal;
+  const outBody = outAnchor?.positionMmBodyLocal;
+  if (!inBody || !outBody) return { sign: 1, entryPortId: "intercept_in" };
+
+  const bBody = {
+    x: outBody.x - inBody.x,
+    y: outBody.y - inBody.y,
+    z: outBody.z - inBody.z,
+  };
+  if (Math.hypot(bBody.x, bBody.y, bBody.z) < 1e-6) {
+    return { sign: 1, entryPortId: "intercept_in" };
+  }
+  const bWorld = bodyLocalDirToWorldThree(bBody, obj).normalize();
+  const sign: AomTraversalSign = dir.dot(bWorld) >= 0 ? 1 : -1;
+  return {
+    sign,
+    entryPortId: sign > 0 ? "intercept_in" : "intercept_out",
+  };
+}
+
 function traceOneRay(
   origin: THREE.Vector3,
   direction: THREE.Vector3,
@@ -1080,37 +1102,30 @@ function traceOneRay(
       orderRaw === 0 ? 0 :
       orderRaw === -1 ? -1 :
       1;
-    const fHz = (params.centerFreqMhz ?? 80) * 1e6;
-    const v = params.acousticVelocityMPerS ?? 4200;
-    const n = params.refractiveIndex ?? 2.26;          // TeO2 default
-    const lambdaM = wavelengthNm * 1e-9;
-    const sinThetaB = (lambdaM * fHz) / (2 * n * v);
-    const thetaB = Math.asin(Math.max(-1, Math.min(1, sinThetaB)));
+    // Phase 7: Bragg θ_B + closed-form sin² efficiency live in
+    // optical/kinds/aom/physics.ts so the panel readouts and the
+    // ray-tracer can never silently disagree.
+    const thetaB = braggAngleRad(params, wavelengthNm);
+    const efficiency = diffractionEfficiency(params, wavelengthNm, thetaB);
 
-    // Efficiency. Use the closed-form sin² when M₂/Pd/L/W are all known
-    // (so RF-power changes affect the visible diffraction); otherwise
-    // fall back to the simpler `baseEfficiency` constant.
-    let efficiency = params.baseEfficiency ?? 0.85;
-    if (
-      typeof params.figureOfMeritM2 === "number" &&
-      typeof params.rfDrivePowerW === "number" &&
-      typeof params.crystalLengthMm === "number" &&
-      typeof params.acousticBeamWidthMm === "number"
-    ) {
-      const L = params.crystalLengthMm * 1e-3;
-      const W = params.acousticBeamWidthMm * 1e-3;
-      const Pd = params.rfDrivePowerW;
-      const inner = Math.sqrt((2 * params.figureOfMeritM2 * Pd) / W);
-      const arg = (Math.PI * L / (2 * lambdaM * Math.cos(thetaB))) * inner;
-      efficiency = Math.sin(arg) ** 2;
-    }
-    efficiency = Math.max(0, Math.min(1, efficiency));
-
-    // Acoustic axis in WORLD frame. Default: body-local +Z (= lab Z, top
-    // of the AOM body where the SMA RF connector sits in most modules).
-    // User may override via kindParams.acousticAxisLocal in scene-local
-    // (x, y, z) — same convention as PBS coatingNormalLocal.
+    // Acoustic axis in WORLD frame. Default: body-local -X for the MT80
+    // GLB convention: +Y is laser -> 0th, -X is transducer -> absorber,
+    // and +/-Z is perpendicular to the outline drawing.
     const obj = ctx.objects.find((o) => o.id === hitObjectId);
+    const traversal = aomTraversalFromRay(obj, ctx, dir);
+    // Phase 7.4 fix: with the new two-stage align, the body is re-tilted
+    // for state B (entry=intercept_out) so the body-frame Bragg-correct
+    // order is the user's selected m WITHOUT flipping for traversal.
+    // Pre-7.4 used `effectiveAomOrderForTraversal(orderSign, traversal.sign)`
+    // here, which assumed the body's mechanical Bragg tilt was FIXED
+    // (state-A orientation regardless of which port is the entry). With
+    // re-tilt-per-state align that assumption breaks: state-B m=+1 with
+    // the flip lands at body-frame -1, which is +3θ_B off-Bragg from the
+    // state-B input pose (input·D2 = +sin θ_B). The matched plan.order
+    // is now just `orderSign`, body-frame physical, single source of
+    // truth shared with `expectedInputDotD2(m, traversalSign, ...)` at
+    // the align side.
+    const effectiveOrderSign = orderSign;
     let rfAxisWorld = new THREE.Vector3(0, 1, 0);  // three +Y = lab +Z
     let bodyAxisWorld = dir.clone();
     if (obj) {
@@ -1120,7 +1135,7 @@ function traceOneRay(
         ?? params.acousticAxisLocal;
       const acousticBodyLocal = (Array.isArray(a) && a.length >= 3)
         ? { x: a[0], y: a[1], z: a[2] }
-        : { x: 0, y: 0, z: 1 };  // body local +Z (Z-up convention)
+        : { x: -1, y: 0, z: 0 };  // MT80 transducer -> absorber
       rfAxisWorld = bodyLocalDirToWorldThree(acousticBodyLocal, obj).normalize();
       bodyAxisWorld = bodyLocalDirToWorldThree({ x: 1, y: 0, z: 0 }, obj).normalize();
     }
@@ -1130,27 +1145,23 @@ function traceOneRay(
     const rotAxis = new THREE.Vector3().crossVectors(dir, rfAxisWorld);
     const canDiffract = rotAxis.lengthSq() >= 1e-12;
     let braggMismatchMrad = 0;
-    let braggAngularFactor = orderSign === 0 ? 0 : 1;
+    let braggAngularFactor = effectiveOrderSign === 0 ? 0 : 1;
     if (!canDiffract) {
       // Beam parallel to acoustic axis (no Bragg interaction possible);
       // emit only the 0th order so the chain doesn't fork pointlessly.
       braggAngularFactor = 0;
     } else {
       rotAxis.normalize();
-      if (orderSign !== 0) {
-        // Pure-physics off-Bragg detuning. Bragg requires the beam to make
-        // angle ±θ_B with the plane perpendicular to the acoustic axis;
-        // equivalently, sin(angle_from_perp) = ±sin(θ_B). The previous
-        // implementation compared the body-local +X axis to an "ideal
-        // body axis", which embeds an assumption that the AOM's optical
-        // hole is along body +X. For GLBs that drill the hole along a
-        // different body axis (e.g., body +Y), that comparison drifts to
-        // ~90° and silently zeros all diffracted power. Drop the body
-        // axis from the equation entirely — only the actual beam vs.
-        // acoustic-axis geometry matters for the Bragg condition.
+      if (effectiveOrderSign !== 0) {
+        // Off-Bragg detuning. Bragg condition: beam · D2 (= rfAxisWorld)
+        // must equal `expectedInputDotD2(orderSign, traversal.sign, θ_B)`.
+        // physics.ts owns this sign convention (Phase 7.4 unification —
+        // it also drives `expectedDotD2` in alignToLaser), so the
+        // ray-tracer's mismatch detection cannot drift from align.
         const dotBA = THREE.MathUtils.clamp(dir.dot(rfAxisWorld), -1, 1);
         const beamAngleFromPerpRad = Math.asin(dotBA);
-        const expectedAngleRad = orderSign * thetaB;
+        const expectedDotD2 = expectedInputDotD2(orderSign, traversal.sign, thetaB);
+        const expectedAngleRad = Math.asin(THREE.MathUtils.clamp(expectedDotD2, -1, 1));
         const mismatchRad = beamAngleFromPerpRad - expectedAngleRad;
         const acceptanceRad = Math.max(1e-6, (params.braggAngularAcceptanceMrad ?? 2.0) * 1e-3);
         braggMismatchMrad = mismatchRad * 1e3;
@@ -1179,23 +1190,10 @@ function traceOneRay(
       0,
       1,
     );
-    // Phase-modulation depth v: derived from the same closed-form
-    // sin²(arg) the Bragg branch already computed. Falls back to
-    // 2·sqrt(efficiency) which gives v ≈ π/2·sqrt(η) — a useful
-    // proxy for cells where M₂/L/W aren't all set.
-    let phaseModDepth = 2 * Math.sqrt(Math.max(0, Math.min(1, efficiency)));
-    if (
-      typeof params.figureOfMeritM2 === "number" &&
-      typeof params.rfDrivePowerW === "number" &&
-      typeof params.crystalLengthMm === "number" &&
-      typeof params.acousticBeamWidthMm === "number"
-    ) {
-      const L = params.crystalLengthMm * 1e-3;
-      const W = params.acousticBeamWidthMm * 1e-3;
-      const Pd = params.rfDrivePowerW;
-      const inner = Math.sqrt((2 * params.figureOfMeritM2 * Pd) / W);
-      phaseModDepth = (Math.PI * L / (2 * lambdaM * Math.cos(thetaB))) * inner;
-    }
+    // Phase-modulation depth v — same source as the panel (see
+    // optical/kinds/aom/physics.ts). Falls back to 2·sqrt(η) when
+    // M₂/L/W/P_d aren't all set.
+    const phaseModDepth = phaseModulationDepth(params, wavelengthNm, thetaB, efficiency);
     const sidebandMeta = (
       order: number,
       angleMrad: number,
@@ -1212,16 +1210,20 @@ function traceOneRay(
         relativeIntensity,
         centerFrequencyThz,
         centerWavelengthNm,
+        requestedOrder: orderSign,
+        matchedOrder: effectiveOrderSign,
+        inputTraversalSign: traversal.sign,
+        entryPortId: traversal.entryPortId,
       };
     };
 
     // Compute per-order intensity fractions.
     const fractionForOrder = (n: number): number => {
-      if (orderSign === 0 || !canDiffract) {
+      if (effectiveOrderSign === 0 || !canDiffract) {
         // RF off (or beam parallel to acoustic): only 0th carries power.
         return n === 0 ? 1 : 0;
       }
-      if (n === orderSign) {
+      if (n === effectiveOrderSign) {
         return efficiency * braggAngularFactor;
       }
       if (Math.abs(n) === 1) {
@@ -1244,7 +1246,7 @@ function traceOneRay(
     for (let n = -maxDiffractionOrder; n <= maxDiffractionOrder; n++) {
       if (n === 0) continue;
       const f = fractionForOrder(n);
-      plans.push({ order: n, fraction: f, alwaysShow: n === orderSign });
+      plans.push({ order: n, fraction: f, alwaysShow: n === effectiveOrderSign });
       nonZeroSum += f;
     }
     // The hybrid model (asymmetric Bragg ±1 + symmetric Bessel ±2..) can
@@ -1267,16 +1269,28 @@ function traceOneRay(
     for (const plan of plans) {
       if (!plan.alwaysShow && plan.fraction < sidebandThreshold) continue;
       const angleMrad = plan.order * 2 * thetaB * 1e3;
+      // Route through `diffractedDirection` (physics.ts single source).
+      // The rotation is `+m·2·θ_B` about D3 (= rotAxis); for Bragg-aligned
+      // input (alignToLaser places beam·D2 = expectedInputDotD2), the
+      // m=±1 output lands symmetric to the input across the D1-D3 plane.
       const rayDir = plan.order === 0
         ? dir.clone()
-        : dir.clone().applyAxisAngle(rotAxis, plan.order * 2 * thetaB).normalize();
+        : (() => {
+            const out = diffractedDirection(
+              { x: dir.x, y: dir.y, z: dir.z },
+              { x: rotAxis.x, y: rotAxis.y, z: rotAxis.z },
+              plan.order,
+              thetaB,
+            );
+            return new THREE.Vector3(out.x, out.y, out.z).normalize();
+          })();
       const newOrigin = plan.order === 0
         ? newOrigin0Cache
         : hitPoint.clone().add(rayDir.clone().multiplyScalar(RAY_EPS_THREE));
       const branchLabel: TraceBranch =
         plan.order === 0
           ? "transmitted"
-          : plan.order === orderSign
+          : plan.order === effectiveOrderSign
             ? "reflected"
             : "transmitted";
       const meta = sidebandMeta(plan.order, angleMrad, plan.fraction);
@@ -1459,6 +1473,7 @@ export function traceBeamsFromLasers(input: {
     componentGroup,
     opticalElements: scene.opticalElements,
     components: scene.components,
+    assets: scene.assets,
     objects: scene.objects,
     targetMeshes,
   };

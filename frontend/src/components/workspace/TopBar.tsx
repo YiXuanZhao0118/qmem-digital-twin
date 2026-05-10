@@ -58,7 +58,9 @@ export function TopBar({ children }: TopBarProps) {
         {menuOpen && (
           <div className="window-menu" role="menu">
             <div className="window-menu-section">Windows</div>
-            {panelIds.map((id) => {
+            {panelIds
+              .filter((id) => id !== "touch-coincidence")
+              .map((id) => {
               const layout = layouts[id];
               return (
                 <button

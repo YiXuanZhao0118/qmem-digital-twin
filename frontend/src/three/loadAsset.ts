@@ -746,6 +746,98 @@ function createTaperedAmplifier(component: ComponentItem, state?: DeviceState): 
   return group;
 }
 
+/** Free-form text annotation rendered as a billboard sprite. Uses the same
+ *  canvas-textured rounded-rectangle approach as `addTaPortLabels` in the
+ *  viewer, but driven entirely by the SceneObject's component properties so
+ *  the user can place arbitrary labels anywhere in the scene (section
+ *  headers, debug notes, "Cooling beam" markers …) without writing code.
+ *
+ *  Properties read from component.properties:
+ *   - text         : string  – label content (default = component.name)
+ *   - textColor    : string  – CSS colour for the glyphs (default white)
+ *   - bgColor      : string  – CSS colour for the rounded panel (default
+ *                              dark slate at 85% alpha)
+ *   - accentColor  : string  – stroke colour around the panel (default teal)
+ *   - fontSizePx   : number  – canvas-space font size; bigger = sharper
+ *                              when zoomed in (default 56)
+ *   - scaleMm      : number  – on-screen WIDTH of the label in mm at scene
+ *                              scale; height auto-derives from aspect ratio
+ *                              (default 80) */
+function createTextAnnotation(component: ComponentItem): THREE.Sprite {
+  const props = component.properties as {
+    text?: unknown;
+    textColor?: unknown;
+    bgColor?: unknown;
+    accentColor?: unknown;
+    fontSizePx?: unknown;
+    scaleMm?: unknown;
+  };
+  const text =
+    typeof props.text === "string" && props.text.length > 0
+      ? props.text
+      : component.name || "Text";
+  const textColor = typeof props.textColor === "string" ? props.textColor : "#ffffff";
+  const bgColor =
+    typeof props.bgColor === "string" ? props.bgColor : "rgba(15, 23, 42, 0.85)";
+  const accentColor =
+    typeof props.accentColor === "string" ? props.accentColor : "#38bdf8";
+  const fontSizePx =
+    typeof props.fontSizePx === "number" && props.fontSizePx > 0 ? props.fontSizePx : 56;
+  const scaleMm =
+    typeof props.scaleMm === "number" && props.scaleMm > 0 ? props.scaleMm : 80;
+
+  const canvas = document.createElement("canvas");
+  const measureCtx = canvas.getContext("2d");
+  const fontSpec = `bold ${fontSizePx}px 'Inter', 'Segoe UI', sans-serif`;
+  let textWidth = fontSizePx * 4;
+  if (measureCtx) {
+    measureCtx.font = fontSpec;
+    textWidth = measureCtx.measureText(text).width;
+  }
+  const padX = Math.max(16, fontSizePx * 0.55);
+  const padY = Math.max(10, fontSizePx * 0.4);
+  const cw = Math.max(96, Math.ceil(textWidth + padX * 2));
+  const ch = Math.ceil(fontSizePx + padY * 2);
+  canvas.width = cw;
+  canvas.height = ch;
+
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    const radius = Math.min(cw, ch) * 0.18;
+    ctx.fillStyle = bgColor;
+    ctx.beginPath();
+    ctx.moveTo(radius, 0);
+    ctx.arcTo(cw, 0, cw, ch, radius);
+    ctx.arcTo(cw, ch, 0, ch, radius);
+    ctx.arcTo(0, ch, 0, 0, radius);
+    ctx.arcTo(0, 0, cw, 0, radius);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = accentColor;
+    ctx.lineWidth = Math.max(2, fontSizePx * 0.06);
+    ctx.stroke();
+    ctx.fillStyle = textColor;
+    ctx.font = fontSpec;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, cw / 2, ch / 2);
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.anisotropy = 4;
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: true, depthWrite: false }),
+  );
+  // scaleMm sets the on-table WIDTH; height tracks the canvas aspect ratio
+  // so the rounded box doesn't squash when text is short or long.
+  const widthThree = mmToThree(scaleMm);
+  const aspectHW = ch / cw;
+  sprite.scale.set(widthThree, widthThree * aspectHW, 1);
+  sprite.userData.isTextAnnotation = true;
+  sprite.renderOrder = 100;
+  return sprite;
+}
+
 function createPrimitive(component: ComponentItem, state?: DeviceState): THREE.Object3D {
   const group = new THREE.Group();
   group.name = component.name;
@@ -755,6 +847,9 @@ function createPrimitive(component: ComponentItem, state?: DeviceState): THREE.O
     case "optical_table":
       mesh = createBox(component, state, [1800, 1200, 90]);
       mesh.position.y = -0.45;
+      break;
+    case "text_annotation":
+      mesh = createTextAnnotation(component);
       break;
     case "mirror": {
       // Disc with optical axis along local +X — the reflective face is the
@@ -870,6 +965,819 @@ function applyAssetScale(object: THREE.Object3D, asset: Asset3D): void {
   object.scale.multiplyScalar(asset.scaleFactor * unitScale);
 }
 
+// Fiber patch cable rendering — procedural Bezier-spline tube editable in
+// the viewer's "fiber edit mode". Each node carries its anchor position
+// plus optional tangent-handle offsets (handleInMm = toward previous node,
+// handleOutMm = toward next node). For a smooth curve, segment between
+// nodes [i]/[i+1] is a CubicBezier with control points
+//   P0 = nodes[i].posMm
+//   P1 = P0 + nodes[i].handleOutMm
+//   P2 = P3 + nodes[i+1].handleInMm
+//   P3 = nodes[i+1].posMm
+// All segments are stitched via CurvePath, then sweep TubeGeometry.
+//
+// Lab → three axis convention: lab (x, y, z) → three (x, z, -y); mm → three
+// units divides by 100 (matches applyAssetScale's mm fallback).
+export type FiberNode = {
+  posMm: [number, number, number];
+  handleInMm?: [number, number, number];
+  handleOutMm?: [number, number, number];
+};
+
+const labMmToFiberThree = (p: [number, number, number]) =>
+  new THREE.Vector3(p[0] / 100, p[2] / 100, -p[1] / 100);
+
+const offsetMmToFiberThree = (d: [number, number, number]) =>
+  new THREE.Vector3(d[0] / 100, d[2] / 100, -d[1] / 100);
+
+export function buildFiberCurvePath(nodes: FiberNode[]): THREE.CurvePath<THREE.Vector3> {
+  const path = new THREE.CurvePath<THREE.Vector3>();
+  for (let i = 0; i < nodes.length - 1; i += 1) {
+    const a = nodes[i];
+    const b = nodes[i + 1];
+    const segmentDelta: [number, number, number] = [
+      b.posMm[0] - a.posMm[0],
+      b.posMm[1] - a.posMm[1],
+      b.posMm[2] - a.posMm[2],
+    ];
+    const defaultHandle: [number, number, number] = [
+      segmentDelta[0] / 3,
+      segmentDelta[1] / 3,
+      segmentDelta[2] / 3,
+    ];
+    const aOut = a.handleOutMm ?? defaultHandle;
+    const bIn = b.handleInMm ?? [-defaultHandle[0], -defaultHandle[1], -defaultHandle[2]];
+    const p0 = labMmToFiberThree(a.posMm);
+    const p3 = labMmToFiberThree(b.posMm);
+    const p1 = p0.clone().add(offsetMmToFiberThree(aOut));
+    const p2 = p3.clone().add(offsetMmToFiberThree(bIn));
+    path.add(new THREE.CubicBezierCurve3(p0, p1, p2, p3));
+  }
+  return path;
+}
+
+/** OUTWARD direction (in three units, fiber-wrapper-local) at endpoint
+ *  `endpoint` of the Bezier polyline `nodes` — the unit vector pointing
+ *  AWAY from the curve body, used to orient the FC connector ferrule. For
+ *  endpoint A this is `-handleOut` (the curve leaves A toward B in the
+ *  +handleOut direction); for endpoint B it's `-handleIn`. Falls back to
+ *  the segment direction toward the neighbour if the handle is missing
+ *  or zero-length. */
+export function fiberEndpointOutwardThree(
+  nodes: FiberNode[],
+  endpoint: "A" | "B",
+): THREE.Vector3 {
+  const idx = endpoint === "A" ? 0 : nodes.length - 1;
+  const neighbourIdx = endpoint === "A" ? 1 : nodes.length - 2;
+  const node = nodes[idx];
+  const handle = endpoint === "A" ? node.handleOutMm : node.handleInMm;
+  if (handle && handle[0] ** 2 + handle[1] ** 2 + handle[2] ** 2 > 1e-9) {
+    return offsetMmToFiberThree([-handle[0], -handle[1], -handle[2]]).normalize();
+  }
+  const neighbour = nodes[neighbourIdx];
+  const seg = labMmToFiberThree(node.posMm).clone().sub(labMmToFiberThree(neighbour.posMm));
+  if (seg.lengthSq() < 1e-9) seg.set(1, 0, 0);
+  return seg.normalize();
+}
+
+// Jacket colours follow the Thorlabs colour-coding convention used in the
+// product photos: yellow for SM single-mode, blue for PM polarization-
+// maintaining, orange for MM multi-mode. This is also the boot colour used
+// on PC ends (APC ends are always green by industry convention).
+type FiberType = "single_mode" | "polarization_maintaining" | "multi_mode";
+type Polish = "PC" | "UPC" | "APC" | "AR";
+
+const FIBER_JACKET_COLOR: Record<FiberType, string> = {
+  single_mode: "#facc15",            // yellow (Thorlabs SM PVC / Hytrel jacket)
+  polarization_maintaining: "#1d4ed8", // deep blue (Thorlabs PM jacket)
+  multi_mode: "#fb923c",             // orange (typical OM-series MM cable)
+};
+
+const APC_BOOT_COLOR = "#16a34a";    // bright green — industry standard for APC
+
+function pickFiberType(component: ComponentItem): FiberType {
+  const props = component.properties as
+    | { fiberKindParamsOverride?: { fiberType?: string } }
+    | undefined;
+  const t = props?.fiberKindParamsOverride?.fiberType;
+  if (t === "single_mode" || t === "multi_mode" || t === "polarization_maintaining") {
+    return t;
+  }
+  // Default in DEFAULT_KIND_PARAMS["fiber"] is PM, mirror that here.
+  return "polarization_maintaining";
+}
+
+function pickEndPolish(component: ComponentItem, endpoint: "A" | "B"): Polish {
+  const props = component.properties as
+    | {
+        fiberKindParamsOverride?: {
+          endA?: { polish?: string };
+          endB?: { polish?: string };
+        };
+      }
+    | undefined;
+  const raw =
+    endpoint === "A"
+      ? props?.fiberKindParamsOverride?.endA?.polish
+      : props?.fiberKindParamsOverride?.endB?.polish;
+  if (raw === "PC" || raw === "UPC" || raw === "APC" || raw === "AR") return raw;
+  return "PC";
+}
+
+interface FcConnectorOptions {
+  polish: Polish;
+  bootColor: string;
+}
+
+// 30126A9 reference geometry (Thorlabs FC/APC connector housing): high-fidelity
+// mesh imported from the published STEP file via FreeCAD STEP→STL. Loaded once
+// per session and shared across every fiber connector instance for memory
+// efficiency. While the load is in flight, fiber connectors fall back to the
+// procedural geometry below; once the cache fills they'll use the imported
+// shape on the next fiber re-render.
+//   - Original STEP frame: longitudinal axis +Z, cable-side end at z≈-25 mm,
+//     ferrule tip at z≈+11.28 mm, Ø10 mm at the coupling nut.
+//   - APC ferrule has the 8° polish baked into the geometry; the PC variant
+//     is generated on demand by clamping the ferrule-tip vertices to a single
+//     y so the slanted face becomes flat.
+//   - All transforms are baked into the cached BufferGeometry: rotateX(-π/2)
+//     swings +Z → +Y, translate(+25 mm in pre-scale frame) puts the cable end
+//     at y=0, then scale 0.01 maps mm → scene units (1 unit = 100 mm).
+const FC_HOUSING_ASSET_PATH = "uploads/thorlabs_fc_apc_30126a9.stl";
+const FC_HOUSING_LENGTH_MM = 36.28;
+const FC_HOUSING_FERRULE_TIP_RADIUS_MM = 1.25;
+let fcHousingApcGeometryCache: THREE.BufferGeometry | null = null;
+let fcHousingPcGeometryCache: THREE.BufferGeometry | null = null;
+let fcHousingLoadPromise: Promise<void> | null = null;
+
+function loadFcHousingGeometry(): Promise<void> {
+  if (fcHousingApcGeometryCache && fcHousingPcGeometryCache) return Promise.resolve();
+  if (!fcHousingLoadPromise) {
+    fcHousingLoadPromise = stlLoader
+      .loadAsync(resolveAssetUrl(FC_HOUSING_ASSET_PATH))
+      .then((raw: THREE.BufferGeometry) => {
+        // Bake the orientation/scale transforms once into the geometry so the
+        // per-fiber Mesh just references it without further transforms. The
+        // procedural boot was removed 2026-05-09 (it added an unwanted
+        // Ø3→Ø6 taper at each cable end), so the housing's cable-side end
+        // sits exactly at the fiber endpoint (y=0). The cable goes directly
+        // into the rear plastic barrel of the imported model.
+        raw.rotateX(-Math.PI / 2); // +Z → +Y in original STL frame
+        raw.translate(0, 25, 0);   // cable end (was z=-25) → y=0 mm
+        raw.scale(0.01, 0.01, 0.01); // mm → scene units (1 unit = 100 mm)
+        raw.computeVertexNormals();
+
+        // Split the housing into 3 visual zones along the longitudinal axis
+        // by reordering triangles and emitting BufferGeometry groups. Per-
+        // triangle Y boundaries chosen from inspecting the STL radial-vs-Z
+        // distribution (scripts/_inspect_stl_zones.py): rear barrel narrows
+        // and the wide hex coupling nut starts around STL z = -9 mm; the
+        // ceramic ferrule (Ø2.5 mm) starts around z = +10 mm.
+        //   group 0 → rear barrel (plastic, jacket-coloured by polish)
+        //   group 1 → coupling nut + body sleeve + chrome ring (silver metal)
+        //   group 2 → ceramic ferrule (white zirconia)
+        const Y_REAR_TO_MID = 0.16; // 16 mm in scene units (= STL z -9 mm)
+        const Y_MID_TO_TIP = 0.35;  // 35 mm in scene units (= STL z +10 mm)
+        const pos = raw.attributes.position;
+        const norm = raw.attributes.normal;
+        const vertCount = pos.count;
+        const triCount = vertCount / 3;
+        const triZones: number[] = new Array(triCount);
+        const counts = [0, 0, 0];
+        for (let t = 0; t < triCount; t++) {
+          const yc = (pos.getY(t * 3) + pos.getY(t * 3 + 1) + pos.getY(t * 3 + 2)) / 3;
+          const z = yc < Y_REAR_TO_MID ? 0 : yc < Y_MID_TO_TIP ? 1 : 2;
+          triZones[t] = z;
+          counts[z]++;
+        }
+        // Stable reorder: triangles are written into the new buffer grouped
+        // by zone, preserving original order within each zone.
+        const newPos = new Float32Array(pos.array.length);
+        const newNorm = new Float32Array(norm.array.length);
+        const writeOffset = [0, counts[0], counts[0] + counts[1]]; // tri-index offsets per zone
+        const writeCursor = [0, 0, 0];
+        for (let t = 0; t < triCount; t++) {
+          const z = triZones[t];
+          const dstTri = writeOffset[z] + writeCursor[z]++;
+          for (let v = 0; v < 3; v++) {
+            const srcBase = (t * 3 + v) * 3;
+            const dstBase = (dstTri * 3 + v) * 3;
+            newPos[dstBase] = pos.array[srcBase];
+            newPos[dstBase + 1] = pos.array[srcBase + 1];
+            newPos[dstBase + 2] = pos.array[srcBase + 2];
+            newNorm[dstBase] = norm.array[srcBase];
+            newNorm[dstBase + 1] = norm.array[srcBase + 1];
+            newNorm[dstBase + 2] = norm.array[srcBase + 2];
+          }
+        }
+        (pos.array as Float32Array).set(newPos);
+        (norm.array as Float32Array).set(newNorm);
+        pos.needsUpdate = true;
+        norm.needsUpdate = true;
+        raw.clearGroups();
+        let cursor = 0;
+        for (let z = 0; z < 3; z++) {
+          raw.addGroup(cursor, counts[z] * 3, z);
+          cursor += counts[z] * 3;
+        }
+        raw.computeBoundingBox();
+        fcHousingApcGeometryCache = raw;
+
+        // Build a flat-tip clone for PC ends. The ferrule tip in the imported
+        // STL is the cluster of vertices at the maximum Y; flatten any vertex
+        // within ±0.5 mm of that y to a single value so the 8° slope becomes
+        // perfectly flat. (Sub-millimetre clamp; the rest of the housing is
+        // untouched, and BufferGeometry groups are inherited via clone().)
+        const pc = raw.clone();
+        const pcPos = pc.attributes.position;
+        const bbox = pc.boundingBox!;
+        const tipY = bbox.max.y;
+        const flattenBand = 0.005; // 0.5 mm in scene units
+        for (let i = 0; i < pcPos.count; i++) {
+          if (pcPos.getY(i) > tipY - flattenBand) {
+            pcPos.setY(i, tipY);
+          }
+        }
+        pcPos.needsUpdate = true;
+        pc.computeVertexNormals();
+        fcHousingPcGeometryCache = pc;
+      })
+      .catch((err: unknown) => {
+        console.warn("[fiber] failed to load FC housing STL, falling back to procedural geometry", err);
+      });
+  }
+  return fcHousingLoadPromise;
+}
+
+// Kick off the load eagerly at module init so by the time the user drops a
+// fiber on the scene the cache is populated. Errors are swallowed; fall-back
+// procedural geometry still renders.
+loadFcHousingGeometry();
+
+function buildFcConnectorMesh(options: FcConnectorOptions = { polish: "PC", bootColor: "#0a0a0c" }): THREE.Group {
+  // FC connector model. Stacked along local +Y from the cable side at y=0
+  // to the ferrule tip at y ≈ 0.3628 (= 36.28 mm). The caller rotates the
+  // group so +Y aligns with the outward direction at the fiber endpoint.
+  //
+  // No procedural boot: the cable's straight TubeGeometry feeds directly
+  // into the imported Thorlabs 30126A9 housing whose rear plastic barrel
+  // (group 0, jacket-coloured) provides the visual identity that a rubber
+  // boot would give. The 30126A9 STL itself contains the rear barrel,
+  // hex coupling nut, body sleeve, chrome shoulder ring and ceramic
+  // ferrule — APC ends use the imported geometry as-is (8° polish baked
+  // in); PC ends use a clone with the ferrule-tip vertices clamped flat.
+  // Falls back to a procedural housing while the STL load is in flight.
+  const conn = new THREE.Group();
+  conn.userData.fiberRole = "connector";
+  conn.userData.fiberPolish = options.polish;
+
+  // ---------- materials ----------------------------------------------
+  // Per-zone materials for the imported STL housing:
+  //   group 0 (rear barrel): plastic, jacket-coloured for PC, green for APC.
+  //   group 1 (coupling nut + body sleeve + chrome ring): silver metal.
+  //   group 2 (ceramic ferrule tip): white zirconia.
+  const rearPlastic = new THREE.MeshStandardMaterial({
+    color: options.bootColor, metalness: 0.0, roughness: 0.85,
+  });
+  const housingMetal = new THREE.MeshStandardMaterial({
+    color: "#c9ccd2", metalness: 0.92, roughness: 0.28,
+  });
+  const housingCeramic = new THREE.MeshStandardMaterial({
+    color: "#f5f3ee", metalness: 0.05, roughness: 0.38,
+  });
+
+  // ---------- helpers ------------------------------------------------
+  const mm = (v: number) => v / 100;
+
+  // ---------- Thorlabs-imported housing (STL) ------------------------
+  const cachedHousing = options.polish === "APC"
+    ? fcHousingApcGeometryCache
+    : fcHousingPcGeometryCache;
+
+  if (cachedHousing) {
+    // Geometry has 3 groups: 0=rear plastic, 1=silver metal, 2=ceramic ferrule.
+    // Materials array order must match group materialIndex.
+    const housing = new THREE.Mesh(cachedHousing, [rearPlastic, housingMetal, housingCeramic]);
+    housing.userData.fiberRole = "housing";
+    housing.userData.thorlabsModel = "30126A9";
+    conn.add(housing);
+  } else {
+    // STL still loading — render a slim procedural placeholder so the
+    // connector isn't invisible during the brief load window. Replaced
+    // with the imported geometry on next fiber re-render once the cache
+    // populates.
+    const knurlMetal = new THREE.MeshStandardMaterial({
+      color: "#a8acb2", metalness: 0.85, roughness: 0.42,
+    });
+    const sleeveMetal = new THREE.MeshStandardMaterial({
+      color: "#8c9098", metalness: 0.88, roughness: 0.34,
+    });
+    const ceramic = new THREE.MeshStandardMaterial({
+      color: "#f5f3ee", metalness: 0.05, roughness: 0.38,
+    });
+    const chromeRing = new THREE.MeshStandardMaterial({
+      color: "#d8dadd", metalness: 0.95, roughness: 0.18,
+    });
+
+    let cursorY = 0;
+    const rearLen = 16;
+    const rearBarrel = new THREE.Mesh(
+      new THREE.CylinderGeometry(mm(3.0), mm(2.5), mm(rearLen), 24),
+      rearPlastic,
+    );
+    rearBarrel.position.y = mm(cursorY + rearLen / 2);
+    conn.add(rearBarrel);
+    cursorY += rearLen;
+
+    const nutLen = 9, nutKnurlLen = 5.5;
+    const nutSmoothLen = nutLen - nutKnurlLen;
+    const nut = new THREE.Mesh(
+      new THREE.CylinderGeometry(mm(4.0), mm(4.0), mm(nutSmoothLen), 6),
+      housingMetal,
+    );
+    nut.position.y = mm(cursorY + nutSmoothLen / 2);
+    conn.add(nut);
+    const nutKnurl = new THREE.Mesh(
+      new THREE.CylinderGeometry(mm(4.05), mm(4.05), mm(nutKnurlLen), 6),
+      knurlMetal,
+    );
+    nutKnurl.position.y = mm(cursorY + nutSmoothLen + nutKnurlLen / 2);
+    conn.add(nutKnurl);
+    cursorY += nutLen;
+
+    const sleeveLen = 4;
+    const sleeve = new THREE.Mesh(
+      new THREE.CylinderGeometry(mm(3.0), mm(3.5), mm(sleeveLen), 20),
+      sleeveMetal,
+    );
+    sleeve.position.y = mm(cursorY + sleeveLen / 2);
+    conn.add(sleeve);
+    cursorY += sleeveLen;
+
+    const shoulderRingLen = 1;
+    const shoulderRing = new THREE.Mesh(
+      new THREE.CylinderGeometry(mm(2.0), mm(2.0), mm(shoulderRingLen), 24),
+      chromeRing,
+    );
+    shoulderRing.position.y = mm(cursorY + shoulderRingLen / 2);
+    conn.add(shoulderRing);
+    cursorY += shoulderRingLen;
+
+    const ferruleLen = 10;
+    const ferruleHeight = mm(ferruleLen);
+    const ferruleGeom = new THREE.CylinderGeometry(mm(1.20), mm(1.25), ferruleHeight, 20);
+    if (options.polish === "APC") {
+      const pos = ferruleGeom.attributes.position;
+      const topY = ferruleHeight / 2;
+      const tan8 = Math.tan((8 * Math.PI) / 180);
+      for (let i = 0; i < pos.count; i++) {
+        if (Math.abs(pos.getY(i) - topY) < 1e-5) {
+          pos.setY(i, topY - pos.getZ(i) * tan8);
+        }
+      }
+      pos.needsUpdate = true;
+      ferruleGeom.computeVertexNormals();
+    }
+    const ferrule = new THREE.Mesh(ferruleGeom, ceramic);
+    ferrule.position.y = mm(cursorY + ferruleLen / 2);
+    conn.add(ferrule);
+
+    const keyPin = new THREE.Mesh(
+      new THREE.CylinderGeometry(mm(0.6), mm(0.6), mm(1.6), 14),
+      chromeRing,
+    );
+    keyPin.rotation.z = Math.PI / 2;
+    keyPin.position.set(mm(4.05 + 0.8), mm(rearLen + nutSmoothLen + nutKnurlLen + sleeveLen * 0.4), 0);
+    conn.add(keyPin);
+  }
+
+  conn.traverse((c) => {
+    c.castShadow = true;
+    c.receiveShadow = true;
+  });
+  return conn;
+}
+
+/** Re-orient and reposition a previously-built FC connector group to
+ *  match the current node array. Used both at initial build (loadAsset)
+ *  and live during drag (DigitalTwinViewer's rebuildTube), so the
+ *  connector tracks anchor and tangent-handle changes in real time. */
+export function applyFiberConnectorTransform(
+  conn: THREE.Object3D,
+  nodes: FiberNode[],
+  endpoint: "A" | "B",
+): void {
+  const idx = endpoint === "A" ? 0 : nodes.length - 1;
+  const outward = fiberEndpointOutwardThree(nodes, endpoint);
+  conn.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), outward);
+  conn.position.copy(labMmToFiberThree(nodes[idx].posMm));
+}
+
+function createFiberSplineObject(component: ComponentItem): THREE.Object3D {
+  const props = (component.properties as { fiberNodes?: FiberNode[]; radiusMm?: number } | undefined) ?? {};
+  const nodes: FiberNode[] = (props.fiberNodes && props.fiberNodes.length >= 2)
+    ? props.fiberNodes
+    : [
+        { posMm: [0, 0, 50], handleOutMm: [100, 0, 0] },
+        { posMm: [300, 0, 50], handleInMm: [-100, 0, 0] },
+      ];
+  const radiusMm = typeof props.radiusMm === "number" && props.radiusMm > 0 ? props.radiusMm : 1.0;
+
+  const fiberType = pickFiberType(component);
+  const jacketColor = FIBER_JACKET_COLOR[fiberType];
+  const polishA = pickEndPolish(component, "A");
+  const polishB = pickEndPolish(component, "B");
+  const bootColorA = polishA === "APC" ? APC_BOOT_COLOR : jacketColor;
+  const bootColorB = polishB === "APC" ? APC_BOOT_COLOR : jacketColor;
+
+  const path = buildFiberCurvePath(nodes);
+  const tubularSegments = Math.max(64, (nodes.length - 1) * 32);
+  const geometry = new THREE.TubeGeometry(path, tubularSegments, radiusMm / 100, 12, false);
+
+  const jacket = new THREE.MeshStandardMaterial({
+    color: jacketColor,
+    metalness: 0.05,
+    roughness: 0.55,
+  });
+  const tube = new THREE.Mesh(geometry, jacket);
+  tube.castShadow = true;
+  tube.receiveShadow = true;
+  tube.name = `${component.name}__tube`;
+  tube.userData.fiberRole = "tube";
+
+  const group = new THREE.Group();
+  group.name = component.name;
+  group.userData.fiberComponentId = component.id;
+  group.userData.fiberType = fiberType;
+  group.add(tube);
+
+  // FC connector at each endpoint. Outward direction comes from the
+  // Bezier handle on that endpoint — handleOut at A points INTO the curve,
+  // so the connector's ferrule sticks out in -handleOut. handleIn at B
+  // similarly points back INTO the curve. Per-end polish (PC vs APC)
+  // controls both the ferrule tip geometry (flat vs 8°) and the boot
+  // colour (jacket-coloured for PC, green for APC).
+  const connA = buildFcConnectorMesh({ polish: polishA, bootColor: bootColorA });
+  connA.userData.fiberConnectorEndpoint = "A";
+  applyFiberConnectorTransform(connA, nodes, "A");
+  group.add(connA);
+  const connB = buildFcConnectorMesh({ polish: polishB, bootColor: bootColorB });
+  connB.userData.fiberConnectorEndpoint = "B";
+  applyFiberConnectorTransform(connB, nodes, "B");
+  group.add(connB);
+
+  return group;
+}
+
+// Render the Thorlabs BB1-E03 broadband dielectric mirror as glass body +
+// pink iridescent reflective coating, instead of the default flat-grey STL
+// look. Front face = the optical/coated face (bears the BB1-E03 THORLABS
+// engraving in the photo); body = green-tinted glass substrate.
+//
+// The STEP→STL export from FreeCAD produces a non-indexed mesh oriented
+// along whichever axis the original Thorlabs CAD used. We auto-detect the
+// disc axis (= smallest bbox dimension) and partition triangles by face
+// normal × axial position into two sub-meshes. The "+axis" flat face is
+// designated as the optical face; if the user later finds the wrong face
+// is coated, we expose a `frontFaceAxisSign` property override.
+function isBB1E03Asset(asset: Asset3D): boolean {
+  return asset.name === "thorlabs_bb1_e03_stl"
+    || /thorlabs_bb1_e03\.stl$/i.test(asset.filePath);
+}
+
+function buildBB1E03MirrorObject(
+  geometry: THREE.BufferGeometry,
+  component: ComponentItem,
+): THREE.Object3D {
+  const positionAttr = geometry.attributes.position as THREE.BufferAttribute;
+  const oldPositions = positionAttr.array as Float32Array;
+
+  const bbox = new THREE.Box3().setFromBufferAttribute(positionAttr);
+  const size = new THREE.Vector3();
+  bbox.getSize(size);
+  let axisIdx: 0 | 1 | 2 = 0;
+  if (size.y < size.x && size.y < size.z) axisIdx = 1;
+  else if (size.z < size.x && size.z < size.y) axisIdx = 2;
+  const axisCenter =
+    (bbox.min.getComponent(axisIdx) + bbox.max.getComponent(axisIdx)) / 2;
+
+  const frontSign = (() => {
+    const raw = (component.properties as { frontFaceAxisSign?: number } | undefined)
+      ?.frontFaceAxisSign;
+    return raw === -1 ? -1 : 1;
+  })();
+
+  const triangleCount = Math.floor(positionAttr.count / 3);
+  const frontTris: number[] = [];
+  const bodyTris: number[] = [];
+  const v1 = new THREE.Vector3();
+  const v2 = new THREE.Vector3();
+  const v3 = new THREE.Vector3();
+  const e1 = new THREE.Vector3();
+  const e2 = new THREE.Vector3();
+  const normal = new THREE.Vector3();
+
+  for (let t = 0; t < triangleCount; t += 1) {
+    const o = t * 9;
+    v1.set(oldPositions[o + 0], oldPositions[o + 1], oldPositions[o + 2]);
+    v2.set(oldPositions[o + 3], oldPositions[o + 4], oldPositions[o + 5]);
+    v3.set(oldPositions[o + 6], oldPositions[o + 7], oldPositions[o + 8]);
+    e1.subVectors(v2, v1);
+    e2.subVectors(v3, v1);
+    normal.crossVectors(e1, e2).normalize();
+
+    const normalAxisComp = normal.getComponent(axisIdx) * frontSign;
+    const centroidAxis =
+      (v1.getComponent(axisIdx) + v2.getComponent(axisIdx) + v3.getComponent(axisIdx)) / 3;
+    const centroidSide = (centroidAxis - axisCenter) * frontSign;
+    const isFrontFace = normalAxisComp > 0.85 && centroidSide > 0;
+    (isFrontFace ? frontTris : bodyTris).push(t);
+  }
+
+  const buildSubGeometry = (triangleIndices: number[]): THREE.BufferGeometry => {
+    const sub = new THREE.BufferGeometry();
+    const buf = new Float32Array(triangleIndices.length * 9);
+    for (let i = 0; i < triangleIndices.length; i += 1) {
+      const srcOff = triangleIndices[i] * 9;
+      const dstOff = i * 9;
+      for (let k = 0; k < 9; k += 1) buf[dstOff + k] = oldPositions[srcOff + k];
+    }
+    sub.setAttribute("position", new THREE.BufferAttribute(buf, 3));
+    sub.computeVertexNormals();
+    return sub;
+  };
+
+  const opticalCoating = new THREE.MeshPhysicalMaterial({
+    color: "#ec9fb6",
+    metalness: 0.25,
+    roughness: 0.12,
+    iridescence: 1.0,
+    iridescenceIOR: 1.45,
+    iridescenceThicknessRange: [180, 540],
+    clearcoat: 1.0,
+    clearcoatRoughness: 0.06,
+    sheen: 0.4,
+    sheenColor: new THREE.Color("#7ab8ff"),
+    envMapIntensity: 1.4,
+  });
+
+  const glassBody = new THREE.MeshPhysicalMaterial({
+    color: "#e3f1ea",
+    metalness: 0.0,
+    roughness: 0.04,
+    transmission: 1.0,
+    thickness: 0.06,
+    ior: 1.52,
+    attenuationColor: new THREE.Color("#bedacd"),
+    attenuationDistance: 0.6,
+    transparent: false,
+    opacity: 1,
+    envMapIntensity: 1.4,
+  });
+
+  const group = new THREE.Group();
+  group.name = component.name;
+
+  const bodyMesh = new THREE.Mesh(buildSubGeometry(bodyTris), glassBody);
+  bodyMesh.renderOrder = 0;
+  group.add(bodyMesh);
+
+  const frontMesh = new THREE.Mesh(buildSubGeometry(frontTris), opticalCoating);
+  frontMesh.renderOrder = 1;
+  group.add(frontMesh);
+
+  geometry.dispose();
+  return group;
+}
+
+// Render the Thorlabs WPHSM05-850 mounted half-wave plate as black anodized
+// SM05 mount + green-tinted glass waveplate disc in the centre. The STL
+// already contains the disc as a separate body inside the mount; we
+// partition triangles by (centroid radial distance from the optical axis)
+// AND (normal alignment with the optical axis) to extract the disc faces.
+function isWphsm05Asset(asset: Asset3D): boolean {
+  return asset.name === "thorlabs_wphsm05_850_stl"
+    || /thorlabs_wphsm05_850\.stl$/i.test(asset.filePath);
+}
+
+function buildWphsm05WaveplateObject(
+  geometry: THREE.BufferGeometry,
+  component: ComponentItem,
+): THREE.Object3D {
+  const positionAttr = geometry.attributes.position as THREE.BufferAttribute;
+  const oldPositions = positionAttr.array as Float32Array;
+
+  const bbox = new THREE.Box3().setFromBufferAttribute(positionAttr);
+  const size = new THREE.Vector3();
+  bbox.getSize(size);
+  let axisIdx: 0 | 1 | 2 = 0;
+  if (size.y < size.x && size.y < size.z) axisIdx = 1;
+  else if (size.z < size.x && size.z < size.y) axisIdx = 2;
+  const radialAxes: [0 | 1 | 2, 0 | 1 | 2] = [
+    [1, 2], [0, 2], [0, 1],
+  ][axisIdx] as [0 | 1 | 2, 0 | 1 | 2];
+  const radialCenters: [number, number] = [
+    (bbox.min.getComponent(radialAxes[0]) + bbox.max.getComponent(radialAxes[0])) / 2,
+    (bbox.min.getComponent(radialAxes[1]) + bbox.max.getComponent(radialAxes[1])) / 2,
+  ];
+  const outerRadius = Math.max(
+    size.getComponent(radialAxes[0]),
+    size.getComponent(radialAxes[1]),
+  ) / 2;
+  // Empirically the WPHSM05-850 STL has the glass disc as a clean 44-triangle
+  // ring at radial distance < 5 mm; jumps to 2k+ triangles at >5 mm where the
+  // mount's internal seating surface starts. 0.58 of the 8.89 mm outer radius
+  // captures the disc cleanly without dragging in mount features.
+  const apertureRadius = outerRadius * 0.58;
+  const glassRadiusSq = apertureRadius * apertureRadius;
+
+  const triangleCount = Math.floor(positionAttr.count / 3);
+  const glassTris: number[] = [];
+  const mountTris: number[] = [];
+  const v1 = new THREE.Vector3();
+  const v2 = new THREE.Vector3();
+  const v3 = new THREE.Vector3();
+  const e1 = new THREE.Vector3();
+  const e2 = new THREE.Vector3();
+  const normal = new THREE.Vector3();
+
+  for (let t = 0; t < triangleCount; t += 1) {
+    const o = t * 9;
+    v1.set(oldPositions[o + 0], oldPositions[o + 1], oldPositions[o + 2]);
+    v2.set(oldPositions[o + 3], oldPositions[o + 4], oldPositions[o + 5]);
+    v3.set(oldPositions[o + 6], oldPositions[o + 7], oldPositions[o + 8]);
+    e1.subVectors(v2, v1);
+    e2.subVectors(v3, v1);
+    normal.crossVectors(e1, e2).normalize();
+
+    const rA =
+      (v1.getComponent(radialAxes[0]) + v2.getComponent(radialAxes[0]) + v3.getComponent(radialAxes[0])) / 3
+      - radialCenters[0];
+    const rB =
+      (v1.getComponent(radialAxes[1]) + v2.getComponent(radialAxes[1]) + v3.getComponent(radialAxes[1])) / 3
+      - radialCenters[1];
+    const radialSq = rA * rA + rB * rB;
+    const normalAxisAbs = Math.abs(normal.getComponent(axisIdx));
+    const isGlass = radialSq < glassRadiusSq && normalAxisAbs > 0.85;
+    (isGlass ? glassTris : mountTris).push(t);
+  }
+
+  const buildSubGeometry = (triangleIndices: number[]): THREE.BufferGeometry => {
+    const sub = new THREE.BufferGeometry();
+    const buf = new Float32Array(triangleIndices.length * 9);
+    for (let i = 0; i < triangleIndices.length; i += 1) {
+      const srcOff = triangleIndices[i] * 9;
+      const dstOff = i * 9;
+      for (let k = 0; k < 9; k += 1) buf[dstOff + k] = oldPositions[srcOff + k];
+    }
+    sub.setAttribute("position", new THREE.BufferAttribute(buf, 3));
+    sub.computeVertexNormals();
+    return sub;
+  };
+
+  const blackMount = new THREE.MeshStandardMaterial({
+    color: "#1a1a1c",
+    metalness: 0.25,
+    roughness: 0.55,
+  });
+
+  const waveplateGlass = new THREE.MeshPhysicalMaterial({
+    color: "#dceee3",
+    metalness: 0.0,
+    roughness: 0.05,
+    transmission: 1.0,
+    thickness: 0.04,
+    ior: 1.55,
+    attenuationColor: new THREE.Color("#a8ccb9"),
+    attenuationDistance: 0.6,
+    transparent: false,
+    opacity: 1,
+    envMapIntensity: 1.3,
+  });
+
+  const group = new THREE.Group();
+  group.name = component.name;
+
+  const mountMesh = new THREE.Mesh(buildSubGeometry(mountTris), blackMount);
+  mountMesh.renderOrder = 0;
+  group.add(mountMesh);
+
+  if (glassTris.length > 0) {
+    const glassMesh = new THREE.Mesh(buildSubGeometry(glassTris), waveplateGlass);
+    glassMesh.renderOrder = 1;
+    group.add(glassMesh);
+  }
+
+  geometry.dispose();
+  return group;
+}
+
+// Render the Thorlabs PBS252 polarising beam splitter cube as clear glass
+// with frosted top/bottom faces. The STEP→STL export already contains the
+// engraved "PBS252" text + arrows on the +Y face as fine triangle detail
+// (see top-face triangle count vs flat bottom), so we don't need to add a
+// sprite — making the top frosted naturally lets the engravings catch
+// light. Iridescence on the body fakes the diagonal coating's pink/purple
+// sheen visible in the product photo.
+function isPbs252Asset(asset: Asset3D): boolean {
+  return asset.name === "thorlabs_pbs252_stl"
+    || /thorlabs_pbs252\.stl$/i.test(asset.filePath);
+}
+
+function buildPbs252BeamSplitterObject(
+  geometry: THREE.BufferGeometry,
+  component: ComponentItem,
+): THREE.Object3D {
+  const positionAttr = geometry.attributes.position as THREE.BufferAttribute;
+  const oldPositions = positionAttr.array as Float32Array;
+
+  const topAxisStr = (component.properties as { topAxis?: string } | undefined)?.topAxis;
+  const topAxisIdx: 0 | 1 | 2 =
+    topAxisStr === "x" ? 0 : topAxisStr === "z" ? 2 : 1;
+
+  const triangleCount = Math.floor(positionAttr.count / 3);
+  const frostedTris: number[] = [];
+  const clearTris: number[] = [];
+  const v1 = new THREE.Vector3();
+  const v2 = new THREE.Vector3();
+  const v3 = new THREE.Vector3();
+  const e1 = new THREE.Vector3();
+  const e2 = new THREE.Vector3();
+  const normal = new THREE.Vector3();
+
+  for (let t = 0; t < triangleCount; t += 1) {
+    const o = t * 9;
+    v1.set(oldPositions[o + 0], oldPositions[o + 1], oldPositions[o + 2]);
+    v2.set(oldPositions[o + 3], oldPositions[o + 4], oldPositions[o + 5]);
+    v3.set(oldPositions[o + 6], oldPositions[o + 7], oldPositions[o + 8]);
+    e1.subVectors(v2, v1);
+    e2.subVectors(v3, v1);
+    normal.crossVectors(e1, e2).normalize();
+
+    const isFrostedFace = Math.abs(normal.getComponent(topAxisIdx)) > 0.85;
+    (isFrostedFace ? frostedTris : clearTris).push(t);
+  }
+
+  const buildSubGeometry = (triangleIndices: number[]): THREE.BufferGeometry => {
+    const sub = new THREE.BufferGeometry();
+    const buf = new Float32Array(triangleIndices.length * 9);
+    for (let i = 0; i < triangleIndices.length; i += 1) {
+      const srcOff = triangleIndices[i] * 9;
+      const dstOff = i * 9;
+      for (let k = 0; k < 9; k += 1) buf[dstOff + k] = oldPositions[srcOff + k];
+    }
+    sub.setAttribute("position", new THREE.BufferAttribute(buf, 3));
+    sub.computeVertexNormals();
+    return sub;
+  };
+
+  // Three.js docs: "When using transmission, set transparent to false." The
+  // transmission render pass already provides the see-through effect; layering
+  // it under transparent: true causes double-sorting and a milky look.
+  const clearGlass = new THREE.MeshPhysicalMaterial({
+    color: "#f4faf6",
+    metalness: 0.0,
+    roughness: 0.04,
+    transmission: 1.0,
+    thickness: 0.25,
+    ior: 1.52,
+    attenuationColor: new THREE.Color("#d0e7dc"),
+    attenuationDistance: 1.2,
+    iridescence: 0.55,
+    iridescenceIOR: 1.4,
+    iridescenceThicknessRange: [220, 580],
+    transparent: false,
+    opacity: 1,
+    envMapIntensity: 1.5,
+  });
+
+  const frostedGlass = new THREE.MeshPhysicalMaterial({
+    color: "#eef3ee",
+    metalness: 0.0,
+    roughness: 0.7,
+    transmission: 0.6,
+    thickness: 0.18,
+    ior: 1.5,
+    transparent: false,
+    opacity: 1,
+    envMapIntensity: 0.9,
+  });
+
+  const group = new THREE.Group();
+  group.name = component.name;
+
+  const clearMesh = new THREE.Mesh(buildSubGeometry(clearTris), clearGlass);
+  clearMesh.renderOrder = 0;
+  group.add(clearMesh);
+
+  const frostedMesh = new THREE.Mesh(buildSubGeometry(frostedTris), frostedGlass);
+  frostedMesh.renderOrder = 1;
+  group.add(frostedMesh);
+
+  geometry.dispose();
+  return group;
+}
+
 export async function loadAssetObject(
   component: ComponentItem,
   asset: Asset3D | undefined,
@@ -879,6 +1787,16 @@ export async function loadAssetObject(
     const table = createNewportOpticalTable();
     table.name = component.name;
     return table;
+  }
+
+  // Fiber patch cables render procedurally as a Bezier-spline tube using
+  // user-editable anchor + tangent-handle data on component.properties.
+  // Bypasses any STL asset attached to the catalogue template.
+  if (component.componentType === "fiber") {
+    const wrapper = new THREE.Group();
+    wrapper.name = component.name;
+    wrapper.add(createFiberSplineObject(component));
+    return wrapper;
   }
 
   if (!asset || asset.filePath.startsWith("primitive://")) {
@@ -897,7 +1815,15 @@ export async function loadAssetObject(
   } else if (extension === "stl") {
     const geometry = await stlLoader.loadAsync(assetUrl);
     geometry.computeVertexNormals();
-    object = new THREE.Mesh(geometry, materialFor(component, state));
+    if (isBB1E03Asset(asset)) {
+      object = buildBB1E03MirrorObject(geometry, component);
+    } else if (isWphsm05Asset(asset)) {
+      object = buildWphsm05WaveplateObject(geometry, component);
+    } else if (isPbs252Asset(asset)) {
+      object = buildPbs252BeamSplitterObject(geometry, component);
+    } else {
+      object = new THREE.Mesh(geometry, materialFor(component, state));
+    }
   } else {
     object = (await gltfLoader.loadAsync(assetUrl)).scene.clone(true);
   }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
@@ -111,6 +112,13 @@ class AssetAnchor(CamelModel):
         serialization_alias="directionBodyLocal",
     )
     aperture_mm: float | None = None
+    # Rectangular aperture (e.g. PBS / BS cube diagonal cement plane is
+    # a rectangle, not a square). When both width + height are set the
+    # editor + ray-tracer use them; when missing we fall back to
+    # 2*aperture_mm x 2*aperture_mm. Independent of aperture_mm so an
+    # anchor can carry both shapes simultaneously without ambiguity.
+    aperture_width_mm: float | None = None
+    aperture_height_mm: float | None = None
     name: str | None = None
     type: str | None = None
 
@@ -645,7 +653,11 @@ class QuantumTrace(CamelModel):
 # --- Port declarations -------------------------------------------------------
 
 
-PortRole = Literal["input", "output"]
+# "bidirectional" added so fiber endpoints (and future devices like
+# circulators / 2-way switches) can declare a single port that both
+# accepts and emits light. The optical solver / link checker treats
+# bidirectional as compatible with any role on the matching side.
+PortRole = Literal["input", "output", "bidirectional"]
 
 
 class OpticalPort(CamelModel):
@@ -669,6 +681,7 @@ ElementKind = Literal[
     "beam_splitter",
     "dichroic_mirror",
     "fiber_coupler",
+    "fiber",
     "isolator",
     "aom",
     "eom",
@@ -899,6 +912,144 @@ class FiberCouplerParams(CamelModel):
     numerical_aperture: float | None = Field(default=None, gt=0)
 
 
+# --- Fiber (full patch-cable / pigtail) -------------------------------------
+#
+# Distinct from the existing `fiber_coupler` element, which models a single
+# free-space ↔ fiber transition (one face). The `fiber` element kind models
+# the WHOLE patch cable as a bidirectional, two-ended optical component:
+# light entering end A propagates to end B (and vice versa) with explicit
+# Marcuse / mode-overlap coupling, Fresnel facet losses, length attenuation,
+# and Marcuse curvature loss accumulated along the editable Bezier spline.
+# See Phase A spec for full physics; this file only defines the persistence
+# / API contract.
+
+class FiberType(str, Enum):
+    MULTI_MODE = "multi_mode"
+    SINGLE_MODE = "single_mode"
+    POLARIZATION_MAINTAINING = "polarization_maintaining"
+
+
+class FiberConnectorType(str, Enum):
+    FC = "FC"
+    SC = "SC"
+    LC = "LC"
+    ST = "ST"
+    BARE = "BARE"  # un-connectorised pigtail
+
+
+class FiberConnectorPolish(str, Enum):
+    PC = "PC"          # 0° polish, ~3.4% Fresnel uncoated
+    UPC = "UPC"        # ultra-physical, slightly lower R but nominally same model
+    APC = "APC"        # 8° polish, back-reflection redirected away from source
+    AR = "AR"          # AR-coated face (independent of polish angle)
+
+
+class FiberAttenuationPoint(CamelModel):
+    """One sample on the fiber's wavelength-vs-attenuation curve. The
+    solver linearly interpolates between adjacent points and clamps to
+    the endpoints outside the sampled range."""
+    wavelength_nm: float = Field(gt=0)
+    db_per_km: float = Field(ge=0)
+
+
+class BendLossConstants(CamelModel):
+    """Macro-bend loss model parameters (Marcuse 1976 curvature-loss
+    formula). Stored on the kind so the solver can integrate
+    α_bend(R(s)) along the spline. Defaults match a typical 780 nm
+    single-mode silica fiber; users can override per kind."""
+    # V-number at the design wavelength (= (2π·a/λ)·sqrt(n_core²−n_clad²))
+    v_number: float = Field(gt=0, default=2.0)
+    # Core radius (µm) and core/cladding refractive indices.
+    core_radius_um: float = Field(gt=0, default=2.2)
+    n_core: float = Field(gt=1.0, default=1.4506)
+    n_clad: float = Field(gt=1.0, default=1.4500)
+    # Critical bend radius (mm) below which the Marcuse formula predicts
+    # >0.1 dB/m loss. Used as a UI warning threshold AND as a soft floor
+    # in the integral so numerical blow-up is avoided when the user
+    # accidentally folds the spline to zero.
+    critical_radius_mm: float = Field(gt=0, default=25.0)
+
+
+class FiberEndSpec(CamelModel):
+    """Per-end optical parameters. The two ends of a real patch cable are
+    usually identical, but the schema lets them differ (hybrid FC/PC ↔
+    FC/APC, SM ↔ MM splice etc.)."""
+
+    # Geometric face
+    aperture_diameter_mm: float = Field(gt=0, default=0.125)        # cladding OD = 125 µm
+    numerical_aperture: float = Field(gt=0, le=1.0, default=0.13)
+    # Field shape (only meaningful for SM / PM; MM leaves null).
+    mode_field_diameter_um: float | None = Field(default=None, gt=0)
+    core_diameter_um: float = Field(gt=0, default=4.4)
+    cladding_diameter_um: float = Field(gt=0, default=125.0)
+
+    # Connector + polish + AR
+    connector_type: FiberConnectorType = FiberConnectorType.FC
+    polish: FiberConnectorPolish = FiberConnectorPolish.PC
+    polish_angle_deg: float = 0.0
+    # Multiplier applied to the bare Fresnel reflectance R(θ): 1.0 = no
+    # AR, ~0.15 = typical AR coating (residual ~0.5 % from a 3.4 % bare
+    # facet), 0.0 = perfect AR. The solver still honours the angular and
+    # polarisation dependence of R(θ); this is just a flat factor on top.
+    fresnel_residual: float = Field(default=1.0, ge=0.0, le=1.0)
+
+    # Glass index at the design wavelength (used for Fresnel computation).
+    glass_index_at_design_lambda: float = Field(gt=1.0, default=1.4506)
+
+    # PM only: angle of the slow optical axis in the connector body
+    # frame, with 0° aligned to the FC alignment key. Per-instance
+    # rotation (`bodyRollDeg` on SceneObject) adds to this. Null for
+    # SM / MM.
+    slow_axis_deg_in_body_frame: float | None = None
+
+    # Optical port face position in CONNECTOR body-local mm. The
+    # connector is positioned by `applyFiberConnectorTransform` at the
+    # spline endpoint with +Y outward; this offset rides along the
+    # connector's transform automatically. Defaults to (0, 36.28, 0)
+    # = the ferrule tip (housing length 36.28 mm in scene units 0.3628).
+    # When the user moves the spline node, the world position of the
+    # port = endpointWorld + connectorRotation·(faceOffset).
+    face_position_mm_body_local: Vec3Mm | None = None
+
+
+class FiberParams(CamelModel):
+    fiber_type: FiberType = FiberType.SINGLE_MODE
+    end_a: FiberEndSpec = Field(default_factory=FiberEndSpec)
+    end_b: FiberEndSpec = Field(default_factory=FiberEndSpec)
+
+    # Wavelength range. cutoff is single-mode-only — below it the fiber
+    # supports multiple modes regardless of its nominal type.
+    cutoff_wavelength_nm: float | None = Field(default=None, gt=0)
+    operating_wavelength_range_nm: tuple[float, float] = (770.0, 790.0)
+    design_wavelength_nm: float = Field(gt=0, default=780.0)
+
+    # Power
+    max_input_power_mw: float = Field(gt=0, default=500.0)
+
+    # Wavelength-dependent attenuation curve (linear interp between points,
+    # clamped at endpoints). Solver accepts at least 1 point.
+    attenuation_curve: list[FiberAttenuationPoint] = Field(
+        default_factory=lambda: [FiberAttenuationPoint(wavelength_nm=780.0, db_per_km=5.0)]
+    )
+
+    # Bend loss model
+    bend_loss: BendLossConstants = Field(default_factory=BendLossConstants)
+    min_bend_radius_mm: float = Field(gt=0, default=25.0)
+
+    # Birefringence (PM/SM)
+    birefringence_delta_n: float | None = Field(default=None, ge=0.0)
+    pmd_coefficient_ps_per_sqrt_km: float | None = Field(default=None, ge=0.0)
+    polarization_extinction_ratio_db: float | None = Field(default=None, ge=0.0)  # PM only
+
+    # Modal dispersion (MM only)
+    bandwidth_mhz_km: float | None = Field(default=None, gt=0)
+
+    # Used to seed the SM-fiber's frozen random Jones matrix so the same
+    # fiber rotates polarisation the same way across reloads. Null = derive
+    # from the SceneObject id at solve time.
+    random_jones_seed: int | None = None
+
+
 class IsolatorParams(CamelModel):
     forward_loss_db: float = Field(default=0.5, ge=0.0)
     isolation_db: float = Field(default=40.0, ge=0.0)
@@ -940,8 +1091,9 @@ class AOMParams(CamelModel):
     acoustic_beam_width_mm: float | None = Field(default=None, ge=0)
     rf_drive_power_w: float | None = Field(default=None, ge=0)
     rf_power_max_w: float | None = Field(default=None, ge=0)
-    # Body-local Z-up direction of the acoustic wave. Default +Z = top
-    # face. Used by the ray-tracer to define the diffraction plane
+    # Body-local Z-up direction of the acoustic wave. For the MT80 GLB
+    # convention, body -X is transducer -> absorber. Used by the ray-tracer
+    # to define the diffraction plane
     # (deflection axis = dir × acoustic_axis).
     # Phase 5: renamed from `acoustic_axis_local` to spell out frame.
     acoustic_axis_body_local: list[float] | None = None
@@ -979,6 +1131,14 @@ class AOMParams(CamelModel):
     # Phase 5: renamed from `bragg_tilt_axis_angle_deg` to make the
     # frame explicit — this angle is in lab/scene Z-up frame, NOT body.
     bragg_tilt_axis_deg_lab: float = Field(default=90.0)
+    # Optional override for the body-local pivot point used by the Bragg
+    # rotation during align. When None, the pivot defaults to the midpoint
+    # of the asset's `intercept_in` and `intercept_out` anchors (the
+    # acousto-optic interaction point for a symmetric AOM where the crystal
+    # sits between the two ports). Override only for asymmetric AOMs whose
+    # interaction point is not at the geometric midpoint of the entry/exit
+    # apertures. Body-local Z-up mm.
+    bragg_interaction_point_mm_body_local: list[float] | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -1068,6 +1228,7 @@ KIND_PARAMS_MODELS: dict[str, type[CamelModel]] = {
     "beam_splitter": BeamSplitterParams,
     "dichroic_mirror": DichroicMirrorParams,
     "fiber_coupler": FiberCouplerParams,
+    "fiber": FiberParams,
     "isolator": IsolatorParams,
     "aom": AOMParams,
     "eom": EOMParams,
@@ -1125,6 +1286,13 @@ DEFAULT_PORTS: dict[str, dict[str, list[dict[str, Any]]]] = {
     "fiber_coupler": {
         "input": [_port("in", "input", "Free space", "main")],
         "output": [_port("out", "output", "Fiber", "fiber")],
+    },
+    "fiber": {
+        "input": [
+            _port("a", "bidirectional", "End A", "fiber"),
+            _port("b", "bidirectional", "End B", "fiber"),
+        ],
+        "output": [],
     },
     "isolator": {
         "input": [_port("in", "input", "In", "main")],

@@ -30,6 +30,7 @@ import {
   upsertTimingProgramApi,
   deleteTimingProgramApi,
   updateAssemblyRelationApi,
+  updateAssetApi,
   updateCollectionApi,
   updateComponentApi,
   updateObjectApi,
@@ -46,6 +47,8 @@ import type {
   OpticalRunResponse,
 } from "../api/client";
 import type {
+  Anchor,
+  Asset3D,
   BeamPath,
   AssemblyRelation,
   Collection,
@@ -110,6 +113,16 @@ type ObjectSelectionOptions = {
 
 type LoadStatus = "idle" | "loading" | "ready" | "error";
 type SocketStatus = "idle" | "connecting" | "connected" | "disconnected" | "error";
+/** Persistent fiber node shape — mirrors backend properties.fiberNodes[].
+ *  posMm is required; handleInMm is null/absent for the very first node
+ *  (endpoint A) and handleOutMm is null/absent for the last node (endpoint
+ *  B). Interior nodes carry both handles independently (PPT-style corner
+ *  anchor — drag one handle without affecting the other). */
+export type FiberNodePersist = {
+  posMm: [number, number, number];
+  handleInMm?: [number, number, number];
+  handleOutMm?: [number, number, number];
+};
 export type TransformPivotMode = "median" | "individual" | "cursor";
 export type TransformAxis = "x" | "y" | "z";
 export type LabPoint = { x: number; y: number; z: number };
@@ -167,6 +180,7 @@ const ACTIVE_COLLECTION_STORAGE_KEY = "qmem.outliner.activeCollectionId";
 // key as a fallback if v2 isn't present yet.
 const TRANSFORM_CURSOR_STORAGE_KEY_V1 = "qmem.transformCursorMm.v1";
 const TRANSFORM_CURSOR_STORAGE_KEY = "qmem.transformCursorMm.v2";
+const TRANSFORM_CURSOR_HIDDEN_STORAGE_KEY = "qmem.transformCursorHidden.v1";
 
 type LabPointLite = { x: number; y: number; z: number };
 
@@ -203,6 +217,27 @@ function saveTransformCursorMm(value: { left: LabPointLite; right: LabPointLite 
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(TRANSFORM_CURSOR_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // ignore quota / availability errors
+  }
+}
+
+function loadTransformCursorHidden(): { left: boolean; right: boolean } {
+  if (typeof window === "undefined") return { left: false, right: false };
+  try {
+    const raw = window.localStorage.getItem(TRANSFORM_CURSOR_HIDDEN_STORAGE_KEY);
+    if (!raw) return { left: false, right: false };
+    const parsed = JSON.parse(raw) as Partial<{ left: boolean; right: boolean }>;
+    return { left: parsed.left === true, right: parsed.right === true };
+  } catch {
+    return { left: false, right: false };
+  }
+}
+
+function saveTransformCursorHidden(value: { left: boolean; right: boolean }): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(TRANSFORM_CURSOR_HIDDEN_STORAGE_KEY, JSON.stringify(value));
   } catch {
     // ignore quota / availability errors
   }
@@ -321,14 +356,59 @@ type SceneStore = {
   selectedObjectId: string | null;
   selectedObjectIds: string[];
   selectedRelationId: string | null;
+  /** Top-level UI mode. When in "phy-editor", App.tsx renders the PHY
+   *  editor sub-page (a separate full-screen layout that hosts
+   *  optical_kinds / optical_components and, in future, electrical /
+   *  mechanical sub-editors) instead of the normal scene + panels. */
+  editorMode: "scene" | "phy-editor";
+  /** Currently active PHY editor view inside the sub-page. `null` =
+   *  editor "home" (left rail visible, right pane shows a hint asking
+   *  the user to pick a sub-editor). */
+  phyEditorView:
+    | { domain: "optical"; section: "kinds" | "components" }
+    | null;
+  /** Asset3D currently being edited (anchors[]). When `phyEditorView`
+   *  is not the optical_components editor, this is null. */
+  editingAssetId: string | null;
+  /** Set by sub-editors when their in-memory drafts have unsaved
+   *  changes. PhyEditor's top-bar Back button reads this to decide
+   *  whether to prompt for confirmation. */
+  phyEditorDirty: boolean;
+  setEditorMode: (mode: "scene" | "phy-editor") => void;
+  setEditingAssetId: (assetId: string | null) => void;
+  setPhyEditorDirty: (dirty: boolean) => void;
+  /** Open the PHY editor sub-page (no specific view selected; user
+   *  picks from the left rail). */
+  openPhyEditor: () => void;
+  /** Close the PHY editor and return to the main scene. */
+  closePhyEditor: () => void;
+  /** Switch to a specific sub-editor inside the PHY editor (e.g.
+   *  optical → components). When null, returns to the editor home. */
+  setPhyEditorView: (
+    view:
+      | { domain: "optical"; section: "kinds" | "components" }
+      | null,
+  ) => void;
+  /** Persist anchor edits for an Asset3D. Goes through the backend
+   *  PUT /api/assets/{id} so other clients see the change via WS. */
+  updateAssetAnchors: (
+    assetId: string,
+    anchors: Anchor[],
+  ) => Promise<void>;
   transformPivotMode: TransformPivotMode;
   /** Per-panel cursor pivot. View-level operations (orbit pivot, the X/Y/Z
    *  editor in each viewer's overlay) read their own panel's slot. Global
    *  ops (spawn-at-cursor, AlignPanel, CursorMenu Shift+S commands) read
    *  `.left` as the primary. */
   transformCursorMm: { left: LabPoint; right: LabPoint };
+  /** Per-panel visibility for the 3D cursor marker. Toggled via the
+   *  hide-button in ViewerCursorEditor; persisted to localStorage. The
+   *  cursor still acts as orbit pivot when hidden — only the marker mesh
+   *  is suppressed. */
+  transformCursorHidden: { left: boolean; right: boolean };
   setTransformPivotMode: (mode: TransformPivotMode) => void;
   setTransformCursorMm: (panel: "left" | "right", point: LabPoint) => void;
+  toggleTransformCursorHidden: (panel: "left" | "right") => void;
   alignSelectedObjectsToCursor: () => Promise<void>;
   moveSelectedOriginsToCursor: () => Promise<void>;
   rotateSelectedObjectsAroundCursor: (axis: TransformAxis, degrees: number) => Promise<void>;
@@ -346,6 +426,7 @@ type SceneStore = {
   // and call the object-level actions below.
   hideObjectInSession: (objectId: string) => void;
   showObjectInSession: (objectId: string) => void;
+  forceShowObject: (objectId: string) => void;
   toggleSessionHiddenObject: (objectId: string) => void;
   setObjectsHiddenInSession: (objectIds: string[], hidden: boolean) => void;
   toggleSessionHiddenBeamPath: (beamPathId: string) => void;
@@ -386,6 +467,46 @@ type SceneStore = {
     scaleFactor?: number;
   }) => Promise<ComponentItem>;
   ensureObjectForComponent: (componentId: string) => Promise<void>;
+  /** Spawn a free-form text annotation at the transform cursor. Creates a
+   *  fresh `text_annotation` component (driven entirely by canvas-rendered
+   *  properties — no asset, no optical role) and a SceneObject pointing at
+   *  it. The new object becomes the active selection so the user can edit
+   *  the text content immediately in the Object panel. */
+  addTextAnnotation: (text?: string) => Promise<ComponentItem>;
+  /** When non-null, the viewer renders Bezier-style anchor + tangent-handle
+   *  gizmos for this fiber component, dims everything else, and routes
+   *  pointer events to the spline editor (drag anchor / drag handle tip /
+   *  double-click tube to insert / right-click anchor to delete). */
+  fiberEditingComponentId: string | null;
+  enterFiberEdit: (componentId: string) => void;
+  exitFiberEdit: () => void;
+  /** Replace the entire node array. Used during a single drag gesture: the
+   *  viewer mutates locally for live feedback then commits via this action
+   *  on pointer-up. Stored on Component.properties (v1 — per-instance
+   *  overrides on SceneObject.properties is a follow-up). */
+  updateFiberNodes: (componentId: string, nodes: FiberNodePersist[]) => Promise<void>;
+  insertFiberNode: (componentId: string, index: number, node: FiberNodePersist) => Promise<void>;
+  removeFiberNode: (componentId: string, index: number) => Promise<void>;
+  updateFiberRadius: (componentId: string, radiusMm: number) => Promise<void>;
+  /** Snap a fiber endpoint (A or B) to the closest beam-path segment
+   *  within `toleranceMm` (default 25). Moves only the chosen endpoint
+   *  anchor and adjusts its tangent handle so the connector ferrule
+   *  faces along the beam (outward = -beam_propagation), keeping
+   *  internal nodes untouched. Returns the fiber-to-beam offset that
+   *  was zeroed out (for UI feedback) or null if no beam in range. */
+  alignFiberEndToBeam: (
+    componentId: string,
+    end: "A" | "B",
+    toleranceMm?: number,
+  ) => Promise<{ offsetMm: number; beamId: string } | null>;
+  /** Toggle which fiber endpoint is the beam-entry port for ray-tracing.
+   *  `end` is the endpoint the user clicked. If it's already the entry, the
+   *  setting clears (no entry — fiber doesn't participate in the trace);
+   *  otherwise it becomes the entry. Stored on SceneObject.properties so
+   *  the wrapper-cache key (component, asset, deviceState) stays warm —
+   *  flipping entry only invalidates the per-object decoration, not the
+   *  geometry. */
+  toggleFiberBeamEntry: (objectId: string, end: "A" | "B") => Promise<void>;
   updateComponent: (componentId: string, patch: Partial<Pick<ComponentItem, "name" | "properties">>) => Promise<void>;
   deleteComponent: (componentId: string) => Promise<void>;
   createAssemblyRelation: (payload: {
@@ -763,8 +884,14 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   selectedObjectId: null,
   selectedObjectIds: [],
   selectedRelationId: null,
+  editorMode: "scene",
+  phyEditorView: null,
+  editingAssetId: null,
+  phyEditorDirty: false,
+  fiberEditingComponentId: null,
   transformPivotMode: "median",
   transformCursorMm: loadTransformCursorMm(),
+  transformCursorHidden: loadTransformCursorHidden(),
   overlayFlags: loadOverlayFlagsFromStorage(),
   session: freshSession(),
   activeViewId: loadActiveViewId(),
@@ -779,6 +906,14 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       const next = { ...state.transformCursorMm, [panel]: point };
       saveTransformCursorMm(next);
       return { transformCursorMm: next };
+    });
+  },
+
+  toggleTransformCursorHidden(panel) {
+    set((state) => {
+      const next = { ...state.transformCursorHidden, [panel]: !state.transformCursorHidden[panel] };
+      saveTransformCursorHidden(next);
+      return { transformCursorHidden: next };
     });
   },
 
@@ -953,6 +1088,15 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     set((state) => {
       const next = cloneSession(state.session);
       next.hiddenObjectIds.delete(objectId);
+      return { session: next };
+    });
+  },
+
+  forceShowObject(objectId) {
+    set((state) => {
+      const next = cloneSession(state.session);
+      next.hiddenObjectIds.delete(objectId);
+      next.forceVisibleObjectIds.add(objectId);
       return { session: next };
     });
   },
@@ -1324,6 +1468,190 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         objects: upsertObject(state.scene.objects, obj),
       },
     }));
+  },
+
+  async addTextAnnotation(text) {
+    const initialText = (text && text.trim().length > 0) ? text : "Text";
+    const component = await createComponentApi({
+      name: initialText,
+      componentType: "text_annotation",
+      properties: {
+        text: initialText,
+        textColor: "#ffffff",
+        bgColor: "rgba(15, 23, 42, 0.85)",
+        accentColor: "#38bdf8",
+        fontSizePx: 56,
+        scaleMm: 80,
+      },
+    });
+    const obj = await createObjectApi({
+      componentId: component.id,
+      collectionId: get().activeCollectionId,
+      ...cursorSpawnPatch(get().transformCursorMm.left, get().scene.objects.length),
+      visible: true,
+      locked: false,
+    });
+    await get().loadScene();
+    // Select the new object so the Object panel opens to its text editor.
+    set({
+      selectedComponentId: null,
+      selectedObjectId: obj.id ?? null,
+      selectedObjectIds: obj.id ? [obj.id] : [],
+    });
+    return component;
+  },
+
+  enterFiberEdit(componentId) {
+    set({ fiberEditingComponentId: componentId });
+  },
+  exitFiberEdit() {
+    set({ fiberEditingComponentId: null });
+  },
+  async updateFiberNodes(componentId, nodes) {
+    const component = get().scene.components.find((c) => c.id === componentId);
+    if (!component) return;
+    const nextProps = { ...(component.properties ?? {}), fiberNodes: nodes };
+    const updated = await updateComponentApi(componentId, { properties: nextProps });
+    set((state) => ({
+      scene: { ...state.scene, components: upsertById(state.scene.components, updated) },
+    }));
+  },
+  async insertFiberNode(componentId, index, node) {
+    const component = get().scene.components.find((c) => c.id === componentId);
+    if (!component) return;
+    const current = ((component.properties ?? {}) as { fiberNodes?: FiberNodePersist[] })
+      .fiberNodes ?? [];
+    const clampedIndex = Math.max(1, Math.min(index, current.length - 1));
+    // The new node always has both handles (it's interior, never an endpoint).
+    // Endpoint handle bookkeeping (handleIn for first, handleOut for last)
+    // remains untouched.
+    const nextNodes = [...current.slice(0, clampedIndex), node, ...current.slice(clampedIndex)];
+    await get().updateFiberNodes(componentId, nextNodes);
+  },
+  async removeFiberNode(componentId, index) {
+    const component = get().scene.components.find((c) => c.id === componentId);
+    if (!component) return;
+    const current = ((component.properties ?? {}) as { fiberNodes?: FiberNodePersist[] })
+      .fiberNodes ?? [];
+    if (current.length <= 2) return; // Always keep two endpoints.
+    if (index <= 0 || index >= current.length - 1) return; // Don't delete endpoints.
+    const nextNodes = current.filter((_, i) => i !== index);
+    await get().updateFiberNodes(componentId, nextNodes);
+  },
+  async updateFiberRadius(componentId, radiusMm) {
+    const component = get().scene.components.find((c) => c.id === componentId);
+    if (!component) return;
+    const nextProps = { ...(component.properties ?? {}), radiusMm };
+    const updated = await updateComponentApi(componentId, { properties: nextProps });
+    set((state) => ({
+      scene: { ...state.scene, components: upsertById(state.scene.components, updated) },
+    }));
+  },
+  async alignFiberEndToBeam(componentId, end, toleranceMm = 25) {
+    const state = get();
+    const component = state.scene.components.find((c) => c.id === componentId);
+    if (!component) return null;
+    const props = (component.properties ?? {}) as { fiberNodes?: FiberNodePersist[] };
+    const nodes = props.fiberNodes;
+    if (!nodes || nodes.length < 2) return null;
+    const idx = end === "A" ? 0 : nodes.length - 1;
+    const neighbourIdx = end === "A" ? 1 : nodes.length - 2;
+    const ep = nodes[idx].posMm;
+    // Find closest beam-path segment within tolerance.
+    let best: {
+      beamId: string;
+      projectedMm: [number, number, number];
+      tangentMm: [number, number, number];
+      distMm: number;
+    } | null = null;
+    for (const beam of state.scene.beamPaths) {
+      if (!beam.visible) continue;
+      if (beam.points.length < 2) continue;
+      for (let i = 0; i < beam.points.length - 1; i += 1) {
+        const a = beam.points[i];
+        const b = beam.points[i + 1];
+        const ab: [number, number, number] = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        const lenSq = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
+        if (lenSq < 1e-6) continue;
+        // Project ep onto segment ab
+        const t =
+          ((ep[0] - a[0]) * ab[0] + (ep[1] - a[1]) * ab[1] + (ep[2] - a[2]) * ab[2]) / lenSq;
+        const tClamped = Math.max(0, Math.min(1, t));
+        const projected: [number, number, number] = [
+          a[0] + tClamped * ab[0],
+          a[1] + tClamped * ab[1],
+          a[2] + tClamped * ab[2],
+        ];
+        const dx = ep[0] - projected[0];
+        const dy = ep[1] - projected[1];
+        const dz = ep[2] - projected[2];
+        const distMm = Math.hypot(dx, dy, dz);
+        if (distMm < (best?.distMm ?? toleranceMm + 1) && distMm <= toleranceMm) {
+          // Tangent: the segment direction (a → b) — beam propagation
+          const tanLen = Math.sqrt(lenSq);
+          best = {
+            beamId: beam.id,
+            projectedMm: projected,
+            tangentMm: [ab[0] / tanLen, ab[1] / tanLen, ab[2] / tanLen],
+            distMm,
+          };
+        }
+      }
+    }
+    if (!best) return null;
+    // Compose new node array: only the endpoint is changed.
+    // - posMm: snap to projected point
+    // - For end A: handleOut should point INTO the curve (i.e., toward
+    //   internal node). The connector outward = -handleOut, so to face
+    //   the connector AGAINST the beam direction, set handleOut antiparallel
+    //   to beam tangent, magnitude preserved from the original handle so
+    //   the curve doesn't snap.
+    const tan = best.tangentMm;
+    const newNode: FiberNodePersist = {
+      posMm: [...best.projectedMm] as [number, number, number],
+      handleInMm: nodes[idx].handleInMm
+        ? ([...nodes[idx].handleInMm] as [number, number, number])
+        : undefined,
+      handleOutMm: nodes[idx].handleOutMm
+        ? ([...nodes[idx].handleOutMm] as [number, number, number])
+        : undefined,
+    };
+    // Preserve handle MAGNITUDES, replace direction so connector faces beam
+    // (outward = -tangent). For end A: handleOut = -tangent · |handleOut|;
+    // for end B: handleIn = +tangent · |handleIn|.
+    const oldNeighbourPos = nodes[neighbourIdx].posMm;
+    const segLen = Math.hypot(
+      oldNeighbourPos[0] - ep[0],
+      oldNeighbourPos[1] - ep[1],
+      oldNeighbourPos[2] - ep[2],
+    );
+    const handleLen = Math.max(20, segLen * 0.33);
+    if (end === "A") {
+      newNode.handleOutMm = [-tan[0] * handleLen, -tan[1] * handleLen, -tan[2] * handleLen];
+    } else {
+      newNode.handleInMm = [tan[0] * handleLen, tan[1] * handleLen, tan[2] * handleLen];
+    }
+    const nextNodes = [...nodes];
+    nextNodes[idx] = newNode;
+    await get().updateFiberNodes(componentId, nextNodes);
+    return { offsetMm: best.distMm, beamId: best.beamId };
+  },
+
+  async toggleFiberBeamEntry(objectId, end) {
+    const obj = get().scene.objects.find((o) => o.id === objectId);
+    if (!obj) return;
+    const current = (obj.properties as { beamEntryEnd?: "A" | "B" } | undefined)?.beamEntryEnd;
+    const next: "A" | "B" | null = current === end ? null : end;
+    const baseProps = (obj.properties ?? {}) as Record<string, unknown>;
+    const nextProps: Record<string, unknown> = { ...baseProps };
+    if (next === null) {
+      delete nextProps.beamEntryEnd;
+    } else {
+      nextProps.beamEntryEnd = next;
+    }
+    await get().updateSceneObject(objectId, {
+      properties: nextProps as SceneObject["properties"],
+    });
   },
 
   async updateComponent(componentId, patch) {
@@ -1940,6 +2268,53 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       selectedObjectIds: [],
       selectedRelationId: null,
     });
+  },
+
+  setEditorMode(mode) {
+    set({ editorMode: mode });
+  },
+
+  setEditingAssetId(assetId) {
+    set({ editingAssetId: assetId });
+  },
+
+  openPhyEditor() {
+    set({
+      editorMode: "phy-editor",
+      phyEditorView: null,
+      phyEditorDirty: false,
+    });
+  },
+
+  closePhyEditor() {
+    set({
+      editorMode: "scene",
+      phyEditorView: null,
+      editingAssetId: null,
+      phyEditorDirty: false,
+    });
+  },
+
+  setPhyEditorView(view) {
+    set({ phyEditorView: view, phyEditorDirty: false });
+  },
+
+  setPhyEditorDirty(dirty) {
+    set({ phyEditorDirty: dirty });
+  },
+
+  async updateAssetAnchors(assetId, anchors) {
+    // Backend Phase 4 schema: positionMmBodyLocal etc. The CamelModel
+    // alias_generator converts to snake_case server-side.
+    const updated = await updateAssetApi(assetId, { anchors });
+    set((state) => ({
+      scene: {
+        ...state.scene,
+        assets: state.scene.assets.map((a) =>
+          a.id === assetId ? (updated as Asset3D) : a,
+        ),
+      },
+    }));
   },
 
   selectObject(objectId, options) {

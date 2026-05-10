@@ -1,7 +1,9 @@
 import axios, { AxiosError } from "axios";
 
 import type {
+  Anchor,
   AssemblyRelation,
+  Asset3D,
   Collection,
   CollectionMember,
   ComponentItem,
@@ -126,6 +128,27 @@ export async function updateComponentApi(
 
 export async function deleteComponentApi(componentId: string): Promise<void> {
   await client.delete(`/api/components/${componentId}`);
+}
+
+export type AssetUpdatePayload = {
+  name?: string;
+  assetType?: string;
+  filePath?: string;
+  source?: string;
+  sourceUrl?: string;
+  unit?: "mm" | "m";
+  scaleFactor?: number;
+  anchors?: Anchor[];
+};
+
+export async function updateAssetApi(
+  assetId: string,
+  patch: AssetUpdatePayload,
+): Promise<Asset3D> {
+  // Backend Asset3DUpdate uses snake_case via CamelModel alias_generator,
+  // but populate_by_name=true so the camelCase JSON we send maps cleanly.
+  const response = await client.put<Asset3D>(`/api/assets/${assetId}`, patch);
+  return response.data;
 }
 
 type AssemblyRelationApiPayload = {

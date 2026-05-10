@@ -7,6 +7,7 @@ import {
 } from "./components/AssetLibraryPanel";
 import { ComponentPanel } from "./components/ComponentPanel";
 import { DualViewerSplit } from "./components/DualViewerSplit";
+import { PhyEditor } from "./components/PhyEditor";
 import { TimingEditorPanel } from "./components/TimingEditorPanel";
 import { TouchCoincidencePanel } from "./components/TouchCoincidencePanel";
 import { BeamScopePanel } from "./components/optical/BeamScopePanel";
@@ -70,6 +71,7 @@ export default function App() {
   const error = useSceneStore((state) => state.error);
   const toggleOverlayFlag = useSceneStore((state) => state.toggleOverlayFlag);
   const resetOverlayFlags = useSceneStore((state) => state.resetOverlayFlags);
+  const editorMode = useSceneStore((state) => state.editorMode);
   const showAllHidden = useSceneStore((state) => state.showAllHidden);
   const toggleSoloObject = useSceneStore((state) => state.toggleSoloObject);
   const setSoloObjects = useSceneStore((state) => state.setSoloObjects);
@@ -187,6 +189,17 @@ export default function App() {
       socket?.close();
     };
   }, [applyEvent, setSocketStatus]);
+
+  // PHY Editor sub-page: full-page take-over when active. The back
+  // button inside `PhyEditor` flips `editorMode` back to "scene",
+  // which falls through to the normal layout below.
+  if (editorMode === "phy-editor") {
+    return (
+      <WorkspaceProvider>
+        <PhyEditor />
+      </WorkspaceProvider>
+    );
+  }
 
   return (
     <WorkspaceProvider>

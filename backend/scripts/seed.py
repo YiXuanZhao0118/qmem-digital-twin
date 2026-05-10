@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 import sys
 
@@ -10,7 +11,92 @@ from sqlalchemy import select, text
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.db import AsyncSessionLocal, engine  # noqa: E402
-from app.models import Asset3D, Base, BeamPath, Component, Connection, DeviceState, SceneObject  # noqa: E402
+from app.models import (  # noqa: E402
+    Asset3D,
+    Base,
+    BeamPath,
+    Collection,
+    CollectionMember,
+    Component,
+    Connection,
+    DeviceState,
+    SceneObject,
+)
+from app.routers.collections import get_master_collection  # noqa: E402
+
+
+def _parse_fiber_meta(part: str) -> dict[str, object]:
+    # Extract fiber type / wavelength / length / connector polish from
+    # Thorlabs patch-cable part numbers like P1-980A-FC-1, P3-1064PMY-2,
+    # P5-630PM-FC-2 etc. The PM/SM split, design wavelength and connector
+    # geometry are encoded directly in the part number; everything else
+    # falls through to DEFAULT_KIND_PARAMS["fiber"] via the deep-merge in
+    # default_kind_params_for_component.
+    is_pm = "PM" in part
+    fiber_type = "polarization_maintaining" if is_pm else "single_mode"
+
+    wavelength = 1310 if "SMF28" in part else 780
+    if "SMF28" not in part:
+        for tok in part.split("-")[1:]:
+            stripped = tok.lstrip("S")
+            m = re.match(r"^(\d+)", stripped)
+            if m:
+                v = int(m.group(1))
+                if v >= 100:
+                    wavelength = v
+                    break
+
+    length_m = 1
+    last = part.rsplit("-", 1)[-1]
+    if last.isdigit():
+        length_m = int(last)
+
+    prefix = part.split("-", 1)[0]
+    polish_a, polish_b = {
+        "P1": ("PC", "PC"),
+        "P3": ("APC", "APC"),
+        "P5": ("PC", "APC"),
+    }.get(prefix, ("PC", "PC"))
+
+    return {
+        "fiber_type": fiber_type,
+        "wavelength_nm": wavelength,
+        "length_m": length_m,
+        "polish_a": polish_a,
+        "polish_b": polish_b,
+    }
+
+
+def _build_fiber_override(part: str) -> dict[str, object]:
+    # Build a minimal fiberKindParamsOverride from the parsed meta. Deep-
+    # merged into DEFAULT_KIND_PARAMS["fiber"] in components.py so anything
+    # not set here (MFD, NA, attenuation curve, etc.) inherits the default.
+    meta = _parse_fiber_meta(part)
+    wl = float(meta["wavelength_nm"])
+    is_pm = meta["fiber_type"] == "polarization_maintaining"
+
+    def end_spec(polish: str) -> dict[str, object]:
+        spec: dict[str, object] = {
+            "connectorType": "FC",
+            "polish": polish,
+            "polishAngleDeg": 8.0 if polish == "APC" else 0.0,
+        }
+        if not is_pm:
+            spec["slowAxisDegInBodyFrame"] = None
+        return spec
+
+    override: dict[str, object] = {
+        "fiberType": meta["fiber_type"],
+        "designWavelengthNm": wl,
+        "operatingWavelengthRangeNm": [wl - 20.0, wl + 20.0],
+        "endA": end_spec(meta["polish_a"]),
+        "endB": end_spec(meta["polish_b"]),
+    }
+    if not is_pm:
+        # Single-mode telecom cutoff heuristic: roughly 0.85 × design
+        # wavelength keeps a comfortable single-mode margin.
+        override["cutoffWavelengthNm"] = round(wl * 0.85, 1)
+    return override
 
 
 ASSETS = [
@@ -117,6 +203,26 @@ ASSETS = [
         "source": "user_upload",
         "unit": "m",
         "scale_factor": 1.0,
+        # AOM contract requires intercept_in / intercept_out anchors with
+        # apertureMm set (alembic 0021 backfills these on existing rows;
+        # seed.py mirrors the same shape so a fresh DB matches a migrated
+        # one). MT80-A1.5-IR housing 59.5 mm, axis 18 mm in from each end
+        # → ports at body Y = ±11.75 mm; active aperture 1.5 mm → radius
+        # 0.75 mm.
+        "anchors": [
+            {
+                "id": "intercept_in",
+                "positionMmBodyLocal": {"x": 0.0, "y": -11.75, "z": 0.0},
+                "directionBodyLocal": {"x": 0.0, "y": 1.0, "z": 0.0},
+                "apertureMm": 0.75,
+            },
+            {
+                "id": "intercept_out",
+                "positionMmBodyLocal": {"x": 0.0, "y": 11.75, "z": 0.0},
+                "directionBodyLocal": {"x": 0.0, "y": -1.0, "z": 0.0},
+                "apertureMm": 0.75,
+            },
+        ],
     },
 ]
 
@@ -253,8 +359,10 @@ COMPONENTS = [
             "crystalLengthMm": 25.0,
             "figureOfMeritM2": 34e-15,
             "acousticBeamWidthMm": 1.5,
-            "acousticAxisBodyLocal": [0, 0, 1],
-            "rfPropagationDirectionBodyLocal": [0, 0, 1],
+            # Body +Y is laser -> 0th, body -X is transducer -> absorber,
+            # and body +/-Z is perpendicular to the outline drawing.
+            "acousticAxisBodyLocal": [-1, 0, 0],
+            "rfPropagationDirectionBodyLocal": [-1, 0, 0],
             "braggAngularAcceptanceMrad": 2.0,
             "diffractionEfficiencyTypical": 0.85,
             "rfPowerMaxW": 2.0,
@@ -549,6 +657,182 @@ _THORLABS_BULK = [
     ("PBS252", "beam_splitter", "primitive_box", -590, -700),
     # ---- Waveplates (added 2026-05-04) ----
     ("WPHSM05-850", "waveplate", "primitive_lens", -500, -700),
+    # ---- Fiber patch cables (consolidated 2026-05-09) ----
+    # The procedural FC connector renderer differentiates jacket colour
+    # (SM yellow / PM blue) and per-end polish (PC flat boot vs APC
+    # green boot + 8° tip), giving 6 visual archetypes total. Catalog
+    # is reduced to the 6 representative 780 nm Thorlabs items that
+    # cover all (fiberType × polish-combo) variants. x=None y=None
+    # marks library-only — drag the template onto the scene to place;
+    # cable length is then variable via the Bezier spline editor.
+    ("P1-780A-FC-1", "fiber", "primitive_box", None, None),    # SM, PC/PC
+    ("P5-780Y-FC-1", "fiber", "primitive_box", None, None),    # SM, PC/APC hybrid
+    ("P3-780A-FC-1", "fiber", "primitive_box", None, None),    # SM, APC/APC
+    ("P1-780PM-FC-1", "fiber", "primitive_box", None, None),   # PM, PC/PC
+    ("P5-780PM-FC-1", "fiber", "primitive_box", None, None),   # PM, PC/APC hybrid
+    ("P3-780PM-FC-1", "fiber", "primitive_box", None, None),   # PM, APC/APC
+    # ---- Optical Posts (added 2026-05-08) ----
+    # Source: https://www.thorlabs.com/optical-posts-half-inch-and-12-mm
+    # All catalog-only (x=None y=None) to avoid scene clutter; STL upgrades
+    # come from thorlabs_bulk_cad.py manifest. -P5 5-pack variants skipped
+    # (same model as single-pack).
+    # TR series (Imperial, 1/2" optical posts)
+    ("TR075", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR1", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR1.5", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR2", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR3", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR4", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR6", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR8", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR10", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR12", "optical_post", "primitive_thorlabs_post", None, None),
+    # TR series (Metric M6, 12 mm posts)
+    ("TR20_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR30_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR40_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR50_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR75_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR100_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR150_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR200_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR250_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR300_M", "optical_post", "primitive_thorlabs_post", None, None),
+    # TR Metric Japan-region variants
+    ("TR20_M-JP", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR30_M-JP", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR40_M-JP", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR50_M-JP", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR75_M-JP", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR100_M-JP", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR150_M-JP", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR200_M-JP", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR250_M-JP", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR300_M-JP", "optical_post", "primitive_thorlabs_post", None, None),
+    # TR Vacuum-compatible variants (V suffix)
+    ("TR20V_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR30V_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR40V_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR50V_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR75V_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR075V", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR1V", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR1.5V", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR2V", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR3V", "optical_post", "primitive_thorlabs_post", None, None),
+    # PLS-HC studded mounting posts (high clearance, M6 stud)
+    ("PLS-HC246_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("PLS-HC373_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("PLS-HC496_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("PLS-HC1", "optical_post", "primitive_thorlabs_post", None, None),
+    ("PLS-HC15", "optical_post", "primitive_thorlabs_post", None, None),
+    ("PLS-HC2", "optical_post", "primitive_thorlabs_post", None, None),
+    # PLS-H studded mounting posts (1/4"-20 stud)
+    ("PLS-H246_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("PLS-H373_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("PLS-H496_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("PLS-H1", "optical_post", "primitive_thorlabs_post", None, None),
+    ("PLS-H15", "optical_post", "primitive_thorlabs_post", None, None),
+    ("PLS-H2", "optical_post", "primitive_thorlabs_post", None, None),
+    # TH tapped posts (8-32 / M4 tapped through hole)
+    ("TH15_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TH20_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TH060", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TH075", "optical_post", "primitive_thorlabs_post", None, None),
+    # TR-E threaded post adapters (1/4"-20 stud + M6 tapped end)
+    ("TR50E_M", "post_adapter", "primitive_thorlabs_post", None, None),
+    ("TR75E_M", "post_adapter", "primitive_thorlabs_post", None, None),
+    ("TR2E", "post_adapter", "primitive_thorlabs_post", None, None),
+    ("TR3E", "post_adapter", "primitive_thorlabs_post", None, None),
+    # TRT/TRC posts (T = tapped, C = clamping)
+    ("TRT2_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TRT2", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR75T_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR75C_M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR3T", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR3C", "optical_post", "primitive_thorlabs_post", None, None),
+    # TRA threaded post adapters (Metric)
+    ("TRA20_M", "post_adapter", "primitive_thorlabs_post", None, None),
+    ("TRA30_M", "post_adapter", "primitive_thorlabs_post", None, None),
+    ("TRA40_M", "post_adapter", "primitive_thorlabs_post", None, None),
+    ("TRA50_M", "post_adapter", "primitive_thorlabs_post", None, None),
+    ("TRA75_M", "post_adapter", "primitive_thorlabs_post", None, None),
+    ("TRA100_M", "post_adapter", "primitive_thorlabs_post", None, None),
+    ("TRA150_M", "post_adapter", "primitive_thorlabs_post", None, None),
+    # TRA threaded post adapters (Imperial)
+    ("TRA075", "post_adapter", "primitive_thorlabs_post", None, None),
+    ("TRA1", "post_adapter", "primitive_thorlabs_post", None, None),
+    ("TRA1.5", "post_adapter", "primitive_thorlabs_post", None, None),
+    ("TRA2", "post_adapter", "primitive_thorlabs_post", None, None),
+    ("TRA3", "post_adapter", "primitive_thorlabs_post", None, None),
+    ("TRA4", "post_adapter", "primitive_thorlabs_post", None, None),
+    ("TRA6", "post_adapter", "primitive_thorlabs_post", None, None),
+    # TRxM clamping (M-series) posts
+    ("TR1M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR2M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR3M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR4M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR5M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR6M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR7M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR8M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR9M", "optical_post", "primitive_thorlabs_post", None, None),
+    ("TR10M", "optical_post", "primitive_thorlabs_post", None, None),
+    # SPW501 spanner wrench (tool, listed on the same overview page)
+    ("SPW501", "tool", "primitive_box", None, None),
+    # ---- Half-inch Post Holders (added 2026-05-08) ----
+    # Source: https://www.thorlabs.com/half-inch-post-holders
+    # PH series (Metric, 12 mm post holders)
+    ("PH20_M", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH30_M", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH40_M", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH50_M", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH75_M", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH100_M", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH150_M", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    # PH series (Imperial, 1/2" post holders)
+    ("PH1", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH1.5", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH2", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH3", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH4", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH6", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    # PH Vacuum-compatible (V suffix)
+    ("PH20V_M", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH30V_M", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH40V_M", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH50V_M", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH75V_M", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH1V", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH1.5V", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH2V", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH3V", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    # PH Pedestal-style (E suffix, larger flat base)
+    ("PH20E_M", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH30E_M", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH40E_M", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH50E_M", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH75E_M", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH100E_M", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH150E_M", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH082E", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH1E", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH1.5E", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH2E", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH3E", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH4E", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("PH6E", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    # CF038 Compact Clamping Forks (single-screw flat fork)
+    ("CF038", "clamping_fork", "primitive_thorlabs_clamping_fork", None, None),
+    ("CF038C", "clamping_fork", "primitive_thorlabs_clamping_fork", None, None),
+    ("CF038C_M", "clamping_fork", "primitive_thorlabs_clamping_fork", None, None),
+    # UPHA universal post-holder adapter
+    ("UPHA", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    # TS series tower stand mounts (alternative to post holder for taller stacks)
+    ("TS6H_M", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("TS25H", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("TS6HV_M", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    ("TS25HV", "post_holder", "primitive_thorlabs_post_holder", None, None),
 ]
 
 # Read CAD manifest produced by scripts/thorlabs_bulk_cad.py — when an item has
@@ -591,17 +875,47 @@ for _part, _ctype, _asset, _x, _y in _THORLABS_BULK:
             _props["sourceStep"] = _meta["stepUrl"]
         if _meta.get("edrawingUrl"):
             _props["edrawingUrl"] = _meta["edrawingUrl"]
-    COMPONENTS.append(
-        {
+    # Fiber components are rendered as a procedural Bezier-spline tube with
+    # PPT-style anchor + tangent-handle editing. The `fiberNodes` array
+    # stores anchor positions and per-side tangent offsets in mm:
+    #   - posMm:        anchor position (x, y, z) in lab mm
+    #   - handleInMm:   tangent offset toward the PREVIOUS node (None for endpoint A)
+    #   - handleOutMm:  tangent offset toward the NEXT node (None for endpoint B)
+    # Default for a new fiber: 2 endpoints 300 mm apart, each with a single
+    # tangent of length 100 mm (= 1/3 of the segment) → smooth straight line.
+    if _ctype == "fiber":
+        _props["geometry"] = "fiber_bezier"
+        _props.setdefault("fiberNodes", [
+            {"posMm": [0.0, 0.0, 50.0], "handleOutMm": [100.0, 0.0, 0.0]},
+            {"posMm": [300.0, 0.0, 50.0], "handleInMm": [-100.0, 0.0, 0.0]},
+        ])
+        _props.setdefault("radiusMm", 1.0)
+        # Per-template kindParams override — the OpticalElement bootstrapper
+        # in routers/components.py merges this into DEFAULT_KIND_PARAMS["fiber"]
+        # so each catalog Thorlabs model lights up with its own spec.
+        # Connector polish (PC vs APC), fiber type (PM vs SM) and design
+        # wavelength come straight from the part number via the parser.
+        if _part.startswith(("P1-", "P3-", "P5-")):
+            _meta_fiber = _parse_fiber_meta(_part)
+            _props["fiberKindParamsOverride"] = _build_fiber_override(_part)
+            _props["cableLengthMm"] = float(_meta_fiber["length_m"]) * 1000.0
+    _component_entry: dict[str, object] = {
+        "name": f"thorlabs_{_norm}",
+        "component_type": _ctype,
+        "brand": "Thorlabs",
+        "model": _part.replace("_M", "/M"),
+        "asset": _final_asset,
+        "properties": _props,
+    }
+    if _x is not None and _y is not None:
+        _component_entry["object"] = {
             "name": f"thorlabs_{_norm}",
-            "component_type": _ctype,
-            "brand": "Thorlabs",
-            "model": _part.replace("_M", "/M"),
-            "asset": _final_asset,
-            "properties": _props,
-            "object": {"x_mm": _x, "y_mm": _y, "z_mm": 0, "rz_deg": 0},
+            "x_mm": _x,
+            "y_mm": _y,
+            "z_mm": 0,
+            "rz_deg": 0,
         }
-    )
+    COMPONENTS.append(_component_entry)
 
 
 BEAM_PATHS = [
@@ -678,6 +992,7 @@ async def upsert_component(
     session,
     component_data: dict[str, object],
     assets_by_name: dict[str, Asset3D],
+    master_collection_id: object,
 ) -> Component | None:
     result = await session.scalars(select(Component).where(Component.name == component_data["name"]))
     component = result.first()
@@ -704,11 +1019,39 @@ async def upsert_component(
     if object_data is not None:
         result = await session.scalars(select(SceneObject).where(SceneObject.component_id == component.id))
         scene_object = result.first()
+        is_new_object = scene_object is None
         if scene_object is None:
-            scene_object = SceneObject(component_id=component.id)
+            # The DB column default is the literal 'object' string with a
+            # unique constraint, which collides as soon as more than one
+            # new SceneObject is created in a single seed transaction.
+            # Fall back to the component name when callers didn't supply
+            # an explicit object name in object_data.
+            scene_object = SceneObject(
+                component_id=component.id,
+                name=object_data.get("name", component.name),
+            )
             session.add(scene_object)
+            await session.flush()
         for key, value in object_data.items():
             setattr(scene_object, key, value)
+
+        # Mirror routers/objects.create_object: every SceneObject must belong
+        # to a collection so it shows up in the Outliner. Without this, seed-
+        # created objects render in the 3D view but are invisible to the
+        # collection-tree UI.
+        existing_member = await session.scalars(
+            select(CollectionMember).where(CollectionMember.object_id == scene_object.id)
+        )
+        if existing_member.first() is None:
+            session.add(
+                CollectionMember(
+                    collection_id=master_collection_id,
+                    object_id=scene_object.id,
+                )
+            )
+        elif is_new_object:
+            # Defensive: shouldn't happen but harmless if it does.
+            pass
 
     if state_data is not None:
         state = await session.get(DeviceState, component.id)
@@ -775,9 +1118,18 @@ async def seed() -> None:
             await session.flush()
             assets_by_name[asset.name] = asset
 
+        # Outliner is keyed by collection membership — every SceneObject we
+        # create here needs a CollectionMember row pointing to a collection,
+        # otherwise it renders in the 3D view but is missing from the tree.
+        master_collection = await get_master_collection(session)
+        await session.flush()
+        master_collection_id = master_collection.id
+
         components_by_name: dict[str, Component] = {}
         for component_data in COMPONENTS:
-            component = await upsert_component(session, component_data.copy(), assets_by_name)
+            component = await upsert_component(
+                session, component_data.copy(), assets_by_name, master_collection_id
+            )
             if component is None:
                 continue
             await session.flush()

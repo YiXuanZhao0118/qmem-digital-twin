@@ -91,10 +91,16 @@ export function wavelengthToColor(wavelengthNm: number): THREE.Color {
 
 function findEmitterAnchor(asset: Asset3D | undefined): Anchor | null {
   if (!asset?.anchors) return null;
-  for (const anchor of asset.anchors) {
-    if (anchor.id === "+x" || anchor.id === "out") return anchor;
-  }
-  return null;
+  // Prefer the user-editable `out` anchor (PHY Editor → Optical →
+  // Components → Laser Source writes here). Fall back to the legacy
+  // auto-bbox `+x` anchor when `out` is missing — this preserves the
+  // pre-rewrite default behaviour for laser assets that haven't been
+  // touched in the editor yet.
+  return (
+    asset.anchors.find((a) => a.id === "out") ??
+    asset.anchors.find((a) => a.id === "+x") ??
+    null
+  );
 }
 
 /** World-space emission origin and direction (lab coords) for a placement.

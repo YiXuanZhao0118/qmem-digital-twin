@@ -55,6 +55,7 @@ OPTICAL_COMPONENT_TYPE_TO_KIND: dict[str, str] = {
     "beam_splitter": "beam_splitter",
     "dichroic_mirror": "dichroic_mirror",
     "fiber_coupler": "fiber_coupler",
+    "fiber": "fiber",
     "isolator": "isolator",
     "aom": "aom",
     "eom": "eom",
@@ -151,6 +152,59 @@ DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
         "modeFieldDiameterUm": 5.0,
         "fiberType": "single_mode",
     },
+    # Defaults match a Thorlabs P1-780PM-FC-1 polarisation-maintaining
+    # patch cable (780 nm design wavelength, FC/PC connectors, ~5.3 µm
+    # MFD, 0.13 NA). Per-end spec is identical on both sides; the user
+    # can split A/B in the kinds editor for hybrid cables.
+    "fiber": {
+        "fiberType": "polarization_maintaining",
+        "endA": {
+            "apertureDiameterMm": 0.125,
+            "numericalAperture": 0.13,
+            "modeFieldDiameterUm": 5.3,
+            "coreDiameterUm": 4.4,
+            "claddingDiameterUm": 125.0,
+            "connectorType": "FC",
+            "polish": "PC",
+            "polishAngleDeg": 0.0,
+            "fresnelResidual": 1.0,
+            "glassIndexAtDesignLambda": 1.4506,
+            "slowAxisDegInBodyFrame": 0.0,
+        },
+        "endB": {
+            "apertureDiameterMm": 0.125,
+            "numericalAperture": 0.13,
+            "modeFieldDiameterUm": 5.3,
+            "coreDiameterUm": 4.4,
+            "claddingDiameterUm": 125.0,
+            "connectorType": "FC",
+            "polish": "PC",
+            "polishAngleDeg": 0.0,
+            "fresnelResidual": 1.0,
+            "glassIndexAtDesignLambda": 1.4506,
+            "slowAxisDegInBodyFrame": 0.0,
+        },
+        "cutoffWavelengthNm": 730.0,
+        "operatingWavelengthRangeNm": [770.0, 790.0],
+        "designWavelengthNm": 780.0,
+        "maxInputPowerMw": 500.0,
+        "attenuationCurve": [
+            {"wavelengthNm": 780.0, "dbPerKm": 5.0},
+        ],
+        "bendLoss": {
+            "vNumber": 2.0,
+            "coreRadiusUm": 2.2,
+            "nCore": 1.4506,
+            "nClad": 1.4500,
+            "criticalRadiusMm": 25.0,
+        },
+        "minBendRadiusMm": 25.0,
+        "birefringenceDeltaN": 5.0e-4,
+        "pmdCoefficientPsPerSqrtKm": 0.05,
+        "polarizationExtinctionRatioDb": 25.0,
+        "bandwidthMhzKm": None,
+        "randomJonesSeed": None,
+    },
     "isolator": {"forwardLossDb": 0.5, "isolationDb": 40.0, "transmissionAxisDegBeamLocal": 0.0},
     "aom": {
         # Legacy / coarse params (kept; topology solver uses them).
@@ -170,10 +224,12 @@ DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
         "acousticBeamWidthMm": 1.5,       # W
         "rfDrivePowerW": 1.0,             # P_d (live control)
         "rfPowerMaxW": 2.0,
-        # Acoustic-wave direction in BODY local (scene axes). +Z = top
-        # face where SMA connector typically sits.
-        "acousticAxisBodyLocal": [0.0, 0.0, 1.0],
-        "rfPropagationDirectionBodyLocal": [0.0, 0.0, 1.0],
+        # Acoustic-wave direction in BODY local (scene axes). For the MT80
+        # GLB convention used here, body +Y is the port-to-port optical axis,
+        # body -X is transducer -> absorber, and body +/-Z is perpendicular
+        # to the AOM outline drawing.
+        "acousticAxisBodyLocal": [-1.0, 0.0, 0.0],
+        "rfPropagationDirectionBodyLocal": [-1.0, 0.0, 0.0],
         "braggAngularAcceptanceMrad": 2.0,
         # User-selected output order. +1 / −1 rotate the diffracted ray
         # by ±2·θ_B and carry η of the incident power; 0 means "RF off"
@@ -247,8 +303,31 @@ def _looks_like_pbs_component(component: Component) -> bool:
     )
 
 
+def _deep_merge_dict(base: dict, override: dict) -> dict:
+    """In-place deep merge of `override` into `base`. Lists are replaced
+    wholesale (not merged element-wise) since they're typically
+    homogeneous like attenuation curves. Returns `base`."""
+    for key, value in override.items():
+        if (
+            isinstance(value, dict)
+            and isinstance(base.get(key), dict)
+        ):
+            _deep_merge_dict(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
 def default_kind_params_for_component(kind: str, component: Component) -> dict[str, object]:
     kind_params = copy.deepcopy(DEFAULT_KIND_PARAMS.get(kind, {}))
+    if kind == "fiber":
+        # Per-template kindParams override: catalog Components can carry
+        # `properties.fiberKindParamsOverride` to specialise the default
+        # 780 nm PM spec for their own fiber type / wavelength / NA / MFD.
+        props = component.properties or {}
+        override = props.get("fiberKindParamsOverride")
+        if isinstance(override, dict):
+            _deep_merge_dict(kind_params, override)
     if kind == "beam_splitter" and _looks_like_pbs_component(component):
         kind_params.update(
             {

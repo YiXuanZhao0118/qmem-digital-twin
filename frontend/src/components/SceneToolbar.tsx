@@ -1,4 +1,4 @@
-import { Columns2, Eye, Move, Play, RefreshCw, RotateCw, Settings2, Square, Wifi, WifiOff } from "lucide-react";
+import { Columns2, Eye, Move, PenTool, Play, RefreshCw, RotateCw, Settings2, Square, Type, Wifi, WifiOff } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { useSceneStore, TOUCH_OPS } from "../store/sceneStore";
@@ -69,6 +69,8 @@ export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneTo
   const [editorView, setEditorView] = useState<SceneView | null | undefined>(undefined);
   const loadScene = useSceneStore((state) => state.loadScene);
   const runOpticalSimulation = useSceneStore((state) => state.runOpticalSimulation);
+  const openPhyEditor = useSceneStore((state) => state.openPhyEditor);
+  const addTextAnnotation = useSceneStore((state) => state.addTextAnnotation);
   const socketStatus = useSceneStore((state) => state.socketStatus);
   const gizmoMode = useSceneStore((state) => state.gizmoMode);
   const setGizmoMode = useSceneStore((state) => state.setGizmoMode);
@@ -153,6 +155,22 @@ export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneTo
         </button>
         <button className="icon-button" title="Reload scene" onClick={() => void loadScene()}>
           <RefreshCw size={18} />
+        </button>
+        <button
+          className="setup-button"
+          title="Open the PHY editor (optical kinds, optical components, ...)"
+          onClick={openPhyEditor}
+        >
+          <PenTool size={17} />
+          PHY Editor
+        </button>
+        <button
+          className="icon-button"
+          title="Add a text label to the scene at the cursor"
+          aria-label="Add text annotation"
+          onClick={() => void addTextAnnotation()}
+        >
+          <Type size={17} />
         </button>
       </div>
 

@@ -129,6 +129,7 @@ export function OutlinerPanel() {
   const moveObjectToCollection = useSceneStore((state) => state.moveObjectToCollection);
   const updateSceneObject = useSceneStore((state) => state.updateSceneObject);
   const toggleSessionHiddenObject = useSceneStore((state) => state.toggleSessionHiddenObject);
+  const forceShowObject = useSceneStore((state) => state.forceShowObject);
   const deleteObject = useSceneStore((state) => state.deleteObject);
 
   const [expanded, setExpanded] = useState<Set<string>>(() =>
@@ -527,7 +528,13 @@ export function OutlinerPanel() {
                     }
                     onClick={(event) => {
                       event.stopPropagation();
-                      if (forceVisible || (!visible && object.visible)) {
+                      if (!visible && object.visible && !forceVisible) {
+                        // "Show object here": object DB-visible but hidden by
+                        // collection cascade, view filter, or session — force-show
+                        // it, bypassing all session-level gates.
+                        forceShowObject(object.id);
+                      } else if (forceVisible) {
+                        // "Hide object override": remove force-visible override.
                         toggleSessionHiddenObject(object.id);
                       } else {
                         void updateSceneObject(object.id, { visible: !object.visible });

@@ -1096,6 +1096,29 @@ h3 {
 .viewer-cursor-field.axis-x span { color: #ef4444; }
 .viewer-cursor-field.axis-y span { color: #22c55e; }
 .viewer-cursor-field.axis-z span { color: #3b82f6; }
+.viewer-cursor-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: 2px;
+  border: 1px solid rgba(248, 250, 252, 0.18);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.viewer-cursor-toggle:hover {
+  background: rgba(248, 250, 252, 0.12);
+  color: #f8fafc;
+  border-color: rgba(248, 250, 252, 0.32);
+}
+.viewer-cursor-toggle[aria-pressed="true"] {
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.5);
+}
 .viewer-cursor-field input {
   width: 56px;
   padding: 2px 4px;
@@ -2494,17 +2517,6 @@ input:disabled {
   font-size: 14px;
   font-weight: 700;
 }
-.optical-run-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  font-size: 12px;
-  border: 1px solid rgba(0, 0, 0, 0.2);
-  border-radius: var(--radius-md);
-  background: var(--panel-strong);
-  cursor: pointer;
-}
 .optical-auto-register {
   display: flex;
   flex-direction: column;
@@ -2530,11 +2542,6 @@ input:disabled {
 }
 .optical-auto-register-btn {
   align-self: flex-start;
-}
-.optical-run-btn:hover:not(:disabled) {
-  background: #f97316;
-  color: #fff;
-  border-color: #f97316;
 }
 .optical-form {
   display: flex;
@@ -2599,18 +2606,6 @@ input:disabled {
   padding: 6px 10px;
   border-radius: var(--radius-md);
   font-size: 12px;
-}
-.optical-run-output {
-  background: #1e1e1e;
-  color: #d4d4d4;
-  padding: 8px 10px;
-  border-radius: var(--radius-md);
-  font-size: 11px;
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 160px;
-  overflow-y: auto;
 }
 .optical-actions {
   display: flex;
@@ -3919,6 +3914,12 @@ input:disabled {
   background: var(--line);
   margin: 4px 0;
 }
+.viewer-context-menu button.context-danger {
+  color: #dc2626;
+}
+.viewer-context-menu button.context-danger:hover {
+  background: rgba(220, 38, 38, 0.12);
+}
 
 .row-action.muted {
   color: var(--muted);
@@ -4450,4 +4451,798 @@ body.is-timing-bar-drag * {
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
   filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.35));
+}
+
+/* =============================================================
+   Component Editor (sub-page) — full-page take-over for editing
+   per-asset anchor geometry. Activated by sceneStore.editorMode
+   === "component-editor".
+   ============================================================= */
+
+.component-editor {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  background: #0b1120;
+  color: #e2e8f0;
+  font-family: 'Inter', 'Segoe UI', sans-serif;
+  overflow: hidden;
+}
+
+.component-editor-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  background: #111827;
+  border-bottom: 1px solid #1f2937;
+  flex-shrink: 0;
+}
+
+.component-editor-title {
+  flex: 1;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.component-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.component-editor-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 240px 1fr 320px;
+  min-height: 0;   /* required so children can scroll */
+}
+
+.component-editor-left,
+.component-editor-right {
+  background: #0f172a;
+  border-right: 1px solid #1f2937;
+  overflow-y: auto;
+  padding: 8px;
+  font-size: 13px;
+}
+
+.component-editor-right {
+  border-right: none;
+  border-left: 1px solid #1f2937;
+}
+
+.component-editor-left-header {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+  margin-bottom: 6px;
+  padding: 0 4px;
+}
+
+.component-editor-group {
+  margin-bottom: 10px;
+}
+
+.component-editor-group-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #cbd5e1;
+  padding: 4px 4px 2px 4px;
+  border-bottom: 1px solid #1e293b;
+  display: flex;
+  align-items: center;
+}
+
+.component-editor-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 5px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: #cbd5e1;
+  font-size: 12px;
+  cursor: pointer;
+  margin-top: 2px;
+  font-family: inherit;
+}
+
+.component-editor-item:hover {
+  background: #1e293b;
+}
+
+.component-editor-item.is-active {
+  background: #1d4ed8;
+  border-color: #3b82f6;
+  color: #ffffff;
+}
+
+.component-editor-viewport {
+  position: relative;
+  background: #0b1120;
+  display: flex;
+  flex-direction: column;
+}
+
+.component-editor-canvas {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+}
+
+.component-editor-canvas canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.component-editor-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  font-size: 13px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.component-editor-overlay {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  right: 12px;
+  background: rgba(248, 113, 113, 0.15);
+  border: 1px solid #f87171;
+  border-radius: 4px;
+  padding: 8px 12px;
+  color: #fca5a5;
+  font-size: 12px;
+  z-index: 3;
+}
+
+.component-editor-section {
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #1e293b;
+}
+
+.component-editor-section:last-child {
+  border-bottom: none;
+}
+
+.component-editor-section-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.component-editor-kind-summary {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 4px;
+  padding: 8px;
+  margin-bottom: 6px;
+}
+
+.component-editor-kind-summary code {
+  background: #0f172a;
+  padding: 1px 4px;
+  border-radius: 2px;
+  font-size: 11px;
+  color: #fbbf24;
+}
+
+.component-editor-validation {
+  font-size: 12px;
+}
+
+.anchor-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  margin-right: 4px;
+  margin-top: 2px;
+  border: 1px solid transparent;
+  font-family: 'Menlo', 'Consolas', monospace;
+}
+
+.anchor-badge-ok {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: #22c55e;
+  color: #4ade80;
+}
+
+.anchor-badge-missing {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: #ef4444;
+  color: #f87171;
+}
+
+.anchor-badge-optional {
+  background: rgba(148, 163, 184, 0.15);
+  border-color: #475569;
+  color: #94a3b8;
+}
+
+.component-editor-anchor-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px;
+  border-radius: 3px;
+  margin-top: 2px;
+}
+
+.component-editor-anchor-row.is-active {
+  background: #1e293b;
+}
+
+.component-editor-anchor-handle {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.component-editor-input {
+  flex: 1;
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #e2e8f0;
+  padding: 3px 6px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.component-editor-coord-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.component-editor-coord {
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 4px;
+}
+
+.component-editor-coord span {
+  margin-bottom: 2px;
+}
+
+.component-editor-coord input {
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #e2e8f0;
+  padding: 4px 6px;
+  border-radius: 3px;
+  font-family: 'Menlo', 'Consolas', monospace;
+  font-size: 12px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* =============================================================
+   PHY Editor wrapper — full-page sub-page hosting per-domain
+   sub-editors (optical_kinds, optical_components, ...). Activated
+   by sceneStore.editorMode === "phy-editor".
+   ============================================================= */
+
+.phy-editor {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  background: #0b1120;
+  color: #e2e8f0;
+  font-family: 'Inter', 'Segoe UI', sans-serif;
+  overflow: hidden;
+}
+
+.phy-editor-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  background: #111827;
+  border-bottom: 1px solid #1f2937;
+  flex-shrink: 0;
+}
+
+.phy-editor-title {
+  flex: 1;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.phy-editor-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  min-height: 0;
+}
+
+.phy-editor-rail {
+  background: #0f172a;
+  border-right: 1px solid #1f2937;
+  overflow-y: auto;
+  padding: 12px 8px;
+  font-size: 13px;
+}
+
+.phy-editor-rail-header {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+  margin-bottom: 10px;
+  padding: 0 4px;
+}
+
+.phy-editor-domain {
+  margin-bottom: 14px;
+}
+
+.phy-editor-domain-disabled {
+  opacity: 0.5;
+}
+
+.phy-editor-domain-title {
+  font-weight: 600;
+  font-size: 12px;
+  color: #cbd5e1;
+  padding: 4px 6px;
+}
+
+.phy-editor-rail-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  margin-top: 3px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: #cbd5e1;
+  font-family: 'Menlo', 'Consolas', monospace;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.phy-editor-rail-item:hover {
+  background: #1e293b;
+}
+
+.phy-editor-rail-item.is-active {
+  background: #1d4ed8;
+  border-color: #3b82f6;
+  color: #ffffff;
+}
+
+.phy-editor-rail-hint {
+  font-family: 'Inter', 'Segoe UI', sans-serif;
+  font-size: 11px;
+  opacity: 0.7;
+  margin-top: 2px;
+}
+
+.phy-editor-rail-soon {
+  font-size: 11px;
+  opacity: 0.6;
+  font-style: italic;
+  padding: 0 10px;
+}
+
+.phy-editor-pane {
+  background: #0b1120;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.phy-editor-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 24px;
+}
+
+/* Sub-editor sub-bar (sits below the wrapper top bar, owned by the
+   active sub-editor). Hosts the editor's own context label + Save. */
+.component-editor-subbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 14px;
+  background: #111827;
+  border-bottom: 1px solid #1f2937;
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+/* OpticalComponentEditor reuses .component-editor + variants from the
+   earlier MVP. Override: when nested inside PhyEditor, it should fill
+   only the right pane, not 100vw/100vh. */
+.phy-editor-pane > .component-editor {
+  width: 100%;
+  height: 100%;
+}
+
+/* =============================================================
+   OpticalKindsEditor (read-only kinds viewer)
+   ============================================================= */
+
+.kinds-editor {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.kinds-editor-banner {
+  background: rgba(251, 191, 36, 0.10);
+  border-bottom: 1px solid rgba(251, 191, 36, 0.4);
+  color: #fde68a;
+  padding: 8px 14px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.kinds-editor-banner code {
+  background: rgba(0, 0, 0, 0.4);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: #fcd34d;
+}
+
+.kinds-editor-grid {
+  flex: 1;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 12px;
+  padding: 14px;
+  align-content: start;
+}
+
+.kinds-editor-card {
+  background: #0f172a;
+  border: 1px solid #1f2937;
+  border-radius: 5px;
+  padding: 10px 12px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kinds-editor-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.kinds-editor-pill {
+  background: #1e293b;
+  border: 1px solid #334155;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  color: #94a3b8;
+  font-family: 'Menlo', 'Consolas', monospace;
+}
+
+.kinds-editor-variant {
+  border-left: 3px solid #3b82f6;
+  padding: 2px 8px;
+  font-size: 12px;
+  background: #111827;
+  border-radius: 0 3px 3px 0;
+}
+
+.kinds-editor-summary {
+  font-size: 12px;
+  opacity: 0.85;
+  line-height: 1.45;
+}
+
+.kinds-editor-anchors {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  border-top: 1px solid #1e293b;
+  padding-top: 6px;
+}
+
+.kinds-editor-anchor-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+  margin-right: 6px;
+}
+
+.kinds-editor-anchor-pill {
+  background: #1e293b;
+  border: 1px solid #334155;
+  padding: 1px 5px;
+  border-radius: 2px;
+  font-size: 10px;
+  margin-right: 4px;
+  font-family: 'Menlo', 'Consolas', monospace;
+}
+
+.kinds-editor-anchor-pill.required {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: #22c55e;
+  color: #4ade80;
+}
+
+.kinds-editor-anchor-pill.optional {
+  background: rgba(148, 163, 184, 0.15);
+  border-color: #475569;
+  color: #cbd5e1;
+}
+
+/* Component editor — Normal direction subsection (only visible for kinds
+   whose KIND_REGISTRY entry lists this anchor in anchorsNeedingDirection,
+   e.g. mirror.intercept_face). */
+.component-editor-direction {
+  background: rgba(59, 130, 246, 0.06);
+  border-left: 2px solid #3b82f6;
+  padding: 6px 8px;
+  border-radius: 0 3px 3px 0;
+  margin-top: 6px;
+}
+
+.component-editor-direction-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.component-editor-direction-presets button {
+  padding: 2px 8px;
+  font-size: 11px;
+  min-width: auto;
+  font-family: 'Menlo', 'Consolas', monospace;
+}
+
+/* Pick-face mode — cursor + button highlight + canvas tint so the
+   user knows the next click will snap an anchor to a 3D face. */
+.component-editor-canvas.is-pick-mode canvas {
+  cursor: crosshair !important;
+}
+
+.component-editor-canvas.is-pick-mode::after {
+  content: "Click a face on the mesh to snap the anchor here. ESC to cancel.";
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(34, 197, 94, 0.95);
+  color: #052e16;
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+  z-index: 5;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.component-editor-pick-face {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px 10px;
+}
+
+.component-editor-pick-face.is-active {
+  background: #16a34a;
+  color: #f0fdf4;
+  border-color: #4ade80;
+}
+
+/* Mirror-specific UX inside OpticalComponentEditor — single
+   intercept_face anchor, no anchor list / +Add / dropdown / delete. */
+.mirror-face-status {
+  font-size: 12px;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  background: #111827;
+  border-radius: 3px;
+}
+
+.mirror-face-pick {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mirror-face-pick.is-active {
+  background: #16a34a;
+  color: #f0fdf4;
+  border-color: #4ade80;
+}
+
+.mirror-face-side-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.mirror-face-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 6px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  color: #cbd5e1;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.mirror-face-side:hover {
+  background: #334155;
+}
+
+.mirror-face-side.is-active {
+  background: #1d4ed8;
+  border-color: #3b82f6;
+  color: #ffffff;
+}
+
+.mirror-face-side strong {
+  font-family: 'Menlo', 'Consolas', monospace;
+  line-height: 1;
+}
+
+.mirror-face-side-hint {
+  font-size: 10px;
+  opacity: 0.7;
+  font-family: 'Menlo', 'Consolas', monospace;
+}
+
+.mirror-face-hint {
+  font-size: 11px;
+  opacity: 0.65;
+  margin-top: 8px;
+  margin-bottom: 0;
+  line-height: 1.5;
+}
+
+/* Component-Editor viewport overlay tools — same on-canvas philosophy
+   as `.viewer-tools-pie` in the main scene. Sits top-center over the
+   3D wireframe; lets the user pick the reflective face + flip side
+   without leaving the model. */
+.editor-viewport-tools {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 6px;
+  padding: 8px 12px;
+  filter: drop-shadow(0 10px 26px rgba(0, 0, 0, 0.4));
+  pointer-events: auto;
+  min-width: 240px;
+}
+
+.editor-viewport-tool {
+  background: rgba(30, 41, 59, 0.95);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  color: #e2e8f0;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.editor-viewport-tool:hover {
+  background: rgba(51, 65, 85, 0.95);
+}
+
+.editor-viewport-pick.is-active {
+  background: rgba(22, 163, 74, 0.95);
+  border-color: rgba(74, 222, 128, 0.7);
+  color: #f0fdf4;
+}
+
+.editor-viewport-side-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.editor-viewport-side-label {
+  flex: 0 0 auto;
+  opacity: 0.8;
+  margin-right: 2px;
+}
+
+.editor-viewport-side-btn {
+  flex: 1;
+  background: rgba(30, 41, 59, 0.95);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  color: #cbd5e1;
+  padding: 4px 8px;
+  font-size: 11px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: 'Menlo', 'Consolas', monospace;
+}
+
+.editor-viewport-side-btn:hover {
+  background: rgba(51, 65, 85, 0.95);
+}
+
+.editor-viewport-side-btn.is-active {
+  background: rgba(29, 78, 216, 0.95);
+  border-color: rgba(59, 130, 246, 0.8);
+  color: #ffffff;
+}
+
+/* Lens viewport-overlay: mode toggle (Plano-Convex / Bi-Convex) sits
+   above the pick / snap action button. Same dark-glass style as the
+   side-row to keep visual coherence with mirror's overlay. */
+.editor-viewport-mode-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  padding-bottom: 6px;
+  margin-bottom: 2px;
 }

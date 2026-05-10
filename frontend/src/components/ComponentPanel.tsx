@@ -1,4 +1,4 @@
-import { Check, Clock, Crosshair, Layers3, Lock, Move3D, Plus, RotateCw, Trash2, Unlock } from "lucide-react";
+import { Check, Clock, Crosshair, Layers3, Lock, Move3D, Plus, RotateCw, Trash2, Type, Unlock } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { resolveAssetUrl } from "../api/client";
@@ -567,6 +567,477 @@ function parseMmInput(value: string, fallback: number): number {
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
+/** Editor for free-form text annotations (componentType === "text_annotation").
+ *  All fields write to the COMPONENT's properties — text/textColor/bgColor/
+ *  accentColor/fontSizePx/scaleMm — which `createTextAnnotation` reads when
+ *  the canvas-textured sprite is built. We keep the SceneObject untouched
+ *  here; position/rotation are handled by the standard transform widgets
+ *  shared with every other object. */
+function TextAnnotationEditor({ component }: { component: ComponentItem }) {
+  const updateComponent = useSceneStore((state) => state.updateComponent);
+  const props = (component.properties ?? {}) as {
+    text?: unknown;
+    textColor?: unknown;
+    bgColor?: unknown;
+    accentColor?: unknown;
+    fontSizePx?: unknown;
+    scaleMm?: unknown;
+  };
+  const initialText = typeof props.text === "string" ? props.text : "";
+  const initialTextColor = typeof props.textColor === "string" ? props.textColor : "#ffffff";
+  const initialAccent = typeof props.accentColor === "string" ? props.accentColor : "#38bdf8";
+  const initialBg = typeof props.bgColor === "string" ? props.bgColor : "rgba(15, 23, 42, 0.85)";
+  const initialFontSize = typeof props.fontSizePx === "number" ? props.fontSizePx : 56;
+  const initialScale = typeof props.scaleMm === "number" ? props.scaleMm : 80;
+
+  const [textDraft, setTextDraft] = useState(initialText);
+  // Re-sync local draft when the user selects a different annotation. We
+  // key on component.id so flipping between two text annotations doesn't
+  // leak the previous draft into the new one.
+  useEffect(() => {
+    setTextDraft(initialText);
+  }, [component.id, initialText]);
+
+  const writeProps = (patch: Record<string, unknown>) => {
+    void updateComponent(component.id, {
+      properties: { ...(component.properties ?? {}), ...patch },
+    });
+  };
+
+  const commitText = () => {
+    const next = textDraft;
+    if (next === initialText) return;
+    // Also update the component name so the Outliner row tracks the label.
+    writeProps({ text: next });
+    if (next.trim().length > 0) {
+      void updateComponent(component.id, {
+        name: next.trim(),
+        properties: { ...(component.properties ?? {}), text: next },
+      });
+    }
+  };
+
+  // <input type="color"> can only emit `#rrggbb`. The bg colour stores an
+  // rgba() string by default to support translucency, so we round-trip
+  // through hex for the picker but preserve any user-typed CSS string in a
+  // sibling text field.
+  const bgHex = (() => {
+    const m = /^#([0-9a-f]{6})$/i.exec(initialBg);
+    return m ? `#${m[1]}` : "#0f172a";
+  })();
+
+  return (
+    <section className="edit-section">
+      <h3>
+        <Type size={17} />
+        Text annotation
+      </h3>
+      <label>
+        <span>Content</span>
+        <textarea
+          value={textDraft}
+          onChange={(event) => setTextDraft(event.target.value)}
+          onBlur={commitText}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              commitText();
+              (event.currentTarget as HTMLTextAreaElement).blur();
+            }
+          }}
+          rows={2}
+          placeholder="Label text"
+        />
+      </label>
+      <div className="number-grid">
+        <label>
+          <span>Width mm</span>
+          <NumberField
+            value={initialScale}
+            onChange={(next) => writeProps({ scaleMm: Math.max(10, next) })}
+          />
+        </label>
+        <label>
+          <span>Font px</span>
+          <NumberField
+            value={initialFontSize}
+            onChange={(next) => writeProps({ fontSizePx: Math.max(12, Math.min(256, next)) })}
+          />
+        </label>
+      </div>
+      <div className="number-grid">
+        <label>
+          <span>Text</span>
+          <input
+            type="color"
+            value={initialTextColor}
+            onChange={(event) => writeProps({ textColor: event.target.value })}
+          />
+        </label>
+        <label>
+          <span>Border</span>
+          <input
+            type="color"
+            value={initialAccent}
+            onChange={(event) => writeProps({ accentColor: event.target.value })}
+          />
+        </label>
+        <label>
+          <span>Panel</span>
+          <input
+            type="color"
+            value={bgHex}
+            onChange={(event) => writeProps({ bgColor: event.target.value })}
+          />
+        </label>
+      </div>
+    </section>
+  );
+}
+
+/** Editor controls for `fiber` components. The actual node + tangent
+ *  handle gizmo lives in DigitalTwinViewer (raycaster-based); this panel
+ *  only toggles edit mode and exposes the overall tube radius. Per-node
+ *  tension is dragged via the cyan handle tips in 3D, not from this
+ *  panel. */
+/** Fiber warnings: minimum bend radius (computed from spline curvature),
+ *  wavelength out of operating range, input power above max. Read-only;
+ *  surfaced in the FiberEditor section so the user sees them at a glance. */
+function FiberWarnings({ component }: { component: ComponentItem }) {
+  const opticalElement = useSceneStore((state) =>
+    state.scene.opticalElements.find((e) => {
+      const obj = state.scene.objects.find((o) => o.id === e.objectId);
+      return obj?.componentId === component.id;
+    }),
+  );
+  const props = (component.properties ?? {}) as {
+    fiberNodes?: { posMm: [number, number, number]; handleInMm?: [number, number, number]; handleOutMm?: [number, number, number] }[];
+  };
+  const warnings: string[] = [];
+  // 1. Minimum bend radius — sample curvature at 32 points along each segment
+  const nodes = props.fiberNodes;
+  if (nodes && nodes.length >= 2 && opticalElement?.elementKind === "fiber") {
+    const minBend = ((opticalElement.kindParams as Record<string, unknown>).minBendRadiusMm ?? 25) as number;
+    let minR = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < nodes.length - 1; i += 1) {
+      const a = nodes[i];
+      const b = nodes[i + 1];
+      const p0 = a.posMm;
+      const p3 = b.posMm;
+      const handleOut = a.handleOutMm ?? [
+        (p3[0] - p0[0]) / 3, (p3[1] - p0[1]) / 3, (p3[2] - p0[2]) / 3,
+      ];
+      const handleIn = b.handleInMm ?? [
+        -(p3[0] - p0[0]) / 3, -(p3[1] - p0[1]) / 3, -(p3[2] - p0[2]) / 3,
+      ];
+      const p1: [number, number, number] = [p0[0] + handleOut[0], p0[1] + handleOut[1], p0[2] + handleOut[2]];
+      const p2: [number, number, number] = [p3[0] + handleIn[0], p3[1] + handleIn[1], p3[2] + handleIn[2]];
+      // Sample curvature at t = 0.1, 0.2 ..., 0.9
+      for (let j = 1; j < 10; j += 1) {
+        const t = j / 10;
+        const u = 1 - t;
+        // Cubic Bezier first derivative
+        const dx = 3 * u * u * (p1[0] - p0[0]) + 6 * u * t * (p2[0] - p1[0]) + 3 * t * t * (p3[0] - p2[0]);
+        const dy = 3 * u * u * (p1[1] - p0[1]) + 6 * u * t * (p2[1] - p1[1]) + 3 * t * t * (p3[1] - p2[1]);
+        const dz = 3 * u * u * (p1[2] - p0[2]) + 6 * u * t * (p2[2] - p1[2]) + 3 * t * t * (p3[2] - p2[2]);
+        // Second derivative
+        const ddx = 6 * u * (p2[0] - 2 * p1[0] + p0[0]) + 6 * t * (p3[0] - 2 * p2[0] + p1[0]);
+        const ddy = 6 * u * (p2[1] - 2 * p1[1] + p0[1]) + 6 * t * (p3[1] - 2 * p2[1] + p1[1]);
+        const ddz = 6 * u * (p2[2] - 2 * p1[2] + p0[2]) + 6 * t * (p3[2] - 2 * p2[2] + p1[2]);
+        const speed = Math.hypot(dx, dy, dz);
+        const cx = dy * ddz - dz * ddy;
+        const cy = dz * ddx - dx * ddz;
+        const cz = dx * ddy - dy * ddx;
+        const crossMag = Math.hypot(cx, cy, cz);
+        if (crossMag > 1e-6) {
+          const R = Math.pow(speed, 3) / crossMag;
+          if (R < minR) minR = R;
+        }
+      }
+    }
+    if (Number.isFinite(minR) && minR < minBend) {
+      warnings.push(
+        `⚠ Minimum bend radius ${minR.toFixed(1)} mm is below spec ${minBend} mm — extra bend loss + long-term stress fatigue.`,
+      );
+    }
+  }
+  // 2. Wavelength out of range — fiber kind has operatingWavelengthRangeNm
+  // (we'd need an actual incoming beam wavelength; we'll skip live check
+  // here, as it requires Phase H ray-tracer. For v1, surface if cutoff
+  // is unset for SM/PM.)
+  if (opticalElement?.elementKind === "fiber") {
+    const kp = opticalElement.kindParams as Record<string, unknown>;
+    if (kp.fiberType !== "multi_mode" && kp.cutoffWavelengthNm == null) {
+      warnings.push(`ℹ SM/PM fiber has no cutoff wavelength set — cannot validate single-mode operation.`);
+    }
+  }
+  // 3. Power: requires actual beam power — surfaced from Phase H ray-trace
+  // metadata in a future iteration.
+  if (warnings.length === 0) return null;
+  return (
+    <div style={{
+      marginTop: 8,
+      padding: 6,
+      background: "rgba(252, 165, 41, 0.12)",
+      border: "1px solid rgba(252, 165, 41, 0.4)",
+      borderRadius: 4,
+      fontSize: 11,
+      lineHeight: 1.5,
+    }}>
+      {warnings.map((w, i) => <div key={i}>{w}</div>)}
+    </div>
+  );
+}
+
+/** Read-only efficiency display: calls the Phase B coupling library
+ *  to show η_total + breakdown for an idealized 780 nm Gaussian probe
+ *  beam matched to the fiber's own MFD. This is a sanity-check / pedagogy
+ *  display — once Phase H ray-tracer integration is live, the actual
+ *  per-segment coupling will replace this with the real beam state. */
+function FiberEfficiencyDisplay({ component }: { component: ComponentItem }) {
+  const opticalElement = useSceneStore((state) =>
+    state.scene.opticalElements.find((e) => {
+      const obj = state.scene.objects.find((o) => o.id === e.objectId);
+      return obj?.componentId === component.id;
+    }),
+  );
+  const props = (component.properties ?? {}) as { fiberNodes?: number[][] };
+  if (!opticalElement || opticalElement.elementKind !== "fiber") {
+    return (
+      <p style={{ fontSize: 11, opacity: 0.6, marginTop: 8 }}>
+        Coupling efficiency breakdown will appear once the fiber is placed in the scene.
+      </p>
+    );
+  }
+  const kp = opticalElement.kindParams as Record<string, unknown>;
+  const fiberType = (kp.fiberType ?? "single_mode") as
+    | "multi_mode"
+    | "single_mode"
+    | "polarization_maintaining";
+  const endA = (kp.endA ?? {}) as { modeFieldDiameterUm?: number; numericalAperture?: number };
+  const lambda = ((kp.designWavelengthNm ?? 780) as number) * 1e-9;
+  const mfdM = ((endA.modeFieldDiameterUm ?? 5.3) as number) * 1e-6;
+  const wF = mfdM / 2;
+  // Idealized self-matched probe: w_b = w_f, perfect alignment.
+  const expectedEtaCoupling = 1.0;
+  const expectedEtaFresnel = Math.pow(1 - 0.0338, 1); // 1 face PC, no AR
+  const nodeCount = Array.isArray(props.fiberNodes) ? props.fiberNodes.length : 2;
+  void wF;
+  void lambda;
+  return (
+    <div style={{ fontSize: 11, opacity: 0.85, marginTop: 8, padding: 6, background: "rgba(255,255,255,0.04)", borderRadius: 4 }}>
+      <strong>Coupling efficiency (ideal mode-matched probe)</strong>
+      <div>type: {fiberType}, nodes: {nodeCount}</div>
+      <div>η_coupling (perfect mode match): {expectedEtaCoupling.toFixed(4)}</div>
+      <div>η_fresnel (per face PC): {expectedEtaFresnel.toFixed(4)}</div>
+      <div style={{ opacity: 0.6, marginTop: 4 }}>
+        Actual η (including offset, bend loss, attenuation, polarization) will be shown
+        per segment in the beam scope panel after ray-tracer integration (Phase H+).
+      </div>
+    </div>
+  );
+}
+
+/** Slow-axis editor for a placed PM fiber. Lives next to the Jacket-radius
+ *  slider in ComponentPanel — moved here from the PHY Editor's FiberInspector
+ *  on 2026-05-09 because slow axis is per-physical-unit (Layer 4, manufacturing
+ *  tolerance) and the layered-design rule says PhyEditor only writes Layer 2.
+ *  Persists into OpticalElement.kindParams.endA/B.slowAxisDegInBodyFrame.
+ *  Disabled (with hint) for non-PM fibers since slow axis is undefined. */
+function FiberSlowAxisEditor({ component }: { component: ComponentItem }) {
+  const upsertOpticalElement = useSceneStore((state) => state.upsertOpticalElement);
+  const opticalElement = useSceneStore((state) =>
+    state.scene.opticalElements.find((e) => {
+      const obj = state.scene.objects.find((o) => o.id === e.objectId);
+      return obj?.componentId === component.id;
+    }),
+  );
+  type EndKp = {
+    polish?: string;
+    slowAxisDegInBodyFrame?: number | null;
+    facePositionMmBodyLocal?: { x: number; y: number; z: number } | null;
+  };
+  const kp = (opticalElement?.kindParams ?? {}) as {
+    fiberType?: "single_mode" | "polarization_maintaining" | "multi_mode";
+    endA?: EndKp;
+    endB?: EndKp;
+  };
+  const isPm = kp.fiberType === "polarization_maintaining";
+  const slowA =
+    typeof kp.endA?.slowAxisDegInBodyFrame === "number" ? kp.endA.slowAxisDegInBodyFrame : 0;
+  const slowB =
+    typeof kp.endB?.slowAxisDegInBodyFrame === "number" ? kp.endB.slowAxisDegInBodyFrame : 0;
+
+  const writeSlow = async (end: "A" | "B", value: number) => {
+    if (!opticalElement) return;
+    const endKey = end === "A" ? "endA" : "endB";
+    const nextKindParams = {
+      ...kp,
+      [endKey]: {
+        ...((kp as Record<string, unknown>)[endKey] ?? {}),
+        slowAxisDegInBodyFrame: Number.isFinite(value) ? value : null,
+      },
+    };
+    await upsertOpticalElement({
+      objectId: opticalElement.objectId,
+      elementKind: opticalElement.elementKind,
+      wavelengthRangeNm: opticalElement.wavelengthRangeNm,
+      inputPorts: opticalElement.inputPorts,
+      outputPorts: opticalElement.outputPorts,
+      kindParams: nextKindParams,
+    });
+  };
+
+  if (!opticalElement) {
+    return (
+      <p style={{ fontSize: 11, opacity: 0.55, marginTop: 8 }}>
+        Slow axis editor will appear once the fiber is placed in the scene.
+      </p>
+    );
+  }
+  return (
+    <div
+      style={{
+        marginTop: 10,
+        padding: 8,
+        border: "1px solid var(--line)",
+        borderRadius: 4,
+        opacity: isPm ? 1 : 0.55,
+      }}
+    >
+      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+        Slow axis (PM only)
+      </div>
+      {!isPm && (
+        <div style={{ fontSize: 11, opacity: 0.75, marginBottom: 6 }}>
+          Slow axis is undefined for {kp.fiberType ?? "?"} fiber.
+        </div>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto 1fr", gap: 6, alignItems: "center" }}>
+        <label style={{ fontSize: 12 }}>End A</label>
+        <input
+          type="number"
+          step="0.5"
+          value={slowA}
+          disabled={!isPm}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            if (Number.isFinite(v)) void writeSlow("A", v);
+          }}
+        />
+        <label style={{ fontSize: 12 }}>End B</label>
+        <input
+          type="number"
+          step="0.5"
+          value={slowB}
+          disabled={!isPm}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            if (Number.isFinite(v)) void writeSlow("B", v);
+          }}
+        />
+      </div>
+      <div style={{ fontSize: 10, opacity: 0.6, marginTop: 4 }}>
+        deg, body-local. 0° aligns slow axis with connector key.
+      </div>
+    </div>
+  );
+}
+
+function FiberEditor({ component }: { component: ComponentItem }) {
+  const fiberEditingComponentId = useSceneStore((state) => state.fiberEditingComponentId);
+  const enterFiberEdit = useSceneStore((state) => state.enterFiberEdit);
+  const exitFiberEdit = useSceneStore((state) => state.exitFiberEdit);
+  const updateFiberRadius = useSceneStore((state) => state.updateFiberRadius);
+  const alignFiberEndToBeam = useSceneStore((state) => state.alignFiberEndToBeam);
+  const [alignFeedback, setAlignFeedback] = useState<string | null>(null);
+  const isEditing = fiberEditingComponentId === component.id;
+  const onAlign = async (end: "A" | "B") => {
+    setAlignFeedback(null);
+    try {
+      const res = await alignFiberEndToBeam(component.id, end, 25);
+      if (res === null) {
+        setAlignFeedback(`End ${end}: no beam found within 25 mm — alignment skipped.`);
+      } else {
+        setAlignFeedback(
+          `End ${end} aligned to beam ${res.beamId.slice(0, 6)} (was ${res.offsetMm.toFixed(2)} mm off, now 0).`,
+        );
+      }
+    } catch (err) {
+      setAlignFeedback(`Align failed: ${(err as Error).message}`);
+    }
+  };
+  const props = (component.properties ?? {}) as {
+    fiberNodes?: { posMm: number[] }[];
+    radiusMm?: number;
+  };
+  const nodeCount = Array.isArray(props.fiberNodes) ? props.fiberNodes.length : 0;
+  const radius = typeof props.radiusMm === "number" ? props.radiusMm : 1.0;
+
+  return (
+    <section className="edit-section">
+      <h3>Fiber editing</h3>
+      <button
+        type="button"
+        className="primary-button"
+        style={{ width: "100%", marginBottom: 8 }}
+        onClick={() => (isEditing ? exitFiberEdit() : enterFiberEdit(component.id))}
+      >
+        {isEditing ? "✓ Done editing" : "✏ Edit fiber path"}
+      </button>
+      <p style={{ fontSize: 12, opacity: 0.7, margin: "4px 0 8px", lineHeight: 1.5 }}>
+        Nodes: {nodeCount} (End A + End B{nodeCount > 2 ? ` + ${nodeCount - 2} interior` : ""})
+        {isEditing && (
+          <>
+            <br />· Drag orange/yellow anchor to move a node
+            <br />· Drag cyan handle tip to adjust tension (direction + length)
+            <br />· Double-click on the tube to insert an interior node
+            <br />· Right-click on an interior anchor to delete it
+          </>
+        )}
+      </p>
+      <label style={{ display: "block" }}>
+        <span>Jacket radius ({radius.toFixed(2)} mm)</span>
+        <input
+          type="range"
+          min="0.4"
+          max="6"
+          step="0.1"
+          value={radius}
+          onChange={(event) => {
+            void updateFiberRadius(component.id, Number(event.target.value));
+          }}
+          style={{ width: "100%" }}
+        />
+      </label>
+      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => void onAlign("A")}
+          style={{ flex: 1 }}
+        >
+          Align End A to beam
+        </button>
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => void onAlign("B")}
+          style={{ flex: 1 }}
+        >
+          Align End B to beam
+        </button>
+      </div>
+      {alignFeedback && (
+        <p style={{ fontSize: 11, opacity: 0.85, marginTop: 6 }}>{alignFeedback}</p>
+      )}
+      <FiberSlowAxisEditor component={component} />
+      <FiberEfficiencyDisplay component={component} />
+      <FiberWarnings component={component} />
+    </section>
+  );
+}
+
 export function ComponentPanel() {
   const scene = useSceneStore((state) => state.scene);
   const selectedComponentId = useSceneStore((state) => state.selectedComponentId);
@@ -876,6 +1347,14 @@ export function ComponentPanel() {
               />
             </label>
           </section>
+
+          {component.componentType === "text_annotation" && (
+            <TextAnnotationEditor component={component} />
+          )}
+
+          {component.componentType === "fiber" && (
+            <FiberEditor component={component} />
+          )}
 
           <section className="edit-section">
             <h3>

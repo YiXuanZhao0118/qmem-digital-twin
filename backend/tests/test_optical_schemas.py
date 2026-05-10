@@ -208,6 +208,45 @@ def test_unknown_element_kind_rejected():
         })
 
 
+def test_aom_bragg_interaction_point_override_accepted():
+    """AOMParams accepts an optional body-local Bragg pivot override.
+
+    Phase 7 (anchor-based AOM align) introduces
+    `braggInteractionPointMmBodyLocal` so asymmetric AOMs can move the
+    rotation pivot off the intercept_in/out midpoint. The field is
+    optional (None default) — both shapes must validate cleanly."""
+    # Without override: midpoint of port anchors is used at align time.
+    aom_default = OpticalElementCreate.model_validate({
+        "objectId": str(uuid.uuid4()),
+        "elementKind": "aom",
+        "kindParams": {
+            "centerFreqMhz": 80.0,
+            "baseEfficiency": 0.85,
+            "deflectionPerMhzUrad": 200.0,
+            "acousticVelocityMPerS": 4200.0,
+            "modulationBandwidthMhz": 20.0,
+        },
+    })
+    assert "braggInteractionPointMmBodyLocal" not in aom_default.kind_params
+
+    # With override: the body-local point is preserved through the
+    # validate-and-normalize round-trip. exclude_none drops it when
+    # None, so explicit setters must come back round-trip.
+    aom_override = OpticalElementCreate.model_validate({
+        "objectId": str(uuid.uuid4()),
+        "elementKind": "aom",
+        "kindParams": {
+            "centerFreqMhz": 80.0,
+            "baseEfficiency": 0.85,
+            "deflectionPerMhzUrad": 200.0,
+            "acousticVelocityMPerS": 4200.0,
+            "modulationBandwidthMhz": 20.0,
+            "braggInteractionPointMmBodyLocal": [0.0, 5.0, 0.0],
+        },
+    })
+    assert aom_override.kind_params["braggInteractionPointMmBodyLocal"] == [0.0, 5.0, 0.0]
+
+
 def test_invalid_kind_params_rejected():
     # MirrorParams.reflectivity must be in [0, 1]
     with pytest.raises(ValidationError):

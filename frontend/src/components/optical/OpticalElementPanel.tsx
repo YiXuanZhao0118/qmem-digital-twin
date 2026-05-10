@@ -1,4 +1,4 @@
-import { Play, Sparkles, Trash2 } from "lucide-react";
+import { Sparkles, Trash2 } from "lucide-react";
 import * as THREE from "three";
 import { Component, useEffect, useMemo, useState, type ReactNode } from "react";
 
@@ -15,8 +15,25 @@ import {
   perpendicularBasis,
 } from "../../utils/beamPlacement";
 import {
+  DEFAULT_STAGE1_MODE,
+  DEFAULT_STAGE2_SIGN,
+  aomBodyFrameBodyLocal,
+  aomTraversalSignFromEntryPort,
+  braggAngleRad,
+  diffractionEfficiency,
+  effectiveAomOrderForTraversal,
+  expectedInputDotD2,
+  phaseModulationDepth,
+  resolveTraversalSign,
+  rfPowerForPeakEfficiencyW,
+  sidebandIntensitiesOnBragg,
+  type Stage1RotationMode,
+  type Stage2SignConvention,
+} from "../../optical/kinds/aom/physics";
+import {
   bodyLocalDirToThree,
   labDirToThree,
+  rotateLabDir,
   threeToLabPointMm,
 } from "../../optical/frames";
 
@@ -37,7 +54,6 @@ export function OpticalElementPanel({ component, sceneObject }: Props) {
   const upsertOpticalElement = useSceneStore((state) => state.upsertOpticalElement);
   const deleteOpticalElement = useSceneStore((state) => state.deleteOpticalElement);
   const autoRegisterOptical = useSceneStore((state) => state.autoRegisterOptical);
-  const runOpticalSimulation = useSceneStore((state) => state.runOpticalSimulation);
 
   const existing = sceneObject
     ? findElementForObject(opticalElements, sceneObject.id)
@@ -52,7 +68,6 @@ export function OpticalElementPanel({ component, sceneObject }: Props) {
   const [waveHigh, setWaveHigh] = useState<number>(existing?.wavelengthRangeNm?.[1] ?? 1100);
   const [error, setError] = useState<string>("");
   const [busy, setBusy] = useState<boolean>(false);
-  const [runResult, setRunResult] = useState<string>("");
 
   // Re-sync when the underlying element changes (e.g., websocket update)
   useEffect(() => {
@@ -138,29 +153,10 @@ export function OpticalElementPanel({ component, sceneObject }: Props) {
     }
   };
 
-  const onRun = async () => {
-    setBusy(true);
-    setRunResult("");
-    try {
-      const result = await runOpticalSimulation();
-      const lines: string[] = [`run ${result.runId.slice(0, 8)}: ${result.segmentCount} segments`];
-      if (result.errors.length) lines.push("errors:", ...result.errors.map((e) => `  - ${e}`));
-      if (result.warnings.length) lines.push("warnings:", ...result.warnings.map((w) => `  - ${w}`));
-      setRunResult(lines.join("\n"));
-    } catch (e) {
-      setRunResult(`Failed: ${(e as Error).message}`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <section className="optical-panel">
       <header className="optical-panel-header">
         <h3>Optical Element</h3>
-        <button type="button" className="optical-run-btn" onClick={onRun} disabled={busy}>
-          <Play size={14} /> Run Solver
-        </button>
       </header>
 
       {!existing && mappedKind && (
@@ -236,7 +232,6 @@ export function OpticalElementPanel({ component, sceneObject }: Props) {
         </div>
 
         {error ? <div className="optical-error">{error}</div> : null}
-        {runResult ? <pre className="optical-run-output">{runResult}</pre> : null}
 
         <div className="optical-actions">
           <button type="button" className="primary" onClick={onSave} disabled={busy}>
@@ -651,15 +646,23 @@ function AomAdjustControls({
     sidebandVisibilityThreshold?: number;
     braggTiltAxisDegLab?: number;
     braggTiltAxisAngleDeg?: number;  // legacy
+    /** Phase 7 (AOM align rewrite): optional override for the body-local
+     *  pivot used by the Bragg rotation. Defaults to the midpoint of
+     *  the asset's intercept_in / intercept_out anchors. */
+    braggInteractionPointMmBodyLocal?: number[] | null;
+    /** Phase 7.4 align rewrite: how Stage 1 pins the rotation about
+     *  beam direction (the only DoF left after the Bragg constraint
+     *  beam·D2 = sin θ_B is imposed). See physics.ts for the modes. */
+    stage1RotationMode?: Stage1RotationMode;
+    /** Phase 7.4 align rewrite: whether the user-selected order m maps
+     *  to the same physical lab side regardless of state ("lab-fixed"),
+     *  or flips with state-B traversal ("physical-traversal"). */
+    stage2SignConvention?: Stage2SignConvention;
   };
-  // Continuous angle (lab/scene Z-up frame): 0° = tilt axis along
-  // scene+Z (fan in XY plane), 90° = tilt axis along scene+Y (fan in
-  // XZ plane). Default 90°.
-  const braggTiltAxisAngleDeg = typeof params.braggTiltAxisDegLab === "number"
-    ? params.braggTiltAxisDegLab
-    : typeof params.braggTiltAxisAngleDeg === "number"
-      ? params.braggTiltAxisAngleDeg
-      : 90;
+  // (Phase 7.1) `braggTiltAxisDegLab` legacy field reading removed —
+  // align now derives the tilt axis from b̂_world × â_world. Schema
+  // field is kept for backward compat with stored data but no longer
+  // consulted by either UI or align.
   const componentRef = scene.components.find((c) => c.id === sceneObject.componentId);
   const compProps = (componentRef?.properties ?? {}) as { wavelengthRangeNm?: number[] };
   const wavelengthForAngleNm = (() => {
@@ -670,30 +673,17 @@ function AomAdjustControls({
     return 780;
   })();
 
-  // Live derived readouts (mirror rayTrace.ts AOM branch). Sized for
-  // wavelengthForAngleNm so the user sees the value at the AOM's rated
-  // mid-band — the ray-tracer evaluates per actual emitted wavelength.
-  const fHz = (params.centerFreqMhz ?? 80) * 1e6;
-  const v = params.acousticVelocityMPerS ?? 4200;
-  const n = params.refractiveIndex ?? 2.26;
-  const lambdaM = wavelengthForAngleNm * 1e-9;
-  const sinThetaB = (lambdaM * fHz) / (2 * n * v);
-  const thetaBRad = Math.asin(Math.max(-1, Math.min(1, sinThetaB)));
+  // Phase 7: physics formulas live in optical/kinds/aom/physics.ts. The
+  // panel computes the on-Bragg case at the rated mid-band so the user
+  // sees the operating-point of the AOM; the ray-tracer applies the
+  // same formulas plus an off-Bragg `braggAngularFactor` per actual
+  // beam direction. Single source = panel ↔ scene cannot disagree.
+  const thetaBRad = braggAngleRad(params, wavelengthForAngleNm);
   const thetaBMrad = thetaBRad * 1e3;
-  let efficiencyEst = params.baseEfficiency ?? 0.85;
-  if (
-    typeof params.figureOfMeritM2 === "number" &&
-    typeof params.rfDrivePowerW === "number" &&
-    typeof params.crystalLengthMm === "number" &&
-    typeof params.acousticBeamWidthMm === "number"
-  ) {
-    const L = params.crystalLengthMm * 1e-3;
-    const W = params.acousticBeamWidthMm * 1e-3;
-    const Pd = params.rfDrivePowerW;
-    const inner = Math.sqrt((2 * params.figureOfMeritM2 * Pd) / W);
-    const arg = (Math.PI * L / (2 * lambdaM * Math.cos(thetaBRad))) * inner;
-    efficiencyEst = Math.min(1, Math.max(0, Math.sin(arg) ** 2));
-  }
+  const efficiencyEst = diffractionEfficiency(params, wavelengthForAngleNm, thetaBRad);
+  const phaseModDepth = phaseModulationDepth(
+    params, wavelengthForAngleNm, thetaBRad, efficiencyEst,
+  );
 
   const orderRaw = params.diffractionOrder;
   const currentOrder: -1 | 0 | 1 =
@@ -714,74 +704,19 @@ function AomAdjustControls({
           Number(acousticArr[1]) || 0,
           Number(acousticArr[2]) || 0,
         ]
-      : [0, 0, 1];
-  const opticalCarrierThz = 299_792_458 / lambdaM / 1e12;
+      : [-1, 0, 0];
+  const opticalCarrierThz = 299_792_458 / (wavelengthForAngleNm * 1e-9) / 1e12;
   const maxDiffractionOrder = Math.max(1, Math.min(10, Math.round(params.maxDiffractionOrder ?? 3)));
   const sidebandVisibilityThreshold = Math.max(0, Math.min(1, params.sidebandVisibilityThreshold ?? 0.01));
-  // Phase-modulation depth v — same formula the ray-tracer's Raman-Nath
-  // branch uses for |n| ≥ 2. Falls back to 2·√η when M2/L/W aren't all set.
-  const phaseModDepth = (() => {
-    if (
-      typeof params.figureOfMeritM2 === "number" &&
-      typeof params.rfDrivePowerW === "number" &&
-      typeof params.crystalLengthMm === "number" &&
-      typeof params.acousticBeamWidthMm === "number"
-    ) {
-      const L = params.crystalLengthMm * 1e-3;
-      const W = params.acousticBeamWidthMm * 1e-3;
-      const Pd = params.rfDrivePowerW;
-      const inner = Math.sqrt((2 * params.figureOfMeritM2 * Pd) / W);
-      return (Math.PI * L / (2 * lambdaM * Math.cos(thetaBRad))) * inner;
-    }
-    return 2 * Math.sqrt(Math.max(0, Math.min(1, efficiencyEst)));
-  })();
-  // Bessel J_n(x) series — must mirror rayTrace.ts so panel ↔ scene agree.
-  const besselJ = (nn: number, x: number): number => {
-    if (nn < 0) return ((-nn) % 2 === 0 ? 1 : -1) * besselJ(-nn, x);
-    if (Math.abs(x) < 1e-12) return nn === 0 ? 1 : 0;
-    let nFact = 1;
-    for (let i = 2; i <= nn; i++) nFact *= i;
-    const half = x / 2;
-    let term = Math.pow(half, nn) / nFact;
-    let sum = term;
-    for (let k = 1; k < 100; k++) {
-      term *= -(half * half) / (k * (nn + k));
-      sum += term;
-      if (Math.abs(term) < 1e-16) break;
-    }
-    return sum;
-  };
-  const selectedFirstOrderIntensity = currentOrder === 0 ? 0 : efficiencyEst;
-  const suppressedFirstOrderIntensity = currentOrder === 0 ? 0 : 0.001;
 
-  const fractionForOrder = (order: number): number => {
-    if (currentOrder === 0) return order === 0 ? 1 : 0;
-    if (order === currentOrder) return selectedFirstOrderIntensity;
-    if (Math.abs(order) === 1) return suppressedFirstOrderIntensity;
-    if (order === 0) return Number.NaN; // filled in below
-    return besselJ(order, phaseModDepth) ** 2;
-  };
+  const intensityByOrder = sidebandIntensitiesOnBragg(
+    currentOrder, efficiencyEst, phaseModDepth, maxDiffractionOrder,
+  );
+  const zerothIntensity = intensityByOrder.get(0)!;
+  const selectedFirstOrderIntensity = currentOrder === 0 ? 0 : efficiencyEst;
 
   const orders: number[] = [];
-  for (let n = -maxDiffractionOrder; n <= maxDiffractionOrder; n++) orders.push(n);
-
-  let nonZeroSum = 0;
-  const intensityByOrder = new Map<number, number>();
-  for (const o of orders) {
-    if (o === 0) continue;
-    const f = fractionForOrder(o);
-    intensityByOrder.set(o, f);
-    nonZeroSum += f;
-  }
-  // Mirror the ray-tracer's normalisation so the panel table shows the
-  // same numbers the scene actually emits.
-  if (nonZeroSum > 1) {
-    const scale = 1 / nonZeroSum;
-    for (const [k, v] of intensityByOrder) intensityByOrder.set(k, v * scale);
-    nonZeroSum = 1;
-  }
-  intensityByOrder.set(0, Math.max(0, 1 - nonZeroSum));
-  const zerothIntensity = intensityByOrder.get(0)!;
+  for (let nn = -maxDiffractionOrder; nn <= maxDiffractionOrder; nn++) orders.push(nn);
 
   const sidebandRows: Array<{
     order: number;
@@ -821,13 +756,17 @@ function AomAdjustControls({
     void persist({ diffractionOrder: order });
   };
 
-  const flipRfDirection = () => {
-    const flipped = rfDirectionLocal.map((v) => -v);
-    void persist({
-      rfPropagationDirectionBodyLocal: flipped,
-      acousticAxisBodyLocal: flipped,
-    });
-  };
+  // (Removed in Phase 7) The "Flip RF" control is intentionally absent.
+  // With braggTiltAxisDegLab defining the rotation plane and
+  // diffractionOrder ∈ {-1, 0, +1} selecting which side of that plane
+  // the diffracted ray emerges, the ±1 geometry is fully determined.
+  // Flipping `acousticAxisBodyLocal` was a redundant second path to
+  // the same swap (it negates the dot in the Bragg constraint, which
+  // is equivalent to flipping orderSign). Keeping both knobs let users
+  // accidentally set inconsistent state. The acoustic axis is now
+  // treated as fixed asset metadata (MT80 default body -X, transducer
+  // -> absorber); to swap which side gets +1, change the order radio
+  // instead.
 
   // RF drive power slider — η depends on it via the closed-form sin².
   // Keep raw input as a string so live typing doesn't lose focus, commit
@@ -846,149 +785,138 @@ function AomAdjustControls({
   };
 
   // Inverse of the closed-form sin²: pick P_d so that arg = π/2.
-  // arg = (π·L / (2·λ·cosθ_B)) · √(2·M₂·P_d / W)  ⇒  P_d = W·cos²θ_B·λ² / (2·M₂·L²)
+  // Delegates the formula to optical/kinds/aom/physics.ts (returns null
+  // when M2/L/W aren't all set, in which case fall back to pegging
+  // baseEfficiency at 0.99).
   const maximiseEfficiency = () => {
-    if (
-      typeof params.figureOfMeritM2 !== "number" ||
-      typeof params.crystalLengthMm !== "number" ||
-      typeof params.acousticBeamWidthMm !== "number"
-    ) {
-      // Without M₂ / L / W, the sin² model isn't usable — fall back to
-      // pegging baseEfficiency at 0.99.
+    const peakPd = rfPowerForPeakEfficiencyW(params, wavelengthForAngleNm, thetaBRad);
+    if (peakPd === null) {
       void persist({ baseEfficiency: 0.99 });
       return;
     }
-    const L = params.crystalLengthMm * 1e-3;
-    const W = params.acousticBeamWidthMm * 1e-3;
-    const cos2 = Math.cos(thetaBRad) ** 2;
-    const lambda2 = lambdaM * lambdaM;
-    const Pd = (W * cos2 * lambda2) / (2 * params.figureOfMeritM2 * L * L);
-    void persist({ rfDrivePowerW: Math.min(rfMax, Math.max(0, Pd)) });
+    void persist({ rfDrivePowerW: Math.min(rfMax, Math.max(0, peakPd)) });
   };
 
-  // Align the AOM body so the input aperture ends up on the closest
-  // forward-incoming beam axis (within INPUT_ALIGN_TOLERANCE_MM). This
-  // is bidirectional — we anchor the BBOX face perpendicular to the
-  // current local +X (and try both ±X faces); pick whichever is closer
-  // to a candidate beam, then translate the AOM so that face centre
-  // lies exactly on that beam's infinite line. Rotation unchanged.
+  // Align the AOM body to the upstream beam in two stages, sharing a
+  // single Bragg sign convention with rayTrace.ts via the helpers in
+  // optical/kinds/aom/physics.ts (`expectedInputDotD2`,
+  // `diffractedDirection`).
+  //
+  // Anchor contract (Phase 7.4 rewrite — vibe-coding-log 2026-05-08):
+  //
+  //   - Asset MUST declare both `intercept_in` and `intercept_out`
+  //     anchors with `apertureMm` set. Migration 0021 backfills these.
+  //
+  //   - Body frame: D1 = unit(intercept_out − intercept_in)  (optical
+  //     axis), D2 = rfPropagationDirectionBodyLocal (acoustic / RFin
+  //     axis), D3 = D1 × D2 (Bragg rotation axis). For canonical MT80:
+  //     D1 = body+Y, D2 = body−X, D3 = body+Z.
+  //
+  //   - State: sign of (in→out)·beam in WORLD picks state A
+  //     (entry=intercept_in) or B (entry=intercept_out).
+  //
+  //   - Stage 1 (snap optical axis ∥ beam): pick D1_target = ±beam,
+  //     D3_target by `params.stage1RotationMode`:
+  //       "min-rot"  — minimum-angle rotation from current pose.
+  //       "upright"  — D3 closest to lab+Z (default — keeps the AOM
+  //                    body upright on a horizontal optical table).
+  //       "keep-d2"  — D2 closest to its current lab direction.
+  //     D2_target = D3_target × D1_target (right-handed).
+  //
+  //   - Stage 2 (Bragg rotation): rotate body about D3_target by
+  //       ω = −traversalSignRaw · arcsin(expectedInputDotD2(...))
+  //     so beam·D2_body lands on the value `physics.ts` derives from
+  //     the user-selected order m and `params.stage2SignConvention`.
+  //
+  //   - Pivot for Stage 2: midpoint of in/out anchors (or
+  //     `kindParams.braggInteractionPointMmBodyLocal` override). Pivot
+  //     only matters for the "rock around interaction point" UX feel;
+  //     the final pose is determined by orientation + entry-on-beam
+  //     translation, which makes the math pivot-independent.
+  //
+  //   - Translation: after the full rotation, project the entry
+  //     anchor's lab position onto the beam line.
   const [alignBusy, setAlignBusy] = useState(false);
   const [alignFeedback, setAlignFeedback] = useState<string | null>(null);
+
+  const ALIGN_TOLERANCE_MM = 25;
 
   const alignToLaser = async () => {
     setAlignBusy(true);
     setAlignFeedback(null);
     try {
-      // 1. Compute every face centre (±X / ±Y / ±Z) of the AOM wrapper in
-      //    lab via its world-bbox, then convert the wrapper-local centres
-      //    to lab via the SceneObject Euler. Each face also carries the
-      //    BODY axis (three.js local) along which the beam should travel
-      //    after entering through it — this is what gets aligned to the
-      //    (Bragg-tilted) beam direction.
-      type CandidateFace = {
-        label: string;
-        wrapper: { x: number; y: number; z: number };
-        bodyAxisThree: THREE.Vector3;
-      };
-      let candidateFaces: CandidateFace[] = [];
-      if (typeof window !== "undefined") {
-        const root = (window as unknown as { __beamGroup?: THREE.Group }).__beamGroup?.parent;
-        if (root) {
-          let wrapper: THREE.Object3D | null = null;
-          root.traverse((nNode) => {
-            if (
-              !wrapper &&
-              nNode.userData?.objectId === sceneObject.id &&
-              nNode.children.length > 0 &&
-              !(nNode as THREE.Mesh).isMesh
-            ) {
-              wrapper = nNode;
-            }
-          });
-          if (wrapper) {
-            (wrapper as THREE.Object3D).updateMatrixWorld(true);
-            const wrapperWorldInv = new THREE.Matrix4().copy(
-              (wrapper as THREE.Object3D).matrixWorld,
-            ).invert();
-            const localBox = new THREE.Box3();
-            (wrapper as THREE.Object3D).traverse((m) => {
-              if (!(m as THREE.Mesh).isMesh) return;
-              const mesh = m as THREE.Mesh;
-              if (!mesh.geometry) return;
-              if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
-              const bb = mesh.geometry.boundingBox;
-              if (!bb) return;
-              mesh.updateMatrixWorld(true);
-              for (let i = 0; i < 8; i++) {
-                const c = new THREE.Vector3(
-                  (i & 1) ? bb.max.x : bb.min.x,
-                  (i & 2) ? bb.max.y : bb.min.y,
-                  (i & 4) ? bb.max.z : bb.min.z,
-                );
-                c.applyMatrix4(mesh.matrixWorld).applyMatrix4(wrapperWorldInv);
-                localBox.expandByPoint(c);
-              }
-            });
-            if (!localBox.isEmpty()) {
-              const cx = (localBox.min.x + localBox.max.x) / 2;
-              const cy = (localBox.min.y + localBox.max.y) / 2;
-              const cz = (localBox.min.z + localBox.max.z) / 2;
-              // Six candidate input/output faces — historically the code only
-              // tried ±X, which broke for AOM GLBs that drill the optical hole
-              // along a different body axis (e.g., the user's MT80 which has
-              // the hole along body +Y). Considering all six faces lets the
-              // align find whichever face the beam actually goes through.
-              candidateFaces = [
-                { label: "-X", wrapper: { x: localBox.min.x, y: cy, z: cz }, bodyAxisThree: new THREE.Vector3(1, 0, 0) },
-                { label: "+X", wrapper: { x: localBox.max.x, y: cy, z: cz }, bodyAxisThree: new THREE.Vector3(-1, 0, 0) },
-                { label: "-Y", wrapper: { x: cx, y: localBox.min.y, z: cz }, bodyAxisThree: new THREE.Vector3(0, 1, 0) },
-                { label: "+Y", wrapper: { x: cx, y: localBox.max.y, z: cz }, bodyAxisThree: new THREE.Vector3(0, -1, 0) },
-                { label: "-Z", wrapper: { x: cx, y: cy, z: localBox.min.z }, bodyAxisThree: new THREE.Vector3(0, 0, 1) },
-                { label: "+Z", wrapper: { x: cx, y: cy, z: localBox.max.z }, bodyAxisThree: new THREE.Vector3(0, 0, -1) },
-              ];
-            }
-          }
-        }
+      // [1] Locate Asset3D and validate the anchor contract.
+      const componentRow = scene.components.find((c) => c.id === sceneObject.componentId);
+      const assetRow = componentRow?.asset3dId
+        ? scene.assets.find((a) => a.id === componentRow.asset3dId)
+        : undefined;
+      if (!componentRow) {
+        setAlignFeedback("AOM Component row not found in scene store.");
+        return;
       }
-      if (!candidateFaces.length) {
-        setAlignFeedback("AOM mesh not found — wait for the scene to finish loading.");
+      if (!assetRow) {
+        setAlignFeedback(
+          "AOM has no Asset3D — open PHY Editor → Optical → optical_component to assign or define anchors.",
+        );
+        return;
+      }
+      const inAnchor = assetRow.anchors.find((a) => a.id === "intercept_in");
+      const outAnchor = assetRow.anchors.find((a) => a.id === "intercept_out");
+      const missing: string[] = [];
+      if (!inAnchor) missing.push("intercept_in");
+      if (!outAnchor) missing.push("intercept_out");
+      if (missing.length) {
+        setAlignFeedback(
+          `AOM asset ${assetRow.name} is missing ${missing.join(" and ")}. ` +
+          "Open PHY Editor → Optical → optical_component and add the port anchor(s).",
+        );
+        return;
+      }
+      if (inAnchor!.apertureMm == null) missing.push("intercept_in.apertureMm");
+      if (outAnchor!.apertureMm == null) missing.push("intercept_out.apertureMm");
+      if (missing.length) {
+        setAlignFeedback(
+          `AOM asset ${assetRow.name} has anchor(s) without aperture: ${missing.join(", ")}. ` +
+          "Set apertureMm in PHY Editor before aligning.",
+        );
         return;
       }
 
-      // 2. Map wrapper-local (three Y-up) → lab (mm) using SceneObject Euler.
-      //    Same Rz · Rx · Ry sequence as transformUtils + beamPlacement.
-      const rx = (sceneObject.rxDeg * Math.PI) / 180;
-      const ry = (sceneObject.ryDeg * Math.PI) / 180;
-      const rz = (sceneObject.rzDeg * Math.PI) / 180;
-      const cyR = Math.cos(ry), syR = Math.sin(ry);
-      const cxR = Math.cos(rx), sxR = Math.sin(rx);
-      const czR = Math.cos(rz), szR = Math.sin(rz);
-      const wrapperLocalToLab = (p: { x: number; y: number; z: number }) => {
-        const apLab = threeToLabPointMm(p);
-        const [bx, by, bz] = [apLab.x, apLab.y, apLab.z];
-        const x1 = bx * cyR + bz * syR;
-        const y1 = by;
-        const z1 = -bx * syR + bz * cyR;
-        const x2 = x1;
-        const y2 = y1 * cxR - z1 * sxR;
-        const z2 = y1 * sxR + z1 * cxR;
-        const wx = x2 * czR - y2 * szR;
-        const wy = x2 * szR + y2 * czR;
-        const wz = z2;
+      // [2] Body-local D1/D2/D3 from anchors + RF direction.
+      const inBody = inAnchor!.positionMmBodyLocal;
+      const outBody = outAnchor!.positionMmBodyLocal;
+      const rfBody = {
+        x: rfDirectionLocal[0],
+        y: rfDirectionLocal[1],
+        z: rfDirectionLocal[2],
+      };
+      const bodyFrame = aomBodyFrameBodyLocal(inBody, outBody, rfBody);
+      if (!bodyFrame) {
+        setAlignFeedback(
+          "Cannot derive D1/D2/D3 from this asset — in/out anchors coincide " +
+          "or RF direction is parallel/zero. Open PHY Editor and fix.",
+        );
+        return;
+      }
+      const D1Body = bodyFrame.D1;
+      const D2Body = bodyFrame.D2;
+      const D3Body = bodyFrame.D3;
+
+      // [3] Current world-frame anchor positions (for upstream-beam search).
+      const bodyToLab = (bodyMm: { x: number; y: number; z: number }) => {
+        const rotated = rotateLabDir(bodyMm, sceneObject);
         return {
-          x: sceneObject.xMm + wx,
-          y: sceneObject.yMm + wy,
-          z: sceneObject.zMm + wz,
+          x: sceneObject.xMm + rotated.x,
+          y: sceneObject.yMm + rotated.y,
+          z: sceneObject.zMm + rotated.z,
         };
       };
-      const facesLab = candidateFaces.map((f) => ({
-        ...f,
-        lab: wrapperLocalToLab(f.wrapper),
-      }));
+      const inLab = bodyToLab(inBody);
+      const outLab = bodyToLab(outBody);
 
-      // 3. Walk live ray-trace segments. For each face/beam pair compute
-      //    perpendicular miss distance; pick the (face, segment) pair
-      //    with the smallest miss inside tolerance.
+      // [4] Walk live ray-trace segments, pick the upstream beam whose
+      //     closest-approach hits one of the AOM anchors. Beam-first
+      //     (smaller forward t) wins as the entry port.
       type TraceSeg = {
         sourceObjectId: string;
         startThree: { x: number; y: number; z: number };
@@ -997,220 +925,318 @@ function AomAdjustControls({
       const traces: TraceSeg[] = (typeof window !== "undefined"
         ? (window as unknown as { __rayTraceDebug?: TraceSeg[] }).__rayTraceDebug
         : undefined) ?? [];
-      const threeToLab = threeToLabPointMm;
       type Match = {
-        face: string;
-        bodyAxisThree: THREE.Vector3;
-        faceWrapper: { x: number; y: number; z: number };
-        faceLab: { x: number; y: number; z: number };
+        portId: "intercept_in" | "intercept_out";
+        entryBody: { x: number; y: number; z: number };
+        entryT: number;
+        otherT: number;
         closest: { x: number; y: number; z: number };
         dir: { x: number; y: number; z: number };
         miss: number;
+        otherMiss: number;
         sourceId: string;
       };
-      const ALIGN_TOLERANCE_MM = 25;
       let best: Match | null = null;
       for (const seg of traces) {
-        // The AOM's own emissions (zeroth + ±1st) are tagged with
-        // sourceObjectId === sceneObject.id; skip them so the AOM
-        // doesn't try to align to its own outgoing rays.
         if (seg.sourceObjectId === sceneObject.id) continue;
-        const a = threeToLab(seg.startThree);
-        const b = threeToLab(seg.endThree);
+        const a = threeToLabPointMm(seg.startThree);
+        const b = threeToLabPointMm(seg.endThree);
         const ab = { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
         const lenSq = ab.x ** 2 + ab.y ** 2 + ab.z ** 2;
         if (lenSq < 1e-6) continue;
         const segLen = Math.sqrt(lenSq);
         const dir = { x: ab.x / segLen, y: ab.y / segLen, z: ab.z / segLen };
-        for (const cf of facesLab) {
-          const toFace = {
-            x: cf.lab.x - a.x, y: cf.lab.y - a.y, z: cf.lab.z - a.z,
-          };
-          const t = toFace.x * dir.x + toFace.y * dir.y + toFace.z * dir.z;
-          // Forward-incoming = beam reaches the face (t ≥ 0).
-          if (t < 0) continue;
-          const closest = {
-            x: a.x + dir.x * t,
-            y: a.y + dir.y * t,
-            z: a.z + dir.z * t,
-          };
-          const miss = Math.hypot(
-            cf.lab.x - closest.x,
-            cf.lab.y - closest.y,
-            cf.lab.z - closest.z,
-          );
-          if (miss > ALIGN_TOLERANCE_MM) continue;
-          if (!best || miss < best.miss) {
-            best = {
-              face: cf.label,
-              bodyAxisThree: cf.bodyAxisThree,
-              faceWrapper: cf.wrapper,
-              faceLab: cf.lab,
-              closest,
-              dir,
-              miss,
-              sourceId: seg.sourceObjectId,
-            };
-          }
+        const projects = (
+          [inLab, outLab] as { x: number; y: number; z: number }[]
+        ).map((p) => {
+          const t = (p.x - a.x) * dir.x + (p.y - a.y) * dir.y + (p.z - a.z) * dir.z;
+          const closest = { x: a.x + dir.x * t, y: a.y + dir.y * t, z: a.z + dir.z * t };
+          const miss = Math.hypot(p.x - closest.x, p.y - closest.y, p.z - closest.z);
+          return { t, closest, miss };
+        });
+        const [pIn, pOut] = projects;
+        if (pIn.t < 0 && pOut.t < 0) continue;
+
+        const candidates: Array<Match> = [];
+        if (pIn.miss <= ALIGN_TOLERANCE_MM && pIn.t >= 0) {
+          candidates.push({
+            portId: "intercept_in",
+            entryBody: { ...inBody },
+            entryT: pIn.t,
+            otherT: pOut.t,
+            closest: pIn.closest,
+            dir,
+            miss: pIn.miss,
+            otherMiss: pOut.miss,
+            sourceId: seg.sourceObjectId,
+          });
+        }
+        if (pOut.miss <= ALIGN_TOLERANCE_MM && pOut.t >= 0) {
+          candidates.push({
+            portId: "intercept_out",
+            entryBody: { ...outBody },
+            entryT: pOut.t,
+            otherT: pIn.t,
+            closest: pOut.closest,
+            dir,
+            miss: pOut.miss,
+            otherMiss: pIn.miss,
+            sourceId: seg.sourceObjectId,
+          });
+        }
+        candidates.sort((m1, m2) => m1.entryT - m2.entryT);
+        const local = candidates[0];
+        if (!local) continue;
+        if (!best || local.miss < best.miss || (local.miss === best.miss && local.entryT < best.entryT)) {
+          best = local;
         }
       }
       if (!best) {
         setAlignFeedback(
-          `No upstream beam within ${ALIGN_TOLERANCE_MM} mm of any AOM face. ` +
-          "Rotate the AOM so its body axis points along the desired beam first.",
+          `No upstream beam reaches either AOM port within ${ALIGN_TOLERANCE_MM} mm. ` +
+          "Rotate the AOM toward the desired beam first, or check the upstream chain is emitting.",
         );
         return;
       }
 
-      // 1-D align: only the user-chosen axis (rx OR ry) is changed; the
-      // other two Euler components are LEFT ALONE. This mirrors a real
-      // tip-tilt mount where one knob moves at a time and the rest of
-      // the AOM orientation stays where the user put it. Bragg condition
-      //
-      //     dir · acoustic_world = orderSign · sin(θ_B)
-      //
-      // is a single equation, so a single rotation DoF is sufficient.
-      // Brute-force scan the chosen Euler component over the full circle
-      // and pick the value that minimises |actual − expected|. Resolution
-      // 0.005° (~0.087 mrad) — much finer than the typical 1–2 mrad
-      // angular acceptance, so we land essentially on Bragg.
-      // 1-D align around an ARBITRARY user-chosen tilt axis. The tilt
-      // axis sits in the scene Y-Z plane (perpendicular to the
-      // canonical scene+X beam direction), parametrised by a single
-      // continuous angle:
-      //   r = 0°   → axis = scene+Z → fan in scene XY (horizontal)
-      //   r = 90°  → axis = scene+Y → fan in scene XZ (vertical)
-      // Bragg condition (dir·acoustic = sign·sinθ_B) is one equation,
-      // so a single rotation amount around any non-degenerate axis
-      // suffices. Apply it as a quaternion delta on top of the current
-      // orientation — keeps the user's pre-existing pose intact aside
-      // from the necessary tilt.
-      const tiltAngleRad = THREE.MathUtils.degToRad(braggTiltAxisAngleDeg);
-      // scene(0, sin(r), cos(r)) → three(0, cos(r), -sin(r))
-      const tiltAxisThree = new THREE.Vector3(
-        0,
-        Math.cos(tiltAngleRad),
-        -Math.sin(tiltAngleRad),
-      ).normalize();
-
-      const acousticThreeLocal = bodyLocalDirToThree({
-        x: rfDirectionLocal[0],
-        y: rfDirectionLocal[1],
-        z: rfDirectionLocal[2],
-      });
-      const expectedDot = currentOrder * Math.sin(thetaBRad);
-      const dirThree = labDirToThree(best.dir).normalize();
-
-      const startEuler = new THREE.Euler(
-        THREE.MathUtils.degToRad(sceneObject.rxDeg),
-        THREE.MathUtils.degToRad(sceneObject.rzDeg),
-        THREE.MathUtils.degToRad(-sceneObject.ryDeg),
-        "YXZ",
-      );
-      const startQuat = new THREE.Quaternion().setFromEuler(startEuler);
-
-      const computeMismatchForOmega = (omegaDeg: number) => {
-        const dq = new THREE.Quaternion().setFromAxisAngle(
-          tiltAxisThree,
-          THREE.MathUtils.degToRad(omegaDeg),
+      // [5] Ambiguity guard — AOM nearly perpendicular to beam.
+      const entryAp = (best.portId === "intercept_in" ? inAnchor! : outAnchor!).apertureMm ?? 0;
+      const apertureDiamMm = 2 * entryAp;
+      if (
+        best.otherMiss <= ALIGN_TOLERANCE_MM &&
+        best.otherT >= 0 &&
+        Math.abs(best.entryT - best.otherT) < apertureDiamMm
+      ) {
+        setAlignFeedback(
+          "AOM is nearly perpendicular to the beam — both ports are within one aperture of the same point on the beam. " +
+          "Rotate the body manually first so the beam clearly enters one port and exits the other.",
         );
-        const testQuat = dq.clone().multiply(startQuat);
-        const testEuler = new THREE.Euler().setFromQuaternion(testQuat, "YXZ");
-        const aWorld = acousticThreeLocal.clone().applyEuler(testEuler).normalize();
-        const dot = THREE.MathUtils.clamp(dirThree.dot(aWorld), -1, 1);
-        return Math.asin(dot) - expectedDot;
+        return;
+      }
+
+      // [6] State (A/B). traversalSignRaw is the *physical* state; what
+      //     we feed to expectedInputDotD2 may be over-ridden by the
+      //     "lab-fixed" stage-2 sign convention.
+      const traversalSignRaw = aomTraversalSignFromEntryPort(best.portId);
+      const stage2SignConvention = params.stage2SignConvention ?? DEFAULT_STAGE2_SIGN;
+      const traversalSignForExpect = resolveTraversalSign(traversalSignRaw, stage2SignConvention);
+      const effectiveOrder = effectiveAomOrderForTraversal(currentOrder, traversalSignRaw);
+      const isStateB = traversalSignRaw < 0;
+
+      // [7] STAGE 1 — snap optical axis ∥ beam.
+      //     D1_target = +beam (state A) or −beam (state B). The remaining
+      //     rotation about beam direction is pinned by stage1RotationMode.
+      const beamUnit = best.dir;
+      const D1Target: { x: number; y: number; z: number } = isStateB
+        ? { x: -beamUnit.x, y: -beamUnit.y, z: -beamUnit.z }
+        : { x: beamUnit.x, y: beamUnit.y, z: beamUnit.z };
+
+      const D1WorldCurrent = rotateLabDir(D1Body, sceneObject);
+      const D2WorldCurrent = rotateLabDir(D2Body, sceneObject);
+      const D3WorldCurrent = rotateLabDir(D3Body, sceneObject);
+
+      const projectOntoPerp = (
+        v: { x: number; y: number; z: number },
+        unitN: { x: number; y: number; z: number },
+      ): { x: number; y: number; z: number } | null => {
+        const dot = v.x * unitN.x + v.y * unitN.y + v.z * unitN.z;
+        const proj = {
+          x: v.x - dot * unitN.x,
+          y: v.y - dot * unitN.y,
+          z: v.z - dot * unitN.z,
+        };
+        const m = Math.hypot(proj.x, proj.y, proj.z);
+        return m > 1e-6 ? { x: proj.x / m, y: proj.y / m, z: proj.z / m } : null;
       };
+      const cross3 = (
+        a: { x: number; y: number; z: number },
+        b: { x: number; y: number; z: number },
+      ) => ({
+        x: a.y * b.z - a.z * b.y,
+        y: a.z * b.x - a.x * b.z,
+        z: a.x * b.y - a.y * b.x,
+      });
 
-      // Coarse scan (1°) then fine refine (0.005°) around the winner.
-      let bestOmega = 0;
-      let bestAbsMis = Math.abs(computeMismatchForOmega(0));
-      for (let coarse = -180; coarse <= 180; coarse += 1) {
-        const m = Math.abs(computeMismatchForOmega(coarse));
-        if (m < bestAbsMis) { bestAbsMis = m; bestOmega = coarse; }
+      const stage1Mode: Stage1RotationMode = params.stage1RotationMode ?? DEFAULT_STAGE1_MODE;
+      let D2Target: { x: number; y: number; z: number } | null = null;
+      let D3Target: { x: number; y: number; z: number } | null = null;
+
+      if (stage1Mode === "min-rot") {
+        // Apply the minimum-angle rotation taking current_D1 → D1_target
+        // to current_D2 and current_D3.
+        const dot = THREE.MathUtils.clamp(
+          D1WorldCurrent.x * D1Target.x +
+          D1WorldCurrent.y * D1Target.y +
+          D1WorldCurrent.z * D1Target.z,
+          -1, 1,
+        );
+        if (dot > 1 - 1e-9) {
+          D2Target = D2WorldCurrent;
+          D3Target = D3WorldCurrent;
+        } else {
+          let axis: { x: number; y: number; z: number };
+          if (dot < -1 + 1e-9) {
+            // Anti-parallel: rotate by π about ANY perpendicular vector;
+            // pick D2 (which is ⊥ current D1).
+            axis = D2WorldCurrent;
+          } else {
+            const ax = cross3(D1WorldCurrent, D1Target);
+            const am = Math.hypot(ax.x, ax.y, ax.z);
+            axis = { x: ax.x / am, y: ax.y / am, z: ax.z / am };
+          }
+          const angleRad = Math.acos(dot);
+          const dqAxisThree = labDirToThree(axis).normalize();
+          const dq = new THREE.Quaternion().setFromAxisAngle(dqAxisThree, angleRad);
+          const applyDQ = (v: { x: number; y: number; z: number }) => {
+            const v3 = labDirToThree(v);
+            v3.applyQuaternion(dq);
+            return { x: v3.x, y: -v3.z, z: v3.y };
+          };
+          D2Target = applyDQ(D2WorldCurrent);
+          D3Target = applyDQ(D3WorldCurrent);
+        }
+      } else if (stage1Mode === "upright") {
+        // Upright: keep body D2 (= acoustic / RF propagation axis, typically
+        // body+Z for an AOM mounted with the transducer on top) close to
+        // lab+Z so the chassis stays "upright" on a horizontal optical
+        // table. D3 falls out from D3 = D1 × D2 — same convention as
+        // aomBodyFrameBodyLocal in physics.ts.
+        //
+        // Bug fix 2026-05-09: previously this constrained D3 toward lab+Z
+        // instead of D2. For typical AOMs (D2 = acoustic = body+Z, D3 =
+        // body+X cross-product axis) that put the chassis on its SIDE
+        // — body+X up, acoustic axis horizontal — and produced an Euler
+        // result with a spurious extra ±90° about Y on top of the right
+        // Z rotation (e.g. (0, -90, 90) instead of the user-expected
+        // (0, 0, 90) for state-B beam entry).
+        D2Target =
+          projectOntoPerp({ x: 0, y: 0, z: 1 }, D1Target) ??
+          projectOntoPerp({ x: 0, y: 1, z: 0 }, D1Target) ??
+          projectOntoPerp({ x: 1, y: 0, z: 0 }, D1Target);
+        if (D2Target) D3Target = cross3(D1Target, D2Target);
+      } else {
+        // "keep-d2"
+        D2Target =
+          projectOntoPerp(D2WorldCurrent, D1Target) ??
+          projectOntoPerp({ x: 0, y: 0, z: 1 }, D1Target) ??
+          projectOntoPerp({ x: 0, y: 1, z: 0 }, D1Target);
+        if (D2Target) D3Target = cross3(D1Target, D2Target);
       }
-      bestAbsMis = Infinity;
-      for (let fine = bestOmega - 1; fine <= bestOmega + 1; fine += 0.005) {
-        const m = Math.abs(computeMismatchForOmega(fine));
-        if (m < bestAbsMis) { bestAbsMis = m; bestOmega = fine; }
+      if (!D2Target || !D3Target) {
+        setAlignFeedback(
+          "Stage 1 fallback chain exhausted — beam direction degenerate against all reference axes. " +
+          "Rotate the AOM manually first so its current pose isn't aligned along all three lab axes simultaneously.",
+        );
+        return;
       }
 
-      const finalDeltaQuat = new THREE.Quaternion().setFromAxisAngle(
-        tiltAxisThree,
-        THREE.MathUtils.degToRad(bestOmega),
-      );
-      const finalQuat = finalDeltaQuat.multiply(startQuat);
+      // [8] Build the absolute Stage 1 quaternion. The body-local frame
+      //     {D1_b, D2_b, D3_b} (in body coords) maps to the world target
+      //     frame {D1_t, D2_t, D3_t} via R = M_target · M_body^{-1}.
+      //     `makeBasis` builds the matrix mapping standard basis to a
+      //     given basis triple, so M_body has body-local D1/D2/D3 as
+      //     columns and M_target has world target D1/D2/D3 as columns.
+      const D1BodyThree = bodyLocalDirToThree(D1Body);
+      const D2BodyThree = bodyLocalDirToThree(D2Body);
+      const D3BodyThree = bodyLocalDirToThree(D3Body);
+      const mBody = new THREE.Matrix4().makeBasis(D1BodyThree, D2BodyThree, D3BodyThree);
+
+      const D1TargetThree = labDirToThree(D1Target).normalize();
+      const D2TargetThree = labDirToThree(D2Target).normalize();
+      const D3TargetThree = labDirToThree(D3Target).normalize();
+      const mTarget = new THREE.Matrix4().makeBasis(D1TargetThree, D2TargetThree, D3TargetThree);
+
+      const mBodyInv = mBody.clone().invert();
+      const mStage1 = new THREE.Matrix4().multiplyMatrices(mTarget, mBodyInv);
+      const stage1Quat = new THREE.Quaternion().setFromRotationMatrix(mStage1);
+
+      // [9] STAGE 2 — Bragg rotation by ω about D3_target_world.
+      //     Derivation (post-Stage-1, beam = s·D1_target where s = +1
+      //     for state A, −1 for state B):
+      //         beam · D2_new(ω) = −s · sin(ω)
+      //     Solving beam · D2_new = expectedInputDotD2(...) gives
+      //         ω = −s · arcsin(expectedDotD2) = −traversalSignRaw · arcsin(...).
+      //     For state A m=+1: expectedDotD2 = −sin θ_B ⇒ ω = +θ_B (CCW
+      //     about +D3, body D2 swings toward −beam side ⇒ Bragg-mirror
+      //     +1 emerges on +D2 side). The sign is structurally consistent
+      //     with rayTrace.ts's `applyAxisAngle(rotAxis, +m·2·θ_B)`.
+      const expectedDotD2 = expectedInputDotD2(currentOrder, traversalSignForExpect, thetaBRad);
+      const omegaRad = -traversalSignRaw * Math.asin(THREE.MathUtils.clamp(expectedDotD2, -1, 1));
+      const stage2DeltaQuat = new THREE.Quaternion().setFromAxisAngle(D3TargetThree, omegaRad);
+      const finalQuat = stage2DeltaQuat.clone().multiply(stage1Quat);
+
+      // [10] Translate so the entry anchor lands on the beam line under
+      //      the new orientation. `bodyLocalDirToThree(bodyMm).applyQuaternion(finalQuat)`
+      //      rotates a body-local OFFSET to lab; we then snap by
+      //      projecting onto the beam line. This is pivot-independent —
+      //      the midpoint pivot only matters for visualising "rocks
+      //      around the interaction point", not for the final pose.
+      const rotatedBodyOffset = (bodyMm: { x: number; y: number; z: number }) => {
+        const v3 = bodyLocalDirToThree(bodyMm);
+        v3.applyQuaternion(finalQuat);
+        return { x: v3.x, y: -v3.z, z: v3.y };
+      };
+      const rotatedEntryDelta = rotatedBodyOffset(best.entryBody);
+      let nextXMm = best.closest.x - rotatedEntryDelta.x;
+      let nextYMm = best.closest.y - rotatedEntryDelta.y;
+      let nextZMm = best.closest.z - rotatedEntryDelta.z;
+      // After the above, the entry anchor sits exactly at best.closest;
+      // best.closest is already on the beam line by construction (it's
+      // the foot of the perpendicular from the original entryLab).
+
+      // [11] Verify Bragg: compute residual = arcsin(beam · D2_new) − arcsin(expectedDotD2).
+      const D2NewThree = bodyLocalDirToThree(D2Body);
+      D2NewThree.applyQuaternion(finalQuat).normalize();
+      const D2NewLab = { x: D2NewThree.x, y: -D2NewThree.z, z: D2NewThree.y };
+      const beamDotD2New = beamUnit.x * D2NewLab.x + beamUnit.y * D2NewLab.y + beamUnit.z * D2NewLab.z;
+      const residualMrad = (
+        Math.asin(THREE.MathUtils.clamp(beamDotD2New, -1, 1)) -
+        Math.asin(THREE.MathUtils.clamp(expectedDotD2, -1, 1))
+      ) * 1e3;
+
+      // [12] Decompose finalQuat back to SceneObject Euler.
       const finalEuler = new THREE.Euler().setFromQuaternion(finalQuat, "YXZ");
       const nextRxDeg = THREE.MathUtils.radToDeg(finalEuler.x);
       const nextRzDeg = THREE.MathUtils.radToDeg(finalEuler.y);
       const nextRyDeg = -THREE.MathUtils.radToDeg(finalEuler.z);
 
-      const wrapperLocalToLabWithPose = (
-        p: { x: number; y: number; z: number },
-        rxDeg: number,
-        ryDeg: number,
-        rzDeg: number,
-      ) => {
-        const rx2 = (rxDeg * Math.PI) / 180;
-        const ry2 = (ryDeg * Math.PI) / 180;
-        const rz2 = (rzDeg * Math.PI) / 180;
-        const cy2 = Math.cos(ry2), sy2 = Math.sin(ry2);
-        const cx2 = Math.cos(rx2), sx2 = Math.sin(rx2);
-        const cz2 = Math.cos(rz2), sz2 = Math.sin(rz2);
-        const apLab = threeToLabPointMm(p);
-        const [bx, by, bz] = [apLab.x, apLab.y, apLab.z];
-        const x1 = bx * cy2 + bz * sy2;
-        const y1 = by;
-        const z1 = -bx * sy2 + bz * cy2;
-        const x2 = x1;
-        const y2 = y1 * cx2 - z1 * sx2;
-        const z2 = y1 * sx2 + z1 * cx2;
-        const wx = x2 * cz2 - y2 * sz2;
-        const wy = x2 * sz2 + y2 * cz2;
-        const wz = z2;
-        return {
-          x: sceneObject.xMm + wx,
-          y: sceneObject.yMm + wy,
-          z: sceneObject.zMm + wz,
-        };
-      };
-      const rotatedFaceLab = wrapperLocalToLabWithPose(
-        best.faceWrapper,
-        nextRxDeg,
-        nextRyDeg,
-        nextRzDeg,
-      );
-      const fromLine = {
-        x: rotatedFaceLab.x - best.closest.x,
-        y: rotatedFaceLab.y - best.closest.y,
-        z: rotatedFaceLab.z - best.closest.z,
-      };
-      const tAfter = fromLine.x * best.dir.x + fromLine.y * best.dir.y + fromLine.z * best.dir.z;
-      const closestAfter = {
-        x: best.closest.x + best.dir.x * tAfter,
-        y: best.closest.y + best.dir.y * tAfter,
-        z: best.closest.z + best.dir.z * tAfter,
-      };
-      const delta = {
-        x: closestAfter.x - rotatedFaceLab.x,
-        y: closestAfter.y - rotatedFaceLab.y,
-        z: closestAfter.z - rotatedFaceLab.z,
-      };
+      // [13] Aperture clipping warning (best-effort; ray-tracer doesn't
+      //      publish per-segment 1/e² waist, so use upstream seed waist
+      //      as a coarse upper bound).
+      const sourceObj = scene.objects.find((o) => o.id === best!.sourceId);
+      const sourceComp = sourceObj
+        ? scene.components.find((c) => c.id === sourceObj.componentId)
+        : undefined;
+      const sourceProps = (sourceComp?.properties ?? {}) as { beamWaistMm?: number };
+      const upstreamWaistMm =
+        typeof sourceProps.beamWaistMm === "number" ? sourceProps.beamWaistMm : null;
+      const clippingWarning =
+        upstreamWaistMm !== null && upstreamWaistMm > entryAp
+          ? ` ⚠ upstream beam waist ${upstreamWaistMm.toFixed(2)} mm > entry aperture ${entryAp.toFixed(2)} mm — beam will clip.`
+          : "";
+
+      // [14] Persist + feedback.
       await updateSceneObject(sceneObject.id, {
-        xMm: sceneObject.xMm + delta.x,
-        yMm: sceneObject.yMm + delta.y,
-        zMm: sceneObject.zMm + delta.z,
+        xMm: nextXMm,
+        yMm: nextYMm,
+        zMm: nextZMm,
         rxDeg: nextRxDeg,
         ryDeg: nextRyDeg,
         rzDeg: nextRzDeg,
       });
-      const sourceName =
-        scene.objects.find((o) => o.id === best!.sourceId)?.name ??
-        best.sourceId.slice(0, 6);
+      const sourceName = sourceObj?.name ?? best!.sourceId.slice(0, 6);
+      const stateLabel = isStateB ? "B (entry=out)" : "A (entry=in)";
+      const orderLabel = currentOrder === 0 ? "0th" : currentOrder > 0 ? "+1" : "-1";
+      const traversalNote =
+        traversalSignRaw < 0 && currentOrder !== 0 && stage2SignConvention === "physical-traversal"
+          ? ` (state-B traversal flips selected ${currentOrder > 0 ? "+1" : "-1"} → physical ${effectiveOrder > 0 ? "+1" : "-1"})`
+          : "";
       setAlignFeedback(
-        `${best.face} face aligned to ${sourceName} beam; ` +
-        `body rotated ${bestOmega.toFixed(3)}° about tilt axis @ r=${braggTiltAxisAngleDeg.toFixed(0)}° ` +
-        `for ${currentOrder === 0 ? "0th" : currentOrder > 0 ? "+1" : "-1"} Bragg ` +
-        `(residual mismatch ${(bestAbsMis * 1e3).toFixed(3)} mrad; face miss was ${best.miss.toFixed(2)} mm).`,
+        `Stage 1 (${stage1Mode}): D1 snapped ∥ beam. ` +
+        `Stage 2: ω = ${(omegaRad * 1e3).toFixed(3)} mrad about D3 ` +
+        `for state ${stateLabel}, m=${orderLabel}${traversalNote} ` +
+        `(residual ${residualMrad.toFixed(3)} mrad). ` +
+        `Aligned to ${sourceName} beam.${clippingWarning}`,
       );
     } catch (err) {
       setAlignFeedback(`Align failed: ${(err as Error).message}`);
@@ -1312,19 +1338,6 @@ function AomAdjustControls({
           </div>
         )}
       </div>
-      <div className="mirror-adjust-row">
-        <span style={{ alignSelf: "center", fontSize: 12, opacity: 0.8 }}>
-          RF k local: [{rfDirectionLocal.map((v) => v.toFixed(0)).join(", ")}]
-        </span>
-        <button
-          type="button"
-          className="secondary-button"
-          onClick={flipRfDirection}
-          title="Flip the local RF/acoustic wavevector. This swaps the physical side where +1 and -1 diffract."
-        >
-          Flip RF
-        </button>
-      </div>
       <div className="mirror-adjust-row" role="radiogroup" aria-label="Diffraction order">
         <span style={{ alignSelf: "center", fontSize: 12, opacity: 0.8 }}>Output order:</span>
         {([-1, 0, 1] as const).map((opt) => (
@@ -1377,45 +1390,19 @@ function AomAdjustControls({
           : `${currentOrder > 0 ? "+1" : "−1"} = diffracted by ${currentOrder > 0 ? "+" : "−"}2θ_B; ` +
             `zeroth retains (1−η) ≈ ${((1 - efficiencyEst) * 100).toFixed(1)}%.`}
       </p>
-      <div className="mirror-adjust-row">
-        <label className="mirror-adjust-field" style={{ flex: 1 }}>
-          <span>Bragg tilt axis r (°): 0=Z (XY fan) · 90=Y (XZ fan)</span>
-          <input
-            type="number"
-            step={1}
-            value={braggTiltAxisAngleDeg.toFixed(1)}
-            onChange={(e) => {
-              const v = Number(e.target.value);
-              if (!Number.isFinite(v)) return;
-              void persist({ braggTiltAxisDegLab: v });
-            }}
-          />
-        </label>
-        {[
-          { label: "Z (0°)", val: 0, hint: "Tilt axis = scene +Z. Bragg fan in scene XY plane (horizontal)." },
-          { label: "Y (90°)", val: 90, hint: "Tilt axis = scene +Y. Bragg fan in scene XZ plane (vertical)." },
-        ].map((preset) => (
-          <button
-            key={preset.label}
-            type="button"
-            className={Math.abs(((braggTiltAxisAngleDeg % 360) + 360) % 360 - preset.val) < 0.01
-              ? "primary-button" : "secondary-button"}
-            onClick={() => void persist({ braggTiltAxisDegLab: preset.val })}
-            title={preset.hint}
-            style={{ minWidth: 64 }}
-          >
-            {preset.label}
-          </button>
-        ))}
-      </div>
+      {/* (Phase 7.1 移除) Bragg tilt axis r (°) 手動輸入。Tilt 軸現在
+          自動 = b̂×â（PHY Editor 的 intercept_in/out 定義 b̂、Component
+          metadata 的 acousticAxisBodyLocal 定義 â），純幾何推導，沒有
+          獨立 DoF。Schema 中的 `braggTiltAxisDegLab` 保留供舊資料讀取，
+          但 align 不再讀取這個欄位。 */}
       <button
         type="button"
         className="primary-button"
         onClick={() => void alignToLaser()}
         disabled={alignBusy}
-        title="Translate the chosen AOM face onto the closest upstream beam, then rotate the body around the user-chosen tilt axis (1-D scan) so dir·acoustic = orderSign·sin(θ_B)."
+        title="Pick the AOM port (intercept_in / intercept_out) that the upstream beam reaches first, translate that anchor onto the beam line, then rotate the body 1-D around the tilt axis (defined in PHY Editor by α — body-local, ⊥ b̂; pivot = midpoint = Bragg interaction point) so dir·acoustic = orderSign·sin(θ_B)."
       >
-        {alignBusy ? "Aligning…" : `Align AOM aperture + Bragg (r=${braggTiltAxisAngleDeg.toFixed(0)}°)`}
+        {alignBusy ? "Aligning…" : "Align AOM port + Bragg"}
       </button>
       {alignFeedback && (
         <div className="snap-to-beam-feedback" style={{ marginTop: 6 }}>
@@ -1428,11 +1415,7 @@ function AomAdjustControls({
 
 /** TA-specific controls: live wavelength + drive current + computed
  *  forward / backward power readout. Drives ase_samples and (later)
- *  gain_samples interpolation. Also exposes a one-shot "Apply BoosTA pro
- *  defaults" button that backfills the new aseSamples / gainSamples /
- *  backwardSpatialMode fields on legacy chip-TA records (which were
- *  created before those fields existed and would otherwise emit 0 mW
- *  in the bidirectional ray-tracer). */
+ *  gain_samples interpolation. */
 type AseSampleRow = {
   driveCurrentMa: number;
   forwardPowerMw: number;
@@ -1444,20 +1427,6 @@ type GainSampleRow = {
   forwardPowerMw: number;
   backwardPowerMw: number;
 };
-
-const BOOSTA_PRO_DEFAULT_ASE: AseSampleRow[] = [
-  { driveCurrentMa: 0,    forwardPowerMw: 0,   backwardPowerMw: 0 },
-  { driveCurrentMa: 1000, forwardPowerMw: 5,   backwardPowerMw: 25 },
-  { driveCurrentMa: 2400, forwardPowerMw: 80,  backwardPowerMw: 200 },
-  { driveCurrentMa: 5000, forwardPowerMw: 250, backwardPowerMw: 500 },
-];
-const BOOSTA_PRO_DEFAULT_GAIN: GainSampleRow[] = [
-  { inputPowerMw: 0,  driveCurrentMa: 2400, forwardPowerMw: 80,   backwardPowerMw: 200 },
-  { inputPowerMw: 5,  driveCurrentMa: 2400, forwardPowerMw: 1200, backwardPowerMw: 120 },
-  { inputPowerMw: 10, driveCurrentMa: 2400, forwardPowerMw: 1800, backwardPowerMw: 80 },
-  { inputPowerMw: 20, driveCurrentMa: 2400, forwardPowerMw: 2500, backwardPowerMw: 50 },
-  { inputPowerMw: 40, driveCurrentMa: 2400, forwardPowerMw: 3000, backwardPowerMw: 35 },
-];
 
 /** Linear interpolation of (drive_current → fwd, bwd) ASE samples — must
  *  mirror the ray-tracer's interpolateAse. */
@@ -1538,20 +1507,6 @@ function TaperedAmplifierAdjustControls({
     if (!Number.isFinite(v) || v < 0) return;
     void persist({ driveCurrentMa: Math.min(v, maxCurrentMa) });
   };
-
-  const applyBoostaProDefaults = () => {
-    void persist({
-      centerWavelengthNm: params.centerWavelengthNm ?? 852,
-      driveCurrentMa: 2400,
-      driveCurrentMaxMa: 5000,
-      aseSamples: BOOSTA_PRO_DEFAULT_ASE,
-      gainSamples: BOOSTA_PRO_DEFAULT_GAIN,
-      backwardSpatialModeX: { waistUm: 600, waistZOffsetMm: 0, mSquared: 1.5 },
-      backwardSpatialModeY: { waistUm: 600, waistZOffsetMm: 0, mSquared: 1.5 },
-    });
-  };
-
-  const needsBackfill = !params.aseSamples || params.aseSamples.length === 0;
 
   // Align INPUT to a nearby incoming beam. The INPUT centerline is the TA's
   // current local +X axis; when the detected beam travels toward -X, the
@@ -1842,13 +1797,6 @@ function TaperedAmplifierAdjustControls({
         ASE @ {driveCurrentMa.toFixed(0)} mA: forward{" "}
         <strong>{forwardMw.toFixed(1)} mW</strong> · backward{" "}
         <strong>{backwardMw.toFixed(1)} mW</strong>
-        {needsBackfill && (
-          <>
-            <br />⚠ This TA's kindParams predate the bidirectional model — its
-            ASE samples are empty so both beams emit 0 mW. Click below to
-            populate BoosTA pro defaults.
-          </>
-        )}
       </p>
       <button
         type="button"
@@ -1857,13 +1805,6 @@ function TaperedAmplifierAdjustControls({
         title="Translate the TA so its INPUT +X centerline coincides with a beam within 25 mm; rotation is unchanged."
       >
         Align INPUT to laser beam
-      </button>
-      <button
-        type="button"
-        className="primary-button"
-        onClick={applyBoostaProDefaults}
-      >
-        Apply BoosTA pro defaults (ASE + gain table + bwd profile)
       </button>
       <p className="mirror-adjust-hint" style={{ opacity: 0.7 }}>
         INPUT seed port is on the +X face for this TA model; output is on the opposite face. Even

@@ -313,10 +313,9 @@ export function isObjectVisible(object: SceneObject, ctx: RenderableContext): bo
   // session hide / solo above; force-visible only beats the COLLECTION
   // cascade, not the user's other intentional hides.
   if (ctx.session.forceVisibleObjectIds?.has(object.id)) {
-    if (ctx.activeView) {
-      const ok = matchesView(object.componentId, ctx.activeView, ctx.scene, ctx.reachableCache, ctx.viewMatchCache);
-      if (!ok) return false;
-    }
+    // "Show object here" is an explicit per-object override — bypass the
+    // collection cascade AND the active-view filter so the object always
+    // surfaces when the user has explicitly requested it.
     return true;
   }
   if (!objectPassesCollectionGate(object.id, ctx)) return false;
