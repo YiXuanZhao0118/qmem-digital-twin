@@ -27,6 +27,12 @@ from app.uuid7 import uuid7_str
 OPTICAL_ANCHOR_ID = "optical_anchor"
 OPTICAL_SURFACE_BINDING_KIND = "opticalSurface"
 EMISSION_REFERENCE_BINDING_KIND = "emissionReference"
+POLARIZATION_REFERENCE_BINDING_KIND = "polarizationReference"
+
+# V2 Phase 4: kindParams keys we strip on PUT for waveplate / polarizer.
+# Mirrors V2_TRACKED_LASER_KEYS.
+V2_TRACKED_WAVEPLATE_KEYS = ("fastAxisDegBeamLocal",)
+V2_TRACKED_POLARIZER_KEYS = ("transmissionAxisDegBeamLocal",)
 
 # Legacy laser kindParams keys that V2 Phase 3 migrates into
 # `objects.properties.opticalSources[].beam`. Solver / UI code must NOT read
@@ -400,6 +406,154 @@ def default_laser_beam(wavelength_nm: float = 780.241, power_mw: float = 1.0) ->
         },
         "transverseMode": {"family": "HG", "m": 0, "n": 0, "label": "TEM00"},
     }
+
+
+def _find_polarization_binding_by_role(
+    scene_object: SceneObject | dict[str, Any] | None, role: str
+) -> dict[str, Any] | None:
+    if scene_object is None:
+        return None
+    if isinstance(scene_object, dict):
+        properties = scene_object.get("properties") or {}
+    else:
+        properties = scene_object.properties or {}
+    bindings = properties.get("anchorBindings") or []
+    for b in bindings:
+        if (
+            isinstance(b, dict)
+            and b.get("kind") == POLARIZATION_REFERENCE_BINDING_KIND
+            and (b.get("payload") or {}).get("role") == role
+        ):
+            return b
+    return None
+
+
+def get_waveplate_axis_deg_beam_local(
+    scene_object: SceneObject | dict[str, Any] | None,
+) -> float | None:
+    """V2 Phase 4 read of waveplate fast-axis angle from
+    polarizationReference binding (role=fast)."""
+    b = _find_polarization_binding_by_role(scene_object, "fast")
+    if b is None:
+        return None
+    try:
+        return float((b.get("payload") or {}).get("axisDegBeamLocal", 0.0))
+    except (TypeError, ValueError):
+        return None
+
+
+def get_polarizer_axis_deg_beam_local(
+    scene_object: SceneObject | dict[str, Any] | None,
+) -> float | None:
+    """V2 Phase 4 read of polarizer transmission-axis angle from
+    polarizationReference binding (role=transmission)."""
+    b = _find_polarization_binding_by_role(scene_object, "transmission")
+    if b is None:
+        return None
+    try:
+        return float((b.get("payload") or {}).get("axisDegBeamLocal", 0.0))
+    except (TypeError, ValueError):
+        return None
+
+
+def legacy_waveplate_kind_params_from_binding(
+    scene_object: SceneObject | dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Synthesise the legacy waveplate kindParams field from the V2 binding."""
+    angle = get_waveplate_axis_deg_beam_local(scene_object)
+    if angle is None:
+        return {}
+    return {"fastAxisDegBeamLocal": angle}
+
+
+def legacy_polarizer_kind_params_from_binding(
+    scene_object: SceneObject | dict[str, Any] | None,
+) -> dict[str, Any]:
+    angle = get_polarizer_axis_deg_beam_local(scene_object)
+    if angle is None:
+        return {}
+    return {"transmissionAxisDegBeamLocal": angle}
+
+
+def _make_polarization_reference_binding(
+    anchor_id: str, role: str, axis_deg: float, name: str
+) -> dict[str, Any]:
+    return {
+        "id": uuid7_str(),
+        "name": name,
+        "anchorId": anchor_id,
+        "kind": POLARIZATION_REFERENCE_BINDING_KIND,
+        "frame": "anchorLocalXY",
+        "payload": {"role": role, "axisDegBeamLocal": axis_deg},
+    }
+
+
+def _upsert_polarization_binding(
+    scene_object: SceneObject, role: str, axis_deg: float, name: str
+) -> None:
+    """Overwrite the role-matching binding's axis if it exists, else append."""
+    properties = dict(scene_object.properties or {})
+    bindings = list(properties.get("anchorBindings") or [])
+    new_bindings: list[Any] = []
+    replaced = False
+    for b in bindings:
+        if (
+            isinstance(b, dict)
+            and b.get("kind") == POLARIZATION_REFERENCE_BINDING_KIND
+            and (b.get("payload") or {}).get("role") == role
+        ):
+            payload = dict(b.get("payload") or {})
+            payload["axisDegBeamLocal"] = axis_deg
+            payload["role"] = role
+            new_bindings.append({**b, "payload": payload})
+            replaced = True
+        else:
+            new_bindings.append(b)
+    if not replaced:
+        anchor_id = pick_optical_surface_anchor_id(
+            getattr(scene_object, "_pickable_anchors", None) or []
+        ) or "optical_anchor"
+        new_bindings.append(_make_polarization_reference_binding(
+            anchor_id=anchor_id, role=role, axis_deg=axis_deg, name=name,
+        ))
+    properties["anchorBindings"] = new_bindings
+    scene_object.properties = properties
+
+
+def write_waveplate_axis_deg_beam_local(scene_object: SceneObject, axis_deg: float) -> None:
+    _upsert_polarization_binding(
+        scene_object, role="fast", axis_deg=axis_deg, name="Fast axis",
+    )
+
+
+def write_polarizer_axis_deg_beam_local(scene_object: SceneObject, axis_deg: float) -> None:
+    _upsert_polarization_binding(
+        scene_object, role="transmission", axis_deg=axis_deg, name="Transmission axis",
+    )
+
+
+async def bootstrap_polarization_axis_binding(
+    scene_object: SceneObject,
+    asset: Asset3D | None,
+    role: str,
+    name: str,
+    default_axis_deg: float = 0.0,
+) -> bool:
+    """Attach a default polarizationReference binding for a freshly-spawned
+    waveplate or polarizer. Returns True iff one was added."""
+    existing = _find_polarization_binding_by_role(scene_object, role)
+    if existing is not None:
+        return False
+    if asset is None:
+        return False
+    anchor_id = pick_optical_surface_anchor_id(asset.anchors or [])
+    if anchor_id is None:
+        return False
+    binding = _make_polarization_reference_binding(
+        anchor_id=anchor_id, role=role, axis_deg=default_axis_deg, name=name,
+    )
+    scene_object.properties = append_binding(scene_object.properties, binding)
+    return True
 
 
 async def bootstrap_laser_default_binding_and_source(

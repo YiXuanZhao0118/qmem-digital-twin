@@ -20,6 +20,7 @@ from app.models import (
 from app.v2_bindings import (
     bootstrap_laser_default_binding_and_source,
     bootstrap_mirror_default_binding,
+    bootstrap_polarization_axis_binding,
 )
 from app.websocket import manager
 
@@ -133,8 +134,10 @@ DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
     "mirror": {"reflectivity": 0.99},
     "lens_spherical": {"focalMm": 100.0, "transmission": 0.99},
     "lens_cylindrical": {"focalMm": 100.0, "cylindricalAxis": "x", "transmission": 0.99},
-    "waveplate": {"retardanceLambda": 0.5, "fastAxisDegBeamLocal": 0.0, "transmission": 0.99},
-    "polarizer": {"transmissionAxisDegBeamLocal": 0.0, "extinctionRatioDb": 30.0, "transmission": 0.95},
+    # V2 Phase 4 (alembic 0030): axis angles moved to
+    # objects.properties.anchorBindings[polarizationReference].payload.axisDegBeamLocal.
+    "waveplate": {"retardanceLambda": 0.5, "transmission": 0.99},
+    "polarizer": {"extinctionRatioDb": 30.0, "transmission": 0.95},
     "beam_splitter": {
         "splitRatioTransmitted": 0.5,
         "polarizing": False,
@@ -430,6 +433,21 @@ async def auto_create_optical_element_for_object(
     if kind == "laser_source" and component.asset_3d_id is not None:
         asset = await session.get(Asset3D, component.asset_3d_id)
         await bootstrap_laser_default_binding_and_source(scene_object, component, asset)
+
+    # V2 Phase 4 (alembic 0030): waveplate / polarizer axis angles live on
+    # objects.properties.anchorBindings[polarizationReference]. Default
+    # angle = 0 deg (pass-through orientation); user adjusts via the
+    # WaveplateAdjustControls panel post-bootstrap.
+    if kind == "waveplate" and component.asset_3d_id is not None:
+        asset = await session.get(Asset3D, component.asset_3d_id)
+        await bootstrap_polarization_axis_binding(
+            scene_object, asset, role="fast", name="Fast axis",
+        )
+    if kind == "polarizer" and component.asset_3d_id is not None:
+        asset = await session.get(Asset3D, component.asset_3d_id)
+        await bootstrap_polarization_axis_binding(
+            scene_object, asset, role="transmission", name="Transmission axis",
+        )
 
     return optical_element
 

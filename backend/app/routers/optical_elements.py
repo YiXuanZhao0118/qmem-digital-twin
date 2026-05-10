@@ -11,9 +11,15 @@ from app.db import get_session
 from app.models import OpticalElement, SceneObject
 from app.v2_bindings import (
     V2_TRACKED_LASER_KEYS,
+    V2_TRACKED_POLARIZER_KEYS,
+    V2_TRACKED_WAVEPLATE_KEYS,
     beam_from_legacy_laser_kind_params,
     get_optical_source,
     legacy_laser_kind_params_from_beam,
+    legacy_polarizer_kind_params_from_binding,
+    legacy_waveplate_kind_params_from_binding,
+    write_polarizer_axis_deg_beam_local,
+    write_waveplate_axis_deg_beam_local,
 )
 from app.websocket import manager
 
@@ -39,28 +45,39 @@ async def _serialize_optical_elements(
         schemas.OpticalElementOut.model_validate(el).model_dump(mode="json", by_alias=True)
         for el in elements
     ]
-    laser_object_ids = [
-        el.object_id for el in elements if el.element_kind == "laser_source"
+    v2_object_ids = [
+        el.object_id
+        for el in elements
+        if el.element_kind in ("laser_source", "waveplate", "polarizer")
     ]
-    if not laser_object_ids:
+    if not v2_object_ids:
         return payloads
     rows = (
         await session.scalars(
-            select(SceneObject).where(SceneObject.id.in_(laser_object_ids))
+            select(SceneObject).where(SceneObject.id.in_(v2_object_ids))
         )
     ).all()
     objects_by_id = {row.id: row for row in rows}
     for payload, el in zip(payloads, elements):
-        if el.element_kind != "laser_source":
-            continue
         scene_object = objects_by_id.get(el.object_id)
-        source = get_optical_source(scene_object) if scene_object is not None else None
-        beam = source.get("beam") if isinstance(source, dict) else None
-        if isinstance(beam, dict):
-            payload["kindParams"] = {
-                **(payload.get("kindParams") or {}),
-                **legacy_laser_kind_params_from_beam(beam),
-            }
+        if scene_object is None:
+            continue
+        if el.element_kind == "laser_source":
+            source = get_optical_source(scene_object)
+            beam = source.get("beam") if isinstance(source, dict) else None
+            if isinstance(beam, dict):
+                payload["kindParams"] = {
+                    **(payload.get("kindParams") or {}),
+                    **legacy_laser_kind_params_from_beam(beam),
+                }
+        elif el.element_kind == "waveplate":
+            patch = legacy_waveplate_kind_params_from_binding(scene_object)
+            if patch:
+                payload["kindParams"] = {**(payload.get("kindParams") or {}), **patch}
+        elif el.element_kind == "polarizer":
+            patch = legacy_polarizer_kind_params_from_binding(scene_object)
+            if patch:
+                payload["kindParams"] = {**(payload.get("kindParams") or {}), **patch}
     return payloads
 
 
@@ -143,6 +160,29 @@ async def update_optical_element(
     element.input_ports = [p.model_dump(by_alias=True) for p in merged.input_ports]
     element.output_ports = [p.model_dump(by_alias=True) for p in merged.output_ports]
     element.kind_params = merged.kind_params
+
+    # V2 Phase 4 (alembic 0030): if the (V1-style) caller sent a
+    # waveplate fast axis or polarizer transmission axis, translate it to
+    # the corresponding polarizationReference binding payload on the
+    # SceneObject. Same pattern as the laser hard cutover below.
+    if element.element_kind == "waveplate" and isinstance(raw_kind_params, dict):
+        if "fastAxisDegBeamLocal" in raw_kind_params:
+            try:
+                axis = float(raw_kind_params["fastAxisDegBeamLocal"])
+            except (TypeError, ValueError):
+                axis = 0.0
+            scene_object = await session.get(SceneObject, object_id)
+            if scene_object is not None:
+                write_waveplate_axis_deg_beam_local(scene_object, axis)
+    if element.element_kind == "polarizer" and isinstance(raw_kind_params, dict):
+        if "transmissionAxisDegBeamLocal" in raw_kind_params:
+            try:
+                axis = float(raw_kind_params["transmissionAxisDegBeamLocal"])
+            except (TypeError, ValueError):
+                axis = 0.0
+            scene_object = await session.get(SceneObject, object_id)
+            if scene_object is not None:
+                write_polarizer_axis_deg_beam_local(scene_object, axis)
 
     # V2 Phase 3 (alembic 0029): if the (V1-style) caller sent any
     # beam-defining laser kindParams, the schema validator silently dropped

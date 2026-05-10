@@ -861,11 +861,12 @@ class LensCylindricalParams(CamelModel):
 
 
 class WaveplateParams(CamelModel):
-    retardance_lambda: float = Field(gt=0)  # 0.5 = HWP, 0.25 = QWP
-    # Phase 5: renamed from `fast_axis_deg` → `fast_axis_deg_beam_local`
-    # to spell out the frame (Jones / beam-propagation frame, not body
-    # or lab). Angle increases clockwise about the +beam axis.
-    fast_axis_deg_beam_local: float = 0.0
+    retardance_lambda: float = Field(default=0.5, gt=0)  # 0.5 = HWP, 0.25 = QWP
+    # V2 Phase 4 (alembic 0030): the fast-axis angle moved from
+    # `fast_axis_deg_beam_local` here to a polarizationReference binding
+    # (role="fast") on the SceneObject. The route layer synthesises the
+    # legacy field on read and translates back on write so the existing
+    # WaveplateAdjustControls keeps working.
     transmission: float = Field(default=0.99, ge=0.0, le=1.0)
     clear_aperture_mm: float | None = Field(default=None, gt=0)
     group_delay_ps: float = 0.0
@@ -873,19 +874,39 @@ class WaveplateParams(CamelModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _accept_legacy_field_names(cls, data: Any) -> Any:
-        return _accept_legacy_keys(data, (
-            ("fastAxisDeg", "fastAxisDegBeamLocal"),
-            ("fast_axis_deg", "fast_axis_deg_beam_local"),
-        ))
+    def _drop_v2_tracked_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data = dict(data)
+            for key in (
+                "fastAxisDegBeamLocal",
+                "fast_axis_deg_beam_local",
+                "fastAxisDeg",
+                "fast_axis_deg",
+            ):
+                data.pop(key, None)
+        return data
 
 
 class PolarizerParams(CamelModel):
-    # Phase 5: renamed from `transmission_axis_deg` →
-    # `transmission_axis_deg_beam_local` (beam Jones frame).
-    transmission_axis_deg_beam_local: float = 0.0
+    # V2 Phase 4 (alembic 0030): transmission-axis angle moved to a
+    # polarizationReference binding (role="transmission"); see WaveplateParams
+    # for the same pattern.
     extinction_ratio_db: float = Field(default=30.0, ge=0.0)
     transmission: float = Field(default=0.95, ge=0.0, le=1.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_v2_tracked_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data = dict(data)
+            for key in (
+                "transmissionAxisDegBeamLocal",
+                "transmission_axis_deg_beam_local",
+                "transmissionAxisDeg",
+                "transmission_axis_deg",
+            ):
+                data.pop(key, None)
+        return data
 
     @model_validator(mode="before")
     @classmethod

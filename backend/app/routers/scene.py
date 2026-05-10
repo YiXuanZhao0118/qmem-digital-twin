@@ -24,7 +24,12 @@ from app.models import (
 )
 from sqlalchemy.orm import selectinload
 from app.routers.collections import canonical_collection_members, get_master_collection
-from app.v2_bindings import get_optical_source, legacy_laser_kind_params_from_beam
+from app.v2_bindings import (
+    get_optical_source,
+    legacy_laser_kind_params_from_beam,
+    legacy_polarizer_kind_params_from_binding,
+    legacy_waveplate_kind_params_from_binding,
+)
 
 
 router = APIRouter()
@@ -57,16 +62,25 @@ async def get_scene(session: AsyncSession = Depends(get_session)) -> schemas.Sce
         for el in optical_elements
     ]
     for payload, el in zip(optical_element_payloads, optical_elements):
-        if el.element_kind != "laser_source":
-            continue
         scene_object = objects_by_id.get(el.object_id)
-        source = get_optical_source(scene_object) if scene_object is not None else None
-        beam = source.get("beam") if isinstance(source, dict) else None
-        if isinstance(beam, dict):
-            payload["kindParams"] = {
-                **(payload.get("kindParams") or {}),
-                **legacy_laser_kind_params_from_beam(beam),
-            }
+        if scene_object is None:
+            continue
+        if el.element_kind == "laser_source":
+            source = get_optical_source(scene_object)
+            beam = source.get("beam") if isinstance(source, dict) else None
+            if isinstance(beam, dict):
+                payload["kindParams"] = {
+                    **(payload.get("kindParams") or {}),
+                    **legacy_laser_kind_params_from_beam(beam),
+                }
+        elif el.element_kind == "waveplate":
+            patch = legacy_waveplate_kind_params_from_binding(scene_object)
+            if patch:
+                payload["kindParams"] = {**(payload.get("kindParams") or {}), **patch}
+        elif el.element_kind == "polarizer":
+            patch = legacy_polarizer_kind_params_from_binding(scene_object)
+            if patch:
+                payload["kindParams"] = {**(payload.get("kindParams") or {}), **patch}
     beam_segments = list((await session.scalars(select(BeamSegment))).all())
     scene_views = list(
         (
