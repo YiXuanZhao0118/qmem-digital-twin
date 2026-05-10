@@ -35,6 +35,7 @@ import {
   bodyLocalDirToWorldThree,
   labDirToThree as labDirToThreeAxisSwap,
 } from "../optical/frames";
+import { rotateLocalToLab } from "../utils/beamPlacement";
 import { emissionFromObject } from "./opticalBeams";
 import {
   type AomTraversalSign,
@@ -1265,7 +1266,54 @@ function traceOneRay(
     // helps debug-trace readers and keeps panels stable).
     plans.sort((a, b) => a.order - b.order);
 
-    const newOrigin0Cache = hitPoint.clone().add(dir.clone().multiplyScalar(RAY_EPS_THREE));
+    // Bragg interaction point in three.js world frame. All sideband
+    // orders (0, ±1, ±2, …) emanate from THIS point so the fan plane is
+    // anchored to the crystal's effective interaction centre, not to
+    // wherever the input ray happens to pierce the AOM body. Resolution:
+    //   1. kindParams.braggInteractionPointMmBodyLocal (asymmetric AOM
+    //      override; body-local mm)
+    //   2. midpoint of the asset's intercept_in / intercept_out anchors
+    //   3. fallback: hitPoint (the previous behaviour)
+    // Result is identical for every order, so they pivot about a common
+    // body-fixed point and the (D1, D2) sideband plane stays
+    // perpendicular to D3 = D1 × D2 even when the beam is offset on the
+    // input face.
+    const braggInteractionPointThree: THREE.Vector3 = (() => {
+      if (!obj) return hitPoint.clone();
+      let pivotBody: { x: number; y: number; z: number } | null = null;
+      const overrideRaw = (params as { braggInteractionPointMmBodyLocal?: unknown })
+        .braggInteractionPointMmBodyLocal;
+      if (Array.isArray(overrideRaw) && overrideRaw.length >= 3) {
+        const [px, py, pz] = overrideRaw as number[];
+        if (Number.isFinite(px) && Number.isFinite(py) && Number.isFinite(pz)) {
+          pivotBody = { x: Number(px), y: Number(py), z: Number(pz) };
+        }
+      }
+      if (!pivotBody) {
+        const component = ctx.components.find((c) => c.id === obj.componentId);
+        const asset = component?.asset3dId
+          ? ctx.assets.find((a) => a.id === component.asset3dId)
+          : undefined;
+        const inAnchor = asset?.anchors?.find((a) => a.id === "intercept_in");
+        const outAnchor = asset?.anchors?.find((a) => a.id === "intercept_out");
+        const inBody = inAnchor?.positionMmBodyLocal;
+        const outBody = outAnchor?.positionMmBodyLocal;
+        if (inBody && outBody) {
+          pivotBody = {
+            x: 0.5 * (inBody.x + outBody.x),
+            y: 0.5 * (inBody.y + outBody.y),
+            z: 0.5 * (inBody.z + outBody.z),
+          };
+        }
+      }
+      if (!pivotBody) return hitPoint.clone();
+      const offsetLab = rotateLocalToLab(pivotBody, obj.rxDeg, obj.ryDeg, obj.rzDeg);
+      return labToThreeVector([
+        obj.xMm + offsetLab.x,
+        obj.yMm + offsetLab.y,
+        obj.zMm + offsetLab.z,
+      ]);
+    })();
 
     for (const plan of plans) {
       if (!plan.alwaysShow && plan.fraction < sidebandThreshold) continue;
@@ -1285,9 +1333,13 @@ function traceOneRay(
             );
             return new THREE.Vector3(out.x, out.y, out.z).normalize();
           })();
-      const newOrigin = plan.order === 0
-        ? newOrigin0Cache
-        : hitPoint.clone().add(rayDir.clone().multiplyScalar(RAY_EPS_THREE));
+      // All orders fan out from the Bragg interaction point so the
+      // sideband plane is perpendicular to D3 at that pivot. Tiny
+      // RAY_EPS_THREE step along the outgoing direction keeps the
+      // raycaster from re-hitting the AOM body it just emerged from.
+      const newOrigin = braggInteractionPointThree
+        .clone()
+        .add(rayDir.clone().multiplyScalar(RAY_EPS_THREE));
       const branchLabel: TraceBranch =
         plan.order === 0
           ? "transmitted"

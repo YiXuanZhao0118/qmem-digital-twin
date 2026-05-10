@@ -10,7 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db import get_session
-from app.models import BeamSegment, OpticalElement, OpticalLink, SceneObject, TimingProgram
+from app.models import (
+    BeamSegment,
+    OpticalElement,
+    OpticalLink,
+    SceneObject,
+    SimulationRun,
+    TimingProgram,
+)
 from app.schemas import CamelModel
 from app.solvers.optical_solver import solve_chain
 from app.timing_program import evaluate_program_at
@@ -74,6 +81,21 @@ async def run_optical(session: AsyncSession = Depends(get_session)) -> OpticalRu
     result = solve_chain(elements, links)
 
     if not result.errors:
+        # V2 Phase 1 (alembic 0027) added a FK from
+        # beam_segments.simulation_run_id → simulation_runs.id, so any
+        # segment we persist must reference a real SimulationRun row.
+        # solve_chain still makes up an in-memory uuid for `result.run_id`;
+        # promote it to a persisted SimulationRun row here so the FK is
+        # satisfied. Status defaults to "completed" and warnings are
+        # stashed verbatim — keeps the route audit-friendly without
+        # pulling the solver into the DB layer.
+        sim_run = SimulationRun(
+            id=result.run_id,
+            status="completed",
+            warnings=list(result.warnings),
+        )
+        session.add(sim_run)
+        await session.flush()  # ensure simulation_runs row exists before FK check on beam_segments
         # Replace any prior segments for these links so the table doesn't grow
         # unbounded across runs (a future runs table will switch this to append).
         link_ids = [link.id for link in links]
@@ -225,6 +247,13 @@ async def run_optical_transient(
         warnings.update(result.warnings)
 
     if payload.persist_segments and not errors:
+        # Same SimulationRun bootstrap as run_optical — see comment there.
+        sim_run = SimulationRun(
+            id=run_id,
+            status="completed",
+            warnings=sorted(warnings),
+        )
+        session.add(sim_run)
         # Wipe prior segments belonging to this run-id's links; we keep CW runs
         # untouched so the user can compare. (CW run uses a different run_id.)
         link_ids = [link.id for link in links]
