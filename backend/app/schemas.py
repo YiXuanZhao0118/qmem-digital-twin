@@ -919,36 +919,33 @@ class PolarizerParams(CamelModel):
 
 
 class BeamSplitterParams(CamelModel):
+    """V2 Phase 6 (alembic 0032): coating normal + PBS transmission axis
+    moved to anchor bindings. The remaining knobs are pure transfer
+    physics (split ratio, polarising bit, extinction, transmission).
+    """
+
     split_ratio_transmitted: float = Field(default=0.5, ge=0.0, le=1.0)
     polarizing: bool = False
-    # Angle of the PBS's P-axis in the beam's local Jones frame. Only used when
-    # polarizing=True. 0° = P along Ex (horizontal pol transmits, vertical pol
-    # reflects to ±Y); 90° = P along Ey (cube rotated 90° around the optical
-    # axis). Pass-through for non-polarising NPBS.
-    # Phase 5: renamed from `transmission_axis_deg` to spell out frame.
-    transmission_axis_deg_beam_local: float = Field(default=0.0, ge=-360.0, le=360.0)
     extinction_ratio_db: float = Field(default=30.0, ge=0.0)
     transmission: float = Field(default=0.99, ge=0.0, le=1.0)
-    # Normal of the internal 45° coating in the SceneObject's body-local
-    # Z-up frame. The geometric ray-tracer reflects off THIS normal
-    # (rotated by the SceneObject's orientation) instead of the cube's
-    # outer mesh face — the outer face has normal along the beam
-    # direction, which would back-reflect the beam and break the chain.
-    # Default `[√½, √½, 0]` reflects a +X-propagating beam to +Y. For
-    # the alternate "reflect to -Y" wiring use `[√½, -√½, 0]`; for
-    # "reflect up to +Z" use `[√½, 0, -√½]`; etc.
-    # Phase 5: renamed from `coating_normal_local` to spell out frame.
-    coating_normal_body_local: tuple[float, float, float] = (0.7071067811865475, 0.7071067811865475, 0.0)
 
     @model_validator(mode="before")
     @classmethod
-    def _accept_legacy_field_names(cls, data: Any) -> Any:
-        return _accept_legacy_keys(data, (
-            ("transmissionAxisDeg", "transmissionAxisDegBeamLocal"),
-            ("transmission_axis_deg", "transmission_axis_deg_beam_local"),
-            ("coatingNormalLocal", "coatingNormalBodyLocal"),
-            ("coating_normal_local", "coating_normal_body_local"),
-        ))
+    def _drop_v2_tracked_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data = dict(data)
+            for key in (
+                "coatingNormalBodyLocal",
+                "coating_normal_body_local",
+                "coatingNormalLocal",
+                "coating_normal_local",
+                "transmissionAxisDegBeamLocal",
+                "transmission_axis_deg_beam_local",
+                "transmissionAxisDeg",
+                "transmission_axis_deg",
+            ):
+                data.pop(key, None)
+        return data
 
 
 class DichroicMirrorParams(CamelModel):

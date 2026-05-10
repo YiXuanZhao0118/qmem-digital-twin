@@ -34,6 +34,10 @@ POLARIZATION_REFERENCE_BINDING_KIND = "polarizationReference"
 V2_TRACKED_WAVEPLATE_KEYS = ("fastAxisDegBeamLocal",)
 V2_TRACKED_POLARIZER_KEYS = ("transmissionAxisDegBeamLocal",)
 
+# V2 Phase 6: beam_splitter coating normal moves to opticalSurface; the PBS
+# transmission axis moves to polarizationReference (only when polarizing).
+V2_TRACKED_BEAM_SPLITTER_KEYS = ("coatingNormalBodyLocal", "transmissionAxisDegBeamLocal")
+
 # Legacy laser kindParams keys that V2 Phase 3 migrates into
 # `objects.properties.opticalSources[].beam`. Solver / UI code must NOT read
 # these from kind_params anymore — the translator below produces them on
@@ -530,6 +534,128 @@ def write_polarizer_axis_deg_beam_local(scene_object: SceneObject, axis_deg: flo
     _upsert_polarization_binding(
         scene_object, role="transmission", axis_deg=axis_deg, name="Transmission axis",
     )
+
+
+def get_beam_splitter_coating_normal(
+    scene_object: SceneObject | dict[str, Any] | None,
+) -> list[float] | None:
+    """V2 Phase 6 read of the beam_splitter internal coating normal from
+    its opticalSurface binding (same payload key as the mirror cutover)."""
+    return get_mirror_normal_body_local(scene_object)
+
+
+def legacy_beam_splitter_kind_params_from_bindings(
+    scene_object: SceneObject | dict[str, Any] | None,
+    *,
+    polarizing: bool,
+) -> dict[str, Any]:
+    """Synthesise the legacy beam_splitter geometry kindParams from V2
+    bindings. Always returns the coating normal (defaults to the historical
+    [√½, √½, 0] when no binding); only returns the PBS transmission axis
+    when ``polarizing`` is True."""
+    out: dict[str, Any] = {}
+    normal = get_beam_splitter_coating_normal(scene_object)
+    if normal is not None:
+        out["coatingNormalBodyLocal"] = normal
+    else:
+        out["coatingNormalBodyLocal"] = [0.7071067811865475, 0.7071067811865475, 0.0]
+    if polarizing:
+        axis = get_polarizer_axis_deg_beam_local(scene_object)
+        if axis is not None:
+            out["transmissionAxisDegBeamLocal"] = axis
+        else:
+            out["transmissionAxisDegBeamLocal"] = 0.0
+    return out
+
+
+def write_beam_splitter_coating_normal(
+    scene_object: SceneObject, normal_body_local: list[float]
+) -> None:
+    """V2 Phase 6 write of the beam_splitter coating normal — overwrites
+    the existing opticalSurface binding payload, or appends one if absent.
+    """
+    properties = dict(scene_object.properties or {})
+    bindings = list(properties.get("anchorBindings") or [])
+    new_bindings: list[Any] = []
+    replaced = False
+    for b in bindings:
+        if (
+            isinstance(b, dict)
+            and b.get("kind") == OPTICAL_SURFACE_BINDING_KIND
+            and not replaced
+        ):
+            payload = dict(b.get("payload") or {})
+            payload["normalBodyLocal"] = list(normal_body_local)
+            new_bindings.append({**b, "payload": payload})
+            replaced = True
+        else:
+            new_bindings.append(b)
+    if not replaced:
+        anchor_id = pick_optical_surface_anchor_id(
+            getattr(scene_object, "_pickable_anchors", None) or []
+        ) or "optical_anchor"
+        new_bindings.append({
+            "id": uuid7_str(),
+            "name": "Internal coating",
+            "anchorId": anchor_id,
+            "kind": OPTICAL_SURFACE_BINDING_KIND,
+            "frame": "anchorLocalXY",
+            "payload": {"normalBodyLocal": list(normal_body_local)},
+        })
+    properties["anchorBindings"] = new_bindings
+    scene_object.properties = properties
+
+
+async def bootstrap_beam_splitter_default_bindings(
+    scene_object: SceneObject,
+    asset: Asset3D | None,
+    *,
+    polarizing: bool,
+) -> bool:
+    """For freshly-spawned beam_splitter / PBS instances, attach the
+    default opticalSurface binding (coating normal = [√½, √½, 0]) and,
+    when polarizing, also a polarizationReference binding (role=transmission,
+    axis=0°). Mirrors the alembic 0032 backfill defaults."""
+    if asset is None:
+        return False
+    anchor_id = pick_optical_surface_anchor_id(asset.anchors or [])
+    if anchor_id is None:
+        return False
+
+    added = False
+    properties = dict(scene_object.properties or {})
+    bindings = list(properties.get("anchorBindings") or [])
+    if not any(
+        isinstance(b, dict) and b.get("kind") == OPTICAL_SURFACE_BINDING_KIND for b in bindings
+    ):
+        bindings.append({
+            "id": uuid7_str(),
+            "name": "Internal coating",
+            "anchorId": anchor_id,
+            "kind": OPTICAL_SURFACE_BINDING_KIND,
+            "frame": "anchorLocalXY",
+            "payload": {"normalBodyLocal": [0.7071067811865475, 0.7071067811865475, 0.0]},
+        })
+        added = True
+    if polarizing and not any(
+        isinstance(b, dict)
+        and b.get("kind") == POLARIZATION_REFERENCE_BINDING_KIND
+        and (b.get("payload") or {}).get("role") == "transmission"
+        for b in bindings
+    ):
+        bindings.append({
+            "id": uuid7_str(),
+            "name": "PBS transmission axis",
+            "anchorId": anchor_id,
+            "kind": POLARIZATION_REFERENCE_BINDING_KIND,
+            "frame": "anchorLocalXY",
+            "payload": {"role": "transmission", "axisDegBeamLocal": 0.0},
+        })
+        added = True
+    if added:
+        properties["anchorBindings"] = bindings
+        scene_object.properties = properties
+    return added
 
 
 async def bootstrap_polarization_axis_binding(

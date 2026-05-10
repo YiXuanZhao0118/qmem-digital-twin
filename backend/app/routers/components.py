@@ -18,6 +18,7 @@ from app.models import (
     SceneObject,
 )
 from app.v2_bindings import (
+    bootstrap_beam_splitter_default_bindings,
     bootstrap_laser_default_binding_and_source,
     bootstrap_mirror_default_binding,
     bootstrap_polarization_axis_binding,
@@ -145,10 +146,10 @@ DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
     # objects.properties.anchorBindings[polarizationReference].payload.axisDegBeamLocal.
     "waveplate": {"retardanceLambda": 0.5, "transmission": 0.99},
     "polarizer": {"extinctionRatioDb": 30.0, "transmission": 0.95},
+    # V2 Phase 6 (alembic 0032): coating normal + PBS axis moved to bindings.
     "beam_splitter": {
         "splitRatioTransmitted": 0.5,
         "polarizing": False,
-        "transmissionAxisDegBeamLocal": 0.0,
         "extinctionRatioDb": 30.0,
         "transmission": 0.99,
     },
@@ -454,6 +455,16 @@ async def auto_create_optical_element_for_object(
         asset = await session.get(Asset3D, component.asset_3d_id)
         await bootstrap_polarization_axis_binding(
             scene_object, asset, role="transmission", name="Transmission axis",
+        )
+
+    # V2 Phase 6 (alembic 0032): beam_splitter coating normal + PBS axis
+    # live on anchor bindings. Default coating normal = [√½, √½, 0]
+    # (reflects +X-propagating beam to +Y); polarising bit defaults False.
+    if kind == "beam_splitter" and component.asset_3d_id is not None:
+        asset = await session.get(Asset3D, component.asset_3d_id)
+        polarizing = bool((kind_params or {}).get("polarizing", False))
+        await bootstrap_beam_splitter_default_bindings(
+            scene_object, asset, polarizing=polarizing,
         )
 
     return optical_element
