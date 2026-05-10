@@ -17,7 +17,10 @@ from app.models import (
     OpticalLink,
     SceneObject,
 )
-from app.v2_bindings import bootstrap_mirror_default_binding
+from app.v2_bindings import (
+    bootstrap_laser_default_binding_and_source,
+    bootstrap_mirror_default_binding,
+)
 from app.websocket import manager
 
 
@@ -73,20 +76,12 @@ OPTICAL_COMPONENT_TYPE_TO_KIND: dict[str, str] = {
 # Minimum-viable kind_params for each kind so the auto-created OpticalElement
 # passes validation. The user can edit through the OpticalElementPanel UI.
 DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
-    "laser_source": {
-        "centerWavelengthNm": 780.241,
-        "spectrum": {
-            "centerThz": 384.227,
-            "components": [
-                {"kind": "main", "lineshape": "gaussian", "fwhmMhz": 1.0, "amplitude": 1.0}
-            ],
-        },
-        "spatialModeX": {"waistUm": 500.0, "waistZOffsetMm": 0.0, "mSquared": 1.0},
-        "spatialModeY": {"waistUm": 500.0, "waistZOffsetMm": 0.0, "mSquared": 1.0},
-        "transverseMode": {"kind": "TEM00"},
-        "polarization": {"exRe": 1.0, "exIm": 0.0, "eyRe": 0.0, "eyIm": 0.0},
-        "nominalPowerMw": 1.0,
-    },
+    # V2 Phase 3 (alembic 0029): every beam-defining laser parameter moved
+    # to objects.properties.opticalSources[].beam, populated by the
+    # auto_create_optical_element_for_object bootstrap (see
+    # v2_bindings.bootstrap_laser_default_binding_and_source). Residual
+    # advanced fields (e.g. rinDbcPerHz) can still live here.
+    "laser_source": {},
     "tapered_amplifier": {
         # Legacy fields — kept for back-compat with the bare-chip entry and
         # for the topology solver's simple gain model.
@@ -402,9 +397,13 @@ async def auto_create_optical_element_for_object(
         return None
 
     default_ports = schemas.DEFAULT_PORTS.get(kind, {})
+    # V2 Phase 3 (alembic 0029): laser_source kindParams is intentionally `{}`
+    # post-cutover — beam-defining fields moved to opticalSources[]. The
+    # empty-dict guard that previously skipped element creation has been
+    # dropped; a missing entry in DEFAULT_KIND_PARAMS still skips, but {}
+    # is now a valid payload for V2-cutover kinds.
     kind_params = default_kind_params_for_component(kind, component)
-    if not kind_params:
-        # Better to skip silently than create a row that fails validation later.
+    if kind not in DEFAULT_KIND_PARAMS:
         return None
 
     optical_element = OpticalElement(
@@ -424,6 +423,13 @@ async def auto_create_optical_element_for_object(
     if kind in ("mirror", "dichroic_mirror") and component.asset_3d_id is not None:
         asset = await session.get(Asset3D, component.asset_3d_id)
         await bootstrap_mirror_default_binding(scene_object, component, asset)
+
+    # V2 Phase 3 (alembic 0029): laser_source per-instance beam parameters
+    # live on objects.properties.opticalSources[]. Bootstrap a default
+    # emissionReference binding + opticalSource for newly-spawned lasers.
+    if kind == "laser_source" and component.asset_3d_id is not None:
+        asset = await session.get(Asset3D, component.asset_3d_id)
+        await bootstrap_laser_default_binding_and_source(scene_object, component, asset)
 
     return optical_element
 

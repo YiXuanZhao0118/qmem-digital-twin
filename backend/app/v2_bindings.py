@@ -26,6 +26,21 @@ from app.uuid7 import uuid7_str
 
 OPTICAL_ANCHOR_ID = "optical_anchor"
 OPTICAL_SURFACE_BINDING_KIND = "opticalSurface"
+EMISSION_REFERENCE_BINDING_KIND = "emissionReference"
+
+# Legacy laser kindParams keys that V2 Phase 3 migrates into
+# `objects.properties.opticalSources[].beam`. Solver / UI code must NOT read
+# these from kind_params anymore — the translator below produces them on
+# demand from the V2 source.
+V2_TRACKED_LASER_KEYS = (
+    "centerWavelengthNm",
+    "nominalPowerMw",
+    "spectrum",
+    "spatialModeX",
+    "spatialModeY",
+    "transverseMode",
+    "polarization",
+)
 
 
 def pick_optical_surface_anchor_id(asset_anchors: list[Any] | None) -> str | None:
@@ -130,6 +145,315 @@ def get_mirror_normal_body_local(scene_object: SceneObject | dict[str, Any] | No
         return [float(raw[0]), float(raw[1]), float(raw[2])]
     except (TypeError, ValueError):
         return None
+
+
+def get_optical_source(scene_object: SceneObject | dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return the first ``opticalSources[]`` entry on a SceneObject, or None."""
+    if scene_object is None:
+        return None
+    if isinstance(scene_object, dict):
+        properties = scene_object.get("properties") or {}
+    else:
+        properties = scene_object.properties or {}
+    sources = properties.get("opticalSources") or []
+    for s in sources:
+        if isinstance(s, dict):
+            return s
+    return None
+
+
+def legacy_laser_kind_params_from_beam(beam: dict[str, Any]) -> dict[str, Any]:
+    """Translate a V2 ``opticalSources[].beam`` record into the legacy
+    laser_source ``kindParams`` shape that ``optical_solver.emit_from_laser_source``
+    and the rest of the solver still consume.
+
+    V2 Phase 3 hard cutover: kind_params is empty in DB; this helper produces
+    the same shape on demand from the per-instance V2 BeamSource. Solver and
+    UI continue working with no internal refactor; only the data origin
+    changes.
+    """
+    if not isinstance(beam, dict):
+        return {}
+
+    spectrum_v2 = beam.get("spectrum") or {}
+    linewidth = spectrum_v2.get("linewidth") or {}
+    components: list[dict[str, Any]] = []
+    kind = (linewidth.get("kind") or "delta").lower()
+    if kind == "voigt":
+        components.append({
+            "kind": "main",
+            "lineshape": "voigt",
+            "voigtGaussianFwhmMhz": float(linewidth.get("gaussianFwhmHz", 0.0)) / 1e6,
+            "voigtLorentzianFwhmMhz": float(linewidth.get("lorentzianFwhmHz", 0.0)) / 1e6,
+            "amplitude": 1.0,
+            "offsetMhz": 0.0,
+        })
+    elif kind in ("gaussian", "lorentzian"):
+        components.append({
+            "kind": "main",
+            "lineshape": kind,
+            "fwhmMhz": float(linewidth.get("fwhmHz", 0.0)) / 1e6,
+            "amplitude": 1.0,
+            "offsetMhz": 0.0,
+        })
+    else:
+        components.append({
+            "kind": "main",
+            "lineshape": "delta",
+            "amplitude": 1.0,
+            "offsetMhz": 0.0,
+        })
+
+    wavelength_nm = float(spectrum_v2.get("centerWavelengthNm", 780.241))
+    center_thz = 299792.458 / wavelength_nm
+
+    envelope = beam.get("spatialEnvelope") or {}
+    profile = envelope.get("transverseProfile") or {}
+    propagation = envelope.get("propagation") or {}
+
+    def _legacy_axis(profile_axis: dict[str, Any] | None, prop_axis: dict[str, Any] | None) -> dict[str, Any]:
+        profile_axis = profile_axis or {}
+        prop_axis = prop_axis or {}
+        return {
+            "waistUm": float(profile_axis.get("waistRadiusUm", 500.0)),
+            "waistZOffsetMm": float(prop_axis.get("waistZOffsetMm", 0.0)),
+            "mSquared": float(prop_axis.get("mSquared", 1.0)),
+        }
+
+    spatial_x = _legacy_axis(profile.get("x"), propagation.get("x"))
+    spatial_y = _legacy_axis(profile.get("y"), propagation.get("y"))
+
+    tm = beam.get("transverseMode") or {}
+    family = (tm.get("family") or "HG").upper()
+    if family == "HG" and tm.get("m") == 0 and tm.get("n") == 0:
+        legacy_tm: dict[str, Any] = {"kind": "TEM00"}
+    elif family == "HG":
+        legacy_tm = {
+            "kind": "TEM_mn",
+            "indicesM": int(tm.get("m", 0)),
+            "indicesN": int(tm.get("n", 0)),
+        }
+    elif family == "LG":
+        legacy_tm = {
+            "kind": "LG_pl",
+            "indicesP": int(tm.get("m", 0)),
+            "indicesL": int(tm.get("n", 0)),
+        }
+    else:
+        legacy_tm = {"kind": "multimode"}
+
+    pol = (beam.get("polarization") or {}).get("jones") or {}
+
+    return {
+        "centerWavelengthNm": wavelength_nm,
+        "nominalPowerMw": float(beam.get("powerMw", 1.0)),
+        "spectrum": {"centerThz": center_thz, "components": components},
+        "spatialModeX": spatial_x,
+        "spatialModeY": spatial_y,
+        "transverseMode": legacy_tm,
+        "polarization": {
+            "exRe": float(pol.get("exRe", 1.0)),
+            "exIm": float(pol.get("exIm", 0.0)),
+            "eyRe": float(pol.get("eyRe", 0.0)),
+            "eyIm": float(pol.get("eyIm", 0.0)),
+        },
+    }
+
+
+def beam_from_legacy_laser_kind_params(legacy: dict[str, Any]) -> dict[str, Any]:
+    """Inverse of ``legacy_laser_kind_params_from_beam``.
+
+    Used by the PUT /api/optical-elements path: when the (V1-style) frontend
+    sends a kindParams payload with centerWavelengthNm / nominalPowerMw / ...,
+    the backend translates it into a V2 BeamSource and writes that to the
+    SceneObject's opticalSources[0].beam, then drops the legacy fields from
+    kindParams via the schema validator.
+    """
+    if not isinstance(legacy, dict):
+        return default_laser_beam()
+
+    try:
+        power_mw = float(legacy.get("nominalPowerMw", 1.0))
+    except (TypeError, ValueError):
+        power_mw = 1.0
+    try:
+        wavelength_nm = float(legacy.get("centerWavelengthNm", 780.241))
+    except (TypeError, ValueError):
+        wavelength_nm = 780.241
+
+    spectrum_legacy = legacy.get("spectrum") or {}
+    components = spectrum_legacy.get("components") or []
+    linewidth: dict[str, Any] = {"kind": "delta"}
+    if components:
+        first = components[0] if isinstance(components[0], dict) else {}
+        ls = (first.get("lineshape") or "delta").lower()
+        if ls == "voigt":
+            g = first.get("voigtGaussianFwhmMhz")
+            l = first.get("voigtLorentzianFwhmMhz")
+            if g is not None and l is not None:
+                linewidth = {
+                    "kind": "voigt",
+                    "gaussianFwhmHz": float(g) * 1e6,
+                    "lorentzianFwhmHz": float(l) * 1e6,
+                }
+        elif ls in ("gaussian", "lorentzian"):
+            fwhm = first.get("fwhmMhz")
+            if fwhm is not None:
+                linewidth = {"kind": ls, "fwhmHz": float(fwhm) * 1e6}
+
+    pol = legacy.get("polarization") or {}
+
+    def _profile_axis(legacy_axis: dict[str, Any] | None) -> tuple[dict[str, Any], dict[str, Any]]:
+        legacy_axis = legacy_axis or {}
+        try:
+            waist_um = float(legacy_axis.get("waistUm", 500.0))
+        except (TypeError, ValueError):
+            waist_um = 500.0
+        try:
+            offset_mm = float(legacy_axis.get("waistZOffsetMm", 0.0))
+        except (TypeError, ValueError):
+            offset_mm = 0.0
+        try:
+            m_sq = float(legacy_axis.get("mSquared", 1.0))
+        except (TypeError, ValueError):
+            m_sq = 1.0
+        return ({"waistRadiusUm": waist_um}, {"waistZOffsetMm": offset_mm, "mSquared": m_sq})
+
+    profile_x, prop_x = _profile_axis(legacy.get("spatialModeX"))
+    profile_y, prop_y = _profile_axis(legacy.get("spatialModeY"))
+
+    tm = legacy.get("transverseMode") or {"kind": "TEM00"}
+    tm_kind = (tm.get("kind") or "TEM00").upper()
+    if tm_kind == "TEM_MN":
+        family, m, n = "HG", int(tm.get("indicesM", 0)), int(tm.get("indicesN", 0))
+        label = f"HG{m}{n}"
+    elif tm_kind == "LG_PL":
+        family, m, n = "LG", int(tm.get("indicesP", 0)), int(tm.get("indicesL", 0))
+        label = f"LG{m}{n}"
+    elif tm_kind == "MULTIMODE":
+        family, m, n, label = "measured", 0, 0, "multimode"
+    else:
+        family, m, n, label = "HG", 0, 0, "TEM00"
+
+    return {
+        "powerMw": power_mw,
+        "spectrum": {
+            "centerWavelengthNm": wavelength_nm,
+            "wavelengthReference": "vacuum",
+            "linewidth": linewidth,
+        },
+        "polarization": {
+            "basis": "beamLocalXY",
+            "normalization": "unit_jones",
+            "jones": {
+                "exRe": float(pol.get("exRe", 1.0)),
+                "exIm": float(pol.get("exIm", 0.0)),
+                "eyRe": float(pol.get("eyRe", 0.0)),
+                "eyIm": float(pol.get("eyIm", 0.0)),
+            },
+        },
+        "spatialEnvelope": {
+            "transverseProfile": {
+                "kind": "elliptical_gaussian",
+                "x": profile_x,
+                "y": profile_y,
+                "hardAperture": None,
+            },
+            "propagation": {
+                "model": "m2_gaussian",
+                "x": prop_x,
+                "y": prop_y,
+            },
+        },
+        "transverseMode": {"family": family, "m": m, "n": n, "label": label},
+    }
+
+
+def default_laser_beam(wavelength_nm: float = 780.241, power_mw: float = 1.0) -> dict[str, Any]:
+    """Build a fresh V2 BeamSource (camelCase) for newly-spawned laser
+    SceneObjects. Mirror of the alembic 0029 backfill defaults so a fresh
+    laser behaves the same as a backfilled one."""
+    return {
+        "powerMw": power_mw,
+        "spectrum": {
+            "centerWavelengthNm": wavelength_nm,
+            "wavelengthReference": "vacuum",
+            "linewidth": {"kind": "delta"},
+        },
+        "polarization": {
+            "basis": "beamLocalXY",
+            "normalization": "unit_jones",
+            "jones": {"exRe": 1.0, "exIm": 0.0, "eyRe": 0.0, "eyIm": 0.0},
+        },
+        "spatialEnvelope": {
+            "transverseProfile": {
+                "kind": "elliptical_gaussian",
+                "x": {"waistRadiusUm": 500.0},
+                "y": {"waistRadiusUm": 500.0},
+                "hardAperture": None,
+            },
+            "propagation": {
+                "model": "m2_gaussian",
+                "x": {"waistZOffsetMm": 0.0, "mSquared": 1.0},
+                "y": {"waistZOffsetMm": 0.0, "mSquared": 1.0},
+            },
+        },
+        "transverseMode": {"family": "HG", "m": 0, "n": 0, "label": "TEM00"},
+    }
+
+
+async def bootstrap_laser_default_binding_and_source(
+    scene_object: SceneObject,
+    component: Component,
+    asset: Asset3D | None,
+) -> bool:
+    """If ``scene_object`` is a freshly-created laser_source with no
+    emissionReference binding yet, attach a default one referencing the
+    asset's preferred emission anchor and seed an opticalSources[] entry
+    with the default V2 beam. Returns True iff a binding was added.
+    """
+    if find_binding(scene_object, kind=EMISSION_REFERENCE_BINDING_KIND) is not None:
+        return False
+    if asset is None:
+        return False
+    anchor_id = pick_optical_surface_anchor_id(asset.anchors or [])
+    if anchor_id is None:
+        return False
+
+    # Default emission direction = anchor.directionBodyLocal if present, else +X.
+    normal = [1.0, 0.0, 0.0]
+    for a in (asset.anchors or []):
+        if isinstance(a, dict) and a.get("id") == anchor_id:
+            d = a.get("directionBodyLocal")
+            if isinstance(d, dict):
+                try:
+                    normal = [float(d.get("x", 1.0)), float(d.get("y", 0.0)), float(d.get("z", 0.0))]
+                except (TypeError, ValueError):
+                    pass
+            break
+
+    binding = {
+        "id": uuid7_str(),
+        "name": "Laser output",
+        "anchorId": anchor_id,
+        "kind": EMISSION_REFERENCE_BINDING_KIND,
+        "frame": "anchorLocalXY",
+        "payload": {"normalBodyLocal": normal},
+    }
+    properties = append_binding(scene_object.properties, binding)
+
+    # Add a default opticalSource if none exists for this binding.
+    sources = list(properties.get("opticalSources") or [])
+    sources.append({
+        "id": uuid7_str(),
+        "bindingId": binding["id"],
+        "enabled": True,
+        "beam": default_laser_beam(),
+    })
+    properties["opticalSources"] = sources
+
+    scene_object.properties = properties
+    return True
 
 
 async def bootstrap_mirror_default_binding(

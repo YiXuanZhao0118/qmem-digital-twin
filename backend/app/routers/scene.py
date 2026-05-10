@@ -24,6 +24,7 @@ from app.models import (
 )
 from sqlalchemy.orm import selectinload
 from app.routers.collections import canonical_collection_members, get_master_collection
+from app.v2_bindings import get_optical_source, legacy_laser_kind_params_from_beam
 
 
 router = APIRouter()
@@ -42,6 +43,30 @@ async def get_scene(session: AsyncSession = Depends(get_session)) -> schemas.Sce
     device_states = list((await session.scalars(select(DeviceState))).all())
     optical_elements = list((await session.scalars(select(OpticalElement))).all())
     optical_links = list((await session.scalars(select(OpticalLink))).all())
+
+    # V2 Phase 3 (alembic 0029) translator: laser_source kindParams is empty
+    # in DB after the cutover. Synthesise the legacy shape from each laser's
+    # opticalSources[].beam so the frontend's existing readers (rayTrace,
+    # OpticalElementPanel, BeamScopePanel, opticalBeams) keep working.
+    #
+    # We build OpticalElementOut dicts here instead of mutating the SA rows
+    # so we don't trigger an autoflush during Pydantic serialisation.
+    objects_by_id = {obj.id: obj for obj in objects}
+    optical_element_payloads = [
+        schemas.OpticalElementOut.model_validate(el).model_dump(mode="json", by_alias=True)
+        for el in optical_elements
+    ]
+    for payload, el in zip(optical_element_payloads, optical_elements):
+        if el.element_kind != "laser_source":
+            continue
+        scene_object = objects_by_id.get(el.object_id)
+        source = get_optical_source(scene_object) if scene_object is not None else None
+        beam = source.get("beam") if isinstance(source, dict) else None
+        if isinstance(beam, dict):
+            payload["kindParams"] = {
+                **(payload.get("kindParams") or {}),
+                **legacy_laser_kind_params_from_beam(beam),
+            }
     beam_segments = list((await session.scalars(select(BeamSegment))).all())
     scene_views = list(
         (
@@ -89,7 +114,7 @@ async def get_scene(session: AsyncSession = Depends(get_session)) -> schemas.Sce
         assembly_relations=assembly_relations,
         beam_paths=beam_paths,
         device_states=device_states,
-        optical_elements=optical_elements,
+        optical_elements=optical_element_payloads,
         optical_links=optical_links,
         beam_segments=beam_segments,
         scene_views=scene_views,

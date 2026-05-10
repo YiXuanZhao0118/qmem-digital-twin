@@ -699,15 +699,40 @@ ElementKind = Literal[
 
 
 class LaserSourceParams(CamelModel):
-    center_wavelength_nm: float = Field(gt=0)
-    spectrum: Spectrum
-    spatial_mode_x: GaussianMode
-    spatial_mode_y: GaussianMode
-    transverse_mode: TransverseMode = Field(default_factory=lambda: TransverseMode())
-    polarization: JonesVector = Field(default_factory=JonesVector)
-    nominal_power_mw: float = Field(gt=0)
+    """V2 Phase 3 (alembic 0029): all beam-defining fields moved to
+    ``objects.properties.opticalSources[].beam``. The remaining knobs are
+    advanced (noise) parameters that the V2 source does not yet model.
+
+    Solver code reads beam state via ``v2_bindings.legacy_laser_kind_params_from_beam``
+    instead of from this model; this class only validates the residual
+    advanced fields and silently drops V1 inputs that still try to set
+    centerWavelengthNm/nominalPowerMw/spectrum/spatialModeX/Y/transverseMode/polarization.
+    """
+
     rin_dbc_per_hz: float | None = None
     frequency_noise_hz_per_sqrt_hz: float | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_v2_tracked_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data = dict(data)
+            for key in (
+                "centerWavelengthNm",
+                "center_wavelength_nm",
+                "nominalPowerMw",
+                "nominal_power_mw",
+                "spectrum",
+                "spatialModeX",
+                "spatial_mode_x",
+                "spatialModeY",
+                "spatial_mode_y",
+                "transverseMode",
+                "transverse_mode",
+                "polarization",
+            ):
+                data.pop(key, None)
+        return data
 
 
 class TaperedAmplifierAse(CamelModel):
@@ -1398,6 +1423,16 @@ class OpticalElementOut(OpticalElementBase):
     object_id: uuid.UUID
     created_at: datetime
     updated_at: datetime
+
+    # V2 Phase 3 (alembic 0029): the read-direction must NOT re-run the
+    # per-kind validator. After the laser_source cutover, the route layer
+    # synthesises legacy laser kindParams from objects.properties.opticalSources
+    # so the frontend keeps reading the V1 shape. Re-running LaserSourceParams
+    # here would silently strip those synthesised fields and the response
+    # would emerge with kindParams = {}.
+    @model_validator(mode="after")
+    def validate_and_normalize(self) -> "OpticalElementOut":  # type: ignore[override]
+        return self
 
 
 # --- OpticalLink schemas ----------------------------------------------------
