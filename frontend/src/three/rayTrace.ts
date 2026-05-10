@@ -1266,18 +1266,24 @@ function traceOneRay(
     // helps debug-trace readers and keeps panels stable).
     plans.sort((a, b) => a.order - b.order);
 
-    // Bragg interaction point in three.js world frame. All sideband
-    // orders (0, ±1, ±2, …) emanate from THIS point so the fan plane is
-    // anchored to the crystal's effective interaction centre, not to
-    // wherever the input ray happens to pierce the AOM body. Resolution:
+    // Bragg interaction point in three.js world frame.
+    //
+    // Every order (0, ±1, ±2, …) fans out from this point so the
+    // sideband plane is anchored to the crystal's effective interaction
+    // centre, perpendicular to D3 = D1 × D2 at that pivot. To keep the
+    // visual continuous, we ALSO extend the input segment to terminate
+    // here (instead of at the entry-face hitPoint) — physically this
+    // matches "beam propagates through the crystal volume up to the
+    // diffraction region, then splits". With the segment extended, the
+    // 0th order continues from the same point along `dir` with no
+    // visible offset.
+    //
+    // Resolution order for the pivot:
     //   1. kindParams.braggInteractionPointMmBodyLocal (asymmetric AOM
-    //      override; body-local mm)
+    //      override, body-local mm)
     //   2. midpoint of the asset's intercept_in / intercept_out anchors
-    //   3. fallback: hitPoint (the previous behaviour)
-    // Result is identical for every order, so they pivot about a common
-    // body-fixed point and the (D1, D2) sideband plane stays
-    // perpendicular to D3 = D1 × D2 even when the beam is offset on the
-    // input face.
+    //   3. fallback: hitPoint (no extension; preserves prior behaviour
+    //      when the asset is missing the port anchors)
     const braggInteractionPointThree: THREE.Vector3 = (() => {
       if (!obj) return hitPoint.clone();
       let pivotBody: { x: number; y: number; z: number } | null = null;
@@ -1314,6 +1320,25 @@ function traceOneRay(
         obj.zMm + offsetLab.z,
       ]);
     })();
+
+    // Extend the just-pushed input segment to terminate at the Bragg
+    // interaction point. This keeps the 0th order visually continuous
+    // with the input (no apparent offset where the beam crosses the AOM
+    // body) and makes the fan visually pivot at the same world point the
+    // pivot maths uses. Skip when no extension was resolved (fallback
+    // path).
+    let extendedPathMm = newPathMm;
+    if (!braggInteractionPointThree.equals(hitPoint)) {
+      const extendedSeg = segments[segments.length - 1];
+      const newEndThree = braggInteractionPointThree.clone();
+      const extendedLengthThree = origin.distanceTo(newEndThree);
+      const extendedSegLengthMm = extendedLengthThree * 100;
+      const extendedEndUm = (pathLengthSoFarMm + extendedSegLengthMm) * 1000;
+      extendedSeg.endThree = newEndThree;
+      extendedSeg.lengthMm = extendedSegLengthMm;
+      extendedSeg.waistAtEndUm = gaussianWaistAtZ(extendedEndUm, mode);
+      extendedPathMm = pathLengthSoFarMm + extendedSegLengthMm;
+    }
 
     for (const plan of plans) {
       if (!plan.alwaysShow && plan.fraction < sidebandThreshold) continue;
@@ -1359,7 +1384,7 @@ function traceOneRay(
           maxLengthMm,
           maxBounces,
           mode,
-          newPathMm,
+          extendedPathMm,
           sourceComponentId,
           powerFactor * plan.fraction,
           polarization,
