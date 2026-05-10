@@ -2,6 +2,8 @@
 
 > **Status (2026-05-10):** §3 (V2 finalized) is the source of truth. §1 and §2 are kept as design history; both are superseded by §3.
 
+> **Implementation progress:** V2 baseline (alembic 0027) + per-kind cutovers for `mirror`, `laser_source`, `waveplate`, `polarizer`, `lens_biconvex` / `lens_plano_convex`, `beam_splitter` / `pbs`, `aom`, `isolator` are **landed and live in production** (alembic 0028–0034). DB stores V2-native; the API GET layer synthesises legacy `kindParams` from bindings via translators in `backend/app/v2_bindings.py` so the existing frontend keeps working unchanged. Final translator removal + native-V2 frontend remain. See `../../Learning.md` § "V2 cutover progress" for the per-phase commit log.
+
 This file holds the **target / planning** schema for QMsimulation's optical data model. It documents the next iteration of how `assets_3d.anchors[]`, `objects.properties.anchorBindings[]`, `objects.properties.opticalSources[]`, `optical_elements.kind_params`, `optical_links`, and solver outputs should be organised.
 
 For the **current** code state (existing tables, kinds, physics formulas), see [../../Learning.md](../../Learning.md). For the project snapshot, see [vibe coding.md](vibe%20coding.md).
