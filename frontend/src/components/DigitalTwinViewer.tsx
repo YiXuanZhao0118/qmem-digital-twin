@@ -241,26 +241,59 @@ function replaceMeshMaterial(mesh: THREE.Mesh, material: THREE.Material): void {
   disposeMaterial(previous);
 }
 
+/** Switch the viewer's component meshes between rendered + wireframe modes.
+ *
+ *  Wireframe mode swaps every Mesh's material for an unlit MeshBasicMaterial
+ *  with `wireframe: true`. The original material is stashed on
+ *  `mesh.userData.__rendered{Material,CastShadow,ReceiveShadow}` BEFORE
+ *  the swap so we can hand it back when the user flips back to "rendered".
+ *  Without that cache, switching back left the wireframe material in place
+ *  (the original was disposed inside replaceMeshMaterial) — see the
+ *  "wireframe sticks" bug.
+ *
+ *  Re-runs of this function (e.g. wrapper cache hit + decoration rebuild)
+ *  are idempotent: switching wireframe→wireframe doesn't re-stash, and
+ *  switching rendered→rendered is a no-op.
+ */
 function applyViewerDisplayMode(object: THREE.Object3D, mode: ViewerDisplayMode): void {
-  if (mode === "rendered") return;
-
   object.traverse((child) => {
     if (!(child instanceof THREE.Mesh)) return;
 
-    const side = materialSide(child.material);
-    replaceMeshMaterial(
-      child,
-      new THREE.MeshBasicMaterial({
+    const cached = child.userData.__renderedMaterial as THREE.Material | THREE.Material[] | undefined;
+    const isCurrentlyWireframe = cached !== undefined;
+
+    if (mode === "wireframe") {
+      if (isCurrentlyWireframe) return;
+      // Stash originals; do NOT dispose — they have to survive the swap
+      // so we can restore them on the way back.
+      child.userData.__renderedMaterial = child.material;
+      child.userData.__renderedCastShadow = child.castShadow;
+      child.userData.__renderedReceiveShadow = child.receiveShadow;
+      const side = materialSide(child.material);
+      child.material = new THREE.MeshBasicMaterial({
         color: "#c9f1e8",
         wireframe: true,
         transparent: true,
         opacity: 0.84,
         depthWrite: false,
         side,
-      }),
-    );
-    child.castShadow = false;
-    child.receiveShadow = false;
+      });
+      child.castShadow = false;
+      child.receiveShadow = false;
+      return;
+    }
+
+    // mode === "rendered"
+    if (!isCurrentlyWireframe) return;
+    // The current material is the wireframe MeshBasicMaterial we made
+    // above; dispose it before swapping the cached original back in.
+    disposeMaterial(child.material);
+    child.material = cached;
+    child.castShadow = (child.userData.__renderedCastShadow as boolean | undefined) ?? true;
+    child.receiveShadow = (child.userData.__renderedReceiveShadow as boolean | undefined) ?? true;
+    delete child.userData.__renderedMaterial;
+    delete child.userData.__renderedCastShadow;
+    delete child.userData.__renderedReceiveShadow;
   });
 }
 
