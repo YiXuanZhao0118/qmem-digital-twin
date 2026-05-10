@@ -67,9 +67,6 @@ export function OpticalElementPanel({ component, sceneObject }: Props) {
   const mappedKind = componentTypeToOpticalKind(component.componentType);
 
   const [kind, setKind] = useState<ElementKind>((existing?.elementKind as ElementKind) ?? "laser_source");
-  const [paramsText, setParamsText] = useState<string>(() =>
-    JSON.stringify(existing?.kindParams ?? DEFAULT_KIND_PARAMS[kind], null, 2),
-  );
   const [waveLow, setWaveLow] = useState<number>(existing?.wavelengthRangeNm?.[0] ?? 400);
   const [waveHigh, setWaveHigh] = useState<number>(existing?.wavelengthRangeNm?.[1] ?? 1100);
   const [error, setError] = useState<string>("");
@@ -79,7 +76,6 @@ export function OpticalElementPanel({ component, sceneObject }: Props) {
   useEffect(() => {
     if (existing) {
       setKind(existing.elementKind as ElementKind);
-      setParamsText(JSON.stringify(existing.kindParams, null, 2));
       setWaveLow(existing.wavelengthRangeNm?.[0] ?? 400);
       setWaveHigh(existing.wavelengthRangeNm?.[1] ?? 1100);
     }
@@ -87,26 +83,20 @@ export function OpticalElementPanel({ component, sceneObject }: Props) {
 
   const ports = (existing?.inputPorts ?? []).concat(existing?.outputPorts ?? []);
 
-  const onLoadDefaults = () => {
-    setParamsText(JSON.stringify(DEFAULT_KIND_PARAMS[kind], null, 2));
-    setError("");
-  };
-
   const onKindChange = (next: ElementKind) => {
     setKind(next);
-    setParamsText(JSON.stringify(DEFAULT_KIND_PARAMS[next], null, 2));
     setError("");
   };
 
+  // Update / Create no longer takes a JSON kindParams payload — the
+  // structured per-kind editors below (LaserSourceControls,
+  // MirrorAdjustControls, WaveplateAdjustControls, AomAdjustControls,
+  // TaperedAmplifierAdjustControls) own per-field persistence. The
+  // top-level button just saves wavelength range + kind, preserving
+  // existing kindParams (or seeding them from DEFAULT_KIND_PARAMS on
+  // first create).
   const onSave = async () => {
     setError("");
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(paramsText);
-    } catch (e) {
-      setError(`JSON parse error: ${(e as Error).message}`);
-      return;
-    }
     if (waveLow <= 0 || waveHigh <= waveLow) {
       setError("Invalid wavelength range (need 0 < low < high).");
       return;
@@ -121,7 +111,7 @@ export function OpticalElementPanel({ component, sceneObject }: Props) {
         objectId: sceneObject.id,
         elementKind: kind,
         wavelengthRangeNm: [waveLow, waveHigh],
-        kindParams: parsed,
+        kindParams: existing?.kindParams ?? DEFAULT_KIND_PARAMS[kind] ?? {},
       });
     } catch (e) {
       setError((e as Error).message);
@@ -221,21 +211,10 @@ export function OpticalElementPanel({ component, sceneObject }: Props) {
           </div>
         </div>
 
-        <div className="optical-row">
-          <div className="optical-row-header">
-            <span>Kind params (JSON)</span>
-            <button type="button" className="link-btn" onClick={onLoadDefaults}>
-              Load default
-            </button>
-          </div>
-          <textarea
-            value={paramsText}
-            onChange={(e) => setParamsText(e.target.value)}
-            spellCheck={false}
-            rows={Math.min(20, paramsText.split("\n").length + 1)}
-            className="optical-params-editor"
-          />
-        </div>
+        {/* Kind params JSON editor removed — structured per-kind editors
+            below (LaserSourceControls, MirrorAdjustControls,
+            WaveplateAdjustControls, AomAdjustControls,
+            TaperedAmplifierAdjustControls) own field-level edits. */}
 
         {error ? <div className="optical-error">{error}</div> : null}
 
