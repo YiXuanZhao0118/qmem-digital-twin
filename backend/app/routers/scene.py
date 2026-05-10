@@ -26,6 +26,7 @@ from sqlalchemy.orm import selectinload
 from app.routers.collections import canonical_collection_members, get_master_collection
 from app.v2_bindings import (
     get_optical_source,
+    legacy_aom_kind_params_from_binding,
     legacy_beam_splitter_kind_params_from_bindings,
     legacy_laser_kind_params_from_beam,
     legacy_polarizer_kind_params_from_binding,
@@ -90,6 +91,10 @@ async def get_scene(session: AsyncSession = Depends(get_session)) -> schemas.Sce
             )
             if patch:
                 payload["kindParams"] = {**existing, **patch}
+        elif el.element_kind == "aom":
+            patch = legacy_aom_kind_params_from_binding(scene_object)
+            if patch:
+                payload["kindParams"] = {**(payload.get("kindParams") or {}), **patch}
     beam_segments = list((await session.scalars(select(BeamSegment))).all())
     scene_views = list(
         (

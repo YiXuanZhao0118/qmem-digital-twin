@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy.orm.attributes import flag_modified
+
 from app.models import Asset3D, Component, SceneObject
 from app.uuid7 import uuid7_str
 
@@ -28,6 +30,7 @@ OPTICAL_ANCHOR_ID = "optical_anchor"
 OPTICAL_SURFACE_BINDING_KIND = "opticalSurface"
 EMISSION_REFERENCE_BINDING_KIND = "emissionReference"
 POLARIZATION_REFERENCE_BINDING_KIND = "polarizationReference"
+RF_DIRECTION_BINDING_KIND = "rfDirection"
 
 # V2 Phase 4: kindParams keys we strip on PUT for waveplate / polarizer.
 # Mirrors V2_TRACKED_LASER_KEYS.
@@ -37,6 +40,10 @@ V2_TRACKED_POLARIZER_KEYS = ("transmissionAxisDegBeamLocal",)
 # V2 Phase 6: beam_splitter coating normal moves to opticalSurface; the PBS
 # transmission axis moves to polarizationReference (only when polarizing).
 V2_TRACKED_BEAM_SPLITTER_KEYS = ("coatingNormalBodyLocal", "transmissionAxisDegBeamLocal")
+
+# V2 Phase 7: AOM RF / acoustic direction moves to a rfDirection binding.
+# The duplicate `acousticAxisBodyLocal` legacy field is also stripped.
+V2_TRACKED_AOM_KEYS = ("rfPropagationDirectionBodyLocal", "acousticAxisBodyLocal")
 
 # Legacy laser kindParams keys that V2 Phase 3 migrates into
 # `objects.properties.opticalSources[].beam`. Solver / UI code must NOT read
@@ -522,6 +529,7 @@ def _upsert_polarization_binding(
         ))
     properties["anchorBindings"] = new_bindings
     scene_object.properties = properties
+    flag_modified(scene_object, "properties")
 
 
 def write_waveplate_axis_deg_beam_local(scene_object: SceneObject, axis_deg: float) -> None:
@@ -604,6 +612,7 @@ def write_beam_splitter_coating_normal(
         })
     properties["anchorBindings"] = new_bindings
     scene_object.properties = properties
+    flag_modified(scene_object, "properties")
 
 
 async def bootstrap_beam_splitter_default_bindings(
@@ -655,7 +664,122 @@ async def bootstrap_beam_splitter_default_bindings(
     if added:
         properties["anchorBindings"] = bindings
         scene_object.properties = properties
+        flag_modified(scene_object, "properties")
     return added
+
+
+def get_aom_rf_direction_body_local(
+    scene_object: SceneObject | dict[str, Any] | None,
+) -> list[float] | None:
+    """V2 Phase 7 read of AOM RF / acoustic direction from rfDirection binding."""
+    if scene_object is None:
+        return None
+    if isinstance(scene_object, dict):
+        properties = scene_object.get("properties") or {}
+    else:
+        properties = scene_object.properties or {}
+    bindings = properties.get("anchorBindings") or []
+    for b in bindings:
+        if (
+            isinstance(b, dict)
+            and b.get("kind") == RF_DIRECTION_BINDING_KIND
+            and isinstance(b.get("payload"), dict)
+        ):
+            raw = b["payload"].get("directionBodyLocal")
+            if isinstance(raw, list) and len(raw) >= 3:
+                try:
+                    return [float(raw[0]), float(raw[1]), float(raw[2])]
+                except (TypeError, ValueError):
+                    continue
+    return None
+
+
+def legacy_aom_kind_params_from_binding(
+    scene_object: SceneObject | dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Synthesise the legacy AOM RF / acoustic direction kindParams from
+    the V2 rfDirection binding. Defaults to [-1, 0, 0] (MT80 convention)
+    when no binding exists."""
+    direction = get_aom_rf_direction_body_local(scene_object) or [-1.0, 0.0, 0.0]
+    return {
+        "rfPropagationDirectionBodyLocal": direction,
+        # The acoustic_axis_body_local field aliased the same vector in V1;
+        # keep it populated for any reader that still consults it.
+        "acousticAxisBodyLocal": direction,
+    }
+
+
+def write_aom_rf_direction_body_local(
+    scene_object: SceneObject, direction_body_local: list[float]
+) -> None:
+    """Overwrite-or-append the rfDirection binding payload."""
+    properties = dict(scene_object.properties or {})
+    bindings = list(properties.get("anchorBindings") or [])
+    new_bindings: list[Any] = []
+    replaced = False
+    for b in bindings:
+        if (
+            isinstance(b, dict)
+            and b.get("kind") == RF_DIRECTION_BINDING_KIND
+            and not replaced
+        ):
+            payload = dict(b.get("payload") or {})
+            payload["directionBodyLocal"] = list(direction_body_local)
+            new_bindings.append({**b, "payload": payload})
+            replaced = True
+        else:
+            new_bindings.append(b)
+    if not replaced:
+        anchor_id = pick_optical_surface_anchor_id(
+            getattr(scene_object, "_pickable_anchors", None) or []
+        ) or "optical_anchor"
+        new_bindings.append({
+            "id": uuid7_str(),
+            "name": "RF / acoustic propagation",
+            "anchorId": anchor_id,
+            "kind": RF_DIRECTION_BINDING_KIND,
+            "frame": "anchorLocalXY",
+            "payload": {"directionBodyLocal": list(direction_body_local)},
+        })
+    properties["anchorBindings"] = new_bindings
+    scene_object.properties = properties
+    flag_modified(scene_object, "properties")
+    # SA does not detect JSONB attribute reassignment via plain dict equality
+    # comparison without a MutableDict wrapper. Explicitly flag the column as
+    # modified so commit() flushes the change.
+    flag_modified(scene_object, "properties")
+
+
+async def bootstrap_aom_default_binding(
+    scene_object: SceneObject,
+    asset: Asset3D | None,
+    *,
+    default_direction: list[float] | None = None,
+) -> bool:
+    """Default rfDirection = [-1, 0, 0] (MT80 convention: body -X is
+    transducer → absorber)."""
+    if asset is None:
+        return False
+    if any(
+        isinstance(b, dict) and b.get("kind") == RF_DIRECTION_BINDING_KIND
+        for b in (scene_object.properties or {}).get("anchorBindings", [])
+    ):
+        return False
+    anchor_id = pick_optical_surface_anchor_id(asset.anchors or [])
+    if anchor_id is None:
+        return False
+    direction = default_direction if default_direction is not None else [-1.0, 0.0, 0.0]
+    binding = {
+        "id": uuid7_str(),
+        "name": "RF / acoustic propagation",
+        "anchorId": anchor_id,
+        "kind": RF_DIRECTION_BINDING_KIND,
+        "frame": "anchorLocalXY",
+        "payload": {"directionBodyLocal": list(direction)},
+    }
+    scene_object.properties = append_binding(scene_object.properties, binding)
+    flag_modified(scene_object, "properties")
+    return True
 
 
 async def bootstrap_polarization_axis_binding(
@@ -679,6 +803,7 @@ async def bootstrap_polarization_axis_binding(
         anchor_id=anchor_id, role=role, axis_deg=default_axis_deg, name=name,
     )
     scene_object.properties = append_binding(scene_object.properties, binding)
+    flag_modified(scene_object, "properties")
     return True
 
 
@@ -733,6 +858,7 @@ async def bootstrap_laser_default_binding_and_source(
     properties["opticalSources"] = sources
 
     scene_object.properties = properties
+    flag_modified(scene_object, "properties")
     return True
 
 
@@ -761,4 +887,5 @@ async def bootstrap_mirror_default_binding(
         normal_body_local=[1.0, 0.0, 0.0],
     )
     scene_object.properties = append_binding(scene_object.properties, binding)
+    flag_modified(scene_object, "properties")
     return True

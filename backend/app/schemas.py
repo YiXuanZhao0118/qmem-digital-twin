@@ -1143,17 +1143,15 @@ class AOMParams(CamelModel):
     acoustic_beam_width_mm: float | None = Field(default=None, ge=0)
     rf_drive_power_w: float | None = Field(default=None, ge=0)
     rf_power_max_w: float | None = Field(default=None, ge=0)
-    # Body-local Z-up direction of the acoustic wave. For the MT80 GLB
-    # convention, body -X is transducer -> absorber. Used by the ray-tracer
-    # to define the diffraction plane
-    # (deflection axis = dir × acoustic_axis).
-    # Phase 5: renamed from `acoustic_axis_local` to spell out frame.
-    acoustic_axis_body_local: list[float] | None = None
-    # Body-local Z-up acoustic k-vector launched by the RF transducer.
-    # Flipping this direction swaps the physical side where +1 and -1
-    # appear. Legacy rows may omit it and fall back to acoustic_axis.
-    # Phase 5: renamed from `rf_propagation_direction_local`.
-    rf_propagation_direction_body_local: list[float] | None = None
+    # V2 Phase 7 (alembic 0033): the RF / acoustic propagation direction
+    # moved from `rf_propagation_direction_body_local` (and the duplicate
+    # `acoustic_axis_body_local` that aliased the same vector) to a
+    # `rfDirection` anchor binding on the SceneObject. Solver / UI reads
+    # come back through the route layer's translator (synthesises the
+    # legacy field from the binding); writes go through
+    # write_aom_rf_direction_body_local. The field stays here as a
+    # silently-dropped V1 input compatibility shim — the validator below
+    # discards them so V1 client uploads still parse.
     # Visual/ray-trace Bragg angular rolloff. This is intentionally a
     # forgiving alignment tolerance for interactive scene setup.
     bragg_angular_acceptance_mrad: float | None = Field(default=None, gt=0)
@@ -1194,12 +1192,23 @@ class AOMParams(CamelModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _accept_legacy_field_names(cls, data: Any) -> Any:
+    def _drop_v2_tracked_and_accept_legacy(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data = dict(data)
+            # V2 Phase 7: silently drop the migrated direction fields.
+            for key in (
+                "rfPropagationDirectionBodyLocal",
+                "rf_propagation_direction_body_local",
+                "rfPropagationDirectionLocal",
+                "rf_propagation_direction_local",
+                "acousticAxisBodyLocal",
+                "acoustic_axis_body_local",
+                "acousticAxisLocal",
+                "acoustic_axis_local",
+            ):
+                data.pop(key, None)
+        # Pre-Phase-5 alias for the lab-frame Bragg tilt axis still applies.
         return _accept_legacy_keys(data, (
-            ("acousticAxisLocal", "acousticAxisBodyLocal"),
-            ("acoustic_axis_local", "acoustic_axis_body_local"),
-            ("rfPropagationDirectionLocal", "rfPropagationDirectionBodyLocal"),
-            ("rf_propagation_direction_local", "rf_propagation_direction_body_local"),
             ("braggTiltAxisAngleDeg", "braggTiltAxisDegLab"),
             ("bragg_tilt_axis_angle_deg", "bragg_tilt_axis_deg_lab"),
         ))

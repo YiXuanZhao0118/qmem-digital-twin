@@ -8,18 +8,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import crud, schemas
 from app.db import get_session
+from sqlalchemy.orm.attributes import flag_modified
+
 from app.models import OpticalElement, SceneObject
 from app.v2_bindings import (
+    V2_TRACKED_AOM_KEYS,
     V2_TRACKED_BEAM_SPLITTER_KEYS,
     V2_TRACKED_LASER_KEYS,
     V2_TRACKED_POLARIZER_KEYS,
     V2_TRACKED_WAVEPLATE_KEYS,
     beam_from_legacy_laser_kind_params,
     get_optical_source,
+    legacy_aom_kind_params_from_binding,
     legacy_beam_splitter_kind_params_from_bindings,
     legacy_laser_kind_params_from_beam,
     legacy_polarizer_kind_params_from_binding,
     legacy_waveplate_kind_params_from_binding,
+    write_aom_rf_direction_body_local,
     write_beam_splitter_coating_normal,
     write_polarizer_axis_deg_beam_local,
     write_waveplate_axis_deg_beam_local,
@@ -51,7 +56,7 @@ async def _serialize_optical_elements(
     v2_object_ids = [
         el.object_id
         for el in elements
-        if el.element_kind in ("laser_source", "waveplate", "polarizer", "beam_splitter")
+        if el.element_kind in ("laser_source", "waveplate", "polarizer", "beam_splitter", "aom")
     ]
     if not v2_object_ids:
         return payloads
@@ -89,6 +94,10 @@ async def _serialize_optical_elements(
             )
             if patch:
                 payload["kindParams"] = {**existing, **patch}
+        elif el.element_kind == "aom":
+            patch = legacy_aom_kind_params_from_binding(scene_object)
+            if patch:
+                payload["kindParams"] = {**(payload.get("kindParams") or {}), **patch}
     return payloads
 
 
@@ -194,6 +203,25 @@ async def update_optical_element(
             scene_object = await session.get(SceneObject, object_id)
             if scene_object is not None:
                 write_polarizer_axis_deg_beam_local(scene_object, axis)
+    if element.element_kind == "aom" and isinstance(raw_kind_params, dict):
+        # Either V1 field (rfPropagationDirectionBodyLocal or its alias
+        # acousticAxisBodyLocal) routes to the same rfDirection binding.
+        raw_dir = (
+            raw_kind_params.get("rfPropagationDirectionBodyLocal")
+            or raw_kind_params.get("acousticAxisBodyLocal")
+        )
+        if raw_dir is not None:
+            try:
+                direction = [
+                    float(raw_dir[0]),
+                    float(raw_dir[1]),
+                    float(raw_dir[2]),
+                ]
+                scene_object = await session.get(SceneObject, object_id)
+                if scene_object is not None:
+                    write_aom_rf_direction_body_local(scene_object, direction)
+            except (TypeError, ValueError, IndexError):
+                pass
     if element.element_kind == "beam_splitter" and isinstance(raw_kind_params, dict):
         if "coatingNormalBodyLocal" in raw_kind_params:
             raw_normal = raw_kind_params.get("coatingNormalBodyLocal")
@@ -244,6 +272,7 @@ async def update_optical_element(
                     sources.append({"id": "tmp", "bindingId": "tmp", "enabled": True, "beam": new_beam})
                     properties["opticalSources"] = sources
                     scene_object.properties = properties
+                    flag_modified(scene_object, "properties")
                 else:
                     # Merge legacy fields onto the existing beam by round-tripping
                     # through the inverse translator on the merged set.
@@ -267,6 +296,7 @@ async def update_optical_element(
                         new_sources.append({**source, "beam": new_beam})
                     properties["opticalSources"] = new_sources
                     scene_object.properties = properties
+                    flag_modified(scene_object, "properties")
 
     await session.commit()
     await session.refresh(element)

@@ -18,6 +18,7 @@ from app.models import (
     SceneObject,
 )
 from app.v2_bindings import (
+    bootstrap_aom_default_binding,
     bootstrap_beam_splitter_default_bindings,
     bootstrap_laser_default_binding_and_source,
     bootstrap_mirror_default_binding,
@@ -236,12 +237,9 @@ DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
         "acousticBeamWidthMm": 1.5,       # W
         "rfDrivePowerW": 1.0,             # P_d (live control)
         "rfPowerMaxW": 2.0,
-        # Acoustic-wave direction in BODY local (scene axes). For the MT80
-        # GLB convention used here, body +Y is the port-to-port optical axis,
-        # body -X is transducer -> absorber, and body +/-Z is perpendicular
-        # to the AOM outline drawing.
-        "acousticAxisBodyLocal": [-1.0, 0.0, 0.0],
-        "rfPropagationDirectionBodyLocal": [-1.0, 0.0, 0.0],
+        # V2 Phase 7 (alembic 0033): RF / acoustic direction moved to
+        # objects.properties.anchorBindings[rfDirection]. Bootstrap default
+        # is [-1, 0, 0] (MT80 convention).
         "braggAngularAcceptanceMrad": 2.0,
         # User-selected output order. +1 / −1 rotate the diffracted ray
         # by ±2·θ_B and carry η of the incident power; 0 means "RF off"
@@ -466,6 +464,13 @@ async def auto_create_optical_element_for_object(
         await bootstrap_beam_splitter_default_bindings(
             scene_object, asset, polarizing=polarizing,
         )
+
+    # V2 Phase 7 (alembic 0033): AOM RF / acoustic propagation direction
+    # lives on objects.properties.anchorBindings[rfDirection]. Default
+    # = [-1, 0, 0] (MT80 convention: body -X is transducer → absorber).
+    if kind == "aom" and component.asset_3d_id is not None:
+        asset = await session.get(Asset3D, component.asset_3d_id)
+        await bootstrap_aom_default_binding(scene_object, asset)
 
     return optical_element
 
