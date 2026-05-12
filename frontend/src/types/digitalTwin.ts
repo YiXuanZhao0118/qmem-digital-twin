@@ -1014,6 +1014,63 @@ export type CircuitUpdatePayload = {
   sceneObjectId?: string | null;
 };
 
+// ---- EM (Phase C, alembic 0038) --------------------------------------------
+
+export type Mesh = {
+  id: string;
+  name: string;
+  meshFormat: "gmsh" | "vtk";
+  sourceAsset3dId: string | null;
+  filePath: string;
+  elementCount: number | null;
+  maxSizeMm: number | null;
+  fileSizeBytes: number;
+  createdAt: string;
+};
+
+export type EmPort = {
+  id: string;
+  name: string;
+  anchorBindingId: string | null;
+  impedanceOhm: number;
+  mode: "te" | "tm" | "tem";
+};
+
+export type EmFreqSweep = {
+  startGhz: number;
+  stopGhz: number;
+  points: number;
+  scale: "linear" | "log";
+};
+
+export type EmBoundaryConditions = {
+  pecAnchorBindingIds: string[];
+  absorbingAnchorBindingIds: string[];
+};
+
+export type EmProblem = {
+  id: string;
+  name: string;
+  sceneObjectId: string | null;
+  meshId: string | null;
+  ports: EmPort[];
+  boundaryConditions: EmBoundaryConditions;
+  freqRangeGhz: EmFreqSweep | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EmProblemCreatePayload = {
+  name: string;
+  sceneObjectId?: string | null;
+  meshId?: string | null;
+  ports?: EmPort[];
+  boundaryConditions?: EmBoundaryConditions;
+  freqRangeGhz?: EmFreqSweep | null;
+};
+
+export type EmProblemUpdatePayload = Partial<EmProblemCreatePayload>;
+
 // ---- Touchstone (Phase B.7) -------------------------------------------------
 
 export type TouchstoneNetwork = {

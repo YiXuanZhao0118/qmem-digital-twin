@@ -34,7 +34,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import AsyncSessionLocal
 from app.models import SimulationRun
 from app.schemas import SimulationModule
-from app.solvers import optics_seq, spice
+from app.config import settings
+from app.solvers import em_fem, optics_seq, spice
 
 
 logger = logging.getLogger(__name__)
@@ -45,10 +46,12 @@ logger = logging.getLogger(__name__)
 SolverCallable = Callable[[AsyncSession, SimulationRun], Awaitable[None]]
 
 
-# Per-module solver coroutine. Phase A: optics_seq. Phase B adds spice.
+# Per-module solver coroutine. Phase A: optics_seq. Phase B: spice.
+# Phase C.5: em_fem (mock palace until C.4 workstation comes online).
 MODULE_DISPATCH: dict[SimulationModule, SolverCallable] = {
     "optics_seq": optics_seq.run,
     "spice": spice.run,
+    "em_fem": em_fem.run,
 }
 
 
@@ -69,6 +72,44 @@ MODULE_DEFAULT_RUNNER: dict[SimulationModule, str] = {
 
 class SolverRunner(Protocol):
     async def submit(self, sim_run: SimulationRun) -> None: ...
+
+
+class SshWorkstationRunner:
+    """Phase C.3 stub for the lab-workstation SSH dispatch path.
+
+    The actual SSH client + workstation-side runner agent land in
+    Phase C.4 (Windows + WSL2 + ``docker pull awslabs/palace:latest`` on
+    the workstation). Until then this class exists so MODULE_DEFAULT_RUNNER
+    can reference 'ssh_workstation' without crashing — but ``submit``
+    raises NotImplementedError to surface the missing piece clearly if
+    something tries to dispatch a real job before workstation setup.
+    """
+
+    def __init__(
+        self,
+        host: str | None,
+        key_path: str | None,
+        palace_image: str,
+    ) -> None:
+        self.host = host
+        self.key_path = key_path
+        self.palace_image = palace_image
+
+    async def submit(self, sim_run: SimulationRun) -> None:
+        if not self.host:
+            raise NotImplementedError(
+                "SshWorkstationRunner: settings.workstation_host is unset. "
+                "Configure WORKSTATION_HOST + WORKSTATION_KEY_PATH and stand "
+                "up the workstation runner agent (Phase C.4) before dispatching "
+                "ssh_workstation runs."
+            )
+        # Phase C.4 will replace this with: open asyncssh client, scp the
+        # job spec + mesh, exec `docker run awslabs/palace:latest`,
+        # poll a status file, scp results back, parse, fill sim_run.
+        raise NotImplementedError(
+            f"SshWorkstationRunner: workstation runner agent on {self.host!r} "
+            "not yet implemented (Phase C.4)."
+        )
 
 
 class InProcessRunner:
@@ -131,7 +172,12 @@ async def _run_in_background(run_id: uuid.UUID, module: SimulationModule) -> Non
                 logger.exception("InProcessRunner: failed to commit error state for run %s", run_id)
 
 
-# Phase A registry: only inproc. Phase B/C extend this dict.
+# Phase A: inproc. Phase C.3: ssh_workstation stub (real wiring in C.4).
 RUNNERS: dict[str, SolverRunner] = {
     "inproc": InProcessRunner(),
+    "ssh_workstation": SshWorkstationRunner(
+        host=settings.workstation_host,
+        key_path=settings.workstation_key_path,
+        palace_image=settings.workstation_palace_image,
+    ),
 }

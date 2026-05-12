@@ -19,6 +19,7 @@ import { SolverConsole } from "./components/workspace/SolverConsole";
 import { TopBar } from "./components/workspace/TopBar";
 import { WorkspaceProvider } from "./components/workspace/WorkspaceProvider";
 import { ElectronicsWorkspace } from "./modules/electronics/ElectronicsWorkspace";
+import { EmWorkspace } from "./modules/em/EmWorkspace";
 import { getModule } from "./modules/_registry";
 import { ModulePlaceholder } from "./modules/ModulePlaceholder";
 import { useSceneStore } from "./store/sceneStore";
@@ -209,13 +210,14 @@ export default function App() {
   // Multiphysics: top-level module switcher.
   //   optics_seq -> existing 3D scene + optics panels (Phase A).
   //   spice      -> ElectronicsWorkspace netlist+results (Phase B).
-  //   anything else (optics_fdtd / em_fem reserved) -> placeholder.
-  // SolverConsole is mounted across optics_seq + spice so the user can
-  // see runs from the previous module after switching.
+  //   em_fem     -> EmWorkspace ports/freq/results (Phase C).
+  //   optics_fdtd reserved -> placeholder.
+  // SolverConsole is mounted across all available modules.
   const moduleDef = getModule(currentModule);
   const isOptics = currentModule === "optics_seq";
   const isElectronics = currentModule === "spice";
-  const showSolverConsole = isOptics || isElectronics;
+  const isEm = currentModule === "em_fem";
+  const showSolverConsole = isOptics || isElectronics || isEm;
 
   return (
     <WorkspaceProvider>
@@ -242,7 +244,8 @@ export default function App() {
             </>
           )}
           {isElectronics && <ElectronicsWorkspace />}
-          {!isOptics && !isElectronics && <ModulePlaceholder module={moduleDef} />}
+          {isEm && <EmWorkspace />}
+          {!isOptics && !isElectronics && !isEm && <ModulePlaceholder module={moduleDef} />}
           {showSolverConsole && <SolverConsole />}
         </div>
       </main>

@@ -7,6 +7,10 @@ import type {
   Circuit,
   CircuitCreatePayload,
   CircuitUpdatePayload,
+  EmProblem,
+  EmProblemCreatePayload,
+  EmProblemUpdatePayload,
+  Mesh,
   Collection,
   CollectionMember,
   ComponentItem,
@@ -703,6 +707,51 @@ export async function deleteCircuitApi(id: string): Promise<void> {
 }
 
 // ---- Touchstone (Phase B.7) -------------------------------------------------
+
+// ---- EM (Phase C) -----------------------------------------------------------
+
+export async function fetchEmProblemsApi(limit = 100): Promise<EmProblem[]> {
+  const response = await client.get<EmProblem[]>("/api/em-problems", { params: { limit } });
+  return response.data;
+}
+
+export async function createEmProblemApi(
+  payload: EmProblemCreatePayload,
+): Promise<EmProblem> {
+  const response = await client.post<EmProblem>("/api/em-problems", payload);
+  return response.data;
+}
+
+export async function updateEmProblemApi(
+  id: string,
+  patch: EmProblemUpdatePayload,
+): Promise<EmProblem> {
+  const response = await client.patch<EmProblem>(`/api/em-problems/${id}`, patch);
+  return response.data;
+}
+
+export async function deleteEmProblemApi(id: string): Promise<void> {
+  await client.delete(`/api/em-problems/${id}`);
+}
+
+export async function fetchMeshesApi(limit = 100): Promise<Mesh[]> {
+  const response = await client.get<Mesh[]>("/api/meshes", { params: { limit } });
+  return response.data;
+}
+
+export async function uploadMeshApi(file: File, name?: string): Promise<Mesh> {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  if (name) form.append("name", name);
+  const response = await client.post<Mesh>("/api/meshes", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return response.data;
+}
+
+export async function deleteMeshApi(id: string): Promise<void> {
+  await client.delete(`/api/meshes/${id}`);
+}
 
 export async function parseTouchstoneApi(file: File): Promise<TouchstoneNetwork> {
   const form = new FormData();

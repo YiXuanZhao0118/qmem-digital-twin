@@ -49,10 +49,10 @@ describe("modules/_registry", () => {
     expect(getModule("em_fem").displayName).toBe("EM");
   });
 
-  it("Phase A only ships optics as available; B/C/D coming_soon", () => {
+  it("Phase A+B+C all ship as available; only optics_fdtd reserved", () => {
     expect(getModule("optics_seq").status).toBe("available");
-    expect(getModule("spice").status).toBe("coming_soon");
-    expect(getModule("em_fem").status).toBe("coming_soon");
+    expect(getModule("spice").status).toBe("available");
+    expect(getModule("em_fem").status).toBe("available");
   });
 
   it("phase tags match the documented rollout", () => {

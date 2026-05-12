@@ -7,6 +7,7 @@ import {
   createAssemblyRelationApi,
   createCollectionApi,
   createCircuitApi,
+  createEmProblemApi,
   createObjectApi,
   createOpticalElementApi,
   createOpticalLinkApi,
@@ -21,8 +22,12 @@ import {
   deleteOpticalLinkApi,
   deleteSceneViewApi,
   deleteCircuitApi,
+  deleteEmProblemApi,
+  deleteMeshApi,
   duplicateSceneViewApi,
   fetchCircuitsApi,
+  fetchEmProblemsApi,
+  fetchMeshesApi,
   fetchScene,
   fetchSimulationRunApi,
   fetchSimulationRunsApi,
@@ -40,11 +45,13 @@ import {
   updateCircuitApi,
   updateCollectionApi,
   updateComponentApi,
+  updateEmProblemApi,
   updateObjectApi,
   updateOpticalElementApi,
   updateOpticalLinkApi,
   updateSceneViewApi,
   uploadComponentAssetApi,
+  uploadMeshApi,
 } from "../api/client";
 import type {
   CollectionCreatePayload,
@@ -76,6 +83,10 @@ import type {
   Circuit,
   CircuitCreatePayload,
   CircuitUpdatePayload,
+  EmProblem,
+  EmProblemCreatePayload,
+  EmProblemUpdatePayload,
+  Mesh,
   SimulationModule,
   SimulationRunCreatePayload,
   SimulationRunV2,
@@ -395,6 +406,10 @@ type SceneStore = {
   /** Currently selected circuit in the Electronics workspace (drives
    *  netlist editor, drives Run button payload). */
   selectedCircuitId: string | null;
+  /** Phase C EM: list of saved EM problems + uploaded meshes. */
+  emProblems: EmProblem[];
+  selectedEmProblemId: string | null;
+  meshes: Mesh[];
   /** Currently active PHY editor view inside the sub-page. `null` =
    *  editor "home" (left rail visible, right pane shows a hint asking
    *  the user to pick a sub-editor). */
@@ -417,6 +432,14 @@ type SceneStore = {
   updateCircuit: (id: string, patch: CircuitUpdatePayload) => Promise<Circuit>;
   deleteCircuit: (id: string) => Promise<void>;
   setSelectedCircuit: (id: string | null) => void;
+  loadEmProblems: () => Promise<void>;
+  createEmProblem: (payload: EmProblemCreatePayload) => Promise<EmProblem>;
+  updateEmProblem: (id: string, patch: EmProblemUpdatePayload) => Promise<EmProblem>;
+  deleteEmProblem: (id: string) => Promise<void>;
+  setSelectedEmProblem: (id: string | null) => void;
+  loadMeshes: () => Promise<void>;
+  uploadMesh: (file: File, name?: string) => Promise<Mesh>;
+  deleteMesh: (id: string) => Promise<void>;
   setEditingAssetId: (assetId: string | null) => void;
   setPhyEditorDirty: (dirty: boolean) => void;
   /** Open the PHY editor sub-page (no specific view selected; user
@@ -945,6 +968,9 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   recentSimulationRuns: [],
   circuits: [],
   selectedCircuitId: null,
+  emProblems: [],
+  selectedEmProblemId: null,
+  meshes: [],
   phyEditorView: null,
   editingAssetId: null,
   phyEditorDirty: false,
@@ -2501,6 +2527,61 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
 
   setSelectedCircuit(id) {
     set({ selectedCircuitId: id });
+  },
+
+  async loadEmProblems() {
+    const ems = await fetchEmProblemsApi(100);
+    set((state) => {
+      const next = state.selectedEmProblemId ?? ems[0]?.id ?? null;
+      return { emProblems: ems, selectedEmProblemId: next };
+    });
+  },
+
+  async createEmProblem(payload) {
+    const em = await createEmProblemApi(payload);
+    set((state) => ({
+      emProblems: [em, ...state.emProblems.filter((e) => e.id !== em.id)],
+      selectedEmProblemId: em.id,
+    }));
+    return em;
+  },
+
+  async updateEmProblem(id, patch) {
+    const updated = await updateEmProblemApi(id, patch);
+    set((state) => ({
+      emProblems: state.emProblems.map((e) => (e.id === id ? updated : e)),
+    }));
+    return updated;
+  },
+
+  async deleteEmProblem(id) {
+    await deleteEmProblemApi(id);
+    set((state) => {
+      const remaining = state.emProblems.filter((e) => e.id !== id);
+      const next =
+        state.selectedEmProblemId === id ? remaining[0]?.id ?? null : state.selectedEmProblemId;
+      return { emProblems: remaining, selectedEmProblemId: next };
+    });
+  },
+
+  setSelectedEmProblem(id) {
+    set({ selectedEmProblemId: id });
+  },
+
+  async loadMeshes() {
+    const meshes = await fetchMeshesApi(100);
+    set({ meshes });
+  },
+
+  async uploadMesh(file, name) {
+    const mesh = await uploadMeshApi(file, name);
+    set((state) => ({ meshes: [mesh, ...state.meshes.filter((m) => m.id !== mesh.id)] }));
+    return mesh;
+  },
+
+  async deleteMesh(id) {
+    await deleteMeshApi(id);
+    set((state) => ({ meshes: state.meshes.filter((m) => m.id !== id) }));
   },
 
   setEditingAssetId(assetId) {

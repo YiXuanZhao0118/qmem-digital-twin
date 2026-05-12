@@ -58,7 +58,7 @@ export const MODULES: ModuleDef[] = [
     displayName: "EM",
     description:
       "palace FEM solver for RF / microwave structures (antenna, waveguide, cavity). Mesh from STEP/STL via Gmsh; runs on the lab workstation over SSH.",
-    status: "coming_soon",
+    status: "available",
     phase: "C",
     phaseLabel: "Phase C",
   },

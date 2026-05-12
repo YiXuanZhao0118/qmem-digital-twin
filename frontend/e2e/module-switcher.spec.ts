@@ -25,14 +25,14 @@ test.describe("Module switcher", () => {
     await expect(tabs.nth(2)).toContainText("EM");
   });
 
-  test("Optics + Electronics are available; EM is coming-soon", async ({ page }) => {
+  test("Optics + Electronics + EM are all available (Phase A+B+C done)", async ({ page }) => {
     await expect(page.getByRole("tab", { name: /^Optics$/ })).toHaveAttribute(
       "aria-selected",
       "true",
     );
     await expect(page.getByRole("tab", { name: /^Optics$/ })).not.toHaveClass(/coming-soon/);
     await expect(page.getByRole("tab", { name: /^Electronics/ })).not.toHaveClass(/coming-soon/);
-    await expect(page.getByRole("tab", { name: /EM/ })).toHaveClass(/coming-soon/);
+    await expect(page.getByRole("tab", { name: /^EM$/ })).not.toHaveClass(/coming-soon/);
   });
 
   test("Optics workspace shows SolverConsole + 3D viewer", async ({ page }) => {
@@ -48,20 +48,24 @@ test.describe("Module switcher", () => {
     // To Electronics: workspace replaces 3D viewer; SolverConsole stays.
     await page.getByRole("tab", { name: /^Electronics/ }).click();
     await expect(page.locator(".electronics-workspace")).toBeVisible();
-    await expect(page.locator(".electronics-sidebar")).toBeVisible();
+    await expect(page.locator(".electronics-sidebar").first()).toBeVisible();
     await expect(page.locator(".electronics-editor")).toBeVisible();
     await expect(page.locator(".electronics-results")).toBeVisible();
     await expect(page.locator(".solver-console")).toBeVisible(); // shared
     await expect(page.locator(".workspace-canvas > .viewer-shell, .workspace-canvas > .dual-viewer-split")).toHaveCount(0);
     await expect(page.locator(".module-placeholder")).toHaveCount(0);
 
-    // To EM: still placeholder; SolverConsole hides.
-    await page.getByRole("tab", { name: /EM/ }).click();
-    await expect(page.locator(".module-placeholder")).toBeVisible();
-    await expect(page.locator(".module-placeholder-title")).toHaveText("EM");
-    await expect(page.locator(".module-placeholder-phase")).toHaveText("Phase C");
-    await expect(page.locator(".solver-console")).toHaveCount(0);
-    await expect(page.locator(".electronics-workspace")).toHaveCount(0);
+    // To EM: EmWorkspace mounts (also reuses .electronics-workspace shell).
+    // Distinguish from Electronics by the EM-specific port table presence
+    // (only EM editor renders that) — but to keep this test cheap we
+    // check the EM problems sidebar header text.
+    await page.getByRole("tab", { name: /^EM$/ }).click();
+    await expect(page.locator(".electronics-workspace")).toBeVisible();
+    await expect(
+      page.locator(".electronics-sidebar .electronics-sidebar-title").first(),
+    ).toContainText(/EM problems/i);
+    await expect(page.locator(".solver-console")).toBeVisible(); // shared across all 3
+    await expect(page.locator(".module-placeholder")).toHaveCount(0);
 
     // Back to Optics: viewer + SolverConsole reappear.
     await page.getByRole("tab", { name: /^Optics$/ }).click();

@@ -86,8 +86,10 @@
 **Target:** EM tab 從 placeholder 變成可用,user 在 3D scene 選 chassis/cavity/antenna → assign port + frequency sweep → 跑 palace FEM on lab workstation → 看 S-parameter (reuse Phase B uPlot) + |E| field overlay。
 
 **Estimate:** 6–10 週(全職)
-**Started:** 2026-05-12(plan 拍板,實作待前置條件)
-**Done:** —
+**Started:** 2026-05-12
+**Mock-mode done:** 2026-05-12(同日完成 — UI 流程 + mock palace 全綠)
+**Real palace done:** — 等 C.4 workstation 上線
+**C.8 vtk.js field viewer:** 等 C.4 真 palace 輸出再做(mock 不產 field)
 
 ### 前置條件(必須先解)
 
@@ -106,14 +108,14 @@
 | C.0 | PROGRESS.md kickoff | ✅ | df8c8a8 | Phase C 規劃拍板 + 5 open questions |
 | C.1 | Backend: `em_problems` + `meshes` schema + alembic 0038 | ✅ | (this commit) | alembic 0038:meshes (id / source_asset_3d_id FK SET NULL / name / mesh_format ENUM 'gmsh'\|'vtk' / file_path / element_count / max_size_mm / file_size_bytes);em_problems (id / scene_object_id FK / mesh_id FK / name / ports JSONB / boundary_conditions JSONB / freq_range_ghz JSONB)。Indexed source_asset_3d_id, scene_object_id, created_at/updated_at desc。 |
 | C.2 | Backend: Pydantic + CRUD routers `/api/em-problems` `/api/meshes` | ✅ | (this commit) | `MeshOut` + `EmPort` / `EmFreqSweep` / `EmBoundaryConditions` / `EmProblemBase` / `Create` / `Update` / `Out` Pydantic。`routers/em_problems.py` 5 endpoints (GET list w/ scene_object_id filter / GET id / POST / PATCH / DELETE)。`routers/meshes.py` 4 endpoints (GET list / GET id / POST upload / DELETE)。Live curl verified:upload toy `.msh` → row created with elementCount parsed from Gmsh header,POST em-problem with nested ports + freq sweep round-trips 對。258 backend pytest 仍 pass。 |
-| C.3 | Backend: `SshWorkstationRunner` (asyncssh) | 📋 | — | `solvers/runner.py` 加 class;`settings.workstation_host` `workstation_key_path` config;submit = ssh + spawn,status = poll job state file。Phase C.3 stub-only safe-default,實際 SSH 等 C.4 workstation 上 |
+| C.3 | Backend: `SshWorkstationRunner` (asyncssh) | ✅ | (this commit) | Stub class in `solvers/runner.py`;config knobs `workstation_host` / `workstation_key_path` / `workstation_palace_image`;`submit` raises `NotImplementedError` with explicit message until Phase C.4 wires the real SSH client + workstation runner agent。Registered in RUNNERS dict so MODULE_DEFAULT_RUNNER references don't crash。 |
 | C.4 | Workstation setup:palace + Gmsh + runner agent | 🔒 | — | Windows + WSL2;`docker pull awslabs/palace:latest`;Gmsh binary in WSL;Python runner script (~100 lines);test `ssh QM "docker run --rm awslabs/palace:latest --help"` |
-| C.5 | Backend: `solvers/em_fem.py` adapter | 📋 | — | params {emProblemId} → load EmProblem + Mesh → write palace JSON config → SshWorkstationRunner.submit → wait + parse results;Phase C.5 mock-mode 同 InProcessRunner 跑 fake Touchstone output for UI dev |
+| C.5 | Backend: `solvers/em_fem.py` adapter | ✅ | (this commit) | `solvers/em_fem.py` async run() loads EmProblem by params.emProblemId,builds frequency axis (linear / log10 from start_ghz/stop_ghz/points/scale),generates synthetic Lorentzian S-matrix (n_ports × n_ports complex,reflection dip + transmission peak at sweep midpoint),fills sim_run.result_summary with same shape as Phase B.7 Touchstone output (freqHz + sParams dict)。Registered to MODULE_DISPATCH。Live e2e:POST `{module:'em_fem', params:{emProblemId}}` → 51-pt 1-10 GHz Lorentzian (\|S11\| 0.491→0.100→0.491 dip,\|S21\| 0.177→0.900→0.177 peak)。Phase C.4+ will swap this to SshWorkstationRunner with no API change。 |
 | C.6 | Mesh ingest:Gmsh wrap STEP/STL → `.msh` upload to backend | ✅ | (this commit) | Phase C MVP 接受 user 已產好的 `.msh` upload via `POST /api/meshes` multipart (100 MB cap from `settings.mesh_max_bytes`);file 存 disk under `settings.mesh_storage_dir = REPO_ROOT/.meshes/`(.gitignored);ASCII Gmsh `$Elements` header parser 抓 element_count。Phase C+ 自動 Gmsh CLI 從 STEP/STL 留 future。 |
-| C.7 | Frontend `EmWorkspace.tsx` 取代 placeholder | 📋 | — | `modules/em/EmWorkspace.tsx`:scene picker (從 SceneObject) + port assignment UI (anchorBindings.kind='emPort') + freq sweep params + Run |
-| C.8 | Frontend field viewer:vtk.js 載 palace `.pvtu` output | 📋 | — | `npm install vtk.js`;render |E| heatmap on mesh surface |
-| C.9 | Frontend S-parameter chart (reuse Phase B Touchstone path) | 📋 | — | palace 輸出 Touchstone-format .s2p → reuse SmithChart + magnitude plot from Phase B.7 |
-| C.10 | Playwright e2e:assign port → run FEM → field appears | 📋 | — | Mock palace output (skip workstation in CI);only smoke-test UI flow |
+| C.7 | Frontend `EmWorkspace.tsx` 取代 placeholder | ✅ | (this commit) | `modules/em/EmWorkspace.tsx` 用同 ElectronicsWorkspace 三欄殼:左 EM problems list + Mesh upload、中 EmProblemEditor (name input + Mesh picker dropdown + Frequency sweep (start/stop/points/scale) + Ports table (id/name/Z₀/mode/remove) + Add port button)、右 RunResultPreview (status pill + meta + NetworkAnalysisChart)。`modules/_registry.ts` em_fem → 'available'。App.tsx route module=em_fem → EmWorkspace。新 sceneStore state (emProblems/selectedEmProblemId/meshes) + actions (loadEmProblems / createEmProblem / updateEmProblem / deleteEmProblem / loadMeshes / uploadMesh / deleteMesh)。新 API helpers (createEmProblemApi / fetchEmProblemsApi / fetchMeshesApi / uploadMeshApi 等)。Live e2e verified browser:click EM tab → New → 2 default ports + 1-10 GHz sweep → Run → 4 秒 status='completed' + Smith chart + magnitude plot 全渲染。 |
+| C.8 | Frontend field viewer:vtk.js 載 palace `.pvtu` output | 🔒 | — | 等 C.4 真實 palace 輸出才有意義;mock 不產 .pvtu。Phase C.4 之後補。 |
+| C.9 | Frontend S-parameter chart (reuse Phase B Touchstone path) | ✅ | (this commit) | 抽 `modules/em/NetworkAnalysisChart.tsx` 共用 SmithChart + magnitude (dB) plot — 由 Phase B.7 NetworkAnalysisPanel 跟 Phase C.7 EmWorkspace 共用。Touchstone .s2p upload 跟 palace mock 走同一 view。 |
+| C.10 | Playwright e2e:assign port → run FEM → field appears | ✅ | (this commit) | 新 `frontend/e2e/em-workspace.spec.ts` 2 tests:workspace 結構 (sidebar + editor + results pane + mesh upload widget) + New+Run round-trip (create EM problem → click Run → status 'completed' within 15s → Smith chart + magnitude plot 出現 + SolverConsole recent runs 含 em_fem)。Pre-existing module-switcher.spec.ts + registry vitest 同步 update (EM 從 coming-soon → available;round-trip test EM 改用 EmWorkspace 結構斷言而非 placeholder)。**全套 9/9 playwright + 5/5 vitest pass**。 |
 
 ### Phase C 完成判準
 
