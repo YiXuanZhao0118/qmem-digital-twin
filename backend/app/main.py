@@ -24,6 +24,7 @@ from app.routers import (
     simulation_runs,
     simulations,
     timing_programs,
+    touchstone,
 )
 from app.routers.collections import get_master_collection
 from app.websocket import router as websocket_router
@@ -54,6 +55,7 @@ app.include_router(optical_links.router, prefix="/api/optical-links", tags=["opt
 app.include_router(simulations.router, prefix="/api/simulations", tags=["simulations"])
 app.include_router(simulation_runs.router, prefix="/api/simulation-runs", tags=["simulation_runs"])
 app.include_router(circuits.router, prefix="/api/circuits", tags=["circuits"])
+app.include_router(touchstone.router, prefix="/api/touchstone", tags=["touchstone"])
 app.include_router(revisions.router, prefix="/api/revisions", tags=["revisions"])
 app.include_router(scene_views.router, prefix="/api/scene-views", tags=["scene_views"])
 app.include_router(collections.router, prefix="/api/collections", tags=["collections"])

@@ -16,6 +16,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { useSceneStore } from "../../store/sceneStore";
 import { NetlistEditor } from "./NetlistEditor";
+import { NetworkAnalysisPanel } from "./NetworkAnalysisPanel";
 import { WaveformChart } from "./WaveformChart";
 
 const STARTER_NETLIST = `* New circuit — replace with your own
@@ -247,6 +248,7 @@ export function ElectronicsWorkspace() {
             No run for this circuit yet — click <strong>Run</strong>.
           </div>
         )}
+        <NetworkAnalysisPanel />
       </aside>
     </div>
   );

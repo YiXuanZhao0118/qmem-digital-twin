@@ -5901,3 +5901,107 @@ body.is-timing-bar-drag * {
   color: rgba(15, 23, 42, 0.5);
   font-style: italic;
 }
+
+/* ---- Network analysis panel (Phase B.7) ---- */
+
+.network-analysis-panel {
+  border-top: 1px solid rgba(15, 23, 42, 0.12);
+  background: rgba(15, 23, 42, 0.02);
+}
+
+.network-analysis-body {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.network-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 4px;
+  font-size: 11px;
+  color: rgba(15, 23, 42, 0.8);
+}
+
+.network-meta strong {
+  color: rgba(15, 23, 42, 0.95);
+}
+
+.smith-chart-block {
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 4px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.smith-chart-svg {
+  width: 100%;
+  max-width: 320px;
+  height: auto;
+  display: block;
+}
+
+.smith-chart-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 10px;
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: rgba(15, 23, 42, 0.75);
+}
+
+.smith-chart-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.smith-chart-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.magnitude-plot-block {
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 4px;
+  padding: 4px 4px 0 4px;
+}
+
+.magnitude-plot-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(15, 23, 42, 0.55);
+  padding: 4px 6px 2px 6px;
+}
+
+.magnitude-plot-canvas {
+  width: 100%;
+  height: 180px;
+}
+
+.magnitude-plot-canvas .u-axis text {
+  fill: rgba(15, 23, 42, 0.65);
+  font-size: 10px;
+}
+
+.magnitude-plot-canvas .u-legend {
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}

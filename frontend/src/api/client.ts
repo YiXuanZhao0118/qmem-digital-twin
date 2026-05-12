@@ -23,6 +23,7 @@ import type {
   SimulationRunCreatePayload,
   SimulationRunV2,
   TimingProgram,
+  TouchstoneNetwork,
   TimingProgramUpsert,
   TransientRunRequest,
   TransientRunResponse,
@@ -699,4 +700,17 @@ export async function updateCircuitApi(
 
 export async function deleteCircuitApi(id: string): Promise<void> {
   await client.delete(`/api/circuits/${id}`);
+}
+
+// ---- Touchstone (Phase B.7) -------------------------------------------------
+
+export async function parseTouchstoneApi(file: File): Promise<TouchstoneNetwork> {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  const response = await client.post<TouchstoneNetwork>(
+    "/api/touchstone/parse",
+    form,
+    { headers: { "Content-Type": "multipart/form-data" } },
+  );
+  return response.data;
 }

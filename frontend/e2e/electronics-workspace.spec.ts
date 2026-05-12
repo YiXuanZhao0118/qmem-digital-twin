@@ -76,10 +76,13 @@ test.describe("Electronics workspace", () => {
     await expect(page.locator(".electronics-btn.primary")).toContainText(/Run/);
     await expect(page.locator(".electronics-netlist-host .monaco-editor")).toBeVisible();
 
-    // Right pane: "Latest run" header.
-    await expect(page.locator(".electronics-results .electronics-sidebar-title")).toContainText(
-      "Latest run",
-    );
+    // Right pane: "Latest run" header (first one — second is the
+    // Network analysis panel below it from Phase B.7).
+    await expect(
+      page.locator(".electronics-results .electronics-sidebar-title").first(),
+    ).toContainText("Latest run");
+    // The Network analysis panel header sits below.
+    await expect(page.locator(".network-analysis-panel")).toBeVisible();
   });
 
   test("Run button dispatches a spice run and shows a waveform chart", async ({ page }) => {
@@ -110,5 +113,31 @@ test.describe("Electronics workspace", () => {
     await expect(
       page.locator(".solver-console-run-row", { hasText: "spice" }).first(),
     ).toBeVisible();
+  });
+
+  test("Touchstone upload renders Smith chart + magnitude plot", async ({ page }) => {
+    // Upload a small synthetic .s2p via the hidden file input.
+    const s2p = `! Test 2-port
+# HZ S MA R 50
+1.0e9   0.5  0    0.9  0     0.9  0     0.5  0
+2.0e9   0.4  10   0.8  20    0.8  -20   0.4  -10
+3.0e9   0.3  20   0.7  40    0.7  -40   0.3  -20
+`;
+    await page.locator('.network-analysis-panel input[type="file"]').setInputFiles({
+      name: "e2e.s2p",
+      mimeType: "application/octet-stream",
+      buffer: Buffer.from(s2p),
+    });
+
+    // Smith chart appears with S11 + S22 legend.
+    await expect(page.locator(".smith-chart-svg")).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator(".smith-chart-legend li")).toHaveCount(2);
+
+    // Magnitude plot canvas mounts.
+    await expect(page.locator(".magnitude-plot-canvas canvas").first()).toBeVisible();
+
+    // Network metadata shows port count + Z0.
+    await expect(page.locator(".network-meta")).toContainText("2-port");
+    await expect(page.locator(".network-meta")).toContainText("e2e.s2p");
   });
 });

@@ -1014,6 +1014,18 @@ export type CircuitUpdatePayload = {
   sceneObjectId?: string | null;
 };
 
+// ---- Touchstone (Phase B.7) -------------------------------------------------
+
+export type TouchstoneNetwork = {
+  filename: string;
+  nPorts: number;
+  z0: number;
+  freqHz: number[];
+  /** Keys are 'sNM' (1-indexed). Values are [re, im] pairs aligned with
+   *  freqHz. */
+  sParams: Record<string, [number, number][]>;
+};
+
 export type RevisionV2 = {
   id: string;
   label: string;
