@@ -950,9 +950,12 @@ export type SimulationRunStatus =
   | "cancelled";
 
 // Module discriminator (mirrors backend app.schemas.SimulationModule).
-// Phase A only ships optics_seq; the other three values are reserved.
+// "optics_seq" is the integrated Lab workspace (kept under the legacy
+// id so existing simulation_runs rows round-trip). "optics_cavity" is
+// the pure cavity calculator; optics_fdtd is reserved.
 export type SimulationModule =
   | "optics_seq"
+  | "optics_cavity"
   | "optics_fdtd"
   | "spice"
   | "em_fem"

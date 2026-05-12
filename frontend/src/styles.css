@@ -6853,3 +6853,293 @@ body.is-timing-bar-drag * {
   margin: 4px 0 0;
   line-height: 1.5;
 }
+
+/* Optics-cavity workspace — Phase Optics-Cavity */
+.cavity-workspace {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 280px minmax(320px, 1fr) minmax(420px, 1.4fr);
+  gap: 14px;
+  padding: 18px;
+  background: linear-gradient(180deg, #0c1117 0%, #131a23 100%);
+  color: rgba(241, 245, 249, 0.92);
+  overflow: auto;
+}
+
+.cavity-sidebar,
+.cavity-mirrors,
+.cavity-result {
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  padding: 14px 14px 16px;
+  overflow: auto;
+}
+
+.cavity-sidebar h3,
+.cavity-mirrors h3,
+.cavity-result h3 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(148, 163, 184, 0.85);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cavity-sidebar h3:not(:first-child) {
+  margin-top: 14px;
+}
+
+.cavity-presets {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cavity-presets button {
+  width: 100%;
+  text-align: left;
+  background: rgba(30, 64, 175, 0.18);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  color: rgba(241, 245, 249, 0.92);
+  border-radius: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+}
+
+.cavity-presets button:hover {
+  background: rgba(30, 64, 175, 0.32);
+  border-color: rgba(59, 130, 246, 0.55);
+}
+
+.cavity-presets strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.cavity-presets span {
+  font-size: 10.5px;
+  color: rgba(203, 213, 225, 0.7);
+  line-height: 1.35;
+}
+
+.cavity-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+
+.cavity-field span {
+  color: rgba(148, 163, 184, 0.85);
+}
+
+.cavity-field input,
+.cavity-field select {
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: rgba(241, 245, 249, 0.95);
+  border-radius: 4px;
+  padding: 5px 7px;
+  font-size: 11.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.cavity-field input:focus,
+.cavity-field select:focus {
+  outline: none;
+  border-color: rgba(59, 130, 246, 0.7);
+}
+
+.cavity-mirrors header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cavity-add-mirror {
+  appearance: none;
+  background: rgba(34, 197, 94, 0.18);
+  border: 1px solid rgba(34, 197, 94, 0.4);
+  color: rgba(220, 252, 231, 0.95);
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 10.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.cavity-add-mirror:hover {
+  background: rgba(34, 197, 94, 0.32);
+}
+
+.cavity-mirrors table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.cavity-mirrors thead th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(148, 163, 184, 0.7);
+  padding: 6px 4px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.cavity-mirrors tbody td {
+  padding: 4px 4px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+}
+
+.cavity-mirrors input {
+  width: 100%;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  color: rgba(241, 245, 249, 0.95);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.cavity-row-idx {
+  color: rgba(148, 163, 184, 0.7);
+  width: 24px;
+  text-align: right;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.cavity-row-del {
+  appearance: none;
+  background: transparent;
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  color: rgba(254, 202, 202, 0.95);
+  border-radius: 4px;
+  padding: 3px 5px;
+  cursor: pointer;
+}
+
+.cavity-row-del:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.cavity-row-del:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.2);
+}
+
+.cavity-result header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cavity-pill {
+  font-size: 10.5px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.cavity-pill.stable {
+  background: rgba(34, 197, 94, 0.22);
+  color: rgba(220, 252, 231, 0.95);
+  border: 1px solid rgba(34, 197, 94, 0.45);
+}
+
+.cavity-pill.unstable {
+  background: rgba(248, 113, 113, 0.22);
+  color: rgba(254, 202, 202, 0.95);
+  border: 1px solid rgba(248, 113, 113, 0.45);
+}
+
+.cavity-busy {
+  font-size: 10.5px;
+  color: rgba(148, 163, 184, 0.7);
+  font-style: italic;
+}
+
+.cavity-error {
+  background: rgba(248, 113, 113, 0.18);
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  color: rgba(254, 226, 226, 0.95);
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  margin-bottom: 10px;
+}
+
+.cavity-warnings {
+  list-style: none;
+  margin: 8px 0 12px;
+  padding: 6px 8px;
+  background: rgba(234, 179, 8, 0.12);
+  border: 1px solid rgba(234, 179, 8, 0.35);
+  border-radius: 4px;
+  font-size: 10.5px;
+  color: rgba(254, 240, 138, 0.95);
+}
+
+.cavity-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px 12px;
+  margin: 10px 0 14px;
+}
+
+.cavity-metrics > div {
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 5px;
+  padding: 6px 10px;
+}
+
+.cavity-metrics dt {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(148, 163, 184, 0.75);
+  margin: 0 0 3px;
+}
+
+.cavity-metrics dd {
+  margin: 0;
+  font-size: 13.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: rgba(254, 240, 138, 0.95);
+  font-weight: 600;
+}
+
+.cavity-sub {
+  font-size: 10.5px;
+  font-weight: 400;
+  color: rgba(148, 163, 184, 0.85);
+}
+
+.cavity-chart {
+  width: 100%;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 6px;
+  padding: 6px 10px 12px;
+  margin-top: 6px;
+}

@@ -37,12 +37,21 @@ export type ModuleDef = {
 export const MODULES: ModuleDef[] = [
   {
     id: "optics_seq",
-    displayName: "Optics",
+    displayName: "Lab",
     description:
-      "Sequential ray-trace + Jones-matrix polarization solver. Build the optical chain in the 3D scene, run beams, inspect per-segment power and polarization.",
+      "Integrated 3D lab workspace — every device, beam path, fiber route, magnetics overlay, and PulseBlaster channel binding lives here. Other modules surface their inputs/results back into this scene via Linked Schematics.",
     status: "available",
     phase: "A",
-    phaseLabel: "Phase A",
+    phaseLabel: "Integrated",
+  },
+  {
+    id: "optics_cavity",
+    displayName: "Optics",
+    description:
+      "Pure optical-cavity simulator: linear / ring Fabry-Perot, FSR + Finesse + linewidth, Airy transmission spectrum, and stability g-parameter. Build a cavity from mirror reflectivities and a length, or pull mirrors from the Lab scene.",
+    status: "available",
+    phase: "A",
+    phaseLabel: "Optics calc",
   },
   {
     id: "spice",

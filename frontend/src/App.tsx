@@ -22,6 +22,7 @@ import { WorkspaceProvider } from "./components/workspace/WorkspaceProvider";
 import { ElectronicsWorkspace } from "./modules/electronics/ElectronicsWorkspace";
 import { EmWorkspace } from "./modules/em/EmWorkspace";
 import { MagneticsPanel } from "./modules/magnetics/MagneticsPanel";
+import { OpticsCavityWorkspace } from "./modules/optics_cavity/OpticsCavityWorkspace";
 import { PulseBlasterPanel } from "./modules/pulse_blaster/PulseBlasterPanel";
 import { getModule } from "./modules/_registry";
 import { ModulePlaceholder } from "./modules/ModulePlaceholder";
@@ -220,6 +221,7 @@ export default function App() {
   // SolverConsole is mounted across all available modules.
   const moduleDef = getModule(currentModule);
   const isOptics = currentModule === "optics_seq";
+  const isCavity = currentModule === "optics_cavity";
   const isElectronics = currentModule === "spice";
   const isEm = currentModule === "em_fem";
   const showSolverConsole = isOptics || isElectronics || isEm;
@@ -251,9 +253,12 @@ export default function App() {
               <CursorMenu />
             </>
           )}
+          {isCavity && <OpticsCavityWorkspace />}
           {isElectronics && <ElectronicsWorkspace />}
           {isEm && <EmWorkspace />}
-          {!isOptics && !isElectronics && !isEm && <ModulePlaceholder module={moduleDef} />}
+          {!isOptics && !isCavity && !isElectronics && !isEm && (
+            <ModulePlaceholder module={moduleDef} />
+          )}
           {showSolverConsole && <SolverConsole />}
         </div>
       </main>

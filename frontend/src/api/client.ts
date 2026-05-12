@@ -884,6 +884,59 @@ export async function compilePulseBlasterApi(): Promise<PulseBlasterCompile> {
   return response.data;
 }
 
+// ---- Optics cavity calculator --------------------------------------------
+
+export type CavityKind = "linear" | "ring_tri" | "ring_bow";
+
+export type CavityMirrorIn = {
+  reflectivity: number;
+  radiusCurvatureMm?: number | null;
+};
+
+export type CavityComputeRequest = {
+  kind: CavityKind;
+  lengthMm: number;
+  wavelengthNm: number;
+  mirrors: CavityMirrorIn[];
+  intracavityLoss?: number;
+  refractiveIndex?: number;
+  spectrumSpanFsr?: number;
+  spectrumPoints?: number;
+};
+
+export type CavityComputeResult = {
+  fsrHz: number;
+  fsrMhz: number;
+  roundTripLengthMm: number;
+  finesse: number;
+  linewidthHz: number;
+  linewidthMhz: number;
+  linewidthPm: number;
+  qualityFactor: number;
+  photonLifetimeNs: number;
+  resonanceWavelengthNm: number;
+  resonanceFrequencyThz: number;
+  rtReflectivity: number;
+  /** Two-mirror linear cavity only. null otherwise. */
+  g1g2: number | null;
+  stable: boolean | null;
+  waistUm: number | null;
+  spectrumFreqOffsetMhz: number[];
+  spectrumTransmission: number[];
+  spectrumReflection: number[];
+  warnings: string[];
+};
+
+export async function computeCavityApi(
+  payload: CavityComputeRequest,
+): Promise<CavityComputeResult> {
+  const response = await client.post<CavityComputeResult>(
+    "/api/optics-cavity/compute",
+    payload,
+  );
+  return response.data;
+}
+
 export async function parseTouchstoneApi(file: File): Promise<TouchstoneNetwork> {
   const form = new FormData();
   form.append("file", file, file.name);

@@ -2038,11 +2038,20 @@ class V2BeamState(CamelModel):
 # 'cancelled' (user aborted before completion).
 SimulationRunStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
 
-# Multi-physics module discriminator. Phase A: optics_seq.
+# Multi-physics module discriminator.
+#
+# Lab (formerly "optics_seq"): the integrated 3D workspace that hosts
+# every physical device, ray-traces beams, and surfaces every other
+# module's results in-context. Stays under the "optics_seq" id for
+# backwards compatibility with existing simulation_runs rows.
+#
+# optics_cavity: pure optical-cavity simulator (FSR / Finesse / Airy
+# transmission / stability) — separate workspace, no 3D scene.
 # Phase B: spice. Phase C: em_fem. Phase F+: magnetics_dc.
 # optics_fdtd reserved for future Phase D.
 SimulationModule = Literal[
     "optics_seq",
+    "optics_cavity",
     "optics_fdtd",
     "spice",
     "em_fem",

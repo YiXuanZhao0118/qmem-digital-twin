@@ -23,6 +23,7 @@ from app.routers import (
     objects,
     optical_elements,
     optical_links,
+    optics_cavity,
     revisions,
     scene,
     scene_views,
@@ -66,6 +67,7 @@ app.include_router(em_problems.router, prefix="/api/em-problems", tags=["em_prob
 app.include_router(coils.router, prefix="/api/coils", tags=["coils"])
 app.include_router(magnetics_problems.router, prefix="/api/magnetics-problems", tags=["magnetics_problems"])
 app.include_router(pulse_blaster.router, prefix="/api/pulse-blaster", tags=["pulse_blaster"])
+app.include_router(optics_cavity.router, prefix="/api/optics-cavity", tags=["optics_cavity"])
 app.include_router(revisions.router, prefix="/api/revisions", tags=["revisions"])
 app.include_router(scene_views.router, prefix="/api/scene-views", tags=["scene_views"])
 app.include_router(collections.router, prefix="/api/collections", tags=["collections"])
