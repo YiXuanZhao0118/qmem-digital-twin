@@ -6,5 +6,11 @@ export default defineConfig({
   server: {
     port: 5173,
   },
+  // Dedupe react/react-dom so @monaco-editor/react (Phase B.5) doesn't
+  // pick up its own copy via transitive deps — duplicate React instances
+  // trigger "Invalid hook call" inside Monaco's wrapper component.
+  resolve: {
+    dedupe: ["react", "react-dom"],
+  },
 });
 

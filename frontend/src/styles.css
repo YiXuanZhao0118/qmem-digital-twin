@@ -5720,20 +5720,15 @@ body.is-timing-bar-drag * {
   cursor: not-allowed;
 }
 
-.electronics-netlist {
+.electronics-netlist-host {
   flex: 1 1 auto;
   min-height: 0;
-  border: 0;
-  outline: 0;
-  resize: none;
-  padding: 12px 14px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12.5px;
-  line-height: 1.5;
   background: #ffffff;
-  color: rgba(15, 23, 42, 0.95);
-  white-space: pre;
-  tab-size: 4;
+  position: relative;
+}
+
+.electronics-netlist-host > section {
+  height: 100%;
 }
 
 .electronics-no-selection {

@@ -13,9 +13,11 @@
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
     "@vitejs/plugin-react": "^4.3.3",
     "axios": "^1.7.7",
     "lucide-react": "^0.468.0",
+    "monaco-editor": "^0.55.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "three": "^0.170.0",

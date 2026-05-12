@@ -15,6 +15,7 @@ import { Play, Plus, Save, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { useSceneStore } from "../../store/sceneStore";
+import { NetlistEditor } from "./NetlistEditor";
 import { WaveformChart } from "./WaveformChart";
 
 const STARTER_NETLIST = `* New circuit — replace with your own
@@ -223,13 +224,9 @@ export function ElectronicsWorkspace() {
                 <Trash2 size={14} />
               </button>
             </header>
-            <textarea
-              className="electronics-netlist"
-              value={draftNetlist}
-              onChange={(e) => setDraftNetlist(e.target.value)}
-              spellCheck={false}
-              placeholder="* SPICE netlist — V/R/L/C/etc + .control directives"
-            />
+            <div className="electronics-netlist-host">
+              <NetlistEditor value={draftNetlist} onChange={setDraftNetlist} />
+            </div>
           </>
         ) : (
           <div className="electronics-no-selection">
