@@ -21,6 +21,7 @@ import {
   type CavityKind,
   type CavityMirrorIn,
 } from "../../api/client";
+import { useSceneStore } from "../../store/sceneStore";
 import { AiryChart } from "./AiryChart";
 
 type Preset = {
@@ -125,6 +126,7 @@ export function OpticsCavityWorkspace() {
   const [result, setResult] = useState<CavityComputeResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const dispatchSimulationRun = useSceneStore((s) => s.dispatchSimulationRun);
 
   const runCompute = async (current: Draft) => {
     setBusy(true);
@@ -136,6 +138,21 @@ export function OpticsCavityWorkspace() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
+    }
+  };
+
+  // Run button: keep the live inline result, but ALSO dispatch a real
+  // SimulationRun so the configuration shows up in SolverConsole and the
+  // user can come back to it later (Phase Optics-Cavity).
+  const runAndPersist = async () => {
+    await runCompute(draft);
+    try {
+      await dispatchSimulationRun({
+        module: "optics_cavity",
+        params: draft as unknown as Record<string, unknown>,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -330,9 +347,9 @@ export function OpticsCavityWorkspace() {
           <button
             type="button"
             className="electronics-btn primary"
-            onClick={() => void runCompute(draft)}
+            onClick={() => void runAndPersist()}
             disabled={busy}
-            title="Recompute now (results also auto-refresh on input changes)"
+            title="Run + save this configuration to SolverConsole"
             style={{ marginLeft: "auto" }}
           >
             <Play size={11} /> {busy ? "Computing…" : "Run"}

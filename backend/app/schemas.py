@@ -2052,6 +2052,7 @@ SimulationRunStatus = Literal["queued", "running", "completed", "failed", "cance
 SimulationModule = Literal[
     "optics_seq",
     "optics_cavity",
+    "optics_crystal",
     "optics_fdtd",
     "spice",
     "em_fem",

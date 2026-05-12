@@ -35,7 +35,14 @@ from app.db import AsyncSessionLocal
 from app.models import SimulationRun
 from app.schemas import SimulationModule
 from app.config import settings
-from app.solvers import em_fem, magnetics_dc, optics_seq, spice
+from app.solvers import (
+    em_fem,
+    magnetics_dc,
+    optics_cavity,
+    optics_crystal,
+    optics_seq,
+    spice,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -50,6 +57,8 @@ SolverCallable = Callable[[AsyncSession, SimulationRun], Awaitable[None]]
 # Phase C.5: em_fem (mock palace until C.4 workstation comes online).
 MODULE_DISPATCH: dict[SimulationModule, SolverCallable] = {
     "optics_seq": optics_seq.run,
+    "optics_cavity": optics_cavity.run,
+    "optics_crystal": optics_crystal.run,
     "spice": spice.run,
     "em_fem": em_fem.run,
     "magnetics_dc": magnetics_dc.run,
@@ -65,6 +74,8 @@ MODULE_DISPATCH: dict[SimulationModule, SolverCallable] = {
 #   Phase D: optics_fdtd → 'ssh_workstation'
 MODULE_DEFAULT_RUNNER: dict[SimulationModule, str] = {
     "optics_seq": "inproc",
+    "optics_cavity": "inproc",
+    "optics_crystal": "inproc",
     "optics_fdtd": "inproc",
     "spice": "inproc",
     "em_fem": "inproc",

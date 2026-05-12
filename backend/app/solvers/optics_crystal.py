@@ -38,7 +38,13 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Callable, Literal
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models import SimulationRun
+from app.websocket import manager
 
 
 C0_M_PER_S = 2.998_792_458e8
@@ -517,3 +523,133 @@ def spdc_tuning(
 
         out.append(row)
     return out
+
+
+# ---- SolverRunner entrypoint ---------------------------------------------
+#
+# Bundles phase-match + SPDC tuning + SHG into one SimulationRun result.
+# `sim_run.params` mirrors a flattened version of the three /api/optics-
+# crystal/* POST bodies.
+
+
+async def run(session: AsyncSession, sim_run: SimulationRun) -> None:
+    sim_run.status = "running"
+    sim_run.progress = 0.0
+    sim_run.started_at = datetime.now(timezone.utc)
+    await session.flush()
+    await _broadcast(sim_run)
+
+    try:
+        p = sim_run.params or {}
+        crystal_id = p.get("crystalId") or p.get("crystal_id")
+        if crystal_id not in CRYSTALS:
+            raise ValueError(f"unknown crystal {crystal_id!r}")
+        kind = p.get("kind", "type0_eee")
+        pump_nm = float(p.get("pumpNm", 0))
+        signal_nm = float(p.get("signalNm", 0))
+        t_C = float(p.get("tC", 25.0))
+
+        # 1) Phase matching at design temperature.
+        idler_nm = 1.0 / (1.0 / pump_nm - 1.0 / signal_nm)
+        a_p, a_s, a_i = _axes_for_kind(kind)
+        n_pump = refractive_index(crystal_id, pump_nm, a_p, t_C)
+        n_signal = refractive_index(crystal_id, signal_nm, a_s, t_C)
+        n_idler = refractive_index(crystal_id, idler_nm, a_i, t_C)
+        dk_bulk = _delta_k_bulk(crystal_id, kind, pump_nm, signal_nm, idler_nm, t_C)
+        crystal = CRYSTALS[crystal_id]
+        poling_um = qpm_period(crystal_id, kind, pump_nm, signal_nm, t_C) if crystal.is_qpm else None
+
+        sim_run.progress = 0.33
+        await session.flush()
+        await _broadcast(sim_run)
+
+        # 2) SPDC tuning sweep ±40°C around design.
+        tuning = spdc_tuning(
+            crystal_id,
+            kind,
+            pump_nm=pump_nm,
+            poling_um=poling_um,
+            t_min_C=max(0.0, t_C - 40),
+            t_max_C=t_C + 40,
+            t_points=41,
+        )
+
+        sim_run.progress = 0.66
+        await session.flush()
+        await _broadcast(sim_run)
+
+        # 3) SHG (optional — only if explicit shgFundamentalNm provided).
+        shg_block: dict | None = None
+        shg_fund = p.get("shgFundamentalNm")
+        if shg_fund is not None:
+            shg_block = shg_efficiency_plane_wave(
+                crystal_id,
+                kind,
+                fundamental_nm=float(shg_fund),
+                p_pump_w=float(p.get("shgPumpW", 1.0)),
+                crystal_length_mm=float(p.get("shgLengthMm", 10.0)),
+                beam_waist_um=float(p.get("shgWaistUm", 50.0)),
+                t_C=t_C,
+                poling_um=poling_um,
+            )
+
+        sim_run.result_summary = {
+            "crystalId": crystal_id,
+            "kind": kind,
+            "pumpNm": pump_nm,
+            "signalNm": signal_nm,
+            "idlerNm": idler_nm,
+            "tC": t_C,
+            "polingPeriodUm": poling_um,
+            "nPump": n_pump,
+            "nSignal": n_signal,
+            "nIdler": n_idler,
+            "deltaKBulkPerMm": dk_bulk * 1e-3,
+            "tuning": [
+                {
+                    "tC": r["t_C"],
+                    "signalNm": r["signal_nm"],
+                    "idlerNm": r["idler_nm"],
+                }
+                for r in tuning
+            ],
+            "shg": (
+                {
+                    "fundamentalNm": shg_block["fundamental_nm"],
+                    "secondHarmonicNm": shg_block["second_harmonic_nm"],
+                    "dEffPmPerV": shg_block["d_eff_pm_per_v"],
+                    "polingUm": shg_block["poling_um"],
+                    "deltaKEffectivePerMm": shg_block["delta_k_effective_per_mm"],
+                    "eta": shg_block["eta"],
+                    "pShW": shg_block["p_sh_w"],
+                    "sincFactor": shg_block["sinc_factor"],
+                }
+                if shg_block
+                else None
+            ),
+        }
+        sim_run.status = "completed"
+        sim_run.progress = 1.0
+        sim_run.finished_at = datetime.now(timezone.utc)
+        await session.flush()
+        await _broadcast(sim_run)
+    except Exception as exc:
+        sim_run.status = "failed"
+        sim_run.error_message = str(exc)
+        sim_run.finished_at = datetime.now(timezone.utc)
+        await session.flush()
+        await _broadcast(sim_run)
+        raise
+
+
+async def _broadcast(sim_run: SimulationRun) -> None:
+    await manager.broadcast(
+        "simulation_run.status_changed",
+        {
+            "id": str(sim_run.id),
+            "module": sim_run.module,
+            "status": sim_run.status,
+            "progress": sim_run.progress,
+            "errorMessage": sim_run.error_message,
+        },
+    )

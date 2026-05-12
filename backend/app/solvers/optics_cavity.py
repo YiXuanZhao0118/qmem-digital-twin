@@ -34,7 +34,13 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Literal
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models import SimulationRun
+from app.websocket import manager
 
 
 C0_M_PER_S = 2.998_792_458e8
@@ -247,4 +253,89 @@ def compute(req: CavityRequest) -> CavityResult:
         spectrum_transmission=spectrum_t,
         spectrum_reflection=spectrum_r,
         warnings=warnings,
+    )
+
+
+# ---- SolverRunner entrypoint ---------------------------------------------
+#
+# Dispatched by InProcessRunner when the user clicks "Run" on the Cavity
+# workspace. Reads sim_run.params (mirrors the /compute POST payload),
+# calls compute(req), writes the full bundle into result_summary, and
+# broadcasts simulation_run.status_changed so SolverConsole can refresh.
+
+
+async def run(session: AsyncSession, sim_run: SimulationRun) -> None:
+    sim_run.status = "running"
+    sim_run.progress = 0.0
+    sim_run.started_at = datetime.now(timezone.utc)
+    await session.flush()
+    await _broadcast(sim_run)
+
+    try:
+        params = sim_run.params or {}
+        mirrors_raw = params.get("mirrors") or []
+        mirrors = [
+            CavityMirror(
+                reflectivity=float(m.get("reflectivity", 0.0)),
+                radius_curvature_mm=m.get("radiusCurvatureMm"),
+            )
+            for m in mirrors_raw
+        ]
+        req = CavityRequest(
+            kind=params.get("kind", "linear"),
+            length_mm=float(params.get("lengthMm", 100.0)),
+            wavelength_nm=float(params.get("wavelengthNm", 1064.0)),
+            mirrors=mirrors,
+            intracavity_loss=float(params.get("intracavityLoss", 0.0)),
+            refractive_index=float(params.get("refractiveIndex", 1.0)),
+            spectrum_span_fsr=float(params.get("spectrumSpanFsr", 4.0)),
+            spectrum_points=int(params.get("spectrumPoints", 401)),
+        )
+        result = compute(req)
+        # Drop the spectrum arrays into a nested key — the rest are scalar
+        # metrics that surface as a flat table in SolverConsole.
+        sim_run.result_summary = {
+            "fsrMhz": result.fsr_mhz,
+            "roundTripLengthMm": result.round_trip_length_mm,
+            "finesse": result.finesse,
+            "linewidthMhz": result.linewidth_mhz,
+            "linewidthPm": result.linewidth_pm,
+            "qualityFactor": result.quality_factor,
+            "photonLifetimeNs": result.photon_lifetime_ns,
+            "resonanceFrequencyThz": result.resonance_frequency_thz,
+            "rtReflectivity": result.rt_reflectivity,
+            "g1g2": result.g1g2,
+            "stable": result.stable,
+            "waistUm": result.waist_um,
+            "warnings": result.warnings,
+            "spectrum": {
+                "freqOffsetMhz": result.spectrum_freq_offset_mhz,
+                "transmission": result.spectrum_transmission,
+                "reflection": result.spectrum_reflection,
+            },
+        }
+        sim_run.status = "completed"
+        sim_run.progress = 1.0
+        sim_run.finished_at = datetime.now(timezone.utc)
+        await session.flush()
+        await _broadcast(sim_run)
+    except Exception as exc:
+        sim_run.status = "failed"
+        sim_run.error_message = str(exc)
+        sim_run.finished_at = datetime.now(timezone.utc)
+        await session.flush()
+        await _broadcast(sim_run)
+        raise
+
+
+async def _broadcast(sim_run: SimulationRun) -> None:
+    await manager.broadcast(
+        "simulation_run.status_changed",
+        {
+            "id": str(sim_run.id),
+            "module": sim_run.module,
+            "status": sim_run.status,
+            "progress": sim_run.progress,
+            "errorMessage": sim_run.error_message,
+        },
     )

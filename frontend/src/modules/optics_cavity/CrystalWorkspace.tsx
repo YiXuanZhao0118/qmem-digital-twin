@@ -25,6 +25,7 @@ import {
   type CrystalSummary,
   type NLKind,
 } from "../../api/client";
+import { useSceneStore } from "../../store/sceneStore";
 import { TuningChart } from "./TuningChart";
 
 type Preset = {
@@ -121,6 +122,7 @@ export function CrystalWorkspace() {
   const [shg, setShg] = useState<CrystalShgResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const dispatchSimulationRun = useSceneStore((s) => s.dispatchSimulationRun);
 
   // Load catalog once.
   useEffect(() => {
@@ -182,6 +184,30 @@ export function CrystalWorkspace() {
       setShg(null);
     } finally {
       if (!signal?.cancelled) setBusy(false);
+    }
+  };
+
+  // Run button: keep the live inline result, but ALSO dispatch a real
+  // SimulationRun so the configuration is saved in SolverConsole.
+  const runAndPersist = async () => {
+    await runCompute();
+    try {
+      await dispatchSimulationRun({
+        module: "optics_crystal",
+        params: {
+          crystalId,
+          kind,
+          pumpNm,
+          signalNm,
+          tC,
+          shgFundamentalNm,
+          shgPumpW,
+          shgLengthMm,
+          shgWaistUm,
+        },
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -346,9 +372,9 @@ export function CrystalWorkspace() {
           <button
             type="button"
             className="electronics-btn primary"
-            onClick={() => void runCompute()}
+            onClick={() => void runAndPersist()}
             disabled={busy}
-            title="Recompute now (results also auto-refresh on input changes)"
+            title="Run + save this configuration to SolverConsole"
             style={{ marginLeft: "auto" }}
           >
             <Play size={11} /> {busy ? "Computing…" : "Run"}

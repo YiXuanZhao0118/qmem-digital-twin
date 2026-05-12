@@ -956,6 +956,7 @@ export type SimulationRunStatus =
 export type SimulationModule =
   | "optics_seq"
   | "optics_cavity"
+  | "optics_crystal"
   | "optics_fdtd"
   | "spice"
   | "em_fem"

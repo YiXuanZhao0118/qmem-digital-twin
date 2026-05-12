@@ -224,7 +224,7 @@ export default function App() {
   const isCavity = currentModule === "optics_cavity";
   const isElectronics = currentModule === "spice";
   const isEm = currentModule === "em_fem";
-  const showSolverConsole = isOptics || isElectronics || isEm;
+  const showSolverConsole = isOptics || isCavity || isElectronics || isEm;
 
   return (
     <WorkspaceProvider>
