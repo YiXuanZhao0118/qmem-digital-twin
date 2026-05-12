@@ -35,7 +35,7 @@ from app.db import AsyncSessionLocal
 from app.models import SimulationRun
 from app.schemas import SimulationModule
 from app.config import settings
-from app.solvers import em_fem, optics_seq, spice
+from app.solvers import em_fem, magnetics_dc, optics_seq, spice
 
 
 logger = logging.getLogger(__name__)
@@ -52,6 +52,7 @@ MODULE_DISPATCH: dict[SimulationModule, SolverCallable] = {
     "optics_seq": optics_seq.run,
     "spice": spice.run,
     "em_fem": em_fem.run,
+    "magnetics_dc": magnetics_dc.run,
 }
 
 
@@ -67,6 +68,7 @@ MODULE_DEFAULT_RUNNER: dict[SimulationModule, str] = {
     "optics_fdtd": "inproc",
     "spice": "inproc",
     "em_fem": "inproc",
+    "magnetics_dc": "inproc",
 }
 
 

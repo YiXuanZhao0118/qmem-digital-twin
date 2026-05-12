@@ -2038,10 +2038,16 @@ class V2BeamState(CamelModel):
 # 'cancelled' (user aborted before completion).
 SimulationRunStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
 
-# Multi-physics module discriminator. Phase A only implements optics_seq;
-# the other three values are reserved table-side so Phase B/C/D can ship
-# without another schema migration.
-SimulationModule = Literal["optics_seq", "optics_fdtd", "spice", "em_fem"]
+# Multi-physics module discriminator. Phase A: optics_seq.
+# Phase B: spice. Phase C: em_fem. Phase F+: magnetics_dc.
+# optics_fdtd reserved for future Phase D.
+SimulationModule = Literal[
+    "optics_seq",
+    "optics_fdtd",
+    "spice",
+    "em_fem",
+    "magnetics_dc",
+]
 
 # Where a SolverRunner dispatched this row. See backend/app/solvers/runner.py.
 SolverRunnerKind = Literal["inproc", "container", "ssh_workstation"]
@@ -2181,6 +2187,66 @@ class EmProblemUpdate(CamelModel):
 
 
 class EmProblemOut(EmProblemBase):
+    id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+
+
+# ---- Coils + Magnetics problems (Phase F+, alembic 0039) ------------------
+
+
+CoilShape = Literal["circular_loop", "solenoid", "polyline"]
+
+
+class CoilBase(CamelModel):
+    name: str
+    shape: CoilShape = "circular_loop"
+    params: JsonDict = Field(default_factory=dict)
+    current_a: float = 1.0
+    scene_object_id: uuid.UUID | None = None
+
+
+class CoilCreate(CoilBase):
+    pass
+
+
+class CoilUpdate(CamelModel):
+    name: str | None = None
+    shape: CoilShape | None = None
+    params: JsonDict | None = None
+    current_a: float | None = None
+    scene_object_id: uuid.UUID | None = None
+
+
+class CoilOut(CoilBase):
+    id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+
+
+class MagneticsEvalRegion(CamelModel):
+    center_mm: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    size_mm: tuple[float, float, float] = (200.0, 200.0, 200.0)
+    grid_dim: tuple[int, int, int] = (24, 24, 24)
+
+
+class MagneticsProblemBase(CamelModel):
+    name: str
+    coil_ids: list[uuid.UUID] = Field(default_factory=list)
+    eval_region: MagneticsEvalRegion = Field(default_factory=MagneticsEvalRegion)
+
+
+class MagneticsProblemCreate(MagneticsProblemBase):
+    pass
+
+
+class MagneticsProblemUpdate(CamelModel):
+    name: str | None = None
+    coil_ids: list[uuid.UUID] | None = None
+    eval_region: MagneticsEvalRegion | None = None
+
+
+class MagneticsProblemOut(MagneticsProblemBase):
     id: uuid.UUID
     created_at: datetime
     updated_at: datetime
