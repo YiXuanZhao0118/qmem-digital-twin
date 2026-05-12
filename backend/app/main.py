@@ -10,6 +10,7 @@ from app.routers import (
     assembly_relations,
     assets,
     beam_paths,
+    circuits,
     collections,
     components,
     connections,
@@ -52,6 +53,7 @@ app.include_router(optical_elements.router, prefix="/api/optical-elements", tags
 app.include_router(optical_links.router, prefix="/api/optical-links", tags=["optical_links"])
 app.include_router(simulations.router, prefix="/api/simulations", tags=["simulations"])
 app.include_router(simulation_runs.router, prefix="/api/simulation-runs", tags=["simulation_runs"])
+app.include_router(circuits.router, prefix="/api/circuits", tags=["circuits"])
 app.include_router(revisions.router, prefix="/api/revisions", tags=["revisions"])
 app.include_router(scene_views.router, prefix="/api/scene-views", tags=["scene_views"])
 app.include_router(collections.router, prefix="/api/collections", tags=["collections"])

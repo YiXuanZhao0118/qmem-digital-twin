@@ -2088,6 +2088,33 @@ class MultiphysicsSimulationRunCreate(CamelModel):
     params: JsonDict = Field(default_factory=dict)
 
 
+# ---- Circuits (Phase B.1, alembic 0037) -----------------------------------
+
+
+class CircuitBase(CamelModel):
+    name: str
+    netlist: str = ""
+    schematic: JsonDict = Field(default_factory=dict)
+    scene_object_id: uuid.UUID | None = None
+
+
+class CircuitCreate(CircuitBase):
+    pass
+
+
+class CircuitUpdate(CamelModel):
+    name: str | None = None
+    netlist: str | None = None
+    schematic: JsonDict | None = None
+    scene_object_id: uuid.UUID | None = None
+
+
+class CircuitOut(CircuitBase):
+    id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+
+
 class V2RevisionBase(CamelModel):
     label: str
     description: str | None = None

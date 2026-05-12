@@ -48,9 +48,35 @@
 
 ## Phase B — Electronics MVP(ngspice)
 
-📋 等 Phase A done 才開工。
+**Target:** Electronics tab 從 placeholder 變成可用,user 寫 SPICE netlist → POST `/api/simulation-runs {module:'spice'}` → ngspice 跑 → 看 V/I 波形圖。
 
-詳細 sub-task 等 Phase A 收尾再展開。
+**Estimate:** 3–4 週(全職)
+**Started:** 2026-05-12
+**Done:** —
+
+### Sub-tasks
+
+| # | Task | Status | Commit | Notes |
+|---|---|---|---|---|
+| B.0 | PROGRESS.md kickoff | ✅ | (this commit) | This entry |
+| B.1 | Backend: `circuits` schema + alembic 0037 + Pydantic + CRUD | ✅ | (this commit) | id, scene_object_id (nullable FK with ON DELETE SET NULL), name, netlist text, schematic JSONB stub for Phase E。Pydantic CircuitBase / Create / Update / Out。Router /api/circuits 5 endpoints (GET list w/ scene_object_id filter, GET id, POST, PATCH, DELETE)。Curl CRUD verified (201 → list → PATCH → DELETE 204 → 404)。247 pytest 仍 pass。 |
+| B.2 | Backend: `solvers/spice.py` adapter(subprocess wrap ngspice)| 📋 | — | params.circuitId → load netlist → run ngspice → parse rawfile → result_summary;register to MODULE_DISPATCH |
+| B.3 | ngspice binary install + path config in `settings` | 📋 | — | choco install ngspice (v41) → C:\ProgramData\chocolatey\bin\ngspice.exe;`settings.ngspice_path` env var |
+| B.4 | Frontend: `ElectronicsWorkspace.tsx` 取代 placeholder | 📋 | — | layout: netlist editor 左 / waveform viewer 右;`modules/_registry.ts` spice → status='available' |
+| B.5 | Frontend: monaco netlist editor + circuits CRUD UI | 📋 | — | `@monaco-editor/react`;list / load / save / new circuit |
+| B.6 | Frontend: uPlot waveform viewer + dispatch run | 📋 | — | `uplot`;POST simulation-runs {module:'spice',params:{circuitId:...}};WS subscribe |
+| B.7 | (optional) scikit-rf S-parameter / Smith chart | 📋 | — | Phase B polish;先標 optional |
+| B.8 | Playwright e2e for spice run round-trip | 📋 | — | RLC netlist → run → waveform 出現 |
+
+### Phase B 完成判準
+
+- 切 Electronics tab → 看到 netlist editor + waveform viewer(不是 placeholder)
+- 寫 RLC 共振 netlist 點 Run → 30 秒內看到 V/I 波形圖
+- POST `/api/simulation-runs {module:'spice'}` 不再返回 501
+- circuits 表 CRUD 全 work(create / list / load / update / delete)
+- pytest 通過,新 spice solver 有單元測試
+- vitest 通過,新 ElectronicsWorkspace 有 component test
+- Playwright e2e:寫 netlist → run → waveform appears
 
 ---
 
