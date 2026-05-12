@@ -16,7 +16,7 @@
  * inline Run + auto-inject of solver outputs into the device's
  * kindParams. Tier 3 (Phase F.3) is the full cross-module DAG.
  */
-import { Play, Plus, Radio, Zap } from "lucide-react";
+import { Clock, Play, Plus, Radio, Zap } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -24,19 +24,33 @@ import {
   createEmProblemApi,
   fetchCircuitsApi,
   fetchEmProblemsApi,
+  fetchPulseBlasterChannelsApi,
 } from "../api/client";
 import { useSceneStore } from "../store/sceneStore";
-import type { Circuit, EmProblem } from "../types/digitalTwin";
+import type { Circuit, EmProblem, PulseBlasterChannel } from "../types/digitalTwin";
+import { useWorkspace } from "./workspace/WorkspaceProvider";
 
 type Props = {
   sceneObjectId: string;
   /** Used as the default name of newly-created linked rows. */
   sceneObjectName: string;
+  /**
+   * Component template id for the selected SceneObject. PulseBlaster
+   * channels bind by `targetComponentId`, not by SceneObject — every
+   * instance of a Component shares the same TTL routing. May be null
+   * if the selection is a bare object (rare).
+   */
+  componentId: string | null;
 };
 
-export function LinkedSchematicsSection({ sceneObjectId, sceneObjectName }: Props) {
+export function LinkedSchematicsSection({
+  sceneObjectId,
+  sceneObjectName,
+  componentId,
+}: Props) {
   const [circuits, setCircuits] = useState<Circuit[]>([]);
   const [emProblems, setEmProblems] = useState<EmProblem[]>([]);
+  const [pbChannels, setPbChannels] = useState<PulseBlasterChannel[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,6 +59,7 @@ export function LinkedSchematicsSection({ sceneObjectId, sceneObjectName }: Prop
   const setSelectedEmProblem = useSceneStore((s) => s.setSelectedEmProblem);
   const dispatchSimulationRun = useSceneStore((s) => s.dispatchSimulationRun);
   const recentRuns = useSceneStore((s) => s.recentSimulationRuns);
+  const { togglePanelVisible, focusPanel } = useWorkspace();
 
   // Map of circuit/em-problem id -> latest run status (just pulled from
   // the global recentRuns store; no extra fetch).
@@ -60,12 +75,14 @@ export function LinkedSchematicsSection({ sceneObjectId, sceneObjectName }: Prop
 
   const refresh = async () => {
     try {
-      const [cs, ems] = await Promise.all([
+      const [cs, ems, pbs] = await Promise.all([
         fetchCircuitsApi(50, sceneObjectId),
         fetchEmProblemsApi(50, sceneObjectId),
+        fetchPulseBlasterChannelsApi(),
       ]);
       setCircuits(cs);
       setEmProblems(ems);
+      setPbChannels(pbs);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -75,6 +92,20 @@ export function LinkedSchematicsSection({ sceneObjectId, sceneObjectName }: Prop
     setError(null);
     void refresh();
   }, [sceneObjectId]);
+
+  // PulseBlaster channels bind by Component, not by SceneObject — same
+  // TTL line drives every instance of a given component.
+  const boundChannels = useMemo(() => {
+    if (!componentId) return [];
+    return pbChannels
+      .filter((c) => c.enabled && c.targetComponentId === componentId)
+      .sort((a, b) => a.channelIndex - b.channelIndex);
+  }, [pbChannels, componentId]);
+
+  const openPulseBlasterPanel = () => {
+    togglePanelVisible("pulse-blaster", true);
+    focusPanel("pulse-blaster");
+  };
 
   const jumpToCircuit = (circuitId: string) => {
     setCurrentModule("spice");
@@ -250,6 +281,41 @@ export function LinkedSchematicsSection({ sceneObjectId, sceneObjectName }: Prop
             onClick={onNewEm}
             disabled={busy}
             title="Create a new EM analysis linked to this object"
+          >
+            <Plus size={11} />
+          </button>
+        </div>
+      </div>
+
+      <div className="linked-row">
+        <div className="linked-row-label">
+          <Clock size={11} /> Timing
+        </div>
+        <div className="linked-chips">
+          {boundChannels.length === 0 ? (
+            <span className="linked-empty">no TTL channel</span>
+          ) : (
+            boundChannels.map((c) => (
+              <button
+                key={c.channelIndex}
+                type="button"
+                className={`linked-chip pb-chip${c.invert ? " pb-chip-inv" : ""}`}
+                onClick={openPulseBlasterPanel}
+                title={`PulseBlaster ch${c.channelIndex}: ${c.label || "(unlabeled)"}${
+                  c.invert ? " — inverted (active-low)" : ""
+                }. Click to open wiring panel.`}
+              >
+                <span className="pb-chip-idx">{c.channelIndex}</span>
+                {c.label || "(unlabeled)"}
+                {c.invert && <em className="pb-chip-inv-mark">/INV</em>}
+              </button>
+            ))
+          )}
+          <button
+            type="button"
+            className="linked-add"
+            onClick={openPulseBlasterPanel}
+            title="Open PulseBlaster wiring panel to bind a TTL channel"
           >
             <Plus size={11} />
           </button>

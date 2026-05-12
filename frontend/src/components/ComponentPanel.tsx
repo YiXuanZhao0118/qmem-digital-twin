@@ -1657,6 +1657,7 @@ export function ComponentPanel() {
         <LinkedSchematicsSection
           sceneObjectId={selectedObject.id}
           sceneObjectName={getComponentName(component) ?? "Object"}
+          componentId={selectedObject.componentId ?? component?.id ?? null}
         />
       )}
       </FloatingPanel>

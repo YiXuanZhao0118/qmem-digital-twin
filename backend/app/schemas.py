@@ -2252,6 +2252,40 @@ class MagneticsProblemOut(MagneticsProblemBase):
     updated_at: datetime
 
 
+# ---- PulseBlaster channels (Phase F+, alembic 0040) -----------------------
+
+
+class PulseBlasterChannelBase(CamelModel):
+    channel_index: int
+    label: str = ""
+    target_component_id: uuid.UUID | None = None
+    invert: bool = False
+    enabled: bool = True
+
+
+class PulseBlasterChannelCreate(PulseBlasterChannelBase):
+    pass
+
+
+class PulseBlasterChannelUpdate(CamelModel):
+    label: str | None = None
+    target_component_id: uuid.UUID | None = None
+    invert: bool | None = None
+    enabled: bool | None = None
+
+
+class PulseBlasterChannelOut(PulseBlasterChannelBase):
+    id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+
+
+class PulseBlasterChannelBulkUpsert(CamelModel):
+    """Single-call replace-all for the 24 channels (UI bulk save)."""
+
+    channels: list[PulseBlasterChannelCreate]
+
+
 class V2RevisionBase(CamelModel):
     label: str
     description: str | None = None

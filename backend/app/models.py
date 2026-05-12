@@ -467,6 +467,51 @@ class MagneticsProblem(Base):
     )
 
 
+class PulseBlasterChannel(Base):
+    """One TTL output channel of the lab's SpinCore PulseBlaster.
+
+    Each channel index (0..N-1; 24 on PB24/ESR, up to 32 on PRO) maps
+    optionally to a Component — meaning "PulseBlaster channel N is the
+    physical TTL line wired to that Component's gate / trigger input."
+
+    The actual gating sequence ("at t=10us turn this device on") still
+    lives in TimingProgram (per-Component). This table is just the
+    component <-> physical wire binding that lets the dispatch layer
+    know which TimingProgram block lives on which output channel.
+
+    Phase F+ MVP single PulseBlaster, multi-PulseBlaster setups can
+    add a parent ``pulse_blasters`` table later.
+    """
+
+    __tablename__ = "pulse_blaster_channels"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    channel_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    label: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    target_component_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("components.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    invert: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class Mesh(Base):
     """Phase C (alembic 0038). One Gmsh mesh (.msh) for the EM module.
 

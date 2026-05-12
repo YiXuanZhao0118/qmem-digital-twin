@@ -1144,6 +1144,34 @@ export type MagneticsProblemCreatePayload = {
 
 export type MagneticsProblemUpdatePayload = Partial<MagneticsProblemCreatePayload>;
 
+// ---- PulseBlaster channels (Phase F+ timing) -------------------------------
+
+export type PulseBlasterChannel = {
+  id: string;
+  channelIndex: number;
+  label: string;
+  targetComponentId: string | null;
+  invert: boolean;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PulseBlasterChannelCreatePayload = {
+  channelIndex: number;
+  label?: string;
+  targetComponentId?: string | null;
+  invert?: boolean;
+  enabled?: boolean;
+};
+
+export type PulseBlasterChannelUpdatePayload = Partial<{
+  label: string;
+  targetComponentId: string | null;
+  invert: boolean;
+  enabled: boolean;
+}>;
+
 // ---- Touchstone (Phase B.7) -------------------------------------------------
 
 export type TouchstoneNetwork = {

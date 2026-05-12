@@ -19,6 +19,7 @@ from app.routers import (
     em_problems,
     magnetics_problems,
     meshes,
+    pulse_blaster,
     objects,
     optical_elements,
     optical_links,
@@ -64,6 +65,7 @@ app.include_router(meshes.router, prefix="/api/meshes", tags=["meshes"])
 app.include_router(em_problems.router, prefix="/api/em-problems", tags=["em_problems"])
 app.include_router(coils.router, prefix="/api/coils", tags=["coils"])
 app.include_router(magnetics_problems.router, prefix="/api/magnetics-problems", tags=["magnetics_problems"])
+app.include_router(pulse_blaster.router, prefix="/api/pulse-blaster", tags=["pulse_blaster"])
 app.include_router(revisions.router, prefix="/api/revisions", tags=["revisions"])
 app.include_router(scene_views.router, prefix="/api/scene-views", tags=["scene_views"])
 app.include_router(collections.router, prefix="/api/collections", tags=["collections"])

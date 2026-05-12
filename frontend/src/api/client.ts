@@ -17,6 +17,9 @@ import type {
   MagneticsProblemCreatePayload,
   MagneticsProblemUpdatePayload,
   Mesh,
+  PulseBlasterChannel,
+  PulseBlasterChannelCreatePayload,
+  PulseBlasterChannelUpdatePayload,
   Collection,
   CollectionMember,
   ComponentItem,
@@ -830,6 +833,34 @@ export async function updateMagneticsProblemApi(
 
 export async function deleteMagneticsProblemApi(id: string): Promise<void> {
   await client.delete(`/api/magnetics-problems/${id}`);
+}
+
+// ---- PulseBlaster channels (Phase F+) -------------------------------------
+
+export async function fetchPulseBlasterChannelsApi(): Promise<PulseBlasterChannel[]> {
+  const response = await client.get<PulseBlasterChannel[]>("/api/pulse-blaster/channels");
+  return response.data;
+}
+
+export async function updatePulseBlasterChannelApi(
+  id: string,
+  patch: PulseBlasterChannelUpdatePayload,
+): Promise<PulseBlasterChannel> {
+  const response = await client.patch<PulseBlasterChannel>(
+    `/api/pulse-blaster/channels/${id}`,
+    patch,
+  );
+  return response.data;
+}
+
+export async function bulkUpsertPulseBlasterChannelsApi(
+  channels: PulseBlasterChannelCreatePayload[],
+): Promise<PulseBlasterChannel[]> {
+  const response = await client.put<PulseBlasterChannel[]>(
+    "/api/pulse-blaster/channels",
+    { channels },
+  );
+  return response.data;
 }
 
 export async function parseTouchstoneApi(file: File): Promise<TouchstoneNetwork> {

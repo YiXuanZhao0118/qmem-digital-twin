@@ -35,7 +35,8 @@ export type PanelId =
   | "touch-coincidence"
   | "optical-link-viewer"
   | "solver-console"
-  | "magnetics";
+  | "magnetics"
+  | "pulse-blaster";
 
 const PANEL_DEFS: { id: PanelId; title: string; defaultLayout: PanelLayout }[] = [
   {
@@ -104,6 +105,13 @@ const PANEL_DEFS: { id: PanelId; title: string; defaultLayout: PanelLayout }[] =
     // Hidden by default; user opens via Window menu when they want to
     // compute a B-field on top of the current Optics scene.
     defaultLayout: { x: -340, y: 80, w: 320, h: 460, visible: false, collapsed: false, z: 2 },
+  },
+  {
+    id: "pulse-blaster",
+    title: "PulseBlaster wiring",
+    // Hidden by default; user opens via Window menu when they want to
+    // map physical TTL channels to lab Components.
+    defaultLayout: { x: 332, y: 80, w: 480, h: 540, visible: false, collapsed: false, z: 2 },
   },
 ];
 

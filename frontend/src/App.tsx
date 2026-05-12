@@ -21,6 +21,7 @@ import { WorkspaceProvider } from "./components/workspace/WorkspaceProvider";
 import { ElectronicsWorkspace } from "./modules/electronics/ElectronicsWorkspace";
 import { EmWorkspace } from "./modules/em/EmWorkspace";
 import { MagneticsPanel } from "./modules/magnetics/MagneticsPanel";
+import { PulseBlasterPanel } from "./modules/pulse_blaster/PulseBlasterPanel";
 import { getModule } from "./modules/_registry";
 import { ModulePlaceholder } from "./modules/ModulePlaceholder";
 import { useSceneStore } from "./store/sceneStore";
@@ -242,6 +243,7 @@ export default function App() {
               <OpticalLinkViewerPanel />
               <TouchCoincidencePanel />
               <MagneticsPanel />
+              <PulseBlasterPanel />
               <CursorMenu />
             </>
           )}
