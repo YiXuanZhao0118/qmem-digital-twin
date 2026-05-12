@@ -11,10 +11,11 @@
  * Status updates flow through the SolverConsole panel (Phase A.6) — this
  * workspace just shows the most recent finished run for the active circuit.
  */
-import { Play, Plus, Save, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { ChevronDown, Play, Plus, Save, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useSceneStore } from "../../store/sceneStore";
+import { CIRCUIT_EXAMPLES } from "./examples";
 import { NetlistEditor } from "./NetlistEditor";
 import { NetworkAnalysisPanel } from "./NetworkAnalysisPanel";
 import { WaveformChart } from "./WaveformChart";
@@ -46,6 +47,18 @@ export function ElectronicsWorkspace() {
   const [draftNetlist, setDraftNetlist] = useState("");
   const [busy, setBusy] = useState<"idle" | "saving" | "running">("idle");
   const [error, setError] = useState<string | null>(null);
+  const [examplesOpen, setExamplesOpen] = useState(false);
+  const examplesRef = useRef<HTMLDivElement | null>(null);
+
+  // Close examples dropdown on outside click.
+  useEffect(() => {
+    if (!examplesOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!examplesRef.current?.contains(e.target as Node)) setExamplesOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [examplesOpen]);
 
   // Initial fetch on mount.
   useEffect(() => {
@@ -81,6 +94,21 @@ export function ElectronicsWorkspace() {
         name: `Circuit ${circuits.length + 1}`,
         netlist: STARTER_NETLIST,
       });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy("idle");
+    }
+  };
+
+  const onPickExample = async (id: string) => {
+    setExamplesOpen(false);
+    const ex = CIRCUIT_EXAMPLES.find((e) => e.id === id);
+    if (!ex) return;
+    setError(null);
+    setBusy("saving");
+    try {
+      await createCircuit({ name: ex.name, netlist: ex.netlist });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -155,10 +183,31 @@ export function ElectronicsWorkspace() {
       <aside className="electronics-sidebar">
         <header className="electronics-sidebar-header">
           <span className="electronics-sidebar-title">Circuits</span>
+          <div ref={examplesRef} className="electronics-examples-dropdown">
+            <button
+              type="button"
+              className="electronics-icon-btn"
+              title="Add from example"
+              onClick={() => setExamplesOpen((v) => !v)}
+              disabled={busy !== "idle"}
+            >
+              <ChevronDown size={14} />
+            </button>
+            {examplesOpen && (
+              <ul className="electronics-examples-menu" role="menu">
+                {CIRCUIT_EXAMPLES.map((ex) => (
+                  <li key={ex.id} role="menuitem" onClick={() => onPickExample(ex.id)}>
+                    <span className="electronics-example-name">{ex.name}</span>
+                    <span className="electronics-example-desc">{ex.description}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
           <button
             type="button"
             className="electronics-icon-btn"
-            title="New circuit"
+            title="New blank circuit"
             onClick={onNew}
             disabled={busy !== "idle"}
           >

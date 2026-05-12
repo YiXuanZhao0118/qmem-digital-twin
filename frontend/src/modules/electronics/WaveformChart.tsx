@@ -21,6 +21,7 @@
  * in Phase B; bigger transients (10k+ points) will still render in
  * <100 ms because uplot is canvas-based.
  */
+import { Download, FileSpreadsheet } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
@@ -93,6 +94,14 @@ export function WaveformChart({ runId, result }: Props) {
     if (!containerRef.current || !plotData) return;
     const container = containerRef.current;
 
+    // Auto-split V (left axis) vs I (right axis). SPICE rawfile names
+    // currents as i(...) and voltages as v(...); anything else lands on
+    // the default voltage scale to avoid surprising the user.
+    const scaleFor = (name: string): "y" | "i" =>
+      name.toLowerCase().startsWith("i(") ? "i" : "y";
+    const hasCurrents = yVarNames.some((n) => scaleFor(n) === "i");
+    const yLabel = result.isComplex ? "|V| magnitude" : "voltage";
+
     const opts: uPlot.Options = {
       width: container.clientWidth || 600,
       height: container.clientHeight || 280,
@@ -100,6 +109,7 @@ export function WaveformChart({ runId, result }: Props) {
       scales: {
         x: { time: false, distr: isLogX ? 3 : 1 },
         y: { auto: true },
+        i: { auto: true },
       },
       axes: [
         {
@@ -108,10 +118,22 @@ export function WaveformChart({ runId, result }: Props) {
           grid: { stroke: "rgba(15,23,42,0.06)" },
         },
         {
-          label: result.isComplex ? "magnitude" : "value",
+          scale: "y",
+          label: yLabel,
           stroke: "#475569",
           grid: { stroke: "rgba(15,23,42,0.06)" },
         },
+        ...(hasCurrents
+          ? [
+              {
+                scale: "i" as const,
+                label: result.isComplex ? "|I| magnitude" : "current",
+                side: 1 as 1, // 1 = right edge
+                stroke: "#92400e",
+                grid: { show: false } as any,
+              },
+            ]
+          : []),
       ],
       series: [
         {}, // X axis
@@ -120,6 +142,7 @@ export function WaveformChart({ runId, result }: Props) {
           stroke: SERIES_COLORS[i % SERIES_COLORS.length],
           width: 1.5,
           show: visibleSet.has(name),
+          scale: scaleFor(name),
         })),
       ],
       legend: { show: false }, // we render our own toggles below
@@ -160,8 +183,51 @@ export function WaveformChart({ runId, result }: Props) {
     });
   };
 
+  const baseFilename = `run-${runId.slice(0, 8)}`;
+
+  const onExportPng = () => {
+    const canvas = containerRef.current?.querySelector("canvas");
+    if (!canvas) return;
+    canvas.toBlob((blob) => {
+      if (blob) downloadBlob(blob, `${baseFilename}.png`);
+    }, "image/png");
+  };
+
+  const onExportCsv = () => {
+    if (!xVarName) return;
+    const rows: string[] = [];
+    rows.push([xVarName, ...yVarNames].join(","));
+    const xValues = plotData[0] as number[];
+    const ySeries = (plotData as number[][]).slice(1);
+    for (let i = 0; i < xValues.length; i++) {
+      const cells = [xValues[i].toString()];
+      for (const series of ySeries) cells.push(series[i].toString());
+      rows.push(cells.join(","));
+    }
+    const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8" });
+    downloadBlob(blob, `${baseFilename}.csv`);
+  };
+
   return (
     <div className="waveform-chart-block">
+      <div className="waveform-chart-toolbar">
+        <button
+          type="button"
+          className="waveform-toolbar-btn"
+          title="Download chart as PNG"
+          onClick={onExportPng}
+        >
+          <Download size={11} /> PNG
+        </button>
+        <button
+          type="button"
+          className="waveform-toolbar-btn"
+          title="Download data as CSV"
+          onClick={onExportCsv}
+        >
+          <FileSpreadsheet size={11} /> CSV
+        </button>
+      </div>
       <div ref={containerRef} className="waveform-chart-canvas" />
       <ul className="waveform-legend">
         {yVarNames.map((name, i) => {
@@ -182,6 +248,17 @@ export function WaveformChart({ runId, result }: Props) {
       </ul>
     </div>
   );
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 /** Coerce a possibly-complex rawfile value to its real part (X-axis). */
