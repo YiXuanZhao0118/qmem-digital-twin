@@ -4,6 +4,9 @@ import type {
   Anchor,
   AssemblyRelation,
   Asset3D,
+  Circuit,
+  CircuitCreatePayload,
+  CircuitUpdatePayload,
   Collection,
   CollectionMember,
   ComponentItem,
@@ -667,4 +670,33 @@ export async function createSimulationRunApi(
 ): Promise<SimulationRunV2> {
   const response = await client.post<SimulationRunV2>("/api/simulation-runs", payload);
   return response.data;
+}
+
+// ---- Circuits (Phase B.1, alembic 0037) -----------------------------------
+
+export async function fetchCircuitsApi(limit = 100): Promise<Circuit[]> {
+  const response = await client.get<Circuit[]>("/api/circuits", { params: { limit } });
+  return response.data;
+}
+
+export async function fetchCircuitApi(id: string): Promise<Circuit> {
+  const response = await client.get<Circuit>(`/api/circuits/${id}`);
+  return response.data;
+}
+
+export async function createCircuitApi(payload: CircuitCreatePayload): Promise<Circuit> {
+  const response = await client.post<Circuit>("/api/circuits", payload);
+  return response.data;
+}
+
+export async function updateCircuitApi(
+  id: string,
+  patch: CircuitUpdatePayload,
+): Promise<Circuit> {
+  const response = await client.patch<Circuit>(`/api/circuits/${id}`, patch);
+  return response.data;
+}
+
+export async function deleteCircuitApi(id: string): Promise<void> {
+  await client.delete(`/api/circuits/${id}`);
 }

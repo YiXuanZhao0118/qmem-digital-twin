@@ -988,6 +988,32 @@ export type SimulationRunCreatePayload = {
   params?: Record<string, unknown>;
 };
 
+// ---- Circuits (Phase B.1, alembic 0037) -----------------------------------
+
+export type Circuit = {
+  id: string;
+  name: string;
+  netlist: string;
+  schematic: Record<string, unknown>;
+  sceneObjectId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CircuitCreatePayload = {
+  name: string;
+  netlist?: string;
+  schematic?: Record<string, unknown>;
+  sceneObjectId?: string | null;
+};
+
+export type CircuitUpdatePayload = {
+  name?: string;
+  netlist?: string;
+  schematic?: Record<string, unknown>;
+  sceneObjectId?: string | null;
+};
+
 export type RevisionV2 = {
   id: string;
   label: string;

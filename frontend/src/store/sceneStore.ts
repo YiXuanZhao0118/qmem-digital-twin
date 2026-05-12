@@ -6,6 +6,7 @@ import {
   autoRegisterOpticalAllApi,
   createAssemblyRelationApi,
   createCollectionApi,
+  createCircuitApi,
   createObjectApi,
   createOpticalElementApi,
   createOpticalLinkApi,
@@ -19,7 +20,9 @@ import {
   deleteOpticalElementApi,
   deleteOpticalLinkApi,
   deleteSceneViewApi,
+  deleteCircuitApi,
   duplicateSceneViewApi,
+  fetchCircuitsApi,
   fetchScene,
   fetchSimulationRunsApi,
   importLocalComponentAssetApi,
@@ -33,6 +36,7 @@ import {
   deleteTimingProgramApi,
   updateAssemblyRelationApi,
   updateAssetApi,
+  updateCircuitApi,
   updateCollectionApi,
   updateComponentApi,
   updateObjectApi,
@@ -68,6 +72,9 @@ import type {
   SceneEvent,
   SceneObject,
   SceneObjectPatch,
+  Circuit,
+  CircuitCreatePayload,
+  CircuitUpdatePayload,
   SimulationModule,
   SimulationRunCreatePayload,
   SimulationRunV2,
@@ -381,6 +388,12 @@ type SceneStore = {
    *  by the SolverConsole panel and kept in sync via the WS event
    *  ``simulation_run.status_changed`` (see applyEvent). */
   recentSimulationRuns: SimulationRunV2[];
+  /** Phase B Electronics: list of saved SPICE circuits. The
+   *  ElectronicsWorkspace populates this on mount via loadCircuits(). */
+  circuits: Circuit[];
+  /** Currently selected circuit in the Electronics workspace (drives
+   *  netlist editor, drives Run button payload). */
+  selectedCircuitId: string | null;
   /** Currently active PHY editor view inside the sub-page. `null` =
    *  editor "home" (left rail visible, right pane shows a hint asking
    *  the user to pick a sub-editor). */
@@ -398,6 +411,11 @@ type SceneStore = {
   setCurrentModule: (module: SimulationModule) => void;
   loadRecentSimulationRuns: (module?: SimulationModule, limit?: number) => Promise<void>;
   dispatchSimulationRun: (payload: SimulationRunCreatePayload) => Promise<SimulationRunV2>;
+  loadCircuits: () => Promise<void>;
+  createCircuit: (payload: CircuitCreatePayload) => Promise<Circuit>;
+  updateCircuit: (id: string, patch: CircuitUpdatePayload) => Promise<Circuit>;
+  deleteCircuit: (id: string) => Promise<void>;
+  setSelectedCircuit: (id: string | null) => void;
   setEditingAssetId: (assetId: string | null) => void;
   setPhyEditorDirty: (dirty: boolean) => void;
   /** Open the PHY editor sub-page (no specific view selected; user
@@ -924,6 +942,8 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   editorMode: "scene",
   currentModule: "optics_seq",
   recentSimulationRuns: [],
+  circuits: [],
+  selectedCircuitId: null,
   phyEditorView: null,
   editingAssetId: null,
   phyEditorDirty: false,
@@ -2440,6 +2460,46 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       ].slice(0, 20),
     }));
     return run;
+  },
+
+  async loadCircuits() {
+    const circuits = await fetchCircuitsApi(100);
+    set((state) => {
+      // Auto-select the most recent circuit if none selected.
+      const next = state.selectedCircuitId ?? circuits[0]?.id ?? null;
+      return { circuits, selectedCircuitId: next };
+    });
+  },
+
+  async createCircuit(payload) {
+    const circuit = await createCircuitApi(payload);
+    set((state) => ({
+      circuits: [circuit, ...state.circuits.filter((c) => c.id !== circuit.id)],
+      selectedCircuitId: circuit.id,
+    }));
+    return circuit;
+  },
+
+  async updateCircuit(id, patch) {
+    const updated = await updateCircuitApi(id, patch);
+    set((state) => ({
+      circuits: state.circuits.map((c) => (c.id === id ? updated : c)),
+    }));
+    return updated;
+  },
+
+  async deleteCircuit(id) {
+    await deleteCircuitApi(id);
+    set((state) => {
+      const remaining = state.circuits.filter((c) => c.id !== id);
+      const next =
+        state.selectedCircuitId === id ? remaining[0]?.id ?? null : state.selectedCircuitId;
+      return { circuits: remaining, selectedCircuitId: next };
+    });
+  },
+
+  setSelectedCircuit(id) {
+    set({ selectedCircuitId: id });
   },
 
   setEditingAssetId(assetId) {

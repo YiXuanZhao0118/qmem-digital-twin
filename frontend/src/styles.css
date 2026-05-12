@@ -5544,3 +5544,285 @@ body.is-timing-bar-drag * {
   color: #b91c1c;
   cursor: help;
 }
+
+/* ============================================================
+   Electronics workspace (Phase B.4)
+   ============================================================ */
+
+.electronics-workspace {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 220px 1fr 380px;
+  gap: 1px;
+  background: rgba(15, 23, 42, 0.12);
+  color: rgba(15, 23, 42, 0.9);
+  font-size: 13px;
+}
+
+.electronics-sidebar,
+.electronics-editor,
+.electronics-results {
+  background: #fafaf7;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.electronics-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(15, 23, 42, 0.03);
+}
+
+.electronics-sidebar-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(15, 23, 42, 0.65);
+}
+
+.electronics-icon-btn {
+  appearance: none;
+  background: transparent;
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  border-radius: 4px;
+  padding: 3px 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  color: rgba(15, 23, 42, 0.7);
+}
+
+.electronics-icon-btn:hover:not(:disabled) {
+  background: rgba(15, 23, 42, 0.05);
+  color: rgba(15, 23, 42, 0.95);
+}
+
+.electronics-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.electronics-circuit-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.electronics-empty {
+  padding: 12px;
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.5);
+  font-style: italic;
+}
+
+.electronics-circuit-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  font-size: 12px;
+}
+
+.electronics-circuit-row:hover {
+  background: rgba(15, 23, 42, 0.04);
+}
+
+.electronics-circuit-row.active {
+  background: rgba(59, 130, 246, 0.1);
+  border-left-color: #3b82f6;
+}
+
+.electronics-circuit-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.electronics-circuit-bytes {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  color: rgba(15, 23, 42, 0.45);
+}
+
+.electronics-editor-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(15, 23, 42, 0.03);
+}
+
+.electronics-name-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  border-radius: 4px;
+  background: #ffffff;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.electronics-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  border-radius: 4px;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(15, 23, 42, 0.85);
+  cursor: pointer;
+}
+
+.electronics-btn:hover:not(:disabled) {
+  background: rgba(15, 23, 42, 0.05);
+}
+
+.electronics-btn.primary {
+  background: linear-gradient(180deg, #4ade80, #22c55e);
+  color: #052e16;
+  border-color: rgba(15, 23, 42, 0.2);
+  font-weight: 600;
+}
+
+.electronics-btn.primary:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.electronics-btn.danger {
+  border-color: rgba(248, 113, 113, 0.5);
+  color: #b91c1c;
+}
+
+.electronics-btn.danger:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.1);
+}
+
+.electronics-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.electronics-netlist {
+  flex: 1 1 auto;
+  min-height: 0;
+  border: 0;
+  outline: 0;
+  resize: none;
+  padding: 12px 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  background: #ffffff;
+  color: rgba(15, 23, 42, 0.95);
+  white-space: pre;
+  tab-size: 4;
+}
+
+.electronics-no-selection {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: rgba(15, 23, 42, 0.4);
+  font-style: italic;
+}
+
+.electronics-error {
+  padding: 8px 12px;
+  background: rgba(248, 113, 113, 0.12);
+  color: #991b1b;
+  font-size: 12px;
+  line-height: 1.5;
+  border-top: 1px solid rgba(248, 113, 113, 0.3);
+}
+
+.electronics-results .electronics-result-preview {
+  padding: 10px 12px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.electronics-result-meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 0 0 12px 0;
+  font-size: 12px;
+}
+
+.electronics-result-meta > div {
+  display: contents;
+}
+
+.electronics-result-meta dt {
+  color: rgba(15, 23, 42, 0.55);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  align-self: center;
+}
+
+.electronics-result-meta dd {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.electronics-result-meta dd.status-completed { color: #166534; font-weight: 600; }
+.electronics-result-meta dd.status-running   { color: #1e3a8a; font-weight: 600; }
+.electronics-result-meta dd.status-queued    { color: #334155; font-weight: 600; }
+.electronics-result-meta dd.status-failed    { color: #991b1b; font-weight: 600; }
+.electronics-result-meta dd.status-cancelled { color: #92400e; font-weight: 600; }
+
+.electronics-variables {
+  font-size: 11px;
+  padding: 8px 0;
+  color: rgba(15, 23, 42, 0.7);
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  margin-bottom: 10px;
+  word-break: break-word;
+}
+
+.electronics-variables strong {
+  color: rgba(15, 23, 42, 0.9);
+}
+
+.electronics-result-data summary {
+  font-size: 11px;
+  cursor: pointer;
+  padding: 4px 0;
+  color: rgba(15, 23, 42, 0.6);
+}
+
+.electronics-result-data pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  line-height: 1.45;
+  background: rgba(15, 23, 42, 0.04);
+  padding: 8px;
+  border-radius: 4px;
+  overflow: auto;
+  max-height: 360px;
+  margin: 6px 0 0 0;
+}

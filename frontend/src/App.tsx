@@ -18,6 +18,7 @@ import { SceneToolbar } from "./components/SceneToolbar";
 import { SolverConsole } from "./components/workspace/SolverConsole";
 import { TopBar } from "./components/workspace/TopBar";
 import { WorkspaceProvider } from "./components/workspace/WorkspaceProvider";
+import { ElectronicsWorkspace } from "./modules/electronics/ElectronicsWorkspace";
 import { getModule } from "./modules/_registry";
 import { ModulePlaceholder } from "./modules/ModulePlaceholder";
 import { useSceneStore } from "./store/sceneStore";
@@ -205,11 +206,16 @@ export default function App() {
     );
   }
 
-  // Multiphysics Phase A: top-level module switcher. Optics keeps the
-  // existing scene + panels layout; Electronics/EM render a placeholder
-  // card until Phase B/C implement them.
+  // Multiphysics: top-level module switcher.
+  //   optics_seq -> existing 3D scene + optics panels (Phase A).
+  //   spice      -> ElectronicsWorkspace netlist+results (Phase B).
+  //   anything else (optics_fdtd / em_fem reserved) -> placeholder.
+  // SolverConsole is mounted across optics_seq + spice so the user can
+  // see runs from the previous module after switching.
   const moduleDef = getModule(currentModule);
-  const opticsActive = moduleDef.status === "available";
+  const isOptics = currentModule === "optics_seq";
+  const isElectronics = currentModule === "spice";
+  const showSolverConsole = isOptics || isElectronics;
 
   return (
     <WorkspaceProvider>
@@ -221,7 +227,7 @@ export default function App() {
           />
         </TopBar>
         <div className="workspace-canvas">
-          {opticsActive ? (
+          {isOptics && (
             <>
               <DualViewerSplit roomDimensions={roomDimensions} />
               {loadStatus === "loading" && <div className="scene-overlay">Loading scene</div>}
@@ -232,12 +238,12 @@ export default function App() {
               <TimingEditorPanel />
               <OpticalLinkViewerPanel />
               <TouchCoincidencePanel />
-              <SolverConsole />
               <CursorMenu />
             </>
-          ) : (
-            <ModulePlaceholder module={moduleDef} />
           )}
+          {isElectronics && <ElectronicsWorkspace />}
+          {!isOptics && !isElectronics && <ModulePlaceholder module={moduleDef} />}
+          {showSolverConsole && <SolverConsole />}
         </div>
       </main>
     </WorkspaceProvider>

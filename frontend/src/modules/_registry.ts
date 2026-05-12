@@ -49,7 +49,7 @@ export const MODULES: ModuleDef[] = [
     displayName: "Electronics",
     description:
       "ngspice-backed circuit simulation. Write a SPICE netlist (Phase B) or build it visually (Phase E), then look at transient / AC / DC sweep waveforms.",
-    status: "coming_soon",
+    status: "available",
     phase: "B",
     phaseLabel: "Phase B",
   },
