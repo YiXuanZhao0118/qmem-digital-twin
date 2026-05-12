@@ -37,7 +37,7 @@ export function AiryChart({ freqOffsetMhz, transmission, reflection }: Props) {
 
     const opts: uPlot.Options = {
       width: containerRef.current.clientWidth,
-      height: 260,
+      height: 240,
       scales: {
         x: { time: false },
         y: { range: [-0.02, 1.05] },
@@ -45,13 +45,15 @@ export function AiryChart({ freqOffsetMhz, transmission, reflection }: Props) {
       axes: [
         {
           label: "frequency offset (MHz)",
-          stroke: "#cbd5e1",
-          grid: { stroke: "rgba(148,163,184,0.18)" },
+          stroke: "rgba(15, 23, 42, 0.7)",
+          grid: { stroke: "rgba(15, 23, 42, 0.08)" },
+          ticks: { stroke: "rgba(15, 23, 42, 0.25)" },
         },
         {
           label: "intensity",
-          stroke: "#cbd5e1",
-          grid: { stroke: "rgba(148,163,184,0.18)" },
+          stroke: "rgba(15, 23, 42, 0.7)",
+          grid: { stroke: "rgba(15, 23, 42, 0.08)" },
+          ticks: { stroke: "rgba(15, 23, 42, 0.25)" },
         },
       ],
       series: [
@@ -68,7 +70,7 @@ export function AiryChart({ freqOffsetMhz, transmission, reflection }: Props) {
       if (containerRef.current && plotRef.current) {
         plotRef.current.setSize({
           width: containerRef.current.clientWidth,
-          height: 260,
+          height: 240,
         });
       }
     };
