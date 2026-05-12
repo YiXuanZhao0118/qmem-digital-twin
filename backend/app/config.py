@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     onshape_secret_key: str | None = None
     onshape_base_url: str = "https://cad.onshape.com"
 
+    # Phase B: ngspice binary path. Falls back to PATH lookup
+    # (`shutil.which("ngspice")`) when None. Set NGSPICE_PATH env var to
+    # override (e.g. C:\ProgramData\chocolatey\bin\ngspice.exe).
+    ngspice_path: str | None = None
+
     model_config = SettingsConfigDict(
         env_file=(".env", "../.env"),
         env_file_encoding="utf-8",

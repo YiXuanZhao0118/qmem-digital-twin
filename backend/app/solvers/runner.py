@@ -34,7 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import AsyncSessionLocal
 from app.models import SimulationRun
 from app.schemas import SimulationModule
-from app.solvers import optics_seq
+from app.solvers import optics_seq, spice
 
 
 logger = logging.getLogger(__name__)
@@ -45,9 +45,10 @@ logger = logging.getLogger(__name__)
 SolverCallable = Callable[[AsyncSession, SimulationRun], Awaitable[None]]
 
 
-# Per-module solver coroutine. Phase A only registers optics_seq.
+# Per-module solver coroutine. Phase A: optics_seq. Phase B adds spice.
 MODULE_DISPATCH: dict[SimulationModule, SolverCallable] = {
     "optics_seq": optics_seq.run,
+    "spice": spice.run,
 }
 
 
