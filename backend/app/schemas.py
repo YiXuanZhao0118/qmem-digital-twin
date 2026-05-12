@@ -2115,6 +2115,77 @@ class CircuitOut(CircuitBase):
     updated_at: datetime
 
 
+# ---- Meshes + EM problems (Phase C.1, alembic 0038) -----------------------
+
+
+class MeshBase(CamelModel):
+    name: str
+    mesh_format: Literal["gmsh", "vtk"] = "gmsh"
+    source_asset_3d_id: uuid.UUID | None = None
+
+
+class MeshOut(MeshBase):
+    id: uuid.UUID
+    file_path: str
+    element_count: int | None = None
+    max_size_mm: float | None = None
+    file_size_bytes: int = 0
+    created_at: datetime
+
+
+class EmPort(CamelModel):
+    """One EM port assignment. ``anchor_binding_id`` references an
+    ``anchorBindings[].id`` on the SceneObject (the geometry payload
+    tells the solver which surface is the port plane).
+    """
+
+    id: str
+    name: str
+    anchor_binding_id: str | None = None
+    impedance_ohm: float = 50.0
+    mode: Literal["te", "tm", "tem"] = "tem"
+
+
+class EmFreqSweep(CamelModel):
+    start_ghz: float
+    stop_ghz: float
+    points: int = 51
+    scale: Literal["linear", "log"] = "linear"
+
+
+class EmBoundaryConditions(CamelModel):
+    pec_anchor_binding_ids: list[str] = Field(default_factory=list)
+    absorbing_anchor_binding_ids: list[str] = Field(default_factory=list)
+
+
+class EmProblemBase(CamelModel):
+    name: str
+    scene_object_id: uuid.UUID | None = None
+    mesh_id: uuid.UUID | None = None
+    ports: list[EmPort] = Field(default_factory=list)
+    boundary_conditions: EmBoundaryConditions = Field(default_factory=EmBoundaryConditions)
+    freq_range_ghz: EmFreqSweep | None = None
+
+
+class EmProblemCreate(EmProblemBase):
+    pass
+
+
+class EmProblemUpdate(CamelModel):
+    name: str | None = None
+    scene_object_id: uuid.UUID | None = None
+    mesh_id: uuid.UUID | None = None
+    ports: list[EmPort] | None = None
+    boundary_conditions: EmBoundaryConditions | None = None
+    freq_range_ghz: EmFreqSweep | None = None
+
+
+class EmProblemOut(EmProblemBase):
+    id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+
+
 class V2RevisionBase(CamelModel):
     label: str
     description: str | None = None

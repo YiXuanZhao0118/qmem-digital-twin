@@ -103,13 +103,13 @@
 
 | # | Task | Status | Commit | Notes |
 |---|---|---|---|---|
-| C.0 | PROGRESS.md kickoff | ✅ | (this commit) | This entry — Phase C 規劃拍板,實作等前置條件 |
-| C.1 | Backend: `em_problems` + `meshes` schema + alembic 0038 | 📋 | — | em_problems(id, scene_object_id, ports JSONB, boundary_conditions JSONB, freq_range_ghz, mesh_id);meshes(id, source_asset_3d_id, file_path, element_count, max_size_mm) |
-| C.2 | Backend: Pydantic + CRUD routers `/api/em-problems` `/api/meshes` | 📋 | — | 同 Phase B circuits 模式 |
-| C.3 | Backend: `SshWorkstationRunner` (asyncssh) | 📋 | — | `solvers/runner.py` 加 class;`settings.workstation_host` `workstation_key_path` config;submit = ssh + spawn,status = poll job state file |
-| C.4 | Workstation setup:palace + Gmsh + runner agent | 🔒 | — | Docker pull palace image (~2 GB);Gmsh binary;Python runner script (~100 lines);test `ssh QM "palace --help"` |
-| C.5 | Backend: `solvers/em_fem.py` adapter | 📋 | — | params {emProblemId} → load EmProblem + Mesh → write palace JSON config → SshWorkstationRunner.submit → wait + parse results;同 Phase B optics_seq 模式 |
-| C.6 | Mesh ingest:Gmsh wrap STEP/STL → `.msh` upload to backend | 📋 | — | Phase C MVP 接受 user 已產好的 `.msh` upload;Phase C+ wrap Gmsh CLI in container |
+| C.0 | PROGRESS.md kickoff | ✅ | df8c8a8 | Phase C 規劃拍板 + 5 open questions |
+| C.1 | Backend: `em_problems` + `meshes` schema + alembic 0038 | ✅ | (this commit) | alembic 0038:meshes (id / source_asset_3d_id FK SET NULL / name / mesh_format ENUM 'gmsh'\|'vtk' / file_path / element_count / max_size_mm / file_size_bytes);em_problems (id / scene_object_id FK / mesh_id FK / name / ports JSONB / boundary_conditions JSONB / freq_range_ghz JSONB)。Indexed source_asset_3d_id, scene_object_id, created_at/updated_at desc。 |
+| C.2 | Backend: Pydantic + CRUD routers `/api/em-problems` `/api/meshes` | ✅ | (this commit) | `MeshOut` + `EmPort` / `EmFreqSweep` / `EmBoundaryConditions` / `EmProblemBase` / `Create` / `Update` / `Out` Pydantic。`routers/em_problems.py` 5 endpoints (GET list w/ scene_object_id filter / GET id / POST / PATCH / DELETE)。`routers/meshes.py` 4 endpoints (GET list / GET id / POST upload / DELETE)。Live curl verified:upload toy `.msh` → row created with elementCount parsed from Gmsh header,POST em-problem with nested ports + freq sweep round-trips 對。258 backend pytest 仍 pass。 |
+| C.3 | Backend: `SshWorkstationRunner` (asyncssh) | 📋 | — | `solvers/runner.py` 加 class;`settings.workstation_host` `workstation_key_path` config;submit = ssh + spawn,status = poll job state file。Phase C.3 stub-only safe-default,實際 SSH 等 C.4 workstation 上 |
+| C.4 | Workstation setup:palace + Gmsh + runner agent | 🔒 | — | Windows + WSL2;`docker pull awslabs/palace:latest`;Gmsh binary in WSL;Python runner script (~100 lines);test `ssh QM "docker run --rm awslabs/palace:latest --help"` |
+| C.5 | Backend: `solvers/em_fem.py` adapter | 📋 | — | params {emProblemId} → load EmProblem + Mesh → write palace JSON config → SshWorkstationRunner.submit → wait + parse results;Phase C.5 mock-mode 同 InProcessRunner 跑 fake Touchstone output for UI dev |
+| C.6 | Mesh ingest:Gmsh wrap STEP/STL → `.msh` upload to backend | ✅ | (this commit) | Phase C MVP 接受 user 已產好的 `.msh` upload via `POST /api/meshes` multipart (100 MB cap from `settings.mesh_max_bytes`);file 存 disk under `settings.mesh_storage_dir = REPO_ROOT/.meshes/`(.gitignored);ASCII Gmsh `$Elements` header parser 抓 element_count。Phase C+ 自動 Gmsh CLI 從 STEP/STL 留 future。 |
 | C.7 | Frontend `EmWorkspace.tsx` 取代 placeholder | 📋 | — | `modules/em/EmWorkspace.tsx`:scene picker (從 SceneObject) + port assignment UI (anchorBindings.kind='emPort') + freq sweep params + Run |
 | C.8 | Frontend field viewer:vtk.js 載 palace `.pvtu` output | 📋 | — | `npm install vtk.js`;render |E| heatmap on mesh surface |
 | C.9 | Frontend S-parameter chart (reuse Phase B Touchstone path) | 📋 | — | palace 輸出 Touchstone-format .s2p → reuse SmithChart + magnitude plot from Phase B.7 |
@@ -124,13 +124,13 @@
 - POST `/api/simulation-runs {module:'em_fem'}` 不再返回 501
 - pytest + e2e 全 pass(含 mocked palace output e2e)
 
-### 開放問題(等 Phase C.4 開工前 user 決定)
+### 開放問題 — 已拍板 (2026-05-12)
 
-1. **Workstation OS** — Linux(palace native) vs Windows(palace via WSL2 / Docker Desktop)?13700K 機器目前是 Win/Linux?
-2. **palace install path** — Docker image (1-line `docker pull awslabs/palace`) vs spack (manual build, 30 min)?
-3. **Mesh size policy** — backend 拒絕 > N MB mesh upload (避免 DDoS);N = 100 MB 合理?
-4. **Field viewer detail** — Phase C MVP 只顯示 surface |E|;volume rendering / vector field arrows / cut planes 留 Phase C+
-5. **Compute time hard cap** — palace job 跑超過幾小時 abort?60 min default 合理?
+1. **Workstation OS** = **Windows + WSL2 / Docker Desktop**(palace 跑在 WSL2 內 Docker container)
+2. **palace install path** = **Docker image**(`docker pull awslabs/palace`)
+3. **Mesh size policy** = **100 MB 上限**(`/api/meshes` POST 拒絕 > 100 MB upload;backend `settings.mesh_max_bytes`)
+4. **Field viewer** = **volume rendering**(vtk.js volumetric;不止 surface)
+5. **Compute time hard cap** = **60 分鐘 default**(`settings.em_solver_timeout_sec=3600`,可被 problem.params override)
 
 ---
 

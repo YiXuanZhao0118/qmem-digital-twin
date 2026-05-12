@@ -27,6 +27,15 @@ class Settings(BaseSettings):
     # override (e.g. C:\ProgramData\chocolatey\bin\ngspice.exe).
     ngspice_path: str | None = None
 
+    # Phase C: EM module — palace via Docker on a WSL2 / lab workstation
+    # over SSH.
+    mesh_max_bytes: int = 100 * 1024 * 1024  # 100 MB upload cap
+    mesh_storage_dir: Path = REPO_ROOT / ".meshes"
+    em_solver_timeout_sec: int = 60 * 60  # 60 minutes
+    workstation_host: str | None = None  # e.g. "QM" — resolved via ~/.ssh/config
+    workstation_key_path: str | None = None
+    workstation_palace_image: str = "awslabs/palace:latest"
+
     model_config = SettingsConfigDict(
         env_file=(".env", "../.env"),
         env_file_encoding="utf-8",

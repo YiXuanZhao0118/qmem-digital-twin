@@ -15,6 +15,7 @@ vite.config.d.ts
 *-dev.log
 *-dev.err
 .local-postgres/
+.meshes/
 
 # Local-only dev / cache artifacts (added 2026-05-07 before first big push to private repo)
 .claude-runtime/

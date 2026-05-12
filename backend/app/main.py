@@ -15,6 +15,8 @@ from app.routers import (
     components,
     connections,
     device_states,
+    em_problems,
+    meshes,
     objects,
     optical_elements,
     optical_links,
@@ -56,6 +58,8 @@ app.include_router(simulations.router, prefix="/api/simulations", tags=["simulat
 app.include_router(simulation_runs.router, prefix="/api/simulation-runs", tags=["simulation_runs"])
 app.include_router(circuits.router, prefix="/api/circuits", tags=["circuits"])
 app.include_router(touchstone.router, prefix="/api/touchstone", tags=["touchstone"])
+app.include_router(meshes.router, prefix="/api/meshes", tags=["meshes"])
+app.include_router(em_problems.router, prefix="/api/em-problems", tags=["em_problems"])
 app.include_router(revisions.router, prefix="/api/revisions", tags=["revisions"])
 app.include_router(scene_views.router, prefix="/api/scene-views", tags=["scene_views"])
 app.include_router(collections.router, prefix="/api/collections", tags=["collections"])
