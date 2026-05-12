@@ -955,7 +955,8 @@ export type SimulationModule =
   | "optics_seq"
   | "optics_fdtd"
   | "spice"
-  | "em_fem";
+  | "em_fem"
+  | "magnetics_dc";
 
 // Where a SolverRunner dispatched this row (mirrors backend
 // app.schemas.SolverRunnerKind). Phase A only ships "inproc".
@@ -1092,6 +1093,56 @@ export type EmProblemCreatePayload = {
 };
 
 export type EmProblemUpdatePayload = Partial<EmProblemCreatePayload>;
+
+// ---- Coils + Magnetics (Phase F+ Magnetics) -------------------------------
+
+export type CoilShape = "circular_loop" | "solenoid" | "polyline";
+
+export type Coil = {
+  id: string;
+  name: string;
+  shape: CoilShape;
+  /** shape-specific: {radiusMm, turns, lengthMm, axisBodyLocal,
+   *  positionMm (when not bound to SceneObject), pointsMm} */
+  params: Record<string, unknown>;
+  currentA: number;
+  sceneObjectId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CoilCreatePayload = {
+  name: string;
+  shape?: CoilShape;
+  params?: Record<string, unknown>;
+  currentA?: number;
+  sceneObjectId?: string | null;
+};
+
+export type CoilUpdatePayload = Partial<CoilCreatePayload>;
+
+export type MagneticsEvalRegion = {
+  centerMm: [number, number, number];
+  sizeMm: [number, number, number];
+  gridDim: [number, number, number];
+};
+
+export type MagneticsProblem = {
+  id: string;
+  name: string;
+  coilIds: string[];
+  evalRegion: MagneticsEvalRegion;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type MagneticsProblemCreatePayload = {
+  name: string;
+  coilIds?: string[];
+  evalRegion?: MagneticsEvalRegion;
+};
+
+export type MagneticsProblemUpdatePayload = Partial<MagneticsProblemCreatePayload>;
 
 // ---- Touchstone (Phase B.7) -------------------------------------------------
 

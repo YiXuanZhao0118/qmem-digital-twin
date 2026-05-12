@@ -34,7 +34,8 @@ export type PanelId =
   | "beam-scope"
   | "touch-coincidence"
   | "optical-link-viewer"
-  | "solver-console";
+  | "solver-console"
+  | "magnetics";
 
 const PANEL_DEFS: { id: PanelId; title: string; defaultLayout: PanelLayout }[] = [
   {
@@ -96,6 +97,13 @@ const PANEL_DEFS: { id: PanelId; title: string; defaultLayout: PanelLayout }[] =
     // multiphysics flow immediately (Run button + recent runs list +
     // WS-driven progress).
     defaultLayout: { x: -340, y: 600, w: 320, h: 260, visible: true, collapsed: false, z: 2 },
+  },
+  {
+    id: "magnetics",
+    title: "Magnetics overlay",
+    // Hidden by default; user opens via Window menu when they want to
+    // compute a B-field on top of the current Optics scene.
+    defaultLayout: { x: -340, y: 80, w: 320, h: 460, visible: false, collapsed: false, z: 2 },
   },
 ];
 

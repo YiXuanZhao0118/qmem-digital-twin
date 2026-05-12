@@ -7,9 +7,15 @@ import type {
   Circuit,
   CircuitCreatePayload,
   CircuitUpdatePayload,
+  Coil,
+  CoilCreatePayload,
+  CoilUpdatePayload,
   EmProblem,
   EmProblemCreatePayload,
   EmProblemUpdatePayload,
+  MagneticsProblem,
+  MagneticsProblemCreatePayload,
+  MagneticsProblemUpdatePayload,
   Mesh,
   Collection,
   CollectionMember,
@@ -761,6 +767,69 @@ export async function uploadMeshApi(file: File, name?: string): Promise<Mesh> {
 
 export async function deleteMeshApi(id: string): Promise<void> {
   await client.delete(`/api/meshes/${id}`);
+}
+
+// ---- Coils + Magnetics (Phase F+) ------------------------------------------
+
+export async function fetchCoilsApi(
+  limit = 200,
+  sceneObjectId?: string,
+): Promise<Coil[]> {
+  const params: Record<string, string | number> = { limit };
+  if (sceneObjectId) params.scene_object_id = sceneObjectId;
+  const response = await client.get<Coil[]>("/api/coils", { params });
+  return response.data;
+}
+
+export async function createCoilApi(payload: CoilCreatePayload): Promise<Coil> {
+  const response = await client.post<Coil>("/api/coils", payload);
+  return response.data;
+}
+
+export async function updateCoilApi(
+  id: string,
+  patch: CoilUpdatePayload,
+): Promise<Coil> {
+  const response = await client.patch<Coil>(`/api/coils/${id}`, patch);
+  return response.data;
+}
+
+export async function deleteCoilApi(id: string): Promise<void> {
+  await client.delete(`/api/coils/${id}`);
+}
+
+export async function fetchMagneticsProblemsApi(
+  limit = 100,
+): Promise<MagneticsProblem[]> {
+  const response = await client.get<MagneticsProblem[]>("/api/magnetics-problems", {
+    params: { limit },
+  });
+  return response.data;
+}
+
+export async function createMagneticsProblemApi(
+  payload: MagneticsProblemCreatePayload,
+): Promise<MagneticsProblem> {
+  const response = await client.post<MagneticsProblem>(
+    "/api/magnetics-problems",
+    payload,
+  );
+  return response.data;
+}
+
+export async function updateMagneticsProblemApi(
+  id: string,
+  patch: MagneticsProblemUpdatePayload,
+): Promise<MagneticsProblem> {
+  const response = await client.patch<MagneticsProblem>(
+    `/api/magnetics-problems/${id}`,
+    patch,
+  );
+  return response.data;
+}
+
+export async function deleteMagneticsProblemApi(id: string): Promise<void> {
+  await client.delete(`/api/magnetics-problems/${id}`);
 }
 
 export async function parseTouchstoneApi(file: File): Promise<TouchstoneNetwork> {

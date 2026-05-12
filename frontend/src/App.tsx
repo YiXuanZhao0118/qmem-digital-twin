@@ -20,6 +20,7 @@ import { TopBar } from "./components/workspace/TopBar";
 import { WorkspaceProvider } from "./components/workspace/WorkspaceProvider";
 import { ElectronicsWorkspace } from "./modules/electronics/ElectronicsWorkspace";
 import { EmWorkspace } from "./modules/em/EmWorkspace";
+import { MagneticsPanel } from "./modules/magnetics/MagneticsPanel";
 import { getModule } from "./modules/_registry";
 import { ModulePlaceholder } from "./modules/ModulePlaceholder";
 import { useSceneStore } from "./store/sceneStore";
@@ -240,6 +241,7 @@ export default function App() {
               <TimingEditorPanel />
               <OpticalLinkViewerPanel />
               <TouchCoincidencePanel />
+              <MagneticsPanel />
               <CursorMenu />
             </>
           )}
