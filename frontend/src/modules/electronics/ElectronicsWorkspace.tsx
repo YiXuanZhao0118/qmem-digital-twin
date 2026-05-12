@@ -15,6 +15,7 @@ import { Play, Plus, Save, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { useSceneStore } from "../../store/sceneStore";
+import { WaveformChart } from "./WaveformChart";
 
 const STARTER_NETLIST = `* New circuit — replace with your own
 * Example: voltage divider DC operating point
@@ -300,12 +301,20 @@ function RunResultPreview({
       )}
       {rs?.variables && rs.variables.length > 0 && (
         <div className="electronics-variables">
-          <strong>Variables:</strong> {rs.variables.join(", ")}
+          <strong>X:</strong> {rs.variables[0]}
+          {rs.variables.length > 1 && (
+            <>
+              {" "}— <strong>Y:</strong> {rs.variables.slice(1).join(", ")}
+            </>
+          )}
         </div>
+      )}
+      {rs?.data && rs.variables && run.status === "completed" && (
+        <WaveformChart runId={run.id} result={rs} />
       )}
       {rs?.data && (
         <details className="electronics-result-data">
-          <summary>Raw data (JSON)</summary>
+          <summary>Raw data (JSON, first 4 KB)</summary>
           <pre>{JSON.stringify(rs.data, null, 2).slice(0, 4000)}</pre>
         </details>
       )}
