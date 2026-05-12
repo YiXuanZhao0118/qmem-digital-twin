@@ -10,6 +10,7 @@
  *             curve (signal/idler vs T)
  *   - right:  SHG efficiency calculator + result card
  */
+import { Play } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -133,66 +134,67 @@ export function CrystalWorkspace() {
     })();
   }, []);
 
-  // Recompute on every change (debounced). All three sub-calculations
-  // run sequentially in one effect so that SHG always sees the newest
-  // phase-match poling — independent effects raced and showed stale
-  // Δk_eff on preset switches.
-  useEffect(() => {
-    let cancelled = false;
-    const handle = window.setTimeout(() => {
-      void (async () => {
-        setBusy(true);
-        setError(null);
-        try {
-          const pm = await computeCrystalPhaseMatchApi({
-            crystalId,
-            kind,
-            pumpNm,
-            signalNm,
-            tC,
-          });
-          if (cancelled) return;
-          setPhaseMatch(pm);
+  // Sequential phase-match → SPDC tuning + SHG. Single fn so the Run
+  // button can call it directly, bypassing the auto-debounce.
+  const runCompute = async (signal?: { cancelled: boolean }) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const pm = await computeCrystalPhaseMatchApi({
+        crystalId,
+        kind,
+        pumpNm,
+        signalNm,
+        tC,
+      });
+      if (signal?.cancelled) return;
+      setPhaseMatch(pm);
 
-          const [tu, shgRes] = await Promise.all([
-            computeCrystalSpdcTuningApi({
-              crystalId,
-              kind,
-              pumpNm,
-              polingUm: pm.polingPeriodUm ?? undefined,
-              tMinC: Math.max(0, tC - 40),
-              tMaxC: tC + 40,
-              tPoints: 41,
-            }),
-            computeCrystalShgApi({
-              crystalId,
-              kind,
-              fundamentalNm: shgFundamentalNm,
-              pPumpW: shgPumpW,
-              crystalLengthMm: shgLengthMm,
-              beamWaistUm: shgWaistUm,
-              tC,
-              polingUm: pm.polingPeriodUm ?? undefined,
-            }),
-          ]);
-          if (cancelled) return;
-          setTuning(tu);
-          setShg(shgRes);
-        } catch (err) {
-          if (cancelled) return;
-          setError(err instanceof Error ? err.message : String(err));
-          setPhaseMatch(null);
-          setTuning(null);
-          setShg(null);
-        } finally {
-          if (!cancelled) setBusy(false);
-        }
-      })();
+      const [tu, shgRes] = await Promise.all([
+        computeCrystalSpdcTuningApi({
+          crystalId,
+          kind,
+          pumpNm,
+          polingUm: pm.polingPeriodUm ?? undefined,
+          tMinC: Math.max(0, tC - 40),
+          tMaxC: tC + 40,
+          tPoints: 41,
+        }),
+        computeCrystalShgApi({
+          crystalId,
+          kind,
+          fundamentalNm: shgFundamentalNm,
+          pPumpW: shgPumpW,
+          crystalLengthMm: shgLengthMm,
+          beamWaistUm: shgWaistUm,
+          tC,
+          polingUm: pm.polingPeriodUm ?? undefined,
+        }),
+      ]);
+      if (signal?.cancelled) return;
+      setTuning(tu);
+      setShg(shgRes);
+    } catch (err) {
+      if (signal?.cancelled) return;
+      setError(err instanceof Error ? err.message : String(err));
+      setPhaseMatch(null);
+      setTuning(null);
+      setShg(null);
+    } finally {
+      if (!signal?.cancelled) setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    const signal = { cancelled: false };
+    const handle = window.setTimeout(() => {
+      void runCompute(signal);
     }, 250);
     return () => {
-      cancelled = true;
+      signal.cancelled = true;
       window.clearTimeout(handle);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     crystalId,
     kind,
@@ -341,7 +343,16 @@ export function CrystalWorkspace() {
       <section className="electronics-editor">
         <header className="electronics-editor-header">
           <span className="electronics-sidebar-title">Phase matching</span>
-          {busy && <span className="cavity-busy">computing…</span>}
+          <button
+            type="button"
+            className="electronics-btn primary"
+            onClick={() => void runCompute()}
+            disabled={busy}
+            title="Recompute now (results also auto-refresh on input changes)"
+            style={{ marginLeft: "auto" }}
+          >
+            <Play size={11} /> {busy ? "Computing…" : "Run"}
+          </button>
         </header>
         <div className="em-editor-body">
           {error && <div className="electronics-error">{error}</div>}

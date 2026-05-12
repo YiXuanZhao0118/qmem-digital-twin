@@ -11,7 +11,7 @@
  * compute on every input change (debounced 250 ms) and render the
  * bundle.
  */
-import { Activity, Plus, Trash2 } from "lucide-react";
+import { Activity, Play, Plus, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -126,22 +126,25 @@ export function OpticsCavityWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const runCompute = async (current: Draft) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await computeCavityApi(current);
+      setResult(res);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   useEffect(() => {
     const handle = window.setTimeout(() => {
-      void (async () => {
-        setBusy(true);
-        setError(null);
-        try {
-          const res = await computeCavityApi(draft);
-          setResult(res);
-        } catch (err) {
-          setError(err instanceof Error ? err.message : String(err));
-        } finally {
-          setBusy(false);
-        }
-      })();
+      void runCompute(draft);
     }, 250);
     return () => window.clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft]);
 
   const onPickPreset = (preset: Preset) => {
@@ -324,6 +327,16 @@ export function OpticsCavityWorkspace() {
       <section className="electronics-editor">
         <header className="electronics-editor-header">
           <span className="electronics-sidebar-title">Mirrors ({draft.mirrors.length})</span>
+          <button
+            type="button"
+            className="electronics-btn primary"
+            onClick={() => void runCompute(draft)}
+            disabled={busy}
+            title="Recompute now (results also auto-refresh on input changes)"
+            style={{ marginLeft: "auto" }}
+          >
+            <Play size={11} /> {busy ? "Computing…" : "Run"}
+          </button>
           <button
             type="button"
             className="electronics-btn"

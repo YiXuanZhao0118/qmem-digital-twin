@@ -230,10 +230,17 @@ export default function App() {
     <WorkspaceProvider>
       <main className="workspace-shell">
         <TopBar>
-          <SceneToolbar
-            roomDimensions={roomDimensions}
-            onRoomDimensionsChange={setRoomDimensions}
-          />
+          {/* SceneToolbar is Lab-only — its buttons (Initial Setup,
+              Display overlays, Scene-view picker, dual viewport) only
+              act on the 3D scene. Other tabs (Optics calculator,
+              Electronics, EM) get module-specific Run controls inside
+              their own workspaces. */}
+          {isOptics && (
+            <SceneToolbar
+              roomDimensions={roomDimensions}
+              onRoomDimensionsChange={setRoomDimensions}
+            />
+          )}
         </TopBar>
         <div className="workspace-canvas">
           {isOptics && (
