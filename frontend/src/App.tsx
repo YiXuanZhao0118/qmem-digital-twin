@@ -22,7 +22,7 @@ import { WorkspaceProvider } from "./components/workspace/WorkspaceProvider";
 import { ElectronicsWorkspace } from "./modules/electronics/ElectronicsWorkspace";
 import { EmWorkspace } from "./modules/em/EmWorkspace";
 import { MagneticsPanel } from "./modules/magnetics/MagneticsPanel";
-import { OpticsCavityWorkspace } from "./modules/optics_cavity/OpticsCavityWorkspace";
+import { OpticsHost } from "./modules/optics_cavity/OpticsHost";
 import { PulseBlasterPanel } from "./modules/pulse_blaster/PulseBlasterPanel";
 import { getModule } from "./modules/_registry";
 import { ModulePlaceholder } from "./modules/ModulePlaceholder";
@@ -253,7 +253,7 @@ export default function App() {
               <CursorMenu />
             </>
           )}
-          {isCavity && <OpticsCavityWorkspace />}
+          {isCavity && <OpticsHost />}
           {isElectronics && <ElectronicsWorkspace />}
           {isEm && <EmWorkspace />}
           {!isOptics && !isCavity && !isElectronics && !isEm && (

@@ -937,6 +937,151 @@ export async function computeCavityApi(
   return response.data;
 }
 
+// ---- Optics nonlinear-crystal calculator ---------------------------------
+
+export type NLKind = "type0_eee" | "type1_ooe" | "type2_oeo" | "type2_eoe";
+export type PrincipalAxis = "x" | "y" | "z" | "o" | "e";
+
+export type CrystalSummary = {
+  id: string;
+  fullName: string;
+  isBiaxial: boolean;
+  isQpm: boolean;
+  axes: string[];
+  kinds: string[];
+  description: string;
+};
+
+export type CrystalCatalogResult = { crystals: CrystalSummary[] };
+
+export type CrystalDispersionRequest = {
+  crystalId: string;
+  axis?: PrincipalAxis;
+  tC?: number;
+  wavelengthMinNm?: number;
+  wavelengthMaxNm?: number;
+  points?: number;
+};
+
+export type CrystalDispersionResult = {
+  wavelengthNm: number[];
+  n: number[];
+  tC: number;
+  axis: string;
+};
+
+export type CrystalPhaseMatchRequest = {
+  crystalId: string;
+  kind?: NLKind;
+  pumpNm: number;
+  signalNm: number;
+  tC?: number;
+};
+
+export type CrystalPhaseMatchResult = {
+  polingPeriodUm: number | null;
+  idlerNm: number;
+  deltaKBulkPerMm: number;
+  nPump: number;
+  nSignal: number;
+  nIdler: number;
+  method: string;
+  warnings: string[];
+};
+
+export type CrystalSpdcTuningRequest = {
+  crystalId: string;
+  kind?: NLKind;
+  pumpNm: number;
+  polingUm?: number | null;
+  tMinC?: number;
+  tMaxC?: number;
+  tPoints?: number;
+};
+
+export type CrystalSpdcTuningRow = {
+  tC: number;
+  signalNm: number | null;
+  idlerNm: number | null;
+  deltaKBulkPerMm: number | null;
+};
+
+export type CrystalSpdcTuningResult = {
+  rows: CrystalSpdcTuningRow[];
+  autoPolingUm: number | null;
+};
+
+export type CrystalShgRequest = {
+  crystalId: string;
+  kind?: NLKind;
+  fundamentalNm: number;
+  pPumpW: number;
+  crystalLengthMm: number;
+  beamWaistUm?: number;
+  tC?: number;
+  polingUm?: number | null;
+};
+
+export type CrystalShgResult = {
+  fundamentalNm: number;
+  secondHarmonicNm: number;
+  nFundamental: number;
+  nSecondHarmonic: number;
+  dEffPmPerV: number;
+  polingUm: number | null;
+  deltaKBulkPerMm: number;
+  deltaKEffectivePerMm: number;
+  intensityWPerM2: number;
+  eta: number;
+  pShW: number;
+  sincFactor: number;
+};
+
+export async function fetchCrystalCatalogApi(): Promise<CrystalCatalogResult> {
+  const response = await client.get<CrystalCatalogResult>("/api/optics-crystal/catalog");
+  return response.data;
+}
+
+export async function computeCrystalDispersionApi(
+  payload: CrystalDispersionRequest,
+): Promise<CrystalDispersionResult> {
+  const response = await client.post<CrystalDispersionResult>(
+    "/api/optics-crystal/dispersion",
+    payload,
+  );
+  return response.data;
+}
+
+export async function computeCrystalPhaseMatchApi(
+  payload: CrystalPhaseMatchRequest,
+): Promise<CrystalPhaseMatchResult> {
+  const response = await client.post<CrystalPhaseMatchResult>(
+    "/api/optics-crystal/phase-match",
+    payload,
+  );
+  return response.data;
+}
+
+export async function computeCrystalSpdcTuningApi(
+  payload: CrystalSpdcTuningRequest,
+): Promise<CrystalSpdcTuningResult> {
+  const response = await client.post<CrystalSpdcTuningResult>(
+    "/api/optics-crystal/spdc-tuning",
+    payload,
+  );
+  return response.data;
+}
+
+export async function computeCrystalShgApi(
+  payload: CrystalShgRequest,
+): Promise<CrystalShgResult> {
+  const response = await client.post<CrystalShgResult>(
+    "/api/optics-crystal/shg",
+    payload,
+  );
+  return response.data;
+}
+
 export async function parseTouchstoneApi(file: File): Promise<TouchstoneNetwork> {
   const form = new FormData();
   form.append("file", file, file.name);
