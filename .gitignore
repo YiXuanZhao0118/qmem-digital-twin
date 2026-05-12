@@ -23,3 +23,9 @@ frontend/.pw/
 frontend/pw-shot*.mjs
 frontend/pw-shot*.png
 frontend/pw-test-placement.mjs
+
+# User-specific Claude Code runtime (skills, settings) — local only, not shared
+# across team or with the lab workstation
+.claude/
+.codex/
+.agents/
