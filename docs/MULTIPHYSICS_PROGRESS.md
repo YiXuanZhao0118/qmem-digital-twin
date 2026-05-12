@@ -20,7 +20,7 @@
 
 **Estimate:** 2–3 週(全職)
 **Started:** 2026-05-12
-**Done:** —
+**Done:** 2026-05-12(同日完成 — 因為 simulation_runs 表 V2 Phase 1 已建好 + 既有 panel system 可重用)
 
 ### Sub-tasks
 
@@ -33,7 +33,7 @@
 | A.4 | Frontend: module registry + `ModuleSwitcher.tsx` (top bar) | ✅ | (this commit) | `modules/_registry.ts` lists Optics(A) / Electronics(B) / EM(C);`components/workspace/ModuleSwitcher.tsx` segmented control;sceneStore 加 `currentModule` + `setCurrentModule`;types/digitalTwin.ts 擴 `SimulationRunStatus` 加 'queued'+'cancelled',新 `SimulationModule` / `SolverRunnerKind` / `SimulationRunCreatePayload` |
 | A.5 | Frontend: `OpticsWorkspace.tsx` 包現有 viewer/panels;Electronics/EM placeholder | ✅ | (this commit) | App.tsx 條件渲染:Optics → 現有 viewer + panels(不動);其他 module → `modules/ModulePlaceholder.tsx` 顯示 phase tag + description + 'Coming soon' card。PHY editor mode 仍 take-over,跟 module 正交。Browser verify: ModuleSwitcher 三個 tab 渲染 + Electronics click 顯示 placeholder + 回 Optics 重出 viewer (canvasHasViewer:true, no console errors) |
 | A.6 | Frontend: `SolverConsole.tsx`(progress / log / error) | ✅ | (this commit) | FloatingPanel @ panel id `solver-console`(右下,visible by default);Run button POST /api/simulation-runs;active run 顯示 status badge + progress bar;recent runs list (last 6);WS `simulation_run.status_changed` 透過 sceneStore.applyEvent 即時 patch list。新 sceneStore state `recentSimulationRuns` + actions `loadRecentSimulationRuns` / `dispatchSimulationRun`。新 api helpers `fetchSimulationRunsApi` / `fetchSimulationRunApi` / `createSimulationRunApi`。Browser preview verified: panel 渲染、initial GET 拿到 4 個 historical runs、Run button enabled (POST e2e 卡 8010 zombie socket — backend 已獨立 verified on 8011, fix 需 reboot Windows 清 stale binding) |
-| A.7 | End-to-end smoke test | 🚧 | (this commit) partial | **Done**: vitest unit guard `frontend/src/modules/_registry.test.ts` 守 backend SimulationModule enum vs frontend MODULES drift(區分 top-level vs nested;5 tests pass)。**Deferred**: full Playwright browser e2e — 還沒裝 Playwright infra + POST e2e 在這台 dev 機卡 8010 zombie socket(reboot 後可解)。Browser-level module switch + console panel 渲染已透過 preview tools 手動 verified。 |
+| A.7 | End-to-end smoke test | ✅ | (this commit) | **Two-layer:** (1) vitest unit guard `frontend/src/modules/_registry.test.ts` 守 backend SimulationModule enum vs frontend MODULES drift(top-level vs nested;5 tests pass)。(2) Playwright browser e2e `frontend/e2e/module-switcher.spec.ts`(4 tests pass / 12.0s):top bar 列 3 tabs、Optics 是 Phase A only available、Optics workspace 顯示 SolverConsole + canvas、Electronics → placeholder → 回 Optics round-trip 復原 viewer。POST e2e click 沒測(因為要等 backend reboot 清 zombie + Phase A 的 backend POST 已在 A.1+A.2+A.3 commit 透過 curl 獨立 verified)。新 npm scripts:`test:e2e` + `test:e2e:ui`。 |
 
 ### Phase A 完成判準
 

@@ -29,3 +29,9 @@ frontend/pw-test-placement.mjs
 .claude/
 .codex/
 .agents/
+
+# Playwright (Phase A.7) — test artifacts only; the suite + config are tracked
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/playwright/.cache/
