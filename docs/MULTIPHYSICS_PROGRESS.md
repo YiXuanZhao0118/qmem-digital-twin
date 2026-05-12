@@ -26,10 +26,10 @@
 
 | # | Task | Status | Commit | Notes |
 |---|---|---|---|---|
-| A.0 | 建 `MULTIPHYSICS_PROGRESS.md` | ✅ | (this commit) | 開工 |
-| A.1 | Backend: `simulation_runs` schema + alembic 0036 + Pydantic + CRUD router | 📋 | — | 新增 `simulation_runs` table;module enum 含 `optics_seq` / `optics_fdtd` / `spice` / `em_fem`(後三個只佔 enum,不 implement) |
-| A.2 | Backend: `SolverRunner` Protocol + `InProcessRunner` 實作 | 📋 | — | `backend/app/solvers/runner.py`;dispatch by module |
-| A.3 | Backend: 把現有 `optical_solver.py` 包進 `solvers/optics_seq.py`,註冊到 runner | 📋 | — | 內容不大改,只搬位置 + 加 thin adapter |
+| A.0 | 建 `MULTIPHYSICS_PROGRESS.md` | ✅ | 0119646 | 開工 |
+| A.1 | Backend: `simulation_runs` schema + alembic 0036 + Pydantic + CRUD router | ✅ | (this commit) | ALTER TABLE 加 7 cols;status enum 擴 +'queued'/'cancelled';Literals `SimulationModule` / `SolverRunnerKind` ;router POST + GET filter;e2e 通過 (POST→queued→completed in 62ms) |
+| A.2 | Backend: `SolverRunner` Protocol + `InProcessRunner` 實作 | ✅ | (this commit) | `backend/app/solvers/runner.py` Protocol + InProcessRunner via `asyncio.create_task`(strong-ref `self._tasks` 防 GC);MODULE_DISPATCH + MODULE_DEFAULT_RUNNER + RUNNERS dispatch tables |
+| A.3 | Backend: 把現有 `optical_solver.py` 包進 `solvers/optics_seq.py`,註冊到 runner | ✅ | (this commit) | adapter `solvers/optics_seq.py`;`hydrate_laser_kind_params` 從 routers/simulations.py 抽出共用;run() mutate sim_run + persist beam_segments + WS broadcast `simulation_run.status_changed` + `scene.reload`;legacy POST /api/simulations/optical/run 改 import 共用 helper,行為不變 |
 | A.4 | Frontend: module registry + `ModuleSwitcher.tsx` (top bar) | 📋 | — | `modules/_registry.ts` + `components/workspace/ModuleSwitcher.tsx` |
 | A.5 | Frontend: `OpticsWorkspace.tsx` 包現有 viewer/panels;Electronics/EM placeholder | 📋 | — | 不改現有 component,只加 wrapper |
 | A.6 | Frontend: `SolverConsole.tsx`(progress / log / error) | 📋 | — | 訂閱 WS broadcast `simulation_runs.status` |

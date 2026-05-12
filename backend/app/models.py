@@ -307,7 +307,9 @@ class SimulationRun(Base):
     solver_version: Mapped[str] = mapped_column(
         Text, nullable=False, default="optical-solver-v1", server_default="optical-solver-v1"
     )
-    # status ∈ {"completed", "running", "failed"}.
+    # status ∈ {"queued","running","completed","failed","cancelled"}. The
+    # original V2 set was {completed,running,failed}; alembic 0036 added
+    # 'queued' and 'cancelled' for the multiphysics runner abstraction.
     status: Mapped[str] = mapped_column(
         Text, nullable=False, default="completed", server_default="completed"
     )
@@ -325,6 +327,28 @@ class SimulationRun(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # Multi-physics extension (alembic 0036). See docs/MULTIPHYSICS_PLAN.md.
+    # module: which solver kind ran this row. Phase A only implements
+    # 'optics_seq'; the other three values are reserved for B/C/D.
+    module: Mapped[str] = mapped_column(
+        Text, nullable=False, default="optics_seq", server_default="optics_seq"
+    )
+    # runner_kind: where the solver ran. 'inproc' = inside the FastAPI
+    # worker (Phase A/B), 'container' = backend Docker subprocess
+    # (later Phase B), 'ssh_workstation' = lab workstation over SSH (Phase C).
+    runner_kind: Mapped[str] = mapped_column(
+        Text, nullable=False, default="inproc", server_default="inproc"
+    )
+    params: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+    progress: Mapped[float | None] = mapped_column(Float)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    # Small, UI-friendly summary (segment_count, key metrics). Big outputs
+    # (full meshes, FDTD field dumps) go to result_blob_path.
+    result_summary: Mapped[JsonDict | None] = mapped_column(JSONB)
+    result_blob_path: Mapped[str | None] = mapped_column(Text)
 
 
 class OpticalElement(Base):

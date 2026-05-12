@@ -2033,7 +2033,18 @@ class V2BeamState(CamelModel):
 # ---- simulation runs / revisions (V2 table-shaped) -------------------------
 
 
-SimulationRunStatus = Literal["completed", "running", "failed"]
+# V2 Phase 1 valid set was {completed, running, failed}; alembic 0036
+# (multiphysics) added 'queued' (created but not yet dispatched) and
+# 'cancelled' (user aborted before completion).
+SimulationRunStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
+
+# Multi-physics module discriminator. Phase A only implements optics_seq;
+# the other three values are reserved table-side so Phase B/C/D can ship
+# without another schema migration.
+SimulationModule = Literal["optics_seq", "optics_fdtd", "spice", "em_fem"]
+
+# Where a SolverRunner dispatched this row. See backend/app/solvers/runner.py.
+SolverRunnerKind = Literal["inproc", "container", "ssh_workstation"]
 
 
 class V2SimulationRunBase(CamelModel):
@@ -2044,6 +2055,15 @@ class V2SimulationRunBase(CamelModel):
     settings: JsonDict = Field(default_factory=dict)
     warnings: list[Any] = Field(default_factory=list)
     finished_at: datetime | None = None
+    # Multi-physics columns (alembic 0036). Defaults match the legacy-row
+    # backfill so existing optical runs round-trip unchanged.
+    module: SimulationModule = "optics_seq"
+    runner_kind: SolverRunnerKind = "inproc"
+    params: JsonDict = Field(default_factory=dict)
+    progress: float | None = None
+    error_message: str | None = None
+    result_summary: JsonDict | None = None
+    result_blob_path: str | None = None
 
 
 class V2SimulationRunCreate(V2SimulationRunBase):
@@ -2053,6 +2073,19 @@ class V2SimulationRunCreate(V2SimulationRunBase):
 class V2SimulationRunOut(V2SimulationRunBase):
     id: uuid.UUID
     started_at: datetime
+
+
+class MultiphysicsSimulationRunCreate(CamelModel):
+    """Payload for ``POST /api/simulation-runs``.
+
+    Module is required (decides which solver to dispatch). runner_kind has
+    a sensible default per module (Phase A: optics_seq → inproc) so callers
+    that don't care can omit it. ``params`` is module-specific JSON.
+    """
+
+    module: SimulationModule
+    runner_kind: SolverRunnerKind | None = None  # None = use module default
+    params: JsonDict = Field(default_factory=dict)
 
 
 class V2RevisionBase(CamelModel):

@@ -20,43 +20,9 @@ from app.models import (
 )
 from app.schemas import CamelModel
 from app.solvers.optical_solver import solve_chain
+from app.solvers.optics_seq import hydrate_laser_kind_params
 from app.timing_program import evaluate_program_at
-from app.v2_bindings import get_optical_source, legacy_laser_kind_params_from_beam
 from app.websocket import manager
-
-
-def _hydrate_laser_kind_params(
-    elements: list[OpticalElement],
-    objects_by_id: dict,
-) -> None:
-    """V2 Phase 3 (alembic 0029) translator boundary.
-
-    The solver's emit-from-laser path still consumes the legacy laser
-    kindParams shape. After Phase 3 the DB no longer stores those fields —
-    the V2 source of truth is ``objects.properties.opticalSources[].beam``.
-    Right before invoking solve_chain we translate the V2 source back into
-    the legacy shape and overwrite the in-memory OpticalElement.kind_params
-    so the rest of the solver runs unchanged.
-
-    Mutation is in-memory only; SQLAlchemy session changes are not flushed
-    here, and the actual DB row stays empty.
-    """
-    for element in elements:
-        if element.element_kind != "laser_source":
-            continue
-        scene_object = objects_by_id.get(element.object_id)
-        if scene_object is None:
-            continue
-        source = get_optical_source(scene_object)
-        if source is None:
-            continue
-        beam = source.get("beam") if isinstance(source, dict) else None
-        if not isinstance(beam, dict):
-            continue
-        legacy = legacy_laser_kind_params_from_beam(beam)
-        # Preserve any residual non-V2 keys the user may have set.
-        merged = {**(element.kind_params or {}), **legacy}
-        element.kind_params = merged
 
 
 router = APIRouter()
@@ -76,7 +42,7 @@ async def run_optical(session: AsyncSession = Depends(get_session)) -> OpticalRu
     objects_by_id = {
         obj.id: obj for obj in (await session.scalars(select(SceneObject))).all()
     }
-    _hydrate_laser_kind_params(elements, objects_by_id)
+    hydrate_laser_kind_params(elements, objects_by_id)
 
     result = solve_chain(elements, links)
 
@@ -197,7 +163,7 @@ async def run_optical_transient(
     objects_by_id = {
         obj.id: obj for obj in (await session.scalars(select(SceneObject))).all()
     }
-    _hydrate_laser_kind_params(elements, objects_by_id)
+    hydrate_laser_kind_params(elements, objects_by_id)
     programs = list(
         (
             await session.scalars(
