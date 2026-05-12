@@ -83,13 +83,54 @@
 
 ## Phase C — EM MVP(palace)
 
-📋 等 Phase B done 才開工。
+**Target:** EM tab 從 placeholder 變成可用,user 在 3D scene 選 chassis/cavity/antenna → assign port + frequency sweep → 跑 palace FEM on lab workstation → 看 S-parameter (reuse Phase B uPlot) + |E| field overlay。
 
-**前置條件**:
-- 🔒 Lab workstation 確認可用(✅ 13700K + 128GB + RTX 4070 Ti)
-- 🔒 Workstation 上裝好 palace + Gmsh + MPI
-- 🔒 SSH key 設好(目前 dev 機器 `~/.ssh/` 沒 private key)
-- 🔒 Workstation 跟 dev 機器網路互通(`~/.ssh/config` 有 `QM` host on 172.30.10.204,確認可達)
+**Estimate:** 6–10 週(全職)
+**Started:** 2026-05-12(plan 拍板,實作待前置條件)
+**Done:** —
+
+### 前置條件(必須先解)
+
+| # | 項目 | Status | 備註 |
+|---|---|---|---|
+| 1 | Lab workstation hardware | ✅ | 13700K + 128GB RAM + RTX 4070 Ti — palace FEM 跑得動 |
+| 2 | Workstation 上裝好 palace + Gmsh + OpenMPI | 🔒 | palace via Docker / spack;Gmsh binary;MPI runtime |
+| 3 | Dev 機器 ↔ workstation SSH key | 🔒 | 目前 dev 機器 `~/.ssh/` 沒 private key — `ssh-keygen -t ed25519` 然後 `ssh-copy-id <workstation>` |
+| 4 | Workstation 跟 dev 機器網路互通 | 🔒 | `~/.ssh/config` 有 `QM` host on 172.30.10.204 — 跑 `ssh QM` 確認可達 |
+| 5 | Workstation 跑 runner agent | 🔒 | `pip install asyncssh` on dev;workstation 上一個 small Python script (tmux + nohup) 接收 job spec、跑 palace、回傳結果 |
+
+### Sub-tasks
+
+| # | Task | Status | Commit | Notes |
+|---|---|---|---|---|
+| C.0 | PROGRESS.md kickoff | ✅ | (this commit) | This entry — Phase C 規劃拍板,實作等前置條件 |
+| C.1 | Backend: `em_problems` + `meshes` schema + alembic 0038 | 📋 | — | em_problems(id, scene_object_id, ports JSONB, boundary_conditions JSONB, freq_range_ghz, mesh_id);meshes(id, source_asset_3d_id, file_path, element_count, max_size_mm) |
+| C.2 | Backend: Pydantic + CRUD routers `/api/em-problems` `/api/meshes` | 📋 | — | 同 Phase B circuits 模式 |
+| C.3 | Backend: `SshWorkstationRunner` (asyncssh) | 📋 | — | `solvers/runner.py` 加 class;`settings.workstation_host` `workstation_key_path` config;submit = ssh + spawn,status = poll job state file |
+| C.4 | Workstation setup:palace + Gmsh + runner agent | 🔒 | — | Docker pull palace image (~2 GB);Gmsh binary;Python runner script (~100 lines);test `ssh QM "palace --help"` |
+| C.5 | Backend: `solvers/em_fem.py` adapter | 📋 | — | params {emProblemId} → load EmProblem + Mesh → write palace JSON config → SshWorkstationRunner.submit → wait + parse results;同 Phase B optics_seq 模式 |
+| C.6 | Mesh ingest:Gmsh wrap STEP/STL → `.msh` upload to backend | 📋 | — | Phase C MVP 接受 user 已產好的 `.msh` upload;Phase C+ wrap Gmsh CLI in container |
+| C.7 | Frontend `EmWorkspace.tsx` 取代 placeholder | 📋 | — | `modules/em/EmWorkspace.tsx`:scene picker (從 SceneObject) + port assignment UI (anchorBindings.kind='emPort') + freq sweep params + Run |
+| C.8 | Frontend field viewer:vtk.js 載 palace `.pvtu` output | 📋 | — | `npm install vtk.js`;render |E| heatmap on mesh surface |
+| C.9 | Frontend S-parameter chart (reuse Phase B Touchstone path) | 📋 | — | palace 輸出 Touchstone-format .s2p → reuse SmithChart + magnitude plot from Phase B.7 |
+| C.10 | Playwright e2e:assign port → run FEM → field appears | 📋 | — | Mock palace output (skip workstation in CI);only smoke-test UI flow |
+
+### Phase C 完成判準
+
+- 切 EM tab → 看到 EmWorkspace(不是 placeholder)
+- 選 SceneObject(e.g. chassis STL)→ assign 2 個 port → 設 1–10 GHz freq sweep → Run
+- 30 分鐘內(realistic for ~1M-DOF FEM)workstation 跑完 → 結果回傳
+- 顯示 S11/S21 (reuse Phase B Smith chart) + |E| field heatmap on mesh surface
+- POST `/api/simulation-runs {module:'em_fem'}` 不再返回 501
+- pytest + e2e 全 pass(含 mocked palace output e2e)
+
+### 開放問題(等 Phase C.4 開工前 user 決定)
+
+1. **Workstation OS** — Linux(palace native) vs Windows(palace via WSL2 / Docker Desktop)?13700K 機器目前是 Win/Linux?
+2. **palace install path** — Docker image (1-line `docker pull awslabs/palace`) vs spack (manual build, 30 min)?
+3. **Mesh size policy** — backend 拒絕 > N MB mesh upload (避免 DDoS);N = 100 MB 合理?
+4. **Field viewer detail** — Phase C MVP 只顯示 surface |E|;volume rendering / vector field arrows / cut planes 留 Phase C+
+5. **Compute time hard cap** — palace job 跑超過幾小時 abort?60 min default 合理?
 
 ---
 
