@@ -679,8 +679,13 @@ export async function createSimulationRunApi(
 
 // ---- Circuits (Phase B.1, alembic 0037) -----------------------------------
 
-export async function fetchCircuitsApi(limit = 100): Promise<Circuit[]> {
-  const response = await client.get<Circuit[]>("/api/circuits", { params: { limit } });
+export async function fetchCircuitsApi(
+  limit = 100,
+  sceneObjectId?: string,
+): Promise<Circuit[]> {
+  const params: Record<string, string | number> = { limit };
+  if (sceneObjectId) params.scene_object_id = sceneObjectId;
+  const response = await client.get<Circuit[]>("/api/circuits", { params });
   return response.data;
 }
 
@@ -710,8 +715,13 @@ export async function deleteCircuitApi(id: string): Promise<void> {
 
 // ---- EM (Phase C) -----------------------------------------------------------
 
-export async function fetchEmProblemsApi(limit = 100): Promise<EmProblem[]> {
-  const response = await client.get<EmProblem[]>("/api/em-problems", { params: { limit } });
+export async function fetchEmProblemsApi(
+  limit = 100,
+  sceneObjectId?: string,
+): Promise<EmProblem[]> {
+  const params: Record<string, string | number> = { limit };
+  if (sceneObjectId) params.scene_object_id = sceneObjectId;
+  const response = await client.get<EmProblem[]>("/api/em-problems", { params });
   return response.data;
 }
 

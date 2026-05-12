@@ -6253,3 +6253,107 @@ body.is-timing-bar-drag * {
   padding: 1px 4px;
   border-radius: 2px;
 }
+
+/* ---- Linked schematics (Phase F.1 Tier 1) ---- */
+
+.linked-schematics {
+  margin-top: 12px;
+  padding: 8px 10px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 6px;
+  background: rgba(59, 130, 246, 0.04);
+}
+
+.linked-schematics h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(15, 23, 42, 0.65);
+  margin: 0 0 8px 0;
+}
+
+.linked-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 11px;
+}
+
+.linked-row-label {
+  flex: 0 0 60px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(15, 23, 42, 0.55);
+  padding-top: 3px;
+}
+
+.linked-chips {
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.linked-empty {
+  font-size: 10px;
+  font-style: italic;
+  color: rgba(15, 23, 42, 0.4);
+}
+
+.linked-chip {
+  appearance: none;
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  color: rgba(15, 23, 42, 0.85);
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  transition: background 120ms;
+}
+
+.linked-chip:hover {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.5);
+}
+
+.linked-add {
+  appearance: none;
+  background: transparent;
+  border: 1px dashed rgba(15, 23, 42, 0.3);
+  color: rgba(15, 23, 42, 0.55);
+  padding: 1px 5px;
+  border-radius: 10px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+
+.linked-add:hover:not(:disabled) {
+  border-color: rgba(59, 130, 246, 0.5);
+  color: rgba(59, 130, 246, 0.95);
+}
+
+.linked-add:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.linked-error {
+  margin-top: 6px;
+  padding: 4px 8px;
+  font-size: 10px;
+  color: #991b1b;
+  background: rgba(248, 113, 113, 0.12);
+  border-radius: 3px;
+}

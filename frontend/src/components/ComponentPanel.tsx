@@ -10,6 +10,7 @@ import { getBeamAnchor, objectPosForAnchorOnBeam } from "../utils/beamAnchor";
 import { getComponentName } from "../utils/components";
 import { getFiberPortLabPose } from "../utils/fiberAlignment";
 import { CollapsibleSection } from "./CollapsibleSection";
+import { LinkedSchematicsSection } from "./LinkedSchematicsSection";
 import { FloatingPanel } from "./workspace/FloatingPanel";
 import { useWorkspace } from "./workspace/WorkspaceProvider";
 import { CapabilityPills } from "./optical/CapabilityPills";
@@ -1652,6 +1653,12 @@ export function ComponentPanel() {
 
       <AlignPanel />
       {isObjectSelection && component && <TimingEditorButton component={component} />}
+      {isObjectSelection && selectedObject && (
+        <LinkedSchematicsSection
+          sceneObjectId={selectedObject.id}
+          sceneObjectName={getComponentName(component) ?? "Object"}
+        />
+      )}
       </FloatingPanel>
 
       <FloatingPanel id="device-state" title="Device state">
