@@ -66,6 +66,7 @@ import type {
   SceneEvent,
   SceneObject,
   SceneObjectPatch,
+  SimulationModule,
   TimingProgram,
   TimingProgramUpsert,
   TransientRunRequest,
@@ -367,6 +368,11 @@ type SceneStore = {
    *  optical_kinds / optical_components and, in future, electrical /
    *  mechanical sub-editors) instead of the normal scene + panels. */
   editorMode: "scene" | "phy-editor";
+  /** Active multiphysics module. Drives the top-bar ModuleSwitcher and
+   *  which workspace App.tsx renders inside .workspace-canvas. Phase A
+   *  only ships an "optics_seq" workspace; the other values flip the
+   *  canvas to ``<ModulePlaceholder />``. See docs/MULTIPHYSICS_PLAN.md. */
+  currentModule: SimulationModule;
   /** Currently active PHY editor view inside the sub-page. `null` =
    *  editor "home" (left rail visible, right pane shows a hint asking
    *  the user to pick a sub-editor). */
@@ -381,6 +387,7 @@ type SceneStore = {
    *  whether to prompt for confirmation. */
   phyEditorDirty: boolean;
   setEditorMode: (mode: "scene" | "phy-editor") => void;
+  setCurrentModule: (module: SimulationModule) => void;
   setEditingAssetId: (assetId: string | null) => void;
   setPhyEditorDirty: (dirty: boolean) => void;
   /** Open the PHY editor sub-page (no specific view selected; user
@@ -905,6 +912,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   selectedObjectIds: [],
   selectedRelationId: null,
   editorMode: "scene",
+  currentModule: "optics_seq",
   phyEditorView: null,
   editingAssetId: null,
   phyEditorDirty: false,
@@ -2401,6 +2409,10 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
 
   setEditorMode(mode) {
     set({ editorMode: mode });
+  },
+
+  setCurrentModule(module) {
+    set({ currentModule: module });
   },
 
   setEditingAssetId(assetId) {

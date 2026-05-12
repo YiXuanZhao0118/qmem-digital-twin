@@ -724,6 +724,7 @@ export type SceneEvent =
   | { type: "optical_element.updated"; payload: (Partial<OpticalElement> & { componentId?: string; deleted?: boolean }) | OpticalElement }
   | { type: "optical_link.updated"; payload: (Partial<OpticalLink> & { id?: string; deleted?: boolean }) | OpticalLink }
   | { type: "optical_simulation.completed"; payload: { runId: string; segmentCount: number; errors: string[]; warnings: string[] } }
+  | { type: "simulation_run.status_changed"; payload: { id: string; module: SimulationModule; status: SimulationRunStatus; progress: number | null; errorMessage: string | null } }
   | { type: "scene_view.updated"; payload: (Partial<import("./visibility").SceneView> & { id?: string; deleted?: boolean }) | import("./visibility").SceneView }
   | { type: "collection.updated"; payload: (Partial<Collection> & { id?: string; deleted?: boolean }) | Collection }
   | { type: "collection_member.updated"; payload: Partial<CollectionMember> & { collectionId?: string; objectId?: string; deleted?: boolean; resetToMaster?: boolean } }
@@ -939,7 +940,26 @@ export type V2BeamState = {
 
 // ---- simulation runs / revisions ------------------------------------------
 
-export type SimulationRunStatus = "completed" | "running" | "failed";
+// alembic 0036 (multiphysics) added 'queued' and 'cancelled' to the
+// V2-Phase-1 set {completed, running, failed}.
+export type SimulationRunStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+// Module discriminator (mirrors backend app.schemas.SimulationModule).
+// Phase A only ships optics_seq; the other three values are reserved.
+export type SimulationModule =
+  | "optics_seq"
+  | "optics_fdtd"
+  | "spice"
+  | "em_fem";
+
+// Where a SolverRunner dispatched this row (mirrors backend
+// app.schemas.SolverRunnerKind). Phase A only ships "inproc".
+export type SolverRunnerKind = "inproc" | "container" | "ssh_workstation";
 
 export type SimulationRunV2 = {
   id: string;
@@ -951,6 +971,21 @@ export type SimulationRunV2 = {
   warnings: unknown[];
   startedAt: string;
   finishedAt?: string | null;
+  // Multiphysics columns (alembic 0036). Backend backfills 'optics_seq' /
+  // 'inproc' on legacy rows so these are always present.
+  module: SimulationModule;
+  runnerKind: SolverRunnerKind;
+  params: Record<string, unknown>;
+  progress: number | null;
+  errorMessage: string | null;
+  resultSummary: Record<string, unknown> | null;
+  resultBlobPath: string | null;
+};
+
+export type SimulationRunCreatePayload = {
+  module: SimulationModule;
+  runnerKind?: SolverRunnerKind;
+  params?: Record<string, unknown>;
 };
 
 export type RevisionV2 = {

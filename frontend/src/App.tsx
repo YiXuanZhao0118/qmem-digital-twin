@@ -17,6 +17,8 @@ import { CursorMenu } from "./components/optical/CursorMenu";
 import { SceneToolbar } from "./components/SceneToolbar";
 import { TopBar } from "./components/workspace/TopBar";
 import { WorkspaceProvider } from "./components/workspace/WorkspaceProvider";
+import { getModule } from "./modules/_registry";
+import { ModulePlaceholder } from "./modules/ModulePlaceholder";
 import { useSceneStore } from "./store/sceneStore";
 import type { SceneEvent } from "./types/digitalTwin";
 import type { OverlayKind } from "./types/visibility";
@@ -72,6 +74,7 @@ export default function App() {
   const toggleOverlayFlag = useSceneStore((state) => state.toggleOverlayFlag);
   const resetOverlayFlags = useSceneStore((state) => state.resetOverlayFlags);
   const editorMode = useSceneStore((state) => state.editorMode);
+  const currentModule = useSceneStore((state) => state.currentModule);
   const showAllHidden = useSceneStore((state) => state.showAllHidden);
   const toggleSoloObject = useSceneStore((state) => state.toggleSoloObject);
   const setSoloObjects = useSceneStore((state) => state.setSoloObjects);
@@ -201,6 +204,12 @@ export default function App() {
     );
   }
 
+  // Multiphysics Phase A: top-level module switcher. Optics keeps the
+  // existing scene + panels layout; Electronics/EM render a placeholder
+  // card until Phase B/C implement them.
+  const moduleDef = getModule(currentModule);
+  const opticsActive = moduleDef.status === "available";
+
   return (
     <WorkspaceProvider>
       <main className="workspace-shell">
@@ -211,16 +220,22 @@ export default function App() {
           />
         </TopBar>
         <div className="workspace-canvas">
-          <DualViewerSplit roomDimensions={roomDimensions} />
-          {loadStatus === "loading" && <div className="scene-overlay">Loading scene</div>}
-          {loadStatus === "error" && <div className="scene-overlay error">{error}</div>}
-          <ComponentsCatalogPanel />
-          <OutlinerFloatingPanel />
-          <ComponentPanel />
-          <TimingEditorPanel />
-          <OpticalLinkViewerPanel />
-          <TouchCoincidencePanel />
-          <CursorMenu />
+          {opticsActive ? (
+            <>
+              <DualViewerSplit roomDimensions={roomDimensions} />
+              {loadStatus === "loading" && <div className="scene-overlay">Loading scene</div>}
+              {loadStatus === "error" && <div className="scene-overlay error">{error}</div>}
+              <ComponentsCatalogPanel />
+              <OutlinerFloatingPanel />
+              <ComponentPanel />
+              <TimingEditorPanel />
+              <OpticalLinkViewerPanel />
+              <TouchCoincidencePanel />
+              <CursorMenu />
+            </>
+          ) : (
+            <ModulePlaceholder module={moduleDef} />
+          )}
         </div>
       </main>
     </WorkspaceProvider>

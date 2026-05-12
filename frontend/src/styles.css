@@ -5250,3 +5250,128 @@ body.is-timing-bar-drag * {
   padding-bottom: 6px;
   margin-bottom: 2px;
 }
+
+/* ============================================================
+   Multiphysics: ModuleSwitcher + ModulePlaceholder (Phase A)
+   ============================================================ */
+
+.module-switcher {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 2px;
+  background: rgba(15, 23, 42, 0.06);
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 8px;
+}
+
+.module-tab {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(15, 23, 42, 0.65);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+  white-space: nowrap;
+}
+
+.module-tab:hover:not(.active) {
+  background: rgba(15, 23, 42, 0.05);
+  color: rgba(15, 23, 42, 0.85);
+}
+
+.module-tab.active {
+  background: #ffffff;
+  color: rgba(15, 23, 42, 0.95);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+}
+
+.module-tab.coming-soon {
+  color: rgba(15, 23, 42, 0.45);
+}
+
+.module-tab.coming-soon.active {
+  color: rgba(15, 23, 42, 0.75);
+}
+
+.module-tab-badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(245, 158, 11, 0.15);
+  color: #b45309;
+}
+
+.module-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: #171817;
+}
+
+.module-placeholder-card {
+  max-width: 560px;
+  padding: 28px 32px;
+  background: rgba(250, 250, 247, 0.98);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+  color: rgba(15, 23, 42, 0.85);
+}
+
+.module-placeholder-phase {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 4px;
+  background: rgba(245, 158, 11, 0.18);
+  color: #b45309;
+  margin-bottom: 12px;
+}
+
+.module-placeholder-title {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0 0 8px 0;
+  color: rgba(15, 23, 42, 0.95);
+}
+
+.module-placeholder-desc {
+  font-size: 14px;
+  line-height: 1.6;
+  margin: 0 0 16px 0;
+}
+
+.module-placeholder-status {
+  font-size: 13px;
+  line-height: 1.55;
+  color: rgba(15, 23, 42, 0.6);
+  margin: 0;
+  padding-top: 14px;
+  border-top: 1px solid rgba(15, 23, 42, 0.1);
+}
+
+.module-placeholder-status code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(15, 23, 42, 0.06);
+}
