@@ -46,6 +46,31 @@
 
 ---
 
+## Phase F — Cross-module integration
+
+**Target:** 3D scene 上的 SceneObject 跟對應的 circuits / EM problems / coils 雙向綁起來,讓 user 在 Optics 3D scene 內就能管理「這個 device 用哪些 schematics 描述它」+ 一鍵 dispatch 對應 solver。
+
+| # | Task | Status | Commit | Notes |
+|---|---|---|---|---|
+| F.1 Tier 1 | Linked schematics list in object properties panel | ✅ | 8a9d52d | 選 SceneObject → properties panel 顯示 ⚡ Circuits + 📡 EM 兩 chip 列表(透過 `scene_object_id` filter 從 backend 拉),click chip 切到對應 module + 自動選中。「+ New」按鈕創建 with `scene_object_id` 預填 + 立即 jump |
+| F.2 Tier 2 | Inline run on chip + last-run status badge | ✅ | (this commit) | LinkedSchematicsSection 每個 chip 旁加綠色 ▶ 按鈕,直接 dispatch spice / em_fem run。Chip 內 inline 顯示 last run status pill (queued/running/completed/failed,從 store recentRuns 拉)。Auto-inject 結果到 device kindParam 留下次 |
+| F.3 Cross-module Run All DAG | 📋 | — | 整 cascade「Run All」按鈕,topological order pin 出依賴,inverse warning manual override |
+
+---
+
+## Phase F+ — Magnetics module(coil B-field)
+
+**Target:** Lab 線圈(Helmholtz, anti-Helmholtz MOT, bias, 補償)→ magpylib Biot-Savart → |B| 體積渲染在 Optics scene 內。
+
+| # | Task | Status | Commit | Notes |
+|---|---|---|---|---|
+| Backend | alembic 0039 + magpylib + Coil/MagneticsProblem CRUD + solver | ✅ | d677a33 | `coils` table (id, scene_object_id FK, shape ENUM, params JSONB, current_a);`magnetics_problems` table (coil_ids JSONB list, eval_region JSONB)。`solvers/magnetics_dc.py` 用 magpylib v5 Biot-Savart;支援 circular_loop / solenoid (helix Polyline) / polyline shape;multi-turn = stacked loops。`module='magnetics_dc'` 註冊。Output 同 Phase C.8 field 格式 + 加 vectors{bx,by,bz}。**Helmholtz physics verified**: 50-turn × 1A × 50mm radius pair → center 0.8992 mT (analytic 0.9 mT) ✓ |
+| Frontend MVP | Magnetics panel inside Optics workspace | ✅ | 9a2f93a | 新 `modules/magnetics/MagneticsPanel.tsx` floating panel(`id='magnetics'`,Window menu 開):Problems selector + Coils multi-select + Eval region grid (center/size/grid 3-axis inputs) + Run button + 結果 |B| stats + reuse FieldViewer (vtk.js volume) 顯示。"Add Helmholtz-style coil" 一鍵建 R=50mm/50turns/1A 範本。**Browser verify**:Add 2 coils → New problem → Run → ~3 秒後 |B| min/max/center mT stats + volume canvas |
+| 3D streamline overlay | 📋 | — | Three.js LineSegments 沿 vector field 積分;掛 DigitalTwinViewer render loop |
+| Coil 3D 視覺化 | 📋 | — | 把 Coil row 在 3D scene 內 render 成 circle / helix mesh,連動 SceneObject pose |
+
+---
+
 ## Phase B — Electronics MVP(ngspice)
 
 **Target:** Electronics tab 從 placeholder 變成可用,user 寫 SPICE netlist → POST `/api/simulation-runs {module:'spice'}` → ngspice 跑 → 看 V/I 波形圖。

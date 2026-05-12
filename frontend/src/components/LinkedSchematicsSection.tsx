@@ -16,8 +16,8 @@
  * inline Run + auto-inject of solver outputs into the device's
  * kindParams. Tier 3 (Phase F.3) is the full cross-module DAG.
  */
-import { Plus, Radio, Zap } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Play, Plus, Radio, Zap } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   createCircuitApi,
@@ -43,6 +43,20 @@ export function LinkedSchematicsSection({ sceneObjectId, sceneObjectName }: Prop
   const setCurrentModule = useSceneStore((s) => s.setCurrentModule);
   const setSelectedCircuit = useSceneStore((s) => s.setSelectedCircuit);
   const setSelectedEmProblem = useSceneStore((s) => s.setSelectedEmProblem);
+  const dispatchSimulationRun = useSceneStore((s) => s.dispatchSimulationRun);
+  const recentRuns = useSceneStore((s) => s.recentSimulationRuns);
+
+  // Map of circuit/em-problem id -> latest run status (just pulled from
+  // the global recentRuns store; no extra fetch).
+  const lastRunStatus = useMemo(() => {
+    const out = new Map<string, string>();
+    for (const r of recentRuns) {
+      const params = (r.params as { circuitId?: string; emProblemId?: string }) ?? {};
+      const key = params.circuitId ?? params.emProblemId;
+      if (key && !out.has(key)) out.set(key, r.status);
+    }
+    return out;
+  }, [recentRuns]);
 
   const refresh = async () => {
     try {
@@ -93,6 +107,37 @@ export function LinkedSchematicsSection({ sceneObjectId, sceneObjectName }: Prop
     }
   };
 
+  const onRunCircuit = async (circuitId: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await dispatchSimulationRun({ module: "spice", params: { circuitId } });
+      const loadRecent = useSceneStore.getState().loadRecentSimulationRuns;
+      await loadRecent("spice", 20);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onRunEm = async (emProblemId: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await dispatchSimulationRun({
+        module: "em_fem",
+        params: { emProblemId },
+      });
+      const loadRecent = useSceneStore.getState().loadRecentSimulationRuns;
+      await loadRecent("em_fem", 20);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const onNewEm = async () => {
     setBusy(true);
     setError(null);
@@ -127,17 +172,31 @@ export function LinkedSchematicsSection({ sceneObjectId, sceneObjectName }: Prop
           {circuits.length === 0 ? (
             <span className="linked-empty">none</span>
           ) : (
-            circuits.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                className="linked-chip"
-                onClick={() => jumpToCircuit(c.id)}
-                title={`Open ${c.name} in Electronics tab`}
-              >
-                {c.name}
-              </button>
-            ))
+            circuits.map((c) => {
+              const status = lastRunStatus.get(c.id);
+              return (
+                <span key={c.id} className="linked-chip-group">
+                  <button
+                    type="button"
+                    className="linked-chip"
+                    onClick={() => jumpToCircuit(c.id)}
+                    title={`Open ${c.name} in Electronics tab`}
+                  >
+                    {c.name}
+                    {status && <em className={`linked-status status-${status}`}>{status}</em>}
+                  </button>
+                  <button
+                    type="button"
+                    className="linked-run"
+                    onClick={() => onRunCircuit(c.id)}
+                    title={`Run ${c.name} via ngspice`}
+                    disabled={busy}
+                  >
+                    <Play size={9} />
+                  </button>
+                </span>
+              );
+            })
           )}
           <button
             type="button"
@@ -159,17 +218,31 @@ export function LinkedSchematicsSection({ sceneObjectId, sceneObjectName }: Prop
           {emProblems.length === 0 ? (
             <span className="linked-empty">none</span>
           ) : (
-            emProblems.map((em) => (
-              <button
-                key={em.id}
-                type="button"
-                className="linked-chip"
-                onClick={() => jumpToEm(em.id)}
-                title={`Open ${em.name} in EM tab`}
-              >
-                {em.name}
-              </button>
-            ))
+            emProblems.map((em) => {
+              const status = lastRunStatus.get(em.id);
+              return (
+                <span key={em.id} className="linked-chip-group">
+                  <button
+                    type="button"
+                    className="linked-chip"
+                    onClick={() => jumpToEm(em.id)}
+                    title={`Open ${em.name} in EM tab`}
+                  >
+                    {em.name}
+                    {status && <em className={`linked-status status-${status}`}>{status}</em>}
+                  </button>
+                  <button
+                    type="button"
+                    className="linked-run"
+                    onClick={() => onRunEm(em.id)}
+                    title={`Run ${em.name} via palace (mock)`}
+                    disabled={busy}
+                  >
+                    <Play size={9} />
+                  </button>
+                </span>
+              );
+            })
           )}
           <button
             type="button"
