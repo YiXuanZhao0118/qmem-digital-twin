@@ -181,6 +181,16 @@ async def delete_object(
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     scene_object = await crud.get_or_404(session, SceneObject, object_id)
+    # Locked objects are protected from removal — same lock that blocks pose
+    # mutation in strip_locked_transform_updates above. The frontend filters
+    # locked ids out of multi-select delete before sending; this 409 is
+    # defense-in-depth for direct API hits and any code path that misses the
+    # pre-filter.
+    if scene_object.locked:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Object is locked. Unlock it before deleting.",
+        )
     await session.delete(scene_object)
     await session.commit()
     await manager.broadcast("object.deleted", {"id": str(object_id), "objectId": str(object_id)})

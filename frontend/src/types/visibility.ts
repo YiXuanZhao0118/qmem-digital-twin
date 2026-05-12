@@ -100,8 +100,8 @@ export type SessionVisibilityState = {
    *  (override no longer needed). Session-only — not persisted to db. */
   forceVisibleObjectIds: Set<string>;
   /** Per-collection override of ancestor collection hide. This lets a child
-   *  collection be shown even when its parent collection is hidden. Own
-   *  collection `visible=false` and `exclude=true` still win. Session-only. */
+   *  collection be shown even when its parent collection is hidden. The child
+   *  collection's own `visible=false` still wins. Session-only. */
   forceVisibleCollectionIds: Set<string>;
 };
 

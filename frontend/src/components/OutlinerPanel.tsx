@@ -19,6 +19,10 @@ import {
   EyeOff,
   FolderPlus,
   Layers3,
+  Link2,
+  Link2Off,
+  Lock,
+  LockOpen,
   Pencil,
   Trash2,
 } from "lucide-react";
@@ -33,6 +37,7 @@ import type {
   SceneObject,
 } from "../types/digitalTwin";
 import { getComponentName } from "../utils/components";
+import { computeRigidCollectionIds } from "../utils/rigidGroup";
 import {
   isCollectionVisible,
   isObjectVisible,
@@ -59,7 +64,12 @@ function loadStringSet(storageKey: string): Set<string> {
 
 type DragPayload =
   | { kind: "collection"; collectionId: string }
-  | { kind: "object"; objectId: string; sourceCollectionId: string };
+  /** Object drag is always a list — single-row drag wraps the one id, multi-
+   *  select drag (when the dragged row is part of `selectedObjectIds`) puts
+   *  every selected id in. Locked ids are filtered out at dragstart-time so
+   *  the drop handler doesn't have to re-check; if every candidate is locked
+   *  the drag is suppressed entirely (e.preventDefault() in the row handler). */
+  | { kind: "object"; objectIds: string[]; sourceCollectionId: string };
 
 const DRAG_MIME = "application/x-qmem-outliner";
 
@@ -160,6 +170,10 @@ export function OutlinerPanel() {
     () => new Map(scene.components.map((component) => [component.id, component])),
     [scene.components],
   );
+  const objectsById = useMemo(
+    () => new Map(scene.objects.map((o) => [o.id, o])),
+    [scene.objects],
+  );
 
   const childrenIndex = useMemo(() => buildChildrenIndex(collections), [collections]);
   const objectsByCollection = useMemo(
@@ -184,6 +198,54 @@ export function OutlinerPanel() {
       return Array.from(seen);
     },
     [childrenIndex, objectsByCollection],
+  );
+
+  /** Effective rigidTransform: a collection's flag OR any ancestor's flag.
+   *  Ancestors with rigidTransform=true cascade the rigid-group property
+   *  to all descendants — we surface that as a "rigid (inherited)" indicator
+   *  on the child row. Same set used by utils/rigidGroup.ts when expanding
+   *  a transform patch. */
+  const rigidCollectionIds = useMemo(
+    () => computeRigidCollectionIds(collections),
+    [collections],
+  );
+
+  /** Three-state lock summary for the bulk Lock icon on a collection row.
+   *  Walks every descendant SceneObject; "all" / "none" / "mixed" / "empty"
+   *  drives icon variant and click action. */
+  const collectionLockState = useCallback(
+    (collectionId: string): "all" | "none" | "mixed" | "empty" => {
+      const ids = collectAllObjectIdsUnder(collectionId);
+      if (ids.length === 0) return "empty";
+      const objsById = new Map(scene.objects.map((o) => [o.id, o]));
+      let locked = 0;
+      let unlocked = 0;
+      for (const id of ids) {
+        const obj = objsById.get(id);
+        if (!obj) continue;
+        if (obj.locked) locked += 1;
+        else unlocked += 1;
+      }
+      if (locked === 0) return "none";
+      if (unlocked === 0) return "all";
+      return "mixed";
+    },
+    [collectAllObjectIdsUnder, scene.objects],
+  );
+
+  /** Bulk-toggle the lock state of every descendant SceneObject in a
+   *  collection. "all locked" → unlock all; otherwise → lock all. Mirrors
+   *  Blender outliner's lock icon. State lives only on SceneObject — no
+   *  collection-level lock field (alembic 0035). */
+  const bulkToggleCollectionLocked = useCallback(
+    async (collectionId: string) => {
+      const ids = collectAllObjectIdsUnder(collectionId);
+      if (ids.length === 0) return;
+      const state = collectionLockState(collectionId);
+      const nextLocked = state !== "all";
+      await Promise.all(ids.map((id) => updateSceneObject(id, { locked: nextLocked })));
+    },
+    [collectAllObjectIdsUnder, collectionLockState, updateSceneObject],
   );
 
   const activeView = useMemo(
@@ -309,8 +371,15 @@ export function OutlinerPanel() {
         });
         return;
       }
-      if (payload.sourceCollectionId === targetCollection.id) return;
-      await moveObjectToCollection(targetCollection.id, payload.objectId);
+      // Object drop: iterate over every dragged id (single or multi-select).
+      // store.moveObjectToCollection silent-skips locked, so even if a
+      // pre-filter at dragstart missed something, locked stays put. We don't
+      // skip "objects already in targetCollection" — the API handles the
+      // no-op cheaply and it keeps the multi-select code branch-free.
+      if (payload.objectIds.length === 0) return;
+      await Promise.all(
+        payload.objectIds.map((id) => moveObjectToCollection(targetCollection.id, id)),
+      );
     },
     [collections, moveCollection, moveObjectToCollection, readDragPayload],
   );
@@ -437,6 +506,73 @@ export function OutlinerPanel() {
           >
             {collectionVisible ? <Eye size={14} /> : <EyeOff size={14} />}
           </button>
+          {(() => {
+            const lockState = collectionLockState(collection.id);
+            const lockTitle =
+              lockState === "empty"
+                ? "No objects to lock"
+                : lockState === "all"
+                  ? "Unlock all objects in this collection"
+                  : lockState === "none"
+                    ? "Lock all objects in this collection"
+                    : "Lock all (some currently unlocked)";
+            return (
+              <button
+                type="button"
+                className={`outliner-action${lockState === "all" ? " active" : ""}${lockState === "mixed" ? " muted" : ""}`}
+                title={lockTitle}
+                disabled={lockState === "empty"}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void bulkToggleCollectionLocked(collection.id);
+                }}
+              >
+                {lockState === "all" || lockState === "mixed" ? (
+                  <Lock size={13} />
+                ) : (
+                  <LockOpen size={13} />
+                )}
+              </button>
+            );
+          })()}
+          {(() => {
+            const ownRigid = collection.rigidTransform;
+            const inheritedRigid = !ownRigid && rigidCollectionIds.has(collection.id);
+            const effectiveRigid = ownRigid || inheritedRigid;
+            // Frozen-group detector: a rigid group containing any locked
+            // descendant object can't be transformed at all (the rigid-group
+            // expander rejects the whole patch when a non-leading member is
+            // locked). Surface this with an amber "warning" class on the
+            // icon + a more pointed tooltip so the user knows why the gizmo
+            // appears unresponsive.
+            const lockedDescendantCount = effectiveRigid
+              ? collectAllObjectIdsUnder(collection.id).reduce((acc, id) => {
+                  return acc + (objectsById.get(id)?.locked ? 1 : 0);
+                }, 0)
+              : 0;
+            const isFrozen = effectiveRigid && lockedDescendantCount > 0;
+            const rigidTitle = isFrozen
+              ? `Rigid group is frozen — ${lockedDescendantCount} member${lockedDescendantCount === 1 ? "" : "s"} locked. Unlock to move.`
+              : ownRigid
+                ? "Rigid group ON — disable to unlink relative pose"
+                : inheritedRigid
+                  ? "Rigid group inherited from ancestor"
+                  : "Rigid group OFF — enable to lock A↔B↔C relative pose";
+            return (
+              <button
+                type="button"
+                className={`outliner-action${ownRigid ? " active" : ""}${inheritedRigid && !isFrozen ? " muted" : ""}${isFrozen ? " warning" : ""}`}
+                title={rigidTitle}
+                disabled={isMaster && !ownRigid && !inheritedRigid}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void updateCollection(collection.id, { rigidTransform: !ownRigid });
+                }}
+              >
+                {effectiveRigid ? <Link2 size={13} /> : <Link2Off size={13} />}
+              </button>
+            );
+          })()}
           <button
             type="button"
             className="outliner-action"
@@ -483,17 +619,30 @@ export function OutlinerPanel() {
               const visible = isObjectVisible(object, visibilityCtx);
               const forceVisible = sessionState.forceVisibleObjectIds.has(object.id);
               const isSelected = selectedObjectIds.includes(object.id) || object.id === selectedObjectId;
+              // Drag-source ids: if this object is part of the current
+              // selection, drag the whole selection (multi-select group
+              // move); otherwise drag just this row. Locked ids are
+              // pre-filtered — store.moveObjectToCollection silent-skips
+              // locked anyway, but the pre-filter lets us suppress the
+              // entire drag when there's nothing draggable left.
+              const dragSourceIds = isSelected ? selectedObjectIds : [object.id];
+              const dragableIds = dragSourceIds.filter((id) => !objectsById.get(id)?.locked);
+              const dragable = dragableIds.length > 0;
               return (
                 <div
                   key={`${collection.id}:${object.id}`}
                   data-object-id={object.id}
                   className={`outliner-row object-row${isSelected ? " selected" : ""}`}
-                  draggable
+                  draggable={dragable}
                   onDragStart={(event) => {
                     event.stopPropagation();
+                    if (!dragable) {
+                      event.preventDefault();
+                      return;
+                    }
                     handleDragStart(event, {
                       kind: "object",
-                      objectId: object.id,
+                      objectIds: dragableIds,
                       sourceCollectionId: collection.id,
                     });
                   }}
@@ -545,10 +694,23 @@ export function OutlinerPanel() {
                   </button>
                   <button
                     type="button"
-                    className="outliner-action danger-action"
-                    title="Delete object"
+                    className={`outliner-action${object.locked ? " active" : ""}`}
+                    title={object.locked ? "Unlock object" : "Lock object (block move + delete)"}
                     onClick={(event) => {
                       event.stopPropagation();
+                      void updateSceneObject(object.id, { locked: !object.locked });
+                    }}
+                  >
+                    {object.locked ? <Lock size={13} /> : <LockOpen size={13} />}
+                  </button>
+                  <button
+                    type="button"
+                    className="outliner-action danger-action"
+                    title={object.locked ? "Locked — unlock to delete" : "Delete object"}
+                    disabled={object.locked}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (object.locked) return;
                       if (
                         window.confirm(
                           `Delete "${object.name}" from the scene? This removes the object from every collection.`,

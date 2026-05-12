@@ -4139,6 +4139,10 @@ input:disabled {
   color: var(--accent);
 }
 
+.outliner-action.warning {
+  color: #b45309; /* amber-700 — flags rigid groups frozen by a locked member */
+}
+
 .outliner-action.danger-action:hover {
   background: rgba(185, 28, 28, 0.12);
   color: var(--danger);

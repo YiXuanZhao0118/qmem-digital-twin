@@ -300,7 +300,17 @@ async def move_object_to_collection(
     session: AsyncSession = Depends(get_session),
 ) -> CollectionMember:
     await crud.get_or_404(session, Collection, collection_id)
-    await crud.get_or_404(session, SceneObject, object_id)
+    scene_object = await crud.get_or_404(session, SceneObject, object_id)
+    # Locked objects are frozen across the board: pose mutation
+    # (strip_locked_transform_updates), deletion (delete_object), and now
+    # outliner reparent. Same defense-in-depth pattern — frontend filters
+    # locked ids out of multi-select drag, this 409 protects against direct
+    # API calls that bypass the UI.
+    if scene_object.locked:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Object is locked. Unlock it before moving to another collection.",
+        )
 
     result = await session.scalars(
         select(CollectionMember).where(CollectionMember.object_id == object_id)

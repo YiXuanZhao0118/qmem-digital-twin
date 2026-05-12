@@ -265,30 +265,90 @@ function PlotFrame({
 // Beam state computation (frontend-only — derived from laser params + z)
 // ───────────────────────────────────────────────────────────────────────────
 
-type SpatialMode = { waist0Um: number; mSquared: number; wavelengthNm: number };
+/** Per-axis Gaussian beam parameters. The X and Y axes propagate
+ *  independently with their own waist, M², and waist-z-offset (the axial
+ *  position where the waist is, relative to the source). This is needed
+ *  for astigmatic beams (e.g., a TA output is typically 500 µm × 50 µm). */
+type AxisMode = {
+  waist0Um: number;
+  mSquared: number;
+  waistZOffsetMm: number;
+  wavelengthNm: number;
+};
 
-function rayleighRangeMm(mode: SpatialMode): number {
+function rayleighRangeMmAxis(mode: AxisMode): number {
   // z_R = π · w₀² / (M² · λ) — keep all in µm then convert to mm at the end.
   const zRUm = (Math.PI * mode.waist0Um * mode.waist0Um) / (mode.mSquared * mode.wavelengthNm * 1e-3);
   return zRUm / 1000;
 }
 
-function waistAtZUm(zMm: number, mode: SpatialMode): number {
-  const zR = rayleighRangeMm(mode);
+/** w(z) for one axis. dz is measured from the per-axis waist position
+ *  (which may be offset from the source by `waistZOffsetMm`), so an
+ *  astigmatic beam can have its X waist at the source but its Y waist
+ *  1 mm downstream. */
+function waistAtZUmAxis(zMm: number, mode: AxisMode): number {
+  const zR = rayleighRangeMmAxis(mode);
   if (zR === 0) return mode.waist0Um;
-  return mode.waist0Um * Math.sqrt(1 + (zMm / zR) ** 2);
+  const dz = zMm - mode.waistZOffsetMm;
+  return mode.waist0Um * Math.sqrt(1 + (dz / zR) ** 2);
 }
 
-function radiusOfCurvatureMm(zMm: number, mode: SpatialMode): number {
-  const zR = rayleighRangeMm(mode);
-  if (zMm === 0) return Infinity;
-  return zMm * (1 + (zR / zMm) ** 2);
+function radiusOfCurvatureMmAxis(zMm: number, mode: AxisMode): number {
+  const zR = rayleighRangeMmAxis(mode);
+  const dz = zMm - mode.waistZOffsetMm;
+  if (Math.abs(dz) < 1e-9) return Infinity;
+  return dz * (1 + (zR / dz) ** 2);
 }
 
-function gouyPhaseRad(zMm: number, mode: SpatialMode): number {
-  const zR = rayleighRangeMm(mode);
+function gouyPhaseRadAxis(zMm: number, mode: AxisMode): number {
+  const zR = rayleighRangeMmAxis(mode);
   if (zR === 0) return 0;
-  return Math.atan(zMm / zR);
+  return Math.atan((zMm - mode.waistZOffsetMm) / zR);
+}
+
+/** Hermite polynomial H_n(ξ) by the standard recursion
+ *  H_{n+1}(ξ) = 2ξ H_n(ξ) − 2n H_{n−1}(ξ).  Returns 0 for negative n. */
+function hermiteH(n: number, xi: number): number {
+  if (n < 0 || !Number.isInteger(n)) return 0;
+  let h0 = 1;
+  let h1 = 2 * xi;
+  if (n === 0) return h0;
+  if (n === 1) return h1;
+  for (let k = 1; k < n; k++) {
+    const next = 2 * xi * h1 - 2 * k * h0;
+    h0 = h1;
+    h1 = next;
+  }
+  return h1;
+}
+
+/** Associated Laguerre polynomial L_p^α(x) by recursion
+ *  (p+1) L_{p+1}^α(x) = (2p + 1 + α − x) L_p^α(x) − (p + α) L_{p−1}^α(x).
+ *  L_0^α = 1; L_1^α = 1 + α − x. p must be a non-negative integer; α can
+ *  be any non-negative real (we only call with α = |ℓ|, integer ≥ 0).
+ *  Returns 0 for invalid p. */
+function laguerreAssociated(p: number, alpha: number, x: number): number {
+  if (p < 0 || !Number.isInteger(p)) return 0;
+  let lkm1 = 1; // L_0^α
+  if (p === 0) return lkm1;
+  let lk = 1 + alpha - x; // L_1^α
+  if (p === 1) return lk;
+  for (let k = 1; k < p; k++) {
+    const lkp1 = ((2 * k + 1 + alpha - x) * lk - (k + alpha) * lkm1) / (k + 1);
+    lkm1 = lk;
+    lk = lkp1;
+  }
+  return lk;
+}
+
+/** Factorial for non-negative integers; tolerates double inputs by
+ *  rounding. Returns NaN on negatives so callers fall back. */
+function factorial(n: number): number {
+  if (n < 0) return NaN;
+  const k = Math.round(n);
+  let acc = 1;
+  for (let i = 2; i <= k; i++) acc *= i;
+  return acc;
 }
 
 /** Render the polarisation state of the clicked segment as
@@ -363,19 +423,13 @@ function PolarizationDisplay({ jones }: { jones: [number, number, number, number
 
 // ───────────────────────────────────────────────────────────────────────────
 
-export function BeamScopePanel() {
+/** Inner UI of the beam scope: snapshot computation + summary line +
+ *  spectrum / profile / phase / pulse plots. Used both by the legacy
+ *  floating BeamScopePanel and embedded inline inside the optical-link
+ *  viewer panel. Returns a Fragment (no FloatingPanel chrome). */
+export function BeamScopeContents() {
   const probe = useSceneStore((state) => state.scopeProbe);
   const opticalElements = useSceneStore((state) => state.scene.opticalElements);
-  const { togglePanelVisible, focusPanel } = useWorkspace();
-
-  useEffect(() => {
-    const onOpen = () => {
-      togglePanelVisible("beam-scope", true);
-      focusPanel("beam-scope");
-    };
-    window.addEventListener("qmem.openBeamScope", onOpen);
-    return () => window.removeEventListener("qmem.openBeamScope", onOpen);
-  }, [togglePanelVisible, focusPanel]);
 
   const snapshot = useMemo(() => {
     if (!probe) return null;
@@ -388,8 +442,15 @@ export function BeamScopePanel() {
     if (!laserEl) return null;
     const params = (laserEl.kindParams ?? {}) as {
       centerWavelengthNm?: number;
-      spatialModeX?: { waistUm?: number; mSquared?: number };
-      spatialModeY?: { waistUm?: number; mSquared?: number };
+      spatialModeX?: { waistUm?: number; mSquared?: number; waistZOffsetMm?: number };
+      spatialModeY?: { waistUm?: number; mSquared?: number; waistZOffsetMm?: number };
+      transverseMode?: {
+        kind?: "TEM00" | "TEM_mn" | "LG_pl" | "multimode";
+        indicesM?: number;
+        indicesN?: number;
+        indicesP?: number;
+        indicesL?: number;
+      };
       nominalPowerMw?: number;
       spectrum?: {
         centerThz?: number;
@@ -402,20 +463,44 @@ export function BeamScopePanel() {
         }>;
       };
     };
-    const wxUm = params.spatialModeX?.waistUm ?? 100;
-    const wyUm = params.spatialModeY?.waistUm ?? 100;
-    const mxSq = params.spatialModeX?.mSquared ?? 1;
-    const mySq = params.spatialModeY?.mSquared ?? 1;
     const wavelengthNm = params.centerWavelengthNm ?? 780;
-    const mode: SpatialMode = {
-      waist0Um: 0.5 * (wxUm + wyUm),
-      mSquared: 0.5 * (mxSq + mySq),
+    const modeX: AxisMode = {
+      waist0Um: params.spatialModeX?.waistUm ?? 100,
+      mSquared: params.spatialModeX?.mSquared ?? 1,
+      waistZOffsetMm: params.spatialModeX?.waistZOffsetMm ?? 0,
+      wavelengthNm,
+    };
+    const modeY: AxisMode = {
+      waist0Um: params.spatialModeY?.waistUm ?? 100,
+      mSquared: params.spatialModeY?.mSquared ?? 1,
+      waistZOffsetMm: params.spatialModeY?.waistZOffsetMm ?? 0,
       wavelengthNm,
     };
     const zMm = probe.zMm;
-    const wUm = waistAtZUm(zMm, mode);
-    const rMm = radiusOfCurvatureMm(zMm, mode);
-    const gouy = gouyPhaseRad(zMm, mode);
+    const wxUm = waistAtZUmAxis(zMm, modeX);
+    const wyUm = waistAtZUmAxis(zMm, modeY);
+    const rxMm = radiusOfCurvatureMmAxis(zMm, modeX);
+    const ryMm = radiusOfCurvatureMmAxis(zMm, modeY);
+    const gouyX = gouyPhaseRadAxis(zMm, modeX);
+    const gouyY = gouyPhaseRadAxis(zMm, modeY);
+    const tm = params.transverseMode ?? { kind: "TEM00" };
+    // For TEM_mn use the configured (m, n); TEM00 forces m=n=0;
+    // LG_pl uses (p, ℓ) directly via the Laguerre-Gauss intensity
+    // formula; multimode falls back to TEM00 rendering (incoherent
+    // superposition is out of scope here, but stored kindParams still
+    // round-trip via the API).
+    const hgM = tm.kind === "TEM_mn" ? Math.max(0, Math.round(tm.indicesM ?? 0)) : 0;
+    const hgN = tm.kind === "TEM_mn" ? Math.max(0, Math.round(tm.indicesN ?? 0)) : 0;
+    const lgP = tm.kind === "LG_pl" ? Math.max(0, Math.round(tm.indicesP ?? 0)) : 0;
+    const lgL = tm.kind === "LG_pl" ? Math.round(tm.indicesL ?? 0) : 0;
+    const modeLabel: string =
+      tm.kind === "TEM_mn"
+        ? `HG ${hgM},${hgN}`
+        : tm.kind === "LG_pl"
+        ? `LG p=${lgP}, ℓ=${lgL}`
+        : tm.kind === "multimode"
+        ? "multimode (rendered as TEM₀₀)"
+        : "TEM₀₀";
     // probe.powerFactor / probe.polarization are the values AT CLICK TIME —
     // stale once the user rotates the upstream HWP. Re-derive both from the
     // current ray-trace by finding the segment whose start point is closest
@@ -487,6 +572,17 @@ export function BeamScopePanel() {
         distanceToInputMm: number;
       };
     } | null)?.taSeedCoupling;
+    const fiberCoupling = (bestSeg as {
+      fiberCoupling?: {
+        etaMode: number;
+        etaFresnel: number;
+        etaAttenuation: number;
+        etaTotal: number;
+        arcLengthM: number;
+        mfdEntryUm: number;
+        mfdExitUm: number;
+      };
+    } | null)?.fiberCoupling;
     const C_M_PER_S = 299_792_458;
     const opticalCenterThz =
       typeof aomSideband?.centerFrequencyThz === "number"
@@ -499,11 +595,21 @@ export function BeamScopePanel() {
     return {
       laserEl,
       params,
-      mode,
+      modeX,
+      modeY,
       zMm,
-      wUm,
-      rMm,
-      gouy,
+      wxUm,
+      wyUm,
+      rxMm,
+      ryMm,
+      gouyX,
+      gouyY,
+      hgM,
+      hgN,
+      lgP,
+      lgL,
+      modeLabel,
+      tmKind: tm.kind ?? "TEM00",
       powerMw,
       wavelengthNm,
       displayWavelengthNm,
@@ -514,24 +620,33 @@ export function BeamScopePanel() {
       branch,
       taSeedCoupling,
       aomSideband,
+      fiberCoupling,
     };
   }, [probe, opticalElements]);
 
   if (!probe || !snapshot) {
     return (
-      <FloatingPanel id="beam-scope" title="Beam scope">
-        <p className="empty-state">Click on a beam segment (not on an optical element) to probe.</p>
-      </FloatingPanel>
+      <p className="empty-state">Click on a beam segment to probe.</p>
     );
   }
 
   const {
     params,
-    mode,
+    modeX,
+    modeY,
     zMm,
-    wUm,
-    rMm,
-    gouy,
+    wxUm,
+    wyUm,
+    rxMm,
+    ryMm,
+    gouyX,
+    gouyY,
+    hgM,
+    hgN,
+    lgP,
+    lgL,
+    modeLabel,
+    tmKind,
     powerMw,
     displayWavelengthNm,
     opticalCenterThz,
@@ -541,6 +656,7 @@ export function BeamScopePanel() {
     branch,
     taSeedCoupling,
     aomSideband,
+    fiberCoupling,
   } = snapshot;
   const k = (2 * Math.PI) / (displayWavelengthNm * 1e-9); // wavenumber, 1/m
 
@@ -593,22 +709,88 @@ export function BeamScopePanel() {
   const specMaxY = Math.max(...spectrumPoints.map((p) => p.y), 1e-9);
   const lambdaLow = displayWavelengthNm - spectrumSpanNm / 2;
 
-  // ─ Beam profile (2D Gaussian intensity I(x, y)) ─────────────────────────
-  // I(x, y) = I₀ · exp(−2(x² + y²)/w²)
-  const wM = wUm * 1e-6;
-  const I0 = (2 * powerMw * 1e-3) / (Math.PI * wM * wM); // W/m²
-  const profileHalfUm = wUm * 2.5; // ±2.5 · w fits the spot with margin
+  // ─ Beam profile — dispatches by transverse-mode family ────────────────
+  // HG (TEM_mn / TEM00): astigmatic |E_{m,n}|² ∝ H_m²(√2·x/w_x) · H_n²(√2·y/w_y)
+  //                                                  · exp(−2x²/w_x² − 2y²/w_y²)
+  // LG (LG_pl): cylindrically symmetric — assumes a circular Gaussian, so
+  //   uses the geometric mean √(w_x · w_y) as the effective waist (LG
+  //   modes aren't well-defined on astigmatic beams). Intensity is
+  //     |E_{p,ℓ}|² ∝ (2r²/w₀²)^|ℓ| · [L_p^|ℓ|(2r²/w₀²)]² · exp(−2r²/w₀²)
+  //   times the field-amplitude normalisation √(2 p! / (π (p+|ℓ|)!)).
+  // Multimode / unknown families fall back to TEM₀₀ (circular Gaussian).
+  const wxM = wxUm * 1e-6;
+  const wyM = wyUm * 1e-6;
+  const I0 = (2 * powerMw * 1e-3) / (Math.PI * wxM * wyM); // W/m² peak for TEM₀₀
+
+  // LG uses circular waist; warn label if astigmatism is significant.
+  const wEffUm = Math.sqrt(wxUm * wyUm);
+  const lgL_abs = Math.abs(lgL);
+  // Field-amplitude normalisation for LG (squared because we want |E|²).
+  const lgNormSq = lgP >= 0 && Number.isFinite(factorial(lgP)) && Number.isFinite(factorial(lgP + lgL_abs))
+    ? (2 * factorial(lgP)) / (Math.PI * factorial(lgP + lgL_abs))
+    : 1;
+
+  // Half-extent: HG fringes from sidelobes; LG rings from p; |ℓ|>0 grows
+  // the radius of peak intensity to ≈ w · √(|ℓ|+2p)/√2.
+  const hgFringeMult = 1 + 0.7 * Math.max(hgM, hgN);
+  const lgRingMult = 1 + 0.6 * (lgP + lgL_abs);
+  const profileHalfUm =
+    tmKind === "LG_pl"
+      ? wEffUm * 2.5 * lgRingMult
+      : Math.max(wxUm, wyUm) * 2.5 * hgFringeMult;
+
   const sampleIntensity = (xUm: number, yUm: number) => {
-    const r2 = (xUm * xUm + yUm * yUm) * 1e-12; // m²
-    return I0 * Math.exp(-2 * r2 / (wM * wM));
+    if (tmKind === "LG_pl") {
+      const rUm2 = xUm * xUm + yUm * yUm;
+      const u = (2 * rUm2) / (wEffUm * wEffUm); // dimensionless 2r²/w²
+      const env = Math.exp(-u);
+      const Lp = laguerreAssociated(lgP, lgL_abs, u);
+      const radial = Math.pow(u, lgL_abs);
+      // Multiply by I₀ for absolute scale; lgNormSq · radial · L² · env
+      // is the un-normalised cylindrical intensity profile.
+      return I0 * lgNormSq * radial * Lp * Lp * env;
+    }
+    // HG branch (TEM_mn or TEM00 fallback).
+    const xiX = (Math.SQRT2 * xUm) / wxUm;
+    const xiY = (Math.SQRT2 * yUm) / wyUm;
+    const env = Math.exp(
+      -2 * (xUm * xUm) / (wxUm * wxUm) - 2 * (yUm * yUm) / (wyUm * wyUm),
+    );
+    if (hgM === 0 && hgN === 0) {
+      return I0 * env;
+    }
+    const Hm = hermiteH(hgM, xiX);
+    const Hn = hermiteH(hgN, xiY);
+    return I0 * Hm * Hm * Hn * Hn * env;
   };
 
-  // ─ Wavefront phase φ(x, y) = k·(x² + y²)/(2R) − ψ_Gouy (2D image) ──────
-  const phaseHalfUm = wUm * 2;
+  // ─ Wavefront phase φ(x, y) — mode-aware ────────────────────────────────
+  // HG: φ = k·(x²/2R_x + y²/2R_y) − (m + n + 1)·½·(ψ_x + ψ_y)
+  // LG: φ = k·r²/(2R) + ℓ·atan2(y,x) − (2p + |ℓ| + 1)·ψ
+  //   (the e^{iℓφ} helical phase factor comes from the azimuthal angle).
+  // Half-extent matches the beam profile so the user sees both plots
+  // over the same window.
+  const phaseHalfUm = profileHalfUm * 0.8;
+  const gouyAvg = 0.5 * (gouyX + gouyY);
+  const gouyHg = (hgM + hgN + 1) * gouyAvg;
+  const gouyLg = (2 * lgP + lgL_abs + 1) * gouyAvg;
+  const rEffMm = 0.5 * ((isFinite(rxMm) ? rxMm : Infinity) + (isFinite(ryMm) ? ryMm : Infinity));
   const samplePhase = (xUm: number, yUm: number) => {
-    const rM2 = (xUm * xUm + yUm * yUm) * 1e-12;
-    const rzM = rMm * 1e-3;
-    return isFinite(rzM) && rzM !== 0 ? (k * rM2) / (2 * rzM) - gouy : -gouy;
+    if (tmKind === "LG_pl") {
+      const rM2 = (xUm * 1e-6) * (xUm * 1e-6) + (yUm * 1e-6) * (yUm * 1e-6);
+      const rM = rEffMm * 1e-3;
+      let phi = -gouyLg + lgL * Math.atan2(yUm, xUm);
+      if (isFinite(rM) && rM !== 0) phi += (k * rM2) / (2 * rM);
+      return phi;
+    }
+    const xM2 = (xUm * 1e-6) * (xUm * 1e-6);
+    const yM2 = (yUm * 1e-6) * (yUm * 1e-6);
+    const rxM = rxMm * 1e-3;
+    const ryM = ryMm * 1e-3;
+    let phi = -gouyHg;
+    if (isFinite(rxM) && rxM !== 0) phi += (k * xM2) / (2 * rxM);
+    if (isFinite(ryM) && ryM !== 0) phi += (k * yM2) / (2 * ryM);
+    return phi;
   };
 
   // ─ Pulse temporal (CW = constant, pulsed = envelope) ────────────────────
@@ -621,12 +803,48 @@ export function BeamScopePanel() {
   }
 
   return (
-    <FloatingPanel id="beam-scope" title={`${segmentLabel}  ·  z = ${zMm.toFixed(1)} mm  ·  ${branch}`}>
+    <>
+      <div className="beam-scope-segment-header" style={{
+        fontSize: 11,
+        color: "#9ca3af",
+        padding: "4px 6px",
+        borderBottom: "1px solid rgba(255,255,255,0.05)",
+        marginBottom: 4,
+      }}>
+        {`${segmentLabel}  ·  z = ${zMm.toFixed(1)} mm  ·  ${branch}  ·  ${modeLabel}`}
+      </div>
       <div className="beam-scope-summary">
-        <div><strong>w(z)</strong>: {wUm.toFixed(1)} µm</div>
-        <div><strong>R(z)</strong>: {isFinite(rMm) ? rMm.toFixed(1) + " mm" : "∞"}</div>
-        <div><strong>ψ<sub>Gouy</sub></strong>: {(gouy * (180 / Math.PI)).toFixed(2)}°</div>
-        <div><strong>z<sub>R</sub></strong>: {rayleighRangeMm(mode).toFixed(1)} mm</div>
+        <div>
+          <strong>w(z)</strong>: {wxUm.toFixed(1)} × {wyUm.toFixed(1)} µm
+          <span className="beam-scope-power-frac"> (x × y)</span>
+        </div>
+        <div>
+          <strong>R(z)</strong>:{" "}
+          {isFinite(rxMm) ? rxMm.toFixed(1) : "∞"} ×{" "}
+          {isFinite(ryMm) ? ryMm.toFixed(1) : "∞"} mm
+          <span className="beam-scope-power-frac"> (R_x × R_y)</span>
+        </div>
+        <div>
+          <strong>ψ<sub>Gouy</sub></strong>:{" "}
+          {(() => {
+            const psi = 0.5 * (gouyX + gouyY);
+            const factor =
+              tmKind === "LG_pl"
+                ? 2 * lgP + Math.abs(lgL) + 1
+                : hgM + hgN + 1;
+            return (factor * psi * (180 / Math.PI)).toFixed(2);
+          })()}°
+          {(hgM > 0 || hgN > 0 || tmKind === "LG_pl") && (
+            <span className="beam-scope-power-frac">
+              {" "}
+              ({tmKind === "LG_pl" ? "(2p+|ℓ|+1)" : "(m+n+1)"} factor applied)
+            </span>
+          )}
+        </div>
+        <div>
+          <strong>z<sub>R</sub></strong>: {rayleighRangeMmAxis(modeX).toFixed(1)} ×{" "}
+          {rayleighRangeMmAxis(modeY).toFixed(1)} mm
+        </div>
         <div>
           <strong>P</strong>: {powerMw.toFixed(2)} mW
           {upstreamFactor < 0.999 && (
@@ -657,6 +875,23 @@ export function BeamScopePanel() {
             {" "}/ df {((aomSideband.frequencyOffsetMhz ?? 0) >= 0 ? "+" : "")}{(aomSideband.frequencyOffsetMhz ?? 0).toFixed(1)} MHz
           </div>
         )}
+        {fiberCoupling && (
+          <>
+            <div>
+              <strong>Fiber η</strong>: {(fiberCoupling.etaTotal * 100).toFixed(2)}%
+              {" "}<span style={{ opacity: 0.7 }}>
+                = mode {(fiberCoupling.etaMode * 100).toFixed(1)}%
+                {" × "}Fresnel {(fiberCoupling.etaFresnel * 100).toFixed(1)}%
+                {" × "}atten {(fiberCoupling.etaAttenuation * 100).toFixed(1)}%
+              </span>
+            </div>
+            <div style={{ opacity: 0.7 }}>
+              <strong>Fiber</strong>: L {fiberCoupling.arcLengthM.toFixed(3)} m
+              {" · "}MFD entry {fiberCoupling.mfdEntryUm.toFixed(2)} µm
+              {" / "}exit {fiberCoupling.mfdExitUm.toFixed(2)} µm
+            </div>
+          </>
+        )}
       </div>
 
       <div className="beam-scope-grid">
@@ -681,9 +916,15 @@ export function BeamScopePanel() {
           halfExtentUm={profileHalfUm}
           sample={sampleIntensity}
           vmin={0}
-          vmax={I0}
+          /* HG (m,n>0) and LG modes have peaks that shift off-axis or
+             exceed I₀ (TEM₀₀'s peak), so let the heatmap auto-range. */
+          vmax={tmKind === "LG_pl" || hgM > 0 || hgN > 0 ? undefined : I0}
           colour={thermalColour}
-          title={`Beam profile  I(x,y)  ·  peak ${I0.toExponential(2)} W/m²`}
+          title={
+            tmKind === "LG_pl"
+              ? `Beam profile  ${modeLabel}  ·  w_eff ${wEffUm.toFixed(1)} µm`
+              : `Beam profile  ${modeLabel}  ·  w_x ${wxUm.toFixed(1)}, w_y ${wyUm.toFixed(1)} µm`
+          }
           axisLabel="x, y (µm)"
         />
 
@@ -708,6 +949,26 @@ export function BeamScopePanel() {
           )} fill="rgba(34, 139, 34, 0.3)" stroke="#228b22" />
         </PlotFrame>
       </div>
+    </>
+  );
+}
+
+/** Floating-panel chrome around BeamScopeContents — kept for code
+ *  compatibility but no longer rendered in App.tsx (the contents now
+ *  live inside the optical-link viewer panel). */
+export function BeamScopePanel() {
+  const { togglePanelVisible, focusPanel } = useWorkspace();
+  useEffect(() => {
+    const onOpen = () => {
+      togglePanelVisible("beam-scope", true);
+      focusPanel("beam-scope");
+    };
+    window.addEventListener("qmem.openBeamScope", onOpen);
+    return () => window.removeEventListener("qmem.openBeamScope", onOpen);
+  }, [togglePanelVisible, focusPanel]);
+  return (
+    <FloatingPanel id="beam-scope" title="Beam scope">
+      <BeamScopeContents />
     </FloatingPanel>
   );
 }

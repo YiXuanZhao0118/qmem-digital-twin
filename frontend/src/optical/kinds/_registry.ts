@@ -34,6 +34,10 @@ export type AnchorId =
   | "out"
   | "optical_anchor"
   | "center"
+  // AOM-specific direction anchor (Phase 8 refactor 2026-05-10).
+  // `id="rf_direction"` carries the body-local RF / acoustic propagation
+  // direction; position is body origin; apertureMm unused.
+  | "rf_direction"
   | "+x" | "-x" | "+y" | "-y" | "+z" | "-z";
 
 /** Anchor IDs the Editor inspector exposes in its dropdown. We
@@ -235,9 +239,19 @@ export const KIND_REGISTRY: Record<ElementKind, KindContract> = {
     // It is NOT the mode field diameter (~5 µm PM, ~10 µm SM); that lives
     // on kindParams.endA/B.modeFieldDiameterUm and is for Gaussian beam
     // tracking (not yet wired into the geometric ray-tracer).
-    requiredAnchors: [],
-    optionalAnchors: ["intercept_in", "intercept_out"],
-    anchorsNeedingDirection: [],
+    //
+    // Both ports are REQUIRED + DIRECTION-BEARING (2026-05-12): ray-trace
+    // bails out if either anchor is missing (rayTrace.ts), and align
+    // needs BOTH position (where the port lands on the beam) AND
+    // direction (face normal anti-parallel to beam at the entry end,
+    // parallel at the exit end). Direction is auto-derived from the
+    // spline tangent via the anchor's `derivedFromFiberEndpoint` flag,
+    // not from the stored `directionBodyLocal` — but the contract still
+    // marks them as needing direction because the align semantics
+    // require it.
+    requiredAnchors: ["intercept_in", "intercept_out"],
+    optionalAnchors: [],
+    anchorsNeedingDirection: ["intercept_in", "intercept_out"],
     anchorsNeedingAperture: ["intercept_in", "intercept_out"],
     alignVariant: "none",
     alignToleranceMm: 25,
@@ -246,17 +260,34 @@ export const KIND_REGISTRY: Record<ElementKind, KindContract> = {
       "Geometry inputs live on Component.properties: fiberNodes[] (≥2 nodes — posMm + optional handleInMm/handleOutMm tangents), radiusMm (jacket radius, default 1.0 mm), and fiberAnchors[] (intercept_in / intercept_out — port face positions in CONNECTOR body-local mm, with +Y outward from the cable; ferrule tip default = (0, 36.28, 0)). " +
       "End A is the first spline node, End B is the last; both ends carry an FC connector (PC or APC polish from kindParams) whose ferrule points outward along −handleOut at A / −handleIn at B. The intercept_in anchor rides along End A's connector frame, intercept_out along End B's — moving a spline node automatically carries the optical port with it. " +
       "ComponentPanel ▸ Fiber editing: ✏ Edit fiber path · Jacket radius slider · Align End A/B to beam · Slow axis (PM only — Layer 4, per-instance kindParams). " +
-      "The two “Align End A/B” buttons call store.alignFiberEndToBeam(componentId, end) which snaps that single endpoint onto the closest beam-path segment within alignToleranceMm (≤25 mm) — interior nodes don't move, so the curve flexes only near that end.",
+      "The two “Align End A/B” buttons call store.alignFiberEndToBeam(componentId, end) which snaps the PORT (intercept_in for A / intercept_out for B — at the ferrule tip, 36.28 mm out from the spline node) onto the closest beam-path segment within alignToleranceMm (≤25 mm), then back-derives the spline node 36.28 mm BEHIND the projected port along the new outward direction (outward = −beam_tangent for A entry, +beam_tangent for B exit). Interior nodes don't move, so the curve flexes only near that end.",
   },
   isolator: {
     kind: "isolator",
     displayName: "Optical Isolator",
+    // Optical isolator = PBS + Faraday Rotator + PBS in series. Anchors
+    // come in two flavours:
+    //   - intercept_in / intercept_out: the device's outer ports — beam
+    //     enters via intercept_in, exits via intercept_out.
+    //   - front_pbs / back_pbs: each PBS cube's diagonal cement interface,
+    //     same semantics as the beam_splitter kind (position = cube centre,
+    //     direction = coating normal along ±(X±Y) / ±(X±Z) / ±(Y±Z) for
+    //     face-aligned cubes, aperture = half the active interface size).
+    //     The two PBS directions implicitly fix the device's transmission
+    //     axis at each face; faradayRotationDeg (typ. 45°) lives in
+    //     kindParams. Asset authors who don't know the internal layout
+    //     can omit the front_pbs / back_pbs anchors — the device still
+    //     works as a black-box pass-through in the current solver.
     requiredAnchors: ["intercept_in"],
-    optionalAnchors: ["intercept_out"],
-    anchorsNeedingDirection: [],
+    optionalAnchors: ["intercept_out", "front_pbs", "back_pbs"],
+    anchorsNeedingDirection: ["front_pbs", "back_pbs"],
+    anchorsNeedingAperture: ["front_pbs", "back_pbs"],
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
-    alignSummary: "intercept_in translates to beam axis (forward direction).",
+    alignSummary:
+      "Forward-pass Faraday isolator. intercept_in translates to beam axis (forward direction); intercept_out is the rear device port. " +
+      "Internally PBS + Faraday rotator + PBS: front_pbs and back_pbs (both optional) mark each PBS cube's diagonal cement interface using the same semantics as the beam_splitter kind — position = cube centre, direction = coating normal (along ±(X±Y) / ±(X±Z) / ±(Y±Z) for face-aligned cubes), aperture = half the active interface size. " +
+      "The Faraday rotator's rotation angle (typically 45°) lives in kindParams.faradayRotationDeg.",
   },
   aom: {
     kind: "aom",

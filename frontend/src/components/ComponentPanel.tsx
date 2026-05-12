@@ -1,5 +1,6 @@
 import { Check, Clock, Crosshair, Layers3, Lock, Move3D, Plus, RotateCw, Trash2, Type, Unlock } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import * as THREE from "three";
 
 import { resolveAssetUrl } from "../api/client";
 import { useSceneStore, type LabPoint, type TransformAxis } from "../store/sceneStore";
@@ -7,6 +8,7 @@ import type { ComponentItem, SceneObject, SceneObjectPatch } from "../types/digi
 import { resolveBeamPosition } from "../utils/beamPlacement";
 import { getBeamAnchor, objectPosForAnchorOnBeam } from "../utils/beamAnchor";
 import { getComponentName } from "../utils/components";
+import { getFiberPortLabPose } from "../utils/fiberAlignment";
 import { CollapsibleSection } from "./CollapsibleSection";
 import { FloatingPanel } from "./workspace/FloatingPanel";
 import { useWorkspace } from "./workspace/WorkspaceProvider";
@@ -710,12 +712,23 @@ function FiberWarnings({ component }: { component: ComponentItem }) {
       return obj?.componentId === component.id;
     }),
   );
-  const props = (component.properties ?? {}) as {
+  // Per-instance fiberNodes live on SceneObject.properties (V2); fall back
+  // to the catalog template (Component.properties) for legacy data.
+  const sceneObjectForFiber = useSceneStore((state) =>
+    state.scene.objects.find((o) => o.componentId === component.id),
+  );
+  const objProps = (sceneObjectForFiber?.properties ?? {}) as {
+    fiberNodes?: { posMm: [number, number, number]; handleInMm?: [number, number, number]; handleOutMm?: [number, number, number] }[];
+  };
+  const compProps = (component.properties ?? {}) as {
     fiberNodes?: { posMm: [number, number, number]; handleInMm?: [number, number, number]; handleOutMm?: [number, number, number] }[];
   };
   const warnings: string[] = [];
   // 1. Minimum bend radius — sample curvature at 32 points along each segment
-  const nodes = props.fiberNodes;
+  const nodes =
+    (objProps.fiberNodes && objProps.fiberNodes.length >= 2)
+      ? objProps.fiberNodes
+      : compProps.fiberNodes;
   if (nodes && nodes.length >= 2 && opticalElement?.elementKind === "fiber") {
     const minBend = ((opticalElement.kindParams as Record<string, unknown>).minBendRadiusMm ?? 25) as number;
     let minR = Number.POSITIVE_INFINITY;
@@ -801,7 +814,13 @@ function FiberEfficiencyDisplay({ component }: { component: ComponentItem }) {
       return obj?.componentId === component.id;
     }),
   );
-  const props = (component.properties ?? {}) as { fiberNodes?: number[][] };
+  // Prefer per-instance fiberNodes (SceneObject.properties); fall back to
+  // catalog template for legacy data. Same pattern as FiberWarnings above.
+  const sceneObjectForEff = useSceneStore((state) =>
+    state.scene.objects.find((o) => o.componentId === component.id),
+  );
+  const objProps = (sceneObjectForEff?.properties ?? {}) as { fiberNodes?: number[][] };
+  const compProps = (component.properties ?? {}) as { fiberNodes?: number[][] };
   if (!opticalElement || opticalElement.elementKind !== "fiber") {
     return (
       <p style={{ fontSize: 11, opacity: 0.6, marginTop: 8 }}>
@@ -821,7 +840,11 @@ function FiberEfficiencyDisplay({ component }: { component: ComponentItem }) {
   // Idealized self-matched probe: w_b = w_f, perfect alignment.
   const expectedEtaCoupling = 1.0;
   const expectedEtaFresnel = Math.pow(1 - 0.0338, 1); // 1 face PC, no AR
-  const nodeCount = Array.isArray(props.fiberNodes) ? props.fiberNodes.length : 2;
+  const resolvedFiberNodes =
+    (Array.isArray(objProps.fiberNodes) && objProps.fiberNodes.length >= 2)
+      ? objProps.fiberNodes
+      : compProps.fiberNodes;
+  const nodeCount = Array.isArray(resolvedFiberNodes) ? resolvedFiberNodes.length : 2;
   void wF;
   void lambda;
   return (
@@ -944,12 +967,148 @@ function FiberSlowAxisEditor({ component }: { component: ComponentItem }) {
   );
 }
 
+// ─ Euler ↔ outward-direction helpers (YXZ convention matching
+//   `sceneObjectToQuaternion`: euler = THREE.Euler(rxRad, rzRad, -ryRad,
+//   "YXZ")). Outward is the connector's +Y body axis, rotated into lab.
+//   The Euler representation has 1 redundant DOF (twist around outward,
+//   irrelevant for SM cross-sections) which we resolve by picking the
+//   shortest rotation from lab+Y to the target outward.
+function eulerDegToOutwardLab(
+  rxDeg: number,
+  ryDeg: number,
+  rzDeg: number,
+): [number, number, number] {
+  const euler = new THREE.Euler(
+    THREE.MathUtils.degToRad(rxDeg),
+    THREE.MathUtils.degToRad(rzDeg),
+    THREE.MathUtils.degToRad(-ryDeg),
+    "YXZ",
+  );
+  const v = new THREE.Vector3(0, 1, 0).applyEuler(euler);
+  return [v.x, v.y, v.z];
+}
+
+function outwardLabToEulerDeg(
+  outwardLab: [number, number, number],
+): { rxDeg: number; ryDeg: number; rzDeg: number } {
+  const v = new THREE.Vector3(
+    outwardLab[0],
+    outwardLab[1],
+    outwardLab[2],
+  ).normalize();
+  const quat = new THREE.Quaternion().setFromUnitVectors(
+    new THREE.Vector3(0, 1, 0),
+    v,
+  );
+  const euler = new THREE.Euler().setFromQuaternion(quat, "YXZ");
+  return {
+    rxDeg: THREE.MathUtils.radToDeg(euler.x),
+    ryDeg: -THREE.MathUtils.radToDeg(euler.z),
+    rzDeg: THREE.MathUtils.radToDeg(euler.y),
+  };
+}
+
+/** Per-fiber-end optical-port pose editor. Displays the ferrule-tip lab
+ *  position (x, y, z) and the outward orientation (rx, ry, rz) — same
+ *  Euler convention as SceneObject's (rxDeg, ryDeg, rzDeg), applied to
+ *  lab+Y to produce the outward direction. Editing any field back-derives
+ *  the spline node + handle via `setFiberPortLabPose`, so the touched
+ *  endpoint snaps to the requested pose while interior nodes don't move. */
+function FiberPortPoseEditor({
+  component,
+  end,
+}: {
+  component: ComponentItem;
+  end: "A" | "B";
+}) {
+  const fiberSceneObject = useSceneStore((state) =>
+    state.scene.objects.find((o) => o.componentId === component.id),
+  );
+  const setFiberPortLabPose = useSceneStore((state) => state.setFiberPortLabPose);
+  const objProps = (fiberSceneObject?.properties ?? {}) as {
+    fiberNodes?: { posMm: [number, number, number]; handleInMm?: [number, number, number]; handleOutMm?: [number, number, number] }[];
+  };
+  const compProps = (component.properties ?? {}) as {
+    fiberNodes?: { posMm: [number, number, number]; handleInMm?: [number, number, number]; handleOutMm?: [number, number, number] }[];
+  };
+  const nodes = (objProps.fiberNodes && objProps.fiberNodes.length >= 2)
+    ? objProps.fiberNodes
+    : compProps.fiberNodes;
+  if (!fiberSceneObject || !nodes || nodes.length < 2) return null;
+
+  const portPose = getFiberPortLabPose(end, nodes, {
+    xMm: fiberSceneObject.xMm,
+    yMm: fiberSceneObject.yMm,
+    zMm: fiberSceneObject.zMm,
+    rxDeg: fiberSceneObject.rxDeg,
+    ryDeg: fiberSceneObject.ryDeg,
+    rzDeg: fiberSceneObject.rzDeg,
+  });
+  if (!portPose) return null;
+  const { rxDeg, ryDeg, rzDeg } = outwardLabToEulerDeg(portPose.outwardLab);
+
+  const apply = (field: "x" | "y" | "z" | "rx" | "ry" | "rz", value: number) => {
+    if (!Number.isFinite(value)) return;
+    const nextPos: [number, number, number] = [
+      portPose.posLab[0],
+      portPose.posLab[1],
+      portPose.posLab[2],
+    ];
+    let nextRx = rxDeg, nextRy = ryDeg, nextRz = rzDeg;
+    if (field === "x") nextPos[0] = value;
+    else if (field === "y") nextPos[1] = value;
+    else if (field === "z") nextPos[2] = value;
+    else if (field === "rx") nextRx = value;
+    else if (field === "ry") nextRy = value;
+    else if (field === "rz") nextRz = value;
+    const nextOutward = eulerDegToOutwardLab(nextRx, nextRy, nextRz);
+    void setFiberPortLabPose(component.id, end, nextPos, nextOutward);
+  };
+
+  const portAnchorId = end === "A" ? "intercept_in" : "intercept_out";
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ fontSize: 11, opacity: 0.75, marginBottom: 4 }}>
+        End {end} port (<code>{portAnchorId}</code>) — ferrule tip lab pose
+      </div>
+      <div className="number-grid" style={{ marginBottom: 4 }}>
+        {(["x", "y", "z"] as const).map((axis) => (
+          <label key={axis}>
+            <span>{axis.toUpperCase()} mm</span>
+            <NumberField
+              value={portPose.posLab[axis === "x" ? 0 : axis === "y" ? 1 : 2]}
+              onChange={(n) => apply(axis, n)}
+            />
+          </label>
+        ))}
+      </div>
+      <div className="number-grid">
+        {(["rx", "ry", "rz"] as const).map((axis) => {
+          const cur = axis === "rx" ? rxDeg : axis === "ry" ? ryDeg : rzDeg;
+          return (
+            <label key={axis}>
+              <span>{axis.toUpperCase()} deg</span>
+              <NumberField value={cur} onChange={(n) => apply(axis, n)} />
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function FiberEditor({ component }: { component: ComponentItem }) {
   const fiberEditingComponentId = useSceneStore((state) => state.fiberEditingComponentId);
   const enterFiberEdit = useSceneStore((state) => state.enterFiberEdit);
   const exitFiberEdit = useSceneStore((state) => state.exitFiberEdit);
   const updateFiberRadius = useSceneStore((state) => state.updateFiberRadius);
   const alignFiberEndToBeam = useSceneStore((state) => state.alignFiberEndToBeam);
+  // Explicit node-removal button — surfaced in the panel because the
+  // 3D-viewer right-click affordance is hard to discover. Endpoints (A
+  // and B) are guarded out by the store action, so this only fires for
+  // interior nodes.
+  const removeFiberNode = useSceneStore((state) => state.removeFiberNode);
   const [alignFeedback, setAlignFeedback] = useState<string | null>(null);
   const isEditing = fiberEditingComponentId === component.id;
   const onAlign = async (end: "A" | "B") => {
@@ -967,12 +1126,25 @@ function FiberEditor({ component }: { component: ComponentItem }) {
       setAlignFeedback(`Align failed: ${(err as Error).message}`);
     }
   };
-  const props = (component.properties ?? {}) as {
-    fiberNodes?: { posMm: number[] }[];
-    radiusMm?: number;
+  // Per-instance values first (V2: fiber spline + jacket radius live on
+  // SceneObject.properties), then catalog template as legacy fallback.
+  const fiberSceneObject = useSceneStore((state) =>
+    state.scene.objects.find((o) => o.componentId === component.id),
+  );
+  const objProps = (fiberSceneObject?.properties ?? {}) as {
+    fiberNodes?: { posMm: number[] }[]; radiusMm?: number;
   };
-  const nodeCount = Array.isArray(props.fiberNodes) ? props.fiberNodes.length : 0;
-  const radius = typeof props.radiusMm === "number" ? props.radiusMm : 1.0;
+  const compProps = (component.properties ?? {}) as {
+    fiberNodes?: { posMm: number[] }[]; radiusMm?: number;
+  };
+  const resolvedNodes =
+    (Array.isArray(objProps.fiberNodes) && objProps.fiberNodes.length >= 2)
+      ? objProps.fiberNodes
+      : compProps.fiberNodes;
+  const nodeCount = Array.isArray(resolvedNodes) ? resolvedNodes.length : 0;
+  const radius =
+    typeof objProps.radiusMm === "number" ? objProps.radiusMm :
+    typeof compProps.radiusMm === "number" ? compProps.radiusMm : 1.0;
 
   return (
     <section className="edit-section">
@@ -992,10 +1164,59 @@ function FiberEditor({ component }: { component: ComponentItem }) {
             <br />· Drag orange/yellow anchor to move a node
             <br />· Drag cyan handle tip to adjust tension (direction + length)
             <br />· Double-click on the tube to insert an interior node
-            <br />· Right-click on an interior anchor to delete it
+            <br />· Right-click on an interior anchor to delete it (or use buttons below)
           </>
         )}
       </p>
+      {/* Explicit per-interior-node delete row. The two endpoint nodes
+          (index 0 = End A, index N-1 = End B) are hidden because they
+          must always exist — the store action also defensively rejects
+          attempts to remove them. */}
+      {nodeCount > 2 && (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 4 }}>
+            Interior nodes
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {(resolvedNodes ?? []).map((n, idx) => {
+              if (idx === 0 || idx === nodeCount - 1) return null; // endpoints
+              const p = n.posMm;
+              return (
+                <div
+                  key={idx}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 6,
+                    fontSize: 11,
+                    padding: "3px 6px",
+                    background: "rgba(255,255,255,0.04)",
+                    borderRadius: 4,
+                  }}
+                >
+                  <span style={{ fontFamily: "ui-monospace, SFMono-Regular, monospace" }}>
+                    #{idx}: ({p[0].toFixed(1)}, {p[1].toFixed(1)}, {p[2].toFixed(1)}) mm
+                  </span>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    style={{ padding: "2px 8px", fontSize: 11 }}
+                    title={`Remove interior node #${idx}. Endpoints (End A / End B) cannot be removed.`}
+                    onClick={() => {
+                      if (window.confirm(`Remove interior node #${idx}?`)) {
+                        void removeFiberNode(component.id, idx);
+                      }
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
       <label style={{ display: "block" }}>
         <span>Jacket radius ({radius.toFixed(2)} mm)</span>
         <input
@@ -1031,6 +1252,8 @@ function FiberEditor({ component }: { component: ComponentItem }) {
       {alignFeedback && (
         <p style={{ fontSize: 11, opacity: 0.85, marginTop: 6 }}>{alignFeedback}</p>
       )}
+      <FiberPortPoseEditor component={component} end="A" />
+      <FiberPortPoseEditor component={component} end="B" />
       <FiberSlowAxisEditor component={component} />
       <FiberEfficiencyDisplay component={component} />
       <FiberWarnings component={component} />
@@ -1295,17 +1518,6 @@ export function ComponentPanel() {
         </section>
       )}
 
-      {!isObjectSelection && Object.keys(component.properties ?? {}).length > 0 && (
-        <CollapsibleSection
-          id="component-spec"
-          icon={<Layers3 size={15} />}
-          title="Component spec"
-          className="state-section"
-        >
-          <pre>{JSON.stringify(component.properties, null, 2)}</pre>
-        </CollapsibleSection>
-      )}
-
       {!isObjectSelection && modelViewerUrl && (
         <CollapsibleSection
           id="component-3d-model"
@@ -1439,7 +1651,7 @@ export function ComponentPanel() {
       )}
 
       <AlignPanel />
-      {component && <TimingEditorButton component={component} />}
+      {isObjectSelection && component && <TimingEditorButton component={component} />}
       </FloatingPanel>
 
       <FloatingPanel id="device-state" title="Device state">

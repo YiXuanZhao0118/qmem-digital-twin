@@ -67,42 +67,70 @@ export function besselJ(n: number, x: number): number {
 
 /** Bragg angle θ_B for the given operating wavelength.
  *
- *  θ_B = arcsin( λ · f / (2 · n · v) )
+ *  θ_B (EXTERNAL, lab-frame Bragg half-angle) = arcsin( λ · f / (2 · v) )
  *
- *  where λ is the optical wavelength in vacuum, f the RF carrier, n the
- *  refractive index, v the acoustic velocity. Domain-clamps the asin
- *  argument so an over-driven RF doesn't NaN — caller can then notice
- *  the result is at the ±π/2 limit. */
+ *  Convention (clarified 2026-05-11 against AA Opto MT80 datasheet):
+ *  This returns the **external** Bragg half-angle (in air, lab frame),
+ *  NOT the internal-crystal angle. The datasheet's `Δθ = λ·f / v` is the
+ *  full external 0→±1 separation angle, equal to 2·θ_B_external. So:
+ *
+ *       sin(θ_B_external) = λ·f / (2·v)         ← here
+ *       sin(θ_B_internal) = λ·f / (2·n·v)       ← what's inside the crystal
+ *
+ *  These are related by Snell's law at the crystal entry face: n·sin(θ_in)
+ *  = sin(θ_ext). Using the external angle keeps everything (alignment,
+ *  ray-trace, Bragg residual) in lab frame consistently. The refractive
+ *  index `n` is no longer in the geometric Bragg path; it only enters the
+ *  closed-form efficiency formula via cosθ_B (small-angle limit, ≈ 1).
+ *
+ *  Pre-fix this function used `arcsin(λ·f / (2·n·v))` (internal angle),
+ *  which made the trace's separation angle ≈ 2·θ_B_internal = 2·θ_B_ext/n,
+ *  i.e. 7.18 mrad instead of the datasheet's 16.2 mrad at 850 nm/80 MHz.
+ *
+ *  Domain-clamps the asin argument so an over-driven RF doesn't NaN —
+ *  caller can then notice the result is at the ±π/2 limit. */
 export function braggAngleRad(
   params: AomPhysicsParams,
   wavelengthNm: number,
 ): number {
   const fHz = (params.centerFreqMhz ?? DEFAULT_CENTER_FREQ_MHZ) * 1e6;
   const v = params.acousticVelocityMPerS ?? DEFAULT_ACOUSTIC_VELOCITY_M_PER_S;
-  const n = params.refractiveIndex ?? DEFAULT_REFRACTIVE_INDEX;
   const lambdaM = wavelengthNm * 1e-9;
-  const sinThetaB = (lambdaM * fHz) / (2 * n * v);
+  const sinThetaB = (lambdaM * fHz) / (2 * v);
   return Math.asin(Math.max(-1, Math.min(1, sinThetaB)));
 }
 
-/** Closed-form first-order diffraction efficiency
+/** First-order diffraction efficiency η.
  *
- *      η = sin²( (π · L / (2 · λ · cosθ_B)) · √(2 · M₂ · P_d / W) )
+ *  Resolution order:
+ *    1. If `params.baseEfficiency` is explicitly set, return it (clamped
+ *       to [0, 1]). This is the user-facing override — useful when the
+ *       closed-form constants don't match the datasheet (e.g., the
+ *       AA Optoelectronic MT80 datasheet quotes η > 85% at P_max but
+ *       our seeded M₂/L/W combo gives ~9% via the closed-form). Setting
+ *       baseEfficiency = 0.85 directly delivers what the datasheet
+ *       advertises.
+ *    2. Otherwise, if all four closed-form inputs (M₂, P_d, L, W) are
+ *       present, compute
+ *          η = sin²( (π · L / (2 · λ · cosθ_B)) · √(2 · M₂ · P_d / W) ).
+ *    3. Otherwise, fall back to DEFAULT_BASE_EFFICIENCY.
  *
- *  When any of M₂ / P_d / L / W is missing, falls back to
- *  `params.baseEfficiency ?? 0.85`. Output is clamped to [0, 1]. */
+ *  Output is clamped to [0, 1]. */
 export function diffractionEfficiency(
   params: AomPhysicsParams,
   wavelengthNm: number,
   thetaBRad: number,
 ): number {
+  if (typeof params.baseEfficiency === "number") {
+    return clamp01(params.baseEfficiency);
+  }
   const allClosedFormInputs =
     typeof params.figureOfMeritM2 === "number" &&
     typeof params.rfDrivePowerW === "number" &&
     typeof params.crystalLengthMm === "number" &&
     typeof params.acousticBeamWidthMm === "number";
   if (!allClosedFormInputs) {
-    return clamp01(params.baseEfficiency ?? DEFAULT_BASE_EFFICIENCY);
+    return clamp01(DEFAULT_BASE_EFFICIENCY);
   }
   const lambdaM = wavelengthNm * 1e-9;
   const L = (params.crystalLengthMm as number) * 1e-3;
@@ -379,12 +407,19 @@ export type Vec3Like = { x: number; y: number; z: number };
  *
  *      beam · D2 = −m · traversalSign · sin(θ_B)
  *
- *  Why the leading minus sign — derived structurally from
- *  `diffractedDirection`'s rotation convention. The ray-tracer rotates
- *  the input by `+m·2·θ_B` about D3. For order m to land symmetric to
- *  the input across the D1-D3 plane (Bragg-mirror), the input must be on
- *  the OPPOSITE side of D1 from where the order emerges:
+ *  Convention (clarified 2026-05-11):
+ *    - θ_B = arcsin(λ·f / (2·n·v))  is the conventional Bragg grazing
+ *      half-angle (denominator has 2). Computed in `braggAngleRad()`.
+ *    - The crystal must be tilted so the input beam makes angle ±θ_B
+ *      with D1 (the body's optical axis). m=+1 needs input at −θ_B,
+ *      m=−1 needs input at +θ_B. Switching between m=±1 rotates the
+ *      crystal by 2·θ_B in total.
+ *    - The diffraction deflection between order 0 and order m on the
+ *      output side is m·2·θ_B (the wider "spot separation" angle,
+ *      ≈ m·λ·f/v in the small-angle limit). That factor of 2 lives in
+ *      `diffractedDirection`, not here.
  *
+ *  Side ledger:
  *    state A, m=+1:   input·D2 = −sin(θ_B)   →  output·D2 = +sin(θ_B)
  *    state A, m=−1:   input·D2 = +sin(θ_B)   →  output·D2 = −sin(θ_B)
  *    state A, m=0 :   input·D2 = 0           →  output·D2 = 0  (pass-through)
@@ -392,13 +427,7 @@ export type Vec3Like = { x: number; y: number; z: number };
  *  `traversalSign` flips the sign for state-B usage (beam enters at
  *  intercept_out instead of intercept_in) so the user's m label maps to
  *  the correct physical lab side regardless of how they oriented the
- *  body.
- *
- *  Phase-7.4 fix: the previous `expectedSinTheta = +effectiveOrder ·
- *  sin(θ_B)` had the opposite sign, which caused align to put the beam
- *  on the same side of D1 that the deflection then sent it further away
- *  from — m=±1 ended up at ±3θ_B (off-Bragg), and angularFactor
- *  collapsed to the Gaussian-acceptance floor. */
+ *  body. */
 export function expectedInputDotD2(
   selectedOrder: DiffractionOrder,
   traversalSign: AomTraversalSign,
@@ -411,11 +440,17 @@ export function expectedInputDotD2(
  *  by `+m·2·θ_B` about the D3 axis (right-hand rule). Pure Rodrigues
  *  rotation; no THREE.js dependency so this can mirror to backend later.
  *
+ *  Convention (clarified 2026-05-11):
+ *    - θ_B = arcsin(λ·f / (2·n·v))  is the conventional Bragg grazing
+ *      half-angle. The angle between two adjacent diffraction orders
+ *      (e.g. between 0 and +1 spots on a screen) is 2·θ_B, not θ_B.
+ *      In the small-angle limit this matches the standard textbook
+ *      result `θ_d ≈ m·λ·f / v` (no factor of 2 in the denominator).
+ *
  *  Conservation properties — verified by the round-trip tests:
  *    - `output · D3` is preserved for every m (including 0).
  *    - For Bragg-aligned input (input·D2 = expectedInputDotD2(m, ...)),
- *      `output·D2` lands on the Bragg-mirror value `+m·traversalSign·
- *      sin(θ_B)`.
+ *      `output·D2` lands on the Bragg-mirror value `+m·traversalSign·sin(θ_B)`.
  *
  *  Caller passes UNIT vectors; the result is unit length up to the
  *  numerical precision of the trig functions (no explicit re-normalise

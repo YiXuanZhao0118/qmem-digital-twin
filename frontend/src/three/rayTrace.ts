@@ -36,6 +36,8 @@ import {
   labDirToThree as labDirToThreeAxisSwap,
 } from "../optical/frames";
 import { rotateLocalToLab } from "../utils/beamPlacement";
+import { FIBER_FERRULE_TIP_MM } from "../utils/fiberAnchorResolver";
+import { endpointOutwardBody } from "../utils/fiberAlignment";
 import { emissionFromObject } from "./opticalBeams";
 import {
   type AomTraversalSign,
@@ -46,6 +48,8 @@ import {
   expectedInputDotD2,
   phaseModulationDepth,
 } from "../optical/kinds/aom/physics";
+import { getRfDirectionBodyLocal } from "../utils/v2Bindings";
+import { getEmissionVisual } from "../utils/emissionVisuals";
 
 export const DEFAULT_MAX_LENGTH_MM = 1000;
 export const DEFAULT_MAX_BOUNCES = 8;
@@ -145,6 +149,33 @@ export type TraceSegment = {
     inputTraversalSign?: -1 | 1;
     entryPortId?: "intercept_in" | "intercept_out";
   };
+  /** Per-fiber-hop coupling breakdown. Set on the FIRST segment emitted
+   *  out of a fiber's intercept_out; downstream segments past further
+   *  optics don't carry it. The scope panel renders these as percentages
+   *  so the user can see why the post-fiber beam is dimmer than the
+   *  pre-fiber beam (mode mismatch vs Fresnel vs length attenuation). */
+  fiberCoupling?: {
+    etaMode: number;          // Marcuse Gaussian overlap (entry face)
+    etaFresnel: number;       // (1-R_entry)·(1-R_exit) — both faces
+    etaAttenuation: number;   // 10^(−α·L/10) Beer-Lambert along arc length
+    etaTotal: number;         // etaMode · etaFresnel · etaAttenuation
+    arcLengthM: number;       // fiber length in metres
+    mfdEntryUm: number;       // mode-field diameter at entry face (µm)
+    mfdExitUm: number;        // mode-field diameter at exit face (µm)
+  };
+  /** Identifies which emission this segment originated from, so the
+   *  renderer can apply the per-emission visualisation override stored
+   *  on `SceneObject.properties.emissionVisuals[emissionKey]`. Inherited
+   *  from the originating emitter call to traceOneRay; downstream
+   *  reflected/transmitted/diffracted children carry the same key. */
+  emissionKey: "main" | "forward" | "backward";
+  /** SceneObject id of the ORIGINAL emitter (laser_source / TA) that
+   *  spawned this segment chain. Unlike `sourceObjectId` (which is the
+   *  *previously-hit* object on recursive segments), this stays constant
+   *  from the emitter all the way down so the renderer can look up the
+   *  emitter's `emissionVisuals[emissionKey]` even on segments far
+   *  downstream of optics. */
+  emitterObjectId: string;
 };
 
 /** Running Gaussian-beam state propagated through traceOneRay. Carries the
@@ -583,11 +614,34 @@ function normalizeJones(j: JonesTuple, fallback: JonesTuple = [1, 0, 0, 0]): Jon
   return [j[0] / norm, j[1] / norm, j[2] / norm, j[3] / norm];
 }
 
+/** Polarization of the seed beam at intercept_in. Used for the input
+ *  acceptance check and for the backward ASE leak direction (which exits
+ *  the same facet as the seed enters). */
 function taInputJones(element: OpticalElement): JonesTuple {
   const params = (element.kindParams ?? {}) as {
     inputPolarization?: { exRe?: number; exIm?: number; eyRe?: number; eyIm?: number };
   };
   const pol = params.inputPolarization ?? {};
+  return normalizeJones([
+    typeof pol.exRe === "number" ? pol.exRe : 0,
+    typeof pol.exIm === "number" ? pol.exIm : 0,
+    typeof pol.eyRe === "number" ? pol.eyRe : 1,
+    typeof pol.eyIm === "number" ? pol.eyIm : 0,
+  ], [0, 0, 1, 0]);
+}
+
+/** Polarization of the amplified beam emitted at intercept_out. Most TA
+ *  chips lock the output to a specific linear state (the gain medium has
+ *  a TM preference), independent of the seed state. The user configures
+ *  this via kindParams.outputPolarization in the panel; if absent, fall
+ *  back to inputPolarization so an unconfigured chip behaves like before
+ *  this wiring landed. */
+function taOutputJones(element: OpticalElement): JonesTuple {
+  const params = (element.kindParams ?? {}) as {
+    outputPolarization?: { exRe?: number; exIm?: number; eyRe?: number; eyIm?: number };
+    inputPolarization?: { exRe?: number; exIm?: number; eyRe?: number; eyIm?: number };
+  };
+  const pol = params.outputPolarization ?? params.inputPolarization ?? {};
   return normalizeJones([
     typeof pol.exRe === "number" ? pol.exRe : 0,
     typeof pol.exIm === "number" ? pol.exIm : 0,
@@ -786,6 +840,8 @@ function traceOneRay(
   powerFactor: number,
   polarization: JonesTuple,
   nominalPowerMwAtSource: number,
+  emissionKey: TraceSegment["emissionKey"],
+  emitterObjectId: string,
   taSeedCoupling?: TraceSegment["taSeedCoupling"],
 ): TraceSegment[] {
   if (depth > maxBounces) return [];
@@ -826,6 +882,8 @@ function traceOneRay(
         beamMode: { ...mode },
         nominalPowerMwAtSource,
         taSeedCoupling,
+        emissionKey,
+        emitterObjectId,
       },
     ];
   }
@@ -856,6 +914,8 @@ function traceOneRay(
     beamMode: { ...mode },
     nominalPowerMwAtSource,
     taSeedCoupling,
+    emissionKey,
+    emitterObjectId,
   };
   const segments: TraceSegment[] = [segment];
   const newPathMm = pathLengthSoFarMm + segLengthMm;
@@ -898,6 +958,8 @@ function traceOneRay(
         powerFactor * r,
         polarization,
         nominalPowerMwAtSource,
+        emissionKey,
+        emitterObjectId,
         taSeedCoupling,
       ),
     );
@@ -912,19 +974,35 @@ function traceOneRay(
     // SceneObject local frame), rotate it into world coords using the same
     // YXZ Euler convention as transformUtils.applyObjectTransform, then
     // reflect against it.
+    // V2 Phase 6 (alembic 0032) moved the coating normal from
+    // OpticalElement.kindParams.coatingNormalBodyLocal into
+    // SceneObject.properties.anchorBindings[opticalSurface].payload.normalBodyLocal.
+    // Read it from the binding first; fall back to kindParams (Phase 5 name
+    // then legacy name) for un-migrated rows. Without this V2 read path
+    // every PBS / beam-splitter created post-migration has `coating ===
+    // undefined`, falls back to `worldNormal` (the cube's outer face
+    // normal, which is parallel to the beam), and the reflected branch
+    // back-reflects 180° onto the incident axis — visually no reflection.
+    const hitObj = ctx.objects.find((o) => o.id === hitObjectId);
+    type SurfaceBinding = {
+      kind?: string;
+      payload?: { normalBodyLocal?: number[] };
+    };
+    const bindings = (hitObj?.properties as { anchorBindings?: SurfaceBinding[] } | undefined)?.anchorBindings;
+    const surfaceBinding = Array.isArray(bindings)
+      ? bindings.find((b) => b?.kind === "opticalSurface" && Array.isArray(b.payload?.normalBodyLocal))
+      : undefined;
+    const bindingNormal = surfaceBinding?.payload?.normalBodyLocal as number[] | undefined;
+
     const oe = elementForObject(hitObjectId, ctx);
     const kp = oe?.kindParams as { coatingNormalBodyLocal?: number[]; coatingNormalLocal?: number[] } | undefined;
-    // Phase 5: prefer the new key, fall back to the legacy one.
-    const coating = kp?.coatingNormalBodyLocal ?? kp?.coatingNormalLocal;
+    const coating = bindingNormal ?? kp?.coatingNormalBodyLocal ?? kp?.coatingNormalLocal;
     let coatingNormalWorld: THREE.Vector3 | null = null;
-    if (Array.isArray(coating) && coating.length >= 3) {
-      const obj = ctx.objects.find((o) => o.id === hitObjectId);
-      if (obj) {
-        coatingNormalWorld = bodyLocalDirToWorldThree(
-          { x: coating[0], y: coating[1], z: coating[2] },
-          obj,
-        ).normalize();
-      }
+    if (Array.isArray(coating) && coating.length >= 3 && hitObj) {
+      coatingNormalWorld = bodyLocalDirToWorldThree(
+        { x: coating[0], y: coating[1], z: coating[2] },
+        hitObj,
+      ).normalize();
     }
     const reflNormal = coatingNormalWorld ?? worldNormal;
     const transmittedDir = dir.clone();
@@ -1031,6 +1109,8 @@ function traceOneRay(
         transFactor,
         transPol,
         nominalPowerMwAtSource,
+        emissionKey,
+        emitterObjectId,
         taSeedCoupling,
       ),
     );
@@ -1051,9 +1131,256 @@ function traceOneRay(
         reflFactor,
         reflPol,
         nominalPowerMwAtSource,
+        emissionKey,
+        emitterObjectId,
         taSeedCoupling,
       ),
     );
+    return segments;
+  }
+
+  if (kind === "fiber") {
+    // Fiber patch-cable dispatch (2026-05-11): when a beam hits a fiber,
+    // figure out which end (A=intercept_in or B=intercept_out) was hit,
+    // compute coupling efficiency at that face, propagate through the
+    // cable (Fresnel both faces + length attenuation), and emit a new
+    // beam from the OPPOSITE end along that end's outward direction.
+    //
+    // Simplified MVP — not yet wired:
+    //   - Bend loss (Marcuse curvature integral along the spline)
+    //   - Polarization-maintaining slow-axis projection
+    //   - Multi-mode mode-mixing scrambler
+    //   - PMD / GVD
+    // These all roll up into η_mode for now; future iterations can pull
+    // each out into its own factor with per-segment debug metadata.
+    const oe = elementForObject(hitObjectId, ctx);
+    const obj = ctx.objects.find((o) => o.id === hitObjectId);
+    const component = obj ? ctx.components.find((c) => c.id === obj.componentId) : undefined;
+    const asset = component?.asset3dId
+      ? ctx.assets.find((a) => a.id === component.asset3dId)
+      : undefined;
+    if (!obj || !asset || !oe) return segments;
+
+    type FiberNodePersist = {
+      posMm: [number, number, number];
+      handleInMm?: [number, number, number];
+      handleOutMm?: [number, number, number];
+    };
+    type FiberKindParams = {
+      endA?: { modeFieldDiameterUm?: number; fresnelResidual?: number; glassIndexAtDesignLambda?: number };
+      endB?: { modeFieldDiameterUm?: number; fresnelResidual?: number; glassIndexAtDesignLambda?: number };
+      fiberType?: "single_mode" | "polarization_maintaining" | "multi_mode";
+      designWavelengthNm?: number;
+      attenuationCurve?: Array<{ wavelengthNm: number; dbPerKm: number }>;
+    };
+    const fParams = (oe.kindParams ?? {}) as FiberKindParams;
+    const endA = fParams.endA ?? {};
+    const endB = fParams.endB ?? {};
+
+    // Compute fiber port poses DIRECTLY from the spline (2026-05-12 fix).
+    // The shared `primitive_box` Asset3D that fiber components reference
+    // carries anchors authored for OTHER components — at the time of this
+    // fix the anchors on the asset were (0, ±55, 0) belonging to some
+    // isolator/box-shaped element. The fiber's actual optical port lives
+    // at `node + outward · FIBER_FERRULE_TIP_MM`, where outward = -handle
+    // at each end (or neighbour-segment fallback) per
+    // `endpointOutwardBody`. Bypassing `asset.anchors.find(...)` entirely
+    // for fiber kind keeps the runtime stable when the shared-asset
+    // anchor data drifts.
+    const objProps = (obj.properties ?? {}) as { fiberNodes?: FiberNodePersist[] };
+    const compProps = (component?.properties ?? {}) as { fiberNodes?: FiberNodePersist[] };
+    const fiberNodes =
+      (objProps.fiberNodes && objProps.fiberNodes.length >= 2)
+        ? objProps.fiberNodes
+        : compProps.fiberNodes;
+    if (!fiberNodes || fiberNodes.length < 2) return segments;
+
+    const outwardA = endpointOutwardBody(fiberNodes, "A");
+    const outwardB = endpointOutwardBody(fiberNodes, "B");
+    const nodeA = fiberNodes[0].posMm;
+    const nodeB = fiberNodes[fiberNodes.length - 1].posMm;
+    const inBody = {
+      x: nodeA[0] + outwardA[0] * FIBER_FERRULE_TIP_MM,
+      y: nodeA[1] + outwardA[1] * FIBER_FERRULE_TIP_MM,
+      z: nodeA[2] + outwardA[2] * FIBER_FERRULE_TIP_MM,
+    };
+    const outBody = {
+      x: nodeB[0] + outwardB[0] * FIBER_FERRULE_TIP_MM,
+      y: nodeB[1] + outwardB[1] * FIBER_FERRULE_TIP_MM,
+      z: nodeB[2] + outwardB[2] * FIBER_FERRULE_TIP_MM,
+    };
+    const inDirBody = { x: outwardA[0], y: outwardA[1], z: outwardA[2] };
+    const outDirBody = { x: outwardB[0], y: outwardB[1], z: outwardB[2] };
+
+    // Body-local position → lab mm → three.js world. `rotateLocalToLab`
+    // rotates a body offset by the SceneObject's Euler (Rz·Rx·Ry order);
+    // adding `(obj.xMm, obj.yMm, obj.zMm)` finishes the body→lab transform.
+    // labMmToThreeAbs maps lab (x, y, z) mm → three (x, z, -y) / 100.
+    const labMmToThreeAbs = (lab: { x: number; y: number; z: number }) =>
+      new THREE.Vector3(lab.x / 100, lab.z / 100, -lab.y / 100);
+    const bodyToLabPos = (b: { x: number; y: number; z: number }) => {
+      const r = rotateLocalToLab(
+        { x: b.x, y: b.y, z: b.z },
+        obj.rxDeg ?? 0, obj.ryDeg ?? 0, obj.rzDeg ?? 0,
+      );
+      return { x: obj.xMm + r.x, y: obj.yMm + r.y, z: obj.zMm + r.z };
+    };
+    const inLabPos = bodyToLabPos(inBody);
+    const outLabPos = bodyToLabPos(outBody);
+    const inThree = labMmToThreeAbs(inLabPos);
+    const outThree = labMmToThreeAbs(outLabPos);
+
+    // Determine which end was hit: closer end wins. The other is the exit.
+    const distInSq = inThree.distanceToSquared(hitPoint);
+    const distOutSq = outThree.distanceToSquared(hitPoint);
+    const entryEnd: "A" | "B" = distInSq <= distOutSq ? "A" : "B";
+    const exitEnd: "A" | "B" = entryEnd === "A" ? "B" : "A";
+    const entryThree = entryEnd === "A" ? inThree : outThree;
+    const exitThree = entryEnd === "A" ? outThree : inThree;
+    const exitDirBody = entryEnd === "A" ? outDirBody : inDirBody;
+    const exitDirWorld = bodyLocalDirToWorldThree(exitDirBody, obj).normalize();
+
+    // Coupling at entry face.
+    // η_mode: Marcuse Gaussian overlap. Beam waist at the face: use the
+    //   incoming `mode.x/y` (or fallback to a small default). Fiber MFD:
+    //   from kindParams.endA.modeFieldDiameterUm.
+    const endParams = entryEnd === "A" ? endA : endB;
+    const exitParams = exitEnd === "A" ? endA : endB;
+    const lambdaNm = wavelengthNm;
+    const lambdaM = lambdaNm * 1e-9;
+    const mfdEntryUm = endParams.modeFieldDiameterUm ?? 5.3;
+    const mfdExitUm = exitParams.modeFieldDiameterUm ?? 5.3;
+    const wfEntryM = (mfdEntryUm / 2) * 1e-6;
+    const wfExitM  = (mfdExitUm  / 2) * 1e-6;
+    // Beam waist at hit — the rayTrace's BeamState is a single isotropic
+    // value (waist0Um). MFD overlap is a circular approximation so this
+    // is fine for the MVP; astigmatic beams collapse to their average waist.
+    const wbUm = mode.waist0Um ?? 100;
+    const wbM = wbUm * 1e-6;
+    // Lateral offset between beam axis and entry anchor (in three units = 100 mm).
+    const offsetThree = hitPoint.clone().sub(entryThree);
+    // Project the offset onto the plane perpendicular to the beam direction
+    // so we measure perpendicular miss, not along-beam separation.
+    const offsetAlong = offsetThree.dot(dir);
+    const perpOffsetThree = offsetThree.clone().sub(dir.clone().multiplyScalar(offsetAlong));
+    const offsetM = perpOffsetThree.length() * 0.1; // three units (100 mm) → m
+    // Tilt angle between beam direction and entry anchor inward normal
+    // (anchor outward = -inward; aligned coupling has beam ∥ -outward).
+    const entryOutwardWorld = bodyLocalDirToWorldThree(
+      entryEnd === "A" ? inDirBody : outDirBody,
+      obj,
+    ).normalize();
+    const cosTilt = -dir.dot(entryOutwardWorld);
+    const tiltRad = Math.acos(Math.max(-1, Math.min(1, cosTilt)));
+    // η_mode (Marcuse single-mode coupling):
+    //   η = (2·w_b·w_f / (w_b² + w_f²))²
+    //     · exp(-2·r₀² / (w_b² + w_f²))
+    //     · exp(-2·θ² · (π·w_b·w_f / λ)² / (w_b² + w_f²))
+    const wb2 = wbM * wbM, wf2 = wfEntryM * wfEntryM, sum = wb2 + wf2;
+    const baseEta = sum > 1e-30 ? Math.pow((2 * wbM * wfEntryM) / sum, 2) : 0;
+    const offsetExpArg = -2 * offsetM * offsetM / sum;
+    const tiltMixedScale = (Math.PI * wbM * wfEntryM / lambdaM);
+    const tiltExpArg = -2 * tiltRad * tiltRad * tiltMixedScale * tiltMixedScale / sum;
+    const etaMode = baseEta * Math.exp(offsetExpArg + tiltExpArg);
+
+    // Fresnel at entry + exit. Bare PC: R = ((n-1)/(n+1))². AR-coated
+    // multiplies by `fresnelResidual` (1.0 = no AR, 0.0 = ideal).
+    const nEntry = endParams.glassIndexAtDesignLambda ?? 1.4506;
+    const nExit = exitParams.glassIndexAtDesignLambda ?? 1.4506;
+    const baseFresnel = (n: number) => Math.pow((n - 1) / (n + 1), 2);
+    const Rentry = baseFresnel(nEntry) * (endParams.fresnelResidual ?? 1);
+    const Rexit  = baseFresnel(nExit)  * (exitParams.fresnelResidual ?? 1);
+    const etaFresnel = (1 - Rentry) * (1 - Rexit);
+
+    // Length attenuation. Arc length ≈ straight-line distance between
+    // adjacent nodes (Bezier curvature shortens slightly; the
+    // approximation is fine for typical patch cables). α from
+    // attenuationCurve at λ, linearly interpolated, clamped at endpoints.
+    let arcLengthMm = 0;
+    if (fiberNodes && fiberNodes.length >= 2) {
+      for (let i = 0; i < fiberNodes.length - 1; i++) {
+        const a = fiberNodes[i].posMm, b = fiberNodes[i + 1].posMm;
+        arcLengthMm += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+      }
+    }
+    const arcLengthKm = arcLengthMm * 1e-6;
+    const interpDbPerKm = (() => {
+      const curve = (fParams.attenuationCurve ?? []).slice().sort((a, b) => a.wavelengthNm - b.wavelengthNm);
+      if (curve.length === 0) return 0;
+      if (lambdaNm <= curve[0].wavelengthNm) return curve[0].dbPerKm;
+      if (lambdaNm >= curve[curve.length - 1].wavelengthNm) return curve[curve.length - 1].dbPerKm;
+      for (let i = 1; i < curve.length; i++) {
+        if (lambdaNm <= curve[i].wavelengthNm) {
+          const a = curve[i - 1], b = curve[i];
+          const t = (lambdaNm - a.wavelengthNm) / (b.wavelengthNm - a.wavelengthNm);
+          return a.dbPerKm + (b.dbPerKm - a.dbPerKm) * t;
+        }
+      }
+      return curve[curve.length - 1].dbPerKm;
+    })();
+    const etaAttenuation = Math.pow(10, -interpDbPerKm * arcLengthKm / 10);
+
+    const etaTotal = Math.max(0, Math.min(1, etaMode * etaFresnel * etaAttenuation));
+
+    // Emit a beam from the EXIT end along the exit-anchor outward
+    // direction. Position is bumped by RAY_EPS_THREE so the new ray
+    // doesn't immediately re-hit this fiber.
+    const newOrigin = exitThree.clone().add(exitDirWorld.clone().multiplyScalar(RAY_EPS_THREE));
+    // Output Gaussian: waist sits AT the fiber exit face. Convention:
+    // `BeamState.waistZUm` is the cumulative path-length FROM THE
+    // ORIGINAL EMITTER at which the waist sits — NOT a local
+    // segment-relative coord. The downstream traceOneRay below starts
+    // at `pathLengthSoFarMm = newPathMm + arcLengthMm`, so the waist
+    // (= fiber exit face) is at exactly that path length. Pre-fix this
+    // was set to 0, which made `gaussianWaistAtZ` interpret the waist
+    // as being at the laser origin — for a beam ~1 m downstream of the
+    // emitter this artificially blew up w(z_lens) to ~100 mm and made
+    // a downstream collimating lens see a far-field source instead of
+    // a near-field point. M² ≈ 1 for SM/PM (fiber is a spatial filter).
+    const downstreamWaistPathUm = (newPathMm + arcLengthMm) * 1000;
+    const outputMode: BeamState = {
+      waist0Um: mfdExitUm / 2,
+      waistZUm: downstreamWaistPathUm,
+      mSquared: 1,
+      wavelengthNm: mode.wavelengthNm ?? lambdaNm,
+    };
+    const fiberCouplingMeta = {
+      etaMode,
+      etaFresnel,
+      etaAttenuation,
+      etaTotal,
+      arcLengthM: arcLengthMm / 1000,
+      mfdEntryUm,
+      mfdExitUm,
+    };
+    const downstream = traceOneRay(
+      newOrigin,
+      exitDirWorld,
+      depth + 1,
+      "transmitted",
+      ctx,
+      hitObjectId,
+      wavelengthNm,
+      maxLengthMm,
+      maxBounces,
+      outputMode,
+      newPathMm + arcLengthMm,
+      sourceComponentId,
+      powerFactor * etaTotal,
+      polarization,
+      nominalPowerMwAtSource,
+      emissionKey,
+      emitterObjectId,
+      taSeedCoupling,
+    );
+    // Attach the coupling breakdown only to the FIRST emitted segment
+    // (the one starting at intercept_out). Further downstream segments
+    // past other optics shouldn't claim this fiber's coupling — they'd
+    // get their own meta if they hit another fiber.
+    if (downstream.length > 0) {
+      downstream[0] = { ...downstream[0], fiberCoupling: fiberCouplingMeta };
+    }
+    segments.push(...downstream);
     return segments;
   }
 
@@ -1131,14 +1458,16 @@ function traceOneRay(
     let rfAxisWorld = new THREE.Vector3(0, 1, 0);  // three +Y = lab +Z
     let bodyAxisWorld = dir.clone();
     if (obj) {
-      const a = params.rfPropagationDirectionBodyLocal
-        ?? params.rfPropagationDirectionLocal
-        ?? params.acousticAxisBodyLocal
-        ?? params.acousticAxisLocal;
-      const acousticBodyLocal = (Array.isArray(a) && a.length >= 3)
-        ? { x: a[0], y: a[1], z: a[2] }
-        : { x: -1, y: 0, z: 0 };  // MT80 transducer -> absorber
-      rfAxisWorld = bodyLocalDirToWorldThree(acousticBodyLocal, obj).normalize();
+      // 2026-05-10: RF direction now lives on the Asset3D as an anchor
+      // with id = "rf_direction"; getRfDirectionBodyLocal reads that
+      // first and falls back to the legacy kindParams keys.
+      const component = ctx.components.find((c) => c.id === obj.componentId);
+      const asset = component?.asset3dId
+        ? ctx.assets.find((a) => a.id === component.asset3dId)
+        : null;
+      const rfBodyLocal = getRfDirectionBodyLocal(asset, params)
+        ?? { x: -1, y: 0, z: 0 };  // MT80 transducer -> absorber default
+      rfAxisWorld = bodyLocalDirToWorldThree(rfBodyLocal, obj).normalize();
       bodyAxisWorld = bodyLocalDirToWorldThree({ x: 1, y: 0, z: 0 }, obj).normalize();
     }
 
@@ -1322,26 +1651,50 @@ function traceOneRay(
     })();
 
     // Extend the just-pushed input segment to terminate at the Bragg
-    // interaction point. This keeps the 0th order visually continuous
-    // with the input (no apparent offset where the beam crosses the AOM
-    // body) and makes the fan visually pivot at the same world point the
-    // pivot maths uses. Skip when no extension was resolved (fallback
-    // path).
+    // interaction point's PROJECTION onto the incoming ray, then move the
+    // sideband fan pivot to that same projected point.
+    //
+    // Pre-fix: the segment endpoint was teleported directly to
+    // `braggInteractionPointThree` (the body-local anchor midpoint
+    // converted to world). When the AOM body is even slightly misaligned
+    // with the actual beam axis (e.g., body-center 46 mm above the beam
+    // line), this introduced a visible kink: the segment's *displayed*
+    // direction `(end - start)` no longer matched the real ray `dir`,
+    // and the 0th-order spawn — which uses `dir` — then appeared to
+    // bend by tens to hundreds of mrad at the joint.
+    //
+    // Post-fix: we keep the segment direction strictly along `dir` by
+    // projecting the geometric pivot onto the ray (`t = (pivot - origin)·dir`)
+    // and using `origin + dir·t` as the new endpoint. The fan still
+    // emerges from a single common point (now the projected one), and
+    // for an on-axis input the projection equals the pivot exactly, so
+    // the visual is unchanged in the aligned case. For a misaligned
+    // input, the fan pivot follows the real beam through the body so
+    // there's no kink — the user sees the laser pass through the AOM
+    // along its actual direction, then the orders fan out from the
+    // closest-approach point. */
     let extendedPathMm = newPathMm;
+    let braggFanPivotThree = braggInteractionPointThree.clone();
     if (!braggInteractionPointThree.equals(hitPoint)) {
       const extendedSeg = segments[segments.length - 1];
-      const newEndThree = braggInteractionPointThree.clone();
-      const extendedLengthThree = origin.distanceTo(newEndThree);
+      const tAlongRay = braggInteractionPointThree.clone().sub(origin).dot(dir);
+      const projectedEnd = origin.clone().add(dir.clone().multiplyScalar(tAlongRay));
+      const extendedLengthThree = origin.distanceTo(projectedEnd);
       const extendedSegLengthMm = extendedLengthThree * 100;
       const extendedEndUm = (pathLengthSoFarMm + extendedSegLengthMm) * 1000;
-      extendedSeg.endThree = newEndThree;
+      extendedSeg.endThree = projectedEnd;
       extendedSeg.lengthMm = extendedSegLengthMm;
       extendedSeg.waistAtEndUm = gaussianWaistAtZ(extendedEndUm, mode);
       extendedPathMm = pathLengthSoFarMm + extendedSegLengthMm;
+      braggFanPivotThree = projectedEnd;
     }
 
     for (const plan of plans) {
       if (!plan.alwaysShow && plan.fraction < sidebandThreshold) continue;
+      // Convention (2026-05-11 clarification): the angle between order 0
+      // and order m on a screen is m·2·θ_B (≈ m·λ·f/v at small angles),
+      // matching standard Bragg-cell deflection. θ_B is the half-angle
+      // (`arcsin(λ·f/(2·n·v))`).
       const angleMrad = plan.order * 2 * thetaB * 1e3;
       // Route through `diffractedDirection` (physics.ts single source).
       // The rotation is `+m·2·θ_B` about D3 (= rotAxis); for Bragg-aligned
@@ -1358,11 +1711,13 @@ function traceOneRay(
             );
             return new THREE.Vector3(out.x, out.y, out.z).normalize();
           })();
-      // All orders fan out from the Bragg interaction point so the
-      // sideband plane is perpendicular to D3 at that pivot. Tiny
-      // RAY_EPS_THREE step along the outgoing direction keeps the
-      // raycaster from re-hitting the AOM body it just emerged from.
-      const newOrigin = braggInteractionPointThree
+      // All orders fan out from the projected Bragg pivot (the foot of
+      // the perpendicular from the geometric body-anchor midpoint onto
+      // the incoming ray) so they share a single emission point that
+      // sits on the actual beam axis. Tiny RAY_EPS_THREE step along
+      // the outgoing direction keeps the raycaster from re-hitting the
+      // AOM body it just emerged from.
+      const newOrigin = braggFanPivotThree
         .clone()
         .add(rayDir.clone().multiplyScalar(RAY_EPS_THREE));
       const branchLabel: TraceBranch =
@@ -1389,6 +1744,8 @@ function traceOneRay(
           powerFactor * plan.fraction,
           polarization,
           nominalPowerMwAtSource,
+          emissionKey,
+          emitterObjectId,
           taSeedCoupling,
         ).map((seg) => ({ ...seg, aomSideband: meta })),
       );
@@ -1475,6 +1832,8 @@ function traceOneRay(
         powerFactor * tx,
         nextPol,
         nominalPowerMwAtSource,
+        emissionKey,
+        emitterObjectId,
         taSeedCoupling,
       ),
     );
@@ -1615,6 +1974,12 @@ export function traceBeamsFromLasers(input: {
     if (element.elementKind === "laser_source") {
       // Single forward emission (existing behaviour). Source nominal power
       // = LaserSourceParams.nominalPowerMw.
+      // Per-instance visualisation override: skip the emission entirely when
+      // the user has unticked it on the object panel, so downstream optics
+      // don't reflect a beam that's not visible.
+      if (!getEmissionVisual(obj, "main").visible) {
+        continue;
+      }
       const nominalLaserMw = Number(
         ((element.kindParams ?? {}) as { nominalPowerMw?: number }).nominalPowerMw,
       );
@@ -1635,6 +2000,8 @@ export function traceBeamsFromLasers(input: {
           1.0,
           laserJones(element),
           Number.isFinite(nominalLaserMw) ? nominalLaserMw : 1.0,
+          "main",
+          obj.id,
         ),
       );
       continue;
@@ -1665,6 +2032,9 @@ export function traceBeamsFromLasers(input: {
     const driveCurrent = typeof taParams.driveCurrentMa === "number" ? taParams.driveCurrentMa : 2400;
     const inputMode = taInputSpatialMode(element);
     const inputPol = taInputJones(element);
+    // Output beam takes its own polarization (chip-locked TM in most TAs);
+    // backward ASE shares the seed-side facet so it stays on inputPol.
+    const outputPol = taOutputJones(element);
     const acceptanceRadiusMm = typeof taParams.inputAcceptanceRadiusMm === "number" && taParams.inputAcceptanceRadiusMm > 0
       ? taParams.inputAcceptanceRadiusMm
       : 25;
@@ -1710,48 +2080,62 @@ export function traceBeamsFromLasers(input: {
     );
     const outputOriginThree =
       apertureBackwardOrigin ?? outputMeshOrigin ?? labToThreeVector([labOrigin.x, labOrigin.y, labOrigin.z]);
-    segments.push(
-      ...traceOneRay(
-        outputOriginThree,
-        outputDirThree,
-        0,
-        "main",
-        ctx,
-        obj.id,
-        seedCoupling?.seedSourceObjectId ? (segments.find((s) => s.sourceObjectId === seedCoupling.seedSourceObjectId)?.wavelengthNm ?? wavelengthNm) : wavelengthNm,
-        maxLengthMm,
-        maxBounces,
-        forwardMode,
-        0,
-        obj.componentId,
-        1.0,
-        inputPol,
-        outputMw,
-        seedCoupling ?? undefined,
-      ),
-    );
+    // Per-instance visualisation overrides for forward / backward emissions
+    // (TA backward = the "input beam" the user can hide on the object panel).
+    // Skipping at trace time also stops downstream optics from reflecting a
+    // hidden beam — important for the user's mental model in the scene.
+    const forwardVisual = getEmissionVisual(obj, "forward");
+    const backwardVisual = getEmissionVisual(obj, "backward");
+    if (forwardVisual.visible) {
+      segments.push(
+        ...traceOneRay(
+          outputOriginThree,
+          outputDirThree,
+          0,
+          "main",
+          ctx,
+          obj.id,
+          seedCoupling?.seedSourceObjectId ? (segments.find((s) => s.sourceObjectId === seedCoupling.seedSourceObjectId)?.wavelengthNm ?? wavelengthNm) : wavelengthNm,
+          maxLengthMm,
+          maxBounces,
+          forwardMode,
+          0,
+          obj.componentId,
+          1.0,
+          outputPol,
+          outputMw,
+          "forward",
+          obj.id,
+          seedCoupling ?? undefined,
+        ),
+      );
+    }
 
     // Input-port leakage / backward ASE — out of the +X INPUT face.
-    segments.push(
-      ...traceOneRay(
-        originThree,
-        dirThree,
-        0,
-        "main",
-        ctx,
-        obj.id,
-        wavelengthNm,
-        maxLengthMm,
-        maxBounces,
-        backwardMode,
-        0,
-        obj.componentId,
-        1.0,
-        inputPol,
-        inputLeakMw,
-        seedCoupling ?? undefined,
-      ),
-    );
+    if (backwardVisual.visible) {
+      segments.push(
+        ...traceOneRay(
+          originThree,
+          dirThree,
+          0,
+          "main",
+          ctx,
+          obj.id,
+          wavelengthNm,
+          maxLengthMm,
+          maxBounces,
+          backwardMode,
+          0,
+          obj.componentId,
+          1.0,
+          inputPol,
+          inputLeakMw,
+          "backward",
+          obj.id,
+          seedCoupling ?? undefined,
+        ),
+      );
+    }
   }
 
   // Restore visibility on the meshes we temporarily flipped on at the

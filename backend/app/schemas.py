@@ -77,6 +77,11 @@ AssetAnchorId = Literal[
     "intercept_face",
     "seed",
     "out",
+    # AOM-specific direction anchor (Phase 8 refactor 2026-05-10).
+    # `id="rf_direction"` carries the RF / acoustic propagation direction
+    # in body-local frame via `directionBodyLocal`; position is body
+    # origin and apertureMm is unused for this anchor.
+    "rf_direction",
 ]
 
 
@@ -785,9 +790,21 @@ class TaperedAmplifierParams(CamelModel):
     input_spatial_mode_x: GaussianMode | None = None
     input_spatial_mode_y: GaussianMode | None = None
     input_polarization: JonesVector = Field(default_factory=lambda: JonesVector(ey_re=1.0))
+    # Forward-looking field: configured for completeness so the structured
+    # editor can persist it. Not yet read by ray-tracer / solver — when
+    # consumed it should describe the SEED's expected transverse profile
+    # (TA chips amplify regardless, but BeamScopePanel can use it for the
+    # input-side overlay).
+    input_transverse_mode: TransverseMode = Field(default_factory=lambda: TransverseMode())
     output_spatial_mode_x: GaussianMode
     output_spatial_mode_y: GaussianMode
     output_transverse_mode: TransverseMode = Field(default_factory=lambda: TransverseMode())
+    # Forward-looking field: stored so the structured editor can persist
+    # it. Not yet read by ray-tracer / solver. When consumed it should
+    # describe the polarisation of the FORWARD-emitted (output-port) beam,
+    # which is typically pinned by the chip's TM gain preference even if
+    # the seed has a different state.
+    output_polarization: JonesVector = Field(default_factory=lambda: JonesVector(ey_re=1.0))
 
     # --- New: BoosTA pro–style operating point + bidirectional emission ---
     # Wavelength is the SEED's wavelength normally (TA inherits from input)
@@ -1586,10 +1603,7 @@ class CollectionBase(CamelModel):
     parent_id: uuid.UUID | None = None
     color: str = "#0f766e"
     visible: bool = True
-    locked: bool = False
-    exclude: bool = False
-    holdout: bool = False
-    indirect_only: bool = False
+    rigid_transform: bool = False
     sort_order: int = 0
     properties: JsonDict = Field(default_factory=dict)
 
@@ -1603,10 +1617,7 @@ class CollectionUpdate(CamelModel):
     parent_id: uuid.UUID | None = None
     color: str | None = None
     visible: bool | None = None
-    locked: bool | None = None
-    exclude: bool | None = None
-    holdout: bool | None = None
-    indirect_only: bool | None = None
+    rigid_transform: bool | None = None
     sort_order: int | None = None
     properties: JsonDict | None = None
 
@@ -1935,6 +1946,23 @@ class V2OpticalSource(CamelModel):
     binding_id: str
     enabled: bool = True
     beam: V2BeamSource
+
+
+class EmissionVisualOverride(CamelModel):
+    """Visualisation-only override for one emitted beam, stored under
+    ``SceneObject.properties.emissionVisuals[<key>]``.
+
+    Keys: ``"main"`` for laser_source; ``"forward"`` and ``"backward"``
+    for tapered_amplifier. Defaults: render with wavelength-derived colour,
+    visible. ``visible=False`` causes the ray-tracer to skip the emission
+    entirely so downstream optics also stop reflecting that beam.
+
+    This is purely a presentation hint — physics (power, spectrum,
+    polarization) is unaffected.
+    """
+
+    color_hex: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    visible: bool = True
 
 
 # ---- optical ports (optical_elements.{input,output}_ports[]) ---------------

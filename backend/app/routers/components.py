@@ -113,20 +113,26 @@ DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
         "centerWavelengthNm": 852.0,
         "driveCurrentMa": 2400.0,
         "driveCurrentMaxMa": 5000.0,
-        # ASE-only (no seed): backward facet leaks more than forward in most
-        # tapered designs because the narrow input facet has a higher AR
-        # coating reflectivity for ASE. Numbers are order-of-magnitude.
+        # ASE-only (no seed). NOTE: forward = amplified-port emission
+        # (intercept_out, the wider tapered facet), backward = seed-side
+        # leak (intercept_in, the narrow facet). Values were swapped in
+        # the original seed; corrected here so the larger ASE belongs to
+        # the forward (output-port) direction. Numbers are
+        # order-of-magnitude estimates for an 852 nm BoosTA pro chip.
         "aseSamples": [
             {"driveCurrentMa": 0.0,    "forwardPowerMw": 0.0,   "backwardPowerMw": 0.0},
-            {"driveCurrentMa": 1000.0, "forwardPowerMw": 5.0,   "backwardPowerMw": 25.0},
-            {"driveCurrentMa": 2400.0, "forwardPowerMw": 80.0,  "backwardPowerMw": 200.0},
-            {"driveCurrentMa": 5000.0, "forwardPowerMw": 250.0, "backwardPowerMw": 500.0},
+            {"driveCurrentMa": 1000.0, "forwardPowerMw": 25.0,  "backwardPowerMw": 5.0},
+            {"driveCurrentMa": 2400.0, "forwardPowerMw": 200.0, "backwardPowerMw": 80.0},
+            {"driveCurrentMa": 5000.0, "forwardPowerMw": 500.0, "backwardPowerMw": 250.0},
         ],
         # With seed: forward saturates near rated output, backward drops as
         # the seed extracts the gain medium. Sample at 2400 mA (default
-        # operating point) across the rated input range 5..40 mW.
+        # operating point) across the rated input range 5..40 mW. The
+        # input=0 row mirrors the corresponding aseSamples point so the
+        # bilinear interpolation stays continuous across the seed/no-seed
+        # boundary.
         "gainSamples": [
-            {"inputPowerMw": 0.0,  "driveCurrentMa": 2400.0, "forwardPowerMw": 80.0,   "backwardPowerMw": 200.0},
+            {"inputPowerMw": 0.0,  "driveCurrentMa": 2400.0, "forwardPowerMw": 200.0,  "backwardPowerMw": 80.0},
             {"inputPowerMw": 5.0,  "driveCurrentMa": 2400.0, "forwardPowerMw": 1200.0, "backwardPowerMw": 120.0},
             {"inputPowerMw": 10.0, "driveCurrentMa": 2400.0, "forwardPowerMw": 1800.0, "backwardPowerMw": 80.0},
             {"inputPowerMw": 20.0, "driveCurrentMa": 2400.0, "forwardPowerMw": 2500.0, "backwardPowerMw": 50.0},
@@ -221,7 +227,7 @@ DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
     },
     # V2 Phase 8 (alembic 0034): transmission axis moved to a
     # polarizationReference binding (role="transmission").
-    "isolator": {"forwardLossDb": 0.5, "isolationDb": 40.0},
+    "isolator": {"forwardLossDb": 0.5, "isolationDb": 40.0, "faradayRotationDeg": 45.0},
     "aom": {
         # Legacy / coarse params (kept; topology solver uses them).
         "baseEfficiency": 0.85,
@@ -339,6 +345,15 @@ def default_kind_params_for_component(kind: str, component: Component) -> dict[s
         # 780 nm PM spec for their own fiber type / wavelength / NA / MFD.
         props = component.properties or {}
         override = props.get("fiberKindParamsOverride")
+        if isinstance(override, dict):
+            _deep_merge_dict(kind_params, override)
+    if kind == "isolator":
+        # Per-template kindParams override: catalog isolators carry
+        # `properties.isolatorKindParamsOverride` with the spec-derived
+        # `forwardLossDb` and `isolationDb`. See seed.py:_build_isolator_meta
+        # for the Thorlabs spec → kindParams derivation.
+        props = component.properties or {}
+        override = props.get("isolatorKindParamsOverride")
         if isinstance(override, dict):
             _deep_merge_dict(kind_params, override)
     if kind == "beam_splitter" and _looks_like_pbs_component(component):

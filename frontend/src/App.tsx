@@ -10,7 +10,7 @@ import { DualViewerSplit } from "./components/DualViewerSplit";
 import { PhyEditor } from "./components/PhyEditor";
 import { TimingEditorPanel } from "./components/TimingEditorPanel";
 import { TouchCoincidencePanel } from "./components/TouchCoincidencePanel";
-import { BeamScopePanel } from "./components/optical/BeamScopePanel";
+import { OpticalLinkViewerPanel } from "./components/optical/OpticalLinkViewerPanel";
 // BeamPlacementPanel + SuggestedLinksPanel removed — replaced with simpler
 // per-object "Snap to beam" action (in OE panel) plus aperture warnings.
 import { CursorMenu } from "./components/optical/CursorMenu";
@@ -218,7 +218,7 @@ export default function App() {
           <OutlinerFloatingPanel />
           <ComponentPanel />
           <TimingEditorPanel />
-          <BeamScopePanel />
+          <OpticalLinkViewerPanel />
           <TouchCoincidencePanel />
           <CursorMenu />
         </div>

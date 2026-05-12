@@ -32,7 +32,8 @@ export type PanelId =
   | "device-state"
   | "timing-editor"
   | "beam-scope"
-  | "touch-coincidence";
+  | "touch-coincidence"
+  | "optical-link-viewer";
 
 const PANEL_DEFS: { id: PanelId; title: string; defaultLayout: PanelLayout }[] = [
   {
@@ -80,6 +81,11 @@ const PANEL_DEFS: { id: PanelId; title: string; defaultLayout: PanelLayout }[] =
     title: "Touch coincidence",
     defaultLayout: { x: 332, y: 200, w: 380, h: 280, visible: false, collapsed: false, z: 3 },
   },
+  {
+    id: "optical-link-viewer",
+    title: "Optical link viewer",
+    defaultLayout: { x: 360, y: 80, w: 640, h: 780, visible: false, collapsed: false, z: 2 },
+  },
 ];
 
 export const PANEL_TITLES: Record<PanelId, string> = Object.fromEntries(
@@ -91,7 +97,7 @@ type LayoutMap = Record<PanelId, PanelLayout>;
 // Bumped on every panel-default move so existing user layouts don't
 // stick at the OLD positions. v4: components y 70 → 116, outliner y
 // 506 → 552 (clear of the new Cursor (mm) X/Y/Z editor at top:64).
-const STORAGE_KEY = "qmem.workspaceLayout.v4";
+const STORAGE_KEY = "qmem.workspaceLayout.v6";
 
 function defaultLayoutFor(viewportWidth: number): LayoutMap {
   const out = {} as LayoutMap;

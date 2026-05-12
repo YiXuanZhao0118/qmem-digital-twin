@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 from pathlib import Path
 import sys
@@ -99,6 +100,78 @@ def _build_fiber_override(part: str) -> dict[str, object]:
     return override
 
 
+# NIR Free-Space Isolators 690 - 1080 nm. Specs lifted from the Thorlabs
+# overview tables at
+# https://www.thorlabs.com/nir-free-space-isolators-690---1080-nm?tabName=Overview
+# (snapshot 2026-05-12). Tuple layout:
+#   (centerWavelengthNm, tuningRangeNm | None, transmissionPercent,
+#    isolationDb, maxBeamDiameterMm, maxPowerW, isTandem, housing)
+# - tuningRangeNm is None for fixed-narrowband models (no user-rotatable
+#   polarizer rings). When given as [low, high] it's the adjustable
+#   narrowband range; the catalog stores the range, the solver uses the
+#   center wavelength as the design point.
+# - transmissionPercent is the typical at center wavelength. For ranges
+#   on the Thorlabs page (e.g. "48 - 55%"), midpoint is used; the
+#   forwardLossDb derivation is rounded to 2 decimals so re-runs are
+#   deterministic.
+# - isolationDb stores a single dB number suitable for the solver. When
+#   Thorlabs publishes a range like "34 - 40 dB", the midpoint is used;
+#   "≥X dB" and "X dB (Min)" map straight to X. Catalogs that need the
+#   raw range can read `properties.isolationDbRange` (set below).
+_ISOLATOR_SPECS: dict[str, tuple] = {
+    # 850 nm only (per 2026-05-12 user scope reduction; other-wavelength
+    # variants removed from the catalog).
+    "IO-3D-850-VLP":  (850,  None,        86, 37,   2.7,  0.7,  False, "standard"),
+    "IO-3-850-HP":    (850,  [835, 865],  92, 37,   2.7, 15.0,  False, "high_power"),
+    "IO-5-850-VLP":   (850,  [830, 870],  88, 35,   4.7,  1.7,  False, "standard"),
+    "IOT-5-850-VLP":  (850,  [830, 870],  80, 55,   4.7,  1.7,  True,  "tandem"),
+    "IOT-5-850-MP":   (850,  [830, 870],  80, 60,   4.7,  7.0,  True,  "tandem_medium_power"),
+    "IO-5-850-HP":    (850,  [835, 865],  92, 41,   4.7, 40.0,  False, "high_power"),
+}
+
+# Thorlabs publishes some isolation values as a range ("34 - 40 dB") rather
+# than a single number. The single-number spec above takes the midpoint so
+# the solver has one figure of merit, but the catalog UI keeps the full
+# range too. Map: part → (lowDb, highDb). Parts not listed here had a
+# single published value (e.g. "≥38 dB" → just (38, 38)).
+_ISOLATOR_ISOLATION_RANGE_DB: dict[str, tuple[float, float]] = {
+    "IO-3D-850-VLP":  (34, 40),
+    "IO-3-850-HP":    (34, 40),
+    "IO-5-850-HP":    (38, 44),
+}
+
+
+def _build_isolator_meta(part: str) -> dict[str, object]:
+    # Build properties + isolatorKindParamsOverride from the Thorlabs spec.
+    # forwardLossDb is derived from transmission: -10 * log10(T) where T
+    # is fraction. Solver consumes the override via the bootstrapper in
+    # routers/components.py (mirrors the fiberKindParamsOverride path).
+    spec = _ISOLATOR_SPECS.get(part)
+    if spec is None:
+        return {}
+    center_nm, tuning, trans_pct, iso_db, beam_mm, max_pw, is_tandem, housing = spec
+    forward_loss_db = round(-10.0 * math.log10(trans_pct / 100.0), 2)
+    props: dict[str, object] = {
+        "centerWavelengthNm": float(center_nm),
+        "transmissionPercent": float(trans_pct),
+        "isolationDb": float(iso_db),
+        "maxBeamDiameterMm": float(beam_mm),
+        "maxPowerW": float(max_pw),
+        "housing": housing,
+        "isTandem": bool(is_tandem),
+        "isolatorKindParamsOverride": {
+            "forwardLossDb": forward_loss_db,
+            "isolationDb": float(iso_db),
+        },
+    }
+    if tuning is not None:
+        props["tuningRangeNm"] = [float(tuning[0]), float(tuning[1])]
+    iso_range = _ISOLATOR_ISOLATION_RANGE_DB.get(part)
+    if iso_range is not None:
+        props["isolationDbRange"] = [float(iso_range[0]), float(iso_range[1])]
+    return props
+
+
 ASSETS = [
     {
         "name": "primitive_table",
@@ -189,6 +262,29 @@ ASSETS = [
         "source": "user_upload",
         "unit": "mm",
         "scale_factor": 1.0,
+        # Two-port TA — same anchor convention as AOM/lens entries.
+        # GLB body extent: 275 × 115 × 90 mm (X × Y × Z), centred at origin.
+        # The user-supplied BoosTA GLB is oriented so the +X face is the
+        # seed-side (per the in-code comment in TaperedAmplifierAdjustControls
+        # alignInputToLaser, which sorts apertures by max-X to pick INPUT) —
+        # but the TOPTICA datasheet labels that face "backward" (housing-front
+        # vs housing-back). Two languages, same physics.
+        # Apertures (radius mm): TA chips taper from ~1.5 mm at the seed end
+        # to ~3-4 mm at the output end; using radii 0.75 / 2.0 mm.
+        "anchors": [
+            {
+                "id": "intercept_in",
+                "positionMmBodyLocal": {"x": 137.5, "y": 0.0, "z": 0.0},
+                "directionBodyLocal": {"x": 1.0, "y": 0.0, "z": 0.0},
+                "apertureMm": 0.75,
+            },
+            {
+                "id": "intercept_out",
+                "positionMmBodyLocal": {"x": -137.5, "y": 0.0, "z": 0.0},
+                "directionBodyLocal": {"x": -1.0, "y": 0.0, "z": 0.0},
+                "apertureMm": 2.0,
+            },
+        ],
     },
     {
         # AA Optoelectronic MT80-style AOM — GLB built from user's Blender
@@ -209,6 +305,12 @@ ASSETS = [
         # one). MT80-A1.5-IR housing 59.5 mm, axis 18 mm in from each end
         # → ports at body Y = ±11.75 mm; active aperture 1.5 mm → radius
         # 0.75 mm.
+        # Phase 8 refactor (2026-05-10, per user): RF / acoustic propagation
+        # direction lives on a third anchor `rf_direction` rather than in
+        # kindParams.rfPropagationDirectionBodyLocal. Position is body
+        # origin (it's a direction, not a point); apertureMm is unused
+        # for this anchor. Default direction reflects the MT80 transducer-
+        # to-absorber path (body −X) — the legacy kindParams default.
         "anchors": [
             {
                 "id": "intercept_in",
@@ -222,8 +324,108 @@ ASSETS = [
                 "directionBodyLocal": {"x": 0.0, "y": -1.0, "z": 0.0},
                 "apertureMm": 0.75,
             },
+            {
+                "id": "rf_direction",
+                "positionMmBodyLocal": {"x": 0.0, "y": 0.0, "z": 0.0},
+                "directionBodyLocal": {"x": -1.0, "y": 0.0, "z": 0.0},
+                "apertureMm": None,
+            },
         ],
     },
+    {
+        # Thorlabs LA1614-B — N-BK7 plano-convex lens, Ø1/2", f = 150 mm,
+        # AR coating 650–1050 nm. STEP downloaded from
+        # https://www.thorlabs.com/item/LA1614-B and converted to STL via
+        # FreeCAD (see .claude/skills/thorlabs-component-import/scripts/
+        # freecad_step_to_stl.py).
+        "name": "thorlabs_la1614_b_stl",
+        "asset_type": "stl",
+        "file_path": "uploads/thorlabs_la1614_b.stl",
+        "source": "FreeCAD STEP export",
+        "source_url": "https://www.thorlabs.com/item/LA1614-B",
+        "unit": "mm",
+        "scale_factor": 1.0,
+        # Plano-convex lens: anchor "in" on the curved side, "out" on the
+        # flat side, both pointing along +Y. Aperture matches the Ø12.7 mm
+        # clear aperture (radius 6.35 mm). The seed is conservative —
+        # users can override per-instance via PerObjectApertureEditor.
+        "anchors": [
+            {
+                "id": "intercept_in",
+                "positionMmBodyLocal": {"x": 0.0, "y": -1.0, "z": 0.0},
+                "directionBodyLocal": {"x": 0.0, "y": 1.0, "z": 0.0},
+                "apertureMm": 6.35,
+            },
+            {
+                "id": "intercept_out",
+                "positionMmBodyLocal": {"x": 0.0, "y": 1.0, "z": 0.0},
+                "directionBodyLocal": {"x": 0.0, "y": -1.0, "z": 0.0},
+                "apertureMm": 6.35,
+            },
+        ],
+    },
+    {
+        # Thorlabs LA1540-B — N-BK7 plano-convex lens, Ø1/2", f = 15 mm,
+        # AR coating 650–1050 nm. Same import pipeline as LA1614-B.
+        "name": "thorlabs_la1540_b_stl",
+        "asset_type": "stl",
+        "file_path": "uploads/thorlabs_la1540_b.stl",
+        "source": "FreeCAD STEP export",
+        "source_url": "https://www.thorlabs.com/item/LA1540-B",
+        "unit": "mm",
+        "scale_factor": 1.0,
+        "anchors": [
+            {
+                "id": "intercept_in",
+                "positionMmBodyLocal": {"x": 0.0, "y": -1.0, "z": 0.0},
+                "directionBodyLocal": {"x": 0.0, "y": 1.0, "z": 0.0},
+                "apertureMm": 6.35,
+            },
+            {
+                "id": "intercept_out",
+                "positionMmBodyLocal": {"x": 0.0, "y": 1.0, "z": 0.0},
+                "directionBodyLocal": {"x": 0.0, "y": -1.0, "z": 0.0},
+                "apertureMm": 6.35,
+            },
+        ],
+    },
+    {
+        # Thorlabs KS1 — Ø1" Precision Kinematic Mirror Mount, 3 adjusters.
+        # Mechanical part (mount only — optic mounts separately), so no
+        # optical anchors. STEP downloaded from /item/KS1 and converted to
+        # STL via FreeCAD (same pipeline as LA1614-B).
+        "name": "thorlabs_ks1_stl",
+        "asset_type": "stl",
+        "file_path": "uploads/thorlabs_ks1.stl",
+        "source": "FreeCAD STEP export",
+        "source_url": "https://www.thorlabs.com/item/KS1",
+        "unit": "mm",
+        "scale_factor": 1.0,
+    },
+    {
+        # Thorlabs KS1T — SM1-Threaded Ø1" Precision Kinematic Mirror Mount,
+        # 3 adjusters. Same form-factor as KS1 with internal SM1 threading
+        # for mounting SM1-threaded optics.
+        "name": "thorlabs_ks1t_stl",
+        "asset_type": "stl",
+        "file_path": "uploads/thorlabs_ks1t.stl",
+        "source": "FreeCAD STEP export",
+        "source_url": "https://www.thorlabs.com/item/KS1T",
+        "unit": "mm",
+        "scale_factor": 1.0,
+    },
+    # ---- NIR Free-Space Isolators 850 nm STL assets (2026-05-12) ----
+    # Only 850 nm kept after the 2026-05-12 scope reduction; the other
+    # wavelength variants in the family (730/780/795/830/895/940/980/1030/
+    # 1050 nm) were dropped from the catalog. STEP downloaded per item
+    # from /item/<PART> and converted via FreeCAD (thorlabs-component-import
+    # skill). Naming: thorlabs_<part-lowercased-with-_>.
+    {"name": "thorlabs_io_3_850_hp_stl",    "asset_type": "stl", "file_path": "uploads/thorlabs_io_3_850_hp.stl",    "source": "FreeCAD STEP export", "source_url": "https://www.thorlabs.com/item/IO-3-850-HP",    "unit": "mm", "scale_factor": 1.0},
+    {"name": "thorlabs_io_3d_850_vlp_stl",  "asset_type": "stl", "file_path": "uploads/thorlabs_io_3d_850_vlp.stl",  "source": "FreeCAD STEP export", "source_url": "https://www.thorlabs.com/item/IO-3D-850-VLP",  "unit": "mm", "scale_factor": 1.0},
+    {"name": "thorlabs_io_5_850_hp_stl",    "asset_type": "stl", "file_path": "uploads/thorlabs_io_5_850_hp.stl",    "source": "FreeCAD STEP export", "source_url": "https://www.thorlabs.com/item/IO-5-850-HP",    "unit": "mm", "scale_factor": 1.0},
+    {"name": "thorlabs_io_5_850_vlp_stl",   "asset_type": "stl", "file_path": "uploads/thorlabs_io_5_850_vlp.stl",   "source": "FreeCAD STEP export", "source_url": "https://www.thorlabs.com/item/IO-5-850-VLP",   "unit": "mm", "scale_factor": 1.0},
+    {"name": "thorlabs_iot_5_850_mp_stl",   "asset_type": "stl", "file_path": "uploads/thorlabs_iot_5_850_mp.stl",   "source": "FreeCAD STEP export", "source_url": "https://www.thorlabs.com/item/IOT-5-850-MP",   "unit": "mm", "scale_factor": 1.0},
+    {"name": "thorlabs_iot_5_850_vlp_stl",  "asset_type": "stl", "file_path": "uploads/thorlabs_iot_5_850_vlp.stl",  "source": "FreeCAD STEP export", "source_url": "https://www.thorlabs.com/item/IOT-5-850-VLP",  "unit": "mm", "scale_factor": 1.0},
 ]
 
 
@@ -328,6 +530,22 @@ COMPONENTS = [
         "properties": {"geometry": "eom", "frequencyGHz": 9.192, "dimensionsMm": [140, 80, 70]},
         "object": {"x_mm": 330, "y_mm": -220, "z_mm": 65, "rz_deg": 0},
         "state": {"enabled": True, "rfPowerDbm": 19.8},
+    },
+    {
+        # Generic EOSpace fiber-coupled phase modulator catalog entry (library-only,
+        # no scene object). Dimensions match a typical EOSpace slim-bar package;
+        # user can replace with a specific PM-0K1-* / PM-0S5-* / PM-AV*-* variant
+        # via the Object panel after dragging into the scene.
+        "name": "eom_eospace_pm_nir",
+        "component_type": "eom",
+        "brand": "EOSpace",
+        "model": "PM-0K1-NIR (generic)",
+        "asset": "primitive_box",
+        "properties": {
+            "geometry": "eom",
+            "dimensionsMm": [140, 30, 30],
+            "sourceUrl": "https://www.eospace.com/phase-modulator",
+        },
     },
     {
         # AA Optoelectronic MT80-A1.5-IR — 80 MHz center freq, 1.5 mm aperture,
@@ -594,6 +812,123 @@ COMPONENTS = [
         },
         "object": {"x_mm": 1040, "y_mm": -280, "z_mm": 0, "rz_deg": 0},
     },
+    {
+        # Thorlabs LA1614-B — N-BK7 plano-convex lens. component_type
+        # "lens_plano_convex" maps to the new ElementKind via
+        # OPTICAL_COMPONENT_TYPE_TO_KIND so auto-register attaches a
+        # plano-convex optical row with focalMm=150, transmission=0.99
+        # (see DEFAULT_KIND_PARAMS in routers/components.py). Material
+        # and AR-coating range live in `properties` for future spectral
+        # filtering. Object is parked in front of the laser path —
+        # user can drag it into a real beam line in the viewer.
+        "name": "thorlabs_lens_la1614_b",
+        "component_type": "lens_plano_convex",
+        "brand": "Thorlabs",
+        "model": "LA1614-B",
+        "asset": "thorlabs_la1614_b_stl",
+        "properties": {
+            "geometry": "stl_mesh",
+            "focalLengthMm": 150,
+            "diameterMm": 12.7,
+            "material": "N-BK7",
+            "arCoatingRangeNm": [650, 1050],
+            "sourceStep": "uploads/LA1614-B-Step.step",
+            "sourceUrl": "https://www.thorlabs.com/item/LA1614-B",
+        },
+        "object": {"x_mm": 700, "y_mm": -120, "z_mm": 0, "rz_deg": 0},
+    },
+    {
+        # Thorlabs LA1540-B — N-BK7 plano-convex, Ø1/2", f = 15 mm.
+        # Short-focal companion to LA1614-B for tight focusing setups.
+        "name": "thorlabs_lens_la1540_b",
+        "component_type": "lens_plano_convex",
+        "brand": "Thorlabs",
+        "model": "LA1540-B",
+        "asset": "thorlabs_la1540_b_stl",
+        "properties": {
+            "geometry": "stl_mesh",
+            "focalLengthMm": 15,
+            "diameterMm": 12.7,
+            "material": "N-BK7",
+            "arCoatingRangeNm": [650, 1050],
+            "sourceStep": "uploads/LA1540-B-Step.step",
+            "sourceUrl": "https://www.thorlabs.com/item/LA1540-B",
+        },
+        "object": {"x_mm": 760, "y_mm": -120, "z_mm": 0, "rz_deg": 0},
+    },
+    {
+        # Thorlabs KS1 — Ø1" Precision Kinematic Mirror Mount, 3 adjusters.
+        # Holds Ø1" (25.4 mm) unmounted optics via included retaining ring.
+        # Pure mechanical mount: no OPTICAL_COMPONENT_TYPE_TO_KIND mapping,
+        # so auto-register is skipped — renders as STL only.
+        "name": "thorlabs_mirror_mount_ks1",
+        "component_type": "mirror_mount",
+        "brand": "Thorlabs",
+        "model": "KS1",
+        "asset": "thorlabs_ks1_stl",
+        "properties": {
+            "geometry": "stl_mesh",
+            "opticDiameterMm": 25.4,
+            "adjusters": 3,
+            "retainingRing": True,
+            "sourceStep": "uploads/KS1-Step.step",
+            "sourceUrl": "https://www.thorlabs.com/item/KS1",
+        },
+    },
+    {
+        # Thorlabs KS1T — SM1-Threaded Ø1" Precision Kinematic Mirror Mount,
+        # 3 adjusters. Internal SM1 threading lets it hold SM1-threaded
+        # optics directly (no retaining ring needed).
+        "name": "thorlabs_mirror_mount_ks1t",
+        "component_type": "mirror_mount",
+        "brand": "Thorlabs",
+        "model": "KS1T",
+        "asset": "thorlabs_ks1t_stl",
+        "properties": {
+            "geometry": "stl_mesh",
+            "opticDiameterMm": 25.4,
+            "adjusters": 3,
+            "internalThread": "SM1",
+            "sourceStep": "uploads/KS1T-Step.step",
+            "sourceUrl": "https://www.thorlabs.com/item/KS1T",
+        },
+    },
+    {
+        # Coherent TORNOS Faraday Isolator — 850 nm / 4 mm aperture (added
+        # 2026-05-12 from coherent.com TORNOS datasheet). Internal optics
+        # are two optically-contacted PBS cubes with a Faraday rotator in
+        # between (the same PBS+FR+PBS structure the user described for the
+        # isolator kind redesign). No public STEP file in the datasheet —
+        # uses primitive_box as a placeholder with the real Ø22.0 × 51.4 mm
+        # cylinder bounding box. colorHex pulls the EOT/Newport vintage red
+        # anodized aluminium look (renderer respects properties.colorHex as
+        # a per-component override; isolator default stays #1a1a1c).
+        # forwardLossDb = -10 * log10(0.95) ≈ 0.22 for the spec ≥95% T.
+        "name": "coherent_tornos_850_4",
+        "component_type": "isolator",
+        "brand": "Coherent",
+        "model": "TORNOS-850-4",
+        "asset": "primitive_box",
+        "properties": {
+            "geometry": "isolator",
+            "diameterMm": 22.0,
+            "lengthMm": 51.4,
+            "dimensionsMm": [22.0, 51.4, 22.0],
+            "centerWavelengthNm": 850.0,
+            "transmissionPercent": 95.0,
+            "isolationDb": 33.0,
+            "clearApertureMm": 4.0,
+            "maxPowerW": 5.0,
+            "housing": "tornos_compact_cylinder",
+            "isTandem": False,
+            "colorHex": "#b8211b",
+            "datasheetUrl": "https://www.coherent.com/lasers/components-accessories",
+            "isolatorKindParamsOverride": {
+                "isolationDb": 33.0,
+                "forwardLossDb": 0.22,
+            },
+        },
+    },
 ]
 
 
@@ -601,6 +936,27 @@ COMPONENTS = [
 # Source: https://www.thorlabs.com/clamping-forks-for-pedestal-posts (all /item/ links).
 # -P5 5-pack variants intentionally skipped (same model as single-pack).
 # Real STEP -> STL CAD pipeline runs on demand per item via thorlabs-component-import skill.
+
+# Per-part lengths (mm) for Ø25.0 mm RS-series pedestal pillar posts & spacers.
+# Pillar-post catalog numbers encode length in inches (RS<inches>P...): RS05P=0.5",
+# RS075P=0.75", RS1P=1", RS1.5P=1.5", RS2P=2", RS2.5P=2.5", RS3P=3", RS3.5P=3.5",
+# RS4P=4", RS6P=6". The Thorlabs sheet lists their actual lengths in mm — those
+# values (not raw inch×25.4) are used here.
+_RS_PILLAR_LENGTHS = {
+    "RS05P": 12.5, "RS075P": 19.0, "RS1P": 25.0, "RS1.5P": 38.0, "RS2P": 50.0,
+    "RS2.5P": 65.0, "RS3P": 75.0, "RS3.5P": 90.0, "RS4P": 100.0, "RS6P": 155.0,
+}
+_RS_LENGTHS_MM: dict[str, float] = {}
+for _stem, _len in _RS_PILLAR_LENGTHS.items():
+    _RS_LENGTHS_MM[f"{_stem}4M"] = _len   # M4-tapped variant
+    _RS_LENGTHS_MM[f"{_stem}_M"] = _len   # M6-tapped variant (RS*P/M)
+# M6-tap post spacers: RS<L>/M = Ø25 mm spacer L mm thick (4–10 mm range)
+for _n in (4, 5, 6, 7, 8, 9, 10):
+    _RS_LENGTHS_MM[f"RS{_n}_M"] = float(_n)
+# Thin post spacers RS*M (no slash): thickness in mm, 1–10 mm
+for _n in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):
+    _RS_LENGTHS_MM[f"RS{_n}M"] = float(_n)
+
 _THORLABS_BULK = [
     # (part_number, component_type, asset, x_mm, y_mm)
     ("MSC1", "mounting_clamp", "primitive_box", -680, -380),
@@ -833,6 +1189,65 @@ _THORLABS_BULK = [
     ("TS25H", "post_holder", "primitive_thorlabs_post_holder", None, None),
     ("TS6HV_M", "post_holder", "primitive_thorlabs_post_holder", None, None),
     ("TS25HV", "post_holder", "primitive_thorlabs_post_holder", None, None),
+    # ---- NIR Free-Space Isolators 850 nm (scope reduced 2026-05-12) ----
+    # Source: https://www.thorlabs.com/nir-free-space-isolators-690---1080-nm
+    # Only 850 nm kept; other wavelengths removed at user request. Catalog-
+    # only (None, None) — drag from library to place. Per-part STL assets
+    # via thorlabs-component-import skill (FreeCAD STEP export).
+    ("IO-3D-850-VLP",  "isolator", "thorlabs_io_3d_850_vlp_stl",  None, None),
+    ("IO-3-850-HP",    "isolator", "thorlabs_io_3_850_hp_stl",    None, None),
+    ("IO-5-850-VLP",   "isolator", "thorlabs_io_5_850_vlp_stl",   None, None),
+    ("IOT-5-850-VLP",  "isolator", "thorlabs_iot_5_850_vlp_stl",  None, None),
+    ("IOT-5-850-MP",   "isolator", "thorlabs_iot_5_850_mp_stl",   None, None),
+    ("IO-5-850-HP",    "isolator", "thorlabs_io_5_850_hp_stl",    None, None),
+    # ---- Ø25.0 mm Pedestal Pillar Posts & Spacers (added 2026-05-11) ----
+    # Source: https://www.thorlabs.com/1-inch-25.0-mm-pedestal-pillar-posts
+    # Metric Ø25.0 mm variants only; Ø1" imperial siblings, Ø24/24.5 mm thin
+    # spacers, and -P5 5-pack variants intentionally skipped. Catalog-only
+    # (None, None) — drag from library to place. STEP/STL CAD on demand via
+    # thorlabs-component-import skill per item.
+    # RS*P4M — Ø25.0 mm Pedestal Pillar Posts, M4 Taps
+    ("RS05P4M", "pedestal_post", "primitive_thorlabs_post", None, None),
+    ("RS075P4M", "pedestal_post", "primitive_thorlabs_post", None, None),
+    ("RS1P4M", "pedestal_post", "primitive_thorlabs_post", None, None),
+    ("RS1.5P4M", "pedestal_post", "primitive_thorlabs_post", None, None),
+    ("RS2P4M", "pedestal_post", "primitive_thorlabs_post", None, None),
+    ("RS2.5P4M", "pedestal_post", "primitive_thorlabs_post", None, None),
+    ("RS3P4M", "pedestal_post", "primitive_thorlabs_post", None, None),
+    ("RS3.5P4M", "pedestal_post", "primitive_thorlabs_post", None, None),
+    ("RS4P4M", "pedestal_post", "primitive_thorlabs_post", None, None),
+    ("RS6P4M", "pedestal_post", "primitive_thorlabs_post", None, None),
+    # RS*P/M — Ø25.0 mm Pedestal Pillar Posts, M6 Taps
+    ("RS05P_M", "pedestal_post", "primitive_thorlabs_post", None, None),
+    ("RS075P_M", "pedestal_post", "primitive_thorlabs_post", None, None),
+    ("RS1P_M", "pedestal_post", "primitive_thorlabs_post", None, None),
+    ("RS1.5P_M", "pedestal_post", "primitive_thorlabs_post", None, None),
+    ("RS2P_M", "pedestal_post", "primitive_thorlabs_post", None, None),
+    ("RS2.5P_M", "pedestal_post", "primitive_thorlabs_post", None, None),
+    ("RS3P_M", "pedestal_post", "primitive_thorlabs_post", None, None),
+    ("RS3.5P_M", "pedestal_post", "primitive_thorlabs_post", None, None),
+    ("RS4P_M", "pedestal_post", "primitive_thorlabs_post", None, None),
+    ("RS6P_M", "pedestal_post", "primitive_thorlabs_post", None, None),
+    # RS*/M — Ø25.0 mm Post Spacers, M6 Tap
+    ("RS4_M", "post_spacer", "primitive_box", None, None),
+    ("RS5_M", "post_spacer", "primitive_box", None, None),
+    ("RS6_M", "post_spacer", "primitive_box", None, None),
+    ("RS7_M", "post_spacer", "primitive_box", None, None),
+    ("RS8_M", "post_spacer", "primitive_box", None, None),
+    ("RS9_M", "post_spacer", "primitive_box", None, None),
+    ("RS10_M", "post_spacer", "primitive_box", None, None),
+    # RS*M — Ø25.0 mm thin Post Spacers (1-10 mm thickness; sub-mm variants
+    # RS01M-RS09M are Ø24.0/24.5 mm, excluded)
+    ("RS1M", "post_spacer", "primitive_box", None, None),
+    ("RS2M", "post_spacer", "primitive_box", None, None),
+    ("RS3M", "post_spacer", "primitive_box", None, None),
+    ("RS4M", "post_spacer", "primitive_box", None, None),
+    ("RS5M", "post_spacer", "primitive_box", None, None),
+    ("RS6M", "post_spacer", "primitive_box", None, None),
+    ("RS7M", "post_spacer", "primitive_box", None, None),
+    ("RS8M", "post_spacer", "primitive_box", None, None),
+    ("RS9M", "post_spacer", "primitive_box", None, None),
+    ("RS10M", "post_spacer", "primitive_box", None, None),
 ]
 
 # Read CAD manifest produced by scripts/thorlabs_bulk_cad.py — when an item has
@@ -899,6 +1314,32 @@ for _part, _ctype, _asset, _x, _y in _THORLABS_BULK:
             _meta_fiber = _parse_fiber_meta(_part)
             _props["fiberKindParamsOverride"] = _build_fiber_override(_part)
             _props["cableLengthMm"] = float(_meta_fiber["length_m"]) * 1000.0
+    # NIR Free-Space Isolators: same override pattern as fiber, but the
+    # specs come from a static table because the part number doesn't
+    # encode enough information (e.g. tuning range, max power, tandem
+    # vs single-stage). See _ISOLATOR_SPECS above for the source data.
+    if _ctype == "isolator":
+        _iso_meta = _build_isolator_meta(_part)
+        if _iso_meta:
+            _props.update(_iso_meta)
+    # Ø25.0 mm RS-series pedestal pillar posts & post spacers — feed the
+    # primitive renderer the actual Thorlabs dimensions instead of the
+    # 12.7 mm × 50 mm fallback. Pedestal posts get a wider flange at the
+    # bottom (Ø31.8 mm × 5 mm — distinctive feature visible in product photos);
+    # M-tap recess on top is M4 (Ø4.5 mm) for the *P4M variants and M6
+    # (Ø6.6 mm) for the *P/M variants. Spacers are plain Ø25 mm discs.
+    if _ctype == "pedestal_post" and _part in _RS_LENGTHS_MM:
+        _props.setdefault("diameterMm", 25.0)
+        _props.setdefault("heightMm", _RS_LENGTHS_MM[_part])
+        _props.setdefault("flangeDiameterMm", 31.8)
+        _props.setdefault("flangeThicknessMm", 5.0)
+        _props.setdefault(
+            "topTapDiameterMm",
+            4.5 if _part.endswith("4M") else 6.6,
+        )
+    elif _ctype == "post_spacer" and _part in _RS_LENGTHS_MM:
+        _props.setdefault("diameterMm", 25.0)
+        _props.setdefault("heightMm", _RS_LENGTHS_MM[_part])
     _component_entry: dict[str, object] = {
         "name": f"thorlabs_{_norm}",
         "component_type": _ctype,

@@ -466,10 +466,14 @@ class Collection(Base):
     )
     color: Mapped[str] = mapped_column(Text, nullable=False, default="#0f766e", server_default="#0f766e")
     visible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
-    locked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
-    exclude: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
-    holdout: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
-    indirect_only: Mapped[bool] = mapped_column(
+    # When true, every descendant SceneObject is treated as one rigid group: a
+    # translate or rotate on any member applies the same rigid-body transform
+    # to all the others (Blender-style "transform together"). Effective state
+    # cascades — a collection inherits rigid_transform=true from any ancestor
+    # with rigid_transform=true; computed at read time. Lock is per-OBJECT
+    # (objects.locked) — there is no collection-level lock state, only a UI
+    # bulk action over its descendants. See alembic 0035.
+    rigid_transform: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
@@ -514,11 +518,13 @@ class CollectionMember(Base):
 
 
 class SceneViewCollectionOverride(Base):
-    """Sparse per-view override for collection visibility / mask flags.
+    """Sparse per-view override for collection visibility.
 
-    Reserved for v2; v1 reads no rows from this table. NULL columns mean
+    Reserved for v2; v1 reads no rows from this table. ``visible=NULL`` means
     "inherit from collection". Only collections that differ from their default
-    state in a given view need a row here.
+    visible state in a given view need a row here. The exclude/holdout/
+    indirect_only override columns were dropped in alembic 0035 along with
+    their canonical counterparts on ``collections``.
     """
 
     __tablename__ = "scene_view_collection_overrides"
@@ -534,9 +540,6 @@ class SceneViewCollectionOverride(Base):
         primary_key=True,
     )
     visible: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    exclude: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    holdout: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    indirect_only: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

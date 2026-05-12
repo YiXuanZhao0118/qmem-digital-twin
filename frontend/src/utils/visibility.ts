@@ -26,9 +26,8 @@ export type RenderableContext = {
   reachableCache?: Map<string, Set<string>>;
   viewMatchCache?: Map<string, boolean>;
   // Set of collection IDs whose own visibility AND every ancestor's visibility
-  // resolve to true (and no ancestor has exclude=true). Computed once per
-  // context. An object passes the collection gate iff at least one of its
-  // memberships is in this set.
+  // resolve to true. Computed once per context. An object passes the collection
+  // gate iff at least one of its memberships is in this set.
   visibleCollectionIds?: Set<string>;
   objectMemberships?: Map<string, string[]>;
 };
@@ -48,7 +47,7 @@ export function computeVisibleCollectionIds(
       cache.set(id, false);
       return false;
     }
-    if (!node.visible || node.exclude) {
+    if (!node.visible) {
       cache.set(id, false);
       return false;
     }

@@ -22,6 +22,10 @@ export type Anchor = {
   id: string;
   name?: string;
   type?: "center" | "face" | "edge" | "custom" | string;
+  /** Static body-local position. For most anchor types this is the
+   *  authoritative value. For fiber port anchors with `derivedFrom` set,
+   *  this is the *fallback* when the spline isn't available (e.g.
+   *  un-instantiated catalog entry). */
   positionMmBodyLocal: { x: number; y: number; z: number };
   directionBodyLocal?: { x: number; y: number; z: number };
   apertureMm?: number;
@@ -30,6 +34,15 @@ export type Anchor = {
    *  to 2 × `apertureMm` per side when width / height are unset. */
   apertureWidthMm?: number;
   apertureHeightMm?: number;
+  /** Dynamic-port marker for fiber kinds. When set, the anchor's
+   *  position is re-derived at read time from the per-instance fiber
+   *  spline (`SceneObject.properties.fiberNodes`, falling back to the
+   *  catalog template). `fiberEndA` resolves to nodes[0].posMm offset
+   *  outward by the ferrule tip length; `fiberEndB` to nodes[N-1].posMm.
+   *  Direction follows the spline tangent at that endpoint. When this
+   *  field is unset, the anchor is treated as a static body-local
+   *  position. See `utils/fiberAnchorResolver.ts`. */
+  derivedFromFiberEndpoint?: "A" | "B";
 };
 
 export type Asset3D = {
@@ -87,6 +100,14 @@ export type SceneObject = {
     // to empty in Phase 1; populated kind-by-kind in Phase 2+.
     anchorBindings?: AnchorBindingV2[];
     opticalSources?: OpticalSourceV2[];
+    /** Per-instance emission visualisation overrides, keyed by emission id:
+     *  laser_source uses "main"; tapered_amplifier uses "forward" /
+     *  "backward". Missing key → wavelength-derived colour, visible=true.
+     *  See utils/emissionVisuals.ts. */
+    emissionVisuals?: Partial<Record<"main" | "forward" | "backward", {
+      colorHex?: string | null;
+      visible?: boolean;
+    }>>;
     [key: string]: unknown;
   };
   updatedAt?: string;
@@ -439,7 +460,21 @@ export type FiberParams = {
 export type IsolatorParams = {
   forwardLossDb: number;
   isolationDb: number;
-  /** Phase 5: renamed from `transmissionAxisDeg`. Beam-local Jones-frame. */
+  /**
+   * Faraday rotator angle in degrees. Typically 45° for a single-stage
+   * isolator (a tandem isolator stacks two cells for 90° total). Combined
+   * with the front_pbs / back_pbs anchor directions on the asset (each
+   * PBS's coating-normal direction encodes its transmission axis), this
+   * fully describes the polarization transfer of the device.
+   */
+  faradayRotationDeg: number;
+  /**
+   * Phase 5: renamed from `transmissionAxisDeg`. Beam-local Jones-frame.
+   * Phase 8 (alembic 0034): transmission axis moved to a
+   * polarizationReference binding on the SceneObject — read the binding
+   * instead. Kept here for back-compat with pre-Phase-8 readers.
+   * @deprecated
+   */
   transmissionAxisDegBeamLocal: number;
 };
 
@@ -725,10 +760,13 @@ export type Collection = {
   parentId: string | null;
   color: string;
   visible: boolean;
-  locked: boolean;
-  exclude: boolean;
-  holdout: boolean;
-  indirectOnly: boolean;
+  /** When true, every descendant SceneObject moves/rotates as one rigid group:
+   *  applying a translate or rotate to any member applies the same rigid-body
+   *  transform to all the others, so A↔B↔C relative pose stays fixed. Effective
+   *  state cascades from any ancestor that has rigid_transform=true. Lock is
+   *  per-OBJECT (SceneObject.locked); the outliner's per-collection lock icon
+   *  is a bulk action over descendants and stores no collection-level state. */
+  rigidTransform: boolean;
   sortOrder: number;
   properties: Record<string, unknown>;
   createdAt?: string;

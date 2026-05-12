@@ -492,10 +492,7 @@ export type CollectionCreatePayload = {
   parentId?: string | null;
   color?: string;
   visible?: boolean;
-  locked?: boolean;
-  exclude?: boolean;
-  holdout?: boolean;
-  indirectOnly?: boolean;
+  rigidTransform?: boolean;
   sortOrder?: number;
   properties?: Record<string, unknown>;
 };

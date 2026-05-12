@@ -5,6 +5,7 @@ import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 
 import { resolveAssetUrl } from "../api/client";
 import type { Asset3D, ComponentItem, DeviceState } from "../types/digitalTwin";
+import { FIBER_FERRULE_TIP_MM } from "../utils/fiberAnchorResolver";
 import { createNewportOpticalTable } from "./photoRoom";
 import { getDimensionsMm, getNumericProperty, mmToThree } from "./transformUtils";
 
@@ -21,6 +22,14 @@ function colorForComponent(component: ComponentItem, state?: DeviceState): THREE
   if (component.componentType === "rf_amplifier" && temperatureC > 45) return "#dc2626";
   if (component.componentType === "vacuum_chamber" && pressurePa > 0.01) return "#dc2626";
   if (enabled === false) return "#6b7280";
+
+  // Per-component color override (catalog can ship a vendor-accurate color
+  // for one part without changing the componentType default — used e.g. by
+  // the red Coherent TORNOS isolator while the other isolators stay black).
+  const colorOverride = (component.properties as { colorHex?: unknown } | null | undefined)?.colorHex;
+  if (typeof colorOverride === "string" && /^#[0-9a-fA-F]{6}$/.test(colorOverride)) {
+    return colorOverride;
+  }
 
   switch (component.componentType) {
     case "optical_table":
@@ -47,8 +56,16 @@ function colorForComponent(component: ComponentItem, state?: DeviceState): THREE
       return "#111827";
     case "optical_post":
       return "#d1d5db";
+    case "pedestal_post":
+      return "#d1d5db";
+    case "post_spacer":
+      return "#d1d5db";
     case "clamping_fork":
       return "#a8b0b8";
+    case "mirror_mount":
+      return "#1a1a1c";
+    case "isolator":
+      return "#1a1a1c";
     default:
       return "#64748b";
   }
@@ -59,10 +76,12 @@ function materialFor(
   state?: DeviceState,
 ): THREE.MeshStandardMaterial {
   const transparent = component.componentType === "vacuum_chamber" || component.componentType === "lens";
+  const isPolished = ["mirror", "optical_post", "pedestal_post", "post_spacer", "clamping_fork", "laser_diode_mount"].includes(component.componentType);
+  const isAnodized = component.componentType === "mirror_mount" || component.componentType === "isolator";
   return new THREE.MeshStandardMaterial({
     color: colorForComponent(component, state),
-    metalness: ["mirror", "optical_post", "clamping_fork", "laser_diode_mount"].includes(component.componentType) ? 0.75 : 0.12,
-    roughness: ["mirror", "optical_post", "clamping_fork", "laser_diode_mount"].includes(component.componentType) ? 0.2 : 0.42,
+    metalness: isPolished ? 0.75 : isAnodized ? 0.55 : 0.12,
+    roughness: isPolished ? 0.2 : isAnodized ? 0.5 : 0.42,
     transparent,
     opacity: component.componentType === "vacuum_chamber" ? 0.34 : component.componentType === "lens" ? 0.45 : 1,
   });
@@ -86,6 +105,61 @@ function createThorlabsPost(component: ComponentItem, state?: DeviceState): THRE
   const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, height, 40), materialFor(component, state));
   mesh.position.y = height / 2;
   return mesh;
+}
+
+// Thorlabs pedestal-style pillar post: a wide flange at the bottom, a narrower
+// cylindrical body on top, and (visually) a darker M-tap recess on the top
+// face. Matches the RS / TBP / RBP family — both Ø25 mm (RS*P/M, RS*P4M) and
+// Ø1/2" (TBP, RBP) sub-families. `heightMm` is TOTAL length (flange + body)
+// per Thorlabs spec convention.
+function createThorlabsPedestalPost(component: ComponentItem, state?: DeviceState): THREE.Object3D {
+  const totalLengthMm = getNumericProperty(component.properties, "heightMm", 25);
+  const bodyDiameterMm = getNumericProperty(component.properties, "diameterMm", 12.7);
+  const flangeDiameterMm = getNumericProperty(
+    component.properties,
+    "flangeDiameterMm",
+    bodyDiameterMm * 1.27,
+  );
+  const flangeThicknessMm = getNumericProperty(component.properties, "flangeThicknessMm", 5.0);
+  const topTapDiameterMm = getNumericProperty(component.properties, "topTapDiameterMm", 6.0);
+
+  const bodyHeightMm = Math.max(0.5, totalLengthMm - flangeThicknessMm);
+
+  const flangeRadius = mmToThree(flangeDiameterMm / 2);
+  const flangeHeight = mmToThree(flangeThicknessMm);
+  const bodyRadius = mmToThree(bodyDiameterMm / 2);
+  const bodyHeight = mmToThree(bodyHeightMm);
+
+  const group = new THREE.Group();
+  const mat = materialFor(component, state);
+
+  const flange = new THREE.Mesh(
+    new THREE.CylinderGeometry(flangeRadius, flangeRadius, flangeHeight, 48),
+    mat,
+  );
+  flange.position.y = flangeHeight / 2;
+  group.add(flange);
+
+  const body = new THREE.Mesh(
+    new THREE.CylinderGeometry(bodyRadius, bodyRadius, bodyHeight, 48),
+    mat,
+  );
+  body.position.y = flangeHeight + bodyHeight / 2;
+  group.add(body);
+
+  // Top tap — a small dark recess at the centre of the top face so the post
+  // reads as "pedestal with M-tap" instead of a featureless cylinder. Inset by
+  // a sliver below the top so it looks like a hole, not a button.
+  const tapRadius = mmToThree(topTapDiameterMm / 2);
+  const tapDepth = mmToThree(2.0);
+  const tap = new THREE.Mesh(
+    new THREE.CylinderGeometry(tapRadius, tapRadius, tapDepth, 24),
+    new THREE.MeshStandardMaterial({ color: "#1f2937", metalness: 0.25, roughness: 0.55 }),
+  );
+  tap.position.y = flangeHeight + bodyHeight - tapDepth / 2 + 0.001;
+  group.add(tap);
+
+  return group;
 }
 
 function createThorlabsPostHolder(component: ComponentItem, state?: DeviceState): THREE.Object3D {
@@ -909,6 +983,48 @@ function createPrimitive(component: ComponentItem, state?: DeviceState): THREE.O
     case "aom":
       mesh = createAom(component, state);
       break;
+    case "isolator": {
+      // Cylindrical isolator housing (e.g. Coherent TORNOS, EOT 34-xxxx,
+      // Newport N04 series). Body axis along +Y (the beam-axis convention
+      // used by STL-based isolators like the Thorlabs IO-3D / IO-5 family).
+      // Body colour comes from materialFor (default #1a1a1c, overridable
+      // via properties.colorHex — TORNOS uses red anodised). Two small
+      // steel input/output ferrule rings stick out of each end.
+      const diameterMm = getNumericProperty(component.properties, "diameterMm", 22);
+      const lengthMm = getNumericProperty(component.properties, "lengthMm", 51.4);
+      const ferruleDiameterMm = getNumericProperty(component.properties, "ferruleDiameterMm", 13);
+      const ferruleLengthMm = getNumericProperty(component.properties, "ferruleLengthMm", 5);
+      const bodyRadius = mmToThree(diameterMm / 2);
+      const bodyLength = mmToThree(lengthMm);
+      const ferruleRadius = mmToThree(ferruleDiameterMm / 2);
+      const ferruleLen = mmToThree(ferruleLengthMm);
+      const isoGroup = new THREE.Group();
+      const body = new THREE.Mesh(
+        new THREE.CylinderGeometry(bodyRadius, bodyRadius, bodyLength, 40),
+        materialFor(component, state),
+      );
+      // CylinderGeometry axis is +Y by default — no rotation needed.
+      isoGroup.add(body);
+      const steelMaterial = new THREE.MeshStandardMaterial({
+        color: "#cbd5e1",
+        metalness: 0.85,
+        roughness: 0.22,
+      });
+      const inputFerrule = new THREE.Mesh(
+        new THREE.CylinderGeometry(ferruleRadius, ferruleRadius, ferruleLen, 24),
+        steelMaterial,
+      );
+      inputFerrule.position.y = -(bodyLength / 2 + ferruleLen / 2);
+      isoGroup.add(inputFerrule);
+      const outputFerrule = new THREE.Mesh(
+        new THREE.CylinderGeometry(ferruleRadius, ferruleRadius, ferruleLen, 24),
+        steelMaterial,
+      );
+      outputFerrule.position.y = bodyLength / 2 + ferruleLen / 2;
+      isoGroup.add(outputFerrule);
+      mesh = isoGroup;
+      break;
+    }
     case "eom": {
       // Origin at the +X face centre of the EOM body, body extending in -X
       // (consistent with the optical-element convention so the beam axis
@@ -938,6 +1054,12 @@ function createPrimitive(component: ComponentItem, state?: DeviceState): THREE.O
       mesh = createThorlabsPostHolder(component, state);
       break;
     case "optical_post":
+      mesh = createThorlabsPost(component, state);
+      break;
+    case "pedestal_post":
+      mesh = createThorlabsPedestalPost(component, state);
+      break;
+    case "post_spacer":
       mesh = createThorlabsPost(component, state);
       break;
     case "clamping_fork":
@@ -1104,7 +1226,11 @@ interface FcConnectorOptions {
 //     swings +Z → +Y, translate(+25 mm in pre-scale frame) puts the cable end
 //     at y=0, then scale 0.01 maps mm → scene units (1 unit = 100 mm).
 const FC_HOUSING_ASSET_PATH = "uploads/thorlabs_fc_apc_30126a9.stl";
-const FC_HOUSING_LENGTH_MM = 36.28;
+// Length of the FC housing along its longitudinal +Y axis (cable end at
+// y=0, ferrule tip at y=FIBER_FERRULE_TIP_MM). Canonical export lives in
+// `utils/fiberAnchorResolver.ts`; the local re-export here keeps the
+// reference greppable in this file.
+const FC_HOUSING_LENGTH_MM = FIBER_FERRULE_TIP_MM;
 const FC_HOUSING_FERRULE_TIP_RADIUS_MM = 1.25;
 let fcHousingApcGeometryCache: THREE.BufferGeometry | null = null;
 let fcHousingPcGeometryCache: THREE.BufferGeometry | null = null;
@@ -1351,6 +1477,40 @@ function buildFcConnectorMesh(options: FcConnectorOptions = { polish: "PC", boot
     conn.add(keyPin);
   }
 
+  // Raycastable port disk at the ferrule tip (2026-05-12 fix). The
+  // imported 30126A9 STL housing — and its procedural fallback — is a
+  // hollow shell with NO end cap at the ferrule tip. A laser beam
+  // travelling exactly along the fiber's optical axis (the well-aligned
+  // case) passes through the entire housing without hitting a single
+  // triangle, so rayTrace.ts sees no hit and the fiber dispatch never
+  // fires. We add an explicit disk perpendicular to outward at the tip
+  // so the ray-tracer can intercept dead-center on-axis rays. The disk
+  // is INVISIBLE in the render pass (colorWrite/depthWrite off) but the
+  // ray-tracer's Raycaster uses default all-layer mask and finds it.
+  //
+  // Radius matches the FC ferrule sleeve OD (Ø2.5 mm → 1.25 mm radius).
+  // For APC tips, the disk is tilted 8° around the local X axis so its
+  // normal matches the slanted polish baked into the STL.
+  const portDiskRadiusMm = 1.25;
+  const portDisk = new THREE.Mesh(
+    new THREE.CircleGeometry(portDiskRadiusMm / 100, 24),
+    new THREE.MeshBasicMaterial({
+      colorWrite: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }),
+  );
+  // CircleGeometry's normal is +Z by default. Rotate -π/2 around local X
+  // so the normal points +Y (= outward in the connector frame). APC
+  // adds +8° about X, tilting the normal 8° toward +Z to match the
+  // polish baked into the STL ferrule tip.
+  const apcRad = (8 * Math.PI) / 180;
+  portDisk.rotation.x = -Math.PI / 2 + (options.polish === "APC" ? apcRad : 0);
+  portDisk.position.y = FIBER_FERRULE_TIP_MM / 100;
+  portDisk.userData.fiberRole = "portDisk";
+  portDisk.userData.fiberPolish = options.polish;
+  conn.add(portDisk);
+
   conn.traverse((c) => {
     c.castShadow = true;
     c.receiveShadow = true;
@@ -1373,15 +1533,84 @@ export function applyFiberConnectorTransform(
   conn.position.copy(labMmToFiberThree(nodes[idx].posMm));
 }
 
-function createFiberSplineObject(component: ComponentItem): THREE.Object3D {
-  const props = (component.properties as { fiberNodes?: FiberNode[]; radiusMm?: number } | undefined) ?? {};
-  const nodes: FiberNode[] = (props.fiberNodes && props.fiberNodes.length >= 2)
-    ? props.fiberNodes
-    : [
-        { posMm: [0, 0, 50], handleOutMm: [100, 0, 0] },
-        { posMm: [300, 0, 50], handleInMm: [-100, 0, 0] },
-      ];
-  const radiusMm = typeof props.radiusMm === "number" && props.radiusMm > 0 ? props.radiusMm : 1.0;
+/** Refresh a previously-built fiber wrapper's procedural geometry to
+ *  match a new node array / jacket radius, without rebuilding the
+ *  whole wrapper. Walks the wrapper tree, finds the tube mesh + the two
+ *  FC connector groups (tagged by `userData.fiberRole` and
+ *  `userData.fiberConnectorEndpoint`), and:
+ *    - rebuilds the TubeGeometry from the new Bezier path / radius,
+ *    - re-applies `applyFiberConnectorTransform` for each connector.
+ *  The old tube geometry is disposed so the GPU buffer doesn't leak.
+ *
+ *  Called from DigitalTwinViewer's cache-hit branch when the fiber's
+ *  per-instance `SceneObject.properties.fiberNodes` / `.radiusMm`
+ *  changed but the wrapper itself is being reused. Without this the
+ *  procedural fiber would visually freeze on its initial pose while
+ *  the underlying spline/anchor data evolves. Returns true if a tube
+ *  mesh was found and updated; false when the wrapper doesn't contain
+ *  a fiber sub-tree (caller can fall through to wrapper-rebuild). */
+export function refreshFiberWrapperGeometry(
+  wrapper: THREE.Object3D,
+  nodes: FiberNode[],
+  radiusMm: number,
+): boolean {
+  if (!nodes || nodes.length < 2) return false;
+  let tubeMesh: THREE.Mesh | null = null;
+  const connectors: { conn: THREE.Object3D; endpoint: "A" | "B" }[] = [];
+  wrapper.traverse((node) => {
+    if (!tubeMesh && (node as THREE.Mesh).isMesh && node.userData?.fiberRole === "tube") {
+      tubeMesh = node as THREE.Mesh;
+    }
+    const ep = node.userData?.fiberConnectorEndpoint;
+    if (ep === "A" || ep === "B") connectors.push({ conn: node, endpoint: ep });
+  });
+  if (!tubeMesh) return false;
+
+  const path = buildFiberCurvePath(nodes);
+  const tubularSegments = Math.max(64, (nodes.length - 1) * 32);
+  const newGeom = new THREE.TubeGeometry(
+    path,
+    tubularSegments,
+    Math.max(radiusMm, 0.01) / 100,
+    12,
+    false,
+  );
+  const old = (tubeMesh as THREE.Mesh).geometry;
+  (tubeMesh as THREE.Mesh).geometry = newGeom;
+  old.dispose();
+
+  for (const { conn, endpoint } of connectors) {
+    applyFiberConnectorTransform(conn, nodes, endpoint);
+  }
+  return true;
+}
+
+function createFiberSplineObject(
+  component: ComponentItem,
+  /** Per-instance overrides — preferred over the component's catalog
+   *  defaults when present. fiberNodes (the spline) and radiusMm (the
+   *  jacket thickness) are both per-instance per V2: each fiber cable
+   *  in the scene should have its own spline shape. */
+  objectFiberNodes?: FiberNode[],
+  objectRadiusMm?: number,
+): THREE.Object3D {
+  const compProps = (component.properties as { fiberNodes?: FiberNode[]; radiusMm?: number } | undefined) ?? {};
+  const resolvedNodes: FiberNode[] | undefined =
+    (objectFiberNodes && objectFiberNodes.length >= 2)
+      ? objectFiberNodes
+      : (compProps.fiberNodes && compProps.fiberNodes.length >= 2)
+        ? compProps.fiberNodes
+        : undefined;
+  const nodes: FiberNode[] = resolvedNodes ?? [
+    { posMm: [0, 0, 50], handleOutMm: [100, 0, 0] },
+    { posMm: [300, 0, 50], handleInMm: [-100, 0, 0] },
+  ];
+  const radiusMm =
+    typeof objectRadiusMm === "number" && objectRadiusMm > 0
+      ? objectRadiusMm
+      : typeof compProps.radiusMm === "number" && compProps.radiusMm > 0
+        ? compProps.radiusMm
+        : 1.0;
 
   const fiberType = pickFiberType(component);
   const jacketColor = FIBER_JACKET_COLOR[fiberType];
@@ -1782,6 +2011,10 @@ export async function loadAssetObject(
   component: ComponentItem,
   asset: Asset3D | undefined,
   state: DeviceState | undefined,
+  /** Per-instance properties — V2: each scene object can have its own
+   *  fiberNodes / radiusMm overrides on top of the component's catalog
+   *  defaults. Pass `sceneObject.properties` from the caller. */
+  objectProperties?: { fiberNodes?: FiberNode[]; radiusMm?: number } | null,
 ): Promise<THREE.Object3D> {
   if (component.componentType === "optical_table") {
     const table = createNewportOpticalTable();
@@ -1790,12 +2023,18 @@ export async function loadAssetObject(
   }
 
   // Fiber patch cables render procedurally as a Bezier-spline tube using
-  // user-editable anchor + tangent-handle data on component.properties.
-  // Bypasses any STL asset attached to the catalogue template.
+  // user-editable anchor + tangent-handle data. Per V2 the spline shape is
+  // a per-instance property (objects.properties.fiberNodes); the catalog
+  // template's component.properties.fiberNodes is the legacy fallback for
+  // pre-2026-05-11 rows.
   if (component.componentType === "fiber") {
     const wrapper = new THREE.Group();
     wrapper.name = component.name;
-    wrapper.add(createFiberSplineObject(component));
+    wrapper.add(createFiberSplineObject(
+      component,
+      objectProperties?.fiberNodes,
+      objectProperties?.radiusMm,
+    ));
     return wrapper;
   }
 

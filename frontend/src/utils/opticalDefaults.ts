@@ -207,7 +207,7 @@ export const DEFAULT_KIND_PARAMS: Record<ElementKind, Record<string, unknown>> =
     bandwidthMhzKm: null,
     randomJonesSeed: null,
   },
-  isolator: { forwardLossDb: 0.5, isolationDb: 40.0, transmissionAxisDegBeamLocal: 0.0 },
+  isolator: { forwardLossDb: 0.5, isolationDb: 40.0, faradayRotationDeg: 45.0, transmissionAxisDegBeamLocal: 0.0 },
   aom: {
     baseEfficiency: 0.85,
     deflectionPerMhzUrad: 200.0,

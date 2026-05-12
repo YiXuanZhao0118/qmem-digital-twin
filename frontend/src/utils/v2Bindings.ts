@@ -82,25 +82,23 @@ export function getMirrorNormalBodyLocal(
 }
 
 // =============================================================================
-// V2 aperture: per-object override
+// V2 aperture: per-object scalar override
 // =============================================================================
 //
-// Aperture has been moved out of `Asset3D.anchors[].apertureMm` (Layer 2 /
-// PHY Editor) and into per-instance bindings. Stored shape (V2):
+// 2026-05-10 simplification (per user request): aperture is stored as a
+// flat scalar field on `objects.properties` keyed by `<anchorId>_apertureMm`,
+// e.g. `intercept_in_apertureMm`, `intercept_out_apertureMm`. Just a number
+// in millimetres (interpreted as a circular aperture radius). The previous
+// `perAnchorApertures` map of {shape, rMm/xMm/yMm} variants is read on a
+// best-effort fallback so un-migrated rows keep working until the alembic
+// migration drains them.
 //
-//   objects.properties.anchorBindings[].payload.aperture =
-//     { shape: "circle", rMm }              // radius
-//   | { shape: "rectangle", xMm, yMm }      // half-widths
-//   | { shape: "ellipse", xMm, yMm }        // semi-axes
-//
-// For kinds whose existing binding only carried geometry (mirror,
-// beam_splitter), aperture rides along inside the SAME binding payload.
-// For kinds whose anchors have no V2 binding yet (AOM intercept_in /
-// intercept_out, lens intercept_in, fiber connector faces, etc.), the
-// per-object override lives in a flat per-anchor map at
-//   objects.properties.perAnchorApertures[anchorId] = <V2 aperture shape>
-// Future cleanup will promote those into per-anchor bindings; the helper
-// here abstracts both lookup paths so consumers can stay agnostic.
+// Backward-compat sources, in precedence:
+//   1. objects.properties[`${anchorId}_apertureMm`]                  (new flat)
+//   2. objects.properties.anchorBindings[anchorId].payload.aperture  (legacy V2 binding)
+//   3. objects.properties.perAnchorApertures[anchorId]               (legacy transitional map)
+//   4. asset.anchors[anchorId].apertureMm                            (Layer 2 default seed)
+//   5. null  →  caller picks a kind default
 
 export type V2Aperture =
   | { shape: "circle"; rMm: number }
@@ -133,11 +131,16 @@ function _readBindingPayloadAperture(payload: Record<string, unknown> | undefine
   return null;
 }
 
+/** Build the flat per-anchor key — `<anchorId>_apertureMm`. Use this so
+ *  callers don't hand-roll the join (which is easy to typo). */
+export function flatApertureKey(anchorId: string): string {
+  return `${anchorId}_apertureMm`;
+}
+
 /** Look up the per-instance aperture override for one (object, anchorId).
- *  Order:
- *    1. anchorBindings[anchorId].payload.aperture (V2 binding-resident)
- *    2. perAnchorApertures[anchorId]              (V2 transitional map)
- *  Returns null if no override is present.
+ *  Returns a V2Aperture for backward compatibility — flat scalar values
+ *  are wrapped as { shape: "circle", rMm }. Reads through the precedence
+ *  chain documented above; null when no override is present.
  */
 export function getPerObjectAperture(
   sceneObject: SceneObject | { properties?: SceneObject["properties"] } | null | undefined,
@@ -145,16 +148,28 @@ export function getPerObjectAperture(
 ): V2Aperture | null {
   if (!sceneObject) return null;
   const props = sceneObject.properties as
-    | { anchorBindings?: AnchorBindingV2[]; perAnchorApertures?: Record<string, unknown> }
+    | (Record<string, unknown> & {
+        anchorBindings?: AnchorBindingV2[];
+        perAnchorApertures?: Record<string, unknown>;
+      })
     | undefined;
-  const bindings = props?.anchorBindings ?? [];
+  if (!props) return null;
+  // [1] new flat scalar
+  const flatKey = flatApertureKey(anchorId);
+  const flat = props[flatKey];
+  if (typeof flat === "number" && flat > 0) {
+    return { shape: "circle", rMm: flat };
+  }
+  // [2] legacy binding payload
+  const bindings = props.anchorBindings ?? [];
   for (const b of bindings) {
     if (b.anchorId === anchorId) {
       const ap = _readBindingPayloadAperture(b.payload);
       if (ap) return ap;
     }
   }
-  const map = props?.perAnchorApertures;
+  // [3] legacy transitional map
+  const map = props.perAnchorApertures;
   if (map && typeof map === "object") {
     const raw = (map as Record<string, unknown>)[anchorId];
     if (raw && typeof raw === "object") {
@@ -165,10 +180,7 @@ export function getPerObjectAperture(
 }
 
 /** Effective scalar aperture (mm) for one (object, anchor) pair.
- *  Precedence:
- *    1. per-object V2 override (binding payload or perAnchorApertures map)
- *    2. asset anchor's legacy apertureMm (Layer 2 default seed)
- *    3. null  →  caller picks a kind default
+ *  Precedence: per-object override → asset anchor's apertureMm → null.
  */
 export function getEffectiveApertureMm(
   sceneObject: SceneObject | { properties?: SceneObject["properties"] } | null | undefined,
@@ -183,30 +195,83 @@ export function getEffectiveApertureMm(
   return null;
 }
 
-/** Build a frontend writer that mutates a SceneObject's per-object
- *  aperture override. Stored under perAnchorApertures so any anchor id
- *  works (including AOM intercept_in/out, lens intercept_in, etc.) without
- *  needing a binding kind to exist for it. Returns the new properties
- *  dict; caller persists via PUT /api/objects/{id}.
+/** Mutate `properties` to set the flat scalar aperture field for a given
+ *  anchor. Pass `null` to clear. Returns the updated properties dict;
+ *  caller persists via PUT /api/objects/{id}. Aperture shape variants
+ *  (rectangle/ellipse) are no longer supported through this writer —
+ *  if the legacy V2Aperture shape is passed, it's collapsed to its
+ *  largest half-extent and stored as a scalar.
  */
 export function setPerObjectAperture(
   properties: SceneObject["properties"] | undefined,
   anchorId: string,
-  aperture: V2Aperture | null,
+  aperture: V2Aperture | number | null,
 ): SceneObject["properties"] {
-  const out = { ...(properties ?? {}) } as SceneObject["properties"] & {
+  const out = { ...(properties ?? {}) } as Record<string, unknown> & {
     perAnchorApertures?: Record<string, V2Aperture>;
   };
-  const map: Record<string, V2Aperture> = { ...(out.perAnchorApertures ?? {}) };
+  const flatKey = flatApertureKey(anchorId);
   if (aperture == null) {
-    delete map[anchorId];
+    delete out[flatKey];
   } else {
-    map[anchorId] = aperture;
+    const scalar = typeof aperture === "number"
+      ? aperture
+      : (v2ApertureToScalarMm(aperture) ?? 0);
+    if (scalar > 0) out[flatKey] = scalar;
+    else delete out[flatKey];
   }
-  if (Object.keys(map).length === 0) {
-    delete out.perAnchorApertures;
-  } else {
-    out.perAnchorApertures = map;
+  // Drain the legacy map for the same anchor on every write so re-saves
+  // converge to the new shape (cheap garbage collection).
+  const map = out.perAnchorApertures;
+  if (map && typeof map === "object" && anchorId in map) {
+    const next = { ...map };
+    delete (next as Record<string, V2Aperture>)[anchorId];
+    if (Object.keys(next).length === 0) delete out.perAnchorApertures;
+    else out.perAnchorApertures = next;
   }
-  return out;
+  return out as SceneObject["properties"];
+}
+
+// =============================================================================
+// AOM rf_direction — Asset3D anchor (replaces kindParams.rfPropagationDirectionBodyLocal)
+// =============================================================================
+
+export const RF_DIRECTION_ANCHOR_ID = "rf_direction";
+
+/** Read the AOM's RF / acoustic propagation direction in body-local frame.
+ *  Source of truth (per 2026-05-10 refactor) is an Asset3D anchor with
+ *  `id = "rf_direction"`. Falls back to legacy kindParams field names so
+ *  un-migrated rows keep working until the alembic migration drains them.
+ *
+ *  Returns null only when neither asset nor kindParams provide a direction
+ *  — the caller (alignToLaser, ray-tracer) then warns the user. */
+export function getRfDirectionBodyLocal(
+  asset: Asset3D | null | undefined,
+  kindParams: Record<string, unknown> | null | undefined,
+): { x: number; y: number; z: number } | null {
+  // [1] new: asset anchor
+  const anchor = asset?.anchors?.find((a) => a.id === RF_DIRECTION_ANCHOR_ID);
+  const dir = anchor?.directionBodyLocal;
+  if (dir && typeof dir.x === "number" && typeof dir.y === "number" && typeof dir.z === "number") {
+    const m = Math.hypot(dir.x, dir.y, dir.z);
+    if (m > 1e-9) return { x: dir.x / m, y: dir.y / m, z: dir.z / m };
+  }
+  // [2] legacy kindParams (Phase 5 + earlier names)
+  const fallbackKeys = [
+    "rfPropagationDirectionBodyLocal",
+    "rfPropagationDirectionLocal",
+    "acousticAxisBodyLocal",
+    "acousticAxisLocal",
+  ];
+  for (const k of fallbackKeys) {
+    const raw = kindParams?.[k];
+    if (Array.isArray(raw) && raw.length >= 3) {
+      const [x, y, z] = raw as number[];
+      if (typeof x === "number" && typeof y === "number" && typeof z === "number") {
+        const m = Math.hypot(x, y, z);
+        if (m > 1e-9) return { x: x / m, y: y / m, z: z / m };
+      }
+    }
+  }
+  return null;
 }

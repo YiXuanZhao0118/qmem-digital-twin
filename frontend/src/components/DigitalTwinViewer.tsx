@@ -3,13 +3,14 @@ import { ArrowLeftRight, Crosshair, Eye, EyeOff, Grid3x3, Move, RotateCw, Sparkl
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
-import { applyFiberConnectorTransform, buildFiberCurvePath, type FiberNode } from "../three/loadAsset";
+import { applyFiberConnectorTransform, buildFiberCurvePath, refreshFiberWrapperGeometry, type FiberNode } from "../three/loadAsset";
 
 import { useSceneStore, TOUCH_OPS, TOUCH_OP_BY_ID, type FeatureKind, type TouchOp } from "../store/sceneStore";
 import { createBeamPath } from "../three/beamPath";
 import { disposeObject, loadAssetObject } from "../three/loadAsset";
 import { wavelengthToColor } from "../three/opticalBeams";
 import { traceBeamsFromLasers, _testReflect, gaussianWaistAtZ, type TraceSegment } from "../three/rayTrace";
+import { getEmissionVisual } from "../utils/emissionVisuals";
 import { PlacementGizmo } from "../three/placement/gizmo";
 import { SnapOverlay } from "../three/placement/snapOverlay";
 import {
@@ -23,15 +24,30 @@ import { ToolbarHint } from "./ToolbarHint";
 
 (window as unknown as { __testReflect?: typeof _testReflect }).__testReflect = _testReflect;
 
-function buildTraceLine(segment: TraceSegment, maxPowerOnPath: number): THREE.Object3D {
-  const colour = wavelengthToColor(segment.aomSideband?.centerWavelengthNm ?? segment.wavelengthNm);
-  if (segment.branch === "reflected") colour.offsetHSL(-0.03, 0.05, 0.05);
+function buildTraceLine(
+  segment: TraceSegment,
+  maxPowerOnPath: number,
+  colorOverrideHex: string | null,
+): THREE.Object3D {
+  const colour = colorOverrideHex
+    ? new THREE.Color(colorOverrideHex)
+    : wavelengthToColor(segment.aomSideband?.centerWavelengthNm ?? segment.wavelengthNm);
+  // Colour stays constant along the chain: a beam keeps its source colour
+  // through mirrors / PBS / AOM / lens / waveplate / etc. Reflected vs
+  // transmitted branches are distinguished by position and power-driven
+  // opacity, not by a hue shift.
 
-  const VISUAL_BOOST = 4; // multiplier so a 50 µm waist still draws as a
-                          // visible tube at scene scale
-  const VISUAL_FLOOR_UM = 30; // never draw thinner than this — sub-30 µm
-                              // pinches at the focus would otherwise vanish
-                              // into the centerline and look like a discontinuity
+  // Visual radius is now drawn at TRUE 1× scale with no minimum-width floor
+  // (2026-05-12, per user). Earlier versions had VISUAL_BOOST=4 and
+  // VISUAL_FLOOR_UM=30 to keep narrow beams visually obvious, but that made
+  // a fiber output (MFD/2 ≈ 5 µm) render ≈ 120 µm wide right at the ferrule
+  // and never visibly diverge — the user couldn't see Gaussian expansion at
+  // all. With BOOST=1 / floor=0, a fiber-output beam starts at its true
+  // ~5 µm radius (effectively a line at scene scale) and fans out following
+  // the real w(z) = w0·√(1 + (z/zR)²) curve. The centerline (Line geometry
+  // below) keeps the beam visible even where the tube radius is sub-pixel.
+  const VISUAL_BOOST = 1;
+  const VISUAL_FLOOR_UM = 0;
 
   const start = segment.startThree.clone();
   const end = segment.endThree.clone();
@@ -54,7 +70,9 @@ function buildTraceLine(segment: TraceSegment, maxPowerOnPath: number): THREE.Ob
     const t = i / N;
     const zUm = startZUm + (endZUm - startZUm) * t;
     const radiusUm = Math.max(gaussianWaistAtZ(zUm, segment.beamMode), VISUAL_FLOOR_UM);
-    const radiusThree = mmToThree(radiusUm / 1000) * VISUAL_BOOST;
+    // 1e-9 Three units floor prevents zero-radius geometry (NaN normals)
+    // without imposing a visually meaningful minimum.
+    const radiusThree = Math.max(mmToThree(radiusUm / 1000) * VISUAL_BOOST, 1e-9);
     profile.push(new THREE.Vector2(radiusThree, length * t));
   }
   const geometry = new THREE.LatheGeometry(profile, 24);
@@ -472,10 +490,13 @@ function addTaPortLabels(wrapper: THREE.Object3D, _component: ComponentItem): vo
   const centerZ = (bboxLocal.min.z + bboxLocal.max.z) / 2;
   // 5 mm outside the +X / -X faces.
   const labelOffset = 0.05;
+  // Lift labels ~25 mm above the optical axis so the 19 mm-tall sprite
+  // does not cover the laser-port aperture. Scene unit = 100 mm.
+  const labelLiftY = 0.25;
 
   const placeAt = (xPos: number, label: string, fg: string, accent: string) => {
     const sprite = makeLabel(label, fg, accent);
-    sprite.position.set(xPos, centerY, centerZ);
+    sprite.position.set(xPos, centerY + labelLiftY, centerZ);
     wrapper.add(sprite);
   };
 
@@ -1254,6 +1275,12 @@ export function DigitalTwinViewer({
         componentRef: ComponentItem | undefined;
         assetRef: Asset3D | undefined;
         stateRef: DeviceState | undefined;
+        // Fiber-only: last-seen per-instance procedural inputs. Reference
+        // equality is enough — `updateFiberNodes` always emits a fresh
+        // array. Used by the cache-hit refresh to skip rebuilding tube +
+        // connector geometry when nothing fiber-specific changed.
+        fiberNodesRef?: unknown;
+        fiberRadiusMmRef?: number;
       }
     >
   >(new Map());
@@ -2612,13 +2639,23 @@ export function DigitalTwinViewer({
                 ? (seg2.polarizationAtStart as [number, number, number, number])
                 : [1, 0, 0, 0],
             });
-            window.dispatchEvent(new CustomEvent("qmem.openBeamScope"));
+            // Beam scope no longer auto-opens from the main scene — the
+            // scope contents now live inside the Optical link viewer
+            // panel, which the user opens explicitly via the Window menu.
+            // We still update `scopeProbe` so the cyan probe marker
+            // renders at the clicked point; the link-viewer panel reads
+            // the same store value to populate its plots.
             return;
           }
         }
       }
 
-      // Single click → always object-selection-only. Beam tubes ignored.
+      // Single click → object-selection-only. Beam tubes are intentionally
+      // ignored in the main object scene so a click near a beam can't grab
+      // the click off the object behind it. Beam-picking is reserved for
+      // the Optical link viewer panel (its own click-on-beam handler still
+      // sets `scopeProbe`); double-click here also still picks beams for
+      // power-user precise scope placement.
       const objectHit = pickObject(event);
       if (objectHit) {
         const objectId = String(objectHit.object.userData.objectId);
@@ -2643,38 +2680,8 @@ export function DigitalTwinViewer({
         });
         return;
       }
-      const beamHit = pickBeam(event);
-      if (beamHit) {
-        // Walk up to find the segment (userData.beamSegment is on the tube
-        // mesh, but raycast may have hit a child).
-        let n: THREE.Object3D | null = beamHit.object;
-        let seg: TraceSegment | null = null;
-        while (n && !seg) {
-          seg = (n.userData?.beamSegment as TraceSegment | undefined) ?? null;
-          n = n.parent;
-        }
-        if (seg) {
-          // Distance along this segment to the hit point in lab mm.
-          const distAlongMm = beamHit.point.distanceTo(seg.startThree) * 100;
-          const totalZMm = seg.pathLengthFromSourceMmAtStart + distAlongMm;
-          useSceneStore.getState().setScopeProbe({
-            sourceComponentId: seg.sourceComponentId,
-            zMm: totalZMm,
-            pointThree: { x: beamHit.point.x, y: beamHit.point.y, z: beamHit.point.z },
-            powerFactor: typeof seg.powerFactorAtStart === "number" ? seg.powerFactorAtStart : 1.0,
-            polarization: Array.isArray(seg.polarizationAtStart) && seg.polarizationAtStart.length === 4
-              ? (seg.polarizationAtStart as [number, number, number, number])
-              : [1, 0, 0, 0],
-          });
-          // Make sure the panel is visible/focused
-          window.dispatchEvent(new CustomEvent("qmem.openBeamScope"));
-          return;
-        }
-      }
-      // Click hit neither an object nor a beam → deselect any current
-      // object selection (the object-priority pickObject above already
-      // returned early when a hit succeeded, so reaching here means truly
-      // nothing was clicked).
+      // Click missed every object → deselect (no fallback to beam picking
+      // in the main object scene, by design).
       selectObject(null, {
         additive: event.ctrlKey || event.metaKey || event.shiftKey,
       });
@@ -2982,12 +2989,20 @@ export function DigitalTwinViewer({
     const relationGroup = relationGroupRef.current;
     const wrapperCache = objectWrappersRef.current;
 
-    // Beams + relations are cheap line-geometry rebuilds — clear and rebuild
-    // them every time. The asset wrappers in componentGroup are NOT cleared;
-    // the diff loop below decides per-object whether to reuse, reload, or
-    // dispose, so STL / GLB geometry survives across most dep changes.
-    clearGroup(beamGroup);
-    clearGroup(relationGroup);
+    // Beams + relations are cheap line-geometry rebuilds.
+    //
+    // We deliberately DO NOT clear them here at the top of the useEffect any
+    // more (2026-05-11 fix). Previously this ran unconditionally, but the
+    // matching repopulation (`renderRayTraces` / `renderRelations`) is gated
+    // by `if (cancelled) return;` inside the async IIFE — when a useEffect
+    // run gets cancelled (which happens whenever two store updates arrive
+    // close together, e.g. `updateSceneObject` fires a manual `set()` AND
+    // the backend WS broadcast also calls `applyEvent`, giving 2 useEffect
+    // fires for one user click) the beams got cleared but never repopulated,
+    // and the reflected/transmitted segments stayed missing until F5. Now
+    // both groups are cleared + rebuilt atomically inside the async IIFE
+    // after the cancelled check, so a cancelled run leaves the previous
+    // frame's beams visible until the new run paints fresh ones.
 
     const assetById = new Map(sceneData.assets.map((asset) => [asset.id, asset]));
     const componentById = new Map(sceneData.components.map((component) => [component.id, component]));
@@ -3118,6 +3133,39 @@ export function DigitalTwinViewer({
           // asset's own offset; it's safe to call repeatedly.
           const assetObject = wrapper.children.find((c) => c.userData?.isLoadedAsset);
           if (assetObject) applyObjectGeometryOffset(assetObject, effectivePlacement);
+          // Fiber has procedural Bezier geometry that lives on
+          // `SceneObject.properties.fiberNodes` / `.radiusMm` — fields that
+          // aren't part of `canReuse`'s identity check (which only watches
+          // componentRef / assetRef / stateRef). Without an explicit refresh,
+          // changing the spline or jacket radius would update the data store
+          // but the rendered tube + connectors would visually freeze on
+          // their initial pose. Re-apply the tube geometry and connector
+          // transforms when those per-instance refs change.
+          if (component.componentType === "fiber") {
+            const objProps = (placement.properties ?? {}) as {
+              fiberNodes?: FiberNode[]; radiusMm?: number;
+            };
+            const compProps = (component.properties ?? {}) as {
+              fiberNodes?: FiberNode[]; radiusMm?: number;
+            };
+            const nodes =
+              (objProps.fiberNodes && objProps.fiberNodes.length >= 2)
+                ? objProps.fiberNodes
+                : compProps.fiberNodes;
+            const radiusMm =
+              typeof objProps.radiusMm === "number"
+                ? objProps.radiusMm
+                : typeof compProps.radiusMm === "number"
+                  ? compProps.radiusMm
+                  : 1.0;
+            const fiberRefsChanged =
+              cached.fiberNodesRef !== nodes || cached.fiberRadiusMmRef !== radiusMm;
+            if (fiberRefsChanged && nodes && nodes.length >= 2) {
+              refreshFiberWrapperGeometry(wrapper, nodes, radiusMm);
+              cached.fiberNodesRef = nodes;
+              cached.fiberRadiusMmRef = radiusMm;
+            }
+          }
         } else {
           // Cache miss — dispose the stale wrapper (if any) and load fresh
           // geometry. Async; the cancelled flag guards against teardown
@@ -3128,7 +3176,14 @@ export function DigitalTwinViewer({
             disposeObject(cached.wrapper);
             wrapperCache.delete(placement.id);
           }
-          const assetObject = await loadAssetObject(component, asset, deviceState);
+          const assetObject = await loadAssetObject(
+            component,
+            asset,
+            deviceState,
+            // Per-instance fiberNodes / radiusMm live on the SceneObject;
+            // see loadAssetObject signature for the V2 contract.
+            placement.properties as { fiberNodes?: FiberNode[]; radiusMm?: number } | null,
+          );
           if (cancelled) {
             disposeObject(assetObject);
             return;
@@ -3145,11 +3200,36 @@ export function DigitalTwinViewer({
             child.userData.objectId = placement.id;
           });
           componentGroup.add(wrapper);
+          // Seed fiberNodesRef / fiberRadiusMmRef on initial build so the
+          // cache-hit refresh path doesn't rebuild on the first cache hit
+          // when nothing actually changed.
+          const fiberObjProps = (placement.properties ?? {}) as {
+            fiberNodes?: FiberNode[]; radiusMm?: number;
+          };
+          const fiberCompProps = (component.properties ?? {}) as {
+            fiberNodes?: FiberNode[]; radiusMm?: number;
+          };
+          const seedFiberNodes =
+            component.componentType === "fiber"
+              ? ((fiberObjProps.fiberNodes && fiberObjProps.fiberNodes.length >= 2)
+                  ? fiberObjProps.fiberNodes
+                  : fiberCompProps.fiberNodes)
+              : undefined;
+          const seedFiberRadius =
+            component.componentType === "fiber"
+              ? (typeof fiberObjProps.radiusMm === "number"
+                  ? fiberObjProps.radiusMm
+                  : typeof fiberCompProps.radiusMm === "number"
+                    ? fiberCompProps.radiusMm
+                    : 1.0)
+              : undefined;
           wrapperCache.set(placement.id, {
             wrapper,
             componentRef: component,
             assetRef: asset,
             stateRef: deviceState,
+            fiberNodesRef: seedFiberNodes,
+            fiberRadiusMmRef: seedFiberRadius,
           });
         }
 
@@ -3157,6 +3237,16 @@ export function DigitalTwinViewer({
         applyViewerDisplayMode(wrapper, displayMode);
         applyVisibilityFlags(wrapper, visibleInView);
         decorate(wrapper, placement, component);
+        // Request a paint at the moment of the transform itself. The async
+        // IIFE that wraps renderComponents() also fires requestRender at the
+        // end, but that one's gated by `if (cancelled) return;` — if a
+        // follow-up state change cancels this run before the IIFE wraps up
+        // (common when the WS broadcasts an Object + OpticalElement +
+        // anchorBindings bootstrap as three quick updates after a drag-in),
+        // the wrapper still HAS the correct transform but never gets
+        // painted. Firing here means every applyObjectTransform leaves a
+        // pending render for the animate loop, regardless of cancellation.
+        requestRenderRef.current?.();
         void selectedComponentId;
       }
 
@@ -3276,20 +3366,43 @@ export function DigitalTwinViewer({
       }
       for (const segment of traces) {
         const maxP = maxBySource.get(segment.sourceComponentId) ?? 1.0;
-        beamGroup.add(buildTraceLine(segment, maxP));
+        // emitterObjectId stays constant from the original emitter down to
+        // every descendant segment (unlike sourceObjectId which becomes the
+        // last-hit optic on recursive calls). Using it here means a custom
+        // beam colour set on a laser/TA carries through AOM diffraction,
+        // PBS splits, mirror reflections, lens passes, etc.
+        const emitterObj = sceneData.objects.find((o) => o.id === segment.emitterObjectId);
+        const colorOverride = getEmissionVisual(emitterObj, segment.emissionKey).colorHex;
+        beamGroup.add(buildTraceLine(segment, maxP, colorOverride));
       }
     }
 
     void (async () => {
       await renderComponents();
       if (cancelled) return;
+      // Beams + relations are cleared + rebuilt atomically here, inside the
+      // async block after the cancelled check (2026-05-11 fix — see comment
+      // above where the old top-of-effect clearGroup calls used to live).
+      // If this run is cancelled by a quick follow-up store update, the
+      // previous frame's beams stay visible until the new run paints fresh
+      // ones, instead of going blank and never recovering until F5.
+      clearGroup(beamGroup);
+      clearGroup(relationGroup);
       renderRayTraces();
+      renderRelations();
       // Tell the gizmo attach effect "wrappers are fresh — re-attach now"
       // so it picks up the wrapper from THIS build instead of the disposed
       // one from the previous build.
       setComponentsBuildVersion((v) => v + 1);
+      // The on-demand animate() loop only paints when pendingRender or the
+      // camera is moving. Cache-hit transforms (applyObjectTransform on a
+      // reused wrapper) mutate three.js state without flipping that flag,
+      // so an "Align to Beam" / move-without-reload would sit invisible
+      // until the next mouse hover. The no-deps safety-net useEffect runs
+      // synchronously on each React commit but resolves before this async
+      // IIFE completes, so we have to request a render explicitly here.
+      requestRenderRef.current?.();
     })();
-    renderRelations();
 
     return () => {
       // Set cancelled so any in-flight async loadAssetObject aborts before
@@ -3349,13 +3462,25 @@ export function DigitalTwinViewer({
 
     const component = sceneData.components.find((c) => c.id === fiberEditingComponentId);
     if (!component) return;
-    const props = (component.properties ?? {}) as {
-      fiberNodes?: FiberNode[];
-      radiusMm?: number;
+    // Per-instance fiberNodes / radiusMm live on the SceneObject's
+    // properties (V2 layer separation; pre-2026-05-11 the values were
+    // mutated on Component.properties, which incorrectly propagated edits
+    // to all instances of the same fiber type). Prefer per-instance; fall
+    // back to the catalog template for legacy data.
+    const editingObject = sceneData.objects.find((o) => o.componentId === fiberEditingComponentId);
+    const objProps = (editingObject?.properties ?? {}) as {
+      fiberNodes?: FiberNode[]; radiusMm?: number;
     };
+    const compProps = (component.properties ?? {}) as {
+      fiberNodes?: FiberNode[]; radiusMm?: number;
+    };
+    const resolvedNodes =
+      (objProps.fiberNodes && objProps.fiberNodes.length >= 2)
+        ? objProps.fiberNodes
+        : compProps.fiberNodes;
     // Deep clone so live mutations during a drag don't leak into the store
     // until pointer-up explicitly commits.
-    const nodes: FiberNode[] = (props.fiberNodes ?? [
+    const nodes: FiberNode[] = (resolvedNodes ?? [
       { posMm: [0, 0, 50], handleOutMm: [100, 0, 0] },
       { posMm: [300, 0, 50], handleInMm: [-100, 0, 0] },
     ]).map((n) => ({
@@ -3363,7 +3488,9 @@ export function DigitalTwinViewer({
       handleInMm: n.handleInMm ? [n.handleInMm[0], n.handleInMm[1], n.handleInMm[2]] : undefined,
       handleOutMm: n.handleOutMm ? [n.handleOutMm[0], n.handleOutMm[1], n.handleOutMm[2]] : undefined,
     }));
-    const radiusMm = typeof props.radiusMm === "number" ? props.radiusMm : 1.0;
+    const radiusMm =
+      typeof objProps.radiusMm === "number" ? objProps.radiusMm :
+      typeof compProps.radiusMm === "number" ? compProps.radiusMm : 1.0;
 
     const labMmToLocalThree = (xMm: number, yMm: number, zMm: number) =>
       new THREE.Vector3(xMm / 100, zMm / 100, -yMm / 100);
@@ -3906,8 +4033,14 @@ export function DigitalTwinViewer({
       if (!sceneObject) continue;
       const component = sceneData.components.find((c) => c.id === sceneObject.componentId);
       if (!component) continue;
-      const props = (component.properties ?? {}) as { fiberNodes?: FiberNode[] };
-      const nodes = props.fiberNodes;
+      // Prefer per-instance fiberNodes (V2 layer); fall back to component
+      // catalog defaults so legacy un-migrated rows still render markers.
+      const objProps = (sceneObject.properties ?? {}) as { fiberNodes?: FiberNode[] };
+      const compProps = (component.properties ?? {}) as { fiberNodes?: FiberNode[] };
+      const nodes =
+        (objProps.fiberNodes && objProps.fiberNodes.length >= 2)
+          ? objProps.fiberNodes
+          : compProps.fiberNodes;
       if (!nodes || nodes.length < 2) continue;
       if (fiberEditingComponentId === component.id) continue;
 
@@ -4068,18 +4201,33 @@ export function DigitalTwinViewer({
             // your selection still deletes it). Confirms with the user since
             // DELETE /api/objects/{id} is a hard-delete and the row can't be
             // restored without re-creating from scratch.
-            const ids = Array.from(new Set([...selectedObjectIds, ctxMenu.objectId]));
-            const label = ids.length > 1 ? `Delete selected (${ids.length})` : "Delete";
+            //
+            // Locked objects are filtered out — store.deleteObject silently
+            // no-ops on locked, but pre-filtering here lets the confirm
+            // dialog show the actual count and disables the button entirely
+            // when every candidate is locked.
+            const candidateIds = Array.from(new Set([...selectedObjectIds, ctxMenu.objectId]));
+            const objsById = new Map(sceneData.objects.map((o) => [o.id, o]));
+            const deletableIds = candidateIds.filter((id) => !objsById.get(id)?.locked);
+            const lockedCount = candidateIds.length - deletableIds.length;
+            const allLocked = deletableIds.length === 0;
+            const label = allLocked
+              ? `Locked (${candidateIds.length})`
+              : deletableIds.length > 1
+                ? `Delete selected (${deletableIds.length})${lockedCount > 0 ? ` · skip ${lockedCount} locked` : ""}`
+                : "Delete";
             return (
               <button
                 className="context-danger"
+                disabled={allLocked}
                 onClick={() => {
                   setCtxMenu(null);
-                  const msg = ids.length > 1
-                    ? `Permanently delete ${ids.length} objects? This cannot be undone.`
+                  if (allLocked) return;
+                  const msg = deletableIds.length > 1
+                    ? `Permanently delete ${deletableIds.length} objects${lockedCount > 0 ? ` (${lockedCount} locked will be skipped)` : ""}? This cannot be undone.`
                     : `Permanently delete "${ctxObjectName}"? This cannot be undone.`;
                   if (!window.confirm(msg)) return;
-                  void Promise.all(ids.map((id) => deleteSceneObject(id)));
+                  void Promise.all(deletableIds.map((id) => deleteSceneObject(id)));
                 }}
               >
                 {label} <kbd>Del</kbd>

@@ -1,12 +1,10 @@
-import { Sparkles, Trash2 } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import * as THREE from "three";
 import { Component, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { useSceneStore } from "../../store/sceneStore";
 import type { ComponentItem, ElementKind, OpticalElement, SceneObject } from "../../types/digitalTwin";
 import {
-  DEFAULT_KIND_PARAMS,
-  KIND_GROUPS,
   KIND_LABELS,
   componentTypeToOpticalKind,
 } from "../../utils/opticalDefaults";
@@ -39,9 +37,85 @@ import {
 import {
   getEffectiveApertureMm,
   getPerObjectAperture,
+  getRfDirectionBodyLocal,
   setPerObjectAperture,
   type V2Aperture,
 } from "../../utils/v2Bindings";
+import {
+  type EmissionKey,
+  getEmissionVisual,
+  setEmissionVisualPatch,
+} from "../../utils/emissionVisuals";
+import { wavelengthToColor } from "../../three/opticalBeams";
+
+function wavelengthHex(wavelengthNm: number): string {
+  return `#${wavelengthToColor(wavelengthNm).getHexString()}`;
+}
+
+/** Per-emission visualisation row: native colour picker + reset button +
+ *  optional show/hide toggle. Used by both LaserSourceControls (1 row,
+ *  no toggle) and TaperedAmplifierAdjustControls (forward + backward;
+ *  backward includes the toggle so the user can hide the input-side ASE).
+ *  Persists via updateSceneObject so the value lives on the SceneObject's
+ *  per-instance properties.emissionVisuals[key]. */
+function EmissionVisualRow({
+  sceneObject,
+  emissionKey,
+  label,
+  fallbackColorHex,
+  showVisibilityToggle,
+}: {
+  sceneObject: SceneObject;
+  emissionKey: EmissionKey;
+  label: string;
+  fallbackColorHex: string;
+  showVisibilityToggle: boolean;
+}) {
+  const updateSceneObject = useSceneStore((s) => s.updateSceneObject);
+  const visual = getEmissionVisual(sceneObject, emissionKey);
+  const hasOverride = visual.colorHex !== null;
+  const displayHex = visual.colorHex ?? fallbackColorHex;
+
+  const persist = (patch: Partial<{ colorHex: string | null; visible: boolean }>) => {
+    void updateSceneObject(sceneObject.id, {
+      properties: setEmissionVisualPatch(sceneObject, emissionKey, patch),
+    });
+  };
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+      <span style={{ fontSize: 11, minWidth: 70 }}>{label}</span>
+      <input
+        type="color"
+        value={displayHex}
+        onChange={(e) => persist({ colorHex: e.target.value })}
+        style={{ width: 32, height: 22, padding: 0, border: "1px solid rgba(255,255,255,0.2)", borderRadius: 3, cursor: "pointer" }}
+        title="Beam colour for this emission"
+      />
+      <span style={{ fontSize: 10, opacity: 0.7, fontFamily: "ui-monospace, SFMono-Regular, monospace" }}>{displayHex}</span>
+      {hasOverride ? (
+        <button
+          type="button"
+          onClick={() => persist({ colorHex: null })}
+          style={{ fontSize: 10, padding: "1px 6px" }}
+          title="Reset to wavelength-derived colour"
+        >Reset</button>
+      ) : (
+        <span style={{ fontSize: 10, opacity: 0.5 }}>(λ default)</span>
+      )}
+      {showVisibilityToggle && (
+        <label style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: "auto", fontSize: 10 }}>
+          <input
+            type="checkbox"
+            checked={visual.visible}
+            onChange={(e) => persist({ visible: e.target.checked })}
+          />
+          <span>Show</span>
+        </label>
+      )}
+    </div>
+  );
+}
 
 type Props = {
   component: ComponentItem;
@@ -57,8 +131,6 @@ function findElementForObject(elements: OpticalElement[], objectId: string): Opt
 
 export function OpticalElementPanel({ component, sceneObject }: Props) {
   const opticalElements = useSceneStore((state) => state.scene.opticalElements);
-  const upsertOpticalElement = useSceneStore((state) => state.upsertOpticalElement);
-  const deleteOpticalElement = useSceneStore((state) => state.deleteOpticalElement);
   const autoRegisterOptical = useSceneStore((state) => state.autoRegisterOptical);
 
   const existing = sceneObject
@@ -66,59 +138,8 @@ export function OpticalElementPanel({ component, sceneObject }: Props) {
     : undefined;
   const mappedKind = componentTypeToOpticalKind(component.componentType);
 
-  const [kind, setKind] = useState<ElementKind>((existing?.elementKind as ElementKind) ?? "laser_source");
-  const [waveLow, setWaveLow] = useState<number>(existing?.wavelengthRangeNm?.[0] ?? 400);
-  const [waveHigh, setWaveHigh] = useState<number>(existing?.wavelengthRangeNm?.[1] ?? 1100);
   const [error, setError] = useState<string>("");
   const [busy, setBusy] = useState<boolean>(false);
-
-  // Re-sync when the underlying element changes (e.g., websocket update)
-  useEffect(() => {
-    if (existing) {
-      setKind(existing.elementKind as ElementKind);
-      setWaveLow(existing.wavelengthRangeNm?.[0] ?? 400);
-      setWaveHigh(existing.wavelengthRangeNm?.[1] ?? 1100);
-    }
-  }, [existing?.objectId, existing?.updatedAt]);
-
-  const ports = (existing?.inputPorts ?? []).concat(existing?.outputPorts ?? []);
-
-  const onKindChange = (next: ElementKind) => {
-    setKind(next);
-    setError("");
-  };
-
-  // Update / Create no longer takes a JSON kindParams payload — the
-  // structured per-kind editors below (LaserSourceControls,
-  // MirrorAdjustControls, WaveplateAdjustControls, AomAdjustControls,
-  // TaperedAmplifierAdjustControls) own per-field persistence. The
-  // top-level button just saves wavelength range + kind, preserving
-  // existing kindParams (or seeding them from DEFAULT_KIND_PARAMS on
-  // first create).
-  const onSave = async () => {
-    setError("");
-    if (waveLow <= 0 || waveHigh <= waveLow) {
-      setError("Invalid wavelength range (need 0 < low < high).");
-      return;
-    }
-    if (!sceneObject) {
-      setError("Select a scene object instance to attach optical params to.");
-      return;
-    }
-    setBusy(true);
-    try {
-      await upsertOpticalElement({
-        objectId: sceneObject.id,
-        elementKind: kind,
-        wavelengthRangeNm: [waveLow, waveHigh],
-        kindParams: existing?.kindParams ?? DEFAULT_KIND_PARAMS[kind] ?? {},
-      });
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const onAutoRegister = async () => {
     if (!mappedKind || existing) return;
@@ -129,19 +150,6 @@ export function OpticalElementPanel({ component, sceneObject }: Props) {
       if (!created) {
         setError("This component type has no optical mapping.");
       }
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const onDelete = async () => {
-    if (!existing) return;
-    if (!window.confirm("Delete this optical element record?")) return;
-    setBusy(true);
-    try {
-      await deleteOpticalElement(component.id);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -178,57 +186,7 @@ export function OpticalElementPanel({ component, sceneObject }: Props) {
         </div>
       )}
 
-      <div className="optical-form">
-        <label className="optical-row">
-          <span>Element kind</span>
-          <select value={kind} onChange={(e) => onKindChange(e.target.value as ElementKind)}>
-            {KIND_GROUPS.map((group) => (
-              <optgroup key={group.label} label={group.label}>
-                {group.kinds.map((k) => (
-                  <option key={k} value={k}>{KIND_LABELS[k]}</option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-        </label>
-
-        <div className="optical-row optical-wavelength">
-          <span>Wavelength range (nm)</span>
-          <div className="number-pair">
-            <input
-              type="number"
-              step="any"
-              value={waveLow}
-              onChange={(e) => setWaveLow(Number(e.target.value))}
-            />
-            <span>—</span>
-            <input
-              type="number"
-              step="any"
-              value={waveHigh}
-              onChange={(e) => setWaveHigh(Number(e.target.value))}
-            />
-          </div>
-        </div>
-
-        {/* Kind params JSON editor removed — structured per-kind editors
-            below (LaserSourceControls, MirrorAdjustControls,
-            WaveplateAdjustControls, AomAdjustControls,
-            TaperedAmplifierAdjustControls) own field-level edits. */}
-
-        {error ? <div className="optical-error">{error}</div> : null}
-
-        <div className="optical-actions">
-          <button type="button" className="primary" onClick={onSave} disabled={busy}>
-            {existing ? "Update" : "Create"}
-          </button>
-          {existing ? (
-            <button type="button" className="danger" onClick={onDelete} disabled={busy}>
-              <Trash2 size={14} /> Delete
-            </button>
-          ) : null}
-        </div>
-      </div>
+      {error ? <div className="optical-error">{error}</div> : null}
 
       {existing && sceneObject && (
         <AdjustErrorBoundary key={sceneObject.id}>
@@ -309,6 +267,10 @@ function AlignToBeamSection({
   const isMirror = elementKind === "mirror" || elementKind === "dichroic_mirror";
   const isEmitter = elementKind === "laser_source" || elementKind === "tapered_amplifier";
   const isWaveplate = elementKind === "waveplate";
+  const isBeamSplitter = elementKind === "beam_splitter";
+  const isLens = elementKind === "lens_biconvex"
+    || elementKind === "lens_plano_convex"
+    || elementKind === "lens_cylindrical";
 
   const onAlign = async () => {
     if (!candidate) return;
@@ -372,6 +334,17 @@ function AlignToBeamSection({
               axis to set the fast-axis angle (Jones-matrix theta). */}
           {isWaveplate && (
             <WaveplateAdjustControls sceneObject={sceneObject} element={element} />
+          )}
+          {/* Beam-splitter / PBS-specific: split ratio, polarising flag,
+              extinction ratio, and overall transmission. */}
+          {isBeamSplitter && (
+            <BeamSplitterControls sceneObject={sceneObject} element={element} />
+          )}
+          {/* Lens-specific (biconvex / plano-convex / cylindrical):
+              focal length, NA or cylindrical axis, transmission,
+              material, GVD. */}
+          {isLens && (
+            <LensControls sceneObject={sceneObject} element={element} />
           )}
           {/* V2: per-object aperture override (asset apertureMm becomes a
               default seed; the editable value lives on the SceneObject). */}
@@ -898,50 +871,166 @@ function LaserSourceControls({
             <option value="multimode">multimode</option>
           </select>
         </label>
-        {tm.kind === "TEM_mn" && (
-          <div style={grid2}>
-            <NumberCell
-              label="m"
-              value={tm.indicesM ?? 0}
-              step={1}
-              onCommit={(v) =>
-                Number.isInteger(v) && v >= 0 &&
-                void persist({ transverseMode: { ...tm, indicesM: v } })
-              }
-            />
-            <NumberCell
-              label="n"
-              value={tm.indicesN ?? 0}
-              step={1}
-              onCommit={(v) =>
-                Number.isInteger(v) && v >= 0 &&
-                void persist({ transverseMode: { ...tm, indicesN: v } })
-              }
-            />
-          </div>
+        {(tm.kind === "TEM_mn" || tm.kind === "TEM00") && (
+          <>
+            <div style={grid2}>
+              <NumberCell
+                label="m"
+                value={tm.indicesM ?? 0}
+                step={1}
+                onCommit={(v) => {
+                  if (!Number.isInteger(v) || v < 0) return;
+                  // Any non-zero index promotes Family to TEM_mn so the
+                  // chosen (m, n) actually drives the HG mode rather than
+                  // being silently ignored under TEM00.
+                  const nextN = tm.indicesN ?? 0;
+                  const promote = v > 0 || nextN > 0;
+                  void persist({
+                    transverseMode: {
+                      ...tm,
+                      kind: promote ? "TEM_mn" : "TEM00",
+                      indicesM: v,
+                      indicesN: nextN,
+                    },
+                  });
+                }}
+              />
+              <NumberCell
+                label="n"
+                value={tm.indicesN ?? 0}
+                step={1}
+                onCommit={(v) => {
+                  if (!Number.isInteger(v) || v < 0) return;
+                  const nextM = tm.indicesM ?? 0;
+                  const promote = v > 0 || nextM > 0;
+                  void persist({
+                    transverseMode: {
+                      ...tm,
+                      kind: promote ? "TEM_mn" : "TEM00",
+                      indicesM: nextM,
+                      indicesN: v,
+                    },
+                  });
+                }}
+              />
+            </div>
+            {/* HG mode reference card — formula at the waist plane (z=0) plus
+                first few Hermite polynomials so the user can sanity-check
+                what (m, n) produce. Pure markup, no math library; the
+                non-ASCII chars (₀ ₓ ᵧ ξ √ · ² etc.) live in the bundle as
+                UTF-8 strings. */}
+            <div
+              style={{
+                marginTop: 6,
+                padding: "6px 8px",
+                background: "rgba(56, 189, 248, 0.04)",
+                borderLeft: "1px dashed rgba(56, 189, 248, 0.4)",
+                fontSize: 10.5,
+                lineHeight: 1.55,
+                opacity: 0.85,
+              }}
+            >
+              <div style={{ fontWeight: 600, color: "#38bdf8", marginBottom: 3 }}>
+                Hermite-Gauss reference
+              </div>
+              <div style={{ marginBottom: 4 }}>
+                Field at the waist (<i>z</i> = 0):
+              </div>
+              <div style={{ fontFamily: "ui-monospace, SFMono-Regular, monospace", marginBottom: 4 }}>
+                <i>E</i><sub>m,n</sub>(<i>x</i>,<i>y</i>,0) = <i>E</i>₀ · <i>H</i><sub>m</sub>(√2 <i>x</i>/<i>w</i><sub>0x</sub>) · <i>H</i><sub>n</sub>(√2 <i>y</i>/<i>w</i><sub>0y</sub>) · exp(−<i>x</i>²/<i>w</i><sub>0x</sub>² − <i>y</i>²/<i>w</i><sub>0y</sub>²)
+              </div>
+              <div style={{ marginBottom: 3 }}>First few Hermite polynomials:</div>
+              <div style={{ fontFamily: "ui-monospace, SFMono-Regular, monospace", marginBottom: 3 }}>
+                <div><i>H</i>₀(ξ) = 1 &nbsp;<span style={{ opacity: 0.6 }}>(TEM₀₀, pure Gaussian)</span></div>
+                <div><i>H</i>₁(ξ) = 2ξ &nbsp;<span style={{ opacity: 0.6 }}>(2 lobes)</span></div>
+                <div><i>H</i>₂(ξ) = 4ξ² − 2 &nbsp;<span style={{ opacity: 0.6 }}>(3 lobes)</span></div>
+                <div><i>H</i><sub>n+1</sub>(ξ) = 2ξ <i>H</i><sub>n</sub>(ξ) − 2<i>n</i> <i>H</i><sub>n−1</sub>(ξ)</div>
+              </div>
+              <div style={{ opacity: 0.7 }}>
+                <i>w</i><sub>0x</sub>, <i>w</i><sub>0y</sub> are the X / Y waist
+                values from the Spatial mode section above.
+              </div>
+            </div>
+          </>
         )}
         {tm.kind === "LG_pl" && (
-          <div style={grid2}>
-            <NumberCell
-              label="p"
-              value={tm.indicesP ?? 0}
-              step={1}
-              onCommit={(v) =>
-                Number.isInteger(v) && v >= 0 &&
-                void persist({ transverseMode: { ...tm, indicesP: v } })
-              }
-            />
-            <NumberCell
-              label="l"
-              value={tm.indicesL ?? 0}
-              step={1}
-              onCommit={(v) =>
-                Number.isInteger(v) &&
-                void persist({ transverseMode: { ...tm, indicesL: v } })
-              }
-            />
-          </div>
+          <>
+            <div style={grid2}>
+              <NumberCell
+                label="p (radial)"
+                value={tm.indicesP ?? 0}
+                step={1}
+                onCommit={(v) =>
+                  Number.isInteger(v) && v >= 0 &&
+                  void persist({ transverseMode: { ...tm, indicesP: v } })
+                }
+              />
+              <NumberCell
+                label="ℓ (azimuthal)"
+                value={tm.indicesL ?? 0}
+                step={1}
+                onCommit={(v) =>
+                  Number.isInteger(v) &&
+                  void persist({ transverseMode: { ...tm, indicesL: v } })
+                }
+              />
+            </div>
+            {/* LG mode reference card — formula at the waist plane (z=0)
+                in cylindrical coords plus first few associated Laguerre
+                polynomials. Pure markup, no math library. */}
+            <div
+              style={{
+                marginTop: 6,
+                padding: "6px 8px",
+                background: "rgba(56, 189, 248, 0.04)",
+                borderLeft: "1px dashed rgba(56, 189, 248, 0.4)",
+                fontSize: 10.5,
+                lineHeight: 1.55,
+                opacity: 0.85,
+              }}
+            >
+              <div style={{ fontWeight: 600, color: "#38bdf8", marginBottom: 3 }}>
+                Laguerre-Gauss reference
+              </div>
+              <div style={{ marginBottom: 4 }}>
+                Field at the waist (<i>z</i> = 0) in cylindrical (<i>r</i>, φ):
+              </div>
+              <div style={{ fontFamily: "ui-monospace, SFMono-Regular, monospace", marginBottom: 4, lineHeight: 1.45 }}>
+                <i>E</i><sub>p,ℓ</sub>(<i>r</i>,φ,0) = <i>E</i>₀ · √(2 <i>p</i>! / [π (<i>p</i>+|ℓ|)!]) · (1/<i>w</i>₀) · (√2 <i>r</i>/<i>w</i>₀)<sup>|ℓ|</sup> · <i>L</i><sub><i>p</i></sub><sup>|ℓ|</sup>(2<i>r</i>²/<i>w</i>₀²) · exp(−<i>r</i>²/<i>w</i>₀²) · <i>e</i><sup>iℓφ</sup>
+              </div>
+              <div style={{ marginBottom: 3 }}>Indices:</div>
+              <div style={{ marginLeft: 8, marginBottom: 3 }}>
+                <div>· <strong>p</strong> (radial, ≥ 0): number of bright rings = p + 1</div>
+                <div>· <strong>ℓ</strong> (azimuthal, topological charge): vortex size + helical phase rate. ℓ ≠ 0 ⇒ dark on-axis singularity</div>
+              </div>
+              <div style={{ marginBottom: 3 }}>First few associated Laguerre polynomials:</div>
+              <div style={{ fontFamily: "ui-monospace, SFMono-Regular, monospace", marginBottom: 3 }}>
+                <div><i>L</i><sub>0</sub><sup>α</sup>(<i>x</i>) = 1 &nbsp;<span style={{ opacity: 0.6 }}>(LG p=0: single ring/spot)</span></div>
+                <div><i>L</i><sub>1</sub><sup>α</sup>(<i>x</i>) = 1 + α − <i>x</i></div>
+                <div><i>L</i><sub>2</sub><sup>α</sup>(<i>x</i>) = ½(<i>x</i>² − 2(α+2)<i>x</i> + (α+1)(α+2))</div>
+                <div>(<i>p</i>+1)<i>L</i><sub><i>p</i>+1</sub><sup>α</sup>(<i>x</i>) = (2<i>p</i>+1+α−<i>x</i>)<i>L</i><sub><i>p</i></sub><sup>α</sup>(<i>x</i>) − (<i>p</i>+α)<i>L</i><sub><i>p</i>−1</sub><sup>α</sup>(<i>x</i>)</div>
+              </div>
+              <div style={{ opacity: 0.7 }}>
+                <i>w</i>₀ uses the avg of <i>w</i><sub>0x</sub>, <i>w</i><sub>0y</sub>;
+                LG modes are circularly symmetric. <i>e</i><sup>iℓφ</sup> is
+                a phase factor — only visible in the Wavefront phase plot,
+                not the intensity.
+              </div>
+            </div>
+          </>
         )}
+      </div>
+
+      {/* Visualization (scene-only — physics unaffected) */}
+      <div style={sectionStyle}>
+        <div style={titleStyle}>Visualization</div>
+        <EmissionVisualRow
+          sceneObject={sceneObject}
+          emissionKey="main"
+          label="Beam color"
+          fallbackColorHex={wavelengthHex(wavelengthNm)}
+          showVisibilityToggle={false}
+        />
       </div>
 
       <p className="snap-to-beam-empty" style={{ marginTop: 8, fontSize: 10, opacity: 0.65 }}>
@@ -1048,34 +1137,58 @@ function WaveplateAdjustControls({
     () => findSnapToBeam(sceneObject.id, scene),
     [scene, sceneObject.id],
   );
-  const params = (element.kindParams ?? {}) as {
+
+  type WaveplateKindParams = {
     fastAxisDegBeamLocal?: number;
-    fastAxisDeg?: number;  // Phase 5 legacy alias
+    fastAxisDeg?: number;  // V2 Phase 5 legacy alias kept for read fallback
     retardanceLambda?: number;
+    transmission?: number;
+    groupDelayPs?: number;
+    gvdFs2?: number;
   };
+
+  const params = (element.kindParams ?? {}) as WaveplateKindParams;
+
+  // ---- field readers (with V2 default fallbacks) --------------------------
   const fastAxisDeg = typeof params.fastAxisDegBeamLocal === "number"
     ? params.fastAxisDegBeamLocal
     : typeof params.fastAxisDeg === "number" ? params.fastAxisDeg : 0;
   const retardance = params.retardanceLambda ?? 0.5;
+  const transmission = params.transmission ?? 0.99;
+  const groupDelayPs = params.groupDelayPs ?? 0;
+  const gvdFs2 = params.gvdFs2 ?? 0;
 
-  // Local draft so the user can type without the input losing focus on every
-  // keystroke; commit on blur or Enter.
-  const [draft, setDraft] = useState<string>(fastAxisDeg.toFixed(1));
-  useEffect(() => {
-    setDraft(fastAxisDeg.toFixed(1));
-  }, [fastAxisDeg]);
+  const platePreset: "HWP" | "QWP" | "custom" =
+    Math.abs(retardance - 0.5) < 1e-6 ? "HWP"
+    : Math.abs(retardance - 0.25) < 1e-6 ? "QWP"
+    : "custom";
 
-  const commit = async (raw: string) => {
-    const next = Number(raw);
+  // ---- writer: shallow-merge a patch into kindParams + persist ------------
+  // Drops the legacy `fastAxisDeg` alias on every save so the row converges
+  // to the canonical V2 shape.
+  const persist = async (patch: Partial<WaveplateKindParams>) => {
+    const { fastAxisDeg: _legacy, ...rest } = params;
+    await upsertOpticalElement({
+      objectId: sceneObject.id,
+      elementKind: element.elementKind,
+      kindParams: { ...rest, ...patch },
+      inputPorts: element.inputPorts,
+      outputPorts: element.outputPorts,
+    });
+  };
+
+  // Fast-axis rotation commit — keep the quaternion-around-beam math from
+  // the original control; it composes Δθ around `candidate.axisDirection`
+  // into the SceneObject Euler so the 3D mesh tracks the user's typed
+  // angle. If the object isn't snap-aligned, kindParams still update so
+  // the Jones simulation sees the new angle.
+  const commitFastAxis = async (next: number) => {
     if (!Number.isFinite(next)) return;
     const delta = next - fastAxisDeg;
     if (Math.abs(delta) < 1e-6) return;
 
     const updates: Partial<SceneObject> = {};
     if (candidate?.axisDirection) {
-      // Compose new orientation = R_axis(Δ) ∘ current. Use the same Euler
-      // convention as transformUtils.applyObjectTransform: the renderer sets
-      // three's Euler (rxDeg, rzDeg, -ryDeg) with order "YXZ".
       const dir = candidate.axisDirection;
       const beamAxisThree = labDirToThree(dir).normalize();
       const deltaQuat = new THREE.Quaternion().setFromAxisAngle(
@@ -1095,56 +1208,519 @@ function WaveplateAdjustControls({
       updates.rzDeg = THREE.MathUtils.radToDeg(newEuler.y);
       updates.ryDeg = -THREE.MathUtils.radToDeg(newEuler.z);
     }
-    // Always update kindParams.fastAxisDeg even if no beam axis is found —
-    // the Jones matrix simulation still picks up the new angle.
     await Promise.all([
       Object.keys(updates).length > 0
         ? updateSceneObject(sceneObject.id, updates)
         : Promise.resolve(),
-      upsertOpticalElement({
-        objectId: sceneObject.id,
-        elementKind: element.elementKind,
-        // Phase 5: write the new field name; drop the legacy alias so
-        // the row converges to the canonical shape on next save.
-        kindParams: (() => {
-          const { fastAxisDeg: _legacy, ...rest } = params;
-          return { ...rest, fastAxisDegBeamLocal: next };
-        })(),
-        inputPorts: element.inputPorts,
-        outputPorts: element.outputPorts,
-      }),
+      persist({ fastAxisDegBeamLocal: next }),
     ]);
   };
 
-  return (
-    <div className="mirror-adjust">
-      <label className="mirror-adjust-field">
-        <span>Fast axis (° clockwise around beam)</span>
+  // Numeric input cell that commits on blur / Enter (uncontrolled-ish).
+  const NumberCell = ({
+    label,
+    value,
+    step = 0.1,
+    onCommit,
+    suffix,
+    style,
+  }: {
+    label: string;
+    value: number;
+    step?: number;
+    onCommit: (v: number) => void;
+    suffix?: string;
+    style?: React.CSSProperties;
+  }) => {
+    const [draft, setDraft] = useState(value.toString());
+    useEffect(() => setDraft(value.toString()), [value]);
+    const commit = (raw: string) => {
+      const v = Number(raw);
+      if (!Number.isFinite(v)) return;
+      onCommit(v);
+    };
+    return (
+      <label className="component-editor-coord" style={style}>
+        <span style={{ fontSize: 11 }}>{label}{suffix ? ` (${suffix})` : ""}</span>
         <input
           type="number"
-          step={1}
+          step={step}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          onBlur={(e) => void commit(e.target.value)}
+          onBlur={(e) => commit(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
-              void commit((e.target as HTMLInputElement).value);
+              commit((e.target as HTMLInputElement).value);
             }
           }}
         />
       </label>
-      <p className="mirror-adjust-hint">
-        λ/{retardance === 0.5 ? "2" : retardance === 0.25 ? "4" : `(${retardance})`} plate.
-        {retardance === 0.5
-          ? " Linear polarisation rotates by 2× this angle."
-          : retardance === 0.25
-          ? " Linear ↔ circular conversion at ±45°."
-          : ""}
-        {!candidate
-          ? " ⚠ Snap-align to beam first so the rotation stays around the optical axis."
-          : ""}
-      </p>
+    );
+  };
+
+  // ---- handlers -----------------------------------------------------------
+  const setPlatePreset = (next: "HWP" | "QWP" | "custom") => {
+    if (next === "HWP") void persist({ retardanceLambda: 0.5 });
+    else if (next === "QWP") void persist({ retardanceLambda: 0.25 });
+    // "custom" leaves the existing retardance value unchanged so the user
+    // can type a new one in the input below.
+  };
+
+  // ---- shared section style (mirrors LaserSourceControls) -----------------
+  const sectionStyle: React.CSSProperties = {
+    marginTop: 8,
+    padding: "6px 8px",
+    background: "rgba(56, 189, 248, 0.06)",
+    borderLeft: "2px solid #38bdf8",
+    fontSize: 11,
+  };
+  const titleStyle: React.CSSProperties = { color: "#38bdf8", fontWeight: 600, marginBottom: 6 };
+  const grid2: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 };
+
+  return (
+    <div className="snap-to-beam">
+      {/* Plate type */}
+      <div style={sectionStyle}>
+        <div style={titleStyle}>Plate type</div>
+        <label className="component-editor-coord" style={{ marginBottom: 6 }}>
+          <span style={{ fontSize: 11 }}>Preset</span>
+          <select
+            value={platePreset}
+            onChange={(e) => setPlatePreset(e.target.value as "HWP" | "QWP" | "custom")}
+          >
+            <option value="HWP">HWP — λ/2 (linear rotates by 2×θ)</option>
+            <option value="QWP">QWP — λ/4 (linear ↔ circular at ±45°)</option>
+            <option value="custom">custom retardance</option>
+          </select>
+        </label>
+        {platePreset === "custom" && (
+          <NumberCell
+            label="Retardance"
+            suffix="λ"
+            value={retardance}
+            step={0.01}
+            onCommit={(v) => v > 0 && void persist({ retardanceLambda: v })}
+          />
+        )}
+      </div>
+
+      {/* Fast axis orientation around beam */}
+      <div style={sectionStyle}>
+        <div style={titleStyle}>Fast axis</div>
+        <NumberCell
+          label="Angle around beam"
+          suffix="° CW"
+          value={fastAxisDeg}
+          step={1}
+          onCommit={(v) => void commitFastAxis(v)}
+        />
+        {!candidate ? (
+          <div style={{ opacity: 0.7, marginTop: 4, fontSize: 10 }}>
+            ⚠ Snap-align to beam first so the rotation stays around the optical axis.
+          </div>
+        ) : (
+          <div style={{ opacity: 0.6, marginTop: 4, fontSize: 10 }}>
+            Rotation composes around the local beam axis; the 3D mesh follows.
+          </div>
+        )}
+      </div>
+
+      {/* Throughput */}
+      <div style={sectionStyle}>
+        <div style={titleStyle}>Throughput</div>
+        <NumberCell
+          label="Transmission"
+          value={transmission}
+          step={0.01}
+          onCommit={(v) => v >= 0 && v <= 1 && void persist({ transmission: v })}
+        />
+      </div>
+
+      {/* Dispersion (advanced) */}
+      <div style={sectionStyle}>
+        <div style={titleStyle}>Dispersion</div>
+        <div style={grid2}>
+          <NumberCell
+            label="Group delay"
+            suffix="ps"
+            value={groupDelayPs}
+            step={0.01}
+            onCommit={(v) => void persist({ groupDelayPs: v })}
+          />
+          <NumberCell
+            label="GVD"
+            suffix="fs²"
+            value={gvdFs2}
+            step={1}
+            onCommit={(v) => void persist({ gvdFs2: v })}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Beam-splitter / PBS controls. Mirrors the LaserSourceControls and
+ *  WaveplateAdjustControls layout: section blocks with field-level commits
+ *  to kindParams via upsertOpticalElement. Geometry (coating normal, PBS
+ *  transmission axis) lives on V2 anchor bindings — these controls only
+ *  cover the transfer-physics knobs (split ratio, polarising flag,
+ *  extinction ratio, overall transmission). */
+function BeamSplitterControls({
+  sceneObject,
+  element,
+}: {
+  sceneObject: SceneObject;
+  element: OpticalElement;
+}) {
+  const upsertOpticalElement = useSceneStore((state) => state.upsertOpticalElement);
+
+  type BeamSplitterKindParams = {
+    splitRatioTransmitted?: number;
+    polarizing?: boolean;
+    extinctionRatioDb?: number;
+    transmission?: number;
+  };
+
+  const params = (element.kindParams ?? {}) as BeamSplitterKindParams;
+
+  const splitT = params.splitRatioTransmitted ?? 0.5;
+  const polarizing = params.polarizing ?? false;
+  const extinctionDb = params.extinctionRatioDb ?? 30.0;
+  const transmission = params.transmission ?? 0.99;
+
+  const persist = async (patch: Partial<BeamSplitterKindParams>) => {
+    await upsertOpticalElement({
+      objectId: sceneObject.id,
+      elementKind: element.elementKind,
+      kindParams: { ...params, ...patch },
+      inputPorts: element.inputPorts,
+      outputPorts: element.outputPorts,
+    });
+  };
+
+  // Numeric input that commits on blur / Enter.
+  const NumberCell = ({
+    label,
+    value,
+    step = 0.01,
+    onCommit,
+    suffix,
+    style,
+  }: {
+    label: string;
+    value: number;
+    step?: number;
+    onCommit: (v: number) => void;
+    suffix?: string;
+    style?: React.CSSProperties;
+  }) => {
+    const [draft, setDraft] = useState(value.toString());
+    useEffect(() => setDraft(value.toString()), [value]);
+    const commit = (raw: string) => {
+      const v = Number(raw);
+      if (!Number.isFinite(v)) return;
+      onCommit(v);
+    };
+    return (
+      <label className="component-editor-coord" style={style}>
+        <span style={{ fontSize: 11 }}>{label}{suffix ? ` (${suffix})` : ""}</span>
+        <input
+          type="number"
+          step={step}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={(e) => commit(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit((e.target as HTMLInputElement).value);
+            }
+          }}
+        />
+      </label>
+    );
+  };
+
+  const sectionStyle: React.CSSProperties = {
+    marginTop: 8,
+    padding: "6px 8px",
+    background: "rgba(56, 189, 248, 0.06)",
+    borderLeft: "2px solid #38bdf8",
+    fontSize: 11,
+  };
+  const titleStyle: React.CSSProperties = { color: "#38bdf8", fontWeight: 600, marginBottom: 6 };
+  const grid2: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 };
+
+  const reflected = Math.max(0, Math.min(1, 1 - splitT));
+
+  return (
+    <div className="snap-to-beam">
+      {/* Splitter type */}
+      <div style={sectionStyle}>
+        <div style={titleStyle}>Splitter type</div>
+        <label className="component-editor-coord" style={{ marginBottom: 6 }}>
+          <span style={{ fontSize: 11 }}>Mode</span>
+          <select
+            value={polarizing ? "PBS" : "BS"}
+            onChange={(e) => void persist({ polarizing: e.target.value === "PBS" })}
+          >
+            <option value="BS">Non-polarising (BS) — split by amplitude</option>
+            <option value="PBS">Polarising (PBS) — split by polarisation</option>
+          </select>
+        </label>
+        <div style={{ opacity: 0.6, fontSize: 10 }}>
+          {polarizing
+            ? "Transmits p, reflects s (per V2 polarizationReference binding)."
+            : "Splits both polarisations by the ratio below."}
+        </div>
+      </div>
+
+      {/* Split ratio — non-polarising only. For PBS the split is dictated
+          by the input polarisation (p transmits, s reflects), so the
+          amplitude-ratio knob is hidden. */}
+      {!polarizing && (
+        <div style={sectionStyle}>
+          <div style={titleStyle}>Split ratio</div>
+          <div style={grid2}>
+            <NumberCell
+              label="Transmitted"
+              value={splitT}
+              step={0.01}
+              onCommit={(v) => v >= 0 && v <= 1 && void persist({ splitRatioTransmitted: v })}
+            />
+            <label className="component-editor-coord">
+              <span style={{ fontSize: 11 }}>Reflected (derived)</span>
+              <input type="number" value={reflected.toFixed(3)} disabled readOnly />
+            </label>
+          </div>
+          <div style={{ opacity: 0.6, marginTop: 4, fontSize: 10 }}>
+            0 = full reflect · 0.5 = 50/50 · 1 = full transmit. Reflected is auto = 1 − T.
+          </div>
+        </div>
+      )}
+
+      {/* Polarising-only: extinction ratio */}
+      {polarizing && (
+        <div style={sectionStyle}>
+          <div style={titleStyle}>Polarising extinction</div>
+          <NumberCell
+            label="Extinction ratio"
+            suffix="dB"
+            value={extinctionDb}
+            step={1}
+            onCommit={(v) => v >= 0 && void persist({ extinctionRatioDb: v })}
+          />
+          <div style={{ opacity: 0.6, marginTop: 4, fontSize: 10 }}>
+            Power leakage of the rejected polarisation: 10^(−ER/10). 30 dB = 0.001.
+          </div>
+        </div>
+      )}
+
+      {/* Throughput */}
+      <div style={sectionStyle}>
+        <div style={titleStyle}>Throughput</div>
+        <NumberCell
+          label="Transmission"
+          value={transmission}
+          step={0.01}
+          onCommit={(v) => v >= 0 && v <= 1 && void persist({ transmission: v })}
+        />
+        <div style={{ opacity: 0.6, marginTop: 4, fontSize: 10 }}>
+          Overall efficiency multiplier on top of the split ratio (coating losses, AR, etc.).
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Lens controls — handles all 3 lens kinds (biconvex / plano-convex /
+ *  cylindrical). Spherical lenses share `LensSphericalParams` (focal_mm,
+ *  numerical_aperture, transmission, material, gvd_fs2); cylindrical
+ *  lenses use `LensCylindricalParams` which swaps `numerical_aperture`
+ *  for `cylindrical_axis` ("x" or "y"). The two are merged into one UI
+ *  here, with the kind-specific field rendered conditionally. The
+ *  per-object aperture (`clear_aperture_mm`) lives on the SceneObject
+ *  (PerObjectApertureEditor) per V2 §3, so it is intentionally not
+ *  surfaced here. */
+function LensControls({
+  sceneObject,
+  element,
+}: {
+  sceneObject: SceneObject;
+  element: OpticalElement;
+}) {
+  const upsertOpticalElement = useSceneStore((state) => state.upsertOpticalElement);
+
+  type LensKindParams = {
+    focalMm?: number;
+    numericalAperture?: number | null;
+    cylindricalAxis?: "x" | "y";
+    transmission?: number;
+    gvdFs2?: number;
+    material?: string | null;
+  };
+
+  const params = (element.kindParams ?? {}) as LensKindParams;
+  const isCylindrical = element.elementKind === "lens_cylindrical";
+  const isPlanoConvex = element.elementKind === "lens_plano_convex";
+
+  const focalMm = params.focalMm ?? 100;
+  const na = typeof params.numericalAperture === "number" ? params.numericalAperture : 0.1;
+  const cylAxis: "x" | "y" = params.cylindricalAxis === "y" ? "y" : "x";
+  const transmission = params.transmission ?? 0.99;
+  const gvdFs2 = params.gvdFs2 ?? 0;
+  const material = params.material ?? "";
+
+  const persist = async (patch: Partial<LensKindParams>) => {
+    await upsertOpticalElement({
+      objectId: sceneObject.id,
+      elementKind: element.elementKind,
+      kindParams: { ...params, ...patch },
+      inputPorts: element.inputPorts,
+      outputPorts: element.outputPorts,
+    });
+  };
+
+  // Numeric input that commits on blur / Enter.
+  const NumberCell = ({
+    label,
+    value,
+    step = 0.1,
+    onCommit,
+    suffix,
+    style,
+  }: {
+    label: string;
+    value: number;
+    step?: number;
+    onCommit: (v: number) => void;
+    suffix?: string;
+    style?: React.CSSProperties;
+  }) => {
+    const [draft, setDraft] = useState(value.toString());
+    useEffect(() => setDraft(value.toString()), [value]);
+    const commit = (raw: string) => {
+      const v = Number(raw);
+      if (!Number.isFinite(v)) return;
+      onCommit(v);
+    };
+    return (
+      <label className="component-editor-coord" style={style}>
+        <span style={{ fontSize: 11 }}>{label}{suffix ? ` (${suffix})` : ""}</span>
+        <input
+          type="number"
+          step={step}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={(e) => commit(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit((e.target as HTMLInputElement).value);
+            }
+          }}
+        />
+      </label>
+    );
+  };
+
+  const sectionStyle: React.CSSProperties = {
+    marginTop: 8,
+    padding: "6px 8px",
+    background: "rgba(56, 189, 248, 0.06)",
+    borderLeft: "2px solid #38bdf8",
+    fontSize: 11,
+  };
+  const titleStyle: React.CSSProperties = { color: "#38bdf8", fontWeight: 600, marginBottom: 6 };
+  const grid2: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 };
+
+  // Quick reference: f-number when both NA and focal length are known.
+  const fNumber = na > 0 ? 1 / (2 * na) : null;
+
+  return (
+    <div className="snap-to-beam">
+      {/* Optics */}
+      <div style={sectionStyle}>
+        <div style={titleStyle}>Optics</div>
+        <div style={grid2}>
+          <NumberCell
+            label="Focal length"
+            suffix="mm"
+            value={focalMm}
+            step={1}
+            onCommit={(v) => Math.abs(v) > 0 && void persist({ focalMm: v })}
+          />
+          {isCylindrical ? (
+            <label className="component-editor-coord">
+              <span style={{ fontSize: 11 }}>Cylindrical axis</span>
+              <select
+                value={cylAxis}
+                onChange={(e) => void persist({ cylindricalAxis: e.target.value as "x" | "y" })}
+              >
+                <option value="x">x — focuses Y, leaves X collimated</option>
+                <option value="y">y — focuses X, leaves Y collimated</option>
+              </select>
+            </label>
+          ) : (
+            <NumberCell
+              label="Numerical aperture"
+              value={na}
+              step={0.01}
+              onCommit={(v) => v >= 0 && void persist({ numericalAperture: v })}
+            />
+          )}
+        </div>
+        <div style={{ opacity: 0.6, marginTop: 4, fontSize: 10 }}>
+          {isCylindrical
+            ? "Cylindrical: power along one axis only — used for beam shaping or compensating astigmatism."
+            : isPlanoConvex
+              ? "Plano-convex: one flat, one curved surface. Aperture lives on the SceneObject."
+              : "Biconvex: both surfaces curved."}
+          {!isCylindrical && fNumber !== null
+            ? ` · f/# ≈ ${fNumber.toFixed(2)}`
+            : ""}
+        </div>
+      </div>
+
+      {/* Throughput / material */}
+      <div style={sectionStyle}>
+        <div style={titleStyle}>Throughput</div>
+        <NumberCell
+          label="Transmission"
+          value={transmission}
+          step={0.01}
+          onCommit={(v) => v >= 0 && v <= 1 && void persist({ transmission: v })}
+        />
+        <label className="component-editor-coord" style={{ marginTop: 6 }}>
+          <span style={{ fontSize: 11 }}>Material</span>
+          <select
+            value={material}
+            onChange={(e) => void persist({ material: e.target.value || null })}
+          >
+            <option value="">(unspecified)</option>
+            <option value="BK7">N-BK7 — visible / NIR</option>
+            <option value="fused_silica">Fused silica — UV / NIR / low GVD</option>
+            <option value="CaF2">CaF₂ — UV–MIR</option>
+            <option value="ZnSe">ZnSe — MIR / CO₂ optics</option>
+            <option value="sapphire">Sapphire — UV–MIR, hard</option>
+            <option value="custom">custom (set via JSON)</option>
+          </select>
+        </label>
+      </div>
+
+      {/* Dispersion */}
+      <div style={sectionStyle}>
+        <div style={titleStyle}>Dispersion</div>
+        <NumberCell
+          label="GVD"
+          suffix="fs²"
+          value={gvdFs2}
+          step={1}
+          onCommit={(v) => void persist({ gvdFs2: v })}
+        />
+      </div>
     </div>
   );
 }
@@ -1242,22 +1818,16 @@ function AomAdjustControls({
   const currentOrder: -1 | 0 | 1 =
     orderRaw === 0 ? 0 : orderRaw === -1 ? -1 : 1;
   const braggAcceptanceMrad = params.braggAngularAcceptanceMrad ?? 2.0;
-  // Phase 5: prefer the new frame-suffixed key, fall back to legacy.
-  const rfArr = params.rfPropagationDirectionBodyLocal ?? params.rfPropagationDirectionLocal;
-  const acousticArr = params.acousticAxisBodyLocal ?? params.acousticAxisLocal;
-  const rfDirectionLocal = Array.isArray(rfArr) && rfArr.length >= 3
-    ? [
-        Number(rfArr[0]) || 0,
-        Number(rfArr[1]) || 0,
-        Number(rfArr[2]) || 0,
-      ]
-    : Array.isArray(acousticArr) && acousticArr.length >= 3
-      ? [
-          Number(acousticArr[0]) || 0,
-          Number(acousticArr[1]) || 0,
-          Number(acousticArr[2]) || 0,
-        ]
-      : [-1, 0, 0];
+  // 2026-05-10: RF direction now lives on the Asset3D as `rf_direction`
+  // anchor; the helper falls back to legacy kindParams keys for
+  // un-migrated rows.
+  const _assetForRf = (() => {
+    const c = scene.components.find((cc) => cc.id === sceneObject.componentId);
+    return c?.asset3dId ? scene.assets.find((aa) => aa.id === c.asset3dId) ?? null : null;
+  })();
+  const _rfDir = getRfDirectionBodyLocal(_assetForRf, params as Record<string, unknown>)
+    ?? { x: -1, y: 0, z: 0 };
+  const rfDirectionLocal = [_rfDir.x, _rfDir.y, _rfDir.z];
   const opticalCarrierThz = 299_792_458 / (wavelengthForAngleNm * 1e-9) / 1e12;
   const maxDiffractionOrder = Math.max(1, Math.min(10, Math.round(params.maxDiffractionOrder ?? 3)));
   const sidebandVisibilityThreshold = Math.max(0, Math.min(1, params.sidebandVisibilityThreshold ?? 0.01));
@@ -1285,6 +1855,11 @@ function AomAdjustControls({
     const alwaysShow = order === 0 || order === currentOrder;
     return {
       order,
+      // Convention (2026-05-11 datasheet match): each order m sits at
+      // m·2·θ_B from the input (the full Bragg deflection angle, equal
+      // to m·λ·f/v in air; matches AA Opto MT80 datasheet's `Δθ = λF/V`).
+      // θ_B here is the EXTERNAL (lab-frame) Bragg half-angle returned
+      // by physics.ts braggAngleRad — see `physics.ts` for the convention.
       angleMrad: order === 0 ? 0 : order * 2 * thetaBMrad,
       frequencyOffsetMhz: order * (params.centerFreqMhz ?? 80),
       centerFrequencyThz: opticalCarrierThz + order * (params.centerFreqMhz ?? 80) * 1e-6,
@@ -1583,18 +2158,39 @@ function AomAdjustControls({
       const effectiveOrder = effectiveAomOrderForTraversal(currentOrder, traversalSignRaw);
       const isStateB = traversalSignRaw < 0;
 
-      // [7] STAGE 1 — snap optical axis ∥ beam.
-      //     D1_target = +beam (state A) or −beam (state B). The remaining
-      //     rotation about beam direction is pinned by stage1RotationMode.
+      // ─────────────────────────────────────────────────────────────────
+      // Three-step alignment (user's decomposition, 2026-05-11):
+      //   Step A: translate (in+out)/2 onto the beam line
+      //   Step B: rotate so D1·beam = cos(θ_corr) where θ_corr = ±θ_B
+      //   Step C: spin around D3 so beam stays in the (D1, D2) plane
+      //           (i.e. beam·D3 = 0 and the in/out anchors track the beam)
+      //
+      // Stage 1 + Stage 2 + entry-anchor translation (the previous
+      // implementation) decomposed the same final pose into "D1∥beam,
+      // then tilt by θ_B about D3, then translate entry to beam". The
+      // new implementation arrives at the same target geometry directly:
+      //
+      //   D3_target_lab = projection of (lab axis or current D3) onto
+      //                   the plane perpendicular to beam — Step C
+      //   D1_target_lab = s·cos(θ_B)·beam + m·s'·sin(θ_B)·(D3_target × beam)
+      //                   — Step B (s = traversalSignRaw, s' = traversalSignForExpect)
+      //   D2_target_lab = D3_target × D1_target (right-handed triad)
+      //   pos_new       = midpoint_foot − R_new · midpoint_body — Step A
+      //
+      // The D1_target formula is derived from the Bragg condition
+      //   beam · D2 = expectedInputDotD2(m, s', θ_B) = −m·s'·sin(θ_B)
+      // combined with beam · D1 = s·cos(θ_B), beam · D3 = 0. Verified by
+      // the residual check below: |arcsin(beam·D2_new) − arcsin(expected)| < 1 mrad.
+      // ─────────────────────────────────────────────────────────────────
       const beamUnit = best.dir;
-      const D1Target: { x: number; y: number; z: number } = isStateB
-        ? { x: -beamUnit.x, y: -beamUnit.y, z: -beamUnit.z }
-        : { x: beamUnit.x, y: beamUnit.y, z: beamUnit.z };
-
-      const D1WorldCurrent = rotateLabDir(D1Body, sceneObject);
-      const D2WorldCurrent = rotateLabDir(D2Body, sceneObject);
-      const D3WorldCurrent = rotateLabDir(D3Body, sceneObject);
-
+      const cross3 = (
+        a: { x: number; y: number; z: number },
+        b: { x: number; y: number; z: number },
+      ) => ({
+        x: a.y * b.z - a.z * b.y,
+        y: a.z * b.x - a.x * b.z,
+        z: a.x * b.y - a.y * b.x,
+      });
       const projectOntoPerp = (
         v: { x: number; y: number; z: number },
         unitN: { x: number; y: number; z: number },
@@ -1608,141 +2204,127 @@ function AomAdjustControls({
         const m = Math.hypot(proj.x, proj.y, proj.z);
         return m > 1e-6 ? { x: proj.x / m, y: proj.y / m, z: proj.z / m } : null;
       };
-      const cross3 = (
-        a: { x: number; y: number; z: number },
-        b: { x: number; y: number; z: number },
-      ) => ({
-        x: a.y * b.z - a.z * b.y,
-        y: a.z * b.x - a.x * b.z,
-        z: a.x * b.y - a.y * b.x,
-      });
 
+      // Step C: pick D3_target perpendicular to beam. `stage1RotationMode`
+      //   keeps the same UI semantics as before — it now decides which
+      //   reference axis to project onto ⊥-beam to get D3:
+      //     "upright"  → D3 ≈ projection of lab+Z (chassis vertical)
+      //     "min-rot"  → D3 ≈ projection of current D3_lab (least disturbance)
+      //     "keep-d2"  → D3 = current_D2_lab × beam (preserves acoustic-axis side)
+      const D2WorldCurrent = rotateLabDir(D2Body, sceneObject);
+      const D3WorldCurrent = rotateLabDir(D3Body, sceneObject);
       const stage1Mode: Stage1RotationMode = params.stage1RotationMode ?? DEFAULT_STAGE1_MODE;
-      let D2Target: { x: number; y: number; z: number } | null = null;
-      let D3Target: { x: number; y: number; z: number } | null = null;
-
+      let D3TargetLab: { x: number; y: number; z: number } | null = null;
       if (stage1Mode === "min-rot") {
-        // Apply the minimum-angle rotation taking current_D1 → D1_target
-        // to current_D2 and current_D3.
-        const dot = THREE.MathUtils.clamp(
-          D1WorldCurrent.x * D1Target.x +
-          D1WorldCurrent.y * D1Target.y +
-          D1WorldCurrent.z * D1Target.z,
-          -1, 1,
-        );
-        if (dot > 1 - 1e-9) {
-          D2Target = D2WorldCurrent;
-          D3Target = D3WorldCurrent;
-        } else {
-          let axis: { x: number; y: number; z: number };
-          if (dot < -1 + 1e-9) {
-            // Anti-parallel: rotate by π about ANY perpendicular vector;
-            // pick D2 (which is ⊥ current D1).
-            axis = D2WorldCurrent;
-          } else {
-            const ax = cross3(D1WorldCurrent, D1Target);
-            const am = Math.hypot(ax.x, ax.y, ax.z);
-            axis = { x: ax.x / am, y: ax.y / am, z: ax.z / am };
-          }
-          const angleRad = Math.acos(dot);
-          const dqAxisThree = labDirToThree(axis).normalize();
-          const dq = new THREE.Quaternion().setFromAxisAngle(dqAxisThree, angleRad);
-          const applyDQ = (v: { x: number; y: number; z: number }) => {
-            const v3 = labDirToThree(v);
-            v3.applyQuaternion(dq);
-            return { x: v3.x, y: -v3.z, z: v3.y };
-          };
-          D2Target = applyDQ(D2WorldCurrent);
-          D3Target = applyDQ(D3WorldCurrent);
-        }
-      } else if (stage1Mode === "upright") {
-        // Upright: keep body D2 (= acoustic / RF propagation axis, typically
-        // body+Z for an AOM mounted with the transducer on top) close to
-        // lab+Z so the chassis stays "upright" on a horizontal optical
-        // table. D3 falls out from D3 = D1 × D2 — same convention as
-        // aomBodyFrameBodyLocal in physics.ts.
-        //
-        // Bug fix 2026-05-09: previously this constrained D3 toward lab+Z
-        // instead of D2. For typical AOMs (D2 = acoustic = body+Z, D3 =
-        // body+X cross-product axis) that put the chassis on its SIDE
-        // — body+X up, acoustic axis horizontal — and produced an Euler
-        // result with a spurious extra ±90° about Y on top of the right
-        // Z rotation (e.g. (0, -90, 90) instead of the user-expected
-        // (0, 0, 90) for state-B beam entry).
-        D2Target =
-          projectOntoPerp({ x: 0, y: 0, z: 1 }, D1Target) ??
-          projectOntoPerp({ x: 0, y: 1, z: 0 }, D1Target) ??
-          projectOntoPerp({ x: 1, y: 0, z: 0 }, D1Target);
-        if (D2Target) D3Target = cross3(D1Target, D2Target);
+        D3TargetLab =
+          projectOntoPerp(D3WorldCurrent, beamUnit) ??
+          projectOntoPerp({ x: 0, y: 0, z: 1 }, beamUnit) ??
+          projectOntoPerp({ x: 0, y: 1, z: 0 }, beamUnit) ??
+          projectOntoPerp({ x: 1, y: 0, z: 0 }, beamUnit);
+      } else if (stage1Mode === "keep-d2") {
+        // D3 such that current D2 stays on the same side: D3 = unit(D2 × beam).
+        const raw = cross3(D2WorldCurrent, beamUnit);
+        const mag = Math.hypot(raw.x, raw.y, raw.z);
+        D3TargetLab =
+          mag > 1e-6
+            ? { x: raw.x / mag, y: raw.y / mag, z: raw.z / mag }
+            : projectOntoPerp({ x: 0, y: 0, z: 1 }, beamUnit) ??
+              projectOntoPerp({ x: 0, y: 1, z: 0 }, beamUnit) ??
+              projectOntoPerp({ x: 1, y: 0, z: 0 }, beamUnit);
       } else {
-        // "keep-d2"
-        D2Target =
-          projectOntoPerp(D2WorldCurrent, D1Target) ??
-          projectOntoPerp({ x: 0, y: 0, z: 1 }, D1Target) ??
-          projectOntoPerp({ x: 0, y: 1, z: 0 }, D1Target);
-        if (D2Target) D3Target = cross3(D1Target, D2Target);
+        // "upright" (default)
+        D3TargetLab =
+          projectOntoPerp({ x: 0, y: 0, z: 1 }, beamUnit) ??
+          projectOntoPerp({ x: 0, y: 1, z: 0 }, beamUnit) ??
+          projectOntoPerp({ x: 1, y: 0, z: 0 }, beamUnit);
       }
-      if (!D2Target || !D3Target) {
+      if (!D3TargetLab) {
         setAlignFeedback(
-          "Stage 1 fallback chain exhausted — beam direction degenerate against all reference axes. " +
-          "Rotate the AOM manually first so its current pose isn't aligned along all three lab axes simultaneously.",
+          "Cannot pick D3 perpendicular to beam — beam direction degenerate against all reference axes. " +
+          "Rotate the AOM manually first or move the upstream beam off the lab-Z axis.",
         );
         return;
       }
 
-      // [8] Build the absolute Stage 1 quaternion. The body-local frame
-      //     {D1_b, D2_b, D3_b} (in body coords) maps to the world target
-      //     frame {D1_t, D2_t, D3_t} via R = M_target · M_body^{-1}.
-      //     `makeBasis` builds the matrix mapping standard basis to a
-      //     given basis triple, so M_body has body-local D1/D2/D3 as
-      //     columns and M_target has world target D1/D2/D3 as columns.
+      // Step B: derive D1_target and D2_target in lab from the Bragg
+      // condition. e2 = D3_target × beam is the unit perpendicular to
+      // beam in the (D1, D2) plane.
+      const e2 = cross3(D3TargetLab, beamUnit);
+      const cosT = Math.cos(thetaBRad);
+      const sinT = Math.sin(thetaBRad);
+      // s = traversalSignRaw (+1 = beam ‖ +D1, state A; −1 = state B).
+      // s' = traversalSignForExpect (lab-fixed convention may set this
+      //      to +1 always; physical-traversal mirrors s).
+      const sRaw = traversalSignRaw;
+      const sExpect = traversalSignForExpect;
+      const D1TargetLab = {
+        x: sRaw * cosT * beamUnit.x + currentOrder * sExpect * sinT * e2.x,
+        y: sRaw * cosT * beamUnit.y + currentOrder * sExpect * sinT * e2.y,
+        z: sRaw * cosT * beamUnit.z + currentOrder * sExpect * sinT * e2.z,
+      };
+      const D2TargetLab = cross3(D3TargetLab, D1TargetLab);
+
+      // Build R_new (basis change): body's {D1, D2, D3} → lab targets.
+      //   M_body   has body-local D1/D2/D3 as columns
+      //   M_target has world target D1/D2/D3 as columns
+      //   R_new = M_target · M_body^{-1}
       const D1BodyThree = bodyLocalDirToThree(D1Body);
       const D2BodyThree = bodyLocalDirToThree(D2Body);
       const D3BodyThree = bodyLocalDirToThree(D3Body);
       const mBody = new THREE.Matrix4().makeBasis(D1BodyThree, D2BodyThree, D3BodyThree);
-
-      const D1TargetThree = labDirToThree(D1Target).normalize();
-      const D2TargetThree = labDirToThree(D2Target).normalize();
-      const D3TargetThree = labDirToThree(D3Target).normalize();
+      const D1TargetThree = labDirToThree(D1TargetLab).normalize();
+      const D2TargetThree = labDirToThree(D2TargetLab).normalize();
+      const D3TargetThree = labDirToThree(D3TargetLab).normalize();
       const mTarget = new THREE.Matrix4().makeBasis(D1TargetThree, D2TargetThree, D3TargetThree);
-
       const mBodyInv = mBody.clone().invert();
-      const mStage1 = new THREE.Matrix4().multiplyMatrices(mTarget, mBodyInv);
-      const stage1Quat = new THREE.Quaternion().setFromRotationMatrix(mStage1);
+      const mAlign = new THREE.Matrix4().multiplyMatrices(mTarget, mBodyInv);
+      const finalQuat = new THREE.Quaternion().setFromRotationMatrix(mAlign);
 
-      // [9] STAGE 2 — Bragg rotation by ω about D3_target_world.
-      //     Derivation (post-Stage-1, beam = s·D1_target where s = +1
-      //     for state A, −1 for state B):
-      //         beam · D2_new(ω) = −s · sin(ω)
-      //     Solving beam · D2_new = expectedInputDotD2(...) gives
-      //         ω = −s · arcsin(expectedDotD2) = −traversalSignRaw · arcsin(...).
-      //     For state A m=+1: expectedDotD2 = −sin θ_B ⇒ ω = +θ_B (CCW
-      //     about +D3, body D2 swings toward −beam side ⇒ Bragg-mirror
-      //     +1 emerges on +D2 side). The sign is structurally consistent
-      //     with rayTrace.ts's `applyAxisAngle(rotAxis, +m·2·θ_B)`.
+      // For the feedback message we still want to report the equivalent
+      // "Stage 2 omega" (= the angle by which D1 deviates from beam) so
+      // the user can sanity-check it equals ±θ_B per the chosen order.
       const expectedDotD2 = expectedInputDotD2(currentOrder, traversalSignForExpect, thetaBRad);
       const omegaRad = -traversalSignRaw * Math.asin(THREE.MathUtils.clamp(expectedDotD2, -1, 1));
-      const stage2DeltaQuat = new THREE.Quaternion().setFromAxisAngle(D3TargetThree, omegaRad);
-      const finalQuat = stage2DeltaQuat.clone().multiply(stage1Quat);
 
-      // [10] Translate so the entry anchor lands on the beam line under
-      //      the new orientation. `bodyLocalDirToThree(bodyMm).applyQuaternion(finalQuat)`
-      //      rotates a body-local OFFSET to lab; we then snap by
-      //      projecting onto the beam line. This is pivot-independent —
-      //      the midpoint pivot only matters for visualising "rocks
-      //      around the interaction point", not for the final pose.
+      // Step A: translate so MIDPOINT of (intercept_in, intercept_out) sits
+      // on the beam line. We project the OLD midpoint onto the beam to
+      // pick the foot, then set pos_new so the body's midpoint maps to
+      // that foot under R_new.
+      const midpointBody = {
+        x: 0.5 * (inBody.x + outBody.x),
+        y: 0.5 * (inBody.y + outBody.y),
+        z: 0.5 * (inBody.z + outBody.z),
+      };
+      const midpointLabOld = bodyToLab(midpointBody);
+      // best.closest is the foot of the perpendicular from the OLD entry
+      // anchor onto the beam — it's a known point on the beam ray. We
+      // project the OLD midpoint onto the same beam ray to get the
+      // midpoint's own foot.
+      const beamRef = best.closest;
+      const tMid =
+        (midpointLabOld.x - beamRef.x) * beamUnit.x +
+        (midpointLabOld.y - beamRef.y) * beamUnit.y +
+        (midpointLabOld.z - beamRef.z) * beamUnit.z;
+      const midpointFoot = {
+        x: beamRef.x + tMid * beamUnit.x,
+        y: beamRef.y + tMid * beamUnit.y,
+        z: beamRef.z + tMid * beamUnit.z,
+      };
       const rotatedBodyOffset = (bodyMm: { x: number; y: number; z: number }) => {
         const v3 = bodyLocalDirToThree(bodyMm);
         v3.applyQuaternion(finalQuat);
         return { x: v3.x, y: -v3.z, z: v3.y };
       };
-      const rotatedEntryDelta = rotatedBodyOffset(best.entryBody);
-      let nextXMm = best.closest.x - rotatedEntryDelta.x;
-      let nextYMm = best.closest.y - rotatedEntryDelta.y;
-      let nextZMm = best.closest.z - rotatedEntryDelta.z;
-      // After the above, the entry anchor sits exactly at best.closest;
-      // best.closest is already on the beam line by construction (it's
-      // the foot of the perpendicular from the original entryLab).
+      const rotatedMidpoint = rotatedBodyOffset(midpointBody);
+      let nextXMm = midpointFoot.x - rotatedMidpoint.x;
+      let nextYMm = midpointFoot.y - rotatedMidpoint.y;
+      let nextZMm = midpointFoot.z - rotatedMidpoint.z;
+      // After the above, the midpoint of (in, out) sits exactly at
+      // midpointFoot which is on the beam line by construction. The in
+      // and out anchors are then offset from that midpoint by ±L/2·D1,
+      // where D1 makes angle θ_B with beam — so each port sits at
+      // L/2·sin(θ_B) ⊥-distance from the beam (typically <0.1 mm for an
+      // AOM).
 
       // [11] Verify Bragg: compute residual = arcsin(beam · D2_new) − arcsin(expectedDotD2).
       const D2NewThree = bodyLocalDirToThree(D2Body);
@@ -1792,11 +2374,11 @@ function AomAdjustControls({
           ? ` (state-B traversal flips selected ${currentOrder > 0 ? "+1" : "-1"} → physical ${effectiveOrder > 0 ? "+1" : "-1"})`
           : "";
       setAlignFeedback(
-        `Stage 1 (${stage1Mode}): D1 snapped ∥ beam. ` +
-        `Stage 2: ω = ${(omegaRad * 1e3).toFixed(3)} mrad about D3 ` +
-        `for state ${stateLabel}, m=${orderLabel}${traversalNote} ` +
-        `(residual ${residualMrad.toFixed(3)} mrad). ` +
-        `Aligned to ${sourceName} beam.${clippingWarning}`,
+        `Aligned (${stage1Mode}): midpoint on beam, D1·beam = cos(θ_B) ` +
+        `for state ${stateLabel}, m=${orderLabel}${traversalNote}. ` +
+        `Equivalent ω = ${(omegaRad * 1e3).toFixed(3)} mrad about D3. ` +
+        `Bragg residual ${residualMrad.toFixed(3)} mrad. ` +
+        `Source: ${sourceName} beam.${clippingWarning}`,
       );
     } catch (err) {
       setAlignFeedback(`Align failed: ${(err as Error).message}`);
@@ -1805,9 +2387,192 @@ function AomAdjustControls({
     }
   };
 
+  // Structured kindParams editor — mirrors the LaserSourceControls /
+  // WaveplateAdjustControls style. Rendered above the existing RF drive +
+  // sideband-table block. Each section commits via `persist()` and uses a
+  // local NumberCell that draftss / commits on blur or Enter.
+  const NumberCell = ({
+    label,
+    suffix,
+    value,
+    step = 0.1,
+    onCommit,
+    placeholder,
+    style,
+  }: {
+    label: string;
+    suffix?: string;
+    value: number;
+    step?: number;
+    onCommit: (v: number) => void;
+    placeholder?: string;
+    style?: React.CSSProperties;
+  }) => {
+    const [draft, setDraft] = useState(Number.isFinite(value) ? value.toString() : "");
+    useEffect(() => setDraft(Number.isFinite(value) ? value.toString() : ""), [value]);
+    const commit = (raw: string) => {
+      const v = Number(raw);
+      if (!Number.isFinite(v)) return;
+      onCommit(v);
+    };
+    return (
+      <label className="component-editor-coord" style={style}>
+        <span style={{ fontSize: 11 }}>{label}{suffix ? ` (${suffix})` : ""}</span>
+        <input
+          type="number"
+          step={step}
+          value={draft}
+          placeholder={placeholder}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={(e) => commit(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit((e.target as HTMLInputElement).value);
+            }
+          }}
+        />
+      </label>
+    );
+  };
+
+  const sectionStyle: React.CSSProperties = {
+    marginTop: 8,
+    padding: "6px 8px",
+    background: "rgba(56, 189, 248, 0.06)",
+    borderLeft: "2px solid #38bdf8",
+    fontSize: 11,
+  };
+  const titleStyle: React.CSSProperties = { color: "#38bdf8", fontWeight: 600, marginBottom: 6 };
+  const grid2: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 };
+  const grid3: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 };
+
+  const useBaseEfficiencyOverride = typeof params.baseEfficiency === "number";
+
   return (
     <div className="mirror-adjust">
-      <div className="mirror-adjust-row">
+      {/* Acoustic / RF carrier — knobs that affect θ_B and Δθ. */}
+      <div style={sectionStyle}>
+        <div style={titleStyle}>Acoustic / RF carrier</div>
+        <div style={grid3}>
+          <NumberCell
+            label="Carrier f"
+            suffix="MHz"
+            value={params.centerFreqMhz ?? 80}
+            step={1}
+            onCommit={(v) => v > 0 && void persist({ centerFreqMhz: v })}
+          />
+          <NumberCell
+            label="Acoustic v"
+            suffix="m/s"
+            value={params.acousticVelocityMPerS ?? 4200}
+            step={50}
+            onCommit={(v) => v > 0 && void persist({ acousticVelocityMPerS: v })}
+          />
+          <NumberCell
+            label="Refractive n"
+            value={params.refractiveIndex ?? 2.26}
+            step={0.01}
+            onCommit={(v) => v > 0 && void persist({ refractiveIndex: v })}
+          />
+        </div>
+        <div style={{ opacity: 0.6, marginTop: 4, fontSize: 10 }}>
+          External Bragg half-angle θ_B = arcsin(λ·f/(2·v)) = <strong>{thetaBMrad.toFixed(2)} mrad</strong> @ {wavelengthForAngleNm.toFixed(0)} nm.
+          {" "}Full 0→±1 separation 2θ_B = <strong>{(2 * thetaBMrad).toFixed(2)} mrad</strong>{" "}
+          (matches datasheet's Δθ = λ·f/v).
+        </div>
+      </div>
+
+      {/* Crystal geometry — feed the closed-form sin² formula. */}
+      <div style={sectionStyle}>
+        <div style={titleStyle}>Crystal geometry</div>
+        <div style={grid3}>
+          <NumberCell
+            label="Crystal length L"
+            suffix="mm"
+            value={params.crystalLengthMm ?? 25}
+            step={1}
+            onCommit={(v) => v > 0 && void persist({ crystalLengthMm: v })}
+          />
+          <NumberCell
+            label="Acoustic beam W"
+            suffix="mm"
+            value={params.acousticBeamWidthMm ?? 1.5}
+            step={0.1}
+            onCommit={(v) => v > 0 && void persist({ acousticBeamWidthMm: v })}
+          />
+          <NumberCell
+            label="Figure of merit M₂"
+            suffix="m²/W"
+            value={params.figureOfMeritM2 ?? 3.4e-14}
+            step={1e-15}
+            onCommit={(v) => v > 0 && void persist({ figureOfMeritM2: v })}
+          />
+        </div>
+        <div style={{ opacity: 0.6, marginTop: 4, fontSize: 10 }}>
+          Used by the closed-form η = sin²((π·L / 2λ·cosθ_B) · √(2·M₂·P_d/W)).{" "}
+          For TeO₂-L (longitudinal mode) at 850 nm, M₂ ≈ 3.4×10⁻¹⁴ m²/W.
+        </div>
+      </div>
+
+      {/* Efficiency — closed-form vs override; angular acceptance. */}
+      <div style={sectionStyle}>
+        <div style={titleStyle}>Efficiency</div>
+        <label className="component-editor-coord" style={{ marginBottom: 6, display: "flex", flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={useBaseEfficiencyOverride}
+            onChange={(e) => {
+              if (e.target.checked) {
+                // Set baseEfficiency to current closed-form result so the
+                // checkbox flip doesn't surprise the user with a jump.
+                void persist({ baseEfficiency: efficiencyEst });
+              } else {
+                // Remove baseEfficiency so closed-form takes over.
+                const { baseEfficiency: _drop, ...rest } = params;
+                void upsertOpticalElement({
+                  objectId: sceneObject.id,
+                  elementKind: element.elementKind,
+                  kindParams: rest,
+                  inputPorts: element.inputPorts,
+                  outputPorts: element.outputPorts,
+                });
+              }
+            }}
+          />
+          <span style={{ fontSize: 11 }}>
+            Override closed-form (set η directly — useful when datasheet η doesn't match the M₂/L/W combo)
+          </span>
+        </label>
+        <div style={grid2}>
+          {useBaseEfficiencyOverride && (
+            <NumberCell
+              label="η (override)"
+              value={params.baseEfficiency ?? 0.85}
+              step={0.01}
+              onCommit={(v) => v >= 0 && v <= 1 && void persist({ baseEfficiency: v })}
+            />
+          )}
+          <NumberCell
+            label="Bragg angular acceptance"
+            suffix="mrad"
+            value={params.braggAngularAcceptanceMrad ?? 2}
+            step={0.1}
+            onCommit={(v) => v > 0 && void persist({ braggAngularAcceptanceMrad: v })}
+          />
+        </div>
+        <div style={{ opacity: 0.6, marginTop: 4, fontSize: 10 }}>
+          Live η at λ ≈ {wavelengthForAngleNm.toFixed(0)} nm, P_d = {(params.rfDrivePowerW ?? 1).toFixed(2)} W:{" "}
+          <strong>{(efficiencyEst * 100).toFixed(1)}%</strong>.
+          {useBaseEfficiencyOverride
+            ? " (using override)"
+            : " (closed-form sin²)"}
+        </div>
+      </div>
+
+      {/* RF drive (with Max η button) — kept as before but moved into the
+          structured layout. */}
+      <div className="mirror-adjust-row" style={{ marginTop: 8 }}>
         <label className="mirror-adjust-field" style={{ flex: 1 }}>
           <span>RF drive power (W, max {rfMax.toFixed(2)})</span>
           <input
@@ -1826,6 +2591,14 @@ function AomAdjustControls({
             }}
           />
         </label>
+        <NumberCell
+          label="RF max"
+          suffix="W"
+          value={params.rfPowerMaxW ?? 2}
+          step={0.1}
+          onCommit={(v) => v > 0 && void persist({ rfPowerMaxW: v })}
+          style={{ flex: 1 }}
+        />
         <button
           type="button"
           className="secondary-button"
@@ -2023,31 +2796,86 @@ function TaperedAmplifierAdjustControls({
 }) {
   const upsertOpticalElement = useSceneStore((state) => state.upsertOpticalElement);
 
-  const params = (element.kindParams ?? {}) as {
+  type AxisMode = { waistUm?: number; mSquared?: number; waistZOffsetMm?: number };
+  type Jones = { exRe?: number; exIm?: number; eyRe?: number; eyIm?: number };
+  type TransverseKind = "TEM00" | "TEM_mn" | "LG_pl" | "multimode";
+  type TransverseMode = { kind?: TransverseKind; indicesM?: number; indicesN?: number; indicesP?: number; indicesL?: number };
+  type AseContinuous = { powerMw?: number; bandwidthNm?: number; centerOffsetNm?: number };
+  type TaKindParams = {
+    // operating point
     centerWavelengthNm?: number;
     driveCurrentMa?: number;
     driveCurrentMaxMa?: number;
+    // steady-state (legacy bare-chip)
+    smallSignalGainDb?: number;
+    saturationPowerMw?: number;
+    minInputPowerMw?: number | null;
+    maxInputPowerMw?: number | null;
+    inputAcceptanceRadiusMm?: number | null;
+    ase?: AseContinuous;
+    // beam profile
+    inputSpatialModeX?: AxisMode | null;
+    inputSpatialModeY?: AxisMode | null;
+    inputPolarization?: Jones;
+    inputTransverseMode?: TransverseMode;
+    outputSpatialModeX?: AxisMode;
+    outputSpatialModeY?: AxisMode;
+    outputTransverseMode?: TransverseMode;
+    outputPolarization?: Jones;
+    backwardSpatialModeX?: AxisMode | null;
+    backwardSpatialModeY?: AxisMode | null;
+    // lookup tables (advanced — edited via API for now)
     aseSamples?: AseSampleRow[];
     gainSamples?: GainSampleRow[];
-    backwardSpatialModeX?: { waistUm?: number; mSquared?: number; waistZOffsetMm?: number };
-    backwardSpatialModeY?: { waistUm?: number; mSquared?: number; waistZOffsetMm?: number };
   };
+
+  const params = (element.kindParams ?? {}) as TaKindParams;
   const wavelengthNm = params.centerWavelengthNm ?? 852;
   const driveCurrentMa = params.driveCurrentMa ?? 2400;
   const maxCurrentMa = params.driveCurrentMaxMa ?? 5000;
   const aseSamples = params.aseSamples ?? [];
+
+  const smallSignalGainDb = params.smallSignalGainDb ?? 30.0;
+  const saturationPowerMw = params.saturationPowerMw ?? 500.0;
+  const minInputPowerMw = params.minInputPowerMw ?? 10.0;
+  const maxInputPowerMw = params.maxInputPowerMw ?? 30.0;
+  const inputAcceptanceRadiusMm = params.inputAcceptanceRadiusMm ?? 25.0;
+  const aseCont: AseContinuous = params.ase ?? {};
+
+  const isx: AxisMode = params.inputSpatialModeX ?? {};
+  const isy: AxisMode = params.inputSpatialModeY ?? {};
+  const osx: AxisMode = params.outputSpatialModeX ?? {};
+  const osy: AxisMode = params.outputSpatialModeY ?? {};
+  // backwardSpatialModeX/Y intentionally unread here — the editor was
+  // removed by user request. Stored values pass through via the
+  // shallow-merge `persist` calls below; ray-tracer / solver still use
+  // them when present (rayTrace.ts:1689, optical_solver.py:499-500).
+  const inPol: Jones = params.inputPolarization ?? { exRe: 0, exIm: 0, eyRe: 1, eyIm: 0 };
+  const outPol: Jones = params.outputPolarization ?? { exRe: 0, exIm: 0, eyRe: 1, eyIm: 0 };
+  const inTm: TransverseMode = params.inputTransverseMode ?? { kind: "TEM00" };
+  const outTm: TransverseMode = params.outputTransverseMode ?? { kind: "TEM00" };
+
+  // Polarization preset detection (mirrors LaserSourceControls).
+  const isClose = (a: number, b: number, tol = 1e-3) => Math.abs(a - b) < tol;
+  const detectPolPreset = (p: Jones): string => {
+    const inv2 = 1 / Math.SQRT2;
+    if (isClose(p.exRe ?? 0, 1) && isClose(p.exIm ?? 0, 0) && isClose(p.eyRe ?? 0, 0) && isClose(p.eyIm ?? 0, 0)) return "H";
+    if (isClose(p.exRe ?? 0, 0) && isClose(p.exIm ?? 0, 0) && isClose(p.eyRe ?? 0, 1) && isClose(p.eyIm ?? 0, 0)) return "V";
+    if (isClose(p.exRe ?? 0, inv2) && isClose(p.exIm ?? 0, 0) && isClose(p.eyRe ?? 0, inv2) && isClose(p.eyIm ?? 0, 0)) return "+45";
+    if (isClose(p.exRe ?? 0, inv2) && isClose(p.exIm ?? 0, 0) && isClose(p.eyRe ?? 0, -inv2) && isClose(p.eyIm ?? 0, 0)) return "-45";
+    if (isClose(p.exRe ?? 0, inv2) && isClose(p.exIm ?? 0, 0) && isClose(p.eyRe ?? 0, 0) && isClose(p.eyIm ?? 0, inv2)) return "RCP";
+    if (isClose(p.exRe ?? 0, inv2) && isClose(p.exIm ?? 0, 0) && isClose(p.eyRe ?? 0, 0) && isClose(p.eyIm ?? 0, -inv2)) return "LCP";
+    return "custom";
+  };
+  const inPolPreset = detectPolPreset(inPol);
+  const outPolPreset = detectPolPreset(outPol);
 
   // Live readout of forward / backward ASE power at the configured drive
   // current (no seed; gain_samples will replace this once a real upstream
   // beam is detected — that's a future 2-pass-trace feature).
   const { forwardMw, backwardMw } = interpolateAseUi(aseSamples, driveCurrentMa);
 
-  const [waveDraft, setWaveDraft] = useState<string>(wavelengthNm.toFixed(1));
-  const [currentDraft, setCurrentDraft] = useState<string>(driveCurrentMa.toFixed(0));
-  useEffect(() => setWaveDraft(wavelengthNm.toFixed(1)), [wavelengthNm]);
-  useEffect(() => setCurrentDraft(driveCurrentMa.toFixed(0)), [driveCurrentMa]);
-
-  const persist = async (patch: Record<string, unknown>) => {
+  const persist = async (patch: Partial<TaKindParams>) => {
     await upsertOpticalElement({
       objectId: sceneObject.id,
       elementKind: element.elementKind,
@@ -2057,16 +2885,114 @@ function TaperedAmplifierAdjustControls({
     });
   };
 
-  const commitWavelength = (raw: string) => {
-    const v = Number(raw);
-    if (!Number.isFinite(v) || v <= 0) return;
-    void persist({ centerWavelengthNm: v });
+  const setSpatial = (
+    key: "inputSpatialModeX" | "inputSpatialModeY" | "outputSpatialModeX" | "outputSpatialModeY" | "backwardSpatialModeX" | "backwardSpatialModeY",
+    current: AxisMode | null,
+    patch: Partial<AxisMode>,
+  ) => {
+    void persist({ [key]: { ...(current ?? {}), ...patch } } as Partial<TaKindParams>);
   };
-  const commitCurrent = (raw: string) => {
-    const v = Number(raw);
-    if (!Number.isFinite(v) || v < 0) return;
-    void persist({ driveCurrentMa: Math.min(v, maxCurrentMa) });
+
+  const setAse = (patch: Partial<AseContinuous>) => {
+    void persist({ ase: { ...aseCont, ...patch } });
   };
+
+  const polPresetJones = (next: string): [number, number, number, number] | null => {
+    const inv2 = 1 / Math.SQRT2;
+    const presets: Record<string, [number, number, number, number]> = {
+      H: [1, 0, 0, 0],
+      V: [0, 0, 1, 0],
+      "+45": [inv2, 0, inv2, 0],
+      "-45": [inv2, 0, -inv2, 0],
+      RCP: [inv2, 0, 0, inv2],
+      LCP: [inv2, 0, 0, -inv2],
+    };
+    return presets[next] ?? null;
+  };
+  const setInPolPreset = (next: string) => {
+    if (next === "custom") return;
+    const j = polPresetJones(next);
+    if (!j) return;
+    void persist({ inputPolarization: { exRe: j[0], exIm: j[1], eyRe: j[2], eyIm: j[3] } });
+  };
+  const setOutPolPreset = (next: string) => {
+    if (next === "custom") return;
+    const j = polPresetJones(next);
+    if (!j) return;
+    void persist({ outputPolarization: { exRe: j[0], exIm: j[1], eyRe: j[2], eyIm: j[3] } });
+  };
+
+  const buildTransverseMode = (next: TransverseKind, prev: TransverseMode): TransverseMode => {
+    const out: TransverseMode = { kind: next };
+    if (next === "TEM_mn") {
+      out.indicesM = prev.indicesM ?? 0;
+      out.indicesN = prev.indicesN ?? 0;
+    } else if (next === "LG_pl") {
+      out.indicesP = prev.indicesP ?? 0;
+      out.indicesL = prev.indicesL ?? 0;
+    }
+    return out;
+  };
+  const setInTransverseKind = (next: TransverseKind) => {
+    void persist({ inputTransverseMode: buildTransverseMode(next, inTm) });
+  };
+  const setOutTransverseKind = (next: TransverseKind) => {
+    void persist({ outputTransverseMode: buildTransverseMode(next, outTm) });
+  };
+
+  // Numeric input cell that commits on blur / Enter.
+  const NumberCell = ({
+    label,
+    value,
+    step = 0.1,
+    onCommit,
+    suffix,
+    style,
+  }: {
+    label: string;
+    value: number;
+    step?: number;
+    onCommit: (v: number) => void;
+    suffix?: string;
+    style?: React.CSSProperties;
+  }) => {
+    const [draft, setDraft] = useState(value.toString());
+    useEffect(() => setDraft(value.toString()), [value]);
+    const commit = (raw: string) => {
+      const v = Number(raw);
+      if (!Number.isFinite(v)) return;
+      onCommit(v);
+    };
+    return (
+      <label className="component-editor-coord" style={style}>
+        <span style={{ fontSize: 11 }}>{label}{suffix ? ` (${suffix})` : ""}</span>
+        <input
+          type="number"
+          step={step}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={(e) => commit(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit((e.target as HTMLInputElement).value);
+            }
+          }}
+        />
+      </label>
+    );
+  };
+
+  const sectionStyle: React.CSSProperties = {
+    marginTop: 8,
+    padding: "6px 8px",
+    background: "rgba(56, 189, 248, 0.06)",
+    borderLeft: "2px solid #38bdf8",
+    fontSize: 11,
+  };
+  const titleStyle: React.CSSProperties = { color: "#38bdf8", fontWeight: 600, marginBottom: 6 };
+  const grid2: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 };
+  const grid3: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 };
 
   // Align INPUT to a nearby incoming beam. The INPUT centerline is the TA's
   // current local +X axis; when the detected beam travels toward -X, the
@@ -2318,60 +3244,356 @@ function TaperedAmplifierAdjustControls({
   };
 
   return (
-    <div className="mirror-adjust">
-      <label className="mirror-adjust-field">
-        <span>Wavelength (nm)</span>
-        <input
-          type="number"
-          step={0.1}
-          value={waveDraft}
-          onChange={(e) => setWaveDraft(e.target.value)}
-          onBlur={(e) => commitWavelength(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              commitWavelength((e.target as HTMLInputElement).value);
+    <div className="snap-to-beam">
+      {/* Anchor mapping legend — explains which kindParams group attaches
+          to which physical anchor on the asset. Asset anchors are seeded
+          in seed.py (intercept_in @ +X face = seed; intercept_out @ -X
+          face = amplified output). */}
+      <div style={{ ...sectionStyle, background: "rgba(56, 189, 248, 0.03)" }}>
+        <div style={{ ...titleStyle, marginBottom: 4 }}>Anchor map</div>
+        <div style={{ fontSize: 10, opacity: 0.85, lineHeight: 1.5 }}>
+          <div><code>intercept_in</code> &nbsp;=&nbsp; seed face (+X) &nbsp;←&nbsp; Input beam profile · backward ASE exits here</div>
+          <div><code>intercept_out</code> &nbsp;=&nbsp; output face (−X) &nbsp;←&nbsp; Output beam profile · forward amplified emission</div>
+        </div>
+      </div>
+
+      {/* Operating point */}
+      <div style={sectionStyle}>
+        <div style={titleStyle}>Operating point</div>
+        <div style={grid3}>
+          <NumberCell
+            label="Wavelength"
+            suffix="nm"
+            value={wavelengthNm}
+            step={0.1}
+            onCommit={(v) => v > 0 && void persist({ centerWavelengthNm: v })}
+          />
+          <NumberCell
+            label="Drive current"
+            suffix="mA"
+            value={driveCurrentMa}
+            step={50}
+            onCommit={(v) =>
+              v >= 0 && void persist({ driveCurrentMa: Math.min(v, maxCurrentMa) })
             }
-          }}
+          />
+          <NumberCell
+            label="Max current"
+            suffix="mA"
+            value={maxCurrentMa}
+            step={50}
+            onCommit={(v) => v > 0 && void persist({ driveCurrentMaxMa: v })}
+          />
+        </div>
+        <div style={{ opacity: 0.75, marginTop: 4, fontSize: 10, lineHeight: 1.55 }}>
+          ASE @ {driveCurrentMa.toFixed(0)} mA:
+          <div style={{ marginTop: 2 }}>
+            forward <strong>{forwardMw.toFixed(1)} mW</strong> · amplified emission
+          </div>
+          <div>
+            backward <strong>{backwardMw.toFixed(1)} mW</strong> · ASE leak through seed facet
+          </div>
+          {aseSamples.length === 0
+            ? " (no aseSamples — solver falls back to the single-direction continuous ASE below)"
+            : null}
+        </div>
+      </div>
+
+      {/* Steady-state gain (no lookup) */}
+      <div style={sectionStyle}>
+        <div style={titleStyle}>Steady-state gain</div>
+        <div style={grid2}>
+          <NumberCell
+            label="Small-signal gain"
+            suffix="dB"
+            value={smallSignalGainDb}
+            step={0.5}
+            onCommit={(v) => void persist({ smallSignalGainDb: v })}
+          />
+          <NumberCell
+            label="Saturation power"
+            suffix="mW"
+            value={saturationPowerMw}
+            step={10}
+            onCommit={(v) => v > 0 && void persist({ saturationPowerMw: v })}
+          />
+          <NumberCell
+            label="Min input"
+            suffix="mW"
+            value={minInputPowerMw}
+            step={1}
+            onCommit={(v) => v >= 0 && void persist({ minInputPowerMw: v })}
+          />
+          <NumberCell
+            label="Max input"
+            suffix="mW"
+            value={maxInputPowerMw}
+            step={1}
+            onCommit={(v) => v >= 0 && void persist({ maxInputPowerMw: v })}
+          />
+          <NumberCell
+            label="Acceptance radius"
+            suffix="mm"
+            value={inputAcceptanceRadiusMm}
+            step={1}
+            onCommit={(v) => v > 0 && void persist({ inputAcceptanceRadiusMm: v })}
+          />
+        </div>
+        <div style={{ opacity: 0.6, marginTop: 4, fontSize: 10 }}>
+          Used when no aseSamples / gainSamples lookup tables are present.
+        </div>
+      </div>
+
+      {/* ASE (continuous fallback). The legacy `ase.power_mw` field is
+          single-direction — the solver applies it as the FORWARD ASE at
+          intercept_out only, so it intentionally does NOT split per-port.
+          The accurate per-anchor split lives in `aseSamples` (shown in
+          the Operating-point readout above). When `aseSamples` is empty
+          the solver falls back to the value below for forward only;
+          backward ASE is implicitly zero in that fallback path. */}
+      <div style={sectionStyle}>
+        <div style={titleStyle}>
+          ASE fallback <span style={{ opacity: 0.7, fontWeight: 400 }}>(used when aseSamples is empty)</span>
+        </div>
+        <div style={grid3}>
+          <NumberCell
+            label="Forward power @ intercept_out"
+            suffix="mW"
+            value={aseCont.powerMw ?? 5.0}
+            step={0.5}
+            onCommit={(v) => v >= 0 && setAse({ powerMw: v })}
+          />
+          <NumberCell
+            label="Bandwidth"
+            suffix="nm"
+            value={aseCont.bandwidthNm ?? 1.0}
+            step={0.1}
+            onCommit={(v) => v > 0 && setAse({ bandwidthNm: v })}
+          />
+          <NumberCell
+            label="Center offset"
+            suffix="nm"
+            value={aseCont.centerOffsetNm ?? 0.0}
+            step={0.1}
+            onCommit={(v) => setAse({ centerOffsetNm: v })}
+          />
+        </div>
+        <div style={{ opacity: 0.6, marginTop: 4, fontSize: 10 }}>
+          Single-direction (forward-only) legacy field. For real per-port
+          values (forward at <code>intercept_out</code>, backward at
+          <code>intercept_in</code>), populate <code>aseSamples</code>
+          via the API.
+        </div>
+      </div>
+
+      {/* Input beam profile — applies at the intercept_in (+X / seed) anchor */}
+      <div style={sectionStyle}>
+        <div style={titleStyle}>
+          Input beam profile <span style={{ opacity: 0.7, fontWeight: 400 }}>@ <code>intercept_in</code></span>
+        </div>
+        <div style={{ marginBottom: 4, fontSize: 10, opacity: 0.7 }}>X axis</div>
+        <div style={grid3}>
+          <NumberCell label="waist" suffix="μm" value={isx.waistUm ?? 600} step={10}
+            onCommit={(v) => v > 0 && setSpatial("inputSpatialModeX", isx, { waistUm: v })} />
+          <NumberCell label="z offset" suffix="mm" value={isx.waistZOffsetMm ?? 0} step={0.1}
+            onCommit={(v) => setSpatial("inputSpatialModeX", isx, { waistZOffsetMm: v })} />
+          <NumberCell label="M²" value={isx.mSquared ?? 1.5} step={0.05}
+            onCommit={(v) => v > 0 && setSpatial("inputSpatialModeX", isx, { mSquared: v })} />
+        </div>
+        <div style={{ marginTop: 6, marginBottom: 4, fontSize: 10, opacity: 0.7 }}>Y axis</div>
+        <div style={grid3}>
+          <NumberCell label="waist" suffix="μm" value={isy.waistUm ?? 600} step={10}
+            onCommit={(v) => v > 0 && setSpatial("inputSpatialModeY", isy, { waistUm: v })} />
+          <NumberCell label="z offset" suffix="mm" value={isy.waistZOffsetMm ?? 0} step={0.1}
+            onCommit={(v) => setSpatial("inputSpatialModeY", isy, { waistZOffsetMm: v })} />
+          <NumberCell label="M²" value={isy.mSquared ?? 1.5} step={0.05}
+            onCommit={(v) => v > 0 && setSpatial("inputSpatialModeY", isy, { mSquared: v })} />
+        </div>
+        <label className="component-editor-coord" style={{ marginTop: 6, marginBottom: 4 }}>
+          <span style={{ fontSize: 11 }}>Input polarization</span>
+          <select value={inPolPreset} onChange={(e) => setInPolPreset(e.target.value)}>
+            <option value="H">H — horizontal</option>
+            <option value="V">V — vertical</option>
+            <option value="+45">+45°</option>
+            <option value="-45">−45°</option>
+            <option value="RCP">RCP</option>
+            <option value="LCP">LCP</option>
+            <option value="custom">custom</option>
+          </select>
+        </label>
+        <div style={grid2}>
+          <NumberCell label="Eₓ_re" value={inPol.exRe ?? 0} step={0.05}
+            onCommit={(v) => void persist({ inputPolarization: { ...inPol, exRe: v } })} />
+          <NumberCell label="Eₓ_im" value={inPol.exIm ?? 0} step={0.05}
+            onCommit={(v) => void persist({ inputPolarization: { ...inPol, exIm: v } })} />
+          <NumberCell label="Eᵧ_re" value={inPol.eyRe ?? 1} step={0.05}
+            onCommit={(v) => void persist({ inputPolarization: { ...inPol, eyRe: v } })} />
+          <NumberCell label="Eᵧ_im" value={inPol.eyIm ?? 0} step={0.05}
+            onCommit={(v) => void persist({ inputPolarization: { ...inPol, eyIm: v } })} />
+        </div>
+        <label className="component-editor-coord" style={{ marginTop: 6 }}>
+          <span style={{ fontSize: 11 }}>Transverse mode</span>
+          <select
+            value={inTm.kind ?? "TEM00"}
+            onChange={(e) => setInTransverseKind(e.target.value as TransverseKind)}
+          >
+            <option value="TEM00">TEM₀₀</option>
+            <option value="TEM_mn">TEM_mn</option>
+            <option value="LG_pl">LG_pl</option>
+            <option value="multimode">multimode</option>
+          </select>
+        </label>
+        {inTm.kind === "TEM_mn" && (
+          <div style={grid2}>
+            <NumberCell label="m" value={inTm.indicesM ?? 0} step={1}
+              onCommit={(v) => void persist({ inputTransverseMode: { ...inTm, kind: "TEM_mn", indicesM: Math.round(v) } })} />
+            <NumberCell label="n" value={inTm.indicesN ?? 0} step={1}
+              onCommit={(v) => void persist({ inputTransverseMode: { ...inTm, kind: "TEM_mn", indicesN: Math.round(v) } })} />
+          </div>
+        )}
+        {inTm.kind === "LG_pl" && (
+          <div style={grid2}>
+            <NumberCell label="p" value={inTm.indicesP ?? 0} step={1}
+              onCommit={(v) => void persist({ inputTransverseMode: { ...inTm, kind: "LG_pl", indicesP: Math.round(v) } })} />
+            <NumberCell label="ℓ" value={inTm.indicesL ?? 0} step={1}
+              onCommit={(v) => void persist({ inputTransverseMode: { ...inTm, kind: "LG_pl", indicesL: Math.round(v) } })} />
+          </div>
+        )}
+      </div>
+
+      {/* Output beam profile — applies at the intercept_out (−X / amplified) anchor */}
+      <div style={sectionStyle}>
+        <div style={titleStyle}>
+          Output beam profile <span style={{ opacity: 0.7, fontWeight: 400 }}>@ <code>intercept_out</code></span>
+        </div>
+        <div style={{ marginBottom: 4, fontSize: 10, opacity: 0.7 }}>X axis</div>
+        <div style={grid3}>
+          <NumberCell label="waist" suffix="μm" value={osx.waistUm ?? 500} step={10}
+            onCommit={(v) => v > 0 && setSpatial("outputSpatialModeX", osx, { waistUm: v })} />
+          <NumberCell label="z offset" suffix="mm" value={osx.waistZOffsetMm ?? 0} step={0.1}
+            onCommit={(v) => setSpatial("outputSpatialModeX", osx, { waistZOffsetMm: v })} />
+          <NumberCell label="M²" value={osx.mSquared ?? 1.5} step={0.05}
+            onCommit={(v) => v > 0 && setSpatial("outputSpatialModeX", osx, { mSquared: v })} />
+        </div>
+        <div style={{ marginTop: 6, marginBottom: 4, fontSize: 10, opacity: 0.7 }}>Y axis</div>
+        <div style={grid3}>
+          <NumberCell label="waist" suffix="μm" value={osy.waistUm ?? 50} step={5}
+            onCommit={(v) => v > 0 && setSpatial("outputSpatialModeY", osy, { waistUm: v })} />
+          <NumberCell label="z offset" suffix="mm" value={osy.waistZOffsetMm ?? 0} step={0.1}
+            onCommit={(v) => setSpatial("outputSpatialModeY", osy, { waistZOffsetMm: v })} />
+          <NumberCell label="M²" value={osy.mSquared ?? 8.0} step={0.1}
+            onCommit={(v) => v > 0 && setSpatial("outputSpatialModeY", osy, { mSquared: v })} />
+        </div>
+        <label className="component-editor-coord" style={{ marginTop: 6 }}>
+          <span style={{ fontSize: 11 }}>Transverse mode</span>
+          <select
+            value={outTm.kind ?? "TEM00"}
+            onChange={(e) => setOutTransverseKind(e.target.value as TransverseKind)}
+          >
+            <option value="TEM00">TEM₀₀</option>
+            <option value="TEM_mn">TEM_mn</option>
+            <option value="LG_pl">LG_pl</option>
+            <option value="multimode">multimode</option>
+          </select>
+        </label>
+        {outTm.kind === "TEM_mn" && (
+          <div style={grid2}>
+            <NumberCell label="m" value={outTm.indicesM ?? 0} step={1}
+              onCommit={(v) => void persist({ outputTransverseMode: { ...outTm, kind: "TEM_mn", indicesM: Math.round(v) } })} />
+            <NumberCell label="n" value={outTm.indicesN ?? 0} step={1}
+              onCommit={(v) => void persist({ outputTransverseMode: { ...outTm, kind: "TEM_mn", indicesN: Math.round(v) } })} />
+          </div>
+        )}
+        {outTm.kind === "LG_pl" && (
+          <div style={grid2}>
+            <NumberCell label="p" value={outTm.indicesP ?? 0} step={1}
+              onCommit={(v) => void persist({ outputTransverseMode: { ...outTm, kind: "LG_pl", indicesP: Math.round(v) } })} />
+            <NumberCell label="ℓ" value={outTm.indicesL ?? 0} step={1}
+              onCommit={(v) => void persist({ outputTransverseMode: { ...outTm, kind: "LG_pl", indicesL: Math.round(v) } })} />
+          </div>
+        )}
+        <label className="component-editor-coord" style={{ marginTop: 6, marginBottom: 4 }}>
+          <span style={{ fontSize: 11 }}>Output polarization</span>
+          <select value={outPolPreset} onChange={(e) => setOutPolPreset(e.target.value)}>
+            <option value="H">H — horizontal</option>
+            <option value="V">V — vertical</option>
+            <option value="+45">+45°</option>
+            <option value="-45">−45°</option>
+            <option value="RCP">RCP</option>
+            <option value="LCP">LCP</option>
+            <option value="custom">custom</option>
+          </select>
+        </label>
+        <div style={grid2}>
+          <NumberCell label="Eₓ_re" value={outPol.exRe ?? 0} step={0.05}
+            onCommit={(v) => void persist({ outputPolarization: { ...outPol, exRe: v } })} />
+          <NumberCell label="Eₓ_im" value={outPol.exIm ?? 0} step={0.05}
+            onCommit={(v) => void persist({ outputPolarization: { ...outPol, exIm: v } })} />
+          <NumberCell label="Eᵧ_re" value={outPol.eyRe ?? 1} step={0.05}
+            onCommit={(v) => void persist({ outputPolarization: { ...outPol, eyRe: v } })} />
+          <NumberCell label="Eᵧ_im" value={outPol.eyIm ?? 0} step={0.05}
+            onCommit={(v) => void persist({ outputPolarization: { ...outPol, eyIm: v } })} />
+        </div>
+      </div>
+
+      {/* Backward beam profile editor removed by user request — when not
+          set in kindParams, the ray-tracer (rayTrace.ts:1689) and solver
+          (optical_solver.py:499-500) both fall back to the forward
+          profile, so the backward ASE arrow still has a sensible waist.
+          Values pre-set via the API are still honoured. */}
+
+      {/* Visualization — per-instance beam colour for the two emissions.
+          Backward (input-port ASE) also has a Show toggle so the user can
+          declutter the scene by hiding it; hiding skips the trace entirely
+          so downstream optics also stop reflecting it. */}
+      <div style={sectionStyle}>
+        <div style={titleStyle}>Visualization</div>
+        <EmissionVisualRow
+          sceneObject={sceneObject}
+          emissionKey="forward"
+          label="Output (forward)"
+          fallbackColorHex={wavelengthHex(wavelengthNm)}
+          showVisibilityToggle={false}
         />
-      </label>
-      <label className="mirror-adjust-field">
-        <span>Drive current (mA, max {maxCurrentMa})</span>
-        <input
-          type="number"
-          step={50}
-          min={0}
-          max={maxCurrentMa}
-          value={currentDraft}
-          onChange={(e) => setCurrentDraft(e.target.value)}
-          onBlur={(e) => commitCurrent(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              commitCurrent((e.target as HTMLInputElement).value);
-            }
-          }}
+        <EmissionVisualRow
+          sceneObject={sceneObject}
+          emissionKey="backward"
+          label="Input (backward ASE)"
+          fallbackColorHex={wavelengthHex(wavelengthNm)}
+          showVisibilityToggle={true}
         />
-      </label>
-      <p className="mirror-adjust-hint">
-        ASE @ {driveCurrentMa.toFixed(0)} mA: forward{" "}
-        <strong>{forwardMw.toFixed(1)} mW</strong> · backward{" "}
-        <strong>{backwardMw.toFixed(1)} mW</strong>
-      </p>
-      <button
-        type="button"
-        className="primary-button"
-        onClick={() => void alignInputToLaser()}
-        title="Translate the TA so its INPUT +X centerline coincides with a beam within 25 mm; rotation is unchanged."
-      >
-        Align INPUT to laser beam
-      </button>
-      <p className="mirror-adjust-hint" style={{ opacity: 0.7 }}>
-        INPUT seed port is on the +X face for this TA model; output is on the opposite face. Even
-        without a seed the chip leaks ASE in both directions; once a seed
-        beam reaches the input port, the gain table will saturate the
-        forward output and partly suppress the backward emission.
-      </p>
+      </div>
+
+      {/* Lookup-table summary (sampled tables — edit via API for now) */}
+      <div style={sectionStyle}>
+        <div style={titleStyle}>Lookup tables</div>
+        <div style={{ opacity: 0.75, fontSize: 10 }}>
+          aseSamples: <strong>{aseSamples.length}</strong> rows · gainSamples:{" "}
+          <strong>{(params.gainSamples ?? []).length}</strong> rows.
+          {aseSamples.length === 0 && (params.gainSamples ?? []).length === 0
+            ? " None present — solver uses the steady-state + ASE values above."
+            : " Solver interpolates these in preference to the steady-state values."}
+        </div>
+      </div>
+
+      {/* Alignment */}
+      <div style={{ marginTop: 8 }}>
+        <button
+          type="button"
+          className="primary-button"
+          onClick={() => void alignInputToLaser()}
+          title="Translate the TA so its INPUT +X centerline coincides with a beam within 25 mm; rotation is unchanged."
+        >
+          Align INPUT to laser beam
+        </button>
+        <p className="mirror-adjust-hint" style={{ opacity: 0.7, marginTop: 4 }}>
+          INPUT seed port is on the +X face for this TA model; output is on the
+          opposite face. Without a seed the chip leaks ASE in both directions
+          (see live readout above); once a seed beam reaches the input port,
+          the gain table will saturate the forward output and partly suppress
+          the backward emission.
+        </p>
+      </div>
     </div>
   );
 }

@@ -85,6 +85,8 @@ function anchorToDraft(a: Anchor): AnchorDraft {
     // concluded "Save failed" when it had actually persisted.
     apertureWidthMm: a.apertureWidthMm,
     apertureHeightMm: a.apertureHeightMm,
+    // Fiber-port tracking flag (preserve through save/load round-trip).
+    derivedFromFiberEndpoint: a.derivedFromFiberEndpoint,
     __key: freshKey(),
   };
 }
@@ -191,6 +193,11 @@ function fiberDefaultPortAnchor(component: ComponentItem, end: FiberEnd): Omit<A
   const base = nodes[idx].posMm;
   return {
     id: end === "A" ? "intercept_in" : "intercept_out",
+    // Stored coords are the snapshot of "where the port would be if the
+    // spline stayed in its current shape" — kept as fallback for tools
+    // that don't yet honour `derivedFromFiberEndpoint`. The marker below
+    // is the live source of truth for renderers / ray-tracer / solver
+    // that DO honour it.
     positionMmBodyLocal: {
       x: base[0] + outward.x * DEFAULT_FIBER_FERRULE_TIP_MM,
       y: base[1] + outward.y * DEFAULT_FIBER_FERRULE_TIP_MM,
@@ -198,6 +205,13 @@ function fiberDefaultPortAnchor(component: ComponentItem, end: FiberEnd): Omit<A
     },
     directionBodyLocal: normal,
     apertureMm: 2.5,
+    // Mark the port as "tracks the fiber endpoint" — when the user drags
+    // the spline endpoint in solid view, consumers that go through
+    // `utils/fiberAnchorResolver` re-derive the port's body-local pose
+    // from the current spline rather than reading the stored snapshot
+    // above. New fiber anchors default to derived; users can clear this
+    // field to pin the port at a fixed body-local position.
+    derivedFromFiberEndpoint: end,
   };
 }
 

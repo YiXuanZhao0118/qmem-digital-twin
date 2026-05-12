@@ -59,7 +59,7 @@ export function TopBar({ children }: TopBarProps) {
           <div className="window-menu" role="menu">
             <div className="window-menu-section">Windows</div>
             {panelIds
-              .filter((id) => id !== "touch-coincidence")
+              .filter((id) => id !== "touch-coincidence" && id !== "beam-scope")
               .map((id) => {
               const layout = layouts[id];
               return (

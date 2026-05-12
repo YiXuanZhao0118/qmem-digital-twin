@@ -96,9 +96,15 @@ import {
 // force-showing an object whose collection is hidden".
 import { computeVisibleCollectionIds } from "../utils/visibility";
 import {
+  computeFiberEndAlignment,
+  withFiberPortLabPose,
+  type BeamSegmentLab,
+} from "../utils/fiberAlignment";
+import {
   computeSnapPositionForLink,
   validateOpticalLink,
 } from "../utils/beamPlacement";
+import { expandPoseToRigidGroup, patchHasPoseChange } from "../utils/rigidGroup";
 
 type RelationDraftTarget = {
   objectAId: string;
@@ -499,6 +505,20 @@ type SceneStore = {
     end: "A" | "B",
     toleranceMm?: number,
   ) => Promise<{ offsetMm: number; beamId: string } | null>;
+  /** Manually set one fiber endpoint's optical-port lab pose. The user
+   *  supplies the desired ferrule-tip lab position and outward direction
+   *  (need not be unit-length — it's normalised internally); the action
+   *  back-derives the spline node + handle so the port lands at the
+   *  requested pose. Handle magnitude is preserved from the previous
+   *  handle when present. Used by the Object panel's per-end
+   *  x/y/z + rx/ry/rz inputs so the user can dial in port positions
+   *  directly instead of going through the spline editor. */
+  setFiberPortLabPose: (
+    componentId: string,
+    end: "A" | "B",
+    targetPosLab: [number, number, number],
+    targetOutwardLab: [number, number, number],
+  ) => Promise<void>;
   /** Toggle which fiber endpoint is the beam-entry port for ray-tracing.
    *  `end` is the endpoint the user clicked. If it's already the entry, the
    *  setting clears (no entry — fiber doesn't participate in the trace);
@@ -1508,133 +1528,185 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     set({ fiberEditingComponentId: null });
   },
   async updateFiberNodes(componentId, nodes) {
-    const component = get().scene.components.find((c) => c.id === componentId);
-    if (!component) return;
-    const nextProps = { ...(component.properties ?? {}), fiberNodes: nodes };
-    const updated = await updateComponentApi(componentId, { properties: nextProps });
-    set((state) => ({
-      scene: { ...state.scene, components: upsertById(state.scene.components, updated) },
+    // V2 fix (2026-05-11): fiber spline geometry is per-instance, so the
+    // node array lives on SceneObject.properties, NOT Component.properties.
+    // The old write target (component.properties.fiberNodes) was a layer-
+    // confusion bug — it mutated the catalog template, breaking all other
+    // instances of the same fiber type AND leaving any per-instance face
+    // anchors (output ports) un-synced because they live on the
+    // SceneObject. Resolve the component → its (first) SceneObject and
+    // write there. The type comment in types/digitalTwin.ts:369 already
+    // states this intent ("geometry on SceneObject.properties.fiberNodes");
+    // this is the implementation catching up.
+    const state = get();
+    const obj = state.scene.objects.find((o) => o.componentId === componentId);
+    if (!obj) return;
+    const nextProps = { ...(obj.properties ?? {}), fiberNodes: nodes };
+    const updated = await updateObjectApi(obj.id, { properties: nextProps });
+    set((s) => ({
+      scene: { ...s.scene, objects: upsertById(s.scene.objects, updated) },
     }));
   },
   async insertFiberNode(componentId, index, node) {
-    const component = get().scene.components.find((c) => c.id === componentId);
-    if (!component) return;
-    const current = ((component.properties ?? {}) as { fiberNodes?: FiberNodePersist[] })
-      .fiberNodes ?? [];
+    const state = get();
+    const obj = state.scene.objects.find((o) => o.componentId === componentId);
+    if (!obj) return;
+    const objProps = obj.properties as { fiberNodes?: FiberNodePersist[] } | undefined;
+    const compProps = state.scene.components.find((c) => c.id === componentId)?.properties as
+      { fiberNodes?: FiberNodePersist[] } | undefined;
+    // Prefer the per-instance fiberNodes; fall back to the legacy
+    // per-component value so users who already had nodes in the old
+    // location still see them when editing for the first time.
+    const current = objProps?.fiberNodes ?? compProps?.fiberNodes ?? [];
     const clampedIndex = Math.max(1, Math.min(index, current.length - 1));
-    // The new node always has both handles (it's interior, never an endpoint).
-    // Endpoint handle bookkeeping (handleIn for first, handleOut for last)
-    // remains untouched.
     const nextNodes = [...current.slice(0, clampedIndex), node, ...current.slice(clampedIndex)];
     await get().updateFiberNodes(componentId, nextNodes);
   },
   async removeFiberNode(componentId, index) {
-    const component = get().scene.components.find((c) => c.id === componentId);
-    if (!component) return;
-    const current = ((component.properties ?? {}) as { fiberNodes?: FiberNodePersist[] })
-      .fiberNodes ?? [];
+    const state = get();
+    const obj = state.scene.objects.find((o) => o.componentId === componentId);
+    if (!obj) return;
+    const objProps = obj.properties as { fiberNodes?: FiberNodePersist[] } | undefined;
+    const compProps = state.scene.components.find((c) => c.id === componentId)?.properties as
+      { fiberNodes?: FiberNodePersist[] } | undefined;
+    const current = objProps?.fiberNodes ?? compProps?.fiberNodes ?? [];
     if (current.length <= 2) return; // Always keep two endpoints.
     if (index <= 0 || index >= current.length - 1) return; // Don't delete endpoints.
     const nextNodes = current.filter((_, i) => i !== index);
     await get().updateFiberNodes(componentId, nextNodes);
   },
   async updateFiberRadius(componentId, radiusMm) {
-    const component = get().scene.components.find((c) => c.id === componentId);
-    if (!component) return;
-    const nextProps = { ...(component.properties ?? {}), radiusMm };
-    const updated = await updateComponentApi(componentId, { properties: nextProps });
-    set((state) => ({
-      scene: { ...state.scene, components: upsertById(state.scene.components, updated) },
+    // Same per-instance treatment as fiberNodes: a fiber's visual jacket
+    // radius is an instance property (you can have two cables of the same
+    // type with different rendered thicknesses), so write to the
+    // SceneObject. Falls back gracefully — no object => no write.
+    const state = get();
+    const obj = state.scene.objects.find((o) => o.componentId === componentId);
+    if (!obj) return;
+    const nextProps = { ...(obj.properties ?? {}), radiusMm };
+    const updated = await updateObjectApi(obj.id, { properties: nextProps });
+    set((s) => ({
+      scene: { ...s.scene, objects: upsertById(s.scene.objects, updated) },
     }));
   },
   async alignFiberEndToBeam(componentId, end, toleranceMm = 25) {
+    // Thin wrapper around the pure geometric helper in
+    // `utils/fiberAlignment.ts`: collect nodes + pose + beam segments
+    // from the live store/world, delegate the projection + back-derivation
+    // math, then write the result back. Helper is testable in isolation
+    // (see utils/__tests__/fiberAlignment.test.ts).
     const state = get();
-    const component = state.scene.components.find((c) => c.id === componentId);
-    if (!component) return null;
-    const props = (component.properties ?? {}) as { fiberNodes?: FiberNodePersist[] };
-    const nodes = props.fiberNodes;
+    // Read per-instance fiberNodes first; fall back to legacy per-component
+    // location for objects that haven't been re-edited since the migration.
+    const obj = state.scene.objects.find((o) => o.componentId === componentId);
+    const objProps = obj?.properties as { fiberNodes?: FiberNodePersist[] } | undefined;
+    const compProps = state.scene.components.find((c) => c.id === componentId)?.properties as
+      { fiberNodes?: FiberNodePersist[] } | undefined;
+    const nodes = objProps?.fiberNodes ?? compProps?.fiberNodes;
     if (!nodes || nodes.length < 2) return null;
-    const idx = end === "A" ? 0 : nodes.length - 1;
-    const neighbourIdx = end === "A" ? 1 : nodes.length - 2;
-    const ep = nodes[idx].posMm;
-    // Find closest beam-path segment within tolerance.
-    let best: {
-      beamId: string;
-      projectedMm: [number, number, number];
-      tangentMm: [number, number, number];
-      distMm: number;
-    } | null = null;
+
+    // Gather candidate beam segments in LAB mm. Two sources:
+    //   (1) Legacy manually-drawn beam_paths (back-compat).
+    //   (2) Live __rayTraceDebug — three.js world coords (units = 100 mm,
+    //       y-up). Inverse swap: lab_x = three.x*100, lab_y = -three.z*100,
+    //       lab_z = three.y*100. Skip segments emitted by this fiber.
+    const beamSegmentsLab: BeamSegmentLab[] = [];
     for (const beam of state.scene.beamPaths) {
       if (!beam.visible) continue;
       if (beam.points.length < 2) continue;
       for (let i = 0; i < beam.points.length - 1; i += 1) {
-        const a = beam.points[i];
-        const b = beam.points[i + 1];
-        const ab: [number, number, number] = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-        const lenSq = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
-        if (lenSq < 1e-6) continue;
-        // Project ep onto segment ab
-        const t =
-          ((ep[0] - a[0]) * ab[0] + (ep[1] - a[1]) * ab[1] + (ep[2] - a[2]) * ab[2]) / lenSq;
-        const tClamped = Math.max(0, Math.min(1, t));
-        const projected: [number, number, number] = [
-          a[0] + tClamped * ab[0],
-          a[1] + tClamped * ab[1],
-          a[2] + tClamped * ab[2],
-        ];
-        const dx = ep[0] - projected[0];
-        const dy = ep[1] - projected[1];
-        const dz = ep[2] - projected[2];
-        const distMm = Math.hypot(dx, dy, dz);
-        if (distMm < (best?.distMm ?? toleranceMm + 1) && distMm <= toleranceMm) {
-          // Tangent: the segment direction (a → b) — beam propagation
-          const tanLen = Math.sqrt(lenSq);
-          best = {
-            beamId: beam.id,
-            projectedMm: projected,
-            tangentMm: [ab[0] / tanLen, ab[1] / tanLen, ab[2] / tanLen],
-            distMm,
-          };
-        }
+        beamSegmentsLab.push({
+          beamId: beam.id,
+          aMm: beam.points[i] as [number, number, number],
+          bMm: beam.points[i + 1] as [number, number, number],
+        });
       }
     }
-    if (!best) return null;
-    // Compose new node array: only the endpoint is changed.
-    // - posMm: snap to projected point
-    // - For end A: handleOut should point INTO the curve (i.e., toward
-    //   internal node). The connector outward = -handleOut, so to face
-    //   the connector AGAINST the beam direction, set handleOut antiparallel
-    //   to beam tangent, magnitude preserved from the original handle so
-    //   the curve doesn't snap.
-    const tan = best.tangentMm;
-    const newNode: FiberNodePersist = {
-      posMm: [...best.projectedMm] as [number, number, number],
-      handleInMm: nodes[idx].handleInMm
-        ? ([...nodes[idx].handleInMm] as [number, number, number])
-        : undefined,
-      handleOutMm: nodes[idx].handleOutMm
-        ? ([...nodes[idx].handleOutMm] as [number, number, number])
-        : undefined,
+    type TraceSeg = {
+      sourceObjectId?: string;
+      startThree?: { x: number; y: number; z: number };
+      endThree?: { x: number; y: number; z: number };
     };
-    // Preserve handle MAGNITUDES, replace direction so connector faces beam
-    // (outward = -tangent). For end A: handleOut = -tangent · |handleOut|;
-    // for end B: handleIn = +tangent · |handleIn|.
-    const oldNeighbourPos = nodes[neighbourIdx].posMm;
-    const segLen = Math.hypot(
-      oldNeighbourPos[0] - ep[0],
-      oldNeighbourPos[1] - ep[1],
-      oldNeighbourPos[2] - ep[2],
-    );
-    const handleLen = Math.max(20, segLen * 0.33);
-    if (end === "A") {
-      newNode.handleOutMm = [-tan[0] * handleLen, -tan[1] * handleLen, -tan[2] * handleLen];
-    } else {
-      newNode.handleInMm = [tan[0] * handleLen, tan[1] * handleLen, tan[2] * handleLen];
+    const traces: TraceSeg[] = ((typeof window !== "undefined"
+      ? (window as unknown as { __rayTraceDebug?: TraceSeg[] }).__rayTraceDebug
+      : undefined) ?? []) as TraceSeg[];
+    const threeToLab = (v: { x: number; y: number; z: number }): [number, number, number] =>
+      [v.x * 100, -v.z * 100, v.y * 100];
+    for (const seg of traces) {
+      if (!seg.startThree || !seg.endThree) continue;
+      if (obj && seg.sourceObjectId === obj.id) continue; // don't snap to own emission
+      beamSegmentsLab.push({
+        beamId: `trace:${seg.sourceObjectId?.slice(0, 8) ?? "?"}`,
+        aMm: threeToLab(seg.startThree),
+        bMm: threeToLab(seg.endThree),
+      });
     }
+
+    const result = computeFiberEndAlignment({
+      end,
+      nodes,
+      pose: {
+        xMm: obj?.xMm ?? 0,
+        yMm: obj?.yMm ?? 0,
+        zMm: obj?.zMm ?? 0,
+        rxDeg: obj?.rxDeg ?? 0,
+        ryDeg: obj?.ryDeg ?? 0,
+        rzDeg: obj?.rzDeg ?? 0,
+      },
+      beamSegmentsLab,
+      toleranceMm,
+    });
+    if (!result) return null;
+
+    // Stitch the result back into the nodes array. Only the touched
+    // endpoint's posMm + the corresponding handle change; the other
+    // handle on this node and all interior nodes are preserved.
+    const idx = end === "A" ? 0 : nodes.length - 1;
+    const newNode: FiberNodePersist = {
+      posMm: result.newPosMmBody,
+      handleInMm:
+        end === "B"
+          ? result.newHandleMmBody
+          : nodes[idx].handleInMm
+            ? ([...nodes[idx].handleInMm] as [number, number, number])
+            : undefined,
+      handleOutMm:
+        end === "A"
+          ? result.newHandleMmBody
+          : nodes[idx].handleOutMm
+            ? ([...nodes[idx].handleOutMm] as [number, number, number])
+            : undefined,
+    };
     const nextNodes = [...nodes];
     nextNodes[idx] = newNode;
     await get().updateFiberNodes(componentId, nextNodes);
-    return { offsetMm: best.distMm, beamId: best.beamId };
+    return { offsetMm: result.distMm, beamId: result.beamId };
+  },
+
+  async setFiberPortLabPose(componentId, end, targetPosLab, targetOutwardLab) {
+    const state = get();
+    const obj = state.scene.objects.find((o) => o.componentId === componentId);
+    const objProps = obj?.properties as { fiberNodes?: FiberNodePersist[] } | undefined;
+    const compProps = state.scene.components.find((c) => c.id === componentId)?.properties as
+      { fiberNodes?: FiberNodePersist[] } | undefined;
+    const nodes = objProps?.fiberNodes ?? compProps?.fiberNodes;
+    if (!nodes || nodes.length < 2) return;
+    const nextNodes = withFiberPortLabPose({
+      end,
+      nodes,
+      pose: {
+        xMm: obj?.xMm ?? 0,
+        yMm: obj?.yMm ?? 0,
+        zMm: obj?.zMm ?? 0,
+        rxDeg: obj?.rxDeg ?? 0,
+        ryDeg: obj?.ryDeg ?? 0,
+        rzDeg: obj?.rzDeg ?? 0,
+      },
+      targetPosLab,
+      targetOutwardLab,
+    });
+    if (nextNodes === nodes) return;
+    await get().updateFiberNodes(componentId, nextNodes);
   },
 
   async toggleFiberBeamEntry(objectId, end) {
@@ -1784,6 +1856,48 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     const currentObject = get().scene.objects.find((object) => object.id === objectId);
     const safePatch = stripLockedTransformPatch(currentObject, patch);
     if (!safePatch) return;
+
+    // Rigid-group expansion: if the leading object lives in a collection
+    // sub-tree where rigidTransform=true and the patch carries a pose change,
+    // fan out the same world-space rigid-body transform to every group
+    // member so the relative pose A↔B↔C stays fixed. See
+    // utils/rigidGroup.ts for the math. Expansion is silent when no rigid
+    // group applies; rejects (no-op) if any non-leading member is locked,
+    // because a partial rigid move would silently break the invariant the
+    // user enables rigidTransform to get.
+    if (currentObject && patchHasPoseChange(safePatch)) {
+      const expansion = expandPoseToRigidGroup(get().scene, currentObject, safePatch);
+      if (expansion.kind === "rejectedLockedMember") {
+        // eslint-disable-next-line no-console
+        console.warn(
+          "[rigidTransform] Move rejected — locked member(s) in rigid group:",
+          expansion.lockedIds,
+        );
+        return;
+      }
+      if (expansion.kind === "group") {
+        const updated = await Promise.all(
+          expansion.entries.map((entry) => updateObjectApi(entry.id, entry.patch)),
+        );
+        set((current) => {
+          const leadingObj = updated.find((o) => o.id === objectId) ?? updated[0];
+          return {
+            selectedObjectId: leadingObj?.id ?? objectId,
+            selectedObjectIds: current.selectedObjectIds.includes(leadingObj?.id ?? objectId)
+              ? current.selectedObjectIds
+              : [leadingObj?.id ?? objectId],
+            selectedComponentId: null,
+            scene: {
+              ...current.scene,
+              objects: upsertObjects(current.scene.objects, updated),
+            },
+          };
+        });
+        return;
+      }
+      // kind === "single": fall through to the regular single-object path.
+    }
+
     const obj = await updateObjectApi(objectId, safePatch);
     set((current) => ({
       selectedObjectId: obj.id ?? objectId,
@@ -1799,6 +1913,14 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   },
 
   async deleteObject(objectId) {
+    // Locked objects can't be removed — same protection that blocks pose
+    // mutation in stripLockedTransformPatch. Silently no-op so that a
+    // multi-select delete (Promise.all over deleteObject(...)) skips locked
+    // members and removes only the unlocked ones, matching the user-facing
+    // spec: "若 select 多個 objects 他也在其中 執行 delete 不會 delete locked
+    // 的 objects". Backend also returns 409 on locked as defense-in-depth.
+    const target = get().scene.objects.find((object) => object.id === objectId);
+    if (target?.locked) return;
     await deleteObjectApi(objectId);
     set((state) => {
       const nextObjects = state.scene.objects.filter((object) => object.id !== objectId);
@@ -2212,6 +2334,13 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   },
 
   async moveObjectToCollection(collectionId, objectId) {
+    // Locked objects are frozen for organizational moves too — same model as
+    // delete and pose patches. A multi-select drag in the outliner calls this
+    // in a Promise.all loop; silent no-op on locked lets the unlocked
+    // members reparent while locked stays put. Backend also returns 409 on
+    // locked as defense-in-depth.
+    const target = get().scene.objects.find((object) => object.id === objectId);
+    if (target?.locked) return;
     const member = await moveObjectToCollectionApi(collectionId, objectId);
     set((state) => {
       const others = (state.scene.collectionMembers ?? []).filter(
