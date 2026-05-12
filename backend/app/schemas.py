@@ -2286,6 +2286,26 @@ class PulseBlasterChannelBulkUpsert(CamelModel):
     channels: list[PulseBlasterChannelCreate]
 
 
+class PulseBlasterInstructionOut(CamelModel):
+    """One row of the compiled SpinCore opcode stream (Phase PB.4)."""
+
+    index: int
+    output_state: int
+    opcode: str
+    data: int
+    length_ns: float
+    label: str | None = None
+
+
+class PulseBlasterCompileOut(CamelModel):
+    """Compiled program — instruction stream + a Python spinapi rendering."""
+
+    instructions: list[PulseBlasterInstructionOut]
+    python_source: str
+    bound_channel_count: int
+    total_duration_ns: float
+
+
 class V2RevisionBase(CamelModel):
     label: str
     description: str | None = None

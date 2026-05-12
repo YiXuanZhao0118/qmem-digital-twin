@@ -45,20 +45,17 @@ function blockGate(block: TimingBlock): GateState {
 }
 
 export function evaluateProgramAt(program: TimingProgram, tNs: number): GateState {
+  // Find the block covering tNs and return its gate state. Outside any
+  // block the device is OFF — channels don't latch past a block's end,
+  // matching how SpinCore programs are normally authored (each
+  // interval gets an explicit drive).
   if (!program.blocks || program.blocks.length === 0) return null;
-
-  const sorted = [...program.blocks].sort((a, b) => a.tStartNs - b.tStartNs);
-  let lastResolved: GateState = null;
-
-  for (const block of sorted) {
-    if (block.tStartNs > tNs) break;
+  for (const block of program.blocks) {
     if (tNs >= block.tStartNs && tNs < block.tEndNs) {
       return blockGate(block);
     }
-    const g = blockGate(block);
-    if (g !== null) lastResolved = g;
   }
-  return lastResolved;
+  return false;
 }
 
 /**

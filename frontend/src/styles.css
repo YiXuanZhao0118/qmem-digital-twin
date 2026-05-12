@@ -6769,3 +6769,87 @@ body.is-timing-bar-drag * {
 .pb-row-disabled select {
   background: rgba(15, 23, 42, 0.03);
 }
+
+.pb-panel-actions {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+/* Phase PB.4 — compile result table + python source dump */
+.pb-compile-result {
+  margin-top: 10px;
+  border-top: 1px solid rgba(15, 23, 42, 0.12);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pb-compile-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: rgba(15, 23, 42, 0.7);
+}
+
+.pb-instr-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.pb-instr-table thead th {
+  text-align: left;
+  padding: 3px 6px;
+  background: rgba(15, 23, 42, 0.04);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 9px;
+  color: rgba(15, 23, 42, 0.6);
+  border-bottom: 1px solid rgba(15, 23, 42, 0.1);
+}
+
+.pb-instr-table tbody td {
+  padding: 2px 6px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.04);
+}
+
+.pb-instr-ttl {
+  color: rgba(202, 138, 4, 0.95);
+  font-weight: 600;
+}
+
+.pb-instr-op {
+  color: rgba(30, 64, 175, 0.95);
+  font-weight: 600;
+}
+
+.pb-instr-len {
+  text-align: right;
+}
+
+.pb-instr-note {
+  color: rgba(15, 23, 42, 0.5);
+  font-style: italic;
+}
+
+.pb-compile-source summary {
+  cursor: pointer;
+  font-size: 10.5px;
+  color: rgba(15, 23, 42, 0.7);
+  padding: 4px 0;
+}
+
+.pb-compile-source pre {
+  font-size: 10px;
+  background: rgba(15, 23, 42, 0.05);
+  padding: 8px 10px;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 4px 0 0;
+  line-height: 1.5;
+}

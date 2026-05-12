@@ -863,6 +863,27 @@ export async function bulkUpsertPulseBlasterChannelsApi(
   return response.data;
 }
 
+export type PulseBlasterInstruction = {
+  index: number;
+  outputState: number;
+  opcode: string;
+  data: number;
+  lengthNs: number;
+  label: string | null;
+};
+
+export type PulseBlasterCompile = {
+  instructions: PulseBlasterInstruction[];
+  pythonSource: string;
+  boundChannelCount: number;
+  totalDurationNs: number;
+};
+
+export async function compilePulseBlasterApi(): Promise<PulseBlasterCompile> {
+  const response = await client.get<PulseBlasterCompile>("/api/pulse-blaster/compile");
+  return response.data;
+}
+
 export async function parseTouchstoneApi(file: File): Promise<TouchstoneNetwork> {
   const form = new FormData();
   form.append("file", file, file.name);
