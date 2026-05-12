@@ -64,5 +64,10 @@ test.describe("EM workspace", () => {
     await expect(
       page.locator(".solver-console-run-row", { hasText: "em_fem" }).first(),
     ).toBeVisible();
+
+    // Phase C.8: vtk.js field viewer renders the mock |E|² volume.
+    await expect(page.locator(".field-viewer-block")).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator(".field-viewer-title")).toContainText(/\|E\|/);
+    await expect(page.locator(".field-viewer-canvas canvas")).toBeVisible();
   });
 });

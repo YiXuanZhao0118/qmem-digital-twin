@@ -18,6 +18,8 @@ import { Play, Plus, Trash2, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useSceneStore } from "../../store/sceneStore";
+import type { EmFieldPayload } from "../../types/digitalTwin";
+import { FieldViewer } from "./FieldViewer";
 import { NetworkAnalysisChart } from "./NetworkAnalysisChart";
 
 const STARTER_FREQ_SWEEP = {
@@ -508,6 +510,7 @@ function EmRunResultPreview({
         freqHz?: number[];
         sParams?: Record<string, [number, number][]>;
         solverNote?: string;
+        field?: EmFieldPayload;
       }
     | null;
 
@@ -550,6 +553,7 @@ function EmRunResultPreview({
           sParams={rs.sParams}
         />
       )}
+      {rs?.field && run.status === "completed" && <FieldViewer field={rs.field} />}
     </div>
   );
 }

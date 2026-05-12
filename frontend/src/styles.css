@@ -6199,3 +6199,57 @@ body.is-timing-bar-drag * {
   border-left: 2px solid rgba(245, 158, 11, 0.4);
   margin-bottom: 8px;
 }
+
+/* ---- Volumetric field viewer (Phase C.8) ---- */
+
+.field-viewer-block {
+  margin-top: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 6px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.field-viewer-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(15, 23, 42, 0.55);
+  padding: 6px 8px 2px 8px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.field-viewer-canvas {
+  position: relative;
+  width: 100%;
+  height: 280px;
+  background: #ebebe6;
+  overflow: hidden;
+}
+
+.field-viewer-placeholder {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px dashed rgba(15, 23, 42, 0.2);
+  border-radius: 4px;
+  background: rgba(15, 23, 42, 0.02);
+  font-size: 11px;
+  color: rgba(15, 23, 42, 0.7);
+  line-height: 1.5;
+}
+
+.field-viewer-placeholder strong {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 4px;
+  color: rgba(15, 23, 42, 0.85);
+}
+
+.field-viewer-placeholder-meta code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  background: rgba(15, 23, 42, 0.05);
+  padding: 1px 4px;
+  border-radius: 2px;
+}

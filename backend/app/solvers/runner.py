@@ -75,14 +75,24 @@ class SolverRunner(Protocol):
 
 
 class SshWorkstationRunner:
-    """Phase C.3 stub for the lab-workstation SSH dispatch path.
+    """Phase C.4: dispatch a solver run on a remote workstation via SSH.
 
-    The actual SSH client + workstation-side runner agent land in
-    Phase C.4 (Windows + WSL2 + ``docker pull awslabs/palace:latest`` on
-    the workstation). Until then this class exists so MODULE_DEFAULT_RUNNER
-    can reference 'ssh_workstation' without crashing — but ``submit``
-    raises NotImplementedError to surface the missing piece clearly if
-    something tries to dispatch a real job before workstation setup.
+    The workstation must have:
+      - SSH server reachable from the dev machine.
+      - The matching public key authorized for ``host`` (use
+        ``ssh-copy-id`` from the dev machine's ed25519 key).
+      - Docker (Windows: Docker Desktop with WSL2 backend) so that
+        ``docker run --rm <palace_image>`` works.
+
+    The runner's ``submit`` only opens the connection and hands off to a
+    *background* asyncio task. The actual solver flow (write config,
+    SCP mesh, run docker, parse results) is module-specific and lives
+    in the per-module solver coroutine — runner just exposes
+    ``run_command`` / ``transfer`` helpers via attributes on
+    ``sim_run.runner`` for the solver to use.
+
+    For Phase C.4 the only consumer is ``solvers.em_fem.run`` which
+    detects the runner kind and uses these helpers when configured.
     """
 
     def __init__(
@@ -94,22 +104,21 @@ class SshWorkstationRunner:
         self.host = host
         self.key_path = key_path
         self.palace_image = palace_image
+        self._tasks: set[asyncio.Task] = set()
 
     async def submit(self, sim_run: SimulationRun) -> None:
         if not self.host:
             raise NotImplementedError(
                 "SshWorkstationRunner: settings.workstation_host is unset. "
-                "Configure WORKSTATION_HOST + WORKSTATION_KEY_PATH and stand "
-                "up the workstation runner agent (Phase C.4) before dispatching "
-                "ssh_workstation runs."
+                "Configure WORKSTATION_HOST (and optionally "
+                "WORKSTATION_KEY_PATH) before dispatching ssh_workstation runs. "
+                "See docs/PHASE_C_WORKSTATION_SETUP.md."
             )
-        # Phase C.4 will replace this with: open asyncssh client, scp the
-        # job spec + mesh, exec `docker run awslabs/palace:latest`,
-        # poll a status file, scp results back, parse, fill sim_run.
-        raise NotImplementedError(
-            f"SshWorkstationRunner: workstation runner agent on {self.host!r} "
-            "not yet implemented (Phase C.4)."
-        )
+        run_id = sim_run.id
+        module = sim_run.module
+        task = asyncio.create_task(_run_in_background(run_id, module))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
 
 class InProcessRunner:

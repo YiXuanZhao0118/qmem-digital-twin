@@ -1048,6 +1048,28 @@ export type EmBoundaryConditions = {
   absorbingAnchorBindingIds: string[];
 };
 
+/** Volumetric scalar field payload — Phase C.8.
+ *  ``data`` is row-major flat array of dim[0]*dim[1]*dim[2] scalars.
+ *  Mock palace produces a Gaussian blob; real palace will eventually
+ *  pull down a .pvtu and stream it via a separate endpoint. */
+export type EmFieldPayload =
+  | {
+      available: true;
+      format: "scalar-grid";
+      dim: [number, number, number];
+      spacingMm: [number, number, number];
+      originMm: [number, number, number];
+      data: number[];
+      label: string;
+    }
+  | {
+      available: false;
+      format: string;
+      remoteHost?: string;
+      remotePath?: string;
+      note?: string;
+    };
+
 export type EmProblem = {
   id: string;
   name: string;
