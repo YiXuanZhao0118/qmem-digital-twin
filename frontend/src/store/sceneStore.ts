@@ -11,6 +11,7 @@ import {
   createOpticalLinkApi,
   createComponentApi,
   createSceneViewApi,
+  createSimulationRunApi,
   deleteAssemblyRelationApi,
   deleteCollectionApi,
   deleteComponentApi,
@@ -20,6 +21,7 @@ import {
   deleteSceneViewApi,
   duplicateSceneViewApi,
   fetchScene,
+  fetchSimulationRunsApi,
   importLocalComponentAssetApi,
   moveObjectToCollectionApi,
   listSceneViewsApi,
@@ -67,6 +69,8 @@ import type {
   SceneObject,
   SceneObjectPatch,
   SimulationModule,
+  SimulationRunCreatePayload,
+  SimulationRunV2,
   TimingProgram,
   TimingProgramUpsert,
   TransientRunRequest,
@@ -373,6 +377,10 @@ type SceneStore = {
    *  only ships an "optics_seq" workspace; the other values flip the
    *  canvas to ``<ModulePlaceholder />``. See docs/MULTIPHYSICS_PLAN.md. */
   currentModule: SimulationModule;
+  /** Recent simulation runs (newest first). Populated lazily on demand
+   *  by the SolverConsole panel and kept in sync via the WS event
+   *  ``simulation_run.status_changed`` (see applyEvent). */
+  recentSimulationRuns: SimulationRunV2[];
   /** Currently active PHY editor view inside the sub-page. `null` =
    *  editor "home" (left rail visible, right pane shows a hint asking
    *  the user to pick a sub-editor). */
@@ -388,6 +396,8 @@ type SceneStore = {
   phyEditorDirty: boolean;
   setEditorMode: (mode: "scene" | "phy-editor") => void;
   setCurrentModule: (module: SimulationModule) => void;
+  loadRecentSimulationRuns: (module?: SimulationModule, limit?: number) => Promise<void>;
+  dispatchSimulationRun: (payload: SimulationRunCreatePayload) => Promise<SimulationRunV2>;
   setEditingAssetId: (assetId: string | null) => void;
   setPhyEditorDirty: (dirty: boolean) => void;
   /** Open the PHY editor sub-page (no specific view selected; user
@@ -913,6 +923,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   selectedRelationId: null,
   editorMode: "scene",
   currentModule: "optics_seq",
+  recentSimulationRuns: [],
   phyEditorView: null,
   editingAssetId: null,
   phyEditorDirty: false,
@@ -2415,6 +2426,22 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     set({ currentModule: module });
   },
 
+  async loadRecentSimulationRuns(module, limit = 20) {
+    const runs = await fetchSimulationRunsApi(module, limit);
+    set({ recentSimulationRuns: runs });
+  },
+
+  async dispatchSimulationRun(payload) {
+    const run = await createSimulationRunApi(payload);
+    set((state) => ({
+      recentSimulationRuns: [
+        run,
+        ...state.recentSimulationRuns.filter((r) => r.id !== run.id),
+      ].slice(0, 20),
+    }));
+    return run;
+  },
+
   setEditingAssetId(assetId) {
     set({ editingAssetId: assetId });
   },
@@ -2703,6 +2730,23 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         case "optical_simulation.completed":
           // Currently advisory only; UI listens via runOpticalSimulation return value.
           return state;
+        case "simulation_run.status_changed": {
+          // Multiphysics WS event. Only mutate rows we already track in
+          // recentSimulationRuns; if the id is unknown we ignore — the
+          // SolverConsole will pick it up the next time it refetches.
+          const payload = event.payload;
+          const recentSimulationRuns = state.recentSimulationRuns.map((run) =>
+            run.id === payload.id
+              ? {
+                  ...run,
+                  status: payload.status,
+                  progress: payload.progress,
+                  errorMessage: payload.errorMessage,
+                }
+              : run,
+          );
+          return { recentSimulationRuns };
+        }
         case "scene_view.updated": {
           const payload = event.payload as Partial<SceneView> & { id?: string; deleted?: boolean };
           const sceneViews = scene.sceneViews ?? [];

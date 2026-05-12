@@ -16,6 +16,9 @@ import type {
   SceneData,
   SceneObject,
   SceneObjectPatch,
+  SimulationModule,
+  SimulationRunCreatePayload,
+  SimulationRunV2,
   TimingProgram,
   TimingProgramUpsert,
   TransientRunRequest,
@@ -638,4 +641,30 @@ export function resolveAssetUrl(filePath: string): string {
     return `${API_BASE_URL}/${filePath}`;
   }
   return `${API_BASE_URL}/assets/${filePath.replace(/^\/+/, "")}`;
+}
+
+// ---- Multiphysics simulation runs (Phase A) -------------------------------
+
+export async function fetchSimulationRunsApi(
+  module?: SimulationModule,
+  limit = 20,
+): Promise<SimulationRunV2[]> {
+  const params: Record<string, string | number> = { limit };
+  if (module) params.module = module;
+  const response = await client.get<SimulationRunV2[]>("/api/simulation-runs", {
+    params,
+  });
+  return response.data;
+}
+
+export async function fetchSimulationRunApi(id: string): Promise<SimulationRunV2> {
+  const response = await client.get<SimulationRunV2>(`/api/simulation-runs/${id}`);
+  return response.data;
+}
+
+export async function createSimulationRunApi(
+  payload: SimulationRunCreatePayload,
+): Promise<SimulationRunV2> {
+  const response = await client.post<SimulationRunV2>("/api/simulation-runs", payload);
+  return response.data;
 }

@@ -15,6 +15,7 @@ import { OpticalLinkViewerPanel } from "./components/optical/OpticalLinkViewerPa
 // per-object "Snap to beam" action (in OE panel) plus aperture warnings.
 import { CursorMenu } from "./components/optical/CursorMenu";
 import { SceneToolbar } from "./components/SceneToolbar";
+import { SolverConsole } from "./components/workspace/SolverConsole";
 import { TopBar } from "./components/workspace/TopBar";
 import { WorkspaceProvider } from "./components/workspace/WorkspaceProvider";
 import { getModule } from "./modules/_registry";
@@ -231,6 +232,7 @@ export default function App() {
               <TimingEditorPanel />
               <OpticalLinkViewerPanel />
               <TouchCoincidencePanel />
+              <SolverConsole />
               <CursorMenu />
             </>
           ) : (
