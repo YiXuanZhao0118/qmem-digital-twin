@@ -72,12 +72,17 @@ export function PulseBlasterPanel() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const loadGlobalChannels = useSceneStore((s) => s.loadPulseBlasterChannels);
+
   const refresh = async () => {
     try {
       const backend = await fetchPulseBlasterChannelsApi();
       const filled = fillFromBackend(backend);
       setRows(filled);
       setOriginal(filled);
+      // Keep the global cache fresh so LinkedSchematics chips and the
+      // PB.3 scrub-time evaluator see the same data.
+      void loadGlobalChannels();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

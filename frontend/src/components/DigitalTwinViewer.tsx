@@ -11,6 +11,7 @@ import { disposeObject, loadAssetObject } from "../three/loadAsset";
 import { wavelengthToColor } from "../three/opticalBeams";
 import { traceBeamsFromLasers, _testReflect, gaussianWaistAtZ, type TraceSegment } from "../three/rayTrace";
 import { getEmissionVisual } from "../utils/emissionVisuals";
+import { buildSceneGateOverrides } from "../utils/timingEvaluation";
 import { PlacementGizmo } from "../three/placement/gizmo";
 import { SnapOverlay } from "../three/placement/snapOverlay";
 import {
@@ -1296,6 +1297,10 @@ export function DigitalTwinViewer({
   // call requestRenderRef.current() to schedule a single frame. Default is a
   // no-op so calls before the init useEffect mounts are safe.
   const requestRenderRef = useRef<() => void>(() => {});
+  // Phase PB.3 — exposes the inner renderRayTraces() so an external
+  // useEffect can request a beam-only refresh when scrubTimeNs or PB
+  // bindings change, without rebuilding component meshes.
+  const redrawBeamsRef = useRef<() => void>(() => {});
   const placementGizmoRef = useRef<PlacementGizmo | null>(null);
   const snapOverlayRef = useRef<SnapOverlay | null>(null);
   const faceHighlightRef = useRef<THREE.Group | null>(null);
@@ -1316,6 +1321,8 @@ export function DigitalTwinViewer({
 
   const sceneData = useSceneStore((state) => state.scene);
   const scopeProbe = useSceneStore((state) => state.scopeProbe);
+  const scrubTimeNs = useSceneStore((state) => state.scrubTimeNs);
+  const pulseBlasterChannels = useSceneStore((state) => state.pulseBlasterChannels);
   const selectedComponentId = useSceneStore((state) => state.selectedComponentId);
   const fiberEditingComponentId = useSceneStore((state) => state.fiberEditingComponentId);
   const updateFiberNodes = useSceneStore((state) => state.updateFiberNodes);
@@ -1576,6 +1583,20 @@ export function DigitalTwinViewer({
     () => makeRenderableContext(overlayFlags, session, activeView, sceneData),
     [overlayFlags, session, activeView, sceneData],
   );
+
+  // Phase PB.3 — cascade scrub-time gate state into the beam tracer.
+  // Empty map when scrubTimeNs is null (normal/static rendering).
+  const gateOverrides = useMemo(() => {
+    if (scrubTimeNs === null) return new Map<string, boolean>();
+    return buildSceneGateOverrides({
+      tNs: scrubTimeNs,
+      programs: sceneData.timingPrograms ?? [],
+      objects: sceneData.objects.map((o) => ({ id: o.id, componentId: o.componentId })),
+      pulseBlasterChannels,
+    });
+  }, [scrubTimeNs, sceneData.timingPrograms, sceneData.objects, pulseBlasterChannels]);
+  const gateOverridesRef = useRef<Map<string, boolean>>(gateOverrides);
+  gateOverridesRef.current = gateOverrides;
 
   const cursorHidden = useSceneStore((state) => state.transformCursorHidden[panelKey]);
   useEffect(() => {
@@ -3339,9 +3360,11 @@ export function DigitalTwinViewer({
 
     function renderRayTraces() {
       if (!renderCtx.overlayFlags.beam_segments) return;
+      clearGroup(beamGroup);
       const traces = traceBeamsFromLasers({
         scene: sceneData,
         componentGroup,
+        gateOverrides: gateOverridesRef.current,
       });
       const win = window as unknown as {
         __rayTraceDebug?: TraceSegment[];
@@ -3377,6 +3400,13 @@ export function DigitalTwinViewer({
       }
     }
 
+    // Phase PB.3 — expose the inner renderRayTraces so an external
+    // effect can trigger a beam-only redraw when scrub state changes.
+    redrawBeamsRef.current = () => {
+      renderRayTraces();
+      requestRenderRef.current?.();
+    };
+
     void (async () => {
       await renderComponents();
       if (cancelled) return;
@@ -3386,7 +3416,6 @@ export function DigitalTwinViewer({
       // If this run is cancelled by a quick follow-up store update, the
       // previous frame's beams stay visible until the new run paints fresh
       // ones, instead of going blank and never recovering until F5.
-      clearGroup(beamGroup);
       clearGroup(relationGroup);
       renderRayTraces();
       renderRelations();
@@ -3414,6 +3443,14 @@ export function DigitalTwinViewer({
       cancelled = true;
     };
   }, [sceneData, selectedComponentId, selectedObjectId, selectedObjectIds, selectedRelationId, previewObjectTransforms, relationDraftTarget, renderCtx, displayMode]);
+
+  // Phase PB.3 — when the scrub-time slider moves (or PB bindings change),
+  // trigger a beam-only redraw via the ref exposed by the big effect above.
+  // The component-mesh path is skipped: meshes only rebuild on real scene
+  // changes, so dragging the slider stays at 60 fps.
+  useEffect(() => {
+    redrawBeamsRef.current?.();
+  }, [scrubTimeNs, pulseBlasterChannels, sceneData.timingPrograms]);
 
   // -----------------------------------------------------------------
   // Fiber Bezier-spline edit overlay. Active only when

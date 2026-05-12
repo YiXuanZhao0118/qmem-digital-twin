@@ -24,10 +24,9 @@ import {
   createEmProblemApi,
   fetchCircuitsApi,
   fetchEmProblemsApi,
-  fetchPulseBlasterChannelsApi,
 } from "../api/client";
 import { useSceneStore } from "../store/sceneStore";
-import type { Circuit, EmProblem, PulseBlasterChannel } from "../types/digitalTwin";
+import type { Circuit, EmProblem } from "../types/digitalTwin";
 import { useWorkspace } from "./workspace/WorkspaceProvider";
 
 type Props = {
@@ -50,7 +49,6 @@ export function LinkedSchematicsSection({
 }: Props) {
   const [circuits, setCircuits] = useState<Circuit[]>([]);
   const [emProblems, setEmProblems] = useState<EmProblem[]>([]);
-  const [pbChannels, setPbChannels] = useState<PulseBlasterChannel[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -59,6 +57,7 @@ export function LinkedSchematicsSection({
   const setSelectedEmProblem = useSceneStore((s) => s.setSelectedEmProblem);
   const dispatchSimulationRun = useSceneStore((s) => s.dispatchSimulationRun);
   const recentRuns = useSceneStore((s) => s.recentSimulationRuns);
+  const pbChannels = useSceneStore((s) => s.pulseBlasterChannels);
   const { togglePanelVisible, focusPanel } = useWorkspace();
 
   // Map of circuit/em-problem id -> latest run status (just pulled from
@@ -75,14 +74,12 @@ export function LinkedSchematicsSection({
 
   const refresh = async () => {
     try {
-      const [cs, ems, pbs] = await Promise.all([
+      const [cs, ems] = await Promise.all([
         fetchCircuitsApi(50, sceneObjectId),
         fetchEmProblemsApi(50, sceneObjectId),
-        fetchPulseBlasterChannelsApi(),
       ]);
       setCircuits(cs);
       setEmProblems(ems);
-      setPbChannels(pbs);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

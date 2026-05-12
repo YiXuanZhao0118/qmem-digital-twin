@@ -1865,10 +1865,16 @@ export function traceBeamsFromLasers(input: {
   };
   componentGroup: THREE.Group;
   options?: { maxLengthMm?: number; maxBounces?: number };
+  /** Phase PB.3 — per-SceneObject gate state at the current scrub time.
+   *  When the map contains an entry with `false`, that emitter is
+   *  treated as gated off and skipped entirely (so downstream optics
+   *  also see no beam). Absent objects render as configured. */
+  gateOverrides?: Map<string, boolean>;
 }): TraceSegment[] {
   const { scene, componentGroup } = input;
   const maxLengthMm = input.options?.maxLengthMm ?? DEFAULT_MAX_LENGTH_MM;
   const maxBounces = input.options?.maxBounces ?? DEFAULT_MAX_BOUNCES;
+  const gateOverrides = input.gateOverrides;
 
   // CRITICAL: refresh world matrices on the entire group BEFORE any bbox /
   // raycast query. Per-mesh updateMatrixWorld(true) only works if the parent
@@ -1980,6 +1986,12 @@ export function traceBeamsFromLasers(input: {
       if (!getEmissionVisual(obj, "main").visible) {
         continue;
       }
+      // Phase PB.3: scrub-time gate cascade — when the user is sampling
+      // a TimingProgram / PB channel sequence, gated-off emitters drop
+      // their beam (so downstream PBS/lens/fiber receive nothing too).
+      if (gateOverrides?.get(obj.id) === false) {
+        continue;
+      }
       const nominalLaserMw = Number(
         ((element.kindParams ?? {}) as { nominalPowerMw?: number }).nominalPowerMw,
       );
@@ -2086,7 +2098,11 @@ export function traceBeamsFromLasers(input: {
     // hidden beam — important for the user's mental model in the scene.
     const forwardVisual = getEmissionVisual(obj, "forward");
     const backwardVisual = getEmissionVisual(obj, "backward");
-    if (forwardVisual.visible) {
+    // Phase PB.3 — TA forward + backward both gated by the same scrub
+    // override (a TA's TimingProgram drives the whole device, not a
+    // single port). When `false`, both arms are suppressed.
+    const taGated = gateOverrides?.get(obj.id) === false;
+    if (forwardVisual.visible && !taGated) {
       segments.push(
         ...traceOneRay(
           outputOriginThree,
@@ -2112,7 +2128,7 @@ export function traceBeamsFromLasers(input: {
     }
 
     // Input-port leakage / backward ASE — out of the +X INPUT face.
-    if (backwardVisual.visible) {
+    if (backwardVisual.visible && !taGated) {
       segments.push(
         ...traceOneRay(
           originThree,

@@ -15,6 +15,7 @@ import { OpticalLinkViewerPanel } from "./components/optical/OpticalLinkViewerPa
 // per-object "Snap to beam" action (in OE panel) plus aperture warnings.
 import { CursorMenu } from "./components/optical/CursorMenu";
 import { SceneToolbar } from "./components/SceneToolbar";
+import { ScrubTimeBar } from "./components/workspace/ScrubTimeBar";
 import { SolverConsole } from "./components/workspace/SolverConsole";
 import { TopBar } from "./components/workspace/TopBar";
 import { WorkspaceProvider } from "./components/workspace/WorkspaceProvider";
@@ -72,6 +73,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
 export default function App() {
   const [roomDimensions, setRoomDimensions] = useState(loadRoomDimensions);
   const loadScene = useSceneStore((state) => state.loadScene);
+  const loadPulseBlasterChannels = useSceneStore((state) => state.loadPulseBlasterChannels);
   const applyEvent = useSceneStore((state) => state.applyEvent);
   const setSocketStatus = useSceneStore((state) => state.setSocketStatus);
   const loadStatus = useSceneStore((state) => state.loadStatus);
@@ -89,7 +91,8 @@ export default function App() {
 
   useEffect(() => {
     void loadScene();
-  }, [loadScene]);
+    void loadPulseBlasterChannels();
+  }, [loadScene, loadPulseBlasterChannels]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -244,6 +247,7 @@ export default function App() {
               <TouchCoincidencePanel />
               <MagneticsPanel />
               <PulseBlasterPanel />
+              <ScrubTimeBar />
               <CursorMenu />
             </>
           )}

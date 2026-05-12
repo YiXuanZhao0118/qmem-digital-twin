@@ -28,6 +28,7 @@ import {
   fetchCircuitsApi,
   fetchEmProblemsApi,
   fetchMeshesApi,
+  fetchPulseBlasterChannelsApi,
   fetchScene,
   fetchSimulationRunApi,
   fetchSimulationRunsApi,
@@ -87,6 +88,7 @@ import type {
   EmProblemCreatePayload,
   EmProblemUpdatePayload,
   Mesh,
+  PulseBlasterChannel,
   SimulationModule,
   SimulationRunCreatePayload,
   SimulationRunV2,
@@ -423,6 +425,18 @@ type SceneStore = {
    *  changes. PhyEditor's top-bar Back button reads this to decide
    *  whether to prompt for confirmation. */
   phyEditorDirty: boolean;
+  /** Phase PB.1: cached PulseBlaster channel bindings (24 rows). The
+   *  PulseBlasterPanel is the source of truth, but the LinkedSchematics
+   *  Timing chips and the PB.3 scrub-time evaluator both need fast read
+   *  access without their own fetch. Auto-loaded on App boot. */
+  pulseBlasterChannels: PulseBlasterChannel[];
+  /** Phase PB.3: scrub-time playhead in nanoseconds. When `null`, the
+   *  scene renders devices as configured (static visibility flags).
+   *  When a number, gate state at this time overrides beam emission for
+   *  every Component with a TimingProgram or a bound PB channel. */
+  scrubTimeNs: number | null;
+  loadPulseBlasterChannels: () => Promise<void>;
+  setScrubTimeNs: (tNs: number | null) => void;
   setEditorMode: (mode: "scene" | "phy-editor") => void;
   setCurrentModule: (module: SimulationModule) => void;
   loadRecentSimulationRuns: (module?: SimulationModule, limit?: number) => Promise<void>;
@@ -974,6 +988,8 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   phyEditorView: null,
   editingAssetId: null,
   phyEditorDirty: false,
+  pulseBlasterChannels: [],
+  scrubTimeNs: null,
   fiberEditingComponentId: null,
   transformPivotMode: "median",
   transformCursorMm: loadTransformCursorMm(),
@@ -2535,6 +2551,15 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       const next = state.selectedEmProblemId ?? ems[0]?.id ?? null;
       return { emProblems: ems, selectedEmProblemId: next };
     });
+  },
+
+  async loadPulseBlasterChannels() {
+    const channels = await fetchPulseBlasterChannelsApi();
+    set({ pulseBlasterChannels: channels });
+  },
+
+  setScrubTimeNs(tNs) {
+    set({ scrubTimeNs: tNs });
   },
 
   async createEmProblem(payload) {

@@ -6451,6 +6451,106 @@ body.is-timing-bar-drag * {
   letter-spacing: 0.04em;
 }
 
+/* Phase PB.3 — scrub-time bar pinned to bottom of workspace canvas */
+.scrub-time-pill,
+.scrub-time-bar {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  background: rgba(15, 23, 42, 0.85);
+  color: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(234, 179, 8, 0.4);
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+.scrub-time-pill {
+  cursor: pointer;
+  font-size: 10.5px;
+  padding: 5px 10px;
+}
+
+.scrub-time-pill:hover {
+  background: rgba(15, 23, 42, 0.95);
+  border-color: rgba(234, 179, 8, 0.7);
+}
+
+.scrub-time-bar {
+  min-width: 420px;
+  padding: 5px 10px 5px 12px;
+}
+
+.scrub-time-icon {
+  color: rgba(234, 179, 8, 0.95);
+}
+
+.scrub-time-range {
+  flex: 1;
+  height: 4px;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.scrub-time-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(234, 179, 8, 0.95);
+  border: 2px solid rgba(15, 23, 42, 0.85);
+  cursor: grab;
+}
+
+.scrub-time-range::-webkit-slider-thumb:active {
+  cursor: grabbing;
+}
+
+.scrub-time-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(234, 179, 8, 0.95);
+  border: 2px solid rgba(15, 23, 42, 0.85);
+  cursor: grab;
+}
+
+.scrub-time-readout {
+  color: rgba(254, 240, 138, 0.95);
+  white-space: nowrap;
+  min-width: 130px;
+  text-align: right;
+}
+
+.scrub-time-stop {
+  appearance: none;
+  background: rgba(248, 113, 113, 0.25);
+  border: 1px solid rgba(248, 113, 113, 0.55);
+  color: rgba(254, 226, 226, 0.95);
+  border-radius: 6px;
+  padding: 2px 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.scrub-time-stop:hover {
+  background: rgba(248, 113, 113, 0.4);
+}
+
 .linked-error {
   margin-top: 6px;
   padding: 4px 8px;
