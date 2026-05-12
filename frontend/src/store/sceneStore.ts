@@ -24,6 +24,7 @@ import {
   duplicateSceneViewApi,
   fetchCircuitsApi,
   fetchScene,
+  fetchSimulationRunApi,
   fetchSimulationRunsApi,
   importLocalComponentAssetApi,
   moveObjectToCollectionApi,
@@ -2805,6 +2806,23 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
                 }
               : run,
           );
+          // When the row hits a terminal state, fetch the full row in the
+          // background so consumers (WaveformChart etc.) get
+          // resultSummary + finishedAt without polling. WS payload only
+          // carries status/progress/error to keep events small.
+          if (payload.status === "completed" || payload.status === "failed") {
+            void fetchSimulationRunApi(payload.id)
+              .then((fullRow) => {
+                set((s) => ({
+                  recentSimulationRuns: s.recentSimulationRuns.map((r) =>
+                    r.id === fullRow.id ? fullRow : r,
+                  ),
+                }));
+              })
+              .catch(() => {
+                /* swallow — UI keeps the partial row */
+              });
+          }
           return { recentSimulationRuns };
         }
         case "scene_view.updated": {

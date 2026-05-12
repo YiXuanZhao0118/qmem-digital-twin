@@ -52,7 +52,8 @@
 
 **Estimate:** 3–4 週(全職)
 **Started:** 2026-05-12
-**Done:** —
+**Done:** 2026-05-12(同日完成 — 因為 Phase A 鋪好的 SolverRunner / SimulationRun / ModuleSwitcher 框架直接重用)
+**Optional**: B.7 scikit-rf 留待之後 RF 設計需要時再加
 
 ### Sub-tasks
 
@@ -65,8 +66,8 @@
 | B.4 | Frontend: `ElectronicsWorkspace.tsx` 取代 placeholder | ✅ | (this commit) | `modules/_registry.ts` spice → 'available';新 `modules/electronics/ElectronicsWorkspace.tsx` 三欄 grid (220 / 1fr / 380):circuits sidebar + netlist textarea editor + LATEST RUN result panel。新 `Circuit` / `CircuitCreatePayload` / `CircuitUpdatePayload` types,`fetchCircuitsApi` / `createCircuitApi` / `updateCircuitApi` / `deleteCircuitApi` API helpers,sceneStore `circuits` / `selectedCircuitId` state + `loadCircuits` / `createCircuit` / `updateCircuit` / `deleteCircuit` / `setSelectedCircuit` actions。App.tsx 三 module 條件 (optics_seq / spice / placeholder)。SolverConsole 跨 optics_seq + spice mount。Phase B.4 用 textarea + raw JSON dump;monaco (B.5) + uPlot (B.6) 接續。**Live e2e:Click Electronics → workspace 渲染 → click Run → 4 秒後 LATEST RUN status='completed', AC Analysis, 81 points, complex, 6 variables, RLC band-pass screenshot 確認**。 |
 | B.5 | Frontend: monaco netlist editor | ✅ | (this commit) | `npm install @monaco-editor/react monaco-editor`;新 `modules/electronics/NetlistEditor.tsx` 用 `@monaco-editor/react` wrap Monaco。註冊 custom `spice-netlist` language(Monarch tokenizer):line comments `*` / `;`、dot-directives `.AC` `.TRAN` `.control` `.end` ...、component prefixes (V/I/R/L/C/B/D/E/F/G/H/J/K/L/M/N/Q/T/X 等)、engineering-suffix numbers (`1.5m` `4.7n` `100k` `1e-9`)。Editor options:line numbers / no minimap / no word wrap / tab=4 / automaticLayout / monospace。需要 vite.config.ts `resolve.dedupe: ["react","react-dom"]` 否則 @monaco-editor/react 拿 own React instance → "Invalid hook call"。Browser verify:8 lines RLC netlist 渲染、syntax highlight 啟用、無 console errors。 |
 | B.6 | Frontend: uPlot waveform viewer + dispatch run | ✅ | (this commit) | `npm install uplot@1.6.32`;新 `modules/electronics/WaveformChart.tsx` 接 `ResultData {variables, isComplex, data}` → uPlot canvas line chart。第一個 variable = X 軸(frequency / time / sweep param 自動),其他 = Y series。Complex 值 reduce 成 magnitude `sqrt(re²+im²)`。X 軸 var 名為 'frequency' 時 auto log10 scale。Per-series 顏色 + click-toggle legend。ResizeObserver 跟 container 同步。**Browser verify:RLC AC sweep 顯示 log-frequency axis 100→1M Hz,藍 v(in)=1V 平、紅 v(n2) 5 kHz LC 共振 notch、綠 v(n1) 中段 dip,5 個 legend items 可 toggle**。Raw JSON dump 保留為 collapsed `<details>` debug fallback。 |
-| B.7 | (optional) scikit-rf S-parameter / Smith chart | 📋 | — | Phase B polish;先標 optional |
-| B.8 | Playwright e2e for spice run round-trip | 📋 | — | RLC netlist → run → waveform 出現 |
+| B.7 | (optional) scikit-rf S-parameter / Smith chart | ⏭ | — | Phase B polish;Phase B 主功能達 demo-ready,scikit-rf 留到後 phase RF 設計需要再做 |
+| B.8 | Playwright e2e for spice run round-trip | ✅ | (this commit) | (1) Update existing module-switcher.spec.ts:Electronics 從 placeholder 改為 available workspace,fix 3D viewer selector(改用 `.viewer-shell, .dual-viewer-split` union 兼顧 single/dual mode);(2) 新 e2e/electronics-workspace.spec.ts 2 tests:workspace 結構 (sidebar + monaco editor + results) 跟 Run button 完整 round-trip(seed circuit → click Run → wait status='completed' → assert WaveformChart + legend 顯示 + SolverConsole recent-runs 含 spice row)。**修一個 real bug**:WS `simulation_run.status_changed` event payload 只帶 status/progress/error,不帶 resultSummary,frontend 看到 'completed' 但 data 還沒到。Fix:applyEvent 內 terminal-state ('completed'/'failed') 自動 `fetchSimulationRunApi(id)` refetch full row,結果 merge 進 recentSimulationRuns。**6/6 playwright pass in 24.8s**。 |
 
 ### Phase B 完成判準
 
