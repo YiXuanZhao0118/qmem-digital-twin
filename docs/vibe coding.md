@@ -3,6 +3,8 @@
 > 這份檔案是專案目前狀態的**完整參考文件**，從大到小都寫進來：架構 → 規範 → 細節。
 > 不是時序紀錄。每次 Claude 對專案做改動後，更新對應段落而不是 append 新區段。
 >
+> **2026-05-12 — Multi-physics platform plan 拍板**：規劃把 qmem-digital-twin 從純 quantum-optics digital twin 擴成 Ansys Workbench-style 多物理平台，第一版三個 module：Optics（現有）、Electronics（ngspice）、EM（palace FEM）。詳見 [docs/MULTIPHYSICS_PLAN.md](qmem-digital-twin/docs/MULTIPHYSICS_PLAN.md)。Phase 順序 A→B→C；Solver runner 抽象成 `InProcessRunner` / `ContainerRunner` / `SshWorkstationRunner` 可換實作（Phase A/B 用 backend container，Phase C 跑 lab workstation SSH）。Cross-module dependency tracking 留到 Phase F。Code 還沒動，目前只有規劃。
+>
 > **最後一次完整 normalize：2026-05-08 07:45**（記錄核心架構原則：**PhyEditor 只該寫 Layer 2，不該寫 Layer 3 / Layer 4**。Per-physical-unit physics（TA mode profile + polarization、mirror reflectivity、AOM RF power 等）即使是同型號 vendor template 都會因為 manufacturing tolerance 不同 → 屬於 Layer 4 kindParams、主場景 Object panel 編、不在 PhyEditor。撤回之前的 taChipSpec migration 提議。§12 加 layered design + 「想編這個東西該去哪」對照表）
 >
 > **最近 update：2026-05-09 — AOM Stage 1 upright mode bug fix**：user 把 MT80 重置到 Euler (0,0,0) 然後 align 0 order,跑出來 `(-3.97e-12, -89.99..., 90)`,預期 `(0, 0, 90)`。Root cause:Stage 1 upright mode 限制錯軸 — 把 D3 朝 lab+Z + D2 = D3×D1,等於把 AOM 側躺(body+X 朝上,acoustic 軸朝水平)。實際物理「upright」意思是 acoustic 軸(= D2 = body+Z for typical AOM)朝上。**Fix**:把 upright mode 的 projectOntoPerp(lab+Z, D1Target) 結果指派給 D2_target,D3_target = D1_target × D2_target。改完 state-B align 跑出 `(0, 0, 90)` ✓,state-A 跑出 `(0, 0, -90)` ✓,跟 `aomBodyFrameBodyLocal` 的 D3 = D1×D2 慣例一致(Phase 7.4 sign convention 不變)。詳 §8 Stage 1 段。
