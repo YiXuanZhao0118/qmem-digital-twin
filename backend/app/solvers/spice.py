@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import shutil
 import struct
+import subprocess
 import tempfile
 import uuid
 from datetime import datetime, timezone
@@ -75,32 +76,41 @@ async def run(session: AsyncSession, sim_run: SimulationRun) -> None:
             netlist_file.write_text(circuit.netlist)
 
             ngspice = _resolve_ngspice_path()
-            proc = await asyncio.create_subprocess_exec(
+            # Use sync subprocess.run inside an executor instead of
+            # asyncio.create_subprocess_exec — uvicorn on Windows defaults
+            # to SelectorEventLoop which does not implement subprocess
+            # (raises bare NotImplementedError). run_in_executor is
+            # cross-platform and event-loop-agnostic.
+            cmd = [
                 str(ngspice),
                 "-b",
                 "-r", str(raw_file),
                 "-o", str(log_file),
                 str(netlist_file),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            try:
-                _stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=SPICE_TIMEOUT_SEC
+            ]
+
+            def _spawn_sync() -> subprocess.CompletedProcess:
+                return subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    timeout=SPICE_TIMEOUT_SEC,
+                    check=False,
                 )
-            except asyncio.TimeoutError:
-                proc.kill()
-                await proc.wait()
+
+            loop = asyncio.get_running_loop()
+            try:
+                completed = await loop.run_in_executor(None, _spawn_sync)
+            except subprocess.TimeoutExpired:
                 raise SpiceError(f"ngspice timed out after {SPICE_TIMEOUT_SEC}s")
 
             log_text = (
                 log_file.read_text(errors="replace") if log_file.exists() else ""
             )
 
-            if proc.returncode != 0 or not raw_file.exists():
-                tail = (stderr or b"").decode(errors="replace")[-500:]
+            if completed.returncode != 0 or not raw_file.exists():
+                tail = (completed.stderr or b"").decode(errors="replace")[-500:]
                 raise SpiceError(
-                    f"ngspice exit={proc.returncode}; stderr_tail={tail!r}"
+                    f"ngspice exit={completed.returncode}; stderr_tail={tail!r}"
                 )
 
             parsed = _parse_raw_file(raw_file.read_bytes())
@@ -176,16 +186,29 @@ def _parse_raw_file(blob: bytes) -> dict:
     ``data`` is ``{var_name: [values]}``. For complex flags each value is a
     ``[re, im]`` 2-tuple-as-list (so it round-trips through JSONB cleanly).
     """
-    if b"Binary:\n" in blob:
-        sep, body = b"Binary:\n", blob.split(b"Binary:\n", 1)[1]
-        is_binary = True
-    elif b"Values:\n" in blob:
-        sep, body = b"Values:\n", blob.split(b"Values:\n", 1)[1]
-        is_binary = False
-    else:
+    # ngspice writes "Binary:\n" on POSIX and "Binary:\r\n" on Windows;
+    # accept both. Find whichever marker appears first in the blob.
+    sep_offset = -1
+    sep_len = 0
+    is_binary = False
+    for marker, binary in (
+        (b"Binary:\r\n", True),
+        (b"Binary:\n", True),
+        (b"Values:\r\n", False),
+        (b"Values:\n", False),
+    ):
+        idx = blob.find(marker)
+        if idx == -1:
+            continue
+        if sep_offset == -1 or idx < sep_offset:
+            sep_offset = idx
+            sep_len = len(marker)
+            is_binary = binary
+    if sep_offset == -1:
         raise SpiceError("rawfile missing Binary: / Values: separator")
 
-    header_bytes = blob[: blob.index(sep)]
+    header_bytes = blob[:sep_offset]
+    body = blob[sep_offset + sep_len:]
     header = header_bytes.decode(errors="replace")
 
     plotname = ""
@@ -238,8 +261,9 @@ def _parse_raw_file(blob: bytes) -> dict:
                 for v_idx, name in enumerate(variables):
                     data[name].append(flat[p * n_vars + v_idx])
     else:
-        if is_complex:
-            raise SpiceError("ASCII complex rawfile parser not implemented")
+        # ASCII Values: "<idx> <var0> <var1> ... <varN-1>" per point.
+        # For complex flags, each token is "re,im" (single comma-separated
+        # token, no whitespace inside).
         tokens = body.decode(errors="replace").split()
         data = {v: [] for v in variables}
         idx = 0
@@ -250,7 +274,16 @@ def _parse_raw_file(blob: bytes) -> dict:
             for v in variables:
                 if idx >= len(tokens):
                     raise SpiceError("ASCII rawfile body truncated mid-point")
-                data[v].append(float(tokens[idx]))
+                token = tokens[idx]
+                if is_complex:
+                    if "," not in token:
+                        raise SpiceError(
+                            f"expected complex token 're,im' got {token!r}"
+                        )
+                    re_str, im_str = token.split(",", 1)
+                    data[v].append([float(re_str), float(im_str)])
+                else:
+                    data[v].append(float(token))
                 idx += 1
 
     return {

@@ -133,3 +133,27 @@ class TestParseRawFileAscii:
         out = _parse_raw_file(blob)
         assert out["data"]["time"] == [0.0, 1.0]
         assert out["data"]["v(out)"] == [0.0, 0.5]
+
+    def test_ascii_complex_ac_sweep(self) -> None:
+        # ngspice ASCII complex format: each value is "re,im" single token.
+        body_text = "0\t100.0,0.0\t0.7071,-0.7071\n1\t1000.0,0.0\t0.5,-0.866\n"
+        header = (
+            "Plotname: AC complex\nFlags: complex\nNo. Variables: 2\n"
+            "No. Points: 2\nVariables:\n 0 frequency\n 1 v(out)\n"
+        ).encode()
+        blob = header + b"Values:\n" + body_text.encode()
+        out = _parse_raw_file(blob)
+        assert out["is_complex"] is True
+        assert out["data"]["frequency"][0] == [100.0, 0.0]
+        assert out["data"]["v(out)"][1] == [0.5, -0.866]
+
+    def test_ascii_with_crlf_line_endings(self) -> None:
+        # Windows ngspice writes CRLF. Parser must accept both.
+        header = (
+            "Plotname: x\r\nFlags: real\r\nNo. Variables: 1\r\n"
+            "No. Points: 2\r\nVariables:\r\n 0 a\r\n"
+        ).encode()
+        body_text = "0\t1.0\n1\t2.0\n"
+        blob = header + b"Values:\r\n" + body_text.encode()
+        out = _parse_raw_file(blob)
+        assert out["data"]["a"] == [1.0, 2.0]
