@@ -67,6 +67,7 @@ export const KIND_LABELS: Record<ElementKind, string> = {
   spectrometer: "Spectrometer",
   wavemeter: "Wavemeter",
   beam_dump: "Beam Dump",
+  rf_source: "RF Source",
 };
 
 export const KIND_GROUPS: { label: string; kinds: ElementKind[] }[] = [
@@ -94,6 +95,10 @@ export const KIND_GROUPS: { label: string; kinds: ElementKind[] }[] = [
   {
     label: "Sinks",
     kinds: ["detector", "camera", "spectrometer", "wavemeter", "beam_dump"],
+  },
+  {
+    label: "RF",
+    kinds: ["rf_source"],
   },
 ];
 
@@ -258,4 +263,10 @@ export const DEFAULT_KIND_PARAMS: Record<ElementKind, Record<string, unknown>> =
   spectrometer: { resolutionPm: 10.0, wavelengthRangeNm: [400, 1100] },
   wavemeter: { precisionMhz: 1.0 },
   beam_dump: { absorption: 0.999 },
+  rf_source: {
+    frequencyMhz: 80.0,
+    powerDbm: 0.0,
+    phaseDeg: 0.0,
+    modulation: "none",
+  },
 };

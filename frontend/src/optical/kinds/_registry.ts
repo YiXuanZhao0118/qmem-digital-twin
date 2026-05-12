@@ -381,6 +381,17 @@ export const KIND_REGISTRY: Record<ElementKind, KindContract> = {
     alignToleranceMm: 25,
     alignSummary: "Absorbing face (intercept_in) translates to beam. Beam terminates.",
   },
+  rf_source: {
+    kind: "rf_source",
+    displayName: "RF Source",
+    requiredAnchors: [],
+    optionalAnchors: ["rf_out"],
+    anchorsNeedingDirection: [],
+    alignVariant: "none",
+    alignToleranceMm: 0,
+    alignSummary:
+      "RF emitter — DDS / synth / arbitrary-waveform generator. Drives downstream RF chain (amp / filter / AOM-EOM driver). Not aligned optically.",
+  },
 };
 
 /** ElementKinds that have a meaningful align contract — used to filter

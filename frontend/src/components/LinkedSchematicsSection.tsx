@@ -16,7 +16,7 @@
  * inline Run + auto-inject of solver outputs into the device's
  * kindParams. Tier 3 (Phase F.3) is the full cross-module DAG.
  */
-import { Clock, Play, Plus, Radio, Zap } from "lucide-react";
+import { Antenna, Clock, Play, Plus, Radio, Zap } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -24,10 +24,61 @@ import {
   createEmProblemApi,
   fetchCircuitsApi,
   fetchEmProblemsApi,
+  fetchRfChainApi,
+  replaceRfChainApi,
 } from "../api/client";
 import { useSceneStore } from "../store/sceneStore";
-import type { Circuit, EmProblem } from "../types/digitalTwin";
+import type { Circuit, EmProblem, RfChainNode, RfNodeKind } from "../types/digitalTwin";
 import { useWorkspace } from "./workspace/WorkspaceProvider";
+
+// Default 3-node chain seeded when the user clicks "+" on an empty RF row.
+// Designed for an AOM: DDS @ 80 MHz → +30 dB amplifier → 80 MHz bandpass.
+function defaultChainFor(terminalSceneObjectId: string) {
+  return [
+    {
+      terminalSceneObjectId,
+      positionInChain: 0,
+      nodeKind: "dds" as RfNodeKind,
+      label: "DDS 80 MHz",
+      gainDb: 0,
+      kindParams: { frequencyMhz: 80, powerDbm: 0 },
+    },
+    {
+      terminalSceneObjectId,
+      positionInChain: 1,
+      nodeKind: "amplifier" as RfNodeKind,
+      label: "+30 dB amp",
+      gainDb: 30,
+      kindParams: {},
+    },
+    {
+      terminalSceneObjectId,
+      positionInChain: 2,
+      nodeKind: "filter_bandpass" as RfNodeKind,
+      label: "BPF 70-90 MHz",
+      gainDb: -1.5,
+      kindParams: { centerMhz: 80, bandwidthMhz: 20 },
+    },
+  ];
+}
+
+const RF_NODE_GLYPH: Record<RfNodeKind, string> = {
+  dds: "DDS",
+  synthesizer: "SYN",
+  amplifier: "AMP",
+  attenuator: "ATT",
+  filter_bandpass: "BPF",
+  filter_lowpass: "LPF",
+  filter_highpass: "HPF",
+  splitter: "SPL",
+  combiner: "CMB",
+  mixer: "MIX",
+  switch: "SW",
+  isolator: "ISO",
+  circulator: "CIR",
+  coax: "COAX",
+  device: "DEV",
+};
 
 type Props = {
   sceneObjectId: string;
@@ -49,6 +100,7 @@ export function LinkedSchematicsSection({
 }: Props) {
   const [circuits, setCircuits] = useState<Circuit[]>([]);
   const [emProblems, setEmProblems] = useState<EmProblem[]>([]);
+  const [rfChain, setRfChain] = useState<RfChainNode[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -74,12 +126,14 @@ export function LinkedSchematicsSection({
 
   const refresh = async () => {
     try {
-      const [cs, ems] = await Promise.all([
+      const [cs, ems, rf] = await Promise.all([
         fetchCircuitsApi(50, sceneObjectId),
         fetchEmProblemsApi(50, sceneObjectId),
+        fetchRfChainApi(sceneObjectId),
       ]);
       setCircuits(cs);
       setEmProblems(ems);
+      setRfChain(rf);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -102,6 +156,43 @@ export function LinkedSchematicsSection({
   const openPulseBlasterPanel = () => {
     togglePanelVisible("pulse-blaster", true);
     focusPanel("pulse-blaster");
+  };
+
+  // Chain dBm summation: source (first DDS/synth node) kindParams.powerDbm + Σ gainDb of all later nodes.
+  const chainOutputDbm = useMemo(() => {
+    if (rfChain.length === 0) return null;
+    const sorted = [...rfChain].sort((a, b) => a.positionInChain - b.positionInChain);
+    const sourceKind = sorted[0].nodeKind;
+    if (sourceKind !== "dds" && sourceKind !== "synthesizer") return null;
+    const sourceDbm = Number(
+      (sorted[0].kindParams as { powerDbm?: number })?.powerDbm ?? 0,
+    );
+    const totalGain = sorted.slice(1).reduce((acc, n) => acc + (n.gainDb ?? 0), 0);
+    return sourceDbm + totalGain;
+  }, [rfChain]);
+
+  const onSeedRfChain = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const seeded = await replaceRfChainApi(
+        sceneObjectId,
+        defaultChainFor(sceneObjectId),
+      );
+      setRfChain(seeded);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onJumpRfNode = (node: RfChainNode) => {
+    if (node.linkedCircuitId) {
+      jumpToCircuit(node.linkedCircuitId);
+    } else if (node.linkedEmProblemId) {
+      jumpToEm(node.linkedEmProblemId);
+    }
   };
 
   const jumpToCircuit = (circuitId: string) => {
@@ -281,6 +372,63 @@ export function LinkedSchematicsSection({
           >
             <Plus size={11} />
           </button>
+        </div>
+      </div>
+
+      <div className="linked-row">
+        <div className="linked-row-label">
+          <Antenna size={11} /> RF chain
+          {chainOutputDbm !== null && (
+            <em className="linked-rf-dbm" title="Computed power at chain output (source dBm + Σ gain)">
+              {chainOutputDbm >= 0 ? "+" : ""}
+              {chainOutputDbm.toFixed(1)} dBm
+            </em>
+          )}
+        </div>
+        <div className="linked-chips">
+          {rfChain.length === 0 ? (
+            <span className="linked-empty">no RF chain</span>
+          ) : (
+            [...rfChain]
+              .sort((a, b) => a.positionInChain - b.positionInChain)
+              .map((node) => {
+                const linked = !!(node.linkedCircuitId || node.linkedEmProblemId);
+                return (
+                  <button
+                    key={node.id}
+                    type="button"
+                    className={`linked-chip rf-chip rf-chip-${node.nodeKind}`}
+                    onClick={() => onJumpRfNode(node)}
+                    disabled={!linked}
+                    title={
+                      linked
+                        ? `Open linked ${node.linkedCircuitId ? "circuit" : "EM problem"}`
+                        : `${node.label || node.nodeKind} — no linked schematic`
+                    }
+                  >
+                    <span className="rf-chip-tag">{RF_NODE_GLYPH[node.nodeKind]}</span>
+                    {node.label || node.nodeKind}
+                    {node.gainDb !== 0 && (
+                      <em className="rf-chip-gain">
+                        {node.gainDb > 0 ? "+" : ""}
+                        {node.gainDb.toFixed(1)} dB
+                      </em>
+                    )}
+                  </button>
+                );
+              })
+          )}
+          {rfChain.length === 0 && (
+            <button
+              type="button"
+              className="linked-add"
+              onClick={onSeedRfChain}
+              disabled={busy}
+              title="Seed a default DDS → amp → BPF chain for this device"
+            >
+              <Plus size={11} />
+            </button>
+          )}
         </div>
       </div>
 

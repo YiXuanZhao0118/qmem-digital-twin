@@ -268,7 +268,8 @@ export type ElementKind =
   | "camera"
   | "spectrometer"
   | "wavemeter"
-  | "beam_dump";
+  | "beam_dump"
+  | "rf_source";
 
 // --- Per-kind params (discriminated by element_kind) ------------------------
 
@@ -558,6 +559,13 @@ export type BeamDumpParams = {
   absorption: number;
 };
 
+export type RfSourceParams = {
+  frequencyMhz: number;
+  powerDbm: number;
+  phaseDeg: number;
+  modulation: "none" | "am" | "fm" | "iq";
+};
+
 // Tagged union: element_kind discriminates which params shape applies.
 export type OpticalElementKindParams =
   | { elementKind: "laser_source"; kindParams: LaserSourceParams }
@@ -581,7 +589,8 @@ export type OpticalElementKindParams =
   | { elementKind: "camera"; kindParams: CameraParams }
   | { elementKind: "spectrometer"; kindParams: SpectrometerParams }
   | { elementKind: "wavemeter"; kindParams: WavemeterParams }
-  | { elementKind: "beam_dump"; kindParams: BeamDumpParams };
+  | { elementKind: "beam_dump"; kindParams: BeamDumpParams }
+  | { elementKind: "rf_source"; kindParams: RfSourceParams };
 
 export type OpticalElementCommon = {
   /** Per-object PK (alembic 0014). Each scene object that has an optical
@@ -1175,6 +1184,50 @@ export type PulseBlasterChannelUpdatePayload = Partial<{
   invert: boolean;
   enabled: boolean;
 }>;
+
+// ---- RF chain nodes (Phase RF.2) ------------------------------------------
+
+export type RfNodeKind =
+  | "dds"
+  | "synthesizer"
+  | "amplifier"
+  | "attenuator"
+  | "filter_bandpass"
+  | "filter_lowpass"
+  | "filter_highpass"
+  | "splitter"
+  | "combiner"
+  | "mixer"
+  | "switch"
+  | "isolator"
+  | "circulator"
+  | "coax"
+  | "device";
+
+export type RfChainNode = {
+  id: string;
+  terminalSceneObjectId: string;
+  positionInChain: number;
+  nodeKind: RfNodeKind;
+  label: string;
+  gainDb: number;
+  kindParams: Record<string, unknown>;
+  linkedCircuitId: string | null;
+  linkedEmProblemId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RfChainNodeCreatePayload = {
+  terminalSceneObjectId: string;
+  positionInChain: number;
+  nodeKind: RfNodeKind;
+  label?: string;
+  gainDb?: number;
+  kindParams?: Record<string, unknown>;
+  linkedCircuitId?: string | null;
+  linkedEmProblemId?: string | null;
+};
 
 // ---- Touchstone (Phase B.7) -------------------------------------------------
 

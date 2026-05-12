@@ -59,6 +59,80 @@ export function evaluateProgramAt(program: TimingProgram, tNs: number): GateStat
 }
 
 /**
+ * Phase RF.3 — evaluate the full waveform value at tNs, not just the
+ * boolean gate. Returns:
+ *   - `gate`         — same as `evaluateProgramAt`
+ *   - `amplitude`    — 0..1 scalar; const = params.amplitude (or 1 if gate), linear_ramp = lerp(start,end), arbitrary = nearest sample, gate_on=1, gate_off=0
+ *   - `frequencyMhz` — params.frequencyMhz if the block sets it (else null)
+ *   - `phaseDeg`     — params.phaseDeg if the block sets it (else null)
+ *
+ * Used by the Object panel to show instantaneous RF state when the
+ * scrub-time slider is active. Stays pure / synchronous.
+ */
+export type ProgramValues = {
+  gate: GateState;
+  amplitude: number;
+  frequencyMhz: number | null;
+  phaseDeg: number | null;
+};
+
+function blockAmplitude(block: TimingBlock, tNs: number): number {
+  const params = block.params as Record<string, unknown>;
+  switch (block.waveformKind) {
+    case "gate_on":
+      return 1;
+    case "gate_off":
+      return 0;
+    case "const": {
+      if (typeof params.amplitude === "number") return params.amplitude;
+      if (typeof params.value === "number") return params.value;
+      const g = blockGate(block);
+      return g === false ? 0 : 1;
+    }
+    case "linear_ramp": {
+      const start = typeof params.start === "number" ? params.start : 0;
+      const end = typeof params.end === "number" ? params.end : 1;
+      const span = block.tEndNs - block.tStartNs;
+      if (span <= 0) return start;
+      const f = (tNs - block.tStartNs) / span;
+      return start + (end - start) * Math.max(0, Math.min(1, f));
+    }
+    case "arbitrary": {
+      const samples = Array.isArray(params.samples) ? (params.samples as unknown[]) : [];
+      const dtNs = typeof params.dtNs === "number" ? params.dtNs : 0;
+      if (samples.length === 0 || dtNs <= 0) return 1;
+      const idx = Math.min(samples.length - 1, Math.max(0, Math.floor((tNs - block.tStartNs) / dtNs)));
+      const v = samples[idx];
+      return typeof v === "number" ? v : 1;
+    }
+    default:
+      return 1;
+  }
+}
+
+export function evaluateProgramValuesAt(
+  program: TimingProgram,
+  tNs: number,
+): ProgramValues {
+  if (!program.blocks || program.blocks.length === 0) {
+    return { gate: null, amplitude: 0, frequencyMhz: null, phaseDeg: null };
+  }
+  for (const block of program.blocks) {
+    if (tNs >= block.tStartNs && tNs < block.tEndNs) {
+      const params = block.params as Record<string, unknown>;
+      return {
+        gate: blockGate(block),
+        amplitude: blockAmplitude(block, tNs),
+        frequencyMhz:
+          typeof params.frequencyMhz === "number" ? params.frequencyMhz : null,
+        phaseDeg: typeof params.phaseDeg === "number" ? params.phaseDeg : null,
+      };
+    }
+  }
+  return { gate: false, amplitude: 0, frequencyMhz: null, phaseDeg: null };
+}
+
+/**
  * Resolve gate state for an entire Component template. PulseBlaster
  * channels bind by Component, but TimingProgram lives per-SceneObject.
  * We pick the first SceneObject of this component that has a program

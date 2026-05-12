@@ -6451,6 +6451,144 @@ body.is-timing-bar-drag * {
   letter-spacing: 0.04em;
 }
 
+/* Phase RF.2 — RF chain chips in LinkedSchematicsSection */
+.linked-rf-dbm {
+  margin-left: 6px;
+  font-style: normal;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(56, 189, 248, 0.18);
+  color: #075985;
+}
+
+.rf-chip {
+  border-radius: 10px;
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  background: rgba(186, 230, 253, 0.35);
+  padding: 2px 7px 2px 4px;
+  gap: 5px;
+}
+
+.rf-chip:not(:disabled):hover {
+  background: rgba(186, 230, 253, 0.85);
+  border-color: rgba(56, 189, 248, 0.75);
+}
+
+.rf-chip:disabled {
+  cursor: default;
+  opacity: 0.85;
+}
+
+.rf-chip-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 14px;
+  padding: 0 4px;
+  background: rgba(56, 189, 248, 0.85);
+  color: #fff;
+  border-radius: 3px;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.rf-chip-amplifier .rf-chip-tag {
+  background: rgba(34, 197, 94, 0.85);
+}
+
+.rf-chip-attenuator .rf-chip-tag,
+.rf-chip-filter_bandpass .rf-chip-tag,
+.rf-chip-filter_lowpass .rf-chip-tag,
+.rf-chip-filter_highpass .rf-chip-tag {
+  background: rgba(168, 85, 247, 0.85);
+}
+
+.rf-chip-gain {
+  margin-left: 4px;
+  font-style: normal;
+  font-size: 9.5px;
+  color: rgba(15, 23, 42, 0.6);
+}
+
+/* Phase RF.3 — instantaneous scrub-time RF readout in Object panel */
+.scrub-rf-readout {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  background: rgba(56, 189, 248, 0.06);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: 6px;
+}
+
+.scrub-rf-readout h3 {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #075985;
+  margin: 0 0 6px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.scrub-rf-grid {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  row-gap: 3px;
+  column-gap: 8px;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.scrub-rf-label {
+  color: rgba(15, 23, 42, 0.55);
+}
+
+.scrub-rf-value {
+  color: rgba(15, 23, 42, 0.85);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.scrub-rf-gate-on {
+  color: #15803d;
+  font-weight: 700;
+}
+
+.scrub-rf-gate-off {
+  color: #991b1b;
+  font-weight: 700;
+}
+
+.scrub-rf-gate-na {
+  color: rgba(15, 23, 42, 0.5);
+}
+
+.scrub-rf-bar-wrapper {
+  display: inline-block;
+  position: relative;
+  flex: 1;
+  height: 5px;
+  background: rgba(15, 23, 42, 0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.scrub-rf-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  background: rgba(56, 189, 248, 0.75);
+  transition: width 60ms;
+}
+
 /* Phase PB.3 — scrub-time bar pinned to bottom of workspace canvas */
 .scrub-time-pill,
 .scrub-time-bar {

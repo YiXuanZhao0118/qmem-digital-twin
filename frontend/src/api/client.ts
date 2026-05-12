@@ -20,6 +20,8 @@ import type {
   PulseBlasterChannel,
   PulseBlasterChannelCreatePayload,
   PulseBlasterChannelUpdatePayload,
+  RfChainNode,
+  RfChainNodeCreatePayload,
   Collection,
   CollectionMember,
   ComponentItem,
@@ -881,6 +883,28 @@ export type PulseBlasterCompile = {
 
 export async function compilePulseBlasterApi(): Promise<PulseBlasterCompile> {
   const response = await client.get<PulseBlasterCompile>("/api/pulse-blaster/compile");
+  return response.data;
+}
+
+// ---- RF chain nodes (Phase RF.2) ------------------------------------------
+
+export async function fetchRfChainApi(
+  terminalSceneObjectId: string,
+): Promise<RfChainNode[]> {
+  const response = await client.get<RfChainNode[]>("/api/rf-chains/nodes", {
+    params: { terminal_scene_object_id: terminalSceneObjectId },
+  });
+  return response.data;
+}
+
+export async function replaceRfChainApi(
+  terminalSceneObjectId: string,
+  nodes: RfChainNodeCreatePayload[],
+): Promise<RfChainNode[]> {
+  const response = await client.put<RfChainNode[]>(
+    `/api/rf-chains/chains/${terminalSceneObjectId}`,
+    { terminalSceneObjectId, nodes },
+  );
   return response.data;
 }
 

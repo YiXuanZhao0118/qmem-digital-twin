@@ -20,6 +20,7 @@ from app.routers import (
     magnetics_problems,
     meshes,
     pulse_blaster,
+    rf_chains,
     objects,
     optical_elements,
     optical_links,
@@ -68,6 +69,7 @@ app.include_router(em_problems.router, prefix="/api/em-problems", tags=["em_prob
 app.include_router(coils.router, prefix="/api/coils", tags=["coils"])
 app.include_router(magnetics_problems.router, prefix="/api/magnetics-problems", tags=["magnetics_problems"])
 app.include_router(pulse_blaster.router, prefix="/api/pulse-blaster", tags=["pulse_blaster"])
+app.include_router(rf_chains.router, prefix="/api/rf-chains", tags=["rf_chains"])
 app.include_router(optics_cavity.router, prefix="/api/optics-cavity", tags=["optics_cavity"])
 app.include_router(optics_crystal.router, prefix="/api/optics-crystal", tags=["optics_crystal"])
 app.include_router(revisions.router, prefix="/api/revisions", tags=["revisions"])

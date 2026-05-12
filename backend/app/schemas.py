@@ -698,6 +698,7 @@ ElementKind = Literal[
     "spectrometer",
     "wavemeter",
     "beam_dump",
+    "rf_source",            # Phase RF.1: DDS / synth / arbitrary waveform generator.
 ]
 
 
@@ -1301,6 +1302,20 @@ class BeamDumpParams(CamelModel):
     absorption: float = Field(default=0.999, ge=0.0, le=1.0)
 
 
+class RfSourceParams(CamelModel):
+    """Phase RF.1 — DDS / synth / arbitrary-waveform RF source.
+
+    Default static knobs; the same values can be overridden per-time-tick
+    by a TimingProgram of waveform_kind="arbitrary" (Phase RF.3 plumbing
+    reads `frequencyMhz` / `powerDbm` / `phaseDeg` from params samples).
+    """
+
+    frequency_mhz: float = Field(default=80.0, ge=0.0)
+    power_dbm: float = Field(default=0.0)
+    phase_deg: float = Field(default=0.0)
+    modulation: Literal["none", "am", "fm", "iq"] = "none"
+
+
 # --- Per-kind validator registry --------------------------------------------
 
 
@@ -1332,6 +1347,7 @@ KIND_PARAMS_MODELS: dict[str, type[CamelModel]] = {
     "spectrometer": SpectrometerParams,
     "wavemeter": WavemeterParams,
     "beam_dump": BeamDumpParams,
+    "rf_source": RfSourceParams,
 }
 
 
@@ -1434,6 +1450,10 @@ DEFAULT_PORTS: dict[str, dict[str, list[dict[str, Any]]]] = {
     "beam_dump": {
         "input": [_port("in", "input", "In", "main")],
         "output": [],
+    },
+    "rf_source": {
+        "input": [],
+        "output": [_port("rf_out", "output", "RF Out", "rf")],
     },
 }
 
@@ -2294,6 +2314,67 @@ class PulseBlasterChannelBulkUpsert(CamelModel):
     """Single-call replace-all for the 24 channels (UI bulk save)."""
 
     channels: list[PulseBlasterChannelCreate]
+
+
+# ---- RF chain nodes (Phase RF.2, alembic 0041) ----------------------------
+
+
+RfNodeKind = Literal[
+    "dds",
+    "synthesizer",
+    "amplifier",
+    "attenuator",
+    "filter_bandpass",
+    "filter_lowpass",
+    "filter_highpass",
+    "splitter",
+    "combiner",
+    "mixer",
+    "switch",
+    "isolator",
+    "circulator",
+    "coax",
+    "device",  # terminal (the AOM/EOM consuming the chain)
+]
+
+
+class RfChainNodeBase(CamelModel):
+    terminal_scene_object_id: uuid.UUID
+    position_in_chain: int
+    node_kind: RfNodeKind
+    label: str = ""
+    gain_db: float = 0.0
+    kind_params: JsonDict = Field(default_factory=dict)
+    linked_circuit_id: uuid.UUID | None = None
+    linked_em_problem_id: uuid.UUID | None = None
+
+
+class RfChainNodeCreate(RfChainNodeBase):
+    pass
+
+
+class RfChainNodeUpdate(CamelModel):
+    position_in_chain: int | None = None
+    node_kind: RfNodeKind | None = None
+    label: str | None = None
+    gain_db: float | None = None
+    kind_params: JsonDict | None = None
+    linked_circuit_id: uuid.UUID | None = None
+    linked_em_problem_id: uuid.UUID | None = None
+
+
+class RfChainNodeOut(RfChainNodeBase):
+    id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+
+
+class RfChainBulkReplace(CamelModel):
+    """Replace the entire chain for one terminal device. Convenient for
+    the panel's drag-reorder editor."""
+
+    terminal_scene_object_id: uuid.UUID
+    nodes: list[RfChainNodeCreate]
 
 
 class PulseBlasterInstructionOut(CamelModel):
