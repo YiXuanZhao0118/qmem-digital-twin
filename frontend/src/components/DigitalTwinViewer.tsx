@@ -10,8 +10,10 @@ import { createBeamPath } from "../three/beamPath";
 import { disposeObject, loadAssetObject } from "../three/loadAsset";
 import { wavelengthToColor } from "../three/opticalBeams";
 import { traceBeamsFromLasers, _testReflect, gaussianWaistAtZ, type TraceSegment } from "../three/rayTrace";
+import { disposeFarfieldLobe, makeFarfieldLobe } from "../three/hornFarfield";
+import { disposeRfBadgeSprite, makeRfBadgeSprite } from "../three/rfBadge";
 import { getEmissionVisual } from "../utils/emissionVisuals";
-import { buildSceneGateOverrides } from "../utils/timingEvaluation";
+import { buildSceneGateOverrides, evaluateProgramValuesAt } from "../utils/timingEvaluation";
 import { PlacementGizmo } from "../three/placement/gizmo";
 import { SnapOverlay } from "../three/placement/snapOverlay";
 import {
@@ -1323,6 +1325,7 @@ export function DigitalTwinViewer({
   const scopeProbe = useSceneStore((state) => state.scopeProbe);
   const scrubTimeNs = useSceneStore((state) => state.scrubTimeNs);
   const pulseBlasterChannels = useSceneStore((state) => state.pulseBlasterChannels);
+  const rfChains = useSceneStore((state) => state.rfChains);
   const selectedComponentId = useSceneStore((state) => state.selectedComponentId);
   const fiberEditingComponentId = useSceneStore((state) => state.fiberEditingComponentId);
   const updateFiberNodes = useSceneStore((state) => state.updateFiberNodes);
@@ -1597,6 +1600,26 @@ export function DigitalTwinViewer({
   }, [scrubTimeNs, sceneData.timingPrograms, sceneData.objects, pulseBlasterChannels]);
   const gateOverridesRef = useRef<Map<string, boolean>>(gateOverrides);
   gateOverridesRef.current = gateOverrides;
+
+  // Phase RF.8 — drive AOM Bragg deflection from the scrub-time
+  // TimingProgram. For each AOM whose own SceneObject has a program
+  // with an `arbitrary` block carrying `frequencyMhz` samples, sample
+  // at t = scrubTimeNs and inject the value into traceBeamsFromLasers.
+  const aomFreqOverrideMhz = useMemo(() => {
+    const out = new Map<string, number>();
+    if (scrubTimeNs === null) return out;
+    const programs = sceneData.timingPrograms ?? [];
+    for (const oe of sceneData.opticalElements) {
+      if (oe.elementKind !== "aom" && oe.elementKind !== "eom") continue;
+      const program = programs.find((p) => p.objectId === oe.objectId);
+      if (!program) continue;
+      const values = evaluateProgramValuesAt(program, scrubTimeNs);
+      if (values.frequencyMhz !== null) out.set(oe.objectId, values.frequencyMhz);
+    }
+    return out;
+  }, [scrubTimeNs, sceneData.timingPrograms, sceneData.opticalElements]);
+  const aomFreqOverrideRef = useRef<Map<string, number>>(aomFreqOverrideMhz);
+  aomFreqOverrideRef.current = aomFreqOverrideMhz;
 
   const cursorHidden = useSceneStore((state) => state.transformCursorHidden[panelKey]);
   useEffect(() => {
@@ -3365,6 +3388,7 @@ export function DigitalTwinViewer({
         scene: sceneData,
         componentGroup,
         gateOverrides: gateOverridesRef.current,
+        aomFreqOverrideMhz: aomFreqOverrideRef.current,
       });
       const win = window as unknown as {
         __rayTraceDebug?: TraceSegment[];
@@ -3407,6 +3431,96 @@ export function DigitalTwinViewer({
       requestRenderRef.current?.();
     };
 
+    // Phase RF.6 — pill labels for RF-driven devices. Read rfChains
+    // from the closure (snapshot of the deps array) and group by
+    // terminal SceneObject id; for each terminal compute "f MHz @ ±dBm"
+    // and parent a sprite to its wrapper at +30 mm above the centre.
+    // We track existing sprites via wrapper.userData.rfBadge so each
+    // rebuild can dispose them properly.
+    function renderRfBadges() {
+      // Dispose old sprites + farfield lobes attached to any wrapper.
+      for (const cacheEntry of wrapperCache.values()) {
+        const wrapper = cacheEntry.wrapper;
+        const existingBadge = wrapper.userData.rfBadge as THREE.Sprite | undefined;
+        if (existingBadge) {
+          wrapper.remove(existingBadge);
+          disposeRfBadgeSprite(existingBadge);
+          delete wrapper.userData.rfBadge;
+        }
+        const existingLobe = wrapper.userData.farfieldLobe as THREE.LineSegments | undefined;
+        if (existingLobe) {
+          wrapper.remove(existingLobe);
+          disposeFarfieldLobe(existingLobe);
+          delete wrapper.userData.farfieldLobe;
+        }
+      }
+      if (!renderCtx.overlayFlags.connections) return;
+
+      const byTerminal = new Map<string, typeof rfChains>();
+      for (const node of rfChains) {
+        const arr = byTerminal.get(node.terminalSceneObjectId) ?? [];
+        arr.push(node);
+        byTerminal.set(node.terminalSceneObjectId, arr);
+      }
+
+      for (const [terminalId, nodes] of byTerminal) {
+        const sorted = [...nodes].sort((a, b) => a.positionInChain - b.positionInChain);
+        const source = sorted[0];
+        if (!source) continue;
+        const isDriven =
+          source.nodeKind === "dds" || source.nodeKind === "synthesizer";
+        if (!isDriven) continue;
+        const params = source.kindParams as { frequencyMhz?: number; powerDbm?: number };
+        const freqMhz = Number(params.frequencyMhz ?? 0);
+        const sourceDbm = Number(params.powerDbm ?? 0);
+        const gainSum = sorted.slice(1).reduce((acc, n) => acc + (n.gainDb ?? 0), 0);
+        const outDbm = sourceDbm + gainSum;
+        const freqText =
+          freqMhz >= 1000
+            ? `${(freqMhz / 1000).toFixed(3)} GHz`
+            : `${freqMhz.toFixed(2)} MHz`;
+        const dbmText = `${outDbm >= 0 ? "+" : ""}${outDbm.toFixed(1)} dBm`;
+
+        const cacheEntry = wrapperCache.get(terminalId);
+        if (!cacheEntry) continue;
+        const wrapper = cacheEntry.wrapper;
+
+        const sprite = makeRfBadgeSprite(`${freqText} @ ${dbmText}`);
+        // +30 mm above the device in scene units (1 unit = 0.01 m).
+        sprite.position.set(0, 0.03, 0);
+        wrapper.add(sprite);
+        wrapper.userData.rfBadge = sprite;
+      }
+
+      // Phase RF.7 — radiation lobes for horn_antenna kinds. Hidden when
+      // the Beams overlay is off (lobe IS the radiation pattern, belongs
+      // to the Physics group not Relations).
+      if (renderCtx.overlayFlags.beam_segments) {
+        for (const obj of sceneData.objects) {
+          const oe = sceneData.opticalElements.find((e) => e.objectId === obj.id);
+          if (!oe || oe.elementKind !== "horn_antenna") continue;
+          const cacheEntry = wrapperCache.get(obj.id);
+          if (!cacheEntry) continue;
+          const wrapper = cacheEntry.wrapper;
+          const params = oe.kindParams as {
+            cosineExponent?: number;
+            polarAxisBodyLocal?: number[] | null;
+          };
+          const exponent = typeof params.cosineExponent === "number" ? params.cosineExponent : 8;
+          const axisArr =
+            Array.isArray(params.polarAxisBodyLocal) && params.polarAxisBodyLocal.length === 3
+              ? (params.polarAxisBodyLocal as number[])
+              : [0, 0, 1];
+          const lobe = makeFarfieldLobe({
+            cosineExponent: exponent,
+            polarAxisBodyLocal: [axisArr[0], axisArr[1], axisArr[2]],
+          });
+          wrapper.add(lobe);
+          wrapper.userData.farfieldLobe = lobe;
+        }
+      }
+    }
+
     void (async () => {
       await renderComponents();
       if (cancelled) return;
@@ -3419,6 +3533,7 @@ export function DigitalTwinViewer({
       clearGroup(relationGroup);
       renderRayTraces();
       renderRelations();
+      renderRfBadges();
       // Tell the gizmo attach effect "wrappers are fresh — re-attach now"
       // so it picks up the wrapper from THIS build instead of the disposed
       // one from the previous build.
@@ -3442,7 +3557,7 @@ export function DigitalTwinViewer({
       // cache entirely.
       cancelled = true;
     };
-  }, [sceneData, selectedComponentId, selectedObjectId, selectedObjectIds, selectedRelationId, previewObjectTransforms, relationDraftTarget, renderCtx, displayMode]);
+  }, [sceneData, selectedComponentId, selectedObjectId, selectedObjectIds, selectedRelationId, previewObjectTransforms, relationDraftTarget, renderCtx, displayMode, rfChains]);
 
   // Phase PB.3 — when the scrub-time slider moves (or PB bindings change),
   // trigger a beam-only redraw via the ref exposed by the big effect above.
@@ -3450,7 +3565,7 @@ export function DigitalTwinViewer({
   // changes, so dragging the slider stays at 60 fps.
   useEffect(() => {
     redrawBeamsRef.current?.();
-  }, [scrubTimeNs, pulseBlasterChannels, sceneData.timingPrograms]);
+  }, [scrubTimeNs, pulseBlasterChannels, sceneData.timingPrograms, aomFreqOverrideMhz]);
 
   // -----------------------------------------------------------------
   // Fiber Bezier-spline edit overlay. Active only when

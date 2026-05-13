@@ -392,6 +392,17 @@ export const KIND_REGISTRY: Record<ElementKind, KindContract> = {
     alignSummary:
       "RF emitter — DDS / synth / arbitrary-waveform generator. Drives downstream RF chain (amp / filter / AOM-EOM driver). Not aligned optically.",
   },
+  horn_antenna: {
+    kind: "horn_antenna",
+    displayName: "Horn Antenna",
+    requiredAnchors: [],
+    optionalAnchors: ["aperture"],
+    anchorsNeedingDirection: ["aperture"],
+    alignVariant: "none",
+    alignToleranceMm: 0,
+    alignSummary:
+      "Microwave horn / antenna — radiates the chain output along its polar axis (+Z body-local by default). Phase RF.7 renders a parametric cos^n radiation lobe; palace farfield can populate a real pattern later.",
+  },
 };
 
 /** ElementKinds that have a meaningful align contract — used to filter

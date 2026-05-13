@@ -11,6 +11,7 @@ import { getComponentName } from "../utils/components";
 import { getFiberPortLabPose } from "../utils/fiberAlignment";
 import { CollapsibleSection } from "./CollapsibleSection";
 import { LinkedSchematicsSection } from "./LinkedSchematicsSection";
+import { RfChainReadout } from "./RfChainReadout";
 import { ScrubTimeRfReadout } from "./ScrubTimeRfReadout";
 import { FloatingPanel } from "./workspace/FloatingPanel";
 import { useWorkspace } from "./workspace/WorkspaceProvider";
@@ -1662,7 +1663,10 @@ export function ComponentPanel() {
         />
       )}
       {isObjectSelection && selectedObject && (
-        <ScrubTimeRfReadout sceneObjectId={selectedObject.id} />
+        <>
+          <RfChainReadout sceneObjectId={selectedObject.id} />
+          <ScrubTimeRfReadout sceneObjectId={selectedObject.id} />
+        </>
       )}
       </FloatingPanel>
 

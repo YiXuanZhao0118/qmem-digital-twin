@@ -699,6 +699,7 @@ ElementKind = Literal[
     "wavemeter",
     "beam_dump",
     "rf_source",            # Phase RF.1: DDS / synth / arbitrary waveform generator.
+    "horn_antenna",         # Phase RF.7: microwave horn / antenna (radiates the RF chain output).
 ]
 
 
@@ -1316,6 +1317,24 @@ class RfSourceParams(CamelModel):
     modulation: Literal["none", "am", "fm", "iq"] = "none"
 
 
+class HornAntennaParams(CamelModel):
+    """Phase RF.7 — radiating microwave horn / antenna.
+
+    A SceneObject of this kind takes the chain output and emits a far-field
+    lobe along its body-local +Z (or `polarAxisBodyLocal`). The lobe is
+    parameterised, not physically solved — gainDbi sets the peak, and the
+    cosine exponent (1=isotropic, 2=dipole, large=narrow horn) shapes the
+    falloff. A real palace farfield run can populate `radiationPattern`
+    later (sampled over θ/φ).
+    """
+
+    frequency_ghz: float = Field(default=9.2, gt=0.0)
+    gain_dbi: float = Field(default=12.0)
+    beamwidth_3db_deg: float = Field(default=30.0, gt=0.0, le=180.0)
+    polar_axis_body_local: list[float] | None = Field(default_factory=lambda: [0.0, 0.0, 1.0])
+    cosine_exponent: float = Field(default=8.0, ge=0.0)
+
+
 # --- Per-kind validator registry --------------------------------------------
 
 
@@ -1348,6 +1367,7 @@ KIND_PARAMS_MODELS: dict[str, type[CamelModel]] = {
     "wavemeter": WavemeterParams,
     "beam_dump": BeamDumpParams,
     "rf_source": RfSourceParams,
+    "horn_antenna": HornAntennaParams,
 }
 
 
@@ -1454,6 +1474,10 @@ DEFAULT_PORTS: dict[str, dict[str, list[dict[str, Any]]]] = {
     "rf_source": {
         "input": [],
         "output": [_port("rf_out", "output", "RF Out", "rf")],
+    },
+    "horn_antenna": {
+        "input": [_port("rf_in", "input", "RF In", "rf")],
+        "output": [_port("aperture", "output", "Aperture", "rf")],
     },
 }
 

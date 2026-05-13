@@ -317,6 +317,10 @@ type TraceContext = {
   objects: SceneObject[];
   // pre-computed flat list of meshes that the raycaster targets
   targetMeshes: THREE.Object3D[];
+  /** Phase RF.8 — per-SceneObject AOM/EOM frequency override (MHz) at
+   *  the current scrub time. Threaded through traceOneRay so the AOM
+   *  branch can pick instantaneous freq over kindParams.centerFreqMhz. */
+  aomFreqOverrideMhz?: Map<string, number>;
 };
 
 /** Compute the world-space bounding box that wraps every mesh belonging to a
@@ -1510,7 +1514,9 @@ function traceOneRay(
     // (default 1 %) — except 0 and the selected ±1 which always show
     // so the user keeps seeing them even when efficiency drops near
     // zero off-Bragg.
-    const fMhz = params.centerFreqMhz ?? 80;
+    // Phase RF.8: scrub-time override > static kindParams > 80 MHz default.
+    const fMhz =
+      ctx.aomFreqOverrideMhz?.get(hitObjectId) ?? params.centerFreqMhz ?? 80;
     const carrierThz = OPTICAL_C_M_PER_S / (wavelengthNm * 1e-9) / 1e12;
     const maxDiffractionOrder = Math.max(
       1,
@@ -1870,11 +1876,18 @@ export function traceBeamsFromLasers(input: {
    *  treated as gated off and skipped entirely (so downstream optics
    *  also see no beam). Absent objects render as configured. */
   gateOverrides?: Map<string, boolean>;
+  /** Phase RF.8 — per-SceneObject AOM/EOM RF frequency override (MHz)
+   *  applied at trace-time. Lets a TimingProgram with `frequencyMhz`
+   *  samples drive the visible Bragg deflection angle as the user
+   *  scrubs the timeline. Absent objects use kindParams.centerFreqMhz
+   *  as before. */
+  aomFreqOverrideMhz?: Map<string, number>;
 }): TraceSegment[] {
   const { scene, componentGroup } = input;
   const maxLengthMm = input.options?.maxLengthMm ?? DEFAULT_MAX_LENGTH_MM;
   const maxBounces = input.options?.maxBounces ?? DEFAULT_MAX_BOUNCES;
   const gateOverrides = input.gateOverrides;
+  const aomFreqOverrideMhz = input.aomFreqOverrideMhz;
 
   // CRITICAL: refresh world matrices on the entire group BEFORE any bbox /
   // raycast query. Per-mesh updateMatrixWorld(true) only works if the parent
@@ -1919,6 +1932,7 @@ export function traceBeamsFromLasers(input: {
     assets: scene.assets,
     objects: scene.objects,
     targetMeshes,
+    aomFreqOverrideMhz,
   };
 
   const assetById = new Map(scene.assets.map((a) => [a.id, a]));

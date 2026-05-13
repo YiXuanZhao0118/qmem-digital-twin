@@ -28,6 +28,7 @@ import {
   fetchCircuitsApi,
   fetchEmProblemsApi,
   fetchMeshesApi,
+  fetchAllRfChainsApi,
   fetchPulseBlasterChannelsApi,
   fetchScene,
   fetchSimulationRunApi,
@@ -89,6 +90,7 @@ import type {
   EmProblemUpdatePayload,
   Mesh,
   PulseBlasterChannel,
+  RfChainNode,
   SimulationModule,
   SimulationRunCreatePayload,
   SimulationRunV2,
@@ -430,12 +432,18 @@ type SceneStore = {
    *  Timing chips and the PB.3 scrub-time evaluator both need fast read
    *  access without their own fetch. Auto-loaded on App boot. */
   pulseBlasterChannels: PulseBlasterChannel[];
+  /** Phase RF.6: all RfChainNodes in the database. The 3D viewer reads
+   *  this to overlay frequency-power badges above terminal devices, and
+   *  AOM/EOM panels read it to display the chain output. Auto-loaded on
+   *  App boot. */
+  rfChains: RfChainNode[];
   /** Phase PB.3: scrub-time playhead in nanoseconds. When `null`, the
    *  scene renders devices as configured (static visibility flags).
    *  When a number, gate state at this time overrides beam emission for
    *  every Component with a TimingProgram or a bound PB channel. */
   scrubTimeNs: number | null;
   loadPulseBlasterChannels: () => Promise<void>;
+  loadRfChains: () => Promise<void>;
   setScrubTimeNs: (tNs: number | null) => void;
   setEditorMode: (mode: "scene" | "phy-editor") => void;
   setCurrentModule: (module: SimulationModule) => void;
@@ -989,6 +997,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   editingAssetId: null,
   phyEditorDirty: false,
   pulseBlasterChannels: [],
+  rfChains: [],
   scrubTimeNs: null,
   fiberEditingComponentId: null,
   transformPivotMode: "median",
@@ -2556,6 +2565,11 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   async loadPulseBlasterChannels() {
     const channels = await fetchPulseBlasterChannelsApi();
     set({ pulseBlasterChannels: channels });
+  },
+
+  async loadRfChains() {
+    const chains = await fetchAllRfChainsApi();
+    set({ rfChains: chains });
   },
 
   setScrubTimeNs(tNs) {

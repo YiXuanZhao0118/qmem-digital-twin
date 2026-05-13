@@ -68,6 +68,7 @@ export const KIND_LABELS: Record<ElementKind, string> = {
   wavemeter: "Wavemeter",
   beam_dump: "Beam Dump",
   rf_source: "RF Source",
+  horn_antenna: "Horn Antenna",
 };
 
 export const KIND_GROUPS: { label: string; kinds: ElementKind[] }[] = [
@@ -98,7 +99,7 @@ export const KIND_GROUPS: { label: string; kinds: ElementKind[] }[] = [
   },
   {
     label: "RF",
-    kinds: ["rf_source"],
+    kinds: ["rf_source", "horn_antenna"],
   },
 ];
 
@@ -268,5 +269,12 @@ export const DEFAULT_KIND_PARAMS: Record<ElementKind, Record<string, unknown>> =
     powerDbm: 0.0,
     phaseDeg: 0.0,
     modulation: "none",
+  },
+  horn_antenna: {
+    frequencyGhz: 9.2,
+    gainDbi: 12.0,
+    beamwidth3dbDeg: 30.0,
+    polarAxisBodyLocal: [0, 0, 1],
+    cosineExponent: 8.0,
   },
 };

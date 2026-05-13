@@ -73,6 +73,7 @@ export default function App() {
   const [roomDimensions, setRoomDimensions] = useState(loadRoomDimensions);
   const loadScene = useSceneStore((state) => state.loadScene);
   const loadPulseBlasterChannels = useSceneStore((state) => state.loadPulseBlasterChannels);
+  const loadRfChains = useSceneStore((state) => state.loadRfChains);
   const applyEvent = useSceneStore((state) => state.applyEvent);
   const setSocketStatus = useSceneStore((state) => state.setSocketStatus);
   const loadStatus = useSceneStore((state) => state.loadStatus);
@@ -91,7 +92,8 @@ export default function App() {
   useEffect(() => {
     void loadScene();
     void loadPulseBlasterChannels();
-  }, [loadScene, loadPulseBlasterChannels]);
+    void loadRfChains();
+  }, [loadScene, loadPulseBlasterChannels, loadRfChains]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {

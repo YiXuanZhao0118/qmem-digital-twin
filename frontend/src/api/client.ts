@@ -897,6 +897,11 @@ export async function fetchRfChainApi(
   return response.data;
 }
 
+export async function fetchAllRfChainsApi(): Promise<RfChainNode[]> {
+  const response = await client.get<RfChainNode[]>("/api/rf-chains/nodes");
+  return response.data;
+}
+
 export async function replaceRfChainApi(
   terminalSceneObjectId: string,
   nodes: RfChainNodeCreatePayload[],

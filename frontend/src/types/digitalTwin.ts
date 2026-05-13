@@ -269,7 +269,8 @@ export type ElementKind =
   | "spectrometer"
   | "wavemeter"
   | "beam_dump"
-  | "rf_source";
+  | "rf_source"
+  | "horn_antenna";
 
 // --- Per-kind params (discriminated by element_kind) ------------------------
 
@@ -566,6 +567,14 @@ export type RfSourceParams = {
   modulation: "none" | "am" | "fm" | "iq";
 };
 
+export type HornAntennaParams = {
+  frequencyGhz: number;
+  gainDbi: number;
+  beamwidth3dbDeg: number;
+  polarAxisBodyLocal: number[] | null;
+  cosineExponent: number;
+};
+
 // Tagged union: element_kind discriminates which params shape applies.
 export type OpticalElementKindParams =
   | { elementKind: "laser_source"; kindParams: LaserSourceParams }
@@ -590,7 +599,8 @@ export type OpticalElementKindParams =
   | { elementKind: "spectrometer"; kindParams: SpectrometerParams }
   | { elementKind: "wavemeter"; kindParams: WavemeterParams }
   | { elementKind: "beam_dump"; kindParams: BeamDumpParams }
-  | { elementKind: "rf_source"; kindParams: RfSourceParams };
+  | { elementKind: "rf_source"; kindParams: RfSourceParams }
+  | { elementKind: "horn_antenna"; kindParams: HornAntennaParams };
 
 export type OpticalElementCommon = {
   /** Per-object PK (alembic 0014). Each scene object that has an optical
