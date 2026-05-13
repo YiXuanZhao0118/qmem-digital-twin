@@ -118,7 +118,7 @@ export function DisplayPopover({ open, onClose }: { open: boolean; onClose: () =
       </div>
 
       <div className="display-hint">
-        Shortcuts: <kbd>1</kbd>–<kbd>8</kbd> toggle overlays · <kbd>0</kbd> reset · <kbd>Esc</kbd> show all
+        Shortcuts: <kbd>1</kbd>–<kbd>6</kbd> toggle overlays · <kbd>0</kbd> reset · <kbd>Esc</kbd> show all
       </div>
     </div>
   );

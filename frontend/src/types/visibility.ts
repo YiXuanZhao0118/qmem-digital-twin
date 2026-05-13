@@ -4,76 +4,55 @@ import type { PhysicsCapability } from "./digitalTwin";
 // L1 — Global overlay flags
 // =============================================================================
 
+// Only overlay flags that actually gate something in the 3D scene live
+// here. Old flags (anchors / bounding_boxes / coordinate_axes / field_map /
+// regions / warnings) were never wired to a renderer — removing them
+// matches what the user can actually toggle. Restore an entry the day a
+// renderer starts consulting it.
 export type OverlayKind =
   // Geometry
   | "components"
-  | "anchors"
-  | "bounding_boxes"
-  | "coordinate_axes"
   // Relations
   | "connections"
   | "assembly_relations"
   | "optical_links"
   // Physics
   | "beam_segments"
-  | "beam_paths"
-  | "field_map"
-  | "regions"
-  // Diagnostics
-  | "warnings";
+  | "beam_paths";
 
 export type OverlayFlags = Record<OverlayKind, boolean>;
 
 export const OVERLAY_KINDS: OverlayKind[] = [
   "components",
-  "anchors",
-  "bounding_boxes",
-  "coordinate_axes",
   "connections",
   "assembly_relations",
   "optical_links",
   "beam_segments",
   "beam_paths",
-  "field_map",
-  "regions",
-  "warnings",
 ];
 
 export const DEFAULT_OVERLAY_FLAGS: OverlayFlags = {
   components: true,
-  anchors: true,
-  bounding_boxes: false,
-  coordinate_axes: false,
   connections: true,
   assembly_relations: true,
   optical_links: true,
   beam_segments: true,
   beam_paths: true,
-  field_map: false,
-  regions: false,
-  warnings: false,
 };
 
 export const OVERLAY_GROUPS: { label: string; kinds: OverlayKind[] }[] = [
-  { label: "Geometry", kinds: ["components", "anchors", "bounding_boxes", "coordinate_axes"] },
+  { label: "Geometry", kinds: ["components"] },
   { label: "Relations", kinds: ["connections", "assembly_relations", "optical_links"] },
-  { label: "Physics", kinds: ["beam_segments", "beam_paths", "field_map", "regions"] },
-  { label: "Diagnostics", kinds: ["warnings"] },
+  { label: "Physics", kinds: ["beam_segments", "beam_paths"] },
 ];
 
 export const OVERLAY_LABELS: Record<OverlayKind, string> = {
   components: "Models",
-  anchors: "Anchors",
-  bounding_boxes: "B.Box",
-  coordinate_axes: "Axes",
   connections: "Cables",
   assembly_relations: "Asm.",
   optical_links: "Optic.",
   beam_segments: "Beams",
   beam_paths: "Path",
-  field_map: "Field",
-  regions: "Region",
-  warnings: "Warnings",
 };
 
 // =============================================================================

@@ -54,13 +54,11 @@ function loadRoomDimensions() {
 
 const NUMBER_KEY_OVERLAYS: Record<string, OverlayKind> = {
   "1": "components",
-  "2": "anchors",
-  "3": "connections",
-  "4": "assembly_relations",
-  "5": "optical_links",
-  "6": "beam_segments",
-  "7": "regions",
-  "8": "warnings",
+  "2": "connections",
+  "3": "assembly_relations",
+  "4": "optical_links",
+  "5": "beam_segments",
+  "6": "beam_paths",
 };
 
 function isTypingTarget(target: EventTarget | null): boolean {
