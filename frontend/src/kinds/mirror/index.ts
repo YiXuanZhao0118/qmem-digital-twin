@@ -7,6 +7,7 @@
  * geometry into this folder's `renderer.ts`.
  */
 import { definePhysicsPlugin } from "../_plugin";
+import { renderMirror } from "./renderer";
 
 export interface MirrorParams extends Record<string, unknown> {
   reflectivity: number;
@@ -18,6 +19,7 @@ export const mirrorPlugin = definePhysicsPlugin<MirrorParams>({
   componentTypes: ["mirror"],
   assetCategory: "optical",
   catalogGroup: "Passive",
+  renderer: renderMirror,
   physics: {
     elementKind: "mirror",
     primaryDomain: "optical",

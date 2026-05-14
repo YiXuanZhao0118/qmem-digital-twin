@@ -8,6 +8,7 @@ import type { Asset3D, ComponentItem, DeviceState } from "../types/digitalTwin";
 import { FIBER_FERRULE_TIP_MM } from "../utils/fiberAnchorResolver";
 import { createNewportOpticalTable } from "./photoRoom";
 import { getDimensionsMm, getNumericProperty, mmToThree } from "./transformUtils";
+import { pluginForComponentType } from "../kinds/_plugins";
 
 const gltfLoader = new GLTFLoader();
 const objLoader = new OBJLoader();
@@ -93,7 +94,12 @@ function colorForComponent(component: ComponentItem, state?: DeviceState): THREE
   }
 }
 
-function materialFor(
+// M6: exported so per-kind renderers in `kinds/<kind>/renderer.ts` can
+// produce visually-consistent materials without depending on
+// loadAsset.ts's full surface area. colorForComponent stays private —
+// M6 follow-up moves the per-kind colour into the plugin's own
+// renderer code.
+export function materialFor(
   component: ComponentItem,
   state?: DeviceState,
 ): THREE.MeshStandardMaterial {
@@ -1808,6 +1814,20 @@ function createRfSwitch(component: ComponentItem, state?: DeviceState): THREE.Ob
 function createPrimitive(component: ComponentItem, state?: DeviceState): THREE.Object3D {
   const group = new THREE.Group();
   group.name = component.name;
+
+  // M6 POC: if the componentType's plugin owns a `renderer`, delegate
+  // to it before falling through to the legacy switch below. Today
+  // only `mirror` has migrated; the rest still come from the switch.
+  // Each future migration moves a switch case → kinds/<id>/renderer.ts
+  // and shrinks this file by another 20-200 lines.
+  const plugin = pluginForComponentType(component.componentType);
+  if (plugin?.renderer) {
+    const mesh = plugin.renderer(component, state);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    group.add(mesh);
+    return group;
+  }
 
   let mesh: THREE.Object3D;
   switch (component.componentType) {
