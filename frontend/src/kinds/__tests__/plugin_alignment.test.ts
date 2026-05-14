@@ -41,9 +41,30 @@ describe("ComponentPlugin alignment with legacy tables", () => {
     expect(report.ok).toBe(true);
   });
 
-  it("PLUGINS array contains the expected M1 sample set", () => {
-    const ids = PLUGINS.map((p) => p.id).sort();
-    expect(ids).toEqual(["aom", "fiber", "mirror", "mirror_mount", "rf_switch"]);
+  it("PLUGINS array covers every ElementKind + every catalog componentType", () => {
+    // 27 physics plugins (one per ElementKind) + 22 passive (mechanical /
+    // infrastructure / misc / passive-electronics) + mirror_mount which
+    // started in M1 as a sample = 50 total. Snapshot value so a
+    // regression (someone deletes a plugin) shows up immediately.
+    expect(PLUGINS.length).toBe(50);
+
+    // Every legacy ElementKind has a physics plugin claiming it.
+    const physicsIds = new Set(
+      PLUGINS.filter((p) => p.physics !== undefined).map((p) => p.id),
+    );
+    const expectedKinds = [
+      "laser_source", "tapered_amplifier", "mirror", "dichroic_mirror",
+      "lens_biconvex", "lens_plano_convex", "lens_cylindrical",
+      "waveplate", "polarizer", "beam_splitter", "fiber_coupler",
+      "fiber", "isolator", "aom", "eom", "nonlinear_crystal",
+      "saturable_absorber", "detector", "camera", "spectrometer",
+      "wavemeter", "beam_dump", "rf_source", "rf_amplifier",
+      "horn_antenna", "rf_cable", "rf_switch",
+    ];
+    for (const k of expectedKinds) {
+      expect(physicsIds.has(k)).toBe(true);
+    }
+    expect(physicsIds.size).toBe(expectedKinds.length);
   });
 
   it("no two plugins claim the same componentType", () => {

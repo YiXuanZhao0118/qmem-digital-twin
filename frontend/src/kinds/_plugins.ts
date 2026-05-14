@@ -1,23 +1,54 @@
 /**
- * Plugin registry — collects every ComponentPlugin into a single tuple
- * and exposes derive helpers so all hand-written tables (KIND_REGISTRY,
- * COMPONENT_TYPE_TO_KIND, KIND_LABELS, DEFAULT_KIND_PARAMS, KIND_GROUPS,
- * RF_DOMAIN_KINDS, AssetLibraryPanel's 5 category Sets) can be derived
- * from this one source instead of hand-maintained.
+ * Plugin registry — single source of truth for every ComponentPlugin
+ * in the digital twin. Replaces the 8+ hand-maintained tables that the
+ * pre-P2 codebase scattered across `_registry.ts`, `elementDefaults.ts`,
+ * `AssetLibraryPanel.tsx`, and the backend `components.py`.
  *
- * M1 scope: 5 sample plugins (mirror / aom / rf_switch / fiber /
- * mirror_mount). The remaining 22 kinds still live in the old tables
- * (`_registry.ts` + `elementDefaults.ts`) until M2 migrates them. The
- * `verifyAlignment` function asserts the derived data matches the
- * existing tables for the 5 already-migrated kinds — runs at module
- * import in dev (`import.meta.env.DEV`) and is the early-warning
- * system for plugin authoring mistakes.
+ * Source-of-truth contract:
+ *   - `PHYSICS_PLUGINS` declares every ElementKind exactly once.
+ *   - `PASSIVE_PLUGINS` declares every catalog-only componentType.
+ *   - `PLUGINS` is the union; consumers iterate this.
+ *   - Derive helpers below project the registry into the shapes the
+ *     legacy consumers expect (KIND_LABELS-shaped Record, KIND_GROUPS,
+ *     RF_DOMAIN_KINDS set, AssetCategory→Set map, etc).
+ *
+ * After M3 lands, all `import { … } from "../utils/elementDefaults"`
+ * and `import { … } from "./_registry"` calls flip to importing from
+ * here, and the legacy tables get deleted.
  */
+// Physics plugins — every ElementKind member.
 import { aomPlugin } from "./aom";
+import { beamDumpPlugin } from "./beam_dump";
+import { beamSplitterPlugin } from "./beam_splitter";
+import { cameraPlugin } from "./camera";
+import { detectorPlugin } from "./detector";
+import { dichroicMirrorPlugin } from "./dichroic_mirror";
+import { eomPlugin } from "./eom";
 import { fiberPlugin } from "./fiber";
+import { fiberCouplerPlugin } from "./fiber_coupler";
+import { hornAntennaPlugin } from "./horn_antenna";
+import { isolatorPlugin } from "./isolator";
+import { laserSourcePlugin } from "./laser_source";
+import { lensBiconvexPlugin } from "./lens_biconvex";
+import { lensCylindricalPlugin } from "./lens_cylindrical";
+import { lensPlanoConvexPlugin } from "./lens_plano_convex";
 import { mirrorPlugin } from "./mirror";
 import { mirrorMountPlugin } from "./mirror_mount";
+import { nonlinearCrystalPlugin } from "./nonlinear_crystal";
+import { polarizerPlugin } from "./polarizer";
+import { rfAmplifierPlugin } from "./rf_amplifier";
+import { rfCablePlugin } from "./rf_cable";
+import { rfSourcePlugin } from "./rf_source";
 import { rfSwitchPlugin } from "./rf_switch";
+import { saturableAbsorberPlugin } from "./saturable_absorber";
+import { spectrometerPlugin } from "./spectrometer";
+import { taperedAmplifierPlugin } from "./tapered_amplifier";
+import { wavemeterPlugin } from "./wavemeter";
+import { waveplatePlugin } from "./waveplate";
+
+// Passive plugins — catalog componentTypes without an ElementKind.
+import { PASSIVE_PLUGINS } from "./_passive_plugins";
+
 import {
   isPhysicsPlugin,
   type AssetCategory,
@@ -27,46 +58,68 @@ import {
 } from "./_plugin";
 
 // =============================================================================
-// The registry — order is stable, used for catalog list ordering when no
-// `catalogGroup` is specified.
+// Registries — order is stable; consumers should not rely on it but
+// snapshot tests do.
 // =============================================================================
 
-// Each plugin file keeps its strong-typed PhysicsPlugin<Params>; the
-// registry stores them under the type-erased base. TParams appears in
-// both covariant (defaultParams) and contravariant (Inspector args)
-// positions, so PhysicsPlugin<T> is invariant in T — we need a single
-// explicit widening here to collapse the union. Consumers use the
-// `pluginForKind` helper, which can re-narrow if needed.
-export const PLUGINS: readonly ComponentPlugin[] = [
+/** Every physics-bearing plugin. One per ElementKind (27 entries). */
+export const PHYSICS_PLUGINS: readonly PhysicsPlugin[] = [
+  // Emitters
+  laserSourcePlugin,
+  taperedAmplifierPlugin,
+  // Passive optical
   mirrorPlugin,
-  aomPlugin,
-  rfSwitchPlugin,
+  dichroicMirrorPlugin,
+  lensBiconvexPlugin,
+  lensPlanoConvexPlugin,
+  lensCylindricalPlugin,
+  waveplatePlugin,
+  polarizerPlugin,
+  beamSplitterPlugin,
+  fiberCouplerPlugin,
   fiberPlugin,
-  mirrorMountPlugin,
+  isolatorPlugin,
+  // Active / nonlinear optical
+  aomPlugin,
+  eomPlugin,
+  nonlinearCrystalPlugin,
+  saturableAbsorberPlugin,
+  // Sinks
+  detectorPlugin,
+  cameraPlugin,
+  spectrometerPlugin,
+  wavemeterPlugin,
+  beamDumpPlugin,
+  // RF / Electronics
+  rfSourcePlugin,
+  rfAmplifierPlugin,
+  hornAntennaPlugin,
+  rfCablePlugin,
+  rfSwitchPlugin,
+] as unknown as readonly PhysicsPlugin[];
+
+/** Every plugin (physics + passive). Consumers wanting "all kinds the
+ *  catalog knows about" iterate this. */
+export const PLUGINS: readonly ComponentPlugin[] = [
+  ...PHYSICS_PLUGINS,
+  mirrorMountPlugin, // physics-flagged passive; lives in mirror_mount/
+  ...PASSIVE_PLUGINS,
 ] as readonly ComponentPlugin[];
 
 export type AnyPlugin = ComponentPlugin;
 
 // =============================================================================
-// Derive helpers — every existing hand-written table has a counterpart
-// here. Consumers (M3) will swap their imports from elementDefaults /
-// _registry to these functions.
+// Helpers — query the registry
 // =============================================================================
 
-/** Subset of PLUGINS that have a physics contract (excludes PassivePlugin). */
 export function physicsPlugins(): readonly PhysicsPlugin[] {
-  return PLUGINS.filter(isPhysicsPlugin);
+  return PHYSICS_PLUGINS;
 }
 
-/** All componentType strings handled by any plugin — replaces the union
- *  of OPTICAL_TYPES / ELECTRONICS_TYPES / MECHANICAL_TYPES sets in
- *  AssetLibraryPanel.tsx once M2 covers every plugin. */
 export function knownComponentTypes(): readonly string[] {
   return PLUGINS.flatMap((p) => p.componentTypes);
 }
 
-/** componentType → plugin (M-to-1; multiple componentTypes can share a
- *  plugin, e.g. `laser` and `laser_source` both → laserSourcePlugin). */
 export function pluginForComponentType(componentType: string): ComponentPlugin | null {
   const trimmed = componentType.trim();
   for (const p of PLUGINS) {
@@ -75,21 +128,24 @@ export function pluginForComponentType(componentType: string): ComponentPlugin |
   return null;
 }
 
-/** ElementKind → plugin (1-to-1 for physics plugins). */
 export function pluginForKind(kind: string): PhysicsPlugin | null {
-  for (const p of physicsPlugins()) {
+  for (const p of PHYSICS_PLUGINS) {
     if (p.physics.elementKind === kind) return p;
   }
   return null;
 }
 
+// =============================================================================
+// Derive helpers — every legacy hand-written table has a counterpart
+// here. M3 swaps consumer imports to use these instead of the
+// elementDefaults / _registry sources.
+// =============================================================================
+
 /** Replaces `COMPONENT_TYPE_TO_KIND` (elementDefaults.ts:11). */
 export function derivedComponentTypeToKind(): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const p of physicsPlugins()) {
-    for (const ct of p.componentTypes) {
-      out[ct] = p.physics.elementKind;
-    }
+  for (const p of PHYSICS_PLUGINS) {
+    for (const ct of p.componentTypes) out[ct] = p.physics.elementKind;
   }
   return out;
 }
@@ -97,25 +153,21 @@ export function derivedComponentTypeToKind(): Record<string, string> {
 /** Replaces `KIND_LABELS` (elementDefaults.ts:63). */
 export function derivedKindLabels(): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const p of physicsPlugins()) {
-    out[p.physics.elementKind] = p.displayName;
-  }
+  for (const p of PHYSICS_PLUGINS) out[p.physics.elementKind] = p.displayName;
   return out;
 }
 
 /** Replaces `DEFAULT_KIND_PARAMS` (elementDefaults.ts:152). */
 export function derivedDefaultKindParams(): Record<string, Record<string, unknown>> {
   const out: Record<string, Record<string, unknown>> = {};
-  for (const p of physicsPlugins()) {
-    out[p.physics.elementKind] = p.physics.defaultParams;
-  }
+  for (const p of PHYSICS_PLUGINS) out[p.physics.elementKind] = p.physics.defaultParams;
   return out;
 }
 
 /** Replaces `RF_DOMAIN_KINDS` (elementDefaults.ts:102). */
 export function derivedRfDomainKinds(): ReadonlySet<string> {
   const out = new Set<string>();
-  for (const p of physicsPlugins()) {
+  for (const p of PHYSICS_PLUGINS) {
     if (p.physics.primaryDomain === "rf") out.add(p.physics.elementKind);
   }
   return out;
@@ -123,8 +175,7 @@ export function derivedRfDomainKinds(): ReadonlySet<string> {
 
 /** Replaces the 5 hand-written Sets at the top of AssetLibraryPanel.tsx:
  *  OPTICAL_TYPES / ELECTRONICS_TYPES / MECHANICAL_TYPES /
- *  INFRASTRUCTURE_TYPES / MISC_TYPES. Returns a `Record<AssetCategory,
- *  Set<componentType>>` so consumers can `category[type]` lookup. */
+ *  INFRASTRUCTURE_TYPES / MISC_TYPES. */
 export function derivedCategoryToComponentTypes(): Record<AssetCategory, ReadonlySet<string>> {
   const out: Record<AssetCategory, Set<string>> = {
     optical: new Set(),
@@ -134,20 +185,15 @@ export function derivedCategoryToComponentTypes(): Record<AssetCategory, Readonl
     misc: new Set(),
   };
   for (const p of PLUGINS) {
-    for (const ct of p.componentTypes) {
-      out[p.assetCategory].add(ct);
-    }
+    for (const ct of p.componentTypes) out[p.assetCategory].add(ct);
   }
   return out;
 }
 
-/** Replaces `KIND_GROUPS` (elementDefaults.ts:120) — kind organisation
- *  inside the Components panel's grouping ("Emitters" / "Passive" /
- *  "Active / Nonlinear" / "Sinks" / "RF"). Plugins without a
- *  `catalogGroup` fall under the category root. */
+/** Replaces `KIND_GROUPS` (elementDefaults.ts:120). */
 export function derivedKindGroups(): { label: string; kinds: string[] }[] {
   const byLabel = new Map<string, string[]>();
-  for (const p of physicsPlugins()) {
+  for (const p of PHYSICS_PLUGINS) {
     const label = p.catalogGroup ?? "Other";
     const bucket = byLabel.get(label);
     if (bucket) bucket.push(p.physics.elementKind);
@@ -160,17 +206,13 @@ export function derivedKindGroups(): { label: string; kinds: string[] }[] {
  *  (components.py:54). M4 emits this via openapi codegen so backend
  *  and frontend share the same table. */
 export function derivedBackendComponentTypeToKind(): Record<string, string> {
-  // Identical to frontend mapping by design — keep separate function
-  // signature so M4 can swap the implementation to JSON-load from a
-  // generated artifact.
   return derivedComponentTypeToKind();
 }
 
 // =============================================================================
-// Dev-time alignment check — fires at module import in dev builds. If a
-// plugin gets the elementKind / displayName / defaultParams / etc. wrong,
-// the dev sees a console error pointing at exactly which kind and field
-// is misaligned. M1's safety net before we replace the old tables.
+// Dev-time alignment check — verifies every migrated plugin matches the
+// legacy table for fields we care about. Runs as a vitest test (see
+// __tests__/plugin_alignment.test.ts).
 // =============================================================================
 
 interface AlignmentReport {
@@ -179,7 +221,10 @@ interface AlignmentReport {
 }
 
 export function verifyAlignment(
-  oldKindRegistry: Record<string, { kind: string; displayName: string; requiredAnchors: readonly string[] }>,
+  oldKindRegistry: Record<
+    string,
+    { kind: string; displayName: string; requiredAnchors: readonly string[] }
+  >,
   oldKindLabels: Record<string, string>,
   oldDefaultKindParams: Record<string, Record<string, unknown>>,
   /** Lookup function rather than a map so callers can pass
@@ -189,7 +234,7 @@ export function verifyAlignment(
 ): AlignmentReport {
   const errors: string[] = [];
 
-  for (const p of physicsPlugins()) {
+  for (const p of PHYSICS_PLUGINS) {
     const k = p.physics.elementKind;
 
     if (p.id !== k) {
@@ -204,7 +249,7 @@ export function verifyAlignment(
       // (e.g. aom registry has "AOM (Acousto-Optic Modulator)" but
       // KIND_LABELS has "AOM" — both are "legacy" so M1 alignment only
       // checks against KIND_LABELS, which is the user-facing canonical.
-      // M2 derives both from the plugin and the drift disappears.
+      // M3 derives both from the plugin and the drift disappears.
       const oldReq = JSON.stringify([...oldEntry.requiredAnchors].sort());
       const newReq = JSON.stringify([...p.physics.anchors.required].sort());
       if (oldReq !== newReq) {
@@ -243,6 +288,4 @@ export function verifyAlignment(
   return { ok: errors.length === 0, errors };
 }
 
-// Exported types for downstream consumers (kept tight — most should
-// import from `_plugin.ts` directly).
 export type { AssetCategory, ElementDomain, PhysicsPlugin };
