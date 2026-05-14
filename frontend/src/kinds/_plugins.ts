@@ -209,6 +209,43 @@ export function derivedBackendComponentTypeToKind(): Record<string, string> {
   return derivedComponentTypeToKind();
 }
 
+/** Replaces `KIND_REGISTRY` (kinds/_registry.ts:132). Builds the
+ *  legacy `KindContract`-shaped record from plugins so existing
+ *  consumers (OpticalComponentEditor, OpticalKindsEditor,
+ *  componentAnchorContracts, getKindContract, kindsWithEditableAnchors)
+ *  keep working unmodified. M3 swaps the legacy export to delegate to
+ *  this function. */
+export function derivedKindRegistry(): Record<
+  string,
+  {
+    kind: string;
+    displayName: string;
+    requiredAnchors: readonly string[];
+    optionalAnchors: readonly string[];
+    anchorsNeedingDirection: readonly string[];
+    anchorsNeedingAperture?: readonly string[];
+    alignVariant: string;
+    alignToleranceMm: number;
+    alignSummary: string;
+  }
+> {
+  const out: Record<string, ReturnType<typeof derivedKindRegistry>[string]> = {};
+  for (const p of PHYSICS_PLUGINS) {
+    out[p.physics.elementKind] = {
+      kind: p.physics.elementKind,
+      displayName: p.displayName,
+      requiredAnchors: p.physics.anchors.required,
+      optionalAnchors: p.physics.anchors.optional,
+      anchorsNeedingDirection: p.physics.anchors.needsDirection,
+      anchorsNeedingAperture: p.physics.anchors.needsAperture,
+      alignVariant: p.physics.alignVariant,
+      alignToleranceMm: p.physics.alignToleranceMm,
+      alignSummary: p.physics.alignSummary,
+    };
+  }
+  return out;
+}
+
 // =============================================================================
 // Dev-time alignment check — verifies every migrated plugin matches the
 // legacy table for fields we care about. Runs as a vitest test (see

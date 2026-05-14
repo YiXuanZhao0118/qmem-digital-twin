@@ -42,11 +42,12 @@ describe("ComponentPlugin alignment with legacy tables", () => {
   });
 
   it("PLUGINS array covers every ElementKind + every catalog componentType", () => {
-    // 27 physics plugins (one per ElementKind) + 22 passive (mechanical /
-    // infrastructure / misc / passive-electronics) + mirror_mount which
-    // started in M1 as a sample = 50 total. Snapshot value so a
-    // regression (someone deletes a plugin) shows up immediately.
-    expect(PLUGINS.length).toBe(50);
+    // 27 physics plugins (one per ElementKind) + 23 passive (mechanical /
+    // infrastructure / misc / passive-electronics / passive-optical) +
+    // mirror_mount which started in M1 as a sample = 51 total. Snapshot
+    // value so a regression (someone deletes a plugin) shows up
+    // immediately.
+    expect(PLUGINS.length).toBe(51);
 
     // Every legacy ElementKind has a physics plugin claiming it.
     const physicsIds = new Set(

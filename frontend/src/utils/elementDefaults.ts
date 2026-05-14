@@ -1,57 +1,35 @@
+/**
+ * Element defaults — thin re-export layer over the plugin registry.
+ *
+ * Pre-P2 this file held the source-of-truth tables for
+ *   - COMPONENT_TYPE_TO_KIND   (componentType → ElementKind)
+ *   - KIND_LABELS              (ElementKind → human-readable label)
+ *   - DEFAULT_KIND_PARAMS      (per-kind kindParams defaults)
+ *   - KIND_GROUPS              (Components-panel grouping)
+ *   - RF_DOMAIN_KINDS          (kinds whose primary domain is RF)
+ *
+ * Post-M3 all five derive from the PhysicsPlugin registry in
+ * `kinds/_plugins.ts`. The exports below preserve their original
+ * names + types so existing consumers keep working unchanged; the
+ * underlying drift between this file, `_registry.ts`, and the backend
+ * is gone.
+ *
+ * `componentTypeToElementKind`, `domainForElementKind`,
+ * `DOMAIN_TITLES`, and the `ElementDomain` type stay where they are —
+ * they're plain helpers on top of the derived data, not separate
+ * sources of truth.
+ */
 import type { ElementKind } from "../types/digitalTwin";
+import {
+  derivedComponentTypeToKind,
+  derivedDefaultKindParams,
+  derivedKindGroups,
+  derivedKindLabels,
+  derivedRfDomainKinds,
+} from "../kinds/_plugins";
 
-const C = 299_792_458;
-
-function nmToThz(nm: number): number {
-  return C / (nm * 1e-9) / 1e12;
-}
-
-// Mirror of backend `OPTICAL_COMPONENT_TYPE_TO_KIND` from
-// app/routers/components.py — keep in sync.
-const COMPONENT_TYPE_TO_KIND: Record<string, ElementKind> = {
-  laser: "laser_source",
-  laser_source: "laser_source",
-  tapered_amplifier: "tapered_amplifier",
-  mirror: "mirror",
-  // V2 Phase 5 (alembic 0031): catalog "lens" maps to lens_biconvex.
-  lens: "lens_biconvex",
-  lens_spherical: "lens_biconvex",
-  lens_biconvex: "lens_biconvex",
-  lens_plano_convex: "lens_plano_convex",
-  lens_cylindrical: "lens_cylindrical",
-  waveplate: "waveplate",
-  polarizer: "polarizer",
-  beam_splitter: "beam_splitter",
-  dichroic_mirror: "dichroic_mirror",
-  fiber_coupler: "fiber_coupler",
-  fiber: "fiber",
-  isolator: "isolator",
-  aom: "aom",
-  eom: "eom",
-  nonlinear_crystal: "nonlinear_crystal",
-  saturable_absorber: "saturable_absorber",
-  detector: "detector",
-  camera: "camera",
-  spectrometer: "spectrometer",
-  wavemeter: "wavemeter",
-  beam_dump: "beam_dump",
-  dds_ad9959_pcb: "rf_source",
-  rf_generator: "rf_source",
-  // Phase RF.cable (2026-05-13): coaxial cables get the rf_cable kind. The
-  // legacy `sma_cable` component_type points at the same kind so existing
-  // QMEM jumpers in the catalog promote automatically — no migration of
-  // stored component_type strings needed.
-  rf_cable: "rf_cable",
-  sma_cable: "rf_cable",
-  // Phase RF.amp (2026-05-14): coaxial RF gain blocks (Mini-Circuits ZHL
-  // series and similar). One rf_in + one rf_out anchor enforced by the
-  // kind contract; per-model gain / freq / NF live in kindParams.
-  rf_amplifier: "rf_amplifier",
-  // Phase RF.switch: SPDT / SP2T / SP4T coaxial switches (Mini-Circuits
-  // ZYSWA-2-50DR and friends). One common port (RFIN) routes to one of
-  // N throws under TTL control. Needs DC power (±5 V for the ZYSWA-2-50DR).
-  rf_switch: "rf_switch",
-};
+const COMPONENT_TYPE_TO_KIND: Record<string, ElementKind> =
+  derivedComponentTypeToKind() as Record<string, ElementKind>;
 
 export function componentTypeToElementKind(
   componentType: string | null | undefined,
@@ -60,35 +38,8 @@ export function componentTypeToElementKind(
   return COMPONENT_TYPE_TO_KIND[componentType.trim()] ?? null;
 }
 
-export const KIND_LABELS: Record<ElementKind, string> = {
-  laser_source: "Laser Source",
-  tapered_amplifier: "Tapered Amplifier",
-  mirror: "Mirror",
-  lens_biconvex: "Biconvex Lens",
-  lens_plano_convex: "Plano-Convex Lens",
-  lens_cylindrical: "Cylindrical Lens",
-  waveplate: "Waveplate",
-  polarizer: "Polarizer",
-  beam_splitter: "Beam Splitter",
-  dichroic_mirror: "Dichroic Mirror",
-  fiber_coupler: "Fiber Coupler",
-  fiber: "Fiber Patch Cable",
-  isolator: "Isolator",
-  aom: "AOM",
-  eom: "EOM",
-  nonlinear_crystal: "Nonlinear Crystal",
-  saturable_absorber: "Saturable Absorber",
-  detector: "Detector",
-  camera: "Camera",
-  spectrometer: "Spectrometer",
-  wavemeter: "Wavemeter",
-  beam_dump: "Beam Dump",
-  rf_source: "RF Source",
-  rf_amplifier: "RF Amplifier",
-  horn_antenna: "Horn Antenna",
-  rf_cable: "RF Cable",
-  rf_switch: "RF Switch",
-};
+export const KIND_LABELS: Record<ElementKind, string> =
+  derivedKindLabels() as Record<ElementKind, string>;
 
 /** Top-level physics domain for an ElementKind. Drives the panel chrome
  *  (header / pill colour) so an AD9959 reads the Electronics & RF title
@@ -99,13 +50,8 @@ export const KIND_LABELS: Record<ElementKind, string> = {
  *  catalog speak the same language. */
 export type ElementDomain = "optical" | "rf";
 
-const RF_DOMAIN_KINDS: ReadonlySet<ElementKind> = new Set<ElementKind>([
-  "rf_source",
-  "rf_amplifier",
-  "horn_antenna",
-  "rf_cable",
-  "rf_switch",
-]);
+const RF_DOMAIN_KINDS: ReadonlySet<ElementKind> =
+  derivedRfDomainKinds() as ReadonlySet<ElementKind>;
 
 export function domainForElementKind(kind: ElementKind | null | undefined): ElementDomain {
   if (kind && RF_DOMAIN_KINDS.has(kind)) return "rf";
@@ -117,269 +63,8 @@ export const DOMAIN_TITLES: Record<ElementDomain, string> = {
   rf: "Electronics & RF / 電子・RF",
 };
 
-export const KIND_GROUPS: { label: string; kinds: ElementKind[] }[] = [
-  { label: "Emitters", kinds: ["laser_source", "tapered_amplifier"] },
-  {
-    label: "Passive",
-    kinds: [
-      "mirror",
-      "lens_biconvex",
-      "lens_plano_convex",
-      "lens_cylindrical",
-      "waveplate",
-      "polarizer",
-      "beam_splitter",
-      "dichroic_mirror",
-      "fiber_coupler",
-      "fiber",
-      "isolator",
-    ],
-  },
-  {
-    label: "Active / Nonlinear",
-    kinds: ["aom", "eom", "nonlinear_crystal", "saturable_absorber"],
-  },
-  {
-    label: "Sinks",
-    kinds: ["detector", "camera", "spectrometer", "wavemeter", "beam_dump"],
-  },
-  {
-    label: "RF",
-    kinds: ["rf_source", "rf_amplifier", "horn_antenna", "rf_cable", "rf_switch"],
-  },
-];
+export const KIND_GROUPS: { label: string; kinds: ElementKind[] }[] =
+  derivedKindGroups() as { label: string; kinds: ElementKind[] }[];
 
-export const DEFAULT_KIND_PARAMS: Record<ElementKind, Record<string, unknown>> = {
-  laser_source: {
-    centerWavelengthNm: 780.241,
-    spectrum: {
-      centerThz: nmToThz(780.241),
-      components: [
-        { kind: "main", lineshape: "lorentzian", offsetMhz: 0, fwhmMhz: 0.1, amplitude: 1.0 },
-      ],
-    },
-    spatialModeX: { waistUm: 250, waistZOffsetMm: 0, mSquared: 1.05 },
-    spatialModeY: { waistUm: 80, waistZOffsetMm: 1.2, mSquared: 1.30 },
-    transverseMode: { kind: "TEM00" },
-    polarization: { exRe: 1, exIm: 0, eyRe: 0, eyIm: 0 },
-    nominalPowerMw: 50.0,
-  },
-  tapered_amplifier: {
-    smallSignalGainDb: 30.0,
-    saturationPowerMw: 500.0,
-    minInputPowerMw: 10.0,
-    maxInputPowerMw: 30.0,
-    inputAcceptanceRadiusMm: 25.0,
-    ase: { powerMw: 5.0, bandwidthNm: 1.0, centerOffsetNm: 0.0 },
-    inputSpatialModeX: { waistUm: 600, waistZOffsetMm: 0, mSquared: 1.5 },
-    inputSpatialModeY: { waistUm: 600, waistZOffsetMm: 0, mSquared: 1.5 },
-    inputPolarization: { exRe: 0, exIm: 0, eyRe: 1, eyIm: 0 },
-    outputSpatialModeX: { waistUm: 500, waistZOffsetMm: 0, mSquared: 1.5 },
-    outputSpatialModeY: { waistUm: 50, waistZOffsetMm: 0, mSquared: 8.0 },
-    outputTransverseMode: { kind: "TEM00" },
-  },
-  // V2 Phase 2: surface normal lives on
-  // objects.properties.anchorBindings[opticalSurface].payload, not here.
-  mirror: { reflectivity: 0.99 },
-  lens_biconvex: { focalMm: 100.0, transmission: 0.99 },
-  lens_plano_convex: { focalMm: 100.0, transmission: 0.99 },
-  lens_cylindrical: { focalMm: 100.0, cylindricalAxis: "x", transmission: 0.99 },
-  waveplate: { retardanceLambda: 0.5, fastAxisDegBeamLocal: 0.0, transmission: 0.99 },
-  polarizer: { transmissionAxisDegBeamLocal: 0.0, extinctionRatioDb: 30.0, transmission: 0.95 },
-  beam_splitter: {
-    splitRatioTransmitted: 0.5,
-    polarizing: false,
-    transmissionAxisDegBeamLocal: 0.0,
-    extinctionRatioDb: 30.0,
-    transmission: 0.99,
-    // Internal 45° coating normal in the SceneObject's local frame. The
-    // geometric ray-tracer reflects off THIS normal — NOT the mesh's outer-
-    // face normal — because the outer face has a normal along the beam
-    // direction (which would back-reflect the beam, breaking the chain).
-    // Default `(1, 1, 0)/√2` reflects a +X incoming beam to +Y (and a -X
-    // beam to +Y as well — both upper-quadrant). Matches the orientation of
-    // the Thorlabs PBS252 STL in our scene.
-    coatingNormalBodyLocal: [0.7071067811865475, 0.7071067811865475, 0],
-  },
-  dichroic_mirror: {
-    cutoffWavelengthNm: 700.0,
-    passBand: "long",
-    transmission: 0.95,
-    reflectivity: 0.95,
-  },
-  fiber_coupler: { couplingEfficiency: 0.7, modeFieldDiameterUm: 5.0, fiberType: "single_mode" },
-  // Defaults match a Thorlabs P1-780PM-FC-1 patch cable (PM single-mode,
-  // 780 nm design, FC/PC connectors). Mirrors backend
-  // routers/components.py DEFAULT_KIND_PARAMS["fiber"] so a freshly
-  // created fiber element rehydrates identically through either path.
-  fiber: {
-    fiberType: "polarization_maintaining",
-    endA: {
-      apertureDiameterMm: 0.125,
-      numericalAperture: 0.13,
-      modeFieldDiameterUm: 5.3,
-      coreDiameterUm: 4.4,
-      claddingDiameterUm: 125.0,
-      connectorType: "FC",
-      polish: "PC",
-      polishAngleDeg: 0.0,
-      fresnelResidual: 1.0,
-      glassIndexAtDesignLambda: 1.4506,
-      slowAxisDegInBodyFrame: 0.0,
-    },
-    endB: {
-      apertureDiameterMm: 0.125,
-      numericalAperture: 0.13,
-      modeFieldDiameterUm: 5.3,
-      coreDiameterUm: 4.4,
-      claddingDiameterUm: 125.0,
-      connectorType: "FC",
-      polish: "PC",
-      polishAngleDeg: 0.0,
-      fresnelResidual: 1.0,
-      glassIndexAtDesignLambda: 1.4506,
-      slowAxisDegInBodyFrame: 0.0,
-    },
-    cutoffWavelengthNm: 730.0,
-    operatingWavelengthRangeNm: [770.0, 790.0],
-    designWavelengthNm: 780.0,
-    maxInputPowerMw: 500.0,
-    attenuationCurve: [{ wavelengthNm: 780.0, dbPerKm: 5.0 }],
-    bendLoss: {
-      vNumber: 2.0,
-      coreRadiusUm: 2.2,
-      nCore: 1.4506,
-      nClad: 1.4500,
-      criticalRadiusMm: 25.0,
-    },
-    minBendRadiusMm: 25.0,
-    birefringenceDeltaN: 5.0e-4,
-    pmdCoefficientPsPerSqrtKm: 0.05,
-    polarizationExtinctionRatioDb: 25.0,
-    bandwidthMhzKm: null,
-    randomJonesSeed: null,
-  },
-  isolator: { forwardLossDb: 0.5, isolationDb: 40.0, faradayRotationDeg: 45.0, transmissionAxisDegBeamLocal: 0.0 },
-  aom: {
-    // Phase B: centerFreqMhz / rfDrivePowerW removed — resolved live from
-    // the upstream rf_source CH via the AOM's rf_in rfCableEndpoints link.
-    baseEfficiency: 0.85,
-    deflectionPerMhzUrad: 200.0,
-    acousticVelocityMPerS: 4200.0,
-    modulationBandwidthMhz: 20.0,
-    refractiveIndex: 2.26,
-    figureOfMeritM2: 34e-15,
-    crystalLengthMm: 25.0,
-    acousticBeamWidthMm: 1.5,
-    rfPowerMaxW: 2.0,
-    acousticAxisBodyLocal: [-1, 0, 0],
-    rfPropagationDirectionBodyLocal: [-1, 0, 0],
-    diffractionOrder: 1,
-    braggAngularAcceptanceMrad: 2.0,
-  },
-  eom: {
-    vPiV: 5.0,
-    modulationKind: "phase",
-    modulationBandwidthMhz: 100.0,
-    insertionLossDb: 3.0,
-  },
-  nonlinear_crystal: {
-    process: "SHG",
-    chi2PmPerV: 4.5,
-    lengthMm: 10.0,
-    walkOffUrad: 0.0,
-  },
-  saturable_absorber: {
-    saturationIntensityWPerCm2: 1e6,
-    modulationDepth: 0.5,
-    nonSaturableLoss: 0.05,
-    recoveryTimePs: 1.0,
-  },
-  detector: {
-    responsivityAPerW: 0.5,
-    quantumEfficiency: 0.8,
-    bandwidthMhz: 1000.0,
-    saturationPowerMw: 10.0,
-  },
-  camera: {
-    resolutionPx: [1024, 1024],
-    pixelSizeUm: 5.5,
-    quantumEfficiency: 0.5,
-    wellDepthE: 20000,
-  },
-  spectrometer: { resolutionPm: 10.0, wavelengthRangeNm: [400, 1100] },
-  wavemeter: { precisionMhz: 1.0 },
-  beam_dump: { absorption: 0.999 },
-  rf_source: {
-    frequencyMhz: 80.0,
-    powerDbm: 0.0,
-    phaseDeg: 0.0,
-    modulation: "none",
-    channels: null,
-    referenceClockMhz: null,
-    sysClockMhz: null,
-    pllMultiplier: 25,
-    pllBypass: false,
-    serialInterface: null,
-    syncRole: "standalone",
-    serialPortMode: "4wire",
-  },
-  // Phase RF.amp: defaults sized for a Mini-Circuits ZHL-1-2W+
-  // (5..500 MHz, +29 dB min gain, +30 dBm rated output, +24 V supply).
-  rf_amplifier: {
-    gainDb: 29.0,
-    frequencyRangeMhz: [5.0, 500.0],
-    outputPowerP1dbDbm: 29.0,
-    outputPowerMaxDbm: 30.0,
-    inputPowerMaxDbm: 0.0,
-    noiseFigureDb: 9.0,
-    supplyVoltageV: 24.0,
-    supplyCurrentA: 0.6,
-    inputReturnLossDb: 14.0,
-    outputReturnLossDb: 14.0,
-    connectorType: "sma",
-  },
-  rf_cable: {
-    lengthMm: 152.0,
-    impedanceOhm: 50.0,
-    maxFrequencyGhz: 3.0,
-    connectorType: "sma",
-    cableType: "RG-316",
-    jacketOuterDiameterMm: 3.2,
-    jacketColor: "#c4a884",
-    workingVoltageVRms: null,
-    dielectricVoltageVRms: null,
-    minBendRadiusMm: 15.0,
-  },
-  horn_antenna: {
-    frequencyGhz: 9.2,
-    gainDbi: 12.0,
-    beamwidth3dbDeg: 30.0,
-    polarAxisBodyLocal: [0, 0, 1],
-    cosineExponent: 8.0,
-  },
-  // Phase RF.switch: defaults match Mini-Circuits ZYSWA-2-50DR
-  // (SP2T absorptive, DC..5 GHz, TTL control, ±5 V supply).
-  // Per-template overrides (other model, different bands) ship via
-  // `component.properties.rfSwitchKindParamsOverride` in the seed.
-  rf_switch: {
-    switchType: "SP2T",
-    throwCount: 2,
-    frequencyMinGhz: 0.0,
-    frequencyMaxGhz: 5.0,
-    insertionLossDb: 1.0,
-    isolationDb: 35.0,
-    switchingTimeNs: 250.0,
-    absorptionType: "absorptive",
-    controlLogic: "TTL",
-    controlVoltageHighV: 5.0,
-    supplyPositiveV: 5.0,
-    supplyNegativeV: -5.0,
-    supplyCurrentMa: 25.0,
-    maxInputPowerDbm: 27.0,
-    connectorType: "sma",
-    manufacturer: "Mini-Circuits",
-    model: "ZYSWA-2-50DR",
-    datasheetUrl: "https://www.minicircuits.com/pdfs/ZYSWA-2-50DR+.pdf",
-  },
-};
+export const DEFAULT_KIND_PARAMS: Record<ElementKind, Record<string, unknown>> =
+  derivedDefaultKindParams() as Record<ElementKind, Record<string, unknown>>;

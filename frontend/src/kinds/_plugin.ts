@@ -84,6 +84,10 @@ export interface AnchorContract {
   /** Subset of required+optional whose direction (not just position)
    *  matters for the align algorithm. */
   readonly needsDirection: ReadonlyArray<AnchorId>;
+  /** Subset of required+optional whose `apertureMm` must be set.
+   *  AOM is the canonical case — both ports need an aperture for
+   *  beam-clipping warnings to fire. Defaults to `[]` when omitted. */
+  readonly needsAperture?: ReadonlyArray<AnchorId>;
 }
 
 // =============================================================================

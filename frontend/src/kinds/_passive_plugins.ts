@@ -66,6 +66,19 @@ export const opticalTablePlugin = definePassivePlugin({
 });
 
 // =============================================================================
+// Passive optical — vacuum chamber and other "objects in the beam path
+// that don't have a physics kind". `vacuum_chamber` renders as a
+// transparent cylinder primitive but has no align contract.
+// =============================================================================
+
+export const vacuumChamberPlugin = definePassivePlugin({
+  id: "vacuum_chamber",
+  displayName: "Vacuum Chamber",
+  componentTypes: ["vacuum_chamber"],
+  assetCategory: "optical",
+});
+
+// =============================================================================
 // Misc — annotations / scene aids.
 // =============================================================================
 
@@ -129,6 +142,8 @@ export const PASSIVE_PLUGINS: readonly PassivePlugin[] = [
   benchEnhancementPlugin,
   // Infrastructure
   opticalTablePlugin,
+  // Optical passive
+  vacuumChamberPlugin,
   // Misc
   textAnnotationPlugin,
   toolPlugin,

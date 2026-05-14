@@ -79,6 +79,7 @@ export const fiberPlugin = definePhysicsPlugin<FiberParams>({
       required: ["intercept_in", "intercept_out"],
       optional: [],
       needsDirection: ["intercept_in", "intercept_out"],
+      needsAperture: ["intercept_in", "intercept_out"],
     },
     alignVariant: "none",
     alignToleranceMm: 25,

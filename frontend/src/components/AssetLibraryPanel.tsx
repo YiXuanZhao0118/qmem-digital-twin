@@ -15,6 +15,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 
 import { OutlinerPanel } from "./OutlinerPanel";
+import { derivedCategoryToComponentTypes } from "../kinds/_plugins";
 import { useSceneStore } from "../store/sceneStore";
 import type { ComponentItem } from "../types/digitalTwin";
 import { getComponentDisplayLabel, getComponentName } from "../utils/components";
@@ -36,62 +37,20 @@ const CATEGORY_DEFS: Record<CategoryKey, CategoryDef> = {
   other: { key: "other", label: "Uncategorized / 未分類", order: 99 },
 };
 
-const OPTICAL_TYPES = new Set<string>([
-  "mirror",
-  "lens",
-  "lens_plano_convex",
-  "beam_splitter",
-  "waveplate",
-  "isolator",
-  "fiber",
-  "aom",
-  "eom",
-  "laser",
-  "laser_source",
-  "tapered_amplifier",
-  "vacuum_chamber",
-]);
-
-const ELECTRONICS_TYPES = new Set<string>([
-  "rf_generator",
-  "rf_amplifier",
-  "rf_switch",
-  "dds_ad9959_pcb",
-  "mcu_board",
-  "tcxo_module",
-  "power_supply_ac_dc",
-  "sma_cable",
-  "rf_cable",
-  "sma_jack",
-  "usb_b_jack",
-  "iec_c14_inlet",
-  "instrument_chassis",
-]);
-
-const MECHANICAL_TYPES = new Set<string>([
-  "clamping_fork",
-  "optical_post",
-  "post_holder",
-  "pedestal_post",
-  "pedestal_base",
-  "pedestal_fork",
-  "post_spacer",
-  "post_adapter",
-  "mirror_mount",
-  "laser_diode_mount",
-  "mounting_clamp",
-  "polaris_clamping_arm",
-  "bench_enhancement",
-]);
-
-const INFRASTRUCTURE_TYPES = new Set<string>([
-  "optical_table",
-]);
-
-const MISC_TYPES = new Set<string>([
-  "text_annotation",
-  "tool",
-]);
+// Pre-P2 these were 5 hand-maintained `new Set<string>([...])` literals
+// that had to stay in sync with the legacy componentType lists in
+// elementDefaults.ts. M3 swaps them to derive from the PhysicsPlugin
+// registry, so adding a new componentType to a plugin's `componentTypes`
+// array is the only edit needed — categories appear here automatically.
+// `vacuum_chamber` and `optical_table` plus a few others that today have
+// no plugin still need a fallback bucket; tracked in `other` until each
+// of them gets a plugin in M2-followup.
+const TYPES_BY_CATEGORY = derivedCategoryToComponentTypes();
+const OPTICAL_TYPES = TYPES_BY_CATEGORY.optical;
+const ELECTRONICS_TYPES = TYPES_BY_CATEGORY.electronics;
+const MECHANICAL_TYPES = TYPES_BY_CATEGORY.mechanical;
+const INFRASTRUCTURE_TYPES = TYPES_BY_CATEGORY.infrastructure;
+const MISC_TYPES = TYPES_BY_CATEGORY.misc;
 
 function categoryForComponentType(componentType: string): CategoryDef {
   if (OPTICAL_TYPES.has(componentType)) return CATEGORY_DEFS.optical;

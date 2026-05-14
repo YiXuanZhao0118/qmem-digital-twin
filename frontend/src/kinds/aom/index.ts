@@ -47,6 +47,7 @@ export const aomPlugin = definePhysicsPlugin<AomParams>({
       required: ["intercept_in", "intercept_out", "rf_in"],
       optional: [],
       needsDirection: ["rf_in"],
+      needsAperture: ["intercept_in", "intercept_out"],
     },
     alignVariant: "translate_and_bragg_rotate",
     alignToleranceMm: 25,
