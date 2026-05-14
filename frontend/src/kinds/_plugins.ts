@@ -49,6 +49,10 @@ import { waveplatePlugin } from "./waveplate";
 // Passive plugins — catalog componentTypes without an ElementKind.
 import { PASSIVE_PLUGINS } from "./_passive_plugins";
 
+// Per-componentType renderer bindings — M6 binds renderers without
+// modifying every plugin's index.ts.
+import { withRenderer } from "./_renderer_bindings";
+
 import {
   isPhysicsPlugin,
   type AssetCategory,
@@ -98,13 +102,14 @@ export const PHYSICS_PLUGINS: readonly PhysicsPlugin[] = [
   rfSwitchPlugin,
 ] as unknown as readonly PhysicsPlugin[];
 
-/** Every plugin (physics + passive). Consumers wanting "all kinds the
- *  catalog knows about" iterate this. */
+/** Every plugin (physics + passive), each wrapped with its renderer
+ *  binding from `_renderer_bindings.ts`. Plugins that already declare
+ *  `renderer` in their own file pass through unchanged. */
 export const PLUGINS: readonly ComponentPlugin[] = [
   ...PHYSICS_PLUGINS,
   mirrorMountPlugin, // physics-flagged passive; lives in mirror_mount/
   ...PASSIVE_PLUGINS,
-] as readonly ComponentPlugin[];
+].map(withRenderer) as readonly ComponentPlugin[];
 
 export type AnyPlugin = ComponentPlugin;
 

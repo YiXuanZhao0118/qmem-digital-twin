@@ -115,7 +115,7 @@ export function materialFor(
   });
 }
 
-function createBox(
+export function createBox(
   component: ComponentItem,
   state: DeviceState | undefined,
   fallbackMm: [number, number, number],
@@ -127,7 +127,7 @@ function createBox(
   );
 }
 
-function createThorlabsPost(component: ComponentItem, state?: DeviceState): THREE.Object3D {
+export function createThorlabsPost(component: ComponentItem, state?: DeviceState): THREE.Object3D {
   const radius = mmToThree(getNumericProperty(component.properties, "diameterMm", 12.7) / 2);
   const height = mmToThree(getNumericProperty(component.properties, "heightMm", 50));
   const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, height, 40), materialFor(component, state));
@@ -140,7 +140,7 @@ function createThorlabsPost(component: ComponentItem, state?: DeviceState): THRE
 // face. Matches the RS / TBP / RBP family — both Ø25 mm (RS*P/M, RS*P4M) and
 // Ø1/2" (TBP, RBP) sub-families. `heightMm` is TOTAL length (flange + body)
 // per Thorlabs spec convention.
-function createThorlabsPedestalPost(component: ComponentItem, state?: DeviceState): THREE.Object3D {
+export function createThorlabsPedestalPost(component: ComponentItem, state?: DeviceState): THREE.Object3D {
   const totalLengthMm = getNumericProperty(component.properties, "heightMm", 25);
   const bodyDiameterMm = getNumericProperty(component.properties, "diameterMm", 12.7);
   const flangeDiameterMm = getNumericProperty(
@@ -190,7 +190,7 @@ function createThorlabsPedestalPost(component: ComponentItem, state?: DeviceStat
   return group;
 }
 
-function createThorlabsPostHolder(component: ComponentItem, state?: DeviceState): THREE.Object3D {
+export function createThorlabsPostHolder(component: ComponentItem, state?: DeviceState): THREE.Object3D {
   const heightMm = getNumericProperty(component.properties, "heightMm", 54.7);
   const bodyRadius = mmToThree(getNumericProperty(component.properties, "baseDiameterMm", 31.8) / 2);
   const bodyHeight = mmToThree(heightMm);
@@ -217,7 +217,7 @@ function createThorlabsPostHolder(component: ComponentItem, state?: DeviceState)
   return group;
 }
 
-function createThorlabsClampingFork(component: ComponentItem, state?: DeviceState): THREE.Object3D {
+export function createThorlabsClampingFork(component: ComponentItem, state?: DeviceState): THREE.Object3D {
   const group = new THREE.Group();
   const material = materialFor(component, state);
   const plateHeight = mmToThree(7);
@@ -243,7 +243,7 @@ function createThorlabsClampingFork(component: ComponentItem, state?: DeviceStat
   return group;
 }
 
-function createTs2000aLaserMount(component: ComponentItem, state?: DeviceState): THREE.Object3D {
+export function createTs2000aLaserMount(component: ComponentItem, state?: DeviceState): THREE.Object3D {
   const [lengthMm, widthMm, heightMm] = getDimensionsMm(component.properties, [72.6, 50.8, 44.5]);
   const length = mmToThree(lengthMm);
   const width = mmToThree(widthMm);
@@ -385,7 +385,7 @@ function createTs2000aLaserMount(component: ComponentItem, state?: DeviceState):
  *    opticalAxisHeightMm:    height of the optical axis above the housing bottom
  *    opticalAxisFromEndMm:   distance from each end face to the aperture centre
  *    rfConnectorOffsetMm:    transverse offset of the SMA from the centre line  */
-function createAom(component: ComponentItem, state?: DeviceState): THREE.Object3D {
+export function createAom(component: ComponentItem, state?: DeviceState): THREE.Object3D {
   const [lengthMm, widthMm, heightMm] = getDimensionsMm(component.properties, [59.5, 22.4, 17.3]);
   const bodyLengthMm = getNumericProperty(component.properties, "bodyLengthMm", lengthMm * 0.86);
   const clearApertureMm = getNumericProperty(component.properties, "clearApertureMm", 3.9);
@@ -762,7 +762,7 @@ function createBoostaProModule(component: ComponentItem, state?: DeviceState): T
   return group;
 }
 
-function createTaperedAmplifier(component: ComponentItem, state?: DeviceState): THREE.Object3D {
+export function createTaperedAmplifier(component: ComponentItem, state?: DeviceState): THREE.Object3D {
   // BoosTA pro full module — distinguished from the bare-chip entry by
   // the `geometry` property on the ComponentTemplate.
   const geometry = (component.properties as { geometry?: string } | undefined)?.geometry;
@@ -865,7 +865,7 @@ function createTaperedAmplifier(component: ComponentItem, state?: DeviceState): 
  *   - scaleMm      : number  – on-screen WIDTH of the label in mm at scene
  *                              scale; height auto-derives from aspect ratio
  *                              (default 80) */
-function createTextAnnotation(component: ComponentItem): THREE.Sprite {
+export function createTextAnnotation(component: ComponentItem): THREE.Sprite {
   const props = component.properties as {
     text?: unknown;
     textColor?: unknown;
@@ -976,7 +976,7 @@ const ddsSmaNickelMat = new THREE.MeshStandardMaterial({
   roughness: 0.32,
 });
 
-function createSmaBulkheadJack(): THREE.Object3D {
+export function createSmaBulkheadJack(): THREE.Object3D {
   const group = new THREE.Group();
   // Layout along the mounting axis (+X = panel-out, where cable mates):
   //
@@ -1056,7 +1056,7 @@ function createSmaBulkheadJack(): THREE.Object3D {
   return group;
 }
 
-function createDdsAd9959Pcb(component: ComponentItem, _state?: DeviceState): THREE.Object3D {
+export function createDdsAd9959Pcb(component: ComponentItem, _state?: DeviceState): THREE.Object3D {
   const group = new THREE.Group();
   const [lenMm, widMm] = getDimensionsMm(component.properties, [100, 80, 16]);
   const length = mmToThree(lenMm);
@@ -1142,7 +1142,7 @@ function createDdsAd9959Pcb(component: ComponentItem, _state?: DeviceState): THR
   return group;
 }
 
-function createDdsMcuBoard(component: ComponentItem, _state?: DeviceState): THREE.Object3D {
+export function createDdsMcuBoard(component: ComponentItem, _state?: DeviceState): THREE.Object3D {
   const group = new THREE.Group();
   const [lenMm, widMm] = getDimensionsMm(component.properties, [90, 70, 18]);
   const length = mmToThree(lenMm);
@@ -1214,7 +1214,7 @@ function createDdsMcuBoard(component: ComponentItem, _state?: DeviceState): THRE
   return group;
 }
 
-function createDdsTcxoModule(component: ComponentItem, _state?: DeviceState): THREE.Object3D {
+export function createDdsTcxoModule(component: ComponentItem, _state?: DeviceState): THREE.Object3D {
   const group = new THREE.Group();
   const [lenMm, widMm] = getDimensionsMm(component.properties, [50, 35, 12]);
   const length = mmToThree(lenMm);
@@ -1252,7 +1252,7 @@ function createDdsTcxoModule(component: ComponentItem, _state?: DeviceState): TH
   return group;
 }
 
-function createMeanwellIrm30(component: ComponentItem, _state?: DeviceState): THREE.Object3D {
+export function createMeanwellIrm30(component: ComponentItem, _state?: DeviceState): THREE.Object3D {
   const group = new THREE.Group();
   const [lenMm, widMm, heightMm] = getDimensionsMm(component.properties, [88, 52.4, 28.8]);
   const length = mmToThree(lenMm);
@@ -1447,7 +1447,7 @@ export function applyRfCableConnectorTransform(
   connector.position.copy(nodePos);
 }
 
-function createSmaShortCable(
+export function createSmaShortCable(
   component: ComponentItem,
   _state?: DeviceState,
   /** Per-instance Bezier nodes. When absent or < 2 nodes, a straight
@@ -1471,7 +1471,7 @@ function createSmaShortCable(
   return createSmaCableSpline(component, nodes);
 }
 
-function createUsbBJack(_component: ComponentItem, _state?: DeviceState): THREE.Object3D {
+export function createUsbBJack(_component: ComponentItem, _state?: DeviceState): THREE.Object3D {
   const group = new THREE.Group();
   const shell = new THREE.Mesh(
     new THREE.BoxGeometry(mmToThree(16), mmToThree(11), mmToThree(12)),
@@ -1496,7 +1496,7 @@ function createUsbBJack(_component: ComponentItem, _state?: DeviceState): THREE.
   return group;
 }
 
-function createIecC14Inlet(_component: ComponentItem, _state?: DeviceState): THREE.Object3D {
+export function createIecC14Inlet(_component: ComponentItem, _state?: DeviceState): THREE.Object3D {
   const group = new THREE.Group();
   const length = mmToThree(30);
   const width = mmToThree(22.5);
@@ -1522,7 +1522,7 @@ function createIecC14Inlet(_component: ComponentItem, _state?: DeviceState): THR
   return group;
 }
 
-function createInstrumentChassis1u(component: ComponentItem, state?: DeviceState): THREE.Object3D {
+export function createInstrumentChassis1u(component: ComponentItem, state?: DeviceState): THREE.Object3D {
   const group = new THREE.Group();
   const [lenMm, depthMm, heightMm] = getDimensionsMm(component.properties, [482.6, 246, 44.45]);
   const length = mmToThree(lenMm);
@@ -1583,7 +1583,7 @@ function createInstrumentChassis1u(component: ComponentItem, state?: DeviceState
  * kinds. Anchors placed on the asset by the catalog seed drive the
  * actual cable-routing math; this primitive is the visual stand-in.
  */
-function createRfSwitch(component: ComponentItem, state?: DeviceState): THREE.Object3D {
+export function createRfSwitch(component: ComponentItem, state?: DeviceState): THREE.Object3D {
   const props = component.properties ?? {};
   const bodyWidthMm = getNumericProperty(props, "bodyWidthMm", 19.05);
   const bodyDepthMm = getNumericProperty(props, "bodyDepthMm", 19.05);
