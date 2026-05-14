@@ -206,3 +206,49 @@ INFO:     connection closed
 INFO:     127.0.0.1:50952 - "WebSocket /ws/scene" [accepted]
 INFO:     connection open
 INFO:     connection closed
+WARNING:  WatchFiles detected changes in 'scripts\audit_kind_drift.py'. Reloading...
+INFO:     Shutting down
+INFO:     connection closed
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [119368]
+WARNING:  WatchFiles detected changes in 'scripts\audit_kind_drift.py'. Reloading...
+INFO:     Started server process [134904]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [134904]
+INFO:     Started server process [121480]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:52417 - "WebSocket /ws/scene" [accepted]
+INFO:     127.0.0.1:56015 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:     127.0.0.1:57673 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:55851 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:     127.0.0.1:62501 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:57249 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     127.0.0.1:65033 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     127.0.0.1:56858 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     127.0.0.1:58425 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     127.0.0.1:64003 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+WARNING:  WatchFiles detected changes in 'app\kinds_manifest.py'. Reloading...

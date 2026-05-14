@@ -1301,15 +1301,36 @@ _THORLABS_BULK = [
     ("RS10M", "post_spacer", "primitive_box", None, None),
 ]
 
-# Read CAD manifest produced by scripts/thorlabs_bulk_cad.py — when an item has
-# status="ok" we'll prefer the real STL mesh over the primitive placeholder.
-_MANIFEST_PATH = Path(__file__).resolve().parents[2].parent / "scripts" / "thorlabs_cad_manifest.json"
-_THORLABS_MANIFEST: dict[str, dict] = {}
-if _MANIFEST_PATH.is_file():
-    try:
-        _THORLABS_MANIFEST = json.loads(_MANIFEST_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        _THORLABS_MANIFEST = {}
+# Read CAD manifest produced by scripts/thorlabs_bulk_cad.py — when an
+# item has status="ok" we'll prefer the real STL mesh over the
+# primitive placeholder.
+#
+# M5 (post-P2): manifest lives inside the repo at backend/data/ so it
+# can never silently desync from seed.py the way it did pre-P2 (the
+# old path was `/c/repos/scripts/thorlabs_cad_manifest.json`, which
+# never existed in this clone — the silent `except: pass` below
+# masked it, and 180 mechanical components got linked to primitive_box
+# instead of their STL meshes).
+_MANIFEST_PATH = Path(__file__).resolve().parents[1] / "data" / "thorlabs_cad_manifest.json"
+if not _MANIFEST_PATH.is_file():
+    raise FileNotFoundError(
+        f"Thorlabs CAD manifest missing at {_MANIFEST_PATH}. "
+        "Either commit it (preferred — it's small, immutable, and "
+        "describes which STL meshes the seed should reference) or "
+        "explicitly clear ASSETS to seed without STLs. The silent "
+        "fallback that produced 180 grey-box components in the pre-P2 "
+        "incident has been removed by design."
+    )
+try:
+    _THORLABS_MANIFEST: dict[str, dict] = json.loads(
+        _MANIFEST_PATH.read_text(encoding="utf-8")
+    )
+except json.JSONDecodeError as e:
+    raise ValueError(
+        f"Thorlabs CAD manifest at {_MANIFEST_PATH} is unparseable: {e}. "
+        "Restore it from git history or regenerate via "
+        "scripts/thorlabs_bulk_cad.py."
+    ) from e
 
 for _part_key, _meta in _THORLABS_MANIFEST.items():
     if _meta.get("status") != "ok":
