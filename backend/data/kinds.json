@@ -1,0 +1,1480 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-05-14T11:42:50.683Z",
+  "component_type_to_kind": {
+    "laser_source": "laser_source",
+    "laser": "laser_source",
+    "tapered_amplifier": "tapered_amplifier",
+    "mirror": "mirror",
+    "dichroic_mirror": "dichroic_mirror",
+    "lens_biconvex": "lens_biconvex",
+    "lens": "lens_biconvex",
+    "lens_spherical": "lens_biconvex",
+    "lens_plano_convex": "lens_plano_convex",
+    "lens_cylindrical": "lens_cylindrical",
+    "waveplate": "waveplate",
+    "polarizer": "polarizer",
+    "beam_splitter": "beam_splitter",
+    "fiber_coupler": "fiber_coupler",
+    "fiber": "fiber",
+    "isolator": "isolator",
+    "aom": "aom",
+    "eom": "eom",
+    "nonlinear_crystal": "nonlinear_crystal",
+    "saturable_absorber": "saturable_absorber",
+    "detector": "detector",
+    "camera": "camera",
+    "spectrometer": "spectrometer",
+    "wavemeter": "wavemeter",
+    "beam_dump": "beam_dump",
+    "rf_source": "rf_source",
+    "dds_ad9959_pcb": "rf_source",
+    "rf_generator": "rf_source",
+    "rf_amplifier": "rf_amplifier",
+    "horn_antenna": "horn_antenna",
+    "rf_cable": "rf_cable",
+    "sma_cable": "rf_cable",
+    "rf_switch": "rf_switch"
+  },
+  "element_kinds": [
+    "laser_source",
+    "tapered_amplifier",
+    "mirror",
+    "dichroic_mirror",
+    "lens_biconvex",
+    "lens_plano_convex",
+    "lens_cylindrical",
+    "waveplate",
+    "polarizer",
+    "beam_splitter",
+    "fiber_coupler",
+    "fiber",
+    "isolator",
+    "aom",
+    "eom",
+    "nonlinear_crystal",
+    "saturable_absorber",
+    "detector",
+    "camera",
+    "spectrometer",
+    "wavemeter",
+    "beam_dump",
+    "rf_source",
+    "rf_amplifier",
+    "horn_antenna",
+    "rf_cable",
+    "rf_switch"
+  ],
+  "physics_plugins": [
+    {
+      "id": "laser_source",
+      "display_name": "Laser Source",
+      "component_types": [
+        "laser_source",
+        "laser"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Emitters",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "laser_source",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical",
+          "thermal"
+        ],
+        "anchors": {
+          "required": [],
+          "optional": [
+            "out",
+            "intercept_out"
+          ],
+          "needs_direction": [],
+          "needs_aperture": []
+        },
+        "align_variant": "none",
+        "align_tolerance_mm": 0,
+        "align_summary": "Emitter — beam originates here. Not aligned to anything.",
+        "default_params": {
+          "centerWavelengthNm": 780.241,
+          "spectrum": {
+            "centerThz": 384.2305877286633,
+            "components": [
+              {
+                "kind": "main",
+                "lineshape": "lorentzian",
+                "offsetMhz": 0,
+                "fwhmMhz": 0.1,
+                "amplitude": 1
+              }
+            ]
+          },
+          "spatialModeX": {
+            "waistUm": 250,
+            "waistZOffsetMm": 0,
+            "mSquared": 1.05
+          },
+          "spatialModeY": {
+            "waistUm": 80,
+            "waistZOffsetMm": 1.2,
+            "mSquared": 1.3
+          },
+          "transverseMode": {
+            "kind": "TEM00"
+          },
+          "polarization": {
+            "exRe": 1,
+            "exIm": 0,
+            "eyRe": 0,
+            "eyIm": 0
+          },
+          "nominalPowerMw": 50
+        }
+      }
+    },
+    {
+      "id": "tapered_amplifier",
+      "display_name": "Tapered Amplifier",
+      "component_types": [
+        "tapered_amplifier"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Emitters",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "tapered_amplifier",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical",
+          "thermal"
+        ],
+        "anchors": {
+          "required": [
+            "intercept_in",
+            "intercept_out"
+          ],
+          "optional": [
+            "seed"
+          ],
+          "needs_direction": [
+            "intercept_in",
+            "intercept_out"
+          ],
+          "needs_aperture": []
+        },
+        "align_variant": "translate_anti_parallel",
+        "align_tolerance_mm": 25,
+        "align_summary": "Dual-anchor kind: intercept_in marks INPUT face (where seed light enters) and intercept_out marks OUTPUT face (where amplified beam exits). Both directions are OUTWARD face normals (point away from chip body). The two faces don't have to be opposite — side-output / shaped TAs route the amplified beam at any angle. The chip's mode profile + polarization preferences live in kindParams (not in the anchor).",
+        "default_params": {
+          "smallSignalGainDb": 30,
+          "saturationPowerMw": 500,
+          "minInputPowerMw": 10,
+          "maxInputPowerMw": 30,
+          "inputAcceptanceRadiusMm": 25,
+          "ase": {
+            "powerMw": 5,
+            "bandwidthNm": 1,
+            "centerOffsetNm": 0
+          },
+          "inputSpatialModeX": {
+            "waistUm": 600,
+            "waistZOffsetMm": 0,
+            "mSquared": 1.5
+          },
+          "inputSpatialModeY": {
+            "waistUm": 600,
+            "waistZOffsetMm": 0,
+            "mSquared": 1.5
+          },
+          "inputPolarization": {
+            "exRe": 0,
+            "exIm": 0,
+            "eyRe": 1,
+            "eyIm": 0
+          },
+          "outputSpatialModeX": {
+            "waistUm": 500,
+            "waistZOffsetMm": 0,
+            "mSquared": 1.5
+          },
+          "outputSpatialModeY": {
+            "waistUm": 50,
+            "waistZOffsetMm": 0,
+            "mSquared": 8
+          },
+          "outputTransverseMode": {
+            "kind": "TEM00"
+          }
+        }
+      }
+    },
+    {
+      "id": "mirror",
+      "display_name": "Mirror",
+      "component_types": [
+        "mirror"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Passive",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "mirror",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical"
+        ],
+        "anchors": {
+          "required": [
+            "intercept_face"
+          ],
+          "optional": [],
+          "needs_direction": [
+            "intercept_face"
+          ],
+          "needs_aperture": []
+        },
+        "align_variant": "translate_anchor_to_beam",
+        "align_tolerance_mm": 25,
+        "align_summary": "Reflective face center translates onto incoming beam. User dials in U/V offset + rx/ry/rz to aim reflection. The face needs a normal direction so the ray-tracer knows which side of the plane the beam reflects off.",
+        "default_params": {
+          "reflectivity": 0.99
+        }
+      }
+    },
+    {
+      "id": "dichroic_mirror",
+      "display_name": "Dichroic Mirror",
+      "component_types": [
+        "dichroic_mirror"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Passive",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "dichroic_mirror",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical"
+        ],
+        "anchors": {
+          "required": [
+            "intercept_face"
+          ],
+          "optional": [],
+          "needs_direction": [
+            "intercept_face"
+          ],
+          "needs_aperture": []
+        },
+        "align_variant": "translate_anchor_to_beam",
+        "align_tolerance_mm": 25,
+        "align_summary": "Same as mirror — face center + normal direction, then user aims via U/V + rotation.",
+        "default_params": {
+          "cutoffWavelengthNm": 700,
+          "passBand": "long",
+          "transmission": 0.95,
+          "reflectivity": 0.95
+        }
+      }
+    },
+    {
+      "id": "lens_biconvex",
+      "display_name": "Biconvex Lens",
+      "component_types": [
+        "lens_biconvex",
+        "lens",
+        "lens_spherical"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Passive",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "lens_biconvex",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical"
+        ],
+        "anchors": {
+          "required": [
+            "intercept_in"
+          ],
+          "optional": [
+            "intercept_out"
+          ],
+          "needs_direction": [
+            "intercept_in"
+          ],
+          "needs_aperture": []
+        },
+        "align_variant": "translate_anchor_to_beam",
+        "align_tolerance_mm": 25,
+        "align_summary": "intercept_in translates to beam axis. Direction = optical axis (light propagation direction through lens body).",
+        "default_params": {
+          "focalMm": 100,
+          "transmission": 0.99
+        }
+      }
+    },
+    {
+      "id": "lens_plano_convex",
+      "display_name": "Plano-Convex Lens",
+      "component_types": [
+        "lens_plano_convex"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Passive",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "lens_plano_convex",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical"
+        ],
+        "anchors": {
+          "required": [
+            "intercept_in"
+          ],
+          "optional": [
+            "intercept_out"
+          ],
+          "needs_direction": [
+            "intercept_in"
+          ],
+          "needs_aperture": []
+        },
+        "align_variant": "translate_anchor_to_beam",
+        "align_tolerance_mm": 25,
+        "align_summary": "intercept_in is the plane-side surface center; direction points from plane toward convex side.",
+        "default_params": {
+          "focalMm": 100,
+          "transmission": 0.99
+        }
+      }
+    },
+    {
+      "id": "lens_cylindrical",
+      "display_name": "Cylindrical Lens",
+      "component_types": [
+        "lens_cylindrical"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Passive",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "lens_cylindrical",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical"
+        ],
+        "anchors": {
+          "required": [
+            "intercept_in"
+          ],
+          "optional": [
+            "intercept_out"
+          ],
+          "needs_direction": [
+            "intercept_in"
+          ],
+          "needs_aperture": []
+        },
+        "align_variant": "translate_anchor_to_beam",
+        "align_tolerance_mm": 25,
+        "align_summary": "intercept_in translates to beam axis. Direction = optical axis (light propagation direction through lens body).",
+        "default_params": {
+          "focalMm": 100,
+          "cylindricalAxis": "x",
+          "transmission": 0.99
+        }
+      }
+    },
+    {
+      "id": "waveplate",
+      "display_name": "Waveplate",
+      "component_types": [
+        "waveplate"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Passive",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "waveplate",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical"
+        ],
+        "anchors": {
+          "required": [
+            "intercept_in"
+          ],
+          "optional": [],
+          "needs_direction": [
+            "intercept_in"
+          ],
+          "needs_aperture": []
+        },
+        "align_variant": "translate_anchor_to_beam",
+        "align_tolerance_mm": 25,
+        "align_summary": "Pick the flat face on the wireframe (sets intercept_in position). Pick X/Y/Z as the fast-axis direction (stored in directionBodyLocal). Per-instance fast-axis angle around the beam stays in kindParams.fastAxisDegBeamLocal.",
+        "default_params": {
+          "retardanceLambda": 0.5,
+          "fastAxisDegBeamLocal": 0,
+          "transmission": 0.99
+        }
+      }
+    },
+    {
+      "id": "polarizer",
+      "display_name": "Polarizer",
+      "component_types": [
+        "polarizer"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Passive",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "polarizer",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical"
+        ],
+        "anchors": {
+          "required": [
+            "intercept_in"
+          ],
+          "optional": [],
+          "needs_direction": [],
+          "needs_aperture": []
+        },
+        "align_variant": "translate_anchor_to_beam",
+        "align_tolerance_mm": 25,
+        "align_summary": "intercept_in translates to beam axis. Translation only.",
+        "default_params": {
+          "transmissionAxisDegBeamLocal": 0,
+          "extinctionRatioDb": 30,
+          "transmission": 0.95
+        }
+      }
+    },
+    {
+      "id": "beam_splitter",
+      "display_name": "Beam Splitter",
+      "component_types": [
+        "beam_splitter"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Passive",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "beam_splitter",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical"
+        ],
+        "anchors": {
+          "required": [
+            "intercept_in"
+          ],
+          "optional": [
+            "intercept_out"
+          ],
+          "needs_direction": [
+            "intercept_in"
+          ],
+          "needs_aperture": []
+        },
+        "align_variant": "translate_anchor_to_beam",
+        "align_tolerance_mm": 25,
+        "align_summary": "Cube of two right-angle prisms cemented along the diagonal. intercept_in marks that diagonal interface: position = cube centre, direction = coating normal (along ±(X±Y) / ±(X±Z) / ±(Y±Z) for face-aligned cubes), aperture = half the active interface size. PBS vs BS distinguished by Component.properties.beamSplitterType (Phase 2 schema).",
+        "default_params": {
+          "splitRatioTransmitted": 0.5,
+          "polarizing": false,
+          "transmissionAxisDegBeamLocal": 0,
+          "extinctionRatioDb": 30,
+          "transmission": 0.99,
+          "coatingNormalBodyLocal": [
+            0.7071067811865475,
+            0.7071067811865475,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "id": "fiber_coupler",
+      "display_name": "Fiber Coupler",
+      "component_types": [
+        "fiber_coupler"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Passive",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "fiber_coupler",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical"
+        ],
+        "anchors": {
+          "required": [
+            "intercept_in"
+          ],
+          "optional": [],
+          "needs_direction": [],
+          "needs_aperture": []
+        },
+        "align_variant": "translate_anchor_to_beam",
+        "align_tolerance_mm": 25,
+        "align_summary": "intercept_in (free-space side) translates to beam.",
+        "default_params": {
+          "couplingEfficiency": 0.7,
+          "modeFieldDiameterUm": 5,
+          "fiberType": "single_mode"
+        }
+      }
+    },
+    {
+      "id": "fiber",
+      "display_name": "Fiber Patch Cable",
+      "component_types": [
+        "fiber"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Passive",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "fiber",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical"
+        ],
+        "anchors": {
+          "required": [
+            "intercept_in",
+            "intercept_out"
+          ],
+          "optional": [],
+          "needs_direction": [
+            "intercept_in",
+            "intercept_out"
+          ],
+          "needs_aperture": [
+            "intercept_in",
+            "intercept_out"
+          ]
+        },
+        "align_variant": "none",
+        "align_tolerance_mm": 25,
+        "align_summary": "Bidirectional patch cable, rendered procedurally from a Bezier spline (no static GLB/STL asset). End A = first spline node; End B = last. intercept_in rides End A's connector frame, intercept_out rides End B's — moving a spline node carries the optical port with it. The two Align End A/B buttons snap the PORT onto the closest beam-path segment within alignToleranceMm (≤25 mm), then back-derive the spline node 36.28 mm BEHIND the projected port along the new outward direction. Interior nodes don't move.",
+        "default_params": {
+          "fiberType": "polarization_maintaining",
+          "endA": {
+            "apertureDiameterMm": 0.125,
+            "numericalAperture": 0.13,
+            "modeFieldDiameterUm": 5.3,
+            "coreDiameterUm": 4.4,
+            "claddingDiameterUm": 125,
+            "connectorType": "FC",
+            "polish": "PC",
+            "polishAngleDeg": 0,
+            "fresnelResidual": 1,
+            "glassIndexAtDesignLambda": 1.4506,
+            "slowAxisDegInBodyFrame": 0
+          },
+          "endB": {
+            "apertureDiameterMm": 0.125,
+            "numericalAperture": 0.13,
+            "modeFieldDiameterUm": 5.3,
+            "coreDiameterUm": 4.4,
+            "claddingDiameterUm": 125,
+            "connectorType": "FC",
+            "polish": "PC",
+            "polishAngleDeg": 0,
+            "fresnelResidual": 1,
+            "glassIndexAtDesignLambda": 1.4506,
+            "slowAxisDegInBodyFrame": 0
+          },
+          "cutoffWavelengthNm": 730,
+          "operatingWavelengthRangeNm": [
+            770,
+            790
+          ],
+          "designWavelengthNm": 780,
+          "maxInputPowerMw": 500,
+          "attenuationCurve": [
+            {
+              "wavelengthNm": 780,
+              "dbPerKm": 5
+            }
+          ],
+          "bendLoss": {
+            "vNumber": 2,
+            "coreRadiusUm": 2.2,
+            "nCore": 1.4506,
+            "nClad": 1.45,
+            "criticalRadiusMm": 25
+          },
+          "minBendRadiusMm": 25,
+          "birefringenceDeltaN": 0.0005,
+          "pmdCoefficientPsPerSqrtKm": 0.05,
+          "polarizationExtinctionRatioDb": 25,
+          "bandwidthMhzKm": null,
+          "randomJonesSeed": null
+        }
+      }
+    },
+    {
+      "id": "isolator",
+      "display_name": "Isolator",
+      "component_types": [
+        "isolator"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Passive",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "isolator",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical"
+        ],
+        "anchors": {
+          "required": [
+            "intercept_in"
+          ],
+          "optional": [
+            "intercept_out",
+            "front_pbs",
+            "back_pbs"
+          ],
+          "needs_direction": [
+            "intercept_in"
+          ],
+          "needs_aperture": []
+        },
+        "align_variant": "translate_anchor_to_beam",
+        "align_tolerance_mm": 25,
+        "align_summary": "Optical isolator = PBS + Faraday Rotator + PBS in series. intercept_in / intercept_out are the device's outer ports; front_pbs / back_pbs (optional) mark each PBS cube's diagonal cement interface (position = cube centre, direction = coating normal). The two PBS directions implicitly fix the device's transmission axis; faradayRotationDeg (typ. 45°) is in kindParams.",
+        "default_params": {
+          "forwardLossDb": 0.5,
+          "isolationDb": 40,
+          "faradayRotationDeg": 45,
+          "transmissionAxisDegBeamLocal": 0
+        }
+      }
+    },
+    {
+      "id": "aom",
+      "display_name": "AOM",
+      "component_types": [
+        "aom"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Active / Nonlinear",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "aom",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical",
+          "rf",
+          "thermal"
+        ],
+        "anchors": {
+          "required": [
+            "intercept_in",
+            "intercept_out",
+            "rf_in"
+          ],
+          "optional": [],
+          "needs_direction": [
+            "rf_in"
+          ],
+          "needs_aperture": [
+            "intercept_in",
+            "intercept_out"
+          ]
+        },
+        "align_variant": "translate_and_bragg_rotate",
+        "align_tolerance_mm": 25,
+        "align_summary": "Define intercept_in / intercept_out (both with apertureMm). Align picks whichever port the upstream beam reaches first as the entry, translates that anchor onto the beam line, then rotates the body 1-D around lab tilt axis (pivot = midpoint of the two anchors = Bragg interaction point). Forward traversal uses the selected +1/-1 order; reverse traversal swaps +1 and -1 for the same mechanical Bragg tilt. rf_in marks the SMA / coax RF drive connector on the AOM driver housing (position = jack centre on the body, direction = outward face normal = the way a mating cable plug slides on). Used purely for cable-routing visualisation in 3D — not consumed by the Bragg solver.",
+        "default_params": {
+          "baseEfficiency": 0.85,
+          "deflectionPerMhzUrad": 200,
+          "acousticVelocityMPerS": 4200,
+          "modulationBandwidthMhz": 20,
+          "refractiveIndex": 2.26,
+          "figureOfMeritM2": 3.4e-14,
+          "crystalLengthMm": 25,
+          "acousticBeamWidthMm": 1.5,
+          "rfPowerMaxW": 2,
+          "acousticAxisBodyLocal": [
+            -1,
+            0,
+            0
+          ],
+          "rfPropagationDirectionBodyLocal": [
+            -1,
+            0,
+            0
+          ],
+          "diffractionOrder": 1,
+          "braggAngularAcceptanceMrad": 2
+        }
+      }
+    },
+    {
+      "id": "eom",
+      "display_name": "EOM",
+      "component_types": [
+        "eom"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Active / Nonlinear",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "eom",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical",
+          "rf"
+        ],
+        "anchors": {
+          "required": [
+            "intercept_in"
+          ],
+          "optional": [
+            "intercept_out"
+          ],
+          "needs_direction": [],
+          "needs_aperture": []
+        },
+        "align_variant": "translate_anchor_to_beam",
+        "align_tolerance_mm": 25,
+        "align_summary": "intercept_in translates to beam. Translation only.",
+        "default_params": {
+          "vPiV": 5,
+          "modulationKind": "phase",
+          "modulationBandwidthMhz": 100,
+          "insertionLossDb": 3
+        }
+      }
+    },
+    {
+      "id": "nonlinear_crystal",
+      "display_name": "Nonlinear Crystal",
+      "component_types": [
+        "nonlinear_crystal"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Active / Nonlinear",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "nonlinear_crystal",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical",
+          "thermal"
+        ],
+        "anchors": {
+          "required": [
+            "intercept_in"
+          ],
+          "optional": [
+            "intercept_out"
+          ],
+          "needs_direction": [],
+          "needs_aperture": []
+        },
+        "align_variant": "translate_anchor_to_beam",
+        "align_tolerance_mm": 25,
+        "align_summary": "intercept_in translates to fundamental beam. Phase matching set in kindParams.",
+        "default_params": {
+          "process": "SHG",
+          "chi2PmPerV": 4.5,
+          "lengthMm": 10,
+          "walkOffUrad": 0
+        }
+      }
+    },
+    {
+      "id": "saturable_absorber",
+      "display_name": "Saturable Absorber",
+      "component_types": [
+        "saturable_absorber"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Active / Nonlinear",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "saturable_absorber",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical"
+        ],
+        "anchors": {
+          "required": [
+            "intercept_in"
+          ],
+          "optional": [],
+          "needs_direction": [],
+          "needs_aperture": []
+        },
+        "align_variant": "translate_anchor_to_beam",
+        "align_tolerance_mm": 25,
+        "align_summary": "intercept_in translates to beam axis.",
+        "default_params": {
+          "saturationIntensityWPerCm2": 1000000,
+          "modulationDepth": 0.5,
+          "nonSaturableLoss": 0.05,
+          "recoveryTimePs": 1
+        }
+      }
+    },
+    {
+      "id": "detector",
+      "display_name": "Detector",
+      "component_types": [
+        "detector"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Sinks",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "detector",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical"
+        ],
+        "anchors": {
+          "required": [
+            "intercept_in"
+          ],
+          "optional": [],
+          "needs_direction": [],
+          "needs_aperture": []
+        },
+        "align_variant": "translate_anchor_to_beam",
+        "align_tolerance_mm": 25,
+        "align_summary": "Active area centre (intercept_in) translates to beam. Beam absorbed.",
+        "default_params": {
+          "responsivityAPerW": 0.5,
+          "quantumEfficiency": 0.8,
+          "bandwidthMhz": 1000,
+          "saturationPowerMw": 10
+        }
+      }
+    },
+    {
+      "id": "camera",
+      "display_name": "Camera",
+      "component_types": [
+        "camera"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Sinks",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "camera",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical"
+        ],
+        "anchors": {
+          "required": [
+            "intercept_in"
+          ],
+          "optional": [],
+          "needs_direction": [],
+          "needs_aperture": []
+        },
+        "align_variant": "translate_anchor_to_beam",
+        "align_tolerance_mm": 25,
+        "align_summary": "Sensor centre (intercept_in) translates to beam. Beam absorbed.",
+        "default_params": {
+          "resolutionPx": [
+            1024,
+            1024
+          ],
+          "pixelSizeUm": 5.5,
+          "quantumEfficiency": 0.5,
+          "wellDepthE": 20000
+        }
+      }
+    },
+    {
+      "id": "spectrometer",
+      "display_name": "Spectrometer",
+      "component_types": [
+        "spectrometer"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Sinks",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "spectrometer",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical"
+        ],
+        "anchors": {
+          "required": [
+            "intercept_in"
+          ],
+          "optional": [],
+          "needs_direction": [],
+          "needs_aperture": []
+        },
+        "align_variant": "translate_anchor_to_beam",
+        "align_tolerance_mm": 25,
+        "align_summary": "Slit/fiber input (intercept_in) translates to beam.",
+        "default_params": {
+          "resolutionPm": 10,
+          "wavelengthRangeNm": [
+            400,
+            1100
+          ]
+        }
+      }
+    },
+    {
+      "id": "wavemeter",
+      "display_name": "Wavemeter",
+      "component_types": [
+        "wavemeter"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Sinks",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "wavemeter",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical"
+        ],
+        "anchors": {
+          "required": [
+            "intercept_in"
+          ],
+          "optional": [],
+          "needs_direction": [],
+          "needs_aperture": []
+        },
+        "align_variant": "translate_anchor_to_beam",
+        "align_tolerance_mm": 25,
+        "align_summary": "Input port (intercept_in) translates to beam.",
+        "default_params": {
+          "precisionMhz": 1
+        }
+      }
+    },
+    {
+      "id": "beam_dump",
+      "display_name": "Beam Dump",
+      "component_types": [
+        "beam_dump"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Sinks",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "beam_dump",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical",
+          "thermal"
+        ],
+        "anchors": {
+          "required": [
+            "intercept_in"
+          ],
+          "optional": [],
+          "needs_direction": [],
+          "needs_aperture": []
+        },
+        "align_variant": "translate_anchor_to_beam",
+        "align_tolerance_mm": 25,
+        "align_summary": "Absorbing face (intercept_in) translates to beam. Beam terminates.",
+        "default_params": {
+          "absorption": 0.999
+        }
+      }
+    },
+    {
+      "id": "rf_source",
+      "display_name": "RF Source",
+      "component_types": [
+        "rf_source",
+        "dds_ad9959_pcb",
+        "rf_generator"
+      ],
+      "asset_category": "electronics",
+      "catalog_group": "RF",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "rf_source",
+        "primary_domain": "rf",
+        "default_physics": [
+          "rf"
+        ],
+        "anchors": {
+          "required": [],
+          "optional": [
+            "rf_out"
+          ],
+          "needs_direction": [],
+          "needs_aperture": []
+        },
+        "align_variant": "none",
+        "align_tolerance_mm": 0,
+        "align_summary": "RF emitter — DDS / synth / arbitrary-waveform generator. Drives downstream RF chain (amp / filter / AOM-EOM driver). Not aligned optically.",
+        "default_params": {
+          "frequencyMhz": 80,
+          "powerDbm": 0,
+          "phaseDeg": 0,
+          "modulation": "none",
+          "channels": null,
+          "referenceClockMhz": null,
+          "sysClockMhz": null,
+          "pllMultiplier": 25,
+          "pllBypass": false,
+          "serialInterface": null,
+          "syncRole": "standalone",
+          "serialPortMode": "4wire"
+        }
+      }
+    },
+    {
+      "id": "rf_amplifier",
+      "display_name": "RF Amplifier",
+      "component_types": [
+        "rf_amplifier"
+      ],
+      "asset_category": "electronics",
+      "catalog_group": "RF",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "rf_amplifier",
+        "primary_domain": "rf",
+        "default_physics": [
+          "rf",
+          "thermal"
+        ],
+        "anchors": {
+          "required": [
+            "rf_in",
+            "rf_out"
+          ],
+          "optional": [],
+          "needs_direction": [
+            "rf_in",
+            "rf_out"
+          ],
+          "needs_aperture": []
+        },
+        "align_variant": "none",
+        "align_tolerance_mm": 0,
+        "align_summary": "Coaxial RF amplifier (e.g. Mini-Circuits ZHL-1-2W+, ZHL-42W+). rf_in marks the input SMA / coax connector; rf_out marks the output SMA / coax connector. Both directions are OUTWARD face normals (pointing away from the body the way a mating plug slides on). Gain, frequency range, P_1dB, NF, and supply spec live in kindParams. Not aligned optically — RF signal flows through cables, not free space.",
+        "default_params": {
+          "gainDb": 29,
+          "frequencyRangeMhz": [
+            5,
+            500
+          ],
+          "outputPowerP1dbDbm": 29,
+          "outputPowerMaxDbm": 30,
+          "inputPowerMaxDbm": 0,
+          "noiseFigureDb": 9,
+          "supplyVoltageV": 24,
+          "supplyCurrentA": 0.6,
+          "inputReturnLossDb": 14,
+          "outputReturnLossDb": 14,
+          "connectorType": "sma"
+        }
+      }
+    },
+    {
+      "id": "horn_antenna",
+      "display_name": "Horn Antenna",
+      "component_types": [
+        "horn_antenna"
+      ],
+      "asset_category": "electronics",
+      "catalog_group": "RF",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "horn_antenna",
+        "primary_domain": "rf",
+        "default_physics": [
+          "rf",
+          "em"
+        ],
+        "anchors": {
+          "required": [],
+          "optional": [
+            "aperture"
+          ],
+          "needs_direction": [
+            "aperture"
+          ],
+          "needs_aperture": []
+        },
+        "align_variant": "none",
+        "align_tolerance_mm": 0,
+        "align_summary": "Microwave horn / antenna — radiates the chain output along its polar axis (+Z body-local by default). Phase RF.7 renders a parametric cos^n radiation lobe; palace farfield can populate a real pattern later.",
+        "default_params": {
+          "frequencyGhz": 9.2,
+          "gainDbi": 12,
+          "beamwidth3dbDeg": 30,
+          "polarAxisBodyLocal": [
+            0,
+            0,
+            1
+          ],
+          "cosineExponent": 8
+        }
+      }
+    },
+    {
+      "id": "rf_cable",
+      "display_name": "RF Cable",
+      "component_types": [
+        "rf_cable",
+        "sma_cable"
+      ],
+      "asset_category": "electronics",
+      "catalog_group": "RF",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "rf_cable",
+        "primary_domain": "rf",
+        "default_physics": [
+          "rf"
+        ],
+        "anchors": {
+          "required": [
+            "rf_in",
+            "rf_out"
+          ],
+          "optional": [],
+          "needs_direction": [
+            "rf_in",
+            "rf_out"
+          ],
+          "needs_aperture": []
+        },
+        "align_variant": "none",
+        "align_tolerance_mm": 25,
+        "align_summary": "Bidirectional coaxial RF cable. rf_in (End A) and rf_out (End B) mark the two SMA / BNC / N connector tips; both directions are OUTWARD face normals (pointing away from the cable body, the way a mating plug would slide on). Cable physics (impedance, max frequency, connector type, jacket OD) lives in RfCableParams. Spline editing UX (analogous to fiber's Edit fiber path) is a follow-up — current visual is parametric straight cable.",
+        "default_params": {
+          "lengthMm": 152,
+          "impedanceOhm": 50,
+          "maxFrequencyGhz": 3,
+          "connectorType": "sma",
+          "cableType": "RG-316",
+          "jacketOuterDiameterMm": 3.2,
+          "jacketColor": "#c4a884",
+          "workingVoltageVRms": null,
+          "dielectricVoltageVRms": null,
+          "minBendRadiusMm": 15
+        }
+      }
+    },
+    {
+      "id": "rf_switch",
+      "display_name": "RF Switch",
+      "component_types": [
+        "rf_switch"
+      ],
+      "asset_category": "electronics",
+      "catalog_group": "RF",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "rf_switch",
+        "primary_domain": "rf",
+        "default_physics": [
+          "rf"
+        ],
+        "anchors": {
+          "required": [
+            "rf_in",
+            "rf_out",
+            "ttl_in"
+          ],
+          "optional": [],
+          "needs_direction": [
+            "rf_in",
+            "rf_out",
+            "ttl_in"
+          ],
+          "needs_aperture": []
+        },
+        "align_variant": "none",
+        "align_tolerance_mm": 25,
+        "align_summary": "Coaxial RF switch (SP2T by default). Four physical SMA-F connectors on the case: rf_in marks the common port (RFIN); the N throw ports are anchors all keyed `rf_out` and distinguished by `name` (RF1, RF2, …); ttl_in marks the TTL control port (a 4th SMA on the ZYSWA-2-50DR). All four directions are OUTWARD face normals — same convention as rf_cable — so a mating cable's End A / End B anchors line up. The switch is reciprocal at small signal (1-in/2-out SPDT == 2-in/1-out multiplexer); the active throw is decided at solve time from the TTL state on ttl_in, or from the kind-level TTL_GATE_KINDS picker when no cable is hooked up — both write to DeviceState.state.activeThrow. ±5 V supply lives at the kind level (POWER_KINDS) so the Instrument Power toggle attaches automatically. Per-model insertion loss / isolation / max input power live in RfSwitchParams.",
+        "default_params": {
+          "switchType": "SP2T",
+          "throwCount": 2,
+          "frequencyMinGhz": 0,
+          "frequencyMaxGhz": 5,
+          "insertionLossDb": 1,
+          "isolationDb": 35,
+          "switchingTimeNs": 250,
+          "absorptionType": "absorptive",
+          "controlLogic": "TTL",
+          "controlVoltageHighV": 5,
+          "supplyPositiveV": 5,
+          "supplyNegativeV": -5,
+          "supplyCurrentMa": 25,
+          "maxInputPowerDbm": 27,
+          "connectorType": "sma",
+          "manufacturer": "Mini-Circuits",
+          "model": "ZYSWA-2-50DR",
+          "datasheetUrl": "https://www.minicircuits.com/pdfs/ZYSWA-2-50DR+.pdf"
+        }
+      }
+    }
+  ],
+  "passive_plugins": [
+    {
+      "id": "mirror_mount",
+      "display_name": "Mirror Mount",
+      "component_types": [
+        "mirror_mount"
+      ],
+      "asset_category": "mechanical",
+      "catalog_group": null,
+      "asset_name_pattern": "{name}_stl"
+    },
+    {
+      "id": "clamping_fork",
+      "display_name": "Clamping Fork",
+      "component_types": [
+        "clamping_fork"
+      ],
+      "asset_category": "mechanical",
+      "catalog_group": null,
+      "asset_name_pattern": "{name}_stl"
+    },
+    {
+      "id": "optical_post",
+      "display_name": "Optical Post",
+      "component_types": [
+        "optical_post"
+      ],
+      "asset_category": "mechanical",
+      "catalog_group": null,
+      "asset_name_pattern": "{name}_stl"
+    },
+    {
+      "id": "post_holder",
+      "display_name": "Post Holder",
+      "component_types": [
+        "post_holder"
+      ],
+      "asset_category": "mechanical",
+      "catalog_group": null,
+      "asset_name_pattern": "{name}_stl"
+    },
+    {
+      "id": "pedestal_post",
+      "display_name": "Pedestal Post",
+      "component_types": [
+        "pedestal_post"
+      ],
+      "asset_category": "mechanical",
+      "catalog_group": null,
+      "asset_name_pattern": "{name}_stl"
+    },
+    {
+      "id": "pedestal_base",
+      "display_name": "Pedestal Base",
+      "component_types": [
+        "pedestal_base"
+      ],
+      "asset_category": "mechanical",
+      "catalog_group": null,
+      "asset_name_pattern": "{name}_stl"
+    },
+    {
+      "id": "pedestal_fork",
+      "display_name": "Pedestal Fork",
+      "component_types": [
+        "pedestal_fork"
+      ],
+      "asset_category": "mechanical",
+      "catalog_group": null,
+      "asset_name_pattern": "{name}_stl"
+    },
+    {
+      "id": "post_spacer",
+      "display_name": "Post Spacer",
+      "component_types": [
+        "post_spacer"
+      ],
+      "asset_category": "mechanical",
+      "catalog_group": null,
+      "asset_name_pattern": "{name}_stl"
+    },
+    {
+      "id": "post_adapter",
+      "display_name": "Post Adapter",
+      "component_types": [
+        "post_adapter"
+      ],
+      "asset_category": "mechanical",
+      "catalog_group": null,
+      "asset_name_pattern": "{name}_stl"
+    },
+    {
+      "id": "laser_diode_mount",
+      "display_name": "Laser Diode Mount",
+      "component_types": [
+        "laser_diode_mount"
+      ],
+      "asset_category": "mechanical",
+      "catalog_group": null,
+      "asset_name_pattern": "{name}_stl"
+    },
+    {
+      "id": "mounting_clamp",
+      "display_name": "Mounting Clamp",
+      "component_types": [
+        "mounting_clamp"
+      ],
+      "asset_category": "mechanical",
+      "catalog_group": null,
+      "asset_name_pattern": "{name}_stl"
+    },
+    {
+      "id": "polaris_clamping_arm",
+      "display_name": "Polaris Clamping Arm",
+      "component_types": [
+        "polaris_clamping_arm"
+      ],
+      "asset_category": "mechanical",
+      "catalog_group": null,
+      "asset_name_pattern": "{name}_stl"
+    },
+    {
+      "id": "bench_enhancement",
+      "display_name": "Bench Enhancement",
+      "component_types": [
+        "bench_enhancement"
+      ],
+      "asset_category": "mechanical",
+      "catalog_group": null,
+      "asset_name_pattern": "{name}_stl"
+    },
+    {
+      "id": "optical_table",
+      "display_name": "Optical Table",
+      "component_types": [
+        "optical_table"
+      ],
+      "asset_category": "infrastructure",
+      "catalog_group": null,
+      "asset_name_pattern": null
+    },
+    {
+      "id": "vacuum_chamber",
+      "display_name": "Vacuum Chamber",
+      "component_types": [
+        "vacuum_chamber"
+      ],
+      "asset_category": "optical",
+      "catalog_group": null,
+      "asset_name_pattern": null
+    },
+    {
+      "id": "text_annotation",
+      "display_name": "Text Annotation",
+      "component_types": [
+        "text_annotation"
+      ],
+      "asset_category": "misc",
+      "catalog_group": null,
+      "asset_name_pattern": null
+    },
+    {
+      "id": "tool",
+      "display_name": "Tool",
+      "component_types": [
+        "tool"
+      ],
+      "asset_category": "misc",
+      "catalog_group": null,
+      "asset_name_pattern": "{name}_stl"
+    },
+    {
+      "id": "mcu_board",
+      "display_name": "MCU Board",
+      "component_types": [
+        "mcu_board"
+      ],
+      "asset_category": "electronics",
+      "catalog_group": null,
+      "asset_name_pattern": null
+    },
+    {
+      "id": "tcxo_module",
+      "display_name": "TCXO Module",
+      "component_types": [
+        "tcxo_module"
+      ],
+      "asset_category": "electronics",
+      "catalog_group": null,
+      "asset_name_pattern": null
+    },
+    {
+      "id": "power_supply_ac_dc",
+      "display_name": "Power Supply (AC/DC)",
+      "component_types": [
+        "power_supply_ac_dc"
+      ],
+      "asset_category": "electronics",
+      "catalog_group": null,
+      "asset_name_pattern": null
+    },
+    {
+      "id": "sma_jack",
+      "display_name": "SMA Jack",
+      "component_types": [
+        "sma_jack"
+      ],
+      "asset_category": "electronics",
+      "catalog_group": null,
+      "asset_name_pattern": null
+    },
+    {
+      "id": "usb_b_jack",
+      "display_name": "USB-B Jack",
+      "component_types": [
+        "usb_b_jack"
+      ],
+      "asset_category": "electronics",
+      "catalog_group": null,
+      "asset_name_pattern": null
+    },
+    {
+      "id": "iec_c14_inlet",
+      "display_name": "IEC C14 Inlet",
+      "component_types": [
+        "iec_c14_inlet"
+      ],
+      "asset_category": "electronics",
+      "catalog_group": null,
+      "asset_name_pattern": null
+    },
+    {
+      "id": "instrument_chassis",
+      "display_name": "Instrument Chassis",
+      "component_types": [
+        "instrument_chassis"
+      ],
+      "asset_category": "electronics",
+      "catalog_group": null,
+      "asset_name_pattern": null
+    }
+  ]
+}

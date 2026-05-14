@@ -51,61 +51,18 @@ def is_component_locked(component: Component) -> bool:
 # the DB. Already-existing rows are backfilled on demand via
 # POST /api/components/{id}/auto-register-optical.
 
-OPTICAL_COMPONENT_TYPE_TO_KIND: dict[str, str] = {
-    "laser": "laser_source",
-    "laser_source": "laser_source",
-    "tapered_amplifier": "tapered_amplifier",
-    "mirror": "mirror",
-    # V2 Phase 5 (alembic 0031): the catalog component_type "lens" maps to
-    # the V2 lens_biconvex (safer default for an unspecified spherical
-    # lens). lens_plano_convex is opt-in via component_type.
-    "lens": "lens_biconvex",
-    "lens_spherical": "lens_biconvex",
-    "lens_biconvex": "lens_biconvex",
-    "lens_plano_convex": "lens_plano_convex",
-    "lens_cylindrical": "lens_cylindrical",
-    "waveplate": "waveplate",
-    "polarizer": "polarizer",
-    "beam_splitter": "beam_splitter",
-    "dichroic_mirror": "dichroic_mirror",
-    "fiber_coupler": "fiber_coupler",
-    "fiber": "fiber",
-    "isolator": "isolator",
-    "aom": "aom",
-    "eom": "eom",
-    "nonlinear_crystal": "nonlinear_crystal",
-    "saturable_absorber": "saturable_absorber",
-    "detector": "detector",
-    "camera": "camera",
-    "spectrometer": "spectrometer",
-    "wavemeter": "wavemeter",
-    "beam_dump": "beam_dump",
-    # RF emitters: a DDS PCB / synthesizer module is registered as a single
-    # `rf_source` element whose `kindParams.frequencyMhz` and `powerDbm`
-    # drive the downstream RF chain (amp / filter / AOM-EOM driver). Per-
-    # channel sources for multi-channel boards like AD9959 (4 channels) are
-    # created by the user through the PhysicsElement panel after placing
-    # the SceneObject.
-    "dds_ad9959_pcb": "rf_source",
-    "rf_generator": "rf_source",
-    # Phase RF.amp: coaxial RF gain blocks (Mini-Circuits ZHL series,
-    # generic SMA gain stages) register under a single `rf_amplifier`
-    # kind. The kind contract enforces one rf_in + one rf_out anchor;
-    # per-model gain / NF / freq range live in kindParams.
-    "rf_amplifier": "rf_amplifier",
-    # Phase RF.cable: coaxial cables (SMA/BNC/N) all register under
-    # the rf_cable kind. Legacy `sma_cable` component_type maps to the
-    # same kind so QMEM jumpers promote automatically — mirrors the
-    # frontend COMPONENT_TYPE_TO_KIND map in elementDefaults.ts.
-    "rf_cable": "rf_cable",
-    "sma_cable": "rf_cable",
-    # Phase RF.switch (2026-05-14): coaxial RF switches (Mini-Circuits
-    # ZYSWA-2-50DR family). Mirrors frontend COMPONENT_TYPE_TO_KIND in
-    # elementDefaults.ts. ±5 V supply + TTL control are declared at the
-    # kind level (POWER_KINDS / TTL_GATE_KINDS) so the
-    # InstrumentPowerPanel + TTL gate picker auto-attach.
-    "rf_switch": "rf_switch",
-}
+from app.kinds_manifest import component_type_to_kind as _ctype_to_kind_from_manifest
+
+# Pre-P2 this was a hand-maintained dict that had to stay in sync with
+# the frontend `COMPONENT_TYPE_TO_KIND` in `elementDefaults.ts` (see
+# the original "Mirror of backend OPTICAL_COMPONENT_TYPE_TO_KIND from
+# app/routers/components.py — keep in sync" comment in the frontend
+# file). M4 makes both sides read from a single manifest generated
+# from the frontend PhysicsPlugin registry, so drift is structurally
+# impossible: a new componentType is added in exactly one place
+# (the plugin file in `frontend/src/kinds/<kind>/index.ts`) and both
+# sides see it after `npm run export:kinds`.
+OPTICAL_COMPONENT_TYPE_TO_KIND: dict[str, str] = _ctype_to_kind_from_manifest()
 
 # Minimum-viable kind_params for each kind so the auto-created PhysicsElement
 # passes validation. The user can edit through the OpticalElementPanel UI.

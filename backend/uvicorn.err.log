@@ -154,3 +154,55 @@ INFO:     connection open
 INFO:     connection closed
 INFO:     127.0.0.1:61073 - "WebSocket /ws/scene" [accepted]
 INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:     127.0.0.1:61816 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     127.0.0.1:65120 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     127.0.0.1:58382 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     127.0.0.1:54798 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     127.0.0.1:62344 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     127.0.0.1:64684 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     127.0.0.1:55074 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+WARNING:  WatchFiles detected changes in 'scripts\link_components_to_stl.py'. Reloading...
+INFO:     connection closed
+INFO:     127.0.0.1:50733 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     127.0.0.1:52232 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     Shutting down
+INFO:     connection closed
+INFO:     connection closed
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [133564]
+INFO:     Started server process [119368]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:63483 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:54755 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     127.0.0.1:52572 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     127.0.0.1:64465 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     127.0.0.1:50952 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     connection closed

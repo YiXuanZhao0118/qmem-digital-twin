@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "tsc --noEmit && vite build",
+    "build": "npm run export:kinds && tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "export:kinds": "npx -y tsx ../scripts/export_kinds_manifest.ts"
   },
   "dependencies": {
     "@kitware/vtk.js": "^35.15.1",
