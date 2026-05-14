@@ -1815,214 +1815,29 @@ function createPrimitive(component: ComponentItem, state?: DeviceState): THREE.O
   const group = new THREE.Group();
   group.name = component.name;
 
-  // M6 POC: if the componentType's plugin owns a `renderer`, delegate
-  // to it before falling through to the legacy switch below. Today
-  // only `mirror` has migrated; the rest still come from the switch.
-  // Each future migration moves a switch case → kinds/<id>/renderer.ts
-  // and shrinks this file by another 20-200 lines.
+  // Post-M6 FULL: every legacy `case "X":` block from this function's
+  // old switch statement lives in `kinds/_renderer_bindings.ts` and is
+  // wired into the plugin registry at module load. Adding a new
+  // primitive geometry = (a) write the renderer in a plugin folder
+  // (or temporarily in _renderer_bindings.ts), (b) register it. No
+  // changes to this file needed.
+  //
+  // The fallback below catches componentTypes that have a plugin but
+  // no renderer (rare — currently only the kinds whose primary render
+  // path is STL/GLB through `loadAssetObject`) and componentTypes
+  // with no plugin at all (a bug to surface).
   const plugin = pluginForComponentType(component.componentType);
-  if (plugin?.renderer) {
-    const mesh = plugin.renderer(component, state);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    group.add(mesh);
-    return group;
-  }
-
   let mesh: THREE.Object3D;
-  switch (component.componentType) {
-    case "optical_table":
-      mesh = createBox(component, state, [1800, 1200, 90]);
-      mesh.position.y = -0.45;
-      break;
-    case "text_annotation":
-      mesh = createTextAnnotation(component);
-      break;
-    case "mirror": {
-      // Disc with optical axis along local +X — the reflective face is the
-      // +X face of the disc, centred on the SceneObject origin so the beam
-      // axis intersects it exactly when the user places the mirror at the
-      // beam height. Replaces the old 8×42×3.5 mm thin-blade box (whose
-      // largest faces were ±Z, not the +X face the kindParams.normalLocal
-      // [1,0,0] was claiming).
-      const radiusMm = getNumericProperty(component.properties, "diameterMm", 25.4) / 2;
-      const thicknessMm = getNumericProperty(component.properties, "thicknessMm", 6);
-      const radius = mmToThree(radiusMm);
-      const thickness = mmToThree(thicknessMm);
-      const disc = new THREE.Mesh(
-        new THREE.CylinderGeometry(radius, radius, thickness, 40),
-        materialFor(component, state),
-      );
-      // CylinderGeometry has its axis along +Y by default; rotate so axis
-      // points along +X, then shift so the +X face sits at local x=0 and
-      // the body extends in -X. The disc spans local x = -thickness to 0.
-      disc.rotation.z = Math.PI / 2;
-      disc.position.x = -thickness / 2;
-      mesh = disc;
-      break;
-    }
-    case "lens": {
-      const radius = mmToThree(getNumericProperty(component.properties, "diameterMm", 25.4) / 2);
-      const thickness = mmToThree(getNumericProperty(component.properties, "thicknessMm", 3.5));
-      const lens = new THREE.Mesh(
-        new THREE.CylinderGeometry(radius, radius, thickness, 40),
-        materialFor(component, state),
-      );
-      // Optical axis along local +X. For a thin lens the "active surface"
-      // is the +X face — beam in +X exits through it. Origin at +X face
-      // centre, body in -X.
-      lens.rotation.z = Math.PI / 2;
-      lens.position.x = -thickness / 2;
-      mesh = lens;
-      break;
-    }
-    case "vacuum_chamber": {
-      const radius = mmToThree(getNumericProperty(component.properties, "radiusMm", 150));
-      const height = mmToThree(getNumericProperty(component.properties, "heightMm", 220));
-      mesh = new THREE.Mesh(
-        new THREE.CylinderGeometry(radius, radius, height, 64),
-        materialFor(component, state),
-      );
-      mesh.position.y = height / 2;
-      break;
-    }
-    case "laser":
-      mesh = createBox(component, state, [260, 90, 80]);
-      mesh.position.y = 0.22;
-      break;
-    case "laser_diode_mount":
-      mesh = createTs2000aLaserMount(component, state);
-      break;
-    case "aom":
-      mesh = createAom(component, state);
-      break;
-    case "isolator": {
-      // Cylindrical isolator housing (e.g. Coherent TORNOS, EOT 34-xxxx,
-      // Newport N04 series). Body axis along +Y (the beam-axis convention
-      // used by STL-based isolators like the Thorlabs IO-3D / IO-5 family).
-      // Body colour comes from materialFor (default #1a1a1c, overridable
-      // via properties.colorHex — TORNOS uses red anodised). Two small
-      // steel input/output ferrule rings stick out of each end.
-      const diameterMm = getNumericProperty(component.properties, "diameterMm", 22);
-      const lengthMm = getNumericProperty(component.properties, "lengthMm", 51.4);
-      const ferruleDiameterMm = getNumericProperty(component.properties, "ferruleDiameterMm", 13);
-      const ferruleLengthMm = getNumericProperty(component.properties, "ferruleLengthMm", 5);
-      const bodyRadius = mmToThree(diameterMm / 2);
-      const bodyLength = mmToThree(lengthMm);
-      const ferruleRadius = mmToThree(ferruleDiameterMm / 2);
-      const ferruleLen = mmToThree(ferruleLengthMm);
-      const isoGroup = new THREE.Group();
-      const body = new THREE.Mesh(
-        new THREE.CylinderGeometry(bodyRadius, bodyRadius, bodyLength, 40),
-        materialFor(component, state),
-      );
-      // CylinderGeometry axis is +Y by default — no rotation needed.
-      isoGroup.add(body);
-      const steelMaterial = new THREE.MeshStandardMaterial({
-        color: "#cbd5e1",
-        metalness: 0.85,
-        roughness: 0.22,
-      });
-      const inputFerrule = new THREE.Mesh(
-        new THREE.CylinderGeometry(ferruleRadius, ferruleRadius, ferruleLen, 24),
-        steelMaterial,
-      );
-      inputFerrule.position.y = -(bodyLength / 2 + ferruleLen / 2);
-      isoGroup.add(inputFerrule);
-      const outputFerrule = new THREE.Mesh(
-        new THREE.CylinderGeometry(ferruleRadius, ferruleRadius, ferruleLen, 24),
-        steelMaterial,
-      );
-      outputFerrule.position.y = bodyLength / 2 + ferruleLen / 2;
-      isoGroup.add(outputFerrule);
-      mesh = isoGroup;
-      break;
-    }
-    case "eom": {
-      // Origin at the +X face centre of the EOM body, body extending in -X
-      // (consistent with the optical-element convention so the beam axis
-      // hits the active aperture when placed at scene-object position).
-      const [lengthMm, widthMm, heightMm] = getDimensionsMm(component.properties, [120, 75, 70]);
-      const length = mmToThree(lengthMm);
-      const eom = new THREE.Mesh(
-        new THREE.BoxGeometry(length, mmToThree(heightMm), mmToThree(widthMm)),
-        materialFor(component, state),
-      );
-      eom.position.x = -length / 2;
-      mesh = eom;
-      break;
-    }
-    case "tapered_amplifier":
-      mesh = createTaperedAmplifier(component, state);
-      break;
-    case "rf_generator":
-      mesh = createBox(component, state, [280, 220, 100]);
-      mesh.position.y = 0.2;
-      break;
-    case "rf_amplifier":
-      mesh = createBox(component, state, [180, 140, 70]);
-      mesh.position.y = 0.18;
-      break;
-    case "post_holder":
-      mesh = createThorlabsPostHolder(component, state);
-      break;
-    case "optical_post":
-      mesh = createThorlabsPost(component, state);
-      break;
-    case "pedestal_post":
-      mesh = createThorlabsPedestalPost(component, state);
-      break;
-    case "post_spacer":
-      mesh = createThorlabsPost(component, state);
-      break;
-    case "clamping_fork":
-      mesh = createThorlabsClampingFork(component, state);
-      break;
-    case "dds_ad9959_pcb":
-      mesh = createDdsAd9959Pcb(component, state);
-      break;
-    case "mcu_board":
-      mesh = createDdsMcuBoard(component, state);
-      break;
-    case "tcxo_module":
-      mesh = createDdsTcxoModule(component, state);
-      break;
-    case "power_supply_ac_dc":
-      mesh = createMeanwellIrm30(component, state);
-      break;
-    case "sma_cable":
-    case "rf_cable":
-      mesh = createSmaShortCable(component, state);
-      break;
-    case "rf_switch":
-      mesh = createRfSwitch(component, state);
-      break;
-    case "sma_jack":
-      mesh = createSmaBulkheadJack();
-      break;
-    case "usb_b_jack":
-      mesh = createUsbBJack(component, state);
-      break;
-    case "iec_c14_inlet":
-      mesh = createIecC14Inlet(component, state);
-      break;
-    case "instrument_chassis":
-      mesh = createInstrumentChassis1u(component, state);
-      break;
-    default:
-      mesh = createBox(component, state, [100, 100, 80]);
-      mesh.position.y = 0.2;
-      break;
+  if (plugin?.renderer) {
+    mesh = plugin.renderer(component, state);
+  } else {
+    mesh = createBox(component, state, [100, 100, 80]);
+    mesh.position.y = 0.2;
   }
 
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   group.add(mesh);
-
-  // Component-name sprite labels removed per UX feedback — labels above
-  // every object cluttered the scene. Object identity is communicated via
-  // the Outliner panel and on-hover highlighting instead.
-
   return group;
 }
 
