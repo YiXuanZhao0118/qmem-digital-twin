@@ -13,6 +13,7 @@
  * tighter coupling to internal helpers; separate extraction passes.
  */
 import { useEffect, useMemo, useState } from "react";
+import * as THREE from "three";
 
 import { useSceneStore } from "../../store/sceneStore";
 import type { PhysicsElement, SceneObject } from "../../types/digitalTwin";
@@ -20,6 +21,7 @@ import {
   findSnapToBeam,
   perpendicularBasis,
 } from "../../utils/beamPlacement";
+import { labDirToThree } from "../../optical/frames";
 
 export function MirrorAdjustControls({ sceneObject }: { sceneObject: SceneObject }) {
   const scene = useSceneStore((state) => state.scene);

@@ -11,7 +11,7 @@ import type {
   SceneData,
 } from "../types/digitalTwin";
 
-import { EMPTY_SESSION_VISIBILITY, type SessionVisibilityState } from "../utils/visibility";
+import { EMPTY_SESSION_VISIBILITY, type SessionVisibilityState } from "../types/visibility";
 
 /** Master collection has parentId === null. Returns the first such
  *  collection's id, or null if no collections exist yet. */

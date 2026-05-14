@@ -27,6 +27,14 @@ import {
   setEmissionVisualPatch,
 } from "../../utils/emissionVisuals";
 import { wavelengthToColor } from "../../three/opticalBeams";
+import * as THREE from "three";
+import {
+  bodyLocalDirToThree,
+  labDirToThree,
+  rotateLabDir,
+  threeToLabPointMm,
+} from "../../optical/frames";
+import { EmissionVisualRow } from "./_shared";
 
 function wavelengthHex(wavelengthNm: number): string {
   return `#${wavelengthToColor(wavelengthNm).getHexString()}`;

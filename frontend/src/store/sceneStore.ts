@@ -168,14 +168,10 @@ export type LabPoint = { x: number; y: number; z: number };
 // Re-exported here for backward compatibility with consumers like
 // DigitalTwinViewer / ToolbarHint / TouchCoincidencePanel that still
 // import these names from `../store/sceneStore`.
-export {
-  TOUCH_OPS,
-  TOUCH_OP_BY_ID,
-  type TouchOp,
-  type TouchOpId,
-  type FeatureKind,
-} from "./_constants";
+export { TOUCH_OPS, TOUCH_OP_BY_ID } from "./_constants";
+export type { TouchOp, TouchOpId, FeatureKind } from "./_constants";
 import { emptyScene } from "./_constants";
+import type { TouchOpId } from "./_constants";
 
 // localStorage adapters split out to `./_persistence` so the wrappers
 // (try/catch + SSR guards) live next to each other and are unit-testable.

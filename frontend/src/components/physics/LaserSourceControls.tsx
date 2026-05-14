@@ -26,6 +26,7 @@ import {
   setEmissionVisualPatch,
 } from "../../utils/emissionVisuals";
 import { wavelengthToColor } from "../../three/opticalBeams";
+import { EmissionVisualRow } from "./_shared";
 
 function wavelengthHex(wavelengthNm: number): string {
   return `#${wavelengthToColor(wavelengthNm).getHexString()}`;
