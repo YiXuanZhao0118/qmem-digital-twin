@@ -164,223 +164,39 @@ export type TransformPivotMode = "median" | "individual" | "cursor";
 export type TransformAxis = "x" | "y" | "z";
 export type LabPoint = { x: number; y: number; z: number };
 
-/** Touch tool operations. Each one is a 2-step picking flow with strict
- *  expectations on what kind of feature the user picks first and second.
- *  See FaceTouchOp definition in handleFaceTouchClick for the math. */
-export type TouchOpId = "vv" | "ve" | "vf" | "ee" | "ef" | "ff";
-export type FeatureKind = "vertex" | "edge" | "face";
-export type TouchOp = {
-  id: TouchOpId;
-  firstKind: FeatureKind;
-  secondKind: FeatureKind;
-  /** UI label e.g. "Vertex → Vertex" */
-  label: string;
-  /** Compact button label e.g. "V·V" */
-  shortLabel: string;
-  /** One-line description shown in the toolbar tooltip + hint bar. */
-  description: string;
-};
+// Touch-tool ops + empty scene + storage keys live in `./_constants`.
+// Re-exported here for backward compatibility with consumers like
+// DigitalTwinViewer / ToolbarHint / TouchCoincidencePanel that still
+// import these names from `../store/sceneStore`.
+export {
+  TOUCH_OPS,
+  TOUCH_OP_BY_ID,
+  type TouchOp,
+  type TouchOpId,
+  type FeatureKind,
+} from "./_constants";
+import { emptyScene } from "./_constants";
 
-export const TOUCH_OPS: ReadonlyArray<TouchOp> = [
-  { id: "vv", firstKind: "vertex", secondKind: "vertex", label: "Vertex → Vertex", shortLabel: "V·V", description: "two vertices coincide" },
-  { id: "ve", firstKind: "vertex", secondKind: "edge",   label: "Vertex → Edge",   shortLabel: "V·E", description: "vertex coincides with edge midpoint" },
-  { id: "vf", firstKind: "vertex", secondKind: "face",   label: "Vertex → Face",   shortLabel: "V·F", description: "vertex coincides with face click point" },
-  { id: "ee", firstKind: "edge",   secondKind: "edge",   label: "Edge → Edge",     shortLabel: "E·E", description: "edge midpoints coincide; edges must be parallel" },
-  { id: "ef", firstKind: "edge",   secondKind: "face",   label: "Edge → Face",     shortLabel: "E·F", description: "edge midpoint coincides with face point; edge must be parallel to face" },
-  { id: "ff", firstKind: "face",   secondKind: "face",   label: "Face → Face",     shortLabel: "F·F", description: "B's face lands on A's plane along normal; faces must be parallel" },
-];
+// localStorage adapters split out to `./_persistence` so the wrappers
+// (try/catch + SSR guards) live next to each other and are unit-testable.
+import {
+  loadActiveCollectionId,
+  loadTransformCursorHidden,
+  loadTransformCursorMm,
+  saveActiveCollectionId,
+  saveTransformCursorHidden,
+  saveTransformCursorMm,
+} from "./_persistence";
 
-export const TOUCH_OP_BY_ID: Record<TouchOpId, TouchOp> = Object.fromEntries(
-  TOUCH_OPS.map((op) => [op.id, op]),
-) as Record<TouchOpId, TouchOp>;
-
-const emptyScene: SceneData = {
-  assets: [],
-  components: [],
-  objects: [],
-  connections: [],
-  assemblyRelations: [],
-  beamPaths: [],
-  deviceStates: [],
-  physicsElements: [],
-  opticalLinks: [],
-  beamSegments: [],
-  sceneViews: [],
-  collections: [],
-  collectionMembers: [],
-  timingPrograms: [],
-};
-
-const ACTIVE_COLLECTION_STORAGE_KEY = "qmem.outliner.activeCollectionId";
-// Cursor persistence — v2 stores both panels' cursors so dual-view can
-// restore each panel's pivot independently. Reads from the v1 single-cursor
-// key as a fallback if v2 isn't present yet.
-const TRANSFORM_CURSOR_STORAGE_KEY_V1 = "qmem.transformCursorMm.v1";
-const TRANSFORM_CURSOR_STORAGE_KEY = "qmem.transformCursorMm.v2";
-const TRANSFORM_CURSOR_HIDDEN_STORAGE_KEY = "qmem.transformCursorHidden.v1";
-
-type LabPointLite = { x: number; y: number; z: number };
-
-function sanitizeLabPoint(p: Partial<LabPointLite> | null | undefined): LabPointLite {
-  return {
-    x: typeof p?.x === "number" && Number.isFinite(p.x) ? p.x : 0,
-    y: typeof p?.y === "number" && Number.isFinite(p.y) ? p.y : 0,
-    z: typeof p?.z === "number" && Number.isFinite(p.z) ? p.z : 0,
-  };
-}
-
-function loadTransformCursorMm(): { left: LabPointLite; right: LabPointLite } {
-  if (typeof window === "undefined") return { left: { x: 0, y: 0, z: 0 }, right: { x: 0, y: 0, z: 0 } };
-  try {
-    const rawV2 = window.localStorage.getItem(TRANSFORM_CURSOR_STORAGE_KEY);
-    if (rawV2) {
-      const parsed = JSON.parse(rawV2) as Partial<{ left: LabPointLite; right: LabPointLite }>;
-      return { left: sanitizeLabPoint(parsed.left), right: sanitizeLabPoint(parsed.right) };
-    }
-    // Fallback to legacy single-cursor key — seed both panels with the same
-    // value so existing sessions don't lose their pinned pivot.
-    const rawV1 = window.localStorage.getItem(TRANSFORM_CURSOR_STORAGE_KEY_V1);
-    if (rawV1) {
-      const seed = sanitizeLabPoint(JSON.parse(rawV1) as Partial<LabPointLite>);
-      return { left: seed, right: seed };
-    }
-  } catch {
-    // ignore parse errors — fall through to defaults
-  }
-  return { left: { x: 0, y: 0, z: 0 }, right: { x: 0, y: 0, z: 0 } };
-}
-
-function saveTransformCursorMm(value: { left: LabPointLite; right: LabPointLite }): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(TRANSFORM_CURSOR_STORAGE_KEY, JSON.stringify(value));
-  } catch {
-    // ignore quota / availability errors
-  }
-}
-
-function loadTransformCursorHidden(): { left: boolean; right: boolean } {
-  if (typeof window === "undefined") return { left: false, right: false };
-  try {
-    const raw = window.localStorage.getItem(TRANSFORM_CURSOR_HIDDEN_STORAGE_KEY);
-    if (!raw) return { left: false, right: false };
-    const parsed = JSON.parse(raw) as Partial<{ left: boolean; right: boolean }>;
-    return { left: parsed.left === true, right: parsed.right === true };
-  } catch {
-    return { left: false, right: false };
-  }
-}
-
-function saveTransformCursorHidden(value: { left: boolean; right: boolean }): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(TRANSFORM_CURSOR_HIDDEN_STORAGE_KEY, JSON.stringify(value));
-  } catch {
-    // ignore quota / availability errors
-  }
-}
-
-function loadActiveCollectionId(): string | null {
-  if (typeof window === "undefined") return null;
-  const value = window.localStorage.getItem(ACTIVE_COLLECTION_STORAGE_KEY);
-  return value && value.length > 0 ? value : null;
-}
-
-function saveActiveCollectionId(value: string | null): void {
-  if (typeof window === "undefined") return;
-  if (value) window.localStorage.setItem(ACTIVE_COLLECTION_STORAGE_KEY, value);
-  else window.localStorage.removeItem(ACTIVE_COLLECTION_STORAGE_KEY);
-}
-
-function findMasterCollectionId(collections: Collection[] | undefined): string | null {
-  if (!collections) return null;
-  for (const collection of collections) {
-    if (collection.parentId === null) return collection.id;
-  }
-  return null;
-}
-
-function collectionDepths(collections: Collection[] | undefined): Map<string, number> {
-  const byId = new Map((collections ?? []).map((collection) => [collection.id, collection]));
-  const cache = new Map<string, number>();
-  const depthOf = (collectionId: string, seen = new Set<string>()): number => {
-    const cached = cache.get(collectionId);
-    if (cached !== undefined) return cached;
-    if (seen.has(collectionId)) return 0;
-    const collection = byId.get(collectionId);
-    if (!collection?.parentId) {
-      cache.set(collectionId, 0);
-      return 0;
-    }
-    const depth = depthOf(collection.parentId, new Set([...seen, collectionId])) + 1;
-    cache.set(collectionId, depth);
-    return depth;
-  };
-  for (const collection of collections ?? []) depthOf(collection.id);
-  return cache;
-}
-
-function normalizeCollectionMembers(
-  collections: Collection[] | undefined,
-  members: CollectionMember[] | undefined,
-): CollectionMember[] {
-  const depths = collectionDepths(collections);
-  const collectionIds = new Set((collections ?? []).map((collection) => collection.id));
-  const byObject = new Map<string, CollectionMember>();
-  const score = (member: CollectionMember) => ({
-    depth: depths.get(member.collectionId) ?? 0,
-    addedAt: member.addedAt ? Date.parse(member.addedAt) || 0 : 0,
-    sortOrder: member.sortOrder,
-    collectionId: member.collectionId,
-  });
-  const isBetter = (candidate: CollectionMember, current: CollectionMember): boolean => {
-    const a = score(candidate);
-    const b = score(current);
-    if (a.depth !== b.depth) return a.depth > b.depth;
-    if (a.addedAt !== b.addedAt) return a.addedAt > b.addedAt;
-    if (a.sortOrder !== b.sortOrder) return a.sortOrder > b.sortOrder;
-    return a.collectionId > b.collectionId;
-  };
-
-  for (const member of members ?? []) {
-    if (!collectionIds.has(member.collectionId)) continue;
-    const current = byObject.get(member.objectId);
-    if (!current || isBetter(member, current)) {
-      byObject.set(member.objectId, member);
-    }
-  }
-
-  return Array.from(byObject.values()).sort((a, b) => {
-    const collectionCompare = a.collectionId.localeCompare(b.collectionId);
-    if (collectionCompare !== 0) return collectionCompare;
-    if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
-    return (a.addedAt ?? "").localeCompare(b.addedAt ?? "");
-  });
-}
-
-function normalizeSceneData(scene: SceneData): SceneData {
-  return {
-    ...scene,
-    collectionMembers: normalizeCollectionMembers(scene.collections, scene.collectionMembers),
-  };
-}
-
-function cloneSession(state: SessionVisibilityState): SessionVisibilityState {
-  return {
-    hiddenObjectIds: new Set(state.hiddenObjectIds),
-    hiddenBeamPathIds: new Set(state.hiddenBeamPathIds),
-    hiddenLinkIds: new Set(state.hiddenLinkIds),
-    hiddenRelationIds: new Set(state.hiddenRelationIds),
-    soloObjectIds: state.soloObjectIds ? new Set(state.soloObjectIds) : null,
-    soloIncludeNeighbors: state.soloIncludeNeighbors,
-    forceVisibleObjectIds: new Set(state.forceVisibleObjectIds ?? []),
-    forceVisibleCollectionIds: new Set(state.forceVisibleCollectionIds ?? []),
-  };
-}
-
-function freshSession(): SessionVisibilityState {
-  return cloneSession(EMPTY_SESSION_VISIBILITY);
-}
+// Pure data helpers split out to `./_helpers`.
+import {
+  cloneSession,
+  collectionDepths,
+  findMasterCollectionId,
+  freshSession,
+  normalizeCollectionMembers,
+  normalizeSceneData,
+} from "./_helpers";
 
 type SceneStore = {
   scene: SceneData;
