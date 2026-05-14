@@ -40,7 +40,7 @@ export function FieldViewer({ field }: Props) {
     container.innerHTML = "";
 
     const fsrw = vtkFullScreenRenderWindow.newInstance({
-      rootContainer: container,
+      container,
       containerStyle: { width: "100%", height: "100%", position: "absolute" },
       background: [0.92, 0.92, 0.9],
     });
@@ -52,8 +52,8 @@ export function FieldViewer({ field }: Props) {
 
     const imageData = vtkImageData.newInstance();
     imageData.setDimensions(nx, ny, nz);
-    imageData.setSpacing(field.spacingMm[0], field.spacingMm[1], field.spacingMm[2]);
-    imageData.setOrigin(field.originMm[0], field.originMm[1], field.originMm[2]);
+    imageData.setSpacing([field.spacingMm[0], field.spacingMm[1], field.spacingMm[2]]);
+    imageData.setOrigin([field.originMm[0], field.originMm[1], field.originMm[2]]);
     const scalars = vtkDataArray.newInstance({
       name: "scalars",
       values: flat,

@@ -50,7 +50,7 @@ type ToolbarHintProps = {
   // displayMode + gizmoMode are supplied by the parent viewer instance —
   // each panel in dual-view holds its own values, so the hint text
   // ("Drag X/Y/Z arrows…" vs "Drag rings…") stays accurate per panel.
-  displayMode?: "wireframe" | "rendered";
+  displayMode?: "wireframe" | "rendered" | "node-edit";
   gizmoMode?: "translate" | "rotate" | "scale";
 };
 

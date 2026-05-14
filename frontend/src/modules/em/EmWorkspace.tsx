@@ -274,14 +274,16 @@ export function EmWorkspace() {
 // EM problem editor (center pane)
 // ---------------------------------------------------------------------------
 
+type EmProblem = ReturnType<typeof useSceneStore.getState>["emProblems"][number];
+
 type EditorProps = {
-  problem: ReturnType<typeof useSceneStore.getState>["emProblems"][number];
+  problem: EmProblem;
   meshes: ReturnType<typeof useSceneStore.getState>["meshes"];
   onSave: (patch: {
     name: string;
     meshId: string | null;
-    ports: typeof problem.ports;
-    freqRangeGhz: NonNullable<typeof problem.freqRangeGhz>;
+    ports: EmProblem["ports"];
+    freqRangeGhz: NonNullable<EmProblem["freqRangeGhz"]>;
   }) => Promise<void>;
   onRun: () => Promise<void>;
   onDelete: () => Promise<void>;

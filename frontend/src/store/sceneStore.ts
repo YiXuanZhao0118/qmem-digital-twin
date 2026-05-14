@@ -233,7 +233,7 @@ type SceneStore = {
    *  editor "home" (left rail visible, right pane shows a hint asking
    *  the user to pick a sub-editor). */
   phyEditorView:
-    | { domain: "optical"; section: "kinds" | "components" }
+    | { domain: "optical" | "rf"; section: "kinds" | "components" }
     | null;
   /** Asset3D currently being edited (anchors[]). When `phyEditorView`
    *  is not the optical_components editor, this is null. */
@@ -282,7 +282,7 @@ type SceneStore = {
    *  optical → components). When null, returns to the editor home. */
   setPhyEditorView: (
     view:
-      | { domain: "optical"; section: "kinds" | "components" }
+      | { domain: "optical" | "rf"; section: "kinds" | "components" }
       | null,
   ) => void;
   /** Persist anchor edits for an Asset3D. Goes through the backend
@@ -596,9 +596,18 @@ type SceneStore = {
    *  panel keeps its own camera and display mode. */
   viewMode: "single" | "dual";
   setViewMode: (mode: "single" | "dual") => void;
-  /** Per-panel display mode. In single view, only `left` is used. */
-  displayMode: { left: "wireframe" | "rendered"; right: "wireframe" | "rendered" };
-  setDisplayMode: (panel: "left" | "right", mode: "wireframe" | "rendered") => void;
+  /** Per-panel display mode. In single view, only `left` is used.
+   *  `node-edit` puts the viewer into fiber/RF-cable node editing mode
+   *  (DigitalTwinViewer's ViewerDisplayMode); the toolbar exposes a
+   *  third button alongside Wireframe/Rendered. */
+  displayMode: {
+    left: "wireframe" | "rendered" | "node-edit";
+    right: "wireframe" | "rendered" | "node-edit";
+  };
+  setDisplayMode: (
+    panel: "left" | "right",
+    mode: "wireframe" | "rendered" | "node-edit",
+  ) => void;
   activeTool: "select" | "face-touch";
   /** Which of the 6 touch operations is active. Each op specifies what kind
    *  of feature the user picks first and second:
