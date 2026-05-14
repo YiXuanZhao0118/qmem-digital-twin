@@ -1,13 +1,13 @@
 /**
  * Per-kind anchor inspector sections — split out of
- * `OpticalComponentEditor.tsx` (god-file). Each section renders the
+ * `ComponentEditor.tsx` (god-file). Each section renders the
  * status / hint / number-input block for one kind's anchor in the
  * PHY Editor right pane.
  *
  * These are pure presentational components: they take `draft` /
  * `updateDraft` props from the parent editor and don't touch the
  * Zustand store themselves. The aperture editor has moved to the
- * Object panel (V2 schema, see OpticalComponentEditor.tsx for the
+ * Object panel (V2 schema, see ComponentEditor.tsx for the
  * full explanation).
  *
  * Sections covered here (the simple ones — no internal state):
@@ -19,7 +19,7 @@
  *   - BeamSplitterFaceSection (pbs / bs)
  *
  * Complex sections (TaperedAmplifier, FiberPatchCable, Aom) still
- * live in OpticalComponentEditor.tsx — they pull in helpers from
+ * live in ComponentEditor.tsx — they pull in helpers from
  * elsewhere in that file (computeBraggTiltAxisFromRfDirectionBodyLocal,
  * useState hooks, etc.) and are a separate extraction pass.
  */
@@ -30,7 +30,7 @@ import type { Anchor } from "../../types/digitalTwin";
  *
  *  Re-declared here (not imported) because the type is internal to
  *  the editor and the section components don't need the wider
- *  OpticalComponentEditor surface to render. */
+ *  ComponentEditor surface to render. */
 export type AnchorDraft = Anchor & { __key: string };
 
 // =============================================================================

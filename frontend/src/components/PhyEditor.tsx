@@ -24,14 +24,14 @@
  *     If the active sub-editor has unsaved drafts (sceneStore.phyEditorDirty),
  *     a confirm prompt appears first. Same prompt fires on switching tabs.
  *
- * The sub-editors themselves (`OpticalKindsEditor`,
- * `OpticalComponentEditor`) own their own Save buttons and dirty state;
+ * The sub-editors themselves (`KindsEditor`,
+ * `ComponentEditor`) own their own Save buttons and dirty state;
  * this wrapper just routes to them.
  */
 
 import { useSceneStore } from "../store/sceneStore";
-import { OpticalComponentEditor } from "./OpticalComponentEditor";
-import { OpticalKindsEditor } from "./OpticalKindsEditor";
+import { ComponentEditor } from "./ComponentEditor";
+import { KindsEditor } from "./KindsEditor";
 
 export function PhyEditor() {
   const phyEditorView = useSceneStore((s) => s.phyEditorView);
@@ -194,10 +194,10 @@ export function PhyEditor() {
               </span>
             </div>
           )}
-          {opticalKinds && <OpticalKindsEditor domain="optical" />}
-          {opticalComponents && <OpticalComponentEditor domain="optical" />}
-          {rfKinds && <OpticalKindsEditor domain="rf" />}
-          {rfComponents && <OpticalComponentEditor domain="rf" />}
+          {opticalKinds && <KindsEditor domain="optical" />}
+          {opticalComponents && <ComponentEditor domain="optical" />}
+          {rfKinds && <KindsEditor domain="rf" />}
+          {rfComponents && <ComponentEditor domain="rf" />}
         </div>
       </div>
     </div>

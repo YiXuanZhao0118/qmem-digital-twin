@@ -1,5 +1,5 @@
 /**
- * OpticalKindsEditor — read-only viewer for the optical-kind contracts
+ * KindsEditor — read-only viewer for the optical-kind contracts
  * that live in `src/kinds/_registry.ts`.
  *
  * Each row represents one ElementKind (mirror, AOM, PBS, ...) and shows
@@ -67,7 +67,7 @@ const OPTICAL_ALWAYS_SHOW: ReadonlySet<ElementKind> = new Set<ElementKind>([
   "camera",
 ]);
 
-export function OpticalKindsEditor({ domain = "optical" }: { domain?: "optical" | "rf" } = {}) {
+export function KindsEditor({ domain = "optical" }: { domain?: "optical" | "rf" } = {}) {
   const allKindsRaw = Object.keys(KIND_REGISTRY) as ElementKind[];
   // Filter to the domain the rail tab represents. RF tab shows every
   // kind whose domainForElementKind() == "rf" (currently rf_source,

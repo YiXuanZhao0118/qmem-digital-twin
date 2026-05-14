@@ -1,5 +1,5 @@
 ﻿/**
- * OpticalComponentEditor ??sub-editor inside the PHY editor. Edits the
+ * ComponentEditor ??sub-editor inside the PHY editor. Edits the
  * anchor geometry (Asset.anchors[]) of a single 3D model (Layer 2 in
  * the four-layer model). Hosted by `<PhyEditor>` when the left-rail
  * navigation is at "Optical ??Components".
@@ -26,7 +26,7 @@ import { mergeVertices } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 
 import { useSceneStore } from "../store/sceneStore";
-import type { Anchor, Asset3D, ComponentItem } from "../types/digitalTwin";
+import type { Anchor, Asset3D, ComponentItem, ElementKind } from "../types/digitalTwin";
 import { loadAssetObject, type FiberNode } from "../three/loadAsset";
 import { mmToThree, threeToMm } from "../optical/frames";
 import {
@@ -58,7 +58,7 @@ import {
   LaserSourceFaceSection,
   WaveplateFaceSection,
   BeamSplitterFaceSection,
-} from "./optical_editor/AnchorFaceSections";
+} from "./component_editor/AnchorFaceSections";
 
 /** Map an AnchorId to a stable hue/colour for the marker sphere. Picks
  *  the same colour every time so the user builds visual habits. */
@@ -2213,7 +2213,7 @@ const KINDS_WITH_OPTICAL_ANCHORS: ReadonlySet<string> = new Set(
   ),
 );
 
-export function OpticalComponentEditor({ domain = "optical" }: { domain?: "optical" | "rf" } = {}) {
+export function ComponentEditor({ domain = "optical" }: { domain?: "optical" | "rf" } = {}) {
   const scene = useSceneStore((s) => s.scene);
   const editingAssetId = useSceneStore((s) => s.editingAssetId);
   const selectedComponentId = useSceneStore((s) => s.selectedComponentId);
