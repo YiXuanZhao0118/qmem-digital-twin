@@ -27,11 +27,12 @@ import type {
   Asset3D,
   ComponentItem,
   ElementKind,
-  OpticalElement,
+  PhysicsElement,
   SceneObject,
 } from "../types/digitalTwin";
 import { mmToThree, labToThreeVector } from "./transformUtils";
 import {
+  bodyLocalDirToLabDir,
   bodyLocalDirToWorldThree,
   labDirToThree as labDirToThreeAxisSwap,
 } from "../optical/frames";
@@ -49,6 +50,7 @@ import {
   phaseModulationDepth,
 } from "../optical/kinds/aom/physics";
 import { getRfDirectionBodyLocal } from "../utils/v2Bindings";
+import { resolveAomRfDriveFromScene } from "../utils/aomRfDrive";
 import { getEmissionVisual } from "../utils/emissionVisuals";
 
 export const DEFAULT_MAX_LENGTH_MM = 1000;
@@ -203,7 +205,7 @@ export type BeamState = {
  *  laser_source's `spatialModeX/Y` AND tapered_amplifier's
  *  `outputSpatialModeX/Y` (the TA stores the OUTPUT mode under a different
  *  key). Falls back to 100 µm circular if neither is present. */
-function averageSpatialMode(element: OpticalElement): BeamState {
+function averageSpatialMode(element: PhysicsElement): BeamState {
   const params = (element.kindParams ?? {}) as {
     centerWavelengthNm?: number;
     spatialModeX?: { waistUm?: number; mSquared?: number; waistZOffsetMm?: number };
@@ -307,11 +309,11 @@ const SPLITTING_KINDS: ReadonlySet<ElementKind> = new Set<ElementKind>([
 
 type TraceContext = {
   componentGroup: THREE.Group;
-  opticalElements: OpticalElement[];
+  physicsElements: PhysicsElement[];
   components: ComponentItem[];
   assets: Asset3D[];
   /** Scene objects — needed to map a componentId → its instance object_id
-   *  so we can look up the per-object OpticalElement (alembic 0014).
+   *  so we can look up the per-object PhysicsElement (alembic 0014).
    *  Must include the rotation Euler angles so the SPLITTING branch can
    *  rotate the coatingNormalLocal into world frame. */
   objects: SceneObject[];
@@ -470,15 +472,15 @@ function elementKindFor(componentId: string, ctx: TraceContext): ElementKind | n
   const objIds = new Set(
     ctx.objects.filter((o) => o.componentId === componentId).map((o) => o.id),
   );
-  const el = ctx.opticalElements.find((item) => objIds.has(item.objectId));
+  const el = ctx.physicsElements.find((item) => objIds.has(item.objectId));
   return (el?.elementKind as ElementKind) ?? null;
 }
 
-function elementForObject(objectId: string, ctx: TraceContext): OpticalElement | null {
-  return ctx.opticalElements.find((item) => item.objectId === objectId) ?? null;
+function elementForObject(objectId: string, ctx: TraceContext): PhysicsElement | null {
+  return ctx.physicsElements.find((item) => item.objectId === objectId) ?? null;
 }
 
-function laserWavelengthNm(element: OpticalElement | undefined): number {
+function laserWavelengthNm(element: PhysicsElement | undefined): number {
   const params = (element?.kindParams ?? {}) as { centerWavelengthNm?: number };
   return typeof params.centerWavelengthNm === "number" && params.centerWavelengthNm > 0
     ? params.centerWavelengthNm
@@ -597,7 +599,7 @@ function applyPolarisingPBS(
 }
 
 /** Initial Jones state from the laser's kindParams.polarization. */
-function laserJones(element: OpticalElement): JonesTuple {
+function laserJones(element: PhysicsElement): JonesTuple {
   const p = (element.kindParams ?? {}) as {
     polarization?: { exRe?: number; exIm?: number; eyRe?: number; eyIm?: number };
   };
@@ -621,7 +623,7 @@ function normalizeJones(j: JonesTuple, fallback: JonesTuple = [1, 0, 0, 0]): Jon
 /** Polarization of the seed beam at intercept_in. Used for the input
  *  acceptance check and for the backward ASE leak direction (which exits
  *  the same facet as the seed enters). */
-function taInputJones(element: OpticalElement): JonesTuple {
+function taInputJones(element: PhysicsElement): JonesTuple {
   const params = (element.kindParams ?? {}) as {
     inputPolarization?: { exRe?: number; exIm?: number; eyRe?: number; eyIm?: number };
   };
@@ -640,7 +642,7 @@ function taInputJones(element: OpticalElement): JonesTuple {
  *  this via kindParams.outputPolarization in the panel; if absent, fall
  *  back to inputPolarization so an unconfigured chip behaves like before
  *  this wiring landed. */
-function taOutputJones(element: OpticalElement): JonesTuple {
+function taOutputJones(element: PhysicsElement): JonesTuple {
   const params = (element.kindParams ?? {}) as {
     outputPolarization?: { exRe?: number; exIm?: number; eyRe?: number; eyIm?: number };
     inputPolarization?: { exRe?: number; exIm?: number; eyRe?: number; eyIm?: number };
@@ -662,7 +664,7 @@ function jonesOverlap(a: JonesTuple, b: JonesTuple): number {
   return Math.max(0, Math.min(1, re * re + im * im));
 }
 
-function taInputSpatialMode(element: OpticalElement): BeamState {
+function taInputSpatialMode(element: PhysicsElement): BeamState {
   const params = (element.kindParams ?? {}) as {
     centerWavelengthNm?: number;
     inputSpatialModeX?: { waistUm?: number; mSquared?: number; waistZOffsetMm?: number } | null;
@@ -979,7 +981,7 @@ function traceOneRay(
     // YXZ Euler convention as transformUtils.applyObjectTransform, then
     // reflect against it.
     // V2 Phase 6 (alembic 0032) moved the coating normal from
-    // OpticalElement.kindParams.coatingNormalBodyLocal into
+    // PhysicsElement.kindParams.coatingNormalBodyLocal into
     // SceneObject.properties.anchorBindings[opticalSurface].payload.normalBodyLocal.
     // Read it from the binding first; fall back to kindParams (Phase 5 name
     // then legacy name) for un-migrated rows. Without this V2 read path
@@ -1408,15 +1410,23 @@ function traceOneRay(
     //         path, no ±1st branch is spawned. Use this when the user
     //         wants pass-through (zeroth-order maximised).
     const oe = elementForObject(hitObjectId, ctx);
-    const params = (oe?.kindParams ?? {}) as {
-      centerFreqMhz?: number;
+    // Phase B: centerFreqMhz / rfDrivePowerW are no longer stored on the
+    // AOM. Resolve them live from the upstream rf_source channel via the
+    // AOM's rf_in `rfCableEndpoints` link (mirrors backend
+    // `hydrate_aom_rf_drive`). Orphan AOMs fall back to 80 MHz default
+    // and an undefined P_d (closed-form efficiency then takes the
+    // baseEfficiency path).
+    const upstreamDrive = resolveAomRfDriveFromScene(
+      hitObjectId, ctx.objects, ctx.physicsElements,
+    );
+    const baseParams = (oe?.kindParams ?? {}) as {
       acousticVelocityMPerS?: number;
       refractiveIndex?: number;
       baseEfficiency?: number;
       figureOfMeritM2?: number;       // m²/W
       crystalLengthMm?: number;       // L (acousto-optic interaction length)
       acousticBeamWidthMm?: number;   // W
-      rfDrivePowerW?: number;         // P_d (current drive)
+      rfPowerMaxW?: number;           // safety cap; clamps resolved P_d
       // Phase 5: new frame-suffixed names; legacy names accepted for
       // un-migrated rows.
       acousticAxisBodyLocal?: number[];
@@ -1428,6 +1438,16 @@ function traceOneRay(
       maxDiffractionOrder?: number;   // visualize orders -N..+N (default 3)
       sidebandVisibilityThreshold?: number; // skip emitting orders below this fraction (default 0.01)
     };
+    const params = {
+      ...baseParams,
+      centerFreqMhz: upstreamDrive?.frequencyMhz ?? 80,
+      rfDrivePowerW: upstreamDrive
+        ? Math.min(
+            upstreamDrive.drivePowerW,
+            baseParams.rfPowerMaxW ?? Number.POSITIVE_INFINITY,
+          )
+        : undefined,
+    } as typeof baseParams & { centerFreqMhz: number; rfDrivePowerW?: number };
     // Coerce to discrete {-1, 0, +1}. Anything else falls back to +1
     // (historical default).
     const orderRaw = params.diffractionOrder;
@@ -1867,7 +1887,7 @@ export function traceBeamsFromLasers(input: {
     components: ComponentItem[];
     objects: SceneObject[];
     assets: Asset3D[];
-    opticalElements: OpticalElement[];
+    physicsElements: PhysicsElement[];
   };
   componentGroup: THREE.Group;
   options?: { maxLengthMm?: number; maxBounces?: number };
@@ -1882,12 +1902,19 @@ export function traceBeamsFromLasers(input: {
    *  scrubs the timeline. Absent objects use kindParams.centerFreqMhz
    *  as before. */
   aomFreqOverrideMhz?: Map<string, number>;
+  /** Object ids whose ``device_states.state.power === false`` — the
+   *  emitter (laser_source / tapered_amplifier) is treated as physically
+   *  off, so it doesn't emit any beam. For TAs this also blocks the
+   *  amplified output even if a seed beam arrives upstream (the device
+   *  acts as a beam dump when unpowered). */
+  poweredOffObjectIds?: Set<string>;
 }): TraceSegment[] {
   const { scene, componentGroup } = input;
   const maxLengthMm = input.options?.maxLengthMm ?? DEFAULT_MAX_LENGTH_MM;
   const maxBounces = input.options?.maxBounces ?? DEFAULT_MAX_BOUNCES;
   const gateOverrides = input.gateOverrides;
   const aomFreqOverrideMhz = input.aomFreqOverrideMhz;
+  const poweredOffObjectIds = input.poweredOffObjectIds;
 
   // CRITICAL: refresh world matrices on the entire group BEFORE any bbox /
   // raycast query. Per-mesh updateMatrixWorld(true) only works if the parent
@@ -1927,7 +1954,7 @@ export function traceBeamsFromLasers(input: {
 
   const ctx: TraceContext = {
     componentGroup,
-    opticalElements: scene.opticalElements,
+    physicsElements: scene.physicsElements,
     components: scene.components,
     assets: scene.assets,
     objects: scene.objects,
@@ -1940,15 +1967,15 @@ export function traceBeamsFromLasers(input: {
   for (const obj of scene.objects) sceneObjectById.set(obj.id, obj);
 
   const segments: TraceSegment[] = [];
-  const traceElements = [...scene.opticalElements].sort((a, b) => {
-    const rank = (e: OpticalElement) => e.elementKind === "tapered_amplifier" ? 1 : 0;
+  const traceElements = [...scene.physicsElements].sort((a, b) => {
+    const rank = (e: PhysicsElement) => e.elementKind === "tapered_amplifier" ? 1 : 0;
     return rank(a) - rank(b);
   });
   for (const element of traceElements) {
     if (element.elementKind !== "laser_source" && element.elementKind !== "tapered_amplifier") {
       continue;
     }
-    // Per-object optical chain: the OpticalElement.objectId IS the SceneObject id.
+    // Per-object optical chain: the PhysicsElement.objectId IS the SceneObject id.
     const obj = sceneObjectById.get(element.objectId);
     if (!obj) continue;
     const component = scene.components.find((c) => c.id === obj.componentId);
@@ -1971,20 +1998,42 @@ export function traceBeamsFromLasers(input: {
     // offset.
     // Phase 6: prefer the new frame-suffixed key (`apertureForwardMmBodyLocal`),
     // fall back to legacy `apertureForwardLocalMm` for un-migrated rows.
+    // For tapered_amplifier specifically: phy-edit writes the input-face
+    // position to asset.anchors.intercept_in; the legacy properties field
+    // is NOT updated by phy edit, so the anchor wins when present. (Lasers
+    // have no intercept_in in their kind contract — fall through unchanged.)
     const apertureProps = component?.properties as
       | { apertureForwardMmBodyLocal?: number[]; apertureForwardLocalMm?: number[] }
       | undefined;
-    const apertureForwardBlender = apertureProps?.apertureForwardMmBodyLocal
+    const inAnchorPos = element.elementKind === "tapered_amplifier"
+      ? asset?.anchors?.find((a) => a.id === "intercept_in")?.positionMmBodyLocal
+      : undefined;
+    // Anchor path bypasses meshAperturePoint — anchor positions are
+    // wrapper-local (relative to SceneObject origin, same convention the
+    // alignment uses), whereas meshAperturePoint interprets its input as
+    // GLB-native and adds the bbox-centering offset baked into glbSceneRoot.
+    // That mismatch displaced the beam by bboxCenter mm. Compute lab-mm
+    // directly: rotated body-local + SceneObject pos → labToThreeVector.
+    const apertureForwardLegacy = apertureProps?.apertureForwardMmBodyLocal
       ?? apertureProps?.apertureForwardLocalMm;
-    const apertureForwardOrigin = apertureForwardBlender && apertureForwardBlender.length === 3
-      ? meshAperturePoint(componentGroup, obj.componentId, [
-          apertureForwardBlender[0],
-          apertureForwardBlender[1],
-          apertureForwardBlender[2],
-        ])
-      : null;
+    const apertureForwardOrigin: THREE.Vector3 | null = inAnchorPos
+      ? (() => {
+          const rotated = bodyLocalDirToLabDir(inAnchorPos, obj);
+          return labToThreeVector([
+            obj.xMm + rotated.x,
+            obj.yMm + rotated.y,
+            obj.zMm + rotated.z,
+          ]);
+        })()
+      : (apertureForwardLegacy && apertureForwardLegacy.length === 3
+        ? meshAperturePoint(componentGroup, obj.componentId, [
+            apertureForwardLegacy[0],
+            apertureForwardLegacy[1],
+            apertureForwardLegacy[2],
+          ])
+        : null);
     // Mesh-bbox lookup is keyed by componentId (each Three.Mesh has
-    // userData.componentId from the renderer). The OpticalElement is per-
+    // userData.componentId from the renderer). The PhysicsElement is per-
     // object now (alembic 0014), so we resolve via SceneObject.componentId.
     const meshOrigin = meshFrontFaceCenter(componentGroup, obj.componentId, dirThree);
     const originThree =
@@ -1998,6 +2047,10 @@ export function traceBeamsFromLasers(input: {
       // the user has unticked it on the object panel, so downstream optics
       // don't reflect a beam that's not visible.
       if (!getEmissionVisual(obj, "main").visible) {
+        continue;
+      }
+      // Power off (Instrument Power panel) — laser physically not emitting.
+      if (poweredOffObjectIds?.has(obj.id)) {
         continue;
       }
       // Phase PB.3: scrub-time gate cascade — when the user is sampling
@@ -2039,6 +2092,15 @@ export function traceBeamsFromLasers(input: {
     // within the acceptance radius. The coupled seed power is:
     //   raw PBSref power × spatial mode overlap × polarization overlap.
     // The amplified output exits the opposite (-X) aperture.
+    //
+    // Power off: the TA chip is unpowered, so neither the amplified output
+    // nor backward ASE leaves the device. Any seed beam arriving from
+    // upstream still hit the front face (those segments were already
+    // pushed by the laser-source loop) — they simply terminate there
+    // since we skip the output emission entirely.
+    if (poweredOffObjectIds?.has(obj.id)) {
+      continue;
+    }
     const taParams = (element.kindParams ?? {}) as {
       driveCurrentMa?: number;
       smallSignalGainDb?: number;
@@ -2087,18 +2149,32 @@ export function traceBeamsFromLasers(input: {
     // Output emission — out of the -X face, continuing the seed direction.
     const outputDirThree = dirThree.clone().negate();
     // Phase 6: prefer the new frame-suffixed key, fall back to legacy.
+    // asset.anchors.intercept_out (phy-edit-driven) wins over the legacy
+    // properties field for the same reason as the input face above.
     const apertureBackProps = component?.properties as
       | { apertureBackwardMmBodyLocal?: number[]; apertureBackwardLocalMm?: number[] }
       | undefined;
-    const apertureBackwardBlender = apertureBackProps?.apertureBackwardMmBodyLocal
+    const outAnchorPos = asset?.anchors?.find((a) => a.id === "intercept_out")?.positionMmBodyLocal;
+    // Same anchor-path / meshAperturePoint split as intercept_in above —
+    // anchor is wrapper-local (alignment formula), legacy field is GLB-frame.
+    const apertureBackwardLegacy = apertureBackProps?.apertureBackwardMmBodyLocal
       ?? apertureBackProps?.apertureBackwardLocalMm;
-    const apertureBackwardOrigin = apertureBackwardBlender && apertureBackwardBlender.length === 3
-      ? meshAperturePoint(componentGroup, obj.componentId, [
-          apertureBackwardBlender[0],
-          apertureBackwardBlender[1],
-          apertureBackwardBlender[2],
-        ])
-      : null;
+    const apertureBackwardOrigin: THREE.Vector3 | null = outAnchorPos
+      ? (() => {
+          const rotated = bodyLocalDirToLabDir(outAnchorPos, obj);
+          return labToThreeVector([
+            obj.xMm + rotated.x,
+            obj.yMm + rotated.y,
+            obj.zMm + rotated.z,
+          ]);
+        })()
+      : (apertureBackwardLegacy && apertureBackwardLegacy.length === 3
+        ? meshAperturePoint(componentGroup, obj.componentId, [
+            apertureBackwardLegacy[0],
+            apertureBackwardLegacy[1],
+            apertureBackwardLegacy[2],
+          ])
+        : null);
     const outputMeshOrigin = meshFrontFaceCenter(
       componentGroup,
       obj.componentId,
@@ -2211,7 +2287,7 @@ function interpolateAse(
 /** Backward spatial mode for a TA. Returns null when the kindParams don't
  *  include backward_spatial_mode_x/y — caller falls back to the forward
  *  mode so the backward beam still has a sensible width. */
-function backwardSpatialMode(element: OpticalElement): BeamState | null {
+function backwardSpatialMode(element: PhysicsElement): BeamState | null {
   const params = (element.kindParams ?? {}) as {
     centerWavelengthNm?: number;
     backwardSpatialModeX?: { waistUm?: number; mSquared?: number; waistZOffsetMm?: number };

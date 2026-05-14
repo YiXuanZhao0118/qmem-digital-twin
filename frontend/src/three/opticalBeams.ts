@@ -6,7 +6,7 @@ import type {
   BeamSegment,
   ComponentItem,
   ElementKind,
-  OpticalElement,
+  PhysicsElement,
   OpticalLink,
   SceneObject,
 } from "../types/digitalTwin";
@@ -256,7 +256,7 @@ export function buildEmitterPreviewRays(scene: {
   objects: SceneObject[];
   components: ComponentItem[];
   assets: Asset3D[];
-  opticalElements: OpticalElement[];
+  physicsElements: PhysicsElement[];
   opticalLinks: OpticalLink[];
 }): THREE.Object3D[] {
   const outgoingLinkSources = new Set(
@@ -264,7 +264,7 @@ export function buildEmitterPreviewRays(scene: {
   );
   const meshes: THREE.Object3D[] = [];
 
-  for (const element of scene.opticalElements) {
+  for (const element of scene.physicsElements) {
     if (!PREVIEW_RAY_KINDS.has(element.elementKind)) continue;
     if (outgoingLinkSources.has(element.objectId)) continue;
     const placement = objectById(element.objectId, scene);

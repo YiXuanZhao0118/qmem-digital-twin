@@ -17,17 +17,18 @@ import type {
   MagneticsProblemCreatePayload,
   MagneticsProblemUpdatePayload,
   Mesh,
-  PulseBlasterChannel,
-  PulseBlasterChannelCreatePayload,
-  PulseBlasterChannelUpdatePayload,
+  TimingProgramCompile,
+  TimingProgramCreatePayload,
+  TimingProgramUpdatePayload,
   RfChainNode,
   RfChainNodeCreatePayload,
   Collection,
   CollectionMember,
   ComponentItem,
+  DeviceState,
   ElementKind,
   GeometrySelector,
-  OpticalElement,
+  PhysicsElement,
   OpticalLink,
   OpticalPort,
   RelationType,
@@ -39,7 +40,6 @@ import type {
   SimulationRunV2,
   TimingProgram,
   TouchstoneNetwork,
-  TimingProgramUpsert,
   TransientRunRequest,
   TransientRunResponse,
 } from "../types/digitalTwin";
@@ -315,9 +315,9 @@ export type OpticalElementApiPayload = {
 
 export async function createOpticalElementApi(
   payload: OpticalElementApiPayload,
-): Promise<OpticalElement> {
+): Promise<PhysicsElement> {
   try {
-    const response = await client.post<OpticalElement>("/api/optical-elements", payload);
+    const response = await client.post<PhysicsElement>("/api/physics-elements", payload);
     return response.data;
   } catch (error) {
     throw new Error(apiErrorMessage(error));
@@ -327,10 +327,10 @@ export async function createOpticalElementApi(
 export async function updateOpticalElementApi(
   objectId: string,
   patch: Partial<Omit<OpticalElementApiPayload, "objectId">>,
-): Promise<OpticalElement> {
+): Promise<PhysicsElement> {
   try {
-    const response = await client.put<OpticalElement>(
-      `/api/optical-elements/${objectId}`,
+    const response = await client.put<PhysicsElement>(
+      `/api/physics-elements/${objectId}`,
       patch,
     );
     return response.data;
@@ -340,17 +340,17 @@ export async function updateOpticalElementApi(
 }
 
 export async function deleteOpticalElementApi(objectId: string): Promise<void> {
-  await client.delete(`/api/optical-elements/${objectId}`);
+  await client.delete(`/api/physics-elements/${objectId}`);
 }
 
 export async function autoRegisterOpticalApi(
   componentId: string,
-): Promise<OpticalElement[]> {
+): Promise<PhysicsElement[]> {
   try {
-    // Auto-register endpoint now creates one OpticalElement per scene
+    // Auto-register endpoint now creates one PhysicsElement per scene
     // object of this component (was: 1 per component). Returns the list
     // of newly-created rows (empty if all objects already had OEs).
-    const response = await client.post<OpticalElement[]>(
+    const response = await client.post<PhysicsElement[]>(
       `/api/components/${componentId}/auto-register-optical`,
     );
     return response.data ?? [];
@@ -362,7 +362,7 @@ export async function autoRegisterOpticalApi(
 export type AutoRegisterAllResponse = {
   createdCount: number;
   scanned: number;
-  elements: OpticalElement[];
+  elements: PhysicsElement[];
 };
 
 export async function autoRegisterOpticalAllApi(): Promise<AutoRegisterAllResponse> {
@@ -611,12 +611,25 @@ export async function unlinkObjectFromCollectionApi(
 }
 
 // =============================================================================
-// Timing programs
+// Timing programs (alembic 0045/0046 — own-id catalog, channel binding inline)
 // =============================================================================
 
-export async function fetchTimingProgramApi(objectId: string): Promise<TimingProgram | null> {
+export async function listTimingProgramsApi(): Promise<TimingProgram[]> {
   try {
-    const response = await client.get<TimingProgram>(`/api/timing-programs/${objectId}`);
+    const response = await client.get<TimingProgram[]>("/api/timing-programs");
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function getTimingProgramApi(
+  programId: string,
+): Promise<TimingProgram | null> {
+  try {
+    const response = await client.get<TimingProgram>(
+      `/api/timing-programs/${programId}`,
+    );
     return response.data;
   } catch (error) {
     if (error instanceof AxiosError && error.response?.status === 404) {
@@ -626,13 +639,12 @@ export async function fetchTimingProgramApi(objectId: string): Promise<TimingPro
   }
 }
 
-export async function upsertTimingProgramApi(
-  objectId: string,
-  payload: TimingProgramUpsert,
+export async function createTimingProgramApi(
+  payload: TimingProgramCreatePayload,
 ): Promise<TimingProgram> {
   try {
-    const response = await client.put<TimingProgram>(
-      `/api/timing-programs/${objectId}`,
+    const response = await client.post<TimingProgram>(
+      "/api/timing-programs",
       payload,
     );
     return response.data;
@@ -641,9 +653,50 @@ export async function upsertTimingProgramApi(
   }
 }
 
-export async function deleteTimingProgramApi(objectId: string): Promise<void> {
+export async function updateTimingProgramApi(
+  programId: string,
+  patch: TimingProgramUpdatePayload,
+): Promise<TimingProgram> {
   try {
-    await client.delete(`/api/timing-programs/${objectId}`);
+    const response = await client.put<TimingProgram>(
+      `/api/timing-programs/${programId}`,
+      patch,
+    );
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function deleteTimingProgramApi(programId: string): Promise<void> {
+  try {
+    await client.delete(`/api/timing-programs/${programId}`);
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function updateDeviceStateApi(
+  objectId: string,
+  state: Record<string, unknown>,
+): Promise<DeviceState> {
+  try {
+    const response = await client.put<DeviceState>(
+      `/api/device-states/${objectId}`,
+      { state },
+    );
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function compileTimingProgramsApi(): Promise<TimingProgramCompile> {
+  try {
+    const response = await client.get<TimingProgramCompile>(
+      "/api/timing-programs/compile/spinapi",
+    );
+    return response.data;
   } catch (error) {
     throw new Error(apiErrorMessage(error));
   }
@@ -837,54 +890,9 @@ export async function deleteMagneticsProblemApi(id: string): Promise<void> {
   await client.delete(`/api/magnetics-problems/${id}`);
 }
 
-// ---- PulseBlaster channels (Phase F+) -------------------------------------
-
-export async function fetchPulseBlasterChannelsApi(): Promise<PulseBlasterChannel[]> {
-  const response = await client.get<PulseBlasterChannel[]>("/api/pulse-blaster/channels");
-  return response.data;
-}
-
-export async function updatePulseBlasterChannelApi(
-  id: string,
-  patch: PulseBlasterChannelUpdatePayload,
-): Promise<PulseBlasterChannel> {
-  const response = await client.patch<PulseBlasterChannel>(
-    `/api/pulse-blaster/channels/${id}`,
-    patch,
-  );
-  return response.data;
-}
-
-export async function bulkUpsertPulseBlasterChannelsApi(
-  channels: PulseBlasterChannelCreatePayload[],
-): Promise<PulseBlasterChannel[]> {
-  const response = await client.put<PulseBlasterChannel[]>(
-    "/api/pulse-blaster/channels",
-    { channels },
-  );
-  return response.data;
-}
-
-export type PulseBlasterInstruction = {
-  index: number;
-  outputState: number;
-  opcode: string;
-  data: number;
-  lengthNs: number;
-  label: string | null;
-};
-
-export type PulseBlasterCompile = {
-  instructions: PulseBlasterInstruction[];
-  pythonSource: string;
-  boundChannelCount: number;
-  totalDurationNs: number;
-};
-
-export async function compilePulseBlasterApi(): Promise<PulseBlasterCompile> {
-  const response = await client.get<PulseBlasterCompile>("/api/pulse-blaster/compile");
-  return response.data;
-}
+// PulseBlaster channel endpoints removed (alembic 0046). channel_index +
+// invert now live inline on TimingProgram; compile endpoint moved to
+// /api/timing-programs/compile/spinapi (see compileTimingProgramsApi above).
 
 // ---- RF chain nodes (Phase RF.2) ------------------------------------------
 
@@ -1118,6 +1126,29 @@ export async function parseTouchstoneApi(file: File): Promise<TouchstoneNetwork>
     "/api/touchstone/parse",
     form,
     { headers: { "Content-Type": "multipart/form-data" } },
+  );
+  return response.data;
+}
+
+// ---- App settings (lab-wide singletons, alembic 0043) --------------------
+
+export type RoomDimensions = {
+  widthMm: number;
+  depthMm: number;
+  heightMm: number;
+};
+
+export async function fetchRoomDimensionsApi(): Promise<RoomDimensions> {
+  const response = await client.get<RoomDimensions>("/api/app-settings/room-dimensions");
+  return response.data;
+}
+
+export async function updateRoomDimensionsApi(
+  payload: RoomDimensions,
+): Promise<RoomDimensions> {
+  const response = await client.put<RoomDimensions>(
+    "/api/app-settings/room-dimensions",
+    payload,
   );
   return response.data;
 }

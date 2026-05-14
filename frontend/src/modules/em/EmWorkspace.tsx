@@ -17,6 +17,7 @@
 import { Play, Plus, Trash2, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useResizablePanes } from "../../components/workspace/useResizablePanes";
 import { useSceneStore } from "../../store/sceneStore";
 import type { EmFieldPayload } from "../../types/digitalTwin";
 import { FieldViewer } from "./FieldViewer";
@@ -52,6 +53,11 @@ export function EmWorkspace() {
   const [busy, setBusy] = useState<"idle" | "saving" | "running" | "uploading">("idle");
   const [error, setError] = useState<string | null>(null);
   const meshInputRef = useRef<HTMLInputElement | null>(null);
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
+  const { startDrag } = useResizablePanes({
+    id: "em",
+    containerRef: workspaceRef,
+  });
 
   useEffect(() => {
     void loadEm();
@@ -140,7 +146,7 @@ export function EmWorkspace() {
   }, [recentRuns, selected?.id]);
 
   return (
-    <div className="electronics-workspace">
+    <div ref={workspaceRef} className="electronics-workspace">
       <aside className="electronics-sidebar">
         <header className="electronics-sidebar-header">
           <span className="electronics-sidebar-title">EM problems</span>
@@ -204,6 +210,14 @@ export function EmWorkspace() {
         </ul>
       </aside>
 
+      <div
+        className="ws-splitter"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize problems panel"
+        onPointerDown={startDrag("left")}
+      />
+
       <section className="electronics-editor">
         {selected ? (
           <EmProblemEditor
@@ -231,6 +245,14 @@ export function EmWorkspace() {
         )}
         {error && <div className="electronics-error">{error}</div>}
       </section>
+
+      <div
+        className="ws-splitter"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize results panel"
+        onPointerDown={startDrag("right")}
+      />
 
       <aside className="electronics-results">
         <header className="electronics-sidebar-header">

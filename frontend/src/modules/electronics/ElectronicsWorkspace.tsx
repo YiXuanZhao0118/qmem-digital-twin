@@ -14,6 +14,7 @@
 import { ChevronDown, Play, Plus, Save, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useResizablePanes } from "../../components/workspace/useResizablePanes";
 import { useSceneStore } from "../../store/sceneStore";
 import { CIRCUIT_EXAMPLES } from "./examples";
 import { NetlistEditor } from "./NetlistEditor";
@@ -49,6 +50,11 @@ export function ElectronicsWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [examplesOpen, setExamplesOpen] = useState(false);
   const examplesRef = useRef<HTMLDivElement | null>(null);
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
+  const { startDrag } = useResizablePanes({
+    id: "electronics",
+    containerRef: workspaceRef,
+  });
 
   // Close examples dropdown on outside click.
   useEffect(() => {
@@ -179,7 +185,7 @@ export function ElectronicsWorkspace() {
   }, [recentRuns, selected?.id]);
 
   return (
-    <div className="electronics-workspace">
+    <div ref={workspaceRef} className="electronics-workspace">
       <aside className="electronics-sidebar">
         <header className="electronics-sidebar-header">
           <span className="electronics-sidebar-title">Circuits</span>
@@ -233,6 +239,14 @@ export function ElectronicsWorkspace() {
         </ul>
       </aside>
 
+      <div
+        className="ws-splitter"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
+        onPointerDown={startDrag("left")}
+      />
+
       <section className="electronics-editor">
         {selected ? (
           <>
@@ -285,6 +299,14 @@ export function ElectronicsWorkspace() {
         )}
         {error && <div className="electronics-error">{error}</div>}
       </section>
+
+      <div
+        className="ws-splitter"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize results panel"
+        onPointerDown={startDrag("right")}
+      />
 
       <aside className="electronics-results">
         <header className="electronics-sidebar-header">

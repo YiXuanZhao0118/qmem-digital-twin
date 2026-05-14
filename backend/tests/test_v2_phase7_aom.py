@@ -23,15 +23,21 @@ def test_aom_params_default_drops_direction_fields():
         "acousticAxisBodyLocal",
         "rfPropagationDirectionLocal",
         "acousticAxisLocal",
+        # Phase B: AOM RF drive moved to upstream link resolution.
+        "centerFreqMhz",
+        "rfDrivePowerW",
     ):
         assert forbidden not in fields
-    # Other AOM physics fields stay (centerFreqMhz, baseEfficiency, …)
-    assert "centerFreqMhz" in fields
+    # Other AOM physics fields stay (baseEfficiency, …)
+    assert "baseEfficiency" in fields
 
 
 def test_aom_params_silently_drops_v1_direction_fields():
     inst = AOMParams.model_validate({
+        # Phase B: centerFreqMhz / rfDrivePowerW now legacy — validator
+        # should silently drop them like the V1 direction aliases.
         "centerFreqMhz": 80.0,
+        "rfDrivePowerW": 1.0,
         "baseEfficiency": 0.85,
         "deflectionPerMhzUrad": 200.0,
         "acousticVelocityMPerS": 4200.0,
@@ -40,16 +46,20 @@ def test_aom_params_silently_drops_v1_direction_fields():
         "acousticAxisBodyLocal": [-1, 0, 0],
     })
     fields = inst.model_dump(by_alias=True, exclude_none=True)
-    for forbidden in ("rfPropagationDirectionBodyLocal", "acousticAxisBodyLocal"):
+    for forbidden in (
+        "rfPropagationDirectionBodyLocal",
+        "acousticAxisBodyLocal",
+        "centerFreqMhz",
+        "rfDrivePowerW",
+    ):
         assert forbidden not in fields
-    assert fields["centerFreqMhz"] == 80.0
+    assert fields["baseEfficiency"] == 0.85
 
 
 def test_aom_params_keeps_lab_frame_alias_for_bragg_tilt():
     """The pre-Phase-5 alias (`braggTiltAxisAngleDeg → braggTiltAxisDegLab`)
     must still translate, not be dropped by the new validator."""
     inst = AOMParams.model_validate({
-        "centerFreqMhz": 80.0,
         "baseEfficiency": 0.85,
         "deflectionPerMhzUrad": 200.0,
         "acousticVelocityMPerS": 4200.0,
@@ -107,6 +117,109 @@ def test_default_kind_params_aom_has_no_direction_fields():
     aom = DEFAULT_KIND_PARAMS["aom"]
     assert "rfPropagationDirectionBodyLocal" not in aom
     assert "acousticAxisBodyLocal" not in aom
+    # Phase B: RF drive resolved from upstream — default kindParams must
+    # not seed centerFreqMhz / rfDrivePowerW.
+    assert "centerFreqMhz" not in aom
+    assert "rfDrivePowerW" not in aom
     # Other physics fields stay.
-    assert "centerFreqMhz" in aom
-    assert "rfDrivePowerW" in aom
+    assert "baseEfficiency" in aom
+
+
+# ---------------------------------------------------------------------------
+# Phase B: hydrate_aom_rf_drive — resolves AOM RF drive from upstream
+# rf_source channel via the AOM's rf_in rfCableEndpoints link.
+# ---------------------------------------------------------------------------
+
+import uuid as _uuid
+
+
+def _make_pe(object_id, kind, kind_params):
+    return SimpleNamespace(object_id=object_id, element_kind=kind, kind_params=kind_params)
+
+
+def _make_obj(obj_id, properties=None):
+    return SimpleNamespace(id=obj_id, properties=properties or {})
+
+
+def test_hydrate_aom_rf_drive_injects_freq_and_power_from_upstream():
+    from app.solvers.optics_seq import hydrate_aom_rf_drive
+
+    aom_id = _uuid.uuid4()
+    src_id = _uuid.uuid4()
+    cable_id = _uuid.uuid4()
+    pes = [
+        _make_pe(aom_id, "aom", {"baseEfficiency": 0.85}),
+        _make_pe(src_id, "rf_source", {
+            "channels": [
+                {"channelIndex": 0, "anchorName": "CH0", "frequencyMhz": 120.0, "amplitudeScale": 0.5},
+            ],
+        }),
+        _make_pe(cable_id, "rf_cable", {"lengthMm": 150.0}),
+    ]
+    objects_by_id = {
+        aom_id: _make_obj(aom_id),
+        src_id: _make_obj(src_id),
+        cable_id: _make_obj(cable_id, {
+            "rfCableEndpoints": {
+                "A": {"targetObjectId": str(src_id), "targetAnchorName": "CH0", "targetAnchorId": "rf_out"},
+                "B": {"targetObjectId": str(aom_id), "targetAnchorName": "rf_in", "targetAnchorId": "rf_in"},
+            },
+        }),
+    }
+
+    hydrate_aom_rf_drive(pes, objects_by_id)
+
+    aom_pe = next(p for p in pes if p.element_kind == "aom")
+    assert aom_pe.kind_params["centerFreqMhz"] == 120.0
+    # Vpp = 0.5 × 1.0 V_full_scale = 0.5 V; P = 0.5² / (8 × 50) = 0.000625 W
+    assert abs(aom_pe.kind_params["rfDrivePowerW"] - (0.5 * 0.5) / (8 * 50)) < 1e-9
+
+
+def test_hydrate_aom_rf_drive_skips_orphan_aom():
+    """AOM with no rf_cable link gets no injection — apply_aom then
+    falls back to its default freq + baseEfficiency path."""
+    from app.solvers.optics_seq import hydrate_aom_rf_drive
+
+    aom_id = _uuid.uuid4()
+    pes = [_make_pe(aom_id, "aom", {"baseEfficiency": 0.85})]
+    objects_by_id = {aom_id: _make_obj(aom_id)}
+
+    hydrate_aom_rf_drive(pes, objects_by_id)
+
+    assert "centerFreqMhz" not in pes[0].kind_params
+    assert "rfDrivePowerW" not in pes[0].kind_params
+
+
+def test_hydrate_aom_rf_drive_clamps_to_rf_power_max():
+    """If kindParams.rfPowerMaxW is set, the injected rfDrivePowerW is
+    clamped down to that value (datasheet safety cap)."""
+    from app.solvers.optics_seq import hydrate_aom_rf_drive
+
+    aom_id = _uuid.uuid4()
+    src_id = _uuid.uuid4()
+    cable_id = _uuid.uuid4()
+    pes = [
+        # rfPowerMaxW = 0.0001 W — caps the resolved 0.0025 W
+        _make_pe(aom_id, "aom", {"baseEfficiency": 0.85, "rfPowerMaxW": 0.0001}),
+        _make_pe(src_id, "rf_source", {
+            "channels": [
+                {"channelIndex": 0, "anchorName": "CH0", "frequencyMhz": 80.0, "amplitudeScale": 1.0},
+            ],
+        }),
+        _make_pe(cable_id, "rf_cable", {}),
+    ]
+    objects_by_id = {
+        aom_id: _make_obj(aom_id),
+        src_id: _make_obj(src_id),
+        cable_id: _make_obj(cable_id, {
+            "rfCableEndpoints": {
+                "A": {"targetObjectId": str(src_id), "targetAnchorName": "CH0", "targetAnchorId": "rf_out"},
+                "B": {"targetObjectId": str(aom_id), "targetAnchorName": "rf_in", "targetAnchorId": "rf_in"},
+            },
+        }),
+    }
+
+    hydrate_aom_rf_drive(pes, objects_by_id)
+
+    aom_pe = next(p for p in pes if p.element_kind == "aom")
+    assert aom_pe.kind_params["rfDrivePowerW"] == 0.0001

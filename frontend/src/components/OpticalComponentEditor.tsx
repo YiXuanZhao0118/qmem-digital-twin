@@ -36,8 +36,14 @@ import {
   kindsWithEditableAnchors,
   type AnchorId,
   type KindContract,
-} from "../optical/kinds/_registry";
-import { componentTypeToOpticalKind } from "../utils/opticalDefaults";
+} from "../kinds/_registry";
+import { componentTypeToElementKind } from "../utils/elementDefaults";
+import {
+  COMPONENT_ANCHOR_CONTRACTS,
+  anchorMatchesTemplate,
+  getAnchorContractFor,
+  type AnchorTemplate,
+} from "./componentAnchorContracts";
 import { computeBraggTiltAxisFromRfDirectionBodyLocal } from "../optical/kinds/aom/physics";
 
 /** Map an AnchorId to a stable hue/colour for the marker sphere. Picks
@@ -57,6 +63,14 @@ function anchorColour(id: string): number {
       return 0xa855f7;          // purple
     case "center":
       return 0xfacc15;          // yellow
+    // RF ports get an amber accent so they're visually distinct from
+    // optical (green/red) ports. Matches .physics-panel-rf chrome.
+    case "rf_in":
+      return 0xfbbf24;          // light amber ??RF input
+    case "rf_out":
+      return 0xf59e0b;          // amber ??RF output
+    case "aperture":
+      return 0xfb923c;          // orange ??horn aperture face
     default:
       return 0xf97316;          // orange ??bbox face anchors etc.
   }
@@ -2160,32 +2174,138 @@ function FiberPatchCableFaceSection({
 // What is NOT edited here: acousticAxisBodyLocal,
 // braggTiltAxisDegLab, diffractionOrder, RF drive power. Those are
 // per-INSTANCE kindParams (vary across SceneObjects sharing the same
-// asset) and live in OpticalElementPanel's AomAdjustControls.
+// asset) and live in PhysicsElementPanel's AomAdjustControls.
 // =============================================================================
 
 function AomFaceSection({
   inDraft,
   outDraft,
+  rfInDraft,
   selectedAnchorKey,
   setSelectedAnchorKey,
   updateDraft,
   acousticAxisBodyLocal,
   rfDirectionBodyLocal,
   onRfDirectionChange,
+  domain,
 }: {
   inDraft: AnchorDraft | null;
   outDraft: AnchorDraft | null;
+  rfInDraft: AnchorDraft | null;
   selectedAnchorKey: string | null;
   setSelectedAnchorKey: (k: string | null) => void;
   updateDraft: (key: string, patch: Partial<AnchorDraft>) => void;
   acousticAxisBodyLocal: { x: number; y: number; z: number } | null;
   rfDirectionBodyLocal: { x: number; y: number; z: number };
   onRfDirectionChange: (dir: { x: number; y: number; z: number }) => void;
+  // PHY Editor tab the user entered AOM from. "optical" hides RF_IN
+  // edit surfaces; "rf" hides intercept_in/out + Bragg + acoustic axis.
+  // Same SceneObject, partitioned editing surface per domain.
+  domain: "optical" | "rf";
 }) {
+  const showOptical = domain === "optical";
+  const showRf = domain === "rf";
+
+  // RF-only branch: when the user entered AOM from the RF tab, the
+  // editor only exposes the physical RF connector (rf_in). intercept_in /
+  // intercept_out and the Bragg / acoustic-axis picker stay on the
+  // Optical tab — same SceneObject, partitioned editing surface.
+  if (showRf) {
+    if (!rfInDraft) {
+      return (
+        <div className="component-editor-section">
+          <div className="component-editor-section-title">
+            AOM RF drive port
+          </div>
+          <div style={{ fontSize: 12, opacity: 0.7 }}>
+            <code>rf_in</code> anchor is missing — the kind contract should
+            auto-create it. Re-open this component or check the contract
+            registry.
+          </div>
+        </div>
+      );
+    }
+    const isSelected = rfInDraft.__key === selectedAnchorKey;
+    const accent = "#b7791f";
+    return (
+      <div className="component-editor-section">
+        <div className="component-editor-section-title">
+          AOM RF drive port
+        </div>
+        <div
+          className={
+            "component-editor-anchor-row" + (isSelected ? " is-active" : "")
+          }
+          style={{
+            flexDirection: "column",
+            alignItems: "stretch",
+            padding: "6px 8px",
+            marginTop: 6,
+            borderLeft: `2px solid ${accent}`,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              cursor: "pointer",
+            }}
+            onClick={() => setSelectedAnchorKey(rfInDraft.__key)}
+          >
+            <strong style={{ color: accent, fontSize: 13 }}>
+              RF_IN (SMA jack)
+            </strong>
+            <span
+              style={{ fontSize: 10, opacity: 0.6, fontFamily: "monospace" }}
+            >
+              rf_in
+            </span>
+          </div>
+          <div
+            className="mirror-face-status"
+            style={{ marginTop: 4, marginBottom: 4 }}
+          >
+            <span style={{ opacity: 0.65 }}>
+              ({rfInDraft.positionMmBodyLocal.x.toFixed(2)},{" "}
+              {rfInDraft.positionMmBodyLocal.y.toFixed(2)},{" "}
+              {rfInDraft.positionMmBodyLocal.z.toFixed(2)}) mm
+            </span>
+            {rfInDraft.directionBodyLocal && (
+              <span style={{ opacity: 0.65, marginLeft: 8 }}>
+                n=(
+                {rfInDraft.directionBodyLocal.x.toFixed(2)},{" "}
+                {rfInDraft.directionBodyLocal.y.toFixed(2)},{" "}
+                {rfInDraft.directionBodyLocal.z.toFixed(2)}
+                )
+              </span>
+            )}
+          </div>
+          <EditableAnchorFields
+            draft={rfInDraft}
+            updateDraft={updateDraft}
+            showDirection={true}
+            apertureMode="scalar"
+          />
+          <p
+            className="mirror-face-hint"
+            style={{ marginTop: 4, fontSize: 11 }}
+          >
+            Position = SMA jack centre on the AOM driver housing.
+            Direction = OUTWARD face normal (the way a mating cable plug
+            slides on). Click <strong>"Pick RF_IN face"</strong> in the
+            viewport toolbar to BFS-detect the face from the mesh.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Optical branch — needs both optical ports.
   if (!inDraft || !outDraft) {
     return (
       <div className="component-editor-section">
-        <div className="component-editor-section-title">AOM ports</div>
+        <div className="component-editor-section-title">AOM optical ports</div>
         <div style={{ fontSize: 12, opacity: 0.7 }}>
           Both <code>intercept_in</code> and <code>intercept_out</code>{" "}
           must exist. Use the dropdown above to add the missing port - align needs both to disambiguate entry vs exit.
@@ -2262,9 +2382,12 @@ function AomFaceSection({
 
   return (
     <div className="component-editor-section">
-      <div className="component-editor-section-title">AOM ports</div>
+      <div className="component-editor-section-title">AOM optical ports</div>
       {portBlock("INTERCEPT_IN", "intercept_in", inDraft, "#4ade80")}
       {portBlock("INTERCEPT_OUT", "intercept_out", outDraft, "#f87171")}
+      {/* RF Drive Port (rf_in anchor) intentionally NOT rendered here —
+          it's edited from the RF tab via the RF-only branch above. Same
+          SceneObject, partitioned editing surface per tab. */}
       <div
         className="mirror-face-status"
         style={{
@@ -2494,7 +2617,44 @@ function BeamSplitterFaceSection({
 // =============================================================================
 
 
-export function OpticalComponentEditor() {
+// Anchor IDs that are RF / coax ports. The PHY Editor's tab filter (and
+// the 3D marker palette) treats these as the "RF surface" of a kind —
+// independent of the kind's primary domain. AOM is the canonical hybrid:
+// optically a passive nonlinear element (intercept_in / intercept_out),
+// but it also takes an RF drive cable (rf_in) — so it appears in BOTH
+// the Optical and RF Components tabs after this 2026-05-13 change.
+const RF_ANCHOR_IDS_SET: ReadonlySet<string> = new Set([
+  "rf_in",
+  "rf_out",
+  // TTL / digital-control input on the body of a kind that's
+  // structurally an RF device (rf_switch's 4th SMA jack). Listed here
+  // so a kind with rf_in + rf_out + ttl_in still resolves ONLY to the
+  // RF tab — without this the Optical-tab filter ("any anchor not in
+  // this set") would catch ttl_in and double-list rf_switch in both
+  // tabs.
+  "ttl_in",
+  "aperture",
+]);
+
+function kindAnchorIds(kind: ElementKind): readonly string[] {
+  const c = KIND_REGISTRY[kind as keyof typeof KIND_REGISTRY];
+  if (!c) return [];
+  return [...c.requiredAnchors, ...c.optionalAnchors];
+}
+
+const KINDS_WITH_RF_ANCHORS: ReadonlySet<string> = new Set(
+  (Object.keys(KIND_REGISTRY) as ElementKind[]).filter((k) =>
+    kindAnchorIds(k).some((id) => RF_ANCHOR_IDS_SET.has(id)),
+  ),
+);
+
+const KINDS_WITH_OPTICAL_ANCHORS: ReadonlySet<string> = new Set(
+  (Object.keys(KIND_REGISTRY) as ElementKind[]).filter((k) =>
+    kindAnchorIds(k).some((id) => !RF_ANCHOR_IDS_SET.has(id)),
+  ),
+);
+
+export function OpticalComponentEditor({ domain = "optical" }: { domain?: "optical" | "rf" } = {}) {
   const scene = useSceneStore((s) => s.scene);
   const editingAssetId = useSceneStore((s) => s.editingAssetId);
   const selectedComponentId = useSceneStore((s) => s.selectedComponentId);
@@ -2515,16 +2675,25 @@ export function OpticalComponentEditor() {
     // anchor 3D viewport.
     const enabledKinds = new Set<string>([...kindsWithEditableAnchors(), "fiber"]);
     return scene.components.filter((c) => {
-      const kind = componentTypeToOpticalKind(c.componentType);
-      return kind != null && enabledKinds.has(kind);
+      const kind = componentTypeToElementKind(c.componentType);
+      if (kind == null || !enabledKinds.has(kind)) return false;
+      // Anchor-based tab routing (Phase RF.cable follow-up, 2026-05-13):
+      // RF tab = kinds whose contract has any rf_in/rf_out/aperture
+      // anchor; Optical tab = kinds whose contract has any non-RF
+      // anchor. Hybrid kinds like AOM (intercept_in/out + rf_in) appear
+      // in BOTH tabs. Fiber is added explicitly to enabledKinds above
+      // (its anchors come from Component.fiberAnchors, not KIND_REGISTRY)
+      // and falls on the Optical side via KINDS_WITH_OPTICAL_ANCHORS.
+      if (domain === "rf") return KINDS_WITH_RF_ANCHORS.has(kind);
+      return KINDS_WITH_OPTICAL_ANCHORS.has(kind);
     });
-  }, [scene.components]);
+  }, [scene.components, domain]);
 
   // Group by ElementKind for the left list
   const groupedComponents = useMemo(() => {
     const map = new Map<string, ComponentItem[]>();
     for (const c of componentsWithFunction) {
-      const kind = componentTypeToOpticalKind(c.componentType);
+      const kind = componentTypeToElementKind(c.componentType);
       if (!kind) continue;
       const list = map.get(kind) ?? [];
       list.push(c);
@@ -2543,8 +2712,31 @@ export function OpticalComponentEditor() {
   );
   const kindContract: KindContract | null = useMemo(() => {
     if (!selectedComponent) return null;
-    return getKindContract(componentTypeToOpticalKind(selectedComponent.componentType));
+    return getKindContract(componentTypeToElementKind(selectedComponent.componentType));
   }, [selectedComponent]);
+  // Unified per-component anchor contract for AUTO-FILL: identity (id +
+  // name + count) is sourced from the contract. Per-component-type
+  // overrides win (e.g. AD9959's 4 SMA ports distinguished by name);
+  // otherwise falls back to KIND_REGISTRY's required + optional anchors
+  // (id only). PHY Editor uses this list to auto-create missing anchors
+  // on load. Always an array (possibly empty) so callers can iterate
+  // unconditionally.
+  const lockedAnchorContract: AnchorTemplate[] = useMemo(
+    () => getAnchorContractFor(selectedComponent?.componentType),
+    [selectedComponent?.componentType],
+  );
+  // Per-component-type HARD LOCK (CH0..CH3 fixed on AD9959, etc.). When
+  // true, the anchor inspector hides "+ Add" / "Delete" and replaces the
+  // id `<select>` with a read-only `<code>` showing id · name —
+  // position/direction stay editable for STL-alignment dragging. Optical
+  // kinds with only a KIND_REGISTRY contract stay soft-locked (existing
+  // behaviour: free edits + validation badges).
+  const isAnchorIdentityHardLocked = useMemo(
+    () =>
+      selectedComponent != null &&
+      COMPONENT_ANCHOR_CONTRACTS[selectedComponent.componentType] != null,
+    [selectedComponent],
+  );
   // Mirror & dichroic-mirror get a streamlined "single face" UX ??  // there is exactly one anchor (intercept_face) and no list / +Add /
   // delete UI; the user just picks the reflective face on the 3D mesh
   // and chooses which side reflects via +/??buttons.
@@ -2568,7 +2760,7 @@ export function OpticalComponentEditor() {
   // from the Bezier spline, but the optical PORT positions (intercept_in /
   // intercept_out) live as anchors stored on Component.properties.fiberAnchors
   // (because fiber has no Asset3D — see kind-contract comment in
-  // optical/kinds/_registry.ts).
+  // kinds/_registry.ts).
   const isFiberKind = kindContract?.kind === "fiber";
   const selectedFiberObject = useMemo(() => {
     if (!isFiberKind || !selectedComponent) return null;
@@ -2576,8 +2768,8 @@ export function OpticalComponentEditor() {
   }, [isFiberKind, selectedComponent, scene.objects]);
   const selectedFiberElement = useMemo(() => {
     if (!selectedFiberObject) return null;
-    return scene.opticalElements.find((e) => e.objectId === selectedFiberObject.id) ?? null;
-  }, [selectedFiberObject, scene.opticalElements]);
+    return scene.physicsElements.find((e) => e.objectId === selectedFiberObject.id) ?? null;
+  }, [selectedFiberObject, scene.physicsElements]);
   /** Anchor editing is enabled when there's an Asset3D (the usual case) OR
    *  the component is a fiber (anchors live on Component.properties). */
   const canEditAnchors = !!editedAsset || (isFiberKind && !!selectedComponent);
@@ -2778,6 +2970,27 @@ export function OpticalComponentEditor() {
         ];
       }
     }
+    // Generic contract-driven auto-fill: ensure every anchor declared in
+    // the locked contract is present in `initial`. Runs AFTER kind-specific
+    // auto-fills (TA / AOM / single-face) so their per-port defaults
+    // (aperture, direction) take priority; this loop only catches the
+    // anchors those blocks don't seed (per-component overrides like
+    // AD9959's 7 SMA ports, or simple optical kinds whose KIND_REGISTRY
+    // contract isn't already covered by a special-case block above).
+    for (const tpl of lockedAnchorContract) {
+      const already = initial.some((d) => anchorMatchesTemplate(d, tpl));
+      if (already) continue;
+      initial = [
+        ...initial,
+        {
+          id: tpl.id,
+          name: tpl.name,
+          positionMmBodyLocal: tpl.positionMmBodyLocal ?? { x: 0, y: 0, z: 0 },
+          directionBodyLocal: tpl.directionBodyLocal,
+          __key: freshKey(),
+        },
+      ];
+    }
     setDrafts(initial);
     // Auto-select the canonical anchor so the inspector + viewport
     // overlay bind immediately without an extra click. TA / AOM both
@@ -2804,6 +3017,7 @@ export function OpticalComponentEditor() {
     selectedComponent?.id,
     selectedFiberElement?.id,
     sourceAnchorsLength,
+    lockedAnchorContract,
   ]);
 
   // Mirror local dirty state into the store so the PhyEditor wrapper's
@@ -3224,6 +3438,12 @@ export function OpticalComponentEditor() {
 
   const addAnchor = () => {
     if (!canEditAnchors) return;
+    // Identity hard-lock (2026-05-13): only per-component-type registry
+    // hits (AD9959 etc.) get full identity lock. Optical kinds (mirror,
+    // AOM, …) with only a KIND_REGISTRY contract keep their soft-lock
+    // UX. This code path is unreachable when the UI hides "+ Add" but
+    // kept as a defensive guard against keyboard / external callers.
+    if (isAnchorIdentityHardLocked) return;
     const used = new Set(drafts.map((d) => d.id));
     const required = kindContract?.requiredAnchors ?? [];
     const optional = kindContract?.optionalAnchors ?? [];
@@ -3247,6 +3467,8 @@ export function OpticalComponentEditor() {
   };
 
   const deleteAnchor = (key: string) => {
+    // Identity hard-lock (2026-05-13): same defensive guard as addAnchor.
+    if (isAnchorIdentityHardLocked) return;
     setDrafts((prev) => prev.filter((d) => d.__key !== key));
     if (selectedAnchorKey === key) setSelectedAnchorKey(null);
     setDirty(true);
@@ -3417,7 +3639,7 @@ export function OpticalComponentEditor() {
       {/* Sub-bar: editing context + Save (Back lives in PhyEditor) */}
       <div className="component-editor-subbar">
         <div className="component-editor-title">
-          <strong>Optical / Components</strong>
+          <strong>{domain === "rf" ? "RF" : "Optical"} / Components</strong>
           {selectedComponent && (
             <span style={{ opacity: 0.7, marginLeft: 8 }}>
               - {selectedComponent.name}
@@ -3492,7 +3714,7 @@ export function OpticalComponentEditor() {
               </div>
               {selectedFiberElement && (
                 <div style={{ opacity: 0.55, fontSize: 11, marginTop: 4 }}>
-                  OpticalElement object {selectedFiberObject?.id?.slice(0, 8)}...
+                  PhysicsElement object {selectedFiberObject?.id?.slice(0, 8)}...
                 </div>
               )}
             </div>
@@ -4031,7 +4253,10 @@ export function OpticalComponentEditor() {
           {isAomKind && selectedComponent && editedAsset && (() => {
             const inDraftLocal = drafts.find((d) => d.id === "intercept_in");
             const outDraftLocal = drafts.find((d) => d.id === "intercept_out");
-            const startAomPick = (anchorId: "intercept_in" | "intercept_out") => {
+            const rfInDraftLocal = drafts.find((d) => d.id === "rf_in");
+            const startAomPick = (
+              anchorId: "intercept_in" | "intercept_out" | "rf_in",
+            ) => {
               const t = drafts.find((d) => d.id === anchorId);
               if (t) setSelectedAnchorKey(t.__key);
               setPickFaceTarget(anchorId);
@@ -4039,48 +4264,80 @@ export function OpticalComponentEditor() {
             };
             return (
               <div className="editor-viewport-tools" role="group" aria-label="AOM port tools">
-                <button
-                  type="button"
-                  className={
-                    "editor-viewport-tool editor-viewport-pick" +
-                    (pickFaceMode && pickFaceTarget === "intercept_in" ? " is-active" : "")
-                  }
-                  onClick={() => {
-                    if (pickFaceMode && pickFaceTarget === "intercept_in") {
-                      setPickFaceMode(false);
-                      setPickFaceTarget(null);
-                    } else {
-                      startAomPick("intercept_in");
+                {/* Optical-tab buttons: intercept_in / intercept_out
+                    picks. Hidden on the RF tab where the user only edits
+                    the SMA connector. */}
+                {domain !== "rf" && (
+                  <button
+                    type="button"
+                    className={
+                      "editor-viewport-tool editor-viewport-pick" +
+                      (pickFaceMode && pickFaceTarget === "intercept_in" ? " is-active" : "")
                     }
-                  }}
-                  title="Click the AOM input aperture face on the wireframe (the closed-edge polygon BFS picks coplanar triangles; centroid sets intercept_in.position, outward normal sets directionBodyLocal)."
-                  disabled={!inDraftLocal}
-                >
-                  {pickFaceMode && pickFaceTarget === "intercept_in"
-                    ? "Click INTERCEPT_IN face (ESC)"
-                    : "Pick INTERCEPT_IN face"}
-                </button>
-                <button
-                  type="button"
-                  className={
-                    "editor-viewport-tool editor-viewport-pick" +
-                    (pickFaceMode && pickFaceTarget === "intercept_out" ? " is-active" : "")
-                  }
-                  onClick={() => {
-                    if (pickFaceMode && pickFaceTarget === "intercept_out") {
-                      setPickFaceMode(false);
-                      setPickFaceTarget(null);
-                    } else {
-                      startAomPick("intercept_out");
+                    onClick={() => {
+                      if (pickFaceMode && pickFaceTarget === "intercept_in") {
+                        setPickFaceMode(false);
+                        setPickFaceTarget(null);
+                      } else {
+                        startAomPick("intercept_in");
+                      }
+                    }}
+                    title="Click the AOM input aperture face on the wireframe (the closed-edge polygon BFS picks coplanar triangles; centroid sets intercept_in.position, outward normal sets directionBodyLocal)."
+                    disabled={!inDraftLocal}
+                  >
+                    {pickFaceMode && pickFaceTarget === "intercept_in"
+                      ? "Click INTERCEPT_IN face (ESC)"
+                      : "Pick INTERCEPT_IN face"}
+                  </button>
+                )}
+                {domain !== "rf" && (
+                  <button
+                    type="button"
+                    className={
+                      "editor-viewport-tool editor-viewport-pick" +
+                      (pickFaceMode && pickFaceTarget === "intercept_out" ? " is-active" : "")
                     }
-                  }}
-                  title="Click the AOM output aperture face on the wireframe."
-                  disabled={!outDraftLocal}
-                >
-                  {pickFaceMode && pickFaceTarget === "intercept_out"
-                    ? "Click INTERCEPT_OUT face (ESC)"
-                    : "Pick INTERCEPT_OUT face"}
-                </button>
+                    onClick={() => {
+                      if (pickFaceMode && pickFaceTarget === "intercept_out") {
+                        setPickFaceMode(false);
+                        setPickFaceTarget(null);
+                      } else {
+                        startAomPick("intercept_out");
+                      }
+                    }}
+                    title="Click the AOM output aperture face on the wireframe."
+                    disabled={!outDraftLocal}
+                  >
+                    {pickFaceMode && pickFaceTarget === "intercept_out"
+                      ? "Click INTERCEPT_OUT face (ESC)"
+                      : "Pick INTERCEPT_OUT face"}
+                  </button>
+                )}
+                {/* RF-tab button: only the SMA RF connector pick. Hidden
+                    on the Optical tab. */}
+                {domain === "rf" && (
+                  <button
+                    type="button"
+                    className={
+                      "editor-viewport-tool editor-viewport-pick" +
+                      (pickFaceMode && pickFaceTarget === "rf_in" ? " is-active" : "")
+                    }
+                    onClick={() => {
+                      if (pickFaceMode && pickFaceTarget === "rf_in") {
+                        setPickFaceMode(false);
+                        setPickFaceTarget(null);
+                      } else {
+                        startAomPick("rf_in");
+                      }
+                    }}
+                    title="Click the SMA / coax RF connector face on the AOM driver housing. BFS picks the coplanar polygon, centroid sets rf_in.position, outward normal sets directionBodyLocal (the way a mating cable plug slides on — convention: all rf_in / rf_out point outward)."
+                    disabled={!rfInDraftLocal}
+                  >
+                    {pickFaceMode && pickFaceTarget === "rf_in"
+                      ? "Click RF_IN face (ESC)"
+                      : "Pick RF_IN face"}
+                  </button>
+                )}
               </div>
             );
           })()}
@@ -4360,6 +4617,7 @@ export function OpticalComponentEditor() {
               <AomFaceSection
                 inDraft={drafts.find((d) => d.id === "intercept_in") ?? null}
                 outDraft={drafts.find((d) => d.id === "intercept_out") ?? null}
+                rfInDraft={drafts.find((d) => d.id === "rf_in") ?? null}
                 selectedAnchorKey={selectedAnchorKey}
                 setSelectedAnchorKey={setSelectedAnchorKey}
                 updateDraft={updateDraft}
@@ -4369,6 +4627,7 @@ export function OpticalComponentEditor() {
                   setAomRfDirectionDraft(dir);
                   setDirty(true);
                 }}
+                domain={domain}
               />
             );
           })()}
@@ -4381,7 +4640,7 @@ export function OpticalComponentEditor() {
             // whatever the user has set elsewhere.
             const firstInst = scene.objects.find((o) => o.componentId === selectedComponent?.id);
             const el = firstInst
-              ? scene.opticalElements.find((e) => e.objectId === firstInst.id)
+              ? scene.physicsElements.find((e) => e.objectId === firstInst.id)
               : null;
             const kp = (el?.kindParams ?? {}) as {
               polarizing?: boolean;
@@ -4403,19 +4662,16 @@ export function OpticalComponentEditor() {
           <div className="component-editor-section">
             <div className="component-editor-section-title">
               Anchors ({drafts.length})
-              <button
-                type="button"
-                className="secondary-button"
-                style={{ marginLeft: "auto" }}
-                onClick={addAnchor}
-                disabled={!canEditAnchors}
+              <span
+                style={{ marginLeft: "auto", fontSize: 11, opacity: 0.6 }}
+                title="Anchor identity (id + name + count) is locked by the component's contract. Drag the position / direction to align with the 3D mesh."
               >
-                + Add
-              </button>
+                identity locked
+              </span>
             </div>
             {drafts.length === 0 && (
               <div style={{ fontSize: 12, opacity: 0.6, padding: "6px 0" }}>
-                No anchors yet. Click "+ Add" to create one.
+                No anchors declared in this component's contract.
               </div>
             )}
             {drafts.map((d) => (
@@ -4433,27 +4689,24 @@ export function OpticalComponentEditor() {
                   style={{
                     background: `#${anchorColour(d.id).toString(16).padStart(6, "0")}`,
                   }}
-                  title={`Select ${d.id}`}
+                  title={`Select ${d.id}${d.name ? ` (${d.name})` : ""}`}
                 />
-                <select
+                <code
                   className="component-editor-input"
-                  value={d.id}
-                  onChange={(e) => updateDraft(d.__key, { id: e.target.value as AnchorId })}
+                  onClick={() => setSelectedAnchorKey(d.__key)}
+                  style={{
+                    flex: 1,
+                    cursor: "pointer",
+                    padding: "4px 8px",
+                    background: "rgba(255,255,255,0.04)",
+                    borderRadius: 4,
+                    fontSize: 12,
+                  }}
+                  title="Locked by component contract — edit position / direction below."
                 >
-                  {EDITABLE_ANCHOR_IDS.map((aid) => (
-                    <option key={aid} value={aid}>
-                      {aid}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => deleteAnchor(d.__key)}
-                  title="Delete anchor"
-                >
-                  Delete
-                </button>
+                  {d.id}
+                  {d.name ? <span style={{ opacity: 0.7 }}> · {d.name}</span> : null}
+                </code>
               </div>
             ))}
           </div>

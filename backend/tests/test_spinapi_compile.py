@@ -1,7 +1,9 @@
-"""Phase PB.4 — unit tests for the SpinCore opcode compiler.
+"""Unit tests for the SpinCore opcode compiler.
 
-These cover the pure compile_to_opcodes() function. The HTTP route is
-covered by the broader integration tests when the DB has fixtures.
+After alembic 0046 the compiler takes a single ``programs`` list where each
+program carries its own ``channel_index`` + ``invert`` inline (the separate
+pulse_blaster_channels table is gone). Programs with ``channel_index = None``
+are skipped (unbound).
 """
 
 from __future__ import annotations
@@ -10,125 +12,91 @@ from app.solvers.spinapi_compile import compile_to_opcodes, render_spinapi_pytho
 
 
 def test_empty_inputs_returns_stop_only() -> None:
-    insts = compile_to_opcodes(channels=[], programs_by_component={})
+    insts = compile_to_opcodes(programs=[])
     assert len(insts) == 1
     assert insts[0].opcode == "STOP"
 
 
-def test_single_gate_on_then_off_emits_two_continues() -> None:
+def test_unbound_program_is_skipped() -> None:
     insts = compile_to_opcodes(
-        channels=[
+        programs=[
             {
-                "channel_index": 5,
-                "label": "AOM",
-                "target_component_id": "aom-comp",
+                "id": "p1",
+                "kind": "TTL",
+                "channel_index": None,  # logical only, no wire
                 "invert": False,
-                "enabled": True,
-            },
-        ],
-        programs_by_component={
-            "aom-comp": {
-                "object_id": "obj-1",
-                "blocks": [
-                    {
-                        "t_start_ns": 0.0,
-                        "t_end_ns": 1000.0,
-                        "waveform_kind": "gate_on",
-                        "params": {},
-                    },
-                    {
-                        "t_start_ns": 1000.0,
-                        "t_end_ns": 2000.0,
-                        "waveform_kind": "gate_off",
-                        "params": {},
-                    },
+                "intervals": [{"spinCoreStartNs": 0.0, "spinCoreEndNs": 1000.0}],
+            }
+        ]
+    )
+    # No bound programs ⇒ STOP only.
+    assert len(insts) == 1
+    assert insts[0].opcode == "STOP"
+
+
+def test_single_high_interval_emits_continue_then_low_then_stop() -> None:
+    insts = compile_to_opcodes(
+        programs=[
+            {
+                "id": "p1",
+                "kind": "TTL",
+                "channel_index": 5,
+                "invert": False,
+                "intervals": [
+                    {"spinCoreStartNs": 0.0, "spinCoreEndNs": 1000.0},
+                    # Gap [1000..2000) — implicit LOW between intervals
+                    {"spinCoreStartNs": 2000.0, "spinCoreEndNs": 3000.0},
                 ],
             }
-        },
+        ]
     )
-    # 2 CONTINUE + 1 STOP
-    assert len(insts) == 3
+    # Edges: 0, 1000, 2000, 3000 -> 3 CONTINUE intervals + STOP.
+    assert len(insts) == 4
     assert insts[0].opcode == "CONTINUE"
-    # ch5 high during the on block
     assert insts[0].output_state == (1 << 5)
     assert insts[0].length_ns == 1000.0
     assert insts[1].output_state == 0
     assert insts[1].length_ns == 1000.0
-    assert insts[2].opcode == "STOP"
+    assert insts[2].output_state == (1 << 5)
+    assert insts[2].length_ns == 1000.0
+    assert insts[3].opcode == "STOP"
 
 
-def test_inverted_channel_flips_state() -> None:
+def test_inverted_program_flips_state() -> None:
     insts = compile_to_opcodes(
-        channels=[
+        programs=[
             {
+                "id": "p1",
+                "kind": "TTL",
                 "channel_index": 6,
-                "label": "EOM (active-low)",
-                "target_component_id": "eom-comp",
                 "invert": True,
-                "enabled": True,
-            },
-        ],
-        programs_by_component={
-            "eom-comp": {
-                "object_id": "obj-1",
-                "blocks": [
-                    {
-                        "t_start_ns": 0.0,
-                        "t_end_ns": 500.0,
-                        "waveform_kind": "gate_on",
-                        "params": {},
-                    },
-                ],
+                "intervals": [{"spinCoreStartNs": 0.0, "spinCoreEndNs": 500.0}],
             }
-        },
+        ]
     )
-    # gate_on raw -> True, inverted -> False -> bit 6 LOW.
+    # raw HIGH during interval, inverted -> bit 6 LOW.
     assert insts[0].output_state == 0
     assert insts[0].length_ns == 500.0
 
 
-def test_two_channels_or_into_mask() -> None:
+def test_two_programs_or_into_mask() -> None:
     insts = compile_to_opcodes(
-        channels=[
+        programs=[
             {
+                "id": "p1",
+                "kind": "TTL",
                 "channel_index": 0,
-                "label": "ch0",
-                "target_component_id": "comp-a",
                 "invert": False,
-                "enabled": True,
+                "intervals": [{"spinCoreStartNs": 0.0, "spinCoreEndNs": 1000.0}],
             },
             {
+                "id": "p2",
+                "kind": "TTL",
                 "channel_index": 7,
-                "label": "ch7",
-                "target_component_id": "comp-b",
                 "invert": False,
-                "enabled": True,
+                "intervals": [{"spinCoreStartNs": 500.0, "spinCoreEndNs": 1500.0}],
             },
-        ],
-        programs_by_component={
-            "comp-a": {
-                "object_id": "oa",
-                "blocks": [
-                    {
-                        "t_start_ns": 0.0,
-                        "t_end_ns": 1000.0,
-                        "waveform_kind": "gate_on",
-                        "params": {},
-                    }
-                ],
-            },
-            "comp-b": {
-                "object_id": "ob",
-                "blocks": [
-                    {
-                        "t_start_ns": 500.0,
-                        "t_end_ns": 1500.0,
-                        "waveform_kind": "gate_on",
-                        "params": {},
-                    }
-                ],
-            },
-        },
+        ]
     )
     # Edges: 0, 500, 1000, 1500 -> 3 CONTINUE intervals + STOP.
     assert len(insts) == 4
@@ -140,60 +108,48 @@ def test_two_channels_or_into_mask() -> None:
     assert insts[2].output_state == (1 << 7)
 
 
-def test_disabled_channel_emits_zero_even_with_program() -> None:
-    insts = compile_to_opcodes(
-        channels=[
-            {
-                "channel_index": 3,
-                "label": "ch3",
-                "target_component_id": "comp",
-                "invert": False,
-                "enabled": False,
-            }
-        ],
-        programs_by_component={
-            "comp": {
-                "object_id": "o",
-                "blocks": [
-                    {
-                        "t_start_ns": 0.0,
-                        "t_end_ns": 1000.0,
-                        "waveform_kind": "gate_on",
-                        "params": {},
-                    }
-                ],
-            }
-        },
-    )
-    assert insts[0].output_state == 0
+def test_trigger_kind_compiles_same_as_ttl() -> None:
+    """``kind`` is metadata only — the PB opcode stream is identical."""
+    common = {
+        "channel_index": 5,
+        "invert": False,
+        "intervals": [{"spinCoreStartNs": 0.0, "spinCoreEndNs": 1000.0}],
+    }
+    ttl_insts = compile_to_opcodes(programs=[{"id": "p", "kind": "TTL", **common}])
+    trig_insts = compile_to_opcodes(programs=[{"id": "p", "kind": "Trigger", **common}])
+    assert [
+        (i.opcode, i.output_state, i.length_ns) for i in ttl_insts
+    ] == [(i.opcode, i.output_state, i.length_ns) for i in trig_insts]
 
 
 def test_python_renderer_produces_valid_calls() -> None:
     insts = compile_to_opcodes(
-        channels=[
+        programs=[
             {
+                "id": "p",
+                "kind": "TTL",
                 "channel_index": 5,
-                "label": "AOM",
-                "target_component_id": "comp",
                 "invert": False,
-                "enabled": True,
+                "intervals": [{"spinCoreStartNs": 0.0, "spinCoreEndNs": 1000.0}],
             }
-        ],
-        programs_by_component={
-            "comp": {
-                "object_id": "o",
-                "blocks": [
-                    {
-                        "t_start_ns": 0.0,
-                        "t_end_ns": 1000.0,
-                        "waveform_kind": "gate_on",
-                        "params": {},
-                    }
-                ],
-            }
-        },
+        ]
     )
     src = render_spinapi_python(insts)
     assert "from spinapi" in src
     assert "pb_inst_pbonly(0x000020, CONTINUE, 0, 1000*ns)" in src
-    assert "STOP" in src
+
+
+def test_snake_case_interval_keys_also_accepted() -> None:
+    insts = compile_to_opcodes(
+        programs=[
+            {
+                "id": "p",
+                "kind": "TTL",
+                "channel_index": 0,
+                "invert": False,
+                "intervals": [{"spin_core_start_ns": 0.0, "spin_core_end_ns": 500.0}],
+            }
+        ]
+    )
+    assert insts[0].output_state == (1 << 0)
+    assert insts[0].length_ns == 500.0

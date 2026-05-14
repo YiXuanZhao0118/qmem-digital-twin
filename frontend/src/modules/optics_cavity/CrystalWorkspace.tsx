@@ -11,8 +11,9 @@
  *   - right:  SHG efficiency calculator + result card
  */
 import { Play } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useResizablePanes } from "../../components/workspace/useResizablePanes";
 import {
   computeCrystalPhaseMatchApi,
   computeCrystalShgApi,
@@ -123,6 +124,11 @@ export function CrystalWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const dispatchSimulationRun = useSceneStore((s) => s.dispatchSimulationRun);
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
+  const { startDrag } = useResizablePanes({
+    id: "crystal",
+    containerRef: workspaceRef,
+  });
 
   // Load catalog once.
   useEffect(() => {
@@ -250,7 +256,7 @@ export function CrystalWorkspace() {
   }, [catalog, crystalId]);
 
   return (
-    <div className="electronics-workspace">
+    <div ref={workspaceRef} className="electronics-workspace">
       <aside className="electronics-sidebar">
         <header className="electronics-sidebar-header">
           <span className="electronics-sidebar-title">Presets</span>
@@ -366,6 +372,14 @@ export function CrystalWorkspace() {
         </div>
       </aside>
 
+      <div
+        className="ws-splitter"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize presets panel"
+        onPointerDown={startDrag("left")}
+      />
+
       <section className="electronics-editor">
         <header className="electronics-editor-header">
           <span className="electronics-sidebar-title">Phase matching</span>
@@ -445,6 +459,14 @@ export function CrystalWorkspace() {
           )}
         </div>
       </section>
+
+      <div
+        className="ws-splitter"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize SHG panel"
+        onPointerDown={startDrag("right")}
+      />
 
       <aside className="electronics-results">
         <header className="electronics-sidebar-header">

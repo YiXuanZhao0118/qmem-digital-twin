@@ -891,7 +891,7 @@ def solve_chain(
         result.errors.append("Optical graph contains a cycle.")
         return result
 
-    # Validate roots are emitters. A "root" here means an OpticalElement with
+    # Validate roots are emitters. A "root" here means an PhysicsElement with
     # no incoming OpticalLink. Non-emitter roots (mirror, lens, …) are dangling
     # — they exist in the catalog but aren't wired into a beam path. That's a
     # config issue, not a fatal one; the rest of the graph (anything reachable
@@ -912,7 +912,7 @@ def solve_chain(
         result.warnings.append(
             f"Component {root_id} is registered as '{kind}' but has no input link from a "
             f"laser/TA — it has no beam to act on. Add an OpticalLink so it receives a beam, "
-            f"or delete its OpticalElement record. Skipping."
+            f"or delete its PhysicsElement record. Skipping."
         )
     if not has_emitter_root:
         result.errors.append(

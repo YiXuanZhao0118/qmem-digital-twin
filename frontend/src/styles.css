@@ -1581,6 +1581,64 @@ input:disabled {
   overflow: auto;
 }
 
+.component-category {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 4px;
+}
+
+.component-category:first-child {
+  margin-top: 0;
+}
+
+.component-category-header {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 6px;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  border-top: 1px solid #e1e4e2;
+}
+
+.component-category:first-child .component-category-header {
+  border-top: none;
+}
+
+.component-category-header:hover {
+  background: rgba(15, 118, 110, 0.08);
+}
+
+.component-category-header .category-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.component-category-header .category-count {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.component-category-children {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
 .component-group {
   display: flex;
   flex-direction: column;
@@ -2497,7 +2555,7 @@ input:disabled {
   border-color: rgba(0, 0, 0, 0.4);
 }
 
-.optical-panel {
+.physics-panel {
   margin: 12px 0;
   padding: 14px;
   background: var(--panel);
@@ -2507,17 +2565,23 @@ input:disabled {
   flex-direction: column;
   gap: 12px;
 }
-.optical-panel-header {
+.physics-panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
-.optical-panel-header h3 {
+.physics-panel-header h3 {
   margin: 0;
   font-size: 14px;
   font-weight: 700;
 }
-.optical-auto-register {
+.physics-panel-rf {
+  border-left: 3px solid #f59e0b;
+}
+.physics-panel-rf .physics-panel-header h3 {
+  color: #b45309;
+}
+.physics-auto-register {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -2527,20 +2591,20 @@ input:disabled {
   border: 1px dashed #f59e0b;
   background: rgba(251, 191, 36, 0.08);
 }
-.optical-auto-register-text {
+.physics-auto-register-text {
   display: flex;
   flex-direction: column;
   gap: 2px;
   font-size: 12px;
   line-height: 1.45;
 }
-.optical-auto-register-text code {
+.physics-auto-register-text code {
   padding: 0 4px;
   border-radius: 4px;
   background: rgba(0, 0, 0, 0.06);
   font-size: 11.5px;
 }
-.optical-auto-register-btn {
+.physics-auto-register-btn {
   align-self: flex-start;
 }
 .optical-form {
@@ -2600,7 +2664,8 @@ input:disabled {
 .optical-wavelength input {
   width: 80px;
 }
-.optical-error {
+.optical-error,
+.physics-error {
   background: #fee2e2;
   color: #991b1b;
   padding: 6px 10px;
@@ -5553,11 +5618,38 @@ body.is-timing-bar-drag * {
   position: absolute;
   inset: 0;
   display: grid;
-  grid-template-columns: 220px 1fr 380px;
-  gap: 1px;
-  background: rgba(15, 23, 42, 0.12);
+  grid-template-columns:
+    var(--ws-left, 220px) 4px 1fr 4px var(--ws-right, 380px);
   color: rgba(15, 23, 42, 0.9);
   font-size: 13px;
+}
+
+.ws-splitter {
+  position: relative;
+  cursor: col-resize;
+  background: #fafaf7;
+  user-select: none;
+  touch-action: none;
+}
+
+.ws-splitter::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  margin-left: -0.5px;
+  background: rgba(15, 23, 42, 0.12);
+  pointer-events: none;
+  transition: background 100ms ease, width 100ms ease, margin-left 100ms ease;
+}
+
+.ws-splitter:hover::after,
+.ws-splitter[data-dragging="true"]::after {
+  background: rgba(59, 130, 246, 0.85);
+  width: 2px;
+  margin-left: -1px;
 }
 
 .electronics-sidebar,
@@ -5568,6 +5660,16 @@ body.is-timing-bar-drag * {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+}
+
+.electronics-sidebar {
+  grid-column: 1;
+}
+.electronics-editor {
+  grid-column: 3;
+}
+.electronics-results {
+  grid-column: 5;
 }
 
 .electronics-sidebar-header {
@@ -6254,267 +6356,6 @@ body.is-timing-bar-drag * {
   border-radius: 2px;
 }
 
-/* ---- Linked schematics (Phase F.1 Tier 1) ---- */
-
-.linked-schematics {
-  margin-top: 12px;
-  padding: 8px 10px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 6px;
-  background: rgba(59, 130, 246, 0.04);
-}
-
-.linked-schematics h3 {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: rgba(15, 23, 42, 0.65);
-  margin: 0 0 8px 0;
-}
-
-.linked-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-bottom: 6px;
-  font-size: 11px;
-}
-
-.linked-row-label {
-  flex: 0 0 60px;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 10px;
-  font-weight: 600;
-  color: rgba(15, 23, 42, 0.55);
-  padding-top: 3px;
-}
-
-.linked-chips {
-  flex: 1 1 auto;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  align-items: center;
-}
-
-.linked-empty {
-  font-size: 10px;
-  font-style: italic;
-  color: rgba(15, 23, 42, 0.4);
-}
-
-.linked-chip-group {
-  display: inline-flex;
-  align-items: center;
-  background: #ffffff;
-  border: 1px solid rgba(15, 23, 42, 0.15);
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-.linked-chip {
-  appearance: none;
-  background: transparent;
-  border: 0;
-  color: rgba(15, 23, 42, 0.85);
-  padding: 2px 8px;
-  font-size: 11px;
-  cursor: pointer;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  transition: background 120ms;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.linked-status {
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  padding: 1px 4px;
-  border-radius: 3px;
-  font-style: normal;
-}
-
-.linked-status.status-completed { background: rgba(34, 197, 94, 0.18); color: #166534; }
-.linked-status.status-running   { background: rgba(59, 130, 246, 0.2); color: #1e3a8a; }
-.linked-status.status-queued    { background: rgba(148, 163, 184, 0.25); color: #334155; }
-.linked-status.status-failed    { background: rgba(248, 113, 113, 0.2); color: #991b1b; }
-.linked-status.status-cancelled { background: rgba(245, 158, 11, 0.2); color: #92400e; }
-
-.linked-run {
-  appearance: none;
-  background: rgba(34, 197, 94, 0.12);
-  border: 0;
-  color: #166534;
-  padding: 1px 5px;
-  cursor: pointer;
-  border-left: 1px solid rgba(15, 23, 42, 0.15);
-  display: inline-flex;
-  align-items: center;
-}
-
-.linked-run:hover:not(:disabled) {
-  background: rgba(34, 197, 94, 0.25);
-}
-
-.linked-run:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.linked-chip:hover {
-  background: rgba(59, 130, 246, 0.12);
-}
-
-.linked-chip-group:hover {
-  border-color: rgba(59, 130, 246, 0.5);
-}
-
-.linked-add {
-  appearance: none;
-  background: transparent;
-  border: 1px dashed rgba(15, 23, 42, 0.3);
-  color: rgba(15, 23, 42, 0.55);
-  padding: 1px 5px;
-  border-radius: 10px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-}
-
-.linked-add:hover:not(:disabled) {
-  border-color: rgba(59, 130, 246, 0.5);
-  color: rgba(59, 130, 246, 0.95);
-}
-
-.linked-add:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-/* PulseBlaster TTL chip — used in LinkedSchematicsSection "Timing" row */
-.pb-chip {
-  border: 1px solid rgba(234, 179, 8, 0.45);
-  border-radius: 10px;
-  background: rgba(254, 240, 138, 0.45);
-  padding: 2px 6px 2px 4px;
-  gap: 5px;
-}
-
-.pb-chip:hover {
-  background: rgba(254, 240, 138, 0.85);
-  border-color: rgba(234, 179, 8, 0.75);
-}
-
-.pb-chip-idx {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  height: 14px;
-  padding: 0 3px;
-  background: rgba(234, 179, 8, 0.85);
-  color: #1e3a8a;
-  border-radius: 3px;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-}
-
-.pb-chip-inv {
-  border-color: rgba(248, 113, 113, 0.55);
-  background: rgba(254, 226, 226, 0.55);
-}
-
-.pb-chip-inv:hover {
-  background: rgba(254, 202, 202, 0.85);
-}
-
-.pb-chip-inv .pb-chip-idx {
-  background: rgba(248, 113, 113, 0.85);
-  color: #fff;
-}
-
-.pb-chip-inv-mark {
-  font-size: 9px;
-  font-weight: 700;
-  font-style: normal;
-  color: #991b1b;
-  letter-spacing: 0.04em;
-}
-
-/* Phase RF.2 — RF chain chips in LinkedSchematicsSection */
-.linked-rf-dbm {
-  margin-left: 6px;
-  font-style: normal;
-  font-size: 9.5px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: rgba(56, 189, 248, 0.18);
-  color: #075985;
-}
-
-.rf-chip {
-  border-radius: 10px;
-  border: 1px solid rgba(56, 189, 248, 0.4);
-  background: rgba(186, 230, 253, 0.35);
-  padding: 2px 7px 2px 4px;
-  gap: 5px;
-}
-
-.rf-chip:not(:disabled):hover {
-  background: rgba(186, 230, 253, 0.85);
-  border-color: rgba(56, 189, 248, 0.75);
-}
-
-.rf-chip:disabled {
-  cursor: default;
-  opacity: 0.85;
-}
-
-.rf-chip-tag {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 28px;
-  height: 14px;
-  padding: 0 4px;
-  background: rgba(56, 189, 248, 0.85);
-  color: #fff;
-  border-radius: 3px;
-  font-size: 8.5px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-}
-
-.rf-chip-amplifier .rf-chip-tag {
-  background: rgba(34, 197, 94, 0.85);
-}
-
-.rf-chip-attenuator .rf-chip-tag,
-.rf-chip-filter_bandpass .rf-chip-tag,
-.rf-chip-filter_lowpass .rf-chip-tag,
-.rf-chip-filter_highpass .rf-chip-tag {
-  background: rgba(168, 85, 247, 0.85);
-}
-
-.rf-chip-gain {
-  margin-left: 4px;
-  font-style: normal;
-  font-size: 9.5px;
-  color: rgba(15, 23, 42, 0.6);
-}
-
 /* Phase RF.3 — instantaneous scrub-time RF readout in Object panel */
 .scrub-rf-readout {
   margin: 8px 0 0;
@@ -6587,51 +6428,6 @@ body.is-timing-bar-drag * {
   bottom: 0;
   background: rgba(56, 189, 248, 0.75);
   transition: width 60ms;
-}
-
-/* Phase RF.5 — RF chain output readout on AOM/EOM Object panels */
-.rf-chain-readout {
-  margin: 8px 0 0;
-  padding: 8px 10px;
-  background: rgba(254, 240, 138, 0.18);
-  border: 1px solid rgba(234, 179, 8, 0.32);
-  border-radius: 6px;
-}
-
-.rf-chain-readout h3 {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 10.5px;
-  font-weight: 600;
-  color: #92400e;
-  margin: 0 0 6px;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-
-.rf-chain-grid {
-  display: grid;
-  grid-template-columns: 100px 1fr;
-  row-gap: 3px;
-  column-gap: 8px;
-  font-size: 11px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.rf-chain-label {
-  color: rgba(15, 23, 42, 0.55);
-}
-
-.rf-chain-value {
-  color: rgba(15, 23, 42, 0.85);
-}
-
-.rf-chain-secondary {
-  margin-left: 6px;
-  font-style: normal;
-  font-size: 10px;
-  color: rgba(15, 23, 42, 0.5);
 }
 
 /* Phase PB.3 — scrub-time bar pinned to bottom of workspace canvas */
@@ -6732,15 +6528,6 @@ body.is-timing-bar-drag * {
 
 .scrub-time-stop:hover {
   background: rgba(248, 113, 113, 0.4);
-}
-
-.linked-error {
-  margin-top: 6px;
-  padding: 4px 8px;
-  font-size: 10px;
-  color: #991b1b;
-  background: rgba(248, 113, 113, 0.12);
-  border-radius: 3px;
 }
 
 /* ---- Magnetics overlay panel (Phase F+) ---- */
@@ -7174,8 +6961,8 @@ body.is-timing-bar-drag * {
   display: flex;
   gap: 2px;
   padding: 6px 10px 0;
-  background: rgba(15, 23, 42, 0.06);
-  border-bottom: 1px solid rgba(15, 23, 42, 0.1);
+  background: #fafaf7;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.12);
   flex: 0 0 auto;
 }
 
@@ -7192,20 +6979,189 @@ body.is-timing-bar-drag * {
   border-radius: 5px 5px 0 0;
 }
 
-.optics-sub-tab:hover {
-  background: rgba(15, 23, 42, 0.04);
+.optics-sub-tab:hover:not(.active) {
+  background: rgba(15, 23, 42, 0.05);
   color: rgba(15, 23, 42, 0.9);
 }
 
 .optics-sub-tab.active {
-  background: #fafaf7;
-  border-color: rgba(15, 23, 42, 0.1);
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
   color: rgba(15, 23, 42, 0.95);
   font-weight: 600;
+  margin-bottom: -1px;
 }
 
 .optics-sub-body {
   position: relative;
   flex: 1 1 auto;
   min-height: 0;
+}
+
+/* AD9959 per-instance controls (Object Panel) -------------------------- */
+
+.ad9959-subsection {
+  margin-top: 10px;
+  padding: 8px;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.ad9959-subsection-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.7;
+  margin-bottom: 6px;
+}
+
+.ad9959-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 3px 0;
+}
+
+.ad9959-row > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  opacity: 0.85;
+}
+
+.ad9959-row > input[type="number"],
+.ad9959-row > select {
+  flex: 0 0 110px;
+  font-size: 12px;
+  padding: 2px 4px;
+}
+
+.ad9959-row > input[type="checkbox"] {
+  flex: 0 0 auto;
+  margin-right: 2px;
+}
+
+.ad9959-row.ad9959-derived {
+  font-style: italic;
+  opacity: 0.75;
+}
+
+.ad9959-row.ad9959-derived > code {
+  flex: 0 0 110px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  padding: 2px 4px;
+  text-align: right;
+}
+
+.ad9959-channel {
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  border-radius: 4px;
+  margin-top: 6px;
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.ad9959-channel.is-expanded {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.ad9959-channel-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 6px;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ad9959-channel-header:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.ad9959-channel-name {
+  font-weight: 600;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  flex: 0 0 36px;
+}
+
+.ad9959-channel-summary {
+  flex: 1 1 auto;
+  opacity: 0.7;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ad9959-channel-enable {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.ad9959-channel-enable:hover {
+  opacity: 1;
+}
+
+.ad9959-channel-body {
+  padding: 4px 8px 8px 22px;
+  border-top: 1px solid var(--line, rgba(255, 255, 255, 0.06));
+}
+
+.ad9959-profiles {
+  margin-top: 6px;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.ad9959-profiles-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  font-size: 10px;
+  opacity: 0.65;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--line, rgba(255, 255, 255, 0.06));
+}
+
+.ad9959-profiles-header > span:first-child {
+  flex: 0 0 86px;
+}
+
+.ad9959-profile-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 6px;
+  font-size: 11px;
+}
+
+.ad9959-profile-row + .ad9959-profile-row {
+  border-top: 1px dashed var(--line, rgba(255, 255, 255, 0.04));
+}
+
+.ad9959-profile-idx {
+  flex: 0 0 86px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.ad9959-profile-row > input[type="number"] {
+  flex: 1 1 auto;
+  font-size: 11px;
+  padding: 2px 4px;
 }

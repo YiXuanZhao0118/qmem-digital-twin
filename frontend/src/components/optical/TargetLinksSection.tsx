@@ -1,6 +1,6 @@
 // TargetLinksSection — shared link list + Add-link form for a single
 // SceneObject. Used by:
-//   - OpticalElementPanel (full-detail OE editor)
+//   - PhysicsElementPanel (full-detail OE editor)
 //   - BeamPlacementPanel (compact, alongside placement controls so user
 //     can manage links + adjust position from the same panel)
 //
@@ -14,7 +14,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSceneStore } from "../../store/sceneStore";
 import type {
   ComponentItem,
-  OpticalElement,
+  PhysicsElement,
   SceneObject,
 } from "../../types/digitalTwin";
 import {
@@ -30,7 +30,7 @@ type Props = {
 };
 
 export function TargetLinksSection({ sceneObject, compact }: Props) {
-  const opticalElements = useSceneStore((state) => state.scene.opticalElements);
+  const physicsElements = useSceneStore((state) => state.scene.physicsElements);
   const opticalLinks = useSceneStore((state) => state.scene.opticalLinks);
   const sceneObjects = useSceneStore((state) => state.scene.objects);
   const components = useSceneStore((state) => state.scene.components);
@@ -39,8 +39,20 @@ export function TargetLinksSection({ sceneObject, compact }: Props) {
   const deleteOpticalLink = useSceneStore((state) => state.deleteOpticalLink);
 
   const existing = sceneObject
-    ? opticalElements.find((e) => e.objectId === sceneObject.id)
+    ? physicsElements.find((e) => e.objectId === sceneObject.id)
     : undefined;
+
+  // Bidirectional ports (rf_cable's End A / End B) live in `inputPorts`
+  // by backend convention but can drive a connection in EITHER direction.
+  // Surface them in BOTH the from-port and to-port dropdowns so an
+  // rf_cable can link FROM (rf_source → cable) or TO (cable → AOM).
+  // 2026-05-13: P2-bidirectional requirement.
+  const fromCandidatePorts = useMemo(() => {
+    if (!existing) return [];
+    const outputs = existing.outputPorts ?? [];
+    const bidiInputs = (existing.inputPorts ?? []).filter((p) => p.role === "bidirectional");
+    return [...outputs, ...bidiInputs];
+  }, [existing]);
 
   const linkValidations = useMemo<Map<string, LinkValidation>>(
     () => validateAllOpticalLinks(scene),
@@ -58,7 +70,7 @@ export function TargetLinksSection({ sceneObject, compact }: Props) {
 
   const linkableTargets = useMemo(() => {
     if (!sceneObject) return [];
-    return opticalElements
+    return physicsElements
       .filter((element) => element.objectId !== sceneObject.id && element.inputPorts.length > 0)
       .map((element) => {
         const targetObject = sceneObjects.find((obj) => obj.id === element.objectId);
@@ -67,10 +79,10 @@ export function TargetLinksSection({ sceneObject, compact }: Props) {
           : undefined;
         return { element, object: targetObject, component: targetComponent };
       })
-      .filter((entry): entry is { element: OpticalElement; object: SceneObject; component: ComponentItem } =>
+      .filter((entry): entry is { element: PhysicsElement; object: SceneObject; component: ComponentItem } =>
         Boolean(entry.object && entry.component),
       );
-  }, [opticalElements, components, sceneObjects, sceneObject]);
+  }, [physicsElements, components, sceneObjects, sceneObject]);
 
   const [linkFromPort, setLinkFromPort] = useState<string>("");
   const [linkToObjectId, setLinkToObjectId] = useState<string>("");
@@ -80,10 +92,10 @@ export function TargetLinksSection({ sceneObject, compact }: Props) {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!linkFromPort && existing?.outputPorts?.[0]) {
-      setLinkFromPort(existing.outputPorts[0].portId);
+    if (!linkFromPort && fromCandidatePorts[0]) {
+      setLinkFromPort(fromCandidatePorts[0].portId);
     }
-  }, [existing?.objectId, existing?.outputPorts, linkFromPort]);
+  }, [existing?.objectId, fromCandidatePorts, linkFromPort]);
 
   useEffect(() => {
     if (!linkToObjectId && linkableTargets[0]) {
@@ -111,7 +123,7 @@ export function TargetLinksSection({ sceneObject, compact }: Props) {
   const onCreateLink = async () => {
     setLinkError("");
     if (!sceneObject || !existing) {
-      setLinkError("Select a scene object instance with an OpticalElement first.");
+      setLinkError("Select a scene object instance with an PhysicsElement first.");
       return;
     }
     if (!linkFromPort || !linkToObjectId || !linkToPort) {
@@ -163,7 +175,7 @@ export function TargetLinksSection({ sceneObject, compact }: Props) {
     return (
       <div className={`optical-links${compact ? " optical-links--compact" : ""}`}>
         <p className="empty-state">
-          This object has no OpticalElement registered — links unavailable.
+          This object has no PhysicsElement registered — links unavailable.
         </p>
       </div>
     );
@@ -220,16 +232,17 @@ export function TargetLinksSection({ sceneObject, compact }: Props) {
         </h4>
       )}
 
-      {(existing.outputPorts?.length ?? 0) > 0 && linkableTargets.length > 0 ? (
+      {fromCandidatePorts.length > 0 && linkableTargets.length > 0 ? (
         <div className="optical-link-builder">
           <div className="optical-link-builder-row">
             <label>
               <span>From port</span>
               <select value={linkFromPort} onChange={(e) => setLinkFromPort(e.target.value)}>
-                {(existing.outputPorts ?? []).map((port) => (
+                {fromCandidatePorts.map((port) => (
                   <option key={port.portId} value={port.portId}>
                     {port.portId}
                     {port.label ? ` (${port.label})` : ""}
+                    {port.role === "bidirectional" ? " ↔" : ""}
                   </option>
                 ))}
               </select>

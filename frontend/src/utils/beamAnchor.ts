@@ -10,7 +10,7 @@
 //  2. Per-element-kind default                                  (kind-based)
 //  3. Body center (no offset)                                   (final fallback)
 
-import type { OpticalElement, Asset3D, ComponentItem, SceneObject } from "../types/digitalTwin";
+import type { PhysicsElement, Asset3D, ComponentItem, SceneObject } from "../types/digitalTwin";
 import { rotateLocalToLab, type Vec3 } from "./beamPlacement";
 import { getMirrorNormalBodyLocal } from "./v2Bindings";
 
@@ -47,12 +47,12 @@ type SceneObjectLike = {
  *  each instance can have independent params even if they share an asset. */
 export function getBeamAnchor(
   objectId: string,
-  scene: { components: ComponentItem[]; assets: Asset3D[]; opticalElements: OpticalElement[]; objects: SceneObjectLike[] },
+  scene: { components: ComponentItem[]; assets: Asset3D[]; physicsElements: PhysicsElement[]; objects: SceneObjectLike[] },
 ): BeamAnchor {
   const obj = scene.objects.find((o) => o.id === objectId);
   const comp = obj ? scene.components.find((c) => c.id === obj.componentId) : null;
   const asset = comp?.asset3dId ? scene.assets.find((a) => a.id === comp.asset3dId) : null;
-  const el = scene.opticalElements.find((e) => e.objectId === objectId);
+  const el = scene.physicsElements.find((e) => e.objectId === objectId);
 
   // 1. Per-asset declared anchor wins — explicit metadata authored by the
   //    asset importer always trumps kind defaults.
@@ -134,7 +134,7 @@ export function anchorLabPos(
  *  Takes a SceneObject id (per-object optical chain). */
 export function mirrorNormalLab(
   objectId: string,
-  scene: { components: ComponentItem[]; assets: Asset3D[]; opticalElements: OpticalElement[]; objects: SceneObjectLike[] },
+  scene: { components: ComponentItem[]; assets: Asset3D[]; physicsElements: PhysicsElement[]; objects: SceneObjectLike[] },
 ): Vec3 | null {
   const anchor = getBeamAnchor(objectId, scene);
   if (!anchor.normalLocal) return null;

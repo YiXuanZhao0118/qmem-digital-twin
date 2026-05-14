@@ -429,7 +429,7 @@ function PolarizationDisplay({ jones }: { jones: [number, number, number, number
  *  viewer panel. Returns a Fragment (no FloatingPanel chrome). */
 export function BeamScopeContents() {
   const probe = useSceneStore((state) => state.scopeProbe);
-  const opticalElements = useSceneStore((state) => state.scene.opticalElements);
+  const physicsElements = useSceneStore((state) => state.scene.physicsElements);
 
   const snapshot = useMemo(() => {
     if (!probe) return null;
@@ -437,7 +437,7 @@ export function BeamScopeContents() {
     // that component, then look up the OE by object_id (alembic 0014).
     const sourceObj = (useSceneStore.getState().scene.objects).find((o) => o.componentId === probe.sourceComponentId);
     const laserEl = sourceObj
-      ? opticalElements.find((el) => el.objectId === sourceObj.id)
+      ? physicsElements.find((el) => el.objectId === sourceObj.id)
       : undefined;
     if (!laserEl) return null;
     const params = (laserEl.kindParams ?? {}) as {
@@ -507,7 +507,7 @@ export function BeamScopeContents() {
     // to the clicked world point. This makes the scope live-update whenever
     // any upstream optic's kindParams change (the renderer republishes
     // `__rayTraceDebug` on every scene re-render, and we depend on
-    // `opticalElements` so React re-runs this useMemo).
+    // `physicsElements` so React re-runs this useMemo).
     const segs = ((window as unknown as { __rayTraceDebug?: Array<Record<string, unknown>> }).__rayTraceDebug) ?? [];
     const px = probe.pointThree.x, py = probe.pointThree.y, pz = probe.pointThree.z;
     let bestSeg: Record<string, unknown> | null = null;
@@ -622,7 +622,7 @@ export function BeamScopeContents() {
       aomSideband,
       fiberCoupling,
     };
-  }, [probe, opticalElements]);
+  }, [probe, physicsElements]);
 
   if (!probe || !snapshot) {
     return (

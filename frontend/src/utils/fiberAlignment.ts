@@ -47,6 +47,24 @@ export interface BeamSegmentLab {
   beamId: string;
   aMm: Vec3Tuple;
   bMm: Vec3Tuple;
+  /** Display label shown in the multi-candidate picker. Lets the caller
+   *  encode source + AOM order + wavelength etc.; falls back to beamId
+   *  when undefined. */
+  displayLabel?: string;
+  /** Original emitter (laser / TA) SceneObject id — used by the store to
+   *  group multi-segment beam chains under one candidate. */
+  emitterObjectId?: string;
+  /** AOM diffraction order if this segment came out of an AOM (… −1, 0,
+   *  +1 …). null/undefined when not from an AOM. Critical for snapping
+   *  to a specific Bragg sideband when 0/±1 orders are all within
+   *  tolerance — without this all three look indistinguishable in the
+   *  picker. */
+  aomOrder?: number | null;
+  /** Visualisation branch — "main" / "transmitted" / "reflected". Used
+   *  for picker disambiguation when a beam splitter produces two paths
+   *  through the same tolerance window. */
+  branch?: string;
+  wavelengthNm?: number;
 }
 
 export interface FiberEndAlignmentResult {
@@ -65,6 +83,17 @@ export interface FiberEndAlignmentResult {
    *  so callers / tests can check the entry-face-vs-beam invariant
    *  without re-deriving it. */
   newOutwardBody: Vec3Tuple;
+}
+
+/** One picker entry — same alignment payload as `FiberEndAlignmentResult`
+ *  plus metadata for the UI label. Returned by
+ *  `findFiberEndAlignmentCandidates` sorted ascending by `distMm`. */
+export interface FiberAlignmentCandidate extends FiberEndAlignmentResult {
+  displayLabel?: string;
+  emitterObjectId?: string;
+  aomOrder?: number | null;
+  branch?: string;
+  wavelengthNm?: number;
 }
 
 function makePoseTransforms(pose: FiberAlignPose) {
@@ -147,7 +176,14 @@ export function endpointOutwardBody(
 /** Run the full port-aware projection. Returns null when no beam segment
  *  is within tolerance. Caller is responsible for stitching the result
  *  back into the persisted fiberNodes array and pushing through the
- *  store. */
+ *  store.
+ *
+ *  Thin wrapper around `findFiberEndAlignmentCandidates` — returns the
+ *  closest candidate (or null when nothing is in range). Kept for the
+ *  one-shot back-compat caller `sceneStore.alignFiberEndToBeam` and the
+ *  pinning tests in `utils/__tests__/fiberAlignment.test.ts`. New code
+ *  (multi-candidate picker — see `findFiberAlignmentCandidates` in the
+ *  store) should call the list version directly. */
 export function computeFiberEndAlignment(opts: {
   end: "A" | "B";
   nodes: FiberNodePersist[];
@@ -155,8 +191,44 @@ export function computeFiberEndAlignment(opts: {
   beamSegmentsLab: BeamSegmentLab[];
   toleranceMm: number;
 }): FiberEndAlignmentResult | null {
+  const list = findFiberEndAlignmentCandidates(opts);
+  if (list.length === 0) return null;
+  const closest = list[0];
+  return {
+    beamId: closest.beamId,
+    distMm: closest.distMm,
+    projectedPortLab: closest.projectedPortLab,
+    newPosMmBody: closest.newPosMmBody,
+    newHandleMmBody: closest.newHandleMmBody,
+    newOutwardBody: closest.newOutwardBody,
+  };
+}
+
+/** Build all candidate beam segments within `toleranceMm` of the fiber
+ *  endpoint's optical port, sorted ascending by distance. Each entry
+ *  already carries the body-local node + handle so applying is a stitch
+ *  + write.
+ *
+ *  Used by the two-phase fiber align action (mirrors
+ *  `findRfCableEndpointAlignmentCandidates`):
+ *    - auto-snap when length === 1 (UI applies `[0]` directly)
+ *    - show a picker dropdown when length >= 2 (AOM 0/±1 clustered
+ *      orders, beam-splitter R+T branches, etc.) so the user explicitly
+ *      chooses which beam to align to instead of the closest-wins coin
+ *      toss the old single-result `computeFiberEndAlignment` did.
+ *
+ *  Optional `BeamSegmentLab.displayLabel / emitterObjectId / aomOrder /
+ *  branch / wavelengthNm` are surfaced verbatim on the result so the
+ *  caller can label each candidate without re-deriving them. */
+export function findFiberEndAlignmentCandidates(opts: {
+  end: "A" | "B";
+  nodes: FiberNodePersist[];
+  pose: FiberAlignPose;
+  beamSegmentsLab: BeamSegmentLab[];
+  toleranceMm: number;
+}): FiberAlignmentCandidate[] {
   const { end, nodes, pose, beamSegmentsLab, toleranceMm } = opts;
-  if (nodes.length < 2) return null;
+  if (nodes.length < 2) return [];
   const idx = end === "A" ? 0 : nodes.length - 1;
   const neighbourIdx = end === "A" ? 1 : nodes.length - 2;
   const epBody = nodes[idx].posMm;
@@ -172,13 +244,16 @@ export function computeFiberEndAlignment(opts: {
   ];
   const anchorLab = bodyToLab(anchorBody);
 
-  // Closest beam-segment projection within tolerance.
-  let best: {
-    beamId: string;
-    projectedMm: Vec3Tuple;
-    tangentMm: Vec3Tuple;
-    distMm: number;
-  } | null = null;
+  const oldNeighbour = nodes[neighbourIdx].posMm;
+  const segLen = Math.hypot(
+    oldNeighbour[0] - epBody[0],
+    oldNeighbour[1] - epBody[1],
+    oldNeighbour[2] - epBody[2],
+  );
+  const handleLen = Math.max(20, segLen * 0.33);
+  const handleSign = end === "A" ? 1 : -1;
+
+  const results: FiberAlignmentCandidate[] = [];
   for (const seg of beamSegmentsLab) {
     const ab: Vec3Tuple = [
       seg.bMm[0] - seg.aMm[0],
@@ -204,55 +279,43 @@ export function computeFiberEndAlignment(opts: {
       anchorLab[2] - projected[2],
     );
     if (distMm > toleranceMm) continue;
-    if (best && distMm >= best.distMm) continue;
     const tanLen = Math.sqrt(lenSq);
-    best = {
+    const tangentMm: Vec3Tuple = [ab[0] / tanLen, ab[1] / tanLen, ab[2] / tanLen];
+
+    // Back-derive new node so the port lands on the projected point.
+    const projectedAnchorBody = labToBody(projected);
+    const tanBody = rotateLabDirToBody(tangentMm);
+    const newOutwardBody: Vec3Tuple =
+      end === "A"
+        ? [-tanBody[0], -tanBody[1], -tanBody[2]]
+        : [tanBody[0], tanBody[1], tanBody[2]];
+    const newPosMmBody: Vec3Tuple = [
+      projectedAnchorBody[0] - newOutwardBody[0] * FIBER_FERRULE_TIP_MM,
+      projectedAnchorBody[1] - newOutwardBody[1] * FIBER_FERRULE_TIP_MM,
+      projectedAnchorBody[2] - newOutwardBody[2] * FIBER_FERRULE_TIP_MM,
+    ];
+    const newHandleMmBody: Vec3Tuple = [
+      handleSign * tanBody[0] * handleLen,
+      handleSign * tanBody[1] * handleLen,
+      handleSign * tanBody[2] * handleLen,
+    ];
+
+    results.push({
       beamId: seg.beamId,
-      projectedMm: projected,
-      tangentMm: [ab[0] / tanLen, ab[1] / tanLen, ab[2] / tanLen],
       distMm,
-    };
+      projectedPortLab: projected,
+      newPosMmBody,
+      newHandleMmBody,
+      newOutwardBody,
+      displayLabel: seg.displayLabel,
+      emitterObjectId: seg.emitterObjectId,
+      aomOrder: seg.aomOrder ?? null,
+      branch: seg.branch,
+      wavelengthNm: seg.wavelengthNm,
+    });
   }
-  if (!best) return null;
-
-  // Back-derive new node so the port lands on the projected point.
-  const projectedAnchorBody = labToBody(best.projectedMm);
-  const tanBody = rotateLabDirToBody(best.tangentMm);
-  const newOutwardBody: Vec3Tuple =
-    end === "A"
-      ? [-tanBody[0], -tanBody[1], -tanBody[2]]
-      : [tanBody[0], tanBody[1], tanBody[2]];
-  const newPosMmBody: Vec3Tuple = [
-    projectedAnchorBody[0] - newOutwardBody[0] * FIBER_FERRULE_TIP_MM,
-    projectedAnchorBody[1] - newOutwardBody[1] * FIBER_FERRULE_TIP_MM,
-    projectedAnchorBody[2] - newOutwardBody[2] * FIBER_FERRULE_TIP_MM,
-  ];
-
-  // Handle direction (magnitude preserved):
-  //   End A: outward_A = −handleOut → handleOut_A = +tanBody
-  //   End B: outward_B = −handleIn  → handleIn_B  = −tanBody
-  const oldNeighbour = nodes[neighbourIdx].posMm;
-  const segLen = Math.hypot(
-    oldNeighbour[0] - epBody[0],
-    oldNeighbour[1] - epBody[1],
-    oldNeighbour[2] - epBody[2],
-  );
-  const handleLen = Math.max(20, segLen * 0.33);
-  const handleSign = end === "A" ? 1 : -1;
-  const newHandleMmBody: Vec3Tuple = [
-    handleSign * tanBody[0] * handleLen,
-    handleSign * tanBody[1] * handleLen,
-    handleSign * tanBody[2] * handleLen,
-  ];
-
-  return {
-    beamId: best.beamId,
-    distMm: best.distMm,
-    projectedPortLab: best.projectedMm,
-    newPosMmBody,
-    newHandleMmBody,
-    newOutwardBody,
-  };
+  results.sort((a, b) => a.distMm - b.distMm);
+  return results;
 }
 
 /** Read the current optical-port pose in LAB frame for one end of a fiber.

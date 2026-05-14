@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app import crud, schemas
 from app.db import get_session
-from app.models import OpticalElement, OpticalLink
+from app.models import PhysicsElement, OpticalLink
 from app.websocket import manager
 
 
@@ -30,8 +30,8 @@ def _port_ids(ports: list, role: str) -> set[str]:
     return ids
 
 
-async def _get_optical_element_by_object(session: AsyncSession, object_id) -> OpticalElement | None:
-    stmt = select(OpticalElement).where(OpticalElement.object_id == object_id)
+async def _get_physics_element_by_object(session: AsyncSession, object_id) -> PhysicsElement | None:
+    stmt = select(PhysicsElement).where(PhysicsElement.object_id == object_id)
     return (await session.scalars(stmt)).one_or_none()
 
 
@@ -47,7 +47,7 @@ async def validate_ports(session: AsyncSession, payload: schemas.OpticalLinkBase
                 f"({payload.from_object_id}). Pick a different target."
             ),
         )
-    source = await _get_optical_element_by_object(session, payload.from_object_id)
+    source = await _get_physics_element_by_object(session, payload.from_object_id)
     if source is None:
         raise HTTPException(
             status_code=400,
@@ -59,7 +59,7 @@ async def validate_ports(session: AsyncSession, payload: schemas.OpticalLinkBase
             detail=f"from_port '{payload.from_port}' is not an output of the source element.",
         )
 
-    target = await _get_optical_element_by_object(session, payload.to_object_id)
+    target = await _get_physics_element_by_object(session, payload.to_object_id)
     if target is None:
         raise HTTPException(
             status_code=400,

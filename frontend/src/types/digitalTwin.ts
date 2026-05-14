@@ -43,6 +43,30 @@ export type Anchor = {
    *  field is unset, the anchor is treated as a static body-local
    *  position. See `utils/fiberAnchorResolver.ts`. */
   derivedFromFiberEndpoint?: "A" | "B";
+  /** Same as `derivedFromFiberEndpoint` but for the rf_cable kind:
+   *  resolves rf_in / rf_out to the live spline endpoints stored in
+   *  `SceneObject.properties.rfCableNodes`. See
+   *  `utils/rfCableAnchorResolver.ts`. */
+  derivedFromRfCableEndpoint?: "A" | "B";
+};
+
+/** Per-instance rf_cable endpoint link record. Persisted under
+ *  `SceneObject.properties.rfCableEndpoints[A|B]` whenever the user runs
+ *  Align RF on a cable end. The renderer resolves the linked endpoint's
+ *  spline node body-local position FROM the target anchor's live lab
+ *  pose (target SceneObject.xMm/yMm/zMm + asset anchor body-local), so
+ *  when the user moves the target component the cable's End A / End B
+ *  physically follows without a re-align. The link is cleared the moment
+ *  the user drags that endpoint's anchor in node-edit mode (manual
+ *  override beats link). */
+export type RfCableEndpointLink = {
+  targetObjectId: string;
+  /** `rf_in` or `rf_out` — anchor.id on the target asset. */
+  targetAnchorId: string;
+  /** Asset anchor `name` field (e.g. "CH0"). Some targets (AD9959) have
+   *  4 anchors all with id=`rf_out` distinguished by name, so name must
+   *  pair with id to pinpoint which one. */
+  targetAnchorName: string;
 };
 
 export type Asset3D = {
@@ -270,7 +294,10 @@ export type ElementKind =
   | "wavemeter"
   | "beam_dump"
   | "rf_source"
-  | "horn_antenna";
+  | "rf_amplifier"
+  | "horn_antenna"
+  | "rf_cable"
+  | "rf_switch";
 
 // --- Per-kind params (discriminated by element_kind) ------------------------
 
@@ -486,12 +513,18 @@ export type AOMParams = {
   deflectionPerMhzUrad: number;
   acousticVelocityMPerS: number;
   modulationBandwidthMhz: number;
-  centerFreqMhz: number;
+  // Phase B (RF link single-source-of-truth): centerFreqMhz / rfDrivePowerW
+  // are no longer stored on the AOM. They are resolved at solve time from
+  // the upstream rf_source channel via the AOM's rf_in `rfCableEndpoints`
+  // link (backend `hydrate_aom_rf_drive`). Frontend resolves the same way
+  // for ray-trace / Bragg-angle UI readouts via
+  // `resolveAomRfDriveFromScene` in `utils/aomRfDrive.ts`.
   refractiveIndex?: number | null;
   figureOfMeritM2?: number | null;
   crystalLengthMm?: number | null;
   acousticBeamWidthMm?: number | null;
-  rfDrivePowerW?: number | null;
+  /** Safety upper bound for the resolved drive power. Clamps the live
+   *  upstream value; not a setpoint. */
   rfPowerMaxW?: number | null;
   /** Phase 5: renamed from `acousticAxisLocal`. Body-local Z-up. */
   acousticAxisBodyLocal?: number[] | null;
@@ -560,11 +593,61 @@ export type BeamDumpParams = {
   absorption: number;
 };
 
+export type DdsSweepTarget = "frequency" | "phase" | "amplitude";
+
+export type DdsSweepConfig = {
+  target: DdsSweepTarget;
+  start: number;
+  end: number;
+  // Rising / falling slope rates in target-unit per second
+  // (MHz/s for frequency, deg/s for phase, 1/s for amplitude).
+  rampUpRate: number;
+  rampDownRate: number;
+  noDwellLow: boolean;
+  noDwellHigh: boolean;
+};
+
+export type DdsChannelMode = "single_tone" | "sweep" | "fm" | "pm" | "am";
+export type DdsModulationLevels = 2 | 4 | 8 | 16;
+
+export type DdsProfile = {
+  // Field meaning depends on parent channel's mode:
+  //   fm → frequencyMhz, pm → phaseDeg, am → amplitudeScale.
+  // Other fields are ignored at runtime; null = not set.
+  frequencyMhz: number | null;
+  phaseDeg: number | null;
+  amplitudeScale: number | null;
+};
+
+export type DdsChannel = {
+  channelIndex: number;
+  anchorName: string | null;
+  mode: DdsChannelMode;
+  channelEnabled: boolean;
+  frequencyMhz: number;
+  phaseDeg: number;
+  amplitudeScale: number;
+  sweep: DdsSweepConfig | null;
+  modulationLevels: DdsModulationLevels;
+  profiles: DdsProfile[] | null;
+};
+
+export type DdsSyncRole = "master" | "slave" | "standalone";
+export type DdsSerialPortMode = "1wire" | "2wire" | "4wire";
+
 export type RfSourceParams = {
   frequencyMhz: number;
   powerDbm: number;
   phaseDeg: number;
   modulation: "none" | "am" | "fm" | "iq";
+  channels: DdsChannel[] | null;
+  referenceClockMhz: number | null;
+  sysClockMhz: number | null;
+  pllMultiplier: number;
+  pllBypass: boolean;
+  serialInterface: "spi" | "parallel" | "none" | null;
+  syncRole: DdsSyncRole;
+  serialPortMode: DdsSerialPortMode;
 };
 
 export type HornAntennaParams = {
@@ -573,6 +656,95 @@ export type HornAntennaParams = {
   beamwidth3dbDeg: number;
   polarAxisBodyLocal: number[] | null;
   cosineExponent: number;
+};
+
+/** RF amplifier (e.g. Mini-Circuits ZHL-1-2W+ — 5..500 MHz, +30 dBm output,
+ *  +24 V supply, SMA female on each end). Unidirectional gain block with
+ *  one rf_in port and one rf_out port. Flat-gain passband between
+ *  `frequencyRangeMhz[0]` and `frequencyRangeMhz[1]`; outside that range
+ *  the solver treats the path as -inf dB. Soft compression near rated
+ *  output is approximated by clamping at `outputPowerMaxDbm` once the
+ *  linear-gain extrapolation would exceed it; the 1 dB compression
+ *  point lives in `outputPowerP1dbDbm` for downstream linearity checks. */
+export type RfAmplifierParams = {
+  gainDb: number;
+  frequencyRangeMhz: [number, number];
+  outputPowerP1dbDbm: number;
+  outputPowerMaxDbm: number;
+  inputPowerMaxDbm: number;
+  noiseFigureDb: number;
+  supplyVoltageV: number;
+  supplyCurrentA: number;
+  inputReturnLossDb: number;
+  outputReturnLossDb: number;
+  connectorType: "sma" | "bnc" | "n" | "smp";
+};
+
+export type RfSwitchType = "SPST" | "SP2T" | "SP3T" | "SP4T";
+export type RfSwitchControlLogic = "TTL" | "CMOS_3V3" | "CMOS_5V" | "OPEN_COLLECTOR";
+export type RfSwitchAbsorptionType = "absorptive" | "reflective";
+
+/** RF switch (e.g. Mini-Circuits ZYSWA-2-50DR — SP2T, DC..5 GHz, ±5 V supply,
+ *  TTL control). Topology: one common RF port (rf_in, the "RFIN" on the
+ *  datasheet) routed to one of N throw ports (rf_out × N, the "RF1"/"RF2"/…
+ *  on the datasheet) under TTL control. Reciprocal in the small-signal
+ *  regime — a 1-in/N-out switch is also a N-in/1-out multiplexer; the
+ *  digital twin treats both directions of each port as bidirectional, and
+ *  the active path is determined by the TTL state (DeviceState.state.ttlGate
+ *  / .activeThrow at runtime). */
+export type RfSwitchParams = {
+  /** Pole/throw topology. ZYSWA-2-50DR is "SP2T". */
+  switchType: RfSwitchType;
+  /** Number of throw ports (= number of rf_out anchors). 2 for SP2T,
+   *  3 for SP3T, etc. Derived from switchType but stored explicitly so a
+   *  custom switch with non-standard topology can override. */
+  throwCount: number;
+  frequencyMinGhz: number;
+  frequencyMaxGhz: number;
+  /** Insertion loss on the active (selected) path, dB. Datasheet "typ"
+   *  at the high end of the band. */
+  insertionLossDb: number;
+  /** Isolation between RFIN and the unselected throw port(s), dB.
+   *  Datasheet "typ" at the high end of the band. */
+  isolationDb: number;
+  /** Time from TTL edge to RF output settled to 50 % of final amplitude,
+   *  nanoseconds. */
+  switchingTimeNs: number;
+  /** Absorptive (50-Ω terminated unselected throw) vs reflective (open). */
+  absorptionType: RfSwitchAbsorptionType;
+  /** Logic family of the control input (TTL = 0/+5 V). */
+  controlLogic: RfSwitchControlLogic;
+  /** Logic-high voltage on the TTL pin, volts. */
+  controlVoltageHighV: number;
+  /** Positive supply rail, volts (e.g. +5 V). */
+  supplyPositiveV: number;
+  /** Negative supply rail, volts (e.g. -5 V). null = single-supply switch. */
+  supplyNegativeV: number | null;
+  /** Typical total current draw at the rated supply, mA. */
+  supplyCurrentMa: number;
+  /** Max RF input power without compression / damage, dBm. */
+  maxInputPowerDbm: number;
+  /** RF connector family on the SMA ports. */
+  connectorType: RfCableConnectorType;
+  /** Manufacturer + model strings for the datasheet link in the inspector. */
+  manufacturer: string | null;
+  model: string | null;
+  datasheetUrl: string | null;
+};
+
+export type RfCableConnectorType = "sma" | "bnc" | "n" | "smp";
+
+export type RfCableParams = {
+  lengthMm: number;
+  impedanceOhm: number;
+  maxFrequencyGhz: number;
+  connectorType: RfCableConnectorType;
+  cableType: string | null;
+  jacketOuterDiameterMm: number;
+  jacketColor: string;
+  workingVoltageVRms: number | null;
+  dielectricVoltageVRms: number | null;
+  minBendRadiusMm: number | null;
 };
 
 // Tagged union: element_kind discriminates which params shape applies.
@@ -600,14 +772,17 @@ export type OpticalElementKindParams =
   | { elementKind: "wavemeter"; kindParams: WavemeterParams }
   | { elementKind: "beam_dump"; kindParams: BeamDumpParams }
   | { elementKind: "rf_source"; kindParams: RfSourceParams }
-  | { elementKind: "horn_antenna"; kindParams: HornAntennaParams };
+  | { elementKind: "rf_amplifier"; kindParams: RfAmplifierParams }
+  | { elementKind: "horn_antenna"; kindParams: HornAntennaParams }
+  | { elementKind: "rf_cable"; kindParams: RfCableParams }
+  | { elementKind: "rf_switch"; kindParams: RfSwitchParams };
 
 export type OpticalElementCommon = {
   /** Per-object PK (alembic 0014). Each scene object that has an optical
-   *  role gets its own OpticalElement row keyed by `objectId`. */
+   *  role gets its own PhysicsElement row keyed by `objectId`. */
   id: string;
   /** SceneObject this element belongs to. Two scene objects of the same
-   *  Component (e.g. two BB1 mirrors) get DIFFERENT OpticalElement rows. */
+   *  Component (e.g. two BB1 mirrors) get DIFFERENT PhysicsElement rows. */
   objectId: string;
   wavelengthRangeNm: [number, number];
   inputPorts: OpticalPort[];
@@ -616,7 +791,7 @@ export type OpticalElementCommon = {
   updatedAt?: string;
 };
 
-export type OpticalElement = OpticalElementCommon & OpticalElementKindParams;
+export type PhysicsElement = OpticalElementCommon & OpticalElementKindParams;
 
 export type OpticalLink = {
   id: string;
@@ -650,40 +825,90 @@ export const EMITTER_KINDS: ReadonlySet<ElementKind> = new Set<ElementKind>([
   "tapered_amplifier",
 ]);
 
-export type SpinCoreStartMode = "WAIT" | "CONTINUE";
-export type WaveformKind = "const" | "linear_ramp" | "arbitrary" | "gate_on" | "gate_off";
+// =============================================================================
+// TimingProgram (alembic 0045/0046 — reusable HIGH-interval schedules)
+// =============================================================================
 
-export type TimingBlock = {
-  id: string;
-  programObjectId: string;
-  label: string | null;
-  tStartNs: number;
-  tEndNs: number;
-  waveformKind: WaveformKind;
-  params: Record<string, unknown>;
-  sortOrder: number;
-  createdAt?: string;
-  updatedAt?: string;
+export type TimingProgramKind = "TTL" | "Trigger";
+
+export type TimingInterval = {
+  spinCoreStartNs: number;
+  spinCoreEndNs: number;
 };
 
 export type TimingProgram = {
-  objectId: string;
-  name: string;
-  spinCoreStart: SpinCoreStartMode;
-  durationNs: number;
-  properties: Record<string, unknown>;
-  blocks: TimingBlock[];
+  id: string;
+  name: string | null;
+  kind: TimingProgramKind;
+  /** Physical PB channel (0..23) this program emits on. null = logical
+   *  schedule not yet bound to a hardware wire. */
+  channelIndex: number | null;
+  invert: boolean;
+  intervals: TimingInterval[];
   createdAt?: string;
   updatedAt?: string;
 };
 
-export type TimingProgramUpsert = {
-  name: string;
-  spinCoreStart: SpinCoreStartMode;
-  durationNs: number;
-  properties?: Record<string, unknown>;
-  blocks: Array<Omit<TimingBlock, "id" | "programObjectId" | "createdAt" | "updatedAt">>;
+export type TimingProgramCreatePayload = {
+  name?: string | null;
+  kind?: TimingProgramKind;
+  channelIndex?: number | null;
+  invert?: boolean;
+  intervals?: TimingInterval[];
 };
+
+export type TimingProgramUpdatePayload = Partial<TimingProgramCreatePayload>;
+
+export type CompiledPbInstruction = {
+  index: number;
+  outputState: number;
+  opcode: string;
+  data: number;
+  lengthNs: number;
+  label: string | null;
+};
+
+export type TimingProgramCompile = {
+  instructions: CompiledPbInstruction[];
+  pythonSource: string;
+  boundProgramCount: number;
+  totalDurationNs: number;
+};
+
+// =============================================================================
+// Kind capabilities (drives UI affordance: power switch / TTL gate / Trigger picker)
+// =============================================================================
+// Defaults; per-template Component.properties.hasTriggerInput / hasTtlGateInput
+// can override (e.g. an rf_source variant that does have a trigger input).
+
+export const POWER_KINDS: ReadonlySet<string> = new Set([
+  "laser_source",
+  "tapered_amplifier",
+  "rf_source",
+  // Phase RF.amp (2026-05-14): coaxial RF gain blocks (Mini-Circuits ZHL
+  // series) take +24 V DC bias on the feed-through posts. Membership
+  // here makes the InstrumentPowerPanel auto-attach a power toggle to
+  // each rf_amplifier object; the supply voltage / current spec lives
+  // in RfAmplifierParams (supplyVoltageV / supplyCurrentA).
+  "rf_amplifier",
+  "function_generator",
+  "rf_switch",
+  "detector",
+  "camera",
+  "spectrometer",
+  "wavemeter",
+]);
+
+export const TTL_GATE_KINDS: ReadonlySet<string> = new Set([
+  "rf_switch",
+]);
+
+export const TRIGGER_KINDS: ReadonlySet<string> = new Set([
+  "function_generator",
+  "camera",
+  "spectrometer",
+  "detector",
+]);
 
 export type TransientTracePoint = {
   tNs: number;
@@ -721,7 +946,7 @@ export type SceneData = {
   assemblyRelations: AssemblyRelation[];
   beamPaths: BeamPath[];
   deviceStates: DeviceState[];
-  opticalElements: OpticalElement[];
+  physicsElements: PhysicsElement[];
   opticalLinks: OpticalLink[];
   beamSegments: BeamSegment[];
   sceneViews?: import("./visibility").SceneView[];
@@ -740,7 +965,7 @@ export type SceneEvent =
   | { type: "beam_path.updated"; payload: BeamPath & { deleted?: boolean } }
   | { type: "connection.updated"; payload: ConnectionItem & { deleted?: boolean } }
   | { type: "device_state.updated"; payload: DeviceState }
-  | { type: "optical_element.updated"; payload: (Partial<OpticalElement> & { componentId?: string; deleted?: boolean }) | OpticalElement }
+  | { type: "physics_element.updated"; payload: (Partial<PhysicsElement> & { componentId?: string; deleted?: boolean }) | PhysicsElement }
   | { type: "optical_link.updated"; payload: (Partial<OpticalLink> & { id?: string; deleted?: boolean }) | OpticalLink }
   | { type: "optical_simulation.completed"; payload: { runId: string; segmentCount: number; errors: string[]; warnings: string[] } }
   | { type: "simulation_run.status_changed"; payload: { id: string; module: SimulationModule; status: SimulationRunStatus; progress: number | null; errorMessage: string | null } }
@@ -748,7 +973,7 @@ export type SceneEvent =
   | { type: "collection.updated"; payload: (Partial<Collection> & { id?: string; deleted?: boolean }) | Collection }
   | { type: "collection_member.updated"; payload: Partial<CollectionMember> & { collectionId?: string; objectId?: string; deleted?: boolean; resetToMaster?: boolean } }
   | { type: "timing_program.updated"; payload: TimingProgram }
-  | { type: "timing_program.deleted"; payload: { objectId: string } }
+  | { type: "timing_program.deleted"; payload: { id: string } }
   | { type: "scene.reload"; payload: Record<string, unknown> }
   | { type: "scene.connected"; payload: Record<string, unknown> }
   | { type: "pong"; payload: Record<string, unknown> };
@@ -1167,33 +1392,8 @@ export type MagneticsProblemCreatePayload = {
 
 export type MagneticsProblemUpdatePayload = Partial<MagneticsProblemCreatePayload>;
 
-// ---- PulseBlaster channels (Phase F+ timing) -------------------------------
-
-export type PulseBlasterChannel = {
-  id: string;
-  channelIndex: number;
-  label: string;
-  targetComponentId: string | null;
-  invert: boolean;
-  enabled: boolean;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type PulseBlasterChannelCreatePayload = {
-  channelIndex: number;
-  label?: string;
-  targetComponentId?: string | null;
-  invert?: boolean;
-  enabled?: boolean;
-};
-
-export type PulseBlasterChannelUpdatePayload = Partial<{
-  label: string;
-  targetComponentId: string | null;
-  invert: boolean;
-  enabled: boolean;
-}>;
+// PulseBlasterChannel types removed in alembic 0046: channel_index + invert
+// are now inline on TimingProgram (see TimingProgram type above).
 
 // ---- RF chain nodes (Phase RF.2) ------------------------------------------
 

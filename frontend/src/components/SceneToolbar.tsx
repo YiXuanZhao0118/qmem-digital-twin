@@ -1,4 +1,4 @@
-import { Columns2, Eye, Move, PenTool, Play, RefreshCw, RotateCw, Settings2, Square, Type, Wifi, WifiOff } from "lucide-react";
+import { Columns2, Eye, Move, PenTool, Play, RotateCw, Settings2, Square, Type, Wifi, WifiOff } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { useSceneStore, TOUCH_OPS } from "../store/sceneStore";
@@ -152,9 +152,6 @@ export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneTo
         <button className="setup-button" title="Initial setup" onClick={() => setSetupOpen((open) => !open)}>
           <Settings2 size={17} />
           Initial Setup
-        </button>
-        <button className="icon-button" title="Reload scene" onClick={() => void loadScene()}>
-          <RefreshCw size={18} />
         </button>
         <button
           className="setup-button"

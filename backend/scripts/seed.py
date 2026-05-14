@@ -724,9 +724,60 @@ COMPONENTS = [
         "brand": "Mini-Circuits",
         "model": "ZHL-42W+",
         "asset": "primitive_box",
-        "properties": {"geometry": "rf_amplifier", "dimensionsMm": [180, 140, 70]},
+        "properties": {
+            "geometry": "rf_amplifier",
+            "dimensionsMm": [180, 140, 70],
+            "datasheetUrl": "https://www.minicircuits.com/pdfs/ZHL-42W+.pdf",
+            "frequencyRangeMhz": [10.0, 4200.0],
+            "gainDb": 33.0,
+            "outputPowerP1dbDbm": 30.0,
+            "outputPowerMaxDbm": 30.0,
+            "supplyVoltageV": 15.0,
+            "supplyCurrentA": 0.8,
+            "connectorType": "sma",
+            "physics_capabilities": ["rf"],
+            "notes": (
+                "Mini-Circuits ZHL-42W+ — 10 MHz to 4.2 GHz coaxial amplifier, "
+                "33 dB typ gain, +30 dBm typ output, +15 V supply, SMA female "
+                "on each end (rf_in / rf_out)."
+            ),
+        },
         "object": {"x_mm": -250, "y_mm": 500, "z_mm": 50, "rz_deg": 0},
         "state": {"enabled": True, "temperatureC": 33.5, "rfPowerDbm": 28.2},
+    },
+    {
+        "name": "rf_amp_zhl_1_2w_plus_001",
+        "component_type": "rf_amplifier",
+        "brand": "Mini-Circuits",
+        "model": "ZHL-1-2W+",
+        "asset": "primitive_box",
+        "properties": {
+            "geometry": "rf_amplifier",
+            # Approximate envelope of the heatsink variant: 108 mm length
+            # (flange-to-flange), 50 mm width across the heatsink base, and
+            # 50 mm total height including the fins.
+            "dimensionsMm": [108, 50, 50],
+            "datasheetUrl": "https://www.minicircuits.com/pdfs/ZHL-1-2W+.pdf",
+            "frequencyRangeMhz": [5.0, 500.0],
+            "gainDb": 29.0,
+            "outputPowerP1dbDbm": 29.0,
+            "outputPowerMaxDbm": 30.0,
+            "inputPowerMaxDbm": 0.0,
+            "noiseFigureDb": 9.0,
+            "supplyVoltageV": 24.0,
+            "supplyCurrentA": 0.6,
+            "connectorType": "sma",
+            "physics_capabilities": ["rf"],
+            "notes": (
+                "Mini-Circuits ZHL-1-2W+ — coaxial high-power amplifier, "
+                "5 to 500 MHz, +30 dBm rated output (~2 W), 29 dB min gain "
+                "(30 dB typ), 9 dB NF typ, +24 V at 0.6 A typ. SMA female "
+                "on each end; rf_in on the +X face, rf_out on the -X face. "
+                "+24V / GND feedthrough posts on the +Y face."
+            ),
+        },
+        "object": {"x_mm": -250, "y_mm": 620, "z_mm": 50, "rz_deg": 0},
+        "state": {"enabled": True, "temperatureC": 35.0, "rfPowerDbm": 28.5},
     },
     {
         "name": "thorlabs_post_holder_ph50em",
@@ -1305,7 +1356,7 @@ for _part, _ctype, _asset, _x, _y in _THORLABS_BULK:
             {"posMm": [300.0, 0.0, 50.0], "handleInMm": [-100.0, 0.0, 0.0]},
         ])
         _props.setdefault("radiusMm", 1.0)
-        # Per-template kindParams override — the OpticalElement bootstrapper
+        # Per-template kindParams override — the PhysicsElement bootstrapper
         # in routers/components.py merges this into DEFAULT_KIND_PARAMS["fiber"]
         # so each catalog Thorlabs model lights up with its own spec.
         # Connector polish (PC vs APC), fiber type (PM vs SM) and design
@@ -1494,12 +1545,20 @@ async def upsert_component(
             # Defensive: shouldn't happen but harmless if it does.
             pass
 
-    if state_data is not None:
-        state = await session.get(DeviceState, component.id)
-        if state is None:
-            state = DeviceState(component_id=component.id)
-            session.add(state)
-        state.state = state_data
+        # DeviceState is keyed by object_id (alembic 0015 — per-object
+        # runtime state). Lives inside the object branch because there's
+        # no place to attach a state row without a SceneObject.
+        if state_data is not None:
+            state = await session.get(DeviceState, scene_object.id)
+            if state is None:
+                state = DeviceState(object_id=scene_object.id)
+                session.add(state)
+            state.state = state_data
+    elif state_data is not None:
+        print(
+            f"  WARN: skipping state for catalog-only component "
+            f"{component.name!r} (no object to bind DeviceState to)"
+        )
 
     return component
 

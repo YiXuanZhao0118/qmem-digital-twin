@@ -14,7 +14,7 @@
 import type {
   Asset3D,
   ComponentItem,
-  OpticalElement,
+  PhysicsElement,
   OpticalLink,
   SceneData,
   SceneObject,
@@ -113,7 +113,7 @@ const objectPosLab = (obj: SceneObject): Vec3 => ({ x: obj.xMm, y: obj.yMm, z: o
  *  elements (mirror, lens, …) don't have a body-relative emission point.
  */
 function beamStartPosLab(obj: SceneObject, scene: SceneData): Vec3 {
-  const el = scene.opticalElements.find((e) => e.objectId === obj.id);
+  const el = scene.physicsElements.find((e) => e.objectId === obj.id);
   if (!el || (el.elementKind !== "laser_source" && el.elementKind !== "tapered_amplifier")) {
     return objectPosLab(obj);
   }
@@ -173,7 +173,7 @@ function mirrorNormalLocal(obj: SceneObject, scene: SceneData): Vec3 | null {
  *  to body center when the element has no reflective surface concept.
  */
 function reflectivePosLab(obj: SceneObject, scene: SceneData): Vec3 {
-  const el = scene.opticalElements.find((e) => e.objectId === obj.id);
+  const el = scene.physicsElements.find((e) => e.objectId === obj.id);
   if (!el) return objectPosLab(obj);
   if (el.elementKind === "laser_source" || el.elementKind === "tapered_amplifier") {
     return beamStartPosLab(obj, scene);
@@ -221,7 +221,7 @@ function computeOutgoingDirection(
   scene: SceneData,
 ): Vec3 | null {
   const obj = scene.objects.find((o) => o.id === objectId);
-  const el = scene.opticalElements.find((e) => e.objectId === objectId);
+  const el = scene.physicsElements.find((e) => e.objectId === objectId);
   if (!obj || !el) return null;
 
   const rotated = (vLocal: Vec3) =>
@@ -342,8 +342,8 @@ export function enumerateBeamSegments(
     return !v || v.status !== "broken";
   };
   const objsById = new Map<string, SceneObject>(scene.objects.map((o) => [o.id, o]));
-  const elByObj = new Map<string, OpticalElement>(
-    scene.opticalElements.map((e) => [e.objectId, e]),
+  const elByObj = new Map<string, PhysicsElement>(
+    scene.physicsElements.map((e) => [e.objectId, e]),
   );
   const compById = new Map(scene.components.map((c) => [c.id, c]));
 
@@ -502,7 +502,7 @@ export function enumerateBeamSegments(
       .filter((l) => !excludeTargetObjId || l.toObjectId !== excludeTargetObjId)
       .map((l) => `${l.fromObjectId}|${l.fromPort}`),
   );
-  for (const el of scene.opticalElements) {
+  for (const el of scene.physicsElements) {
     if (excludeTargetObjId && el.objectId === excludeTargetObjId) continue;
     const obj = objsById.get(el.objectId);
     if (!obj) continue;
@@ -729,8 +729,8 @@ const DEFAULT_APERTURE_MM = 12.5;
 /** Find the lab-frame intercept point for the to-side of a link, plus the
  *  aperture radius to compare against. Order of preference:
  *   1. Asset anchor whose id matches `toPort` exactly.
- *   2. Asset anchor with a known intercept-style id ("in", "intercept_in",
- *      "intercept_face", "seed").
+ *   2. Asset anchor with a known intercept-style id ("in", "out",
+ *      "intercept_in", "intercept_out", "intercept_face", "seed").
  *   3. Body center + DEFAULT_APERTURE_MM. */
 function findInterceptPoint(
   toObjectId: string,
@@ -751,7 +751,7 @@ function findInterceptPoint(
     : undefined;
   if (!asset?.anchors?.length) return fallback;
 
-  const candidates = [toPort, "in", "intercept_in", "intercept_face", "seed"];
+  const candidates = [toPort, "in", "out", "intercept_in", "intercept_out", "intercept_face", "seed"];
   for (const wantedId of candidates) {
     const anchor = asset.anchors.find((a) => a.id === wantedId);
     if (anchor?.positionMmBodyLocal) {
@@ -829,12 +829,12 @@ export function validateOpticalLink(link: OpticalLink, scene: SceneData): LinkVa
       apertureMm: DEFAULT_APERTURE_MM,
     };
   }
-  const fromEl = scene.opticalElements.find((e) => e.objectId === link.fromObjectId);
-  const toEl = scene.opticalElements.find((e) => e.objectId === link.toObjectId);
+  const fromEl = scene.physicsElements.find((e) => e.objectId === link.fromObjectId);
+  const toEl = scene.physicsElements.find((e) => e.objectId === link.toObjectId);
   if (!fromEl || !toEl) {
     return {
       status: "broken",
-      reason: "Endpoint has no OpticalElement registered",
+      reason: "Endpoint has no PhysicsElement registered",
       missDistanceMm: Number.POSITIVE_INFINITY,
       apertureMm: DEFAULT_APERTURE_MM,
     };
@@ -863,7 +863,7 @@ export function validateOpticalLink(link: OpticalLink, scene: SceneData): LinkVa
   // the emitter). Set very small so a Mirror placed millimetres from the
   // laser still counts as a real hit ahead of any nominal target further out.
   const T_EPS = 0.01; // mm
-  for (const otherEl of scene.opticalElements) {
+  for (const otherEl of scene.physicsElements) {
     if (otherEl.objectId === link.fromObjectId) continue;
     const otherObj = scene.objects.find((o) => o.id === otherEl.objectId);
     if (!otherObj) continue;
@@ -992,7 +992,7 @@ export function enumerateSuggestedLinks(scene: SceneData): SuggestedLink[] {
     ),
   );
 
-  for (const fromEl of scene.opticalElements) {
+  for (const fromEl of scene.physicsElements) {
     // Iterate over each output port of fromEl.
     const outputPorts = (fromEl.outputPorts ?? []).map((p) => p.portId);
     if (outputPorts.length === 0) {
@@ -1010,7 +1010,7 @@ export function enumerateSuggestedLinks(scene: SceneData): SuggestedLink[] {
 
       // Find first hit among all candidate to-objects along this axis.
       type Hit = {
-        toEl: OpticalElement;
+        toEl: PhysicsElement;
         toPort: string;
         t: number;
         miss: number;
@@ -1018,7 +1018,7 @@ export function enumerateSuggestedLinks(scene: SceneData): SuggestedLink[] {
       };
       const hits: Hit[] = [];
 
-      for (const toEl of scene.opticalElements) {
+      for (const toEl of scene.physicsElements) {
         if (toEl.objectId === fromEl.objectId) continue;
         // Skip emitters as targets (they don't catch beams).
         if (toEl.elementKind === "laser_source") continue;
@@ -1200,7 +1200,7 @@ export function enumerateBeamAxesFromEmitters(
     "detector", "camera", "spectrometer", "wavemeter", "beam_dump",
   ]);
 
-  function reflectMirror(_elem: OpticalElement, obj: SceneObject, incident: Vec3): Vec3 {
+  function reflectMirror(_elem: PhysicsElement, obj: SceneObject, incident: Vec3): Vec3 {
     // V2 Phase 2 (alembic 0028): the surface normal lives on the
     // SceneObject's V2 anchorBindings; mirrorNormalLocal does the
     // binding → asset_anchor → null precedence so this stays in sync
@@ -1221,9 +1221,9 @@ export function enumerateBeamAxesFromEmitters(
     if (bounces >= maxBounces) return;
 
     // Find first hit along (origin, direction) among all OE except source.
-    type Hit = { obj: SceneObject; el: OpticalElement; t: number; miss: number; aperture: number };
+    type Hit = { obj: SceneObject; el: PhysicsElement; t: number; miss: number; aperture: number };
     let best: Hit | null = null;
-    for (const otherEl of scene.opticalElements) {
+    for (const otherEl of scene.physicsElements) {
       if (otherEl.objectId === fromObjectId) continue;
       const otherObj = scene.objects.find((o) => o.id === otherEl.objectId);
       if (!otherObj) continue;
@@ -1272,7 +1272,7 @@ export function enumerateBeamAxesFromEmitters(
     walk(best.obj.id, nextPort, hitPoint, nextDir, bounces + 1);
   }
 
-  for (const emitterEl of scene.opticalElements) {
+  for (const emitterEl of scene.physicsElements) {
     // ONLY laser_source seeds snap-to-beam axes. Tapered amplifiers are
     // technically emitters, but in practice the TA's forward output is a
     // short downstream link and you align downstream optics relative to
@@ -1300,7 +1300,7 @@ export function enumerateBeamAxesFromEmitters(
 /** Find the closest beam axis whose perpendicular distance to ANY of the
  *  object's intercept anchors is ≤ 25 mm, and return the snap that would
  *  align that anchor to the axis. Returns null when nothing is in range
- *  or the object has no OpticalElement / no usable anchor.
+ *  or the object has no PhysicsElement / no usable anchor.
  *
  *  Beam axes considered:
  *   - Every segment of the geometrically-walked chain from each emitter,
@@ -1312,7 +1312,7 @@ export function findSnapToBeam(
 ): SnapCandidate | null {
   const obj = scene.objects.find((o) => o.id === objectId);
   if (!obj) return null;
-  const el = scene.opticalElements.find((e) => e.objectId === objectId);
+  const el = scene.physicsElements.find((e) => e.objectId === objectId);
   if (!el) return null;
 
   // Prefer the renderer's published trace segments (window.__rayTraceDebug)
@@ -1478,7 +1478,7 @@ export function traceBeamFromEmitter(
 /** List every emitter (laser_source / tapered_amplifier) in the scene that
  *  has at least one outgoing link. Used to populate the Beam selector. */
 export function listBeamEmitters(scene: SceneData): SceneObject[] {
-  const emitters = scene.opticalElements
+  const emitters = scene.physicsElements
     .filter(
       (e) => e.elementKind === "laser_source" || e.elementKind === "tapered_amplifier",
     )
@@ -1514,8 +1514,8 @@ export function enumerateSlotsForTarget(
     return !v || v.status !== "broken";
   };
   const objsById = new Map<string, SceneObject>(scene.objects.map((o) => [o.id, o]));
-  const elByObj = new Map<string, OpticalElement>(
-    scene.opticalElements.map((e) => [e.objectId, e]),
+  const elByObj = new Map<string, PhysicsElement>(
+    scene.physicsElements.map((e) => [e.objectId, e]),
   );
   const compById = new Map(scene.components.map((c) => [c.id, c]));
   const labelFor = (objId: string): string => {

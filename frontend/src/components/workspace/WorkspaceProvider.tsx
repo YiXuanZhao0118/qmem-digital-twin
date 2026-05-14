@@ -29,14 +29,14 @@ export type PanelId =
   | "components"
   | "outliner"
   | "object"
-  | "device-state"
-  | "timing-editor"
+  | "pulse-timing"
+  | "instrument-power"
   | "beam-scope"
   | "touch-coincidence"
   | "optical-link-viewer"
+  | "rf-link"
   | "solver-console"
-  | "magnetics"
-  | "pulse-blaster";
+  | "magnetics";
 
 const PANEL_DEFS: { id: PanelId; title: string; defaultLayout: PanelLayout }[] = [
   {
@@ -62,17 +62,14 @@ const PANEL_DEFS: { id: PanelId; title: string; defaultLayout: PanelLayout }[] =
     defaultLayout: { x: -340, y: 296, w: 320, h: 520, visible: true, collapsed: false, z: 1 },
   },
   {
-    id: "device-state",
-    title: "Device state",
-    // Hidden by default per UX request — the panel was rarely useful and
-    // ate vertical space on the right column. User can re-open via the
-    // Window menu if needed.
-    defaultLayout: { x: -340, y: 824, w: 320, h: 80, visible: false, collapsed: true, z: 1 },
+    id: "pulse-timing",
+    title: "Pulse & Timing",
+    defaultLayout: { x: 332, y: 480, w: 760, h: 380, visible: false, collapsed: false, z: 2 },
   },
   {
-    id: "timing-editor",
-    title: "QM — timeline editor",
-    defaultLayout: { x: 332, y: 480, w: 720, h: 320, visible: false, collapsed: false, z: 2 },
+    id: "instrument-power",
+    title: "Instrument Power",
+    defaultLayout: { x: 332, y: 80, w: 380, h: 360, visible: false, collapsed: false, z: 2 },
   },
   {
     id: "beam-scope",
@@ -88,6 +85,11 @@ const PANEL_DEFS: { id: PanelId; title: string; defaultLayout: PanelLayout }[] =
     id: "optical-link-viewer",
     title: "Optical link viewer",
     defaultLayout: { x: 360, y: 80, w: 640, h: 780, visible: false, collapsed: false, z: 2 },
+  },
+  {
+    id: "rf-link",
+    title: "RF link",
+    defaultLayout: { x: 360, y: 80, w: 720, h: 520, visible: false, collapsed: false, z: 2 },
   },
   {
     id: "solver-console",
@@ -106,13 +108,6 @@ const PANEL_DEFS: { id: PanelId; title: string; defaultLayout: PanelLayout }[] =
     // compute a B-field on top of the current Optics scene.
     defaultLayout: { x: -340, y: 80, w: 320, h: 460, visible: false, collapsed: false, z: 2 },
   },
-  {
-    id: "pulse-blaster",
-    title: "PulseBlaster wiring",
-    // Hidden by default; user opens via Window menu when they want to
-    // map physical TTL channels to lab Components.
-    defaultLayout: { x: 332, y: 80, w: 480, h: 540, visible: false, collapsed: false, z: 2 },
-  },
 ];
 
 export const PANEL_TITLES: Record<PanelId, string> = Object.fromEntries(
@@ -124,7 +119,7 @@ type LayoutMap = Record<PanelId, PanelLayout>;
 // Bumped on every panel-default move so existing user layouts don't
 // stick at the OLD positions. v4: components y 70 → 116, outliner y
 // 506 → 552 (clear of the new Cursor (mm) X/Y/Z editor at top:64).
-const STORAGE_KEY = "qmem.workspaceLayout.v6";
+const STORAGE_KEY = "qmem.workspaceLayout.v7";
 
 function defaultLayoutFor(viewportWidth: number): LayoutMap {
   const out = {} as LayoutMap;

@@ -1,6 +1,6 @@
 /**
  * OpticalKindsEditor — read-only viewer for the optical-kind contracts
- * that live in `src/optical/kinds/_registry.ts`.
+ * that live in `src/kinds/_registry.ts`.
  *
  * Each row represents one ElementKind (mirror, AOM, PBS, ...) and shows
  * what every component of that kind is expected to provide:
@@ -17,13 +17,16 @@
  * Components know exactly what each kind expects from them.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 
-import { KIND_REGISTRY } from "../optical/kinds/_registry";
-import type { KindContract } from "../optical/kinds/_registry";
+import { KIND_REGISTRY } from "../kinds/_registry";
+import type { KindContract } from "../kinds/_registry";
 import { useSceneStore } from "../store/sceneStore";
 import type { ElementKind } from "../types/digitalTwin";
-import { componentTypeToOpticalKind } from "../utils/opticalDefaults";
+import {
+  componentTypeToElementKind,
+  domainForElementKind,
+} from "../utils/elementDefaults";
 
 const VARIANT_LABELS: Record<KindContract["alignVariant"], string> = {
   translate_anchor_to_beam:
@@ -31,7 +34,7 @@ const VARIANT_LABELS: Record<KindContract["alignVariant"], string> = {
   translate_and_bragg_rotate:
     "Translate face → beam, rotate body to satisfy Bragg",
   translate_anti_parallel:
-    "Translate input → beam (anti-parallel direction required)",
+    "Rotate + translate body so beam passes through intercept_in and intercept_out",
   none: "No generic align (emitter or custom action)",
 };
 
@@ -42,64 +45,83 @@ const VARIANT_COLOURS: Record<KindContract["alignVariant"], string> = {
   none: "#64748b",
 };
 
-export function OpticalKindsEditor() {
-  const allKinds = Object.keys(KIND_REGISTRY) as ElementKind[];
-  const components = useSceneStore((s) => s.scene.components);
-  const [showAll, setShowAll] = useState(false);
+// Use the centralized RF / Optical split from elementDefaults.ts so any
+// new RF kind (rf_amplifier, rf_cable, rf_switch, …) shows up under the
+// RF rail tab automatically. Previously this file had its own hardcoded
+// 2-entry set that went stale every time a new RF kind landed.
+function isRfKind(k: ElementKind): boolean {
+  return domainForElementKind(k) === "rf";
+}
 
-  // Phase 7.4 follow-up: filter the read-only contract grid down to kinds
-  // that are actually instantiated in the current scene. This keeps the
-  // PHY Editor focused on what the user is working with — previously the
-  // 20-kind grid contained ~13 kinds with no instances. Toggle to see
-  // every kind in the registry (useful when scaffolding a new component).
+// Optical-tab allowlist: kinds that ALWAYS appear under Optical → Kinds
+// even when no SceneObject of that kind is in the current scene. The
+// rest of the Optical kinds are auto-hidden when the scene has no
+// instance (keeps the grid focused). RF kinds are never hidden — every
+// RF kind always renders so newly-added RF gear is immediately
+// inspectable.
+const OPTICAL_ALWAYS_SHOW: ReadonlySet<ElementKind> = new Set<ElementKind>([
+  "dichroic_mirror",
+  "lens_cylindrical",
+  "polarizer",
+  "detector",
+  "camera",
+]);
+
+export function OpticalKindsEditor({ domain = "optical" }: { domain?: "optical" | "rf" } = {}) {
+  const allKindsRaw = Object.keys(KIND_REGISTRY) as ElementKind[];
+  // Filter to the domain the rail tab represents. RF tab shows every
+  // kind whose domainForElementKind() == "rf" (currently rf_source,
+  // horn_antenna, rf_cable, rf_amplifier, rf_switch); Optical tab shows
+  // everything else. Hybrid kinds like AOM (intercept_in/out + rf_in)
+  // are classified by the canonical set in elementDefaults.ts — see
+  // RF_DOMAIN_KINDS there.
+  const allKinds = domain === "rf"
+    ? allKindsRaw.filter(isRfKind)
+    : allKindsRaw.filter((k) => !isRfKind(k));
+  const components = useSceneStore((s) => s.scene.components);
+
+  // Which ElementKinds have at least one Component in the current scene.
+  // Used to keep the Optical grid focused on "kinds the user is actually
+  // working with" instead of the full 22-entry registry — combined with
+  // OPTICAL_ALWAYS_SHOW so a handful of canonical kinds always render
+  // even before any instance is placed.
   const usedKinds = useMemo(() => {
     const set = new Set<ElementKind>();
     for (const c of components) {
-      const k = componentTypeToOpticalKind(c.componentType);
+      const k = componentTypeToElementKind(c.componentType);
       if (k) set.add(k);
     }
     return set;
   }, [components]);
 
-  const kinds = showAll ? allKinds : allKinds.filter((k) => usedKinds.has(k));
-  const hiddenCount = allKinds.length - kinds.length;
+  // Final visible list:
+  //   - RF tab:      every RF kind, always.
+  //   - Optical tab: kinds in OPTICAL_ALWAYS_SHOW ∪ kinds with at least
+  //                  one scene instance.
+  const kinds = domain === "rf"
+    ? allKinds
+    : allKinds.filter((k) => OPTICAL_ALWAYS_SHOW.has(k) || usedKinds.has(k));
+  const domainLabel = domain === "rf" ? "RF" : "Optical";
 
   return (
     <div className="kinds-editor">
       <div className="component-editor-subbar">
         <div className="component-editor-title">
-          <strong>Optical → Kinds</strong>
+          <strong>{domainLabel} → Kinds</strong>
           <span style={{ opacity: 0.7, marginLeft: 8 }}>
-            · contract for {kinds.length} of {allKinds.length} optical-element kinds
+            · contract for {kinds.length} {domain}-element kind{kinds.length === 1 ? "" : "s"}
           </span>
-        </div>
-        <div style={{ marginLeft: "auto" }}>
-          <label style={{ fontSize: 13, opacity: 0.85, cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={showAll}
-              onChange={(e) => setShowAll(e.target.checked)}
-              style={{ marginRight: 4, verticalAlign: "middle" }}
-            />
-            Show all (incl. {hiddenCount > 0 ? `${hiddenCount} unused` : "no extra"})
-          </label>
         </div>
       </div>
 
       <div className="kinds-editor-banner">
         Read-only. Kind contracts live in
         <code style={{ marginLeft: 4, marginRight: 4 }}>
-          src/optical/kinds/_registry.ts
+          src/kinds/_registry.ts
         </code>
         — edit via PR. UI editing will land when the
         <code style={{ marginLeft: 4 }}>optical_kinds</code> DB table
         is added.
-        {!showAll && hiddenCount > 0 && (
-          <span style={{ marginLeft: 8, opacity: 0.7 }}>
-            · Hiding {hiddenCount} kind{hiddenCount === 1 ? "" : "s"} with no
-            scene instance — toggle "Show all" to reveal.
-          </span>
-        )}
       </div>
 
       <div className="kinds-editor-grid">

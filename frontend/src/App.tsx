@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 
-import { WS_URL } from "./api/client";
+import {
+  WS_URL,
+  fetchRoomDimensionsApi,
+  updateRoomDimensionsApi,
+  type RoomDimensions,
+} from "./api/client";
 import {
   ComponentsCatalogPanel,
   OutlinerFloatingPanel,
@@ -8,9 +13,11 @@ import {
 import { ComponentPanel } from "./components/ComponentPanel";
 import { DualViewerSplit } from "./components/DualViewerSplit";
 import { PhyEditor } from "./components/PhyEditor";
-import { TimingEditorPanel } from "./components/TimingEditorPanel";
+import { InstrumentPowerPanel } from "./components/InstrumentPowerPanel";
+import { PulseTimingPanel } from "./components/PulseTimingPanel";
 import { TouchCoincidencePanel } from "./components/TouchCoincidencePanel";
 import { OpticalLinkViewerPanel } from "./components/optical/OpticalLinkViewerPanel";
+import { RfLinkPanel } from "./components/RfLinkPanel";
 // BeamPlacementPanel + SuggestedLinksPanel removed — replaced with simpler
 // per-object "Snap to beam" action (in OE panel) plus aperture warnings.
 import { CursorMenu } from "./components/optical/CursorMenu";
@@ -23,34 +30,18 @@ import { ElectronicsWorkspace } from "./modules/electronics/ElectronicsWorkspace
 import { EmWorkspace } from "./modules/em/EmWorkspace";
 import { MagneticsPanel } from "./modules/magnetics/MagneticsPanel";
 import { OpticsHost } from "./modules/optics_cavity/OpticsHost";
-import { PulseBlasterPanel } from "./modules/pulse_blaster/PulseBlasterPanel";
 import { getModule } from "./modules/_registry";
 import { ModulePlaceholder } from "./modules/ModulePlaceholder";
 import { useSceneStore } from "./store/sceneStore";
 import type { SceneEvent } from "./types/digitalTwin";
 import type { OverlayKind } from "./types/visibility";
 
-const DEFAULT_ROOM_DIMENSIONS = {
-  widthMm: 4200,
-  depthMm: 1800,
-  heightMm: 4000,
-};
-
-function loadRoomDimensions() {
-  const saved = window.localStorage.getItem("qmem-room-dimensions");
-  if (!saved) return DEFAULT_ROOM_DIMENSIONS;
-
-  try {
-    const parsed = JSON.parse(saved) as Partial<typeof DEFAULT_ROOM_DIMENSIONS>;
-    return {
-      widthMm: Number(parsed.widthMm) || DEFAULT_ROOM_DIMENSIONS.widthMm,
-      depthMm: Number(parsed.depthMm) || DEFAULT_ROOM_DIMENSIONS.depthMm,
-      heightMm: Number(parsed.heightMm) || DEFAULT_ROOM_DIMENSIONS.heightMm,
-    };
-  } catch {
-    return DEFAULT_ROOM_DIMENSIONS;
-  }
-}
+// Room dimensions live in app_settings.room_dimensions (alembic 0043),
+// shared across users. We deliberately do NOT seed a default here:
+// rendering the 3D viewer with a placeholder size and then swapping to
+// the real one would tear down + rebuild the whole scene (the viewer's
+// init effect depends on roomDimensions), producing a visible "jump".
+// Instead we gate the optics layout on the fetch resolving.
 
 const NUMBER_KEY_OVERLAYS: Record<string, OverlayKind> = {
   "1": "components",
@@ -70,9 +61,9 @@ function isTypingTarget(target: EventTarget | null): boolean {
 }
 
 export default function App() {
-  const [roomDimensions, setRoomDimensions] = useState(loadRoomDimensions);
+  const [roomDimensions, setRoomDimensions] = useState<RoomDimensions | null>(null);
   const loadScene = useSceneStore((state) => state.loadScene);
-  const loadPulseBlasterChannels = useSceneStore((state) => state.loadPulseBlasterChannels);
+  const loadTimingPrograms = useSceneStore((state) => state.loadTimingPrograms);
   const loadRfChains = useSceneStore((state) => state.loadRfChains);
   const applyEvent = useSceneStore((state) => state.applyEvent);
   const setSocketStatus = useSceneStore((state) => state.setSocketStatus);
@@ -91,9 +82,9 @@ export default function App() {
 
   useEffect(() => {
     void loadScene();
-    void loadPulseBlasterChannels();
+    void loadTimingPrograms();
     void loadRfChains();
-  }, [loadScene, loadPulseBlasterChannels, loadRfChains]);
+  }, [loadScene, loadTimingPrograms, loadRfChains]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -165,8 +156,50 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    window.localStorage.setItem("qmem-room-dimensions", JSON.stringify(roomDimensions));
-  }, [roomDimensions]);
+    let cancelled = false;
+    fetchRoomDimensionsApi()
+      .then((dims) => {
+        if (cancelled) return;
+        setRoomDimensions(dims);
+        // First-time visit (no per-browser cursor saved yet): place the 3D
+        // cursor at table-ish height in the middle of the room so users
+        // open looking AT the lab instead of at floor-center (0,0,0). Once
+        // the user moves it via Shift+S the new position lives in
+        // localStorage and survives reloads — handled by sceneStore.
+        const hadSavedCursor =
+          window.localStorage.getItem("qmem.transformCursorMm.v2") ??
+          window.localStorage.getItem("qmem.transformCursorMm.v1");
+        if (!hadSavedCursor) {
+          const center = { x: 0, y: dims.heightMm / 4, z: 0 };
+          const store = useSceneStore.getState();
+          store.setTransformCursorMm("left", center);
+          store.setTransformCursorMm("right", center);
+        }
+      })
+      .catch(() => {
+        // Backend unreachable on first load — fall through to the same
+        // values the backend would have returned for an empty row, so the
+        // viewer still mounts instead of getting stuck on the loading
+        // screen forever. Once the backend comes back up, a manual reload
+        // (or any future fetch) picks up the real value.
+        if (cancelled) return;
+        setRoomDimensions({ widthMm: 4200, depthMm: 1800, heightMm: 4000 });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const persistRoomDimensions = (dims: RoomDimensions) => {
+    setRoomDimensions(dims);
+    void updateRoomDimensionsApi(dims);
+    // Changing roomDimensions re-runs DigitalTwinViewer's big init effect,
+    // which tears down componentGroupRef. The component-build effect only
+    // re-runs when sceneData's reference changes, so without this the user
+    // sees an empty room until something else triggers a reload. Force a
+    // fresh fetch so the new sceneData ref re-triggers the build.
+    void loadScene();
+  };
 
   useEffect(() => {
     let closed = false;
@@ -235,15 +268,15 @@ export default function App() {
               act on the 3D scene. Other tabs (Optics calculator,
               Electronics, EM) get module-specific Run controls inside
               their own workspaces. */}
-          {isOptics && (
+          {isOptics && roomDimensions && (
             <SceneToolbar
               roomDimensions={roomDimensions}
-              onRoomDimensionsChange={setRoomDimensions}
+              onRoomDimensionsChange={persistRoomDimensions}
             />
           )}
         </TopBar>
         <div className="workspace-canvas">
-          {isOptics && (
+          {isOptics && roomDimensions && (
             <>
               <DualViewerSplit roomDimensions={roomDimensions} />
               {loadStatus === "loading" && <div className="scene-overlay">Loading scene</div>}
@@ -251,14 +284,18 @@ export default function App() {
               <ComponentsCatalogPanel />
               <OutlinerFloatingPanel />
               <ComponentPanel />
-              <TimingEditorPanel />
+              <PulseTimingPanel />
+              <InstrumentPowerPanel />
               <OpticalLinkViewerPanel />
+              <RfLinkPanel />
               <TouchCoincidencePanel />
               <MagneticsPanel />
-              <PulseBlasterPanel />
               <ScrubTimeBar />
               <CursorMenu />
             </>
+          )}
+          {isOptics && !roomDimensions && (
+            <div className="scene-overlay">Loading lab configuration…</div>
           )}
           {isCavity && <OpticsHost />}
           {isElectronics && <ElectronicsWorkspace />}

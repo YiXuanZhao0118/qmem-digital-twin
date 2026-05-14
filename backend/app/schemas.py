@@ -82,6 +82,29 @@ AssetAnchorId = Literal[
     # in body-local frame via `directionBodyLocal`; position is body
     # origin and apertureMm is unused for this anchor.
     "rf_direction",
+    # RF / microwave ports (added 2026-05-13 with the physics_elements
+    # rename). `rf_in` marks an RF input connector (e.g. AOM RF SMA);
+    # `rf_out` marks an output (e.g. each AD9959 channel SMA, horn
+    # antenna feed). `aperture` is the horn-antenna radiation-face
+    # anchor (lobe origin + main-beam direction).
+    "rf_in",
+    "rf_out",
+    # TTL / digital-control input port (added 2026-05-14 with the
+    # rf_switch kind). On the Mini-Circuits ZYSWA-2-50DR this is the
+    # 4th SMA-F jack on the case (labelled "TTL" next to RFIN/RF1/RF2).
+    # Position = jack centre, direction = outward face normal — same
+    # geometry as the RF SMA jacks so a mating cable's End-A anchor
+    # aligns the same way. Distinct id (not `rf_in`) because solver
+    # semantics differ: ttl_in is a digital control signal, not an RF
+    # analogue path.
+    "ttl_in",
+    "aperture",
+    # Optical-isolator internal PBS cube anchors. Each marks the diagonal
+    # cement interface (position = cube centre, direction = coating normal,
+    # apertureMm = half the active interface size). See the `isolator` kind
+    # in frontend _registry.ts for the alignment semantics.
+    "front_pbs",
+    "back_pbs",
 ]
 
 
@@ -699,7 +722,10 @@ ElementKind = Literal[
     "wavemeter",
     "beam_dump",
     "rf_source",            # Phase RF.1: DDS / synth / arbitrary waveform generator.
+    "rf_amplifier",         # Phase RF.amp: coaxial RF gain block (one rf_in, one rf_out).
     "horn_antenna",         # Phase RF.7: microwave horn / antenna (radiates the RF chain output).
+    "rf_cable",             # Phase RF.cable: coaxial RF cable (SMA/BNC/N), parallel to `fiber` for RF.
+    "rf_switch",            # Phase RF.switch: coaxial SP2T / SP4T switch (Mini-Circuits ZYSWA-2-50DR family).
 ]
 
 
@@ -1155,7 +1181,13 @@ class AOMParams(CamelModel):
     deflection_per_mhz_urad: float = Field(default=200.0, ge=0.0)
     acoustic_velocity_m_per_s: float = Field(default=4200.0, gt=0)
     modulation_bandwidth_mhz: float = Field(default=20.0, gt=0)
-    center_freq_mhz: float = Field(default=80.0, gt=0)
+    # Phase B (RF link single-source-of-truth): the AOM's RF drive carrier
+    # frequency and power are NOT stored on the AOM anymore. They are
+    # resolved at solve time from the upstream rf_source channel via the
+    # AOM's rf_in `rfCableEndpoints` link. See
+    # `optics_seq.hydrate_aom_rf_drive`. Legacy data with
+    # `center_freq_mhz` / `rf_drive_power_w` is silently dropped by the
+    # validator below.
     # Time-domain switching dynamics:
     rise_time_ns: float = Field(default=50.0, ge=0.0)
     fall_time_ns: float = Field(default=50.0, ge=0.0)
@@ -1165,11 +1197,14 @@ class AOMParams(CamelModel):
     # defaults so legacy AOM rows that don't carry them still trace.
     #   sin θ_B = λ·f / (2·n·v)
     #   I₁/I₀  = sin²(π·L/(2λ·cosθ_B)·√(2·M₂·P_d/W))
+    # (f and P_d are no longer kindParams — see comment above.)
     refractive_index: float | None = Field(default=None, gt=0)
     figure_of_merit_m2: float | None = Field(default=None, ge=0)
     crystal_length_mm: float | None = Field(default=None, ge=0)
     acoustic_beam_width_mm: float | None = Field(default=None, ge=0)
-    rf_drive_power_w: float | None = Field(default=None, ge=0)
+    # Safety upper limit on RF drive power — clamps the resolved upstream
+    # value, NOT a setpoint. Kept here because it's a property of the AOM
+    # device (datasheet max), not of the driver.
     rf_power_max_w: float | None = Field(default=None, ge=0)
     # V2 Phase 7 (alembic 0033): the RF / acoustic propagation direction
     # moved from `rf_propagation_direction_body_local` (and the duplicate
@@ -1233,6 +1268,17 @@ class AOMParams(CamelModel):
                 "acoustic_axis_body_local",
                 "acousticAxisLocal",
                 "acoustic_axis_local",
+            ):
+                data.pop(key, None)
+            # Phase B (RF link single-source-of-truth): the AOM's RF
+            # carrier + drive power are no longer stored — they're resolved
+            # at solve time from the upstream rf_source channel. Drop
+            # legacy values silently so old physics_element rows still load.
+            for key in (
+                "centerFreqMhz",
+                "center_freq_mhz",
+                "rfDrivePowerW",
+                "rf_drive_power_w",
             ):
                 data.pop(key, None)
         # Pre-Phase-5 alias for the lab-frame Bragg tilt axis still applies.
@@ -1303,18 +1349,211 @@ class BeamDumpParams(CamelModel):
     absorption: float = Field(default=0.999, ge=0.0, le=1.0)
 
 
+class DdsSweepConfig(CamelModel):
+    """Per-channel linear sweep (AD9959 Digital Ramp Generator).
+
+    Mirrors the AD9959 DRG hardware: rising-slope and falling-slope rates are
+    independent (RU/RD), and the chip can optionally skip dwell at either
+    extreme (`no_dwell_low / no_dwell_high`) so the ramp re-fires immediately
+    instead of holding at start/end. Rates are in **target-unit per second**
+    (e.g. MHz/s for frequency sweep, deg/s for phase, 1/s for amplitude).
+    """
+
+    target: Literal["frequency", "phase", "amplitude"]
+    start: float
+    end: float
+    ramp_up_rate: float = Field(gt=0.0)
+    ramp_down_rate: float = Field(gt=0.0)
+    no_dwell_low: bool = False
+    no_dwell_high: bool = False
+
+
+class DdsProfile(CamelModel):
+    """One FM/PM/AM profile-register value for an AD9959 channel.
+
+    Field meaning depends on the parent channel's `mode`:
+      - `fm` (frequency modulation): `frequency_mhz` is used
+      - `pm` (phase modulation): `phase_deg` is used
+      - `am` (amplitude modulation): `amplitude_scale` is used
+    The other fields are ignored but allowed so a single Profile record
+    can carry a snapshot of all three when the user is iterating.
+
+    Profile selection at runtime is driven by the P0..P3 profile pins
+    according to the channel's `modulation_levels` (2-/4-/8-/16-level).
+    For 2-level only P0 is used (profiles[0..1]); 16-level uses all 4
+    pins (profiles[0..15]). On real AD9959 hardware the pin count is
+    chip-wide; this schema lets each channel set its own for v2
+    simplicity — keep them aligned in practice.
+    """
+
+    frequency_mhz: float | None = Field(default=None, ge=0.0)
+    phase_deg: float | None = None
+    amplitude_scale: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class DdsChannel(CamelModel):
+    """One channel of a multi-channel DDS (AD9959 has 4: CH0..CH3).
+
+    `mode` selects the channel's runtime behaviour:
+      - `single_tone`: static freq/phase/amp from the top-level fields
+      - `sweep`: linear ramp on one target (see `sweep`)
+      - `fm` / `pm` / `am`: profile-pin selected modulation
+        (see `profiles[]` + `modulation_levels`)
+
+    `anchor_name` is the optional cross-reference to `Asset3D.anchors[].name`
+    (e.g. "CH0") so the front-end can colocate the channel's per-instance
+    params with the physical SMA port. `amplitude_scale` mirrors the AD9959
+    10-bit Amplitude Scale Factor (0..1023 → 0.0..1.0).
+    """
+
+    channel_index: int = Field(ge=0)
+    anchor_name: str | None = None
+    mode: Literal["single_tone", "sweep", "fm", "pm", "am"] = "single_tone"
+    channel_enabled: bool = True
+    frequency_mhz: float = Field(default=0.0, ge=0.0)
+    phase_deg: float = 0.0
+    amplitude_scale: float = Field(default=1.0, ge=0.0, le=1.0)
+    sweep: DdsSweepConfig | None = None
+    modulation_levels: Literal[2, 4, 8, 16] = 2
+    profiles: list[DdsProfile] | None = None
+
+
 class RfSourceParams(CamelModel):
     """Phase RF.1 — DDS / synth / arbitrary-waveform RF source.
 
-    Default static knobs; the same values can be overridden per-time-tick
-    by a TimingProgram of waveform_kind="arbitrary" (Phase RF.3 plumbing
-    reads `frequencyMhz` / `powerDbm` / `phaseDeg` from params samples).
+    Default static knobs. Time-dependent shape lives on the source itself
+    (``rfSources[].signal.waveform``); TimingProgram only controls gate /
+    trigger via ``triggerBinding`` / ``gateBinding``.
+
+    Multi-channel devices (AD9959 4-channel DDS, etc.) populate `channels[]`;
+    `reference_clock_mhz` / `sys_clock_mhz` capture the external REF_CLK feed
+    and the PLL-multiplied core clock; `pll_multiplier` / `pll_bypass` reflect
+    the AD9959 PLL register (×4..×20 typical, bypass when REF_CLK is already
+    at SYSCLK rate). Single-channel synths leave `channels` null and use the
+    legacy top-level frequency/power/phase fields — both paths remain valid
+    for backward compatibility.
     """
 
     frequency_mhz: float = Field(default=80.0, ge=0.0)
     power_dbm: float = Field(default=0.0)
     phase_deg: float = Field(default=0.0)
     modulation: Literal["none", "am", "fm", "iq"] = "none"
+    channels: list[DdsChannel] | None = None
+    reference_clock_mhz: float | None = Field(default=None, ge=0.0)
+    sys_clock_mhz: float | None = Field(default=None, ge=0.0)
+    pll_multiplier: int = Field(default=25, ge=1, le=20 * 4)
+    pll_bypass: bool = False
+    serial_interface: Literal["spi", "parallel", "none"] | None = None
+    # Multichip phase-sync role (AD9959 SYNC_IN / SYNC_OUT). `master`
+    # drives the chain output; `slave` consumes the master's pulse;
+    # `standalone` ignores SYNC entirely. The chassis-level topology
+    # registry (SceneObject.properties.ddsChassis.syncTopology) describes
+    # how the chips are wired together; this field is the chip's role
+    # within that topology.
+    sync_role: Literal["master", "slave", "standalone"] = "standalone"
+    # AD9959 serial port mode. 4-wire is the default eval-board layout
+    # (CS + SCLK + SDIO_IN + SDIO_OUT); 2-wire collapses SDIO_IN/OUT to
+    # a single bidirectional SDIO_0 (saves an MCU pin); 1-wire is the
+    # vendor-specific I²C-like mode. Affects MCU wiring + bandwidth, not
+    # the DDS cores.
+    serial_port_mode: Literal["1wire", "2wire", "4wire"] = "4wire"
+
+
+class RfCableParams(CamelModel):
+    """Phase RF.cable — coaxial RF cable (two-port, bidirectional).
+
+    Parallels `FiberParams` structurally (two endpoints, jacket + connectors)
+    but with RF coax physics. Geometry inputs (length, jacket OD, port
+    anchors) live on the same Component.properties shape as fiber so the
+    same spline-based renderer + PHY Editor anchor flow can be reused
+    once the rf_cable spline UX is wired (TODO).
+    """
+
+    length_mm: float = Field(default=152.0, gt=0.0)
+    impedance_ohm: float = Field(default=50.0, gt=0.0)
+    max_frequency_ghz: float = Field(default=3.0, gt=0.0)
+    connector_type: Literal["sma", "bnc", "n", "smp"] = "sma"
+    # Manufacturer cable type label, e.g. RG-316, RG-174, LMR-200.
+    cable_type: str | None = "RG-316"
+    # Cable jacket OD (mm) — drives the spline tube radius in 3D.
+    jacket_outer_diameter_mm: float = Field(default=3.2, gt=0.0)
+    # CSS hex colour for the jacket in the 3D viewport.
+    jacket_color: str = "#c4a884"
+    # Voltage ratings (informational only — not used in physics yet).
+    working_voltage_v_rms: float | None = Field(default=None, ge=0.0)
+    dielectric_voltage_v_rms: float | None = Field(default=None, ge=0.0)
+    # Mechanical bend limit (mm).
+    min_bend_radius_mm: float | None = Field(default=15.0, ge=0.0)
+
+
+class RfAmplifierParams(CamelModel):
+    """Phase RF.amp — coaxial RF gain block (e.g. Mini-Circuits ZHL series).
+
+    Unidirectional amplifier: one ``rf_in`` SMA input, one ``rf_out`` SMA
+    output. Modeled as a flat-gain passband between
+    ``frequency_range_mhz[0]`` and ``frequency_range_mhz[1]``; outside that
+    band the solver treats the path as ``-inf`` dB. Soft compression near
+    rated output is approximated by clamping the output at
+    ``output_power_max_dbm`` (the rated P_sat) once the linear-gain
+    extrapolation would exceed it; the 1 dB compression point lives in
+    ``output_power_p1db_dbm`` for downstream linearity checks.
+    """
+
+    gain_db: float = Field(default=29.0)
+    frequency_range_mhz: tuple[float, float] = (5.0, 500.0)
+    output_power_p1db_dbm: float = Field(default=29.0)
+    output_power_max_dbm: float = Field(default=30.0)
+    input_power_max_dbm: float = Field(default=0.0)
+    noise_figure_db: float = Field(default=9.0, ge=0.0)
+    supply_voltage_v: float = Field(default=24.0)
+    supply_current_a: float = Field(default=0.6, ge=0.0)
+    input_return_loss_db: float = Field(default=14.0, ge=0.0)
+    output_return_loss_db: float = Field(default=14.0, ge=0.0)
+    connector_type: Literal["sma", "bnc", "n", "smp"] = "sma"
+
+
+class RfSwitchParams(CamelModel):
+    """Phase RF.switch — coaxial RF switch (SP2T / SP4T family).
+
+    Models a Mini-Circuits ZYSWA-2-50DR-style absorptive SP2T as the
+    default: one common port (rf_in / "RFIN") routes to one of N throw
+    ports (rf_out × N / "RF1" / "RF2" / …) under TTL control. The
+    unselected throw is terminated in 50 Ω internally (absorptive
+    variant), so reflections off the off-path are well below the
+    isolation spec. Reflective variants leave the off-path open.
+
+    The active throw is a per-instance runtime state stored in
+    `DeviceState.state.activeThrow` (string, e.g. "RF1"); this Params
+    class only carries the static spec the catalog reads from the
+    datasheet. ±5 V supply and TTL control are declared at the kind
+    level (POWER_KINDS + TTL_GATE_KINDS in frontend digitalTwin.ts) so
+    the InstrumentPowerPanel + TTL gate picker show up automatically
+    when the user adds a switch to the scene.
+    """
+
+    switch_type: Literal["SPST", "SP2T", "SP3T", "SP4T"] = "SP2T"
+    throw_count: int = Field(default=2, ge=1, le=16)
+    frequency_min_ghz: float = Field(default=0.0, ge=0.0)
+    frequency_max_ghz: float = Field(default=5.0, gt=0.0)
+    # Insertion loss on the active path, dB ("typ" at the band's high
+    # corner per Mini-Circuits convention).
+    insertion_loss_db: float = Field(default=1.0, ge=0.0)
+    # Isolation between RFIN and the unselected throw port, dB.
+    isolation_db: float = Field(default=35.0, ge=0.0)
+    # Time from TTL edge to RF settled at 50 % of final amplitude, ns.
+    switching_time_ns: float = Field(default=250.0, gt=0.0)
+    absorption_type: Literal["absorptive", "reflective"] = "absorptive"
+    control_logic: Literal["TTL", "CMOS_3V3", "CMOS_5V", "OPEN_COLLECTOR"] = "TTL"
+    control_voltage_high_v: float = Field(default=5.0)
+    supply_positive_v: float = Field(default=5.0)
+    # null = single-supply switch (no negative bias rail).
+    supply_negative_v: float | None = Field(default=-5.0)
+    supply_current_ma: float = Field(default=25.0, ge=0.0)
+    max_input_power_dbm: float = Field(default=27.0)
+    connector_type: Literal["sma", "bnc", "n", "smp"] = "sma"
+    manufacturer: str | None = "Mini-Circuits"
+    model: str | None = "ZYSWA-2-50DR"
+    datasheet_url: str | None = "https://www.minicircuits.com/pdfs/ZYSWA-2-50DR+.pdf"
 
 
 class HornAntennaParams(CamelModel):
@@ -1367,7 +1606,10 @@ KIND_PARAMS_MODELS: dict[str, type[CamelModel]] = {
     "wavemeter": WavemeterParams,
     "beam_dump": BeamDumpParams,
     "rf_source": RfSourceParams,
+    "rf_amplifier": RfAmplifierParams,
     "horn_antenna": HornAntennaParams,
+    "rf_cable": RfCableParams,
+    "rf_switch": RfSwitchParams,
 }
 
 
@@ -1475,16 +1717,50 @@ DEFAULT_PORTS: dict[str, dict[str, list[dict[str, Any]]]] = {
         "input": [],
         "output": [_port("rf_out", "output", "RF Out", "rf")],
     },
+    "rf_amplifier": {
+        "input": [_port("rf_in", "input", "RF In", "rf")],
+        "output": [_port("rf_out", "output", "RF Out", "rf")],
+    },
     "horn_antenna": {
         "input": [_port("rf_in", "input", "RF In", "rf")],
         "output": [_port("aperture", "output", "Aperture", "rf")],
+    },
+    "rf_cable": {
+        "input": [
+            _port("a", "bidirectional", "End A", "rf"),
+            _port("b", "bidirectional", "End B", "rf"),
+        ],
+        "output": [],
+    },
+    # SP2T RF switch: 4 SMA-F connectors on the body (datasheet
+    # "needs 4 pins wired") — 1 RF common (RFIN) + 2 RF throws (RF1 /
+    # RF2) + 1 TTL control. The three RF ports are bidirectional in
+    # the small-signal regime so the same switch acts as 1-in/2-out
+    # SPDT or 2-in/1-out multiplexer; calling RFIN "input" and RF1/RF2
+    # "output" is the conventional datasheet labelling, not a routing
+    # constraint. The TTL port is `input`-only (digital control flows
+    # IN from the upstream gate / pulse-blaster). The active throw at
+    # solve time is read from DeviceState.state.activeThrow (string
+    # "RF1" / "RF2") — set either by a cable hooked to the TTL port or
+    # by the kind-level TTL gate picker. For SP3T / SP4T variants the
+    # user can override throw_count in kindParams and extend this
+    # default at scene-object insert time.
+    "rf_switch": {
+        "input": [
+            _port("rfin", "bidirectional", "RFIN (Common)", "rf"),
+            _port("ttl", "input", "TTL (Control)", "ttl"),
+        ],
+        "output": [
+            _port("rf1", "bidirectional", "RF1", "rf"),
+            _port("rf2", "bidirectional", "RF2", "rf"),
+        ],
     },
 }
 
 EMITTER_KINDS: set[str] = {"laser_source", "tapered_amplifier"}
 
 
-# --- Top-level OpticalElement schemas ---------------------------------------
+# --- Top-level PhysicsElement schemas ---------------------------------------
 
 
 class OpticalElementBase(CamelModel):
@@ -1569,6 +1845,41 @@ class OpticalLinkUpdate(CamelModel):
 
 
 class OpticalLinkOut(OpticalLinkBase):
+    id: uuid.UUID
+    created_at: datetime
+
+
+# --- RfLink schemas ---------------------------------------------------------
+#
+# RF graph edge, parallel to OpticalLink (alembic 0044). ``electrical_length_mm``
+# replaces ``free_space_mm``; ``properties`` carries domain-specific edge
+# state (impedanceOhm, lossDb, delayNs, cableObjectId, ...) until a typed
+# discriminated payload lands in a later phase.
+
+
+class RfLinkBase(CamelModel):
+    from_object_id: uuid.UUID
+    from_port: str
+    to_object_id: uuid.UUID
+    to_port: str
+    electrical_length_mm: float = Field(default=0.0, ge=0.0)
+    properties: JsonDict = Field(default_factory=dict)
+
+
+class RfLinkCreate(RfLinkBase):
+    pass
+
+
+class RfLinkUpdate(CamelModel):
+    from_object_id: uuid.UUID | None = None
+    from_port: str | None = None
+    to_object_id: uuid.UUID | None = None
+    to_port: str | None = None
+    electrical_length_mm: float | None = None
+    properties: JsonDict | None = None
+
+
+class RfLinkOut(RfLinkBase):
     id: uuid.UUID
     created_at: datetime
 
@@ -1696,8 +2007,9 @@ class SceneOut(CamelModel):
     assembly_relations: list[AssemblyRelationOut] = Field(default_factory=list)
     beam_paths: list[BeamPathOut]
     device_states: list[DeviceStateOut]
-    optical_elements: list[OpticalElementOut] = Field(default_factory=list)
+    physics_elements: list[OpticalElementOut] = Field(default_factory=list)
     optical_links: list[OpticalLinkOut] = Field(default_factory=list)
+    rf_links: list[RfLinkOut] = Field(default_factory=list)
     beam_segments: list[BeamSegmentOut] = Field(default_factory=list)
     scene_views: list[SceneViewOut] = Field(default_factory=list)
     collections: list[CollectionOut] = Field(default_factory=list)
@@ -1711,23 +2023,24 @@ class WebSocketEvent(CamelModel):
 
 
 # =============================================================================
-# Timing programs (per-component timed action sequence)
+# Timing programs (reusable HIGH-interval schedules)
 # =============================================================================
 #
-# A TimingProgram is a *per-component* sequence of blocks that says what the
-# component is doing at each instant. Hardware capability gates what kind of
-# program a component is allowed to have:
+# A TimingProgram is a top-level object identified by its own ``id``.
+# Consumers (rfSources.triggerBinding / gateBinding, PulseBlaster channels)
+# reference it by id; a single program can be shared across N consumers.
 #
-#   laser_source / tapered_amplifier  →  full timeline (any waveform_kind)
-#   aom / eom WITH rf_driver_component_id  →  full timeline (incl. arbitrary)
-#   aom / eom WITHOUT rf driver  →  on/off gates only
-#   passive elements  →  no TimingProgram
+# ``kind`` discriminates how downstream hardware interprets the intervals:
+#   "TTL":     output is HIGH for [start, end) and LOW between intervals.
+#   "Trigger": fire a rising edge at each interval's start; the interval
+#              width is the pulse width emitted to make the edge observable.
 #
-# 10 ns is the minimum resolution (SpinCore-style); the API validator rounds
-# t_start_ns / t_end_ns to multiples of 10 ns on write.
+# Storage is JSONB inline on ``timing_programs.intervals`` — the previous
+# separate ``timing_blocks`` table was dropped in alembic 0045 because the
+# read pattern is always "load the whole schedule". 10 ns is the minimum
+# resolution; the validator snaps start/end on write.
 
-SpinCoreStartMode = Literal["WAIT", "CONTINUE"]
-WaveformKind = Literal["const", "linear_ramp", "arbitrary", "gate_on", "gate_off"]
+TimingProgramKind = Literal["TTL", "Trigger"]
 TIMING_RESOLUTION_NS = 10.0
 
 
@@ -1736,89 +2049,58 @@ def _round_to_resolution(value: float) -> float:
     return round(value / TIMING_RESOLUTION_NS) * TIMING_RESOLUTION_NS
 
 
-class TimingBlockBase(CamelModel):
-    label: str | None = None
-    t_start_ns: float = Field(default=0.0, ge=0.0)
-    t_end_ns: float = Field(default=0.0, ge=0.0)
-    waveform_kind: WaveformKind = "const"
-    params: JsonDict = Field(default_factory=dict)
-    sort_order: int = 0
+class IntervalBase(CamelModel):
+    spin_core_start_ns: float = Field(default=0.0, ge=0.0)
+    spin_core_end_ns: float = Field(default=0.0, ge=0.0)
 
     @model_validator(mode="after")
-    def _check_block(self) -> "TimingBlockBase":
-        # Snap to 10 ns
-        self.t_start_ns = _round_to_resolution(self.t_start_ns)
-        self.t_end_ns = _round_to_resolution(self.t_end_ns)
-        if self.t_end_ns <= self.t_start_ns:
+    def _check_interval(self) -> "IntervalBase":
+        self.spin_core_start_ns = _round_to_resolution(self.spin_core_start_ns)
+        self.spin_core_end_ns = _round_to_resolution(self.spin_core_end_ns)
+        if self.spin_core_end_ns <= self.spin_core_start_ns:
             raise ValueError(
-                f"t_end_ns ({self.t_end_ns}) must be > t_start_ns ({self.t_start_ns}); "
-                f"minimum block duration is {TIMING_RESOLUTION_NS} ns."
+                f"spin_core_end_ns ({self.spin_core_end_ns}) must be > "
+                f"spin_core_start_ns ({self.spin_core_start_ns}); minimum "
+                f"interval width is {TIMING_RESOLUTION_NS} ns."
             )
-        # Validate per-waveform params shape
-        kind = self.waveform_kind
-        if kind == "const":
-            if "value" not in self.params:
-                # default to 0; allows quick-create of empty const block
-                self.params = {**self.params, "value": 0.0}
-            if not isinstance(self.params.get("value"), (int, float)):
-                raise ValueError("const waveform requires params.value as a number")
-        elif kind == "linear_ramp":
-            for key in ("start", "end"):
-                if not isinstance(self.params.get(key), (int, float)):
-                    raise ValueError("linear_ramp waveform requires params.start and params.end as numbers")
-        elif kind == "arbitrary":
-            samples = self.params.get("samples")
-            dt_ns = self.params.get("dt_ns")
-            if not isinstance(samples, list) or not samples:
-                raise ValueError("arbitrary waveform requires non-empty params.samples list")
-            if not isinstance(dt_ns, (int, float)) or dt_ns <= 0:
-                raise ValueError("arbitrary waveform requires positive params.dt_ns")
-        elif kind in ("gate_on", "gate_off"):
-            # No params required.
-            pass
         return self
 
 
-class TimingBlockCreate(TimingBlockBase):
+class TimingProgramBase(CamelModel):
+    name: str | None = None
+    kind: TimingProgramKind = "TTL"
+    # PB hardware binding (alembic 0046): which physical channel emits this
+    # schedule. None = logical program with no hardware wire yet.
+    channel_index: int | None = Field(default=None, ge=0)
+    invert: bool = False
+    intervals: list[IntervalBase] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_ordered_non_overlapping(self) -> "TimingProgramBase":
+        prev_end = -1.0
+        for i, iv in enumerate(self.intervals):
+            if iv.spin_core_start_ns < prev_end:
+                raise ValueError(
+                    f"intervals must be ordered and non-overlapping; "
+                    f"interval[{i}].spin_core_start_ns ({iv.spin_core_start_ns}) "
+                    f"is before prior end ({prev_end})."
+                )
+            prev_end = iv.spin_core_end_ns
+        return self
+
+
+class TimingProgramCreate(TimingProgramBase):
     pass
 
 
-class TimingBlockUpdate(CamelModel):
-    label: str | None = None
-    t_start_ns: float | None = None
-    t_end_ns: float | None = None
-    waveform_kind: WaveformKind | None = None
-    params: JsonDict | None = None
-    sort_order: int | None = None
-
-
-class TimingBlockOut(TimingBlockBase):
-    id: uuid.UUID
-    program_object_id: uuid.UUID
-    created_at: datetime
-    updated_at: datetime
-
-
-class TimingProgramBase(CamelModel):
-    name: str = "program"
-    spin_core_start: SpinCoreStartMode = "WAIT"
-    duration_ns: float = Field(default=0.0, ge=0.0)
-    properties: JsonDict = Field(default_factory=dict)
-
-
-class TimingProgramUpsert(TimingProgramBase):
-    """Idempotent upsert payload for an object's timing program.
-
-    Includes the desired list of blocks; the route replaces the program's
-    block set with this list (delete-and-recreate). For incremental edits
-    use the per-block routes.
-    """
-    blocks: list[TimingBlockCreate] = Field(default_factory=list)
+class TimingProgramUpdate(CamelModel):
+    name: str | None = None
+    kind: TimingProgramKind | None = None
+    intervals: list[IntervalBase] | None = None
 
 
 class TimingProgramOut(TimingProgramBase):
-    object_id: uuid.UUID
-    blocks: list[TimingBlockOut] = Field(default_factory=list)
+    id: uuid.UUID
     created_at: datetime
     updated_at: datetime
 
@@ -1829,7 +2111,7 @@ class TimingProgramOut(TimingProgramBase):
 #
 # These are the additive Pydantic shapes for the V2 target schema. They live
 # inside JSONB today (objects.properties.{anchorBindings, opticalSources},
-# optical_elements.input_ports / output_ports) and table rows for
+# physics_elements.input_ports / output_ports) and table rows for
 # revisions / simulation_runs.
 #
 # Phase 1 only validates round-trips for these shapes — no per-kind cutover
@@ -2009,7 +2291,7 @@ class EmissionVisualOverride(CamelModel):
     visible: bool = True
 
 
-# ---- optical ports (optical_elements.{input,output}_ports[]) ---------------
+# ---- optical ports (physics_elements.{input,output}_ports[]) ---------------
 
 
 PortRole = Literal["input", "output", "bidirectional"]
@@ -2039,7 +2321,7 @@ PortFace = Literal["face_1", "face_2", "face_3", "face_4", "face_5", "face_6"]
 
 
 class V2OpticalPort(CamelModel):
-    """Inline port endpoint on an OpticalElement. Geometry resolves
+    """Inline port endpoint on an PhysicsElement. Geometry resolves
     through ``binding_id → anchorBindings[] → assets_3d.anchors[]``.
     """
 
@@ -2306,38 +2588,9 @@ class MagneticsProblemOut(MagneticsProblemBase):
     updated_at: datetime
 
 
-# ---- PulseBlaster channels (Phase F+, alembic 0040) -----------------------
-
-
-class PulseBlasterChannelBase(CamelModel):
-    channel_index: int
-    label: str = ""
-    target_component_id: uuid.UUID | None = None
-    invert: bool = False
-    enabled: bool = True
-
-
-class PulseBlasterChannelCreate(PulseBlasterChannelBase):
-    pass
-
-
-class PulseBlasterChannelUpdate(CamelModel):
-    label: str | None = None
-    target_component_id: uuid.UUID | None = None
-    invert: bool | None = None
-    enabled: bool | None = None
-
-
-class PulseBlasterChannelOut(PulseBlasterChannelBase):
-    id: uuid.UUID
-    created_at: datetime
-    updated_at: datetime
-
-
-class PulseBlasterChannelBulkUpsert(CamelModel):
-    """Single-call replace-all for the 24 channels (UI bulk save)."""
-
-    channels: list[PulseBlasterChannelCreate]
+# PulseBlasterChannel schemas removed in alembic 0046. (channel_index, invert)
+# now live inline on TimingProgram; the dedicated PB channels table + endpoints
+# are gone.
 
 
 # ---- RF chain nodes (Phase RF.2, alembic 0041) ----------------------------
@@ -2419,6 +2672,17 @@ class PulseBlasterCompileOut(CamelModel):
     python_source: str
     bound_channel_count: int
     total_duration_ns: float
+
+
+# ---- App settings (alembic 0043) ------------------------------------------
+
+
+class RoomDimensions(CamelModel):
+    """Initial Setup — lab-wide room size. Shared across all users."""
+
+    width_mm: float = Field(ge=100)
+    depth_mm: float = Field(ge=100)
+    height_mm: float = Field(ge=100)
 
 
 class V2RevisionBase(CamelModel):

@@ -16,13 +16,13 @@ from app.models import (
     Component,
     Connection,
     DeviceState,
-    OpticalElement,
+    PhysicsElement,
     OpticalLink,
+    RfLink,
     SceneObject,
     SceneView,
     TimingProgram,
 )
-from sqlalchemy.orm import selectinload
 from app.routers.collections import canonical_collection_members, get_master_collection
 from app.v2_bindings import (
     get_optical_source,
@@ -49,8 +49,9 @@ async def get_scene(session: AsyncSession = Depends(get_session)) -> schemas.Sce
     assembly_relations = list((await session.scalars(select(AssemblyRelation))).all())
     beam_paths = list((await session.scalars(select(BeamPath))).all())
     device_states = list((await session.scalars(select(DeviceState))).all())
-    optical_elements = list((await session.scalars(select(OpticalElement))).all())
+    physics_elements = list((await session.scalars(select(PhysicsElement))).all())
     optical_links = list((await session.scalars(select(OpticalLink))).all())
+    rf_links = list((await session.scalars(select(RfLink))).all())
 
     # V2 Phase 3 (alembic 0029) translator: laser_source kindParams is empty
     # in DB after the cutover. Synthesise the legacy shape from each laser's
@@ -60,11 +61,11 @@ async def get_scene(session: AsyncSession = Depends(get_session)) -> schemas.Sce
     # We build OpticalElementOut dicts here instead of mutating the SA rows
     # so we don't trigger an autoflush during Pydantic serialisation.
     objects_by_id = {obj.id: obj for obj in objects}
-    optical_element_payloads = [
+    physics_element_payloads = [
         schemas.OpticalElementOut.model_validate(el).model_dump(mode="json", by_alias=True)
-        for el in optical_elements
+        for el in physics_elements
     ]
-    for payload, el in zip(optical_element_payloads, optical_elements):
+    for payload, el in zip(physics_element_payloads, physics_elements):
         scene_object = objects_by_id.get(el.object_id)
         if scene_object is None:
             continue
@@ -132,11 +133,7 @@ async def get_scene(session: AsyncSession = Depends(get_session)) -> schemas.Sce
         collections_rows, collection_members_rows
     )
     timing_programs_rows = list(
-        (
-            await session.scalars(
-                select(TimingProgram).options(selectinload(TimingProgram.blocks))
-            )
-        ).all()
+        (await session.scalars(select(TimingProgram))).all()
     )
 
     return schemas.SceneOut(
@@ -147,8 +144,9 @@ async def get_scene(session: AsyncSession = Depends(get_session)) -> schemas.Sce
         assembly_relations=assembly_relations,
         beam_paths=beam_paths,
         device_states=device_states,
-        optical_elements=optical_element_payloads,
+        physics_elements=physics_element_payloads,
         optical_links=optical_links,
+        rf_links=rf_links,
         beam_segments=beam_segments,
         scene_views=scene_views,
         collections=collections_rows,

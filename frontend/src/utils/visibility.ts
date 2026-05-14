@@ -246,7 +246,7 @@ function evalFilter(
     case "wavelength_range": {
       // Per-object optical chain — find any OE whose object belongs to this component.
       const objIds = new Set(scene.objects.filter((o) => o.componentId === componentId).map((o) => o.id));
-      const oe = scene.opticalElements.find((x) => objIds.has(x.objectId));
+      const oe = scene.physicsElements.find((x) => objIds.has(x.objectId));
       if (!oe) return false;
       const [lo, hi] = oe.wavelengthRangeNm;
       return !(hi < expr.lowNm || lo > expr.highNm);

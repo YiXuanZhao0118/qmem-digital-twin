@@ -28,7 +28,7 @@ import { useSceneStore } from "../../store/sceneStore";
 import type {
   Asset3D,
   ComponentItem,
-  OpticalElement,
+  PhysicsElement,
   OpticalLink,
   SceneObject,
 } from "../../types/digitalTwin";
@@ -65,12 +65,12 @@ function anchorColour(id: string): number {
   }
 }
 
-/** Aperture diameter in mm — first checks the OpticalElement's
+/** Aperture diameter in mm — first checks the PhysicsElement's
  *  `clearApertureMm` / `apertureDiameterMm`, then falls back to the
  *  Asset3D's intercept anchor `apertureMm`. Returns null only when nothing
  *  meaningful is configured. */
 function apertureDiameterMm(
-  el: OpticalElement | undefined,
+  el: PhysicsElement | undefined,
   asset: Asset3D | undefined,
 ): number | null {
   if (el) {
@@ -190,7 +190,7 @@ export function OpticalLinkViewerPanel() {
   // renderer gets created at the moment the mount DIV first appears.
   const panelVisible = usePanelLayout("optical-link-viewer").visible;
   const objects = useSceneStore((s) => s.scene.objects);
-  const opticalElements = useSceneStore((s) => s.scene.opticalElements);
+  const physicsElements = useSceneStore((s) => s.scene.physicsElements);
   const opticalLinks = useSceneStore((s) => s.scene.opticalLinks);
   const components = useSceneStore((s) => s.scene.components);
   const assets = useSceneStore((s) => s.scene.assets);
@@ -211,7 +211,7 @@ export function OpticalLinkViewerPanel() {
   //   - Every standalone tapered_amplifier (one not folded into any laser)
   const emitterChoices = useMemo<EmitterChoice[]>(() => {
     const choices: EmitterChoice[] = [];
-    for (const el of opticalElements) {
+    for (const el of physicsElements) {
       const obj = objects.find((o) => o.id === el.objectId);
       if (!obj) continue;
       if (el.elementKind === "laser_source") {
@@ -229,7 +229,7 @@ export function OpticalLinkViewerPanel() {
     }
     choices.sort((a, b) => a.name.localeCompare(b.name));
     return choices;
-  }, [objects, opticalElements, tasFoldedIntoLaser]);
+  }, [objects, physicsElements, tasFoldedIntoLaser]);
 
   const [selectedEmitterId, setSelectedEmitterId] = useState<string | null>(null);
 
@@ -266,7 +266,7 @@ export function OpticalLinkViewerPanel() {
   // The tick loop reads the latest store data via refs so the loop itself
   // doesn't need to be rebuilt on every dep change.
   const chainEmitterIdsRef = useRef<Set<string>>(chainEmitterIds);
-  const opticalElementsRef = useRef(opticalElements);
+  const opticalElementsRef = useRef(physicsElements);
   const opticalLinksRef = useRef(opticalLinks);
   const objectsRef = useRef(objects);
   const componentsRef = useRef(components);
@@ -277,7 +277,7 @@ export function OpticalLinkViewerPanel() {
   const setChainEmitterIdsRef = useRef(setChainEmitterIds);
   const setTasFoldedIntoLaserRef = useRef(setTasFoldedIntoLaser);
   chainEmitterIdsRef.current = chainEmitterIds;
-  opticalElementsRef.current = opticalElements;
+  opticalElementsRef.current = physicsElements;
   opticalLinksRef.current = opticalLinks;
   objectsRef.current = objects;
   componentsRef.current = components;
@@ -555,7 +555,7 @@ export function OpticalLinkViewerPanel() {
 
       if (segments.length === 0) return;
 
-      const elementByObjectId = new Map<string, OpticalElement>();
+      const elementByObjectId = new Map<string, PhysicsElement>();
       for (const el of opticalElementsRef.current) elementByObjectId.set(el.objectId, el);
       const objectById = new Map<string, SceneObject>(
         objectsRef.current.map((o) => [o.id, o]),
@@ -837,7 +837,7 @@ export function OpticalLinkViewerPanel() {
     // Re-run when scope probe OR chain set changes, AND also when underlying
     // trace data could have shifted via store updates.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scopeProbe, chainEmitterIds, opticalElements]);
+  }, [scopeProbe, chainEmitterIds, physicsElements]);
 
   const noEmitters = emitterChoices.length === 0;
 

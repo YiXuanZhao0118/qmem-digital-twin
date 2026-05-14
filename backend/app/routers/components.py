@@ -13,7 +13,7 @@ from app.models import (
     Asset3D,
     BeamPath,
     Component,
-    OpticalElement,
+    PhysicsElement,
     OpticalLink,
     SceneObject,
 )
@@ -44,10 +44,10 @@ def is_component_locked(component: Component) -> bool:
 # =============================================================================
 #
 # `Component.component_type` is just a tag (used by the catalog UI for
-# grouping). The optical solver only sees `OpticalElement` rows. To stop
+# grouping). The optical solver only sees `PhysicsElement` rows. To stop
 # users from "adding a mirror" and silently getting nothing in the simulator,
 # every Component whose component_type maps to a known optical kind gets an
-# OpticalElement auto-created with sensible defaults the moment it lands in
+# PhysicsElement auto-created with sensible defaults the moment it lands in
 # the DB. Already-existing rows are backfilled on demand via
 # POST /api/components/{id}/auto-register-optical.
 
@@ -80,14 +80,39 @@ OPTICAL_COMPONENT_TYPE_TO_KIND: dict[str, str] = {
     "spectrometer": "spectrometer",
     "wavemeter": "wavemeter",
     "beam_dump": "beam_dump",
+    # RF emitters: a DDS PCB / synthesizer module is registered as a single
+    # `rf_source` element whose `kindParams.frequencyMhz` and `powerDbm`
+    # drive the downstream RF chain (amp / filter / AOM-EOM driver). Per-
+    # channel sources for multi-channel boards like AD9959 (4 channels) are
+    # created by the user through the PhysicsElement panel after placing
+    # the SceneObject.
+    "dds_ad9959_pcb": "rf_source",
+    "rf_generator": "rf_source",
+    # Phase RF.amp: coaxial RF gain blocks (Mini-Circuits ZHL series,
+    # generic SMA gain stages) register under a single `rf_amplifier`
+    # kind. The kind contract enforces one rf_in + one rf_out anchor;
+    # per-model gain / NF / freq range live in kindParams.
+    "rf_amplifier": "rf_amplifier",
+    # Phase RF.cable: coaxial cables (SMA/BNC/N) all register under
+    # the rf_cable kind. Legacy `sma_cable` component_type maps to the
+    # same kind so QMEM jumpers promote automatically — mirrors the
+    # frontend COMPONENT_TYPE_TO_KIND map in elementDefaults.ts.
+    "rf_cable": "rf_cable",
+    "sma_cable": "rf_cable",
+    # Phase RF.switch (2026-05-14): coaxial RF switches (Mini-Circuits
+    # ZYSWA-2-50DR family). Mirrors frontend COMPONENT_TYPE_TO_KIND in
+    # elementDefaults.ts. ±5 V supply + TTL control are declared at the
+    # kind level (POWER_KINDS / TTL_GATE_KINDS) so the
+    # InstrumentPowerPanel + TTL gate picker auto-attach.
+    "rf_switch": "rf_switch",
 }
 
-# Minimum-viable kind_params for each kind so the auto-created OpticalElement
+# Minimum-viable kind_params for each kind so the auto-created PhysicsElement
 # passes validation. The user can edit through the OpticalElementPanel UI.
 DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
     # V2 Phase 3 (alembic 0029): every beam-defining laser parameter moved
     # to objects.properties.opticalSources[].beam, populated by the
-    # auto_create_optical_element_for_object bootstrap (see
+    # auto_create_physics_element_for_object bootstrap (see
     # v2_bindings.bootstrap_laser_default_binding_and_source). Residual
     # advanced fields (e.g. rinDbcPerHz) can still live here.
     "laser_source": {},
@@ -230,11 +255,16 @@ DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
     "isolator": {"forwardLossDb": 0.5, "isolationDb": 40.0, "faradayRotationDeg": 45.0},
     "aom": {
         # Legacy / coarse params (kept; topology solver uses them).
+        # Phase B: centerFreqMhz / rfDrivePowerW are NOT seeded here. They
+        # are resolved at solve time from the upstream rf_source channel
+        # via the AOM's rf_in rfCableEndpoints link (hydrate_aom_rf_drive
+        # in optics_seq.py). Orphan AOMs see 80 MHz / undefined P_d
+        # defaults; the closed-form efficiency falls back to
+        # baseEfficiency until a cable is wired up.
         "baseEfficiency": 0.85,
         "deflectionPerMhzUrad": 200.0,
         "acousticVelocityMPerS": 4200.0,
         "modulationBandwidthMhz": 20.0,
-        "centerFreqMhz": 80.0,
         # Bragg-diffraction physics fields used by the ray-tracer:
         #   sin θ_B = λ·f / (2·n·v)
         #   I₁/I₀  = sin²(π·L/(2λ·cosθ_B)·√(2·M₂·P_d/W))
@@ -244,7 +274,6 @@ DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
         "figureOfMeritM2": 34e-15,        # m²/W (TeO₂)
         "crystalLengthMm": 25.0,          # L
         "acousticBeamWidthMm": 1.5,       # W
-        "rfDrivePowerW": 1.0,             # P_d (live control)
         "rfPowerMaxW": 2.0,
         # V2 Phase 7 (alembic 0033): RF / acoustic direction moved to
         # objects.properties.anchorBindings[rfDirection]. Bootstrap default
@@ -301,6 +330,72 @@ DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
     "spectrometer": {"resolutionPm": 100.0, "wavelengthRangeNm": [400.0, 1100.0]},
     "wavemeter": {"precisionMhz": 1.0},
     "beam_dump": {"absorption": 0.999},
+    # RF emitter (DDS / synthesizer). 80 MHz default lands inside the
+    # AD9959 0..200 MHz range and matches the existing rf_source default
+    # in the frontend `opticalDefaults.ts` table.
+    "rf_source": {
+        "frequencyMhz": 80.0,
+        "powerDbm": 0.0,
+        "phaseDeg": 0.0,
+        "modulation": "none",
+    },
+    # Phase RF.amp: coaxial RF amplifier defaults sized for a
+    # Mini-Circuits ZHL-1-2W+ (5..500 MHz, +29 dB min gain, +30 dBm
+    # rated output, +24 V supply). Per-model overrides land in
+    # component.properties for now; the kind solver only consumes
+    # gain / freq range / P_1dB / NF.
+    "rf_amplifier": {
+        "gainDb": 29.0,
+        "frequencyRangeMhz": [5.0, 500.0],
+        "outputPowerP1dbDbm": 29.0,
+        "outputPowerMaxDbm": 30.0,
+        "inputPowerMaxDbm": 0.0,
+        "noiseFigureDb": 9.0,
+        "supplyVoltageV": 24.0,
+        "supplyCurrentA": 0.6,
+        "inputReturnLossDb": 14.0,
+        "outputReturnLossDb": 14.0,
+        "connectorType": "sma",
+    },
+    # Phase RF.cable: coaxial RF cable defaults match Thorlabs CA2906
+    # (RG-316 SMA-M-SMA-M, 50 Ω, DC..3 GHz) — the most common short
+    # patch cable in the lab catalog. Per-instance length/impedance/etc.
+    # carry over from `component.properties` via the mapping block in
+    # `default_kind_params_for_component`.
+    "rf_cable": {
+        "lengthMm": 152.0,
+        "impedanceOhm": 50.0,
+        "maxFrequencyGhz": 3.0,
+        "connectorType": "sma",
+        "cableType": "RG-316",
+        "jacketOuterDiameterMm": 3.2,
+        "jacketColor": "#a93226",
+        "minBendRadiusMm": 15.0,
+    },
+    # Phase RF.switch: defaults match Mini-Circuits ZYSWA-2-50DR
+    # (SP2T absorptive, DC..5 GHz, ±5 V supply, TTL control, ~25 mA).
+    # Per-template overrides (other model, different bands) ship via
+    # `component.properties.rfSwitchKindParamsOverride` in the seed.
+    "rf_switch": {
+        "switchType": "SP2T",
+        "throwCount": 2,
+        "frequencyMinGhz": 0.0,
+        "frequencyMaxGhz": 5.0,
+        "insertionLossDb": 1.0,
+        "isolationDb": 35.0,
+        "switchingTimeNs": 250.0,
+        "absorptionType": "absorptive",
+        "controlLogic": "TTL",
+        "controlVoltageHighV": 5.0,
+        "supplyPositiveV": 5.0,
+        "supplyNegativeV": -5.0,
+        "supplyCurrentMa": 25.0,
+        "maxInputPowerDbm": 27.0,
+        "connectorType": "sma",
+        "manufacturer": "Mini-Circuits",
+        "model": "ZYSWA-2-50DR",
+        "datasheetUrl": "https://www.minicircuits.com/pdfs/ZYSWA-2-50DR+.pdf",
+    },
 }
 
 
@@ -367,8 +462,10 @@ def default_kind_params_for_component(kind: str, component: Component) -> dict[s
     if kind == "aom":
         props = component.properties or {}
         mapped_fields = {
+            # Phase B: centerFrequencyMhz no longer mapped — the AOM's
+            # operating frequency is resolved live from the upstream
+            # rf_source CH at solve time (see hydrate_aom_rf_drive).
             "diffractionEfficiencyTypical": "baseEfficiency",
-            "centerFrequencyMhz": "centerFreqMhz",
             "acousticVelocityMPerS": "acousticVelocityMPerS",
             "modulationBandwidthMhz": "modulationBandwidthMhz",
             "refractiveIndex": "refractiveIndex",
@@ -401,14 +498,42 @@ def default_kind_params_for_component(kind: str, component: Component) -> dict[s
                 and all(isinstance(item, (int, float)) for item in value[:3])
             ):
                 kind_params[new_key] = [float(item) for item in value[:3]]
+    if kind == "rf_cable":
+        # Phase RF.cable: catalog cables (Thorlabs CA29xx, QMEM jumpers) carry
+        # their physical spec on `component.properties`. Map those scalars
+        # into kindParams so the auto-registered PhysicsElement reflects the
+        # specific cable's length / impedance / frequency rating instead of
+        # the generic CA2906 fallback in DEFAULT_KIND_PARAMS.
+        props = component.properties or {}
+        mapped_scalars = {
+            "lengthMm": "lengthMm",
+            "impedanceOhm": "impedanceOhm",
+            "maxFrequencyGhz": "maxFrequencyGhz",
+            "jacketOuterDiameterMm": "jacketOuterDiameterMm",
+            "minBendRadiusMm": "minBendRadiusMm",
+            "workingVoltageVRms": "workingVoltageVRms",
+            "dielectricVoltageVRms": "dielectricVoltageVRms",
+        }
+        for prop_key, param_key in mapped_scalars.items():
+            value = props.get(prop_key)
+            if isinstance(value, (int, float)):
+                kind_params[param_key] = float(value)
+        for prop_key, param_key in (
+            ("connectorType", "connectorType"),
+            ("cableType", "cableType"),
+            ("jacketColor", "jacketColor"),
+        ):
+            value = props.get(prop_key)
+            if isinstance(value, str) and value:
+                kind_params[param_key] = value
     return kind_params
 
 
-async def auto_create_optical_element_for_object(
+async def auto_create_physics_element_for_object(
     session: AsyncSession, scene_object: SceneObject, component: Component
-) -> OpticalElement | None:
+) -> PhysicsElement | None:
     """If `component.component_type` maps to a known optical kind AND no
-    OpticalElement exists for this OBJECT yet, create one with default
+    PhysicsElement exists for this OBJECT yet, create one with default
     ports + kind_params keyed by `scene_object.id`.
 
     Returns the new row, or None if nothing was created. Optical
@@ -418,7 +543,7 @@ async def auto_create_optical_element_for_object(
     kind = OPTICAL_COMPONENT_TYPE_TO_KIND.get((component.component_type or "").strip())
     if kind is None:
         return None
-    stmt = select(OpticalElement).where(OpticalElement.object_id == scene_object.id)
+    stmt = select(PhysicsElement).where(PhysicsElement.object_id == scene_object.id)
     existing = (await session.scalars(stmt)).one_or_none()
     if existing is not None:
         return None
@@ -433,7 +558,7 @@ async def auto_create_optical_element_for_object(
     if kind not in DEFAULT_KIND_PARAMS:
         return None
 
-    optical_element = OpticalElement(
+    physics_element = PhysicsElement(
         object_id=scene_object.id,
         element_kind=kind,
         wavelength_range_nm=[400.0, 1100.0],
@@ -441,7 +566,7 @@ async def auto_create_optical_element_for_object(
         output_ports=list(default_ports.get("output", []) or []),
         kind_params=kind_params,
     )
-    session.add(optical_element)
+    session.add(physics_element)
 
     # V2 Phase 2 (alembic 0028): mirror per-instance reflective normal moved
     # to objects.properties.anchorBindings[opticalSurface]. For
@@ -495,10 +620,10 @@ async def auto_create_optical_element_for_object(
         asset = await session.get(Asset3D, component.asset_3d_id)
         await bootstrap_isolator_default_binding(scene_object, asset)
 
-    return optical_element
+    return physics_element
 
 
-def optical_element_payload(element: OpticalElement) -> dict[str, object]:
+def physics_element_payload(element: PhysicsElement) -> dict[str, object]:
     return schemas.OpticalElementOut.model_validate(element).model_dump(
         mode="json", by_alias=True
     )
@@ -525,7 +650,7 @@ async def create_component(
     await session.refresh(component)
     await manager.broadcast("component.created", component_payload(component))
     # Components no longer auto-create OpticalElements (per-component → per-object
-    # refactor in alembic 0014). The OpticalElement is created when a SceneObject
+    # refactor in alembic 0014). The PhysicsElement is created when a SceneObject
     # of this component is added to the scene.
     return component
 
@@ -557,8 +682,8 @@ async def update_component(
 )
 async def auto_register_optical(
     component_id: uuid.UUID, session: AsyncSession = Depends(get_session)
-) -> list[OpticalElement]:
-    """For each SceneObject of this component, create an OpticalElement
+) -> list[PhysicsElement]:
+    """For each SceneObject of this component, create an PhysicsElement
     if one doesn't exist yet. Returns the list of newly-created rows
     (empty if all objects already had OpticalElements or the component
     type isn't a known optical kind).
@@ -566,9 +691,9 @@ async def auto_register_optical(
     component = await crud.get_or_404(session, Component, component_id)
     stmt = select(SceneObject).where(SceneObject.component_id == component_id)
     objs = list((await session.scalars(stmt)).all())
-    created: list[OpticalElement] = []
+    created: list[PhysicsElement] = []
     for obj in objs:
-        oe = await auto_create_optical_element_for_object(session, obj, component)
+        oe = await auto_create_physics_element_for_object(session, obj, component)
         if oe is not None:
             created.append(oe)
     if not created:
@@ -576,7 +701,7 @@ async def auto_register_optical(
     await session.commit()
     for oe in created:
         await session.refresh(oe)
-        await manager.broadcast("optical_element.updated", optical_element_payload(oe))
+        await manager.broadcast("physics_element.updated", physics_element_payload(oe))
     return created
 
 
@@ -584,7 +709,7 @@ async def auto_register_optical(
 async def auto_register_optical_all(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
-    """Sweep every SceneObject and create missing OpticalElement rows
+    """Sweep every SceneObject and create missing PhysicsElement rows
     for those whose Component maps to a known optical kind. Idempotent.
     """
     stmt = (
@@ -593,9 +718,9 @@ async def auto_register_optical_all(
         .where(Component.archived_at.is_(None))
     )
     pairs = list((await session.execute(stmt)).all())
-    created: list[OpticalElement] = []
+    created: list[PhysicsElement] = []
     for obj, comp in pairs:
-        oe = await auto_create_optical_element_for_object(session, obj, comp)
+        oe = await auto_create_physics_element_for_object(session, obj, comp)
         if oe is not None:
             created.append(oe)
     if not created:
@@ -604,9 +729,9 @@ async def auto_register_optical_all(
     payloads: list[dict[str, object]] = []
     for element in created:
         await session.refresh(element)
-        payload = optical_element_payload(element)
+        payload = physics_element_payload(element)
         payloads.append(payload)
-        await manager.broadcast("optical_element.updated", payload)
+        await manager.broadcast("physics_element.updated", payload)
     return {
         "createdCount": len(created),
         "scanned": len(pairs),
@@ -636,7 +761,7 @@ async def delete_component(
             )
         )
     )
-    # All other per-instance state (Connection, OpticalLink, OpticalElement,
+    # All other per-instance state (Connection, OpticalLink, PhysicsElement,
     # DeviceState, TimingProgram) is keyed by SceneObject id with ON DELETE
     # CASCADE, so deleting the SceneObjects below propagates everything.
     await session.execute(delete(SceneObject).where(SceneObject.component_id == component_id))

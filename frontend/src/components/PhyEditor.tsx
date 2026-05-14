@@ -53,7 +53,7 @@ export function PhyEditor() {
 
   const switchView = (
     view:
-      | { domain: "optical"; section: "kinds" | "components" }
+      | { domain: "optical" | "rf"; section: "kinds" | "components" }
       | null,
   ) => {
     if (
@@ -72,6 +72,9 @@ export function PhyEditor() {
   const opticalKinds = opticalActive && phyEditorView?.section === "kinds";
   const opticalComponents =
     opticalActive && phyEditorView?.section === "components";
+  const rfActive = phyEditorView?.domain === "rf";
+  const rfKinds = rfActive && phyEditorView?.section === "kinds";
+  const rfComponents = rfActive && phyEditorView?.section === "components";
 
   return (
     <div className="phy-editor">
@@ -131,6 +134,36 @@ export function PhyEditor() {
             </button>
           </div>
 
+          <div className="phy-editor-domain">
+            <div className="phy-editor-domain-title">▼ RF</div>
+            <button
+              type="button"
+              className={
+                "phy-editor-rail-item" +
+                (rfKinds ? " is-active" : "")
+              }
+              onClick={() =>
+                switchView({ domain: "rf", section: "kinds" })
+              }
+            >
+              rf_kinds
+              <span className="phy-editor-rail-hint">contract registry</span>
+            </button>
+            <button
+              type="button"
+              className={
+                "phy-editor-rail-item" +
+                (rfComponents ? " is-active" : "")
+              }
+              onClick={() =>
+                switchView({ domain: "rf", section: "components" })
+              }
+            >
+              rf_component
+              <span className="phy-editor-rail-hint">rf_in / rf_out anchors</span>
+            </button>
+          </div>
+
           <div className="phy-editor-domain phy-editor-domain-disabled">
             <div className="phy-editor-domain-title">▷ Electrical</div>
             <div className="phy-editor-rail-soon">coming later</div>
@@ -154,11 +187,17 @@ export function PhyEditor() {
                 <br />
                 Optical → Components: edit the anchor positions on a
                 specific component's GLB.
+                <br />
+                RF → Components: place rf_in / rf_out anchors at the SMA
+                / coax port positions on the 3D model (e.g. each AD9959
+                channel, AOM RF input).
               </span>
             </div>
           )}
-          {opticalKinds && <OpticalKindsEditor />}
-          {opticalComponents && <OpticalComponentEditor />}
+          {opticalKinds && <OpticalKindsEditor domain="optical" />}
+          {opticalComponents && <OpticalComponentEditor domain="optical" />}
+          {rfKinds && <OpticalKindsEditor domain="rf" />}
+          {rfComponents && <OpticalComponentEditor domain="rf" />}
         </div>
       </div>
     </div>

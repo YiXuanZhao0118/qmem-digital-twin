@@ -12,7 +12,7 @@ import type * as THREE from "three";
 import type {
   Asset3D,
   ComponentItem,
-  OpticalElement,
+  PhysicsElement,
   OpticalLink,
   SceneObject,
 } from "../../types/digitalTwin";
@@ -136,7 +136,7 @@ export type SceneSnapshot = {
   components: ComponentItem[];
   objects: SceneObject[];
   assets: Asset3D[];
-  opticalElements: OpticalElement[];
+  physicsElements: PhysicsElement[];
   opticalLinks: OpticalLink[];
 };
 
@@ -312,7 +312,7 @@ export function computePlacement(input: PlacementInput): PlacementResult {
 }
 
 /** Rank snap candidates by per-project relevance:
- *  1. If target component has an OpticalElement → beam snaps win.
+ *  1. If target component has an PhysicsElement → beam snaps win.
  *  2. Then anchor snaps (most specific).
  *  3. Then geometry snaps (face_centroid > bbox_center > vertex > edge).
  *  4. Then reference snaps.
@@ -326,7 +326,7 @@ export function rankByOpticalRelevance(
   componentId: string,
 ): SnapTarget[] {
   void intent;
-  const targetIsOptical = scene.opticalElements.some((el) => el.objectId === componentId);
+  const targetIsOptical = scene.physicsElements.some((el) => el.objectId === componentId);
 
   const tier = (kind: SnapTargetKind): number => {
     switch (kind) {

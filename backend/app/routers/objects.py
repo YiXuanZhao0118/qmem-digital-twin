@@ -94,8 +94,8 @@ async def create_object(
 ) -> SceneObject:
     # Lazy import avoids a circular components ↔ objects router dependency.
     from app.routers.components import (
-        auto_create_optical_element_for_object,
-        optical_element_payload,
+        auto_create_physics_element_for_object,
+        physics_element_payload,
     )
 
     component = await crud.get_or_404(session, Component, payload.component_id)
@@ -119,17 +119,17 @@ async def create_object(
     session.add(CollectionMember(collection_id=target_id, object_id=scene_object.id))
 
     # Per-object optical participation: when the user spawns an object of an
-    # optical kind (mirror, laser_source, etc.), auto-create the OpticalElement
+    # optical kind (mirror, laser_source, etc.), auto-create the PhysicsElement
     # for THIS specific instance with default kind_params. They can edit those
     # params per-object after.
-    optical_element = await auto_create_optical_element_for_object(
+    physics_element = await auto_create_physics_element_for_object(
         session, scene_object, component
     )
 
     await session.commit()
     await session.refresh(scene_object)
-    if optical_element is not None:
-        await session.refresh(optical_element)
+    if physics_element is not None:
+        await session.refresh(physics_element)
     await manager.broadcast("object.updated", object_payload(scene_object))
     await manager.broadcast(
         "collection_member.updated",
@@ -139,8 +139,8 @@ async def create_object(
             "sortOrder": 0,
         },
     )
-    if optical_element is not None:
-        await manager.broadcast("optical_element.updated", optical_element_payload(optical_element))
+    if physics_element is not None:
+        await manager.broadcast("physics_element.updated", physics_element_payload(physics_element))
     return scene_object
 
 

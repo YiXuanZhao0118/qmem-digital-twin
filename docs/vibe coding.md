@@ -905,7 +905,7 @@ physics.ts 是 Bragg 幾何唯一 source；align 跟 rayTrace 用同一組 helpe
 | `store/sceneStore.ts` | Zustand store + scene mutations（單一 source of truth）|
 | **`optical/frames.ts`** | ★ frame/unit conversion 唯一入口 |
 | **`optical/frames.test.ts`** | 76 個 vitest regression test |
-| **`optical/kinds/_registry.ts`** | ★ `KIND_REGISTRY: Record<ElementKind, KindContract>`：每個 kind 的 expected anchors (required + optional)、**`anchorsNeedingDirection`**（mirror / dichroic_mirror 的 `intercept_face` 必須帶法向方向，否則 ray-tracer 不知道哪一側反射）、align variant、tolerance、人類可讀的 align summary。OpticalKindsEditor + OpticalComponentEditor 都從這裡讀。MVP 是 hardcoded TS const；未來 (P8/P9) 可搬部分到 DB |
+| **`kinds/_registry.ts`** | ★ `KIND_REGISTRY: Record<ElementKind, KindContract>`：每個 kind (光學 + RF) 的 expected anchors (required + optional)、**`anchorsNeedingDirection`**（mirror / dichroic_mirror 的 `intercept_face` 必須帶法向方向，否則 ray-tracer 不知道哪一側反射）、align variant、tolerance、人類可讀的 align summary。OpticalKindsEditor + OpticalComponentEditor 都從這裡讀。MVP 是 hardcoded TS const；未來 (P8/P9) 可搬部分到 DB |
 | **`optical/kinds/aom/physics.ts`** | ★ AOM 物理 + Bragg 幾何唯一 source。Bragg θ_B、closed-form sin² η、Bessel J_n、phase mod depth、sideband intensities、RF power inverse。**Phase 7.4 新增**：`expectedInputDotD2(m, traversalSign, θ_B)` = `−m·traversalSign·sin(θ_B)` 是 align 的 Bragg target、`diffractedDirection(input, D3, m, θ_B)` 是 rayTrace 的 deflection rotation、`aomBodyFrameBodyLocal(in, out, rf)` 從 anchors + RF 推 D1/D2/D3。`Stage1RotationMode` / `Stage2SignConvention` enum + DEFAULT_*。被 AomAdjustControls (alignToLaser) + rayTrace.ts 共用,sign 結構性派生不再 drift |
 | **`optical/kinds/aom/physics.test.ts`** | 54 個 vitest 守住公式 + Bragg sign convention（J_n 序列收斂、Bragg 角度數值、η ∈ [0,1]、sideband 總和歸一、Max η inverse 自洽、`expectedInputDotD2` sign matrix、`diffractedDirection` Rodrigues、(state, m) round-trip Bragg-mirror — 防 Phase 7.4 sign-bug 復發）|
 | **`components/PhyEditor.tsx`** | ★ PHY Editor 全頁面 wrapper（活化條件 `editorMode === "phy-editor"`）。Top bar (Back to scene + 標題 + 全域 dirty 指示) + 兩欄：左 rail PHY domain 樹 + 右 pane host 子 editor。Tab 切換 / Back 都檢 `phyEditorDirty` 彈 confirm |
@@ -1154,7 +1154,7 @@ npm run test:watch             # watch mode
   - `components/PhyEditor.tsx`：top bar (Back to scene + 標題 + dirty marker) + 兩欄 layout（左 rail PHY 樹 + 右 pane host 子 editor）。Tab 切換 / Back 都檢 phyEditorDirty 彈 confirm
   - `components/OpticalKindsEditor.tsx`：read-only 卡片陣列顯示 KIND_REGISTRY 的 20 個 kind
   - `components/OpticalComponentEditor.tsx`：anchor 編輯器（左 component list + 中 isolated wireframe + TransformControls + 右 inspector）。Save → updateAssetApi。Dirty 透過 store 同步給 wrapper
-  - `optical/kinds/_registry.ts`：`KIND_REGISTRY` map（每 kind 的 expected anchors + align variant + tolerance + alignSummary）
+  - `kinds/_registry.ts`：`KIND_REGISTRY` map（每 kind 的 expected anchors + align variant + tolerance + alignSummary）
   - 編輯入口集中在 `SceneToolbar`，不再從 `ComponentPanel` 進入（per-component "Edit anchors" 按鈕已拔掉）
 
 待做：
@@ -1171,7 +1171,7 @@ npm run test:watch             # watch mode
 - Layer 4b (object source / anchor-bound geometry) = SceneObject.properties.opticalSources[] + anchorBindings[] ← **per-object emitted beam / start-contact geometry**：laser wavelength、power、spectrum、polarization、spatialEnvelope、transverseMode 放 opticalSources[].beam；surface / port / detector aperture、interaction volume / mode field 等 geometry-only payload 放 anchorBindings[]。每筆 source / binding 有自己的 opaque object-scoped `id`；source 用 `bindingId` reference start binding，binding 用 `anchorId` reference Asset.anchors[]；不要用 asset anchor id 當 source 或 binding 主鍵
 - Layer 3 (component catalog) = Component ← **vendor documentation / catalog**：model number、vendor、datasheet、linked asset、component_type。目標架構中不把 Component.properties 當物理參數容器
 - Layer 2 (asset geometry) = Asset.anchors[] ← **reusable physics interaction geometry**：id、name、type、positionMmBodyLocal、directionBodyLocal。type 必須是 PhysicsCapability；不放 aperture，也不放純機械定位點
-- Layer 1 (kind contract) = `optical/kinds/_registry.ts`（code）+ 未來 `optical_kinds` table ← physics class 定義，OpticalKindsEditor 唯讀顯示；編輯走 PR
+- Layer 1 (kind contract) = `kinds/_registry.ts`（code）+ 未來 `optical_kinds` table ← physics class 定義，OpticalKindsEditor 唯讀顯示；編輯走 PR
 
 **PhyEditor 只該寫 Layer 2，不應該寫 Layer 3 或 Layer 4。**這條界線很重要：
 

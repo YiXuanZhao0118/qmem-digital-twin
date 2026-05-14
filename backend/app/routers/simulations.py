@@ -7,21 +7,18 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import Field
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.db import get_session
 from app.models import (
     BeamSegment,
-    OpticalElement,
+    PhysicsElement,
     OpticalLink,
     SceneObject,
     SimulationRun,
-    TimingProgram,
 )
 from app.schemas import CamelModel
 from app.solvers.optical_solver import solve_chain
-from app.solvers.optics_seq import hydrate_laser_kind_params
-from app.timing_program import evaluate_program_at
+from app.solvers.optics_seq import hydrate_aom_rf_drive, hydrate_laser_kind_params
 from app.websocket import manager
 
 
@@ -37,12 +34,13 @@ class OpticalRunResponse(CamelModel):
 
 @router.post("/optical/run", response_model=OpticalRunResponse, status_code=status.HTTP_200_OK)
 async def run_optical(session: AsyncSession = Depends(get_session)) -> OpticalRunResponse:
-    elements = list((await session.scalars(select(OpticalElement))).all())
+    elements = list((await session.scalars(select(PhysicsElement))).all())
     links = list((await session.scalars(select(OpticalLink))).all())
     objects_by_id = {
         obj.id: obj for obj in (await session.scalars(select(SceneObject))).all()
     }
     hydrate_laser_kind_params(elements, objects_by_id)
+    hydrate_aom_rf_drive(elements, objects_by_id)
 
     result = solve_chain(elements, links)
 
@@ -158,28 +156,22 @@ async def run_optical_transient(
             ),
         )
 
-    elements = list((await session.scalars(select(OpticalElement))).all())
+    elements = list((await session.scalars(select(PhysicsElement))).all())
     links = list((await session.scalars(select(OpticalLink))).all())
     objects_by_id = {
         obj.id: obj for obj in (await session.scalars(select(SceneObject))).all()
     }
     hydrate_laser_kind_params(elements, objects_by_id)
-    programs = list(
-        (
-            await session.scalars(
-                select(TimingProgram).options(selectinload(TimingProgram.blocks))
-            )
-        ).all()
-    )
-    blocks_by_object: dict[uuid.UUID, list] = {
-        program.object_id: list(program.blocks) for program in programs
-    }
+    hydrate_aom_rf_drive(elements, objects_by_id)
 
+    # alembic 0045: TimingProgram is no longer per-object. Per-object gating
+    # factors now come from each object's properties.rfSources[].signal.gateBinding
+    # (or laser equivalent), which resolves a TimingProgram by id. That binding
+    # resolver hasn't landed yet — until it does, the transient path runs
+    # ungated (factor = 1.0 everywhere) and emits empty object_traces.
     run_id = uuid.uuid4()
     all_segments: list[dict] = []
-    object_traces: dict[uuid.UUID, list[TransientTracePoint]] = {
-        program.object_id: [] for program in programs
-    }
+    object_traces: dict[uuid.UUID, list[TransientTracePoint]] = {}
     errors: set[str] = set()
     warnings: set[str] = set()
 
@@ -187,19 +179,7 @@ async def run_optical_transient(
         t_ns = payload.t_start_ns + step * payload.dt_ns
         t_ms = t_ns / 1.0e6
 
-        # Evaluate every object's program at t and collect (factor, trace point).
-        factors: dict[uuid.UUID, float] = {}
-        for object_id, blocks in blocks_by_object.items():
-            res = evaluate_program_at(blocks, t_ns)
-            factors[object_id] = float(res.value)
-            object_traces[object_id].append(
-                TransientTracePoint(
-                    t_ns=t_ns,
-                    value=res.value,
-                    kind=res.kind,
-                    label=res.label,
-                )
-            )
+        factors: dict[uuid.UUID, float] = {obj_id: 1.0 for obj_id in objects_by_id}
 
         result = solve_chain(
             elements,

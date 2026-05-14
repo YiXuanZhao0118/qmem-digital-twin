@@ -14,7 +14,7 @@
 // the same optical_link the placement targets; if the solver hasn't run we
 // degrade to "info" status (no warning, no green check, just a hint).
 
-import type { OpticalElement, BeamSegment, SceneData } from "../types/digitalTwin";
+import type { PhysicsElement, BeamSegment, SceneData } from "../types/digitalTwin";
 import { mirrorNormalLab } from "./beamAnchor";
 import type { Vec3 } from "./beamPlacement";
 
@@ -40,7 +40,7 @@ export type ApertureResult = {
  *  Backend convention: `clearApertureMm` (mirror, lens_spherical,
  *  lens_cylindrical, polarizer, etc. all carry this optional field). We
  *  also accept `apertureDiameterMm` for forward-compat with future kinds. */
-function getApertureDiameterMm(el: OpticalElement | undefined): number | null {
+function getApertureDiameterMm(el: PhysicsElement | undefined): number | null {
   if (!el) return null;
   const params = el.kindParams as Record<string, unknown>;
   const candidates = ["clearApertureMm", "apertureDiameterMm"];
@@ -94,7 +94,7 @@ export function checkAperture(
   segmentMeta: { fromObjectId: string; fromPort: string },
   scene: SceneData,
 ): ApertureResult | null {
-  const el = scene.opticalElements.find((e) => e.objectId === targetObjectId);
+  const el = scene.physicsElements.find((e) => e.objectId === targetObjectId);
   if (!el) return null;
   const apMm = getApertureDiameterMm(el);
   if (apMm === null) return null;

@@ -66,6 +66,28 @@ function colorForComponent(component: ComponentItem, state?: DeviceState): THREE
       return "#1a1a1c";
     case "isolator":
       return "#1a1a1c";
+    case "dds_ad9959_pcb":
+      return "#0f3f2a";
+    case "mcu_board":
+      return "#1e293b";
+    case "tcxo_module":
+      return "#3f3422";
+    case "power_supply_ac_dc":
+      return "#7c2d12";
+    case "sma_cable":
+    case "rf_cable":
+      return "#c4a884";
+    case "rf_switch":
+      // Brushed aluminium body of a Mini-Circuits ZYSWA-2-50DR-style
+      // coaxial SP2T switch. White silkscreen + gold SMAs ride on top.
+      return "#c8ccd0";
+    case "sma_jack":
+    case "usb_b_jack":
+      return "#cbd5e1";
+    case "iec_c14_inlet":
+      return "#1f2937";
+    case "instrument_chassis":
+      return "#27272a";
     default:
       return "#64748b";
   }
@@ -76,8 +98,8 @@ function materialFor(
   state?: DeviceState,
 ): THREE.MeshStandardMaterial {
   const transparent = component.componentType === "vacuum_chamber" || component.componentType === "lens";
-  const isPolished = ["mirror", "optical_post", "pedestal_post", "post_spacer", "clamping_fork", "laser_diode_mount"].includes(component.componentType);
-  const isAnodized = component.componentType === "mirror_mount" || component.componentType === "isolator";
+  const isPolished = ["mirror", "optical_post", "pedestal_post", "post_spacer", "clamping_fork", "laser_diode_mount", "sma_jack", "usb_b_jack"].includes(component.componentType);
+  const isAnodized = component.componentType === "mirror_mount" || component.componentType === "isolator" || component.componentType === "instrument_chassis" || component.componentType === "power_supply_ac_dc";
   return new THREE.MeshStandardMaterial({
     color: colorForComponent(component, state),
     metalness: isPolished ? 0.75 : isAnodized ? 0.55 : 0.12,
@@ -912,6 +934,877 @@ function createTextAnnotation(component: ComponentItem): THREE.Sprite {
   return sprite;
 }
 
+const ddsPcbGreenMat = new THREE.MeshStandardMaterial({ color: "#0f3f2a", metalness: 0.05, roughness: 0.62 });
+const ddsPcbDarkBlueMat = new THREE.MeshStandardMaterial({ color: "#1e293b", metalness: 0.08, roughness: 0.55 });
+const ddsPcbTanGreenMat = new THREE.MeshStandardMaterial({ color: "#3f3422", metalness: 0.05, roughness: 0.58 });
+const ddsBlackInsetMat = new THREE.MeshStandardMaterial({ color: "#020617", metalness: 0.25, roughness: 0.55 });
+const ddsChromeMat = new THREE.MeshStandardMaterial({ color: "#d1d5db", metalness: 0.85, roughness: 0.2 });
+const ddsBrassMat = new THREE.MeshStandardMaterial({ color: "#b7791f", metalness: 0.7, roughness: 0.28 });
+const ddsTeflonWhiteMat = new THREE.MeshStandardMaterial({ color: "#f1f5f9", metalness: 0.05, roughness: 0.55 });
+const ddsSilkscreenMat = new THREE.MeshStandardMaterial({ color: "#e5e7eb", metalness: 0.05, roughness: 0.65 });
+const ddsCableBlackMat = new THREE.MeshStandardMaterial({ color: "#0f172a", metalness: 0.15, roughness: 0.62 });
+// Brass with flat-shading — used for hex flanges so the 6 facets render as
+// discrete planes (smooth shading on a 6-sided CylinderGeometry interpolates
+// the normals across faces and the hex visually degenerates into a cylinder).
+const ddsBrassFlatMat = new THREE.MeshStandardMaterial({
+  color: "#b7791f",
+  metalness: 0.7,
+  roughness: 0.28,
+  flatShading: true,
+});
+// RG-316 jacket: tan / beige fluorinated FEP outer. Reference: Thorlabs
+// CA29xx dimension drawing photo — clearly distinguishable from a black
+// RG-178 jacket.
+// RG-316 FEP jacket — reddish-brown, matches Thorlabs CA29xx datasheet
+// artwork and the colour of physical RG-316 in the lab. Prior `#c4a884` was
+// closer to RG-174 PVC tan, which read as "wrong cable type" on screen.
+const ddsCableTanMat = new THREE.MeshStandardMaterial({ color: "#a93226", metalness: 0.05, roughness: 0.62 });
+const ddsPsuShellMat = new THREE.MeshStandardMaterial({ color: "#f8fafc", metalness: 0.05, roughness: 0.62 });
+const ddsPsuLabelMat = new THREE.MeshStandardMaterial({ color: "#7c2d12", metalness: 0.05, roughness: 0.55 });
+
+// SMA bulkhead jack body — nickel-plated steel. Darker / less mirror-bright
+// than the generic chrome used on other DDS chassis trim.
+const ddsSmaNickelMat = new THREE.MeshStandardMaterial({
+  color: "#9ca3af",
+  metalness: 0.9,
+  roughness: 0.32,
+});
+
+function createSmaBulkheadJack(): THREE.Object3D {
+  const group = new THREE.Group();
+  // Layout along the mounting axis (+X = panel-out, where cable mates):
+  //
+  //   -6.7      -3.7      -1.75       0      2.25       8.5         12.5
+  //    | back-nut | washer | back-shaft | flange | front threaded barrel |
+  //    +---------+---------+-----------+--------+-----------------------+
+  //                                    ^
+  //                                    panel surface
+  //
+  // 2026-05-13: added back-of-panel lock nut + lock washer + threaded
+  // back-shaft. Matches a real Amphenol 132357 panel-mount SMA-F which
+  // ships as flange + threaded shaft + lock washer + lock nut — the prior
+  // model only rendered the flange + front barrel, which is why the user
+  // reported "sma 母頭少了螺帽".
+  const hexThickness = mmToThree(1);
+  const hexRadius = mmToThree(5.0);
+  const hex = new THREE.Mesh(
+    new THREE.CylinderGeometry(hexRadius, hexRadius, hexThickness, 6),
+    ddsSmaNickelMat,
+  );
+  hex.rotation.z = Math.PI / 2;
+  hex.position.x = hexThickness / 2;
+  group.add(hex);
+
+  const barrel = new THREE.Mesh(
+    new THREE.CylinderGeometry(mmToThree(3.2), mmToThree(3.2), mmToThree(8), 24),
+    ddsSmaNickelMat,
+  );
+  barrel.rotation.z = Math.PI / 2;
+  barrel.position.x = hexThickness + mmToThree(4);
+  group.add(barrel);
+
+  // Back-of-panel threaded shaft. Goes through the panel hole; visible
+  // from inside the chassis between the flange and the lock nut.
+  const backShaft = new THREE.Mesh(
+    new THREE.CylinderGeometry(mmToThree(3.0), mmToThree(3.0), mmToThree(3.5), 24),
+    ddsSmaNickelMat,
+  );
+  backShaft.rotation.z = Math.PI / 2;
+  backShaft.position.x = -mmToThree(1.75);
+  group.add(backShaft);
+
+  // Lock washer between the panel back and the nut.
+  const lockWasher = new THREE.Mesh(
+    new THREE.CylinderGeometry(mmToThree(4.5), mmToThree(4.5), mmToThree(0.4), 24),
+    ddsSmaNickelMat,
+  );
+  lockWasher.rotation.z = Math.PI / 2;
+  lockWasher.position.x = -mmToThree(3.7);
+  group.add(lockWasher);
+
+  // Back panel-mount hex nut. Slightly thinner than the front flange so
+  // the flange stays visually dominant.
+  const backNut = new THREE.Mesh(
+    new THREE.CylinderGeometry(mmToThree(4.6), mmToThree(4.6), mmToThree(3.0), 6),
+    ddsSmaNickelMat,
+  );
+  backNut.rotation.z = Math.PI / 2;
+  backNut.position.x = -mmToThree(5.4);
+  group.add(backNut);
+
+  const teflon = new THREE.Mesh(
+    new THREE.CylinderGeometry(mmToThree(2.0), mmToThree(2.0), mmToThree(0.8), 20),
+    ddsTeflonWhiteMat,
+  );
+  teflon.rotation.z = Math.PI / 2;
+  teflon.position.x = -mmToThree(0.45);
+  group.add(teflon);
+
+  const pin = new THREE.Mesh(
+    new THREE.CylinderGeometry(mmToThree(0.5), mmToThree(0.5), mmToThree(1.6), 16),
+    ddsBrassMat,
+  );
+  pin.rotation.z = Math.PI / 2;
+  pin.position.x = -mmToThree(0.5);
+  group.add(pin);
+  return group;
+}
+
+function createDdsAd9959Pcb(component: ComponentItem, _state?: DeviceState): THREE.Object3D {
+  const group = new THREE.Group();
+  const [lenMm, widMm] = getDimensionsMm(component.properties, [100, 80, 16]);
+  const length = mmToThree(lenMm);
+  const width = mmToThree(widMm);
+  const pcbThickness = mmToThree(1.6);
+
+  const pcb = new THREE.Mesh(new THREE.BoxGeometry(length, pcbThickness, width), ddsPcbGreenMat);
+  pcb.position.y = pcbThickness / 2;
+  group.add(pcb);
+
+  const chip = new THREE.Mesh(
+    new THREE.BoxGeometry(mmToThree(16), mmToThree(2.4), mmToThree(16)),
+    ddsBlackInsetMat,
+  );
+  chip.position.set(-length * 0.05, pcbThickness + mmToThree(1.2), 0);
+  group.add(chip);
+
+  const chipLabel = new THREE.Mesh(
+    new THREE.BoxGeometry(mmToThree(13), mmToThree(0.05), mmToThree(13)),
+    ddsSilkscreenMat,
+  );
+  chipLabel.position.set(-length * 0.05, pcbThickness + mmToThree(2.45), 0);
+  group.add(chipLabel);
+
+  const regulator = new THREE.Mesh(
+    new THREE.BoxGeometry(mmToThree(8), mmToThree(3.5), mmToThree(7)),
+    ddsBlackInsetMat,
+  );
+  regulator.position.set(length * 0.32, pcbThickness + mmToThree(1.75), -width * 0.3);
+  group.add(regulator);
+
+  const xtal = new THREE.Mesh(
+    new THREE.BoxGeometry(mmToThree(7), mmToThree(2.5), mmToThree(5)),
+    ddsChromeMat,
+  );
+  xtal.position.set(length * 0.18, pcbThickness + mmToThree(1.25), width * 0.3);
+  group.add(xtal);
+
+  // 4 SMA outputs on the +X (right) edge of the PCB, pointing in +X.
+  // createSmaBulkheadJack already builds the jack along +X, so we mount the
+  // hex flange flush to the edge (origin at panel) and the barrel sticks out.
+  for (let index = 0; index < 4; index += 1) {
+    const jack = createSmaBulkheadJack();
+    jack.position.set(
+      length / 2,
+      pcbThickness + mmToThree(5),
+      (index - 1.5) * mmToThree(14),
+    );
+    group.add(jack);
+  }
+
+  const headerBody = new THREE.Mesh(
+    new THREE.BoxGeometry(mmToThree(2.54 * 10), mmToThree(8), mmToThree(2.54 * 2)),
+    ddsBlackInsetMat,
+  );
+  headerBody.position.set(-length * 0.32, pcbThickness + mmToThree(4), -width * 0.3);
+  group.add(headerBody);
+  for (let row = 0; row < 2; row += 1) {
+    for (let col = 0; col < 10; col += 1) {
+      const pin = new THREE.Mesh(
+        new THREE.BoxGeometry(mmToThree(0.6), mmToThree(7), mmToThree(0.6)),
+        ddsBrassMat,
+      );
+      pin.position.set(
+        -length * 0.32 + (col - 4.5) * mmToThree(2.54),
+        pcbThickness + mmToThree(4),
+        -width * 0.3 + (row - 0.5) * mmToThree(2.54),
+      );
+      group.add(pin);
+    }
+  }
+
+  for (const x of [-0.45, 0.45]) {
+    for (const z of [-0.45, 0.45]) {
+      const hole = new THREE.Mesh(
+        new THREE.CylinderGeometry(mmToThree(1.6), mmToThree(1.6), pcbThickness * 1.05, 14),
+        ddsBlackInsetMat,
+      );
+      hole.position.set(x * length * 0.95, pcbThickness / 2, z * width * 0.95);
+      group.add(hole);
+    }
+  }
+  return group;
+}
+
+function createDdsMcuBoard(component: ComponentItem, _state?: DeviceState): THREE.Object3D {
+  const group = new THREE.Group();
+  const [lenMm, widMm] = getDimensionsMm(component.properties, [90, 70, 18]);
+  const length = mmToThree(lenMm);
+  const width = mmToThree(widMm);
+  const pcbThickness = mmToThree(1.6);
+
+  const pcb = new THREE.Mesh(new THREE.BoxGeometry(length, pcbThickness, width), ddsPcbDarkBlueMat);
+  pcb.position.y = pcbThickness / 2;
+  group.add(pcb);
+
+  const mcu = new THREE.Mesh(
+    new THREE.BoxGeometry(mmToThree(12), mmToThree(1.4), mmToThree(12)),
+    ddsBlackInsetMat,
+  );
+  mcu.position.set(0, pcbThickness + mmToThree(0.7), 0);
+  group.add(mcu);
+
+  const usbShell = new THREE.Mesh(
+    new THREE.BoxGeometry(mmToThree(11), mmToThree(11), mmToThree(15)),
+    ddsChromeMat,
+  );
+  usbShell.position.set(-length / 2 + mmToThree(7), pcbThickness + mmToThree(5.5), -width * 0.3);
+  group.add(usbShell);
+
+  const usbCavity = new THREE.Mesh(
+    new THREE.BoxGeometry(mmToThree(0.6), mmToThree(7.8), mmToThree(8.5)),
+    ddsBlackInsetMat,
+  );
+  usbCavity.position.set(-length / 2 + mmToThree(0.8), pcbThickness + mmToThree(5.5), -width * 0.3);
+  group.add(usbCavity);
+
+  for (let port = 0; port < 5; port += 1) {
+    const headerBody = new THREE.Mesh(
+      new THREE.BoxGeometry(mmToThree(2.54 * 6), mmToThree(8), mmToThree(2.54)),
+      ddsBlackInsetMat,
+    );
+    const x = length * 0.45 - port * mmToThree(15);
+    headerBody.position.set(x, pcbThickness + mmToThree(4), width * 0.32);
+    group.add(headerBody);
+    for (let col = 0; col < 6; col += 1) {
+      const pin = new THREE.Mesh(
+        new THREE.BoxGeometry(mmToThree(0.5), mmToThree(7), mmToThree(0.5)),
+        ddsBrassMat,
+      );
+      pin.position.set(x + (col - 2.5) * mmToThree(2.54), pcbThickness + mmToThree(4), width * 0.32);
+      group.add(pin);
+    }
+    const silkLabel = new THREE.Mesh(
+      new THREE.BoxGeometry(mmToThree(2.54 * 6), mmToThree(0.05), mmToThree(2)),
+      ddsSilkscreenMat,
+    );
+    silkLabel.position.set(x, pcbThickness + mmToThree(0.05), width * 0.18);
+    group.add(silkLabel);
+  }
+
+  const button = new THREE.Mesh(
+    new THREE.BoxGeometry(mmToThree(6), mmToThree(3.2), mmToThree(6)),
+    ddsChromeMat,
+  );
+  button.position.set(length * 0.42, pcbThickness + mmToThree(1.6), -width * 0.28);
+  group.add(button);
+
+  const xtal = new THREE.Mesh(
+    new THREE.BoxGeometry(mmToThree(7), mmToThree(2.5), mmToThree(5)),
+    ddsChromeMat,
+  );
+  xtal.position.set(length * 0.18, pcbThickness + mmToThree(1.25), -width * 0.18);
+  group.add(xtal);
+  return group;
+}
+
+function createDdsTcxoModule(component: ComponentItem, _state?: DeviceState): THREE.Object3D {
+  const group = new THREE.Group();
+  const [lenMm, widMm] = getDimensionsMm(component.properties, [50, 35, 12]);
+  const length = mmToThree(lenMm);
+  const width = mmToThree(widMm);
+  const pcbThickness = mmToThree(1.6);
+
+  const pcb = new THREE.Mesh(new THREE.BoxGeometry(length, pcbThickness, width), ddsPcbTanGreenMat);
+  pcb.position.y = pcbThickness / 2;
+  group.add(pcb);
+
+  const tcxoCan = new THREE.Mesh(
+    new THREE.BoxGeometry(mmToThree(8.4), mmToThree(3.2), mmToThree(8.4)),
+    ddsChromeMat,
+  );
+  tcxoCan.position.set(-length * 0.3, pcbThickness + mmToThree(1.6), 0);
+  group.add(tcxoCan);
+
+  const fanout = new THREE.Mesh(
+    new THREE.BoxGeometry(mmToThree(6), mmToThree(1.2), mmToThree(4)),
+    ddsBlackInsetMat,
+  );
+  fanout.position.set(length * 0.05, pcbThickness + mmToThree(0.6), 0);
+  group.add(fanout);
+
+  for (let index = 0; index < 5; index += 1) {
+    const jack = createSmaBulkheadJack();
+    jack.position.set(
+      length / 2,
+      pcbThickness + mmToThree(5),
+      (index - 2) * mmToThree(6),
+    );
+    jack.scale.setScalar(0.7);
+    group.add(jack);
+  }
+  return group;
+}
+
+function createMeanwellIrm30(component: ComponentItem, _state?: DeviceState): THREE.Object3D {
+  const group = new THREE.Group();
+  const [lenMm, widMm, heightMm] = getDimensionsMm(component.properties, [88, 52.4, 28.8]);
+  const length = mmToThree(lenMm);
+  const width = mmToThree(widMm);
+  const height = mmToThree(heightMm);
+
+  const shell = new THREE.Mesh(new THREE.BoxGeometry(length, height, width), ddsPsuShellMat);
+  shell.position.y = height / 2;
+  group.add(shell);
+
+  const label = new THREE.Mesh(
+    new THREE.BoxGeometry(length * 0.86, mmToThree(0.05), width * 0.78),
+    ddsPsuLabelMat,
+  );
+  label.position.y = height + mmToThree(0.03);
+  group.add(label);
+
+  for (let pin = 0; pin < 4; pin += 1) {
+    const pinMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(mmToThree(0.8), mmToThree(4), mmToThree(0.8)),
+      ddsBrassMat,
+    );
+    pinMesh.position.set(-length * 0.4 + pin * mmToThree(5), -mmToThree(2), 0);
+    group.add(pinMesh);
+  }
+
+  for (let pin = 0; pin < 2; pin += 1) {
+    const pinMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(mmToThree(1), mmToThree(5), mmToThree(1)),
+      ddsBrassMat,
+    );
+    pinMesh.position.set(length * 0.32 + pin * mmToThree(7), -mmToThree(2.5), 0);
+    group.add(pinMesh);
+  }
+  return group;
+}
+
+/** Build one SMA-male connector group at the origin, pieces extending
+ *  along local +X (boot near origin, pin at the far +X end). Cable-end
+ *  cap is centred at X=0. The straight-cable jacket Y=2 mm lift is NOT
+ *  applied here — callers position the whole group. Used by both the
+ *  straight-tube renderer (two mirrored copies on either end of the
+ *  cylinder) and the spline renderer (one copy per spline endpoint,
+ *  oriented to the outward tangent). */
+function buildSmaMaleConnectorGroup(): THREE.Group {
+  const group = new THREE.Group();
+  let offsetMm = 0;
+  const place = (piece: THREE.Object3D, lenMm: number): void => {
+    piece.rotation.z = Math.PI / 2;
+    piece.position.set(mmToThree(offsetMm + lenMm / 2), 0, 0);
+    group.add(piece);
+    offsetMm += lenMm;
+  };
+
+  // Black heat-shrink strain-relief boot.
+  place(
+    new THREE.Mesh(
+      new THREE.CylinderGeometry(mmToThree(1.85), mmToThree(1.85), mmToThree(3), 18),
+      ddsCableBlackMat,
+    ),
+    3,
+  );
+
+  // Gold-plated brass crimp ferrule.
+  place(
+    new THREE.Mesh(
+      new THREE.CylinderGeometry(mmToThree(2.2), mmToThree(2.2), mmToThree(4), 24),
+      ddsBrassMat,
+    ),
+    3,
+  );
+
+  // Threaded coupling barrel.
+  place(
+    new THREE.Mesh(
+      new THREE.CylinderGeometry(mmToThree(3.0), mmToThree(3.0), mmToThree(4), 24),
+      ddsBrassMat,
+    ),
+    4,
+  );
+
+  // Hex coupling flange with central bore — overlaps PTFE+pin (does NOT
+  // advance offsetMm).
+  {
+    const hexThick = 6.5;
+    const hexShape = new THREE.Shape();
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+      const x = mmToThree(3.5) * Math.cos(a);
+      const y = mmToThree(3.5) * Math.sin(a);
+      if (i === 0) hexShape.moveTo(x, y);
+      else hexShape.lineTo(x, y);
+    }
+    hexShape.closePath();
+    const bore = new THREE.Path();
+    bore.absarc(0, 0, mmToThree(2.5), 0, Math.PI * 2, false);
+    hexShape.holes.push(bore);
+
+    const hexGeom = new THREE.ExtrudeGeometry(hexShape, {
+      depth: mmToThree(hexThick),
+      bevelEnabled: false,
+      curveSegments: 24,
+    });
+    hexGeom.translate(0, 0, -mmToThree(hexThick) / 2);
+    hexGeom.rotateY(Math.PI / 2);
+
+    const hex = new THREE.Mesh(hexGeom, ddsBrassFlatMat);
+    hex.position.set(mmToThree(offsetMm + hexThick / 2), 0, 0);
+    group.add(hex);
+  }
+
+  // White PTFE dielectric.
+  place(
+    new THREE.Mesh(
+      new THREE.CylinderGeometry(mmToThree(2.85), mmToThree(2.85), mmToThree(3.5), 24),
+      ddsTeflonWhiteMat,
+    ),
+    3.5,
+  );
+
+  // Centre pin.
+  place(
+    new THREE.Mesh(
+      new THREE.CylinderGeometry(mmToThree(0.5), mmToThree(0.5), mmToThree(2), 12),
+      ddsBrassMat,
+    ),
+    2,
+  );
+
+  return group;
+}
+
+/** Bezier-spline RF cable renderer — used when the SceneObject carries
+ *  per-instance `properties.rfCableNodes`. Parallels `createFiberSplineObject`:
+ *  TubeGeometry follows the curve, two SMA male connectors are placed at
+ *  the spline endpoints with their +X axes aligned to the outward
+ *  tangents so the connector orientation tracks node drag in real time. */
+function createSmaCableSpline(
+  component: ComponentItem,
+  nodes: FiberNode[],
+): THREE.Object3D {
+  const group = new THREE.Group();
+  // Tag the wrapper so the node-edit mode's traversal can recognise this
+  // as an rf_cable instance. The outer wrapper (assigned by
+  // DigitalTwinViewer at load time) carries the per-instance `objectId`;
+  // tube + wrapper here only need to be discoverable by role.
+  group.userData.rfCableRole = "wrapper";
+  group.userData.rfCableComponentId = component.id;
+
+  // RG-316 reddish-brown jacket — TubeGeometry sweeps a 1.6 mm radius
+  // circle along the Bezier path. 64 longitudinal × 14 radial segments
+  // matches the smoothness of the straight-tube cylinder fallback.
+  const path = buildFiberCurvePath(nodes);
+  const jacket = new THREE.Mesh(
+    new THREE.TubeGeometry(path, 64, mmToThree(1.6), 14, false),
+    ddsCableTanMat,
+  );
+  jacket.userData.rfCableRole = "tube";
+  group.add(jacket);
+
+  const xAxis = new THREE.Vector3(1, 0, 0);
+  for (const end of ["A", "B"] as const) {
+    const idx = end === "A" ? 0 : nodes.length - 1;
+    const connector = buildSmaMaleConnectorGroup();
+    const nodePos = labMmToFiberThree(nodes[idx].posMm);
+    const outward = fiberEndpointOutwardThree(nodes, end);
+    connector.quaternion.setFromUnitVectors(xAxis, outward);
+    connector.position.copy(nodePos);
+    // Tag so the node-edit re-render can find each endpoint connector and
+    // re-orient it after the spline changes.
+    connector.userData.rfCableConnectorEndpoint = end;
+    group.add(connector);
+  }
+
+  return group;
+}
+
+/** Reapply position + quaternion for one rf_cable SMA-male connector
+ *  after the underlying spline has been edited. Called by the node-edit
+ *  pointer handlers in `DigitalTwinViewer` so connectors track endpoint
+ *  drags without rebuilding the whole spline. */
+export function applyRfCableConnectorTransform(
+  connector: THREE.Object3D,
+  nodes: FiberNode[],
+  endpoint: "A" | "B",
+): void {
+  if (nodes.length < 2) return;
+  const idx = endpoint === "A" ? 0 : nodes.length - 1;
+  const nodePos = labMmToFiberThree(nodes[idx].posMm);
+  const outward = fiberEndpointOutwardThree(nodes, endpoint);
+  connector.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), outward);
+  connector.position.copy(nodePos);
+}
+
+function createSmaShortCable(
+  component: ComponentItem,
+  _state?: DeviceState,
+  /** Per-instance Bezier nodes. When absent or < 2 nodes, a straight
+   *  2-node default spline is auto-generated from `component.properties
+   *  .lengthMm` so every rf_cable instance is ready for node-drag editing
+   *  without needing a catalog template or backend bootstrap. */
+  rfCableNodes?: FiberNode[],
+): THREE.Object3D {
+  let nodes = rfCableNodes;
+  if (!nodes || nodes.length < 2) {
+    // Default 2-node straight spline centred on the object origin so a
+    // freshly-spawned cable renders symmetrically (matches the old
+    // straight-cylinder convention where the jacket was centred at
+    // `cable.position = 0`).
+    const lengthMm = getNumericProperty(component.properties, "lengthMm", 150);
+    nodes = [
+      { posMm: [-lengthMm / 2, 0, 0] },
+      { posMm: [lengthMm / 2, 0, 0] },
+    ];
+  }
+  return createSmaCableSpline(component, nodes);
+}
+
+function createUsbBJack(_component: ComponentItem, _state?: DeviceState): THREE.Object3D {
+  const group = new THREE.Group();
+  const shell = new THREE.Mesh(
+    new THREE.BoxGeometry(mmToThree(16), mmToThree(11), mmToThree(12)),
+    ddsChromeMat,
+  );
+  shell.position.set(mmToThree(8), mmToThree(5.5), 0);
+  group.add(shell);
+
+  const cavity = new THREE.Mesh(
+    new THREE.BoxGeometry(mmToThree(0.5), mmToThree(8.5), mmToThree(8.5)),
+    ddsBlackInsetMat,
+  );
+  cavity.position.set(mmToThree(1.6), mmToThree(5.5), 0);
+  group.add(cavity);
+
+  const tongue = new THREE.Mesh(
+    new THREE.BoxGeometry(mmToThree(0.6), mmToThree(1.2), mmToThree(6.5)),
+    ddsTeflonWhiteMat,
+  );
+  tongue.position.set(mmToThree(1.4), mmToThree(5.5), 0);
+  group.add(tongue);
+  return group;
+}
+
+function createIecC14Inlet(_component: ComponentItem, _state?: DeviceState): THREE.Object3D {
+  const group = new THREE.Group();
+  const length = mmToThree(30);
+  const width = mmToThree(22.5);
+  const depth = mmToThree(27);
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(depth, width, length), ddsBlackInsetMat);
+  body.position.set(depth / 2, width / 2, 0);
+  group.add(body);
+
+  for (const offset of [-1, 0, 1]) {
+    const socket = new THREE.Mesh(
+      new THREE.CylinderGeometry(mmToThree(1.5), mmToThree(1.5), mmToThree(2), 14),
+      ddsBrassMat,
+    );
+    socket.rotation.z = Math.PI / 2;
+    socket.position.set(
+      mmToThree(0.6),
+      width / 2 + (offset === 0 ? mmToThree(4) : -mmToThree(2)),
+      offset === 0 ? 0 : offset * mmToThree(7),
+    );
+    group.add(socket);
+  }
+  return group;
+}
+
+function createInstrumentChassis1u(component: ComponentItem, state?: DeviceState): THREE.Object3D {
+  const group = new THREE.Group();
+  const [lenMm, depthMm, heightMm] = getDimensionsMm(component.properties, [482.6, 246, 44.45]);
+  const length = mmToThree(lenMm);
+  const depth = mmToThree(depthMm);
+  const height = mmToThree(heightMm);
+  const wall = mmToThree(1.5);
+
+  const material = materialFor(component, state);
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(length, wall, depth), material);
+  floor.position.set(0, wall / 2, 0);
+  group.add(floor);
+
+  const ceiling = floor.clone();
+  ceiling.position.y = height - wall / 2;
+  group.add(ceiling);
+
+  const frontPanel = new THREE.Mesh(new THREE.BoxGeometry(length, height, wall), material);
+  frontPanel.position.set(0, height / 2, depth / 2 - wall / 2);
+  group.add(frontPanel);
+
+  const backPanel = frontPanel.clone();
+  backPanel.position.z = -depth / 2 + wall / 2;
+  group.add(backPanel);
+
+  const sideGeometry = new THREE.BoxGeometry(wall, height, depth - 2 * wall);
+  const left = new THREE.Mesh(sideGeometry, material);
+  left.position.set(-length / 2 + wall / 2, height / 2, 0);
+  group.add(left);
+
+  const right = new THREE.Mesh(sideGeometry, material);
+  right.position.set(length / 2 - wall / 2, height / 2, 0);
+  group.add(right);
+  return group;
+}
+
+/**
+ * Coaxial RF switch (Mini-Circuits ZYSWA-2-50DR-style — case ZZ121).
+ *
+ * Geometry (mm, body-local frame, Z-up after `mmToThree` flip):
+ *   - Body: aluminium cube ~19 × 15.5 × 19 (xMm = bodyWidthMm, yMm = thickness,
+ *     zMm = bodyDepthMm). Top face wears a white silkscreen label.
+ *   - SMA jacks: one on each end of the +X and -X faces. RFIN sits on +X
+ *     (the common port, anchor id `rf_in`), RF1 / RF2 sit on -X (the two
+ *     throws, anchor id `rf_out` with `name` = "RF1" / "RF2").
+ *   - Power + control pins (2026-05-14 revision per photo): feedthroughs
+ *     sit on the ±Z (front/back) faces, NOT the top face — -5V on -Z
+ *     (back), +5V on +Z (front), both in the upper half so they line up
+ *     with the silkscreen "-5V" / "+5V" edge labels on the top. A small
+ *     GND chassis-ground lug sits on the +Z (front) face, offset toward
+ *     the +X edge ("上面偏側邊"). The TTL pin is co-located with the +5V
+ *     feedthrough on the real PCB header; we model it visually as the
+ *     same group.
+ *   - Mounting flanges extend the footprint along ±Z to match the
+ *     datasheet's ZZ121 case (overall 31.75 mm corner-to-corner).
+ *
+ * Convention: the scene origin sits at the body geometric centre (top
+ * face at +Y/2, bottom at -Y/2) — no axis offset, unlike beam-emitting
+ * kinds. Anchors placed on the asset by the catalog seed drive the
+ * actual cable-routing math; this primitive is the visual stand-in.
+ */
+function createRfSwitch(component: ComponentItem, state?: DeviceState): THREE.Object3D {
+  const props = component.properties ?? {};
+  const bodyWidthMm = getNumericProperty(props, "bodyWidthMm", 19.05);
+  const bodyDepthMm = getNumericProperty(props, "bodyDepthMm", 19.05);
+  const bodyHeightMm = getNumericProperty(props, "bodyHeightMm", 15.49);
+  const flangeFootprintMm = getNumericProperty(props, "flangeFootprintMm", 31.75);
+  const flangeThicknessMm = getNumericProperty(props, "flangeThicknessMm", 2.6);
+
+  const W = mmToThree(bodyWidthMm);   // along three.X
+  const H = mmToThree(bodyHeightMm);  // along three.Y (= scene up)
+  const D = mmToThree(bodyDepthMm);   // along three.Z
+  const flangeExtra = (mmToThree(flangeFootprintMm) - D) / 2;
+  const flangeT = mmToThree(flangeThicknessMm);
+
+  const group = new THREE.Group();
+
+  // --- Aluminium body ----------------------------------------------------
+  const bodyMat = materialFor(component, state);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(W, H, D), bodyMat);
+  body.castShadow = true;
+  body.receiveShadow = true;
+  group.add(body);
+
+  // White silkscreen label on the +Y (top) face. Inset slightly so the
+  // label appears recessed under the aluminium edge highlight.
+  const labelInset = mmToThree(0.5);
+  const label = new THREE.Mesh(
+    new THREE.PlaneGeometry(W - labelInset * 2, D - labelInset * 2),
+    new THREE.MeshStandardMaterial({
+      color: "#fafafa",
+      metalness: 0.02,
+      roughness: 0.6,
+    }),
+  );
+  label.rotation.x = -Math.PI / 2;
+  label.position.y = H / 2 + mmToThree(0.05);
+  group.add(label);
+
+  // --- Mounting flanges on ±Z (front / back of the body) -----------------
+  if (flangeExtra > 0) {
+    const flangeMat = new THREE.MeshStandardMaterial({
+      color: "#cfd3d6",
+      metalness: 0.85,
+      roughness: 0.45,
+    });
+    for (const sign of [-1, 1]) {
+      const plate = new THREE.Mesh(
+        new THREE.BoxGeometry(W, flangeT, flangeExtra),
+        flangeMat,
+      );
+      plate.position.set(0, -H / 2 + flangeT / 2, sign * (D / 2 + flangeExtra / 2));
+      plate.castShadow = true;
+      plate.receiveShadow = true;
+      group.add(plate);
+
+      // Two through-holes per flange (visualised as dark cylinders).
+      const holeRadius = mmToThree(1.4);
+      const holeXOffset = mmToThree(5.5);
+      for (const xs of [-1, 1]) {
+        const hole = new THREE.Mesh(
+          new THREE.CylinderGeometry(holeRadius, holeRadius, flangeT * 1.05, 20),
+          new THREE.MeshStandardMaterial({ color: "#1f2937", roughness: 0.9 }),
+        );
+        hole.position.set(
+          xs * holeXOffset,
+          -H / 2 + flangeT / 2,
+          sign * (D / 2 + flangeExtra * 0.65),
+        );
+        group.add(hole);
+      }
+    }
+  }
+
+  // --- SMA bulkhead jacks (4× on the ±X faces) ---------------------------
+  // The reusable createSmaBulkheadJack builder mounts a jack along its
+  // own +X axis. We instance it 4 times and rotate / offset to mate with
+  // each face. The Z-offset within each face places the connector closer
+  // to the corresponding label ("RF1"/"RFIN" near top, "RF2"/"TTL" near
+  // bottom in the photo).
+  const portZOffset = D * 0.22;
+  const smaConfigs: { x: number; z: number; rotateY: number }[] = [
+    // -X face: RF1 (top), RF2 (bottom). Jack points in -X.
+    { x: -W / 2, z: +portZOffset, rotateY: Math.PI },
+    { x: -W / 2, z: -portZOffset, rotateY: Math.PI },
+    // +X face: RFIN (top, common), TTL/RF2 reuse pattern (bottom).
+    { x: +W / 2, z: +portZOffset, rotateY: 0 },
+    { x: +W / 2, z: -portZOffset, rotateY: 0 },
+  ];
+  for (const cfg of smaConfigs) {
+    const jack = createSmaBulkheadJack();
+    jack.rotation.y = cfg.rotateY;
+    jack.position.set(cfg.x, 0, cfg.z);
+    group.add(jack);
+  }
+
+  // --- Power feedthroughs on ±Z (front / back faces) --------------------
+  // Per user spec (2026-05-14 revision): the ±5 V feedthroughs sit on the
+  // ±Z faces of the body, NOT on the ±Y (top/bottom) faces. -5V on the
+  // -Z (back) face, +5V on the +Z (front) face — both in the upper half
+  // of their face so the silkscreen "+5V" / "-5V" edge labels on the top
+  // align with the matching feedthrough below. White hookup wire is
+  // omitted (it occludes the anchor inspector); a follow-up GLB can
+  // carry photoreal wiring if needed later.
+  const feedthroughHexR = mmToThree(1.9);
+  const feedthroughHexH = mmToThree(1.5);
+  const insulR = mmToThree(1.15);
+  const insulH = mmToThree(1.6);
+  const feedPinR = mmToThree(0.45);
+  const feedPinH = mmToThree(4.5);
+  const aluHexMat = new THREE.MeshStandardMaterial({
+    color: "#cfd3d6", metalness: 0.85, roughness: 0.45,
+  });
+  const insulMat = new THREE.MeshStandardMaterial({
+    color: "#8d2222", metalness: 0.05, roughness: 0.55,
+  });
+  function makeFeedthrough(): THREE.Object3D {
+    const ft = new THREE.Group();
+    const hex = new THREE.Mesh(
+      new THREE.CylinderGeometry(feedthroughHexR, feedthroughHexR, feedthroughHexH, 6),
+      aluHexMat,
+    );
+    hex.position.y = feedthroughHexH / 2;
+    ft.add(hex);
+    const insul = new THREE.Mesh(
+      new THREE.CylinderGeometry(insulR, insulR, insulH, 18),
+      insulMat,
+    );
+    insul.position.y = feedthroughHexH + insulH / 2;
+    ft.add(insul);
+    const pin = new THREE.Mesh(
+      new THREE.CylinderGeometry(feedPinR, feedPinR, feedPinH, 14),
+      ddsBrassMat,
+    );
+    pin.position.y = feedthroughHexH + insulH + feedPinH / 2;
+    ft.add(pin);
+    ft.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh) {
+        o.castShadow = true;
+        o.receiveShadow = true;
+      }
+    });
+    return ft;
+  }
+  // makeFeedthrough() builds the stack along local +Y. Rotating around X
+  // by +π/2 maps local +Y → world +Z (front-mount), and by -π/2 maps it
+  // to -Z (back-mount). The group origin sits ON the body face, so the
+  // hex nut starts flush with the aluminium.
+  const ftYUpper = H * 0.25; // "upper half" per user spec
+  const frontFeed = makeFeedthrough();
+  frontFeed.rotation.x = Math.PI / 2;
+  frontFeed.position.set(0, ftYUpper, D / 2);
+  group.add(frontFeed);
+  const backFeed = makeFeedthrough();
+  backFeed.rotation.x = -Math.PI / 2;
+  backFeed.position.set(0, ftYUpper, -D / 2);
+  group.add(backFeed);
+
+  // --- GND pin on the +Z (front) face, upper area, offset toward +X ----
+  // ("上面偏側邊" per user spec — chassis-ground lug on the same face as
+  // the +5V feedthrough, shifted toward the +X edge.)
+  const gnd = new THREE.Group();
+  const gndCollar = new THREE.Mesh(
+    new THREE.CylinderGeometry(mmToThree(1.1), mmToThree(1.1), mmToThree(1.0), 16),
+    aluHexMat,
+  );
+  gndCollar.position.y = mmToThree(0.5);
+  gnd.add(gndCollar);
+  const gndPin = new THREE.Mesh(
+    new THREE.CylinderGeometry(feedPinR, feedPinR, mmToThree(4.5), 12),
+    ddsBrassMat,
+  );
+  gndPin.position.y = mmToThree(1.0) + mmToThree(4.5) / 2;
+  gnd.add(gndPin);
+  gnd.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh) {
+      o.castShadow = true;
+      o.receiveShadow = true;
+    }
+  });
+  gnd.rotation.x = Math.PI / 2; // axis along +Z (out of front face)
+  gnd.position.set(W / 2 - mmToThree(4.0), ftYUpper, D / 2);
+  group.add(gnd);
+
+  // --- Phillips screws at the 4 corners of the top face (label cover) --
+  // Holds the top lid down per user spec ("頂面螺絲: label 四角，固定上蓋").
+  function makeScrew(): THREE.Object3D {
+    const s = new THREE.Group();
+    const head = new THREE.Mesh(
+      new THREE.CylinderGeometry(mmToThree(1.0), mmToThree(0.95), mmToThree(0.7), 18),
+      aluHexMat,
+    );
+    s.add(head);
+    const slotMat = new THREE.MeshStandardMaterial({
+      color: "#1a1a1a", roughness: 0.9,
+    });
+    const slot1 = new THREE.Mesh(
+      new THREE.BoxGeometry(mmToThree(1.6), mmToThree(0.12), mmToThree(0.4)),
+      slotMat,
+    );
+    slot1.position.y = mmToThree(0.4);
+    s.add(slot1);
+    const slot2 = slot1.clone() as THREE.Mesh;
+    slot2.rotation.y = Math.PI / 2;
+    s.add(slot2);
+    s.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh) {
+        o.castShadow = true;
+        o.receiveShadow = true;
+      }
+    });
+    return s;
+  }
+  const screwInset = mmToThree(2.5);
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const sc = makeScrew();
+      sc.position.set(
+        sx * (W / 2 - screwInset),
+        H / 2 + mmToThree(0.4),
+        sz * (D / 2 - screwInset),
+      );
+      group.add(sc);
+    }
+  }
+
+  return group;
+}
+
 function createPrimitive(component: ComponentItem, state?: DeviceState): THREE.Object3D {
   const group = new THREE.Group();
   group.name = component.name;
@@ -1064,6 +1957,37 @@ function createPrimitive(component: ComponentItem, state?: DeviceState): THREE.O
       break;
     case "clamping_fork":
       mesh = createThorlabsClampingFork(component, state);
+      break;
+    case "dds_ad9959_pcb":
+      mesh = createDdsAd9959Pcb(component, state);
+      break;
+    case "mcu_board":
+      mesh = createDdsMcuBoard(component, state);
+      break;
+    case "tcxo_module":
+      mesh = createDdsTcxoModule(component, state);
+      break;
+    case "power_supply_ac_dc":
+      mesh = createMeanwellIrm30(component, state);
+      break;
+    case "sma_cable":
+    case "rf_cable":
+      mesh = createSmaShortCable(component, state);
+      break;
+    case "rf_switch":
+      mesh = createRfSwitch(component, state);
+      break;
+    case "sma_jack":
+      mesh = createSmaBulkheadJack();
+      break;
+    case "usb_b_jack":
+      mesh = createUsbBJack(component, state);
+      break;
+    case "iec_c14_inlet":
+      mesh = createIecC14Inlet(component, state);
+      break;
+    case "instrument_chassis":
+      mesh = createInstrumentChassis1u(component, state);
       break;
     default:
       mesh = createBox(component, state, [100, 100, 80]);
@@ -1549,6 +2473,41 @@ export function applyFiberConnectorTransform(
  *  the underlying spline/anchor data evolves. Returns true if a tube
  *  mesh was found and updated; false when the wrapper doesn't contain
  *  a fiber sub-tree (caller can fall through to wrapper-rebuild). */
+/** Re-apply rf_cable Bezier tube + SMA-male connector transforms in
+ *  place against an existing wrapper. Used in the DigitalTwinViewer
+ *  cache-hit path so the cable's geometry tracks per-instance spline
+ *  edits (node drag in node-edit mode) AND linked endpoint movement
+ *  (Align-RF target SceneObject pose changes) without rebuilding the
+ *  whole wrapper. Mirrors `refreshFiberWrapperGeometry`. */
+export function refreshRfCableWrapperGeometry(
+  wrapper: THREE.Object3D,
+  nodes: FiberNode[],
+): boolean {
+  if (!nodes || nodes.length < 2) return false;
+  let tubeMesh: THREE.Mesh | null = null;
+  const connectors: { conn: THREE.Object3D; endpoint: "A" | "B" }[] = [];
+  wrapper.traverse((node) => {
+    if (!tubeMesh && (node as THREE.Mesh).isMesh && node.userData?.rfCableRole === "tube") {
+      tubeMesh = node as THREE.Mesh;
+    }
+    const ep = node.userData?.rfCableConnectorEndpoint;
+    if (ep === "A" || ep === "B") connectors.push({ conn: node, endpoint: ep });
+  });
+  if (!tubeMesh) return false;
+
+  const path = buildFiberCurvePath(nodes);
+  const tubularSegments = Math.max(64, (nodes.length - 1) * 32);
+  const newGeom = new THREE.TubeGeometry(path, tubularSegments, mmToThree(1.6), 14, false);
+  const old = (tubeMesh as THREE.Mesh).geometry;
+  (tubeMesh as THREE.Mesh).geometry = newGeom;
+  old.dispose();
+
+  for (const { conn, endpoint } of connectors) {
+    applyRfCableConnectorTransform(conn, nodes, endpoint);
+  }
+  return true;
+}
+
 export function refreshFiberWrapperGeometry(
   wrapper: THREE.Object3D,
   nodes: FiberNode[],
@@ -2007,14 +2966,144 @@ function buildPbs252BeamSplitterObject(
   return group;
 }
 
+// Render the AD9959/PCBZ evaluation board STL with a two-zone material split.
+// The single STEP→STL export merges the entire board (PCB substrate + chips +
+// regulators + SMA jacks + headers) into one triangle soup, so a single
+// `materialFor()` call paints everything in the component-type colour
+// (#0f3f2a PCB green) — including the SMA flanges, which looks wrong.
+//
+// We split by triangle-centroid Z (body-local Z-up frame, PCB substrate sits
+// at Z ∈ [-1.4, +0.6] mm — verified empirically: 92% of total surface area
+// lives in that band). Triangles below the threshold get the PCB green
+// material that matches the procedural primitive; everything above gets a
+// dark-matte "components-on-board" material so the SMAs / chips / headers no
+// longer read as green.
+function isAd9959PcbAsset(asset: Asset3D): boolean {
+  return asset.name === "primitive_dds_ad9959_pcb"
+    || /ad9959_pcbz\.stl$/i.test(asset.filePath);
+}
+
+// PCB substrate top sits near z = 0 in the imported STL frame (gmsh kept
+// the corner-anchored Z and we recentred only X/Y in `_finalize_ad9959_stl.py`).
+// 0.6 mm clears the silkscreen + solder mask thickness without bleeding into
+// surface-mount component bodies whose lowest faces start around z = 1 mm.
+const AD9959_PCB_TOP_Z_MM = 0.6;
+
+// SMA gold-zone classifier. The AD9959/PCBZ uses right-angle edge-launch
+// SMAs at the ±X edges (CH0–CH3 on +X, REF_CLK on −X). The connector body
+// sits within ~8 mm of the board edge and rises 1–12 mm above the PCB
+// substrate (hex flange ~9 mm AF, barrel ø ~6 mm, total height ≲ 11 mm).
+// Empirical probe of the mesh (`above PCB tris near +X edge: 199 tris in
+// Y ∈ [-49, 53]`) confirms the classifier captures the connector bodies
+// without bleeding into the centre of the board.
+const AD9959_SMA_X_EDGE_BAND_MM = 8.0;
+const AD9959_SMA_Z_MIN_MM = 1.0;
+const AD9959_SMA_Z_MAX_MM = 12.0;
+
+function buildAd9959PcbObject(
+  geometry: THREE.BufferGeometry,
+  component: ComponentItem,
+): THREE.Object3D {
+  const positionAttr = geometry.attributes.position as THREE.BufferAttribute;
+  const oldPositions = positionAttr.array as Float32Array;
+
+  geometry.computeBoundingBox();
+  const bbox = geometry.boundingBox!;
+  // The mesh is symmetric in X around 0 (re-centred by `_finalize_ad9959_stl.py`);
+  // pick the larger absolute edge as the half-width so the classifier is robust
+  // even if a future export shifts the centroid by a fraction of a mm.
+  const halfX = Math.max(Math.abs(bbox.min.x), Math.abs(bbox.max.x));
+
+  const triangleCount = Math.floor(positionAttr.count / 3);
+  const pcbTris: number[] = [];
+  const smaTris: number[] = [];
+  const componentTris: number[] = [];
+  for (let t = 0; t < triangleCount; t += 1) {
+    const o = t * 9;
+    // Buffer layout per triangle is [x1,y1,z1, x2,y2,z2, x3,y3,z3]. STLLoader
+    // loads file coordinates verbatim (mm, body-local frame) — `applyAssetScale`
+    // only scales uniformly downstream and doesn't permute axes, so the file's
+    // X / Z are still at offsets {0,3,6} and {2,5,8} respectively here.
+    const centroidX = (oldPositions[o + 0] + oldPositions[o + 3] + oldPositions[o + 6]) / 3;
+    const centroidZ = (oldPositions[o + 2] + oldPositions[o + 5] + oldPositions[o + 8]) / 3;
+    if (centroidZ <= AD9959_PCB_TOP_Z_MM) {
+      pcbTris.push(t);
+    } else if (
+      Math.abs(centroidX) > halfX - AD9959_SMA_X_EDGE_BAND_MM
+      && centroidZ >= AD9959_SMA_Z_MIN_MM
+      && centroidZ <= AD9959_SMA_Z_MAX_MM
+    ) {
+      smaTris.push(t);
+    } else {
+      componentTris.push(t);
+    }
+  }
+
+  const buildSubGeometry = (triangleIndices: number[]): THREE.BufferGeometry => {
+    const sub = new THREE.BufferGeometry();
+    const buf = new Float32Array(triangleIndices.length * 9);
+    for (let i = 0; i < triangleIndices.length; i += 1) {
+      const srcOff = triangleIndices[i] * 9;
+      const dstOff = i * 9;
+      for (let k = 0; k < 9; k += 1) buf[dstOff + k] = oldPositions[srcOff + k];
+    }
+    sub.setAttribute("position", new THREE.BufferAttribute(buf, 3));
+    sub.computeVertexNormals();
+    return sub;
+  };
+
+  const pcbMat = new THREE.MeshStandardMaterial({
+    color: "#0f3f2a",   // matches `ddsPcbGreenMat` used by the procedural fallback
+    metalness: 0.05,
+    roughness: 0.62,
+  });
+  const componentMat = new THREE.MeshStandardMaterial({
+    color: "#1f2733",   // dark matte for ICs / regulators / headers
+    metalness: 0.18,
+    roughness: 0.45,
+  });
+  // Gold-plated SMA hex flange + barrel. Reference: a representative SMA
+  // model on 3DContentCentral (catalogid=171 → connectors) shipped from a
+  // supplier rendered with a brighter, more saturated gold than the muted
+  // brass tone (#b7791f) used for procedural placeholder pins inside the
+  // PCB. We bump toward true gold (#d4a017) and crank metalness so the
+  // SMA bodies read as a polished plated metal instead of a dull alloy.
+  const smaMat = new THREE.MeshStandardMaterial({
+    color: "#d4a017",
+    metalness: 0.85,
+    roughness: 0.22,
+  });
+
+  const group = new THREE.Group();
+  group.name = component.name;
+
+  if (pcbTris.length > 0) {
+    group.add(new THREE.Mesh(buildSubGeometry(pcbTris), pcbMat));
+  }
+  if (componentTris.length > 0) {
+    group.add(new THREE.Mesh(buildSubGeometry(componentTris), componentMat));
+  }
+  if (smaTris.length > 0) {
+    group.add(new THREE.Mesh(buildSubGeometry(smaTris), smaMat));
+  }
+
+  geometry.dispose();
+  return group;
+}
+
 export async function loadAssetObject(
   component: ComponentItem,
   asset: Asset3D | undefined,
   state: DeviceState | undefined,
   /** Per-instance properties — V2: each scene object can have its own
-   *  fiberNodes / radiusMm overrides on top of the component's catalog
-   *  defaults. Pass `sceneObject.properties` from the caller. */
-  objectProperties?: { fiberNodes?: FiberNode[]; radiusMm?: number } | null,
+   *  fiberNodes / rfCableNodes / radiusMm overrides on top of the
+   *  component's catalog defaults. Pass `sceneObject.properties` from
+   *  the caller. */
+  objectProperties?: {
+    fiberNodes?: FiberNode[];
+    rfCableNodes?: FiberNode[];
+    radiusMm?: number;
+  } | null,
 ): Promise<THREE.Object3D> {
   if (component.componentType === "optical_table") {
     const table = createNewportOpticalTable();
@@ -2035,6 +3124,22 @@ export async function loadAssetObject(
       objectProperties?.fiberNodes,
       objectProperties?.radiusMm,
     ));
+    return wrapper;
+  }
+
+  // Phase RF.cable (2026-05-13): rf_cable / sma_cable render through the
+  // procedural SMA-cable primitive. When the per-instance SceneObject
+  // carries `rfCableNodes` we render the Bezier-spline version (jacket
+  // follows the curve, connectors auto-orient to endpoint tangents).
+  // Without nodes we fall back to the straight-cylinder rendering — same
+  // appearance as before the spline mode landed.
+  if (
+    component.componentType === "rf_cable" ||
+    component.componentType === "sma_cable"
+  ) {
+    const wrapper = new THREE.Group();
+    wrapper.name = component.name;
+    wrapper.add(createSmaShortCable(component, state, objectProperties?.rfCableNodes));
     return wrapper;
   }
 
@@ -2060,6 +3165,8 @@ export async function loadAssetObject(
       object = buildWphsm05WaveplateObject(geometry, component);
     } else if (isPbs252Asset(asset)) {
       object = buildPbs252BeamSplitterObject(geometry, component);
+    } else if (isAd9959PcbAsset(asset)) {
+      object = buildAd9959PcbObject(geometry, component);
     } else {
       object = new THREE.Mesh(geometry, materialFor(component, state));
     }

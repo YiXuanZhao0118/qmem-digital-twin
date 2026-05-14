@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>Mini-Circuits ZYSWA-2-50DR - 3D Asset</title>
+<style>
+  body { margin:0; overflow:hidden; background:#1a1d20; font-family:system-ui,sans-serif; color:#eee; }
+  #info {
+    position:absolute; top:12px; left:12px; padding:10px 14px;
+    background:rgba(0,0,0,0.55); border-radius:8px; font-size:13px;
+    line-height:1.55; pointer-events:none; backdrop-filter:blur(4px);
+  }
+  #info b { color:#7ad7ff; }
+  #info small { color:#aaa; }
+  #legend {
+    position:absolute; bottom:12px; left:12px; padding:8px 12px;
+    background:rgba(0,0,0,0.55); border-radius:8px; font-size:12px;
+    line-height:1.5; backdrop-filter:blur(4px);
+  }
+  #legend span { display:inline-block; width:10px; height:10px; border-radius:50%;
+                 margin-right:6px; vertical-align:middle; }
+</style>
+</head>
+<body>
+<div id="info">
+  <b>Mini-Circuits ZYSWA-2-50DR</b><br>
+  Absorptive SP2T RF Switch · DC – 5 GHz<br>
+  Body 19 × 19 × 15.5 mm (case ZZ121)<br>
+  <small>Drag = rotate · Scroll = zoom · Right-drag = pan</small>
+</div>
+<div id="legend">
+  <div><span style="background:#e7c14b"></span>SMA (Au)</div>
+  <div><span style="background:#c9b25a"></span>Power pin / GND</div>
+  <div><span style="background:#cfd3d6"></span>Aluminium body</div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+/* ---------- scene ---------- */
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1d20);
+
+const camera = new THREE.PerspectiveCamera(38, innerWidth/innerHeight, 0.1, 800);
+camera.position.set(58, 42, 58);
+
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.target.set(0, 2, 0);
+
+/* ---------- lighting ---------- */
+scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+const key = new THREE.DirectionalLight(0xffffff, 1.1);
+key.position.set(35, 55, 30); key.castShadow = true;
+key.shadow.mapSize.set(1024, 1024);
+const s = key.shadow.camera; s.left=-40; s.right=40; s.top=40; s.bottom=-40; s.near=0.5; s.far=200;
+scene.add(key);
+const fill = new THREE.DirectionalLight(0xc8d8ff, 0.4);
+fill.position.set(-30, 25, -20); scene.add(fill);
+const rim = new THREE.DirectionalLight(0xffe6c8, 0.55);
+rim.position.set(10, -10, -40); scene.add(rim);
+
+/* ---------- ground ---------- */
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(300, 300),
+  new THREE.MeshStandardMaterial({ color:0x101214, roughness:0.95 })
+);
+ground.rotation.x = -Math.PI/2;
+ground.position.y = -12;
+ground.receiveShadow = true;
+scene.add(ground);
+
+/* ---------- materials ---------- */
+const M = {
+  alu:        new THREE.MeshStandardMaterial({ color:0xc8ccd0, metalness:0.85, roughness:0.42 }),
+  aluDark:    new THREE.MeshStandardMaterial({ color:0xa6abae, metalness:0.85, roughness:0.55 }),
+  gold:       new THREE.MeshStandardMaterial({ color:0xe2b659, metalness:1.0,  roughness:0.28 }),
+  goldDeep:   new THREE.MeshStandardMaterial({ color:0xb8893f, metalness:1.0,  roughness:0.5  }),
+  pin:        new THREE.MeshStandardMaterial({ color:0xd9b15a, metalness:1.0,  roughness:0.3  }),
+  ptfe:       new THREE.MeshStandardMaterial({ color:0xf1efe6, metalness:0.05, roughness:0.85 }),
+  redInsul:   new THREE.MeshStandardMaterial({ color:0x8d2222, metalness:0.05, roughness:0.55 }),
+  screw:      new THREE.MeshStandardMaterial({ color:0xbcc1c5, metalness:0.95, roughness:0.32 }),
+  screwSlot:  new THREE.MeshStandardMaterial({ color:0x1a1a1a, metalness:0.4,  roughness:0.9  }),
+  black:      new THREE.MeshStandardMaterial({ color:0x111315, roughness:0.9 })
+};
+
+/* ---------- dimensions (mm, 1 unit = 1 mm) ---------- */
+const D = {
+  bodyW: 19.05,   // body W & D (square in plan)
+  bodyH: 15.49,   // body height (F)
+  flangeFull: 31.75, // overall with flanges (A)
+  flangeT: 2.6,
+  smaProtrude: 7.2,
+  smaR: 3.2,
+};
+
+const root = new THREE.Group();
+scene.add(root);
+
+/* ---------- main aluminium body ---------- */
+{
+  // Slightly rounded cube using a bevel-look via small inset edges
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(D.bodyW, D.bodyH, D.bodyW),
+    M.alu
+  );
+  body.castShadow = true; body.receiveShadow = true;
+  root.add(body);
+
+  // brushed-look thin horizontal lines (subtle decorative groove around middle)
+  for (const yOff of [-D.bodyH/2 + 0.3, D.bodyH/2 - 0.3]) {
+    const ring = new THREE.Mesh(
+      new THREE.BoxGeometry(D.bodyW + 0.02, 0.18, D.bodyW + 0.02),
+      M.aluDark
+    );
+    ring.position.y = yOff;
+    root.add(ring);
+  }
+}
+
+/* ---------- mounting flanges (front & back of the body) ---------- */
+function makeFlange(zSign) {
+  const g = new THREE.Group();
+  const depth = (D.flangeFull - D.bodyW) / 2;
+  const plate = new THREE.Mesh(
+    new THREE.BoxGeometry(D.bodyW, D.flangeT, depth),
+    M.alu
+  );
+  plate.position.set(0, -D.bodyH/2 + D.flangeT/2, zSign * (D.bodyW/2 + depth/2));
+  plate.castShadow = true; plate.receiveShadow = true;
+  g.add(plate);
+  // two through-holes
+  for (const xs of [-1, 1]) {
+    const hole = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.4, 1.4, D.flangeT + 0.05, 24),
+      M.black
+    );
+    hole.position.set(xs * 5.5, -D.bodyH/2 + D.flangeT/2, zSign * (D.bodyW/2 + depth*0.65));
+    g.add(hole);
+  }
+  return g;
+}
+root.add(makeFlange(1));
+root.add(makeFlange(-1));
+
+/* ---------- label texture on the top face ---------- */
+function makeLabelTexture() {
+  const W = 1024, H = 1024;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const c = cv.getContext('2d');
+  // white background
+  c.fillStyle = '#fafafa';
+  c.fillRect(0, 0, W, H);
+
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillStyle = '#161616';
+
+  // top edge: -5V
+  c.font = 'bold 64px sans-serif';
+  c.fillText('-5V', W/2, 80);
+
+  // corner labels
+  c.textAlign = 'left';
+  c.font = 'bold 56px sans-serif';
+  c.fillText('RF1', 60, 230);
+  c.textAlign = 'right';
+  c.fillText('RFIN', W-60, 230);
+  c.textAlign = 'left';
+  c.fillText('RF2', 60, 800);
+  c.textAlign = 'right';
+  c.fillText('TTL', W-60, 800);
+
+  // Mini-Circuits logo block (centered)
+  c.textAlign = 'center';
+  c.fillStyle = '#0e4a86';
+  c.font = 'bold 84px Georgia, serif';
+  c.fillText('Mini-Circuits', W/2, 410);
+  // tiny IC pictogram before logo
+  c.fillStyle = '#0e4a86';
+  c.fillRect(W/2 - 270, 392, 38, 28);
+  c.fillStyle = '#fafafa';
+  for (let i = 0; i < 4; i++) {
+    c.fillRect(W/2 - 268 + i*8, 388, 4, 6);
+    c.fillRect(W/2 - 268 + i*8, 420, 4, 6);
+  }
+  c.fillStyle = '#161616';
+  c.font = '46px sans-serif';
+  c.fillText('SWITCH', W/2, 480);
+  c.font = 'bold 86px sans-serif';
+  c.fillText('ZYSWA-2-50DR', W/2, 560);
+  c.font = '46px sans-serif';
+  c.fillText('DC – 5 GHz', W/2, 625);
+  c.font = '34px sans-serif';
+  c.fillText('DATA: www.minicircuits.com/model', W/2, 685);
+
+  // barcode strip
+  c.fillStyle = '#161616';
+  for (let i = 0; i < 96; i++) {
+    if (Math.random() > 0.42) {
+      const w = 2 + Math.random() * 3;
+      c.fillRect(180 + i * 7, 720, w, 50);
+    }
+  }
+  c.font = 'bold 38px monospace';
+  c.fillText('S F187110744', W/2, 800);
+
+  // bottom edge: +5V
+  c.font = 'bold 64px sans-serif';
+  c.fillText('+5V', W/2, 940);
+
+  const tex = new THREE.CanvasTexture(cv);
+  tex.anisotropy = 16;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+{
+  const tex = makeLabelTexture();
+  const label = new THREE.Mesh(
+    new THREE.PlaneGeometry(D.bodyW - 0.6, D.bodyW - 0.6),
+    new THREE.MeshStandardMaterial({ map:tex, roughness:0.55, metalness:0.02 })
+  );
+  label.rotation.x = -Math.PI/2;
+  label.position.y = D.bodyH/2 + 0.01;
+  label.receiveShadow = true;
+  root.add(label);
+}
+
+/* ---------- SMA connector (female) ---------- */
+function makeSMA() {
+  const g = new THREE.Group();
+  // hex flange against body
+  const hex = new THREE.Mesh(
+    new THREE.CylinderGeometry(4.3, 4.3, 2.0, 6),
+    M.gold
+  );
+  hex.rotation.z = Math.PI/2;
+  hex.position.x = 1.0;
+  g.add(hex);
+  // outer barrel
+  const barrel = new THREE.Mesh(
+    new THREE.CylinderGeometry(D.smaR, D.smaR, D.smaProtrude - 1.8, 32),
+    M.gold
+  );
+  barrel.rotation.z = Math.PI/2;
+  barrel.position.x = 1.0 + (D.smaProtrude - 1.8)/2 + 0.05;
+  g.add(barrel);
+  // thread ridges
+  const ringCount = 5;
+  for (let i = 0; i < ringCount; i++) {
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(D.smaR + 0.06, 0.16, 8, 28),
+      M.goldDeep
+    );
+    ring.rotation.y = Math.PI/2;
+    ring.position.x = 2.2 + i * 1.05;
+    g.add(ring);
+  }
+  // PTFE dielectric
+  const ptfe = new THREE.Mesh(
+    new THREE.CylinderGeometry(2.0, 2.0, D.smaProtrude - 0.6, 28),
+    M.ptfe
+  );
+  ptfe.rotation.z = Math.PI/2;
+  ptfe.position.x = 1.0 + (D.smaProtrude - 0.6)/2 + 0.1;
+  g.add(ptfe);
+  // center pin (female socket)
+  const pinHole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.55, 0.55, D.smaProtrude - 0.4, 18),
+    M.gold
+  );
+  pinHole.rotation.z = Math.PI/2;
+  pinHole.position.x = 1.0 + (D.smaProtrude - 0.4)/2 + 0.2;
+  g.add(pinHole);
+  // dark socket cavity at tip
+  const cavity = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.3, 0.3, 1.8, 16),
+    M.black
+  );
+  cavity.rotation.z = Math.PI/2;
+  cavity.position.x = 1.0 + D.smaProtrude - 1.2;
+  g.add(cavity);
+
+  g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return g;
+}
+
+// Place SMA connectors:
+//  +X face (right) : RFIN (front, +Z),  TTL (back, -Z)
+//  -X face (left)  : RF1  (front, +Z),  RF2 (back, -Z)
+const SMA_OFFSET_Z = D.bodyW * 0.22;
+{
+  const right1 = makeSMA(); right1.position.set(D.bodyW/2, 0, +SMA_OFFSET_Z); root.add(right1);
+  const right2 = makeSMA(); right2.position.set(D.bodyW/2, 0, -SMA_OFFSET_Z); root.add(right2);
+  const left1 = makeSMA(); left1.rotation.y = Math.PI;
+  left1.position.set(-D.bodyW/2, 0, +SMA_OFFSET_Z); root.add(left1);
+  const left2 = makeSMA(); left2.rotation.y = Math.PI;
+  left2.position.set(-D.bodyW/2, 0, -SMA_OFFSET_Z); root.add(left2);
+}
+
+/* ---------- power feedthrough (with wire) ---------- */
+function makeFeedthrough() {
+  const g = new THREE.Group();
+  // hex nut sitting on the body face
+  const nut = new THREE.Mesh(
+    new THREE.CylinderGeometry(1.9, 1.9, 1.5, 6),
+    M.alu
+  );
+  nut.position.y = 0.75;
+  g.add(nut);
+  // small red/maroon insulator bead above nut
+  const insul = new THREE.Mesh(
+    new THREE.CylinderGeometry(1.15, 1.15, 1.6, 18),
+    M.redInsul
+  );
+  insul.position.y = 2.3;
+  g.add(insul);
+  // metal solder pad / pin base
+  const padBase = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.95, 0.95, 0.8, 16),
+    M.pin
+  );
+  padBase.position.y = 3.5;
+  g.add(padBase);
+  // small solder blob / pin tip
+  const blob = new THREE.Mesh(
+    new THREE.SphereGeometry(0.55, 16, 12),
+    M.pin
+  );
+  blob.position.y = 4.0;
+  g.add(blob);
+  g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return g;
+}
+
+// -5V on BACK face (-Z), upper area — aligns with the "-5V" silkscreen edge
+{
+  const ft = makeFeedthrough();
+  // (X=0, Y=-PI/2, Z=PI/2):  local +Y → world -Z (axis),  local +X → world +Y (wire bends up)
+  ft.rotation.set(0, -Math.PI/2, Math.PI/2);
+  ft.position.set(0, D.bodyH/4, -D.bodyW/2);
+  root.add(ft);
+}
+// +5V on FRONT face (+Z), upper area — aligns with the "+5V" silkscreen edge
+{
+  const ft = makeFeedthrough();
+  // (X=0, Y=PI/2, Z=PI/2):  local +Y → world +Z (axis),  local +X → world +Y (wire bends up)
+  ft.rotation.set(0, Math.PI/2, Math.PI/2);
+  ft.position.set(0, D.bodyH/4, D.bodyW/2);
+  root.add(ft);
+}
+
+/* ---------- GND pin on top face, offset to one side ---------- */
+function makeGndPin() {
+  const g = new THREE.Group();
+  const collar = new THREE.Mesh(
+    new THREE.CylinderGeometry(1.1, 1.1, 1.0, 16),
+    M.alu
+  );
+  collar.position.y = 0.5;
+  g.add(collar);
+  const insul = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.7, 0.7, 0.8, 16),
+    M.redInsul
+  );
+  insul.position.y = 1.4;
+  g.add(insul);
+  const pin = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.45, 0.45, 4.5, 14),
+    M.pin
+  );
+  pin.position.y = 4.0;
+  g.add(pin);
+  // tiny green label dot to indicate GND
+  const tag = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.9, 0.9, 0.05, 16),
+    new THREE.MeshStandardMaterial({ color:0x2a6c2a, roughness:0.7 })
+  );
+  tag.position.y = 0.02;
+  g.add(tag);
+  g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return g;
+}
+{
+  const gnd = makeGndPin();
+  // front face (+Z), upper area, offset toward +X side ("上面偏側邊")
+  gnd.rotation.x = Math.PI/2; // pin axis now points +Z (outward from front face)
+  gnd.position.set(D.bodyW/2 - 4.0, D.bodyH/4, D.bodyW/2);
+  root.add(gnd);
+}
+
+/* ---------- corner screws on top face (holding the lid) ---------- */
+function makeScrew(r = 1.6) {
+  const g = new THREE.Group();
+  const head = new THREE.Mesh(
+    new THREE.CylinderGeometry(r, r * 0.95, 0.75, 20),
+    M.screw
+  );
+  g.add(head);
+  // Phillips cross
+  const slot1 = new THREE.Mesh(
+    new THREE.BoxGeometry(r * 1.6, 0.14, 0.45),
+    M.screwSlot
+  );
+  slot1.position.y = 0.4;
+  g.add(slot1);
+  const slot2 = slot1.clone();
+  slot2.rotation.y = Math.PI/2;
+  g.add(slot2);
+  g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return g;
+}
+// Two small assembly screws near the -5V feedthrough (top), per the photo:
+// one slightly to the side of the feedthrough.
+{
+  const s1 = makeScrew(1.0);
+  s1.position.set(-D.bodyW/2 + 2.8, D.bodyH/2 + 0.4, -D.bodyW/2 + 2.8);
+  root.add(s1);
+  const s2 = makeScrew(1.0);
+  s2.position.set(+D.bodyW/2 - 2.8, D.bodyH/2 + 0.4, -D.bodyW/2 + 2.8);
+  root.add(s2);
+  // bottom face screws
+  const s3 = makeScrew(1.0);
+  s3.position.set(-D.bodyW/2 + 2.8, -D.bodyH/2 - 0.4, +D.bodyW/2 - 2.8);
+  s3.rotation.x = Math.PI;
+  root.add(s3);
+  const s4 = makeScrew(1.0);
+  s4.position.set(+D.bodyW/2 - 2.8, -D.bodyH/2 - 0.4, +D.bodyW/2 - 2.8);
+  s4.rotation.x = Math.PI;
+  root.add(s4);
+}
+
+/* ---------- subtle axis helper (toggle with H key) ---------- */
+const axes = new THREE.AxesHelper(25);
+axes.position.set(-25, -10, -25);
+axes.visible = false;
+scene.add(axes);
+addEventListener('keydown', e => { if (e.key === 'h' || e.key === 'H') axes.visible = !axes.visible; });
+
+/* ---------- animation ---------- */
+function animate() {
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(animate);
+}
+animate();
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

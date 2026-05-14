@@ -2,7 +2,7 @@
 
 The V2 schema (docs/optical-schema-v2.md §3) puts per-instance geometry
 data into ``objects.properties.anchorBindings[]`` instead of mixing it
-with transfer physics in ``optical_elements.kind_params``.
+with transfer physics in ``physics_elements.kind_params``.
 
 This module:
 1. Provides a stable rule for picking which asset anchor a given binding
@@ -284,7 +284,7 @@ def legacy_laser_kind_params_from_beam(beam: dict[str, Any]) -> dict[str, Any]:
 def beam_from_legacy_laser_kind_params(legacy: dict[str, Any]) -> dict[str, Any]:
     """Inverse of ``legacy_laser_kind_params_from_beam``.
 
-    Used by the PUT /api/optical-elements path: when the (V1-style) frontend
+    Used by the PUT /api/physics-elements path: when the (V1-style) frontend
     sends a kindParams payload with centerWavelengthNm / nominalPowerMw / ...,
     the backend translates it into a V2 BeamSource and writes that to the
     SceneObject's opticalSources[0].beam, then drops the legacy fields from

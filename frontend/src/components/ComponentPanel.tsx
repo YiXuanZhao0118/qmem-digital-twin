@@ -5,21 +5,22 @@ import * as THREE from "three";
 import { resolveAssetUrl } from "../api/client";
 import { useSceneStore, type LabPoint, type TransformAxis } from "../store/sceneStore";
 import type { ComponentItem, SceneObject, SceneObjectPatch } from "../types/digitalTwin";
+import { TRIGGER_KINDS, TTL_GATE_KINDS } from "../types/digitalTwin";
 import { resolveBeamPosition } from "../utils/beamPlacement";
 import { getBeamAnchor, objectPosForAnchorOnBeam } from "../utils/beamAnchor";
 import { getComponentName } from "../utils/components";
 import { getFiberPortLabPose } from "../utils/fiberAlignment";
+import { Ad9959ObjectControls } from "./Ad9959ObjectControls";
+import { DdsChassisObjectControls } from "./DdsChassisObjectControls";
 import { CollapsibleSection } from "./CollapsibleSection";
-import { LinkedSchematicsSection } from "./LinkedSchematicsSection";
-import { RfChainReadout } from "./RfChainReadout";
 import { ScrubTimeRfReadout } from "./ScrubTimeRfReadout";
 import { FloatingPanel } from "./workspace/FloatingPanel";
 import { useWorkspace } from "./workspace/WorkspaceProvider";
 import { CapabilityPills } from "./optical/CapabilityPills";
-import { OpticalElementPanel } from "./optical/OpticalElementPanel";
+import { PhysicsElementPanel } from "./physics/PhysicsElementPanel";
 import { AlignPanel } from "./AlignPanel";
 import { NumberField } from "./NumberField";
-import { componentTypeToOpticalKind } from "../utils/opticalDefaults";
+import { componentTypeToElementKind } from "../utils/elementDefaults";
 
 type DraftObject = Required<Omit<SceneObjectPatch, "name" | "properties" | "serialNumber">> & {
   name: string;
@@ -39,49 +40,48 @@ const emptyDraft: DraftObject = {
   serialNumber: null,
 };
 
-function timingCapabilityFor(
+function pulseTimingCapabilityFor(
   component: ComponentItem | undefined,
-  opticalElements: { objectId: string; elementKind: string; kindParams: Record<string, unknown> }[],
-  sceneObjects: { id: string; componentId: string }[],
-): { allowed: boolean; label: string; mode: "full" | "rf_arbitrary" | "gate_only" | "none" } {
-  if (!component) return { allowed: false, label: "Timing", mode: "none" };
-  // Optical elements are per-object — find any OE that belongs to a scene
-  // object of this component. Two BB1 mirrors can have different kinds in
-  // theory, but they shouldn't; the first match wins.
-  const objIds = new Set(sceneObjects.filter((o) => o.componentId === component.id).map((o) => o.id));
-  const element = opticalElements.find((oe) => objIds.has(oe.objectId));
-  const kind = element?.elementKind ?? component.componentType;
-  if (kind === "laser_source" || kind === "tapered_amplifier") {
-    return { allowed: true, label: "Open timing editor", mode: "full" };
-  }
-  if (kind === "aom" || kind === "eom") {
-    const rfId = (element?.kindParams ?? {})["rfDriverComponentId"] as string | null | undefined;
-    if (rfId) return { allowed: true, label: "Open timing editor (RF arbitrary)", mode: "rf_arbitrary" };
-    return { allowed: true, label: "Open timing editor (on/off)", mode: "gate_only" };
-  }
-  return { allowed: false, label: "Timing not applicable", mode: "none" };
+): { allowed: boolean; mode: "ttl" | "trigger" | "none" } {
+  if (!component) return { allowed: false, mode: "none" };
+  // Per-template overrides: a Component can opt-in / opt-out of either
+  // capability via properties.hasTtlGateInput / properties.hasTriggerInput
+  // (e.g. a specific rf_source variant that does have a trigger pin).
+  const props = (component.properties as {
+    hasTtlGateInput?: unknown;
+    hasTriggerInput?: unknown;
+  }) ?? {};
+  const isTtl =
+    props.hasTtlGateInput === true ||
+    (props.hasTtlGateInput !== false && TTL_GATE_KINDS.has(component.componentType));
+  if (isTtl) return { allowed: true, mode: "ttl" };
+  const isTrigger =
+    props.hasTriggerInput === true ||
+    (props.hasTriggerInput !== false && TRIGGER_KINDS.has(component.componentType));
+  if (isTrigger) return { allowed: true, mode: "trigger" };
+  return { allowed: false, mode: "none" };
 }
 
-function TimingEditorButton({ component }: { component: ComponentItem }) {
-  const opticalElements = useSceneStore((state) => state.scene.opticalElements);
-  const sceneObjects = useSceneStore((state) => state.scene.objects);
+function PulseTimingButton({ component }: { component: ComponentItem }) {
   const { togglePanelVisible, focusPanel } = useWorkspace();
-  const cap = useMemo(
-    () => timingCapabilityFor(component, opticalElements, sceneObjects),
-    [component, opticalElements, sceneObjects],
-  );
+  const cap = useMemo(() => pulseTimingCapabilityFor(component), [component]);
   if (!cap.allowed) return null;
   return (
     <button
       type="button"
       className="secondary-button timing-open-button"
       onClick={() => {
-        togglePanelVisible("timing-editor", true);
-        focusPanel("timing-editor");
+        togglePanelVisible("pulse-timing", true);
+        focusPanel("pulse-timing");
       }}
+      title={
+        cap.mode === "ttl"
+          ? "This device has a TTL gate input — open Pulse & Timing to bind a TimingProgram"
+          : "This device has a Trigger input — open Pulse & Timing to bind a Trigger TimingProgram"
+      }
     >
       <Clock size={14} />
-      {cap.label}
+      Pulse & Timing
     </button>
   );
 }
@@ -709,8 +709,8 @@ function TextAnnotationEditor({ component }: { component: ComponentItem }) {
  *  wavelength out of operating range, input power above max. Read-only;
  *  surfaced in the FiberEditor section so the user sees them at a glance. */
 function FiberWarnings({ component }: { component: ComponentItem }) {
-  const opticalElement = useSceneStore((state) =>
-    state.scene.opticalElements.find((e) => {
+  const physicsElement = useSceneStore((state) =>
+    state.scene.physicsElements.find((e) => {
       const obj = state.scene.objects.find((o) => o.id === e.objectId);
       return obj?.componentId === component.id;
     }),
@@ -732,8 +732,8 @@ function FiberWarnings({ component }: { component: ComponentItem }) {
     (objProps.fiberNodes && objProps.fiberNodes.length >= 2)
       ? objProps.fiberNodes
       : compProps.fiberNodes;
-  if (nodes && nodes.length >= 2 && opticalElement?.elementKind === "fiber") {
-    const minBend = ((opticalElement.kindParams as Record<string, unknown>).minBendRadiusMm ?? 25) as number;
+  if (nodes && nodes.length >= 2 && physicsElement?.elementKind === "fiber") {
+    const minBend = ((physicsElement.kindParams as Record<string, unknown>).minBendRadiusMm ?? 25) as number;
     let minR = Number.POSITIVE_INFINITY;
     for (let i = 0; i < nodes.length - 1; i += 1) {
       const a = nodes[i];
@@ -781,8 +781,8 @@ function FiberWarnings({ component }: { component: ComponentItem }) {
   // (we'd need an actual incoming beam wavelength; we'll skip live check
   // here, as it requires Phase H ray-tracer. For v1, surface if cutoff
   // is unset for SM/PM.)
-  if (opticalElement?.elementKind === "fiber") {
-    const kp = opticalElement.kindParams as Record<string, unknown>;
+  if (physicsElement?.elementKind === "fiber") {
+    const kp = physicsElement.kindParams as Record<string, unknown>;
     if (kp.fiberType !== "multi_mode" && kp.cutoffWavelengthNm == null) {
       warnings.push(`ℹ SM/PM fiber has no cutoff wavelength set — cannot validate single-mode operation.`);
     }
@@ -811,8 +811,8 @@ function FiberWarnings({ component }: { component: ComponentItem }) {
  *  display — once Phase H ray-tracer integration is live, the actual
  *  per-segment coupling will replace this with the real beam state. */
 function FiberEfficiencyDisplay({ component }: { component: ComponentItem }) {
-  const opticalElement = useSceneStore((state) =>
-    state.scene.opticalElements.find((e) => {
+  const physicsElement = useSceneStore((state) =>
+    state.scene.physicsElements.find((e) => {
       const obj = state.scene.objects.find((o) => o.id === e.objectId);
       return obj?.componentId === component.id;
     }),
@@ -824,14 +824,14 @@ function FiberEfficiencyDisplay({ component }: { component: ComponentItem }) {
   );
   const objProps = (sceneObjectForEff?.properties ?? {}) as { fiberNodes?: number[][] };
   const compProps = (component.properties ?? {}) as { fiberNodes?: number[][] };
-  if (!opticalElement || opticalElement.elementKind !== "fiber") {
+  if (!physicsElement || physicsElement.elementKind !== "fiber") {
     return (
       <p style={{ fontSize: 11, opacity: 0.6, marginTop: 8 }}>
         Coupling efficiency breakdown will appear once the fiber is placed in the scene.
       </p>
     );
   }
-  const kp = opticalElement.kindParams as Record<string, unknown>;
+  const kp = physicsElement.kindParams as Record<string, unknown>;
   const fiberType = (kp.fiberType ?? "single_mode") as
     | "multi_mode"
     | "single_mode"
@@ -868,12 +868,12 @@ function FiberEfficiencyDisplay({ component }: { component: ComponentItem }) {
  *  slider in ComponentPanel — moved here from the PHY Editor's FiberInspector
  *  on 2026-05-09 because slow axis is per-physical-unit (Layer 4, manufacturing
  *  tolerance) and the layered-design rule says PhyEditor only writes Layer 2.
- *  Persists into OpticalElement.kindParams.endA/B.slowAxisDegInBodyFrame.
+ *  Persists into PhysicsElement.kindParams.endA/B.slowAxisDegInBodyFrame.
  *  Disabled (with hint) for non-PM fibers since slow axis is undefined. */
 function FiberSlowAxisEditor({ component }: { component: ComponentItem }) {
   const upsertOpticalElement = useSceneStore((state) => state.upsertOpticalElement);
-  const opticalElement = useSceneStore((state) =>
-    state.scene.opticalElements.find((e) => {
+  const physicsElement = useSceneStore((state) =>
+    state.scene.physicsElements.find((e) => {
       const obj = state.scene.objects.find((o) => o.id === e.objectId);
       return obj?.componentId === component.id;
     }),
@@ -883,7 +883,7 @@ function FiberSlowAxisEditor({ component }: { component: ComponentItem }) {
     slowAxisDegInBodyFrame?: number | null;
     facePositionMmBodyLocal?: { x: number; y: number; z: number } | null;
   };
-  const kp = (opticalElement?.kindParams ?? {}) as {
+  const kp = (physicsElement?.kindParams ?? {}) as {
     fiberType?: "single_mode" | "polarization_maintaining" | "multi_mode";
     endA?: EndKp;
     endB?: EndKp;
@@ -895,7 +895,7 @@ function FiberSlowAxisEditor({ component }: { component: ComponentItem }) {
     typeof kp.endB?.slowAxisDegInBodyFrame === "number" ? kp.endB.slowAxisDegInBodyFrame : 0;
 
   const writeSlow = async (end: "A" | "B", value: number) => {
-    if (!opticalElement) return;
+    if (!physicsElement) return;
     const endKey = end === "A" ? "endA" : "endB";
     const nextKindParams = {
       ...kp,
@@ -905,16 +905,16 @@ function FiberSlowAxisEditor({ component }: { component: ComponentItem }) {
       },
     };
     await upsertOpticalElement({
-      objectId: opticalElement.objectId,
-      elementKind: opticalElement.elementKind,
-      wavelengthRangeNm: opticalElement.wavelengthRangeNm,
-      inputPorts: opticalElement.inputPorts,
-      outputPorts: opticalElement.outputPorts,
+      objectId: physicsElement.objectId,
+      elementKind: physicsElement.elementKind,
+      wavelengthRangeNm: physicsElement.wavelengthRangeNm,
+      inputPorts: physicsElement.inputPorts,
+      outputPorts: physicsElement.outputPorts,
       kindParams: nextKindParams,
     });
   };
 
-  if (!opticalElement) {
+  if (!physicsElement) {
     return (
       <p style={{ fontSize: 11, opacity: 0.55, marginTop: 8 }}>
         Slow axis editor will appear once the fiber is placed in the scene.
@@ -1102,29 +1102,53 @@ function FiberPortPoseEditor({
 }
 
 function FiberEditor({ component }: { component: ComponentItem }) {
-  const fiberEditingComponentId = useSceneStore((state) => state.fiberEditingComponentId);
-  const enterFiberEdit = useSceneStore((state) => state.enterFiberEdit);
-  const exitFiberEdit = useSceneStore((state) => state.exitFiberEdit);
   const updateFiberRadius = useSceneStore((state) => state.updateFiberRadius);
-  const alignFiberEndToBeam = useSceneStore((state) => state.alignFiberEndToBeam);
+  const findFiberAlignmentCandidates = useSceneStore(
+    (state) => state.findFiberAlignmentCandidates,
+  );
+  const applyFiberAlignmentCandidate = useSceneStore(
+    (state) => state.applyFiberAlignmentCandidate,
+  );
   // Explicit node-removal button — surfaced in the panel because the
   // 3D-viewer right-click affordance is hard to discover. Endpoints (A
   // and B) are guarded out by the store action, so this only fires for
   // interior nodes.
   const removeFiberNode = useSceneStore((state) => state.removeFiberNode);
   const [alignFeedback, setAlignFeedback] = useState<string | null>(null);
-  const isEditing = fiberEditingComponentId === component.id;
+  const [picker, setPicker] = useState<{
+    end: "A" | "B";
+    candidates: import("../utils/fiberAlignment").FiberAlignmentCandidate[];
+  } | null>(null);
+
+  const applyCandidate = async (
+    end: "A" | "B",
+    c: import("../utils/fiberAlignment").FiberAlignmentCandidate,
+  ) => {
+    await applyFiberAlignmentCandidate(component.id, end, c);
+    const label = c.displayLabel ?? `beam ${c.beamId.slice(0, 6)}`;
+    setAlignFeedback(
+      `End ${end} → ${label} (was ${c.distMm.toFixed(2)} mm off, now 0).`,
+    );
+    setPicker(null);
+  };
+
   const onAlign = async (end: "A" | "B") => {
     setAlignFeedback(null);
     try {
-      const res = await alignFiberEndToBeam(component.id, end, 25);
-      if (res === null) {
+      const list = await findFiberAlignmentCandidates(component.id, end, 25);
+      if (list.length === 0) {
         setAlignFeedback(`End ${end}: no beam found within 25 mm — alignment skipped.`);
-      } else {
-        setAlignFeedback(
-          `End ${end} aligned to beam ${res.beamId.slice(0, 6)} (was ${res.offsetMm.toFixed(2)} mm off, now 0).`,
-        );
+        setPicker(null);
+        return;
       }
+      if (list.length === 1) {
+        await applyCandidate(end, list[0]);
+        return;
+      }
+      // Multiple beams within tolerance — surface a picker so the user
+      // disambiguates (AOM 0/±1 orders or beam-splitter R+T branches
+      // that cluster within mm of each other).
+      setPicker({ end, candidates: list });
     } catch (err) {
       setAlignFeedback(`Align failed: ${(err as Error).message}`);
     }
@@ -1151,25 +1175,9 @@ function FiberEditor({ component }: { component: ComponentItem }) {
 
   return (
     <section className="edit-section">
-      <h3>Fiber editing</h3>
-      <button
-        type="button"
-        className="primary-button"
-        style={{ width: "100%", marginBottom: 8 }}
-        onClick={() => (isEditing ? exitFiberEdit() : enterFiberEdit(component.id))}
-      >
-        {isEditing ? "✓ Done editing" : "✏ Edit fiber path"}
-      </button>
+      <h3>Fiber</h3>
       <p style={{ fontSize: 12, opacity: 0.7, margin: "4px 0 8px", lineHeight: 1.5 }}>
         Nodes: {nodeCount} (End A + End B{nodeCount > 2 ? ` + ${nodeCount - 2} interior` : ""})
-        {isEditing && (
-          <>
-            <br />· Drag orange/yellow anchor to move a node
-            <br />· Drag cyan handle tip to adjust tension (direction + length)
-            <br />· Double-click on the tube to insert an interior node
-            <br />· Right-click on an interior anchor to delete it (or use buttons below)
-          </>
-        )}
       </p>
       {/* Explicit per-interior-node delete row. The two endpoint nodes
           (index 0 = End A, index N-1 = End B) are hidden because they
@@ -1252,6 +1260,56 @@ function FiberEditor({ component }: { component: ComponentItem }) {
           Align End B to beam
         </button>
       </div>
+      {picker && (
+        <div
+          style={{
+            marginTop: 8,
+            padding: 8,
+            background: "rgba(255,255,255,0.04)",
+            borderRadius: 4,
+          }}
+        >
+          <div style={{ fontSize: 12, marginBottom: 6 }}>
+            <strong>End {picker.end}: {picker.candidates.length} beams within 25 mm</strong>
+            <button
+              type="button"
+              onClick={() => setPicker(null)}
+              style={{
+                float: "right",
+                background: "transparent",
+                border: "none",
+                color: "#aaa",
+                cursor: "pointer",
+                fontSize: 14,
+                padding: "0 4px",
+              }}
+              aria-label="Cancel picker"
+            >
+              ✕
+            </button>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            {picker.candidates.map((c, i) => (
+              <button
+                key={`${c.beamId}/${i}`}
+                type="button"
+                className="secondary-button"
+                onClick={() => void applyCandidate(picker.end, c)}
+                style={{
+                  textAlign: "left",
+                  fontSize: 11,
+                  padding: "4px 8px",
+                  fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                }}
+              >
+                {i === 0 ? "★ " : "  "}
+                {c.displayLabel ?? c.beamId}{" "}
+                <span style={{ opacity: 0.6 }}>· {c.distMm.toFixed(2)} mm</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {alignFeedback && (
         <p style={{ fontSize: 11, opacity: 0.85, marginTop: 6 }}>{alignFeedback}</p>
       )}
@@ -1260,6 +1318,335 @@ function FiberEditor({ component }: { component: ComponentItem }) {
       <FiberSlowAxisEditor component={component} />
       <FiberEfficiencyDisplay component={component} />
       <FiberWarnings component={component} />
+    </section>
+  );
+}
+
+function RfCableEditor({ component }: { component: ComponentItem }) {
+  // RF-cable per-instance controls. Mirrors FiberEditor's Align buttons
+  // but two-phase: list candidates -> auto-apply if 1, else show a
+  // picker so the user can pick a specific socket when AD9959-style
+  // clustered CH0..CH3 anchors all fall within tolerance.
+  const selectedObjectId = useSceneStore((state) => state.selectedObjectId);
+  const selectedObject = useSceneStore((state) =>
+    selectedObjectId
+      ? state.scene.objects.find((o) => o.id === selectedObjectId) ?? null
+      : null,
+  );
+  const findRfCableAlignmentCandidates = useSceneStore(
+    (state) => state.findRfCableAlignmentCandidates,
+  );
+  const applyRfCableAlignmentCandidate = useSceneStore(
+    (state) => state.applyRfCableAlignmentCandidate,
+  );
+  const removeRfCableNode = useSceneStore((state) => state.removeRfCableNode);
+  const clearRfCableEndpointLink = useSceneStore((state) => state.clearRfCableEndpointLink);
+  const sceneObjects = useSceneStore((state) => state.scene.objects);
+  const sceneComponents = useSceneStore((state) => state.scene.components);
+  const sceneAssets = useSceneStore((state) => state.scene.assets);
+  const [alignFeedback, setAlignFeedback] = useState<string | null>(null);
+  const [picker, setPicker] = useState<{
+    end: "A" | "B";
+    candidates: import("../utils/rfCableAlignment").RfCableAlignmentResult[];
+  } | null>(null);
+
+  const isThisCableSelected = selectedObject?.componentId === component.id;
+
+  // Read this cable's per-end link records. Each value (when present)
+  // is { targetObjectId, targetAnchorId, targetAnchorName } — set by
+  // Align RF (`applyRfCableAlignmentCandidate`), cleared by Unlink, by
+  // endpoint drag in node-edit mode, or by the dangling-cleanup effect
+  // below when the target goes missing.
+  const endpointLinks = (((selectedObject?.properties ?? {}) as {
+    rfCableEndpoints?: {
+      A?: { targetObjectId: string; targetAnchorId: string; targetAnchorName: string };
+      B?: { targetObjectId: string; targetAnchorId: string; targetAnchorName: string };
+    };
+  }).rfCableEndpoints) ?? {};
+
+  /** Look up the live target SceneObject + asset anchor for a link.
+   *  Returns null if either is missing — used for both the panel's
+   *  status label (so dangling links can be flagged before the auto-
+   *  cleanup effect fires) and the cleanup decision itself. */
+  const resolveLinkLive = (
+    link: { targetObjectId: string; targetAnchorId: string; targetAnchorName: string },
+  ): { targetName: string } | null => {
+    const t = sceneObjects.find((o) => o.id === link.targetObjectId);
+    if (!t) return null;
+    const tc = sceneComponents.find((c) => c.id === t.componentId);
+    if (!tc || !tc.asset3dId) return null;
+    const ta = sceneAssets.find((a) => a.id === tc.asset3dId);
+    if (!ta || !Array.isArray(ta.anchors)) return null;
+    const ok = ta.anchors.some(
+      (a) => a.id === link.targetAnchorId
+        && (a.name ?? a.id) === link.targetAnchorName,
+    );
+    if (!ok) return null;
+    return { targetName: t.name };
+  };
+
+  // Auto-cleanup dangling links: when the target SceneObject is deleted
+  // or its asset anchor renamed / removed, fire `clearRfCableEndpointLink`
+  // so the cable falls back cleanly to the stored node value (which is
+  // the last good position the resolver wrote). Runs only when this
+  // cable instance is selected — bulk cross-cable cleanup belongs in a
+  // store-side migration / startup pass.
+  useEffect(() => {
+    if (!isThisCableSelected || !selectedObject) return;
+    (["A", "B"] as const).forEach((end) => {
+      const link = endpointLinks[end];
+      if (!link) return;
+      if (resolveLinkLive(link)) return;
+      void clearRfCableEndpointLink(selectedObject.id, end);
+    });
+    // We intentionally don't depend on endpointLinks here — it's a fresh
+    // object every render; the meaningful change is sceneObjects /
+    // Components / Assets shifting (any of which can invalidate a link).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isThisCableSelected, selectedObject?.id, sceneObjects, sceneComponents, sceneAssets]);
+
+  // Read this cable instance's spline nodes for the interior-node remove
+  // list. rf_cable nodes are per-instance (SceneObject.properties), so we
+  // pull them off the selected object directly — no V1 catalog fallback
+  // like fiber had. Endpoints (idx 0 / N-1) are hidden because they must
+  // always exist and the `removeRfCableNode` store action defensively
+  // rejects them.
+  const rfCableNodes = isThisCableSelected
+    ? (((selectedObject?.properties ?? {}) as { rfCableNodes?: { posMm: number[] }[] })
+      .rfCableNodes ?? [])
+    : [];
+  const nodeCount = rfCableNodes.length;
+
+  const applyCandidate = async (
+    end: "A" | "B",
+    c: import("../utils/rfCableAlignment").RfCableAlignmentResult,
+  ) => {
+    if (!selectedObject) return;
+    await applyRfCableAlignmentCandidate(selectedObject.id, end, c);
+    setAlignFeedback(
+      `End ${end} → ${c.targetName} · ${c.targetAnchorName} [${c.targetAnchorId}] (was ${c.distMm.toFixed(2)} mm off, now 0).`,
+    );
+    setPicker(null);
+  };
+
+  const onAlign = async (end: "A" | "B") => {
+    if (!selectedObject) return;
+    setAlignFeedback(null);
+    try {
+      const list = await findRfCableAlignmentCandidates(selectedObject.id, end, 25);
+      if (list.length === 0) {
+        setAlignFeedback(`End ${end}: no rf_in/rf_out port found within 25 mm.`);
+        setPicker(null);
+        return;
+      }
+      if (list.length === 1) {
+        await applyCandidate(end, list[0]);
+        return;
+      }
+      // Multiple candidates within tolerance — surface a picker so the
+      // user disambiguates (AD9959 CH0..CH3 typical case).
+      setPicker({ end, candidates: list });
+    } catch (err) {
+      setAlignFeedback(`Align failed: ${(err as Error).message}`);
+    }
+  };
+
+  return (
+    <section className="edit-section">
+      <h3>RF cable</h3>
+      {!isThisCableSelected ? (
+        <p style={{ fontSize: 12, opacity: 0.7 }}>
+          Select an rf_cable SceneObject in the viewport or outliner to
+          enable Align RF (per-instance action).
+        </p>
+      ) : (
+        <>
+          <p style={{ fontSize: 12, opacity: 0.7, margin: "0 0 8px", lineHeight: 1.5 }}>
+            Nodes: {nodeCount} (End A + End B{nodeCount > 2 ? ` + ${nodeCount - 2} interior` : ""}).
+            Snap each end to the closest <code>rf_in</code> / <code>rf_out</code> anchor on
+            another component (AOM RF input, AD9959 channel, etc.) within 25 mm. If multiple
+            ports cluster within tolerance, a picker opens so you choose which socket.
+          </p>
+          {/* Interior node list with Remove buttons — mirrors FiberEditor.
+              Endpoints (idx 0 / N-1) are hidden since they must always
+              exist; the `removeRfCableNode` store action defensively
+              rejects attempts to remove them anyway. */}
+          {nodeCount > 2 && (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 4 }}>
+                Interior nodes
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {rfCableNodes.map((n, idx) => {
+                  if (idx === 0 || idx === nodeCount - 1) return null;
+                  const p = n.posMm;
+                  return (
+                    <div
+                      key={idx}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 6,
+                        fontSize: 11,
+                        padding: "3px 6px",
+                        background: "rgba(255,255,255,0.04)",
+                        borderRadius: 4,
+                      }}
+                    >
+                      <span style={{ fontFamily: "ui-monospace, SFMono-Regular, monospace" }}>
+                        #{idx}: ({p[0].toFixed(1)}, {p[1].toFixed(1)}, {p[2].toFixed(1)}) mm
+                      </span>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        style={{ padding: "2px 8px", fontSize: 11 }}
+                        title={`Remove interior node #${idx}. Endpoints (End A / End B) cannot be removed.`}
+                        onClick={() => {
+                          if (!selectedObject) return;
+                          if (window.confirm(`Remove interior node #${idx}?`)) {
+                            void removeRfCableNode(selectedObject.id, idx);
+                          }
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {/* Per-end link status. ⛓ = linked (cable end auto-follows the
+              target), — = free (cable end uses stored node, manual mode).
+              Dangling links (target deleted / anchor renamed) show in
+              red briefly before the auto-cleanup useEffect above clears
+              them on the next scene update. */}
+          <div style={{ marginBottom: 8 }}>
+            {(["A", "B"] as const).map((end) => {
+              const link = endpointLinks[end];
+              const live = link ? resolveLinkLive(link) : null;
+              return (
+                <div
+                  key={end}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: 11,
+                    padding: "3px 6px",
+                    background: "rgba(255,255,255,0.04)",
+                    borderRadius: 4,
+                    marginBottom: 3,
+                  }}
+                >
+                  <span style={{ fontWeight: 600, minWidth: 38 }}>End {end}:</span>
+                  {!link ? (
+                    <span style={{ opacity: 0.6 }}>— free (manual)</span>
+                  ) : !live ? (
+                    <span style={{ color: "#f87171" }}>
+                      ⚠ dangling → {link.targetAnchorName} [{link.targetAnchorId}]
+                      <span style={{ opacity: 0.6 }}> (target missing)</span>
+                    </span>
+                  ) : (
+                    <span style={{ color: "#86efac" }}>
+                      ⛓ {live.targetName} · {link.targetAnchorName}
+                      <span style={{ opacity: 0.6 }}> [{link.targetAnchorId}]</span>
+                    </span>
+                  )}
+                  {link && (
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      style={{ marginLeft: "auto", padding: "2px 8px", fontSize: 11 }}
+                      onClick={() => {
+                        if (!selectedObject) return;
+                        void clearRfCableEndpointLink(selectedObject.id, end);
+                      }}
+                      title={`Unlink End ${end} — the cable end falls back to its last stored node, won't follow the target any more.`}
+                    >
+                      Unlink
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => void onAlign("A")}
+              style={{ flex: 1 }}
+            >
+              Align End A to RF port
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => void onAlign("B")}
+              style={{ flex: 1 }}
+            >
+              Align End B to RF port
+            </button>
+          </div>
+          {picker && (
+            <div
+              style={{
+                marginTop: 8,
+                padding: 8,
+                background: "rgba(255,255,255,0.04)",
+                borderRadius: 4,
+              }}
+            >
+              <div style={{ fontSize: 12, marginBottom: 6 }}>
+                <strong>End {picker.end}: {picker.candidates.length} candidates within 25 mm</strong>
+                <button
+                  type="button"
+                  onClick={() => setPicker(null)}
+                  style={{
+                    float: "right",
+                    background: "transparent",
+                    border: "none",
+                    color: "#aaa",
+                    cursor: "pointer",
+                    fontSize: 14,
+                    padding: "0 4px",
+                  }}
+                  aria-label="Cancel picker"
+                >
+                  ✕
+                </button>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                {picker.candidates.map((c, i) => (
+                  <button
+                    key={`${c.targetObjectId}/${c.targetAnchorName}`}
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => void applyCandidate(picker.end, c)}
+                    style={{
+                      textAlign: "left",
+                      fontSize: 11,
+                      padding: "4px 8px",
+                      fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                    }}
+                  >
+                    {i === 0 ? "★ " : "  "}
+                    {c.targetName} · {c.targetAnchorName}{" "}
+                    <span style={{ opacity: 0.6 }}>
+                      [{c.targetAnchorId}] · {c.distMm.toFixed(2)} mm
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {alignFeedback && (
+            <p style={{ fontSize: 11, opacity: 0.85, marginTop: 6 }}>{alignFeedback}</p>
+          )}
+        </>
+      )}
     </section>
   );
 }
@@ -1289,12 +1676,6 @@ export function ComponentPanel() {
     scene.components[0];
   const placement = selectedObject;
   const isObjectSelection = Boolean(selectedObject);
-  // Device state is now per-OBJECT (alembic 0015). Match by selected object,
-  // not by component template — siblings of the same component each have
-  // their own runtime state.
-  const deviceState = scene.deviceStates.find(
-    (item) => selectedObject && item.objectId === selectedObject.id,
-  );
   const asset = scene.assets.find((item) => item.id === component?.asset3dId);
   const modelViewerUrl =
     asset?.assetType === "edrawing_html" || asset?.filePath.toLowerCase().endsWith(".html")
@@ -1439,14 +1820,9 @@ export function ComponentPanel() {
 
   if (!component) {
     return (
-      <>
-        <FloatingPanel id="object" title="Object">
-          <p className="empty-state">No selection</p>
-        </FloatingPanel>
-        <FloatingPanel id="device-state" title="Device state">
-          <p className="empty-state">No selection</p>
-        </FloatingPanel>
-      </>
+      <FloatingPanel id="object" title="Object">
+        <p className="empty-state">No selection</p>
+      </FloatingPanel>
     );
   }
 
@@ -1571,6 +1947,20 @@ export function ComponentPanel() {
             <FiberEditor component={component} />
           )}
 
+          {(component.componentType === "rf_cable" ||
+            component.componentType === "sma_cable") && (
+            <RfCableEditor component={component} />
+          )}
+
+          {component.componentType === "dds_ad9959_pcb" && (
+            <Ad9959ObjectControls component={component} />
+          )}
+
+          {component.componentType === "instrument_chassis" &&
+            (component.name?.startsWith("dds_chassis") ?? false) && (
+              <DdsChassisObjectControls component={component} />
+            )}
+
           <section className="edit-section">
             <h3>
               <Move3D size={17} />
@@ -1647,31 +2037,17 @@ export function ComponentPanel() {
           </button>
 
           {(component?.physicsCapabilities?.includes("optical") ||
-            componentTypeToOpticalKind(component?.componentType) !== null) && (
-            <OpticalElementPanel component={component} sceneObject={placement} />
+            componentTypeToElementKind(component?.componentType) !== null) && (
+            <PhysicsElementPanel component={component} sceneObject={placement} />
           )}
         </>
       )}
 
       <AlignPanel />
-      {isObjectSelection && component && <TimingEditorButton component={component} />}
+      {isObjectSelection && component && <PulseTimingButton component={component} />}
       {isObjectSelection && selectedObject && (
-        <LinkedSchematicsSection
-          sceneObjectId={selectedObject.id}
-          sceneObjectName={getComponentName(component) ?? "Object"}
-          componentId={selectedObject.componentId ?? component?.id ?? null}
-        />
+        <ScrubTimeRfReadout sceneObjectId={selectedObject.id} />
       )}
-      {isObjectSelection && selectedObject && (
-        <>
-          <RfChainReadout sceneObjectId={selectedObject.id} />
-          <ScrubTimeRfReadout sceneObjectId={selectedObject.id} />
-        </>
-      )}
-      </FloatingPanel>
-
-      <FloatingPanel id="device-state" title="Device state">
-        <pre>{JSON.stringify(deviceState?.state ?? {}, null, 2)}</pre>
       </FloatingPanel>
     </>
   );

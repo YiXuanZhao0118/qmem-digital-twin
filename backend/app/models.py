@@ -81,9 +81,9 @@ class Component(Base):
         cascade="all, delete-orphan",
         foreign_keys="SceneObject.component_id",
     )
-    # DeviceState, TimingProgram, OpticalElement are all per-OBJECT now
+    # DeviceState, TimingProgram, PhysicsElement are all per-OBJECT now
     # (alembic 0014 + 0015). Reach them via SceneObject.{device_state,
-    # timing_program, optical_element}. Component is purely a catalog row.
+    # timing_program, physics_element}. Component is purely a catalog row.
 
 
 class SceneObject(Base):
@@ -123,16 +123,15 @@ class SceneObject(Base):
     )
 
     component: Mapped[Component] = relationship(back_populates="objects", foreign_keys=[component_id])
-    optical_element: Mapped[OpticalElement | None] = relationship(
+    physics_element: Mapped[PhysicsElement | None] = relationship(
         back_populates="object", cascade="all, delete-orphan",
-        primaryjoin="SceneObject.id == OpticalElement.object_id",
+        primaryjoin="SceneObject.id == PhysicsElement.object_id",
     )
     device_state: Mapped[DeviceState | None] = relationship(
         back_populates="object", cascade="all, delete-orphan"
     )
-    timing_program: Mapped[TimingProgram | None] = relationship(
-        back_populates="object", cascade="all, delete-orphan"
-    )
+    # TimingProgram is no longer per-object (alembic 0045) — consumers
+    # reference programs by id via JSONB refs in ``properties``.
 
 
 class Connection(Base):
@@ -467,49 +466,8 @@ class MagneticsProblem(Base):
     )
 
 
-class PulseBlasterChannel(Base):
-    """One TTL output channel of the lab's SpinCore PulseBlaster.
-
-    Each channel index (0..N-1; 24 on PB24/ESR, up to 32 on PRO) maps
-    optionally to a Component — meaning "PulseBlaster channel N is the
-    physical TTL line wired to that Component's gate / trigger input."
-
-    The actual gating sequence ("at t=10us turn this device on") still
-    lives in TimingProgram (per-Component). This table is just the
-    component <-> physical wire binding that lets the dispatch layer
-    know which TimingProgram block lives on which output channel.
-
-    Phase F+ MVP single PulseBlaster, multi-PulseBlaster setups can
-    add a parent ``pulse_blasters`` table later.
-    """
-
-    __tablename__ = "pulse_blaster_channels"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-        server_default=text("gen_random_uuid()"),
-    )
-    channel_index: Mapped[int] = mapped_column(Integer, nullable=False)
-    label: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
-    target_component_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("components.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    invert: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("false")
-    )
-    enabled: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, server_default=text("true")
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
+# PulseBlasterChannel removed in alembic 0046. The (channel_index, invert)
+# binding it carried is now stored inline on TimingProgram.
 
 
 class RfChainNode(Base):
@@ -645,13 +603,16 @@ class EmProblem(Base):
     )
 
 
-class OpticalElement(Base):
-    __tablename__ = "optical_elements"
+class PhysicsElement(Base):
+    __tablename__ = "physics_elements"
 
-    # Optical participation is per-OBJECT (instance), not per-Component
+    # Physics participation is per-OBJECT (instance), not per-Component
     # (template). Two SceneObjects of the same Component (e.g. two BB1
-    # mirrors) each get their own OpticalElement row with independent
+    # mirrors) each get their own PhysicsElement row with independent
     # kind_params, ports, and chain participation. See alembic 0014.
+    # Renamed from OpticalElement in alembic 0042 once the KIND_REGISTRY
+    # grew to cover RF (rf_source, horn_antenna) and other non-optical
+    # physics domains; the table holds whatever PHY kind the object plays.
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
@@ -688,9 +649,9 @@ class OpticalElement(Base):
     )
 
     # Note: relationship to Component goes via the SceneObject (object → component).
-    # No direct OpticalElement.component relationship anymore — the row is
+    # No direct PhysicsElement.component relationship anymore — the row is
     # keyed by object, components are reachable via the object.
-    object: Mapped[SceneObject] = relationship(back_populates="optical_element")
+    object: Mapped[SceneObject] = relationship(back_populates="physics_element")
 
 
 class OpticalLink(Base):
@@ -725,6 +686,62 @@ class OpticalLink(Base):
     to_port: Mapped[str] = mapped_column(Text, nullable=False)
     free_space_mm: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0")
     properties: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class RfLink(Base):
+    """RF signal graph edge between two SceneObject ports (alembic 0044).
+
+    Parallels ``OpticalLink`` so RF networks containing switches,
+    splitters, combiners, directional couplers and mixers can be
+    modelled as a proper directed graph rather than the linear
+    ``rf_chain_nodes`` chain. ``rf_chain_nodes`` is being demoted to a
+    derived readout cache in a later phase.
+
+    ``electrical_length_mm`` replaces ``OpticalLink.free_space_mm``:
+    it is the signal path length through the wired connection (0 for
+    a direct connector mating, cable length for a patch cable).
+    Frequency-domain edge state (impedanceOhm, lossDb, delayNs,
+    cableObjectId, etc.) lives on ``properties`` until formalised.
+    """
+
+    __tablename__ = "rf_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "from_object_id",
+            "from_port",
+            "to_object_id",
+            "to_port",
+            name="uq_rf_link_object_endpoints",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    from_object_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("objects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    from_port: Mapped[str] = mapped_column(Text, nullable=False)
+    to_object_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("objects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    to_port: Mapped[str] = mapped_column(Text, nullable=False)
+    electrical_length_mm: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0, server_default="0"
+    )
+    properties: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -905,67 +922,26 @@ class BeamSegment(Base):
 
 
 class TimingProgram(Base):
-    """A per-OBJECT timed sequence program (alembic 0015).
+    """A reusable schedule of HIGH intervals (alembic 0045).
 
-    Owned by exactly one SceneObject (1:1). Two physical units of the same
-    Component model each have their own program — they can run different
-    sequences on different days. Only objects whose component has an
-    appropriate physics capability are expected to have a TimingProgram
-    (laser_source / tapered_amplifier always; AOM/EOM only when an RF
-    driver is wired up). The DB enforces 1:1 — UI gates creation by the
-    object's element kind / RF wiring.
+    Identified by its own ``id`` (no longer per-object). Consumers reference
+    the program via ``id`` — multiple consumers (RF source triggers / gates,
+    PulseBlaster channels) can share a single program. ``kind`` discriminates
+    how the intervals are interpreted downstream:
+
+    - ``"TTL"``:     output is HIGH inside each interval, LOW between.
+    - ``"Trigger"``: a rising edge fires at each interval's start; the
+                     interval's width is the pulse width the PB hardware
+                     emits to make the edge observable.
+
+    ``intervals`` is a JSONB list of ``{spinCoreStartNs, spinCoreEndNs}``
+    pairs, ordered and non-overlapping (validated at write time). Storing
+    intervals inline replaces the old separate ``timing_blocks`` table —
+    the read pattern is always "load the whole schedule", so JSON column
+    avoids an N+1 join.
     """
 
     __tablename__ = "timing_programs"
-
-    object_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("objects.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    name: Mapped[str] = mapped_column(Text, nullable=False, default="program", server_default="program")
-    spin_core_start: Mapped[str] = mapped_column(
-        Text, nullable=False, default="WAIT", server_default="WAIT"
-    )  # "WAIT" | "CONTINUE"
-    duration_ns: Mapped[float] = mapped_column(
-        Float, nullable=False, default=0.0, server_default="0"
-    )
-    properties: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
-
-    object: Mapped[SceneObject] = relationship(back_populates="timing_program")
-    blocks: Mapped[list[TimingBlock]] = relationship(
-        back_populates="program",
-        cascade="all, delete-orphan",
-        order_by="TimingBlock.t_start_ns",
-    )
-
-
-class TimingBlock(Base):
-    """A single block on the component's timeline.
-
-    Each block describes the component's action over `[t_start_ns, t_end_ns)`.
-    `waveform_kind` chooses how `params` is interpreted:
-
-    - "const":      params={"value": float}    (e.g. power=0.7)
-    - "linear_ramp": params={"start": float, "end": float}
-    - "arbitrary":  params={"samples": [float], "dt_ns": float}  (RF-bearing AOM/EOM only)
-    - "gate_on":    params={}  (boolean ON for the duration; AOM/EOM no-RF)
-    - "gate_off":   params={}  (boolean OFF — usually only emitted from solver merging)
-
-    Times are float ns; the UI snaps inputs to 10 ns and the API validator
-    rounds on write.
-    """
-
-    __tablename__ = "timing_blocks"
 
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -973,17 +949,20 @@ class TimingBlock(Base):
         default=uuid.uuid4,
         server_default=text("gen_random_uuid()"),
     )
-    program_object_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("timing_programs.object_id", ondelete="CASCADE"),
-        nullable=False,
+    name: Mapped[str | None] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(
+        Text, nullable=False, default="TTL", server_default="TTL"
     )
-    label: Mapped[str | None] = mapped_column(Text)
-    t_start_ns: Mapped[float] = mapped_column(Float, nullable=False)
-    t_end_ns: Mapped[float] = mapped_column(Float, nullable=False)
-    waveform_kind: Mapped[str] = mapped_column(Text, nullable=False, default="const", server_default="const")
-    params: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
-    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # PB hardware binding (alembic 0046, absorbed from the now-dropped
+    # pulse_blaster_channels table). NULL = logical schedule not bound to
+    # a wire. UNIQUE partial index ensures one program per physical channel.
+    channel_index: Mapped[int | None] = mapped_column(Integer)
+    invert: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    intervals: Mapped[JsonList] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -994,4 +973,27 @@ class TimingBlock(Base):
         onupdate=func.now(),
     )
 
-    program: Mapped[TimingProgram] = relationship(back_populates="blocks")
+
+class AppSetting(Base):
+    """Shared app-wide singleton settings, keyed by string.
+
+    Lab-global, not per-user — every browser session reads the same row.
+    First key is ``room_dimensions`` (Initial Setup), stored as a JSONB
+    object ``{"widthMm": ..., "depthMm": ..., "heightMm": ...}``. New keys
+    can be added without a migration. See alembic 0043.
+    """
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    value: Mapped[JsonDict] = mapped_column(JSONB, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+# TimingBlock removed in alembic 0045. The intervals it carried are now a
+# JSONB array on TimingProgram.intervals; see that class for the new layout.

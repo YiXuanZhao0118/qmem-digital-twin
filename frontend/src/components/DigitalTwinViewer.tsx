@@ -1,9 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeftRight, Crosshair, Eye, EyeOff, Grid3x3, Move, RotateCw, Sparkles } from "lucide-react";
+import { ArrowLeftRight, Crosshair, Eye, EyeOff, Grid3x3, Move, RotateCw, Sparkles, Spline } from "lucide-react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
-import { applyFiberConnectorTransform, buildFiberCurvePath, refreshFiberWrapperGeometry, type FiberNode } from "../three/loadAsset";
+import {
+  applyFiberConnectorTransform,
+  applyRfCableConnectorTransform,
+  buildFiberCurvePath,
+  refreshFiberWrapperGeometry,
+  refreshRfCableWrapperGeometry,
+  type FiberNode,
+} from "../three/loadAsset";
+import { resolveLinkedRfCableEndpoint } from "../utils/rfCableAnchorResolver";
+import type { RfCableEndpointLink } from "../types/digitalTwin";
 
 import { useSceneStore, TOUCH_OPS, TOUCH_OP_BY_ID, type FeatureKind, type TouchOp } from "../store/sceneStore";
 import { createBeamPath } from "../three/beamPath";
@@ -13,7 +22,7 @@ import { traceBeamsFromLasers, _testReflect, gaussianWaistAtZ, type TraceSegment
 import { disposeFarfieldLobe, makeFarfieldLobe } from "../three/hornFarfield";
 import { disposeRfBadgeSprite, makeRfBadgeSprite } from "../three/rfBadge";
 import { getEmissionVisual } from "../utils/emissionVisuals";
-import { buildSceneGateOverrides, evaluateProgramValuesAt } from "../utils/timingEvaluation";
+import { buildSceneGateOverrides } from "../utils/timingEvaluation";
 import { PlacementGizmo } from "../three/placement/gizmo";
 import { SnapOverlay } from "../three/placement/snapOverlay";
 import {
@@ -140,7 +149,7 @@ import { createLabPhotoRoom } from "../three/photoRoom";
 import { applyObjectGeometryOffset, applyObjectTransform, mmToThree } from "../three/transformUtils";
 import { relationTarget, worldAnchor } from "../utils/relationAnchors";
 import { computeBraggTiltAxisFromRfDirectionBodyLocal } from "../optical/kinds/aom/physics";
-import type { Asset3D, ComponentItem, DeviceState, OpticalElement, SceneObject } from "../types/digitalTwin";
+import type { Asset3D, ComponentItem, DeviceState, PhysicsElement, SceneObject } from "../types/digitalTwin";
 import {
   isAssemblyRelationVisible,
   isBeamPathVisible,
@@ -154,7 +163,7 @@ type RoomDimensions = {
   heightMm: number;
 };
 
-type ViewerDisplayMode = "wireframe" | "rendered";
+type ViewerDisplayMode = "wireframe" | "rendered" | "node-edit";
 type AxisView = "xPos" | "xNeg" | "yPos" | "yNeg" | "zPos" | "zNeg";
 type AxisViewTarget = AxisView | "home";
 
@@ -176,6 +185,15 @@ const DISPLAY_MODE_OPTIONS: Array<{
 }> = [
   { mode: "wireframe", title: "Wireframe display", Icon: Grid3x3 },
   { mode: "rendered", title: "Rendered display", Icon: Sparkles },
+  // Node-edit mode: click any cable (fiber or rf_cable) to bring up its
+  // Bezier spline gizmo; drag the anchor / handle spheres to reshape the
+  // path. Other selection / transform interactions are suppressed so a
+  // node click never falls through to "select the object".
+  {
+    mode: "node-edit",
+    title: "Cable node edit (fiber + RF) — click a cable, drag anchors / tangent handles. Other ops blocked.",
+    Icon: Spline,
+  },
 ];
 
 const AXIS_VIEW_CONFIG: Record<
@@ -538,7 +556,7 @@ function addTaPortLabels(wrapper: THREE.Object3D, _component: ComponentItem): vo
 function addAomTiltAxisMarker(
   wrapper: THREE.Object3D,
   asset: Asset3D | undefined,
-  opticalElement: OpticalElement | undefined,
+  physicsElement: PhysicsElement | undefined,
   component: ComponentItem,
 ): void {
   if (!asset) return;
@@ -550,7 +568,7 @@ function addAomTiltAxisMarker(
   // direction. acousticAxisBodyLocal is no longer read here; degeneracy
   // (τ̂ ‖ â) is surfaced as a runtime warning in the align feedback,
   // not by hiding the arrow.
-  void opticalElement;
+  void physicsElement;
   const compProps = (component.properties ?? {}) as {
     rfPropagationDirectionBodyLocal?: number[];
     rfPropagationDirectionLocal?: number[];
@@ -1284,6 +1302,13 @@ export function DigitalTwinViewer({
         // connector geometry when nothing fiber-specific changed.
         fiberNodesRef?: unknown;
         fiberRadiusMmRef?: number;
+        // rf_cable parallel: cached array of effective nodes (post-link
+        // resolution) plus a "watch list" of linked-target ref keys so a
+        // target move invalidates cache without ref-equality on the
+        // stored cable.properties.rfCableNodes (which doesn't change
+        // when the target moves — only the link's resolution does).
+        rfCableEffectiveNodesRef?: unknown;
+        rfCableLinkWatchKey?: string;
       }
     >
   >(new Map());
@@ -1324,13 +1349,20 @@ export function DigitalTwinViewer({
   const sceneData = useSceneStore((state) => state.scene);
   const scopeProbe = useSceneStore((state) => state.scopeProbe);
   const scrubTimeNs = useSceneStore((state) => state.scrubTimeNs);
-  const pulseBlasterChannels = useSceneStore((state) => state.pulseBlasterChannels);
   const rfChains = useSceneStore((state) => state.rfChains);
   const selectedComponentId = useSceneStore((state) => state.selectedComponentId);
   const fiberEditingComponentId = useSceneStore((state) => state.fiberEditingComponentId);
+  const enterFiberEdit = useSceneStore((state) => state.enterFiberEdit);
+  const exitFiberEdit = useSceneStore((state) => state.exitFiberEdit);
   const updateFiberNodes = useSceneStore((state) => state.updateFiberNodes);
   const insertFiberNode = useSceneStore((state) => state.insertFiberNode);
   const removeFiberNode = useSceneStore((state) => state.removeFiberNode);
+  const rfCableEditingObjectId = useSceneStore((state) => state.rfCableEditingObjectId);
+  const enterRfCableEdit = useSceneStore((state) => state.enterRfCableEdit);
+  const exitRfCableEdit = useSceneStore((state) => state.exitRfCableEdit);
+  const updateRfCableNodes = useSceneStore((state) => state.updateRfCableNodes);
+  const insertRfCableNode = useSceneStore((state) => state.insertRfCableNode);
+  const removeRfCableNode = useSceneStore((state) => state.removeRfCableNode);
   const selectedObjectId = useSceneStore((state) => state.selectedObjectId);
   const selectedObjectIds = useSceneStore((state) => state.selectedObjectIds);
   const selectedRelationId = useSceneStore((state) => state.selectedRelationId);
@@ -1397,7 +1429,7 @@ export function DigitalTwinViewer({
       }
     }
     if (!selectedObject) return;
-    const oe = sceneData.opticalElements.find((e) => e.objectId === selectedObject.id);
+    const oe = sceneData.physicsElements.find((e) => e.objectId === selectedObject.id);
     if (!oe || oe.elementKind !== "waveplate") return;
 
     const params = (oe.kindParams ?? {}) as {
@@ -1458,7 +1490,7 @@ export function DigitalTwinViewer({
       sphere.renderOrder = 1201;
       overlay.add(sphere);
     }
-  }, [selectedObject, sceneData.opticalElements]);
+  }, [selectedObject, sceneData.physicsElements]);
 
   // Beam-scope probe marker — when the user Alt+clicks a beam tube, draw a
   // small cyan ring + "src → hit" label at probe.pointThree so they can see
@@ -1587,39 +1619,40 @@ export function DigitalTwinViewer({
     [overlayFlags, session, activeView, sceneData],
   );
 
-  // Phase PB.3 — cascade scrub-time gate state into the beam tracer.
-  // Empty map when scrubTimeNs is null (normal/static rendering).
+  // Scrub-time gate / AOM-freq overrides — both return empty maps until the
+  // post-0046 binding resolver (objects.properties.gateBindings → program id)
+  // is in place. Without it we can't determine which object's gate is being
+  // driven by which standalone program, so the beam tracer falls back to the
+  // static configured state.
   const gateOverrides = useMemo(() => {
     if (scrubTimeNs === null) return new Map<string, boolean>();
     return buildSceneGateOverrides({
       tNs: scrubTimeNs,
       programs: sceneData.timingPrograms ?? [],
       objects: sceneData.objects.map((o) => ({ id: o.id, componentId: o.componentId })),
-      pulseBlasterChannels,
     });
-  }, [scrubTimeNs, sceneData.timingPrograms, sceneData.objects, pulseBlasterChannels]);
+  }, [scrubTimeNs, sceneData.timingPrograms, sceneData.objects]);
   const gateOverridesRef = useRef<Map<string, boolean>>(gateOverrides);
   gateOverridesRef.current = gateOverrides;
 
-  // Phase RF.8 — drive AOM Bragg deflection from the scrub-time
-  // TimingProgram. For each AOM whose own SceneObject has a program
-  // with an `arbitrary` block carrying `frequencyMhz` samples, sample
-  // at t = scrubTimeNs and inject the value into traceBeamsFromLasers.
-  const aomFreqOverrideMhz = useMemo(() => {
-    const out = new Map<string, number>();
-    if (scrubTimeNs === null) return out;
-    const programs = sceneData.timingPrograms ?? [];
-    for (const oe of sceneData.opticalElements) {
-      if (oe.elementKind !== "aom" && oe.elementKind !== "eom") continue;
-      const program = programs.find((p) => p.objectId === oe.objectId);
-      if (!program) continue;
-      const values = evaluateProgramValuesAt(program, scrubTimeNs);
-      if (values.frequencyMhz !== null) out.set(oe.objectId, values.frequencyMhz);
-    }
-    return out;
-  }, [scrubTimeNs, sceneData.timingPrograms, sceneData.opticalElements]);
+  const aomFreqOverrideMhz = useMemo(() => new Map<string, number>(), []);
   const aomFreqOverrideRef = useRef<Map<string, number>>(aomFreqOverrideMhz);
   aomFreqOverrideRef.current = aomFreqOverrideMhz;
+
+  // Power off set — object ids whose device_states.state.power === false.
+  // Lasers / TAs in this set don't emit a beam. Default is ON (emitting)
+  // until the user explicitly toggles OFF via the Instrument Power panel,
+  // so freshly seeded scenes still show beams.
+  const poweredOffObjectIds = useMemo(() => {
+    const out = new Set<string>();
+    for (const ds of sceneData.deviceStates ?? []) {
+      const power = (ds.state as { power?: unknown } | undefined)?.power;
+      if (power === false) out.add(ds.objectId);
+    }
+    return out;
+  }, [sceneData.deviceStates]);
+  const poweredOffObjectIdsRef = useRef<Set<string>>(poweredOffObjectIds);
+  poweredOffObjectIdsRef.current = poweredOffObjectIds;
 
   const cursorHidden = useSceneStore((state) => state.transformCursorHidden[panelKey]);
   useEffect(() => {
@@ -1959,7 +1992,7 @@ export function DigitalTwinViewer({
             components: s.components,
             objects: s.objects,
             assets: s.assets,
-            opticalElements: s.opticalElements,
+            physicsElements: s.physicsElements,
             opticalLinks: s.opticalLinks,
           };
         },
@@ -2868,6 +2901,12 @@ export function DigitalTwinViewer({
     if (!gizmo) return;
     gizmo.setOrientation(gizmoOrientation);
     gizmo.setMode(gizmoMode);
+    // Node-edit mode locks out object-level transforms — only cable
+    // anchor / handle drags fire while the gizmo is hidden.
+    if (displayMode === "node-edit") {
+      gizmo.detach();
+      return;
+    }
     if (!selectedObjectId) {
       gizmo.detach();
       return;
@@ -2950,13 +2989,60 @@ export function DigitalTwinViewer({
     // leave the gizmo invisible/stale until the user toggles the mode
     // button, which is the bug the 2026-05-02 user report flagged.
     gizmo.setMode(gizmoMode);
-  }, [selectedObjectId, selectedObjectIds, sceneData.objects, gizmoOrientation, gizmoMode, componentsBuildVersion]);
+  }, [selectedObjectId, selectedObjectIds, sceneData.objects, gizmoOrientation, gizmoMode, componentsBuildVersion, displayMode]);
 
   useEffect(() => {
     if (environmentGroupRef.current) {
       applyEnvironmentDisplayMode(environmentGroupRef.current, displayMode);
     }
   }, [displayMode]);
+
+  // Node-edit mode driver: when `displayMode === "node-edit"`, auto-enter
+  // the appropriate cable edit (fiber vs rf_cable) for whichever
+  // SceneObject is currently selected. Switching the selection while in
+  // node-edit mode hot-swaps the gizmo to the new cable. Toggling the
+  // mode off exits both edits so the gizmo + selection behaviour return
+  // to normal. Clicking a non-cable in node-edit mode still selects it
+  // but no edit gizmo appears — the user can switch to a cable any time.
+  useEffect(() => {
+    if (displayMode !== "node-edit") {
+      if (fiberEditingComponentId) exitFiberEdit();
+      if (rfCableEditingObjectId) exitRfCableEdit();
+      return;
+    }
+    const selectedObj = selectedObjectId
+      ? sceneData.objects.find((o) => o.id === selectedObjectId)
+      : null;
+    if (!selectedObj) {
+      if (fiberEditingComponentId) exitFiberEdit();
+      if (rfCableEditingObjectId) exitRfCableEdit();
+      return;
+    }
+    const component = sceneData.components.find((c) => c.id === selectedObj.componentId);
+    if (!component) return;
+    const ct = component.componentType;
+    if (ct === "fiber") {
+      if (fiberEditingComponentId !== component.id) enterFiberEdit(component.id);
+    } else if (ct === "rf_cable" || ct === "sma_cable") {
+      if (rfCableEditingObjectId !== selectedObj.id) enterRfCableEdit(selectedObj.id);
+    } else {
+      // Selected something that isn't a cable — clear any active edit so
+      // the gizmo doesn't linger on the wrong target.
+      if (fiberEditingComponentId) exitFiberEdit();
+      if (rfCableEditingObjectId) exitRfCableEdit();
+    }
+  }, [
+    displayMode,
+    selectedObjectId,
+    sceneData.objects,
+    sceneData.components,
+    fiberEditingComponentId,
+    rfCableEditingObjectId,
+    enterFiberEdit,
+    exitFiberEdit,
+    enterRfCableEdit,
+    exitRfCableEdit,
+  ]);
 
   // Update the face-touch highlight when the pending pick changes. The
   // group contains a disc (face), a sphere (vertex) and a line (edge) —
@@ -3084,7 +3170,7 @@ export function DigitalTwinViewer({
       }
       if (component.componentType === "aom" && selectedObjectIdSet.has(placement.id)) {
         const aomAsset = component.asset3dId ? assetById.get(component.asset3dId) : undefined;
-        const aomElement = sceneData.opticalElements.find((e) => e.objectId === placement.id);
+        const aomElement = sceneData.physicsElements.find((e) => e.objectId === placement.id);
         addAomTiltAxisMarker(wrapper, aomAsset, aomElement, component);
       }
       if (component.componentType === "fiber") {
@@ -3136,6 +3222,101 @@ export function DigitalTwinViewer({
       }
 
       const seenObjectIds = new Set<string>();
+
+      /** Compute effective rf_cable nodes for one placement, overriding the
+       *  spline endpoints (idx 0 / N-1) with values derived from any
+       *  `rfCableEndpoints[A|B]` link record. Returns `null` when the
+       *  placement isn't an rf_cable. Also produces a `linkWatchKey`
+       *  string that captures the linked-target poses + anchor positions
+       *  — when ANY of those change, the key changes and cache-hit
+       *  detects the need to re-apply tube geometry. */
+      const resolveEffectiveRfCableState = (
+        placement: SceneObject,
+        component: ComponentItem,
+      ): { effectiveNodes: FiberNode[]; linkWatchKey: string } | null => {
+        if (
+          component.componentType !== "rf_cable"
+          && component.componentType !== "sma_cable"
+        ) return null;
+        const compLen = (component.properties as { lengthMm?: number } | undefined)?.lengthMm;
+        const lengthMm = typeof compLen === "number" ? compLen : 150;
+        const props = (placement.properties ?? {}) as {
+          rfCableNodes?: FiberNode[];
+          rfCableEndpoints?: { A?: RfCableEndpointLink; B?: RfCableEndpointLink };
+        };
+        const stored: FiberNode[] =
+          props.rfCableNodes && props.rfCableNodes.length >= 2
+            ? props.rfCableNodes.map((n) => ({
+                posMm: [n.posMm[0], n.posMm[1], n.posMm[2]],
+                handleInMm: n.handleInMm
+                  ? [n.handleInMm[0], n.handleInMm[1], n.handleInMm[2]]
+                  : undefined,
+                handleOutMm: n.handleOutMm
+                  ? [n.handleOutMm[0], n.handleOutMm[1], n.handleOutMm[2]]
+                  : undefined,
+              }))
+            : [
+                { posMm: [-lengthMm / 2, 0, 0] },
+                { posMm: [lengthMm / 2, 0, 0] },
+              ];
+        const cablePose = {
+          xMm: placement.xMm, yMm: placement.yMm, zMm: placement.zMm,
+          rxDeg: placement.rxDeg, ryDeg: placement.ryDeg, rzDeg: placement.rzDeg,
+        };
+        const watchKeyParts: string[] = [];
+        const applyLink = (end: "A" | "B", link: RfCableEndpointLink) => {
+          const targetObj = sceneData.objects.find((o) => o.id === link.targetObjectId);
+          if (!targetObj) return;
+          const targetComp = sceneData.components.find((c) => c.id === targetObj.componentId);
+          if (!targetComp || !targetComp.asset3dId) return;
+          const targetAsset = sceneData.assets.find((a) => a.id === targetComp.asset3dId);
+          if (!targetAsset || !Array.isArray(targetAsset.anchors)) return;
+          const targetAnchor = targetAsset.anchors.find(
+            (a) => a.id === link.targetAnchorId
+              && (a.name ?? a.id) === link.targetAnchorName,
+          );
+          if (!targetAnchor) return;
+          const resolved = resolveLinkedRfCableEndpoint({
+            endpoint: end,
+            cablePose,
+            targetPose: {
+              xMm: targetObj.xMm, yMm: targetObj.yMm, zMm: targetObj.zMm,
+              rxDeg: targetObj.rxDeg, ryDeg: targetObj.ryDeg, rzDeg: targetObj.rzDeg,
+            },
+            targetAnchorPosBodyMm: [
+              targetAnchor.positionMmBodyLocal.x,
+              targetAnchor.positionMmBodyLocal.y,
+              targetAnchor.positionMmBodyLocal.z,
+            ],
+            targetAnchorDirBody: targetAnchor.directionBodyLocal
+              ? [
+                  targetAnchor.directionBodyLocal.x,
+                  targetAnchor.directionBodyLocal.y,
+                  targetAnchor.directionBodyLocal.z,
+                ]
+              : [1, 0, 0],
+          });
+          if (!resolved) return;
+          const idx = end === "A" ? 0 : stored.length - 1;
+          stored[idx] = {
+            posMm: resolved.posMmBody,
+            handleInMm:
+              end === "B"
+                ? resolved.handleMmBody
+                : stored[idx].handleInMm,
+            handleOutMm:
+              end === "A"
+                ? resolved.handleMmBody
+                : stored[idx].handleOutMm,
+          };
+          watchKeyParts.push(
+            `${end}:${link.targetObjectId}:${link.targetAnchorId}:${link.targetAnchorName}:${targetObj.xMm.toFixed(3)},${targetObj.yMm.toFixed(3)},${targetObj.zMm.toFixed(3)},${targetObj.rxDeg.toFixed(3)},${targetObj.ryDeg.toFixed(3)},${targetObj.rzDeg.toFixed(3)}:${targetAnchor.positionMmBodyLocal.x},${targetAnchor.positionMmBodyLocal.y},${targetAnchor.positionMmBodyLocal.z}`,
+          );
+        };
+        if (props.rfCableEndpoints?.A) applyLink("A", props.rfCableEndpoints.A);
+        if (props.rfCableEndpoints?.B) applyLink("B", props.rfCableEndpoints.B);
+        return { effectiveNodes: stored, linkWatchKey: watchKeyParts.join("|") };
+      };
 
       for (const placement of sceneData.objects) {
         if (cancelled) return;
@@ -3210,6 +3391,23 @@ export function DigitalTwinViewer({
               cached.fiberRadiusMmRef = radiusMm;
             }
           }
+          // rf_cable parallel: rebuild tube + connectors when stored nodes
+          // OR a linked target's pose / anchor changed. `linkWatchKey`
+          // captures every target pose + anchor body-local that the
+          // current endpoint links depend on; when it differs from the
+          // cached key, target moved → re-resolve + refresh geometry.
+          const rfCableState = resolveEffectiveRfCableState(placement, component);
+          if (rfCableState) {
+            const { effectiveNodes, linkWatchKey } = rfCableState;
+            const refsChanged =
+              cached.rfCableEffectiveNodesRef !== effectiveNodes
+              || cached.rfCableLinkWatchKey !== linkWatchKey;
+            if (refsChanged && effectiveNodes.length >= 2) {
+              refreshRfCableWrapperGeometry(wrapper, effectiveNodes);
+              cached.rfCableEffectiveNodesRef = effectiveNodes;
+              cached.rfCableLinkWatchKey = linkWatchKey;
+            }
+          }
         } else {
           // Cache miss — dispose the stale wrapper (if any) and load fresh
           // geometry. Async; the cancelled flag guards against teardown
@@ -3220,13 +3418,23 @@ export function DigitalTwinViewer({
             disposeObject(cached.wrapper);
             wrapperCache.delete(placement.id);
           }
+          // For rf_cable, resolve linked endpoints FIRST so the cache-miss
+          // initial render reflects any active Align-RF links — otherwise
+          // the cable would briefly paint with the stored fallback nodes
+          // before the cache-hit refresh path catches up on the next
+          // rebuild tick.
+          const rfCableSeed = resolveEffectiveRfCableState(placement, component);
+          const propsForLoader = rfCableSeed
+            ? { ...(placement.properties ?? {}), rfCableNodes: rfCableSeed.effectiveNodes }
+            : placement.properties;
           const assetObject = await loadAssetObject(
             component,
             asset,
             deviceState,
-            // Per-instance fiberNodes / radiusMm live on the SceneObject;
-            // see loadAssetObject signature for the V2 contract.
-            placement.properties as { fiberNodes?: FiberNode[]; radiusMm?: number } | null,
+            // Per-instance fiberNodes / rfCableNodes / radiusMm live on
+            // the SceneObject; see loadAssetObject signature for the V2
+            // contract.
+            propsForLoader as { fiberNodes?: FiberNode[]; rfCableNodes?: FiberNode[]; radiusMm?: number } | null,
           );
           if (cancelled) {
             disposeObject(assetObject);
@@ -3274,6 +3482,8 @@ export function DigitalTwinViewer({
             stateRef: deviceState,
             fiberNodesRef: seedFiberNodes,
             fiberRadiusMmRef: seedFiberRadius,
+            rfCableEffectiveNodesRef: rfCableSeed?.effectiveNodes,
+            rfCableLinkWatchKey: rfCableSeed?.linkWatchKey,
           });
         }
 
@@ -3285,7 +3495,7 @@ export function DigitalTwinViewer({
         // IIFE that wraps renderComponents() also fires requestRender at the
         // end, but that one's gated by `if (cancelled) return;` — if a
         // follow-up state change cancels this run before the IIFE wraps up
-        // (common when the WS broadcasts an Object + OpticalElement +
+        // (common when the WS broadcasts an Object + PhysicsElement +
         // anchorBindings bootstrap as three quick updates after a drag-in),
         // the wrapper still HAS the correct transform but never gets
         // painted. Firing here means every applyObjectTransform leaves a
@@ -3389,6 +3599,7 @@ export function DigitalTwinViewer({
         componentGroup,
         gateOverrides: gateOverridesRef.current,
         aomFreqOverrideMhz: aomFreqOverrideRef.current,
+        poweredOffObjectIds: poweredOffObjectIdsRef.current,
       });
       const win = window as unknown as {
         __rayTraceDebug?: TraceSegment[];
@@ -3497,7 +3708,7 @@ export function DigitalTwinViewer({
       // to the Physics group not Relations).
       if (renderCtx.overlayFlags.beam_segments) {
         for (const obj of sceneData.objects) {
-          const oe = sceneData.opticalElements.find((e) => e.objectId === obj.id);
+          const oe = sceneData.physicsElements.find((e) => e.objectId === obj.id);
           if (!oe || oe.elementKind !== "horn_antenna") continue;
           const cacheEntry = wrapperCache.get(obj.id);
           if (!cacheEntry) continue;
@@ -3565,7 +3776,7 @@ export function DigitalTwinViewer({
   // changes, so dragging the slider stays at 60 fps.
   useEffect(() => {
     redrawBeamsRef.current?.();
-  }, [scrubTimeNs, pulseBlasterChannels, sceneData.timingPrograms, aomFreqOverrideMhz]);
+  }, [scrubTimeNs, sceneData.timingPrograms, aomFreqOverrideMhz, poweredOffObjectIds]);
 
   // -----------------------------------------------------------------
   // Fiber Bezier-spline edit overlay. Active only when
@@ -3769,8 +3980,8 @@ export function DigitalTwinViewer({
     // scale; we render at the visible ferrule OD = 2.5 mm with a thin
     // edge to be perceptible).
     //
-    // Reads spec from the OpticalElement (kindParams.endA / endB).
-    // No-op if no OpticalElement exists for this SceneObject.
+    // Reads spec from the PhysicsElement (kindParams.endA / endB).
+    // No-op if no PhysicsElement exists for this SceneObject.
     // ---------------------------------------------------------------
     type SpecOverlay = { meshes: THREE.Mesh[] };
     const specOverlay: SpecOverlay = { meshes: [] };
@@ -3784,17 +3995,17 @@ export function DigitalTwinViewer({
       }
       specOverlay.meshes = [];
 
-      // Find the OpticalElement for this fiber's first SceneObject.
+      // Find the PhysicsElement for this fiber's first SceneObject.
       // (If multiple instances of the catalog exist, we attach the
       // overlay to whichever wrapper we picked above.)
       const objectIdOnWrapper = String(
         (fiberWrapper as THREE.Object3D).userData?.objectId ?? "",
       );
-      const opticalElement = sceneData.opticalElements.find(
+      const physicsElement = sceneData.physicsElements.find(
         (e) => String(e.objectId) === objectIdOnWrapper,
       );
-      if (!opticalElement || opticalElement.elementKind !== "fiber") return;
-      const kp = (opticalElement.kindParams ?? {}) as {
+      if (!physicsElement || physicsElement.elementKind !== "fiber") return;
+      const kp = (physicsElement.kindParams ?? {}) as {
         fiberType?: string;
         endA?: { slowAxisDegInBodyFrame?: number | null };
         endB?: { slowAxisDegInBodyFrame?: number | null };
@@ -4153,6 +4364,427 @@ export function DigitalTwinViewer({
     updateFiberNodes,
   ]);
 
+  // -----------------------------------------------------------------
+  // RF-cable spline editing gizmo. Parallels the fiber edit block above
+  // but targets `rfCableEditingObjectId` (per-instance, indexed by
+  // SceneObject id since rf_cable geometry is never on the Component
+  // template). Same anchor / tangent-handle gizmo + drag commit pattern;
+  // omits fiber-specific overlays (PM slow-axis indicator, optical
+  // aperture ring) and the FC connector retransform — uses
+  // `applyRfCableConnectorTransform` for the SMA male connectors instead.
+  // -----------------------------------------------------------------
+  useEffect(() => {
+    if (!rfCableEditingObjectId) return;
+    const renderer = rendererRef.current;
+    const camera = cameraRef.current;
+    const componentGroup = componentGroupRef.current;
+    const controls = controlsRef.current;
+    if (!renderer || !camera || !componentGroup) return;
+
+    let cableWrapper: THREE.Object3D | null = null;
+    let tubeMesh: THREE.Mesh | null = null;
+    componentGroup.traverse((node) => {
+      if (node.userData?.objectId !== rfCableEditingObjectId) return;
+      // Find the inner rf_cable wrapper (created by createSmaCableSpline)
+      // beneath the outer SceneObject wrapper.
+      node.traverse((child) => {
+        if (!cableWrapper && child.userData?.rfCableRole === "wrapper") {
+          cableWrapper = child;
+        }
+        if (
+          !tubeMesh
+          && (child as THREE.Mesh).isMesh
+          && child.userData?.rfCableRole === "tube"
+        ) {
+          tubeMesh = child as THREE.Mesh;
+        }
+      });
+    });
+    if (!cableWrapper || !tubeMesh) return;
+
+    const editingObject = sceneData.objects.find((o) => o.id === rfCableEditingObjectId);
+    if (!editingObject) return;
+    const component = sceneData.components.find((c) => c.id === editingObject.componentId);
+    if (!component) return;
+    const objProps = (editingObject.properties ?? {}) as {
+      rfCableNodes?: FiberNode[];
+    };
+    const lengthMm = (() => {
+      const v = (component.properties as { lengthMm?: number } | undefined)?.lengthMm;
+      return typeof v === "number" ? v : 150;
+    })();
+    const resolvedNodes =
+      (objProps.rfCableNodes && objProps.rfCableNodes.length >= 2)
+        ? objProps.rfCableNodes
+        : [
+            { posMm: [-lengthMm / 2, 0, 0] as [number, number, number] },
+            { posMm: [lengthMm / 2, 0, 0] as [number, number, number] },
+          ];
+    const nodes: FiberNode[] = resolvedNodes.map((n) => ({
+      posMm: [n.posMm[0], n.posMm[1], n.posMm[2]],
+      handleInMm: n.handleInMm ? [n.handleInMm[0], n.handleInMm[1], n.handleInMm[2]] : undefined,
+      handleOutMm: n.handleOutMm ? [n.handleOutMm[0], n.handleOutMm[1], n.handleOutMm[2]] : undefined,
+    }));
+    const radiusMm = 1.6;  // RG-316 jacket
+
+    const labMmToLocalThree = (xMm: number, yMm: number, zMm: number) =>
+      new THREE.Vector3(xMm / 100, zMm / 100, -yMm / 100);
+    const localThreeToLabMm = (v: THREE.Vector3): [number, number, number] => [
+      v.x * 100, -v.z * 100, v.y * 100,
+    ];
+    const offsetLocalThreeToLabMm = (v: THREE.Vector3): [number, number, number] => [
+      v.x * 100, -v.z * 100, v.y * 100,
+    ];
+
+    // Dim every component except the rf_cable being edited (same dimming
+    // pattern as fiber edit so the user's focus stays on the active cable).
+    const dimmedRecords: { material: THREE.Material; prevOpacity: number; prevTransparent: boolean }[] = [];
+    componentGroup.traverse((node) => {
+      const mesh = node as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.material) return;
+      let p: THREE.Object3D | null = mesh;
+      while (p) {
+        if (p.userData?.objectId === rfCableEditingObjectId) return;
+        p = p.parent;
+      }
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const m of mats) {
+        const mat = m as THREE.Material & { opacity?: number; transparent?: boolean };
+        if (typeof mat.opacity === "number") {
+          dimmedRecords.push({
+            material: mat,
+            prevOpacity: mat.opacity,
+            prevTransparent: !!mat.transparent,
+          });
+          mat.transparent = true;
+          mat.opacity = 0.18;
+        }
+      }
+    });
+
+    const anchorEndMat = new THREE.MeshBasicMaterial({ color: 0xffd166, depthTest: false });
+    const anchorInteriorMat = new THREE.MeshBasicMaterial({ color: 0xff8844, depthTest: false });
+    const handleTipMat = new THREE.MeshBasicMaterial({ color: 0x66d9ff, depthTest: false });
+    const handleLineMat = new THREE.LineBasicMaterial({
+      color: 0x66d9ff, depthTest: false, transparent: true, opacity: 0.85,
+    });
+    const anchorGeometry = new THREE.SphereGeometry(0.045, 16, 12);
+    const handleTipGeometry = new THREE.SphereGeometry(0.028, 14, 10);
+
+    type AnchorRef = { mesh: THREE.Mesh; nodeIndex: number };
+    type HandleRef = { mesh: THREE.Mesh; line: THREE.Line; nodeIndex: number; side: "in" | "out" };
+    const anchorRefs: AnchorRef[] = [];
+    const handleRefs: HandleRef[] = [];
+
+    const buildGizmo = () => {
+      for (const a of anchorRefs) (cableWrapper as THREE.Object3D).remove(a.mesh);
+      for (const h of handleRefs) {
+        (cableWrapper as THREE.Object3D).remove(h.mesh);
+        (cableWrapper as THREE.Object3D).remove(h.line);
+        h.line.geometry.dispose();
+      }
+      anchorRefs.length = 0;
+      handleRefs.length = 0;
+
+      nodes.forEach((node, index) => {
+        const isEnd = index === 0 || index === nodes.length - 1;
+        const anchor = new THREE.Mesh(anchorGeometry, isEnd ? anchorEndMat : anchorInteriorMat);
+        anchor.position.copy(labMmToLocalThree(node.posMm[0], node.posMm[1], node.posMm[2]));
+        anchor.userData.rfCableAnchorIndex = index;
+        anchor.renderOrder = 1000;
+        (cableWrapper as THREE.Object3D).add(anchor);
+        anchorRefs.push({ mesh: anchor, nodeIndex: index });
+
+        const buildHandle = (side: "in" | "out", offsetMm: [number, number, number]) => {
+          const tipPos = labMmToLocalThree(
+            node.posMm[0] + offsetMm[0],
+            node.posMm[1] + offsetMm[1],
+            node.posMm[2] + offsetMm[2],
+          );
+          const tip = new THREE.Mesh(handleTipGeometry, handleTipMat);
+          tip.position.copy(tipPos);
+          tip.userData.rfCableHandleNodeIndex = index;
+          tip.userData.rfCableHandleSide = side;
+          tip.renderOrder = 1001;
+          (cableWrapper as THREE.Object3D).add(tip);
+          const lineGeom = new THREE.BufferGeometry().setFromPoints([
+            anchor.position.clone(), tipPos.clone(),
+          ]);
+          const line = new THREE.Line(lineGeom, handleLineMat);
+          line.renderOrder = 999;
+          line.userData.rfCableHandleLine = true;
+          (cableWrapper as THREE.Object3D).add(line);
+          handleRefs.push({ mesh: tip, line, nodeIndex: index, side });
+        };
+        // Endpoint nodes only get the INWARD handle: idx=0 keeps handleOut
+        // (toward neighbour B), idx=N-1 keeps handleIn (toward neighbour A).
+        // The outer side makes no sense because the spline terminates at the
+        // SMA connector face — there is no curve continuation past the end
+        // for the user to set tension on.
+        const isFirst = index === 0;
+        const isLast = index === nodes.length - 1;
+        if (node.handleOutMm && !isLast) buildHandle("out", node.handleOutMm);
+        if (node.handleInMm && !isFirst) buildHandle("in", node.handleInMm);
+      });
+    };
+    buildGizmo();
+
+    const refreshHandleLine = (handle: HandleRef) => {
+      const anchor = anchorRefs.find((a) => a.nodeIndex === handle.nodeIndex);
+      if (!anchor) return;
+      const points = [anchor.mesh.position.clone(), handle.mesh.position.clone()];
+      handle.line.geometry.dispose();
+      handle.line.geometry = new THREE.BufferGeometry().setFromPoints(points);
+    };
+
+    const rebuildTube = () => {
+      const path = buildFiberCurvePath(nodes);
+      const tubularSegments = Math.max(64, (nodes.length - 1) * 32);
+      const newGeom = new THREE.TubeGeometry(path, tubularSegments, radiusMm / 100, 14, false);
+      const old = (tubeMesh as THREE.Mesh).geometry;
+      (tubeMesh as THREE.Mesh).geometry = newGeom;
+      old.dispose();
+      const wrapper = cableWrapper as THREE.Object3D;
+      for (const child of wrapper.children) {
+        const tag = child.userData?.rfCableConnectorEndpoint;
+        if (tag === "A" || tag === "B") applyRfCableConnectorTransform(child, nodes, tag);
+      }
+    };
+
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    type DragKind =
+      | { kind: "anchor"; nodeIndex: number; startAnchorWorld: THREE.Vector3 }
+      | { kind: "handle"; nodeIndex: number; side: "in" | "out" };
+    let drag: DragKind | null = null;
+    let dragPlane: THREE.Plane | null = null;
+
+    const updatePointer = (event: { clientX: number; clientY: number }) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+    };
+    const screenAlignedPlaneAt = (worldPos: THREE.Vector3) => {
+      const camDir = new THREE.Vector3();
+      camera.getWorldDirection(camDir);
+      return new THREE.Plane(camDir.clone().negate(), camDir.clone().dot(worldPos));
+    };
+
+    const onContextMenu = (event: MouseEvent) => event.preventDefault();
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button === 2) {
+        updatePointer(event);
+        const anchorMeshes = anchorRefs.map((r) => r.mesh);
+        const hits = raycaster.intersectObjects(anchorMeshes, false);
+        if (hits.length > 0) {
+          const idx = hits[0].object.userData.rfCableAnchorIndex as number;
+          event.preventDefault();
+          event.stopPropagation();
+          if (idx > 0 && idx < nodes.length - 1) {
+            void removeRfCableNode(rfCableEditingObjectId, idx);
+          }
+        }
+        return;
+      }
+      if (event.button !== 0) return;
+      updatePointer(event);
+
+      const handleMeshes = handleRefs.map((r) => r.mesh);
+      const handleHits = raycaster.intersectObjects(handleMeshes, false);
+      if (handleHits.length > 0) {
+        const tip = handleHits[0].object as THREE.Mesh;
+        const nodeIndex = tip.userData.rfCableHandleNodeIndex as number;
+        const side = tip.userData.rfCableHandleSide as "in" | "out";
+        const wp = new THREE.Vector3();
+        tip.getWorldPosition(wp);
+        dragPlane = screenAlignedPlaneAt(wp);
+        drag = { kind: "handle", nodeIndex, side };
+        if (controls) controls.enabled = false;
+        try { renderer.domElement.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
+      const anchorMeshes = anchorRefs.map((r) => r.mesh);
+      const anchorHits = raycaster.intersectObjects(anchorMeshes, false);
+      if (anchorHits.length > 0) {
+        const anchor = anchorHits[0].object as THREE.Mesh;
+        const nodeIndex = anchor.userData.rfCableAnchorIndex as number;
+        const wp = new THREE.Vector3();
+        anchor.getWorldPosition(wp);
+        dragPlane = screenAlignedPlaneAt(wp);
+        drag = { kind: "anchor", nodeIndex, startAnchorWorld: wp.clone() };
+        if (controls) controls.enabled = false;
+        try { renderer.domElement.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+    };
+
+    const onPointerMove = (event: PointerEvent) => {
+      if (!drag || !dragPlane) return;
+      updatePointer(event);
+      const worldHit = new THREE.Vector3();
+      if (!raycaster.ray.intersectPlane(dragPlane, worldHit)) return;
+      const wrapperInv = new THREE.Matrix4().copy((cableWrapper as THREE.Object3D).matrixWorld).invert();
+      const localHit = worldHit.clone().applyMatrix4(wrapperInv);
+
+      if (drag.kind === "anchor") {
+        const node = nodes[drag.nodeIndex];
+        const oldAnchorLocal = labMmToLocalThree(node.posMm[0], node.posMm[1], node.posMm[2]);
+        const delta = localHit.clone().sub(oldAnchorLocal);
+        const newPosLab = localThreeToLabMm(localHit);
+        node.posMm = [newPosLab[0], newPosLab[1], newPosLab[2]];
+        const anchorRef = anchorRefs.find((a) => a.nodeIndex === drag!.nodeIndex);
+        if (anchorRef) anchorRef.mesh.position.copy(localHit);
+        for (const h of handleRefs) {
+          if (h.nodeIndex !== drag.nodeIndex) continue;
+          h.mesh.position.add(delta);
+          refreshHandleLine(h);
+        }
+        rebuildTube();
+        return;
+      }
+
+      const node = nodes[drag.nodeIndex];
+      const anchorLocal = labMmToLocalThree(node.posMm[0], node.posMm[1], node.posMm[2]);
+      const offsetLocal = localHit.clone().sub(anchorLocal);
+      const offsetMm = offsetLocalThreeToLabMm(offsetLocal);
+      if (drag.side === "in") node.handleInMm = offsetMm;
+      else node.handleOutMm = offsetMm;
+      const handleRef = handleRefs.find(
+        (h) => h.nodeIndex === drag!.nodeIndex && h.side === (drag as { side: "in" | "out" }).side,
+      );
+      if (handleRef) {
+        handleRef.mesh.position.copy(localHit);
+        refreshHandleLine(handleRef);
+      }
+      rebuildTube();
+    };
+
+    const onPointerUp = (event: PointerEvent) => {
+      if (!drag) return;
+      // Capture which end (if any) was just dragged BEFORE clearing the
+      // drag state so we can clear the matching Align-RF link record in
+      // the same commit. Dragging an interior node or a handle tip does
+      // NOT clear any link (those leave the endpoint anchors alone).
+      let clearLinkEnd: "A" | "B" | undefined;
+      if (drag.kind === "anchor") {
+        if (drag.nodeIndex === 0) clearLinkEnd = "A";
+        else if (drag.nodeIndex === nodes.length - 1) clearLinkEnd = "B";
+      }
+      drag = null;
+      dragPlane = null;
+      if (controls) controls.enabled = true;
+      try { renderer.domElement.releasePointerCapture(event.pointerId); } catch { /* ignore */ }
+      void updateRfCableNodes(
+        rfCableEditingObjectId,
+        nodes.map((n) => ({
+          posMm: [n.posMm[0], n.posMm[1], n.posMm[2]],
+          handleInMm: n.handleInMm ? [n.handleInMm[0], n.handleInMm[1], n.handleInMm[2]] : undefined,
+          handleOutMm: n.handleOutMm ? [n.handleOutMm[0], n.handleOutMm[1], n.handleOutMm[2]] : undefined,
+        })),
+        clearLinkEnd,
+      );
+    };
+
+    const onDoubleClick = (event: MouseEvent) => {
+      updatePointer({ clientX: event.clientX, clientY: event.clientY });
+      const tubeHits = raycaster.intersectObject(tubeMesh as THREE.Mesh, false);
+      if (tubeHits.length === 0) return;
+      const hitWorld = tubeHits[0].point.clone();
+      const wrapperInv = new THREE.Matrix4().copy((cableWrapper as THREE.Object3D).matrixWorld).invert();
+      const localThree = hitWorld.applyMatrix4(wrapperInv);
+      const labMm = localThreeToLabMm(localThree);
+
+      const path = buildFiberCurvePath(nodes);
+      let bestSegment = 0;
+      let bestDistSq = Infinity;
+      const samples = 24;
+      let bestSegT = 0.5;
+      path.curves.forEach((c, segIdx) => {
+        for (let s = 0; s <= samples; s += 1) {
+          const t = s / samples;
+          const pt = c.getPointAt(t);
+          const d2 = pt.distanceToSquared(localThree);
+          if (d2 < bestDistSq) {
+            bestDistSq = d2;
+            bestSegment = segIdx;
+            bestSegT = t;
+          }
+        }
+      });
+      const tangentLocal = path.curves[bestSegment].getTangentAt(bestSegT).clone();
+      const segLengthMm = path.curves[bestSegment].getLength() * 100;
+      const handleLengthMm = Math.max(20, Math.min(200, segLengthMm * 0.25));
+      const tangentLabUnit = offsetLocalThreeToLabMm(tangentLocal);
+      const tangentLength = Math.hypot(tangentLabUnit[0], tangentLabUnit[1], tangentLabUnit[2]) || 1;
+      const inOffset: [number, number, number] = [
+        -tangentLabUnit[0] / tangentLength * handleLengthMm,
+        -tangentLabUnit[1] / tangentLength * handleLengthMm,
+        -tangentLabUnit[2] / tangentLength * handleLengthMm,
+      ];
+      const outOffset: [number, number, number] = [
+        tangentLabUnit[0] / tangentLength * handleLengthMm,
+        tangentLabUnit[1] / tangentLength * handleLengthMm,
+        tangentLabUnit[2] / tangentLength * handleLengthMm,
+      ];
+      event.preventDefault();
+      event.stopPropagation();
+      void insertRfCableNode(rfCableEditingObjectId, bestSegment + 1, {
+        posMm: [labMm[0], labMm[1], labMm[2]],
+        handleInMm: inOffset,
+        handleOutMm: outOffset,
+      });
+    };
+
+    const canvas = renderer.domElement;
+    canvas.addEventListener("pointerdown", onPointerDown, true);
+    canvas.addEventListener("pointermove", onPointerMove);
+    canvas.addEventListener("pointerup", onPointerUp);
+    canvas.addEventListener("contextmenu", onContextMenu);
+    canvas.addEventListener("dblclick", onDoubleClick, true);
+
+    return () => {
+      canvas.removeEventListener("pointerdown", onPointerDown, true);
+      canvas.removeEventListener("pointermove", onPointerMove);
+      canvas.removeEventListener("pointerup", onPointerUp);
+      canvas.removeEventListener("contextmenu", onContextMenu);
+      canvas.removeEventListener("dblclick", onDoubleClick, true);
+      if (controls) controls.enabled = true;
+      for (const a of anchorRefs) a.mesh.parent?.remove(a.mesh);
+      for (const h of handleRefs) {
+        h.mesh.parent?.remove(h.mesh);
+        h.line.parent?.remove(h.line);
+        h.line.geometry.dispose();
+      }
+      anchorGeometry.dispose();
+      handleTipGeometry.dispose();
+      anchorEndMat.dispose();
+      anchorInteriorMat.dispose();
+      handleTipMat.dispose();
+      handleLineMat.dispose();
+      for (const record of dimmedRecords) {
+        (record.material as THREE.Material & { opacity: number; transparent: boolean }).opacity =
+          record.prevOpacity;
+        (record.material as THREE.Material & { opacity: number; transparent: boolean }).transparent =
+          record.prevTransparent;
+      }
+    };
+  }, [
+    rfCableEditingObjectId,
+    sceneData.components,
+    sceneData.objects,
+    componentsBuildVersion,
+    insertRfCableNode,
+    removeRfCableNode,
+    updateRfCableNodes,
+  ]);
+
   // Fiber endpoint markers — show End A / End B as small read-only yellow
   // spheres whenever a fiber object is selected (no edit mode required).
   // Lets the user quickly see where the ports actually sit in the scene,
@@ -4235,6 +4867,93 @@ export function DigitalTwinViewer({
     componentsBuildVersion,
   ]);
 
+  // RF-cable endpoint markers — mirrors the fiber block above. Blue
+  // spheres at each spline endpoint (rf_in / rf_out positions) whenever
+  // an rf_cable / sma_cable object is selected and isn't currently in
+  // node-edit mode (the edit gizmo's own yellow anchors cover the
+  // endpoints there). Reads `SceneObject.properties.rfCableNodes`
+  // directly so the markers track per-instance spline edits in real
+  // time — this is what "anchor markers follow the cable path" means
+  // in P2-anchor-dynamic terms.
+  useEffect(() => {
+    const componentGroup = componentGroupRef.current;
+    if (!componentGroup) return;
+
+    const ids = new Set<string>();
+    for (const id of selectedObjectIds) ids.add(id);
+    if (selectedObjectId) ids.add(selectedObjectId);
+    if (ids.size === 0) return;
+
+    const labMmToLocalThree = (xMm: number, yMm: number, zMm: number) =>
+      new THREE.Vector3(xMm / 100, zMm / 100, -yMm / 100);
+
+    const markerGeometry = new THREE.SphereGeometry(0.045, 16, 12);
+    const markerMat = new THREE.MeshBasicMaterial({
+      color: 0x3b82f6, depthTest: false, transparent: true, opacity: 0.95,
+    });
+
+    const created: THREE.Mesh[] = [];
+    for (const objectId of ids) {
+      const sceneObject = sceneData.objects.find((o) => o.id === objectId);
+      if (!sceneObject) continue;
+      const component = sceneData.components.find((c) => c.id === sceneObject.componentId);
+      if (!component) continue;
+      const ct = component.componentType;
+      if (ct !== "rf_cable" && ct !== "sma_cable") continue;
+      if (rfCableEditingObjectId === objectId) continue; // edit gizmo already covers this
+
+      const objProps = (sceneObject.properties ?? {}) as { rfCableNodes?: FiberNode[] };
+      const lengthMm = (() => {
+        const v = (component.properties as { lengthMm?: number } | undefined)?.lengthMm;
+        return typeof v === "number" ? v : 150;
+      })();
+      const nodes =
+        (objProps.rfCableNodes && objProps.rfCableNodes.length >= 2)
+          ? objProps.rfCableNodes
+          : [
+              { posMm: [-lengthMm / 2, 0, 0] as [number, number, number] },
+              { posMm: [lengthMm / 2, 0, 0] as [number, number, number] },
+            ];
+
+      // Find the inner rf_cable wrapper (added by createSmaCableSpline)
+      // beneath the outer SceneObject wrapper.
+      let cableGroup: THREE.Object3D | null = null;
+      componentGroup.traverse((node) => {
+        if (cableGroup) return;
+        if (node.userData?.objectId !== objectId) return;
+        node.traverse((child) => {
+          if (!cableGroup && child.userData?.rfCableRole === "wrapper") {
+            cableGroup = child;
+          }
+        });
+      });
+      if (!cableGroup) continue;
+
+      for (const idx of [0, nodes.length - 1]) {
+        const n = nodes[idx];
+        const sphere = new THREE.Mesh(markerGeometry, markerMat);
+        sphere.position.copy(labMmToLocalThree(n.posMm[0], n.posMm[1], n.posMm[2]));
+        sphere.renderOrder = 999;
+        sphere.userData.rfCableEndpointMarker = true;
+        (cableGroup as THREE.Object3D).add(sphere);
+        created.push(sphere);
+      }
+    }
+
+    return () => {
+      for (const mesh of created) mesh.parent?.remove(mesh);
+      markerGeometry.dispose();
+      markerMat.dispose();
+    };
+  }, [
+    selectedObjectId,
+    selectedObjectIds,
+    sceneData.objects,
+    sceneData.components,
+    rfCableEditingObjectId,
+    componentsBuildVersion,
+  ]);
+
   // Safety net for on-demand rendering: any React commit could have mutated
   // the Three.js scene through one of the many sibling useEffects above
   // (gizmo attach, wireframe outline, fiber overlay, fast-axis indicator,
@@ -4274,26 +4993,28 @@ export function DigitalTwinViewer({
           </button>
         ))}
       </div>
-      <div className="viewer-transform-modes" role="group" aria-label="Transform mode">
-        <button
-          type="button"
-          className={`viewer-mode-button${gizmoMode === "translate" ? " active" : ""}`}
-          title="Translate (G)"
-          aria-pressed={gizmoMode === "translate"}
-          onClick={() => setGizmoMode("translate")}
-        >
-          <Move size={16} />
-        </button>
-        <button
-          type="button"
-          className={`viewer-mode-button${gizmoMode === "rotate" ? " active" : ""}`}
-          title="Rotate (R)"
-          aria-pressed={gizmoMode === "rotate"}
-          onClick={() => setGizmoMode("rotate")}
-        >
-          <RotateCw size={16} />
-        </button>
-      </div>
+      {displayMode !== "node-edit" && (
+        <div className="viewer-transform-modes" role="group" aria-label="Transform mode">
+          <button
+            type="button"
+            className={`viewer-mode-button${gizmoMode === "translate" ? " active" : ""}`}
+            title="Translate (G)"
+            aria-pressed={gizmoMode === "translate"}
+            onClick={() => setGizmoMode("translate")}
+          >
+            <Move size={16} />
+          </button>
+          <button
+            type="button"
+            className={`viewer-mode-button${gizmoMode === "rotate" ? " active" : ""}`}
+            title="Rotate (R)"
+            aria-pressed={gizmoMode === "rotate"}
+            onClick={() => setGizmoMode("rotate")}
+          >
+            <RotateCw size={16} />
+          </button>
+        </div>
+      )}
       {displayMode === "wireframe" && (
         <ToolsPie
           activeTool={activeTool}
