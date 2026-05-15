@@ -49,6 +49,8 @@ import {
   portKey as rfPortKey,
   type RfSignalState,
 } from "../utils/rfPropagation";
+import { isPhysicsPlugin, resolvePortDomain } from "../kinds/_plugin";
+import { pluginForKind } from "../kinds/_plugins";
 import { FloatingPanel } from "./workspace/FloatingPanel";
 
 const PORT_R = 5;
@@ -102,9 +104,45 @@ type DanglingCable = {
   endsLinked: 0 | 1;
 };
 
-function rfPortsOf(anchors: Anchor[]): Port[] {
+/** Decide whether a SceneObject of the given kind should appear as a
+ *  node in the RF link panel. A kind qualifies when its plugin declares
+ *  at least one anchor whose port domain resolves to "rf" — covers
+ *  rf_source / rf_amplifier / rf_switch / horn_antenna and the AOM /
+ *  EOM hybrid (where rf_in is explicitly tagged "rf" in `portDomains`).
+ *
+ *  Pure-optical kinds whose asset happens to expose a stray rf_*-named
+ *  anchor (fiber patch cables, for example, where the wrong asset row
+ *  has leaked rf anchors) get filtered out here because the PLUGIN
+ *  contract is what matters — the asset's anchor list is data and can
+ *  be wrong, the plugin contract is the schema and is right by
+ *  definition. */
+function kindParticipatesInRfLink(kind: string | null): boolean {
+  if (!kind) return false;
+  const plugin = pluginForKind(kind);
+  if (!plugin || !isPhysicsPlugin(plugin)) return false;
+  const declared = [
+    ...plugin.physics.anchors.required,
+    ...plugin.physics.anchors.optional,
+  ];
+  return declared.some((id) => resolvePortDomain(plugin, id) === "rf");
+}
+
+/** Resolve the RF ports of a SceneObject. Cross-checks each asset anchor
+ *  against the plugin's `portDomains` (Phase 2) before admitting it as
+ *  an RF port — keeps stray rf_*-named anchors on non-RF assets from
+ *  leaking into the panel and keeps the AOM's optical anchors out of
+ *  the RF column. */
+function rfPortsOf(anchors: Anchor[], kind: string | null): Port[] {
+  const plugin = kind ? pluginForKind(kind) : null;
   return anchors
-    .filter((a) => a.id === "rf_in" || a.id === "rf_out")
+    .filter((a) => {
+      if (plugin && isPhysicsPlugin(plugin)) {
+        return resolvePortDomain(plugin, a.id) === "rf";
+      }
+      // No plugin: fall back to the legacy literal-match filter so a
+      // brand-new kind without a registered plugin still renders.
+      return a.id === "rf_in" || a.id === "rf_out";
+    })
     .map((a) => ({
       anchorId: a.id,
       anchorName: a.name ?? a.id,
@@ -450,8 +488,11 @@ export function RfLinkPanel() {
     for (const obj of objects) {
       const kind = kindByObjectId.get(obj.id) ?? null;
       if (kind === "rf_cable") continue;
+      // Plugin-driven gate — skips fiber / waveplate / lens / etc. even
+      // if their asset row spuriously carries an rf_* anchor name.
+      if (!kindParticipatesInRfLink(kind)) continue;
       const asset = assetByObjectId(obj);
-      const ports = rfPortsOf(asset?.anchors ?? []);
+      const ports = rfPortsOf(asset?.anchors ?? [], kind);
       if (ports.length === 0) continue;
       list.push({
         objectId: obj.id,
@@ -574,7 +615,14 @@ export function RfLinkPanel() {
    *  Phase B the panel is the canonical source — no AOM-side sync is
    *  needed (the solver hydrates the AOM's effective drive at solve time
    *  via `hydrate_aom_rf_drive`, and the frontend ray-tracer reads the
-   *  same upstream resolver). */
+   *  same upstream resolver).
+   *
+   *  Auto-creates the matching `channels[]` entry on first edit when the
+   *  PhysicsElement was bootstrapped with the legacy `channels: null`
+   *  default (the dds_ad9959_pcb auto-create path doesn't seed a per-
+   *  anchor channels list yet). The new channel mirrors the AD9959
+   *  default tone (80 MHz, 1.0 amplitude, single-tone mode) so the panel
+   *  becomes editable the moment the user types into the input. */
   const commitChannelEdit = async (
     srcObjectId: string,
     srcAnchorName: string,
@@ -585,8 +633,26 @@ export function RfLinkPanel() {
     const params = pe.kindParams as RfSourceParams;
     const channels = params.channels ?? [];
     const idx = channels.findIndex((c) => c.anchorName === srcAnchorName);
-    if (idx === -1) return;
-    const nextChannels = channels.map((c, i) => (i === idx ? { ...c, ...patch } : c));
+    let nextChannels: DdsChannel[];
+    if (idx === -1) {
+      // First edit on an AD9959 whose channels[] was never bootstrapped.
+      // Build a fresh DdsChannel from defaults + the user's patch.
+      const fresh: DdsChannel = {
+        channelIndex: channels.length,
+        anchorName: srcAnchorName,
+        mode: "single_tone",
+        channelEnabled: true,
+        frequencyMhz: patch.frequencyMhz ?? 80.0,
+        phaseDeg: 0.0,
+        amplitudeScale: patch.amplitudeScale ?? 1.0,
+        sweep: null,
+        modulationLevels: 2,
+        profiles: null,
+      };
+      nextChannels = [...channels, fresh];
+    } else {
+      nextChannels = channels.map((c, i) => (i === idx ? { ...c, ...patch } : c));
+    }
     await upsertOpticalElement({
       objectId: srcObjectId,
       elementKind: pe.elementKind,
@@ -824,16 +890,33 @@ export function RfLinkPanel() {
                       let body: React.ReactNode;
                       if (isSource && port.role === "out") {
                         const entry = channelByPortKey.get(`${n.objectId}|${port.anchorName}`);
-                        if (entry) {
-                          body = (
-                            <EditableAd9959Row
-                              port={port}
-                              ownerObjectId={n.objectId}
-                              channel={entry.channel}
-                              onCommit={(patch) => commitChannelEdit(n.objectId, port.anchorName, patch)}
-                            />
-                          );
-                        }
+                        // Always show the editor on an rf_source rf_out;
+                        // when the PhysicsElement was bootstrapped with
+                        // `channels: null` (the dds_ad9959_pcb auto-create
+                        // path hasn't seeded per-CH entries yet), synthesise
+                        // a default channel here so the row stays editable.
+                        // commitChannelEdit appends a real channels[] entry
+                        // on first save.
+                        const channel: DdsChannel = entry?.channel ?? {
+                          channelIndex: 0,
+                          anchorName: port.anchorName,
+                          mode: "single_tone",
+                          channelEnabled: true,
+                          frequencyMhz: 80.0,
+                          phaseDeg: 0.0,
+                          amplitudeScale: 1.0,
+                          sweep: null,
+                          modulationLevels: 2,
+                          profiles: null,
+                        };
+                        body = (
+                          <EditableAd9959Row
+                            port={port}
+                            ownerObjectId={n.objectId}
+                            channel={channel}
+                            onCommit={(patch) => commitChannelEdit(n.objectId, port.anchorName, patch)}
+                          />
+                        );
                       } else if (aom && port.role === "in") {
                         const requiredP = aomRequiredPowerW(aom);
                         const requiredVpp = requiredP != null ? powerWToVpp(requiredP) : null;
