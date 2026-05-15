@@ -38,6 +38,7 @@ import {
   createThorlabsPostHolder,
   createTs2000aLaserMount,
   createUsbBJack,
+  createZhl12wPlusAmplifier,
   materialFor,
 } from "../three/loadAsset";
 import { createNewportOpticalTable } from "../three/photoRoom";
@@ -130,6 +131,23 @@ const renderRfGenericBox = (dims: [number, number, number], yOffset: number): Re
     return mesh;
   };
 
+// rf_amplifier ships as a generic-box for unknown brands, but the
+// canonical Mini-Circuits ZHL-1-2W+ has a procedural model that matches
+// the heatsink + SMA + feedthrough geometry of the real part. Dispatch on
+// `component.model` so adding a new amplifier brand (ZHL-42W+, ZHL-2-4W+,
+// …) is just one more case in the switch — the box stays the default.
+const renderRfAmplifier: Renderer = (component, state) => {
+  if (component.model === "ZHL-1-2W+") {
+    return createZhl12wPlusAmplifier(component, state);
+  }
+  // Fallback: generic chassis box sized roughly like a small heatsink
+  // amplifier. Matches the pre-M6 default for any rf_amplifier whose
+  // model field doesn't match a known procedural renderer.
+  const mesh = createBox(component, state, [108, 50, 50]);
+  mesh.position.y = mmToThree(0.5);
+  return mesh;
+};
+
 const renderOpticalTable: Renderer = () => {
   const table = createNewportOpticalTable();
   return table;
@@ -171,7 +189,7 @@ const RENDERER_BY_COMPONENT_TYPE: Record<string, Renderer> = {
   rf_source: renderRfSource,
   dds_ad9959_pcb: renderRfSource,
   rf_generator: renderRfSource,
-  rf_amplifier: renderRfGenericBox([180, 140, 70], 0.18),
+  rf_amplifier: renderRfAmplifier,
   rf_cable: renderRfCable,
   sma_cable: renderRfCable,
   rf_switch: createRfSwitch,
