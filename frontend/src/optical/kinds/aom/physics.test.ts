@@ -459,8 +459,8 @@ describe("resolveTraversalSign", () => {
 });
 
 describe("default mode constants", () => {
-  it("DEFAULT_STAGE1_MODE = 'upright' (AOM body upright on horizontal table)", () => {
-    expect(DEFAULT_STAGE1_MODE).toBe("upright");
+  it("DEFAULT_STAGE1_MODE = 'min-rot' (least rotation from current pose, no 180° flip)", () => {
+    expect(DEFAULT_STAGE1_MODE).toBe("min-rot");
   });
 
   it("DEFAULT_STAGE2_SIGN = 'physical-traversal' (matches rayTrace.ts)", () => {

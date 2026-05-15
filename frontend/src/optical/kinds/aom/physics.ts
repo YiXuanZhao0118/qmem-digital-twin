@@ -536,11 +536,18 @@ export function aomBodyFrameBodyLocal(
  *    "keep-d2"  — D2 in lab stays as close to its current direction as
  *                 possible (RFin port direction is preserved)
  *
- *  Default for new AOM placements is "upright" since most lab tables are
- *  horizontal and users expect the AOM body not to roll. */
+ *  Default for new AOM placements is "min-rot" — the 3-step align spec
+ *  the user verified on 2026-05-15:
+ *    1. translate midpoint(in, out) onto the beam
+ *    2. rotate so in, out, beam share the (D1, D3) plane (i.e. D3 ⊥ beam,
+ *       picked to minimise rotation from the current D3 ⇒ "min-rot")
+ *    3. rotate around D2 (the RF axis) so D1 lines up with the beam
+ *  "upright" used to be the default but forced a body-roll the user did
+ *  NOT ask for; switching to "min-rot" + the dotD1Beam sign fix in
+ *  AomAdjustControls.tsx removes the spurious RY=180° flip. */
 export type Stage1RotationMode = "min-rot" | "upright" | "keep-d2";
 
-export const DEFAULT_STAGE1_MODE: Stage1RotationMode = "upright";
+export const DEFAULT_STAGE1_MODE: Stage1RotationMode = "min-rot";
 
 /** Stage 2 sign convention — see `expectedInputDotD2` for the math.
  *
