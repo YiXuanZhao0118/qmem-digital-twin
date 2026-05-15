@@ -271,6 +271,30 @@ describe("buildRfPropagation", () => {
     expect(atAom.cumulativeGainDb).toBeCloseTo(13.5, 6);
   });
 
+  it("synthesises default channels from asset rf_out anchors when channels[] is null", () => {
+    // The dds_ad9959_pcb auto-create path leaves the PhysicsElement with
+    // channels: null. The propagation walker must still emit a signal so
+    // the AOM rf_in shows live readings on first load (before the user
+    // edits any channel). Defaults are 80 MHz at amp=1.0.
+    const src = makeAd9959("src1", 80.0, 0.5);
+    src.pe.kindParams = {}; // strip the channels[] the builder seeded
+    const aom = makeAom("aom1");
+    const cable = makeCable("c", { objectId: "src1", anchorName: "CH0" }, { objectId: "aom1", anchorName: "rf_in" });
+
+    const result = buildRfPropagation({
+      objects: [src.obj, aom.obj, cable.obj],
+      components: [src.comp, aom.comp, cable.comp],
+      assets: [src.asset, aom.asset, cable.asset],
+      physicsElements: [src.pe, aom.pe, cable.pe],
+    });
+
+    const atAom = result.signalAtPort.get(portKey("aom1", "rf_in"));
+    expect(atAom).toBeDefined();
+    expect(atAom!.frequencyMhz).toBe(80.0);
+    expect(atAom!.vpp).toBeCloseTo(AD9959_VPP_FULL_SCALE, 6);
+    expect(atAom!.sourceAnchorName).toBe("CH0");
+  });
+
   it("regression: direct source → AOM (no amplifier) still works (I6)", () => {
     const src = makeAd9959("src1", 80.0, 0.7);
     const aom = makeAom("aom1");

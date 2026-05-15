@@ -295,21 +295,50 @@ export function buildRfPropagation(args: {
 
   // Seed: every rf_source channel's anchor emits its raw signal AT that
   // anchor (the source itself). Then we walk outward via cables.
+  //
+  // Defensive fallback: when `channels[]` is null/empty (the
+  // dds_ad9959_pcb auto-create path bootstraps the PhysicsElement
+  // before any user edit, leaving channels at null), synthesise a
+  // default channel for each rf_out anchor on the asset so the
+  // propagation still produces signals downstream. This mirrors the
+  // EditableAd9959Row's synthesised default — the panel and the solver
+  // both treat un-edited DDS outputs as 80 MHz at full amplitude, so
+  // the user sees the cable chain working immediately on load.
   for (const pe of physicsElements) {
     if (pe.elementKind !== "rf_source") continue;
     const params = pe.kindParams as RfSourceParams;
-    for (const ch of params.channels ?? []) {
-      if (!ch.anchorName) continue;
+    const explicitChannels = params.channels ?? [];
+    type SourceSeed = { anchorName: string; frequencyMhz: number; amplitudeScale: number };
+    const seeds: SourceSeed[] = explicitChannels
+      .filter((c): c is typeof c & { anchorName: string } => Boolean(c.anchorName))
+      .map((c) => ({
+        anchorName: c.anchorName!,
+        frequencyMhz: c.frequencyMhz,
+        amplitudeScale: c.amplitudeScale ?? 0,
+      }));
+    if (seeds.length === 0) {
+      // No explicit channels — emit one default seed per asset rf_out anchor.
+      const anchors = anchorsByObj.get(pe.objectId) ?? [];
+      for (const a of anchors) {
+        if (a.id !== "rf_out") continue;
+        seeds.push({
+          anchorName: a.name ?? a.id,
+          frequencyMhz: 80.0,
+          amplitudeScale: 1.0,
+        });
+      }
+    }
+    for (const seed of seeds) {
       const signal: RfSignalState = {
-        frequencyMhz: ch.frequencyMhz,
-        vpp: (ch.amplitudeScale ?? 0) * AD9959_VPP_FULL_SCALE,
+        frequencyMhz: seed.frequencyMhz,
+        vpp: seed.amplitudeScale * AD9959_VPP_FULL_SCALE,
         sourceObjectId: pe.objectId,
-        sourceAnchorName: ch.anchorName,
+        sourceAnchorName: seed.anchorName,
         cumulativeGainDb: 0,
         passthroughObjectIds: [],
         saturated: false,
       };
-      const sourceKey = portKey(pe.objectId, ch.anchorName);
+      const sourceKey = portKey(pe.objectId, seed.anchorName);
       signalAtPort.set(sourceKey, signal);
       queue.push({ key: sourceKey, signal });
     }

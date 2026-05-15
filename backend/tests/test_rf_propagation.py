@@ -216,6 +216,22 @@ def test_clamps_at_output_power_max():
     assert s_aom.saturated is True
 
 
+def test_synthesises_default_channels_when_channels_null():
+    """The dds_ad9959_pcb auto-create path leaves channels at null; the
+    walker must fall back to one default seed per rf_out asset anchor so
+    the downstream AOM still receives a signal at first solve."""
+    src = _make_ad9959("src1", 80.0, 0.5)
+    src[1].kind_params = {}  # strip the channels[] the builder seeded
+    aom = _make_aom("aom1")
+    cable = _make_cable("c", ("src1", "CH0"), ("aom1", "rf_in"))
+    scene = _scene(src, aom, cable)
+    result = build_rf_propagation(**scene)
+    s_aom = result.signal_at_port[("aom1", "rf_in")]
+    assert s_aom.frequency_mhz == 80.0
+    assert s_aom.vpp == pytest.approx(AD9959_VPP_FULL_SCALE)
+    assert s_aom.source_anchor_name == "CH0"
+
+
 def test_direct_source_to_aom_no_amp():
     """I6 — regression: pre-Phase-1 direct chain still works."""
     src = _make_ad9959("src1", 80.0, 0.7)
