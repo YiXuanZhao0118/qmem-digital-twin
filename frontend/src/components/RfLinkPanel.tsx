@@ -38,10 +38,17 @@ import type {
   ComponentItem,
   DdsChannel,
   PhysicsElement,
+  RfAmplifierParams,
   RfCableEndpointLink,
   RfSourceParams,
   SceneObject,
 } from "../types/digitalTwin";
+import {
+  AD9959_VPP_FULL_SCALE,
+  buildRfPropagation,
+  portKey as rfPortKey,
+  type RfSignalState,
+} from "../utils/rfPropagation";
 import { FloatingPanel } from "./workspace/FloatingPanel";
 
 const PORT_R = 5;
@@ -53,11 +60,10 @@ const ROW_GAP = 28;
 const PAD = 24;
 
 /** AD9959 single-ended into 50 Ω at default Rset (1.91 kΩ) is roughly
- *  1.0 Vpp at amplitudeScale = 1.0. This is a coarse spec-sheet value;
- *  Phase B will derive it from configurable Rset if needed. */
-const VPP_FULL_SCALE = 1.0;
-/** RF load impedance (50 Ω) — used both for Vpp↔W conversion AND for the
- *  AOM required-Vpp computation. */
+ *  1.0 Vpp at amplitudeScale = 1.0. Now imported from rfPropagation so
+ *  RfLinkPanel + aomRfDrive + backend hydrate use the same constant. */
+const VPP_FULL_SCALE = AD9959_VPP_FULL_SCALE;
+/** RF load impedance (50 Ω) — used for the AOM required-Vpp computation. */
 const Z_OHM = 50;
 /** Default optical wavelength for the AOM required-Vpp readout. Real beam
  *  λ would require tracing the upstream optical chain to this AOM; for the
@@ -298,6 +304,79 @@ function AomInRow({ port, requiredVpp, incomingVpp }: AomInRowProps) {
 }
 
 // ============================================================================
+// Amplifier transformation rows — show Vpp_in → gain → Vpp_out so the user
+// can see the ZHL-1-2W (and any future RF amp) effect at a glance. Mirrors
+// the EditableAd9959Row / AomInRow styling so the schematic reads uniformly.
+// ============================================================================
+
+type AmpInRowProps = {
+  port: Port;
+  incomingVpp: number | null;
+};
+
+function AmpInRow({ port, incomingVpp }: AmpInRowProps) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        fontSize: 10,
+        color: "#cfcfd8",
+        height: PORT_ROW_H,
+        paddingLeft: 12,
+      }}
+    >
+      <span style={{ minWidth: 30, color: "#e8e8ee", fontWeight: 500 }}>{port.anchorName}</span>
+      {incomingVpp != null ? (
+        <span style={{ color: "#8e8e9a" }}>
+          in: <strong style={{ color: "#cfcfd8" }}>{incomingVpp.toFixed(2)}</strong> Vpp
+        </span>
+      ) : (
+        <span style={{ color: "#6e6e7a" }}>no upstream</span>
+      )}
+    </div>
+  );
+}
+
+type AmpOutRowProps = {
+  port: Port;
+  outgoingVpp: number | null;
+  gainDb: number;
+  saturated: boolean;
+};
+
+function AmpOutRow({ port, outgoingVpp, gainDb, saturated }: AmpOutRowProps) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        gap: 6,
+        fontSize: 10,
+        color: "#cfcfd8",
+        height: PORT_ROW_H,
+        paddingRight: 12,
+      }}
+    >
+      <span style={{ color: "#8e8e9a" }}>+{gainDb.toFixed(1)} dB</span>
+      {outgoingVpp != null && (
+        <span style={{ color: "#8e8e9a" }}>
+          → <strong style={{ color: "#cfcfd8" }}>{outgoingVpp.toFixed(2)}</strong> Vpp
+        </span>
+      )}
+      {saturated && (
+        <span style={{ color: "#d49a3a", fontSize: 9 }}>⚠ clamp</span>
+      )}
+      <span style={{ minWidth: 30, color: "#e8e8ee", fontWeight: 500, textAlign: "right" }}>
+        {port.anchorName}
+      </span>
+    </div>
+  );
+}
+
+// ============================================================================
 // Main panel
 // ============================================================================
 
@@ -468,38 +547,28 @@ export function RfLinkPanel() {
     return m;
   }, [physicsElements]);
 
-  /** Reverse map: AOM (or any rf_in port) → upstream source endpoint
-   *  (sourceObjectId, sourceAnchorName) via any rf_cable's two endpoints.
-   *  Used so the AOM rf_in row can show "incoming Vpp" pulled live from
-   *  the source CH amplitudeScale. */
-  const upstreamByAomKey = useMemo(() => {
-    const m = new Map<string, { sourceObjectId: string; sourceAnchorName: string }>();
-    for (const obj of objects) {
-      if (kindByObjectId.get(obj.id) !== "rf_cable") continue;
-      const ep = (obj.properties as {
-        rfCableEndpoints?: { A?: RfCableEndpointLink; B?: RfCableEndpointLink };
-      }).rfCableEndpoints;
-      const a = ep?.A;
-      const b = ep?.B;
-      if (!a || !b) continue;
-      const peA = kindByObjectId.get(a.targetObjectId);
-      const peB = kindByObjectId.get(b.targetObjectId);
-      // For Phase A we only care about source→AOM directionality. If A is
-      // the source side and B is the sink (e.g. AOM), seed the map keyed on B.
-      if (peA === "rf_source" && peB !== "rf_source") {
-        m.set(`${b.targetObjectId}|${b.targetAnchorName}`, {
-          sourceObjectId: a.targetObjectId,
-          sourceAnchorName: a.targetAnchorName,
-        });
-      } else if (peB === "rf_source" && peA !== "rf_source") {
-        m.set(`${a.targetObjectId}|${a.targetAnchorName}`, {
-          sourceObjectId: b.targetObjectId,
-          sourceAnchorName: b.targetAnchorName,
-        });
-      }
+  /** Full RF propagation map — for every port that an RF signal reaches,
+   *  the frequency + Vpp + provenance. Replaces the old direct-only
+   *  upstreamByAomKey: now signals walk through any number of amplifiers
+   *  before landing at the AOM (or any other rf_in sink), so the panel
+   *  shows the actually-amplified Vpp rather than the raw source Vpp.
+   *  Same map drives the AOM "incoming Vpp" badge AND the amplifier
+   *  rf_in/rf_out transformation rows. */
+  const rfPropagation = useMemo(
+    () => buildRfPropagation({ objects, components, assets, physicsElements }),
+    [objects, components, assets, physicsElements],
+  );
+
+  /** RfAmplifier kindParams keyed by SceneObject id — pulled out so the
+   *  rf_in/rf_out rows can show gain alongside the Vpp transformation. */
+  const ampByObjectId = useMemo(() => {
+    const m = new Map<string, RfAmplifierParams>();
+    for (const pe of physicsElements) {
+      if (pe.elementKind !== "rf_amplifier") continue;
+      m.set(pe.objectId, pe.kindParams as RfAmplifierParams);
     }
     return m;
-  }, [objects, kindByObjectId]);
+  }, [physicsElements]);
 
   /** Commit handler: write the new channel param to the rf_source. After
    *  Phase B the panel is the canonical source — no AOM-side sync is
@@ -698,6 +767,7 @@ export function RfLinkPanel() {
                 const selected = selectedObjectId === n.objectId;
                 const isSource = n.kind === "rf_source";
                 const aom = n.kind === "aom" ? aomByObjectId.get(n.objectId) ?? null : null;
+                const amp = n.kind === "rf_amplifier" ? ampByObjectId.get(n.objectId) ?? null : null;
                 return (
                   <g key={n.objectId}>
                     <rect
@@ -767,14 +837,31 @@ export function RfLinkPanel() {
                       } else if (aom && port.role === "in") {
                         const requiredP = aomRequiredPowerW(aom);
                         const requiredVpp = requiredP != null ? powerWToVpp(requiredP) : null;
-                        const upstream = upstreamByAomKey.get(`${n.objectId}|${port.anchorName}`);
-                        const upstreamChannel = upstream
-                          ? channelByPortKey.get(`${upstream.sourceObjectId}|${upstream.sourceAnchorName}`)
-                          : null;
-                        const incomingVpp = upstreamChannel
-                          ? (upstreamChannel.channel.amplitudeScale ?? 0) * VPP_FULL_SCALE
-                          : null;
+                        // Pull the post-chain signal from the propagation map.
+                        // It already includes any in-line amplifier gain
+                        // (and saturation clamps), so the incoming Vpp here
+                        // matches what the Bragg solver / backend will see.
+                        const signal = rfPropagation.signalAtPort.get(rfPortKey(n.objectId, port.anchorName)) as RfSignalState | undefined;
+                        const incomingVpp = signal ? signal.vpp : null;
                         body = <AomInRow port={port} requiredVpp={requiredVpp} incomingVpp={incomingVpp} />;
+                      } else if (amp) {
+                        // Amplifier: show Vpp_in on rf_in and Vpp_out + gain
+                        // badge on rf_out, both pulled from the propagation
+                        // map. The map already applied this amp's gain at
+                        // the rf_out key, so we just read it back.
+                        const signal = rfPropagation.signalAtPort.get(rfPortKey(n.objectId, port.anchorName)) as RfSignalState | undefined;
+                        if (port.role === "in") {
+                          body = <AmpInRow port={port} incomingVpp={signal ? signal.vpp : null} />;
+                        } else {
+                          body = (
+                            <AmpOutRow
+                              port={port}
+                              outgoingVpp={signal ? signal.vpp : null}
+                              gainDb={amp.gainDb ?? 0}
+                              saturated={signal ? signal.saturated : false}
+                            />
+                          );
+                        }
                       }
                       const fallback = !body ? (
                         <text
@@ -989,8 +1076,9 @@ export function RfLinkPanel() {
           </div>
         )}
         <div style={{ fontSize: 10, color: "#6e6e7a", display: "flex", gap: 16, flexWrap: "wrap" }}>
-          <span><span style={{ color: "#7be08a" }}>●</span> rf_out (editable)</span>
-          <span><span style={{ color: "#62a3ff" }}>●</span> rf_in (computed req.)</span>
+          <span><span style={{ color: "#7be08a" }}>●</span> rf_out (editable / amp out)</span>
+          <span><span style={{ color: "#62a3ff" }}>●</span> rf_in (computed Vpp)</span>
+          <span>Amplifier rows show Vpp_in → +gain dB → Vpp_out (clamped at P_max).</span>
           <span>Drag from a port to another to auto-create a cable.</span>
           <span>AD9959 full-scale ≈ {VPP_FULL_SCALE.toFixed(1)} Vpp @ 50 Ω · λ = {DEFAULT_LAMBDA_NM} nm for AOM req.</span>
         </div>

@@ -87,6 +87,73 @@ def physics_plugins() -> list[dict[str, Any]]:
     return list(load_manifest()["physics_plugins"])
 
 
+def intrinsic_keys_by_kind() -> dict[str, list[str]]:
+    """`elementKind → list of kindParam keys tagged as intrinsic`. Phase 2
+    plugin metadata. Plugins that haven't been migrated yet (the export
+    emits ``null`` for those) are omitted from the dict so the caller can
+    distinguish "no entry → treat all params as state" from "explicit
+    empty list → no intrinsic params at all" (the rf_amplifier case
+    inverted)."""
+    out: dict[str, list[str]] = {}
+    for p in load_manifest()["physics_plugins"]:
+        keys = p.get("physics", {}).get("intrinsic_param_keys")
+        if isinstance(keys, list):
+            out[p["physics"]["element_kind"]] = list(keys)
+    return out
+
+
+def state_keys_by_kind() -> dict[str, list[str]]:
+    """Mirror of `intrinsic_keys_by_kind()` for state params. Same
+    contract: missing entry = legacy plugin = treat everything as state."""
+    out: dict[str, list[str]] = {}
+    for p in load_manifest()["physics_plugins"]:
+        keys = p.get("physics", {}).get("state_param_keys")
+        if isinstance(keys, list):
+            out[p["physics"]["element_kind"]] = list(keys)
+    return out
+
+
+def port_domains_by_kind() -> dict[str, dict[str, str]]:
+    """`elementKind → {anchor_id: domain_label}`. Phase 2 metadata for
+    typed cable connections (rf / optical / trigger / ttl / dc).
+    Returns an empty inner dict for plugins that don't declare overrides."""
+    out: dict[str, dict[str, str]] = {}
+    for p in load_manifest()["physics_plugins"]:
+        out[p["physics"]["element_kind"]] = dict(p.get("physics", {}).get("port_domains") or {})
+    return out
+
+
+def partition_kind_params(element_kind: str, kind_params: dict) -> tuple[dict, dict]:
+    """Split a kindParams blob into `(intrinsic_params, state_params)`
+    using the plugin's declared keys. For un-migrated plugins (no
+    intrinsic/state lists in the manifest) this returns ``({}, kp.copy())``
+    — every key falls into state, which matches the pre-Phase-2 default.
+    Keys present in `kind_params` but listed in NEITHER side are treated
+    as state too (defensive fallback so a stray field can't disappear)."""
+    intrinsic_lookup = intrinsic_keys_by_kind()
+    state_lookup = state_keys_by_kind()
+    intrinsic_keys = set(intrinsic_lookup.get(element_kind) or [])
+    state_keys = set(state_lookup.get(element_kind) or [])
+    if not intrinsic_keys and not state_keys:
+        # Legacy plugin: everything is state.
+        return {}, dict(kind_params or {})
+    intrinsic_out: dict = {}
+    state_out: dict = {}
+    for k, v in (kind_params or {}).items():
+        if k in intrinsic_keys and k not in state_keys:
+            intrinsic_out[k] = v
+        elif k in state_keys:
+            state_out[k] = v
+        else:
+            # Key in neither list — treat as state (defensive default;
+            # `partitionKindParamKeys` in the frontend flags these as
+            # `unclassified` and the exhaustiveness test asserts the list
+            # is empty for every migrated plugin, so seeing one here in
+            # production indicates a real DB row has a stray key).
+            state_out[k] = v
+    return intrinsic_out, state_out
+
+
 def asset_name_patterns() -> dict[str, str]:
     """`componentType → assetNamePattern` for every plugin that
     declared one. M5's API-layer auto-linker (replacing the one-shot

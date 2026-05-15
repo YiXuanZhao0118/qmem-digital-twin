@@ -50,5 +50,39 @@ export const rfSourcePlugin = definePhysicsPlugin<RfSourceParams>({
       syncRole: "standalone",
       serialPortMode: "4wire",
     },
+    // Phase 3c: AD9959 / generic-DDS spec sheet vs runtime knobs.
+    //
+    // Intrinsic (board / silicon):
+    //   referenceClockMhz, sysClockMhz, pllMultiplier, pllBypass,
+    //   serialInterface, syncRole (master/slave/standalone wiring on the
+    //   PCB), serialPortMode (1/2/4-wire — strapped on the board).
+    //
+    // State (the user-facing knobs):
+    //   frequencyMhz / powerDbm / phaseDeg are the legacy single-tone
+    //   convenience fields; in production they're superseded by the
+    //   `channels[]` array which carries per-channel freq / amp / phase /
+    //   sweep / modulation.
+    //
+    // Note: AD9959 channel count (4) lives on the catalog Component's
+    // properties / asset anchors, not in kindParams — see the asset's
+    // CH0..CH3 anchors. Future addition: an explicit `channelCount`
+    // intrinsic so we don't rely on asset introspection.
+    intrinsicParamKeys: [
+      "referenceClockMhz",
+      "sysClockMhz",
+      "pllMultiplier",
+      "pllBypass",
+      "serialInterface",
+      "syncRole",
+      "serialPortMode",
+    ],
+    stateParamKeys: [
+      "frequencyMhz",
+      "powerDbm",
+      "phaseDeg",
+      "modulation",
+      "channels",
+    ],
+    portDomains: { rf_out: "rf" },
   },
 });

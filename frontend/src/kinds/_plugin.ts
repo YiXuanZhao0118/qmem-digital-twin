@@ -64,6 +64,64 @@ export type PhysicsDomain =
  *  RF anchors still surface in the Object-panel RF link section. */
 export type ElementDomain = "optical" | "rf";
 
+/** Per-anchor signal domain. Lets the framework know which kind of link
+ *  graph an anchor participates in — used by the RF / Optical / trigger
+ *  link panels for type-safe cable connections and by the solver for
+ *  domain dispatch. Distinct from `ElementDomain` (the plugin's primary
+ *  tab) because hybrid kinds like AOM have anchors in MULTIPLE domains
+ *  (intercept_in/out → optical, rf_in → rf).
+ *
+ *  Added in Phase 2 alongside `intrinsicParamKeys` / `stateParamKeys`.
+ *  Optional on every plugin: omitting it falls back to the legacy
+ *  "infer from anchor id prefix" heuristic the panels already use
+ *  (rf_* → rf, intercept_* / fiber_* → optical). Filling it in makes the
+ *  contract explicit for kinds whose anchors don't match the heuristic. */
+export type PortDomain = "optical" | "rf" | "trigger" | "ttl" | "dc";
+
+// =============================================================================
+// Phase 5 — Transfer-function pattern (pure traversal)
+// =============================================================================
+
+/** Snapshot of an RF signal at a single port. Carried through the cable
+ *  graph by the RF propagation walker; passed to a plugin's `rfTransfer`
+ *  whenever the walker hits one of its rf_in ports.
+ *
+ *  Mirrors the `RfSignalState` defined in `utils/rfPropagation.ts` — kept
+ *  here as a structural type so this file doesn't have to import from
+ *  the utils layer (which would create a circular dependency back to the
+ *  plugin registry). The two definitions are pinned-equal by a sanity
+ *  assignment in `rfPropagation.ts`. */
+export interface RfTransferSignal {
+  readonly frequencyMhz: number;
+  readonly vpp: number;
+  readonly sourceObjectId: string;
+  readonly sourceAnchorName: string;
+  readonly cumulativeGainDb: number;
+  readonly passthroughObjectIds: readonly string[];
+  readonly saturated: boolean;
+}
+
+/** One downstream emission row returned by an `RfTransfer`. The walker
+ *  uses `outputAnchorName` to look up the rf_out anchor on this kind's
+ *  asset (so the cable adjacency is keyed correctly) and `outgoing` as
+ *  the transformed signal to propagate. */
+export interface RfTransferOutput {
+  readonly outputAnchorName: string;
+  readonly outgoing: RfTransferSignal;
+}
+
+/** A plugin-level transfer function: given the incoming signal at one of
+ *  the kind's rf_in anchors, return the (output anchor, outgoing signal)
+ *  rows that should propagate downstream. Return `null` (or `[]`) for a
+ *  sink. MUST be pure and synchronous. */
+export type RfTransfer = (args: {
+  readonly inputAnchorName: string;
+  readonly incoming: RfTransferSignal;
+  readonly kindParams: Readonly<Record<string, unknown>>;
+  readonly anchors: ReadonlyArray<{ id: string; name?: string }>;
+  readonly objectId: string;
+}) => ReadonlyArray<RfTransferOutput> | null;
+
 /** Align algorithm dispatch — moved verbatim from the existing
  *  KindContract.alignVariant. */
 export type AlignVariant =
@@ -162,6 +220,58 @@ export interface PhysicsPlugin<TParams extends Record<string, unknown> = Record<
 
     /** Default kindParams written into new Components of this kind. */
     readonly defaultParams: TParams;
+
+    // -------------------------------------------------------------------
+    // Phase 2 additions — all optional and backwards-compatible.
+    // -------------------------------------------------------------------
+
+    /** Subset of `defaultParams` keys that are INTRINSIC: spec-sheet values
+     *  that don't change unless the physical part is swapped (refractive
+     *  index, acoustic velocity, amplifier gain, channel count …). The
+     *  Object panel renders these read-only and the DB-level Phase-4 split
+     *  uses this to migrate the column.
+     *
+     *  When omitted, the framework treats every key as state — matching
+     *  pre-Phase-2 behaviour so existing plugins keep working unchanged. */
+    readonly intrinsicParamKeys?: ReadonlyArray<keyof TParams & string>;
+
+    /** Subset of `defaultParams` keys that are OPERATING STATE: knobs the
+     *  user dials in during an experiment (Bragg tilt angle, HWP fast-axis
+     *  angle, AD9959 per-channel frequency / amplitude). Renders editable
+     *  in the Object panel; `intrinsicParamKeys` and `stateParamKeys`
+     *  partition the kindParams space.
+     *
+     *  When omitted, falls back to "every key not in intrinsicParamKeys"
+     *  if that's set, else "every key". */
+    readonly stateParamKeys?: ReadonlyArray<keyof TParams & string>;
+
+    /** Anchor-id → signal-domain map. Lets cross-domain kinds like AOM
+     *  (which has rf_in + intercept_in/out) be precise about which anchor
+     *  belongs to which link graph. Anchors not listed fall through to the
+     *  panel's heuristic (rf_* → rf, intercept_* / fiber_* → optical). */
+    readonly portDomains?: Readonly<Record<string, PortDomain>>;
+
+    /** Phase 5 — plugin-level RF transfer function (pure traversal).
+     *
+     *  Optional. When set, the RF propagation walker
+     *  (`utils/rfPropagation.ts`) calls this whenever a signal arrives at
+     *  one of this kind's rf_in ports, and uses the returned outputs to
+     *  fan out the BFS. See `RfTransfer` above for the contract.
+     *
+     *  This is the migration target for the existing
+     *  `PASSTHROUGH_BY_KIND` registry in `rfPropagation.ts`: when a plugin
+     *  declares its own transfer the walker prefers it over the central
+     *  registry. New RF passthrough kinds (attenuator, filter, combiner,
+     *  …) should be one-file changes: write the plugin, declare `rfTransfer`,
+     *  done. No central registry edit. Same pattern the optical solver
+     *  will migrate to as `solve_chain` is broken up in follow-on PRs.
+     *
+     *  Backend parity contract: every kind that declares a TS `rfTransfer`
+     *  MUST register a Python sibling in
+     *  `backend/app/solvers/rf_propagation.py` (PASSTHROUGH_BY_KIND).
+     *  The frontend test `plugin_partition.test.ts > rfTransfer parity`
+     *  surfaces drift. */
+    readonly rfTransfer?: RfTransfer;
   };
 
   /** Optional kindParams inspector — shown in the PHY Editor right
@@ -205,4 +315,88 @@ export function definePhysicsPlugin<TParams extends Record<string, unknown>>(
 /** Plugin author convenience: build a PassivePlugin (no physics). */
 export function definePassivePlugin(plugin: PassivePlugin): PassivePlugin {
   return plugin;
+}
+
+// =============================================================================
+// Phase 2 derived helpers — read intrinsic/state partitions for a plugin
+// =============================================================================
+
+/** Partition of a plugin's defaultParams keys into intrinsic (spec-sheet)
+ *  and state (knob) sets. The contract:
+ *
+ *   - When BOTH intrinsicParamKeys + stateParamKeys are set on the plugin,
+ *     they MUST partition the kindParams namespace cleanly. Anything in
+ *     both is reported in `overlap`; anything in neither is in `unclassified`.
+ *
+ *   - When only ONE is set, the other is derived: all remaining keys go
+ *     to whichever side is unset. So a plugin can opt in incrementally
+ *     by marking just the intrinsics, and the framework defaults the rest
+ *     to state.
+ *
+ *   - When NEITHER is set (the pre-Phase-2 case), every key is treated as
+ *     state. Renders identically to today's behaviour.
+ *
+ *  Returns `string[]` sets so consumers don't have to fight TS narrowing
+ *  on `keyof TParams`. Callers that want strong typing can cast. */
+export function partitionKindParamKeys<TParams extends Record<string, unknown>>(
+  plugin: PhysicsPlugin<TParams>,
+): {
+  intrinsic: readonly string[];
+  state: readonly string[];
+  overlap: readonly string[];
+  unclassified: readonly string[];
+} {
+  const all = Object.keys(plugin.physics.defaultParams);
+  const intrinsicSet = new Set<string>((plugin.physics.intrinsicParamKeys ?? []) as readonly string[]);
+  const stateSet = new Set<string>((plugin.physics.stateParamKeys ?? []) as readonly string[]);
+  const intrinsicGiven = plugin.physics.intrinsicParamKeys !== undefined;
+  const stateGiven = plugin.physics.stateParamKeys !== undefined;
+
+  if (!intrinsicGiven && !stateGiven) {
+    // Legacy plugin: everything is state. (The Object panel renders it
+    // editable, exactly as today.)
+    return { intrinsic: [], state: all, overlap: [], unclassified: [] };
+  }
+
+  const overlap = all.filter((k) => intrinsicSet.has(k) && stateSet.has(k));
+  let intrinsic: string[];
+  let state: string[];
+  let unclassified: string[];
+
+  if (intrinsicGiven && !stateGiven) {
+    intrinsic = all.filter((k) => intrinsicSet.has(k));
+    state = all.filter((k) => !intrinsicSet.has(k));
+    unclassified = [];
+  } else if (!intrinsicGiven && stateGiven) {
+    state = all.filter((k) => stateSet.has(k));
+    intrinsic = all.filter((k) => !stateSet.has(k));
+    unclassified = [];
+  } else {
+    intrinsic = all.filter((k) => intrinsicSet.has(k) && !stateSet.has(k));
+    state = all.filter((k) => stateSet.has(k) && !intrinsicSet.has(k));
+    unclassified = all.filter((k) => !intrinsicSet.has(k) && !stateSet.has(k));
+  }
+
+  return { intrinsic, state, overlap, unclassified };
+}
+
+/** Resolve a port's signal domain. Plugin-declared overrides win; otherwise
+ *  apply the heuristic the link panels already use (rf_* → rf, intercept_*
+ *  / fiber_* → optical). Returns null when the heuristic can't classify
+ *  the anchor — caller can fall back to whatever default makes sense.
+ *
+ *  Generic on TParams so callers passing strongly-typed plugins
+ *  (`PhysicsPlugin<AomParams>`) don't have to widen to
+ *  `PhysicsPlugin<Record<string, unknown>>` first. */
+export function resolvePortDomain<TParams extends Record<string, unknown>>(
+  plugin: PhysicsPlugin<TParams>,
+  anchorId: string,
+): PortDomain | null {
+  const explicit = plugin.physics.portDomains?.[anchorId];
+  if (explicit) return explicit;
+  if (anchorId === "rf_in" || anchorId === "rf_out") return "rf";
+  if (anchorId.startsWith("intercept_") || anchorId.startsWith("fiber_")) return "optical";
+  if (anchorId === "trigger_in" || anchorId === "trigger_out") return "trigger";
+  if (anchorId.startsWith("ttl_") || anchorId === "gate_in") return "ttl";
+  return null;
 }

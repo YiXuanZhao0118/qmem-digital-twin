@@ -46,6 +46,13 @@ interface ManifestPhysicsPlugin {
     align_tolerance_mm: number;
     align_summary: string;
     default_params: Record<string, unknown>;
+    // Phase 2 / 3 additions. Always emitted (even when the plugin author
+    // didn't supply intrinsic/state lists) so the backend can detect
+    // un-migrated kinds by `intrinsic_param_keys === null` and fall back
+    // to "treat every key as state" (the pre-Phase-2 behaviour).
+    intrinsic_param_keys: string[] | null;
+    state_param_keys: string[] | null;
+    port_domains: Record<string, string>;
   };
 }
 
@@ -103,6 +110,13 @@ function build(): Manifest {
           align_tolerance_mm: p.physics.alignToleranceMm,
           align_summary: p.physics.alignSummary,
           default_params: p.physics.defaultParams,
+          intrinsic_param_keys: p.physics.intrinsicParamKeys
+            ? [...p.physics.intrinsicParamKeys]
+            : null,
+          state_param_keys: p.physics.stateParamKeys
+            ? [...p.physics.stateParamKeys]
+            : null,
+          port_domains: { ...(p.physics.portDomains ?? {}) },
         },
       });
     } else {

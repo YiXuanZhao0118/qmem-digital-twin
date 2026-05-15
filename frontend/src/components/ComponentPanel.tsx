@@ -13,6 +13,7 @@ import { getFiberPortLabPose } from "../utils/fiberAlignment";
 import { Ad9959ObjectControls } from "./Ad9959ObjectControls";
 import { DdsChassisObjectControls } from "./DdsChassisObjectControls";
 import { CollapsibleSection } from "./CollapsibleSection";
+import { IntrinsicSpecPanel } from "./IntrinsicSpecPanel";
 import { ScrubTimeRfReadout } from "./ScrubTimeRfReadout";
 import { FloatingPanel } from "./workspace/FloatingPanel";
 import { useWorkspace } from "./workspace/WorkspaceProvider";
@@ -2038,7 +2039,15 @@ export function ComponentPanel() {
 
           {(component?.physicsCapabilities?.includes("optical") ||
             componentTypeToElementKind(component?.componentType) !== null) && (
-            <PhysicsElementPanel component={component} sceneObject={placement} />
+            <>
+              {/* Phase 3e: intrinsic spec (read-only) sits ABOVE the
+                  operating-state editor. Reads `intrinsicParamKeys` /
+                  `portDomains` from the plugin; renders nothing for kinds
+                  that haven't been migrated yet so this is a no-op for
+                  un-migrated plugins. */}
+              <IntrinsicSpecPanel component={component} sceneObject={placement} />
+              <PhysicsElementPanel component={component} sceneObject={placement} />
+            </>
           )}
         </>
       )}

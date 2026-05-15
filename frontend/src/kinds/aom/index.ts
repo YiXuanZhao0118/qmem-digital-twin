@@ -69,5 +69,41 @@ export const aomPlugin = definePhysicsPlugin<AomParams>({
       diffractionOrder: 1,
       braggAngularAcceptanceMrad: 2.0,
     },
+    // Phase 2 / Phase 3a: spec sheet vs knobs.
+    //
+    // Intrinsic (the crystal itself — replace the AOM hardware to change):
+    //   baseEfficiency, acousticVelocityMPerS, modulationBandwidthMhz,
+    //   refractiveIndex, figureOfMeritM2, crystalLengthMm,
+    //   acousticBeamWidthMm, rfPowerMaxW (safety cap is a hardware limit),
+    //   acousticAxisBodyLocal, rfPropagationDirectionBodyLocal,
+    //   braggAngularAcceptanceMrad, deflectionPerMhzUrad.
+    //
+    // Operating state (knobs the user dials at experiment time):
+    //   diffractionOrder. NOTE: centerFreqMhz / rfDrivePowerW are NOT
+    //   stored — they are derived live from the upstream rf_source via
+    //   `hydrate_aom_rf_drive` / `resolveAomRfDriveFromScene`. The
+    //   intrinsic+state union therefore intentionally omits them; they
+    //   live in the "derived" tier the Phase-3e ComponentPanel renders
+    //   separately.
+    intrinsicParamKeys: [
+      "baseEfficiency",
+      "deflectionPerMhzUrad",
+      "acousticVelocityMPerS",
+      "modulationBandwidthMhz",
+      "refractiveIndex",
+      "figureOfMeritM2",
+      "crystalLengthMm",
+      "acousticBeamWidthMm",
+      "rfPowerMaxW",
+      "acousticAxisBodyLocal",
+      "rfPropagationDirectionBodyLocal",
+      "braggAngularAcceptanceMrad",
+    ],
+    stateParamKeys: ["diffractionOrder"],
+    portDomains: {
+      intercept_in: "optical",
+      intercept_out: "optical",
+      rf_in: "rf",
+    },
   },
 });

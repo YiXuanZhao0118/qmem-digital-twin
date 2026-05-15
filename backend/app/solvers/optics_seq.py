@@ -23,13 +23,23 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
+    Asset3D,
     BeamSegment,
+    Component,
     PhysicsElement,
     OpticalLink,
     SceneObject,
     SimulationRun,
 )
 from app.solvers.optical_solver import solve_chain
+from app.solvers.rf_propagation import (
+    AD9959_VPP_FULL_SCALE,
+    RF_LOAD_Z_OHM,
+    anchor_lookup_name,
+    build_rf_propagation,
+    find_anchor_by_role,
+    vpp_to_power_w,
+)
 from app.v2_bindings import get_optical_source, legacy_laser_kind_params_from_beam
 from app.websocket import manager
 
@@ -68,33 +78,40 @@ def hydrate_laser_kind_params(
         element.kind_params = merged
 
 
-# AD9959 single-ended into 50 Ω at default Rset has ~1.0 Vpp full-scale.
-# Keep this in sync with `VPP_FULL_SCALE` in frontend RfLinkPanel.tsx and
-# any solver that assumes Vpp ↔ amplitude_scale conversion.
-_AD9959_VPP_FULL_SCALE = 1.0
-_RF_LOAD_Z_OHM = 50.0
+# Backwards-compat aliases. New code should import these from
+# ``app.solvers.rf_propagation`` directly. Kept here so consumers that
+# pinned to the old optics_seq module path keep working.
+_AD9959_VPP_FULL_SCALE = AD9959_VPP_FULL_SCALE
+_RF_LOAD_Z_OHM = RF_LOAD_Z_OHM
 
 
 def hydrate_aom_rf_drive(
     elements: list[PhysicsElement],
     objects_by_id: dict,
+    components_by_id: dict | None = None,
+    assets_by_id: dict | None = None,
 ) -> None:
-    """Phase B (RF link single-source-of-truth) translator.
+    """Phase B (RF link single-source-of-truth) translator, Phase 1 multi-hop.
 
-    The AOM's RF carrier frequency and drive power are no longer stored on
-    the AOM itself — they are resolved at solve time from the upstream
-    rf_source channel via the AOM's rf_in ``rfCableEndpoints`` link. This
-    helper walks every rf_cable SceneObject in the scene, identifies cables
-    whose endpoints span an rf_source ↔ AOM pair, and injects the matching
-    channel's ``frequencyMhz`` + Vpp-derived ``rfDrivePowerW`` into the
-    AOM's in-memory ``kind_params``. ``apply_aom`` then reads them as if
-    they were stored fields.
+    The AOM's RF carrier frequency and drive power are not stored on the
+    AOM itself — they are resolved at solve time from the upstream
+    rf_source channel by walking the rf_cable graph. Phase 1 generalised
+    the walk from "direct source→AOM only" to a full BFS through any
+    number of passthrough nodes (rf_amplifier today); the traversal lives
+    in ``app.solvers.rf_propagation`` and this helper just looks up the
+    AOM's rf_in port in the resulting signal map.
 
     Vpp ↔ W conversion: Vpp = amp × 1.0 V_full_scale; P = Vpp²/(8·Z).
 
     AOMs whose rf_in has no upstream cable get no injection; their
     ``apply_aom`` falls back to the 80 MHz / baseEfficiency code path
     (mirrors the pre-Phase-B default behaviour for orphan AOMs).
+
+    Multi-hop fallback: when ``components_by_id`` / ``assets_by_id`` are
+    not supplied (legacy callers), the propagation degrades to "no
+    passthroughs known", which still handles direct source→AOM cables
+    correctly. The full multi-hop behaviour requires both maps so
+    amplifier output anchors can be resolved.
 
     Mutation is in-memory only — DB rows stay clean of these fields.
     """
@@ -103,59 +120,39 @@ def hydrate_aom_rf_drive(
     }
     if not aom_object_ids:
         return
-    # Index rf_source channels by (object_id, anchor_name) for O(1) lookup.
-    channel_by_source_anchor: dict[tuple, dict] = {}
+    prop = build_rf_propagation(
+        objects_by_id=objects_by_id,
+        elements=elements,
+        components_by_id=components_by_id or {},
+        assets_by_id=assets_by_id or {},
+    )
     for e in elements:
-        if e.element_kind != "rf_source":
+        if e.element_kind != "aom":
             continue
-        for ch in (e.kind_params or {}).get("channels") or []:
-            name = ch.get("anchorName")
-            if name is None:
-                continue
-            channel_by_source_anchor[(e.object_id, name)] = ch
-    # Walk every rf_cable SceneObject. A cable's `rfCableEndpoints.{A,B}`
-    # are the bidirectional link records (target_object_id + target_anchor).
-    # Cables that don't bridge a source→AOM pair are ignored.
-    for obj in objects_by_id.values():
-        props = getattr(obj, "properties", None) or {}
-        eps = props.get("rfCableEndpoints") if isinstance(props, dict) else None
-        if not isinstance(eps, dict):
+        # Resolve the AOM's rf_in anchor name from its asset anchors —
+        # falls back to literal "rf_in" if the asset isn't loaded, which
+        # matches the most common asset author convention.
+        comp = (components_by_id or {}).get(getattr(objects_by_id.get(e.object_id), "component_id", None))
+        asset = (assets_by_id or {}).get(getattr(comp, "asset_3d_id", None)) if comp is not None else None
+        anchors = list(getattr(asset, "anchors", None) or [])
+        rf_in = find_anchor_by_role(anchors, "rf_in")
+        rf_in_name = anchor_lookup_name(rf_in) if rf_in is not None else "rf_in"
+        signal = prop.signal_at_port.get((e.object_id, rf_in_name))
+        if signal is None:
             continue
-        a = eps.get("A")
-        b = eps.get("B")
-        if not isinstance(a, dict) or not isinstance(b, dict):
-            continue
-        # Coerce id strings to uuid via objects_by_id key type.
-        for src, tgt in ((a, b), (b, a)):
-            try:
-                tgt_id = type(next(iter(objects_by_id.keys())))(tgt["targetObjectId"])
-                src_id = type(next(iter(objects_by_id.keys())))(src["targetObjectId"])
-            except (KeyError, ValueError, StopIteration):
-                continue
-            if tgt_id not in aom_object_ids:
-                continue
-            ch = channel_by_source_anchor.get((src_id, src.get("targetAnchorName")))
-            if ch is None:
-                continue
-            freq_mhz = float(ch.get("frequencyMhz", 80.0))
-            amp_scale = float(ch.get("amplitudeScale", 1.0))
-            vpp = amp_scale * _AD9959_VPP_FULL_SCALE
-            drive_power_w = (vpp * vpp) / (8.0 * _RF_LOAD_Z_OHM)
-            # Find the AOM PhysicsElement and inject.
-            for e in elements:
-                if e.object_id != tgt_id or e.element_kind != "aom":
-                    continue
-                merged = {
-                    **(e.kind_params or {}),
-                    "centerFreqMhz": freq_mhz,
-                    "rfDrivePowerW": drive_power_w,
-                }
-                # Clamp to safety max if specified.
-                rf_max = merged.get("rfPowerMaxW")
-                if isinstance(rf_max, (int, float)) and rf_max > 0:
-                    merged["rfDrivePowerW"] = min(merged["rfDrivePowerW"], float(rf_max))
-                e.kind_params = merged
-                break
+        drive_power_w = vpp_to_power_w(signal.vpp)
+        merged = {
+            **(e.kind_params or {}),
+            "centerFreqMhz": signal.frequency_mhz,
+            "rfDrivePowerW": drive_power_w,
+        }
+        # Clamp to safety max if specified — keeps Bragg solver from
+        # blowing past the crystal damage threshold even when an upstream
+        # ZHL-1-2W could in principle deliver more.
+        rf_max = merged.get("rfPowerMaxW")
+        if isinstance(rf_max, (int, float)) and rf_max > 0:
+            merged["rfDrivePowerW"] = min(merged["rfDrivePowerW"], float(rf_max))
+        e.kind_params = merged
 
 
 async def _broadcast_status(sim_run: SimulationRun) -> None:
@@ -199,8 +196,18 @@ async def run(
             obj.id: obj
             for obj in (await session.scalars(select(SceneObject))).all()
         }
+        # Components + Assets are needed by the multi-hop RF propagation
+        # (it resolves rf_in/rf_out anchor names from the asset). Loading
+        # all rows is fine — the catalog is bounded (tens of rows for a
+        # typical scene) and we already load the whole PhysicsElement set.
+        components_by_id = {
+            c.id: c for c in (await session.scalars(select(Component))).all()
+        }
+        assets_by_id = {
+            a.id: a for a in (await session.scalars(select(Asset3D))).all()
+        }
         hydrate_laser_kind_params(elements, objects_by_id)
-        hydrate_aom_rf_drive(elements, objects_by_id)
+        hydrate_aom_rf_drive(elements, objects_by_id, components_by_id, assets_by_id)
 
         result = solve_chain(elements, links, run_id=sim_run.id)
 

@@ -49,11 +49,18 @@ import type {
   SceneViewUpdatePayload,
 } from "../types/visibility";
 
+// `import.meta.env` is defined by Vite at app runtime but is undefined when
+// this file is loaded under tsx / node CJS (e.g. by the export:kinds script
+// at scripts/export_kinds_manifest.ts → _plugins → _renderer_bindings →
+// loadAsset → here). The `as any` + optional chain lets the module load
+// cleanly in both contexts; production builds still substitute the real
+// env values via Vite's define plugin.
+const _vite = ((import.meta as unknown) as { env?: Record<string, string> }).env ?? {};
 export const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:8010";
+  _vite.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:8010";
 
 export const WS_URL =
-  import.meta.env.VITE_WS_URL ?? `${API_BASE_URL.replace(/^http/, "ws")}/ws/scene`;
+  _vite.VITE_WS_URL ?? `${API_BASE_URL.replace(/^http/, "ws")}/ws/scene`;
 
 export const client = axios.create({
   baseURL: API_BASE_URL,

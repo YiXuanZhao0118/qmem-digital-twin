@@ -6,79 +6,91 @@
 //
 // After Phase B (RF link single-source-of-truth) the AOM's `centerFreqMhz`
 // and `rfDrivePowerW` are no longer stored on the AOM itself. They are
-// resolved at read time from the upstream `rf_source` channel via the
-// AOM's rf_in `rfCableEndpoints` link. Vpp ↔ W conversion mirrors the
-// backend exactly so the frontend ray-trace and the backend solver agree.
+// resolved at read time from the upstream `rf_source` channel by walking
+// the rf_cable graph.
 //
-// Keep these constants in sync with the same names in
-// `RfLinkPanel.tsx` and `optics_seq.py` — they encode the AD9959 → 50 Ω
-// drive-level model. Stays here so all consumers import from one spot.
+// Phase 1 (post-Phase B) generalised the walk from "direct source→AOM
+// cable only" to a full BFS through any number of passthrough nodes
+// (rf_amplifier today; rf_switch / attenuator / filter as the kind set
+// grows). The traversal lives in `rfPropagation.ts`; this module is now
+// a thin AOM-specific façade so existing callers keep their narrow
+// signature.
 
-import type { PhysicsElement, RfSourceParams, SceneObject } from "../types/digitalTwin";
+import type { Asset3D, ComponentItem, PhysicsElement, SceneObject } from "../types/digitalTwin";
+import {
+  AD9959_VPP_FULL_SCALE,
+  RF_LOAD_Z_OHM,
+  buildRfPropagation,
+  portKey,
+  vppToPowerW,
+} from "./rfPropagation";
 
-/** AD9959 single-ended into 50 Ω at default Rset has ~1.0 Vpp full-scale. */
-export const AD9959_VPP_FULL_SCALE = 1.0;
-/** RF load impedance for Vpp ↔ W conversion (P = Vpp² / (8·Z)). */
-export const RF_LOAD_Z_OHM = 50.0;
+// Re-export the canonical constants so older imports keep working without
+// having to know about the new module split.
+export { AD9959_VPP_FULL_SCALE, RF_LOAD_Z_OHM, vppToPowerW };
 
 export type ResolvedAomRfDrive = {
   frequencyMhz: number;
-  /** Average power (W) into the 50 Ω load, derived from amplitudeScale via
-   *  Vpp = amp × full_scale and P = Vpp²/(8·Z). */
+  /** Average power (W) into the 50 Ω load, derived from the propagation
+   *  result (Vpp²/(8·Z)). After Phase 1 this already includes any in-line
+   *  amplifier gains and output-power clamps along the chain. */
   drivePowerW: number;
-  /** Object id + anchor name of the upstream rf_source CH that drives
-   *  this AOM — useful for "Synced from <source> · <CH>" read-outs. */
+  /** Object id + anchor name of the originating rf_source CH — useful for
+   *  the "Synced from <source> · <CH>" read-out. Even after a multi-hop
+   *  chain this points to the actual DDS channel, not the intermediate
+   *  amplifier. */
   sourceObjectId: string;
   sourceAnchorName: string;
+  /** Cumulative linear gain (dB) applied along the chain — 0 for a direct
+   *  source→AOM hookup, ≈29 for one ZHL-1-2W in line. Exposed so callers
+   *  can flag "amplified by …" in the UI. */
+  cumulativeGainDb: number;
+  /** True when an amplifier's output-power clamp limited the resolved Vpp.
+   *  Solver + UI can warn the user about the saturation. */
+  saturated: boolean;
 };
-
-type RfCableEndpoint = { targetObjectId: string; targetAnchorName: string };
-type RfCableEndpointsProps = {
-  rfCableEndpoints?: { A?: RfCableEndpoint; B?: RfCableEndpoint };
-};
-
-/** Vpp ↔ W conversion under a sinusoid into resistive Z:
- *      P_avg = (Vpp / (2√2))² / Z = Vpp² / (8 · Z)
- *  Matches the formula used in `hydrate_aom_rf_drive` (backend). */
-export function vppToPowerW(vpp: number, zOhm: number = RF_LOAD_Z_OHM): number {
-  return (vpp * vpp) / (8 * zOhm);
-}
 
 /** Resolve the live RF drive (freq, power) feeding an AOM by following
- *  the rf_cable that connects the AOM's rf_in anchor to an rf_source
- *  channel. Returns `null` when the AOM has no upstream cable link or
- *  the linked target is missing / not an rf_source. */
+ *  the rf_cable graph backwards from the AOM's rf_in anchor through any
+ *  number of amplifiers / switches to the originating rf_source channel.
+ *
+ *  Returns `null` when the AOM has no rf_in cable, or the chain doesn't
+ *  trace back to an rf_source.
+ *
+ *  The function delegates to `buildRfPropagation`; if you need the signal
+ *  at multiple ports in one render, call `buildRfPropagation` directly
+ *  and look up `signalAtPort.get(portKey(aomId, "rf_in"))` to avoid
+ *  rebuilding the propagation map each time. */
 export function resolveAomRfDriveFromScene(
   aomObjectId: string,
   objects: SceneObject[],
+  components: ComponentItem[],
+  assets: Asset3D[],
   physicsElements: PhysicsElement[],
 ): ResolvedAomRfDrive | null {
-  // Find a cable that touches this AOM, then identify the source side.
-  for (const obj of objects) {
-    const pe = physicsElements.find((p) => p.objectId === obj.id);
-    if (pe?.elementKind !== "rf_cable") continue;
-    const eps = (obj.properties as RfCableEndpointsProps).rfCableEndpoints;
-    const a = eps?.A;
-    const b = eps?.B;
-    if (!a || !b) continue;
-    let src: RfCableEndpoint | undefined;
-    if (a.targetObjectId === aomObjectId) src = b;
-    else if (b.targetObjectId === aomObjectId) src = a;
-    if (!src) continue;
-    const srcPe = physicsElements.find((p) => p.objectId === src!.targetObjectId);
-    if (srcPe?.elementKind !== "rf_source") continue;
-    const channels = (srcPe.kindParams as RfSourceParams).channels ?? [];
-    const ch = channels.find((c) => c.anchorName === src!.targetAnchorName);
-    if (!ch) continue;
-    const freqMhz = ch.frequencyMhz;
-    const amp = ch.amplitudeScale ?? 0;
-    const vpp = amp * AD9959_VPP_FULL_SCALE;
-    return {
-      frequencyMhz: freqMhz,
-      drivePowerW: vppToPowerW(vpp),
-      sourceObjectId: src.targetObjectId,
-      sourceAnchorName: src.targetAnchorName,
-    };
-  }
-  return null;
+  const prop = buildRfPropagation({ objects, components, assets, physicsElements });
+  // Try each anchor name we know the AOM might use for its RF input. In
+  // practice the asset's rf_in anchor name IS "rf_in" — we look it up
+  // explicitly rather than scanning so the API is predictable.
+  // (The asset anchor's `name` defaults to the same string as its `id`
+  // when no explicit display name is set, which is the case for all AOM
+  // assets in the catalog.)
+  const componentById = new Map(components.map((c) => [c.id, c]));
+  const assetById = new Map(assets.map((a) => [a.id, a]));
+  const aomObj = objects.find((o) => o.id === aomObjectId);
+  if (!aomObj) return null;
+  const aomComp = componentById.get(aomObj.componentId);
+  const aomAsset = aomComp?.asset3dId ? assetById.get(aomComp.asset3dId) : undefined;
+  const rfIn = aomAsset?.anchors?.find((a) => a.id === "rf_in");
+  if (!rfIn) return null;
+  const signal = prop.signalAtPort.get(portKey(aomObjectId, rfIn.name ?? rfIn.id));
+  if (!signal) return null;
+  return {
+    frequencyMhz: signal.frequencyMhz,
+    drivePowerW: vppToPowerW(signal.vpp),
+    sourceObjectId: signal.sourceObjectId,
+    sourceAnchorName: signal.sourceAnchorName,
+    cumulativeGainDb: signal.cumulativeGainDb,
+    saturated: signal.saturated,
+  };
 }

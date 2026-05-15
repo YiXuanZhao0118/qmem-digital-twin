@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-05-14T11:42:50.683Z",
+  "generated_at": "2026-05-15T03:43:20.464Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -129,7 +129,10 @@
             "eyIm": 0
           },
           "nominalPowerMw": 50
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     },
     {
@@ -205,7 +208,10 @@
           "outputTransverseMode": {
             "kind": "TEM00"
           }
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     },
     {
@@ -238,7 +244,10 @@
         "align_summary": "Reflective face center translates onto incoming beam. User dials in U/V offset + rx/ry/rz to aim reflection. The face needs a normal direction so the ray-tracer knows which side of the plane the beam reflects off.",
         "default_params": {
           "reflectivity": 0.99
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     },
     {
@@ -274,7 +283,10 @@
           "passBand": "long",
           "transmission": 0.95,
           "reflectivity": 0.95
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     },
     {
@@ -312,7 +324,10 @@
         "default_params": {
           "focalMm": 100,
           "transmission": 0.99
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     },
     {
@@ -348,7 +363,10 @@
         "default_params": {
           "focalMm": 100,
           "transmission": 0.99
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     },
     {
@@ -385,7 +403,10 @@
           "focalMm": 100,
           "cylindricalAxis": "x",
           "transmission": 0.99
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     },
     {
@@ -420,6 +441,16 @@
           "retardanceLambda": 0.5,
           "fastAxisDegBeamLocal": 0,
           "transmission": 0.99
+        },
+        "intrinsic_param_keys": [
+          "retardanceLambda",
+          "transmission"
+        ],
+        "state_param_keys": [
+          "fastAxisDegBeamLocal"
+        ],
+        "port_domains": {
+          "intercept_in": "optical"
         }
       }
     },
@@ -453,7 +484,10 @@
           "transmissionAxisDegBeamLocal": 0,
           "extinctionRatioDb": 30,
           "transmission": 0.95
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     },
     {
@@ -497,7 +531,10 @@
             0.7071067811865475,
             0
           ]
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     },
     {
@@ -530,7 +567,10 @@
           "couplingEfficiency": 0.7,
           "modeFieldDiameterUm": 5,
           "fiberType": "single_mode"
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     },
     {
@@ -620,7 +660,10 @@
           "polarizationExtinctionRatioDb": 25,
           "bandwidthMhzKm": null,
           "randomJonesSeed": null
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     },
     {
@@ -660,7 +703,10 @@
           "isolationDb": 40,
           "faradayRotationDeg": 45,
           "transmissionAxisDegBeamLocal": 0
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     },
     {
@@ -720,6 +766,28 @@
           ],
           "diffractionOrder": 1,
           "braggAngularAcceptanceMrad": 2
+        },
+        "intrinsic_param_keys": [
+          "baseEfficiency",
+          "deflectionPerMhzUrad",
+          "acousticVelocityMPerS",
+          "modulationBandwidthMhz",
+          "refractiveIndex",
+          "figureOfMeritM2",
+          "crystalLengthMm",
+          "acousticBeamWidthMm",
+          "rfPowerMaxW",
+          "acousticAxisBodyLocal",
+          "rfPropagationDirectionBodyLocal",
+          "braggAngularAcceptanceMrad"
+        ],
+        "state_param_keys": [
+          "diffractionOrder"
+        ],
+        "port_domains": {
+          "intercept_in": "optical",
+          "intercept_out": "optical",
+          "rf_in": "rf"
         }
       }
     },
@@ -757,7 +825,10 @@
           "modulationKind": "phase",
           "modulationBandwidthMhz": 100,
           "insertionLossDb": 3
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     },
     {
@@ -794,7 +865,10 @@
           "chi2PmPerV": 4.5,
           "lengthMm": 10,
           "walkOffUrad": 0
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     },
     {
@@ -828,7 +902,10 @@
           "modulationDepth": 0.5,
           "nonSaturableLoss": 0.05,
           "recoveryTimePs": 1
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     },
     {
@@ -862,7 +939,10 @@
           "quantumEfficiency": 0.8,
           "bandwidthMhz": 1000,
           "saturationPowerMw": 10
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     },
     {
@@ -899,7 +979,10 @@
           "pixelSizeUm": 5.5,
           "quantumEfficiency": 0.5,
           "wellDepthE": 20000
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     },
     {
@@ -934,7 +1017,10 @@
             400,
             1100
           ]
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     },
     {
@@ -965,7 +1051,10 @@
         "align_summary": "Input port (intercept_in) translates to beam.",
         "default_params": {
           "precisionMhz": 1
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     },
     {
@@ -997,7 +1086,10 @@
         "align_summary": "Absorbing face (intercept_in) translates to beam. Beam terminates.",
         "default_params": {
           "absorption": 0.999
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     },
     {
@@ -1041,6 +1133,25 @@
           "serialInterface": null,
           "syncRole": "standalone",
           "serialPortMode": "4wire"
+        },
+        "intrinsic_param_keys": [
+          "referenceClockMhz",
+          "sysClockMhz",
+          "pllMultiplier",
+          "pllBypass",
+          "serialInterface",
+          "syncRole",
+          "serialPortMode"
+        ],
+        "state_param_keys": [
+          "frequencyMhz",
+          "powerDbm",
+          "phaseDeg",
+          "modulation",
+          "channels"
+        ],
+        "port_domains": {
+          "rf_out": "rf"
         }
       }
     },
@@ -1090,6 +1201,24 @@
           "inputReturnLossDb": 14,
           "outputReturnLossDb": 14,
           "connectorType": "sma"
+        },
+        "intrinsic_param_keys": [
+          "gainDb",
+          "frequencyRangeMhz",
+          "outputPowerP1dbDbm",
+          "outputPowerMaxDbm",
+          "inputPowerMaxDbm",
+          "noiseFigureDb",
+          "supplyVoltageV",
+          "supplyCurrentA",
+          "inputReturnLossDb",
+          "outputReturnLossDb",
+          "connectorType"
+        ],
+        "state_param_keys": [],
+        "port_domains": {
+          "rf_in": "rf",
+          "rf_out": "rf"
         }
       }
     },
@@ -1132,7 +1261,10 @@
             1
           ],
           "cosineExponent": 8
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     },
     {
@@ -1177,7 +1309,10 @@
           "workingVoltageVRms": null,
           "dielectricVoltageVRms": null,
           "minBendRadiusMm": 15
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     },
     {
@@ -1231,7 +1366,10 @@
           "manufacturer": "Mini-Circuits",
           "model": "ZYSWA-2-50DR",
           "datasheetUrl": "https://www.minicircuits.com/pdfs/ZYSWA-2-50DR+.pdf"
-        }
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
       }
     }
   ],

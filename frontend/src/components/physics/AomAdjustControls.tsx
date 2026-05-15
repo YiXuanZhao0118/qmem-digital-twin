@@ -121,8 +121,14 @@ export function AomAdjustControls({
   // resolver mirrors `hydrate_aom_rf_drive` in optics_seq.py so the panel
   // shows exactly what the backend solver will see.
   const upstreamDrive = useMemo(
-    () => resolveAomRfDriveFromScene(sceneObject.id, scene.objects, scene.physicsElements),
-    [scene.objects, scene.physicsElements, sceneObject.id],
+    () => resolveAomRfDriveFromScene(
+      sceneObject.id,
+      scene.objects,
+      scene.components,
+      scene.assets,
+      scene.physicsElements,
+    ),
+    [scene.objects, scene.components, scene.assets, scene.physicsElements, sceneObject.id],
   );
   const upstreamRf = useMemo<{ sourceName: string; channelName: string } | null>(() => {
     if (!upstreamDrive) return null;
@@ -279,30 +285,40 @@ export function AomAdjustControls({
   //     axis), D3 = D1 × D2 (Bragg rotation axis). For canonical MT80:
   //     D1 = body+Y, D2 = body−X, D3 = body+Z.
   //
-  //   - State: sign of (in→out)·beam in WORLD picks state A
-  //     (entry=intercept_in) or B (entry=intercept_out).
+  //   - Entry port: whichever of intercept_in / intercept_out the
+  //     upstream beam reaches first geometrically. Reported in the
+  //     feedback as "entry=in" or "entry=out". This used to flip the
+  //     body 180° via `traversalSignRaw` (the old state-A/state-B
+  //     dichotomy); since 2026-05-15 it only affects the diffraction-
+  //     order label (via `effectiveAomOrderForTraversal` /
+  //     `traversalSignForExpect`), not the body orientation.
   //
-  //   - Stage 1 (snap optical axis ∥ beam): pick D1_target = ±beam,
-  //     D3_target by `params.stage1RotationMode`:
-  //       "min-rot"  — minimum-angle rotation from current pose.
-  //       "upright"  — D3 closest to lab+Z (default — keeps the AOM
-  //                    body upright on a horizontal optical table).
+  //   - Stage 1 (snap optical axis ∥ beam): pick D1_target = s·beam
+  //     where s = sign(D1_current · beam) — minimum rotation from
+  //     current pose, never a 180° flip. D3_target by
+  //     `params.stage1RotationMode` (default "min-rot"):
+  //       "min-rot"  — D3_target = projection of D3_current onto ⊥-beam
+  //                    (matches the user's 3-step decomposition: rotate
+  //                    around D3 to bring beam into (D1,D3) plane, then
+  //                    rotate around D2 to put D1 on beam).
+  //       "upright"  — D3 closest to lab+Z (forces AOM upright on a
+  //                    horizontal table; can rotate the body more than
+  //                    necessary if it started in a non-upright pose).
   //       "keep-d2"  — D2 closest to its current lab direction.
   //     D2_target = D3_target × D1_target (right-handed).
   //
   //   - Stage 2 (Bragg rotation): rotate body about D3_target by
-  //       ω = −traversalSignRaw · arcsin(expectedInputDotD2(...))
+  //       ω = −s · arcsin(expectedInputDotD2(...))
   //     so beam·D2_body lands on the value `physics.ts` derives from
   //     the user-selected order m and `params.stage2SignConvention`.
   //
   //   - Pivot for Stage 2: midpoint of in/out anchors (or
   //     `kindParams.braggInteractionPointMmBodyLocal` override). Pivot
   //     only matters for the "rock around interaction point" UX feel;
-  //     the final pose is determined by orientation + entry-on-beam
+  //     the final pose is determined by orientation + midpoint-on-beam
   //     translation, which makes the math pivot-independent.
   //
-  //   - Translation: after the full rotation, project the entry
-  //     anchor's lab position onto the beam line.
+  //   - Translation: project the (in+out)/2 midpoint onto the beam ray.
   const [alignBusy, setAlignBusy] = useState(false);
   const [alignFeedback, setAlignFeedback] = useState<string | null>(null);
 
@@ -393,6 +409,7 @@ export function AomAdjustControls({
         sourceObjectId: string;
         startThree: { x: number; y: number; z: number };
         endThree: { x: number; y: number; z: number };
+        hitObjectId?: string | null;
       };
       const traces: TraceSeg[] = (typeof window !== "undefined"
         ? (window as unknown as { __rayTraceDebug?: TraceSeg[] }).__rayTraceDebug
@@ -429,8 +446,21 @@ export function AomAdjustControls({
         const [pIn, pOut] = projects;
         if (pIn.t < 0 && pOut.t < 0) continue;
 
+        // Segment upper bound: a beam that terminates at another component
+        // (seg.hitObjectId != null) doesn't extend past its endpoint.
+        // Without this check, a stale upstream beam segment that happens to
+        // be collinear with the AOM anchor's current world position will
+        // produce miss ≈ 0 and beat the real reaching beam (which has miss
+        // = a few mm because the AOM isn't perfectly aligned yet). Allow a
+        // tolerance equal to ALIGN_TOLERANCE_MM so a beam that ends exactly
+        // at the AOM still matches. Unbounded beams (hitObjectId == null)
+        // pass through with no upper bound.
+        const segUpperBound = seg.hitObjectId != null
+          ? segLen + ALIGN_TOLERANCE_MM
+          : Number.POSITIVE_INFINITY;
+
         const candidates: Array<Match> = [];
-        if (pIn.miss <= ALIGN_TOLERANCE_MM && pIn.t >= 0) {
+        if (pIn.miss <= ALIGN_TOLERANCE_MM && pIn.t >= 0 && pIn.t <= segUpperBound) {
           candidates.push({
             portId: "intercept_in",
             entryBody: { ...inBody },
@@ -443,7 +473,7 @@ export function AomAdjustControls({
             sourceId: seg.sourceObjectId,
           });
         }
-        if (pOut.miss <= ALIGN_TOLERANCE_MM && pOut.t >= 0) {
+        if (pOut.miss <= ALIGN_TOLERANCE_MM && pOut.t >= 0 && pOut.t <= segUpperBound) {
           candidates.push({
             portId: "intercept_out",
             entryBody: { ...outBody },
@@ -550,6 +580,7 @@ export function AomAdjustControls({
       //     "upright"  → D3 ≈ projection of lab+Z (chassis vertical)
       //     "min-rot"  → D3 ≈ projection of current D3_lab (least disturbance)
       //     "keep-d2"  → D3 = current_D2_lab × beam (preserves acoustic-axis side)
+      const D1WorldCurrent = rotateLabDir(D1Body, sceneObject);
       const D2WorldCurrent = rotateLabDir(D2Body, sceneObject);
       const D3WorldCurrent = rotateLabDir(D3Body, sceneObject);
       const stage1Mode: Stage1RotationMode = params.stage1RotationMode ?? DEFAULT_STAGE1_MODE;
@@ -591,10 +622,21 @@ export function AomAdjustControls({
       const e2 = cross3(D3TargetLab, beamUnit);
       const cosT = Math.cos(thetaBRad);
       const sinT = Math.sin(thetaBRad);
-      // s = traversalSignRaw (+1 = beam ‖ +D1, state A; −1 = state B).
+      // s = sign(D1_current · beam): pick D1_target ∥ +beam or −beam
+      // by minimum rotation, NOT by which port reaches the beam first
+      // (2026-05-15 fix). The old code used `traversalSignRaw` here,
+      // which forced a 180° body flip whenever state B was detected
+      // (entry = intercept_out) — even though the AOM is bidirectional
+      // and the body orientation does not need to flip. The "in" vs
+      // "out" entry distinction is preserved for diffraction-order
+      // labeling via `traversalSignForExpect` / `effectiveOrder`.
       // s' = traversalSignForExpect (lab-fixed convention may set this
-      //      to +1 always; physical-traversal mirrors s).
-      const sRaw = traversalSignRaw;
+      //      to +1 always; physical-traversal mirrors traversalSignRaw).
+      const dotD1Beam =
+        D1WorldCurrent.x * beamUnit.x +
+        D1WorldCurrent.y * beamUnit.y +
+        D1WorldCurrent.z * beamUnit.z;
+      const sRaw: 1 | -1 = dotD1Beam >= 0 ? 1 : -1;
       const sExpect = traversalSignForExpect;
       const D1TargetLab = {
         x: sRaw * cosT * beamUnit.x + currentOrder * sExpect * sinT * e2.x,
@@ -620,10 +662,10 @@ export function AomAdjustControls({
       const finalQuat = new THREE.Quaternion().setFromRotationMatrix(mAlign);
 
       // For the feedback message we still want to report the equivalent
-      // "Stage 2 omega" (= the angle by which D1 deviates from beam) so
+      // "Stage 2 omega" (= the angle by which D1 deviates from s·beam) so
       // the user can sanity-check it equals ±θ_B per the chosen order.
       const expectedDotD2 = expectedInputDotD2(currentOrder, traversalSignForExpect, thetaBRad);
-      const omegaRad = -traversalSignRaw * Math.asin(THREE.MathUtils.clamp(expectedDotD2, -1, 1));
+      const omegaRad = -sRaw * Math.asin(THREE.MathUtils.clamp(expectedDotD2, -1, 1));
 
       // Step A: translate so MIDPOINT of (intercept_in, intercept_out) sits
       // on the beam line. We project the OLD midpoint onto the beam to
@@ -706,15 +748,16 @@ export function AomAdjustControls({
         rzDeg: nextRzDeg,
       });
       const sourceName = sourceObj?.name ?? best!.sourceId.slice(0, 6);
-      const stateLabel = isStateB ? "B (entry=out)" : "A (entry=in)";
+      const entryLabel = isStateB ? "entry=out" : "entry=in";
+      const d1ParityLabel = sRaw > 0 ? "D1∥+beam" : "D1∥−beam";
       const orderLabel = currentOrder === 0 ? "0th" : currentOrder > 0 ? "+1" : "-1";
       const traversalNote =
         traversalSignRaw < 0 && currentOrder !== 0 && stage2SignConvention === "physical-traversal"
-          ? ` (state-B traversal flips selected ${currentOrder > 0 ? "+1" : "-1"} → physical ${effectiveOrder > 0 ? "+1" : "-1"})`
+          ? ` (entry=out flips selected ${currentOrder > 0 ? "+1" : "-1"} → physical ${effectiveOrder > 0 ? "+1" : "-1"})`
           : "";
       setAlignFeedback(
-        `Aligned (${stage1Mode}): midpoint on beam, D1·beam = cos(θ_B) ` +
-        `for state ${stateLabel}, m=${orderLabel}${traversalNote}. ` +
+        `Aligned (${stage1Mode}): midpoint on beam, ${d1ParityLabel} ` +
+        `(${entryLabel}), m=${orderLabel}${traversalNote}. ` +
         `Equivalent ω = ${(omegaRad * 1e3).toFixed(3)} mrad about D3. ` +
         `Bragg residual ${residualMrad.toFixed(3)} mrad. ` +
         `Source: ${sourceName} beam.${clippingWarning}`,

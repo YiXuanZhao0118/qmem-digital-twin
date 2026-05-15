@@ -1417,7 +1417,7 @@ function traceOneRay(
     // and an undefined P_d (closed-form efficiency then takes the
     // baseEfficiency path).
     const upstreamDrive = resolveAomRfDriveFromScene(
-      hitObjectId, ctx.objects, ctx.physicsElements,
+      hitObjectId, ctx.objects, ctx.components, ctx.assets, ctx.physicsElements,
     );
     const baseParams = (oe?.kindParams ?? {}) as {
       acousticVelocityMPerS?: number;

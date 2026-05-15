@@ -638,6 +638,21 @@ class PhysicsElement(Base):
     kind_params: Mapped[JsonDict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default="{}"
     )
+    # Phase 4 (alembic 0049): three-layer storage split. `kind_params` stays
+    # as the merged source-of-truth until Phase 5 retires it; new code should
+    # read intrinsic + state columns directly. The CRUD layer keeps all
+    # three in sync on write (see ``app.crud.set_physics_element_params``).
+    #
+    # `intrinsic_params` carries spec-sheet values (acoustic velocity,
+    # refractive index, amplifier gain, …) — rendered read-only in the UI.
+    # `state_params` carries operating-state knobs (Bragg tilt angle,
+    # diffraction order, AD9959 freq/amp, …) — user-editable.
+    intrinsic_params: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+    state_params: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

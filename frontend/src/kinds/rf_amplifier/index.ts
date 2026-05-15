@@ -1,4 +1,5 @@
 import { definePhysicsPlugin } from "../_plugin";
+import { rfAmplifierTransfer } from "./transfer";
 
 export interface RfAmplifierParams extends Record<string, unknown> {
   gainDb: number;
@@ -46,5 +47,35 @@ export const rfAmplifierPlugin = definePhysicsPlugin<RfAmplifierParams>({
       outputReturnLossDb: 14.0,
       connectorType: "sma",
     },
+    // Phase 3d: a coaxial amplifier is pure spec sheet — every parameter
+    // is fixed by the part number. ZHL-1-2W+ doesn't have any user knob;
+    // it just amplifies whatever Vpp / freq lands on its rf_in. The
+    // Object panel renders this whole block read-only; "Operating" tab
+    // stays empty. Gain calibration tweaks (a specific unit measuring
+    // +28.7 dB instead of the spec +29) are an instance-level override —
+    // they'd land in `SceneObject.properties.intrinsicOverrides.gainDb`,
+    // not by mutating the catalog.
+    intrinsicParamKeys: [
+      "gainDb",
+      "frequencyRangeMhz",
+      "outputPowerP1dbDbm",
+      "outputPowerMaxDbm",
+      "inputPowerMaxDbm",
+      "noiseFigureDb",
+      "supplyVoltageV",
+      "supplyCurrentA",
+      "inputReturnLossDb",
+      "outputReturnLossDb",
+      "connectorType",
+    ],
+    stateParamKeys: [],
+    portDomains: { rf_in: "rf", rf_out: "rf" },
+    // Phase 5: the canonical example of the plugin-level transfer
+    // pattern. The RF propagation walker (`utils/rfPropagation.ts`)
+    // calls this whenever a signal arrives at rf_in. Adding a new RF
+    // passthrough kind (attenuator, filter, …) is a one-file change:
+    // write the plugin, declare `rfTransfer`, done. Backend parity
+    // lives in `backend/app/solvers/rf_propagation.py`.
+    rfTransfer: rfAmplifierTransfer,
   },
 });
