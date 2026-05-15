@@ -300,17 +300,53 @@ function EditableAd9959Row({ port, channel, onCommit }: EditableAd9959RowProps) 
 type AomInRowProps = {
   port: Port;
   requiredVpp: number | null;
-  incomingVpp: number | null;
+  /** Live signal arriving at the AOM rf_in port. Pulled from the RF
+   *  propagation map so it reflects ANY upstream amplifier gain that's
+   *  already been applied; bypasses the rf_source channel's raw Vpp. */
+  incomingSignal: RfSignalState | null;
+  /** Display name of the originating rf_source object (e.g. "AD9959").
+   *  Resolved from the SceneObject list by the caller. */
+  sourceObjectName: string | null;
 };
 
-function AomInRow({ port, requiredVpp, incomingVpp }: AomInRowProps) {
+/** Format a small power value in human-friendly W / mW / µW depending on
+ *  magnitude so the AOM RF readout doesn't show "0.00 W" when the upstream
+ *  is in the hundred-mW regime that Bragg drives actually live in. */
+function formatPowerW(p: number): string {
+  if (!Number.isFinite(p) || p <= 0) return "0";
+  if (p >= 1.0) return `${p.toFixed(2)} W`;
+  if (p >= 1e-3) return `${(p * 1e3).toFixed(1)} mW`;
+  return `${(p * 1e6).toFixed(0)} µW`;
+}
+
+function AomInRow({ port, requiredVpp, incomingSignal, sourceObjectName }: AomInRowProps) {
+  // Pre-compute every readout so the JSX stays a thin layout pass.
+  const incomingVpp = incomingSignal ? incomingSignal.vpp : null;
+  const incomingFreqMhz = incomingSignal ? incomingSignal.frequencyMhz : null;
+  const incomingPowerW = incomingSignal ? (incomingVpp! * incomingVpp!) / (8 * 50) : null;
   const ratio = requiredVpp && incomingVpp ? incomingVpp / requiredVpp : null;
   let badge: { color: string; text: string } | null = null;
   if (requiredVpp != null && incomingVpp != null) {
-    if (ratio! < 0.5) badge = { color: "#d96666", text: "⚠ underdrive" };
-    else if (ratio! > 1.5) badge = { color: "#d49a3a", text: "⚠ overdrive" };
+    if (ratio! < 0.5) badge = { color: "#d96666", text: "⚠ under" };
+    else if (ratio! > 1.5) badge = { color: "#d49a3a", text: "⚠ over" };
     else badge = { color: "#7be08a", text: "OK" };
   }
+  // Build the provenance hint shown right-aligned. Examples:
+  //   "← AD9959 · CH0"               (direct cable)
+  //   "← AD9959 · CH0 · +29 dB"      (through one ZHL-1-2W)
+  //   "← AD9959 · CH0 · +29 dB ⚠ clamped"
+  const provenance: string | null = (() => {
+    if (!incomingSignal) return null;
+    const parts: string[] = [];
+    if (sourceObjectName) parts.push(sourceObjectName);
+    parts.push(incomingSignal.sourceAnchorName);
+    if (Math.abs(incomingSignal.cumulativeGainDb) > 0.05) {
+      const sign = incomingSignal.cumulativeGainDb > 0 ? "+" : "";
+      parts.push(`${sign}${incomingSignal.cumulativeGainDb.toFixed(1)} dB`);
+    }
+    return `← ${parts.join(" · ")}`;
+  })();
+
   return (
     <div
       style={{
@@ -321,21 +357,62 @@ function AomInRow({ port, requiredVpp, incomingVpp }: AomInRowProps) {
         color: "#cfcfd8",
         height: PORT_ROW_H,
         paddingLeft: 12, // leave room for blue port dot at left rect edge
+        overflow: "hidden",
       }}
+      title={
+        // Full tooltip — fits even when the inline row truncates.
+        incomingSignal
+          ? `${port.anchorName} input: ${incomingFreqMhz!.toFixed(2)} MHz · ${incomingVpp!.toFixed(2)} Vpp · ${formatPowerW(incomingPowerW!)}` +
+            (requiredVpp != null ? `\nneed ≥ ${requiredVpp.toFixed(2)} Vpp for full Bragg η` : "") +
+            (provenance ? `\n${provenance.replace("← ", "from ")}` : "") +
+            (incomingSignal.saturated ? "\n⚠ Upstream amplifier clamped at P_max" : "")
+          : `${port.anchorName} input: no upstream rf_source linked`
+      }
     >
-      <span style={{ minWidth: 30, color: "#e8e8ee", fontWeight: 500 }}>{port.anchorName}</span>
-      {requiredVpp != null && (
-        <span style={{ color: "#8e8e9a" }}>
-          need ≥ <strong style={{ color: "#cfcfd8" }}>{requiredVpp.toFixed(2)}</strong> Vpp
+      <span style={{ minWidth: 28, color: "#e8e8ee", fontWeight: 500 }}>{port.anchorName}</span>
+      {/* Primary readout: what's actually arriving at the AOM right now.
+          Three columns, monospaced-style alignment so the freq / Vpp / W
+          tuple lines up across multiple AOMs in the column. */}
+      {incomingSignal ? (
+        <span style={{ color: "#e8e8ee" }}>
+          <strong style={{ color: "#e8e8ee" }}>{incomingFreqMhz!.toFixed(1)}</strong>
+          <span style={{ color: "#8e8e9a" }}> MHz · </span>
+          <strong style={{ color: "#e8e8ee" }}>{incomingVpp!.toFixed(2)}</strong>
+          <span style={{ color: "#8e8e9a" }}> V · </span>
+          <span style={{ color: "#cfcfd8" }}>{formatPowerW(incomingPowerW!)}</span>
         </span>
+      ) : (
+        <span style={{ color: "#6e6e7a" }}>no upstream</span>
       )}
-      {incomingVpp != null && (
-        <span style={{ color: "#8e8e9a" }}>
-          (in: <strong style={{ color: "#cfcfd8" }}>{incomingVpp.toFixed(2)}</strong>)
+      {/* Required-Vpp hint shrinks to a small secondary label so the
+          actual incoming reading stays dominant. */}
+      {requiredVpp != null && (
+        <span style={{ color: "#6e6e7a", fontSize: 9 }}>
+          (≥ {requiredVpp.toFixed(2)} V)
         </span>
       )}
       {badge && (
-        <span style={{ color: badge.color, marginLeft: 2, fontSize: 9 }}>{badge.text}</span>
+        <span style={{ color: badge.color, fontSize: 9 }}>{badge.text}</span>
+      )}
+      {incomingSignal?.saturated && (
+        <span style={{ color: "#d49a3a", fontSize: 9 }}>⚠ clamp</span>
+      )}
+      {/* Provenance chip sits at the right edge. CSS handles overflow
+          when the rect is narrow. */}
+      {provenance && (
+        <span
+          style={{
+            marginLeft: "auto",
+            color: "#8e8e9a",
+            fontSize: 9,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            maxWidth: 90,
+          }}
+        >
+          {provenance}
+        </span>
       )}
     </div>
   );
@@ -922,11 +999,22 @@ export function RfLinkPanel() {
                         const requiredVpp = requiredP != null ? powerWToVpp(requiredP) : null;
                         // Pull the post-chain signal from the propagation map.
                         // It already includes any in-line amplifier gain
-                        // (and saturation clamps), so the incoming Vpp here
+                        // (and saturation clamps), so the incoming reading
                         // matches what the Bragg solver / backend will see.
                         const signal = rfPropagation.signalAtPort.get(rfPortKey(n.objectId, port.anchorName)) as RfSignalState | undefined;
-                        const incomingVpp = signal ? signal.vpp : null;
-                        body = <AomInRow port={port} requiredVpp={requiredVpp} incomingVpp={incomingVpp} />;
+                        // Resolve the originating rf_source object name so
+                        // the AOM row can show provenance ("← AD9959 · CH0").
+                        const sourceObjectName = signal
+                          ? objects.find((o) => o.id === signal.sourceObjectId)?.name ?? null
+                          : null;
+                        body = (
+                          <AomInRow
+                            port={port}
+                            requiredVpp={requiredVpp}
+                            incomingSignal={signal ?? null}
+                            sourceObjectName={sourceObjectName}
+                          />
+                        );
                       } else if (amp) {
                         // Amplifier: show Vpp_in on rf_in and Vpp_out + gain
                         // badge on rf_out, both pulled from the propagation
