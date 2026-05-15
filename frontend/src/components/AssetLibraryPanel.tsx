@@ -250,16 +250,25 @@ export function ComponentsCatalogPanel() {
                                     <strong>{getComponentDisplayLabel(component)}</strong>
                                     {isComponentLocked(component) && <small>locked</small>}
                                   </span>
-                                  <span
-                                    className="row-action"
-                                    title="Place component as object"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      void ensureObjectForComponent(component.id);
-                                    }}
-                                  >
-                                    <Plus size={15} />
-                                  </span>
+                                  {/* Cables can only enter the scene via the RF
+                                      Link panel's drag-to-connect, never from
+                                      the catalog — placing one here would
+                                      create a dangling object the store now
+                                      auto-deletes anyway. Hide the Plus button
+                                      to match. */}
+                                  {component.componentType !== "rf_cable" &&
+                                    component.componentType !== "sma_cable" && (
+                                      <span
+                                        className="row-action"
+                                        title="Place component as object"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          void ensureObjectForComponent(component.id);
+                                        }}
+                                      >
+                                        <Plus size={15} />
+                                      </span>
+                                    )}
                                 </button>
                               );
                             })}

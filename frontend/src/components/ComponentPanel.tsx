@@ -128,6 +128,8 @@ function objectPanelTitle(
  * deselecting. Locked objects are read-only. */
 function MultiSelectTransformPanel({ objects }: { objects: SceneObject[] }) {
   const updateSceneObject = useSceneStore((state) => state.updateSceneObject);
+  const updateSceneObjects = useSceneStore((state) => state.updateSceneObjects);
+  const deleteObjects = useSceneStore((state) => state.deleteObjects);
   const editable = objects.filter((o) => !o.locked);
 
   const center = {
@@ -139,28 +141,34 @@ function MultiSelectTransformPanel({ objects }: { objects: SceneObject[] }) {
     rzDeg: average(editable.map((o) => o.rzDeg)),
   };
 
-  /** Apply a delta to every editable object's position. */
+  /** Apply a delta to every editable object's position. Uses the store's
+   *  batch updater so N objects → 1 re-render. The user complaint that
+   *  triggered this: moving / rotating / deleting 50 objects used to feel
+   *  one-at-a-time because Promise.all over `updateSceneObject` caused
+   *  N independent set() calls. */
   const setCenterPos = async (axis: "xMm" | "yMm" | "zMm", next: number) => {
     const delta = next - center[axis];
     if (Math.abs(delta) < 1e-9) return;
-    await Promise.all(
-      editable.map((o) =>
-        updateSceneObject(o.id, { [axis]: o[axis] + delta } as { xMm?: number; yMm?: number; zMm?: number }),
-      ),
+    await updateSceneObjects(
+      editable.map((o) => ({
+        objectId: o.id,
+        patch: { [axis]: o[axis] + delta } as { xMm?: number; yMm?: number; zMm?: number },
+      })),
     );
   };
 
   const setCenterRot = async (axis: "rxDeg" | "ryDeg" | "rzDeg", next: number) => {
     const delta = next - center[axis];
     if (Math.abs(delta) < 1e-9) return;
-    await Promise.all(
-      editable.map((o) =>
-        updateSceneObject(o.id, { [axis]: o[axis] + delta } as {
+    await updateSceneObjects(
+      editable.map((o) => ({
+        objectId: o.id,
+        patch: { [axis]: o[axis] + delta } as {
           rxDeg?: number;
           ryDeg?: number;
           rzDeg?: number;
-        }),
-      ),
+        },
+      })),
     );
   };
 
@@ -1558,15 +1566,22 @@ function RfCableEditor({ component }: { component: ComponentItem }) {
                   {link && (
                     <button
                       type="button"
-                      className="secondary-button"
+                      className="danger-button"
                       style={{ marginLeft: "auto", padding: "2px 8px", fontSize: 11 }}
                       onClick={() => {
                         if (!selectedObject) return;
+                        if (
+                          !window.confirm(
+                            `Unlink End ${end}? Cables can't be left with a free end, so the whole cable will be deleted. (You can re-create it from the RF Link panel.)`,
+                          )
+                        ) {
+                          return;
+                        }
                         void clearRfCableEndpointLink(selectedObject.id, end);
                       }}
-                      title={`Unlink End ${end} — the cable end falls back to its last stored node, won't follow the target any more.`}
+                      title={`Unlink End ${end} — deletes the cable (cables must keep both ends attached; recreate from RF Link).`}
                     >
-                      Unlink
+                      Unlink &amp; delete
                     </button>
                   )}
                 </div>
@@ -1912,12 +1927,18 @@ export function ComponentPanel() {
         </CollapsibleSection>
       )}
 
-      {!placement && (
-        <button className="primary-button" onClick={() => void ensureObjectForComponent(component.id)}>
-          <Plus size={16} />
-          Add object at cursor
-        </button>
-      )}
+      {!placement &&
+        component.componentType !== "rf_cable" &&
+        component.componentType !== "sma_cable" && (
+          // Cables aren't instantiable from the catalog — they're
+          // created exclusively via the RF Link panel's drag-to-connect
+          // flow. Hide the button entirely so the store contract
+          // ("create cables only from RF Link") is also enforced in UI.
+          <button className="primary-button" onClick={() => void ensureObjectForComponent(component.id)}>
+            <Plus size={16} />
+            Add object at cursor
+          </button>
+        )}
 
       {placement && selectedObjects.length > 1 && (
         <MultiSelectTransformPanel objects={selectedObjects} />

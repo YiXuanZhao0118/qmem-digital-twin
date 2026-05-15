@@ -1377,6 +1377,7 @@ export function DigitalTwinViewer({
   const toggleSoloObject = useSceneStore((state) => state.toggleSoloObject);
   const showAllHidden = useSceneStore((state) => state.showAllHidden);
   const deleteSceneObject = useSceneStore((state) => state.deleteObject);
+  const deleteSceneObjects = useSceneStore((state) => state.deleteObjects);
   const gizmoOrientation = useSceneStore((state) => state.gizmoOrientation);
   const gizmoMode = useSceneStore((state) => state.gizmoMode[panelKey]);
   const setGizmoModeRaw = useSceneStore((state) => state.setGizmoMode);
@@ -5100,7 +5101,11 @@ export function DigitalTwinViewer({
                     ? `Permanently delete ${deletableIds.length} objects${lockedCount > 0 ? ` (${lockedCount} locked will be skipped)` : ""}? This cannot be undone.`
                     : `Permanently delete "${ctxObjectName}"? This cannot be undone.`;
                   if (!window.confirm(msg)) return;
-                  void Promise.all(deletableIds.map((id) => deleteSceneObject(id)));
+                  // Batch delete → one state update for the whole set
+                  // (vs. the previous Promise.all over deleteObject,
+                  // which caused N re-renders so the user saw objects
+                  // disappear one-by-one when deleting 50 at a time).
+                  void deleteSceneObjects(deletableIds);
                 }}
               >
                 {label} <kbd>Del</kbd>

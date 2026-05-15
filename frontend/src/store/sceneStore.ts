@@ -530,7 +530,22 @@ type SceneStore = {
   deleteAssemblyRelation: (relationId: string) => Promise<void>;
   applyRelationOnce: (relationId: string) => Promise<SceneObject | null>;
   updateSceneObject: (objectId: string, patch: SceneObjectPatch) => Promise<void>;
+  /** Batch counterpart to `updateSceneObject` — fires every API call in
+   *  parallel and applies a SINGLE state update at the end, so 50 moves
+   *  cause 1 re-render instead of 50. Silently drops locked objects from
+   *  the patch list (same lock-protection contract as `updateSceneObject`).
+   *  Locked-aware rigid-group expansion is NOT applied to batch entries;
+   *  callers that need group semantics still use `updateSceneObject` for
+   *  the leading object. */
+  updateSceneObjects: (
+    entries: ReadonlyArray<{ objectId: string; patch: SceneObjectPatch }>,
+  ) => Promise<void>;
   deleteObject: (objectId: string) => Promise<void>;
+  /** Batch counterpart to `deleteObject` — fires every DELETE in parallel
+   *  and applies a SINGLE state update at the end. Locked objects are
+   *  filtered out before any network call to keep parity with the
+   *  single-object lock protection. */
+  deleteObjects: (objectIds: ReadonlyArray<string>) => Promise<void>;
   setComponentCapabilities: (
     componentId: string,
     capabilities: PhysicsCapability[],
@@ -1484,6 +1499,22 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
 
   async ensureObjectForComponent(componentId) {
     const scene = get().scene;
+    // Cables are not instantiable as standalone SceneObjects. The only
+    // way a new rf_cable / sma_cable comes into the scene is the RF Link
+    // panel's drag-to-connect flow (`createRfCableBetweenPorts`), which
+    // pairs each new cable with two real endpoints. Dragging a cable
+    // catalog row into the scene would create a dangling cable with no
+    // attached ports — same outcome we already auto-delete on unlink —
+    // so we reject the placement up front and log a console hint instead.
+    const component = scene.components.find((c) => c.id === componentId);
+    if (component?.componentType === "rf_cable" || component?.componentType === "sma_cable") {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[sceneStore] Placing ${component.componentType} from the catalog is not allowed — ` +
+          "use the RF Link panel's drag-to-connect to create cables between ports.",
+      );
+      return;
+    }
     const obj = await createObjectApi({
       componentId,
       collectionId: get().activeCollectionId,
@@ -1626,10 +1657,14 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     }));
   },
   async clearRfCableEndpointLink(objectId, end) {
-    // Standalone "unlink" — removes `rfCableEndpoints[end]` without
-    // touching `rfCableNodes`. The stored node value at idx 0 / N-1
-    // becomes the new visible position (which is what was being
-    // derived from the link a moment ago, so the cable doesn't jump).
+    // Per the user-facing cable contract ("只要 cable 有一端 unlink 就直接
+    // 移除"): unlinking either end now DELETES the cable object outright
+    // instead of leaving it dangling with one anchored end and one free
+    // end. The two-mode design (free spline gizmo + linked endpoint) was
+    // confusing the user because a freed end snapped to (0, 0, 0) by
+    // default, looking like the cable had teleported into the corner of
+    // the table. End-state simplification: cables either connect two
+    // ports or they don't exist.
     const state = get();
     const obj = state.scene.objects.find((o) => o.id === objectId);
     if (!obj) return;
@@ -1637,16 +1672,8 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       rfCableEndpoints?: { A?: unknown; B?: unknown };
     };
     if (!baseProps.rfCableEndpoints?.[end]) return; // nothing to unlink
-    const nextEndpoints = { ...baseProps.rfCableEndpoints };
-    delete nextEndpoints[end];
-    const nextProps: Record<string, unknown> = {
-      ...baseProps,
-      rfCableEndpoints: nextEndpoints,
-    };
-    const updated = await updateObjectApi(obj.id, { properties: nextProps });
-    set((s) => ({
-      scene: { ...s.scene, objects: upsertById(s.scene.objects, updated) },
-    }));
+    // Delegate to the batch deleter so the scene update is one set().
+    await get().deleteObjects([objectId]);
   },
   async insertRfCableNode(objectId, index, node) {
     const state = get();
@@ -2424,6 +2451,38 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     }));
   },
 
+  async updateSceneObjects(entries) {
+    // Skip locked / no-op patches BEFORE issuing any network call.
+    // Mirrors the single-object lock contract; multi-select callers
+    // that include a locked object in the patch list get a silent skip
+    // for that entry, rest go through.
+    const state = get();
+    const objsById = new Map(state.scene.objects.map((o) => [o.id, o]));
+    type Prepared = { objectId: string; patch: SceneObjectPatch };
+    const prepared: Prepared[] = [];
+    for (const entry of entries) {
+      const current = objsById.get(entry.objectId);
+      const safe = stripLockedTransformPatch(current, entry.patch);
+      if (!safe) continue;
+      prepared.push({ objectId: entry.objectId, patch: safe });
+    }
+    if (prepared.length === 0) return;
+    // Fire every PATCH in parallel — the API path is per-row, no
+    // cross-row ordering constraint. One Promise.all so a single
+    // backend 500 still surfaces (Promise.all short-circuits on
+    // reject).
+    const updated = await Promise.all(
+      prepared.map((entry) => updateObjectApi(entry.objectId, entry.patch)),
+    );
+    // ONE state update — 50 moves cause 1 re-render instead of 50.
+    set((current) => ({
+      scene: {
+        ...current.scene,
+        objects: upsertObjects(current.scene.objects, updated),
+      },
+    }));
+  },
+
   async deleteObject(objectId) {
     // Locked objects can't be removed — same protection that blocks pose
     // mutation in stripLockedTransformPatch. Silently no-op so that a
@@ -2431,15 +2490,69 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     // members and removes only the unlocked ones, matching the user-facing
     // spec: "若 select 多個 objects 他也在其中 執行 delete 不會 delete locked
     // 的 objects". Backend also returns 409 on locked as defense-in-depth.
-    const target = get().scene.objects.find((object) => object.id === objectId);
-    if (target?.locked) return;
-    await deleteObjectApi(objectId);
-    set((state) => {
-      const nextObjects = state.scene.objects.filter((object) => object.id !== objectId);
+    //
+    // Implementation note: delegates to `deleteObjects` so the single-
+    // object path goes through the same set() reducer as bulk delete.
+    // Avoids two copies of "compute next selection / next scene" drift.
+    await get().deleteObjects([objectId]);
+  },
+
+  async deleteObjects(objectIds) {
+    // Filter once up front: locked objects are skipped silently (same
+    // contract as the single-object path), and we de-duplicate so a
+    // caller that hands us [id, id] doesn't fire two DELETEs.
+    const state = get();
+    const objsById = new Map(state.scene.objects.map((o) => [o.id, o]));
+    const toDelete: string[] = [];
+    const seen = new Set<string>();
+    for (const id of objectIds) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const target = objsById.get(id);
+      if (target && !target.locked) toDelete.push(id);
+    }
+    if (toDelete.length === 0) return;
+    // Cable contract: any rf_cable that points to a doomed object via
+    // either of its endpoint links would be left dangling, and our
+    // user-facing rule is "cable 一端 unlink 就直接移除". Walk the cable
+    // list ONCE, gather cables whose A or B targets a deleted object,
+    // and roll them into the same delete batch. Closure over `toDelete`
+    // is intentional — we add to it before issuing API calls.
+    const doomedSet = new Set<string>(toDelete);
+    for (const obj of state.scene.objects) {
+      if (doomedSet.has(obj.id)) continue;
+      const props = (obj.properties ?? {}) as {
+        rfCableEndpoints?: {
+          A?: { targetObjectId?: string };
+          B?: { targetObjectId?: string };
+        };
+      };
+      const eps = props.rfCableEndpoints;
+      if (!eps) continue;
+      const aTarget = eps.A?.targetObjectId;
+      const bTarget = eps.B?.targetObjectId;
+      if ((aTarget && doomedSet.has(aTarget)) || (bTarget && doomedSet.has(bTarget))) {
+        toDelete.push(obj.id);
+        doomedSet.add(obj.id);
+      }
+    }
+    // Fire every DELETE in parallel — the API is idempotent per-row and
+    // there's no inter-row ordering constraint, so Promise.all is safe
+    // even when one fails (allSettled keeps the partial successes).
+    // We use Promise.all so a backend 500 surfaces; the local state stays
+    // consistent because we only reduce the deleted set after.
+    await Promise.all(toDelete.map((id) => deleteObjectApi(id)));
+    // ONE state update — what the user wanted: 50 deletes = 1 re-render.
+    const deletedSet = new Set<string>(toDelete);
+    set((current) => {
+      const nextObjects = current.scene.objects.filter((object) => !deletedSet.has(object.id));
       const fallback = nextObjects[0];
       const nextObjectIdSet = new Set(nextObjects.map((object) => object.id));
-      const remainingSelectedIds = state.selectedObjectIds.filter((id) => id !== objectId && nextObjectIdSet.has(id));
-      const activeWasDeleted = state.selectedObjectId === objectId;
+      const remainingSelectedIds = current.selectedObjectIds.filter(
+        (id) => !deletedSet.has(id) && nextObjectIdSet.has(id),
+      );
+      const activeWasDeleted =
+        current.selectedObjectId !== null && deletedSet.has(current.selectedObjectId);
       const nextSelectedObjectIds =
         remainingSelectedIds.length > 0
           ? remainingSelectedIds
@@ -2447,15 +2560,19 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
             ? [fallback.id]
             : [];
       return {
-        selectedObjectId: activeWasDeleted ? nextSelectedObjectIds[0] ?? null : state.selectedObjectId,
+        selectedObjectId: activeWasDeleted
+          ? nextSelectedObjectIds[0] ?? null
+          : current.selectedObjectId,
         selectedObjectIds: nextSelectedObjectIds,
-        selectedComponentId:
-          activeWasDeleted ? fallback?.componentId ?? null : state.selectedComponentId,
+        selectedComponentId: activeWasDeleted
+          ? fallback?.componentId ?? null
+          : current.selectedComponentId,
         scene: {
-          ...state.scene,
+          ...current.scene,
           objects: nextObjects,
-          assemblyRelations: state.scene.assemblyRelations.filter(
-            (relation) => relation.objectAId !== objectId && relation.objectBId !== objectId,
+          assemblyRelations: current.scene.assemblyRelations.filter(
+            (relation) =>
+              !deletedSet.has(relation.objectAId) && !deletedSet.has(relation.objectBId),
           ),
         },
       };
