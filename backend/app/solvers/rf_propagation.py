@@ -238,35 +238,49 @@ def build_rf_propagation(
     signal_at_port: dict[PortKey, RfSignalState] = {}
     queue: deque[tuple[PortKey, RfSignalState]] = deque()
 
-    # Seed: every rf_source channel emits at its anchor.
-    #
-    # Defensive fallback: when `channels[]` is null/empty (the
-    # dds_ad9959_pcb auto-create path leaves it that way until the user
-    # edits a channel), synthesise a default seed for each rf_out anchor
-    # on the asset so the propagation still drives downstream sinks.
-    # Mirrors the frontend `buildRfPropagation` and the panel's
-    # EditableAd9959Row — both default to 80 MHz at full amplitude when
-    # no explicit channel is stored.
+    # Seed: every rf_source rf_out anchor emits at its anchor. Persisted
+    # `channels[]` entries override the per-anchor freq / amp; anchors
+    # without a matching channel fall back to 80 MHz at full amplitude.
+    # Mirrors the frontend `buildRfPropagation` — see there for the full
+    # rationale (the per-anchor walk fixes a bug where editing just CH0
+    # would silence CH1..CH3).
     for e in elements:
         if e.element_kind != "rf_source":
             continue
         channels = (e.kind_params or {}).get("channels") or []
-        seeds: list[tuple[str, float, float]] = []
+        persisted_by_anchor: dict[str, tuple[float, float]] = {}
         for ch in channels:
             anchor_name = ch.get("anchorName")
             if not isinstance(anchor_name, str):
                 continue
-            seeds.append((
-                anchor_name,
+            persisted_by_anchor[anchor_name] = (
                 float(ch.get("frequencyMhz", 80.0)),
                 float(ch.get("amplitudeScale") or 0.0),
-            ))
+            )
+        anchors = anchors_by_obj.get(e.object_id) or []
+        seeds: list[tuple[str, float, float]] = []
+        for a in anchors:
+            if a.get("id") != "rf_out":
+                continue
+            anchor_name = anchor_lookup_name(a)
+            persisted = persisted_by_anchor.get(anchor_name)
+            if persisted is not None:
+                seeds.append((anchor_name, persisted[0], persisted[1]))
+            else:
+                seeds.append((anchor_name, 80.0, 1.0))
         if not seeds:
-            anchors = anchors_by_obj.get(e.object_id) or []
-            for a in anchors:
-                if a.get("id") != "rf_out":
+            # Degenerate: asset has no anchor metadata. Fall back to
+            # whatever explicit channels[] does contain so we emit
+            # something.
+            for ch in channels:
+                anchor_name = ch.get("anchorName")
+                if not isinstance(anchor_name, str):
                     continue
-                seeds.append((anchor_lookup_name(a), 80.0, 1.0))
+                seeds.append((
+                    anchor_name,
+                    float(ch.get("frequencyMhz", 80.0)),
+                    float(ch.get("amplitudeScale") or 0.0),
+                ))
         for anchor_name, freq_mhz, amp_scale in seeds:
             signal = RfSignalState(
                 frequency_mhz=freq_mhz,

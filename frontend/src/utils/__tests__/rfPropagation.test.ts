@@ -136,6 +136,26 @@ function makeAd9959(objectId: string, freqMhz: number, ampScale: number) {
   return { obj, comp, asset, pe };
 }
 
+function makeAd9959FourCh(objectId: string) {
+  // 4-channel DDS with NO persisted channels[] — exercises the
+  // "per-anchor seed from asset rf_out anchors" fallback path that
+  // the dds_ad9959_pcb auto-create flow ends up in before the user
+  // commits any edit.
+  const anchors = [
+    makeAnchor("rf_out", "CH0"),
+    makeAnchor("rf_out", "CH1"),
+    makeAnchor("rf_out", "CH2"),
+    makeAnchor("rf_out", "CH3"),
+  ];
+  const asset = makeAsset(`asset-${objectId}`, anchors);
+  const comp = makeComponent(`comp-${objectId}`, asset.id, "rf_source");
+  const obj = makeObject(objectId, comp.id);
+  // kindParams = {} — channels is missing (matches what the
+  // auto_create_physics_element_for_object flow leaves on the row).
+  const pe = makePe(objectId, "rf_source", {});
+  return { obj, comp, asset, pe };
+}
+
 function makeAmp(objectId: string, gainDb: number, outputMaxDbm?: number) {
   const anchors = [makeAnchor("rf_in", "rf_in"), makeAnchor("rf_out", "rf_out")];
   const asset = makeAsset(`asset-${objectId}`, anchors);
@@ -269,6 +289,52 @@ describe("buildRfPropagation", () => {
     const atAom = result.signalAtPort.get(portKey("aom1", "rf_in"))!;
     expect(atAom.vpp).toBeCloseTo(expected, 5);
     expect(atAom.cumulativeGainDb).toBeCloseTo(13.5, 6);
+  });
+
+  it("seeds CH1..CH3 with defaults even when only CH0 has a persisted channel entry", () => {
+    // Bug repro: editing only CH0 used to short-circuit the fallback,
+    // leaving CH1..CH3 unseeded. Cables hanging off CH1 saw "no upstream"
+    // even though the DDS clearly drives that anchor.
+    const src = makeAd9959FourCh("src1");
+    // Inject ONE persisted channel for CH0 only (mirrors what
+    // commitChannelEdit does after the first edit). CH1..CH3 stay absent.
+    src.pe.kindParams = {
+      channels: [
+        {
+          channelIndex: 0,
+          anchorName: "CH0",
+          mode: "single_tone",
+          channelEnabled: true,
+          frequencyMhz: 120.0, // user-typed value
+          phaseDeg: 0,
+          amplitudeScale: 0.4,
+          sweep: null,
+          modulationLevels: 4,
+          profiles: null,
+        },
+      ],
+    };
+    const aom = makeAom("aom1");
+    // Cable goes from CH1, not CH0 — exercises the fallback for an
+    // anchor that the user never touched.
+    const cable = makeCable("c", { objectId: "src1", anchorName: "CH1" }, { objectId: "aom1", anchorName: "rf_in" });
+    const result = buildRfPropagation({
+      objects: [src.obj, aom.obj, cable.obj],
+      components: [src.comp, aom.comp, cable.comp],
+      assets: [src.asset, aom.asset, cable.asset],
+      physicsElements: [src.pe, aom.pe, cable.pe],
+    });
+    // CH0 carries the persisted state.
+    const ch0 = result.signalAtPort.get(portKey("src1", "CH0"))!;
+    expect(ch0.frequencyMhz).toBe(120.0);
+    expect(ch0.vpp).toBeCloseTo(0.4 * AD9959_VPP_FULL_SCALE, 6);
+    // CH1 falls back to defaults — and DRIVES the AOM via the cable.
+    const ch1 = result.signalAtPort.get(portKey("src1", "CH1"))!;
+    expect(ch1.frequencyMhz).toBe(80.0);
+    expect(ch1.vpp).toBeCloseTo(AD9959_VPP_FULL_SCALE, 6);
+    const atAom = result.signalAtPort.get(portKey("aom1", "rf_in"))!;
+    expect(atAom.frequencyMhz).toBe(80.0);
+    expect(atAom.sourceAnchorName).toBe("CH1");
   });
 
   it("synthesises default channels from asset rf_out anchors when channels[] is null", () => {

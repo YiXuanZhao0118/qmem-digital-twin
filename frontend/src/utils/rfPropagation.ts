@@ -296,35 +296,59 @@ export function buildRfPropagation(args: {
   // Seed: every rf_source channel's anchor emits its raw signal AT that
   // anchor (the source itself). Then we walk outward via cables.
   //
-  // Defensive fallback: when `channels[]` is null/empty (the
-  // dds_ad9959_pcb auto-create path bootstraps the PhysicsElement
-  // before any user edit, leaving channels at null), synthesise a
-  // default channel for each rf_out anchor on the asset so the
-  // propagation still produces signals downstream. This mirrors the
-  // EditableAd9959Row's synthesised default — the panel and the solver
-  // both treat un-edited DDS outputs as 80 MHz at full amplitude, so
-  // the user sees the cable chain working immediately on load.
+  // Seeding strategy — per-anchor, not per-explicit-channel:
+  //   1. Index any persisted `channels[]` entries by anchorName so the
+  //      user's typed freq / amp can override the default for that
+  //      anchor.
+  //   2. Walk EVERY rf_out anchor on the source asset and emit one seed
+  //      per anchor. Anchors with a matching channels[] entry use the
+  //      persisted values; the rest fall back to 80 MHz / amp = 1.0
+  //      (same defaults as `EditableAd9959Row`).
+  //
+  //   The earlier version short-circuited when channels[] had ANY entry,
+  //   which broke multi-channel chains the moment the user committed
+  //   only CH0: CH1..CH3 had no explicit channel and got no seed, so
+  //   any cable hanging off CH1/CH2/CH3 saw "no upstream". Anchoring on
+  //   the asset's rf_out list instead guarantees every physical SMA
+  //   port emits a signal regardless of edit history.
   for (const pe of physicsElements) {
     if (pe.elementKind !== "rf_source") continue;
     const params = pe.kindParams as RfSourceParams;
     const explicitChannels = params.channels ?? [];
+    const persistedByAnchor = new Map<
+      string,
+      { frequencyMhz: number; amplitudeScale: number }
+    >();
+    for (const ch of explicitChannels) {
+      if (!ch.anchorName) continue;
+      persistedByAnchor.set(ch.anchorName, {
+        frequencyMhz: ch.frequencyMhz,
+        amplitudeScale: ch.amplitudeScale ?? 0,
+      });
+    }
+    const anchors = anchorsByObj.get(pe.objectId) ?? [];
     type SourceSeed = { anchorName: string; frequencyMhz: number; amplitudeScale: number };
-    const seeds: SourceSeed[] = explicitChannels
-      .filter((c): c is typeof c & { anchorName: string } => Boolean(c.anchorName))
-      .map((c) => ({
-        anchorName: c.anchorName!,
-        frequencyMhz: c.frequencyMhz,
-        amplitudeScale: c.amplitudeScale ?? 0,
-      }));
+    const seeds: SourceSeed[] = [];
+    for (const a of anchors) {
+      if (a.id !== "rf_out") continue;
+      const anchorName = a.name ?? a.id;
+      const persisted = persistedByAnchor.get(anchorName);
+      seeds.push({
+        anchorName,
+        frequencyMhz: persisted?.frequencyMhz ?? 80.0,
+        amplitudeScale: persisted?.amplitudeScale ?? 1.0,
+      });
+    }
+    // If the source asset has no anchor metadata (degenerate case —
+    // catalog row predates the anchor contract), fall back to whatever
+    // explicit channels[] does contain so we still emit something.
     if (seeds.length === 0) {
-      // No explicit channels — emit one default seed per asset rf_out anchor.
-      const anchors = anchorsByObj.get(pe.objectId) ?? [];
-      for (const a of anchors) {
-        if (a.id !== "rf_out") continue;
+      for (const ch of explicitChannels) {
+        if (!ch.anchorName) continue;
         seeds.push({
-          anchorName: a.name ?? a.id,
-          frequencyMhz: 80.0,
-          amplitudeScale: 1.0,
+          anchorName: ch.anchorName,
+          frequencyMhz: ch.frequencyMhz,
+          amplitudeScale: ch.amplitudeScale ?? 0,
         });
       }
     }
