@@ -313,7 +313,7 @@ describe("buildRfPropagation", () => {
           profiles: null,
         },
       ],
-    };
+    } as unknown as PhysicsElement["kindParams"];
     const aom = makeAom("aom1");
     // Cable goes from CH1, not CH0 — exercises the fallback for an
     // anchor that the user never touched.
@@ -343,7 +343,7 @@ describe("buildRfPropagation", () => {
     // the AOM rf_in shows live readings on first load (before the user
     // edits any channel). Defaults are 80 MHz at amp=1.0.
     const src = makeAd9959("src1", 80.0, 0.5);
-    src.pe.kindParams = {}; // strip the channels[] the builder seeded
+    src.pe.kindParams = {} as unknown as PhysicsElement["kindParams"]; // strip the channels[] the builder seeded
     const aom = makeAom("aom1");
     const cable = makeCable("c", { objectId: "src1", anchorName: "CH0" }, { objectId: "aom1", anchorName: "rf_in" });
 

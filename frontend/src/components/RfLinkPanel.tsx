@@ -54,12 +54,28 @@ import { pluginForKind } from "../kinds/_plugins";
 import { FloatingPanel } from "./workspace/FloatingPanel";
 
 const PORT_R = 5;
-const NODE_W = 240;
+/** Minimum / maximum block width. Final width per column is the widest
+ *  rendered row inside that column, clamped to this range so a degenerate
+ *  one-char anchor doesn't shrink the block to nothing and a runaway
+ *  provenance string doesn't blow the SVG out beyond a sensible bound. */
+const NODE_MIN_W = 200;
+const NODE_MAX_W = 480;
 const NODE_HEADER_H = 28;
 const PORT_ROW_H = 30;
 const COL_GAP = 90;
 const ROW_GAP = 28;
 const PAD = 24;
+
+/** Estimate the rendered pixel width of a chunk of text at the given font
+ *  size. The system-ui stack we use is variable-width, but at this fontSize
+ *  range ~0.58 × fontSize per ASCII character is a reliable upper bound
+ *  (proportional digits / punctuation come in shorter, CJK comes in longer
+ *  but we don't put CJK in the panel). The estimator is used purely for
+ *  layout sizing, not for clipping decisions, so consistent over-estimation
+ *  is fine — it just leaves a little extra padding. */
+function estimateTextWidthPx(text: string, fontSizePx = 10): number {
+  return text.length * fontSizePx * 0.58;
+}
 
 /** AD9959 single-ended into 50 Ω at default Rset (1.91 kΩ) is roughly
  *  1.0 Vpp at amplitudeScale = 1.0. Now imported from rfPropagation so
@@ -740,22 +756,126 @@ export function RfLinkPanel() {
   };
 
   type Pos = { x: number; y: number; w: number; h: number };
+
+  /** Per-row pixel-width estimate based on the actual text the row will
+   *  render. Mirrors the JSX in EditableAd9959Row / AomInRow / AmpInRow /
+   *  AmpOutRow so the block width matches the content one-to-one. */
+  const estimateRowWidthPx = (node: RfNode, port: Port): number => {
+    // Anchor-name label (left or right padded depending on role).
+    const NAME_PAD = 30;
+    const SIDE_PAD = 24; // 12px each side inside the foreignObject
+    const GAP = 6;
+    const labelW = estimateTextWidthPx(port.anchorName, 10);
+    // Per-port kind-specific bodies. Keep the order in sync with the
+    // render switch below so missing branches show up as conservative
+    // "just the anchor name" estimates (small block, easy to spot).
+    if (node.kind === "rf_source" && port.role === "out") {
+      // EditableAd9959Row: [name] [freq input 50px] MHz [vpp input 44px] Vpp
+      const FREQ_INPUT = 50;
+      const VPP_INPUT = 44;
+      const mhzLabel = estimateTextWidthPx("MHz", 10);
+      const vppLabel = estimateTextWidthPx("Vpp", 10);
+      return SIDE_PAD + NAME_PAD + GAP + FREQ_INPUT + GAP + mhzLabel + GAP + VPP_INPUT + GAP + vppLabel;
+    }
+    if (node.kind === "aom" && port.role === "in") {
+      const aom = aomByObjectId.get(node.objectId);
+      const requiredP = aom ? aomRequiredPowerW(aom) : null;
+      const requiredVpp = requiredP != null ? powerWToVpp(requiredP) : null;
+      const signal = rfPropagation.signalAtPort.get(rfPortKey(node.objectId, port.anchorName));
+      const sourceName = signal
+        ? objects.find((o) => o.id === signal.sourceObjectId)?.name ?? null
+        : null;
+      const incomingW = signal
+        ? estimateTextWidthPx(
+            `${signal.frequencyMhz.toFixed(1)} MHz · ${signal.vpp.toFixed(2)} V · ${signal.vpp.toFixed(2)} mW`,
+            10,
+          )
+        : estimateTextWidthPx("no upstream", 10);
+      const requiredW = requiredVpp != null ? estimateTextWidthPx(`(≥ ${requiredVpp.toFixed(2)} V)`, 9) : 0;
+      const badgeW = signal && requiredVpp != null ? estimateTextWidthPx("⚠ over", 9) : 0;
+      const clampW = signal?.saturated ? estimateTextWidthPx("⚠ clamp", 9) : 0;
+      const provenanceW = signal
+        ? Math.min(
+            estimateTextWidthPx(
+              `← ${sourceName ?? ""} · ${signal.sourceAnchorName}` +
+                (Math.abs(signal.cumulativeGainDb) > 0.05
+                  ? ` · ${signal.cumulativeGainDb > 0 ? "+" : ""}${signal.cumulativeGainDb.toFixed(1)} dB`
+                  : ""),
+              9,
+            ),
+            90, // matches the maxWidth on the provenance chip
+          )
+        : 0;
+      return SIDE_PAD + NAME_PAD + GAP + incomingW + GAP + requiredW + GAP + badgeW + GAP + clampW + GAP + provenanceW;
+    }
+    if (node.kind === "rf_amplifier") {
+      const amp = ampByObjectId.get(node.objectId);
+      const signal = rfPropagation.signalAtPort.get(rfPortKey(node.objectId, port.anchorName));
+      if (port.role === "in") {
+        const ioW = signal
+          ? estimateTextWidthPx(`in: ${signal.vpp.toFixed(2)} Vpp`, 10)
+          : estimateTextWidthPx("no upstream", 10);
+        return SIDE_PAD + NAME_PAD + GAP + ioW;
+      }
+      // rf_out row: `+gainDb dB → Vpp Vpp ⚠ clamp anchorName`
+      const gainW = estimateTextWidthPx(`+${(amp?.gainDb ?? 0).toFixed(1)} dB`, 10);
+      const ioW = signal ? estimateTextWidthPx(`→ ${signal.vpp.toFixed(2)} Vpp`, 10) : 0;
+      const clampW = signal?.saturated ? estimateTextWidthPx("⚠ clamp", 9) : 0;
+      return SIDE_PAD + gainW + GAP + ioW + GAP + clampW + GAP + NAME_PAD;
+    }
+    // Generic fallback: just the anchor name on one side.
+    return SIDE_PAD + NAME_PAD + GAP + labelW;
+  };
+
+  /** Header width: object name + kind label + a small breathing margin. */
+  const estimateHeaderWidthPx = (node: RfNode): number => {
+    const SIDE_PAD = 18; // 10px name margin + 8px end gap
+    const GAP = 14;
+    const nameW = estimateTextWidthPx(node.name, 12);
+    const kindW = node.kind ? estimateTextWidthPx(node.kind, 9) : 0;
+    return SIDE_PAD + nameW + GAP + kindW;
+  };
+
   const positionByNodeId = useMemo(() => {
     const cols: RfNode[][] = [[], [], []];
     nodes.forEach((n) => cols[n.column].push(n));
     cols.forEach((col) => col.sort((a, b) => a.name.localeCompare(b.name)));
+
+    // Per-column max width — every block in the column shares this width
+    // so the in / out port circles line up vertically and the cable edges
+    // come out at predictable x coordinates.
+    const colWidths = cols.map((col) => {
+      let max = NODE_MIN_W;
+      for (const node of col) {
+        max = Math.max(max, estimateHeaderWidthPx(node));
+        for (const port of node.ports) {
+          max = Math.max(max, estimateRowWidthPx(node, port));
+        }
+      }
+      return Math.min(NODE_MAX_W, Math.ceil(max));
+    });
+
+    // Cumulative column x offsets — variable per scene because each
+    // column gets its own width.
+    const colX: number[] = [PAD];
+    for (let i = 1; i < cols.length; i += 1) {
+      colX.push(colX[i - 1] + colWidths[i - 1] + COL_GAP);
+    }
+
     const positions = new Map<string, Pos>();
     cols.forEach((col, i) => {
       let y = PAD;
-      const x = PAD + i * (NODE_W + COL_GAP);
+      const x = colX[i];
+      const w = colWidths[i];
       col.forEach((node) => {
         const h = NODE_HEADER_H + node.ports.length * PORT_ROW_H + 10;
-        positions.set(node.objectId, { x, y, w: NODE_W, h });
+        positions.set(node.objectId, { x, y, w, h });
         y += h + ROW_GAP;
       });
     });
     return positions;
-  }, [nodes]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes, rfPropagation, aomByObjectId, ampByObjectId, objects]);
 
   const nodeById = useMemo(() => {
     const m = new Map<string, RfNode>();
@@ -783,7 +903,16 @@ export function RfLinkPanel() {
     return Math.max(max + PAD, 160);
   }, [positionByNodeId]);
 
-  const svgWidth = PAD + 3 * NODE_W + 2 * COL_GAP + PAD;
+  const svgWidth = useMemo(() => {
+    let max = 0;
+    positionByNodeId.forEach((p) => {
+      max = Math.max(max, p.x + p.w);
+    });
+    // Always reserve the full 3-column footprint so an empty far-right
+    // column doesn't crowd the cables coming from the middle.
+    const fallback = PAD + 3 * NODE_MIN_W + 2 * COL_GAP + PAD;
+    return Math.max(max + PAD, fallback);
+  }, [positionByNodeId]);
 
   return (
     <FloatingPanel id="rf-link" title="RF link" icon={<Cable size={14} />}>
