@@ -88,6 +88,51 @@ const Z_OHM = 50;
  *  Phase A readout we use 780 nm (Rb/Cs cold-atom typical). */
 const DEFAULT_LAMBDA_NM = 780;
 
+/** localStorage key for the per-object (dx, dy) layout offsets the user
+ *  has dragged blocks to. Keyed by SceneObject.id so an object moves
+ *  consistently across panel re-renders / browser reloads, but resets
+ *  cleanly when the object is deleted. */
+const NODE_OFFSETS_STORAGE_KEY = "qmem.rfLinkPanel.nodeOffsets";
+
+type NodeOffset = { dx: number; dy: number };
+
+function loadNodeOffsets(): Map<string, NodeOffset> {
+  if (typeof window === "undefined") return new Map();
+  try {
+    const raw = window.localStorage.getItem(NODE_OFFSETS_STORAGE_KEY);
+    if (!raw) return new Map();
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return new Map();
+    const out = new Map<string, NodeOffset>();
+    for (const [k, v] of Object.entries(parsed)) {
+      if (
+        v &&
+        typeof v === "object" &&
+        typeof (v as NodeOffset).dx === "number" &&
+        typeof (v as NodeOffset).dy === "number"
+      ) {
+        out.set(k, { dx: (v as NodeOffset).dx, dy: (v as NodeOffset).dy });
+      }
+    }
+    return out;
+  } catch {
+    return new Map();
+  }
+}
+
+function saveNodeOffsets(offsets: Map<string, NodeOffset>): void {
+  if (typeof window === "undefined") return;
+  try {
+    const obj: Record<string, NodeOffset> = {};
+    offsets.forEach((v, k) => {
+      obj[k] = v;
+    });
+    window.localStorage.setItem(NODE_OFFSETS_STORAGE_KEY, JSON.stringify(obj));
+  } catch {
+    /* ignore quota / serialization errors */
+  }
+}
+
 type PortRole = "in" | "out";
 
 type Port = {
@@ -543,6 +588,25 @@ export function RfLinkPanel() {
   const [drag, setDrag] = useState<DragState | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
+  // Per-node layout drag state. Independent of the cable rubber-band
+  // drag above: this one starts on the node's rect (not on a port
+  // circle), is persisted to localStorage, and lets the user override
+  // the auto-column layout to declutter dense scenes.
+  type NodeDragState = {
+    objectId: string;
+    startClientX: number;
+    startClientY: number;
+    initialOffsetX: number;
+    initialOffsetY: number;
+    /** Pointerdown→pointerup with no movement counts as a click (selects
+     *  the object); set true the moment the cursor moves past the
+     *  threshold so we know to suppress the click semantics. */
+    movedPastThreshold: boolean;
+  };
+  const NODE_DRAG_THRESHOLD_PX = 4;
+  const [nodeDrag, setNodeDrag] = useState<NodeDragState | null>(null);
+  const [nodeOffsets, setNodeOffsets] = useState<Map<string, NodeOffset>>(() => loadNodeOffsets());
+
   // Body class toggled while a drag is in progress so other floating
   // panels can dim themselves and stop intercepting clicks — the user
   // is clearly mid-action and doesn't want a stray panel interrupting.
@@ -869,13 +933,23 @@ export function RfLinkPanel() {
       const w = colWidths[i];
       col.forEach((node) => {
         const h = NODE_HEADER_H + node.ports.length * PORT_ROW_H + 10;
-        positions.set(node.objectId, { x, y, w, h });
+        // Apply per-node manual drag offset on top of the auto-layout
+        // base position. Offsets persist in localStorage; the auto
+        // layout column / row spacing is the fallback for un-dragged
+        // nodes and the anchor any future "reset layout" button reverts to.
+        const off = nodeOffsets.get(node.objectId);
+        positions.set(node.objectId, {
+          x: x + (off?.dx ?? 0),
+          y: y + (off?.dy ?? 0),
+          w,
+          h,
+        });
         y += h + ROW_GAP;
       });
     });
     return positions;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, rfPropagation, aomByObjectId, ampByObjectId, objects]);
+  }, [nodes, rfPropagation, aomByObjectId, ampByObjectId, objects, nodeOffsets]);
 
   const nodeById = useMemo(() => {
     const m = new Map<string, RfNode>();
@@ -1052,8 +1126,62 @@ export function RfLinkPanel() {
                       fill="#23232a"
                       stroke={selected ? "#5fa8ff" : "#3e3e48"}
                       strokeWidth={selected ? 2 : 1}
-                      style={{ cursor: "pointer" }}
-                      onClick={() => selectObject(n.objectId)}
+                      // grab → grabbing cue. Port circles + foreignObject
+                      // bodies sit on top of this rect in document order,
+                      // so pointerdown on a port / input never reaches
+                      // here — node drag and port drag are cleanly
+                      // separated.
+                      style={{ cursor: nodeDrag?.objectId === n.objectId ? "grabbing" : "grab" }}
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        const existing = nodeOffsets.get(n.objectId) ?? { dx: 0, dy: 0 };
+                        setNodeDrag({
+                          objectId: n.objectId,
+                          startClientX: e.clientX,
+                          startClientY: e.clientY,
+                          initialOffsetX: existing.dx,
+                          initialOffsetY: existing.dy,
+                          movedPastThreshold: false,
+                        });
+                        try { (e.currentTarget as Element).setPointerCapture?.(e.pointerId); } catch {}
+                      }}
+                      onPointerMove={(e) => {
+                        if (!nodeDrag || nodeDrag.objectId !== n.objectId) return;
+                        const dx = e.clientX - nodeDrag.startClientX;
+                        const dy = e.clientY - nodeDrag.startClientY;
+                        const moved =
+                          nodeDrag.movedPastThreshold ||
+                          Math.abs(dx) > NODE_DRAG_THRESHOLD_PX ||
+                          Math.abs(dy) > NODE_DRAG_THRESHOLD_PX;
+                        if (!moved) return;
+                        setNodeOffsets((prev) => {
+                          const next = new Map(prev);
+                          next.set(n.objectId, {
+                            dx: nodeDrag.initialOffsetX + dx,
+                            dy: nodeDrag.initialOffsetY + dy,
+                          });
+                          return next;
+                        });
+                        if (!nodeDrag.movedPastThreshold) {
+                          setNodeDrag({ ...nodeDrag, movedPastThreshold: true });
+                        }
+                      }}
+                      onPointerUp={(e) => {
+                        if (!nodeDrag || nodeDrag.objectId !== n.objectId) {
+                          setNodeDrag(null);
+                          return;
+                        }
+                        try { (e.currentTarget as Element).releasePointerCapture?.(e.pointerId); } catch {}
+                        if (!nodeDrag.movedPastThreshold) {
+                          // Click semantics — no movement past the threshold.
+                          selectObject(n.objectId);
+                        } else {
+                          // Persist the new resting position.
+                          saveNodeOffsets(nodeOffsets);
+                        }
+                        setNodeDrag(null);
+                      }}
+                      onPointerCancel={() => setNodeDrag(null)}
                     />
                     <text
                       x={pos.x + 10}
@@ -1375,12 +1503,34 @@ export function RfLinkPanel() {
             ))}
           </div>
         )}
-        <div style={{ fontSize: 10, color: "#6e6e7a", display: "flex", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 10, color: "#6e6e7a", display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
           <span><span style={{ color: "#7be08a" }}>●</span> rf_out (editable / amp out)</span>
           <span><span style={{ color: "#62a3ff" }}>●</span> rf_in (computed Vpp)</span>
           <span>Amplifier rows show Vpp_in → +gain dB → Vpp_out (clamped at P_max).</span>
-          <span>Drag from a port to another to auto-create a cable.</span>
+          <span>Drag a block to reposition · drag a port to create a cable.</span>
           <span>AD9959 full-scale ≈ {VPP_FULL_SCALE.toFixed(1)} Vpp @ 50 Ω · λ = {DEFAULT_LAMBDA_NM} nm for AOM req.</span>
+          {nodeOffsets.size > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setNodeOffsets(new Map());
+                saveNodeOffsets(new Map());
+              }}
+              title="Clear manual block positions and snap everything back to the column layout"
+              style={{
+                marginLeft: "auto",
+                background: "#23232a",
+                color: "#cfcfd8",
+                border: "1px solid #3e3e48",
+                borderRadius: 3,
+                padding: "2px 8px",
+                fontSize: 10,
+                cursor: "pointer",
+              }}
+            >
+              Reset layout ({nodeOffsets.size})
+            </button>
+          )}
         </div>
       </div>
     </FloatingPanel>
