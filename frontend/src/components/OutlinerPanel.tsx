@@ -13,17 +13,20 @@
  */
 
 import {
+  Bookmark,
   ChevronDown,
   ChevronRight,
   Eye,
   EyeOff,
   FolderPlus,
   Layers3,
+  Library,
   Link2,
   Link2Off,
   Lock,
   LockOpen,
   Pencil,
+  Stamp,
   Trash2,
 } from "lucide-react";
 import * as React from "react";
@@ -33,11 +36,13 @@ import { useSceneStore } from "../store/sceneStore";
 import type {
   Collection,
   CollectionMember,
+  CollectionTemplate,
   ComponentItem,
   SceneObject,
 } from "../types/digitalTwin";
 import { getComponentName } from "../utils/components";
 import { computeRigidCollectionIds } from "../utils/rigidGroup";
+import { capabilityProfile } from "../kinds/_capabilityProfile";
 import {
   isCollectionVisible,
   isObjectVisible,
@@ -141,6 +146,14 @@ export function OutlinerPanel() {
   const toggleSessionHiddenObject = useSceneStore((state) => state.toggleSessionHiddenObject);
   const forceShowObject = useSceneStore((state) => state.forceShowObject);
   const deleteObject = useSceneStore((state) => state.deleteObject);
+  const collectionTemplates = useSceneStore((state) => state.collectionTemplates);
+  const loadCollectionTemplates = useSceneStore((state) => state.loadCollectionTemplates);
+  const saveCollectionAsTemplate = useSceneStore((state) => state.saveCollectionAsTemplate);
+  const instantiateCollectionTemplateAtCursor = useSceneStore(
+    (state) => state.instantiateCollectionTemplateAtCursor,
+  );
+  const deleteCollectionTemplate = useSceneStore((state) => state.deleteCollectionTemplate);
+  const cursorMm = useSceneStore((state) => state.transformCursorMm.left);
 
   const [expanded, setExpanded] = useState<Set<string>>(() =>
     loadStringSet(EXPANDED_COLLECTIONS_STORAGE_KEY),
@@ -148,6 +161,17 @@ export function OutlinerPanel() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+
+  // Lazy fetch: templates panel is collapsed by default, so the first time the
+  // user opens it (or this panel mounts after a saved template event) we pull
+  // the list. WebSocket broadcast for templates is out of scope for v1 —
+  // saves / deletes from this client mutate local state directly, and a
+  // second client just sees a stale list until they re-open the dropdown.
+  useEffect(() => {
+    if (!templatesOpen) return;
+    void loadCollectionTemplates();
+  }, [templatesOpen, loadCollectionTemplates]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -170,15 +194,33 @@ export function OutlinerPanel() {
     () => new Map(scene.components.map((component) => [component.id, component])),
     [scene.components],
   );
+  // Hide every SceneObject whose ElementKind opts out of `outlinerVisible`
+  // in the capability profile — currently `programmable_pulse_generator`
+  // (managed from RF Link / Pulse & Timing) and, once the fiber split
+  // lands, the derived `fiber` body wrapper. New kinds that need hiding
+  // just add an OVERRIDES entry; no edit here.
+  const outlinerHiddenKinds = useMemo(() => {
+    const out = new Set<string>();
+    for (const pe of scene.physicsElements) {
+      if (!capabilityProfile(pe.elementKind).outlinerVisible) {
+        out.add(pe.objectId);
+      }
+    }
+    return out;
+  }, [scene.physicsElements]);
+  const visibleObjects = useMemo(
+    () => scene.objects.filter((o) => !outlinerHiddenKinds.has(o.id)),
+    [scene.objects, outlinerHiddenKinds],
+  );
   const objectsById = useMemo(
-    () => new Map(scene.objects.map((o) => [o.id, o])),
-    [scene.objects],
+    () => new Map(visibleObjects.map((o) => [o.id, o])),
+    [visibleObjects],
   );
 
   const childrenIndex = useMemo(() => buildChildrenIndex(collections), [collections]);
   const objectsByCollection = useMemo(
-    () => buildObjectsByCollection(scene.objects, collectionMembers),
-    [scene.objects, collectionMembers],
+    () => buildObjectsByCollection(visibleObjects, collectionMembers),
+    [visibleObjects, collectionMembers],
   );
 
   /** All object IDs reachable from a collection, walking child collections
@@ -217,7 +259,7 @@ export function OutlinerPanel() {
     (collectionId: string): "all" | "none" | "mixed" | "empty" => {
       const ids = collectAllObjectIdsUnder(collectionId);
       if (ids.length === 0) return "empty";
-      const objsById = new Map(scene.objects.map((o) => [o.id, o]));
+      const objsById = new Map(visibleObjects.map((o) => [o.id, o]));
       let locked = 0;
       let unlocked = 0;
       for (const id of ids) {
@@ -230,7 +272,7 @@ export function OutlinerPanel() {
       if (unlocked === 0) return "all";
       return "mixed";
     },
-    [collectAllObjectIdsUnder, scene.objects],
+    [collectAllObjectIdsUnder, visibleObjects],
   );
 
   /** Bulk-toggle the lock state of every descendant SceneObject in a
@@ -321,6 +363,43 @@ export function OutlinerPanel() {
       await deleteCollection(collection.id);
     },
     [childrenIndex, deleteCollection, objectsByCollection],
+  );
+
+  const handleSaveAsTemplate = useCallback(
+    async (collection: Collection) => {
+      const defaultName = collection.name;
+      const name = window.prompt(
+        `Save "${collection.name}" (and all sub-collections + their objects) as a reusable template.\n\nTemplate name:`,
+        defaultName,
+      );
+      if (name === null) return;
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      await saveCollectionAsTemplate(collection.id, { name: trimmed });
+      setTemplatesOpen(true);
+    },
+    [saveCollectionAsTemplate],
+  );
+
+  const handleInstantiateTemplate = useCallback(
+    async (template: CollectionTemplate) => {
+      // Drops the template at the 3D cursor (transformCursorMm.left). The
+      // store action computes target = cursor; the backend places every new
+      // object at cursor + that member's saved relativeOffset, so the new
+      // bundle's centroid lands exactly on the cursor and relative geometry
+      // matches the saved configuration.
+      await instantiateCollectionTemplateAtCursor(template.id, null);
+    },
+    [instantiateCollectionTemplateAtCursor],
+  );
+
+  const handleDeleteTemplate = useCallback(
+    async (template: CollectionTemplate) => {
+      if (!window.confirm(`Delete template "${template.name}"? This cannot be undone.`))
+        return;
+      await deleteCollectionTemplate(template.id);
+    },
+    [deleteCollectionTemplate],
   );
 
   const handleDragStart = useCallback(
@@ -584,6 +663,17 @@ export function OutlinerPanel() {
           >
             <FolderPlus size={13} />
           </button>
+          <button
+            type="button"
+            className="outliner-action"
+            title="Save as template (Collection Drift) — captures structure, sub-collections and relative poses"
+            onClick={(event) => {
+              event.stopPropagation();
+              void handleSaveAsTemplate(collection);
+            }}
+          >
+            <Bookmark size={13} />
+          </button>
           {!isMaster && editingId !== collection.id && (
             <button
               type="button"
@@ -750,6 +840,18 @@ export function OutlinerPanel() {
         <small>active: {collections.find((c) => c.id === activeCollectionId)?.name ?? "—"}</small>
         <button
           type="button"
+          className={`outliner-action${templatesOpen ? " active" : ""}`}
+          title={
+            templatesOpen
+              ? "Hide collection templates"
+              : `Collection templates (Drift) — ${collectionTemplates.length} saved`
+          }
+          onClick={() => setTemplatesOpen((open) => !open)}
+        >
+          <Library size={14} />
+        </button>
+        <button
+          type="button"
           className="outliner-action"
           title="New top-level collection"
           onClick={() => void handleAddChild(masterCollection.id)}
@@ -758,14 +860,75 @@ export function OutlinerPanel() {
         </button>
       </div>
       <MarqueeTree
-        objects={scene.objects}
+        objects={visibleObjects}
         selectedObjectIds={selectedObjectIds}
         setSelectedObjects={setSelectedObjects}
       >
         {renderCollectionRow(masterCollection, 0)}
       </MarqueeTree>
+      {templatesOpen && (
+        <div className="outliner-templates">
+          <div className="outliner-templates-header">
+            <span>Templates</span>
+            <small>
+              instantiate @ cursor ({cursorMm.x.toFixed(0)}, {cursorMm.y.toFixed(0)},{" "}
+              {cursorMm.z.toFixed(0)}) mm
+            </small>
+          </div>
+          {collectionTemplates.length === 0 ? (
+            <p className="outliner-empty">
+              No templates yet. Save any collection (bookmark icon) to add one here.
+            </p>
+          ) : (
+            <ul className="outliner-templates-list">
+              {collectionTemplates.map((template) => {
+                const totalMembers = countTemplateMembers(template.tree);
+                const totalCollections = countTemplateCollections(template.tree);
+                return (
+                  <li key={template.id} className="outliner-templates-row">
+                    <button
+                      type="button"
+                      className="outliner-templates-instantiate"
+                      title={`Instantiate "${template.name}" at the 3D cursor — places ${totalMembers} object${totalMembers === 1 ? "" : "s"} across ${totalCollections} collection${totalCollections === 1 ? "" : "s"}`}
+                      onClick={() => void handleInstantiateTemplate(template)}
+                    >
+                      <Stamp size={13} />
+                      <span className="outliner-name">
+                        <em>{template.name}</em>
+                        <small>
+                          {totalCollections} col · {totalMembers} obj
+                        </small>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="outliner-action danger-action"
+                      title="Delete template"
+                      onClick={() => void handleDeleteTemplate(template)}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
     </section>
   );
+}
+
+function countTemplateMembers(node: CollectionTemplate["tree"]): number {
+  let total = node.members.length;
+  for (const child of node.children) total += countTemplateMembers(child);
+  return total;
+}
+
+function countTemplateCollections(node: CollectionTemplate["tree"]): number {
+  let total = 1;
+  for (const child of node.children) total += countTemplateCollections(child);
+  return total;
 }
 
 /** Wraps the outliner tree to provide drag-marquee selection.

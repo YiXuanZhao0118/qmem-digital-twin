@@ -10,7 +10,7 @@ from app import crud, schemas
 from app.db import get_session
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.models import PhysicsElement, SceneObject
+from app.models import PhysicsElement, SceneObject, TimingProgram
 from app.v2_bindings import (
     V2_TRACKED_AOM_KEYS,
     V2_TRACKED_BEAM_SPLITTER_KEYS,
@@ -36,6 +36,49 @@ from app.websocket import manager
 
 
 router = APIRouter()
+
+
+async def _validate_ppg_timing_binding(
+    session: AsyncSession,
+    *,
+    object_id: uuid.UUID,
+    element_kind: str,
+    kind_params: dict[str, object],
+) -> None:
+    if element_kind != "programmable_pulse_generator":
+        return
+    raw_id = kind_params.get("timingProgramId")
+    if raw_id is None:
+        return
+    try:
+        timing_program_id = raw_id if isinstance(raw_id, uuid.UUID) else uuid.UUID(str(raw_id))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid PPG timingProgramId")
+
+    program = await session.get(TimingProgram, timing_program_id)
+    if program is None:
+        raise HTTPException(status_code=400, detail="PPG timingProgramId does not exist")
+
+    # Alembic 0051 dropped TimingProgram.kind — every PPG emits the same
+    # "RFout" HIGH/LOW gate. Normalise the field so older clients sending
+    # outputDomain="ttl" / "trigger" don't get rejected.
+    kind_params["outputDomain"] = "rfout"
+
+    rows = (
+        await session.scalars(
+            select(PhysicsElement).where(
+                PhysicsElement.element_kind == "programmable_pulse_generator",
+                PhysicsElement.object_id != object_id,
+            )
+        )
+    ).all()
+    for row in rows:
+        params = row.kind_params or {}
+        if str(params.get("timingProgramId") or "") == str(timing_program_id):
+            raise HTTPException(
+                status_code=400,
+                detail="TimingProgram is already bound to another Programmable Pulse Generator",
+            )
 
 
 async def _serialize_physics_elements(
@@ -144,6 +187,12 @@ async def create_physics_element(
         for port in payload.output_ports
     ]
     data["wavelength_range_nm"] = list(payload.wavelength_range_nm)
+    await _validate_ppg_timing_binding(
+        session,
+        object_id=payload.object_id,
+        element_kind=data["element_kind"],
+        kind_params=data["kind_params"],
+    )
     element = PhysicsElement(**data)
     session.add(element)
     await session.commit()
@@ -186,6 +235,12 @@ async def update_physics_element(
     element.wavelength_range_nm = list(merged.wavelength_range_nm)
     element.input_ports = [p.model_dump(by_alias=True) for p in merged.input_ports]
     element.output_ports = [p.model_dump(by_alias=True) for p in merged.output_ports]
+    await _validate_ppg_timing_binding(
+        session,
+        object_id=object_id,
+        element_kind=merged.element_kind,
+        kind_params=merged.kind_params,
+    )
     element.kind_params = merged.kind_params
 
     # V2 Phase 4 (alembic 0030): if the (V1-style) caller sent a

@@ -52,6 +52,7 @@ import { computeBraggTiltAxisFromRfDirectionBodyLocal } from "../optical/kinds/a
 // they pull in physics helpers and state hooks that aren't worth
 // dragging through the import boundary yet.
 import {
+  ConnectorTypeField,
   EditableAnchorFields,
   MirrorFaceSection,
   LensFaceSection,
@@ -115,6 +116,10 @@ function anchorToDraft(a: Anchor): AnchorDraft {
     apertureHeightMm: a.apertureHeightMm,
     // Fiber-port tracking flag (preserve through save/load round-trip).
     derivedFromFiberEndpoint: a.derivedFromFiberEndpoint,
+    // RF / TTL connector gender — same load-path bug as `apertureWidthMm`
+    // above: leaving this out lets Save persist the value to the backend
+    // but the dropdown re-initialises to "— unset —" on next open.
+    connectorType: a.connectorType,
     __key: freshKey(),
   };
 }
@@ -639,7 +644,7 @@ function useViewport(
 
     let cancelled = false;
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color("#0b1120");
+    scene.background = new THREE.Color("#ffffff");
     const ambient = new THREE.AmbientLight(0xffffff, 0.4);
     scene.add(ambient);
     const dir = new THREE.DirectionalLight(0xffffff, 0.8);
@@ -858,9 +863,21 @@ function useViewport(
       controls.update();
     }
 
-    // Wireframe overlay ??same shader pattern as DigitalTwinViewer.tsx
+    // Wireframe overlay — same shader pattern as DigitalTwinViewer.tsx
     // addWireframeOutline. Drawn in a contrasting cyan so it pops on the
     // dark editor background.
+    //
+    // Knock-back is done on a CLONE of each mesh's material, not the
+    // original. Several procedural primitives (DDS chassis brass / Teflon
+    // / cable jacket / SMA connectors — see `ddsBrassMat`,
+    // `ddsTeflonWhiteMat`, `ddsCableBlackMat`, `ddsCableTanMat`,
+    // `ddsBlackInsetMat` in `three/loadAsset.ts`) share a single module-
+    // scoped material instance across every mesh that uses them. Mutating
+    // that singleton's opacity in-place leaks back to every other object
+    // in the main scene — cables, AD9959 PCBs, anything with an SMA
+    // connector — and they all render at opacity 0.18 after the user
+    // returns from PHY editor. Cloning here gives the editor its own
+    // per-mesh material that never touches the singletons.
     function applyWireframe(target: THREE.Object3D) {
       const lineMat = new THREE.LineBasicMaterial({
         color: 0x67e8f9,
@@ -872,15 +889,16 @@ function useViewport(
       target.traverse((child) => {
         if (!(child instanceof THREE.Mesh) || !child.geometry) return;
         if (child.userData?.__editorWire) return;
-        // Knock back the mesh material so the silhouette dominates.
         if (child.material) {
           const mats = Array.isArray(child.material) ? child.material : [child.material];
-          for (const m of mats) {
-            if ("opacity" in m && "transparent" in m) {
-              (m as THREE.Material & { opacity: number; transparent: boolean }).transparent = true;
-              (m as THREE.Material & { opacity: number; transparent: boolean }).opacity = 0.18;
-            }
-          }
+          const cloned = mats.map((m) => {
+            if (!("opacity" in m && "transparent" in m)) return m;
+            const c = m.clone();
+            (c as THREE.Material & { opacity: number; transparent: boolean }).transparent = true;
+            (c as THREE.Material & { opacity: number; transparent: boolean }).opacity = 0.18;
+            return c;
+          });
+          child.material = Array.isArray(child.material) ? cloned : cloned[0];
         }
         const edges = new THREE.EdgesGeometry(child.geometry, 30);
         const lines = new THREE.LineSegments(edges, lineMat);
@@ -1171,9 +1189,13 @@ function useViewport(
       // re-called from the load callback with the real value.
       const span = meshSpan ?? 0.05;
       const markerScale = isFiberViewport ? 0.45 : 1;
+      // 20× shrunk from the previous mesh-proportional sizing (0.025 →
+      // 0.00125 factor and matching floor reductions). Matches the
+      // lab-viewer marker shrink so anchor dots are subtle pinpricks
+      // rather than obscuring the geometry behind them.
       const sphereRadius = Math.max(
-        isFiberViewport ? 0.00045 : 0.001,
-        span * 0.025 * markerScale,
+        isFiberViewport ? 0.0000225 : 0.00005,
+        span * 0.00125 * markerScale,
       );
       const arrowSpanFactor = isFiberViewport ? 0.13 : 0.3;
 
@@ -1931,6 +1953,7 @@ function AomFaceSection({
             draft={rfInDraft}
             updateDraft={updateDraft}
             showDirection={true}
+            showConnectorType={true}
             apertureMode="scalar"
           />
           <p
@@ -2193,6 +2216,15 @@ const RF_ANCHOR_IDS_SET: ReadonlySet<string> = new Set([
   // tabs.
   "ttl_in",
   "aperture",
+]);
+
+/** Subset of RF_ANCHOR_IDS_SET that physically lives on a coaxial connector
+ *  (and therefore has a meaningful SMA/BNC × M/F gender). `aperture` is
+ *  excluded — it's a radiating face on horn_antenna, not a connector. */
+const RF_CONNECTOR_ANCHOR_IDS: ReadonlySet<string> = new Set([
+  "rf_in",
+  "rf_out",
+  "ttl_in",
 ]);
 
 function kindAnchorIds(kind: ElementKind): readonly string[] {
@@ -4298,20 +4330,32 @@ export function ComponentEditor({ domain = "optical" }: { domain?: "optical" | "
                   </label>
                 ))}
               </div>
-              <label className="component-editor-coord">
-                <span>Aperture (mm)</span>
-                <input
-                  type="number"
-                  step={0.1}
-                  min={0}
-                  value={selectedDraft.apertureMm ?? 12.5}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    if (!Number.isFinite(v)) return;
-                    updateDraft(selectedDraft.__key, { apertureMm: v });
-                  }}
-                />
-              </label>
+              {/* RF / TTL / Trigger anchors don't have a meaningful optical
+                  aperture — they're coax connector face centres. Hide the
+                  Aperture (mm) field for those anchor ids so the inspector
+                  only shows it where it actually means something
+                  (optical / mechanical apertures). */}
+              {!(
+                selectedDraft.id === "rf_in" ||
+                selectedDraft.id === "rf_out" ||
+                selectedDraft.id === "ttl_in" ||
+                selectedDraft.id === "trigger_in"
+              ) && (
+                <label className="component-editor-coord">
+                  <span>Aperture (mm)</span>
+                  <input
+                    type="number"
+                    step={0.1}
+                    min={0}
+                    value={selectedDraft.apertureMm ?? 12.5}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      if (!Number.isFinite(v)) return;
+                      updateDraft(selectedDraft.__key, { apertureMm: v });
+                    }}
+                  />
+                </label>
+              )}
 
               <button
                 type="button"
@@ -4417,6 +4461,10 @@ export function ComponentEditor({ domain = "optical" }: { domain?: "optical" | "
                     </button>
                   </div>
                 </div>
+              )}
+
+              {RF_CONNECTOR_ANCHOR_IDS.has(selectedDraft.id) && (
+                <ConnectorTypeField draft={selectedDraft} updateDraft={updateDraft} />
               )}
 
               <p style={{ fontSize: 11, opacity: 0.65, marginTop: 6 }}>

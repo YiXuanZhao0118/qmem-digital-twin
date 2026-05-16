@@ -48,6 +48,11 @@ export type Anchor = {
    *  `SceneObject.properties.rfCableNodes`. See
    *  `utils/rfCableAnchorResolver.ts`. */
   derivedFromRfCableEndpoint?: "A" | "B";
+  /** Physical coaxial connector at this anchor — gender + family.
+   *  Only meaningful for RF / TTL anchors (rf_in / rf_out / ttl_in);
+   *  left undefined on optical anchors. Edited per-anchor in the
+   *  PHY Editor RF / Components view. */
+  connectorType?: "sma_male" | "sma_female" | "bnc_male" | "bnc_female";
 };
 
 /** Per-instance rf_cable endpoint link record. Persisted under
@@ -96,6 +101,7 @@ export type ComponentItem = {
   properties: Record<string, unknown>;
   physicsCapabilities: PhysicsCapability[];
   notes?: string | null;
+  archivedAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -283,6 +289,7 @@ export type ElementKind =
   | "dichroic_mirror"
   | "fiber_coupler"
   | "fiber"
+  | "fiber_end"
   | "isolator"
   | "aom"
   | "eom"
@@ -296,6 +303,7 @@ export type ElementKind =
   | "rf_source"
   | "rf_amplifier"
   | "horn_antenna"
+  | "programmable_pulse_generator"
   | "rf_cable"
   | "rf_switch";
 
@@ -484,6 +492,29 @@ export type FiberParams = {
   /** MM only. */
   bandwidthMhzKm?: number | null;
   randomJonesSeed?: number | null;
+  /** Phase fiber-split: each end is now its own `fiber_end` SceneObject
+   *  whose lab pose drives the spline endpoint. Null on legacy data
+   *  pending the Phase B alembic backfill. */
+  endAObjectId?: string | null;
+  endBObjectId?: string | null;
+};
+
+/** Phase fiber-split — per-end ferrule SceneObject. Each `fiber_end`
+ *  owns its lab pose, lock, rigid-group membership, and align flow;
+ *  shared fiber params (length, fiberType, etc.) live on the paired
+ *  `fiber` body wrapper referenced via `fiberBodyObjectId`. */
+export type FiberEndParams = {
+  /** e.g. "FC/PC", "FC/APC", "LC/PC". Null = catalog default. */
+  connectorType?: string | null;
+  polish?: "PC" | "APC" | "UPC" | null;
+  /** PM only — slow-axis angle in body frame (deg). */
+  slowAxisDegInBodyFrame?: number | null;
+  /** Back-reference to the paired fiber body SceneObject (the hidden
+   *  spline wrapper carrying shared params). */
+  fiberBodyObjectId?: string | null;
+  /** Which end of the body this object represents. Aligns with
+   *  FiberParams.endAObjectId / endBObjectId. */
+  endRole: "A" | "B";
 };
 
 export type IsolatorParams = {
@@ -658,6 +689,25 @@ export type HornAntennaParams = {
   cosineExponent: number;
 };
 
+export type ProgrammablePulseGeneratorParams = {
+  connectorType: "sma" | "bnc";
+  timingProgramId: string | null;
+  /** PPG emits a single "RFout" HIGH/LOW gate. Previously split into
+   *  "ttl" / "trigger" sub-domains driven by TimingProgram.kind, but
+   *  alembic 0051 collapsed that into one signal type — downstream
+   *  consumer ports (switch.ttl_in / AOM.trigger_in) carry any semantic
+   *  difference. Field kept as a literal for schema stability. */
+  outputDomain: "rfout";
+  highVoltageV: number;
+  /** Resting / default level OUTSIDE any HIGH interval. Symmetric:
+   *  result = inInterval XOR (restState === "HIGH"). Defaults to "LOW"
+   *  (omitted on un-migrated rows is treated as "LOW" so existing-scene
+   *  behaviour is preserved). When the user sets "HIGH" the program's
+   *  intervals become LOW pulses (negative-logic). Also the steady-state
+   *  level seen by downstream switches when scrub is stopped. */
+  restState?: "HIGH" | "LOW";
+};
+
 /** RF amplifier (e.g. Mini-Circuits ZHL-1-2W+ — 5..500 MHz, +30 dBm output,
  *  +24 V supply, SMA female on each end). Unidirectional gain block with
  *  one rf_in port and one rf_out port. Flat-gain passband between
@@ -761,6 +811,7 @@ export type OpticalElementKindParams =
   | { elementKind: "dichroic_mirror"; kindParams: DichroicMirrorParams }
   | { elementKind: "fiber_coupler"; kindParams: FiberCouplerParams }
   | { elementKind: "fiber"; kindParams: FiberParams }
+  | { elementKind: "fiber_end"; kindParams: FiberEndParams }
   | { elementKind: "isolator"; kindParams: IsolatorParams }
   | { elementKind: "aom"; kindParams: AOMParams }
   | { elementKind: "eom"; kindParams: EOMParams }
@@ -774,6 +825,10 @@ export type OpticalElementKindParams =
   | { elementKind: "rf_source"; kindParams: RfSourceParams }
   | { elementKind: "rf_amplifier"; kindParams: RfAmplifierParams }
   | { elementKind: "horn_antenna"; kindParams: HornAntennaParams }
+  | {
+      elementKind: "programmable_pulse_generator";
+      kindParams: ProgrammablePulseGeneratorParams;
+    }
   | { elementKind: "rf_cable"; kindParams: RfCableParams }
   | { elementKind: "rf_switch"; kindParams: RfSwitchParams };
 
@@ -829,21 +884,17 @@ export const EMITTER_KINDS: ReadonlySet<ElementKind> = new Set<ElementKind>([
 // TimingProgram (alembic 0045/0046 — reusable HIGH-interval schedules)
 // =============================================================================
 
-export type TimingProgramKind = "TTL" | "Trigger";
-
 export type TimingInterval = {
   spinCoreStartNs: number;
   spinCoreEndNs: number;
 };
 
+/** Slimmed-down by alembic 0051: kind / channelIndex / invert are gone.
+ *  Every PPG emits the same RFout HIGH/LOW gate; channel ordering is
+ *  positional from the PPG list at solve time. */
 export type TimingProgram = {
   id: string;
   name: string | null;
-  kind: TimingProgramKind;
-  /** Physical PB channel (0..23) this program emits on. null = logical
-   *  schedule not yet bound to a hardware wire. */
-  channelIndex: number | null;
-  invert: boolean;
   intervals: TimingInterval[];
   createdAt?: string;
   updatedAt?: string;
@@ -851,9 +902,6 @@ export type TimingProgram = {
 
 export type TimingProgramCreatePayload = {
   name?: string | null;
-  kind?: TimingProgramKind;
-  channelIndex?: number | null;
-  invert?: boolean;
   intervals?: TimingInterval[];
 };
 
@@ -1023,6 +1071,44 @@ export type CollectionMember = {
   objectId: string;
   sortOrder: number;
   addedAt?: string;
+};
+
+/** Collection Drift template — see backend/app/models.py CollectionTemplate
+ *  + alembic 0053. Each member's pose is stored relative to the centroid
+ *  of every descendant SceneObject across the saved subtree, so dropping
+ *  the template back into the scene at a target point places the new
+ *  bundle as one rigid block at that point. Cable connections and
+ *  optical / RF links are intentionally NOT included in the snapshot. */
+export type CollectionTemplateMember = {
+  componentId: string;
+  relativeXMm: number;
+  relativeYMm: number;
+  relativeZMm: number;
+  rxDeg: number;
+  ryDeg: number;
+  rzDeg: number;
+  visible: boolean;
+  properties: Record<string, unknown>;
+  sortOrder: number;
+};
+
+export type CollectionTemplateNode = {
+  name: string;
+  color: string;
+  visible: boolean;
+  rigidTransform: boolean;
+  sortOrder: number;
+  properties: Record<string, unknown>;
+  members: CollectionTemplateMember[];
+  children: CollectionTemplateNode[];
+};
+
+export type CollectionTemplate = {
+  id: string;
+  name: string;
+  description: string | null;
+  tree: CollectionTemplateNode;
+  createdAt: string;
 };
 
 // =============================================================================

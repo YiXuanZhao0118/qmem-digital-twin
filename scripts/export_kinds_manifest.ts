@@ -19,8 +19,23 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { PLUGINS } from "../frontend/src/kinds/_plugins";
-import { isPhysicsPlugin } from "../frontend/src/kinds/_plugin";
+if (typeof globalThis.ProgressEvent === "undefined") {
+  class NodeProgressEvent extends Event {
+    readonly lengthComputable: boolean;
+    readonly loaded: number;
+    readonly total: number;
+
+    constructor(type: string, init: ProgressEventInit = {}) {
+      super(type);
+      this.lengthComputable = init.lengthComputable ?? false;
+      this.loaded = init.loaded ?? 0;
+      this.total = init.total ?? 0;
+    }
+  }
+
+  (globalThis as unknown as { ProgressEvent: typeof ProgressEvent }).ProgressEvent =
+    NodeProgressEvent as typeof ProgressEvent;
+}
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT_PATH = resolve(HERE, "..", "backend", "data", "kinds.json");
@@ -78,14 +93,18 @@ interface Manifest {
   passive_plugins: ManifestPassivePlugin[];
 }
 
-function build(): Manifest {
+function build(
+  plugins: readonly unknown[],
+  isPhysics: (plugin: unknown) => boolean,
+): Manifest {
   const physics: ManifestPhysicsPlugin[] = [];
   const passive: ManifestPassivePlugin[] = [];
   const componentTypeToKind: Record<string, string> = {};
   const elementKinds: string[] = [];
 
-  for (const p of PLUGINS) {
-    if (isPhysicsPlugin(p)) {
+  for (const pUnknown of plugins) {
+    const p = pUnknown as any;
+    if (isPhysics(pUnknown)) {
       const ek = p.physics.elementKind;
       elementKinds.push(ek);
       for (const ct of p.componentTypes) componentTypeToKind[ct] = ek;
@@ -141,12 +160,24 @@ function build(): Manifest {
   };
 }
 
-const manifest = build();
-mkdirSync(dirname(OUT_PATH), { recursive: true });
-writeFileSync(OUT_PATH, JSON.stringify(manifest, null, 2) + "\n", "utf-8");
+async function main(): Promise<void> {
+  const [{ PLUGINS }, { isPhysicsPlugin }] = await Promise.all([
+    import("../frontend/src/kinds/_plugins"),
+    import("../frontend/src/kinds/_plugin"),
+  ]);
 
-const physicsCount = manifest.physics_plugins.length;
-const passiveCount = manifest.passive_plugins.length;
-console.log(
+  const manifest = build(PLUGINS, isPhysicsPlugin as (plugin: unknown) => boolean);
+  mkdirSync(dirname(OUT_PATH), { recursive: true });
+  writeFileSync(OUT_PATH, JSON.stringify(manifest, null, 2) + "\n", "utf-8");
+
+  const physicsCount = manifest.physics_plugins.length;
+  const passiveCount = manifest.passive_plugins.length;
+  console.log(
   `wrote ${OUT_PATH}\n  ${physicsCount} physics + ${passiveCount} passive plugins\n  ${Object.keys(manifest.component_type_to_kind).length} componentType → kind entries`,
-);
+  );
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

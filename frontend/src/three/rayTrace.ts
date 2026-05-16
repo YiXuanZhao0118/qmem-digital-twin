@@ -323,6 +323,12 @@ type TraceContext = {
    *  the current scrub time. Threaded through traceOneRay so the AOM
    *  branch can pick instantaneous freq over kindParams.centerFreqMhz. */
   aomFreqOverrideMhz?: Map<string, number>;
+  /** Phase PB.3 (AOM extension) — per-SceneObject gate map. When the
+   *  AOM is in this map with value `false`, its RF drive is treated as
+   *  off: the branch behaves as orderSign=0 and only emits a 0th-order
+   *  pass-through ray. Used by the 3D viewer to gate AOM diffraction
+   *  based on the current scrub-time switch routing. */
+  gateOverrides?: Map<string, boolean>;
 };
 
 /** Compute the world-space bounding box that wraps every mesh belonging to a
@@ -1450,7 +1456,13 @@ function traceOneRay(
     } as typeof baseParams & { centerFreqMhz: number; rfDrivePowerW?: number };
     // Coerce to discrete {-1, 0, +1}. Anything else falls back to +1
     // (historical default).
-    const orderRaw = params.diffractionOrder;
+    // Phase PB.3 (AOM extension): when the scrub-time RF propagation
+    // says no RF reaches this AOM's rf_in, force orderSign=0 so the
+    // beam passes straight through (zeroth-order only, no diffraction
+    // pair). This is what visually gates the AOM "off" as the user
+    // scrubs across a switch routing boundary.
+    const aomGatedOff = ctx.gateOverrides?.get(hitObjectId) === false;
+    const orderRaw = aomGatedOff ? 0 : params.diffractionOrder;
     const orderSign: -1 | 0 | 1 =
       orderRaw === 0 ? 0 :
       orderRaw === -1 ? -1 :
@@ -1960,6 +1972,7 @@ export function traceBeamsFromLasers(input: {
     objects: scene.objects,
     targetMeshes,
     aomFreqOverrideMhz,
+    gateOverrides,
   };
 
   const assetById = new Map(scene.assets.map((a) => [a.id, a]));

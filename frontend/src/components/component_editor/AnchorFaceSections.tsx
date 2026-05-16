@@ -34,6 +34,50 @@ import type { Anchor } from "../../types/digitalTwin";
 export type AnchorDraft = Anchor & { __key: string };
 
 // =============================================================================
+// ConnectorTypeField — physical coax connector picker (RF / TTL anchors only)
+// =============================================================================
+
+const CONNECTOR_OPTIONS: ReadonlyArray<{
+  value: NonNullable<Anchor["connectorType"]>;
+  label: string;
+}> = [
+  { value: "sma_male", label: "SMA Male" },
+  { value: "sma_female", label: "SMA Female" },
+  { value: "bnc_male", label: "BNC Male" },
+  { value: "bnc_female", label: "BNC Female" },
+];
+
+export function ConnectorTypeField({
+  draft,
+  updateDraft,
+}: {
+  draft: AnchorDraft;
+  updateDraft: (key: string, patch: Partial<AnchorDraft>) => void;
+}) {
+  return (
+    <div className="component-editor-coord" style={{ marginTop: 8 }}>
+      <span>Connector (RF / TTL)</span>
+      <select
+        value={draft.connectorType ?? ""}
+        onChange={(e) => {
+          const v = e.target.value;
+          updateDraft(draft.__key, {
+            connectorType: v === ""
+              ? undefined
+              : (v as NonNullable<Anchor["connectorType"]>),
+          });
+        }}
+      >
+        <option value="">— unset —</option>
+        {CONNECTOR_OPTIONS.map((opt) => (
+          <option key={opt.value} value={opt.value}>{opt.label}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+// =============================================================================
 // EditableAnchorFields — reused inside every section below
 // =============================================================================
 
@@ -41,11 +85,17 @@ export function EditableAnchorFields({
   draft,
   updateDraft,
   showDirection,
+  showConnectorType = false,
   apertureMode: _apertureMode = "scalar",
 }: {
   draft: AnchorDraft;
   updateDraft: (key: string, patch: Partial<AnchorDraft>) => void;
   showDirection: boolean;
+  /** When true, render a SMA/BNC × M/F picker below the direction grid.
+   *  Used by the RF / Components face sections (AOM rf_in, fiber RF
+   *  endpoint editor) so they line up with the generic anchor editor's
+   *  inline picker. Optical sections leave this false. */
+  showConnectorType?: boolean;
   apertureMode?: "scalar" | "rectangle";
 }) {
   return (
@@ -95,6 +145,7 @@ export function EditableAnchorFields({
           ))}
         </div>
       )}
+      {showConnectorType && <ConnectorTypeField draft={draft} updateDraft={updateDraft} />}
       {/* Aperture inputs intentionally removed (V2). Edit per-object on
           the Object panel — the value lives in
           objects.properties.anchorBindings[].payload.aperture. */}

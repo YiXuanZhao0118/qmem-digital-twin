@@ -26,6 +26,7 @@ import { dichroicMirrorPlugin } from "./dichroic_mirror";
 import { eomPlugin } from "./eom";
 import { fiberPlugin } from "./fiber";
 import { fiberCouplerPlugin } from "./fiber_coupler";
+import { fiberEndPlugin } from "./fiber_end";
 import { hornAntennaPlugin } from "./horn_antenna";
 import { isolatorPlugin } from "./isolator";
 import { laserSourcePlugin } from "./laser_source";
@@ -36,6 +37,7 @@ import { mirrorPlugin } from "./mirror";
 import { mirrorMountPlugin } from "./mirror_mount";
 import { nonlinearCrystalPlugin } from "./nonlinear_crystal";
 import { polarizerPlugin } from "./polarizer";
+import { programmablePulseGeneratorPlugin } from "./programmable_pulse_generator";
 import { rfAmplifierPlugin } from "./rf_amplifier";
 import { rfCablePlugin } from "./rf_cable";
 import { rfSourcePlugin } from "./rf_source";
@@ -82,6 +84,7 @@ export const PHYSICS_PLUGINS: readonly PhysicsPlugin[] = [
   beamSplitterPlugin,
   fiberCouplerPlugin,
   fiberPlugin,
+  fiberEndPlugin,
   isolatorPlugin,
   // Active / nonlinear optical
   aomPlugin,
@@ -98,6 +101,7 @@ export const PHYSICS_PLUGINS: readonly PhysicsPlugin[] = [
   rfSourcePlugin,
   rfAmplifierPlugin,
   hornAntennaPlugin,
+  programmablePulseGeneratorPlugin,
   rfCablePlugin,
   rfSwitchPlugin,
 ] as unknown as readonly PhysicsPlugin[];

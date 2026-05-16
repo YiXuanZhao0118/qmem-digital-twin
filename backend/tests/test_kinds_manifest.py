@@ -66,9 +66,9 @@ class TestComponentTypeToKind:
 
 
 class TestElementKinds:
-    def test_returns_27_kinds(self) -> None:
+    def test_returns_29_kinds(self) -> None:
         kinds = element_kinds()
-        assert len(kinds) == 27, f"expected 27 ElementKinds, got {len(kinds)}: {kinds}"
+        assert len(kinds) == 29, f"expected 29 ElementKinds, got {len(kinds)}: {kinds}"
 
     def test_covers_full_spectrum(self) -> None:
         kinds = set(element_kinds())

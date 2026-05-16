@@ -42,6 +42,7 @@ const KIND_UNION_MEMBERS: ElementKind[] = [
   "beam_splitter",
   "fiber_coupler",
   "fiber",
+  "fiber_end",
   "isolator",
   "aom",
   "eom",
@@ -55,6 +56,7 @@ const KIND_UNION_MEMBERS: ElementKind[] = [
   "rf_source",
   "rf_amplifier",
   "horn_antenna",
+  "programmable_pulse_generator",
   "rf_cable",
   "rf_switch",
 ];

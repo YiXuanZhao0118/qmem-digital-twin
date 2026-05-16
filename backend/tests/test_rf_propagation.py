@@ -293,3 +293,189 @@ def test_hydrate_aom_rf_drive_respects_rf_power_max():
 
     aom_pe = next(e for e in scene["elements"] if e.object_id == "aom1")
     assert aom_pe.kind_params["rfDrivePowerW"] == pytest.approx(0.5)
+
+
+# ---------------------------------------------------------------------------
+# Tests — rf_switch TTL-driven routing
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FakeTimingInterval:
+    spin_core_start_ns: float
+    spin_core_end_ns: float
+
+
+@dataclass
+class FakeTimingProgram:
+    id: str
+    kind: str = "TTL"
+    intervals: list = field(default_factory=list)
+
+
+def _make_switch(obj_id: str, *, ttl_active_high_throw: int = 2, ttl_state: str = "LOW"):
+    """SPDT switch with anchors RFIN (rf_in), RF1/RF2 (rf_out), TTL (ttl_in).
+    Matches the Mini-Circuits ZYSWA-2-50DR catalog row."""
+    obj = FakeObj(id=obj_id, component_id=f"comp-{obj_id}", properties={})
+    pe = FakePe(
+        object_id=obj_id,
+        element_kind="rf_switch",
+        kind_params={
+            "switchType": "SP2T",
+            "throwCount": 2,
+            "insertionLossDb": 1.0,
+            "ttlActiveHighThrow": ttl_active_high_throw,
+            "ttlState": ttl_state,
+        },
+    )
+    comp = FakeComp(id=f"comp-{obj_id}", asset_3d_id=f"asset-{obj_id}")
+    asset = FakeAsset(
+        id=f"asset-{obj_id}",
+        anchors=[
+            {"id": "rf_in", "name": "RFIN"},
+            {"id": "rf_out", "name": "RF1"},
+            {"id": "rf_out", "name": "RF2"},
+            {"id": "ttl_in", "name": "TTL"},
+        ],
+    )
+    return obj, pe, comp, asset
+
+
+def _make_ppg(
+    obj_id: str,
+    timing_program_id: str | None = None,
+    rest_state: str = "LOW",
+):
+    """Programmable Pulse Generator with a single rf_out anchor. The
+    backend steady-state TTL resolver reads ``kind_params.restState`` —
+    intervals are scrub-time only (frontend domain), so this fixture
+    accepts a `rest_state` knob to drive the resolver directly.
+    """
+    obj = FakeObj(id=obj_id, component_id=f"comp-{obj_id}", properties={})
+    pe = FakePe(
+        object_id=obj_id,
+        element_kind="programmable_pulse_generator",
+        kind_params={
+            "connectorType": "sma",
+            "outputDomain": "ttl",
+            "highVoltageV": 3.2,
+            "timingProgramId": timing_program_id,
+            "restState": rest_state,
+        },
+    )
+    comp = FakeComp(id=f"comp-{obj_id}", asset_3d_id=f"asset-{obj_id}")
+    asset = FakeAsset(
+        id=f"asset-{obj_id}",
+        anchors=[{"id": "rf_out", "name": "rf_out"}],
+    )
+    return obj, pe, comp, asset
+
+
+def test_rf_switch_routes_to_rf1_when_ttl_low_default_polarity():
+    """ttlState=LOW + ttlActiveHighThrow=2 → SPDT routes to RF1; AOM hanging
+    off RF1 sees the source signal, AOM on RF2 sees nothing."""
+    src = _make_ad9959("src1", 80.0, 0.5)
+    sw = _make_switch("sw1", ttl_active_high_throw=2, ttl_state="LOW")
+    aom1 = _make_aom("aom1")
+    aom2 = _make_aom("aom2")
+    cab_in = _make_cable("ca_in", ("src1", "CH0"), ("sw1", "RFIN"))
+    cab_rf1 = _make_cable("ca_rf1", ("sw1", "RF1"), ("aom1", "rf_in"))
+    cab_rf2 = _make_cable("ca_rf2", ("sw1", "RF2"), ("aom2", "rf_in"))
+    scene = _scene(src, sw, aom1, aom2, cab_in, cab_rf1, cab_rf2)
+    result = build_rf_propagation(**scene)
+
+    # RFIN sees the source
+    assert ("sw1", "RFIN") in result.signal_at_port
+    # Active throw RF1 gets the signal with 1 dB insertion loss
+    assert ("sw1", "RF1") in result.signal_at_port
+    src_vpp = 0.5 * AD9959_VPP_FULL_SCALE
+    expected_vpp = src_vpp * (10 ** (-1.0 / 20.0))
+    assert result.signal_at_port[("sw1", "RF1")].vpp == pytest.approx(expected_vpp, rel=1e-5)
+    assert result.signal_at_port[("aom1", "rf_in")].vpp == pytest.approx(expected_vpp, rel=1e-5)
+    # Inactive throw RF2 receives nothing → AOM2 has no upstream
+    assert ("sw1", "RF2") not in result.signal_at_port
+    assert ("aom2", "rf_in") not in result.signal_at_port
+
+
+def test_rf_switch_routes_to_rf2_when_ttl_high_default_polarity():
+    """ttlState=HIGH + ttlActiveHighThrow=2 → routes to RF2; mirror of the
+    LOW case. AOM1 stays dark, AOM2 lights up."""
+    src = _make_ad9959("src1", 80.0, 0.5)
+    sw = _make_switch("sw1", ttl_active_high_throw=2, ttl_state="HIGH")
+    aom1 = _make_aom("aom1")
+    aom2 = _make_aom("aom2")
+    cab_in = _make_cable("ca_in", ("src1", "CH0"), ("sw1", "RFIN"))
+    cab_rf1 = _make_cable("ca_rf1", ("sw1", "RF1"), ("aom1", "rf_in"))
+    cab_rf2 = _make_cable("ca_rf2", ("sw1", "RF2"), ("aom2", "rf_in"))
+    scene = _scene(src, sw, aom1, aom2, cab_in, cab_rf1, cab_rf2)
+    result = build_rf_propagation(**scene)
+
+    assert ("sw1", "RF1") not in result.signal_at_port
+    assert ("aom1", "rf_in") not in result.signal_at_port
+    assert ("sw1", "RF2") in result.signal_at_port
+    assert ("aom2", "rf_in") in result.signal_at_port
+
+
+def test_rf_switch_inverted_polarity_high_throw_1():
+    """ttlActiveHighThrow=1: HIGH → RF1, LOW → RF2. Configurable polarity
+    proves the param-driven branching."""
+    src = _make_ad9959("src1", 80.0, 1.0)
+    sw = _make_switch("sw1", ttl_active_high_throw=1, ttl_state="HIGH")
+    aom1 = _make_aom("aom1")
+    aom2 = _make_aom("aom2")
+    cab_in = _make_cable("ca_in", ("src1", "CH0"), ("sw1", "RFIN"))
+    cab_rf1 = _make_cable("ca_rf1", ("sw1", "RF1"), ("aom1", "rf_in"))
+    cab_rf2 = _make_cable("ca_rf2", ("sw1", "RF2"), ("aom2", "rf_in"))
+    scene = _scene(src, sw, aom1, aom2, cab_in, cab_rf1, cab_rf2)
+    result = build_rf_propagation(**scene)
+
+    assert ("aom1", "rf_in") in result.signal_at_port
+    assert ("aom2", "rf_in") not in result.signal_at_port
+
+
+def test_rf_switch_ttl_state_derived_from_ppg_rest_state():
+    """Steady-state TTL: the backend resolver reads PPG ``restState``
+    directly. Intervals are intentionally scrub-time-only and live in
+    the frontend's per-section schedule, so swapping them here must not
+    change backend routing — only ``restState`` does.
+
+    Case A: PPG rest_state="HIGH" → switch HIGH → RF2 active (with
+    ttlActiveHighThrow=2 default polarity).
+    Case B: PPG rest_state="LOW"  → switch LOW  → RF1 active.
+    """
+    # Case A: rest_state=HIGH → RF2 active.
+    src = _make_ad9959("src1", 80.0, 0.5)
+    sw = _make_switch("sw1", ttl_active_high_throw=2, ttl_state="LOW")
+    aom1 = _make_aom("aom1")
+    aom2 = _make_aom("aom2")
+    ppg = _make_ppg("ppg1", timing_program_id="prog-1", rest_state="HIGH")
+    cab_in = _make_cable("ca_in", ("src1", "CH0"), ("sw1", "RFIN"))
+    cab_rf1 = _make_cable("ca_rf1", ("sw1", "RF1"), ("aom1", "rf_in"))
+    cab_rf2 = _make_cable("ca_rf2", ("sw1", "RF2"), ("aom2", "rf_in"))
+    cab_ttl = _make_cable("ca_ttl", ("ppg1", "rf_out"), ("sw1", "TTL"))
+    scene = _scene(src, sw, aom1, aom2, ppg, cab_in, cab_rf1, cab_rf2, cab_ttl)
+    result = build_rf_propagation(
+        **scene,
+        timing_programs_by_id={"prog-1": FakeTimingProgram(id="prog-1")},
+    )
+    assert ("aom1", "rf_in") not in result.signal_at_port
+    assert ("aom2", "rf_in") in result.signal_at_port
+
+    # Case B: rest_state=LOW → RF1 active. Fresh scene so we don't reuse
+    # element state mutated by the first build.
+    src2 = _make_ad9959("src1", 80.0, 0.5)
+    sw2 = _make_switch("sw1", ttl_active_high_throw=2, ttl_state="LOW")
+    aom1_2 = _make_aom("aom1")
+    aom2_2 = _make_aom("aom2")
+    ppg2 = _make_ppg("ppg1", timing_program_id="prog-1", rest_state="LOW")
+    cab_in2 = _make_cable("ca_in", ("src1", "CH0"), ("sw1", "RFIN"))
+    cab_rf1_2 = _make_cable("ca_rf1", ("sw1", "RF1"), ("aom1", "rf_in"))
+    cab_rf2_2 = _make_cable("ca_rf2", ("sw1", "RF2"), ("aom2", "rf_in"))
+    cab_ttl2 = _make_cable("ca_ttl", ("ppg1", "rf_out"), ("sw1", "TTL"))
+    scene = _scene(src2, sw2, aom1_2, aom2_2, ppg2, cab_in2, cab_rf1_2, cab_rf2_2, cab_ttl2)
+    result = build_rf_propagation(
+        **scene,
+        timing_programs_by_id={"prog-1": FakeTimingProgram(id="prog-1")},
+    )
+    assert ("aom1", "rf_in") in result.signal_at_port
+    assert ("aom2", "rf_in") not in result.signal_at_port

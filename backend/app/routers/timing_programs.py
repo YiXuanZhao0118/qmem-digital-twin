@@ -1,10 +1,11 @@
-"""TimingProgram CRUD + SpinCore compile (alembic 0045/0046).
+"""TimingProgram CRUD + SpinCore compile (alembic 0045 / 0046 / 0051).
 
-Programs are top-level objects identified by their own UUID. Consumers
-(rfSources.triggerBinding / gateBinding, AOM/EOM TTL gates, ...) reference
-programs by ``id``; a single program may be shared across multiple
-consumers. Each program optionally binds to a PB hardware channel via
-``channel_index`` (UNIQUE partial index — one wire, one schedule).
+Programs are top-level objects identified by their own UUID. Each PPG
+SceneObject owns exactly one program via
+``physics_elements.kind_params.timingProgramId`` (1:1, cascade-deleted
+with the PPG). Alembic 0051 slimmed the model: kind / channel_index /
+invert are gone; channel ordering is positional from the PPG list at
+solve time, every PPG emits the same RFout HIGH/LOW gate.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import schemas
 from app.db import get_session
-from app.models import TimingProgram
+from app.models import PhysicsElement, TimingProgram
 from app.schemas import CamelModel
 from app.solvers.spinapi_compile import compile_to_opcodes, render_spinapi_python
 from app.websocket import manager
@@ -44,30 +45,6 @@ async def _broadcast_deleted(program_id: uuid.UUID) -> None:
 def _intervals_for_db(payload: schemas.TimingProgramBase) -> list[dict[str, float]]:
     """Serialize Pydantic IntervalBase models as camelCase dicts for JSONB."""
     return [iv.model_dump(by_alias=True) for iv in payload.intervals]
-
-
-async def _check_channel_conflict(
-    session: AsyncSession,
-    channel_index: int | None,
-    *,
-    exclude_program_id: uuid.UUID | None = None,
-) -> None:
-    """Raise 400 if another program already owns ``channel_index``."""
-    if channel_index is None:
-        return
-    stmt = select(TimingProgram).where(TimingProgram.channel_index == channel_index)
-    if exclude_program_id is not None:
-        stmt = stmt.where(TimingProgram.id != exclude_program_id)
-    existing = (await session.scalars(stmt)).first()
-    if existing is not None:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"PB channel {channel_index} is already bound to program "
-                f"{existing.id} ({existing.name or 'unnamed'}). Move that "
-                f"program off channel {channel_index} first or pick another channel."
-            ),
-        )
 
 
 @router.get("", response_model=list[schemas.TimingProgramOut])
@@ -99,12 +76,8 @@ async def create_program(
     payload: schemas.TimingProgramCreate,
     session: AsyncSession = Depends(get_session),
 ) -> TimingProgram:
-    await _check_channel_conflict(session, payload.channel_index)
     program = TimingProgram(
         name=payload.name,
-        kind=payload.kind,
-        channel_index=payload.channel_index,
-        invert=payload.invert,
         intervals=_intervals_for_db(payload),
     )
     session.add(program)
@@ -125,15 +98,6 @@ async def update_program(
         raise HTTPException(status_code=404, detail="TimingProgram not found")
     if payload.name is not None:
         program.name = payload.name
-    if payload.kind is not None:
-        program.kind = payload.kind
-    if "channel_index" in payload.model_fields_set:
-        await _check_channel_conflict(
-            session, payload.channel_index, exclude_program_id=program_id
-        )
-        program.channel_index = payload.channel_index
-    if payload.invert is not None:
-        program.invert = payload.invert
     if payload.intervals is not None:
         program.intervals = [iv.model_dump(by_alias=True) for iv in payload.intervals]
     await session.commit()
@@ -150,6 +114,19 @@ async def delete_program(
     program = await session.get(TimingProgram, program_id)
     if program is None:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
+    rows = (
+        await session.scalars(
+            select(PhysicsElement).where(
+                PhysicsElement.element_kind == "programmable_pulse_generator"
+            )
+        )
+    ).all()
+    for row in rows:
+        if str((row.kind_params or {}).get("timingProgramId") or "") == str(program_id):
+            raise HTTPException(
+                status_code=409,
+                detail="TimingProgram is bound to a Programmable Pulse Generator.",
+            )
     await session.delete(program)
     await session.commit()
     await _broadcast_deleted(program_id)

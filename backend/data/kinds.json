@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-05-15T03:43:20.464Z",
+  "generated_at": "2026-05-16T12:28:14.414Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -17,6 +17,7 @@
     "beam_splitter": "beam_splitter",
     "fiber_coupler": "fiber_coupler",
     "fiber": "fiber",
+    "fiber_end": "fiber_end",
     "isolator": "isolator",
     "aom": "aom",
     "eom": "eom",
@@ -32,6 +33,7 @@
     "rf_generator": "rf_source",
     "rf_amplifier": "rf_amplifier",
     "horn_antenna": "horn_antenna",
+    "programmable_pulse_generator": "programmable_pulse_generator",
     "rf_cable": "rf_cable",
     "sma_cable": "rf_cable",
     "rf_switch": "rf_switch"
@@ -49,6 +51,7 @@
     "beam_splitter",
     "fiber_coupler",
     "fiber",
+    "fiber_end",
     "isolator",
     "aom",
     "eom",
@@ -62,6 +65,7 @@
     "rf_source",
     "rf_amplifier",
     "horn_antenna",
+    "programmable_pulse_generator",
     "rf_cable",
     "rf_switch"
   ],
@@ -605,7 +609,7 @@
         },
         "align_variant": "none",
         "align_tolerance_mm": 25,
-        "align_summary": "Bidirectional patch cable, rendered procedurally from a Bezier spline (no static GLB/STL asset). End A = first spline node; End B = last. intercept_in rides End A's connector frame, intercept_out rides End B's — moving a spline node carries the optical port with it. The two Align End A/B buttons snap the PORT onto the closest beam-path segment within alignToleranceMm (≤25 mm), then back-derive the spline node 36.28 mm BEHIND the projected port along the new outward direction. Interior nodes don't move.",
+        "align_summary": "Bidirectional patch cable, body wrapper for the Phase fiber-split model (2026-05-16). Each end is now a sibling `fiber_end` SceneObject (referenced via FiberParams.endAObjectId / endBObjectId); the body wrapper carries shared spec (fiberType, length, attenuation, etc.) and a derived spline whose endpoints re-resolve from the paired fiber_end lab poses at render time. The body itself has no pose / Lock / rigid-group / align affordance — those live on each fiber_end (default capability profile). To align an end to a beam: select the fiber_end SceneObject and use its AlignPanel (translate_anchor_to_beam, ≤25 mm). Interior spline nodes (1..N-2) remain editable in node-edit mode; endpoint nodes (0 / N-1) are pinned to the fiber_end objects.",
         "default_params": {
           "fiberType": "polarization_maintaining",
           "endA": {
@@ -660,6 +664,48 @@
           "polarizationExtinctionRatioDb": 25,
           "bandwidthMhzKm": null,
           "randomJonesSeed": null
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
+      }
+    },
+    {
+      "id": "fiber_end",
+      "display_name": "Fiber End",
+      "component_types": [
+        "fiber_end"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Passive",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "fiber_end",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical"
+        ],
+        "anchors": {
+          "required": [
+            "tip"
+          ],
+          "optional": [],
+          "needs_direction": [
+            "tip"
+          ],
+          "needs_aperture": [
+            "tip"
+          ]
+        },
+        "align_variant": "translate_anchor_to_beam",
+        "align_tolerance_mm": 25,
+        "align_summary": "Per-end ferrule for a fiber. The `tip` anchor is the external optical face — Align End snaps it onto the closest beam-path segment within alignToleranceMm (≤25 mm). The paired hidden fiber body wrapper's spline endpoint re-derives from this object's pose at draw time, so moving / aligning a fiber_end automatically drags the cable spline.",
+        "default_params": {
+          "connectorType": null,
+          "polish": null,
+          "slowAxisDegInBodyFrame": null,
+          "fiberBodyObjectId": null,
+          "endRole": "A"
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
@@ -1268,6 +1314,45 @@
       }
     },
     {
+      "id": "programmable_pulse_generator",
+      "display_name": "Programmable Pulse Generator",
+      "component_types": [
+        "programmable_pulse_generator"
+      ],
+      "asset_category": "electronics",
+      "catalog_group": "RF",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "programmable_pulse_generator",
+        "primary_domain": "rf",
+        "default_physics": [
+          "rf"
+        ],
+        "anchors": {
+          "required": [],
+          "optional": [
+            "rf_out"
+          ],
+          "needs_direction": [
+            "rf_out"
+          ],
+          "needs_aperture": []
+        },
+        "align_variant": "none",
+        "align_tolerance_mm": 0,
+        "align_summary": "Programmable Pulse Generator (PPG) is the physical one-to-one output for a Pulse & Timing TimingProgram. One coax rf_out anchor emits TTL or Trigger according to the bound program kind. SMA and BNC variants differ only by connector.",
+        "default_params": {
+          "connectorType": "sma",
+          "timingProgramId": null,
+          "outputDomain": "ttl",
+          "highVoltageV": 3.2
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
+      }
+    },
+    {
       "id": "rf_cable",
       "display_name": "RF Cable",
       "component_types": [
@@ -1363,6 +1448,8 @@
           "supplyCurrentMa": 25,
           "maxInputPowerDbm": 27,
           "connectorType": "sma",
+          "ttlActiveHighThrow": 2,
+          "ttlState": "LOW",
           "manufacturer": "Mini-Circuits",
           "model": "ZYSWA-2-50DR",
           "datasheetUrl": "https://www.minicircuits.com/pdfs/ZYSWA-2-50DR+.pdf"

@@ -98,7 +98,14 @@ AssetAnchorId = Literal[
     # semantics differ: ttl_in is a digital control signal, not an RF
     # analogue path.
     "ttl_in",
+    "trigger_in",
     "aperture",
+    # Fiber-end ferrule tip (Phase fiber-split, 2026-05-16). Each
+    # `fiber_end` SceneObject has one `tip` anchor — the external
+    # optical face where the beam enters / exits the fiber. Position =
+    # ferrule tip centre, direction = outward face normal; apertureMm
+    # is the cladding diameter (rendered scaled for visibility).
+    "tip",
     # Optical-isolator internal PBS cube anchors. Each marks the diagonal
     # cement interface (position = cube centre, direction = coating normal,
     # apertureMm = half the active interface size). See the `isolator` kind
@@ -149,6 +156,11 @@ class AssetAnchor(CamelModel):
     aperture_height_mm: float | None = None
     name: str | None = None
     type: str | None = None
+    # Physical coaxial connector at this anchor — gender + family.
+    # Only meaningful for RF / TTL / Trigger anchors (rf_in / rf_out / ttl_in / trigger_in);
+    # left null on optical anchors. Edited per-anchor in the PHY Editor
+    # RF / Components view.
+    connector_type: Literal["sma_male", "sma_female", "bnc_male", "bnc_female"] | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -229,7 +241,9 @@ class ComponentBase(CamelModel):
 
 
 class ComponentCreate(ComponentBase):
-    pass
+    # Optional on create: backend defaults to `model` (fallback `component_type`)
+    # with `-N` suffixing on collision. Users can still pass an explicit name.
+    name: str | None = None  # type: ignore[assignment]
 
 
 class ComponentUpdate(CamelModel):
@@ -711,6 +725,7 @@ ElementKind = Literal[
     "dichroic_mirror",
     "fiber_coupler",
     "fiber",
+    "fiber_end",            # Phase fiber-split: per-end ferrule SceneObject for a fiber. Two of these (end A / end B) pair with a hidden `fiber` body wrapper to give each end its own pose / lock / rigid-group membership / align flow.
     "isolator",
     "aom",
     "eom",
@@ -724,6 +739,7 @@ ElementKind = Literal[
     "rf_source",            # Phase RF.1: DDS / synth / arbitrary waveform generator.
     "rf_amplifier",         # Phase RF.amp: coaxial RF gain block (one rf_in, one rf_out).
     "horn_antenna",         # Phase RF.7: microwave horn / antenna (radiates the RF chain output).
+    "programmable_pulse_generator",  # PPG — source-like RF stub (one rf_out, TTL/RF signal). SMA & BNC connector variants.
     "rf_cable",             # Phase RF.cable: coaxial RF cable (SMA/BNC/N), parallel to `fiber` for RF.
     "rf_switch",            # Phase RF.switch: coaxial SP2T / SP4T switch (Mini-Circuits ZYSWA-2-50DR family).
 ]
@@ -1146,6 +1162,41 @@ class FiberParams(CamelModel):
     # from the SceneObject id at solve time.
     random_jones_seed: int | None = None
 
+    # Phase fiber-split: each end is its own SceneObject. The `fiber` body
+    # wrapper carries shared params (this class) and references the two
+    # `fiber_end` SceneObjects whose poses drive the spline endpoints.
+    # Null on legacy rows; populated by the alembic backfill that creates
+    # the paired fiber_end objects from existing fiberNodes[0] / [N-1].
+    end_a_object_id: uuid.UUID | None = None
+    end_b_object_id: uuid.UUID | None = None
+
+
+class FiberEndParams(CamelModel):
+    """Phase fiber-split: per-end ferrule. Each ``fiber_end`` SceneObject
+    owns its own lab pose / rotation / lock / collection membership /
+    align flow. The two fiber_end objects pair with a single hidden
+    ``fiber`` body SceneObject (which carries fiberType, lengthMm and
+    other shared params) via ``FiberParams.end_a_object_id`` /
+    ``end_b_object_id``.
+
+    Per-end fields that used to live on ``FiberEndSpec`` (connector,
+    polish, slow-axis orientation) move here so each end's plug type and
+    rotation can be edited per-instance without touching the partner end.
+    """
+
+    # Connector + polish — moved off FiberEndSpec.
+    connector_type: str | None = None        # e.g. "FC/PC", "FC/APC", "LC/PC"
+    polish: str | None = None                # "PC" | "APC" | "UPC"
+    # PM fibers only — slow-axis angle in body frame (deg).
+    slow_axis_deg_in_body_frame: float | None = None
+    # Back-reference to the paired fiber body. Null only during the
+    # half-built state mid-creation; backfilled by Phase B migration for
+    # every existing fiber.
+    fiber_body_object_id: uuid.UUID | None = None
+    # Which end of the body this object represents. "A" / "B" align with
+    # FiberParams.end_a_object_id / end_b_object_id.
+    end_role: Literal["A", "B"] = "A"
+
 
 class IsolatorParams(CamelModel):
     """V2 Phase 8 (alembic 0034): transmission-axis angle moved to a
@@ -1551,6 +1602,19 @@ class RfSwitchParams(CamelModel):
     supply_current_ma: float = Field(default=25.0, ge=0.0)
     max_input_power_dbm: float = Field(default=27.0)
     connector_type: Literal["sma", "bnc", "n", "smp"] = "sma"
+    # Per-model TTL polarity. When TTL is HIGH (> threshold), the switch
+    # routes RFIN to RF{ttl_active_high_throw}; LOW routes to the other
+    # SPDT throw. Default 2 matches the user's lab convention
+    # (HIGH → RF2, LOW → RF1). For SP4T/SP6T this still picks "the HIGH
+    # throw" and falls back to manual ttl_state otherwise (one TTL line
+    # only resolves SPDT cleanly).
+    ttl_active_high_throw: Literal[1, 2, 3, 4, 5, 6] = 2
+    # Manual TTL state override used when there is no upstream PPG cable
+    # on ttl_in. The RF Link object panel exposes a HIGH/LOW toggle that
+    # writes this field. When a PPG is connected the toggle is greyed
+    # out and the TTL state is derived from the bound TimingProgram at
+    # t = 0 (HIGH if t=0 is inside any HIGH interval, else LOW).
+    ttl_state: Literal["HIGH", "LOW"] = "LOW"
     manufacturer: str | None = "Mini-Circuits"
     model: str | None = "ZYSWA-2-50DR"
     datasheet_url: str | None = "https://www.minicircuits.com/pdfs/ZYSWA-2-50DR+.pdf"
@@ -1574,6 +1638,36 @@ class HornAntennaParams(CamelModel):
     cosine_exponent: float = Field(default=8.0, ge=0.0)
 
 
+class ProgrammablePulseGeneratorParams(CamelModel):
+    """Programmable Pulse Generator (PPG).
+
+    Source-like RF stub: one `rf_out` port emits a TTL/RF pulse train
+    downstream. Two catalog variants ship today — the SMA-connector
+    variant (rendered via the SMA thumb-antenna GLB) and the BNC-connector
+    variant (rendered via the BNC-M / RCA-F adapter GLB). The connector
+    family is fixed per catalog entry; the user's choice of variant
+    determines `connector_type`. The full physics (timing resolution,
+    channel count, jitter, rise time) will be fleshed out once the
+    function is defined.
+    """
+
+    connector_type: Literal["sma", "bnc"] = "sma"
+    timing_program_id: uuid.UUID | None = None
+    # PPG emits a single "RFout" HIGH/LOW gate at high_voltage_v. Previously
+    # split into ttl / trigger sub-domains driven by TimingProgram.kind, but
+    # alembic 0051 collapses that into a single signal type — the consumer
+    # side (switch.ttl_in / AOM.trigger_in) carries any semantic difference.
+    # Field kept as a literal for forward compatibility / schema stability.
+    output_domain: Literal["rfout"] = "rfout"
+    high_voltage_v: float = Field(default=3.2, gt=0.0)
+    # Resting / default level of the channel — the value the output sits at
+    # OUTSIDE any HIGH interval. Symmetric semantics: when rest_state="HIGH"
+    # the program's intervals describe LOW pulses (negative logic); the gate
+    # state at scrub-stop is rest_state directly. JSONB-only field, no DB
+    # migration needed; defaults to "LOW" to preserve existing-scene behaviour.
+    rest_state: Literal["HIGH", "LOW"] = "LOW"
+
+
 # --- Per-kind validator registry --------------------------------------------
 
 
@@ -1595,6 +1689,7 @@ KIND_PARAMS_MODELS: dict[str, type[CamelModel]] = {
     "dichroic_mirror": DichroicMirrorParams,
     "fiber_coupler": FiberCouplerParams,
     "fiber": FiberParams,
+    "fiber_end": FiberEndParams,
     "isolator": IsolatorParams,
     "aom": AOMParams,
     "eom": EOMParams,
@@ -1608,6 +1703,7 @@ KIND_PARAMS_MODELS: dict[str, type[CamelModel]] = {
     "rf_source": RfSourceParams,
     "rf_amplifier": RfAmplifierParams,
     "horn_antenna": HornAntennaParams,
+    "programmable_pulse_generator": ProgrammablePulseGeneratorParams,
     "rf_cable": RfCableParams,
     "rf_switch": RfSwitchParams,
 }
@@ -1669,6 +1765,14 @@ DEFAULT_PORTS: dict[str, dict[str, list[dict[str, Any]]]] = {
         ],
         "output": [],
     },
+    "fiber_end": {
+        # A fiber_end is one ferrule tip. The single port represents the
+        # external optical face (where beams enter/exit the fiber). The
+        # internal side links into the paired fiber body — that link is
+        # carried in kindParams (fiberBodyObjectId), not as a port.
+        "input": [_port("tip", "bidirectional", "Ferrule tip", "main")],
+        "output": [],
+    },
     "isolator": {
         "input": [_port("in", "input", "In", "main")],
         "output": [_port("out", "output", "Out", "transmitted")],
@@ -1725,6 +1829,10 @@ DEFAULT_PORTS: dict[str, dict[str, list[dict[str, Any]]]] = {
         "input": [_port("rf_in", "input", "RF In", "rf")],
         "output": [_port("aperture", "output", "Aperture", "rf")],
     },
+    "programmable_pulse_generator": {
+        "input": [],
+        "output": [_port("rf_out", "output", "RF Out", "rf")],
+    },
     "rf_cable": {
         "input": [
             _port("a", "bidirectional", "End A", "rf"),
@@ -1776,7 +1884,14 @@ class OpticalElementBase(CamelModel):
         if validator is None:
             raise ValueError(f"Unknown element_kind: {self.element_kind}")
         validated = validator(**self.kind_params)
-        self.kind_params = validated.model_dump(by_alias=True, exclude_none=True)
+        # mode="json" ensures non-JSON-native types (e.g. UUID on
+        # ProgrammablePulseGeneratorParams.timing_program_id) get coerced
+        # to strings before reaching the JSONB column. Without it,
+        # SQLAlchemy raises ``Object of type UUID is not JSON serializable``
+        # on commit, which the route layer surfaces as a 500 — and the
+        # frontend's update-then-create fallback then emits a misleading
+        # "PhysicsElement already exists" 409.
+        self.kind_params = validated.model_dump(by_alias=True, exclude_none=True, mode="json")
 
         if not self.input_ports and not self.output_ports:
             defaults = DEFAULT_PORTS.get(self.element_kind)
@@ -1999,6 +2114,61 @@ class CollectionMembershipRequest(CamelModel):
     sort_order: int = 0
 
 
+# =============================================================================
+# Collection templates (Collection Drift)
+# =============================================================================
+#
+# Snapshot of a Collection subtree + relative member poses. See alembic 0053
+# and CollectionTemplate in models.py for the JSONB tree schema.
+
+
+class CollectionTemplateMemberPayload(CamelModel):
+    component_id: uuid.UUID
+    relative_x_mm: float = 0.0
+    relative_y_mm: float = 0.0
+    relative_z_mm: float = 0.0
+    rx_deg: float = 0.0
+    ry_deg: float = 0.0
+    rz_deg: float = 0.0
+    visible: bool = True
+    properties: JsonDict = Field(default_factory=dict)
+    sort_order: int = 0
+
+
+class CollectionTemplateNodePayload(CamelModel):
+    name: str
+    color: str = "#0f766e"
+    visible: bool = True
+    rigid_transform: bool = False
+    sort_order: int = 0
+    properties: JsonDict = Field(default_factory=dict)
+    members: list[CollectionTemplateMemberPayload] = Field(default_factory=list)
+    children: list["CollectionTemplateNodePayload"] = Field(default_factory=list)
+
+
+CollectionTemplateNodePayload.model_rebuild()
+
+
+class CollectionTemplateCreate(CamelModel):
+    name: str
+    description: str | None = None
+
+
+class CollectionTemplateOut(CamelModel):
+    id: uuid.UUID
+    name: str
+    description: str | None = None
+    tree: CollectionTemplateNodePayload
+    created_at: datetime
+
+
+class CollectionTemplateInstantiate(CamelModel):
+    parent_collection_id: uuid.UUID | None = None
+    target_x_mm: float = 0.0
+    target_y_mm: float = 0.0
+    target_z_mm: float = 0.0
+
+
 class SceneOut(CamelModel):
     assets: list[Asset3DOut]
     components: list[ComponentOut]
@@ -2026,21 +2196,20 @@ class WebSocketEvent(CamelModel):
 # Timing programs (reusable HIGH-interval schedules)
 # =============================================================================
 #
-# A TimingProgram is a top-level object identified by its own ``id``.
-# Consumers (rfSources.triggerBinding / gateBinding, PulseBlaster channels)
-# reference it by id; a single program can be shared across N consumers.
+# A TimingProgram is a top-level object identified by its own ``id``. Each
+# PPG SceneObject owns exactly one program via
+# ``physics_elements.kind_params.timingProgramId`` (1:1, cascade-deleted
+# with the PPG). ``intervals`` is a JSONB list of ``{spinCoreStartNs,
+# spinCoreEndNs}`` HIGH windows on a 10 ns grid; the rest of the timeline
+# is implicit LOW.
 #
-# ``kind`` discriminates how downstream hardware interprets the intervals:
-#   "TTL":     output is HIGH for [start, end) and LOW between intervals.
-#   "Trigger": fire a rising edge at each interval's start; the interval
-#              width is the pulse width emitted to make the edge observable.
-#
-# Storage is JSONB inline on ``timing_programs.intervals`` — the previous
-# separate ``timing_blocks`` table was dropped in alembic 0045 because the
-# read pattern is always "load the whole schedule". 10 ns is the minimum
-# resolution; the validator snaps start/end on write.
+# History note: this used to also carry ``kind`` (TTL / Trigger),
+# ``channel_index`` (PB hardware binding) and ``invert``. Alembic 0051
+# dropped all three — every PPG now emits the same RFout HIGH/LOW gate,
+# channel ordering is positional from the PPG list at solve time, and
+# there is no 24-channel cap because the channel index is no longer
+# stored.
 
-TimingProgramKind = Literal["TTL", "Trigger"]
 TIMING_RESOLUTION_NS = 10.0
 
 
@@ -2068,11 +2237,6 @@ class IntervalBase(CamelModel):
 
 class TimingProgramBase(CamelModel):
     name: str | None = None
-    kind: TimingProgramKind = "TTL"
-    # PB hardware binding (alembic 0046): which physical channel emits this
-    # schedule. None = logical program with no hardware wire yet.
-    channel_index: int | None = Field(default=None, ge=0)
-    invert: bool = False
     intervals: list[IntervalBase] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -2095,7 +2259,6 @@ class TimingProgramCreate(TimingProgramBase):
 
 class TimingProgramUpdate(CamelModel):
     name: str | None = None
-    kind: TimingProgramKind | None = None
     intervals: list[IntervalBase] | None = None
 
 

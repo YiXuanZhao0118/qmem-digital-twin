@@ -33,12 +33,16 @@ import {
 import { pluginForComponentType } from "../kinds/_plugins";
 import { CollapsibleSection } from "./CollapsibleSection";
 
+// Domain chip palette — matches the light theme used by the floating
+// panels (cream/teal). `bg` is a soft tint, `fg` is the readable solid;
+// kept saturated enough to scan a port list at a glance without
+// fighting the accent green elsewhere on the page.
 const DOMAIN_COLORS: Record<PortDomain, { bg: string; fg: string; label: string }> = {
-  optical: { bg: "#2a3b2e", fg: "#7be08a", label: "optical" },
-  rf:      { bg: "#2a323b", fg: "#62a3ff", label: "rf" },
-  trigger: { bg: "#3b2a2e", fg: "#d49a3a", label: "trigger" },
-  ttl:     { bg: "#3b2a2e", fg: "#d49a3a", label: "ttl" },
-  dc:      { bg: "#2e2a3b", fg: "#a062ff", label: "dc" },
+  optical: { bg: "rgba(15, 118, 110, 0.10)", fg: "#0f766e",   label: "optical" },
+  rf:      { bg: "rgba(37, 99, 235, 0.10)",  fg: "#1d4ed8",   label: "rf" },
+  trigger: { bg: "rgba(180, 83, 9, 0.12)",   fg: "#9a4a07",   label: "trigger" },
+  ttl:     { bg: "rgba(180, 83, 9, 0.12)",   fg: "#9a4a07",   label: "ttl" },
+  dc:      { bg: "rgba(124, 58, 237, 0.10)", fg: "#6d28d9",   label: "dc" },
 };
 
 /** Pretty-print a kindParam value for the read-only spec view.
@@ -107,34 +111,23 @@ export function IntrinsicSpecPanel({ component, sceneObject }: Props) {
   return (
     <CollapsibleSection
       id={`intrinsic-spec-${physicsPlugin.id}`}
-      title="Object spec (intrinsic)"
+      title="Spec"
       icon={<Info size={13} />}
-      defaultOpen={false}
+      defaultOpen
       badge={hasIntrinsic ? `${partition.intrinsic.length} fields` : undefined}
     >
-      <div style={{ padding: "6px 8px", display: "flex", flexDirection: "column", gap: 10 }}>
+      <div className="intrinsic-spec">
         {hasIntrinsic && (
-          <div>
-            <div style={{ fontSize: 10, color: "#8e8e9a", marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
+          <div className="intrinsic-spec-block">
+            <div className="intrinsic-spec-subhead">
               <Cpu size={11} /> Spec sheet — read-only
             </div>
-            <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
+            <table className="intrinsic-spec-table">
               <tbody>
                 {partition.intrinsic.map((key) => (
                   <tr key={key}>
-                    <td style={{
-                      padding: "2px 4px",
-                      color: "#cfcfd8",
-                      whiteSpace: "nowrap",
-                      borderBottom: "1px solid #2a2a30",
-                    }}>{key}</td>
-                    <td style={{
-                      padding: "2px 4px",
-                      color: "#e8e8ee",
-                      fontFamily: "var(--mono-font, ui-monospace, monospace)",
-                      textAlign: "right",
-                      borderBottom: "1px solid #2a2a30",
-                    }}>{formatValue(kindParams[key])}</td>
+                    <td className="intrinsic-spec-key">{key}</td>
+                    <td className="intrinsic-spec-val">{formatValue(kindParams[key])}</td>
                   </tr>
                 ))}
               </tbody>
@@ -143,45 +136,29 @@ export function IntrinsicSpecPanel({ component, sceneObject }: Props) {
         )}
 
         {hasPortDomains && (
-          <div>
-            <div style={{ fontSize: 10, color: "#8e8e9a", marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
+          <div className="intrinsic-spec-block">
+            <div className="intrinsic-spec-subhead">
               <PlugZap size={11} /> Ports by domain
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            <div className="intrinsic-spec-ports">
               {anchors.map((a) => {
                 const dom = resolvePortDomain(physicsPlugin, a.id);
                 const meta = dom ? DOMAIN_COLORS[dom] : null;
                 return (
-                  <div
-                    key={`${a.id}/${a.name ?? ""}`}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 6,
-                      fontSize: 11,
-                      padding: "2px 4px",
-                      borderBottom: "1px solid #2a2a30",
-                    }}
-                  >
-                    <span style={{ color: "#cfcfd8" }}>
+                  <div key={`${a.id}/${a.name ?? ""}`} className="intrinsic-spec-port">
+                    <span className="intrinsic-spec-port-name">
                       {a.name ?? a.id}{" "}
-                      <span style={{ color: "#6e6e7a" }}>· {a.id}</span>
+                      <span className="intrinsic-spec-port-id">· {a.id}</span>
                     </span>
                     {meta ? (
                       <span
-                        style={{
-                          fontSize: 9,
-                          padding: "1px 6px",
-                          borderRadius: 3,
-                          background: meta.bg,
-                          color: meta.fg,
-                        }}
+                        className="intrinsic-spec-port-chip"
+                        style={{ background: meta.bg, color: meta.fg }}
                       >
                         {meta.label}
                       </span>
                     ) : (
-                      <span style={{ fontSize: 9, color: "#6e6e7a" }}>—</span>
+                      <span className="intrinsic-spec-port-chip intrinsic-spec-port-chip-empty">—</span>
                     )}
                   </div>
                 );

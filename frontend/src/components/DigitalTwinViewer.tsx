@@ -12,6 +12,8 @@ import {
   type FiberNode,
 } from "../three/loadAsset";
 import { resolveLinkedRfCableEndpoint } from "../utils/rfCableAnchorResolver";
+import { resolveLinkedFiberEndpoint } from "../utils/fiberBodyEndpointResolver";
+import { capabilityProfile } from "../kinds/_capabilityProfile";
 import type { RfCableEndpointLink } from "../types/digitalTwin";
 
 import { useSceneStore, TOUCH_OPS, TOUCH_OP_BY_ID, type FeatureKind, type TouchOp } from "../store/sceneStore";
@@ -23,6 +25,12 @@ import { disposeFarfieldLobe, makeFarfieldLobe } from "../three/hornFarfield";
 import { disposeRfBadgeSprite, makeRfBadgeSprite } from "../three/rfBadge";
 import { getEmissionVisual } from "../utils/emissionVisuals";
 import { buildSceneGateOverrides } from "../utils/timingEvaluation";
+import {
+  buildAomGateOverridesFromSnapshot,
+  buildRfPropagationSchedule,
+  getRfSnapshotAt,
+} from "../utils/rfPropagationSchedule";
+import { computePpgMountedThreePose } from "../utils/ppgMounting";
 import { PlacementGizmo } from "../three/placement/gizmo";
 import { SnapOverlay } from "../three/placement/snapOverlay";
 import {
@@ -310,10 +318,12 @@ function applyViewerDisplayMode(object: THREE.Object3D, mode: ViewerDisplayMode)
       child.userData.__renderedReceiveShadow = child.receiveShadow;
       const side = materialSide(child.material);
       child.material = new THREE.MeshBasicMaterial({
-        color: "#c9f1e8",
+        // Dark blue wireframe lines on the light-cream background; the
+        // original solid material is stashed and restored on the way back.
+        color: "#1e3a8a",
         wireframe: true,
         transparent: true,
-        opacity: 0.84,
+        opacity: 0.45,
         depthWrite: false,
         side,
       });
@@ -945,7 +955,7 @@ function addAnchorAxis(
 ): void {
   const axis = directionToThree(direction);
   const dot = new THREE.Mesh(
-    new THREE.SphereGeometry(0.055, 12, 12),
+    new THREE.SphereGeometry(0.00275, 12, 12),
     new THREE.MeshBasicMaterial({ color }),
   );
   dot.position.copy(origin);
@@ -1302,6 +1312,11 @@ export function DigitalTwinViewer({
         // connector geometry when nothing fiber-specific changed.
         fiberNodesRef?: unknown;
         fiberRadiusMmRef?: number;
+        // Phase fiber-split parallel of rfCableLinkWatchKey: invalidate
+        // the fiber-body refresh cache when the paired fiber_end
+        // SceneObjects move, since the body's spline endpoints derive
+        // from those object poses (resolveLinkedFiberEndpoint).
+        fiberLinkWatchKey?: string;
         // rf_cable parallel: cached array of effective nodes (post-link
         // resolution) plus a "watch list" of linked-target ref keys so a
         // target move invalidates cache without ref-equality on the
@@ -1620,30 +1635,13 @@ export function DigitalTwinViewer({
     [overlayFlags, session, activeView, sceneData],
   );
 
-  // Scrub-time gate / AOM-freq overrides — both return empty maps until the
-  // post-0046 binding resolver (objects.properties.gateBindings → program id)
-  // is in place. Without it we can't determine which object's gate is being
-  // driven by which standalone program, so the beam tracer falls back to the
-  // static configured state.
-  const gateOverrides = useMemo(() => {
-    if (scrubTimeNs === null) return new Map<string, boolean>();
-    return buildSceneGateOverrides({
-      tNs: scrubTimeNs,
-      programs: sceneData.timingPrograms ?? [],
-      objects: sceneData.objects.map((o) => ({ id: o.id, componentId: o.componentId })),
-    });
-  }, [scrubTimeNs, sceneData.timingPrograms, sceneData.objects]);
-  const gateOverridesRef = useRef<Map<string, boolean>>(gateOverrides);
-  gateOverridesRef.current = gateOverrides;
-
-  const aomFreqOverrideMhz = useMemo(() => new Map<string, number>(), []);
-  const aomFreqOverrideRef = useRef<Map<string, number>>(aomFreqOverrideMhz);
-  aomFreqOverrideRef.current = aomFreqOverrideMhz;
-
   // Power off set — object ids whose device_states.state.power === false.
-  // Lasers / TAs in this set don't emit a beam. Default is ON (emitting)
-  // until the user explicitly toggles OFF via the Instrument Power panel,
-  // so freshly seeded scenes still show beams.
+  // Lasers / TAs in this set don't emit a beam. RF sources / amps / switches
+  // in this set drop signal at the propagation BFS (so downstream AOMs see
+  // no upstream RF and the diffracted orders vanish). Default is ON
+  // (emitting / amplifying) until the user explicitly toggles OFF via the
+  // Instrument Power panel, so freshly seeded scenes still show beams and
+  // RF chains.
   const poweredOffObjectIds = useMemo(() => {
     const out = new Set<string>();
     for (const ds of sceneData.deviceStates ?? []) {
@@ -1654,6 +1652,68 @@ export function DigitalTwinViewer({
   }, [sceneData.deviceStates]);
   const poweredOffObjectIdsRef = useRef<Set<string>>(poweredOffObjectIds);
   poweredOffObjectIdsRef.current = poweredOffObjectIds;
+
+  // Scrub-time gate overrides — derived from a precomputed propagation
+  // schedule keyed by section boundary. The schedule itself only
+  // recomputes when [scene + programs] change; dragging the scrub
+  // cursor is then an O(log N) lookup + thin AOM-port walk to derive
+  // the gate map. The beam tracer treats `gateOverrides[aomId] === false`
+  // as "AOM passes the 0th order straight through, no diffraction",
+  // which is exactly the user-visible behaviour when an upstream switch
+  // routes the carrier to a different throw.
+  const rfPropagationSchedule = useMemo(
+    () =>
+      buildRfPropagationSchedule({
+        objects: sceneData.objects,
+        components: sceneData.components,
+        assets: sceneData.assets,
+        physicsElements: sceneData.physicsElements,
+        timingPrograms: sceneData.timingPrograms ?? [],
+        poweredOffObjectIds,
+      }),
+    [
+      sceneData.objects,
+      sceneData.components,
+      sceneData.assets,
+      sceneData.physicsElements,
+      sceneData.timingPrograms,
+      poweredOffObjectIds,
+    ],
+  );
+  const gateOverrides = useMemo(() => {
+    // scrubTimeNs === null is the "scrub stopped" idle state. We still
+    // gate AOMs from the snapshot — `getRfSnapshotAt(null)` returns the
+    // t=0 snapshot, and the PPG rest-state XOR inside `buildRfPropagation`
+    // means a channel with rest=HIGH and no interval at 0 reports HIGH at
+    // idle (so its downstream switch routes to ttlActiveHighThrow and the
+    // AOM stays driven). This makes the user-set "default state" visible
+    // in the 3D viewer the moment scrub is stopped, which is the whole
+    // point of the Pulse & Timing rest-state pill.
+    const snapshot = getRfSnapshotAt(rfPropagationSchedule, scrubTimeNs);
+    return buildAomGateOverridesFromSnapshot(snapshot, {
+      objects: sceneData.objects,
+      components: sceneData.components,
+      assets: sceneData.assets,
+      physicsElements: sceneData.physicsElements,
+    });
+  }, [
+    scrubTimeNs,
+    rfPropagationSchedule,
+    sceneData.objects,
+    sceneData.components,
+    sceneData.assets,
+    sceneData.physicsElements,
+  ]);
+  // Keep import alive for legacy callers; the helper is now a fallback
+  // (returns empty Map) — actual gating lives in the useMemo above.
+  void buildSceneGateOverrides;
+  const gateOverridesRef = useRef<Map<string, boolean>>(gateOverrides);
+  gateOverridesRef.current = gateOverrides;
+
+  const aomFreqOverrideMhz = useMemo(() => new Map<string, number>(), []);
+  const aomFreqOverrideRef = useRef<Map<string, number>>(aomFreqOverrideMhz);
+  aomFreqOverrideRef.current = aomFreqOverrideMhz;
+
 
   const cursorHidden = useSceneStore((state) => state.transformCursorHidden[panelKey]);
   useEffect(() => {
@@ -1681,6 +1741,9 @@ export function DigitalTwinViewer({
     if (!mount) return;
 
     const scene = new THREE.Scene();
+    // Initial colors; the displayMode effect below swaps these to a
+    // cream/white palette when the user enters wireframe mode so the
+    // dark-blue wireframe lines stay readable.
     scene.background = new THREE.Color("#151715");
     scene.fog = new THREE.Fog("#151715", 45, 90);
     sceneRef.current = scene;
@@ -1864,7 +1927,7 @@ export function DigitalTwinViewer({
     hoverFaceOutline.renderOrder = 986;
     hoverHighlight.add(hoverFaceOutline);
     const hoverVertexBall = new THREE.Mesh(
-      new THREE.SphereGeometry(0.045, 18, 18),
+      new THREE.SphereGeometry(0.00225, 18, 18), // 0.225 mm (20× shrunk from 4.5 mm)
       new THREE.MeshBasicMaterial({
         color: hoverYellow,
         transparent: true,
@@ -2921,6 +2984,20 @@ export function DigitalTwinViewer({
       gizmo.detach();
       return;
     }
+    // Capability profile gate — kinds whose pose is fully derived from
+    // anchors (rf_cable, future hidden fiber body) or which are managed
+    // exclusively by other panels (PPG, mating pose computed by
+    // ppgMounting.ts) opt out of the placement gizmo via
+    // `viewerGizmoAttachable: false`. Interior-node spline edits in
+    // node-edit mode remain the only legitimate hand-driven cable
+    // manipulation.
+    const peForSelection = sceneData.physicsElements.find(
+      (e) => e.objectId === selectedObjectId,
+    );
+    if (!capabilityProfile(peForSelection?.elementKind).viewerGizmoAttachable) {
+      gizmo.detach();
+      return;
+    }
     // Helper: find the wrapper Group in componentGroup for a given objectId.
     const findWrapper = (objectId: string): THREE.Group | null => {
       let wrapper: THREE.Group | null = null;
@@ -2995,6 +3072,26 @@ export function DigitalTwinViewer({
   useEffect(() => {
     if (environmentGroupRef.current) {
       applyEnvironmentDisplayMode(environmentGroupRef.current, displayMode);
+    }
+    // Light background in wireframe mode so the dark-blue wireframe lines
+    // read clearly; restore the dark photo-studio palette otherwise. The
+    // photo-room walls hide the bg color most of the time; toggling their
+    // visibility off in wireframe mode lets the white bg show through.
+    const scene = sceneRef.current;
+    const envGroup = environmentGroupRef.current;
+    if (scene) {
+      const bg = displayMode === "wireframe" ? "#ffffff" : "#151715";
+      scene.background = new THREE.Color(bg);
+      if (scene.fog instanceof THREE.Fog) {
+        scene.fog.color = new THREE.Color(bg);
+      }
+    }
+    if (envGroup) {
+      // Hide the photo-studio walls + floor + ceiling in wireframe mode
+      // so the white bg is visible; show them again in rendered mode.
+      // The optical table is added separately as a SceneObject, not part
+      // of `environmentGroup`, so this only toggles the surrounding room.
+      envGroup.visible = displayMode !== "wireframe";
     }
   }, [displayMode]);
 
@@ -3319,6 +3416,70 @@ export function DigitalTwinViewer({
         return { effectiveNodes: stored, linkWatchKey: watchKeyParts.join("|") };
       };
 
+      // Fiber body equivalent of resolveEffectiveRfCableState — Phase
+      // fiber-split: the body's stored fiberNodes[0] / [N-1] are
+      // overridden at render time from the paired fiber_end
+      // SceneObjects' lab poses (referenced via FiberParams.endA/B
+      // ObjectId). Returns null for legacy data where endA/BObjectId
+      // is missing — caller falls back to stored fiberNodes.
+      const resolveEffectiveFiberBodyState = (
+        placement: SceneObject,
+        component: ComponentItem,
+      ): { effectiveNodes: FiberNode[]; linkWatchKey: string } | null => {
+        if (component.componentType !== "fiber") return null;
+        const fiberPe = sceneData.physicsElements.find((e) => e.objectId === placement.id);
+        const kp = (fiberPe?.kindParams ?? {}) as {
+          endAObjectId?: string | null;
+          endBObjectId?: string | null;
+        };
+        if (!kp.endAObjectId && !kp.endBObjectId) return null;
+
+        const objProps = (placement.properties ?? {}) as { fiberNodes?: FiberNode[] };
+        const compProps = (component.properties ?? {}) as { fiberNodes?: FiberNode[] };
+        const baseNodes =
+          (objProps.fiberNodes && objProps.fiberNodes.length >= 2)
+            ? objProps.fiberNodes
+            : compProps.fiberNodes;
+        if (!baseNodes || baseNodes.length < 2) return null;
+
+        const stored: FiberNode[] = baseNodes.map((n) => ({
+          posMm: [n.posMm[0], n.posMm[1], n.posMm[2]],
+          handleInMm: n.handleInMm
+            ? [n.handleInMm[0], n.handleInMm[1], n.handleInMm[2]]
+            : undefined,
+          handleOutMm: n.handleOutMm
+            ? [n.handleOutMm[0], n.handleOutMm[1], n.handleOutMm[2]]
+            : undefined,
+        }));
+
+        const watchKeyParts: string[] = [];
+        const applyEnd = (end: "A" | "B", endObjId: string | null | undefined) => {
+          if (!endObjId) return;
+          const endObj = sceneData.objects.find((o) => o.id === endObjId);
+          if (!endObj) return;
+          const resolved = resolveLinkedFiberEndpoint({
+            endpoint: end,
+            fiberBody: placement,
+            fiberEnd: endObj,
+          });
+          if (!resolved) return;
+          const idx = end === "A" ? 0 : stored.length - 1;
+          stored[idx] = {
+            posMm: resolved.posMmBody,
+            handleInMm:
+              end === "B" ? resolved.handleMmBody : stored[idx].handleInMm,
+            handleOutMm:
+              end === "A" ? resolved.handleMmBody : stored[idx].handleOutMm,
+          };
+          watchKeyParts.push(
+            `${end}:${endObjId}:${endObj.xMm.toFixed(3)},${endObj.yMm.toFixed(3)},${endObj.zMm.toFixed(3)},${endObj.rxDeg.toFixed(3)},${endObj.ryDeg.toFixed(3)},${endObj.rzDeg.toFixed(3)}`,
+          );
+        };
+        applyEnd("A", kp.endAObjectId);
+        applyEnd("B", kp.endBObjectId);
+        return { effectiveNodes: stored, linkWatchKey: watchKeyParts.join("|") };
+      };
+
       for (const placement of sceneData.objects) {
         if (cancelled) return;
         seenObjectIds.add(placement.id);
@@ -3374,22 +3535,33 @@ export function DigitalTwinViewer({
             const compProps = (component.properties ?? {}) as {
               fiberNodes?: FiberNode[]; radiusMm?: number;
             };
-            const nodes =
-              (objProps.fiberNodes && objProps.fiberNodes.length >= 2)
-                ? objProps.fiberNodes
-                : compProps.fiberNodes;
             const radiusMm =
               typeof objProps.radiusMm === "number"
                 ? objProps.radiusMm
                 : typeof compProps.radiusMm === "number"
                   ? compProps.radiusMm
                   : 1.0;
+            // Phase fiber-split: if FiberParams.endA/BObjectId points at
+            // paired fiber_end SceneObjects, the body's two spline
+            // endpoint nodes re-derive from those objects' lab poses.
+            // Falls back to stored fiberNodes for legacy (pre-migration)
+            // data where endA/BObjectId is null.
+            const fiberState = resolveEffectiveFiberBodyState(placement, component);
+            const nodes = fiberState
+              ? fiberState.effectiveNodes
+              : (objProps.fiberNodes && objProps.fiberNodes.length >= 2)
+                ? objProps.fiberNodes
+                : compProps.fiberNodes;
+            const fiberWatchKey = fiberState?.linkWatchKey ?? "";
             const fiberRefsChanged =
-              cached.fiberNodesRef !== nodes || cached.fiberRadiusMmRef !== radiusMm;
+              cached.fiberNodesRef !== nodes
+              || cached.fiberRadiusMmRef !== radiusMm
+              || cached.fiberLinkWatchKey !== fiberWatchKey;
             if (fiberRefsChanged && nodes && nodes.length >= 2) {
               refreshFiberWrapperGeometry(wrapper, nodes, radiusMm);
               cached.fiberNodesRef = nodes;
               cached.fiberRadiusMmRef = radiusMm;
+              cached.fiberLinkWatchKey = fiberWatchKey;
             }
           }
           // rf_cable parallel: rebuild tube + connectors when stored nodes
@@ -3476,21 +3648,68 @@ export function DigitalTwinViewer({
                     ? fiberCompProps.radiusMm
                     : 1.0)
               : undefined;
+          const fiberSeed =
+            component.componentType === "fiber"
+              ? resolveEffectiveFiberBodyState(placement, component)
+              : null;
           wrapperCache.set(placement.id, {
             wrapper,
             componentRef: component,
             assetRef: asset,
             stateRef: deviceState,
-            fiberNodesRef: seedFiberNodes,
+            fiberNodesRef: fiberSeed?.effectiveNodes ?? seedFiberNodes,
             fiberRadiusMmRef: seedFiberRadius,
+            fiberLinkWatchKey: fiberSeed?.linkWatchKey,
             rfCableEffectiveNodesRef: rfCableSeed?.effectiveNodes,
             rfCableLinkWatchKey: rfCableSeed?.linkWatchKey,
           });
         }
 
-        applyObjectTransform(wrapper, effectivePlacement);
+        // PPG is conceptually a connector that plugs straight into the
+        // peer instrument's coax port — its body lab pose is the mating
+        // pose of `rf_out` against the target anchor, not whatever
+        // `xMm/yMm/zMm` the SceneObject was created at. Override here;
+        // fall back to the regular SceneObject pose when the PPG is
+        // transiently orphan (no rf_cable resolved yet).
+        const peForPlacement = sceneData.physicsElements.find(
+          (e) => e.objectId === placement.id,
+        );
+        const mountedPose =
+          peForPlacement?.elementKind === "programmable_pulse_generator"
+            ? computePpgMountedThreePose(sceneData, effectivePlacement, component, asset)
+            : null;
+        if (mountedPose) {
+          wrapper.position.copy(mountedPose.positionThree);
+          wrapper.quaternion.copy(mountedPose.quaternion);
+          wrapper.scale.setScalar(1);
+          wrapper.visible = placement.visible;
+        } else {
+          applyObjectTransform(wrapper, effectivePlacement);
+        }
         applyViewerDisplayMode(wrapper, displayMode);
         applyVisibilityFlags(wrapper, visibleInView);
+        // PPG mounts directly on its peer instrument's coax port (the
+        // ppgMounting math above places the PPG body so its rf_out
+        // anchor coincides with the target anchor). The rf_cable that
+        // records the routing relationship would render as a zero-length
+        // spline degenerating onto a single point — hide it. Cables that
+        // connect two non-PPG instruments stay visible as normal.
+        if (peForPlacement?.elementKind === "rf_cable") {
+          const eps = ((placement.properties ?? {}) as {
+            rfCableEndpoints?: {
+              A?: { targetObjectId?: string };
+              B?: { targetObjectId?: string };
+            };
+          }).rfCableEndpoints;
+          const ppgTargetIds = new Set(
+            sceneData.physicsElements
+              .filter((pe) => pe.elementKind === "programmable_pulse_generator")
+              .map((pe) => pe.objectId),
+          );
+          const aIsPpg = eps?.A?.targetObjectId && ppgTargetIds.has(eps.A.targetObjectId);
+          const bIsPpg = eps?.B?.targetObjectId && ppgTargetIds.has(eps.B.targetObjectId);
+          if (aIsPpg || bIsPpg) wrapper.visible = false;
+        }
         decorate(wrapper, placement, component);
         // Request a paint at the moment of the transform itself. The async
         // IIFE that wraps renderComponents() also fires requestRender at the
@@ -3906,6 +4125,11 @@ export function DigitalTwinViewer({
       transparent: true,
       opacity: 0.85,
     });
+    // Fiber spline node + handle gizmo sizes. Originals (4.5 / 2.8 mm)
+    // were briefly shrunk 20× in a prior pass to keep them inside the
+    // ferrule body, but that made them invisible at lab scale —
+    // restoring the visible defaults so node-edit mode actually shows
+    // draggable anchors. Same rationale applied to rf_cable below.
     const anchorGeometry = new THREE.SphereGeometry(0.045, 16, 12); // 4.5 mm
     const handleTipGeometry = new THREE.SphereGeometry(0.028, 14, 10); // 2.8 mm
 
@@ -4158,6 +4382,17 @@ export function DigitalTwinViewer({
         const tip = handleHits[0].object as THREE.Mesh;
         const nodeIndex = tip.userData.fiberHandleNodeIndex as number;
         const side = tip.userData.fiberHandleSide as "in" | "out";
+        // Endpoint handles are pinned in Phase fiber-split — the spline
+        // direction at each end derives from the paired fiber_end
+        // SceneObject's rotation (see resolveLinkedFiberEndpoint).
+        // Enforces `endpointSplineNodesLocked: true` on the `fiber`
+        // capability profile (kinds/_capabilityProfile.ts). To change
+        // the endpoint tangent the user rotates the fiber_end object.
+        if (nodeIndex === 0 || nodeIndex === nodes.length - 1) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         const wp = new THREE.Vector3();
         tip.getWorldPosition(wp);
         dragPlane = screenAlignedPlaneAt(wp);
@@ -4175,6 +4410,16 @@ export function DigitalTwinViewer({
       if (anchorHits.length > 0) {
         const anchor = anchorHits[0].object as THREE.Mesh;
         const nodeIndex = anchor.userData.fiberAnchorIndex as number;
+        // Endpoint anchor nodes are pinned to the paired fiber_end
+        // SceneObjects' lab poses; to move an end the user drags the
+        // fiber_end object (gizmo / Object panel) instead. Enforces
+        // `endpointSplineNodesLocked: true` on the `fiber` capability
+        // profile.
+        if (nodeIndex === 0 || nodeIndex === nodes.length - 1) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         const wp = new THREE.Vector3();
         anchor.getWorldPosition(wp);
         dragPlane = screenAlignedPlaneAt(wp);
@@ -4469,8 +4714,11 @@ export function DigitalTwinViewer({
     const handleLineMat = new THREE.LineBasicMaterial({
       color: 0x66d9ff, depthTest: false, transparent: true, opacity: 0.85,
     });
-    const anchorGeometry = new THREE.SphereGeometry(0.045, 16, 12);
-    const handleTipGeometry = new THREE.SphereGeometry(0.028, 14, 10);
+    // rf_cable node + handle gizmo sizes (parity with the fiber editor
+    // above). Briefly shrunk 20× in a prior pass — invisible at lab
+    // scale. Restored to the readable defaults.
+    const anchorGeometry = new THREE.SphereGeometry(0.045, 16, 12); // 4.5 mm
+    const handleTipGeometry = new THREE.SphereGeometry(0.028, 14, 10); // 2.8 mm
 
     type AnchorRef = { mesh: THREE.Mesh; nodeIndex: number };
     type HandleRef = { mesh: THREE.Mesh; line: THREE.Line; nodeIndex: number; side: "in" | "out" };
@@ -4598,6 +4846,17 @@ export function DigitalTwinViewer({
         const tip = handleHits[0].object as THREE.Mesh;
         const nodeIndex = tip.userData.rfCableHandleNodeIndex as number;
         const side = tip.userData.rfCableHandleSide as "in" | "out";
+        // Endpoint nodes are pinned to their target objects' anchors
+        // (rfCableEndpoints[A|B]); dragging the tangent handle would
+        // change the spline direction at that anchored point. Enforces
+        // the `endpointSplineNodesLocked: true` capability on rf_cable
+        // (see kinds/_capabilityProfile.ts). Interior-node handles
+        // remain editable.
+        if (nodeIndex === 0 || nodeIndex === nodes.length - 1) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         const wp = new THREE.Vector3();
         tip.getWorldPosition(wp);
         dragPlane = screenAlignedPlaneAt(wp);
@@ -4614,6 +4873,17 @@ export function DigitalTwinViewer({
       if (anchorHits.length > 0) {
         const anchor = anchorHits[0].object as THREE.Mesh;
         const nodeIndex = anchor.userData.rfCableAnchorIndex as number;
+        // Endpoint anchor nodes are pinned via the rf_cable kind's
+        // `endpointSplineNodesLocked: true` capability (see
+        // kinds/_capabilityProfile.ts). To detach a cable end the user
+        // right-clicks the port in the RF Link panel and picks
+        // "Disconnect cable" — that path runs the proper cascade
+        // (rfCableEndpoints clear + cable object delete + PPG sweep).
+        if (nodeIndex === 0 || nodeIndex === nodes.length - 1) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         const wp = new THREE.Vector3();
         anchor.getWorldPosition(wp);
         dragPlane = screenAlignedPlaneAt(wp);
@@ -4804,7 +5074,7 @@ export function DigitalTwinViewer({
     const labMmToLocalThree = (xMm: number, yMm: number, zMm: number) =>
       new THREE.Vector3(xMm / 100, zMm / 100, -yMm / 100);
 
-    const markerGeometry = new THREE.SphereGeometry(0.045, 16, 12);
+    const markerGeometry = new THREE.SphereGeometry(0.00225, 16, 12); // 0.225 mm (20× shrunk from 4.5 mm)
     const markerMat = new THREE.MeshBasicMaterial({
       color: 0x3b82f6,
       depthTest: false,
@@ -4888,7 +5158,7 @@ export function DigitalTwinViewer({
     const labMmToLocalThree = (xMm: number, yMm: number, zMm: number) =>
       new THREE.Vector3(xMm / 100, zMm / 100, -yMm / 100);
 
-    const markerGeometry = new THREE.SphereGeometry(0.045, 16, 12);
+    const markerGeometry = new THREE.SphereGeometry(0.00225, 16, 12); // 0.225 mm (20× shrunk from 4.5 mm)
     const markerMat = new THREE.MeshBasicMaterial({
       color: 0x3b82f6, depthTest: false, transparent: true, opacity: 0.95,
     });

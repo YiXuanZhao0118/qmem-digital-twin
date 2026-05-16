@@ -55,9 +55,17 @@ export type AnchorId =
   // a digital control signal, not an RF analogue path, and downstream
   // RF-chain math should not see it as a signal source.
   | "ttl_in"
+  | "trigger_in"
   // Horn-antenna aperture face — radiation lobe origin + main-beam
   // direction (cos^n parametric pattern).
   | "aperture"
+  // Fiber-end ferrule tip (Phase fiber-split, 2026-05-16). Each
+  // `fiber_end` SceneObject has one `tip` anchor representing the
+  // external optical face — where the beam enters / exits the fiber.
+  // Position = ferrule tip centre, direction = outward face normal
+  // (the optical axis pointing into free space); apertureMm = MFD or
+  // cladding diameter scaled for visibility.
+  | "tip"
   // Optical-isolator internal PBS cube anchors (diagonal cement
   // interface — position = cube centre, direction = coating normal,
   // apertureMm = half the active interface size). Used by the
@@ -82,6 +90,7 @@ export const EDITABLE_ANCHOR_IDS: AnchorId[] = [
   "rf_in",
   "rf_out",
   "ttl_in",
+  "trigger_in",
   "aperture",
 ];
 

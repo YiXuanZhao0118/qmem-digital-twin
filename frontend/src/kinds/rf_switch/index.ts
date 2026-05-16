@@ -29,6 +29,14 @@ export interface RfSwitchParams extends Record<string, unknown> {
   supplyCurrentMa: number;
   maxInputPowerDbm: number;
   connectorType: string;
+  /** Per-model TTL polarity. When TTL is HIGH, switch routes RFIN →
+   *  RF{ttlActiveHighThrow}; LOW routes to the other SPDT throw. */
+  ttlActiveHighThrow: 1 | 2 | 3 | 4 | 5 | 6;
+  /** Manual TTL state used when no PPG is connected on ttl_in. When a
+   *  PPG cable is present the active state is derived from the bound
+   *  TimingProgram at t = 0 (HIGH if t = 0 falls inside any HIGH
+   *  interval). */
+  ttlState: "HIGH" | "LOW";
   manufacturer: string;
   model: string;
   datasheetUrl: string;
@@ -69,6 +77,8 @@ export const rfSwitchPlugin = definePhysicsPlugin<RfSwitchParams>({
       supplyCurrentMa: 25.0,
       maxInputPowerDbm: 27.0,
       connectorType: "sma",
+      ttlActiveHighThrow: 2,
+      ttlState: "LOW",
       manufacturer: "Mini-Circuits",
       model: "ZYSWA-2-50DR",
       datasheetUrl: "https://www.minicircuits.com/pdfs/ZYSWA-2-50DR+.pdf",

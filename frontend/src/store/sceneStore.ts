@@ -6,6 +6,10 @@ import {
   autoRegisterOpticalAllApi,
   createAssemblyRelationApi,
   createCollectionApi,
+  deleteCollectionTemplateApi,
+  instantiateCollectionTemplateApi,
+  listCollectionTemplatesApi,
+  saveCollectionAsTemplateApi,
   createCircuitApi,
   createEmProblemApi,
   createObjectApi,
@@ -71,6 +75,7 @@ import type {
   AssemblyRelation,
   Collection,
   CollectionMember,
+  CollectionTemplate,
   ComponentItem,
   GeometrySelector,
   ConnectionItem,
@@ -136,6 +141,11 @@ import {
   validateOpticalLink,
 } from "../utils/beamPlacement";
 import { expandPoseToRigidGroup, patchHasPoseChange } from "../utils/rigidGroup";
+import {
+  connectorFamilyFromAnchor,
+  domainsAreCompatible,
+  resolveRfLinkPortDomain,
+} from "../utils/rfLinkPorts";
 
 type RelationDraftTarget = {
   objectAId: string;
@@ -252,8 +262,14 @@ type SceneStore = {
    *  this time overrides beam emission per the active TimingProgram
    *  bindings. */
   scrubTimeNs: number | null;
+  /** User-requested timeline total (ns). Drives both the Pulse & Timing
+   *  panel total-duration input AND the scrub-time bar's right edge.
+   *  ``null`` ≡ auto-fit to max(end of all intervals); never shrinks
+   *  below max(end) at runtime. */
+  userTimelineTotalNs: number | null;
   loadRfChains: () => Promise<void>;
   setScrubTimeNs: (tNs: number | null) => void;
+  setUserTimelineTotalNs: (tNs: number | null) => void;
   setEditorMode: (mode: "scene" | "phy-editor") => void;
   setCurrentModule: (module: SimulationModule) => void;
   loadRecentSimulationRuns: (module?: SimulationModule, limit?: number) => Promise<void>;
@@ -343,7 +359,7 @@ type SceneStore = {
   duplicateSceneView: (viewId: string) => Promise<SceneView>;
   createViewFromCurrentVisibility: (name: string) => Promise<SceneView>;
   loadScene: () => Promise<void>;
-  createComponent: (name: string, componentType: string) => Promise<ComponentItem>;
+  createComponent: (name: string | undefined, componentType: string) => Promise<ComponentItem>;
   uploadComponentAsset: (payload: {
     file: File;
     name: string;
@@ -363,6 +379,20 @@ type SceneStore = {
     scaleFactor?: number;
   }) => Promise<ComponentItem>;
   ensureObjectForComponent: (componentId: string) => Promise<void>;
+  createProgrammablePulseGenerator: (args: {
+    connectorType: "sma" | "bnc";
+  }) => Promise<{ objectId: string; timingProgramId: string } | null>;
+  /** End-to-end "create PPG at a receiving port": auto-creates a fresh
+   *  TimingProgram, materialises a PPG object whose rf_out matches the
+   *  target port's connector family, and lays an RF cable from the PPG
+   *  to the target ttl_in / trigger_in. Returns null when the target
+   *  port is occupied or has no defined connector family. */
+  createPpgAtPort: (args: {
+    targetObjectId: string;
+    targetAnchorId: string;
+    targetAnchorName: string;
+    targetConnectorFamily: "sma" | "bnc";
+  }) => Promise<{ objectId: string; timingProgramId: string } | null>;
   /** Spawn a free-form text annotation at the transform cursor. Creates a
    *  fresh `text_annotation` component (driven entirely by canvas-rendered
    *  properties — no asset, no optical role) and a SceneObject pointing at
@@ -738,6 +768,22 @@ type SceneStore = {
   ) => Promise<Collection>;
   moveObjectToCollection: (collectionId: string, objectId: string) => Promise<void>;
   unlinkObjectFromCollection: (collectionId: string, objectId: string) => Promise<void>;
+  // ─── Collection templates (Collection Drift) ───────────────────────────────
+  collectionTemplates: CollectionTemplate[];
+  loadCollectionTemplates: () => Promise<void>;
+  saveCollectionAsTemplate: (
+    collectionId: string,
+    payload: { name: string; description?: string | null },
+  ) => Promise<CollectionTemplate>;
+  /** Drop a saved template into the scene with its centroid landing on the
+   *  current 3D cursor (``transformCursorMm.left``). Optional ``parentCollectionId``
+   *  defaults to Master. Reloads the scene afterward so every new
+   *  collection / object / physics_element row shows up at once. */
+  instantiateCollectionTemplateAtCursor: (
+    templateId: string,
+    parentCollectionId?: string | null,
+  ) => Promise<void>;
+  deleteCollectionTemplate: (templateId: string) => Promise<void>;
   loadTimingPrograms: () => Promise<void>;
   createTimingProgram: (payload: TimingProgramCreatePayload) => Promise<TimingProgram>;
   updateTimingProgram: (
@@ -934,6 +980,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   phyEditorDirty: false,
   rfChains: [],
   scrubTimeNs: null,
+  userTimelineTotalNs: null,
   fiberEditingComponentId: null,
   rfCableEditingObjectId: null,
   transformPivotMode: "median",
@@ -1400,7 +1447,12 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         ? scene.components.find((component) => component.id === currentComponentId)
         : undefined;
       const selectedComponent = selectedComponentCandidate;
-      const fallbackObject = selectedComponent ? undefined : selectedObject ?? scene.objects[0];
+      // Selection rule: keep what the user had if it still exists; never
+      // auto-pick a survivor on the user's behalf. Previously this line
+      // fell back to `scene.objects[0]`, which made cold start /
+      // post-reload look like an arbitrary object had been clicked — the
+      // user explicitly asked us not to do that.
+      const fallbackObject = selectedComponent ? undefined : selectedObject;
       const sceneObjectIds = new Set(scene.objects.map((object) => object.id));
       const validObjectIds = currentObjectIds.filter((id) => sceneObjectIds.has(id));
       const nextSelectedObjectIds = selectedComponent
@@ -1454,8 +1506,10 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   },
 
   async createComponent(name, componentType) {
+    // `name` is optional — backend defaults to model (fallback component_type)
+    // with `-N` suffixing on collision.
     const component = await createComponentApi({
-      name,
+      ...(name ? { name } : {}),
       componentType,
       properties: { geometry: componentType },
     });
@@ -1507,11 +1561,15 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     // attached ports — same outcome we already auto-delete on unlink —
     // so we reject the placement up front and log a console hint instead.
     const component = scene.components.find((c) => c.id === componentId);
-    if (component?.componentType === "rf_cable" || component?.componentType === "sma_cable") {
+    if (
+      component?.componentType === "rf_cable" ||
+      component?.componentType === "sma_cable" ||
+      component?.componentType === "programmable_pulse_generator"
+    ) {
       // eslint-disable-next-line no-console
       console.warn(
         `[sceneStore] Placing ${component.componentType} from the catalog is not allowed — ` +
-          "use the RF Link panel's drag-to-connect to create cables between ports.",
+          "use the RF Link panel to create cables or Pulse & Timing outputs.",
       );
       return;
     }
@@ -1531,6 +1589,106 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         objects: upsertObject(state.scene.objects, obj),
       },
     }));
+  },
+
+  async createProgrammablePulseGenerator({ connectorType }) {
+    const state = get();
+    // PPG ↔ TimingProgram are 1:1. The program is created with just a name;
+    // channel ordering is now positional from the PPG list at solve time
+    // (no PB cap, no per-program channel_index column post-alembic 0051).
+    const ppgCount = state.scene.physicsElements.filter(
+      (pe) => pe.elementKind === "programmable_pulse_generator",
+    ).length;
+    const programName = `CH${ppgCount}`;
+
+    const component = state.scene.components.find((candidate) => {
+      if (candidate.componentType !== "programmable_pulse_generator") return false;
+      const props = candidate.properties as Record<string, unknown>;
+      return props.connectorType === connectorType;
+    });
+    if (!component) return null;
+
+    const program = await createTimingProgramApi({
+      name: programName,
+      intervals: [],
+    });
+
+    const obj = await createObjectApi({
+      // PPG SceneObject.name is the user-facing identity of this channel
+      // (Pulse & Timing left column, RF Link node header). Set it to a
+      // short positional label rather than letting the backend auto-name
+      // it ``programmable_pulse_generator_bnc_object_4`` — the user can
+      // rename it from either panel later.
+      name: programName,
+      componentId: component.id,
+      collectionId: get().activeCollectionId,
+      ...cursorSpawnPatch(get().transformCursorMm.left, state.scene.objects.length),
+      visible: true,
+      locked: false,
+    });
+
+    const kindParams = {
+      connectorType,
+      timingProgramId: program.id,
+      outputDomain: "rfout" as const,
+      highVoltageV: 3.2,
+    };
+    let element: PhysicsElement;
+    try {
+      element = await updateOpticalElementApi(obj.id, {
+        elementKind: "programmable_pulse_generator",
+        kindParams,
+      });
+    } catch {
+      element = await createOpticalElementApi({
+        objectId: obj.id,
+        elementKind: "programmable_pulse_generator",
+        kindParams,
+      });
+    }
+
+    set((current) => ({
+      selectedComponentId: null,
+      selectedObjectId: obj.id ?? null,
+      selectedObjectIds: obj.id ? [obj.id] : [],
+      scene: {
+        ...current.scene,
+        timingPrograms: [...(current.scene.timingPrograms ?? []), program],
+        objects: upsertObject(current.scene.objects, obj),
+        physicsElements: upsertById(
+          current.scene.physicsElements.filter((item) => item.objectId !== element.objectId),
+          element,
+        ),
+      },
+    }));
+    return { objectId: obj.id, timingProgramId: program.id };
+  },
+
+  async createPpgAtPort({
+    targetObjectId,
+    targetAnchorId,
+    targetAnchorName,
+    targetConnectorFamily,
+  }) {
+    const created = await get().createProgrammablePulseGenerator({
+      connectorType: targetConnectorFamily,
+    });
+    if (!created) return null;
+    const cableId = await get().createRfCableBetweenPorts({
+      srcObjectId: created.objectId,
+      srcAnchorId: "rf_out",
+      srcAnchorName: "rf_out",
+      tgtObjectId: targetObjectId,
+      tgtAnchorId: targetAnchorId,
+      tgtAnchorName: targetAnchorName,
+    });
+    if (!cableId) {
+      // PPG materialised but cable failed — roll back the PPG (and the
+      // cascaded TimingProgram) so we don't leave dangling state.
+      await get().deleteObject(created.objectId).catch(() => {});
+      return null;
+    }
+    return created;
   },
 
   async addTextAnnotation(text) {
@@ -2060,25 +2218,23 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     const state = get();
     if (srcObjectId === tgtObjectId) return null;
 
-    // 1. Find a catalog rf_cable Component to instantiate. Prefer one
-    //    whose componentType is exactly "rf_cable"; fall back to
-    //    "sma_cable" for legacy templates.
-    const cableComponent =
-      state.scene.components.find((c) => c.componentType === "rf_cable")
-        ?? state.scene.components.find((c) => c.componentType === "sma_cable");
-    if (!cableComponent) return null;
-
     // 2. Resolve each endpoint's port lab position so the new SceneObject
     //    can land at the midpoint (the spline nodes will then be re-derived
     //    via applyRfCableAlignmentCandidate; the body pose just provides
     //    a sensible centre point + rotation = identity).
+    //
+    //    Also extracts each endpoint's `connectorType` so the cable-variant
+    //    picker below can match SMA / BNC families end-for-end.
     type Vec3 = [number, number, number];
+    type ConnectorFamily = "sma" | "bnc" | null;
     type PortResolved = {
       labPos: Vec3;
       labDir: Vec3;
       anchorPosBody: Vec3;
       anchorDirBody: Vec3;
       targetName: string;
+      connectorFamily: ConnectorFamily;
+      domain: "rf" | "ttl" | "trigger" | "rfout" | null;
     };
     const resolvePort = (
       objectId: string,
@@ -2097,6 +2253,9 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         (a) => a.id === anchorId && (a.name ?? a.id) === anchorName,
       );
       if (!anchor) return null;
+      const pe = state.scene.physicsElements.find((e) => e.objectId === objectId) ?? null;
+      const kind = pe?.elementKind ?? null;
+      const domain = resolveRfLinkPortDomain({ kind, anchorId });
       const anchorPosBody: Vec3 = [
         anchor.positionMmBodyLocal.x,
         anchor.positionMmBodyLocal.y,
@@ -2105,6 +2264,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       const anchorDirBody: Vec3 = anchor.directionBodyLocal
         ? [anchor.directionBodyLocal.x, anchor.directionBodyLocal.y, anchor.directionBodyLocal.z]
         : [1, 0, 0];
+      const connectorFamily = connectorFamilyFromAnchor(anchor);
       // Body → lab using the owner's pose (Euler XYZ). Mirrors the
       // `makeOwnerTransforms` block in findRfCableAlignmentCandidates.
       const rxr = (obj.rxDeg * Math.PI) / 180;
@@ -2131,12 +2291,78 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         anchorPosBody,
         anchorDirBody,
         targetName: obj.name,
+        connectorFamily,
+        domain,
       };
     };
 
     const src = resolvePort(srcObjectId, srcAnchorId, srcAnchorName);
     const tgt = resolvePort(tgtObjectId, tgtAnchorId, tgtAnchorName);
     if (!src || !tgt) return null;
+    if (!src.domain || !tgt.domain) return null;
+    if (!domainsAreCompatible(src.domain, tgt.domain)) return null;
+    // Connector family on both ends must be defined. Same-family routes
+    // pick the direct catalog cable; cross-family (SMA ↔ BNC) is allowed
+    // when the catalog ships an asymmetric variant (e.g. `rf_cable_sma_to_bnc`).
+    // The cablePick branch below resolves both cases.
+    if (!src.connectorFamily || !tgt.connectorFamily) return null;
+
+    // 1. Pick the right catalog cable variant based on the two endpoints'
+    //    connector families (SMA vs BNC). Catalog cable rows now carry
+    //    `properties.endAConnector` / `endBConnector` (the BNC variants);
+    //    legacy rows like Thorlabs CA2906 use `properties.connectorType`
+    //    as a single family for both ends. When the cable is asymmetric
+    //    (sma_to_bnc) and the drag direction reverses it, we swap which
+    //    spline endpoint (A vs B) attaches to src vs tgt so the rendered
+    //    SMA / BNC connector geometry lands on the matching physical port.
+    const cableEndFamily = (
+      c: ComponentItem,
+      end: "endAConnector" | "endBConnector",
+    ): ConnectorFamily => {
+      const props = (c.properties ?? {}) as Record<string, unknown>;
+      const explicit = props[end];
+      if (explicit === "sma" || explicit === "bnc") return explicit;
+      const fallback = props.connectorType;
+      return fallback === "sma" || fallback === "bnc" ? fallback : null;
+    };
+    const rfCables = state.scene.components.filter(
+      (c) =>
+        (c.componentType === "rf_cable" || c.componentType === "sma_cable")
+        && !c.archivedAt,
+    );
+    const cablePick = (() => {
+      const sFam = src.connectorFamily;
+      const tFam = tgt.connectorFamily;
+      if (sFam && tFam) {
+        // Direct orientation: cable end A → src, end B → tgt.
+        const direct = rfCables.find(
+          (c) =>
+            cableEndFamily(c, "endAConnector") === sFam
+            && cableEndFamily(c, "endBConnector") === tFam,
+        );
+        if (direct) return { component: direct, swap: false };
+        // Reverse orientation: cable end A → tgt, end B → src. Picks
+        // an asymmetric cable (e.g. sma_to_bnc) when the drag direction
+        // is the opposite of the catalog row's A/B convention.
+        const reverse = rfCables.find(
+          (c) =>
+            cableEndFamily(c, "endAConnector") === tFam
+            && cableEndFamily(c, "endBConnector") === sFam,
+        );
+        if (reverse) return { component: reverse, swap: true };
+      }
+      // No connector data on one or both anchors, or no matching cable
+      // in the catalog — fall back to the first rf_cable row (legacy
+      // behaviour). User can still swap to a matching variant later.
+      const fallback =
+        rfCables[0]
+        ?? state.scene.components.find((c) => c.componentType === "rf_cable")
+        ?? state.scene.components.find((c) => c.componentType === "sma_cable");
+      return fallback ? { component: fallback, swap: false } : null;
+    })();
+    if (!cablePick) return null;
+    const cableComponent = cablePick.component;
+    const cableSwap = cablePick.swap;
 
     // 3. Create the new cable SceneObject at the midpoint. Identity
     //    rotation — the spline nodes carry the actual end-to-end vector
@@ -2200,8 +2426,20 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         newHandleMmBody: result.handleMmBody,
       } as import("../utils/rfCableAlignment").RfCableAlignmentResult;
     };
-    const candA = buildCandidate("A", src, srcObjectId, srcAnchorId, srcAnchorName);
-    const candB = buildCandidate("B", tgt, tgtObjectId, tgtAnchorId, tgtAnchorName);
+    // When the picked cable runs A→B opposite to the drag's src→tgt
+    // (`cableSwap === true`), end A attaches to the TARGET port and end
+    // B to the SOURCE so the catalog row's SMA / BNC geometry per end
+    // lines up with the physical connector family at each side.
+    const aPort = cableSwap ? tgt : src;
+    const bPort = cableSwap ? src : tgt;
+    const aObjectId = cableSwap ? tgtObjectId : srcObjectId;
+    const aAnchorId = cableSwap ? tgtAnchorId : srcAnchorId;
+    const aAnchorName = cableSwap ? tgtAnchorName : srcAnchorName;
+    const bObjectId = cableSwap ? srcObjectId : tgtObjectId;
+    const bAnchorId = cableSwap ? srcAnchorId : tgtAnchorId;
+    const bAnchorName = cableSwap ? srcAnchorName : tgtAnchorName;
+    const candA = buildCandidate("A", aPort, aObjectId, aAnchorId, aAnchorName);
+    const candB = buildCandidate("B", bPort, bObjectId, bAnchorId, bAnchorName);
     if (candA) await get().applyRfCableAlignmentCandidate(cableObj.id, "A", candA);
     if (candB) await get().applyRfCableAlignmentCandidate(cableObj.id, "B", candB);
     return cableObj.id;
@@ -2536,40 +2774,96 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         doomedSet.add(obj.id);
       }
     }
+    // PPG ↔ instrument cascade: a Programmable Pulse Generator's only
+    // reason to exist is to drive a downstream TTL / Trigger input. If
+    // every cable attached to its rf_out is in the doomed set (either
+    // because the user directly disconnected the cable or because the
+    // sink instrument is being deleted), the PPG is now orphan and
+    // should follow. Backend then cascades its bound TimingProgram, so
+    // Pulse & Timing stays in sync without any extra work here.
+    const peByObjectId = new Map<string, PhysicsElement>();
+    for (const pe of state.scene.physicsElements) peByObjectId.set(pe.objectId, pe);
+    const cablesPerPpg = new Map<string, string[]>();
+    for (const obj of state.scene.objects) {
+      const pe = peByObjectId.get(obj.id);
+      if (pe?.elementKind !== "rf_cable") continue;
+      const eps = (obj.properties as {
+        rfCableEndpoints?: {
+          A?: { targetObjectId?: string };
+          B?: { targetObjectId?: string };
+        };
+      })?.rfCableEndpoints;
+      for (const link of [eps?.A, eps?.B]) {
+        const targetId = link?.targetObjectId;
+        if (!targetId) continue;
+        if (peByObjectId.get(targetId)?.elementKind !== "programmable_pulse_generator") continue;
+        const arr = cablesPerPpg.get(targetId) ?? [];
+        arr.push(obj.id);
+        cablesPerPpg.set(targetId, arr);
+      }
+    }
+    for (const obj of state.scene.objects) {
+      if (doomedSet.has(obj.id)) continue;
+      if (peByObjectId.get(obj.id)?.elementKind !== "programmable_pulse_generator") continue;
+      const cables = cablesPerPpg.get(obj.id) ?? [];
+      const aliveCables = cables.filter((cableId) => !doomedSet.has(cableId));
+      if (aliveCables.length === 0) {
+        toDelete.push(obj.id);
+        doomedSet.add(obj.id);
+      }
+    }
     // Fire every DELETE in parallel — the API is idempotent per-row and
     // there's no inter-row ordering constraint, so Promise.all is safe
     // even when one fails (allSettled keeps the partial successes).
     // We use Promise.all so a backend 500 surfaces; the local state stays
     // consistent because we only reduce the deleted set after.
     await Promise.all(toDelete.map((id) => deleteObjectApi(id)));
+    // Cross-table cascade: when a PPG is among the doomed set, also drop
+    // its bound TimingProgram and PhysicsElement locally. Backend
+    // cascades + broadcasts the same — this optimistic update closes the
+    // gap so the user doesn't see a stale Pulse & Timing row or a
+    // dangling RF Link node between the API ack and the WS event.
+    const stateNow = get();
+    const cascadedProgramIds = new Set<string>();
+    for (const id of toDelete) {
+      const pe = stateNow.scene.physicsElements.find((p) => p.objectId === id);
+      if (pe?.elementKind !== "programmable_pulse_generator") continue;
+      const programId = (pe.kindParams as { timingProgramId?: string } | undefined)
+        ?.timingProgramId;
+      if (typeof programId === "string" && programId) cascadedProgramIds.add(programId);
+    }
     // ONE state update — what the user wanted: 50 deletes = 1 re-render.
     const deletedSet = new Set<string>(toDelete);
     set((current) => {
       const nextObjects = current.scene.objects.filter((object) => !deletedSet.has(object.id));
-      const fallback = nextObjects[0];
       const nextObjectIdSet = new Set(nextObjects.map((object) => object.id));
       const remainingSelectedIds = current.selectedObjectIds.filter(
         (id) => !deletedSet.has(id) && nextObjectIdSet.has(id),
       );
       const activeWasDeleted =
         current.selectedObjectId !== null && deletedSet.has(current.selectedObjectId);
-      const nextSelectedObjectIds =
-        remainingSelectedIds.length > 0
-          ? remainingSelectedIds
-          : activeWasDeleted && fallback
-            ? [fallback.id]
-            : [];
+      // Selection rule: if the active object was deleted, clear the
+      // selection — don't auto-jump to an arbitrary survivor. (Previously
+      // fell back to `nextObjects[0]` + its componentId, which felt like
+      // a phantom click to the user.)
+      const nextSelectedObjectIds = remainingSelectedIds;
       return {
         selectedObjectId: activeWasDeleted
           ? nextSelectedObjectIds[0] ?? null
           : current.selectedObjectId,
         selectedObjectIds: nextSelectedObjectIds,
         selectedComponentId: activeWasDeleted
-          ? fallback?.componentId ?? null
+          ? null
           : current.selectedComponentId,
         scene: {
           ...current.scene,
           objects: nextObjects,
+          physicsElements: current.scene.physicsElements.filter(
+            (item) => !deletedSet.has(item.objectId),
+          ),
+          timingPrograms: (current.scene.timingPrograms ?? []).filter(
+            (p) => !cascadedProgramIds.has(p.id),
+          ),
           assemblyRelations: current.scene.assemblyRelations.filter(
             (relation) =>
               !deletedSet.has(relation.objectAId) && !deletedSet.has(relation.objectBId),
@@ -2992,6 +3286,43 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     await get().loadScene();
   },
 
+  collectionTemplates: [],
+
+  async loadCollectionTemplates() {
+    const templates = await listCollectionTemplatesApi();
+    set({ collectionTemplates: templates });
+  },
+
+  async saveCollectionAsTemplate(collectionId, payload) {
+    const template = await saveCollectionAsTemplateApi(collectionId, payload);
+    set((state) => ({
+      collectionTemplates: [template, ...state.collectionTemplates],
+    }));
+    return template;
+  },
+
+  async instantiateCollectionTemplateAtCursor(templateId, parentCollectionId) {
+    const cursor = get().transformCursorMm.left;
+    await instantiateCollectionTemplateApi(templateId, {
+      parentCollectionId: parentCollectionId ?? null,
+      targetXMm: cursor.x,
+      targetYMm: cursor.y,
+      targetZMm: cursor.z,
+    });
+    // Instantiation creates an arbitrary number of collections + objects +
+    // physics_elements in one go; a full scene reload is the cheapest way to
+    // surface them all in one render pass rather than chasing per-row
+    // WebSocket events from the broadcast tail.
+    await get().loadScene();
+  },
+
+  async deleteCollectionTemplate(templateId) {
+    await deleteCollectionTemplateApi(templateId);
+    set((state) => ({
+      collectionTemplates: state.collectionTemplates.filter((t) => t.id !== templateId),
+    }));
+  },
+
   async loadTimingPrograms() {
     const programs = await listTimingProgramsApi();
     set((state) => ({
@@ -3141,6 +3472,10 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     set({ scrubTimeNs: tNs });
   },
 
+  setUserTimelineTotalNs(tNs) {
+    set({ userTimelineTotalNs: tNs });
+  },
+
   async createEmProblem(payload) {
     const em = await createEmProblemApi(payload);
     set((state) => ({
@@ -3235,6 +3570,14 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     // Same as selectComponent above — never silently reject. A user trying
     // to flip "visible" back on for a hidden object needs to be able to
     // select it first.
+    //
+    // Pose-derived kinds (rf_cable, programmable_pulse_generator) are
+    // EXCLUDED from multi-select. Their lab pose is computed from their
+    // peer instruments (cable endpoints / PPG mating to target anchor)
+    // and a multi-select gizmo drag would either be a no-op or corrupt
+    // the derived position. We allow a SINGLE-select on them (so the
+    // Object panel can still render their kind-specific controls) but
+    // strip them from any additive / marquee path.
     set((state) => {
       if (!objectId) {
         return options?.additive
@@ -3247,11 +3590,21 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
             };
       }
 
+      const kindOf = (id: string) =>
+        state.scene.physicsElements.find((pe) => pe.objectId === id)?.elementKind;
+      const isPoseDerived = (id: string) => {
+        const k = kindOf(id);
+        return k === "rf_cable" || k === "programmable_pulse_generator";
+      };
+
       if (options?.additive) {
+        // Additive (Ctrl-click etc.) — silently ignore pose-derived kinds.
+        if (isPoseDerived(objectId)) return {};
         const isSelected = state.selectedObjectIds.includes(objectId);
+        const baseFiltered = state.selectedObjectIds.filter((id) => !isPoseDerived(id));
         const selectedObjectIds = isSelected
-          ? state.selectedObjectIds.filter((id) => id !== objectId)
-          : [...state.selectedObjectIds, objectId];
+          ? baseFiltered.filter((id) => id !== objectId)
+          : [...baseFiltered, objectId];
         return {
           selectedObjectId: isSelected ? selectedObjectIds[selectedObjectIds.length - 1] ?? null : objectId,
           selectedObjectIds,
@@ -3260,6 +3613,9 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         };
       }
 
+      // Single-select — pose-derived kinds are allowed (Object panel
+      // shows their special controls) but always end up alone in the
+      // selection list so no multi-transform gizmo attaches.
       return {
         selectedObjectId: objectId,
         selectedObjectIds: [objectId],
@@ -3270,7 +3626,23 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   },
 
   setSelectedObjects(objectIds) {
-    const unique = Array.from(new Set(objectIds));
+    // Marquee / Outliner-bulk path. Pose-derived kinds (rf_cable, PPG)
+    // are filtered out even when a marquee box overlaps their wrapper
+    // or an Outliner range-select walks past their hidden row — they're
+    // never legitimate multi-select members.
+    const state = get();
+    const poseDerivedIds = new Set(
+      state.scene.physicsElements
+        .filter(
+          (pe) =>
+            pe.elementKind === "rf_cable"
+            || pe.elementKind === "programmable_pulse_generator",
+        )
+        .map((pe) => pe.objectId),
+    );
+    const unique = Array.from(new Set(objectIds)).filter(
+      (id) => !poseDerivedIds.has(id),
+    );
     set({
       selectedObjectIds: unique,
       selectedObjectId: unique[0] ?? null,
@@ -3380,21 +3752,21 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         case "object.deleted": {
           const objectId = event.payload.objectId ?? event.payload.id;
           const nextObjects = scene.objects.filter((item) => item.id !== objectId);
-          const fallback = nextObjects[0];
           const nextObjectIdSet = new Set(nextObjects.map((item) => item.id));
           const remainingSelectedIds = state.selectedObjectIds.filter((id) => id !== objectId && nextObjectIdSet.has(id));
           const activeWasDeleted = state.selectedObjectId === objectId;
-          const nextSelectedObjectIds =
-            remainingSelectedIds.length > 0
-              ? remainingSelectedIds
-              : activeWasDeleted && fallback
-                ? [fallback.id]
-                : [];
+          // Selection rule: clear selection when the active object is
+          // deleted; do NOT auto-jump to nextObjects[0] (the user
+          // explicitly rejected this — felt like a phantom click). Same
+          // for selectedComponentId — leave it as-is if it pointed to
+          // something else, clear it only if it belonged to the deleted
+          // object (which we no longer infer here).
+          const nextSelectedObjectIds = remainingSelectedIds;
           return {
             selectedObjectId: activeWasDeleted ? nextSelectedObjectIds[0] ?? null : state.selectedObjectId,
             selectedObjectIds: nextSelectedObjectIds,
             selectedComponentId:
-              activeWasDeleted ? fallback?.componentId ?? null : state.selectedComponentId,
+              activeWasDeleted ? null : state.selectedComponentId,
             scene: {
               ...scene,
               objects: nextObjects,

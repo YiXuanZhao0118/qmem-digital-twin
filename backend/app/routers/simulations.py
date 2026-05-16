@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_session
 from app.models import (
     BeamSegment,
+    DeviceState,
     PhysicsElement,
     OpticalLink,
     SceneObject,
@@ -39,8 +40,9 @@ async def run_optical(session: AsyncSession = Depends(get_session)) -> OpticalRu
     objects_by_id = {
         obj.id: obj for obj in (await session.scalars(select(SceneObject))).all()
     }
+    device_states = list((await session.scalars(select(DeviceState))).all())
     hydrate_laser_kind_params(elements, objects_by_id)
-    hydrate_aom_rf_drive(elements, objects_by_id)
+    hydrate_aom_rf_drive(elements, objects_by_id, device_states=device_states)
 
     result = solve_chain(elements, links)
 
@@ -161,8 +163,9 @@ async def run_optical_transient(
     objects_by_id = {
         obj.id: obj for obj in (await session.scalars(select(SceneObject))).all()
     }
+    device_states = list((await session.scalars(select(DeviceState))).all())
     hydrate_laser_kind_params(elements, objects_by_id)
-    hydrate_aom_rf_drive(elements, objects_by_id)
+    hydrate_aom_rf_drive(elements, objects_by_id, device_states=device_states)
 
     # alembic 0045: TimingProgram is no longer per-object. Per-object gating
     # factors now come from each object's properties.rfSources[].signal.gateBinding

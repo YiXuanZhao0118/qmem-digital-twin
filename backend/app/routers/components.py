@@ -40,6 +40,79 @@ def is_component_locked(component: Component) -> bool:
 
 
 # =============================================================================
+# Component name defaulting + uniqueness
+# =============================================================================
+#
+# Default policy (confirmed with user 2026-05-16):
+#   - On create, if `name` is omitted/blank, derive it from `model`; fall back
+#     to `component_type` when `model` is null/empty.
+#   - Names are unique case-insensitively across all Component rows. On
+#     collision, append `-2`, `-3`, … until a free slot is found.
+#   - Users keep the freedom to rename via PUT — uniqueness is enforced there
+#     too (returns 409 if the explicit name clashes).
+
+
+def normalize_component_name(name: str | None) -> str:
+    normalized = (name or "").strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Component name cannot be empty.")
+    return normalized
+
+
+async def component_name_exists(
+    session: AsyncSession,
+    name: str,
+    exclude_component_id: uuid.UUID | None = None,
+) -> bool:
+    # Archived rows are "in trash" — they don't reserve names. This means
+    # restoring an archived component may need a rename if its slot has been
+    # reclaimed, which is the right tradeoff (visible catalog stays clean).
+    stmt = (
+        select(Component.id)
+        .where(func.lower(Component.name) == name.lower())
+        .where(Component.archived_at.is_(None))
+    )
+    if exclude_component_id is not None:
+        stmt = stmt.where(Component.id != exclude_component_id)
+    return await session.scalar(stmt) is not None
+
+
+async def require_unique_component_name(
+    session: AsyncSession,
+    name: str | None,
+    exclude_component_id: uuid.UUID | None = None,
+) -> str:
+    normalized = normalize_component_name(name)
+    if await component_name_exists(session, normalized, exclude_component_id):
+        raise HTTPException(
+            status_code=409,
+            detail=f'Component name "{normalized}" already exists.',
+        )
+    return normalized
+
+
+def _default_component_base_name(model: str | None, component_type: str) -> str:
+    base = (model or "").strip() or (component_type or "").strip()
+    return base or "component"
+
+
+async def next_component_name(
+    session: AsyncSession,
+    model: str | None,
+    component_type: str,
+) -> str:
+    base = _default_component_base_name(model, component_type)
+    if not await component_name_exists(session, base):
+        return base
+    index = 2
+    while True:
+        candidate = f"{base}-{index}"
+        if not await component_name_exists(session, candidate):
+            return candidate
+        index += 1
+
+
+# =============================================================================
 # Optical-element auto-sync
 # =============================================================================
 #
@@ -206,6 +279,24 @@ DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
         "polarizationExtinctionRatioDb": 25.0,
         "bandwidthMhzKm": None,
         "randomJonesSeed": None,
+        # Phase fiber-split — populated by the alembic backfill that
+        # creates paired fiber_end SceneObjects from the existing
+        # fiberNodes[0] / [N-1]. Null on freshly-spawned fibers until the
+        # auto-create hook also spawns the two ends (Phase B work).
+        "endAObjectId": None,
+        "endBObjectId": None,
+    },
+    # Phase fiber-split — per-end ferrule SceneObject for a fiber. Two
+    # of these (end A / end B) pair with a single hidden `fiber` body
+    # wrapper. connectorType / polish / slowAxis live here so each end
+    # is independently editable; the back-pointer to the paired body
+    # arrives during paired-create.
+    "fiber_end": {
+        "connectorType": None,
+        "polish": None,
+        "slowAxisDegInBodyFrame": None,
+        "fiberBodyObjectId": None,
+        "endRole": "A",
     },
     # V2 Phase 8 (alembic 0034): transmission axis moved to a
     # polarizationReference binding (role="transmission").
@@ -353,6 +444,12 @@ DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
         "model": "ZYSWA-2-50DR",
         "datasheetUrl": "https://www.minicircuits.com/pdfs/ZYSWA-2-50DR+.pdf",
     },
+    "programmable_pulse_generator": {
+        "connectorType": "sma",
+        "timingProgramId": None,
+        "outputDomain": "ttl",
+        "highVoltageV": 3.2,
+    },
 }
 
 
@@ -483,6 +580,11 @@ def default_kind_params_for_component(kind: str, component: Component) -> dict[s
             value = props.get(prop_key)
             if isinstance(value, str) and value:
                 kind_params[param_key] = value
+    if kind == "programmable_pulse_generator":
+        props = component.properties or {}
+        connector = props.get("connectorType")
+        if connector in ("sma", "bnc"):
+            kind_params["connectorType"] = connector
     return kind_params
 
 
@@ -601,7 +703,15 @@ async def list_components(
 async def create_component(
     payload: schemas.ComponentCreate, session: AsyncSession = Depends(get_session)
 ) -> Component:
-    component = Component(**payload.model_dump())
+    values = payload.model_dump()
+    requested_name = values.get("name")
+    if requested_name and requested_name.strip():
+        values["name"] = await require_unique_component_name(session, requested_name)
+    else:
+        values["name"] = await next_component_name(
+            session, values.get("model"), values["component_type"]
+        )
+    component = Component(**values)
     session.add(component)
     await session.commit()
     await session.refresh(component)
@@ -626,7 +736,14 @@ async def update_component(
     session: AsyncSession = Depends(get_session),
 ) -> Component:
     component = await crud.get_or_404(session, Component, component_id)
-    crud.apply_updates(component, payload.model_dump(exclude_unset=True))
+    updates = payload.model_dump(exclude_unset=True)
+    if "name" in updates:
+        updates["name"] = await require_unique_component_name(
+            session,
+            updates["name"] if isinstance(updates["name"], str) else None,
+            component.id,
+        )
+    crud.apply_updates(component, updates)
     await session.commit()
     await session.refresh(component)
     await manager.broadcast("component.updated", component_payload(component))

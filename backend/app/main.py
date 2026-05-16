@@ -12,6 +12,7 @@ from app.routers import (
     assets,
     beam_paths,
     circuits,
+    collection_templates,
     collections,
     components,
     connections,
@@ -74,6 +75,11 @@ app.include_router(optics_crystal.router, prefix="/api/optics-crystal", tags=["o
 app.include_router(revisions.router, prefix="/api/revisions", tags=["revisions"])
 app.include_router(scene_views.router, prefix="/api/scene-views", tags=["scene_views"])
 app.include_router(collections.router, prefix="/api/collections", tags=["collections"])
+app.include_router(
+    collection_templates.router,
+    prefix="/api/collection-templates",
+    tags=["collection_templates"],
+)
 app.include_router(
     timing_programs.router, prefix="/api/timing-programs", tags=["timing_programs"]
 )

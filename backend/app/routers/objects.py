@@ -8,7 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import crud, schemas
 from app.db import get_session
-from app.models import Collection, CollectionMember, Component, SceneObject
+from app.models import (
+    Collection,
+    CollectionMember,
+    Component,
+    PhysicsElement,
+    SceneObject,
+    TimingProgram,
+)
 from app.routers.collections import get_master_collection
 from app.websocket import manager
 
@@ -74,9 +81,13 @@ async def require_unique_object_name(
 
 
 async def next_object_name(session: AsyncSession, component: Component) -> str:
-    index = 1
+    # Default = component_type uppercased (the "category") + 0-based index,
+    # e.g. AOM0, AOM1, MIRROR0. Falls back to "OBJECT" if the component has
+    # no type tag for some reason. Confirmed with user 2026-05-16.
+    base = (component.component_type or "").strip().upper() or "OBJECT"
+    index = 0
     while True:
-        candidate = f"{component.name}_object_{index}"
+        candidate = f"{base}{index}"
         if not await object_name_exists(session, candidate):
             return candidate
         index += 1
@@ -191,9 +202,44 @@ async def delete_object(
             status_code=status.HTTP_409_CONFLICT,
             detail="Object is locked. Unlock it before deleting.",
         )
+    # PPG ↔ TimingProgram are 1:1 — deleting a PPG cascades to deleting its
+    # bound TimingProgram so the Pulse & Timing catalog stays in sync with
+    # the RF Link graph.
+    cascaded_program_id: uuid.UUID | None = None
+    element = (
+        await session.scalars(
+            select(PhysicsElement).where(PhysicsElement.object_id == object_id)
+        )
+    ).first()
+    had_physics_element = element is not None
+    if element is not None and element.element_kind == "programmable_pulse_generator":
+        raw = (element.kind_params or {}).get("timingProgramId")
+        if raw:
+            try:
+                cascaded_program_id = uuid.UUID(str(raw))
+            except (TypeError, ValueError):
+                cascaded_program_id = None
     await session.delete(scene_object)
+    if cascaded_program_id is not None:
+        program = await session.get(TimingProgram, cascaded_program_id)
+        if program is not None:
+            await session.delete(program)
     await session.commit()
     await manager.broadcast("object.deleted", {"id": str(object_id), "objectId": str(object_id)})
+    # Surface the cascade-deleted PhysicsElement to every connected client.
+    # The DB FK already drops the row, but without this event scene.
+    # physicsElements stays stale on the frontend until the next /api/scene
+    # GET — long enough that RF Link / Pulse & Timing show ghost entries
+    # until the user clicks around.
+    if had_physics_element:
+        await manager.broadcast(
+            "physics_element.updated",
+            {"objectId": str(object_id), "deleted": True},
+        )
+    if cascaded_program_id is not None:
+        await manager.broadcast(
+            "timing_program.deleted", {"id": str(cascaded_program_id)}
+        )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

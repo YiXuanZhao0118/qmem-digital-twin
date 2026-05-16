@@ -84,9 +84,17 @@ export const fiberPlugin = definePhysicsPlugin<FiberParams>({
     alignVariant: "none",
     alignToleranceMm: 25,
     alignSummary:
-      "Bidirectional patch cable, rendered procedurally from a Bezier spline (no static GLB/STL asset). " +
-      "End A = first spline node; End B = last. intercept_in rides End A's connector frame, intercept_out rides End B's — moving a spline node carries the optical port with it. " +
-      "The two Align End A/B buttons snap the PORT onto the closest beam-path segment within alignToleranceMm (≤25 mm), then back-derive the spline node 36.28 mm BEHIND the projected port along the new outward direction. Interior nodes don't move.",
+      "Bidirectional patch cable, body wrapper for the Phase fiber-split " +
+      "model (2026-05-16). Each end is now a sibling `fiber_end` SceneObject " +
+      "(referenced via FiberParams.endAObjectId / endBObjectId); the body " +
+      "wrapper carries shared spec (fiberType, length, attenuation, etc.) " +
+      "and a derived spline whose endpoints re-resolve from the paired " +
+      "fiber_end lab poses at render time. The body itself has no pose / " +
+      "Lock / rigid-group / align affordance — those live on each fiber_end " +
+      "(default capability profile). To align an end to a beam: select the " +
+      "fiber_end SceneObject and use its AlignPanel (translate_anchor_to_beam, " +
+      "≤25 mm). Interior spline nodes (1..N-2) remain editable in node-edit " +
+      "mode; endpoint nodes (0 / N-1) are pinned to the fiber_end objects.",
     defaultParams: {
       fiberType: "polarization_maintaining",
       endA: { ...DEFAULT_END },

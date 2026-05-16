@@ -47,7 +47,12 @@ describe("ComponentPlugin alignment with legacy tables", () => {
     // mirror_mount which started in M1 as a sample = 51 total. Snapshot
     // value so a regression (someone deletes a plugin) shows up
     // immediately.
-    expect(PLUGINS.length).toBe(51);
+    // 29 physics (incl. programmable_pulse_generator + fiber_end) +
+    // mirror_mount (physics-flagged passive) + 22 PASSIVE_PLUGINS = 52.
+    // Bumped to 52 in Phase A of the fiber two-end split; was 51 pre-PPG,
+    // 52 after PPG, 53 after fiber_end — adjust here when the registry
+    // grows again.
+    expect(PLUGINS.length).toBe(53);
 
     // Every legacy ElementKind has a physics plugin claiming it.
     const physicsIds = new Set(
@@ -57,10 +62,11 @@ describe("ComponentPlugin alignment with legacy tables", () => {
       "laser_source", "tapered_amplifier", "mirror", "dichroic_mirror",
       "lens_biconvex", "lens_plano_convex", "lens_cylindrical",
       "waveplate", "polarizer", "beam_splitter", "fiber_coupler",
-      "fiber", "isolator", "aom", "eom", "nonlinear_crystal",
+      "fiber", "fiber_end", "isolator", "aom", "eom", "nonlinear_crystal",
       "saturable_absorber", "detector", "camera", "spectrometer",
       "wavemeter", "beam_dump", "rf_source", "rf_amplifier",
-      "horn_antenna", "rf_cable", "rf_switch",
+      "horn_antenna", "programmable_pulse_generator",
+      "rf_cable", "rf_switch",
     ];
     for (const k of expectedKinds) {
       expect(physicsIds.has(k)).toBe(true);

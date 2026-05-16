@@ -111,7 +111,7 @@ export function materialFor(
     metalness: isPolished ? 0.75 : isAnodized ? 0.55 : 0.12,
     roughness: isPolished ? 0.2 : isAnodized ? 0.5 : 0.42,
     transparent,
-    opacity: component.componentType === "vacuum_chamber" ? 0.34 : component.componentType === "lens" ? 0.45 : 1,
+    opacity: component.componentType === "vacuum_chamber" ? 0.72 : component.componentType === "lens" ? 0.82 : 1,
   });
 }
 
@@ -1599,11 +1599,122 @@ function buildSmaMaleConnectorGroup(): THREE.Group {
   return group;
 }
 
+/** Build one BNC-male connector group at the origin, pieces extending
+ *  along local +X. Same orientation convention as `buildSmaMaleConnectorGroup`
+ *  (cable-end cap at X=0, mating pin at far +X) so the spline renderer can
+ *  swap connector type per end without touching the placement code.
+ *
+ *  Visual proportions follow a generic BNC-M plug (~14 mm OD bayonet
+ *  sleeve, ~30 mm total length) so the connector reads as obviously
+ *  chunkier than the SMA male built by `buildSmaMaleConnectorGroup`. */
+function buildBncMaleConnectorGroup(): THREE.Group {
+  const group = new THREE.Group();
+  let offsetMm = 0;
+  const place = (piece: THREE.Object3D, lenMm: number): void => {
+    piece.rotation.z = Math.PI / 2;
+    piece.position.set(mmToThree(offsetMm + lenMm / 2), 0, 0);
+    group.add(piece);
+    offsetMm += lenMm;
+  };
+
+  // Black heat-shrink strain-relief boot.
+  place(
+    new THREE.Mesh(
+      new THREE.CylinderGeometry(mmToThree(2.5), mmToThree(2.5), mmToThree(4), 18),
+      ddsCableBlackMat,
+    ),
+    4,
+  );
+
+  // Gold-plated brass crimp ferrule.
+  place(
+    new THREE.Mesh(
+      new THREE.CylinderGeometry(mmToThree(3.2), mmToThree(3.2), mmToThree(5), 24),
+      ddsBrassMat,
+    ),
+    5,
+  );
+
+  // Bayonet coupling sleeve — chunky brushed-nickel barrel, the
+  // recognisable BNC silhouette. Two L-slots are cut by intersecting
+  // small dark boxes so the part reads as a BNC and not a generic
+  // cylinder.
+  const sleeveLenMm = 12;
+  const sleeve = new THREE.Mesh(
+    new THREE.CylinderGeometry(mmToThree(4.5), mmToThree(4.5), mmToThree(sleeveLenMm), 28),
+    ddsBrassFlatMat,
+  );
+  sleeve.rotation.z = Math.PI / 2;
+  sleeve.position.set(mmToThree(offsetMm + sleeveLenMm / 2), 0, 0);
+  group.add(sleeve);
+
+  for (const slotPhi of [0, Math.PI]) {
+    const slot = new THREE.Mesh(
+      new THREE.BoxGeometry(mmToThree(3), mmToThree(1.4), mmToThree(1.4)),
+      ddsBlackInsetMat,
+    );
+    slot.position.set(
+      mmToThree(offsetMm + sleeveLenMm * 0.75),
+      mmToThree(4.5) * Math.cos(slotPhi),
+      mmToThree(4.5) * Math.sin(slotPhi),
+    );
+    group.add(slot);
+  }
+  offsetMm += sleeveLenMm;
+
+  // White PTFE dielectric face.
+  place(
+    new THREE.Mesh(
+      new THREE.CylinderGeometry(mmToThree(4.0), mmToThree(4.0), mmToThree(3), 24),
+      ddsTeflonWhiteMat,
+    ),
+    3,
+  );
+
+  // Centre pin.
+  place(
+    new THREE.Mesh(
+      new THREE.CylinderGeometry(mmToThree(0.7), mmToThree(0.7), mmToThree(3), 12),
+      ddsBrassMat,
+    ),
+    3,
+  );
+
+  return group;
+}
+
+type RfCableEndConnector = "sma" | "bnc";
+
+/** Resolve which connector to draw at each cable end. Reads
+ *  `properties.endAConnector` / `properties.endBConnector` (preferred), then
+ *  falls back to `properties.connectorType` for the legacy single-typed
+ *  catalog rows (e.g. the original Thorlabs CA2906 SMA-SMA jumper). */
+function rfCableEndConnectors(
+  component: ComponentItem,
+): { a: RfCableEndConnector; b: RfCableEndConnector } {
+  const props = (component.properties ?? {}) as Record<string, unknown>;
+  const read = (key: string): RfCableEndConnector | null => {
+    const v = props[key];
+    return v === "bnc" ? "bnc" : v === "sma" ? "sma" : null;
+  };
+  const fallback = read("connectorType") ?? "sma";
+  return {
+    a: read("endAConnector") ?? fallback,
+    b: read("endBConnector") ?? fallback,
+  };
+}
+
+function buildRfCableConnector(kind: RfCableEndConnector): THREE.Group {
+  return kind === "bnc" ? buildBncMaleConnectorGroup() : buildSmaMaleConnectorGroup();
+}
+
 /** Bezier-spline RF cable renderer — used when the SceneObject carries
  *  per-instance `properties.rfCableNodes`. Parallels `createFiberSplineObject`:
- *  TubeGeometry follows the curve, two SMA male connectors are placed at
- *  the spline endpoints with their +X axes aligned to the outward
- *  tangents so the connector orientation tracks node drag in real time. */
+ *  TubeGeometry follows the curve, the two endpoint connectors are placed
+ *  with their +X axes aligned to the outward tangents so the connector
+ *  orientation tracks node drag in real time. Per-end connector type is
+ *  resolved from `component.properties.endAConnector` / `endBConnector` so
+ *  the same renderer covers the SMA-SMA, SMA-BNC and BNC-BNC catalog rows. */
 function createSmaCableSpline(
   component: ComponentItem,
   nodes: FiberNode[],
@@ -1627,10 +1738,11 @@ function createSmaCableSpline(
   jacket.userData.rfCableRole = "tube";
   group.add(jacket);
 
+  const ends = rfCableEndConnectors(component);
   const xAxis = new THREE.Vector3(1, 0, 0);
   for (const end of ["A", "B"] as const) {
     const idx = end === "A" ? 0 : nodes.length - 1;
-    const connector = buildSmaMaleConnectorGroup();
+    const connector = buildRfCableConnector(end === "A" ? ends.a : ends.b);
     const nodePos = labMmToFiberThree(nodes[idx].posMm);
     const outward = fiberEndpointOutwardThree(nodes, end);
     connector.quaternion.setFromUnitVectors(xAxis, outward);
@@ -2593,6 +2705,76 @@ export function refreshFiberWrapperGeometry(
   return true;
 }
 
+/** Procedural FC-style ferrule for a `fiber_end` SceneObject. Body
+ *  frame: origin = jacket attachment (where the paired fiber body's
+ *  spline endpoint meets the ferrule); axis = +Y, tip at
+ *  (0, FIBER_END_TIP_OFFSET_MM, 0). Used until proper per-connector
+ *  Asset3D rows land.
+ *
+ *  Stack (along +Y from origin, in mm):
+ *    0  →  6   strain-relief boot (jacketColor)
+ *    6  → 28   metal nut barrel (silver)
+ *   28  → 36   ceramic ferrule tip (off-white; green if APC polish)
+ *
+ *  Total length matches FIBER_END_TIP_OFFSET_MM in
+ *  utils/fiberBodyEndpointResolver.ts so the resolver's tip-anchor
+ *  convention coincides with the visual tip. */
+function createFiberEndFerrule(component: ComponentItem): THREE.Object3D {
+  const compProps = (component.properties ?? {}) as {
+    fiberType?: FiberType;
+    polish?: "PC" | "APC" | "UPC";
+  };
+  const fiberType: FiberType = compProps.fiberType ?? "single_mode";
+  const jacketColor = FIBER_JACKET_COLOR[fiberType];
+  const polish = compProps.polish ?? "PC";
+  const ferruleTipColor = polish === "APC" ? APC_BOOT_COLOR : "#f3f4f6";
+
+  const group = new THREE.Group();
+  group.name = `${component.name}__ferrule`;
+  group.userData.fiberEndComponentId = component.id;
+  group.userData.fiberEndRole = "ferrule";
+
+  const makeCyl = (
+    name: string,
+    yStartMm: number,
+    yEndMm: number,
+    radiusMm: number,
+    color: string,
+  ) => {
+    const length = (yEndMm - yStartMm) / 100; // mm → three units
+    const geom = new THREE.CylinderGeometry(
+      radiusMm / 100,
+      radiusMm / 100,
+      length,
+      16,
+      1,
+      false,
+    );
+    const mat = new THREE.MeshStandardMaterial({
+      color,
+      metalness: name === "nut" ? 0.6 : 0.05,
+      roughness: name === "nut" ? 0.35 : 0.55,
+    });
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.name = `${component.name}__${name}`;
+    // CylinderGeometry is centred on its origin along Y; offset so the
+    // segment starts at yStartMm.
+    mesh.position.set(0, (yStartMm + yEndMm) / 2 / 100, 0);
+    group.add(mesh);
+  };
+
+  // Boot 0..6 mm — jacket-coloured strain relief.
+  makeCyl("boot", 0, 6, 2.0, jacketColor);
+  // Nut 6..28 mm — silver coupling barrel.
+  makeCyl("nut", 6, 28, 1.4, "#9ca3af");
+  // Ferrule tip 28..36 mm — white ceramic (green for APC polish).
+  makeCyl("ferrule_tip", 28, 36, 1.0, ferruleTipColor);
+
+  return group;
+}
+
 function createFiberSplineObject(
   component: ComponentItem,
   /** Per-instance overrides — preferred over the component's catalog
@@ -3173,6 +3355,19 @@ export async function loadAssetObject(
       objectProperties?.fiberNodes,
       objectProperties?.radiusMm,
     ));
+    return wrapper;
+  }
+
+  // Phase fiber-split: fiber_end SceneObjects render a procedural FC-
+  // style ferrule, body-local frame extending from origin (jacket
+  // attachment, where the fiber body spline endpoint meets the ferrule)
+  // along +Y to (0, +FIBER_END_TIP_OFFSET_MM, 0) (= tip anchor face).
+  // The hidden fiber body wrapper re-derives its spline endpoint from
+  // this object's lab pose via resolveLinkedFiberEndpoint.
+  if (component.componentType === "fiber_end") {
+    const wrapper = new THREE.Group();
+    wrapper.name = component.name;
+    wrapper.add(createFiberEndFerrule(component));
     return wrapper;
   }
 

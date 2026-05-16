@@ -168,10 +168,22 @@ def _rf_amplifier_transfer(
     kind_params: dict,
     anchors: list[dict],
     object_id: Any,
+    powered_off_object_ids: set | None = None,
+    **_unused: Any,
 ) -> list[tuple[str, RfSignalState]] | None:
     """ZHL-1-2W-style gain block: rf_in → rf_out, Vpp ×10^(gainDb/20), with
     optional output-power clamp at ``outputPowerMaxDbm`` (saturated=True
-    when the clamp fires). Mirrors ``rfAmplifierTransfer`` in the frontend."""
+    when the clamp fires). Mirrors ``rfAmplifierTransfer`` in the frontend.
+
+    Power gate: when the object is listed in ``powered_off_object_ids``
+    (Instrument Power panel toggle OFF, written to
+    ``device_states.state.power = false``) the chip is unbiased — input
+    signal hits an effective 50 Ω termination and nothing leaves rf_out.
+    Returning None here drops the signal from the BFS, mirroring the
+    real device.
+    """
+    if powered_off_object_ids is not None and object_id in powered_off_object_ids:
+        return None
     out_anchor = find_anchor_by_role(anchors, "rf_out")
     if out_anchor is None:
         return None
@@ -197,12 +209,169 @@ def _rf_amplifier_transfer(
     return [(anchor_lookup_name(out_anchor), outgoing)]
 
 
+def _rf_switch_transfer(
+    *,
+    incoming: RfSignalState,
+    kind_params: dict,
+    anchors: list[dict],
+    object_id: Any,
+    switch_ttl_states: Mapping[Any, str] | None = None,
+    powered_off_object_ids: set | None = None,
+    **_unused: Any,
+) -> list[tuple[str, RfSignalState]] | None:
+    """SPDT-style coaxial switch (ZYSWA-2-50DR default): RFIN routes to one
+    of N rf_out throws keyed by the TTL state on ``ttl_in``. The active
+    throw is HIGH ↔ ``ttlActiveHighThrow`` and LOW ↔ the other SPDT throw
+    (3 − ttlActiveHighThrow when throwCount = 2). For SP4T+ only the
+    HIGH throw is reachable from a single TTL line; the other throws stay
+    inactive (the per-anchor signal map will simply not be populated, so
+    downstream AOMs see "no upstream" and a beam-off result).
+
+    Insertion loss on the active path is applied as a Vpp scaling
+    (``10^(-IL/20)``). The unselected throws return nothing → no signal
+    propagates → AOM downstream reports no upstream RF → beam OFF, which
+    is exactly the user-facing semantic for a switched-off path.
+
+    Power gate: an unbiased coaxial switch (no ±5 V on the bias posts)
+    presents a high impedance / floating-throw state — no RF reaches
+    either of the throw ports. Drop the signal from the BFS.
+    """
+    if powered_off_object_ids is not None and object_id in powered_off_object_ids:
+        return None
+    state = (switch_ttl_states or {}).get(object_id) or kind_params.get("ttlState") or "LOW"
+    high_throw_raw = kind_params.get("ttlActiveHighThrow", 2)
+    try:
+        high_throw = int(high_throw_raw)
+    except (TypeError, ValueError):
+        high_throw = 2
+    if state == "HIGH":
+        active = high_throw
+    else:
+        throw_count_raw = kind_params.get("throwCount", 2)
+        try:
+            throw_count = int(throw_count_raw)
+        except (TypeError, ValueError):
+            throw_count = 2
+        if throw_count == 2:
+            active = 3 - high_throw  # SPDT: the other throw
+        else:
+            # SP3T+: only the HIGH-throw line is auto-resolved; LOW
+            # state is ambiguous without more control bits, default to
+            # "no path active" so the user gets a clear off-result
+            # rather than a silently wrong default.
+            return []
+    target_name = f"RF{active}"
+
+    # Locate the rf_out anchor whose anchor.name matches the active throw.
+    # Asset convention: multiple anchors share id="rf_out" and are
+    # distinguished by name ("RF1", "RF2", …). Case-insensitive match in
+    # case authoring tools normalise.
+    active_anchor: dict | None = None
+    for a in anchors:
+        if a.get("id") != "rf_out":
+            continue
+        name = a.get("name") or ""
+        if isinstance(name, str) and name.upper() == target_name:
+            active_anchor = a
+            break
+    if active_anchor is None:
+        return []
+
+    il_db_raw = kind_params.get("insertionLossDb", 1.0)
+    try:
+        il_db = float(il_db_raw)
+    except (TypeError, ValueError):
+        il_db = 1.0
+    il_linear = 10.0 ** (-il_db / 20.0)
+    outgoing = RfSignalState(
+        frequency_mhz=incoming.frequency_mhz,
+        vpp=incoming.vpp * il_linear,
+        source_object_id=incoming.source_object_id,
+        source_anchor_name=incoming.source_anchor_name,
+        cumulative_gain_db=incoming.cumulative_gain_db - il_db,
+        passthrough_object_ids=incoming.passthrough_object_ids + (object_id,),
+        saturated=incoming.saturated,
+    )
+    return [(anchor_lookup_name(active_anchor), outgoing)]
+
+
 # Registry of passthrough transfers per element kind. Add new kinds here as
-# the link graph grows (rf_switch, rf_attenuator, rf_filter, …). Must stay
-# parallel to PASSTHROUGH_BY_KIND in the frontend.
+# the link graph grows (rf_attenuator, rf_filter, …). Must stay parallel to
+# PASSTHROUGH_BY_KIND in the frontend.
 PASSTHROUGH_BY_KIND: dict[str, Callable[..., list[tuple[str, RfSignalState]] | None]] = {
     "rf_amplifier": _rf_amplifier_transfer,
+    "rf_switch": _rf_switch_transfer,
 }
+
+
+def _ppg_idle_is_high(rest_state: str | None) -> bool:
+    """Steady-state / idle TTL for a PPG. Backend solvers and compile-
+    time analysis represent the "scrub stopped" view of the system, so
+    the program's interval list is intentionally NOT consulted here —
+    only ``rest_state``. Intervals are scrub-time-only and live in the
+    frontend's per-section snapshot schedule.
+    """
+    return (rest_state or "LOW").upper() == "HIGH"
+
+
+def _resolve_switch_ttl_states(
+    *,
+    elements: Iterable[Any],
+    adj: Mapping[PortKey, list[dict]],
+    anchors_by_obj: Mapping[Any, list[dict]],
+    pe_by_obj: Mapping[Any, Any],
+    timing_programs_by_id: Mapping[Any, Any] | None,
+) -> dict[Any, str]:
+    """Steady-state TTL resolver: for every rf_switch, look one hop up
+    the cable graph from its ttl_in anchor. If the peer is a PPG with a
+    bound TimingProgram, derive HIGH/LOW from the program at t=0;
+    otherwise fall back to the switch's manual ``ttlState`` param.
+    """
+    out: dict[Any, str] = {}
+    programs = timing_programs_by_id or {}
+    for e in elements:
+        if e.element_kind != "rf_switch":
+            continue
+        ttl_anchor = None
+        for a in anchors_by_obj.get(e.object_id) or []:
+            if a.get("id") == "ttl_in":
+                ttl_anchor = a
+                break
+        manual = (e.kind_params or {}).get("ttlState") or "LOW"
+        if ttl_anchor is None:
+            out[e.object_id] = manual
+            continue
+        ttl_name = anchor_lookup_name(ttl_anchor)
+        peers = adj.get((e.object_id, ttl_name)) or []
+        derived: str | None = None
+        for peer in peers:
+            peer_pe = pe_by_obj.get(peer["target_object_id"])
+            if peer_pe is None:
+                continue
+            if peer_pe.element_kind != "programmable_pulse_generator":
+                continue
+            program_id = (peer_pe.kind_params or {}).get("timingProgramId")
+            if not program_id:
+                continue
+            # Coerce to whatever key type the timing_programs map uses
+            # (UUID vs str both possible in different call sites).
+            program = programs.get(program_id)
+            if program is None:
+                try:
+                    program = programs.get(str(program_id))
+                except Exception:
+                    program = None
+            if program is None:
+                continue
+            # Steady-state TTL: use the PPG's rest_state directly.
+            # Intervals only affect the scrub-time view, which lives in
+            # the frontend; backend solvers always represent the idle
+            # / scrub-stopped state.
+            rest_state = (peer_pe.kind_params or {}).get("restState", "LOW")
+            derived = "HIGH" if _ppg_idle_is_high(rest_state) else "LOW"
+            break
+        out[e.object_id] = derived if derived is not None else manual
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -216,10 +385,18 @@ def build_rf_propagation(
     elements: list[Any],
     components_by_id: Mapping[Any, Any],
     assets_by_id: Mapping[Any, Any],
+    timing_programs_by_id: Mapping[Any, Any] | None = None,
+    powered_off_object_ids: set | None = None,
 ) -> RfPropagationResult:
     """Walk every rf_source channel forward through the rf_cable graph,
     transforming the signal at each passthrough (amplifier / switch / …)
     and recording the state at every port the wave reaches.
+
+    Power gate: ``powered_off_object_ids`` is the set of objects whose
+    ``device_states.state.power`` is False (Instrument Power panel toggle
+    OFF). rf_source objects in this set are not seeded, and rf_amplifier /
+    rf_switch objects in this set drop incoming signal at the transfer
+    function (returning None). Defaults to None — all devices powered.
 
     See module docstring for the algorithm; keep parity with
     ``buildRfPropagation`` in ``frontend/src/utils/rfPropagation.ts``."""
@@ -235,6 +412,19 @@ def build_rf_propagation(
     anchors_by_obj = _build_anchors_by_object(objects_by_id, components_by_id, assets_by_id)
     pe_by_obj: dict[Any, Any] = {e.object_id: e for e in elements}
 
+    # Steady-state pre-pass: for every rf_switch, peek one hop up its
+    # ttl_in cable. If the peer is a PPG with a bound TimingProgram,
+    # derive HIGH/LOW from t=0; else use the switch's manual ttlState
+    # param. The map is consumed by `_rf_switch_transfer` to pick which
+    # rf_out anchor receives the active-throw signal.
+    switch_ttl_states = _resolve_switch_ttl_states(
+        elements=elements,
+        adj=adj,
+        anchors_by_obj=anchors_by_obj,
+        pe_by_obj=pe_by_obj,
+        timing_programs_by_id=timing_programs_by_id,
+    )
+
     signal_at_port: dict[PortKey, RfSignalState] = {}
     queue: deque[tuple[PortKey, RfSignalState]] = deque()
 
@@ -246,6 +436,10 @@ def build_rf_propagation(
     # would silence CH1..CH3).
     for e in elements:
         if e.element_kind != "rf_source":
+            continue
+        # Power gate: AD9959 / synth with no DC bias produces no output on
+        # any channel. Skip the entire seed loop for this object.
+        if powered_off_object_ids is not None and e.object_id in powered_off_object_ids:
             continue
         channels = (e.kind_params or {}).get("channels") or []
         persisted_by_anchor: dict[str, tuple[float, float]] = {}
@@ -316,6 +510,8 @@ def build_rf_propagation(
                 kind_params=peer_pe.kind_params or {},
                 anchors=anchors,
                 object_id=peer["target_object_id"],
+                switch_ttl_states=switch_ttl_states,
+                powered_off_object_ids=powered_off_object_ids,
             )
             if not outputs:
                 continue

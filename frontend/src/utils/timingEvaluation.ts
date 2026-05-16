@@ -3,21 +3,19 @@
  * output is HIGH.
  *
  * After alembic 0045/0046 the program is just a list of [start, end)
- * intervals; output is HIGH inside any interval and LOW outside. The
- * ``invert`` flag on the program flips the result before it leaves the
- * wire (active-low).
+ * intervals; output is HIGH inside any interval and LOW outside.
+ * Alembic 0051 dropped the ``invert`` flag — the gate goes straight to
+ * the PPG output without polarity inversion.
  */
 import type { TimingProgram } from "../types/digitalTwin";
 
 export type GateState = boolean;
 
-/** Returns true if any interval covers ``tNs`` (with the program's
- *  ``invert`` flag applied). False otherwise. */
+/** Returns true if any interval covers ``tNs``. False otherwise. */
 export function evaluateProgramAt(program: TimingProgram, tNs: number): GateState {
-  const raw = (program.intervals ?? []).some(
+  return (program.intervals ?? []).some(
     (iv) => tNs >= iv.spinCoreStartNs && tNs < iv.spinCoreEndNs,
   );
-  return program.invert ? !raw : raw;
 }
 
 /**

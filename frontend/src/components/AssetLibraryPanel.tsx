@@ -255,9 +255,13 @@ export function ComponentsCatalogPanel() {
                                       the catalog — placing one here would
                                       create a dangling object the store now
                                       auto-deletes anyway. Hide the Plus button
-                                      to match. */}
+                                      to match. programmable_pulse_generator
+                                      follows the same rule: SMA and BNC
+                                      variants only enter via the RF Link
+                                      panel. */}
                                   {component.componentType !== "rf_cable" &&
-                                    component.componentType !== "sma_cable" && (
+                                    component.componentType !== "sma_cable" &&
+                                    component.componentType !== "programmable_pulse_generator" && (
                                       <span
                                         className="row-action"
                                         title="Place component as object"

@@ -24,6 +24,7 @@ import type {
   RfChainNodeCreatePayload,
   Collection,
   CollectionMember,
+  CollectionTemplate,
   ComponentItem,
   DeviceState,
   ElementKind,
@@ -134,7 +135,7 @@ export async function deleteObjectApi(objectId: string): Promise<void> {
 }
 
 export async function createComponentApi(payload: {
-  name: string;
+  name?: string;
   componentType: string;
   brand?: string;
   model?: string;
@@ -612,6 +613,66 @@ export async function unlinkObjectFromCollectionApi(
 ): Promise<void> {
   try {
     await client.delete(`/api/collections/${collectionId}/objects/${objectId}`);
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Collection Drift — templates
+// ---------------------------------------------------------------------------
+
+export async function listCollectionTemplatesApi(): Promise<CollectionTemplate[]> {
+  try {
+    const response = await client.get<CollectionTemplate[]>("/api/collection-templates");
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function saveCollectionAsTemplateApi(
+  collectionId: string,
+  payload: { name: string; description?: string | null },
+): Promise<CollectionTemplate> {
+  try {
+    const response = await client.post<CollectionTemplate>(
+      `/api/collection-templates/from-collection/${collectionId}`,
+      payload,
+    );
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function instantiateCollectionTemplateApi(
+  templateId: string,
+  payload: {
+    parentCollectionId?: string | null;
+    targetXMm: number;
+    targetYMm: number;
+    targetZMm: number;
+  },
+): Promise<{
+  rootCollectionId: string;
+  createdCollectionIds: string[];
+  createdObjectIds: string[];
+}> {
+  try {
+    const response = await client.post(
+      `/api/collection-templates/${templateId}/instantiate`,
+      payload,
+    );
+    return response.data;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error));
+  }
+}
+
+export async function deleteCollectionTemplateApi(templateId: string): Promise<void> {
+  try {
+    await client.delete(`/api/collection-templates/${templateId}`);
   } catch (error) {
     throw new Error(apiErrorMessage(error));
   }

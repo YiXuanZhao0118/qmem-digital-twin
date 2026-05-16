@@ -45,12 +45,21 @@ import type {
 } from "../types/digitalTwin";
 import {
   AD9959_VPP_FULL_SCALE,
-  buildRfPropagation,
   portKey as rfPortKey,
   type RfSignalState,
 } from "../utils/rfPropagation";
-import { isPhysicsPlugin, resolvePortDomain } from "../kinds/_plugin";
-import { pluginForKind } from "../kinds/_plugins";
+import {
+  buildRfPropagationSchedule,
+  getRfSnapshotAt,
+} from "../utils/rfPropagationSchedule";
+import {
+  connectorFamilyFromAnchor,
+  kindParticipatesInRfLink,
+  ppgChannelIndex,
+  resolveRfLinkPortDomain,
+  type RfLinkConnectorFamily,
+  type RfLinkSignalDomain,
+} from "../utils/rfLinkPorts";
 import { FloatingPanel } from "./workspace/FloatingPanel";
 
 const PORT_R = 5;
@@ -137,8 +146,18 @@ type PortRole = "in" | "out";
 
 type Port = {
   anchorId: string;
+  /** Raw asset anchor name (or anchor.id when name is null) — used as the
+   *  routing key for cable endpoints, propagation maps, and port-key
+   *  occupancy lookups. MUST match the asset's stored value exactly,
+   *  otherwise `createRfCableBetweenPorts.resolvePort` can't find the
+   *  anchor and silently fails. */
   anchorName: string;
+  /** Display-only canonical name (rf_in / RF In / RFIN → RFIN). Rendered
+   *  in port labels and drag hints; never used for routing. */
+  displayName: string;
   role: PortRole;
+  domain: RfLinkSignalDomain;
+  connectorFamily: RfLinkConnectorFamily | null;
 };
 
 type RfNode = {
@@ -177,38 +196,37 @@ type DanglingCable = {
  *  contract is what matters — the asset's anchor list is data and can
  *  be wrong, the plugin contract is the schema and is right by
  *  definition. */
-function kindParticipatesInRfLink(kind: string | null): boolean {
-  if (!kind) return false;
-  const plugin = pluginForKind(kind);
-  if (!plugin || !isPhysicsPlugin(plugin)) return false;
-  const declared = [
-    ...plugin.physics.anchors.required,
-    ...plugin.physics.anchors.optional,
-  ];
-  return declared.some((id) => resolvePortDomain(plugin, id) === "rf");
-}
+// kindParticipatesInRfLink is shared with the store-side validation helper.
 
 /** Resolve the RF ports of a SceneObject. Cross-checks each asset anchor
  *  against the plugin's `portDomains` (Phase 2) before admitting it as
  *  an RF port — keeps stray rf_*-named anchors on non-RF assets from
  *  leaking into the panel and keeps the AOM's optical anchors out of
  *  the RF column. */
-function rfPortsOf(anchors: Anchor[], kind: string | null): Port[] {
-  const plugin = kind ? pluginForKind(kind) : null;
+function rfLinkPortsOf(
+  anchors: Anchor[],
+  kind: string | null,
+): Port[] {
   return anchors
-    .filter((a) => {
-      if (plugin && isPhysicsPlugin(plugin)) {
-        return resolvePortDomain(plugin, a.id) === "rf";
-      }
-      // No plugin: fall back to the legacy literal-match filter so a
-      // brand-new kind without a registered plugin still renders.
-      return a.id === "rf_in" || a.id === "rf_out";
+    .map((a) => {
+      const domain = resolveRfLinkPortDomain({
+        kind,
+        anchorId: a.id,
+      });
+      if (!domain) return null;
+      const anchorName = a.name ?? a.id;
+      return {
+        anchorId: a.id,
+        anchorName,
+        displayName: normaliseAnchorName(a.id, a.name),
+        role: a.id === "rf_in" || a.id === "ttl_in" || a.id === "trigger_in"
+          ? ("in" as const)
+          : ("out" as const),
+        domain,
+        connectorFamily: connectorFamilyFromAnchor(a),
+      };
     })
-    .map((a) => ({
-      anchorId: a.id,
-      anchorName: a.name ?? a.id,
-      role: a.id === "rf_in" ? ("in" as const) : ("out" as const),
-    }));
+    .filter((port): port is Port => port !== null);
 }
 
 function classifyColumn(kind: string | null, ports: Port[]): 0 | 1 | 2 {
@@ -227,6 +245,50 @@ function endpointKey(link: RfCableEndpointLink): string {
 
 function portKey(p: Port): string {
   return `${p.anchorId}|${p.anchorName}`;
+}
+
+/** Inline `· CONNECTOR` tag used in every port row — fallback text AND the
+ *  editable body rows (DDS rf_out, AOM rf_in, amp in/out). Keeps the
+ *  connector visibility uniform across all kinds; without it only ports
+ *  that fall through to the plain-text fallback (switch, horn, PPG) show
+ *  the connector family. Domain (RF/TTL/Trigger) is already implicit in
+ *  the anchor name (RFIN / RFOUT / TTLIN / TRIGGER), so we omit it here.
+ */
+function PortConnectorTag({ port }: { port: Port }) {
+  return (
+    <span
+      style={{
+        color: port.connectorFamily ? "#8e8e9a" : "#d96666",
+        fontSize: 9,
+        whiteSpace: "nowrap",
+      }}
+    >
+      · {port.connectorFamily?.toUpperCase() ?? "NO CONN"}
+    </span>
+  );
+}
+
+/** Canonical anchor-name overrides. Asset rows currently store one of three
+ *  variants per id ("rf_in" / "RF In" / "RFIN" / null), all referring to the
+ *  same coax port. We normalise at display time so the user sees one form
+ *  regardless of which asset author typed which spelling. Multi-port assets
+ *  (switch RF1/RF2, DDS CH0..CH3) keep their distinct names because their
+ *  anchor.name doesn't reduce to the canonical id form. */
+const CANONICAL_PORT_NAMES: Record<string, string> = {
+  rf_in: "RFIN",
+  rf_out: "RFOUT",
+  ttl_in: "TTLIN",
+  trigger_in: "TRIGGER",
+};
+function normaliseAnchorName(anchorId: string, anchorName: string | null | undefined): string {
+  const canonical = CANONICAL_PORT_NAMES[anchorId];
+  if (!canonical) return anchorName ?? anchorId;
+  if (!anchorName) return canonical;
+  const stripped = anchorName.replace(/[\s_]/g, "").toUpperCase();
+  const idStripped = anchorId.replace(/[\s_]/g, "").toUpperCase();
+  // Only override when the user-set name is just a stylistic variant of the
+  // anchor id; preserve genuine multi-port names (RF1 / RF2 / CH0 ...).
+  return stripped === idStripped ? canonical : anchorName;
 }
 
 function powerWToVpp(p: number): number {
@@ -306,7 +368,8 @@ function EditableAd9959Row({ port, channel, onCommit }: EditableAd9959RowProps) 
         paddingRight: 12,
       }}
     >
-      <span style={{ minWidth: 28, color: "#e8e8ee", fontWeight: 500 }}>{port.anchorName}</span>
+      <span style={{ minWidth: 28, color: "#e8e8ee", fontWeight: 500 }}>{port.displayName}</span>
+      <PortConnectorTag port={port} />
       <input
         key={`freq-${currentFreq}`}
         type="number"
@@ -423,14 +486,15 @@ function AomInRow({ port, requiredVpp, incomingSignal, sourceObjectName }: AomIn
       title={
         // Full tooltip — fits even when the inline row truncates.
         incomingSignal
-          ? `${port.anchorName} input: ${incomingFreqMhz!.toFixed(2)} MHz · ${incomingVpp!.toFixed(2)} Vpp · ${formatPowerW(incomingPowerW!)}` +
+          ? `${port.displayName} input: ${incomingFreqMhz!.toFixed(2)} MHz · ${incomingVpp!.toFixed(2)} Vpp · ${formatPowerW(incomingPowerW!)}` +
             (requiredVpp != null ? `\nneed ≥ ${requiredVpp.toFixed(2)} Vpp for full Bragg η` : "") +
             (provenance ? `\n${provenance.replace("← ", "from ")}` : "") +
             (incomingSignal.saturated ? "\n⚠ Upstream amplifier clamped at P_max" : "")
-          : `${port.anchorName} input: no upstream rf_source linked`
+          : `${port.displayName} input: no upstream rf_source linked`
       }
     >
-      <span style={{ minWidth: 28, color: "#e8e8ee", fontWeight: 500 }}>{port.anchorName}</span>
+      <span style={{ minWidth: 28, color: "#e8e8ee", fontWeight: 500 }}>{port.displayName}</span>
+      <PortConnectorTag port={port} />
       {/* Primary readout: what's actually arriving at the AOM right now.
           Three columns, monospaced-style alignment so the freq / Vpp / W
           tuple lines up across multiple AOMs in the column. */}
@@ -503,7 +567,8 @@ function AmpInRow({ port, incomingVpp }: AmpInRowProps) {
         paddingLeft: 12,
       }}
     >
-      <span style={{ minWidth: 30, color: "#e8e8ee", fontWeight: 500 }}>{port.anchorName}</span>
+      <span style={{ minWidth: 30, color: "#e8e8ee", fontWeight: 500 }}>{port.displayName}</span>
+      <PortConnectorTag port={port} />
       {incomingVpp != null ? (
         <span style={{ color: "#8e8e9a" }}>
           in: <strong style={{ color: "#cfcfd8" }}>{incomingVpp.toFixed(2)}</strong> Vpp
@@ -545,8 +610,9 @@ function AmpOutRow({ port, outgoingVpp, gainDb, saturated }: AmpOutRowProps) {
       {saturated && (
         <span style={{ color: "#d49a3a", fontSize: 9 }}>⚠ clamp</span>
       )}
+      <PortConnectorTag port={port} />
       <span style={{ minWidth: 30, color: "#e8e8ee", fontWeight: 500, textAlign: "right" }}>
-        {port.anchorName}
+        {port.displayName}
       </span>
     </div>
   );
@@ -561,6 +627,7 @@ export function RfLinkPanel() {
   const components = useSceneStore((s) => s.scene.components);
   const assets = useSceneStore((s) => s.scene.assets);
   const physicsElements = useSceneStore((s) => s.scene.physicsElements);
+  const timingPrograms = useSceneStore((s) => s.scene.timingPrograms) ?? [];
   const selectObject = useSceneStore((s) => s.selectObject);
   const selectedObjectId = useSceneStore((s) => s.selectedObjectId);
   const upsertOpticalElement = useSceneStore((s) => s.upsertOpticalElement);
@@ -576,6 +643,8 @@ export function RfLinkPanel() {
     srcAnchorId: string;
     srcAnchorName: string;
     srcRole: PortRole;
+    srcDomain: RfLinkSignalDomain;
+    srcConnectorFamily: RfLinkConnectorFamily;
     mouseX: number;
     mouseY: number;
     /** Port key (`objectId|anchorId|anchorName|role`) directly under the
@@ -587,6 +656,33 @@ export function RfLinkPanel() {
   };
   const [drag, setDrag] = useState<DragState | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  // Right-click context menu state. Two modes, mutually exclusive:
+  //   - `create-ppg`: empty ttl_in / trigger_in input port → offer
+  //     "Create Pulse & Timing program here" (auto-builds PPG + cable).
+  //   - `remove-cable`: any port already attached to an rf_cable → offer
+  //     "Disconnect cable". Cables are hidden from the Outliner so this
+  //     is the only UX path to remove them once placed.
+  type PortContextMenu =
+    | {
+        mode: "create-ppg";
+        x: number;
+        y: number;
+        targetObjectId: string;
+        targetAnchorId: string;
+        targetAnchorName: string;
+        targetConnectorFamily: RfLinkConnectorFamily;
+      }
+    | {
+        mode: "remove-cable";
+        x: number;
+        y: number;
+        cableObjectId: string;
+        cableName: string;
+        portLabel: string;
+      };
+  const [portMenu, setPortMenu] = useState<PortContextMenu | null>(null);
+  const [ppgBusy, setPpgBusy] = useState(false);
+  const [ppgError, setPpgError] = useState<string | null>(null);
 
   // Per-node layout drag state. Independent of the cable rubber-band
   // drag above: this one starts on the node's rect (not on a port
@@ -630,6 +726,62 @@ export function RfLinkPanel() {
     return m;
   }, [physicsElements]);
 
+  const createPpgAtPort = useSceneStore((s) => s.createPpgAtPort);
+  const deleteObject = useSceneStore((s) => s.deleteObject);
+  const updateSceneObject = useSceneStore((s) => s.updateSceneObject);
+
+  // Inline node-name editing — double-click a node header opens a small
+  // `<foreignObject>` input. On commit (blur / Enter) we write to the
+  // SceneObject.name; for PPG nodes this also propagates to Pulse &
+  // Timing's left column via the shared scene state. Escape reverts.
+  const [editingNameNodeId, setEditingNameNodeId] = useState<string | null>(null);
+  const [editingNameDraft, setEditingNameDraft] = useState<string>("");
+  const commitNodeRename = (objectId: string, name: string) => {
+    setEditingNameNodeId(null);
+    const obj = objects.find((o) => o.id === objectId);
+    const trimmed = name.trim();
+    if (!obj || trimmed === obj.name) return;
+    if (trimmed.length === 0) return;
+    void updateSceneObject(objectId, { name: trimmed }).catch(() => {});
+  };
+
+  const handleCreatePpgFromMenu = async () => {
+    if (!portMenu || portMenu.mode !== "create-ppg") return;
+    setPpgBusy(true);
+    setPpgError(null);
+    try {
+      const created = await createPpgAtPort({
+        targetObjectId: portMenu.targetObjectId,
+        targetAnchorId: portMenu.targetAnchorId,
+        targetAnchorName: portMenu.targetAnchorName,
+        targetConnectorFamily: portMenu.targetConnectorFamily,
+      });
+      if (!created) {
+        setPpgError("No matching PPG catalog row, or the port is busy.");
+      } else {
+        setPortMenu(null);
+      }
+    } catch (err) {
+      setPpgError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPpgBusy(false);
+    }
+  };
+
+  const handleRemoveCableFromMenu = async () => {
+    if (!portMenu || portMenu.mode !== "remove-cable") return;
+    setPpgBusy(true);
+    setPpgError(null);
+    try {
+      await deleteObject(portMenu.cableObjectId);
+      setPortMenu(null);
+    } catch (err) {
+      setPpgError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPpgBusy(false);
+    }
+  };
+
   const assetByObjectId = useMemo(() => {
     const compMap = new Map<string, ComponentItem>(components.map((c) => [c.id, c]));
     const assetMap = new Map<string, Asset3D>(assets.map((a) => [a.id, a]));
@@ -649,7 +801,7 @@ export function RfLinkPanel() {
       // if their asset row spuriously carries an rf_* anchor name.
       if (!kindParticipatesInRfLink(kind)) continue;
       const asset = assetByObjectId(obj);
-      const ports = rfPortsOf(asset?.anchors ?? [], kind);
+      const ports = rfLinkPortsOf(asset?.anchors ?? [], kind);
       if (ports.length === 0) continue;
       list.push({
         objectId: obj.id,
@@ -660,7 +812,7 @@ export function RfLinkPanel() {
       });
     }
     return list;
-  }, [objects, kindByObjectId, assetByObjectId]);
+  }, [objects, kindByObjectId, assetByObjectId, peByObjectId, timingPrograms]);
 
   const { edges, dangling } = useMemo<{ edges: RfEdge[]; dangling: DanglingCable[] }>(() => {
     const edgesOut: RfEdge[] = [];
@@ -734,6 +886,29 @@ export function RfLinkPanel() {
     return s;
   }, [objects, kindByObjectId]);
 
+  /** Reverse index: port key → owning rf_cable SceneObject id. Used by
+   *  the right-click "Remove cable" context menu so a single click can
+   *  disconnect a port without the user having to find the cable in the
+   *  Outliner. */
+  const cableByPortKey = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const obj of objects) {
+      if (kindByObjectId.get(obj.id) !== "rf_cable") continue;
+      const ep = (obj.properties as {
+        rfCableEndpoints?: { A?: RfCableEndpointLink; B?: RfCableEndpointLink };
+      }).rfCableEndpoints;
+      for (const link of [ep?.A, ep?.B]) {
+        if (link) {
+          m.set(
+            `${link.targetObjectId}|${link.targetAnchorId}|${link.targetAnchorName}`,
+            obj.id,
+          );
+        }
+      }
+    }
+    return m;
+  }, [objects, kindByObjectId]);
+
   /** AOM kindParams keyed by SceneObject id. Lets the rf_in port reader
    *  pull M²/L/W in one lookup. */
   const aomByObjectId = useMemo(() => {
@@ -752,9 +927,38 @@ export function RfLinkPanel() {
    *  shows the actually-amplified Vpp rather than the raw source Vpp.
    *  Same map drives the AOM "incoming Vpp" badge AND the amplifier
    *  rf_in/rf_out transformation rows. */
+  const scrubTimeNs = useSceneStore((s) => s.scrubTimeNs);
+  const deviceStates = useSceneStore((s) => s.scene.deviceStates);
+  // Instrument Power panel cascade — kept in sync with the viewer's
+  // identical computation (see DigitalTwinViewer.tsx). Powered-off RF
+  // sources / amps / switches are excluded from the propagation BFS.
+  const poweredOffObjectIds = useMemo(() => {
+    const out = new Set<string>();
+    for (const ds of deviceStates ?? []) {
+      const power = (ds.state as { power?: unknown } | undefined)?.power;
+      if (power === false) out.add(ds.objectId);
+    }
+    return out;
+  }, [deviceStates]);
+  // Precompute one propagation snapshot per timing section (boundaries
+  // = union of all program interval start/end times). The schedule only
+  // depends on scene + programs, NOT on scrubTimeNs — so dragging the
+  // scrub cursor is an O(log N) lookup instead of a full graph walk.
+  const rfPropagationSchedule = useMemo(
+    () =>
+      buildRfPropagationSchedule({
+        objects,
+        components,
+        assets,
+        physicsElements,
+        timingPrograms,
+        poweredOffObjectIds,
+      }),
+    [objects, components, assets, physicsElements, timingPrograms, poweredOffObjectIds],
+  );
   const rfPropagation = useMemo(
-    () => buildRfPropagation({ objects, components, assets, physicsElements }),
-    [objects, components, assets, physicsElements],
+    () => getRfSnapshotAt(rfPropagationSchedule, scrubTimeNs),
+    [rfPropagationSchedule, scrubTimeNs],
   );
 
   /** RfAmplifier kindParams keyed by SceneObject id — pulled out so the
@@ -829,17 +1033,24 @@ export function RfLinkPanel() {
     const NAME_PAD = 30;
     const SIDE_PAD = 24; // 12px each side inside the foreignObject
     const GAP = 6;
-    const labelW = estimateTextWidthPx(port.anchorName, 10);
+    const labelW = estimateTextWidthPx(port.displayName, 10);
+    // Connector tag width — `· BNC` / `· SMA` / `· NO CONN` rendered at
+    // fontSize 9 in every body row. Padded so PortConnectorTag never gets
+    // clipped on narrow column blocks.
+    const connectorTagW = estimateTextWidthPx(
+      `· ${port.connectorFamily?.toUpperCase() ?? "NO CONN"}`,
+      9,
+    );
     // Per-port kind-specific bodies. Keep the order in sync with the
     // render switch below so missing branches show up as conservative
     // "just the anchor name" estimates (small block, easy to spot).
     if (node.kind === "rf_source" && port.role === "out") {
-      // EditableAd9959Row: [name] [freq input 50px] MHz [vpp input 44px] Vpp
+      // EditableAd9959Row: [name] [· BNC] [freq input 50px] MHz [vpp input 44px] Vpp
       const FREQ_INPUT = 50;
       const VPP_INPUT = 44;
       const mhzLabel = estimateTextWidthPx("MHz", 10);
       const vppLabel = estimateTextWidthPx("Vpp", 10);
-      return SIDE_PAD + NAME_PAD + GAP + FREQ_INPUT + GAP + mhzLabel + GAP + VPP_INPUT + GAP + vppLabel;
+      return SIDE_PAD + NAME_PAD + GAP + connectorTagW + GAP + FREQ_INPUT + GAP + mhzLabel + GAP + VPP_INPUT + GAP + vppLabel;
     }
     if (node.kind === "aom" && port.role === "in") {
       const aom = aomByObjectId.get(node.objectId);
@@ -870,7 +1081,7 @@ export function RfLinkPanel() {
             90, // matches the maxWidth on the provenance chip
           )
         : 0;
-      return SIDE_PAD + NAME_PAD + GAP + incomingW + GAP + requiredW + GAP + badgeW + GAP + clampW + GAP + provenanceW;
+      return SIDE_PAD + NAME_PAD + GAP + connectorTagW + GAP + incomingW + GAP + requiredW + GAP + badgeW + GAP + clampW + GAP + provenanceW;
     }
     if (node.kind === "rf_amplifier") {
       const amp = ampByObjectId.get(node.objectId);
@@ -879,16 +1090,21 @@ export function RfLinkPanel() {
         const ioW = signal
           ? estimateTextWidthPx(`in: ${signal.vpp.toFixed(2)} Vpp`, 10)
           : estimateTextWidthPx("no upstream", 10);
-        return SIDE_PAD + NAME_PAD + GAP + ioW;
+        return SIDE_PAD + NAME_PAD + GAP + connectorTagW + GAP + ioW;
       }
-      // rf_out row: `+gainDb dB → Vpp Vpp ⚠ clamp anchorName`
+      // rf_out row: `+gainDb dB → Vpp Vpp ⚠ clamp · CONN anchorName`
       const gainW = estimateTextWidthPx(`+${(amp?.gainDb ?? 0).toFixed(1)} dB`, 10);
       const ioW = signal ? estimateTextWidthPx(`→ ${signal.vpp.toFixed(2)} Vpp`, 10) : 0;
       const clampW = signal?.saturated ? estimateTextWidthPx("⚠ clamp", 9) : 0;
-      return SIDE_PAD + gainW + GAP + ioW + GAP + clampW + GAP + NAME_PAD;
+      return SIDE_PAD + gainW + GAP + ioW + GAP + clampW + GAP + connectorTagW + GAP + NAME_PAD;
     }
-    // Generic fallback: just the anchor name on one side.
-    return SIDE_PAD + NAME_PAD + GAP + labelW;
+    // Generic fallback: just the anchor name + connector tag + channel
+    // suffix (PPG only) on one side.
+    const channelSuffixW =
+      node.kind === "programmable_pulse_generator" && port.role === "out"
+        ? estimateTextWidthPx(" · CH99", 10)
+        : 0;
+    return SIDE_PAD + NAME_PAD + GAP + labelW + GAP + connectorTagW + channelSuffixW;
   };
 
   /** Header width: object name + kind label + a small breathing margin. */
@@ -1010,6 +1226,23 @@ export function RfLinkPanel() {
           overflow: "hidden",
         }}
       >
+        {ppgError && (
+          <div
+            style={{
+              padding: 6,
+              background: "#3a1f1f",
+              border: "1px solid #6a3a3a",
+              borderRadius: 4,
+              color: "#ff8f8f",
+              fontSize: 11,
+              cursor: "pointer",
+            }}
+            onClick={() => setPpgError(null)}
+            title="Click to dismiss"
+          >
+            {ppgError}
+          </div>
+        )}
         {nodes.length === 0 ? (
           <div style={{ padding: 16, color: "#9a9aa6", fontSize: 12 }}>
             No RF components in scene yet.
@@ -1047,7 +1280,7 @@ export function RfLinkPanel() {
                 const targetEl = document.elementFromPoint(e.clientX, e.clientY) as Element | null;
                 const portEl = targetEl?.closest?.("[data-rf-port-key]") as HTMLElement | null;
                 if (portEl?.dataset?.rfPortKey) {
-                  const [objId, anchorId, anchorName, role] = portEl.dataset.rfPortKey.split("|");
+                  const [objId, anchorId, anchorName, role, domain, connectorFamily] = portEl.dataset.rfPortKey.split("|");
                   const targetKey = `${objId}|${anchorId}|${anchorName}`;
                   // Valid only when target is on a different object, role
                   // is opposite (out → in or in → out), AND the target
@@ -1057,8 +1290,14 @@ export function RfLinkPanel() {
                   // before they release; this is a defence-in-depth check.
                   const sameObject = objId === drag.srcObjectId;
                   const sameRole = !role || role === drag.srcRole;
+                  const domainMismatch = domain !== drag.srcDomain;
+                  // Cross-family (SMA ↔ BNC) is allowed because the catalog
+                  // ships `rf_cable_sma_to_bnc`; only block when either
+                  // endpoint has no defined connector at all (`"none"`).
+                  const connectorUndefined =
+                    connectorFamily === "none" || drag.srcConnectorFamily === undefined;
                   const busy = occupiedPortKeys.has(targetKey);
-                  if (!sameObject && !sameRole && !busy) {
+                  if (!sameObject && !sameRole && !domainMismatch && !connectorUndefined && !busy) {
                     const args = drag.srcRole === "out"
                       ? {
                           srcObjectId: drag.srcObjectId,
@@ -1087,12 +1326,56 @@ export function RfLinkPanel() {
                 const from = portCoord(e.fromObjectId, e.fromKey);
                 const to = portCoord(e.toObjectId, e.toKey);
                 if (!from || !to) return null;
-                const midX = (from.cx + to.cx) / 2;
-                const d = `M ${from.cx} ${from.cy} C ${midX} ${from.cy}, ${midX} ${to.cy}, ${to.cx} ${to.cy}`;
+                // Direction of signal flow on this cable. The output
+                // (rf_out) port is always the upstream side; the path
+                // is drawn so animateMotion's t=0 starts there and
+                // t=1 reaches the downstream input.
+                const forward = from.role === "out";
+                const startX = forward ? from.cx : to.cx;
+                const startY = forward ? from.cy : to.cy;
+                const endX = forward ? to.cx : from.cx;
+                const endY = forward ? to.cy : from.cy;
+                const midX = (startX + endX) / 2;
+                const d = `M ${startX} ${startY} C ${midX} ${startY}, ${midX} ${endY}, ${endX} ${endY}`;
+                const pathId = `rfedge-${e.cableObjectId}`;
                 const labelY = (from.cy + to.cy) / 2 - 5;
+
+                // Activity = both endpoints recorded the SAME signal
+                // (same source) in the propagation map. When a switch
+                // routes to a different throw the inactive cable's
+                // endpoint never gets seeded, so the ball naturally
+                // disappears. The yellow ball cadence is intentionally
+                // fixed (no carrier-frequency scaling) — it's a flow
+                // indicator, not a meaningful waveform.
+                const fromAnchorName = e.fromKey.split("|")[1] ?? "";
+                const toAnchorName = e.toKey.split("|")[1] ?? "";
+                const fromSig = rfPropagation.signalAtPort.get(
+                  rfPortKey(e.fromObjectId, fromAnchorName),
+                );
+                const toSig = rfPropagation.signalAtPort.get(
+                  rfPortKey(e.toObjectId, toAnchorName),
+                );
+                const active =
+                  !!fromSig
+                  && !!toSig
+                  && fromSig.sourceObjectId === toSig.sourceObjectId;
+
                 return (
                   <g key={e.cableObjectId}>
-                    <path d={d} fill="none" stroke="#8e8e9a" strokeWidth={2} />
+                    <path
+                      id={pathId}
+                      d={d}
+                      fill="none"
+                      stroke={active ? "#fbbf24" : "#8e8e9a"}
+                      strokeWidth={active ? 2.5 : 2}
+                    />
+                    {active && (
+                      <circle r={4.5} fill="#fde68a" stroke="#b45309" strokeWidth={1}>
+                        <animateMotion dur="1.4s" repeatCount="indefinite">
+                          <mpath href={`#${pathId}`} />
+                        </animateMotion>
+                      </circle>
+                    )}
                     <text
                       x={midX}
                       y={labelY}
@@ -1114,6 +1397,10 @@ export function RfLinkPanel() {
                 const isSource = n.kind === "rf_source";
                 const aom = n.kind === "aom" ? aomByObjectId.get(n.objectId) ?? null : null;
                 const amp = n.kind === "rf_amplifier" ? ampByObjectId.get(n.objectId) ?? null : null;
+                const isPpg = n.kind === "programmable_pulse_generator";
+                const ppgCh = isPpg
+                  ? ppgChannelIndex(peByObjectId.get(n.objectId) ?? null, physicsElements, objects)
+                  : null;
                 return (
                   <g key={n.objectId}>
                     <rect
@@ -1183,16 +1470,55 @@ export function RfLinkPanel() {
                       }}
                       onPointerCancel={() => setNodeDrag(null)}
                     />
-                    <text
-                      x={pos.x + 10}
-                      y={pos.y + 18}
-                      fontSize={12}
-                      fill="#e8e8ee"
-                      fontWeight={500}
-                      style={{ pointerEvents: "none" }}
-                    >
-                      {n.name}
-                    </text>
+                    {editingNameNodeId === n.objectId ? (
+                      <foreignObject
+                        x={pos.x + 8}
+                        y={pos.y + 6}
+                        width={Math.min(pos.w - 16, 180)}
+                        height={20}
+                      >
+                        <input
+                          autoFocus
+                          type="text"
+                          value={editingNameDraft}
+                          onChange={(e) => setEditingNameDraft(e.target.value)}
+                          onBlur={() => commitNodeRename(n.objectId, editingNameDraft)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                            if (e.key === "Escape") setEditingNameNodeId(null);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          style={{
+                            width: "100%",
+                            background: "#1c1c22",
+                            color: "#e8e8ee",
+                            border: "1px solid #62a3ff",
+                            borderRadius: 2,
+                            padding: "1px 4px",
+                            fontSize: 12,
+                            fontWeight: 500,
+                          }}
+                        />
+                      </foreignObject>
+                    ) : (
+                      <text
+                        x={pos.x + 10}
+                        y={pos.y + 18}
+                        fontSize={12}
+                        fill="#e8e8ee"
+                        fontWeight={500}
+                        style={{ cursor: "text" }}
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          setEditingNameNodeId(n.objectId);
+                          setEditingNameDraft(n.name);
+                        }}
+                      >
+                        <title>Double-click to rename</title>
+                        {n.name}
+                      </text>
+                    )}
                     {n.kind && (
                       <text
                         x={pos.x + pos.w - 8}
@@ -1291,6 +1617,11 @@ export function RfLinkPanel() {
                           );
                         }
                       }
+                      const showPpgChannel =
+                        isPpg && port.role === "out" && port.anchorId === "rf_out";
+                      const channelSuffix = showPpgChannel
+                        ? ` · CH${ppgCh != null ? ppgCh : "—"}`
+                        : "";
                       const fallback = !body ? (
                         <text
                           x={port.role === "in" ? cx + PORT_R + 6 : cx - PORT_R - 6}
@@ -1299,7 +1630,7 @@ export function RfLinkPanel() {
                           fill="#cfcfd8"
                           textAnchor={port.role === "in" ? "start" : "end"}
                         >
-                          {port.anchorName}
+                          {`${port.displayName} · ${port.connectorFamily?.toUpperCase() ?? "NO CONN"}${channelSuffix}`}
                         </text>
                       ) : null;
 
@@ -1310,23 +1641,42 @@ export function RfLinkPanel() {
                       // can see at a glance which ports are already claimed.
                       const portFullKey = `${n.objectId}|${port.anchorId}|${port.anchorName}`;
                       const isPortOccupied = occupiedPortKeys.has(portFullKey);
+                      // ttl_in / trigger_in input ports are the entry point
+                      // for the right-click "Create Pulse & Timing here"
+                      // shortcut — it spawns a fresh PPG (with its own
+                      // TimingProgram) and an rf_cable to this port in one
+                      // step. Only fires when the port has a defined
+                      // connector family (sma|bnc) and is not already busy.
+                      const canSpawnPpgHere =
+                        port.role === "in" &&
+                        (port.domain === "ttl" || port.domain === "trigger") &&
+                        port.connectorFamily != null &&
+                        !isPortOccupied;
                       const isDragSource =
                         drag &&
                         drag.srcObjectId === n.objectId &&
                         drag.srcAnchorId === port.anchorId &&
                         drag.srcAnchorName === port.anchorName;
+                      const portHasConnector = port.connectorFamily !== null;
+                      // Cross-family (SMA ↔ BNC) is fine — catalog has
+                      // `rf_cable_sma_to_bnc`. Only block when one side has
+                      // no defined connector at all.
                       const isValidDropTarget =
                         !!drag &&
                         !isDragSource &&
                         drag.srcObjectId !== n.objectId &&
                         drag.srcRole !== port.role &&
+                        drag.srcDomain === port.domain &&
+                        portHasConnector &&
                         !isPortOccupied;
                       const isBlockedDropTarget =
                         !!drag &&
                         !isDragSource &&
                         drag.srcObjectId !== n.objectId &&
                         drag.srcRole !== port.role &&
-                        isPortOccupied;
+                        (!portHasConnector ||
+                          drag.srcDomain !== port.domain ||
+                          isPortOccupied);
                       // Render the foreignObject FIRST so the port circle
                       // stays on top — foreignObject's HTML content
                       // intercepts pointer events across its full bounding
@@ -1360,10 +1710,12 @@ export function RfLinkPanel() {
                                   : "#1c1c22"
                             }
                             strokeWidth={isValidDropTarget || isBlockedDropTarget ? 2 : 1}
-                            data-rf-port-key={`${n.objectId}|${port.anchorId}|${port.anchorName}|${port.role}`}
+                            data-rf-port-key={`${n.objectId}|${port.anchorId}|${port.anchorName}|${port.role}|${port.domain}|${port.connectorFamily ?? "none"}`}
                             data-rf-port-occupied={isPortOccupied || undefined}
-                            style={{ cursor: isPortOccupied ? "not-allowed" : "crosshair", touchAction: "none" }}
+                            style={{ cursor: isPortOccupied || !portHasConnector ? "not-allowed" : "crosshair", touchAction: "none" }}
                             onPointerDown={(e) => {
+                              if (e.button !== 0) return;
+                              if (!port.connectorFamily) return;
                               if (!svgRef.current) return;
                               e.preventDefault();
                               e.stopPropagation();
@@ -1373,11 +1725,48 @@ export function RfLinkPanel() {
                                 srcAnchorId: port.anchorId,
                                 srcAnchorName: port.anchorName,
                                 srcRole: port.role,
+                                srcDomain: port.domain,
+                                srcConnectorFamily: port.connectorFamily,
                                 mouseX: e.clientX - rect.left,
                                 mouseY: e.clientY - rect.top,
                                 hoverPortKey: null,
                               });
                               try { svgRef.current.setPointerCapture(e.pointerId); } catch { /* unsupported */ }
+                            }}
+                            onContextMenu={(e) => {
+                              // Busy port → offer "Disconnect cable" so the
+                              // user can clear the link without hunting
+                              // for the rf_cable in the (now-hidden)
+                              // Outliner. Empty ttl_in / trigger_in input →
+                              // offer "Create Pulse & Timing program here".
+                              // Other empty ports do nothing on right-click.
+                              const cableObjectId = cableByPortKey.get(portFullKey);
+                              if (cableObjectId) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                const cable = objects.find((o) => o.id === cableObjectId);
+                                setPortMenu({
+                                  mode: "remove-cable",
+                                  x: e.clientX,
+                                  y: e.clientY,
+                                  cableObjectId,
+                                  cableName: cable?.name ?? "RF cable",
+                                  portLabel: `${n.name} · ${port.displayName}`,
+                                });
+                                return;
+                              }
+                              if (!canSpawnPpgHere) return;
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setPortMenu({
+                                mode: "create-ppg",
+                                x: e.clientX,
+                                y: e.clientY,
+                                targetObjectId: n.objectId,
+                                targetAnchorId: port.anchorId,
+                                targetAnchorName: port.anchorName,
+                                targetConnectorFamily: port.connectorFamily!,
+                              });
                             }}
                           />
                         </g>
@@ -1409,7 +1798,7 @@ export function RfLinkPanel() {
                   color: "#bdbdc8",
                 };
                 if (drag.hoverPortKey) {
-                  const [hObjId, hAnchorId, hAnchorName, hRole] = drag.hoverPortKey.split("|");
+                  const [hObjId, hAnchorId, hAnchorName, hRole, hDomain, hConnector] = drag.hoverPortKey.split("|");
                   const targetFullKey = `${hObjId}|${hAnchorId}|${hAnchorName}`;
                   const targetObj = objects.find((o) => o.id === hObjId);
                   const sameObject = hObjId === drag.srcObjectId;
@@ -1419,6 +1808,18 @@ export function RfLinkPanel() {
                     hint = { text: "Same object", color: "#8e8e9a" };
                   } else if (sameRole) {
                     hint = { text: `Role mismatch (${hRole})`, color: "#d49a3a" };
+                  } else if (hConnector === "none") {
+                    hint = { text: "Connector undefined", color: "#d96666" };
+                  } else if (hDomain !== drag.srcDomain) {
+                    hint = { text: `Domain mismatch (${hDomain})`, color: "#d49a3a" };
+                  } else if (hConnector !== drag.srcConnectorFamily) {
+                    // Cross-family is allowed (sma_to_bnc cable variant
+                    // exists in the catalog) — surface it as info, not a
+                    // block. The cable picker decides which variant to use.
+                    hint = {
+                      text: `Cross-family (${drag.srcConnectorFamily?.toUpperCase()} → ${hConnector?.toUpperCase()}) — adapter cable`,
+                      color: "#8acfff",
+                    };
                   } else if (busy) {
                     hint = { text: "⛔ Port busy", color: "#d96666" };
                   } else {
@@ -1533,6 +1934,113 @@ export function RfLinkPanel() {
           )}
         </div>
       </div>
+      {portMenu && (
+        <>
+          {/* Backdrop catches clicks anywhere else to dismiss the menu. */}
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 9998,
+              cursor: "default",
+            }}
+            onClick={() => setPortMenu(null)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setPortMenu(null);
+            }}
+          />
+          <div
+            style={{
+              position: "fixed",
+              left: portMenu.x,
+              top: portMenu.y,
+              zIndex: 9999,
+              minWidth: 220,
+              background: "#23232a",
+              border: "1px solid #3e3e48",
+              borderRadius: 4,
+              boxShadow: "0 4px 14px rgba(0,0,0,0.45)",
+              padding: 4,
+              fontSize: 11,
+              color: "#cfcfd8",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {portMenu.mode === "create-ppg" ? (
+              <>
+                <button
+                  type="button"
+                  disabled={ppgBusy}
+                  onClick={() => void handleCreatePpgFromMenu()}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "6px 8px",
+                    background: "transparent",
+                    color: "#e8e8ee",
+                    border: "none",
+                    borderRadius: 3,
+                    cursor: ppgBusy ? "wait" : "pointer",
+                  }}
+                  onMouseOver={(e) => (e.currentTarget.style.background = "#2e2e36")}
+                  onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
+                >
+                  {ppgBusy
+                    ? "Adding..."
+                    : "Create Pulse & Timing program here"}
+                </button>
+                <div
+                  style={{
+                    padding: "4px 8px",
+                    color: "#8e8e9a",
+                    fontSize: 10,
+                    borderTop: "1px solid #3e3e48",
+                    marginTop: 2,
+                  }}
+                >
+                  connector: {portMenu.targetConnectorFamily.toUpperCase()} · auto-binds PPG ↔ program
+                </div>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  disabled={ppgBusy}
+                  onClick={() => void handleRemoveCableFromMenu()}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "6px 8px",
+                    background: "transparent",
+                    color: "#ff8f8f",
+                    border: "none",
+                    borderRadius: 3,
+                    cursor: ppgBusy ? "wait" : "pointer",
+                  }}
+                  onMouseOver={(e) => (e.currentTarget.style.background = "#3a1f1f")}
+                  onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
+                >
+                  {ppgBusy ? "Removing..." : `Disconnect cable "${portMenu.cableName}"`}
+                </button>
+                <div
+                  style={{
+                    padding: "4px 8px",
+                    color: "#8e8e9a",
+                    fontSize: 10,
+                    borderTop: "1px solid #3e3e48",
+                    marginTop: 2,
+                  }}
+                >
+                  attached at: {portMenu.portLabel}
+                </div>
+              </>
+            )}
+          </div>
+        </>
+      )}
     </FloatingPanel>
   );
 }

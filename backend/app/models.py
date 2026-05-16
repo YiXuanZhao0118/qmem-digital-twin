@@ -937,23 +937,20 @@ class BeamSegment(Base):
 
 
 class TimingProgram(Base):
-    """A reusable schedule of HIGH intervals (alembic 0045).
+    """A reusable schedule of HIGH intervals (alembic 0045, slimmed by 0051).
 
-    Identified by its own ``id`` (no longer per-object). Consumers reference
-    the program via ``id`` — multiple consumers (RF source triggers / gates,
-    PulseBlaster channels) can share a single program. ``kind`` discriminates
-    how the intervals are interpreted downstream:
+    Identified by its own ``id``. Each PPG SceneObject owns exactly one
+    TimingProgram via ``physics_elements.kind_params.timingProgramId``
+    (1:1, cascade-deleted with the PPG). ``intervals`` is a JSONB list of
+    ``{spinCoreStartNs, spinCoreEndNs}`` HIGH windows; the rest of the
+    timeline is implicit LOW.
 
-    - ``"TTL"``:     output is HIGH inside each interval, LOW between.
-    - ``"Trigger"``: a rising edge fires at each interval's start; the
-                     interval's width is the pulse width the PB hardware
-                     emits to make the edge observable.
-
-    ``intervals`` is a JSONB list of ``{spinCoreStartNs, spinCoreEndNs}``
-    pairs, ordered and non-overlapping (validated at write time). Storing
-    intervals inline replaces the old separate ``timing_blocks`` table —
-    the read pattern is always "load the whole schedule", so JSON column
-    avoids an N+1 join.
+    History note: this used to also carry ``kind`` (TTL / Trigger),
+    ``channel_index`` (PB hardware binding 0..23) and ``invert`` (active-
+    low gate). Alembic 0051 dropped all three — the new model is "every
+    PPG emits the same RFout HIGH/LOW gate; channel ordering is
+    positional from the PPG list at solve time; there is no 24-channel
+    cap because the channel index is no longer stored".
     """
 
     __tablename__ = "timing_programs"
@@ -965,16 +962,6 @@ class TimingProgram(Base):
         server_default=text("gen_random_uuid()"),
     )
     name: Mapped[str | None] = mapped_column(Text)
-    kind: Mapped[str] = mapped_column(
-        Text, nullable=False, default="TTL", server_default="TTL"
-    )
-    # PB hardware binding (alembic 0046, absorbed from the now-dropped
-    # pulse_blaster_channels table). NULL = logical schedule not bound to
-    # a wire. UNIQUE partial index ensures one program per physical channel.
-    channel_index: Mapped[int | None] = mapped_column(Integer)
-    invert: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("false")
-    )
     intervals: Mapped[JsonList] = mapped_column(
         JSONB, nullable=False, default=list, server_default="[]"
     )
@@ -1007,6 +994,58 @@ class AppSetting(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+
+
+class CollectionTemplate(Base):
+    """Reusable snapshot of a Collection subtree — the "Collection Drift" feature.
+
+    Saves the structure (sub-collection tree) plus every descendant SceneObject's
+    pose relative to the subtree's geometric centroid. Cable connections,
+    optical / RF links, and physics_element details are intentionally NOT
+    snapshotted — instantiation produces clean, unconnected objects whose
+    relative geometry exactly matches the saved configuration. See alembic 0053.
+
+    ``tree`` schema (recursive)::
+
+        {
+          "name": "A",
+          "color": "#0f766e",
+          "visible": true,
+          "rigidTransform": false,
+          "sortOrder": 0,
+          "properties": {},
+          "members": [
+            {
+              "componentId": "<uuid>",
+              "relativeXMm": float,   # offset from centroid at save time
+              "relativeYMm": float,
+              "relativeZMm": float,
+              "rxDeg": float,         # world-frame Euler angles preserved as-is
+              "ryDeg": float,
+              "rzDeg": float,
+              "visible": true,
+              "properties": {},
+              "sortOrder": 0
+            }
+          ],
+          "children": [<nested node>, ...]
+        }
+    """
+
+    __tablename__ = "collection_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    tree: Mapped[JsonDict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
 

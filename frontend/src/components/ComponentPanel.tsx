@@ -22,6 +22,7 @@ import { PhysicsElementPanel } from "./physics/PhysicsElementPanel";
 import { AlignPanel } from "./AlignPanel";
 import { NumberField } from "./NumberField";
 import { componentTypeToElementKind } from "../utils/elementDefaults";
+import { capabilityProfile } from "../kinds/_capabilityProfile";
 
 type DraftObject = Required<Omit<SceneObjectPatch, "name" | "properties" | "serialNumber">> & {
   name: string;
@@ -174,57 +175,62 @@ function MultiSelectTransformPanel({ objects }: { objects: SceneObject[] }) {
 
   return (
     <>
-      <section className="edit-section multiselect-summary">
+      {/* === Identity (group): same skeleton as single-select Identity, but
+          the editor acts on the group's centroid. Position and rotation
+          live as labelled sub-rows inside one section instead of three
+          siblings, so the user sees the "what does this section do" header
+          once. */}
+      <section className="edit-section identity-section">
         <h3>
           <Layers3 size={17} />
-          Multi-select ({objects.length} objects, {editable.length} editable)
+          Group · {objects.length} objects ({editable.length} editable)
         </h3>
-      </section>
 
-      <section className="edit-section">
-        <h3>
-          <Crosshair size={17} />
-          Group centre position mm
-        </h3>
-        <div className="number-grid">
-          {(["xMm", "yMm", "zMm"] as const).map((key) => (
-            <label key={key}>
-              <span>{key.replace("Mm", "").toUpperCase()}</span>
-              <NumberField
-                value={center[key]}
-                onChange={(v) => void setCenterPos(key, v)}
-                disabled={editable.length === 0}
-                title="Edits delta — applied to every selected object"
-              />
-            </label>
-          ))}
+        <div className="identity-pose-row">
+          <span className="identity-pose-label">
+            <Crosshair size={13} />
+            Group centre position mm
+          </span>
+          <div className="number-grid">
+            {(["xMm", "yMm", "zMm"] as const).map((key) => (
+              <label key={key}>
+                <span>{key.replace("Mm", "").toUpperCase()}</span>
+                <NumberField
+                  value={center[key]}
+                  onChange={(v) => void setCenterPos(key, v)}
+                  disabled={editable.length === 0}
+                  title="Edits delta — applied to every selected object"
+                />
+              </label>
+            ))}
+          </div>
+          <div className="multiselect-hint">
+            Editing here moves every selected object by the same delta.
+          </div>
         </div>
-        <div className="multiselect-hint">
-          Editing here moves every selected object by the same delta.
-        </div>
-      </section>
 
-      <section className="edit-section">
-        <h3>
-          <RotateCw size={17} />
-          Group centre rotation deg
-        </h3>
-        <div className="number-grid">
-          {(["rxDeg", "ryDeg", "rzDeg"] as const).map((key) => (
-            <label key={key}>
-              <span>{key.replace("Deg", "").toUpperCase()}</span>
-              <NumberField
-                value={center[key]}
-                onChange={(v) => void setCenterRot(key, v)}
-                disabled={editable.length === 0}
-                title="Adds delta to each object's own rotation"
-              />
-            </label>
-          ))}
-        </div>
-        <div className="multiselect-hint">
-          Adds the same delta to each object's rotation independently (does
-          not orbit them around the centre).
+        <div className="identity-pose-row">
+          <span className="identity-pose-label">
+            <RotateCw size={13} />
+            Group centre rotation deg
+          </span>
+          <div className="number-grid">
+            {(["rxDeg", "ryDeg", "rzDeg"] as const).map((key) => (
+              <label key={key}>
+                <span>{key.replace("Deg", "").toUpperCase()}</span>
+                <NumberField
+                  value={center[key]}
+                  onChange={(v) => void setCenterRot(key, v)}
+                  disabled={editable.length === 0}
+                  title="Adds delta to each object's own rotation"
+                />
+              </label>
+            ))}
+          </div>
+          <div className="multiselect-hint">
+            Adds the same delta to each object's rotation independently
+            (does not orbit them around the centre).
+          </div>
         </div>
       </section>
 
@@ -1123,6 +1129,14 @@ function FiberEditor({ component }: { component: ComponentItem }) {
   // and B) are guarded out by the store action, so this only fires for
   // interior nodes.
   const removeFiberNode = useSceneStore((state) => state.removeFiberNode);
+  // Phase fiber-split: each end of a fiber is a sibling fiber_end
+  // SceneObject. Selecting the fiber_end swaps the Object panel over to
+  // that end's own pose / lock / align controls. Legacy fibers with no
+  // endA/BObjectId fall back to the per-fiber-spline Align End A/B
+  // buttons below.
+  const physicsElements = useSceneStore((state) => state.scene.physicsElements);
+  const sceneObjects = useSceneStore((state) => state.scene.objects);
+  const selectObject = useSceneStore((state) => state.selectObject);
   const [alignFeedback, setAlignFeedback] = useState<string | null>(null);
   const [picker, setPicker] = useState<{
     end: "A" | "B";
@@ -1181,6 +1195,23 @@ function FiberEditor({ component }: { component: ComponentItem }) {
   const radius =
     typeof objProps.radiusMm === "number" ? objProps.radiusMm :
     typeof compProps.radiusMm === "number" ? compProps.radiusMm : 1.0;
+
+  // Phase fiber-split: resolve the paired fiber_end SceneObjects via
+  // the fiber body PE's kindParams. Returns null entries for legacy
+  // pre-migration data, in which case the per-fiber Align End A/B
+  // buttons below stay as the alignment surface.
+  const fiberPe = physicsElements.find((e) => e.objectId === fiberSceneObject?.id);
+  const fiberKp = (fiberPe?.kindParams ?? {}) as {
+    endAObjectId?: string | null;
+    endBObjectId?: string | null;
+  };
+  const endA = fiberKp.endAObjectId
+    ? sceneObjects.find((o) => o.id === fiberKp.endAObjectId) ?? null
+    : null;
+  const endB = fiberKp.endBObjectId
+    ? sceneObjects.find((o) => o.id === fiberKp.endBObjectId) ?? null
+    : null;
+  const splitReady = endA !== null || endB !== null;
 
   return (
     <section className="edit-section">
@@ -1251,24 +1282,81 @@ function FiberEditor({ component }: { component: ComponentItem }) {
           style={{ width: "100%" }}
         />
       </label>
-      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-        <button
-          type="button"
-          className="secondary-button"
-          onClick={() => void onAlign("A")}
-          style={{ flex: 1 }}
-        >
-          Align End A to beam
-        </button>
-        <button
-          type="button"
-          className="secondary-button"
-          onClick={() => void onAlign("B")}
-          style={{ flex: 1 }}
-        >
-          Align End B to beam
-        </button>
-      </div>
+      {splitReady ? (
+        // Phase fiber-split: each end is a sibling fiber_end
+        // SceneObject. The Object panel here belongs to the fiber BODY
+        // — for per-end pose / lock / align the user clicks "Select"
+        // and the panel re-renders for that end SceneObject (which
+        // inherits the default capability profile: Object pose, Lock,
+        // AlignPanel, Viewer gizmo, rigid-group eligibility).
+        <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+          {(["A", "B"] as const).map((end) => {
+            const obj = end === "A" ? endA : endB;
+            return (
+              <div
+                key={end}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontSize: 11,
+                  padding: "4px 8px",
+                  background: "rgba(255,255,255,0.04)",
+                  borderRadius: 4,
+                }}
+              >
+                <span style={{ fontWeight: 600, minWidth: 38 }}>End {end}:</span>
+                {obj ? (
+                  <>
+                    <span style={{ flex: 1, color: "#86efac" }}>
+                      ⛓ {obj.name}{" "}
+                      <span style={{ opacity: 0.6 }}>
+                        ({obj.xMm.toFixed(1)}, {obj.yMm.toFixed(1)}, {obj.zMm.toFixed(1)} mm)
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      style={{ padding: "2px 8px", fontSize: 11 }}
+                      onClick={() => selectObject(obj.id)}
+                      title={`Switch the Object panel to ${obj.name} so its pose / lock / Align controls show up.`}
+                    >
+                      Select
+                    </button>
+                  </>
+                ) : (
+                  <span style={{ color: "#f87171" }}>
+                    ⚠ missing fiber_end SceneObject — re-run migration or recreate
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+          {/* Legacy pre-Phase-B-migration fallback: fiber's two ends are
+              not yet sibling SceneObjects, so the old per-fiber-spline
+              Align End A/B buttons remain as the alignment surface.
+              Removed once every fiber row is migrated. */}
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => void onAlign("A")}
+            style={{ flex: 1 }}
+          >
+            Align End A to beam
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => void onAlign("B")}
+            style={{ flex: 1 }}
+          >
+            Align End B to beam
+          </button>
+        </div>
+      )}
       {picker && (
         <div
           style={{
@@ -1588,76 +1676,13 @@ function RfCableEditor({ component }: { component: ComponentItem }) {
               );
             })}
           </div>
-          <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => void onAlign("A")}
-              style={{ flex: 1 }}
-            >
-              Align End A to RF port
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => void onAlign("B")}
-              style={{ flex: 1 }}
-            >
-              Align End B to RF port
-            </button>
-          </div>
-          {picker && (
-            <div
-              style={{
-                marginTop: 8,
-                padding: 8,
-                background: "rgba(255,255,255,0.04)",
-                borderRadius: 4,
-              }}
-            >
-              <div style={{ fontSize: 12, marginBottom: 6 }}>
-                <strong>End {picker.end}: {picker.candidates.length} candidates within 25 mm</strong>
-                <button
-                  type="button"
-                  onClick={() => setPicker(null)}
-                  style={{
-                    float: "right",
-                    background: "transparent",
-                    border: "none",
-                    color: "#aaa",
-                    cursor: "pointer",
-                    fontSize: 14,
-                    padding: "0 4px",
-                  }}
-                  aria-label="Cancel picker"
-                >
-                  ✕
-                </button>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                {picker.candidates.map((c, i) => (
-                  <button
-                    key={`${c.targetObjectId}/${c.targetAnchorName}`}
-                    type="button"
-                    className="secondary-button"
-                    onClick={() => void applyCandidate(picker.end, c)}
-                    style={{
-                      textAlign: "left",
-                      fontSize: 11,
-                      padding: "4px 8px",
-                      fontFamily: "ui-monospace, SFMono-Regular, monospace",
-                    }}
-                  >
-                    {i === 0 ? "★ " : "  "}
-                    {c.targetName} · {c.targetAnchorName}{" "}
-                    <span style={{ opacity: 0.6 }}>
-                      [{c.targetAnchorId}] · {c.distMm.toFixed(2)} mm
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* Per-end Align buttons removed: cable creation + auto-snap now
+              happens exclusively in the RF Link panel (drag a port to a
+              port, or right-click ttl_in / trigger_in for "Create Pulse &
+              Timing program here"). Both endpoint anchors are
+              read-only in this panel — the only edit affordances on a
+              cable are interior-node spline drag in the 3D viewer and
+              Unlink-and-delete per end below. */}
           {alignFeedback && (
             <p style={{ fontSize: 11, opacity: 0.85, marginTop: 6 }}>{alignFeedback}</p>
           )}
@@ -1686,12 +1711,33 @@ export function ComponentPanel() {
     () => new Map(scene.components.map((item) => [item.id, item])),
     [scene.components],
   );
+  // Resolution rule: take the selected object's component first, then
+  // the explicitly-selected component, then nothing. Previously this
+  // line fell back to `scene.components[0]`, which made the panel show
+  // an arbitrary component (whichever was first in the list) on cold
+  // start — the user explicitly asked us not to auto-select on their
+  // behalf. With no selection, `component` is undefined and the panel
+  // renders its "No selection" empty state.
   const component =
     (selectedObject ? componentById.get(selectedObject.componentId) : undefined) ??
-    scene.components.find((item) => item.id === selectedComponentId) ??
-    scene.components[0];
+    scene.components.find((item) => item.id === selectedComponentId);
   const placement = selectedObject;
   const isObjectSelection = Boolean(selectedObject);
+  // Resolve the PhysicsElement for the active selection so the Object
+  // section can branch by elementKind (e.g. rf_cable hides pose / lock /
+  // align since its pose is fully derived from the two endpoint anchors).
+  const physicsElement = useMemo(
+    () =>
+      selectedObject
+        ? scene.physicsElements.find((e) => e.objectId === selectedObject.id)
+        : undefined,
+    [selectedObject, scene.physicsElements],
+  );
+  // Per-kind capability profile drives which sections of the Object
+  // panel render. Default profile = show everything; cable / PPG / future
+  // hidden-body kinds turn off individual capabilities through
+  // _capabilityProfile.OVERRIDES.
+  const profile = capabilityProfile(physicsElement?.elementKind);
   const asset = scene.assets.find((item) => item.id === component?.asset3dId);
   const modelViewerUrl =
     asset?.assetType === "edrawing_html" || asset?.filePath.toLowerCase().endsWith(".html")
@@ -1946,10 +1992,13 @@ export function ComponentPanel() {
 
       {placement && selectedObjects.length <= 1 && (
         <>
-          <section className="edit-section">
+          {/* === Identity: name + pose + visibility/lock in one section.
+              rf_cable hides pose (derived from endpoint anchors); cable
+              kinds also skip Lock per profile. */}
+          <section className="edit-section identity-section">
             <h3>
               <Layers3 size={17} />
-              Object
+              Identity
             </h3>
             <label>
               <span>Name</span>
@@ -1959,121 +2008,178 @@ export function ComponentPanel() {
                 onChange={(event) => setText("name", event.target.value)}
               />
             </label>
+
+            {profile.objectPanelShowPose && (
+              <>
+                <div className="identity-pose-row">
+                  <span className="identity-pose-label">
+                    <Move3D size={13} />
+                    Position mm
+                  </span>
+                  <div className="number-grid">
+                    {(["xMm", "yMm", "zMm"] as const).map((key) => (
+                      <label key={key}>
+                        <span>{key.replace("Mm", "").toUpperCase()}</span>
+                        <NumberField
+                          value={draft[key] as number}
+                          onChange={(next) => setNumber(key, String(next))}
+                          disabled={positionLocked}
+                          midOnAxis={(a, b) => {
+                            const aObj = scene.objects.find((o) => o.name === a);
+                            const bObj = scene.objects.find((o) => o.name === b);
+                            if (!aObj || !bObj) return null;
+                            return ((aObj[key] as number) + (bObj[key] as number)) / 2;
+                          }}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <PlacedRelativeToReadout placement={placement} />
+                </div>
+
+                <div className="identity-pose-row">
+                  <span className="identity-pose-label">
+                    <RotateCw size={13} />
+                    Rotation deg
+                  </span>
+                  <div className="number-grid">
+                    {(["rxDeg", "ryDeg", "rzDeg"] as const).map((key) => (
+                      <label key={key}>
+                        <span>{key.replace("Deg", "").toUpperCase()}</span>
+                        <input
+                          type="number"
+                          value={draft[key]}
+                          disabled={positionLocked}
+                          onChange={(event) => setNumber(key, event.target.value)}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+
+            <div className="identity-toggles">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={draft.visible}
+                  onChange={(event) => setBoolean("visible", event.target.checked)}
+                />
+                Visible
+              </label>
+              {profile.lockable && (
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={draft.locked}
+                    onChange={(event) => setBoolean("locked", event.target.checked)}
+                  />
+                  {draft.locked ? <Lock size={15} /> : <Unlock size={15} />}
+                  Locked
+                </label>
+              )}
+            </div>
           </section>
 
+          {/* === Content (text_annotation only) === */}
           {component.componentType === "text_annotation" && (
             <TextAnnotationEditor component={component} />
           )}
 
-          {component.componentType === "fiber" && (
-            <FiberEditor component={component} />
+          {/* === Connections: cable/fiber node + endpoint editor. Wrapped
+              in a uniformly-headed section so cables/fibers slot into the
+              same skeleton as everything else. */}
+          {(component.componentType === "fiber"
+            || component.componentType === "rf_cable"
+            || component.componentType === "sma_cable") && (
+            <section className="edit-section">
+              <h3>
+                <Layers3 size={17} />
+                Connections
+              </h3>
+              {component.componentType === "fiber" && (
+                <FiberEditor component={component} />
+              )}
+              {(component.componentType === "rf_cable"
+                || component.componentType === "sma_cable") && (
+                <RfCableEditor component={component} />
+              )}
+            </section>
           )}
 
-          {(component.componentType === "rf_cable" ||
-            component.componentType === "sma_cable") && (
-            <RfCableEditor component={component} />
-          )}
-
-          {component.componentType === "dds_ad9959_pcb" && (
-            <Ad9959ObjectControls component={component} />
-          )}
-
-          {component.componentType === "instrument_chassis" &&
-            (component.name?.startsWith("dds_chassis") ?? false) && (
-              <DdsChassisObjectControls component={component} />
-            )}
-
-          <section className="edit-section">
-            <h3>
-              <Move3D size={17} />
-              Object position mm
-            </h3>
-            <div className="number-grid">
-              {(["xMm", "yMm", "zMm"] as const).map((key) => (
-                <label key={key}>
-                  <span>{key.replace("Mm", "").toUpperCase()}</span>
-                  <NumberField
-                    value={draft[key] as number}
-                    onChange={(next) => setNumber(key, String(next))}
-                    disabled={positionLocked}
-                    midOnAxis={(a, b) => {
-                      const aObj = scene.objects.find((o) => o.name === a);
-                      const bObj = scene.objects.find((o) => o.name === b);
-                      if (!aObj || !bObj) return null;
-                      return ((aObj[key] as number) + (bObj[key] as number)) / 2;
-                    }}
-                  />
-                </label>
-              ))}
-            </div>
-            <PlacedRelativeToReadout placement={placement} />
-          </section>
-
-          <section className="edit-section">
-            <h3>
-              <RotateCw size={17} />
-              Object rotation deg
-            </h3>
-            <div className="number-grid">
-              {(["rxDeg", "ryDeg", "rzDeg"] as const).map((key) => (
-                <label key={key}>
-                  <span>{key.replace("Deg", "").toUpperCase()}</span>
-                  <input
-                    type="number"
-                    value={draft[key]}
-                    disabled={positionLocked}
-                    onChange={(event) => setNumber(key, event.target.value)}
-                  />
-                </label>
-              ))}
-            </div>
-          </section>
-
-          <div className="toggle-row">
-            <label>
-              <input
-                type="checkbox"
-                checked={draft.visible}
-                onChange={(event) => setBoolean("visible", event.target.checked)}
-              />
-              Visible
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={draft.locked}
-                onChange={(event) => setBoolean("locked", event.target.checked)}
-              />
-              {draft.locked ? <Lock size={15} /> : <Unlock size={15} />}
-              Locked
-            </label>
-          </div>
-
-          <button
-            className={`danger-button${confirmingRemove ? " confirming" : ""}`}
-            title={confirmingRemove ? "Click again to confirm deletion" : "Remove object"}
-            onClick={removeSelectedObject}
-          >
-            <Trash2 size={16} />
-            {confirmingRemove ? "Click again to confirm" : "Remove object"}
-          </button>
-
+          {/* === Spec (read-only) + Parameters (editable + align). The
+              intrinsic spec sits above the operating-state editor; both
+              hide when the kind hasn't been migrated to the Phase-2
+              plugin partition. */}
           {(component?.physicsCapabilities?.includes("optical") ||
             componentTypeToElementKind(component?.componentType) !== null) && (
             <>
-              {/* Phase 3e: intrinsic spec (read-only) sits ABOVE the
-                  operating-state editor. Reads `intrinsicParamKeys` /
-                  `portDomains` from the plugin; renders nothing for kinds
-                  that haven't been migrated yet so this is a no-op for
-                  un-migrated plugins. */}
               <IntrinsicSpecPanel component={component} sceneObject={placement} />
               <PhysicsElementPanel component={component} sceneObject={placement} />
+              {component.componentType === "dds_ad9959_pcb" && (
+                <Ad9959ObjectControls component={component} />
+              )}
             </>
           )}
+
+          {/* dds_chassis is a passive carrier (no elementKind) — its
+              channel-routing controls don't fit Spec/Parameters but
+              still belong below the identity block, not in the middle. */}
+          {component.componentType === "instrument_chassis"
+            && (component.name?.startsWith("dds_chassis") ?? false) && (
+              <DdsChassisObjectControls component={component} />
+            )}
+
+          {/* === Remove / Unlink === */}
+          {!profile.showRemoveObjectButton && physicsElement?.elementKind === "rf_cable" ? (
+            (() => {
+              // rf_cable has no "Remove object" affordance — both ends are
+              // anchored to other objects, and the user-facing rule
+              // ("cable 一端 unlink 就直接移除") means severing either end
+              // is the same operation as deleting the cable. Surface two
+              // end-labelled buttons (A / B) so the user sees which
+              // upstream / downstream object they're disconnecting from.
+              const eps = (placement?.properties as {
+                rfCableEndpoints?: {
+                  A?: { targetObjectId?: string };
+                  B?: { targetObjectId?: string };
+                };
+              } | undefined)?.rfCableEndpoints;
+              const nameFor = (objectId: string | undefined) =>
+                objectId
+                  ? scene.objects.find((o) => o.id === objectId)?.name ?? "(unknown)"
+                  : "(unlinked)";
+              return (
+                <div style={{ display: "grid", gap: 6 }}>
+                  {(["A", "B"] as const).map((end) => (
+                    <button
+                      key={end}
+                      className="danger-button"
+                      title={`Unlink end ${end} (${nameFor(eps?.[end]?.targetObjectId)}) and delete this cable`}
+                      onClick={() => placement && void deleteObject(placement.id)}
+                    >
+                      <Trash2 size={16} />
+                      Unlink &amp; delete end {end} ({nameFor(eps?.[end]?.targetObjectId)})
+                    </button>
+                  ))}
+                </div>
+              );
+            })()
+          ) : profile.showRemoveObjectButton ? (
+            <button
+              className={`danger-button${confirmingRemove ? " confirming" : ""}`}
+              title={confirmingRemove ? "Click again to confirm deletion" : "Remove object"}
+              onClick={removeSelectedObject}
+            >
+              <Trash2 size={16} />
+              {confirmingRemove ? "Click again to confirm" : "Remove object"}
+            </button>
+          ) : null /* PPG: deleted via RF Link right-click "Disconnect" */}
         </>
       )}
 
-      <AlignPanel />
+      {profile.showAlignPanel && <AlignPanel />}
       {isObjectSelection && component && <PulseTimingButton component={component} />}
       {isObjectSelection && selectedObject && (
         <ScrubTimeRfReadout sceneObjectId={selectedObject.id} />

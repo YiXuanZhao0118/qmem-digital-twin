@@ -26,10 +26,12 @@ from app.models import (
     Asset3D,
     BeamSegment,
     Component,
+    DeviceState,
     PhysicsElement,
     OpticalLink,
     SceneObject,
     SimulationRun,
+    TimingProgram,
 )
 from app.solvers.optical_solver import solve_chain
 from app.solvers.rf_propagation import (
@@ -90,6 +92,8 @@ def hydrate_aom_rf_drive(
     objects_by_id: dict,
     components_by_id: dict | None = None,
     assets_by_id: dict | None = None,
+    timing_programs_by_id: dict | None = None,
+    device_states: list | None = None,
 ) -> None:
     """Phase B (RF link single-source-of-truth) translator, Phase 1 multi-hop.
 
@@ -120,11 +124,22 @@ def hydrate_aom_rf_drive(
     }
     if not aom_object_ids:
         return
+    # Instrument Power panel cascade: an rf_source / rf_amplifier / rf_switch
+    # whose DeviceState.state.power is False produces / passes no signal.
+    # Computed here (not inside build_rf_propagation) so the propagation
+    # solver stays oblivious to the DB row format.
+    powered_off_object_ids: set = set()
+    for ds in device_states or []:
+        power = ((getattr(ds, "state", None) or {}) or {}).get("power")
+        if power is False:
+            powered_off_object_ids.add(getattr(ds, "object_id", None))
     prop = build_rf_propagation(
         objects_by_id=objects_by_id,
         elements=elements,
         components_by_id=components_by_id or {},
         assets_by_id=assets_by_id or {},
+        timing_programs_by_id=timing_programs_by_id,
+        powered_off_object_ids=powered_off_object_ids,
     )
     for e in elements:
         if e.element_kind != "aom":
@@ -206,8 +221,25 @@ async def run(
         assets_by_id = {
             a.id: a for a in (await session.scalars(select(Asset3D))).all()
         }
+        # TimingPrograms feed the rf_switch TTL steady-state resolver:
+        # when a switch's ttl_in is wired to a PPG, the PPG's bound program
+        # at t=0 decides HIGH/LOW which in turn picks the active throw.
+        timing_programs_by_id = {
+            p.id: p for p in (await session.scalars(select(TimingProgram))).all()
+        }
+        # DeviceStates carry the Instrument Power panel toggle (state.power).
+        # Loaded here so the RF propagation can gate AD9959 / ZHL / ZYSWA at
+        # solve time when the user has switched them off.
+        device_states = list((await session.scalars(select(DeviceState))).all())
         hydrate_laser_kind_params(elements, objects_by_id)
-        hydrate_aom_rf_drive(elements, objects_by_id, components_by_id, assets_by_id)
+        hydrate_aom_rf_drive(
+            elements,
+            objects_by_id,
+            components_by_id,
+            assets_by_id,
+            timing_programs_by_id=timing_programs_by_id,
+            device_states=device_states,
+        )
 
         result = solve_chain(elements, links, run_id=sim_run.id)
 

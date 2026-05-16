@@ -1,21 +1,18 @@
-"""Compile bound TimingPrograms into a SpinCore opcode stream.
+"""Compile TimingPrograms into a SpinCore opcode stream.
 
-Each TimingProgram carries its own (channel_index, invert) hardware
-binding inline (alembic 0046 — the separate ``pulse_blaster_channels``
-table was dropped). The compiler:
+Alembic 0051 removed the per-program ``channel_index`` / ``invert`` /
+``kind`` fields — every program is now just ``{name, intervals[]}``,
+and the channel index is **positional**: the caller passes programs
+in the desired channel order (sorted by PPG creation order at the
+router boundary), and the compiler maps list-index → PB bit. The
+compiler:
 
-1. Filter to programs with ``channel_index IS NOT NULL`` (those are
-   physically bound to a PB output line).
-2. Merge every interval boundary across all bound programs into a sorted
+1. Take the input programs as already-sorted; channel N == ``progs[N]``.
+2. Merge every interval boundary across all programs into a sorted
    unique edge list.
-3. For each ``[t_i, t_{i+1}]``: build the 24-bit output mask from
-   per-program gate state at ``t_i`` (HIGH if any interval covers t_i,
-   optionally inverted).
+3. For each ``[t_i, t_{i+1}]``: build the output mask from per-program
+   gate state at ``t_i`` (HIGH iff any interval covers t_i).
 4. Emit a CONTINUE per ``[t_i, t_{i+1}]``, then a final STOP.
-
-``kind`` ("TTL" / "Trigger") doesn't affect the opcode stream — the PB
-hardware emits the same waveform either way; downstream consumers
-(DDS sync inputs vs gate inputs) interpret rising edges themselves.
 
 The compiler is pure: no DB session, no network. The router hydrates
 programs from the DB and hands them in.
@@ -36,9 +33,7 @@ class _Interval:
 @dataclass
 class _Program:
     program_id: str
-    kind: str  # "TTL" | "Trigger" (metadata only)
     channel_index: int
-    invert: bool
     intervals: list[_Interval]
 
 
@@ -61,39 +56,32 @@ class PbInstruction:
 
 
 def _program_high_at(program: _Program, t_ns: float) -> bool:
-    raw = any(
+    return any(
         iv.spin_core_start_ns <= t_ns < iv.spin_core_end_ns
         for iv in program.intervals
     )
-    return (not raw) if program.invert else raw
 
 
 def compile_to_opcodes(
     programs: Iterable[dict],
 ) -> list[PbInstruction]:
-    """Turn bound TimingPrograms into a SpinCore opcode stream.
+    """Turn TimingPrograms into a SpinCore opcode stream.
 
     Args:
-      programs: iterable of dicts shaped
-        ``{id, kind, channel_index, invert, intervals: [...]}``.
-        Programs with ``channel_index is None`` are skipped (they're
-        logical schedules without a hardware wire). Intervals accept
-        either snake_case (``spin_core_start_ns``) or camelCase
+      programs: iterable of dicts shaped ``{id, intervals: [...]}``.
+        The iterable order is the channel order — element 0 maps to
+        bit 0, element 1 to bit 1, etc. Intervals accept either
+        snake_case (``spin_core_start_ns``) or camelCase
         (``spinCoreStartNs``) keys.
     """
 
     progs: list[_Program] = []
-    for p in programs:
-        ch = p.get("channel_index")
-        if ch is None:
-            continue
+    for idx, p in enumerate(programs):
         intervals_raw = p.get("intervals") or []
         progs.append(
             _Program(
                 program_id=str(p.get("id", "")),
-                kind=str(p.get("kind", "TTL")),
-                channel_index=int(ch),
-                invert=bool(p.get("invert", False)),
+                channel_index=idx,
                 intervals=[
                     _Interval(
                         spin_core_start_ns=float(

@@ -18,6 +18,7 @@
 import * as THREE from "three";
 
 import { labMmToThree, sceneObjectToQuaternion, threeToLabMm } from "../optical/frames";
+import { capabilityProfile } from "../kinds/_capabilityProfile";
 import type {
   Collection,
   CollectionMember,
@@ -234,7 +235,20 @@ export function expandPoseToRigidGroup(
   }
 
   const objsById = new Map(scene.objects.map((o) => [o.id, o]));
-  const otherIds = Array.from(groupIds).filter((id) => id !== leading.id);
+  // Capability-profile filter — kinds with `rigidGroupParticipant: false`
+  // (rf_cable / PPG today, future hidden fiber body) are skipped because
+  // their lab pose is fully derived at draw time from their anchor /
+  // mating peers; any patch we'd hand them here is overwritten on the
+  // next render. Dragging a rigid group should move the peers and let
+  // these derived-pose kinds auto-track.
+  const skipObjectIds = new Set(
+    scene.physicsElements
+      .filter((pe) => !capabilityProfile(pe.elementKind).rigidGroupParticipant)
+      .map((pe) => pe.objectId),
+  );
+  const otherIds = Array.from(groupIds).filter(
+    (id) => id !== leading.id && !skipObjectIds.has(id),
+  );
 
   const lockedIds = otherIds.filter((id) => objsById.get(id)?.locked === true);
   if (lockedIds.length > 0) {
