@@ -21,6 +21,7 @@ import type {
 } from "../types/digitalTwin";
 import { bodyLocalDirToLabDir, threeToLabPointMm } from "../optical/frames";
 import { getEffectiveApertureMm, getMirrorNormalBodyLocal } from "./v2Bindings";
+import { FIBER_END_TIP_OFFSET_MM } from "./fiberBodyEndpointResolver";
 
 export type Vec3 = { x: number; y: number; z: number };
 
@@ -1335,7 +1336,14 @@ export function findSnapToBeam(
   const anchorPoints: AnchorPoint[] = [];
   for (const a of asset?.anchors ?? []) {
     const id = a.id ?? "";
-    if (id !== "intercept_face" && id !== "intercept_in" && id !== "intercept_out" && id !== "in" && id !== "seed") {
+    if (
+      id !== "intercept_face"
+      && id !== "intercept_in"
+      && id !== "intercept_out"
+      && id !== "in"
+      && id !== "seed"
+      && id !== "tip"
+    ) {
       continue;
     }
     if (!a.positionMmBodyLocal) continue;
@@ -1344,6 +1352,19 @@ export function findSnapToBeam(
       id,
       localPos: { x: a.positionMmBodyLocal.x, y: a.positionMmBodyLocal.y, z: a.positionMmBodyLocal.z },
       apertureMm: typeof apertureRaw === "number" && apertureRaw > 0 ? apertureRaw : 12.5,
+    });
+  }
+  // fiber_end SceneObjects use a procedural ferrule (no Asset3D), so the
+  // asset-anchor loop above finds nothing. Inject the conventional `tip`
+  // anchor inline — body-local position matches the offset used by the
+  // resolver in fiberBodyEndpointResolver.ts + the ferrule mesh in
+  // loadAsset.ts's createFiberEndFerrule, so align translates the
+  // SceneObject so the ferrule tip lands on the beam.
+  if (anchorPoints.length === 0 && el.elementKind === "fiber_end") {
+    anchorPoints.push({
+      id: "tip",
+      localPos: { x: 0, y: FIBER_END_TIP_OFFSET_MM, z: 0 },
+      apertureMm: 0.125, // single-mode cladding ≈ 125 µm
     });
   }
   if (anchorPoints.length === 0) {

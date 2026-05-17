@@ -152,6 +152,40 @@ async def create_object(
     )
     if physics_element is not None:
         await manager.broadcast("physics_element.updated", physics_element_payload(physics_element))
+        # Phase fiber-split: when the body is a fresh fiber, the
+        # auto-create hook also spawned two paired `fiber_end`
+        # SceneObjects so the frontend sees the 3-object cluster in
+        # Outliner without a page reload. Broadcast their creation
+        # events here (post-commit) — the spawner doesn't have access
+        # to the manager and broadcasts after-commit is the convention
+        # in this router.
+        if physics_element.element_kind == "fiber":
+            paired_pes = (
+                await session.scalars(
+                    select(PhysicsElement).where(
+                        PhysicsElement.element_kind == "fiber_end",
+                    )
+                )
+            ).all()
+            for pe in paired_pes:
+                kp = pe.kind_params or {}
+                if str(kp.get("fiberBodyObjectId") or "") != str(scene_object.id):
+                    continue
+                end_obj = await session.get(SceneObject, pe.object_id)
+                if end_obj is None:
+                    continue
+                await manager.broadcast("object.updated", object_payload(end_obj))
+                await manager.broadcast(
+                    "collection_member.updated",
+                    {
+                        "collectionId": str(target_id),
+                        "objectId": str(end_obj.id),
+                        "sortOrder": 0,
+                    },
+                )
+                await manager.broadcast(
+                    "physics_element.updated", physics_element_payload(pe)
+                )
     return scene_object
 
 

@@ -168,7 +168,7 @@ processes in the order above. The stack is reachable at the ports listed in the
                  └────────────────────────┬───────────────────────┘
                                           │
                  ┌────────────────────────▼───────────────────────┐
-                 │  PostgreSQL    :55432   (Alembic at 0053)      │
+                 │  PostgreSQL    :55432   (Alembic at 0054)      │
                  │  assets_3d, components, objects, connections,  │
                  │  collections, optical_links, rf_chain_nodes,   │
                  │  physics_elements, beam_paths, simulation_runs │
@@ -252,8 +252,8 @@ plugin grows a field.
 | Mount | File | Purpose |
 |---|---|---|
 | `/api/assets` | `assets.py` | Asset upload & CRUD; serves anchors editor |
-| `/api/components` | `components.py` | Catalog CRUD; archive/restore; upload-from-file |
-| `/api/objects` | `objects.py` | Instance CRUD; **bulk batch update** so multi-select doesn't trigger N broadcasts |
+| `/api/components` | `components.py` | Catalog CRUD; archive/restore; upload-from-file. Owns `auto_create_physics_element_for_object`, which on a fresh `fiber` spawn also creates paired `fiber_end_a` + `fiber_end_b` SceneObjects (3-object cluster, mirroring migration 0052 for new placements) and joins them to the body's collection |
+| `/api/objects` | `objects.py` | Instance CRUD; **bulk batch update** so multi-select doesn't trigger N broadcasts. On fresh `fiber` creation also broadcasts the auto-spawned `fiber_end_a`/`fiber_end_b` SceneObjects + PhysicsElements so the 3-object cluster lands without a page reload |
 | `/api/connections` | `connections.py` | Cable graph CRUD |
 | `/api/assembly-relations` | `assembly_relations.py` | Constraint CRUD + one-shot solve |
 | `/api/beam-paths` | `beam_paths.py` | Polyline cache CRUD |
@@ -309,7 +309,7 @@ plugin grows a field.
 
 ### Alembic migrations
 
-Currently at **revision 0053**. Recent milestones:
+Currently at **revision 0054**. Recent milestones:
 
 | Rev | Title | Purpose |
 |---|---|---|
@@ -318,6 +318,7 @@ Currently at **revision 0053**. Recent milestones:
 | 0051 | timing_program_slim | Drops `kind`/`channel_index`/`invert`; PPGs emit one "RFout" gate; positional ordering |
 | 0052 | fiber_split_to_paired_ends | A fiber becomes 3 SceneObjects: `fiber_end_a` + body + `fiber_end_b` |
 | 0053 | collection_templates | Adds `collection_templates` table backing Collection Drift |
+| 0054 | split_rf_cable_assets | Splits the shared `primitive_thorlabs_ca2906_cable` Asset3D into per-component rows (`primitive_rf_cable_sma_to_bnc`, `primitive_rf_cable_bnc_to_bnc`) so PHY Editor `rf_in`/`rf_out` anchor edits no longer clobber sibling cables |
 
 Earlier highlights: `0027` V2 baseline (real `SimulationRun ↔ BeamSegment` FK),
 `0036` multiphysics dispatch, `0042` rename of `optical_elements` →
@@ -466,8 +467,8 @@ optional `inspector` (React node). The backend reads the same data through
 | `ppgMounting.ts` (new) | Auto-instantiate a PPG + TimingProgram + rf_cable at a target ttl_in/trigger_in port |
 | `fiberAlignment.ts` / `fiberAnchorResolver.ts` / `fiberBodyEndpointResolver.ts` (new) | Fiber spline + ferrule-tip math + endpoint→anchor binding |
 | `rfCableAlignment.ts` / `rfCableAnchorResolver.ts` | Same for RF cables |
-| `rigidGroup.ts` | Expand pose patch to all rigid-group members |
-| `beamPlacement.ts` / `beamSnap.ts` / `beamAnchor.ts` / `apertureCheck.ts` | Beam snapping, aperture clipping warnings |
+| `rigidGroup.ts` | Expand pose patch to all rigid-group members. `expandFiberBodyPose` adds an intrinsic fiber-body→ends cascade so moving the body translates / rotates both paired `fiber_end` SceneObjects as a unit (independent of any collection rigid_transform) |
+| `beamPlacement.ts` / `beamSnap.ts` / `beamAnchor.ts` / `apertureCheck.ts` | Beam snapping, aperture clipping warnings. `findSnapToBeam` injects a virtual `tip` anchor (offset = `FIBER_END_TIP_OFFSET_MM`) for `fiber_end` SceneObjects since they render procedurally with no Asset3D anchors, so Align-to-beam can still land the ferrule tip on the ray |
 | `emissionVisuals.ts` | Per-instance beam color override |
 | `relationAnchors.ts` | AssemblyRelation selector → resolved Anchor |
 | `v2Bindings.ts` | Per-instance overrides (mirror normal, AOM RF direction, …) |
@@ -476,6 +477,30 @@ optional `inspector` (React node). The backend reads the same data through
 
 Tests under `frontend/src/utils/__tests__/` cover fiber alignment, RF
 propagation, and the new `fiberBodyEndpointResolver`.
+
+### Fiber 3-object cluster (post-0052)
+
+A "fiber" in the UI is **three SceneObjects** glued together:
+
+```
+fiber_body  ──── fiber_end_a   (End A ferrule, drives spline node 0)
+            └─── fiber_end_b   (End B ferrule, drives spline node N-1)
+```
+
+The body's `PhysicsElement.kindParams` carries `endAObjectId` /
+`endBObjectId` back-references. The spline endpoint positions are
+**derived** from the ends' lab poses by `fiberBodyEndpointResolver.ts` —
+moving an end repositions only the matching spline endpoint, while
+moving the body cascades the same rigid delta to both ends so the whole
+assembly translates / rotates together (`expandFiberBodyPose`,
+`sceneStore.updateSceneObject`). Interior spline nodes stay editable in
+fiber node-edit mode; endpoint nodes are locked (`endpointSplineNodesLocked`).
+
+`kinds/_capabilityProfile.ts` reflects this: the fiber body is Outliner-
+visible, gizmo-attachable, and pose-editable (so the whole assembly can
+be picked up), but per-body Align and per-body Remove are hidden — those
+operations belong to the individual ends or to the surrounding
+collection.
 
 ### API client (`frontend/src/api/client.ts`)
 
@@ -665,6 +690,14 @@ keeping in mind while extending the system.
 - **Anchor `connectorType` (0050) is nullable.** Migrations and routers treat
   null as "unknown"; the frontend treats it as "compatible with everything".
   Tighten one or the other so cable-misconnect warnings work end-to-end.
+- **Shared-asset anchor clobbering (fixed in 0054).** Three rf_cable
+  components used to share `primitive_thorlabs_ca2906_cable`. Editing
+  the BNC cable's `rf_in` anchor in PHY Editor silently overwrote the
+  SMA cable's anchors. Migration 0054 + the updated
+  `upsert_bnc_rf_cables.py` give each variant its own Asset3D row. If
+  you add another procedural family in the future, **never share an
+  Asset3D across components that have user-editable anchors** — clone
+  the row in the seed script instead.
 
 ### Dev quality of life
 
@@ -675,4 +708,5 @@ keeping in mind while extending the system.
 
 ---
 
-*Last regenerated: 2026-05-17 (Alembic revision 0053, commit 461b7a8).*
+*Last regenerated: 2026-05-17 (Alembic revision 0054, with fiber
+3-object cluster spawn + body cascade in working tree).*

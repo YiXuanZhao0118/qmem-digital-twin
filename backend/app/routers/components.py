@@ -12,6 +12,8 @@ from app.db import get_session
 from app.models import (
     Asset3D,
     BeamPath,
+    Collection,
+    CollectionMember,
     Component,
     PhysicsElement,
     OpticalLink,
@@ -588,6 +590,180 @@ def default_kind_params_for_component(kind: str, component: Component) -> dict[s
     return kind_params
 
 
+def _body_to_lab_xyz(
+    p: tuple[float, float, float],
+    x: float, y: float, z: float,
+    rx_deg: float, ry_deg: float, rz_deg: float,
+) -> tuple[float, float, float]:
+    """Body-local → lab transform, Euler XYZ. Mirrors the math in
+    `frontend/src/store/sceneStore.ts` (`createRfCableBetweenPorts`'s
+    `apply()` helper) and `alembic 0052_fiber_split_to_paired_ends`
+    (`_body_to_lab`). Kept inline here so this router doesn't pull in
+    numpy / scipy for a one-off transform."""
+    import math
+    rx, ry, rz = math.radians(rx_deg or 0.0), math.radians(ry_deg or 0.0), math.radians(rz_deg or 0.0)
+    cx, sx = math.cos(rx), math.sin(rx)
+    cy, sy = math.cos(ry), math.sin(ry)
+    cz, sz = math.cos(rz), math.sin(rz)
+    px, py, pz = p
+    x1 = cy * px + sy * pz
+    y1 = py
+    z1 = -sy * px + cy * pz
+    y2 = cx * y1 - sx * z1
+    z2 = sx * y1 + cx * z1
+    return (
+        (x or 0.0) + cz * x1 - sz * y2,
+        (y or 0.0) + sz * x1 + cz * y2,
+        (z or 0.0) + z2,
+    )
+
+
+_FIBER_END_TIP_PORT = {
+    "portId": "tip",
+    "role": "bidirectional",
+    "label": "Ferrule tip",
+    "kind": "main",
+}
+
+
+async def _spawn_fiber_end_pair_for_body(
+    session: AsyncSession,
+    fiber_body: SceneObject,
+    fiber_body_pe: PhysicsElement,
+    fiber_component: Component,
+) -> None:
+    """When a new fiber body SceneObject is created via the catalog, also
+    spawn two paired `fiber_end` SceneObjects (referenced via
+    FiberParams.endAObjectId / endBObjectId on the body PE). Mirrors
+    alembic 0052 but for fresh-spawn instead of backfill. Idempotent
+    against the body PE already having end refs (early return)."""
+    existing_kp = fiber_body_pe.kind_params or {}
+    if existing_kp.get("endAObjectId") or existing_kp.get("endBObjectId"):
+        return
+
+    # Resolve the fiber_end_generic catalog Component — created by
+    # migration 0052; bail silently if missing so a half-migrated DB
+    # doesn't 500 on fiber spawn.
+    fiber_end_comp = await session.scalar(
+        select(Component).where(
+            Component.name == "fiber_end_generic",
+            Component.archived_at.is_(None),
+        )
+    )
+    if fiber_end_comp is None:
+        return
+
+    # First / last spline node in body-local frame: prefer per-instance
+    # fiberNodes from the body's properties (rare on fresh spawn), fall
+    # back to the catalog template's fiberNodes.
+    obj_props = fiber_body.properties or {}
+    comp_props = fiber_component.properties or {}
+    fiber_nodes = obj_props.get("fiberNodes") if isinstance(obj_props, dict) else None
+    if not isinstance(fiber_nodes, list) or len(fiber_nodes) < 2:
+        fiber_nodes = comp_props.get("fiberNodes") if isinstance(comp_props, dict) else None
+    if not isinstance(fiber_nodes, list) or len(fiber_nodes) < 2:
+        # Final fallback — matches the default in
+        # `createFiberSplineObject` in loadAsset.ts so a brand-new fiber
+        # with no nodes still gets a sensible ferrule placement.
+        fiber_nodes = [
+            {"posMm": [0.0, 0.0, 50.0]},
+            {"posMm": [300.0, 0.0, 50.0]},
+        ]
+
+    first = fiber_nodes[0]
+    last = fiber_nodes[-1]
+    first_pos = first.get("posMm") if isinstance(first, dict) else None
+    last_pos = last.get("posMm") if isinstance(last, dict) else None
+    if not (isinstance(first_pos, list) and isinstance(last_pos, list)):
+        return
+
+    end_a_lab = _body_to_lab_xyz(
+        (float(first_pos[0]), float(first_pos[1]), float(first_pos[2])),
+        float(fiber_body.x_mm or 0.0),
+        float(fiber_body.y_mm or 0.0),
+        float(fiber_body.z_mm or 0.0),
+        float(fiber_body.rx_deg or 0.0),
+        float(fiber_body.ry_deg or 0.0),
+        float(fiber_body.rz_deg or 0.0),
+    )
+    end_b_lab = _body_to_lab_xyz(
+        (float(last_pos[0]), float(last_pos[1]), float(last_pos[2])),
+        float(fiber_body.x_mm or 0.0),
+        float(fiber_body.y_mm or 0.0),
+        float(fiber_body.z_mm or 0.0),
+        float(fiber_body.rx_deg or 0.0),
+        float(fiber_body.ry_deg or 0.0),
+        float(fiber_body.rz_deg or 0.0),
+    )
+
+    # Find the collection the fiber body just joined — caller already
+    # added the membership before invoking auto_create. Default to
+    # master if (somehow) no membership exists yet.
+    collection_id = await session.scalar(
+        select(CollectionMember.collection_id).where(
+            CollectionMember.object_id == fiber_body.id
+        )
+    )
+    if collection_id is None:
+        master = await session.scalar(
+            select(Collection).where(Collection.parent_id.is_(None)).order_by(Collection.created_at.asc()).limit(1)
+        )
+        if master is None:
+            return
+        collection_id = master.id
+
+    end_ids: dict[str, uuid.UUID] = {}
+    for end_role, end_lab, suffix in (
+        ("A", end_a_lab, "_end_a"),
+        ("B", end_b_lab, "_end_b"),
+    ):
+        end_obj = SceneObject(
+            id=uuid.uuid4(),
+            name=f"{fiber_body.name}{suffix}",
+            component_id=fiber_end_comp.id,
+            x_mm=end_lab[0],
+            y_mm=end_lab[1],
+            z_mm=end_lab[2],
+            rx_deg=0.0,
+            ry_deg=0.0,
+            rz_deg=0.0,
+            visible=True,
+            locked=False,
+            properties={},
+        )
+        session.add(end_obj)
+        await session.flush()
+
+        end_pe = PhysicsElement(
+            object_id=end_obj.id,
+            element_kind="fiber_end",
+            wavelength_range_nm=[400.0, 1100.0],
+            input_ports=[_FIBER_END_TIP_PORT],
+            output_ports=[],
+            kind_params={
+                "connectorType": None,
+                "polish": None,
+                "slowAxisDegInBodyFrame": None,
+                "fiberBodyObjectId": str(fiber_body.id),
+                "endRole": end_role,
+            },
+        )
+        session.add(end_pe)
+
+        session.add(
+            CollectionMember(collection_id=collection_id, object_id=end_obj.id, sort_order=0)
+        )
+        end_ids[end_role] = end_obj.id
+
+    # Wire the body PE back-references.
+    next_kp = dict(existing_kp)
+    next_kp["endAObjectId"] = str(end_ids["A"])
+    next_kp["endBObjectId"] = str(end_ids["B"])
+    fiber_body_pe.kind_params = next_kp
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(fiber_body_pe, "kind_params")
+
+
 async def auto_create_physics_element_for_object(
     session: AsyncSession, scene_object: SceneObject, component: Component
 ) -> PhysicsElement | None:
@@ -678,6 +854,17 @@ async def auto_create_physics_element_for_object(
     if kind == "isolator" and component.asset_3d_id is not None:
         asset = await session.get(Asset3D, component.asset_3d_id)
         await bootstrap_isolator_default_binding(scene_object, asset)
+
+    # Phase fiber-split: spawn two paired `fiber_end` SceneObjects + PEs
+    # so a freshly-placed fiber comes up with the same 3-object
+    # structure as a migrated one (body + end_a + end_b). The body's
+    # endA/BObjectId fields wire the back-references; the resolver in
+    # `frontend/src/utils/fiberBodyEndpointResolver.ts` then derives
+    # spline endpoints from the ends' lab poses going forward.
+    if kind == "fiber":
+        await _spawn_fiber_end_pair_for_body(
+            session, scene_object, physics_element, component
+        )
 
     return physics_element
 

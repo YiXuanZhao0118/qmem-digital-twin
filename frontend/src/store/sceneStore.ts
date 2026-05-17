@@ -140,7 +140,7 @@ import {
   computeSnapPositionForLink,
   validateOpticalLink,
 } from "../utils/beamPlacement";
-import { expandPoseToRigidGroup, patchHasPoseChange } from "../utils/rigidGroup";
+import { expandFiberBodyPose, expandPoseToRigidGroup, patchHasPoseChange } from "../utils/rigidGroup";
 import {
   connectorFamilyFromAnchor,
   domainsAreCompatible,
@@ -2643,6 +2643,39 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     // because a partial rigid move would silently break the invariant the
     // user enables rigidTransform to get.
     if (currentObject && patchHasPoseChange(safePatch)) {
+      // Fiber body cascade comes first — moving a fiber body propagates
+      // the same rigid delta to both paired fiber_end SceneObjects so
+      // the whole fiber assembly translates / rotates as a unit.
+      // Independent of collection rigid_transform — the body+ends
+      // grouping is intrinsic to fiber-split. Reverse direction (moving
+      // a fiber_end alone) does NOT cascade, by design: per-end Align
+      // needs to move just the one end.
+      const fiberExpansion = expandFiberBodyPose(get().scene, currentObject, safePatch);
+      if (fiberExpansion?.kind === "rejectedLockedMember") {
+        // eslint-disable-next-line no-console
+        console.warn(
+          "[fiber] Move rejected — locked fiber_end(s):",
+          fiberExpansion.lockedIds,
+        );
+        return;
+      }
+      if (fiberExpansion?.kind === "group") {
+        const updated = await Promise.all(
+          fiberExpansion.entries.map((entry) => updateObjectApi(entry.id, entry.patch)),
+        );
+        set((current) => ({
+          selectedObjectId: objectId,
+          selectedObjectIds: current.selectedObjectIds.includes(objectId)
+            ? current.selectedObjectIds
+            : [objectId],
+          selectedComponentId: null,
+          scene: {
+            ...current.scene,
+            objects: upsertObjects(current.scene.objects, updated),
+          },
+        }));
+        return;
+      }
       const expansion = expandPoseToRigidGroup(get().scene, currentObject, safePatch);
       if (expansion.kind === "rejectedLockedMember") {
         // eslint-disable-next-line no-console

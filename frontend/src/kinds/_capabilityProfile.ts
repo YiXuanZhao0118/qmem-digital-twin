@@ -112,11 +112,17 @@ const OVERRIDES: Record<string, Partial<ComponentCapabilityProfile>> = {
   //     + Remove). The empty override entry below is intentional so
   //     anyone grepping for "fiber" finds the explicit choice.
   fiber: {
-    outlinerVisible: false,
-    objectPanelShowPose: false,
-    lockable: false,
-    rigidGroupParticipant: false,
-    viewerGizmoAttachable: false,
+    // Fiber body is visible in Outliner and movable as a whole — picking
+    // it up via the gizmo translates / rotates the entire fiber (body +
+    // both paired fiber_ends) as a unit. Cascade to ends lives in
+    // sceneStore.updateSceneObject; the resolver still re-derives spline
+    // endpoints from the ends' post-cascade pose, so the body's own pose
+    // visibly moves the whole assembly. Endpoint spline nodes stay
+    // pinned (only interior nodes draggable in node-edit mode).
+    //
+    // No per-body Align (fiber_end carries align), no per-body Remove
+    // (use the per-end Unlink path or the fiber-group collection deletion
+    // once that lands).
     showAlignPanel: false,
     showRemoveObjectButton: false,
     endpointSplineNodesLocked: true,
