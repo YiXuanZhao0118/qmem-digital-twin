@@ -34,6 +34,13 @@ export type Anchor = {
    *  to 2 × `apertureMm` per side when width / height are unset. */
   apertureWidthMm?: number;
   apertureHeightMm?: number;
+  /** Explicit aperture geometry. R3 (PHY Editor authority, 2026-05-17):
+   *  "circle" uses `apertureMm` as radius; "ellipse" uses
+   *  `apertureWidthMm` / `apertureHeightMm` as semi-major / semi-minor
+   *  axis lengths; "rectangle" uses them as full width / full height.
+   *  When unset, legacy rows infer from which fields are populated:
+   *  W+H present → rectangle (back-compat); apertureMm only → circle. */
+  apertureShape?: "circle" | "ellipse" | "rectangle";
   /** Dynamic-port marker for fiber kinds. When set, the anchor's
    *  position is re-derived at read time from the per-instance fiber
    *  spline (`SceneObject.properties.fiberNodes`, falling back to the
@@ -479,7 +486,7 @@ export type FiberParams = {
   endA: FiberEndSpec;
   endB: FiberEndSpec;
   cutoffWavelengthNm?: number | null;
-  operatingWavelengthRangeNm: [number, number];
+  wavelengthRangeNm: [number, number];
   designWavelengthNm: number;
   maxInputPowerMw: number;
   attenuationCurve: FiberAttenuationPoint[];

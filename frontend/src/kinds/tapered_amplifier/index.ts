@@ -26,6 +26,7 @@ export interface TaperedAmplifierParams extends Record<string, unknown> {
   outputSpatialModeX: GaussianMode;
   outputSpatialModeY: GaussianMode;
   outputTransverseMode: { kind: string };
+  centerWavelengthNm: number;
 }
 
 export const taperedAmplifierPlugin = definePhysicsPlugin<TaperedAmplifierParams>({
@@ -60,6 +61,7 @@ export const taperedAmplifierPlugin = definePhysicsPlugin<TaperedAmplifierParams
       outputSpatialModeX: { waistUm: 500, waistZOffsetMm: 0, mSquared: 1.5 },
       outputSpatialModeY: { waistUm: 50, waistZOffsetMm: 0, mSquared: 8.0 },
       outputTransverseMode: { kind: "TEM00" },
+      centerWavelengthNm: 780,
     },
   },
 });

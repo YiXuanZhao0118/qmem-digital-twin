@@ -89,7 +89,7 @@ def _build_fiber_override(part: str) -> dict[str, object]:
     override: dict[str, object] = {
         "fiberType": meta["fiber_type"],
         "designWavelengthNm": wl,
-        "operatingWavelengthRangeNm": [wl - 20.0, wl + 20.0],
+        "wavelengthRangeNm": [wl - 20.0, wl + 20.0],
         "endA": end_spec(meta["polish_a"]),
         "endB": end_spec(meta["polish_b"]),
     }

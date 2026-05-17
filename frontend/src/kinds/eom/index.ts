@@ -5,6 +5,7 @@ export interface EomParams extends Record<string, unknown> {
   modulationKind: "phase" | "amplitude";
   modulationBandwidthMhz: number;
   insertionLossDb: number;
+  wavelengthRangeNm: [number, number];
 }
 
 export const eomPlugin = definePhysicsPlugin<EomParams>({
@@ -21,6 +22,7 @@ export const eomPlugin = definePhysicsPlugin<EomParams>({
       required: ["intercept_in"],
       optional: ["intercept_out"],
       needsDirection: [],
+      needsAperture: ["intercept_in"],
     },
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
@@ -30,6 +32,7 @@ export const eomPlugin = definePhysicsPlugin<EomParams>({
       modulationKind: "phase",
       modulationBandwidthMhz: 100.0,
       insertionLossDb: 3.0,
+      wavelengthRangeNm: [400, 1700],
     },
   },
 });

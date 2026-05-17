@@ -262,7 +262,7 @@ DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
             "slowAxisDegInBodyFrame": 0.0,
         },
         "cutoffWavelengthNm": 730.0,
-        "operatingWavelengthRangeNm": [770.0, 790.0],
+        "wavelengthRangeNm": [770.0, 790.0],
         "designWavelengthNm": 780.0,
         "maxInputPowerMw": 500.0,
         "attenuationCurve": [
@@ -641,17 +641,31 @@ async def _spawn_fiber_end_pair_for_body(
     if existing_kp.get("endAObjectId") or existing_kp.get("endBObjectId"):
         return
 
-    # Resolve the fiber_end_generic catalog Component — created by
-    # migration 0052; bail silently if missing so a half-migrated DB
-    # doesn't 500 on fiber spawn.
+    # Resolve the fiber_end_generic catalog Component — usually created
+    # by migration 0052, but if it's been archived or deleted (or never
+    # ran, e.g. half-migrated DB) we create one inline so fiber spawn
+    # never silently no-ops. Archived rows get un-archived rather than
+    # creating a duplicate so historical SceneObject references stay
+    # resolvable.
     fiber_end_comp = await session.scalar(
-        select(Component).where(
-            Component.name == "fiber_end_generic",
-            Component.archived_at.is_(None),
-        )
+        select(Component).where(Component.name == "fiber_end_generic")
     )
     if fiber_end_comp is None:
-        return
+        fiber_end_comp = Component(
+            id=uuid.uuid4(),
+            name="fiber_end_generic",
+            component_type="fiber_end",
+            brand="Generic",
+            model="Fiber End (procedural ferrule)",
+            asset_3d_id=None,
+            physics_capabilities=["optical"],
+            properties={},
+        )
+        session.add(fiber_end_comp)
+        await session.flush()
+    elif fiber_end_comp.archived_at is not None:
+        fiber_end_comp.archived_at = None
+        await session.flush()
 
     # First / last spline node in body-local frame: prefer per-instance
     # fiberNodes from the body's properties (rare on fresh spawn), fall
@@ -729,7 +743,15 @@ async def _spawn_fiber_end_pair_for_body(
             rz_deg=0.0,
             visible=True,
             locked=False,
-            properties={},
+            # 7-part fiber model (2026-05-17): tensionHandleMm carries
+            # nodeA/nodeB tension in fiber_end body-local frame, pointing
+            # OUTWARD (= where the wire leaves the ferrule). The body
+            # spline endpoint's Bezier handle = -tensionHandleMm in fiber-
+            # body frame (resolveLinkedFiberEndpoint). Seed at
+            # (0, +30, 0) so the initial curve direction matches the
+            # legacy auto-derived behaviour (ferrule +Y × 30 mm). User
+            # drags the handle in node-edit mode to retune.
+            properties={"tensionHandleMm": [0.0, 30.0, 0.0]},
         )
         session.add(end_obj)
         await session.flush()

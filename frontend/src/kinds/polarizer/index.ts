@@ -4,6 +4,7 @@ export interface PolarizerParams extends Record<string, unknown> {
   transmissionAxisDegBeamLocal: number;
   extinctionRatioDb: number;
   transmission: number;
+  wavelengthRangeNm: [number, number];
 }
 
 export const polarizerPlugin = definePhysicsPlugin<PolarizerParams>({
@@ -20,6 +21,7 @@ export const polarizerPlugin = definePhysicsPlugin<PolarizerParams>({
       required: ["intercept_in"],
       optional: [],
       needsDirection: [],
+      needsAperture: ["intercept_in"],
     },
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
@@ -28,6 +30,7 @@ export const polarizerPlugin = definePhysicsPlugin<PolarizerParams>({
       transmissionAxisDegBeamLocal: 0.0,
       extinctionRatioDb: 30.0,
       transmission: 0.95,
+      wavelengthRangeNm: [400, 1100],
     },
   },
 });

@@ -37,6 +37,9 @@ export interface FiberEndParams extends Record<string, unknown> {
   /** Which end of the body this represents. Aligns with the body's
    *  endAObjectId / endBObjectId fields. */
   endRole: "A" | "B";
+  /** Operating wavelength window (nm). Defaults track the paired
+   *  fiber body's wavelengthRangeNm. */
+  wavelengthRangeNm: [number, number];
 }
 
 export const fiberEndPlugin = definePhysicsPlugin<FiberEndParams>({
@@ -65,6 +68,7 @@ export const fiberEndPlugin = definePhysicsPlugin<FiberEndParams>({
       slowAxisDegInBodyFrame: null,
       fiberBodyObjectId: null,
       endRole: "A",
+      wavelengthRangeNm: [770, 790],
     },
   },
 });

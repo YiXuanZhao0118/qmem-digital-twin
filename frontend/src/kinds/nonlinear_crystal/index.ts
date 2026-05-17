@@ -5,6 +5,7 @@ export interface NonlinearCrystalParams extends Record<string, unknown> {
   chi2PmPerV: number;
   lengthMm: number;
   walkOffUrad: number;
+  wavelengthRangeNm: [number, number];
 }
 
 export const nonlinearCrystalPlugin = definePhysicsPlugin<NonlinearCrystalParams>({
@@ -21,6 +22,7 @@ export const nonlinearCrystalPlugin = definePhysicsPlugin<NonlinearCrystalParams
       required: ["intercept_in"],
       optional: ["intercept_out"],
       needsDirection: [],
+      needsAperture: ["intercept_in"],
     },
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
@@ -30,6 +32,7 @@ export const nonlinearCrystalPlugin = definePhysicsPlugin<NonlinearCrystalParams
       chi2PmPerV: 4.5,
       lengthMm: 10.0,
       walkOffUrad: 0.0,
+      wavelengthRangeNm: [400, 1700],
     },
   },
 });

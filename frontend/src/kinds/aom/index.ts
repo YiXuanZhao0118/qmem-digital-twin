@@ -26,6 +26,7 @@ export interface AomParams extends Record<string, unknown> {
   rfPropagationDirectionBodyLocal: [number, number, number];
   diffractionOrder: number;
   braggAngularAcceptanceMrad: number;
+  wavelengthRangeNm: [number, number];
 }
 
 export const aomPlugin = definePhysicsPlugin<AomParams>({
@@ -68,6 +69,7 @@ export const aomPlugin = definePhysicsPlugin<AomParams>({
       rfPropagationDirectionBodyLocal: [-1, 0, 0],
       diffractionOrder: 1,
       braggAngularAcceptanceMrad: 2.0,
+      wavelengthRangeNm: [400, 1700],
     },
     // Phase 2 / Phase 3a: spec sheet vs knobs.
     //
@@ -98,6 +100,7 @@ export const aomPlugin = definePhysicsPlugin<AomParams>({
       "acousticAxisBodyLocal",
       "rfPropagationDirectionBodyLocal",
       "braggAngularAcceptanceMrad",
+      "wavelengthRangeNm",
     ],
     stateParamKeys: ["diffractionOrder"],
     portDomains: {

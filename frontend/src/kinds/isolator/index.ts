@@ -5,6 +5,7 @@ export interface IsolatorParams extends Record<string, unknown> {
   isolationDb: number;
   faradayRotationDeg: number;
   transmissionAxisDegBeamLocal: number;
+  wavelengthRangeNm: [number, number];
 }
 
 export const isolatorPlugin = definePhysicsPlugin<IsolatorParams>({
@@ -21,6 +22,7 @@ export const isolatorPlugin = definePhysicsPlugin<IsolatorParams>({
       required: ["intercept_in"],
       optional: ["intercept_out", "front_pbs", "back_pbs"],
       needsDirection: ["intercept_in"],
+      needsAperture: ["intercept_in"],
     },
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
@@ -31,6 +33,7 @@ export const isolatorPlugin = definePhysicsPlugin<IsolatorParams>({
       isolationDb: 40.0,
       faradayRotationDeg: 45.0,
       transmissionAxisDegBeamLocal: 0.0,
+      wavelengthRangeNm: [400, 1100],
     },
   },
 });

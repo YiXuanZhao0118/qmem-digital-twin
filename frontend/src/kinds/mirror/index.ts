@@ -11,6 +11,7 @@ import { renderMirror } from "./renderer";
 
 export interface MirrorParams extends Record<string, unknown> {
   reflectivity: number;
+  wavelengthRangeNm: [number, number];
 }
 
 export const mirrorPlugin = definePhysicsPlugin<MirrorParams>({
@@ -28,11 +29,12 @@ export const mirrorPlugin = definePhysicsPlugin<MirrorParams>({
       required: ["intercept_face"],
       optional: [],
       needsDirection: ["intercept_face"],
+      needsAperture: ["intercept_face"],
     },
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
     alignSummary:
       "Reflective face center translates onto incoming beam. User dials in U/V offset + rx/ry/rz to aim reflection. The face needs a normal direction so the ray-tracer knows which side of the plane the beam reflects off.",
-    defaultParams: { reflectivity: 0.99 },
+    defaultParams: { reflectivity: 0.99, wavelengthRangeNm: [400, 1100] },
   },
 });

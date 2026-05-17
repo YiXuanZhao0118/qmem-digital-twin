@@ -7,6 +7,7 @@ export interface BeamSplitterParams extends Record<string, unknown> {
   extinctionRatioDb: number;
   transmission: number;
   coatingNormalBodyLocal: [number, number, number];
+  wavelengthRangeNm: [number, number];
 }
 
 export const beamSplitterPlugin = definePhysicsPlugin<BeamSplitterParams>({
@@ -23,6 +24,7 @@ export const beamSplitterPlugin = definePhysicsPlugin<BeamSplitterParams>({
       required: ["intercept_in"],
       optional: ["intercept_out"],
       needsDirection: ["intercept_in"],
+      needsAperture: ["intercept_in"],
     },
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
@@ -35,6 +37,7 @@ export const beamSplitterPlugin = definePhysicsPlugin<BeamSplitterParams>({
       extinctionRatioDb: 30.0,
       transmission: 0.99,
       coatingNormalBodyLocal: [0.7071067811865475, 0.7071067811865475, 0],
+      wavelengthRangeNm: [400, 1100],
     },
   },
 });

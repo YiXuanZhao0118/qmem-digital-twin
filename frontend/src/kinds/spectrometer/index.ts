@@ -19,6 +19,7 @@ export const spectrometerPlugin = definePhysicsPlugin<SpectrometerParams>({
       required: ["intercept_in"],
       optional: [],
       needsDirection: [],
+      needsAperture: ["intercept_in"],
     },
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,

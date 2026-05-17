@@ -5,6 +5,7 @@ export interface DichroicMirrorParams extends Record<string, unknown> {
   passBand: "long" | "short" | "band";
   transmission: number;
   reflectivity: number;
+  wavelengthRangeNm: [number, number];
 }
 
 export const dichroicMirrorPlugin = definePhysicsPlugin<DichroicMirrorParams>({
@@ -21,6 +22,7 @@ export const dichroicMirrorPlugin = definePhysicsPlugin<DichroicMirrorParams>({
       required: ["intercept_face"],
       optional: [],
       needsDirection: ["intercept_face"],
+      needsAperture: ["intercept_face"],
     },
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
@@ -31,6 +33,7 @@ export const dichroicMirrorPlugin = definePhysicsPlugin<DichroicMirrorParams>({
       passBand: "long",
       transmission: 0.95,
       reflectivity: 0.95,
+      wavelengthRangeNm: [400, 1100],
     },
   },
 });

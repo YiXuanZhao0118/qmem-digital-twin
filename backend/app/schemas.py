@@ -154,6 +154,13 @@ class AssetAnchor(CamelModel):
     # anchor can carry both shapes simultaneously without ambiguity.
     aperture_width_mm: float | None = None
     aperture_height_mm: float | None = None
+    # R3 (PHY Editor authority, 2026-05-17): explicit aperture geometry.
+    # circle    → uses aperture_mm as radius
+    # ellipse   → uses width/height as semi-axes
+    # rectangle → uses width/height as full extents
+    # Legacy rows without this field infer: W+H present → rectangle,
+    # aperture_mm only → circle (matches pre-R3 ray-tracer behaviour).
+    aperture_shape: Literal["circle", "ellipse", "rectangle"] | None = None
     name: str | None = None
     type: str | None = None
     # Physical coaxial connector at this anchor — gender + family.
@@ -882,6 +889,7 @@ class MirrorParams(CamelModel):
     # Time-domain / wave-optics extensions (all optional; missing = ideal):
     clear_aperture_mm: float | None = Field(default=None, gt=0)
     group_delay_ps: float = 0.0
+    wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
     # V2 Phase 2 (alembic 0028): the reflective-surface normal moved from
     # `surface_normal_body_local` here to
@@ -911,6 +919,7 @@ class LensSphericalParams(CamelModel):
     clear_aperture_mm: float | None = Field(default=None, gt=0)
     gvd_fs2: float = 0.0
     material: str | None = None  # "BK7", "fused_silica", "ZnSe", ...
+    wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
 
 class LensCylindricalParams(CamelModel):
@@ -920,6 +929,7 @@ class LensCylindricalParams(CamelModel):
     clear_aperture_mm: float | None = Field(default=None, gt=0)
     gvd_fs2: float = 0.0
     material: str | None = None
+    wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
 
 class WaveplateParams(CamelModel):
@@ -933,6 +943,7 @@ class WaveplateParams(CamelModel):
     clear_aperture_mm: float | None = Field(default=None, gt=0)
     group_delay_ps: float = 0.0
     gvd_fs2: float = 0.0
+    wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
     @model_validator(mode="before")
     @classmethod
@@ -955,6 +966,7 @@ class PolarizerParams(CamelModel):
     # for the same pattern.
     extinction_ratio_db: float = Field(default=30.0, ge=0.0)
     transmission: float = Field(default=0.95, ge=0.0, le=1.0)
+    wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
     @model_validator(mode="before")
     @classmethod
@@ -989,6 +1001,7 @@ class BeamSplitterParams(CamelModel):
     polarizing: bool = False
     extinction_ratio_db: float = Field(default=30.0, ge=0.0)
     transmission: float = Field(default=0.99, ge=0.0, le=1.0)
+    wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
     @model_validator(mode="before")
     @classmethod
@@ -1014,6 +1027,7 @@ class DichroicMirrorParams(CamelModel):
     pass_band: Literal["short", "long"] = "long"
     transmission: float = Field(default=0.95, ge=0.0, le=1.0)
     reflectivity: float = Field(default=0.95, ge=0.0, le=1.0)
+    wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
 
 class FiberCouplerParams(CamelModel):
@@ -1023,6 +1037,7 @@ class FiberCouplerParams(CamelModel):
     # Numerical aperture used by the wave-optics solver to clip the input cone;
     # if None, the solver uses MFD-derived effective NA (≈ λ/(π·MFD/2)).
     numerical_aperture: float | None = Field(default=None, gt=0)
+    wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
 
 # --- Fiber (full patch-cable / pigtail) -------------------------------------
@@ -1133,7 +1148,7 @@ class FiberParams(CamelModel):
     # Wavelength range. cutoff is single-mode-only — below it the fiber
     # supports multiple modes regardless of its nominal type.
     cutoff_wavelength_nm: float | None = Field(default=None, gt=0)
-    operating_wavelength_range_nm: tuple[float, float] = (770.0, 790.0)
+    wavelength_range_nm: tuple[float, float] = (770.0, 790.0)
     design_wavelength_nm: float = Field(gt=0, default=780.0)
 
     # Power
@@ -1196,6 +1211,9 @@ class FiberEndParams(CamelModel):
     # Which end of the body this object represents. "A" / "B" align with
     # FiberParams.end_a_object_id / end_b_object_id.
     end_role: Literal["A", "B"] = "A"
+    # Operating wavelength window (nm). Defaults to the typical 780-nm
+    # patch-cable band; per-instance overrides are honoured.
+    wavelength_range_nm: tuple[float, float] = (770.0, 790.0)
 
 
 class IsolatorParams(CamelModel):
@@ -1207,6 +1225,7 @@ class IsolatorParams(CamelModel):
     forward_loss_db: float = Field(default=0.5, ge=0.0)
     isolation_db: float = Field(default=40.0, ge=0.0)
     group_delay_ps: float = 0.0
+    wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
     @model_validator(mode="before")
     @classmethod
@@ -1303,6 +1322,7 @@ class AOMParams(CamelModel):
     # interaction point is not at the geometric midpoint of the entry/exit
     # apertures. Body-local Z-up mm.
     bragg_interaction_point_mm_body_local: list[float] | None = None
+    wavelength_range_nm: tuple[float, float] = (400.0, 1700.0)
 
     @model_validator(mode="before")
     @classmethod
@@ -1347,6 +1367,7 @@ class EOMParams(CamelModel):
     insertion_loss_db: float = Field(default=3.0, ge=0.0)
     rise_time_ns: float = Field(default=1.0, ge=0.0)
     gvd_fs2: float = 0.0
+    wavelength_range_nm: tuple[float, float] = (400.0, 1700.0)
 
 
 class NonlinearCrystalParams(CamelModel):
@@ -1361,6 +1382,7 @@ class NonlinearCrystalParams(CamelModel):
     gvd_fs2_per_mm: float = 0.0  # pump GVD; for SHG signal we'd add gvd_signal too
     # Phase mismatch in 1/mm; 0 = perfect QPM (default for ideal crystal).
     delta_k_per_mm: float = 0.0
+    wavelength_range_nm: tuple[float, float] = (400.0, 1700.0)
 
 
 class SaturableAbsorberParams(CamelModel):
@@ -1368,6 +1390,7 @@ class SaturableAbsorberParams(CamelModel):
     modulation_depth: float = Field(default=0.5, ge=0.0, le=1.0)
     non_saturable_loss: float = Field(default=0.05, ge=0.0, le=1.0)
     recovery_time_ps: float = Field(gt=0)
+    wavelength_range_nm: tuple[float, float] = (400.0, 1700.0)
 
 
 # Sinks ------------------------------------------------------------------------
@@ -1378,6 +1401,7 @@ class DetectorParams(CamelModel):
     quantum_efficiency: float = Field(default=0.8, ge=0.0, le=1.0)
     bandwidth_mhz: float = Field(gt=0)
     saturation_power_mw: float = Field(gt=0)
+    wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
 
 class CameraParams(CamelModel):
@@ -1385,6 +1409,7 @@ class CameraParams(CamelModel):
     pixel_size_um: float = Field(gt=0)
     quantum_efficiency: float = Field(default=0.5, ge=0.0, le=1.0)
     well_depth_e: int = Field(default=20000, gt=0)
+    wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
 
 class SpectrometerParams(CamelModel):
@@ -1394,10 +1419,12 @@ class SpectrometerParams(CamelModel):
 
 class WavemeterParams(CamelModel):
     precision_mhz: float = Field(gt=0)
+    wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
 
 class BeamDumpParams(CamelModel):
     absorption: float = Field(default=0.999, ge=0.0, le=1.0)
+    wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
 
 class DdsSweepConfig(CamelModel):

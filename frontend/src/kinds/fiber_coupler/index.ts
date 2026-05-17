@@ -4,6 +4,7 @@ export interface FiberCouplerParams extends Record<string, unknown> {
   couplingEfficiency: number;
   modeFieldDiameterUm: number;
   fiberType: "single_mode" | "multi_mode" | "polarization_maintaining";
+  wavelengthRangeNm: [number, number];
 }
 
 export const fiberCouplerPlugin = definePhysicsPlugin<FiberCouplerParams>({
@@ -20,6 +21,7 @@ export const fiberCouplerPlugin = definePhysicsPlugin<FiberCouplerParams>({
       required: ["intercept_in"],
       optional: [],
       needsDirection: [],
+      needsAperture: ["intercept_in"],
     },
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
@@ -28,6 +30,7 @@ export const fiberCouplerPlugin = definePhysicsPlugin<FiberCouplerParams>({
       couplingEfficiency: 0.7,
       modeFieldDiameterUm: 5.0,
       fiberType: "single_mode",
+      wavelengthRangeNm: [400, 1100],
     },
   },
 });

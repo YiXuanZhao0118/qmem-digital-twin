@@ -32,7 +32,7 @@ export interface FiberParams extends Record<string, unknown> {
   endA: FiberEndSpec;
   endB: FiberEndSpec;
   cutoffWavelengthNm: number;
-  operatingWavelengthRangeNm: [number, number];
+  wavelengthRangeNm: [number, number];
   designWavelengthNm: number;
   maxInputPowerMw: number;
   attenuationCurve: Array<{ wavelengthNm: number; dbPerKm: number }>;
@@ -100,7 +100,7 @@ export const fiberPlugin = definePhysicsPlugin<FiberParams>({
       endA: { ...DEFAULT_END },
       endB: { ...DEFAULT_END },
       cutoffWavelengthNm: 730.0,
-      operatingWavelengthRangeNm: [770.0, 790.0],
+      wavelengthRangeNm: [770.0, 790.0],
       designWavelengthNm: 780.0,
       maxInputPowerMw: 500.0,
       attenuationCurve: [{ wavelengthNm: 780.0, dbPerKm: 5.0 }],

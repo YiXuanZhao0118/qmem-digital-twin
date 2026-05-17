@@ -5,6 +5,7 @@ export interface CameraParams extends Record<string, unknown> {
   pixelSizeUm: number;
   quantumEfficiency: number;
   wellDepthE: number;
+  wavelengthRangeNm: [number, number];
 }
 
 export const cameraPlugin = definePhysicsPlugin<CameraParams>({
@@ -21,6 +22,7 @@ export const cameraPlugin = definePhysicsPlugin<CameraParams>({
       required: ["intercept_in"],
       optional: [],
       needsDirection: [],
+      needsAperture: ["intercept_in"],
     },
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
@@ -30,6 +32,7 @@ export const cameraPlugin = definePhysicsPlugin<CameraParams>({
       pixelSizeUm: 5.5,
       quantumEfficiency: 0.5,
       wellDepthE: 20000,
+      wavelengthRangeNm: [400, 1100],
     },
   },
 });

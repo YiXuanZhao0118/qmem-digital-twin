@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-05-16T12:28:14.414Z",
+  "generated_at": "2026-05-17T01:32:40.763Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -211,7 +211,8 @@
           },
           "outputTransverseMode": {
             "kind": "TEM00"
-          }
+          },
+          "centerWavelengthNm": 780
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
@@ -241,13 +242,19 @@
           "needs_direction": [
             "intercept_face"
           ],
-          "needs_aperture": []
+          "needs_aperture": [
+            "intercept_face"
+          ]
         },
         "align_variant": "translate_anchor_to_beam",
         "align_tolerance_mm": 25,
         "align_summary": "Reflective face center translates onto incoming beam. User dials in U/V offset + rx/ry/rz to aim reflection. The face needs a normal direction so the ray-tracer knows which side of the plane the beam reflects off.",
         "default_params": {
-          "reflectivity": 0.99
+          "reflectivity": 0.99,
+          "wavelengthRangeNm": [
+            400,
+            1100
+          ]
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
@@ -277,7 +284,9 @@
           "needs_direction": [
             "intercept_face"
           ],
-          "needs_aperture": []
+          "needs_aperture": [
+            "intercept_face"
+          ]
         },
         "align_variant": "translate_anchor_to_beam",
         "align_tolerance_mm": 25,
@@ -286,7 +295,11 @@
           "cutoffWavelengthNm": 700,
           "passBand": "long",
           "transmission": 0.95,
-          "reflectivity": 0.95
+          "reflectivity": 0.95,
+          "wavelengthRangeNm": [
+            400,
+            1100
+          ]
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
@@ -320,14 +333,20 @@
           "needs_direction": [
             "intercept_in"
           ],
-          "needs_aperture": []
+          "needs_aperture": [
+            "intercept_in"
+          ]
         },
         "align_variant": "translate_anchor_to_beam",
         "align_tolerance_mm": 25,
         "align_summary": "intercept_in translates to beam axis. Direction = optical axis (light propagation direction through lens body).",
         "default_params": {
           "focalMm": 100,
-          "transmission": 0.99
+          "transmission": 0.99,
+          "wavelengthRangeNm": [
+            400,
+            1100
+          ]
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
@@ -359,14 +378,20 @@
           "needs_direction": [
             "intercept_in"
           ],
-          "needs_aperture": []
+          "needs_aperture": [
+            "intercept_in"
+          ]
         },
         "align_variant": "translate_anchor_to_beam",
         "align_tolerance_mm": 25,
         "align_summary": "intercept_in is the plane-side surface center; direction points from plane toward convex side.",
         "default_params": {
           "focalMm": 100,
-          "transmission": 0.99
+          "transmission": 0.99,
+          "wavelengthRangeNm": [
+            400,
+            1100
+          ]
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
@@ -398,7 +423,9 @@
           "needs_direction": [
             "intercept_in"
           ],
-          "needs_aperture": []
+          "needs_aperture": [
+            "intercept_in"
+          ]
         },
         "align_variant": "translate_anchor_to_beam",
         "align_tolerance_mm": 25,
@@ -406,7 +433,11 @@
         "default_params": {
           "focalMm": 100,
           "cylindricalAxis": "x",
-          "transmission": 0.99
+          "transmission": 0.99,
+          "wavelengthRangeNm": [
+            400,
+            1100
+          ]
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
@@ -436,7 +467,9 @@
           "needs_direction": [
             "intercept_in"
           ],
-          "needs_aperture": []
+          "needs_aperture": [
+            "intercept_in"
+          ]
         },
         "align_variant": "translate_anchor_to_beam",
         "align_tolerance_mm": 25,
@@ -444,11 +477,16 @@
         "default_params": {
           "retardanceLambda": 0.5,
           "fastAxisDegBeamLocal": 0,
-          "transmission": 0.99
+          "transmission": 0.99,
+          "wavelengthRangeNm": [
+            400,
+            1100
+          ]
         },
         "intrinsic_param_keys": [
           "retardanceLambda",
-          "transmission"
+          "transmission",
+          "wavelengthRangeNm"
         ],
         "state_param_keys": [
           "fastAxisDegBeamLocal"
@@ -479,7 +517,9 @@
           ],
           "optional": [],
           "needs_direction": [],
-          "needs_aperture": []
+          "needs_aperture": [
+            "intercept_in"
+          ]
         },
         "align_variant": "translate_anchor_to_beam",
         "align_tolerance_mm": 25,
@@ -487,7 +527,11 @@
         "default_params": {
           "transmissionAxisDegBeamLocal": 0,
           "extinctionRatioDb": 30,
-          "transmission": 0.95
+          "transmission": 0.95,
+          "wavelengthRangeNm": [
+            400,
+            1100
+          ]
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
@@ -519,7 +563,9 @@
           "needs_direction": [
             "intercept_in"
           ],
-          "needs_aperture": []
+          "needs_aperture": [
+            "intercept_in"
+          ]
         },
         "align_variant": "translate_anchor_to_beam",
         "align_tolerance_mm": 25,
@@ -534,6 +580,10 @@
             0.7071067811865475,
             0.7071067811865475,
             0
+          ],
+          "wavelengthRangeNm": [
+            400,
+            1100
           ]
         },
         "intrinsic_param_keys": null,
@@ -562,7 +612,9 @@
           ],
           "optional": [],
           "needs_direction": [],
-          "needs_aperture": []
+          "needs_aperture": [
+            "intercept_in"
+          ]
         },
         "align_variant": "translate_anchor_to_beam",
         "align_tolerance_mm": 25,
@@ -570,7 +622,11 @@
         "default_params": {
           "couplingEfficiency": 0.7,
           "modeFieldDiameterUm": 5,
-          "fiberType": "single_mode"
+          "fiberType": "single_mode",
+          "wavelengthRangeNm": [
+            400,
+            1100
+          ]
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
@@ -639,7 +695,7 @@
             "slowAxisDegInBodyFrame": 0
           },
           "cutoffWavelengthNm": 730,
-          "operatingWavelengthRangeNm": [
+          "wavelengthRangeNm": [
             770,
             790
           ],
@@ -705,7 +761,11 @@
           "polish": null,
           "slowAxisDegInBodyFrame": null,
           "fiberBodyObjectId": null,
-          "endRole": "A"
+          "endRole": "A",
+          "wavelengthRangeNm": [
+            770,
+            790
+          ]
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
@@ -739,7 +799,9 @@
           "needs_direction": [
             "intercept_in"
           ],
-          "needs_aperture": []
+          "needs_aperture": [
+            "intercept_in"
+          ]
         },
         "align_variant": "translate_anchor_to_beam",
         "align_tolerance_mm": 25,
@@ -748,7 +810,11 @@
           "forwardLossDb": 0.5,
           "isolationDb": 40,
           "faradayRotationDeg": 45,
-          "transmissionAxisDegBeamLocal": 0
+          "transmissionAxisDegBeamLocal": 0,
+          "wavelengthRangeNm": [
+            400,
+            1100
+          ]
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
@@ -811,7 +877,11 @@
             0
           ],
           "diffractionOrder": 1,
-          "braggAngularAcceptanceMrad": 2
+          "braggAngularAcceptanceMrad": 2,
+          "wavelengthRangeNm": [
+            400,
+            1700
+          ]
         },
         "intrinsic_param_keys": [
           "baseEfficiency",
@@ -825,7 +895,8 @@
           "rfPowerMaxW",
           "acousticAxisBodyLocal",
           "rfPropagationDirectionBodyLocal",
-          "braggAngularAcceptanceMrad"
+          "braggAngularAcceptanceMrad",
+          "wavelengthRangeNm"
         ],
         "state_param_keys": [
           "diffractionOrder"
@@ -861,7 +932,9 @@
             "intercept_out"
           ],
           "needs_direction": [],
-          "needs_aperture": []
+          "needs_aperture": [
+            "intercept_in"
+          ]
         },
         "align_variant": "translate_anchor_to_beam",
         "align_tolerance_mm": 25,
@@ -870,7 +943,11 @@
           "vPiV": 5,
           "modulationKind": "phase",
           "modulationBandwidthMhz": 100,
-          "insertionLossDb": 3
+          "insertionLossDb": 3,
+          "wavelengthRangeNm": [
+            400,
+            1700
+          ]
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
@@ -901,7 +978,9 @@
             "intercept_out"
           ],
           "needs_direction": [],
-          "needs_aperture": []
+          "needs_aperture": [
+            "intercept_in"
+          ]
         },
         "align_variant": "translate_anchor_to_beam",
         "align_tolerance_mm": 25,
@@ -910,7 +989,11 @@
           "process": "SHG",
           "chi2PmPerV": 4.5,
           "lengthMm": 10,
-          "walkOffUrad": 0
+          "walkOffUrad": 0,
+          "wavelengthRangeNm": [
+            400,
+            1700
+          ]
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
@@ -938,7 +1021,9 @@
           ],
           "optional": [],
           "needs_direction": [],
-          "needs_aperture": []
+          "needs_aperture": [
+            "intercept_in"
+          ]
         },
         "align_variant": "translate_anchor_to_beam",
         "align_tolerance_mm": 25,
@@ -947,7 +1032,11 @@
           "saturationIntensityWPerCm2": 1000000,
           "modulationDepth": 0.5,
           "nonSaturableLoss": 0.05,
-          "recoveryTimePs": 1
+          "recoveryTimePs": 1,
+          "wavelengthRangeNm": [
+            400,
+            1700
+          ]
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
@@ -975,7 +1064,9 @@
           ],
           "optional": [],
           "needs_direction": [],
-          "needs_aperture": []
+          "needs_aperture": [
+            "intercept_in"
+          ]
         },
         "align_variant": "translate_anchor_to_beam",
         "align_tolerance_mm": 25,
@@ -984,7 +1075,11 @@
           "responsivityAPerW": 0.5,
           "quantumEfficiency": 0.8,
           "bandwidthMhz": 1000,
-          "saturationPowerMw": 10
+          "saturationPowerMw": 10,
+          "wavelengthRangeNm": [
+            400,
+            1100
+          ]
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
@@ -1012,7 +1107,9 @@
           ],
           "optional": [],
           "needs_direction": [],
-          "needs_aperture": []
+          "needs_aperture": [
+            "intercept_in"
+          ]
         },
         "align_variant": "translate_anchor_to_beam",
         "align_tolerance_mm": 25,
@@ -1024,7 +1121,11 @@
           ],
           "pixelSizeUm": 5.5,
           "quantumEfficiency": 0.5,
-          "wellDepthE": 20000
+          "wellDepthE": 20000,
+          "wavelengthRangeNm": [
+            400,
+            1100
+          ]
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
@@ -1052,7 +1153,9 @@
           ],
           "optional": [],
           "needs_direction": [],
-          "needs_aperture": []
+          "needs_aperture": [
+            "intercept_in"
+          ]
         },
         "align_variant": "translate_anchor_to_beam",
         "align_tolerance_mm": 25,
@@ -1090,13 +1193,19 @@
           ],
           "optional": [],
           "needs_direction": [],
-          "needs_aperture": []
+          "needs_aperture": [
+            "intercept_in"
+          ]
         },
         "align_variant": "translate_anchor_to_beam",
         "align_tolerance_mm": 25,
         "align_summary": "Input port (intercept_in) translates to beam.",
         "default_params": {
-          "precisionMhz": 1
+          "precisionMhz": 1,
+          "wavelengthRangeNm": [
+            400,
+            1100
+          ]
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
@@ -1125,13 +1234,19 @@
           ],
           "optional": [],
           "needs_direction": [],
-          "needs_aperture": []
+          "needs_aperture": [
+            "intercept_in"
+          ]
         },
         "align_variant": "translate_anchor_to_beam",
         "align_tolerance_mm": 25,
         "align_summary": "Absorbing face (intercept_in) translates to beam. Beam terminates.",
         "default_params": {
-          "absorption": 0.999
+          "absorption": 0.999,
+          "wavelengthRangeNm": [
+            400,
+            1100
+          ]
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,

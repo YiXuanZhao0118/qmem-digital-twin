@@ -4,6 +4,7 @@ export interface WaveplateParams extends Record<string, unknown> {
   retardanceLambda: number;
   fastAxisDegBeamLocal: number;
   transmission: number;
+  wavelengthRangeNm: [number, number];
 }
 
 export const waveplatePlugin = definePhysicsPlugin<WaveplateParams>({
@@ -20,6 +21,7 @@ export const waveplatePlugin = definePhysicsPlugin<WaveplateParams>({
       required: ["intercept_in"],
       optional: [],
       needsDirection: ["intercept_in"],
+      needsAperture: ["intercept_in"],
     },
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
@@ -29,13 +31,14 @@ export const waveplatePlugin = definePhysicsPlugin<WaveplateParams>({
       retardanceLambda: 0.5,
       fastAxisDegBeamLocal: 0.0,
       transmission: 0.99,
+      wavelengthRangeNm: [400, 1100],
     },
     // Phase 3b: split intrinsic (the cut crystal / coating spec) from
     // operating state (the rotation mount the user actually turns).
     //   retardanceLambda — fixed by the crystal cut; 0.5 = HWP, 0.25 = QWP.
     //   transmission     — fixed by AR coating quality.
     //   fastAxisDegBeamLocal — the knob (mount rotation angle).
-    intrinsicParamKeys: ["retardanceLambda", "transmission"],
+    intrinsicParamKeys: ["retardanceLambda", "transmission", "wavelengthRangeNm"],
     stateParamKeys: ["fastAxisDegBeamLocal"],
     portDomains: { intercept_in: "optical" },
   },

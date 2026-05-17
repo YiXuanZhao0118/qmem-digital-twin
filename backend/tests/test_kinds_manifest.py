@@ -121,6 +121,74 @@ class TestAssetNamePatterns:
             assert "{name}" in patterns[ct], f"{ct} pattern invalid: {patterns[ct]}"
 
 
+class TestOpticalCoverage:
+    """R1/R2 coverage (2026-05-17, docs/optical-kinds-spec.md):
+
+    * Every non-emitter optical kind has wavelengthRangeNm in default_params.
+    * Every non-emitter non-fiber optical kind declares needsAperture.
+    * Both emitter kinds (laser_source, tapered_amplifier) have centerWavelengthNm.
+    """
+
+    EMITTERS = frozenset({"laser_source", "tapered_amplifier"})
+
+    def _optical_plugins(self) -> list[dict]:
+        return [
+            p
+            for p in physics_plugins()
+            if p["asset_category"] == "optical"
+        ]
+
+    def test_every_non_emitter_optical_has_wavelength_range(self) -> None:
+        missing: list[str] = []
+        for p in self._optical_plugins():
+            if p["id"] in self.EMITTERS:
+                continue
+            dp = p["physics"]["default_params"]
+            if "wavelengthRangeNm" not in dp:
+                missing.append(p["id"])
+        assert missing == [], (
+            f"non-emitter optical kinds missing wavelengthRangeNm: {missing}"
+        )
+
+    def test_every_non_emitter_non_fiber_has_needs_aperture(self) -> None:
+        missing: list[str] = []
+        for p in self._optical_plugins():
+            if p["id"] in self.EMITTERS or p["id"] == "fiber":
+                continue
+            anchors = p["physics"]["anchors"]
+            if not anchors.get("needs_aperture"):
+                missing.append(p["id"])
+        assert missing == [], (
+            f"non-emitter non-fiber optical kinds missing needsAperture: "
+            f"{missing}"
+        )
+
+    def test_emitters_have_center_wavelength(self) -> None:
+        missing: list[str] = []
+        for p in self._optical_plugins():
+            if p["id"] not in self.EMITTERS:
+                continue
+            dp = p["physics"]["default_params"]
+            if "centerWavelengthNm" not in dp:
+                missing.append(p["id"])
+        assert missing == [], (
+            f"emitter kinds missing centerWavelengthNm: {missing}"
+        )
+
+    def test_fiber_uses_wavelength_range_nm_not_legacy_name(self) -> None:
+        """R2 rename (2026-05-17): fiber's operatingWavelengthRangeNm was
+        renamed to wavelengthRangeNm. Guard the rename so a revert
+        surfaces immediately."""
+        for p in self._optical_plugins():
+            if p["id"] != "fiber":
+                continue
+            dp = p["physics"]["default_params"]
+            assert "wavelengthRangeNm" in dp
+            assert "operatingWavelengthRangeNm" not in dp
+            return
+        pytest.fail("fiber plugin not found in manifest")
+
+
 class TestManifestMissing:
     def test_load_fails_loud_on_bad_schema(self) -> None:
         """Smoke-test the fail-loud guard. Doesn't actually corrupt the

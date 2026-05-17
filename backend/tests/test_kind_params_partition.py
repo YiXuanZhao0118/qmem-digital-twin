@@ -46,7 +46,7 @@ def test_aom_partition_matches_plugin_declarations():
 def test_waveplate_partition_separates_retardance_from_fast_axis():
     intrinsic = set(intrinsic_keys_by_kind().get("waveplate") or [])
     state = set(state_keys_by_kind().get("waveplate") or [])
-    assert intrinsic == {"retardanceLambda", "transmission"}
+    assert intrinsic == {"retardanceLambda", "transmission", "wavelengthRangeNm"}
     assert state == {"fastAxisDegBeamLocal"}
 
 

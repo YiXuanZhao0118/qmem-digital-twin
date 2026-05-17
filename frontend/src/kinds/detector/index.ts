@@ -5,6 +5,7 @@ export interface DetectorParams extends Record<string, unknown> {
   quantumEfficiency: number;
   bandwidthMhz: number;
   saturationPowerMw: number;
+  wavelengthRangeNm: [number, number];
 }
 
 export const detectorPlugin = definePhysicsPlugin<DetectorParams>({
@@ -21,6 +22,7 @@ export const detectorPlugin = definePhysicsPlugin<DetectorParams>({
       required: ["intercept_in"],
       optional: [],
       needsDirection: [],
+      needsAperture: ["intercept_in"],
     },
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
@@ -30,6 +32,7 @@ export const detectorPlugin = definePhysicsPlugin<DetectorParams>({
       quantumEfficiency: 0.8,
       bandwidthMhz: 1000.0,
       saturationPowerMw: 10.0,
+      wavelengthRangeNm: [400, 1100],
     },
   },
 });

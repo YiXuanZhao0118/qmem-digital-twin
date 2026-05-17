@@ -792,7 +792,7 @@ function FiberWarnings({ component }: { component: ComponentItem }) {
       );
     }
   }
-  // 2. Wavelength out of range — fiber kind has operatingWavelengthRangeNm
+  // 2. Wavelength out of range — fiber kind has wavelengthRangeNm
   // (we'd need an actual incoming beam wavelength; we'll skip live check
   // here, as it requires Phase H ray-tracer. For v1, surface if cutoff
   // is unset for SM/PM.)

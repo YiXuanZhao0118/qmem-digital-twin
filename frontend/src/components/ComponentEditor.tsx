@@ -114,6 +114,7 @@ function anchorToDraft(a: Anchor): AnchorDraft {
     // concluded "Save failed" when it had actually persisted.
     apertureWidthMm: a.apertureWidthMm,
     apertureHeightMm: a.apertureHeightMm,
+    apertureShape: a.apertureShape,
     // Fiber-port tracking flag (preserve through save/load round-trip).
     derivedFromFiberEndpoint: a.derivedFromFiberEndpoint,
     // RF / TTL connector gender — same load-path bug as `apertureWidthMm`
@@ -4341,20 +4342,133 @@ export function ComponentEditor({ domain = "optical" }: { domain?: "optical" | "
                 selectedDraft.id === "ttl_in" ||
                 selectedDraft.id === "trigger_in"
               ) && (
-                <label className="component-editor-coord">
-                  <span>Aperture (mm)</span>
-                  <input
-                    type="number"
-                    step={0.1}
-                    min={0}
-                    value={selectedDraft.apertureMm ?? 12.5}
-                    onChange={(e) => {
-                      const v = Number(e.target.value);
-                      if (!Number.isFinite(v)) return;
-                      updateDraft(selectedDraft.__key, { apertureMm: v });
-                    }}
-                  />
-                </label>
+                <div className="component-editor-aperture">
+                  <label className="component-editor-coord">
+                    <span>Aperture shape</span>
+                    <select
+                      value={(() => {
+                        const explicit = selectedDraft.apertureShape;
+                        if (explicit) return explicit;
+                        // Infer for legacy rows: W+H set → rectangle;
+                        // apertureMm only → circle.
+                        if (
+                          selectedDraft.apertureWidthMm != null &&
+                          selectedDraft.apertureHeightMm != null
+                        ) {
+                          return "rectangle";
+                        }
+                        return "circle";
+                      })()}
+                      onChange={(e) => {
+                        const shape = e.target.value as
+                          | "circle"
+                          | "ellipse"
+                          | "rectangle";
+                        // Seed W/H from 2 × radius when switching from
+                        // circle so the new shape has sensible defaults.
+                        const fallbackHalf = selectedDraft.apertureMm ?? 12.5;
+                        const patch: Partial<AnchorDraft> = {
+                          apertureShape: shape,
+                        };
+                        if (
+                          shape !== "circle" &&
+                          (selectedDraft.apertureWidthMm == null ||
+                            selectedDraft.apertureHeightMm == null)
+                        ) {
+                          patch.apertureWidthMm =
+                            selectedDraft.apertureWidthMm ??
+                            fallbackHalf * 2;
+                          patch.apertureHeightMm =
+                            selectedDraft.apertureHeightMm ??
+                            fallbackHalf * 2;
+                        }
+                        updateDraft(selectedDraft.__key, patch);
+                      }}
+                    >
+                      <option value="circle">Circle</option>
+                      <option value="ellipse">Ellipse</option>
+                      <option value="rectangle">Rectangle</option>
+                    </select>
+                  </label>
+                  {(() => {
+                    const shape =
+                      selectedDraft.apertureShape ??
+                      (selectedDraft.apertureWidthMm != null &&
+                      selectedDraft.apertureHeightMm != null
+                        ? "rectangle"
+                        : "circle");
+                    if (shape === "circle") {
+                      return (
+                        <label className="component-editor-coord">
+                          <span>Radius (mm)</span>
+                          <input
+                            type="number"
+                            step={0.1}
+                            min={0}
+                            value={selectedDraft.apertureMm ?? 12.5}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              if (!Number.isFinite(v)) return;
+                              updateDraft(selectedDraft.__key, {
+                                apertureMm: v,
+                              });
+                            }}
+                          />
+                        </label>
+                      );
+                    }
+                    const widthLabel =
+                      shape === "ellipse"
+                        ? "Semi-major axis (mm)"
+                        : "Width (mm)";
+                    const heightLabel =
+                      shape === "ellipse"
+                        ? "Semi-minor axis (mm)"
+                        : "Height (mm)";
+                    return (
+                      <>
+                        <label className="component-editor-coord">
+                          <span>{widthLabel}</span>
+                          <input
+                            type="number"
+                            step={0.1}
+                            min={0}
+                            value={
+                              selectedDraft.apertureWidthMm ??
+                              (selectedDraft.apertureMm ?? 12.5) * 2
+                            }
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              if (!Number.isFinite(v)) return;
+                              updateDraft(selectedDraft.__key, {
+                                apertureWidthMm: v,
+                              });
+                            }}
+                          />
+                        </label>
+                        <label className="component-editor-coord">
+                          <span>{heightLabel}</span>
+                          <input
+                            type="number"
+                            step={0.1}
+                            min={0}
+                            value={
+                              selectedDraft.apertureHeightMm ??
+                              (selectedDraft.apertureMm ?? 12.5) * 2
+                            }
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              if (!Number.isFinite(v)) return;
+                              updateDraft(selectedDraft.__key, {
+                                apertureHeightMm: v,
+                              });
+                            }}
+                          />
+                        </label>
+                      </>
+                    );
+                  })()}
+                </div>
               )}
 
               <button

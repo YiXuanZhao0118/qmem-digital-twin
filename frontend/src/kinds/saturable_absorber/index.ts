@@ -5,6 +5,7 @@ export interface SaturableAbsorberParams extends Record<string, unknown> {
   modulationDepth: number;
   nonSaturableLoss: number;
   recoveryTimePs: number;
+  wavelengthRangeNm: [number, number];
 }
 
 export const saturableAbsorberPlugin = definePhysicsPlugin<SaturableAbsorberParams>({
@@ -21,6 +22,7 @@ export const saturableAbsorberPlugin = definePhysicsPlugin<SaturableAbsorberPara
       required: ["intercept_in"],
       optional: [],
       needsDirection: [],
+      needsAperture: ["intercept_in"],
     },
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
@@ -30,6 +32,7 @@ export const saturableAbsorberPlugin = definePhysicsPlugin<SaturableAbsorberPara
       modulationDepth: 0.5,
       nonSaturableLoss: 0.05,
       recoveryTimePs: 1.0,
+      wavelengthRangeNm: [400, 1700],
     },
   },
 });
