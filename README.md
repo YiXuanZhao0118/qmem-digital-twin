@@ -413,6 +413,52 @@ The page is a single full-viewport `.workspace-shell` with three regions:
 PhyEditor takes over the whole canvas when
 `sceneStore.editorMode === "phy-editor"` (full-screen anchors/spec editor).
 
+### Page layout — floating panels
+
+The center region is a Blender-style floating-panel canvas managed by
+`workspace/WorkspaceProvider.tsx`. Every panel has `{ x, y, w, h, visible,
+collapsed, z }` persisted to localStorage under
+`qmem.workspaceLayout.v7` (the version suffix is bumped whenever the default
+layout changes so existing users get re-seeded). Negative `x`/`y` resolve
+against the viewport size at mount time, so panels stick to the right /
+bottom edges regardless of window width.
+
+Defaults (from `PANEL_DEFS` in `workspace/WorkspaceProvider.tsx`):
+
+| Panel id | Title | Default position (px) | Size (w×h) | Visible | z |
+|---|---|---|---|---|---|
+| `components` | Components catalog | 16, 116 (top-left, below the Wireframe/Rendered pills + Cursor editor) | 300 × 420 | yes | 1 |
+| `outliner` | Outliner | 16, 552 (under Components, +16 px gap) | 300 × 320 | yes | 1 |
+| `object` | Object inspector | −340, 296 (top-right, below the XYZ gizmo + Tools pie) | 320 × 520 | yes | 1 |
+| `pulse-timing` | Pulse & Timing | 332, 480 | 760 × 380 | no | 2 |
+| `instrument-power` | Instrument Power | 332, 80 | 380 × 360 | no | 2 |
+| `beam-scope` | Beam scope | 332, 80 | 560 × 460 | no | 2 |
+| `touch-coincidence` | Touch coincidence | 332, 200 | 380 × 280 | no | 3 |
+| `optical-link-viewer` | Optical link viewer | 360, 80 | 640 × 780 | no | 2 |
+| `rf-link` | RF link | 360, 80 | 720 × 520 | no | 2 |
+| `solver-console` | Solver console | −340, 600 (right column, below Object) | 320 × 260 | yes | 2 |
+| `magnetics` | Magnetics overlay | −340, 80 | 320 × 460 | no | 2 |
+| `ai-binding` | AI Binding | −340, 80 | 380 × 520 | yes (only when `VITE_ENABLE_AI_PANEL=true`) | 3 |
+
+Layout rules:
+
+- Panels can be dragged, resized, collapsed (header-only), and stacked
+  via the `z` slot — `FloatingPanel.tsx` raises `z` on focus.
+- The Window menu in `TopBar.tsx` toggles `visible`; closing a panel
+  preserves its last `x/y/w/h` so re-opening lands it back in place.
+- "Reset layout" in `TopBar.tsx` clears the localStorage key and
+  re-seeds from `PANEL_DEFS`. Bumping `STORAGE_KEY` (currently `v7`)
+  has the same effect for everyone on the next page load — use it
+  whenever a default position moves so existing users don't stay
+  stuck on the old one.
+- The orientation gizmo, Wireframe/Rendered toggle, Cursor (mm)
+  editor, and Initial Setup button live outside the floating layer
+  and are not part of `PANEL_DEFS` (see `SceneToolbar.tsx`).
+
+Bottom strip: `ScrubTimeBar.tsx` (timeline playhead) is permanently
+mounted below the canvas — not a floating panel. Module-switch tabs
+(top of the page) come from `ModuleSwitcher.tsx` inside `TopBar.tsx`.
+
 Keyboard shortcuts:
 
 | Key | Effect |
@@ -440,7 +486,7 @@ Keyboard shortcuts:
 | Power & state | `InstrumentPowerPanel.tsx` | Enabled / temperature / pressure readouts |
 | DDS specifics | `DdsChassisObjectControls.tsx`, `Ad9959ObjectControls.tsx` | AD9959 chassis & per-chip UIs |
 | Toolbar | `SceneToolbar.tsx`, `ToolbarHint.tsx`, `NumberField.tsx`, `CollapsibleSection.tsx` | Initial Setup button, shortcut help, shared inputs |
-| AI binding (alpha) | `AIBindingPanel.tsx` | Drives the agent_orchestrator from the browser. Gated behind `VITE_ENABLE_AI_PANEL=true`. Three local states (`idle` / `running` / `terminal`) map to `agent_sessions.status`. 30 s heartbeat keeps the backend sweeper from auto-abandoning the session. Chat transcript is purely display state; the persisted source of truth for "what got created" is the `mutations` list from `GET /{id}` |
+| AI binding (alpha) | `AIBindingPanel.tsx` | Drives the agent_orchestrator from the browser. Gated behind `VITE_ENABLE_AI_PANEL=true`. Three local states (`idle` / `running` / `terminal`) map to `agent_sessions.status`. 30 s heartbeat keeps the backend sweeper from auto-abandoning the session. Chat transcript is purely display state; the persisted source of truth for "what got created" is the `mutations` list from `GET /{id}`. Default layout is `visible: true` (post-`WorkspaceProvider` flip) — once the env flag is on, the panel opens with the workspace instead of needing a Window-menu click |
 
 ### Zustand store (`store/sceneStore.ts`)
 
@@ -717,11 +763,12 @@ reconciled against the authoritative payload.
 
 > **Feature flag.** Hidden by default. To enable in dev:
 > 1. Set `VITE_ENABLE_AI_PANEL=true` in `frontend/.env` (or as an env var when
->    running `npm run dev`). Two gates exist on the frontend: `App.tsx` decides
->    whether the panel component mounts at all, and `WorkspaceProvider.tsx`
->    seeds the panel layout with `visible: false` so even a mounted panel
->    stays closed until opened from the Window menu (or its default layout
->    is flipped).
+>    running `npm run dev`). Three frontend gates all read this flag: `App.tsx`
+>    decides whether the panel component mounts at all; `WorkspaceProvider.tsx`
+>    seeds the default panel layout (currently `visible: true` so the panel
+>    opens with the workspace once mounted); `TopBar.tsx` decides whether
+>    the Window menu lists it for re-opening. Flip the env var off + reset
+>    layout to hide everywhere.
 > 2. Set `ANTHROPIC_API_KEY=…` in the backend `.env`. An empty key leaves
 >    session lifecycle working but makes `POST /messages` return a friendly
 >    error, so the panel can render "API key not configured" instead of
@@ -936,6 +983,20 @@ keeping in mind while extending the system.
   applied the patch optimistically, the local state stays stale until the
   next `/api/scene` reload. Wrap mutations in a small "previous-value
   snapshot" so failures can revert.
+- **`WorkspaceProvider.STORAGE_KEY = "qmem.workspaceLayout.v7"`.** Anytime
+  you change a default panel position, size, or visibility in `PANEL_DEFS`,
+  bump the suffix (`v7` → `v8`). Existing users carry the old layout in
+  localStorage and will silently keep the old defaults forever otherwise.
+  The recent AI-binding flip from `visible: false` → `visible: true` is a
+  case in point: returning users won't see the change until the key is
+  bumped or they hit Reset Layout.
+- **Two visibility gates for the AI panel can drift.** `App.tsx` mounts the
+  component when `VITE_ENABLE_AI_PANEL=true`, and `WorkspaceProvider.tsx`
+  separately decides whether the default layout is open. If the env var is
+  off, the default `visible: true` is harmless because the component never
+  mounts; but if you later disable the panel for another reason (legal,
+  cost), make sure to change both files plus the `TopBar` Window-menu
+  gate, or one entry point will leak through.
 
 ### Data / migration hygiene
 
@@ -1011,6 +1072,7 @@ keeping in mind while extending the system.
 
 ---
 
-*Last regenerated: 2026-05-17 (Alembic revision 0058: fiber-end
+*Last regenerated: 2026-05-18 (Alembic revision 0058: fiber-end
 recombine + AI binding agent sessions + persisted Anthropic
-messages_json).*
+messages_json; refreshed AI binding panel gates + new Page-layout
+panel-defaults table).*
