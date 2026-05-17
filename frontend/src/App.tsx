@@ -10,6 +10,7 @@ import {
   ComponentsCatalogPanel,
   OutlinerFloatingPanel,
 } from "./components/AssetLibraryPanel";
+import { AIBindingPanel } from "./components/AIBindingPanel";
 import { ComponentPanel } from "./components/ComponentPanel";
 import { DualViewerSplit } from "./components/DualViewerSplit";
 import { PhyEditor } from "./components/PhyEditor";
@@ -42,6 +43,15 @@ import type { OverlayKind } from "./types/visibility";
 // the real one would tear down + rebuild the whole scene (the viewer's
 // init effect depends on roomDimensions), producing a visible "jump".
 // Instead we gate the optics layout on the fetch resolving.
+
+// Feature flag for the AI binding agent panel. The panel + backend
+// endpoints (agent_sessions) ship in this build, but the Claude Agent
+// SDK driver that calls into agent_tools.py is not wired yet — so the
+// panel is hidden behind this flag to keep users out of a half-built
+// UI. Set VITE_ENABLE_AI_PANEL=true in .env to turn it on for dev.
+const _viteEnv =
+  ((import.meta as unknown) as { env?: Record<string, string> }).env ?? {};
+const AI_PANEL_ENABLED = _viteEnv.VITE_ENABLE_AI_PANEL === "true";
 
 const NUMBER_KEY_OVERLAYS: Record<string, OverlayKind> = {
   "1": "components",
@@ -290,6 +300,7 @@ export default function App() {
               <RfLinkPanel />
               <TouchCoincidencePanel />
               <MagneticsPanel />
+              {AI_PANEL_ENABLED && <AIBindingPanel />}
               <ScrubTimeBar />
               <CursorMenu />
             </>

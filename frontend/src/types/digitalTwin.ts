@@ -1552,3 +1552,87 @@ export type RevisionV2 = {
   sceneHash?: string | null;
   createdAt: string;
 };
+
+
+// =============================================================================
+// AI binding agent (alembic 0057 + backend/app/routers/agent_sessions.py).
+// The panel that drives these types lives behind VITE_ENABLE_AI_PANEL and
+// is not user-facing in v1.
+// =============================================================================
+
+export type AgentSessionStatus =
+  | "running"
+  | "committed"
+  | "cancelled"
+  | "abandoned";
+
+export type AgentSession = {
+  id: string;
+  instruction: string;
+  status: AgentSessionStatus;
+  lastHeartbeatAt: string;
+  heartbeatTimeoutSec: number;
+  committedAt: string | null;
+  cancelledAt: string | null;
+  cancellationReason: string | null;
+  createdAt: string;
+};
+
+export type SessionMutationOp = "create" | "update" | "delete";
+export type SessionMutationEntityType = "asset_3d" | "component";
+
+export type SessionMutation = {
+  id: string;
+  op: SessionMutationOp;
+  entityType: SessionMutationEntityType;
+  entityId: string;
+  /** Post-mutation snapshot — minimal identifying fields (id + name +
+   *  type-specific FK). Use this to render review rows without an
+   *  extra fetch. */
+  after: Record<string, unknown> | null;
+  /** ISO timestamp; non-null = user clicked "undo last step". The row
+   *  stays in the audit log so the review UI can show struck-through
+   *  history. */
+  undoneAt: string | null;
+  createdAt: string;
+};
+
+export type AgentSessionState = {
+  session: AgentSession;
+  mutations: SessionMutation[];
+};
+
+export type CommitResult = {
+  sessionId: string;
+  approvedAssets: string[];
+  approvedComponents: string[];
+};
+
+export type CancelResult = {
+  sessionId: string;
+  rolledBackCount: number;
+  reason: string;
+};
+
+export type AgentAttachmentKind = "asset_file" | "image";
+
+export type AgentUpload = {
+  fileId: string;
+  filename: string;
+  storedName: string;
+  filePath: string;
+  kind: AgentAttachmentKind;
+  mediaType: string | null;
+  sizeBytes: number;
+};
+
+/** Subset of AgentUpload that the panel echoes back to POST /messages
+ *  as `attachments[]`. The backend re-derives file_path from
+ *  stored_name to prevent path-traversal. */
+export type AgentAttachmentRef = {
+  storedName: string;
+  filename: string;
+  filePath: string;
+  kind: AgentAttachmentKind;
+  mediaType: string | null;
+};

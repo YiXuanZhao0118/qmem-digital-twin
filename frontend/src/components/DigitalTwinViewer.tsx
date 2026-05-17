@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeftRight, Crosshair, Eye, EyeOff, Grid3x3, Move, RotateCw, Sparkles, Spline } from "lucide-react";
+import { ArrowLeftRight, Bookmark, BookmarkX, Crosshair, Eye, EyeOff, Grid3x3, Move, RotateCw, Sparkles, Spline, Target } from "lucide-react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import {
   applyFiberConnectorTransform,
+  applyFiberFerruleOrientation,
   applyRfCableConnectorTransform,
   buildFiberCurvePath,
   refreshFiberWrapperGeometry,
@@ -12,7 +13,18 @@ import {
   type FiberNode,
 } from "../three/loadAsset";
 import { resolveLinkedRfCableEndpoint } from "../utils/rfCableAnchorResolver";
-import { resolveLinkedFiberEndpoint } from "../utils/fiberBodyEndpointResolver";
+import {
+  bodyHandleToTensionHandle,
+  FIBER_END_CONNECTOR_LENGTH_MM,
+  resolveEndpointFromKindParams,
+  type FiberEndKindParams,
+} from "../utils/fiberBodyEndpointResolver";
+import {
+  FIBER_FERRULE_TIP_MM,
+  syncFiberNodesFromKindParams,
+  type FiberEndKindParamsShape,
+  type FiberNodePersistent,
+} from "../utils/fiberAnchorResolver";
 import { capabilityProfile } from "../kinds/_capabilityProfile";
 import type { RfCableEndpointLink } from "../types/digitalTwin";
 
@@ -756,17 +768,18 @@ function addFiberBeamFlowIndicator(
   const entryConn = beamEntryEnd === "A" ? aConn : bConn;
   const exitConn = beamEntryEnd === "A" ? bConn : aConn;
   // Ring haloes the optical port. Position is read from the corresponding
-  // fiberAnchors record in connector body-local mm (default (0, 36.28, 0)
-  // = ferrule tip); falls back to a ferrule-tip approximation if anchors
-  // are missing. Rings are children of the connector group so coordinates
-  // stay connector-local even after the spline rotates / translates.
+  // fiberAnchors record in connector body-local mm (default (0,
+  // FIBER_FERRULE_TIP_MM, 0) = ferrule tip); falls back to a ferrule-tip
+  // approximation if anchors are missing. Rings are children of the
+  // connector group so coordinates stay connector-local even after the
+  // spline rotates / translates.
   const findAnchorPos = (anchorId: string) => {
     const a = (fiberAnchors ?? []).find((x) => x.id === anchorId);
     const p = a?.positionMmBodyLocal;
     if (p && Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z)) {
       return { x: p.x, y: p.y, z: p.z };
     }
-    return { x: 0, y: 36.28, z: 0 };
+    return { x: 0, y: FIBER_FERRULE_TIP_MM, z: 0 };
   };
   const entryPosMm = findAnchorPos(beamEntryEnd === "A" ? "intercept_in" : "intercept_out");
   const exitPosMm = findAnchorPos(beamEntryEnd === "A" ? "intercept_out" : "intercept_in");
@@ -1213,6 +1226,34 @@ function ViewerCursorEditor({ panelKey }: { panelKey: "left" | "right" }) {
   const setCursor = (point: { x: number; y: number; z: number }) => setCursorRaw(panelKey, point);
   const cursorHidden = useSceneStore((state) => state.transformCursorHidden[panelKey]);
   const toggleCursorHidden = useSceneStore((state) => state.toggleTransformCursorHidden);
+  // For the "⊕ Center on selection" button: track selection count to drive
+  // the disabled state. The actual median is computed lazily on click via
+  // getState() so we don't subscribe to every object's mm fields here.
+  const selectionCount = useSceneStore((state) =>
+    state.selectedObjectIds.length > 0
+      ? state.selectedObjectIds.length
+      : state.selectedObjectId
+      ? 1
+      : 0,
+  );
+  const centerOnSelection = () => {
+    const state = useSceneStore.getState();
+    const ids = state.selectedObjectIds.length > 0
+      ? state.selectedObjectIds
+      : state.selectedObjectId
+      ? [state.selectedObjectId]
+      : [];
+    if (ids.length === 0) return;
+    const objs = ids
+      .map((id) => state.scene.objects.find((o) => o.id === id))
+      .filter((o): o is NonNullable<typeof o> => Boolean(o));
+    if (objs.length === 0) return;
+    setCursorRaw(panelKey, {
+      x: objs.reduce((s, o) => s + o.xMm, 0) / objs.length,
+      y: objs.reduce((s, o) => s + o.yMm, 0) / objs.length,
+      z: objs.reduce((s, o) => s + o.zMm, 0) / objs.length,
+    });
+  };
   const [draft, setDraft] = useState({
     x: cursor.x.toFixed(1),
     y: cursor.y.toFixed(1),
@@ -1263,6 +1304,20 @@ function ViewerCursorEditor({ panelKey }: { panelKey: "left" | "right" }) {
       {renderField("x")}
       {renderField("y")}
       {renderField("z")}
+      <button
+        type="button"
+        className="viewer-cursor-toggle viewer-cursor-center"
+        onClick={centerOnSelection}
+        disabled={selectionCount === 0}
+        aria-label="Center cursor on selection (median of selected object origins)"
+        title={
+          selectionCount === 0
+            ? "Center on selection — select objects first"
+            : `Center cursor on ${selectionCount} selected object${selectionCount === 1 ? "" : "s"} (median)`
+        }
+      >
+        <Target size={14} />
+      </button>
       <button
         type="button"
         className="viewer-cursor-toggle"
@@ -1324,6 +1379,12 @@ export function DigitalTwinViewer({
         // when the target moves — only the link's resolution does).
         rfCableEffectiveNodesRef?: unknown;
         rfCableLinkWatchKey?: string;
+        // alembic 0056: fiber endA/endB pose lives on the fiber PE
+        // kindParams. Cache invalidation on kindParams change is
+        // tracked by `fiberEndsRefKey` (cheap stringification of the
+        // two endPose snapshots — changes when Align A/B writes back
+        // or node-edit drags an endpoint).
+        fiberEndsRefKey?: string;
       }
     >
   >(new Map());
@@ -1606,6 +1667,19 @@ export function DigitalTwinViewer({
     const previousTarget = controls.target.clone();
 
     if (view === "home") {
+      // If the user has saved a custom Home view for this panel, restore
+      // that absolute camera pose verbatim — angle, distance, and pivot.
+      // Otherwise fall back to the factory framing: re-centre on the
+      // current cursor with the hard-coded HOME_CAMERA_OFFSET.
+      const saved = useSceneStore.getState().homeView[panelKey];
+      if (saved) {
+        controls.target.set(saved.target.x, saved.target.y, saved.target.z);
+        camera.up.set(saved.up.x, saved.up.y, saved.up.z);
+        camera.position.set(saved.position.x, saved.position.y, saved.position.z);
+        camera.lookAt(controls.target);
+        controls.update();
+        return;
+      }
       controls.target.copy(target);
       camera.position.copy(target).add(HOME_CAMERA_OFFSET);
       camera.up.set(0, 1, 0);
@@ -1621,7 +1695,29 @@ export function DigitalTwinViewer({
     camera.position.copy(target).addScaledVector(config.direction, distance);
     camera.lookAt(target);
     controls.update();
-  }, []);
+  }, [panelKey]);
+
+  /** Snapshot the live camera pose (position, target, up) and persist it
+   *  as this panel's custom Home. Subsequent H presses restore exactly
+   *  this framing. Stored in three-space units; the store handles
+   *  localStorage. Passing `null` clears the override and falls back to
+   *  the factory default. */
+  const saveCurrentAsHome = useCallback(() => {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (!camera || !controls) return;
+    useSceneStore.getState().setHomeView(panelKey, {
+      position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+      target: { x: controls.target.x, y: controls.target.y, z: controls.target.z },
+      up: { x: camera.up.x, y: camera.up.y, z: camera.up.z },
+    });
+  }, [panelKey]);
+
+  const clearCustomHome = useCallback(() => {
+    useSceneStore.getState().setHomeView(panelKey, null);
+  }, [panelKey]);
+
+  const customHomeSaved = useSceneStore((state) => state.homeView[panelKey] !== null);
 
   const activeView = useMemo(
     () =>
@@ -1787,7 +1883,7 @@ export function DigitalTwinViewer({
     orientationRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     orientationRenderer.setSize(AXIS_GIZMO_SIZE, AXIS_GIZMO_SIZE, false);
     orientationRenderer.domElement.className = "global-axis-gizmo";
-    orientationRenderer.domElement.title = "Click H for Home, or X/Y/Z/-X/-Y/-Z to align around the current center";
+    orientationRenderer.domElement.title = "Click H for Home (custom if saved, else default framing), or X/Y/Z/-X/-Y/-Z to align around the current center";
     mount.appendChild(orientationRenderer.domElement);
     orientationRendererRef.current = orientationRenderer;
     const globalAxesGizmo = createGlobalAxesGizmo();
@@ -3416,23 +3512,27 @@ export function DigitalTwinViewer({
         return { effectiveNodes: stored, linkWatchKey: watchKeyParts.join("|") };
       };
 
-      // Fiber body equivalent of resolveEffectiveRfCableState — Phase
-      // fiber-split: the body's stored fiberNodes[0] / [N-1] are
-      // overridden at render time from the paired fiber_end
-      // SceneObjects' lab poses (referenced via FiberParams.endA/B
-      // ObjectId). Returns null for legacy data where endA/BObjectId
-      // is missing — caller falls back to stored fiberNodes.
+      // alembic 0056: fiber endA/endB pose lives on fiber PE.kindParams.
+      // The body's fiberNodes[0] / [N-1] are overridden at render time
+      // by resolveEndpointFromKindParams(endA/endB). Returns null when
+      // the PE has no endA/endB sub-objects (very old data or non-fiber
+      // placements) — caller falls back to stored fiberNodes.
       const resolveEffectiveFiberBodyState = (
         placement: SceneObject,
         component: ComponentItem,
-      ): { effectiveNodes: FiberNode[]; linkWatchKey: string } | null => {
+      ): { effectiveNodes: FiberNode[]; linkWatchKey: string;
+           endA: FiberEndKindParams | null; endB: FiberEndKindParams | null } | null => {
         if (component.componentType !== "fiber") return null;
-        const fiberPe = sceneData.physicsElements.find((e) => e.objectId === placement.id);
+        const fiberPe = sceneData.physicsElements.find(
+          (e) => e.objectId === placement.id && e.elementKind === "fiber",
+        );
         const kp = (fiberPe?.kindParams ?? {}) as {
-          endAObjectId?: string | null;
-          endBObjectId?: string | null;
+          endA?: FiberEndKindParams | null;
+          endB?: FiberEndKindParams | null;
         };
-        if (!kp.endAObjectId && !kp.endBObjectId) return null;
+        const endA = (kp.endA && typeof kp.endA === "object") ? kp.endA : null;
+        const endB = (kp.endB && typeof kp.endB === "object") ? kp.endB : null;
+        if (!endA && !endB) return null;
 
         const objProps = (placement.properties ?? {}) as { fiberNodes?: FiberNode[] };
         const compProps = (component.properties ?? {}) as { fiberNodes?: FiberNode[] };
@@ -3453,15 +3553,9 @@ export function DigitalTwinViewer({
         }));
 
         const watchKeyParts: string[] = [];
-        const applyEnd = (end: "A" | "B", endObjId: string | null | undefined) => {
-          if (!endObjId) return;
-          const endObj = sceneData.objects.find((o) => o.id === endObjId);
-          if (!endObj) return;
-          const resolved = resolveLinkedFiberEndpoint({
-            endpoint: end,
-            fiberBody: placement,
-            fiberEnd: endObj,
-          });
+        const applyEnd = (end: "A" | "B", params: FiberEndKindParams | null) => {
+          if (!params) return;
+          const resolved = resolveEndpointFromKindParams(end, params);
           if (!resolved) return;
           const idx = end === "A" ? 0 : stored.length - 1;
           stored[idx] = {
@@ -3471,13 +3565,21 @@ export function DigitalTwinViewer({
             handleOutMm:
               end === "A" ? resolved.handleMmBody : stored[idx].handleOutMm,
           };
+          const pos = params.posMm as number[] | undefined;
+          const rot = params.rotDeg as number[] | undefined;
+          const ten = params.tensionHandleMm as number[] | undefined;
           watchKeyParts.push(
-            `${end}:${endObjId}:${endObj.xMm.toFixed(3)},${endObj.yMm.toFixed(3)},${endObj.zMm.toFixed(3)},${endObj.rxDeg.toFixed(3)},${endObj.ryDeg.toFixed(3)},${endObj.rzDeg.toFixed(3)}`,
+            `${end}:${(pos ?? []).map((v) => v.toFixed(3)).join(",")}:${(rot ?? []).map((v) => v.toFixed(3)).join(",")}:${(ten ?? []).map((v) => v.toFixed(3)).join(",")}`,
           );
         };
-        applyEnd("A", kp.endAObjectId);
-        applyEnd("B", kp.endBObjectId);
-        return { effectiveNodes: stored, linkWatchKey: watchKeyParts.join("|") };
+        applyEnd("A", endA);
+        applyEnd("B", endB);
+        return {
+          effectiveNodes: stored,
+          linkWatchKey: watchKeyParts.join("|"),
+          endA,
+          endB,
+        };
       };
 
       for (const placement of sceneData.objects) {
@@ -3502,11 +3604,21 @@ export function DigitalTwinViewer({
         const deviceState = stateByObjectId.get(placement.id);
 
         const cached = wrapperCache.get(placement.id);
+        // alembic 0056: fiber endA/endB pose lives on the PE kindParams.
+        // Compute a watch key up-front so cache invalidates when those
+        // change (Align A/B button, node-edit endpoint drag, etc.).
+        const fiberStateForCache =
+          component.componentType === "fiber"
+            ? resolveEffectiveFiberBodyState(placement, component)
+            : null;
+        const fiberEndsRefKeyNow = fiberStateForCache?.linkWatchKey ?? "";
         const canReuse =
           cached !== undefined &&
           cached.componentRef === component &&
           cached.assetRef === asset &&
-          cached.stateRef === deviceState;
+          cached.stateRef === deviceState &&
+          (component.componentType !== "fiber" ||
+            cached.fiberEndsRefKey === fiberEndsRefKeyNow);
 
         let wrapper: THREE.Group;
         if (canReuse && cached) {
@@ -3541,11 +3653,12 @@ export function DigitalTwinViewer({
                 : typeof compProps.radiusMm === "number"
                   ? compProps.radiusMm
                   : 1.0;
-            // Phase fiber-split: if FiberParams.endA/BObjectId points at
-            // paired fiber_end SceneObjects, the body's two spline
-            // endpoint nodes re-derive from those objects' lab poses.
-            // Falls back to stored fiberNodes for legacy (pre-migration)
-            // data where endA/BObjectId is null.
+            // alembic 0056: fiber spline endpoints + ferrule poses both
+            // derive from fiber PE.kindParams.endA / endB. Resolver
+            // overwrites nodes[0]/[N-1] and gives us the two end
+            // placements to pass through so refreshFiberWrapperGeometry
+            // can re-pose the ferrules at their kindParams locations
+            // (not derived from spline tangent).
             const fiberState = resolveEffectiveFiberBodyState(placement, component);
             const nodes = fiberState
               ? fiberState.effectiveNodes
@@ -3558,7 +3671,35 @@ export function DigitalTwinViewer({
               || cached.fiberRadiusMmRef !== radiusMm
               || cached.fiberLinkWatchKey !== fiberWatchKey;
             if (fiberRefsChanged && nodes && nodes.length >= 2) {
-              refreshFiberWrapperGeometry(wrapper, nodes, radiusMm);
+              const toPlacementForRefresh = (
+                ep: FiberEndKindParams | null | undefined,
+              ) => {
+                if (!ep) return null;
+                const resolved = resolveEndpointFromKindParams("A", ep);
+                const pos = resolved?.posMmBody;
+                const rot = ep.rotDeg as number[] | undefined;
+                if (!Array.isArray(pos) || pos.length !== 3) return null;
+                const polishRaw = (ep as { polish?: string }).polish;
+                const polish: "PC" | "APC" | "UPC" | undefined =
+                  polishRaw === "PC" || polishRaw === "APC" || polishRaw === "UPC"
+                    ? polishRaw
+                    : undefined;
+                return {
+                  posMm: [pos[0], pos[1], pos[2]] as [number, number, number],
+                  rotDeg: (Array.isArray(rot) && rot.length === 3
+                    ? [rot[0], rot[1], rot[2]]
+                    : [0, 0, 0]) as [number, number, number],
+                  tensionHandleMm: (resolved?.handleMmBody ?? [0, 30, 0]) as [number, number, number],
+                  polish,
+                };
+              };
+              refreshFiberWrapperGeometry(
+                wrapper,
+                nodes,
+                radiusMm,
+                toPlacementForRefresh(fiberState?.endA),
+                toPlacementForRefresh(fiberState?.endB),
+              );
               cached.fiberNodesRef = nodes;
               cached.fiberRadiusMmRef = radiusMm;
               cached.fiberLinkWatchKey = fiberWatchKey;
@@ -3597,9 +3738,62 @@ export function DigitalTwinViewer({
           // before the cache-hit refresh path catches up on the next
           // rebuild tick.
           const rfCableSeed = resolveEffectiveRfCableState(placement, component);
-          const propsForLoader = rfCableSeed
-            ? { ...(placement.properties ?? {}), rfCableNodes: rfCableSeed.effectiveNodes }
-            : placement.properties;
+          // For fiber, resolve endpoints from PE.kindParams.endA/endB
+          // so the tube renders between the SAME positions as the
+          // ferrules — without this override the cache-miss path uses
+          // the stored object.properties.fiberNodes (which can be
+          // stale relative to a freshly-aligned endA/endB.posMm).
+          const fiberSeedForLoader =
+            component.componentType === "fiber"
+              ? resolveEffectiveFiberBodyState(placement, component)
+              : null;
+          let propsForLoader = placement.properties as
+            | (typeof placement.properties & {
+                fiberNodes?: FiberNode[];
+                rfCableNodes?: FiberNode[];
+              })
+            | null;
+          if (rfCableSeed) {
+            propsForLoader = { ...(propsForLoader ?? {}), rfCableNodes: rfCableSeed.effectiveNodes };
+          }
+          if (fiberSeedForLoader) {
+            propsForLoader = { ...(propsForLoader ?? {}), fiberNodes: fiberSeedForLoader.effectiveNodes };
+          }
+          // alembic 0056: the fiber body's two ferrules render at the
+          // poses recorded on its PE kindParams.endA / endB (body-local
+          // frame). Pull them out for the loader; per-end physics fields
+          // (polish) come along.
+          const fiberBodyPe = sceneData.physicsElements.find(
+            (e) => e.objectId === placement.id && e.elementKind === "fiber",
+          );
+          const fiberKp = (fiberBodyPe?.kindParams ?? {}) as {
+            endA?: FiberEndKindParams & { polish?: string };
+            endB?: FiberEndKindParams & { polish?: string };
+          };
+          const toPlacement = (
+            ep: (FiberEndKindParams & { polish?: string }) | null | undefined,
+          ) => {
+            if (!ep) return null;
+            const resolved = resolveEndpointFromKindParams("A", ep);
+            const pos = resolved?.posMmBody;
+            const rot = ep.rotDeg as number[] | undefined;
+            if (!Array.isArray(pos) || pos.length !== 3) return null;
+            const polishRaw = ep.polish;
+            const polish: "PC" | "APC" | "UPC" | undefined =
+              polishRaw === "PC" || polishRaw === "APC" || polishRaw === "UPC"
+                ? polishRaw
+                : undefined;
+            return {
+              posMm: [pos[0], pos[1], pos[2]] as [number, number, number],
+              rotDeg: (Array.isArray(rot) && rot.length === 3
+                ? [rot[0], rot[1], rot[2]]
+                : [0, 0, 0]) as [number, number, number],
+              tensionHandleMm: (resolved?.handleMmBody ?? [0, 30, 0]) as [number, number, number],
+              polish,
+            };
+          };
+          const fiberEndAPlacement = toPlacement(fiberKp.endA);
+          const fiberEndBPlacement = toPlacement(fiberKp.endB);
           const assetObject = await loadAssetObject(
             component,
             asset,
@@ -3608,6 +3802,10 @@ export function DigitalTwinViewer({
             // the SceneObject; see loadAssetObject signature for the V2
             // contract.
             propsForLoader as { fiberNodes?: FiberNode[]; rfCableNodes?: FiberNode[]; radiusMm?: number } | null,
+            {
+              fiberEndA: fiberEndAPlacement,
+              fiberEndB: fiberEndBPlacement,
+            },
           );
           if (cancelled) {
             disposeObject(assetObject);
@@ -3662,6 +3860,7 @@ export function DigitalTwinViewer({
             fiberLinkWatchKey: fiberSeed?.linkWatchKey,
             rfCableEffectiveNodesRef: rfCableSeed?.effectiveNodes,
             rfCableLinkWatchKey: rfCableSeed?.linkWatchKey,
+            fiberEndsRefKey: fiberEndsRefKeyNow,
           });
         }
 
@@ -4071,6 +4270,44 @@ export function DigitalTwinViewer({
       handleInMm: n.handleInMm ? [n.handleInMm[0], n.handleInMm[1], n.handleInMm[2]] : undefined,
       handleOutMm: n.handleOutMm ? [n.handleOutMm[0], n.handleOutMm[1], n.handleOutMm[2]] : undefined,
     }));
+
+    // Phase fiber-split: the renderer overrides nodes[0] / [N-1] with
+    // values derived from the paired fiber_end SceneObjects (see
+    // resolveEffectiveFiberBodyState). Apply the same overrides here
+    // so the node-edit gizmo shows endpoints / handles in the SAME
+    // positions the user sees in object view — otherwise the spheres
+    // float at the legacy stored fiberNodes positions and the user
+    // perceives a mismatch.
+    // alembic 0056: override endpoint nodes from fiber PE kindParams.
+    // endA / endB sub-objects carry posMm/rotDeg/tensionHandleMm in
+    // body-local frame. Resolver returns the spline endpoint position
+    // (= posMm) + the body Bezier handle (= -rotated tension).
+    const fiberPeKindParams = editingObject
+      ? ((sceneData.physicsElements.find(
+          (e) => e.objectId === editingObject.id && e.elementKind === "fiber",
+        )?.kindParams ?? {}) as {
+          endA?: FiberEndKindParams | null;
+          endB?: FiberEndKindParams | null;
+        })
+      : {};
+    if (editingObject) {
+      const applyEndOverride = (
+        end: "A" | "B",
+        params: FiberEndKindParams | null | undefined,
+      ) => {
+        if (!params) return;
+        const r = resolveEndpointFromKindParams(end, params);
+        if (!r) return;
+        const idx = end === "A" ? 0 : nodes.length - 1;
+        nodes[idx] = {
+          posMm: r.posMmBody,
+          handleInMm: end === "B" ? r.handleMmBody : nodes[idx].handleInMm,
+          handleOutMm: end === "A" ? r.handleMmBody : nodes[idx].handleOutMm,
+        };
+      };
+      applyEndOverride("A", fiberPeKindParams.endA ?? null);
+      applyEndOverride("B", fiberPeKindParams.endB ?? null);
+    }
     const radiusMm =
       typeof objProps.radiusMm === "number" ? objProps.radiusMm :
       typeof compProps.radiusMm === "number" ? compProps.radiusMm : 1.0;
@@ -4091,7 +4328,17 @@ export function DigitalTwinViewer({
     ];
 
     // Dim every component except the fiber being edited.
-    const dimmedRecords: { material: THREE.Material; prevOpacity: number; prevTransparent: boolean }[] = [];
+    //
+    // Keyed by Material identity (Map, not Array) so a singleton material
+    // shared across many meshes (e.g. ddsBrassMat / ddsCableBlackMat in
+    // three/loadAsset.ts — used by every SMA connector + cable jacket in
+    // the DDS chassis family) is recorded EXACTLY ONCE with its true
+    // pre-dim opacity. With the old array, mesh A pushed {prev: 1.0}
+    // and mutated mat → 0.18, then mesh B pushed {prev: 0.18} (reading
+    // the now-mutated value), and cleanup's last-write-wins restored
+    // the material to 0.18 instead of 1.0 — the singleton stayed
+    // dimmed forever after exiting fiber edit.
+    const dimmedRecords = new Map<THREE.Material, { prevOpacity: number; prevTransparent: boolean }>();
     componentGroup.traverse((node) => {
       const mesh = node as THREE.Mesh;
       if (!mesh.isMesh || !mesh.material) return;
@@ -4103,15 +4350,15 @@ export function DigitalTwinViewer({
       const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       for (const m of mats) {
         const mat = m as THREE.Material & { opacity?: number; transparent?: boolean };
-        if (typeof mat.opacity === "number") {
-          dimmedRecords.push({
-            material: mat,
+        if (typeof mat.opacity !== "number") continue;
+        if (!dimmedRecords.has(mat)) {
+          dimmedRecords.set(mat, {
             prevOpacity: mat.opacity,
             prevTransparent: !!mat.transparent,
           });
-          mat.transparent = true;
-          mat.opacity = 0.18;
         }
+        mat.transparent = true;
+        mat.opacity = 0.18;
       }
     });
 
@@ -4133,8 +4380,15 @@ export function DigitalTwinViewer({
     const anchorGeometry = new THREE.SphereGeometry(0.045, 16, 12); // 4.5 mm
     const handleTipGeometry = new THREE.SphereGeometry(0.028, 14, 10); // 2.8 mm
 
-    // Track all gizmo meshes so we can find them by raycast.
-    type AnchorRef = { mesh: THREE.Mesh; nodeIndex: number };
+    // Track all gizmo meshes so we can find them by raycast. All
+    // anchors live on the fiber body wrapper. Endpoint spheres sit at
+    // the junction (= node.posMm) — design 2026-05-17: tension at the
+    // ends is locked along ferrule outward, so no visual offset / no
+    // handle UI.
+    type AnchorRef = {
+      mesh: THREE.Mesh;
+      nodeIndex: number;
+    };
     type HandleRef = {
       mesh: THREE.Mesh;
       line: THREE.Line;
@@ -4143,11 +4397,15 @@ export function DigitalTwinViewer({
     };
     const anchorRefs: AnchorRef[] = [];
     const handleRefs: HandleRef[] = [];
+    // 2026-05-17: endpoint anchor visual offset removed (tension is
+    // locked, no separate "handle" UI — sphere sits at the junction).
 
     // Build the gizmo overlay. Re-built from the current `nodes` array each
     // time we need to refresh after a structural change (insert / delete).
     const buildGizmo = () => {
-      // Tear down any previous gizmo state.
+      // Tear down any previous gizmo state. All anchors live on the
+      // fiber body wrapper (alembic 0056 reverted the cross-wrapper
+      // parenting attempt — fiber_end SceneObjects no longer exist).
       for (const a of anchorRefs) (fiberWrapper as THREE.Object3D).remove(a.mesh);
       for (const h of handleRefs) {
         (fiberWrapper as THREE.Object3D).remove(h.mesh);
@@ -4157,6 +4415,11 @@ export function DigitalTwinViewer({
       anchorRefs.length = 0;
       handleRefs.length = 0;
 
+      // Design 2026-05-17: endpoint tension is FIXED direction (body
+      // Bezier tangent always points along the ferrule's outward axis).
+      // No editable handle at endpoints; the anchor sphere sits AT the
+      // junction (= ferrule back = wire-meets-connector point). Interior
+      // nodes keep normal anchor + handle editing.
       nodes.forEach((node, index) => {
         const isEnd = index === 0 || index === nodes.length - 1;
         const anchor = new THREE.Mesh(anchorGeometry, isEnd ? anchorEndMat : anchorInteriorMat);
@@ -4167,6 +4430,19 @@ export function DigitalTwinViewer({
         anchorRefs.push({ mesh: anchor, nodeIndex: index });
 
         const buildHandle = (side: "in" | "out", offsetMm: [number, number, number]) => {
+          // Both line endpoints live in the BODY wrapper's local frame
+          // (line starts at junction, ends at junction + handle). The
+          // anchor sphere may be parented elsewhere (fiber_end wrapper
+          // for endpoint nodes), so we cannot use anchor.position as
+          // the line origin — its coords would be in the wrong frame.
+          // Anchoring at the junction is also the physically correct
+          // visualisation: the line represents the body's Bezier
+          // tangent at the spline endpoint = junction.
+          const junctionLocal = labMmToLocalThree(
+            node.posMm[0],
+            node.posMm[1],
+            node.posMm[2],
+          );
           const tipPos = labMmToLocalThree(
             node.posMm[0] + offsetMm[0],
             node.posMm[1] + offsetMm[1],
@@ -4179,7 +4455,7 @@ export function DigitalTwinViewer({
           tip.renderOrder = 1001;
           (fiberWrapper as THREE.Object3D).add(tip);
           const lineGeom = new THREE.BufferGeometry().setFromPoints([
-            anchor.position.clone(),
+            junctionLocal.clone(),
             tipPos.clone(),
           ]);
           const line = new THREE.Line(lineGeom, handleLineMat);
@@ -4188,6 +4464,11 @@ export function DigitalTwinViewer({
           (fiberWrapper as THREE.Object3D).add(line);
           handleRefs.push({ mesh: tip, line, nodeIndex: index, side });
         };
+        // All nodes (including endpoints) get the editable handle pair.
+        // For endpoints the handle represents the body-local
+        // wire-extension direction (= tensionHandleMm); the
+        // user can drag the tip to retune. Interior nodes show both
+        // in / out handles for full Bezier control.
         if (node.handleOutMm) buildHandle("out", node.handleOutMm);
         if (node.handleInMm) buildHandle("in", node.handleInMm);
       });
@@ -4308,16 +4589,25 @@ export function DigitalTwinViewer({
     // Update the line geometry connecting an anchor to one of its handle
     // tips, after the anchor or tip has moved.
     const refreshHandleLine = (handle: HandleRef) => {
-      const anchor = anchorRefs.find((a) => a.nodeIndex === handle.nodeIndex);
-      if (!anchor) return;
-      const points = [anchor.mesh.position.clone(), handle.mesh.position.clone()];
+      // Line start = junction in body wrapper local. Anchor.mesh.position
+      // would be wrong for endpoint anchors (parented to fiber_end
+      // wrapper) — its coords are in the fiber_end's body-local frame,
+      // not the fiber body wrapper's. Use node.posMm consistently.
+      const node = nodes[handle.nodeIndex];
+      if (!node) return;
+      const startLocal = labMmToLocalThree(node.posMm[0], node.posMm[1], node.posMm[2]);
+      const points = [startLocal, handle.mesh.position.clone()];
       handle.line.geometry.dispose();
       handle.line.geometry = new THREE.BufferGeometry().setFromPoints(points);
     };
 
     // Live tube rebuild during a drag. Also re-applies the FC connector
-    // transforms so the heads track the endpoint anchor and tangent
-    // direction as the user drags A.handleOut / B.handleIn.
+    // transforms. alembic 0056: ferrules are placed at kindParams.endA/B
+    // posMm and oriented from tensionHandleMm instead of derived from
+    // spline tangent.
+    // For endpoint anchor drags we use the in-flight node.posMm (= new
+    // junction position) but keep the rotation from kindParams (only
+    // the position is being dragged).
     const rebuildTube = () => {
       const path = buildFiberCurvePath(nodes);
       const tubularSegments = Math.max(64, (nodes.length - 1) * 32);
@@ -4328,7 +4618,32 @@ export function DigitalTwinViewer({
       const wrapper = fiberWrapper as THREE.Object3D;
       for (const child of wrapper.children) {
         const tag = child.userData?.fiberConnectorEndpoint;
-        if (tag === "A" || tag === "B") applyFiberConnectorTransform(child, nodes, tag);
+        if (tag !== "A" && tag !== "B") continue;
+        const kpEnd = tag === "A" ? fiberPeKindParams.endA : fiberPeKindParams.endB;
+        if (kpEnd && Array.isArray(kpEnd.posMm) && kpEnd.posMm.length === 3) {
+          // Use live node.posMm for position (catches in-flight endpoint
+          // drag) and keep the ferrule direction tied to tensionHandleMm.
+          const nodeIdx = tag === "A" ? 0 : nodes.length - 1;
+          const livePosMm = nodes[nodeIdx].posMm;
+          const rot = Array.isArray(kpEnd.rotDeg) && kpEnd.rotDeg.length === 3
+            ? kpEnd.rotDeg
+            : [0, 0, 0];
+          const tension = Array.isArray(kpEnd.tensionHandleMm) && kpEnd.tensionHandleMm.length === 3
+            ? kpEnd.tensionHandleMm
+            : (tag === "A" ? nodes[0].handleOutMm : nodes[nodes.length - 1].handleInMm) ?? [0, 30, 0];
+          child.position.set(
+            livePosMm[0] / 100,
+            livePosMm[2] / 100,
+            -livePosMm[1] / 100,
+          );
+          applyFiberFerruleOrientation(
+            child,
+            [tension[0] as number, tension[1] as number, tension[2] as number],
+            [rot[0] as number, rot[1] as number, rot[2] as number],
+          );
+        } else {
+          applyFiberConnectorTransform(child, nodes, tag);
+        }
       }
     };
 
@@ -4336,8 +4651,20 @@ export function DigitalTwinViewer({
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
     type DragKind =
-      | { kind: "anchor"; nodeIndex: number; startAnchorWorld: THREE.Vector3 }
-      | { kind: "handle"; nodeIndex: number; side: "in" | "out" };
+      | { kind: "anchor"; nodeIndex: number; grabOffsetLocal: THREE.Vector3 }
+      // alembic 0056: dragging an endpoint anchor (node 0 / N-1) in
+      // node-edit mode updates fiber.kindParams.endA/endB.posMm
+      // (body-local frame). Spline tube and ferrule visually follow
+      // the cursor live; on pointerup the new body-local posMm is
+      // committed to the fiber PE via upsertOpticalElement.
+      | { kind: "endpointObject"; nodeIndex: number; endRole: "A" | "B"; latestPosMmBody: [number, number, number]; grabOffsetLocal: THREE.Vector3 }
+      // alembic 0056: dragging the HANDLE at an endpoint updates
+      // fiber.kindParams.endA/endB.tensionHandleMm (end's body-local
+      // frame). On commit the new body Bezier handle (cursor offset
+      // in body-local mm) is mapped back via bodyHandleToTensionHandle
+      // and written to the PE.
+      | { kind: "handle"; nodeIndex: number; side: "in" | "out"; grabOffsetLocal: THREE.Vector3 }
+      | { kind: "endpointHandle"; nodeIndex: number; side: "in" | "out"; endRole: "A" | "B"; grabOffsetLocal: THREE.Vector3 };
     let drag: DragKind | null = null;
     let dragPlane: THREE.Plane | null = null;
 
@@ -4352,6 +4679,14 @@ export function DigitalTwinViewer({
       const camDir = new THREE.Vector3();
       camera.getWorldDirection(camDir);
       return new THREE.Plane(camDir.clone().negate(), camDir.clone().dot(worldPos));
+    };
+
+    const localPointOnPlane = (plane: THREE.Plane | null) => {
+      if (!plane) return null;
+      const worldHit = new THREE.Vector3();
+      if (!raycaster.ray.intersectPlane(plane, worldHit)) return null;
+      const wrapperInv = new THREE.Matrix4().copy((fiberWrapper as THREE.Object3D).matrixWorld).invert();
+      return worldHit.applyMatrix4(wrapperInv);
     };
 
     const onContextMenu = (event: MouseEvent) => event.preventDefault();
@@ -4382,21 +4717,24 @@ export function DigitalTwinViewer({
         const tip = handleHits[0].object as THREE.Mesh;
         const nodeIndex = tip.userData.fiberHandleNodeIndex as number;
         const side = tip.userData.fiberHandleSide as "in" | "out";
-        // Endpoint handles are pinned in Phase fiber-split — the spline
-        // direction at each end derives from the paired fiber_end
-        // SceneObject's rotation (see resolveLinkedFiberEndpoint).
-        // Enforces `endpointSplineNodesLocked: true` on the `fiber`
-        // capability profile (kinds/_capabilityProfile.ts). To change
-        // the endpoint tangent the user rotates the fiber_end object.
-        if (nodeIndex === 0 || nodeIndex === nodes.length - 1) {
-          event.preventDefault();
-          event.stopPropagation();
-          return;
-        }
+        const isEndpoint = nodeIndex === 0 || nodeIndex === nodes.length - 1;
         const wp = new THREE.Vector3();
         tip.getWorldPosition(wp);
         dragPlane = screenAlignedPlaneAt(wp);
-        drag = { kind: "handle", nodeIndex, side };
+        const localHit = localPointOnPlane(dragPlane);
+        const grabOffsetLocal = localHit
+          ? tip.position.clone().sub(localHit)
+          : new THREE.Vector3();
+        // Endpoint handle drag routes commit to fiber PE.kindParams.
+        // endA/endB.tensionHandleMm; interior handle drag commits to
+        // fiber.properties.fiberNodes[i].handleIn/OutMm via the legacy
+        // updateFiberNodes path.
+        if (isEndpoint) {
+          const endRole: "A" | "B" = nodeIndex === 0 ? "A" : "B";
+          drag = { kind: "endpointHandle", nodeIndex, side, endRole, grabOffsetLocal };
+        } else {
+          drag = { kind: "handle", nodeIndex, side, grabOffsetLocal };
+        }
         if (controls) controls.enabled = false;
         try { renderer.domElement.setPointerCapture(event.pointerId); } catch { /* ignore */ }
         event.preventDefault();
@@ -4410,12 +4748,39 @@ export function DigitalTwinViewer({
       if (anchorHits.length > 0) {
         const anchor = anchorHits[0].object as THREE.Mesh;
         const nodeIndex = anchor.userData.fiberAnchorIndex as number;
-        // Endpoint anchor nodes are pinned to the paired fiber_end
-        // SceneObjects' lab poses; to move an end the user drags the
-        // fiber_end object (gizmo / Object panel) instead. Enforces
-        // `endpointSplineNodesLocked: true` on the `fiber` capability
-        // profile.
-        if (nodeIndex === 0 || nodeIndex === nodes.length - 1) {
+        const isEndpoint = nodeIndex === 0 || nodeIndex === nodes.length - 1;
+        // alembic 0056: endpoint anchor drag updates the fiber PE's
+        // kindParams.endA/endB.posMm in body-local frame. Initial
+        // latestPosMmBody = the current node.posMm = fiber.kindParams.
+        // endA/B.posMm (resolver already wrote it). Click-without-drag
+        // commits the same value → no-op.
+        if (isEndpoint) {
+          const endRole: "A" | "B" = nodeIndex === 0 ? "A" : "B";
+          const wp = new THREE.Vector3();
+          anchor.getWorldPosition(wp);
+          dragPlane = screenAlignedPlaneAt(wp);
+          const localHit = localPointOnPlane(dragPlane);
+          const anchorLocal = labMmToLocalThree(
+            nodes[nodeIndex].posMm[0],
+            nodes[nodeIndex].posMm[1],
+            nodes[nodeIndex].posMm[2],
+          );
+          const grabOffsetLocal = localHit
+            ? anchorLocal.clone().sub(localHit)
+            : new THREE.Vector3();
+          drag = {
+            kind: "endpointObject",
+            nodeIndex,
+            endRole,
+            latestPosMmBody: [
+              nodes[nodeIndex].posMm[0],
+              nodes[nodeIndex].posMm[1],
+              nodes[nodeIndex].posMm[2],
+            ],
+            grabOffsetLocal,
+          };
+          if (controls) controls.enabled = false;
+          try { renderer.domElement.setPointerCapture(event.pointerId); } catch { /* ignore */ }
           event.preventDefault();
           event.stopPropagation();
           return;
@@ -4423,7 +4788,16 @@ export function DigitalTwinViewer({
         const wp = new THREE.Vector3();
         anchor.getWorldPosition(wp);
         dragPlane = screenAlignedPlaneAt(wp);
-        drag = { kind: "anchor", nodeIndex, startAnchorWorld: wp.clone() };
+        const localHit = localPointOnPlane(dragPlane);
+        const anchorLocal = labMmToLocalThree(
+          nodes[nodeIndex].posMm[0],
+          nodes[nodeIndex].posMm[1],
+          nodes[nodeIndex].posMm[2],
+        );
+        const grabOffsetLocal = localHit
+          ? anchorLocal.clone().sub(localHit)
+          : new THREE.Vector3();
+        drag = { kind: "anchor", nodeIndex, grabOffsetLocal };
         if (controls) controls.enabled = false;
         try { renderer.domElement.setPointerCapture(event.pointerId); } catch { /* ignore */ }
         event.preventDefault();
@@ -4438,40 +4812,51 @@ export function DigitalTwinViewer({
       const worldHit = new THREE.Vector3();
       if (!raycaster.ray.intersectPlane(dragPlane, worldHit)) return;
       const wrapperInv = new THREE.Matrix4().copy((fiberWrapper as THREE.Object3D).matrixWorld).invert();
-      const localHit = worldHit.clone().applyMatrix4(wrapperInv);
+      const localHit = worldHit.clone().applyMatrix4(wrapperInv).add(drag.grabOffsetLocal);
 
-      if (drag.kind === "anchor") {
+      if (drag.kind === "anchor" || drag.kind === "endpointObject") {
         const node = nodes[drag.nodeIndex];
+        const anchorRef = anchorRefs.find((a) => a.nodeIndex === drag!.nodeIndex);
         const oldAnchorLocal = labMmToLocalThree(node.posMm[0], node.posMm[1], node.posMm[2]);
         const delta = localHit.clone().sub(oldAnchorLocal);
-        // Update anchor position
         const newPosLab = localThreeToLabMm(localHit);
         node.posMm = [newPosLab[0], newPosLab[1], newPosLab[2]];
-        // Move the anchor mesh
-        const anchorRef = anchorRefs.find((a) => a.nodeIndex === drag!.nodeIndex);
         if (anchorRef) anchorRef.mesh.position.copy(localHit);
-        // Move BOTH handle tips with the anchor (handles store offsets).
         for (const h of handleRefs) {
           if (h.nodeIndex !== drag.nodeIndex) continue;
           h.mesh.position.add(delta);
           refreshHandleLine(h);
         }
         rebuildTube();
+        // alembic 0056: endpoint drag commit target is the body-local
+        // junction position (= node.posMm we just wrote). Stash for the
+        // pointerup commit to fiber.kindParams.endA/B.posMm.
+        if (drag.kind === "endpointObject") {
+          drag.latestPosMmBody = [
+            node.posMm[0],
+            node.posMm[1],
+            node.posMm[2],
+          ];
+        }
         return;
       }
 
-      // Handle tip drag — adjust the offset on this side only.
+      // Handle tip drag — adjust the offset on this side only. Shared
+      // by both interior `handle` drags and 7-part `endpointHandle`
+      // drags (the visual is identical; the commit path diverges in
+      // onPointerUp).
       const node = nodes[drag.nodeIndex];
       const anchorLocal = labMmToLocalThree(node.posMm[0], node.posMm[1], node.posMm[2]);
       const offsetLocal = localHit.clone().sub(anchorLocal);
       const offsetMm = offsetLocalThreeToLabMm(offsetLocal);
-      if (drag.side === "in") {
+      const dragSide = (drag as { side: "in" | "out" }).side;
+      if (dragSide === "in") {
         node.handleInMm = offsetMm;
       } else {
         node.handleOutMm = offsetMm;
       }
       const handleRef = handleRefs.find(
-        (h) => h.nodeIndex === drag!.nodeIndex && h.side === (drag as { side: "in" | "out" }).side,
+        (h) => h.nodeIndex === drag!.nodeIndex && h.side === dragSide,
       );
       if (handleRef) {
         handleRef.mesh.position.copy(localHit);
@@ -4482,10 +4867,108 @@ export function DigitalTwinViewer({
 
     const onPointerUp = (event: PointerEvent) => {
       if (!drag) return;
+      const finishedDrag = drag;
       drag = null;
       dragPlane = null;
       if (controls) controls.enabled = true;
       try { renderer.domElement.releasePointerCapture(event.pointerId); } catch { /* ignore */ }
+      if (finishedDrag.kind === "endpointObject") {
+        // alembic 0056: commit the new body-local posMm to fiber
+        // PE.kindParams.endA/endB. The resolver re-derives the spline
+        // endpoint from the PE on next render → ferrule + spline both
+        // pick up the new pose.
+        const storeState = useSceneStore.getState();
+        const fiberObj = storeState.scene.objects.find(
+          (o) => o.componentId === fiberEditingComponentId,
+        );
+        if (!fiberObj) return;
+        const fiberPe = storeState.scene.physicsElements.find(
+          (p) => p.objectId === fiberObj.id && p.elementKind === "fiber",
+        );
+        if (!fiberPe) return;
+        const kp = { ...(fiberPe.kindParams ?? {}) } as Record<string, unknown>;
+        const endKey = finishedDrag.endRole === "A" ? "endA" : "endB";
+        const existing =
+          (kp[endKey] && typeof kp[endKey] === "object")
+            ? (kp[endKey] as Record<string, unknown>)
+            : {};
+        // posMm IS the spline endpoint (= where the dragged anchor
+        // sphere sits = back of connector = junction with wire). No
+        // tip-offset conversion needed under the clarified contract.
+        kp[endKey] = {
+          ...existing,
+          posMm: [
+            finishedDrag.latestPosMmBody[0],
+            finishedDrag.latestPosMmBody[1],
+            finishedDrag.latestPosMmBody[2],
+          ] as [number, number, number],
+        };
+        void (async () => {
+          await storeState.upsertOpticalElement({
+            objectId: fiberObj.id,
+            elementKind: "fiber",
+            kindParams: kp,
+          });
+          // Sync fiberNodes from kindParams so the ray tracer + legacy
+          // panel see the new tip position.
+          const refreshed = useSceneStore.getState().scene.objects.find((o) => o.id === fiberObj.id);
+          const existingNodes = (refreshed?.properties as { fiberNodes?: FiberNodePersistent[] } | null)?.fiberNodes;
+          const nextNodes = syncFiberNodesFromKindParams(
+            kp.endA as FiberEndKindParamsShape | null,
+            kp.endB as FiberEndKindParamsShape | null,
+            existingNodes ?? undefined,
+          );
+          await storeState.updateFiberNodes(fiberEditingComponentId, nextNodes);
+        })();
+        return;
+      }
+      if (finishedDrag.kind === "endpointHandle") {
+        // alembic 0056: the visual handle = body's Bezier tangent at
+        // the spline endpoint. Map back through bodyHandleToTensionHandle
+        // to recover the body-local tensionHandleMm vector for
+        // kindParams.endA/B.
+        const node = nodes[finishedDrag.nodeIndex];
+        const newBodyHandleMm =
+          finishedDrag.side === "in" ? node.handleInMm : node.handleOutMm;
+        if (!newBodyHandleMm) return;
+        const storeState = useSceneStore.getState();
+        const fiberObj = storeState.scene.objects.find(
+          (o) => o.componentId === fiberEditingComponentId,
+        );
+        if (!fiberObj) return;
+        const fiberPe = storeState.scene.physicsElements.find(
+          (p) => p.objectId === fiberObj.id && p.elementKind === "fiber",
+        );
+        if (!fiberPe) return;
+        const kp = { ...(fiberPe.kindParams ?? {}) } as Record<string, unknown>;
+        const endKey = finishedDrag.endRole === "A" ? "endA" : "endB";
+        const existing =
+          (kp[endKey] && typeof kp[endKey] === "object")
+            ? (kp[endKey] as FiberEndKindParams & Record<string, unknown>)
+            : ({} as FiberEndKindParams & Record<string, unknown>);
+        const tensionHandleMm = bodyHandleToTensionHandle(existing, [
+          newBodyHandleMm[0],
+          newBodyHandleMm[1],
+          newBodyHandleMm[2],
+        ]);
+        kp[endKey] = { ...existing, tensionHandleMm };
+        void (async () => {
+          await storeState.upsertOpticalElement({
+            objectId: fiberObj.id,
+            elementKind: "fiber",
+            kindParams: kp,
+          });
+          const refreshed = useSceneStore.getState().scene.objects.find((o) => o.id === fiberObj.id);
+          const existingNodes = (refreshed?.properties as { fiberNodes?: FiberNodePersistent[] } | null)?.fiberNodes;
+          const nextNodes = syncFiberNodesFromKindParams(
+            kp.endA as FiberEndKindParamsShape | null,
+            kp.endB as FiberEndKindParamsShape | null,
+            existingNodes ?? undefined,
+          );
+          await storeState.updateFiberNodes(fiberEditingComponentId, nextNodes);
+        })();
+        return;
+      }
       void updateFiberNodes(
         fiberEditingComponentId,
         nodes.map((n) => ({
@@ -4594,11 +5077,11 @@ export function DigitalTwinViewer({
       anchorInteriorMat.dispose();
       handleTipMat.dispose();
       handleLineMat.dispose();
-      for (const record of dimmedRecords) {
-        (record.material as THREE.Material & { opacity: number; transparent: boolean }).opacity =
-          record.prevOpacity;
-        (record.material as THREE.Material & { opacity: number; transparent: boolean }).transparent =
-          record.prevTransparent;
+      for (const [material, prev] of dimmedRecords) {
+        (material as THREE.Material & { opacity: number; transparent: boolean }).opacity =
+          prev.prevOpacity;
+        (material as THREE.Material & { opacity: number; transparent: boolean }).transparent =
+          prev.prevTransparent;
       }
     };
   }, [
@@ -4684,7 +5167,11 @@ export function DigitalTwinViewer({
 
     // Dim every component except the rf_cable being edited (same dimming
     // pattern as fiber edit so the user's focus stays on the active cable).
-    const dimmedRecords: { material: THREE.Material; prevOpacity: number; prevTransparent: boolean }[] = [];
+    //
+    // See the fiber-edit dim above for why this is a Map keyed on
+    // Material identity instead of an array — same shared-singleton
+    // restore bug, same fix.
+    const dimmedRecords = new Map<THREE.Material, { prevOpacity: number; prevTransparent: boolean }>();
     componentGroup.traverse((node) => {
       const mesh = node as THREE.Mesh;
       if (!mesh.isMesh || !mesh.material) return;
@@ -4696,15 +5183,15 @@ export function DigitalTwinViewer({
       const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       for (const m of mats) {
         const mat = m as THREE.Material & { opacity?: number; transparent?: boolean };
-        if (typeof mat.opacity === "number") {
-          dimmedRecords.push({
-            material: mat,
+        if (typeof mat.opacity !== "number") continue;
+        if (!dimmedRecords.has(mat)) {
+          dimmedRecords.set(mat, {
             prevOpacity: mat.opacity,
             prevTransparent: !!mat.transparent,
           });
-          mat.transparent = true;
-          mat.opacity = 0.18;
         }
+        mat.transparent = true;
+        mat.opacity = 0.18;
       }
     });
 
@@ -5039,11 +5526,11 @@ export function DigitalTwinViewer({
       anchorInteriorMat.dispose();
       handleTipMat.dispose();
       handleLineMat.dispose();
-      for (const record of dimmedRecords) {
-        (record.material as THREE.Material & { opacity: number; transparent: boolean }).opacity =
-          record.prevOpacity;
-        (record.material as THREE.Material & { opacity: number; transparent: boolean }).transparent =
-          record.prevTransparent;
+      for (const [material, prev] of dimmedRecords) {
+        (material as THREE.Material & { opacity: number; transparent: boolean }).opacity =
+          prev.prevOpacity;
+        (material as THREE.Material & { opacity: number; transparent: boolean }).transparent =
+          prev.prevTransparent;
       }
     };
   }, [
@@ -5247,6 +5734,29 @@ export function DigitalTwinViewer({
           re-render churn during a drag). */}
       <div ref={marqueeRef} className="viewer-marquee" />
       <ViewerCursorEditor panelKey={panelKey} />
+      <div className="viewer-home-controls" role="group" aria-label="Custom Home view">
+        <button
+          type="button"
+          className="viewer-home-button"
+          onClick={saveCurrentAsHome}
+          title="Save current view as Home (overrides the H button's default framing)"
+          aria-label="Save current view as Home"
+        >
+          <Bookmark size={14} />
+          <span>Set Home</span>
+        </button>
+        {customHomeSaved && (
+          <button
+            type="button"
+            className="viewer-home-button viewer-home-clear"
+            onClick={clearCustomHome}
+            title="Clear saved Home — H reverts to default framing"
+            aria-label="Clear saved Home"
+          >
+            <BookmarkX size={14} />
+          </button>
+        )}
+      </div>
       <ToolbarHint displayMode={displayMode} gizmoMode={gizmoMode} />
       <div className="viewer-display-modes" role="group" aria-label="Display mode">
         {DISPLAY_MODE_OPTIONS.map(({ mode, title, Icon }) => (

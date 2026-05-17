@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -7,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.db import AsyncSessionLocal
 from app.routers import (
+    agent_sessions,
     app_settings,
     assembly_relations,
     assets,
@@ -36,7 +40,12 @@ from app.routers import (
     touchstone,
 )
 from app.routers.collections import get_master_collection
+from app.services.agent_session import scan_for_abandoned
 from app.websocket import router as websocket_router
+
+
+_log = logging.getLogger(__name__)
+_SWEEPER_INTERVAL_SEC = 60
 
 
 app = FastAPI(title="Quantum Memory Digital Twin API")
@@ -85,6 +94,9 @@ app.include_router(
 )
 app.include_router(app_settings.router, prefix="/api/app-settings", tags=["app_settings"])
 app.include_router(scene.router, prefix="/api", tags=["scene"])
+app.include_router(
+    agent_sessions.router, prefix="/api/agent-sessions", tags=["agent_sessions"]
+)
 app.include_router(websocket_router, prefix="/ws", tags=["websocket"])
 
 
@@ -92,6 +104,41 @@ app.include_router(websocket_router, prefix="/ws", tags=["websocket"])
 async def _ensure_master_collection() -> None:
     async with AsyncSessionLocal() as session:
         await get_master_collection(session)
+
+
+async def _sweep_abandoned_sessions_loop() -> None:
+    """Periodically reaps AI binding sessions whose heartbeat has lapsed.
+
+    First sweep runs immediately so a backend restart after a crash
+    cleans up zombie 'running' rows before any user could start a new
+    session. Thereafter the loop sleeps ``_SWEEPER_INTERVAL_SEC``
+    seconds between sweeps.
+
+    Each sweep gets its own DB session — the long-running loop must
+    not hold a single connection open for hours.
+    """
+    while True:
+        try:
+            async with AsyncSessionLocal() as session:
+                abandoned = await scan_for_abandoned(session)
+            if abandoned:
+                _log.info(
+                    "agent_session_sweeper: rolled back %d abandoned session(s): %s",
+                    len(abandoned),
+                    [str(sid) for sid in abandoned],
+                )
+        except Exception:
+            # A bad sweep must not kill the loop — the next tick gets
+            # a fresh DB session and tries again.
+            _log.exception("agent_session_sweeper: sweep failed")
+        await asyncio.sleep(_SWEEPER_INTERVAL_SEC)
+
+
+@app.on_event("startup")
+async def _start_agent_session_sweeper() -> None:
+    # fire-and-forget — the task lives for the lifetime of the FastAPI
+    # process; uvicorn shutdown cancels it cleanly when the loop closes.
+    asyncio.create_task(_sweep_abandoned_sessions_loop())
 
 
 @app.get("/api/health")

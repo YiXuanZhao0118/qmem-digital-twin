@@ -101,32 +101,20 @@ const OVERRIDES: Record<string, Partial<ComponentCapabilityProfile>> = {
     showAlignPanel: false,
     showRemoveObjectButton: false,
   },
-  // Phase fiber-split: a fiber is now three SceneObjects.
-  //   - `fiber` body wrapper: lab pose fully derived from the two
-  //     paired fiber_end SceneObjects (mirror of rf_cable). Hidden in
-  //     Outliner, no transform handles, no Remove button. Endpoint
-  //     spline nodes pinned to the paired ends; interior nodes
-  //     remain editable in node-edit mode.
-  //   - `fiber_end`: a normal first-class SceneObject — falls back to
-  //     the DEFAULT profile (lock + rigid-group + align + pose + gizmo
-  //     + Remove). The empty override entry below is intentional so
-  //     anyone grepping for "fiber" finds the explicit choice.
+  // alembic 0056 (2026-05-17): collapsed the 3-SceneObject fiber split.
+  // A fiber is back to a single SceneObject; End A / End B pose live
+  // inline on fiber PE.kindParams.endA / endB. Default profile applies
+  // (visible in Outliner, lockable, rigid-group participant, gizmo
+  // attachable, etc.) — the only override is endpointSplineNodesLocked
+  // so the spline endpoints (= where each ferrule sits) are only
+  // adjusted via the per-end Align A / Align B buttons, not by free-
+  // dragging the endpoint anchor sphere. Interior nodes stay draggable.
   fiber: {
-    // Fiber body is visible in Outliner and movable as a whole — picking
-    // it up via the gizmo translates / rotates the entire fiber (body +
-    // both paired fiber_ends) as a unit. Cascade to ends lives in
-    // sceneStore.updateSceneObject; the resolver still re-derives spline
-    // endpoints from the ends' post-cascade pose, so the body's own pose
-    // visibly moves the whole assembly. Endpoint spline nodes stay
-    // pinned (only interior nodes draggable in node-edit mode).
-    //
-    // No per-body Align (fiber_end carries align), no per-body Remove
-    // (use the per-end Unlink path or the fiber-group collection deletion
-    // once that lands).
-    showAlignPanel: false,
-    showRemoveObjectButton: false,
     endpointSplineNodesLocked: true,
   },
+  // fiber_end kind retained in the manifest (legacy plugin) but no
+  // SceneObject of this kind can exist post-0056 (catalog Component
+  // archived). The empty override keeps grep-results contiguous.
   fiber_end: {},
 };
 

@@ -36,7 +36,8 @@ export type PanelId =
   | "optical-link-viewer"
   | "rf-link"
   | "solver-console"
-  | "magnetics";
+  | "magnetics"
+  | "ai-binding";
 
 const PANEL_DEFS: { id: PanelId; title: string; defaultLayout: PanelLayout }[] = [
   {
@@ -107,6 +108,16 @@ const PANEL_DEFS: { id: PanelId; title: string; defaultLayout: PanelLayout }[] =
     // Hidden by default; user opens via Window menu when they want to
     // compute a B-field on top of the current Optics scene.
     defaultLayout: { x: -340, y: 80, w: 320, h: 460, visible: false, collapsed: false, z: 2 },
+  },
+  {
+    id: "ai-binding",
+    title: "AI Binding",
+    // Two gates keep this hidden: VITE_ENABLE_AI_PANEL (App.tsx —
+    // controls whether the component mounts at all) and `visible: false`
+    // (this default — controls whether the panel is open even when
+    // mounted). To turn the feature back on for dev: set the env var
+    // and either flip `visible: true` here, or open via the Window menu.
+    defaultLayout: { x: -340, y: 80, w: 380, h: 520, visible: false, collapsed: false, z: 3 },
   },
 ];
 

@@ -140,7 +140,7 @@ import {
   computeSnapPositionForLink,
   validateOpticalLink,
 } from "../utils/beamPlacement";
-import { expandFiberBodyPose, expandPoseToRigidGroup, patchHasPoseChange } from "../utils/rigidGroup";
+import { expandPoseToRigidGroup, patchHasPoseChange } from "../utils/rigidGroup";
 import {
   connectorFamilyFromAnchor,
   domainsAreCompatible,
@@ -187,12 +187,17 @@ import type { TouchOpId } from "./_constants";
 // (try/catch + SSR guards) live next to each other and are unit-testable.
 import {
   loadActiveCollectionId,
+  loadHomeView,
   loadTransformCursorHidden,
   loadTransformCursorMm,
   saveActiveCollectionId,
+  saveHomeView,
   saveTransformCursorHidden,
   saveTransformCursorMm,
 } from "./_persistence";
+import type { HomeViewPose, HomeViewState } from "./_persistence";
+
+export type { HomeViewPose, HomeViewState } from "./_persistence";
 
 // Pure data helpers split out to `./_helpers`.
 import {
@@ -318,9 +323,15 @@ type SceneStore = {
    *  cursor still acts as orbit pivot when hidden — only the marker mesh
    *  is suppressed. */
   transformCursorHidden: { left: boolean; right: boolean };
+  /** Per-panel custom Home camera pose. `null` means "use the hard-coded
+   *  default" — the H button in the orientation gizmo then restores the
+   *  factory framing. Saved via setHomeView(panel, pose) and cleared via
+   *  setHomeView(panel, null). Persisted to localStorage. */
+  homeView: HomeViewState;
   setTransformPivotMode: (mode: TransformPivotMode) => void;
   setTransformCursorMm: (panel: "left" | "right", point: LabPoint) => void;
   toggleTransformCursorHidden: (panel: "left" | "right") => void;
+  setHomeView: (panel: "left" | "right", pose: HomeViewPose | null) => void;
   alignSelectedObjectsToCursor: () => Promise<void>;
   moveSelectedOriginsToCursor: () => Promise<void>;
   rotateSelectedObjectsAroundCursor: (axis: TransformAxis, degrees: number) => Promise<void>;
@@ -986,6 +997,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   transformPivotMode: "median",
   transformCursorMm: loadTransformCursorMm(),
   transformCursorHidden: loadTransformCursorHidden(),
+  homeView: loadHomeView(),
   overlayFlags: loadOverlayFlagsFromStorage(),
   session: freshSession(),
   activeViewId: loadActiveViewId(),
@@ -1008,6 +1020,14 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       const next = { ...state.transformCursorHidden, [panel]: !state.transformCursorHidden[panel] };
       saveTransformCursorHidden(next);
       return { transformCursorHidden: next };
+    });
+  },
+
+  setHomeView(panel, pose) {
+    set((state) => {
+      const next: HomeViewState = { ...state.homeView, [panel]: pose };
+      saveHomeView(next);
+      return { homeView: next };
     });
   },
 
@@ -2467,23 +2487,54 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     const compProps = state.scene.components.find((c) => c.id === componentId)?.properties as
       { fiberNodes?: FiberNodePersist[] } | undefined;
     const nodes = objProps?.fiberNodes ?? compProps?.fiberNodes;
-    if (!nodes || nodes.length < 2) return;
+    if (!nodes || nodes.length < 2 || !obj) return;
     const nextNodes = withFiberPortLabPose({
       end,
       nodes,
       pose: {
-        xMm: obj?.xMm ?? 0,
-        yMm: obj?.yMm ?? 0,
-        zMm: obj?.zMm ?? 0,
-        rxDeg: obj?.rxDeg ?? 0,
-        ryDeg: obj?.ryDeg ?? 0,
-        rzDeg: obj?.rzDeg ?? 0,
+        xMm: obj.xMm,
+        yMm: obj.yMm,
+        zMm: obj.zMm,
+        rxDeg: obj.rxDeg,
+        ryDeg: obj.ryDeg,
+        rzDeg: obj.rzDeg,
       },
       targetPosLab,
       targetOutwardLab,
     });
     if (nextNodes === nodes) return;
     await get().updateFiberNodes(componentId, nextNodes);
+
+    // Sync the touched endpoint into fiber PE.kindParams.endA/endB so
+    // the renderer (which reads kindParams) and the ray tracer + anchor
+    // resolver stay aligned with the panel edit. Under the 2026-05-17
+    // clarified contract: kindParams.endA/B.posMm = fiberNodes[idx].posMm
+    // (= back of connector = junction), tensionHandleMm = handle vector
+    // pointing into the body (handleOutMm for A, handleInMm for B).
+    const fpe = state.scene.physicsElements.find(
+      (e) => e.objectId === obj.id && e.elementKind === "fiber",
+    );
+    if (!fpe) return;
+    const idx = end === "A" ? 0 : nextNodes.length - 1;
+    const node = nextNodes[idx];
+    const tau = end === "A" ? node.handleOutMm : node.handleInMm;
+    if (!tau) return;
+    const kp = { ...(fpe.kindParams ?? {}) } as Record<string, unknown>;
+    const endKey = end === "A" ? "endA" : "endB";
+    const existing =
+      kp[endKey] && typeof kp[endKey] === "object"
+        ? (kp[endKey] as Record<string, unknown>)
+        : {};
+    kp[endKey] = {
+      ...existing,
+      posMm: [node.posMm[0], node.posMm[1], node.posMm[2]] as [number, number, number],
+      tensionHandleMm: [tau[0], tau[1], tau[2]] as [number, number, number],
+    };
+    await get().upsertOpticalElement({
+      objectId: obj.id,
+      elementKind: "fiber",
+      kindParams: kp,
+    });
   },
 
   async toggleFiberBeamEntry(objectId, end) {
@@ -2643,39 +2694,10 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     // because a partial rigid move would silently break the invariant the
     // user enables rigidTransform to get.
     if (currentObject && patchHasPoseChange(safePatch)) {
-      // Fiber body cascade comes first — moving a fiber body propagates
-      // the same rigid delta to both paired fiber_end SceneObjects so
-      // the whole fiber assembly translates / rotates as a unit.
-      // Independent of collection rigid_transform — the body+ends
-      // grouping is intrinsic to fiber-split. Reverse direction (moving
-      // a fiber_end alone) does NOT cascade, by design: per-end Align
-      // needs to move just the one end.
-      const fiberExpansion = expandFiberBodyPose(get().scene, currentObject, safePatch);
-      if (fiberExpansion?.kind === "rejectedLockedMember") {
-        // eslint-disable-next-line no-console
-        console.warn(
-          "[fiber] Move rejected — locked fiber_end(s):",
-          fiberExpansion.lockedIds,
-        );
-        return;
-      }
-      if (fiberExpansion?.kind === "group") {
-        const updated = await Promise.all(
-          fiberExpansion.entries.map((entry) => updateObjectApi(entry.id, entry.patch)),
-        );
-        set((current) => ({
-          selectedObjectId: objectId,
-          selectedObjectIds: current.selectedObjectIds.includes(objectId)
-            ? current.selectedObjectIds
-            : [objectId],
-          selectedComponentId: null,
-          scene: {
-            ...current.scene,
-            objects: upsertObjects(current.scene.objects, updated),
-          },
-        }));
-        return;
-      }
+      // alembic 0056 removed the fiber multi-SceneObject split; the
+      // fiber's two ends are now in-body kindParams.endA / endB sub-
+      // objects, transformed automatically by the wrapper's
+      // matrixWorld. No fiber-specific cascade needed at this layer.
       const expansion = expandPoseToRigidGroup(get().scene, currentObject, safePatch);
       if (expansion.kind === "rejectedLockedMember") {
         // eslint-disable-next-line no-console

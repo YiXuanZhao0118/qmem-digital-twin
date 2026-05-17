@@ -317,93 +317,14 @@ export function expandPoseToRigidGroup(
 }
 
 /** Fiber-body cascade — when a fiber `body` SceneObject is translated /
- *  rotated, the same rigid delta applies to both paired `fiber_end`
- *  SceneObjects (referenced via FiberParams.endAObjectId /
- *  endBObjectId), so the whole fiber assembly moves as a unit. Mirrors
- *  the math in `expandPoseToRigidGroup` but doesn't rely on a
- *  rigid_transform collection — the body+ends grouping is intrinsic to
- *  the fiber-split data model. Returns null when the leading object is
- *  not a fiber body, or has no paired ends yet (legacy data pre-Phase B
- *  migration).
- *
- *  The reverse direction does NOT cascade: moving a single fiber_end
- *  only moves that end (used for per-end Align), and the body's spline
- *  endpoint auto-re-derives from the moved end's lab pose via
- *  `resolveLinkedFiberEndpoint`. This asymmetry is what gives the user
- *  both "whole-fiber translate" (drag body) and "per-end align" (drag
- *  end) without conflict.
+ *  rotated, the body's two ends move with it automatically — they're
+ *  rendered as children of the fiber wrapper at body-local endA/endB
+ *  poses (alembic 0056 collapsed the multi-SceneObject split). No
+ *  rigid-group expansion needed at the SceneObject layer.
  */
-export function expandFiberBodyPose(
-  scene: SceneData,
-  leading: SceneObject,
-  patch: RigidPosePatch,
-): RigidExpansionResult | null {
-  const fiberPe = scene.physicsElements.find((e) => e.objectId === leading.id);
-  if (!fiberPe || fiberPe.elementKind !== "fiber") return null;
-  const kp = (fiberPe.kindParams ?? {}) as {
-    endAObjectId?: string | null;
-    endBObjectId?: string | null;
-  };
-  const endIds = [kp.endAObjectId, kp.endBObjectId].filter(
-    (id): id is string => typeof id === "string" && id.length > 0,
-  );
-  if (endIds.length === 0) return null;
-
-  const leadEntry: RigidExpansionEntry = { id: leading.id, patch };
-  const objsById = new Map(scene.objects.map((o) => [o.id, o]));
-  const lockedEnds = endIds.filter((id) => objsById.get(id)?.locked === true);
-  if (lockedEnds.length > 0) {
-    return { kind: "rejectedLockedMember", lockedIds: lockedEnds };
-  }
-
-  const oldPose = {
-    xMm: leading.xMm, yMm: leading.yMm, zMm: leading.zMm,
-    rxDeg: leading.rxDeg, ryDeg: leading.ryDeg, rzDeg: leading.rzDeg,
-  };
-  const newPose = {
-    xMm: patch.xMm ?? oldPose.xMm,
-    yMm: patch.yMm ?? oldPose.yMm,
-    zMm: patch.zMm ?? oldPose.zMm,
-    rxDeg: patch.rxDeg ?? oldPose.rxDeg,
-    ryDeg: patch.ryDeg ?? oldPose.ryDeg,
-    rzDeg: patch.rzDeg ?? oldPose.rzDeg,
-  };
-  const oldLeading = { ...leading, ...oldPose };
-  const newLeading = { ...leading, ...newPose };
-
-  const oldQ = sceneObjectToQuaternion(oldLeading);
-  const newQ = sceneObjectToQuaternion(newLeading);
-  const deltaQ = newQ.clone().multiply(oldQ.clone().invert());
-
-  const leadOldThree = labMmToThree(oldPose);
-  const leadNewThree = labMmToThree(newPose);
-  const deltaTThree = leadNewThree.clone().sub(leadOldThree);
-
-  const entries: RigidExpansionEntry[] = [leadEntry];
-  for (const id of endIds) {
-    const member = objsById.get(id);
-    if (!member) continue;
-    const memberThree = labMmToThree({ xMm: member.xMm, yMm: member.yMm, zMm: member.zMm });
-    const rel = memberThree.clone().sub(leadOldThree).applyQuaternion(deltaQ);
-    const newMemberThree = leadOldThree.clone().add(rel).add(deltaTThree);
-    const newMemberLab = threeToLabMm(newMemberThree);
-    const memberQ = sceneObjectToQuaternion(member);
-    const newMemberQ = deltaQ.clone().multiply(memberQ);
-    const e = new THREE.Euler().setFromQuaternion(newMemberQ, "YXZ");
-    const newRxDeg = THREE.MathUtils.radToDeg(e.x);
-    const newRzDeg = THREE.MathUtils.radToDeg(e.y);
-    const newRyDeg = -THREE.MathUtils.radToDeg(e.z);
-    entries.push({
-      id: member.id,
-      patch: {
-        xMm: newMemberLab.xMm,
-        yMm: newMemberLab.yMm,
-        zMm: newMemberLab.zMm,
-        rxDeg: newRxDeg,
-        ryDeg: newRyDeg,
-        rzDeg: newRzDeg,
-      },
-    });
-  }
-  return { kind: "group", entries };
-}
+// expandFiberBodyPose was removed in alembic 0056 (2026-05-17): a
+// fiber is a single SceneObject again, the two ends are
+// kindParams.endA / endB sub-objects on the fiber PE. Whole-fiber
+// translate / rotate is just a normal pose update on the one
+// SceneObject; the renderer transforms the in-body endA / endB poses
+// automatically via the wrapper's matrixWorld.

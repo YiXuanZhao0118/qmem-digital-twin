@@ -12,6 +12,13 @@ import { ModuleSwitcher } from "./ModuleSwitcher";
 import { ProjectLogo } from "./ProjectLogo";
 import { useWorkspace, type PanelId } from "./WorkspaceProvider";
 
+// Same feature flag as App.tsx — the AI Binding panel only appears in
+// the Window menu when VITE_ENABLE_AI_PANEL is on. Off by default so
+// users can't toggle a panel whose mount is feature-gated.
+const _viteEnv =
+  ((import.meta as unknown) as { env?: Record<string, string> }).env ?? {};
+const AI_PANEL_ENABLED = _viteEnv.VITE_ENABLE_AI_PANEL === "true";
+
 type TopBarProps = {
   children?: React.ReactNode; // SceneToolbar gets injected here
 };
@@ -61,7 +68,12 @@ export function TopBar({ children }: TopBarProps) {
           <div className="window-menu" role="menu">
             <div className="window-menu-section">Windows</div>
             {panelIds
-              .filter((id) => id !== "touch-coincidence" && id !== "beam-scope")
+              .filter(
+                (id) =>
+                  id !== "touch-coincidence" &&
+                  id !== "beam-scope" &&
+                  (id !== "ai-binding" || AI_PANEL_ENABLED),
+              )
               .map((id) => {
               const layout = layouts[id];
               return (

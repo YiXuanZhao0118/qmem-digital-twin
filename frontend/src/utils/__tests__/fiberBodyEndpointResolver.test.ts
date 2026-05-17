@@ -1,106 +1,91 @@
 /**
- * Pinning tests for resolveLinkedFiberEndpoint — the helper that re-
- * derives a fiber body's spline endpoint (node 0 or N-1) from its
- * paired fiber_end SceneObject's lab pose. Phase fiber-split (2026-05-16).
+ * Tests for resolveEndpointFromKindParams, the helper that turns a fiber
+ * PE's kindParams.endA/endB into a body-local spline endpoint and Bezier
+ * handle for the renderer.
  *
- * Invariants:
- *   I1. With identity body pose + identity end pose, the resolved
- *       endpoint position is the fiber_end's lab origin (= body
- *       origin), and the handle points along -Y (= INTO the spline,
- *       opposite of the +Y outward tip direction).
- *   I2. Translating the fiber_end SceneObject by Δ translates the
- *       resolved endpoint position by Δ (body-local space coincides
- *       with lab here because body pose is identity).
- *   I3. Rotating the fiber_end SceneObject rotates the handle accordingly
- *       (+90° about Z swaps -Y handle to +X).
- *   I4. With a non-identity BODY pose, the endpoint position is the
- *       fiber_end origin transformed back into body-local space (i.e.
- *       the lab→body inverse of the body's own pose applied to the
- *       end origin).
+ * Current contract: posMm is the optical emission point at the ferrule tip.
+ * tensionHandleMm is already the fiber BODY-local wire tangent; rotDeg is
+ * residual ferrule metadata and must not rotate the wire. The resolver
+ * returns the connector rear / spline endpoint derived from tip + tension.
  */
 import { describe, expect, it } from "vitest";
 
-import { resolveLinkedFiberEndpoint } from "../fiberBodyEndpointResolver";
-import type { SceneObject } from "../../types/digitalTwin";
+import {
+  bodyHandleToTensionHandle,
+  FIBER_END_CONNECTOR_LENGTH_MM,
+  resolveEndpointFromKindParams,
+} from "../fiberBodyEndpointResolver";
 
-function obj(
-  pose: Partial<Pick<SceneObject, "xMm" | "yMm" | "zMm" | "rxDeg" | "ryDeg" | "rzDeg">>,
-): SceneObject {
-  return {
-    id: "test",
-    componentId: "comp",
-    name: "test",
-    xMm: 0, yMm: 0, zMm: 0, rxDeg: 0, ryDeg: 0, rzDeg: 0,
-    visible: true, locked: false,
-    properties: {},
-    ...pose,
-  } as SceneObject;
-}
-
-const EPS = 1e-6;
-
-describe("resolveLinkedFiberEndpoint", () => {
-  it("I1: identity poses → endpoint at origin, handle along -Y", () => {
-    const r = resolveLinkedFiberEndpoint({
-      endpoint: "A",
-      fiberBody: obj({}),
-      fiberEnd: obj({}),
+describe("resolveEndpointFromKindParams", () => {
+  it("identity rotDeg: handle equals body-local tensionHandleMm", () => {
+    const r = resolveEndpointFromKindParams("A", {
+      posMm: [10, 20, 30],
+      rotDeg: [0, 0, 0],
+      tensionHandleMm: [0, 30, 0],
     });
     expect(r).not.toBeNull();
     if (!r) return;
-    expect(r.posMmBody[0]).toBeCloseTo(0, 6);
-    expect(r.posMmBody[1]).toBeCloseTo(0, 6);
-    expect(r.posMmBody[2]).toBeCloseTo(0, 6);
-    // Outward = +Y; handle (into spline) = -Y * 30 mm.
+    expect(r.posMmBody[0]).toBeCloseTo(10, 6);
+    expect(r.posMmBody[1]).toBeCloseTo(20 + FIBER_END_CONNECTOR_LENGTH_MM, 6);
+    expect(r.posMmBody[2]).toBeCloseTo(30, 6);
     expect(r.handleMmBody[0]).toBeCloseTo(0, 6);
-    expect(r.handleMmBody[1]).toBeCloseTo(-30, 6);
+    expect(r.handleMmBody[1]).toBeCloseTo(30, 6);
     expect(r.handleMmBody[2]).toBeCloseTo(0, 6);
   });
 
-  it("I2: translating fiber_end translates the endpoint", () => {
-    const r = resolveLinkedFiberEndpoint({
-      endpoint: "A",
-      fiberBody: obj({}),
-      fiberEnd: obj({ xMm: 5, yMm: -10, zMm: 7 }),
+  it("rotDeg does not rotate the wire tangent", () => {
+    const r = resolveEndpointFromKindParams("A", {
+      posMm: [0, 0, 0],
+      rotDeg: [0, 0, 90],
+      tensionHandleMm: [0, 30, 0],
     });
     expect(r).not.toBeNull();
     if (!r) return;
-    expect(r.posMmBody[0]).toBeCloseTo(5, 6);
-    expect(r.posMmBody[1]).toBeCloseTo(-10, 6);
-    expect(r.posMmBody[2]).toBeCloseTo(7, 6);
+    expect(r.posMmBody[0]).toBeCloseTo(0, 4);
+    expect(r.posMmBody[1]).toBeCloseTo(FIBER_END_CONNECTOR_LENGTH_MM, 4);
+    expect(r.posMmBody[2]).toBeCloseTo(0, 4);
+    expect(r.handleMmBody[0]).toBeCloseTo(0, 4);
+    expect(r.handleMmBody[1]).toBeCloseTo(30, 4);
+    expect(r.handleMmBody[2]).toBeCloseTo(0, 4);
   });
 
-  it("I3: +90° about Z on fiber_end rotates outward (+Y) to +X, so handle to -X·30", () => {
-    const r = resolveLinkedFiberEndpoint({
-      endpoint: "A",
-      fiberBody: obj({}),
-      fiberEnd: obj({ rzDeg: 90 }),
+  it("returns null when tension vector is zero", () => {
+    const r = resolveEndpointFromKindParams("A", {
+      posMm: [0, 0, 0],
+      rotDeg: [0, 0, 0],
+      tensionHandleMm: [0, 0, 0],
     });
-    expect(r).not.toBeNull();
-    if (!r) return;
-    // After +90° Z rotation: +Y → -X. Handle = -outward * 30 = +X * 30.
-    // (Depending on the Euler XYZ convention chosen; here we just pin
-    // that exactly one of the handle's components magnitude-30 and the
-    // others are zero — direction is whatever the makePoseTransforms
-    // helper produces. The asymmetric expectation guards against the
-    // resolver silently returning zero on rotated inputs.)
-    const mag = Math.hypot(r.handleMmBody[0], r.handleMmBody[1], r.handleMmBody[2]);
-    expect(mag).toBeCloseTo(30, 4);
-    // Rotation should have moved the handle off pure -Y.
-    expect(Math.abs(r.handleMmBody[1])).toBeLessThan(30 - EPS);
+    expect(r).toBeNull();
   });
 
-  it("I4: non-identity BODY pose round-trips end origin through body-local", () => {
-    // Body translated by +X 100. fiber_end at lab origin → body-local x = -100.
-    const r = resolveLinkedFiberEndpoint({
-      endpoint: "A",
-      fiberBody: obj({ xMm: 100 }),
-      fiberEnd: obj({}),
+  it("falls back to default body-local tension when tensionHandleMm is missing", () => {
+    const r = resolveEndpointFromKindParams("B", {
+      posMm: [1, 2, 3],
+      rotDeg: [0, 0, 0],
+      tensionHandleMm: null,
     });
     expect(r).not.toBeNull();
     if (!r) return;
-    expect(r.posMmBody[0]).toBeCloseTo(-100, 6);
-    expect(r.posMmBody[1]).toBeCloseTo(0, 6);
-    expect(r.posMmBody[2]).toBeCloseTo(0, 6);
+    expect(r.posMmBody[0]).toBeCloseTo(1, 6);
+    expect(r.posMmBody[1]).toBeCloseTo(2 + FIBER_END_CONNECTOR_LENGTH_MM, 6);
+    expect(r.posMmBody[2]).toBeCloseTo(3, 6);
+    expect(r.handleMmBody[1]).toBeCloseTo(30, 6);
+  });
+});
+
+describe("bodyHandleToTensionHandle", () => {
+  it("is identity for body-local endpoint handles", () => {
+    const original = {
+      posMm: [0, 0, 0] as [number, number, number],
+      rotDeg: [10, 20, 30] as [number, number, number],
+      tensionHandleMm: [5, 25, -8] as [number, number, number],
+    };
+    const r = resolveEndpointFromKindParams("A", original);
+    expect(r).not.toBeNull();
+    if (!r) return;
+    const recovered = bodyHandleToTensionHandle(original, r.handleMmBody);
+    expect(recovered[0]).toBeCloseTo(5, 4);
+    expect(recovered[1]).toBeCloseTo(25, 4);
+    expect(recovered[2]).toBeCloseTo(-8, 4);
   });
 });

@@ -77,3 +77,8 @@ export const ACTIVE_COLLECTION_STORAGE_KEY = "qmem.outliner.activeCollectionId";
 export const TRANSFORM_CURSOR_STORAGE_KEY_V1 = "qmem.transformCursorMm.v1";
 export const TRANSFORM_CURSOR_STORAGE_KEY = "qmem.transformCursorMm.v2";
 export const TRANSFORM_CURSOR_HIDDEN_STORAGE_KEY = "qmem.transformCursorHidden.v1";
+
+// Per-panel custom Home view. null entries fall back to the hard-coded
+// HOME_CAMERA_POSITION/TARGET in DigitalTwinViewer, so first-run users
+// still get the same default camera as before.
+export const HOME_VIEW_STORAGE_KEY = "qmem.homeView.v1";

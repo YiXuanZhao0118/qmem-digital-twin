@@ -36,6 +36,20 @@ class Settings(BaseSettings):
     workstation_key_path: str | None = None
     workstation_palace_image: str = "awslabs/palace:latest"
 
+    # AI binding agent (alembic 0057, agent_orchestrator). Empty key disables
+    # the orchestrator gracefully — sessions still start and accept
+    # heartbeats, but POST /messages returns a friendly error so the panel
+    # can show "API key not configured" instead of crashing.
+    anthropic_api_key: str | None = None
+    # Sonnet 4.6 is the right balance for the tool-use loop (cheaper +
+    # faster than Opus 4.7, plenty smart enough for create_asset /
+    # create_component dispatch). Override per-deploy via env if you
+    # specifically want Opus for harder binding tasks.
+    anthropic_model: str = "claude-sonnet-4-6"
+    # Cap on a single agent turn — protects against runaway tool loops.
+    # 8192 is enough for "create 10 things and explain" without truncating.
+    anthropic_max_tokens: int = 8192
+
     model_config = SettingsConfigDict(
         env_file=(".env", "../.env"),
         env_file_encoding="utf-8",

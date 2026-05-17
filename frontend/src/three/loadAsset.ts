@@ -2673,6 +2673,12 @@ export function refreshFiberWrapperGeometry(
   wrapper: THREE.Object3D,
   nodes: FiberNode[],
   radiusMm: number,
+  /** alembic 0056: when provided, ferrules are re-placed at the body-
+   *  local poses from fiber PE.kindParams.endA / endB instead of being
+   *  derived from spline tangent. Pass null for the legacy fallback
+   *  (catalog preview, very old data). */
+  endA?: FiberEndPlacement | null,
+  endB?: FiberEndPlacement | null,
 ): boolean {
   if (!nodes || nodes.length < 2) return false;
   let tubeMesh: THREE.Mesh | null = null;
@@ -2700,79 +2706,99 @@ export function refreshFiberWrapperGeometry(
   old.dispose();
 
   for (const { conn, endpoint } of connectors) {
-    applyFiberConnectorTransform(conn, nodes, endpoint);
+    const placement = endpoint === "A" ? endA : endB;
+    if (placement) {
+      // posMm = BACK of connector (mesh origin). STL extends to tip
+      // along its local +Y, which applyFiberFerruleOrientation rotates
+      // to -unit(tension). Visible tip ends up at posMm + outward * 36.
+      conn.position.set(
+        placement.posMm[0] / 100,
+        placement.posMm[2] / 100,
+        -placement.posMm[1] / 100,
+      );
+      const mag = Math.hypot(
+        placement.tensionHandleMm[0],
+        placement.tensionHandleMm[1],
+        placement.tensionHandleMm[2],
+      );
+      if (mag < 1e-9) {
+        applyEulerXYZQuat(conn, placement.rotDeg);
+      } else {
+        applyFiberFerruleOrientation(conn, placement.tensionHandleMm, placement.rotDeg);
+      }
+    } else {
+      applyFiberConnectorTransform(conn, nodes, endpoint);
+    }
   }
   return true;
 }
 
-/** Procedural FC-style ferrule for a `fiber_end` SceneObject. Body
- *  frame: origin = jacket attachment (where the paired fiber body's
- *  spline endpoint meets the ferrule); axis = +Y, tip at
- *  (0, FIBER_END_TIP_OFFSET_MM, 0). Used until proper per-connector
- *  Asset3D rows land.
+/** Per-instance End A / End B pose passed in from the SceneObject's
+ *  PE.kindParams. Body-local frame; ferrule extends from posMm along
+ *  rotDeg(0, +1, 0) (= +Y in the end's own frame after rotation). When
+ *  null / undefined the renderer falls back to the legacy "derive from
+ *  spline tangent" placement (catalog preview, very old scenes). */
+export type FiberEndPlacement = {
+  posMm: [number, number, number];
+  rotDeg: [number, number, number];
+  /** Wire-extension direction in the fiber BODY-local frame. The
+   *  ferrule mesh auto-orients so its tip (= +Y local) points OPPOSITE
+   *  this direction. `rotDeg[1]` is then applied as axial roll only. */
+  tensionHandleMm: [number, number, number];
+  polish?: "PC" | "APC" | "UPC";
+};
+
+/** Apply ferrule orientation derived from `tensionHandleMm` + a
+ *  residual roll from `rotDeg`. The connector mesh is built so its
+ *  local +Y points to the tip (away from the wire). For end A with
+ *  tension = +X×10 (wire goes into body +X), the connector tip should
+ *  point body -X.
  *
- *  Stack (along +Y from origin, in mm):
- *    0  →  6   strain-relief boot (jacketColor)
- *    6  → 28   metal nut barrel (silver)
- *   28  → 36   ceramic ferrule tip (off-white; green if APC polish)
+ *  Algorithm: rotate connector +Y to match `-unit(tension)` in body
+ *  frame. Then apply only axial roll around the connector's local +Y.
+ *  This keeps the ferrule head and the fiber line tangent coincident;
+ *  arbitrary pitch/yaw from rotDeg would visibly detach the head from
+ *  the cable direction.
  *
- *  Total length matches FIBER_END_TIP_OFFSET_MM in
- *  utils/fiberBodyEndpointResolver.ts so the resolver's tip-anchor
- *  convention coincides with the visual tip. */
-function createFiberEndFerrule(component: ComponentItem): THREE.Object3D {
-  const compProps = (component.properties ?? {}) as {
-    fiberType?: FiberType;
-    polish?: "PC" | "APC" | "UPC";
-  };
-  const fiberType: FiberType = compProps.fiberType ?? "single_mode";
-  const jacketColor = FIBER_JACKET_COLOR[fiberType];
-  const polish = compProps.polish ?? "PC";
-  const ferruleTipColor = polish === "APC" ? APC_BOOT_COLOR : "#f3f4f6";
+ *  Falls back to the raw EulerXYZ from rotDeg when tension is zero. */
+export function applyFiberFerruleOrientation(
+  target: THREE.Object3D,
+  tensionHandleMm: [number, number, number],
+  rotDeg: [number, number, number],
+) {
+  const mag = Math.hypot(tensionHandleMm[0], tensionHandleMm[1], tensionHandleMm[2]);
+  if (mag < 1e-6) {
+    applyEulerXYZQuat(target, rotDeg);
+    return;
+  }
+  // tipDirBody = -unit(tension) in body frame.
+  const tipBody = new THREE.Vector3(
+    -tensionHandleMm[0] / mag,
+    -tensionHandleMm[1] / mag,
+    -tensionHandleMm[2] / mag,
+  );
+  // Convert body-direction to three-frame: body (x,y,z) → three (x, z, -y).
+  const tipThree = new THREE.Vector3(tipBody.x, tipBody.z, -tipBody.y);
+  // Rotate connector local +Y to the target direction.
+  const alignQ = new THREE.Quaternion().setFromUnitVectors(
+    new THREE.Vector3(0, 1, 0),
+    tipThree,
+  );
+  target.quaternion.copy(alignQ);
+  target.rotateY(THREE.MathUtils.degToRad(rotDeg[1]));
+}
 
-  const group = new THREE.Group();
-  group.name = `${component.name}__ferrule`;
-  group.userData.fiberEndComponentId = component.id;
-  group.userData.fiberEndRole = "ferrule";
-
-  const makeCyl = (
-    name: string,
-    yStartMm: number,
-    yEndMm: number,
-    radiusMm: number,
-    color: string,
-  ) => {
-    const length = (yEndMm - yStartMm) / 100; // mm → three units
-    const geom = new THREE.CylinderGeometry(
-      radiusMm / 100,
-      radiusMm / 100,
-      length,
-      16,
-      1,
-      false,
-    );
-    const mat = new THREE.MeshStandardMaterial({
-      color,
-      metalness: name === "nut" ? 0.6 : 0.05,
-      roughness: name === "nut" ? 0.35 : 0.55,
-    });
-    const mesh = new THREE.Mesh(geom, mat);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    mesh.name = `${component.name}__${name}`;
-    // CylinderGeometry is centred on its origin along Y; offset so the
-    // segment starts at yStartMm.
-    mesh.position.set(0, (yStartMm + yEndMm) / 2 / 100, 0);
-    group.add(mesh);
-  };
-
-  // Boot 0..6 mm — jacket-coloured strain relief.
-  makeCyl("boot", 0, 6, 2.0, jacketColor);
-  // Nut 6..28 mm — silver coupling barrel.
-  makeCyl("nut", 6, 28, 1.4, "#9ca3af");
-  // Ferrule tip 28..36 mm — white ceramic (green for APC polish).
-  makeCyl("ferrule_tip", 28, 36, 1.0, ferruleTipColor);
-
-  return group;
+/** Apply Euler XYZ rotation (degrees) to a Three.js Object3D's
+ *  quaternion. Matches the convention in fiberBodyEndpointResolver and
+ *  in the SceneObject pose math. */
+function applyEulerXYZQuat(target: THREE.Object3D, rotDeg: [number, number, number]) {
+  const e = new THREE.Euler(
+    THREE.MathUtils.degToRad(rotDeg[0]),
+    THREE.MathUtils.degToRad(rotDeg[1]),
+    THREE.MathUtils.degToRad(rotDeg[2]),
+    "ZYX", // intrinsic R_z·R_y·R_x = THREE's "ZYX" extrinsic order
+  );
+  target.quaternion.setFromEuler(e);
 }
 
 function createFiberSplineObject(
@@ -2783,6 +2809,14 @@ function createFiberSplineObject(
    *  in the scene should have its own spline shape. */
   objectFiberNodes?: FiberNode[],
   objectRadiusMm?: number,
+  /** alembic 0056 (2026-05-17): End A / End B pose from the fiber PE
+   *  kindParams (body-local frame). When provided, the ferrules are
+   *  placed AT these poses directly (decoupled from spline tangent).
+   *  When omitted (catalog preview, very old data), the renderer
+   *  reverts to applyFiberConnectorTransform deriving ferrule pose
+   *  from the spline tangent at each end. */
+  endA?: FiberEndPlacement | null,
+  endB?: FiberEndPlacement | null,
 ): THREE.Object3D {
   const compProps = (component.properties as { fiberNodes?: FiberNode[]; radiusMm?: number } | undefined) ?? {};
   const resolvedNodes: FiberNode[] | undefined =
@@ -2804,8 +2838,8 @@ function createFiberSplineObject(
 
   const fiberType = pickFiberType(component);
   const jacketColor = FIBER_JACKET_COLOR[fiberType];
-  const polishA = pickEndPolish(component, "A");
-  const polishB = pickEndPolish(component, "B");
+  const polishA = endA?.polish ?? pickEndPolish(component, "A");
+  const polishB = endB?.polish ?? pickEndPolish(component, "B");
   const bootColorA = polishA === "APC" ? APC_BOOT_COLOR : jacketColor;
   const bootColorB = polishB === "APC" ? APC_BOOT_COLOR : jacketColor;
 
@@ -2830,19 +2864,41 @@ function createFiberSplineObject(
   group.userData.fiberType = fiberType;
   group.add(tube);
 
-  // FC connector at each endpoint. Outward direction comes from the
-  // Bezier handle on that endpoint — handleOut at A points INTO the curve,
-  // so the connector's ferrule sticks out in -handleOut. handleIn at B
-  // similarly points back INTO the curve. Per-end polish (PC vs APC)
-  // controls both the ferrule tip geometry (flat vs 8°) and the boot
-  // colour (jacket-coloured for PC, green for APC).
+  // Place each ferrule. Contract (2026-05-17, clarified):
+  //   kindParams.endA/B.posMm = BACK of connector (= junction with wire
+  //   = mesh origin). Mesh extends from its local origin (cable end at
+  //   y=0) along +Y for FIBER_FERRULE_TIP_MM to its tip (= optical
+  //   port). applyFiberFerruleOrientation rotates local +Y to point
+  //   along -unit(tension) (= outward, away from the wire), so the
+  //   visible tip lands at `posMm + outward · FIBER_FERRULE_TIP_MM` —
+  //   which is exactly where the anchor/BEAM also lands.
+  const placeFerruleAtJunction = (
+    conn: THREE.Object3D,
+    placement: FiberEndPlacement,
+  ) => {
+    conn.position.set(
+      placement.posMm[0] / 100,
+      placement.posMm[2] / 100,
+      -placement.posMm[1] / 100,
+    );
+    const tau = placement.tensionHandleMm;
+    const mag = Math.hypot(tau[0], tau[1], tau[2]);
+    if (mag < 1e-9) {
+      applyEulerXYZQuat(conn, placement.rotDeg);
+    } else {
+      applyFiberFerruleOrientation(conn, tau, placement.rotDeg);
+    }
+  };
+
   const connA = buildFcConnectorMesh({ polish: polishA, bootColor: bootColorA });
   connA.userData.fiberConnectorEndpoint = "A";
-  applyFiberConnectorTransform(connA, nodes, "A");
+  if (endA) placeFerruleAtJunction(connA, endA);
+  else applyFiberConnectorTransform(connA, nodes, "A");
   group.add(connA);
   const connB = buildFcConnectorMesh({ polish: polishB, bootColor: bootColorB });
   connB.userData.fiberConnectorEndpoint = "B";
-  applyFiberConnectorTransform(connB, nodes, "B");
+  if (endB) placeFerruleAtJunction(connB, endB);
+  else applyFiberConnectorTransform(connB, nodes, "B");
   group.add(connB);
 
   return group;
@@ -3335,6 +3391,15 @@ export async function loadAssetObject(
     rfCableNodes?: FiberNode[];
     radiusMm?: number;
   } | null,
+  /** Per-instance fiber endpoint pose (alembic 0056). When provided,
+   *  the fiber ferrules render at the supplied body-local poses
+   *  (decoupled from spline tangent). Caller (DigitalTwinViewer
+   *  createComponentMesh) reads these from fiber PE kindParams.endA /
+   *  endB. */
+  instanceFlags?: {
+    fiberEndA?: FiberEndPlacement | null;
+    fiberEndB?: FiberEndPlacement | null;
+  } | null,
 ): Promise<THREE.Object3D> {
   if (component.componentType === "optical_table") {
     const table = createNewportOpticalTable();
@@ -3346,7 +3411,8 @@ export async function loadAssetObject(
   // user-editable anchor + tangent-handle data. Per V2 the spline shape is
   // a per-instance property (objects.properties.fiberNodes); the catalog
   // template's component.properties.fiberNodes is the legacy fallback for
-  // pre-2026-05-11 rows.
+  // pre-2026-05-11 rows. The two ferrules are placed at body-local
+  // poses from fiber PE.kindParams.endA / endB (alembic 0056).
   if (component.componentType === "fiber") {
     const wrapper = new THREE.Group();
     wrapper.name = component.name;
@@ -3354,22 +3420,13 @@ export async function loadAssetObject(
       component,
       objectProperties?.fiberNodes,
       objectProperties?.radiusMm,
+      instanceFlags?.fiberEndA ?? null,
+      instanceFlags?.fiberEndB ?? null,
     ));
     return wrapper;
   }
-
-  // Phase fiber-split: fiber_end SceneObjects render a procedural FC-
-  // style ferrule, body-local frame extending from origin (jacket
-  // attachment, where the fiber body spline endpoint meets the ferrule)
-  // along +Y to (0, +FIBER_END_TIP_OFFSET_MM, 0) (= tip anchor face).
-  // The hidden fiber body wrapper re-derives its spline endpoint from
-  // this object's lab pose via resolveLinkedFiberEndpoint.
-  if (component.componentType === "fiber_end") {
-    const wrapper = new THREE.Group();
-    wrapper.name = component.name;
-    wrapper.add(createFiberEndFerrule(component));
-    return wrapper;
-  }
+  // alembic 0056: fiber_end SceneObjects no longer exist. The two
+  // ferrules render as children of the fiber wrapper above.
 
   // Phase RF.cable (2026-05-13): rf_cable / sma_cable render through the
   // procedural SMA-cable primitive. When the per-instance SceneObject

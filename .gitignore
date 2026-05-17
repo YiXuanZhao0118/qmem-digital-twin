@@ -36,3 +36,12 @@ frontend/test-results/
 frontend/playwright-report/
 frontend/blob-report/
 frontend/playwright/.cache/
+
+# AI binding agent (alembic 0057) — per-session CAD/image uploads land
+# under assets/agent_uploads/<session_id>/. Per-machine dev state; never
+# part of a commit. Production deploys should mount this as a volume.
+assets/agent_uploads/
+
+# Uvicorn dev-server logs — historical noise, should never have been tracked
+backend/uvicorn.out.log
+backend/uvicorn.err.log

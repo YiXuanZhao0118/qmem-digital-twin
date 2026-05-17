@@ -498,6 +498,76 @@ def default_kind_params_for_component(kind: str, component: Component) -> dict[s
         override = props.get("fiberKindParamsOverride")
         if isinstance(override, dict):
             _deep_merge_dict(kind_params, override)
+        # alembic 0056 (2026-05-17) + design update 2026-05-17:
+        # End A / End B pose lives inline on fiber PE.kindParams in
+        # body-local frame.
+        #   posMm  → ferrule "back" position = where wire meets connector
+        #   rotDeg → end's orientation in body frame (identity by default)
+        #   tensionHandleMm → direction the wire EXTENDS FROM this end
+        #     into the body interior, expressed in the end's body-local
+        #     frame. For a straight fiber from (0,0,0) to (300,0,0):
+        #     endA.tensionHandleMm = +X×10 (= wire goes +X toward endB)
+        #     endB.tensionHandleMm = -X×10 (= wire goes -X back toward endA)
+        # Derived from catalog fiberNodes: posMm = node.posMm,
+        # tensionHandleMm = unit(handle) × 10 mm.
+        catalog_nodes = props.get("fiberNodes") if isinstance(props, dict) else None
+        if not (isinstance(catalog_nodes, list) and len(catalog_nodes) >= 2):
+            catalog_nodes = [
+                {"posMm": [0.0, 0.0, 0.0], "handleOutMm": [100.0, 0.0, 0.0]},
+                {"posMm": [300.0, 0.0, 0.0], "handleInMm": [-100.0, 0.0, 0.0]},
+            ]
+
+        def _vec_or_none(v):
+            if not isinstance(v, list) or len(v) != 3:
+                return None
+            try:
+                return [float(v[0]), float(v[1]), float(v[2])]
+            except (TypeError, ValueError):
+                return None
+
+        def _unit_scaled(v, mag: float):
+            if v is None:
+                return None
+            length = (v[0] ** 2 + v[1] ** 2 + v[2] ** 2) ** 0.5
+            if length < 1e-9:
+                return None
+            return [v[0] / length * mag, v[1] / length * mag, v[2] / length * mag]
+
+        DEFAULT_TENSION_MM = 10.0
+
+        first_node = catalog_nodes[0] if isinstance(catalog_nodes[0], dict) else {}
+        last_node = catalog_nodes[-1] if isinstance(catalog_nodes[-1], dict) else {}
+        first_pos = _vec_or_none(first_node.get("posMm")) or [0.0, 0.0, 0.0]
+        last_pos = _vec_or_none(last_node.get("posMm")) or [300.0, 0.0, 0.0]
+        # Tension direction at each end = unit-normalised catalog tangent
+        # (handleOut at end A, handleIn at end B). Falls back to the
+        # end→other-end direction if the catalog handle is missing or
+        # zero — guarantees we always seed a non-degenerate direction.
+        tension_a = _unit_scaled(
+            _vec_or_none(first_node.get("handleOutMm")),
+            DEFAULT_TENSION_MM,
+        ) or _unit_scaled(
+            [last_pos[i] - first_pos[i] for i in range(3)],
+            DEFAULT_TENSION_MM,
+        ) or [DEFAULT_TENSION_MM, 0.0, 0.0]
+        tension_b = _unit_scaled(
+            _vec_or_none(last_node.get("handleInMm")),
+            DEFAULT_TENSION_MM,
+        ) or _unit_scaled(
+            [first_pos[i] - last_pos[i] for i in range(3)],
+            DEFAULT_TENSION_MM,
+        ) or [-DEFAULT_TENSION_MM, 0.0, 0.0]
+        for end_key, pos, tension in (
+            ("endA", first_pos, tension_a),
+            ("endB", last_pos, tension_b),
+        ):
+            existing = kind_params.get(end_key)
+            if not isinstance(existing, dict):
+                existing = {}
+                kind_params[end_key] = existing
+            existing.setdefault("rotDeg", [0.0, 0.0, 0.0])
+            existing.setdefault("tensionHandleMm", list(tension))
+            existing.setdefault("posMm", list(pos))
     if kind == "isolator":
         # Per-template kindParams override: catalog isolators carry
         # `properties.isolatorKindParamsOverride` with the spec-derived
@@ -590,200 +660,13 @@ def default_kind_params_for_component(kind: str, component: Component) -> dict[s
     return kind_params
 
 
-def _body_to_lab_xyz(
-    p: tuple[float, float, float],
-    x: float, y: float, z: float,
-    rx_deg: float, ry_deg: float, rz_deg: float,
-) -> tuple[float, float, float]:
-    """Body-local → lab transform, Euler XYZ. Mirrors the math in
-    `frontend/src/store/sceneStore.ts` (`createRfCableBetweenPorts`'s
-    `apply()` helper) and `alembic 0052_fiber_split_to_paired_ends`
-    (`_body_to_lab`). Kept inline here so this router doesn't pull in
-    numpy / scipy for a one-off transform."""
-    import math
-    rx, ry, rz = math.radians(rx_deg or 0.0), math.radians(ry_deg or 0.0), math.radians(rz_deg or 0.0)
-    cx, sx = math.cos(rx), math.sin(rx)
-    cy, sy = math.cos(ry), math.sin(ry)
-    cz, sz = math.cos(rz), math.sin(rz)
-    px, py, pz = p
-    x1 = cy * px + sy * pz
-    y1 = py
-    z1 = -sy * px + cy * pz
-    y2 = cx * y1 - sx * z1
-    z2 = sx * y1 + cx * z1
-    return (
-        (x or 0.0) + cz * x1 - sz * y2,
-        (y or 0.0) + sz * x1 + cz * y2,
-        (z or 0.0) + z2,
-    )
-
-
-_FIBER_END_TIP_PORT = {
-    "portId": "tip",
-    "role": "bidirectional",
-    "label": "Ferrule tip",
-    "kind": "main",
-}
-
-
-async def _spawn_fiber_end_pair_for_body(
-    session: AsyncSession,
-    fiber_body: SceneObject,
-    fiber_body_pe: PhysicsElement,
-    fiber_component: Component,
-) -> None:
-    """When a new fiber body SceneObject is created via the catalog, also
-    spawn two paired `fiber_end` SceneObjects (referenced via
-    FiberParams.endAObjectId / endBObjectId on the body PE). Mirrors
-    alembic 0052 but for fresh-spawn instead of backfill. Idempotent
-    against the body PE already having end refs (early return)."""
-    existing_kp = fiber_body_pe.kind_params or {}
-    if existing_kp.get("endAObjectId") or existing_kp.get("endBObjectId"):
-        return
-
-    # Resolve the fiber_end_generic catalog Component — usually created
-    # by migration 0052, but if it's been archived or deleted (or never
-    # ran, e.g. half-migrated DB) we create one inline so fiber spawn
-    # never silently no-ops. Archived rows get un-archived rather than
-    # creating a duplicate so historical SceneObject references stay
-    # resolvable.
-    fiber_end_comp = await session.scalar(
-        select(Component).where(Component.name == "fiber_end_generic")
-    )
-    if fiber_end_comp is None:
-        fiber_end_comp = Component(
-            id=uuid.uuid4(),
-            name="fiber_end_generic",
-            component_type="fiber_end",
-            brand="Generic",
-            model="Fiber End (procedural ferrule)",
-            asset_3d_id=None,
-            physics_capabilities=["optical"],
-            properties={},
-        )
-        session.add(fiber_end_comp)
-        await session.flush()
-    elif fiber_end_comp.archived_at is not None:
-        fiber_end_comp.archived_at = None
-        await session.flush()
-
-    # First / last spline node in body-local frame: prefer per-instance
-    # fiberNodes from the body's properties (rare on fresh spawn), fall
-    # back to the catalog template's fiberNodes.
-    obj_props = fiber_body.properties or {}
-    comp_props = fiber_component.properties or {}
-    fiber_nodes = obj_props.get("fiberNodes") if isinstance(obj_props, dict) else None
-    if not isinstance(fiber_nodes, list) or len(fiber_nodes) < 2:
-        fiber_nodes = comp_props.get("fiberNodes") if isinstance(comp_props, dict) else None
-    if not isinstance(fiber_nodes, list) or len(fiber_nodes) < 2:
-        # Final fallback — matches the default in
-        # `createFiberSplineObject` in loadAsset.ts so a brand-new fiber
-        # with no nodes still gets a sensible ferrule placement.
-        fiber_nodes = [
-            {"posMm": [0.0, 0.0, 50.0]},
-            {"posMm": [300.0, 0.0, 50.0]},
-        ]
-
-    first = fiber_nodes[0]
-    last = fiber_nodes[-1]
-    first_pos = first.get("posMm") if isinstance(first, dict) else None
-    last_pos = last.get("posMm") if isinstance(last, dict) else None
-    if not (isinstance(first_pos, list) and isinstance(last_pos, list)):
-        return
-
-    end_a_lab = _body_to_lab_xyz(
-        (float(first_pos[0]), float(first_pos[1]), float(first_pos[2])),
-        float(fiber_body.x_mm or 0.0),
-        float(fiber_body.y_mm or 0.0),
-        float(fiber_body.z_mm or 0.0),
-        float(fiber_body.rx_deg or 0.0),
-        float(fiber_body.ry_deg or 0.0),
-        float(fiber_body.rz_deg or 0.0),
-    )
-    end_b_lab = _body_to_lab_xyz(
-        (float(last_pos[0]), float(last_pos[1]), float(last_pos[2])),
-        float(fiber_body.x_mm or 0.0),
-        float(fiber_body.y_mm or 0.0),
-        float(fiber_body.z_mm or 0.0),
-        float(fiber_body.rx_deg or 0.0),
-        float(fiber_body.ry_deg or 0.0),
-        float(fiber_body.rz_deg or 0.0),
-    )
-
-    # Find the collection the fiber body just joined — caller already
-    # added the membership before invoking auto_create. Default to
-    # master if (somehow) no membership exists yet.
-    collection_id = await session.scalar(
-        select(CollectionMember.collection_id).where(
-            CollectionMember.object_id == fiber_body.id
-        )
-    )
-    if collection_id is None:
-        master = await session.scalar(
-            select(Collection).where(Collection.parent_id.is_(None)).order_by(Collection.created_at.asc()).limit(1)
-        )
-        if master is None:
-            return
-        collection_id = master.id
-
-    end_ids: dict[str, uuid.UUID] = {}
-    for end_role, end_lab, suffix in (
-        ("A", end_a_lab, "_end_a"),
-        ("B", end_b_lab, "_end_b"),
-    ):
-        end_obj = SceneObject(
-            id=uuid.uuid4(),
-            name=f"{fiber_body.name}{suffix}",
-            component_id=fiber_end_comp.id,
-            x_mm=end_lab[0],
-            y_mm=end_lab[1],
-            z_mm=end_lab[2],
-            rx_deg=0.0,
-            ry_deg=0.0,
-            rz_deg=0.0,
-            visible=True,
-            locked=False,
-            # 7-part fiber model (2026-05-17): tensionHandleMm carries
-            # nodeA/nodeB tension in fiber_end body-local frame, pointing
-            # OUTWARD (= where the wire leaves the ferrule). The body
-            # spline endpoint's Bezier handle = -tensionHandleMm in fiber-
-            # body frame (resolveLinkedFiberEndpoint). Seed at
-            # (0, +30, 0) so the initial curve direction matches the
-            # legacy auto-derived behaviour (ferrule +Y × 30 mm). User
-            # drags the handle in node-edit mode to retune.
-            properties={"tensionHandleMm": [0.0, 30.0, 0.0]},
-        )
-        session.add(end_obj)
-        await session.flush()
-
-        end_pe = PhysicsElement(
-            object_id=end_obj.id,
-            element_kind="fiber_end",
-            wavelength_range_nm=[400.0, 1100.0],
-            input_ports=[_FIBER_END_TIP_PORT],
-            output_ports=[],
-            kind_params={
-                "connectorType": None,
-                "polish": None,
-                "slowAxisDegInBodyFrame": None,
-                "fiberBodyObjectId": str(fiber_body.id),
-                "endRole": end_role,
-            },
-        )
-        session.add(end_pe)
-
-        session.add(
-            CollectionMember(collection_id=collection_id, object_id=end_obj.id, sort_order=0)
-        )
-        end_ids[end_role] = end_obj.id
-
-    # Wire the body PE back-references.
-    next_kp = dict(existing_kp)
-    next_kp["endAObjectId"] = str(end_ids["A"])
-    next_kp["endBObjectId"] = str(end_ids["B"])
-    fiber_body_pe.kind_params = next_kp
-    from sqlalchemy.orm.attributes import flag_modified
-    flag_modified(fiber_body_pe, "kind_params")
+# alembic 0056 (2026-05-17): the 3-SceneObject fiber split is reversed.
+# A fiber is a single SceneObject again; End A / End B pose lives inline
+# on the fiber PE's kindParams.endA / endB (body-local frame). The old
+# `_spawn_fiber_end_pair_for_body` helper, its catalog-component seeder,
+# the `_FIBER_END_TIP_PORT` constant, and the `_body_to_lab_xyz`
+# transform were removed in this commit — see git history for the
+# previous implementation if a future re-split is ever needed.
 
 
 async def auto_create_physics_element_for_object(
@@ -877,16 +760,10 @@ async def auto_create_physics_element_for_object(
         asset = await session.get(Asset3D, component.asset_3d_id)
         await bootstrap_isolator_default_binding(scene_object, asset)
 
-    # Phase fiber-split: spawn two paired `fiber_end` SceneObjects + PEs
-    # so a freshly-placed fiber comes up with the same 3-object
-    # structure as a migrated one (body + end_a + end_b). The body's
-    # endA/BObjectId fields wire the back-references; the resolver in
-    # `frontend/src/utils/fiberBodyEndpointResolver.ts` then derives
-    # spline endpoints from the ends' lab poses going forward.
-    if kind == "fiber":
-        await _spawn_fiber_end_pair_for_body(
-            session, scene_object, physics_element, component
-        )
+    # alembic 0056 (2026-05-17): fiber is back to a single SceneObject.
+    # End A / End B pose lives inline on the fiber PE.kindParams.endA /
+    # endB and was already seeded above by default_kind_params_for_
+    # component → fiber branch. No paired SceneObjects to spawn.
 
     return physics_element
 
@@ -902,7 +779,10 @@ async def list_components(
     session: AsyncSession = Depends(get_session),
     include_archived: bool = False,
 ) -> list[Component]:
-    stmt = select(Component)
+    # Hide AI-binding-session drafts (alembic 0057). Only the owning agent
+    # session sees its drafts via /api/agent-sessions/{id}; everything else
+    # only sees 'active'.
+    stmt = select(Component).where(Component.status == "active")
     if not include_archived:
         stmt = stmt.where(Component.archived_at.is_(None))
     return list((await session.scalars(stmt)).all())

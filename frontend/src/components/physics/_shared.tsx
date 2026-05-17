@@ -20,9 +20,15 @@ import type {
   SceneObject,
 } from "../../types/digitalTwin";
 import {
+  findFiberEndSnap,
   findSnapToBeam,
   perpendicularBasis,
 } from "../../utils/beamPlacement";
+import {
+  syncFiberNodesFromKindParams,
+  type FiberEndKindParamsShape,
+  type FiberNodePersistent,
+} from "../../utils/fiberAnchorResolver";
 import {
   getEffectiveApertureMm,
   getPerObjectAperture,
@@ -183,6 +189,12 @@ export function AlignToBeamSection({
   if (elementKind === "laser_source") {
     return <LaserSourceControls sceneObject={sceneObject} element={element} />;
   }
+  if (elementKind === "fiber") {
+    // alembic 0056: a fiber is one SceneObject with End A / End B as
+    // sub-objects in kindParams. Align happens per-end via these two
+    // buttons; the body's own pose stays put.
+    return <FiberEndAlignControls sceneObject={sceneObject} element={element} />;
+  }
   if (isEmitter) {
     return (
       <div className="snap-to-beam snap-to-beam-empty">
@@ -250,6 +262,135 @@ export function AlignToBeamSection({
         </div>
       )}
       {feedback && <div className="snap-to-beam-feedback">{feedback}</div>}
+    </div>
+  );
+}
+
+/** Align End A / Align End B for a fiber SceneObject. Each button
+ *  snaps the corresponding ferrule tip onto the nearest beam axis by
+ *  translating the end's body-local posMm (kindParams.endA/endB.posMm)
+ *  — the fiber body's lab pose and the other end stay put. End
+ *  rotation is preserved so the user's manual rotDeg setting isn't
+ *  clobbered by snap. */
+function FiberEndAlignControls({
+  sceneObject,
+  element,
+}: {
+  sceneObject: SceneObject;
+  element: PhysicsElement;
+}) {
+  const scene = useSceneStore((state) => state.scene);
+  const upsertOpticalElement = useSceneStore((state) => state.upsertOpticalElement);
+  const updateFiberNodes = useSceneStore((state) => state.updateFiberNodes);
+  const [busyEnd, setBusyEnd] = useState<"A" | "B" | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
+  const candidateA = useMemo(
+    () => findFiberEndSnap(sceneObject.id, "A", scene),
+    [scene, sceneObject.id],
+  );
+  const candidateB = useMemo(
+    () => findFiberEndSnap(sceneObject.id, "B", scene),
+    [scene, sceneObject.id],
+  );
+
+  const labelFromObjectId = (id: string) =>
+    scene.objects.find((o) => o.id === id)?.name ?? id.slice(0, 6);
+
+  const onAlignEnd = async (endRole: "A" | "B") => {
+    const cand = endRole === "A" ? candidateA : candidateB;
+    if (!cand) return;
+    setBusyEnd(endRole);
+    setFeedback(null);
+    try {
+      const kp = { ...(element.kindParams ?? {}) } as Record<string, unknown>;
+      const endKey = endRole === "A" ? "endA" : "endB";
+      const existing =
+        kp[endKey] && typeof kp[endKey] === "object"
+          ? (kp[endKey] as Record<string, unknown>)
+          : {};
+      kp[endKey] = {
+        ...existing,
+        posMm: [cand.newEndPosMmBody.x, cand.newEndPosMmBody.y, cand.newEndPosMmBody.z],
+        // Wire-extension direction = beam direction (in end body-local
+        // frame). Ferrule auto-orients so tip points OPPOSITE this
+        // (faces the source) via applyFerruleOrientation.
+        tensionHandleMm: [
+          cand.newTensionHandleMmBody.x,
+          cand.newTensionHandleMmBody.y,
+          cand.newTensionHandleMmBody.z,
+        ],
+      };
+      await upsertOpticalElement({
+        objectId: sceneObject.id,
+        elementKind: "fiber",
+        kindParams: kp,
+      });
+      // Sync fiber.properties.fiberNodes from the new kindParams so
+      // the ray tracer (rayTrace.ts reads fiberNodes) and the legacy
+      // panel (getFiberPortLabPose reads fiberNodes) see the new tip
+      // position. Without this, kindParams updates the renderer but
+      // the BEAM math stays on the old node positions.
+      const currentFiberObj = scene.objects.find((o) => o.id === sceneObject.id);
+      if (currentFiberObj) {
+        const existingNodes = (currentFiberObj.properties as { fiberNodes?: FiberNodePersistent[] } | null)?.fiberNodes;
+        const nextNodes = syncFiberNodesFromKindParams(
+          kp.endA as FiberEndKindParamsShape | null,
+          kp.endB as FiberEndKindParamsShape | null,
+          existingNodes ?? undefined,
+        );
+        await updateFiberNodes(sceneObject.componentId, nextNodes);
+      }
+      setFeedback(
+        `End ${endRole} aligned to ${labelFromObjectId(cand.fromObjectId)} (${cand.fromPort}); shifted ${cand.missMm.toFixed(2)} mm onto axis.`,
+      );
+    } catch (err) {
+      setFeedback(`Align End ${endRole} failed: ${(err as Error).message}`);
+    } finally {
+      setBusyEnd(null);
+    }
+  };
+
+  return (
+    <div className="snap-to-beam">
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          className="primary-button"
+          onClick={() => void onAlignEnd("A")}
+          disabled={!candidateA || busyEnd !== null}
+          title={
+            candidateA
+              ? `Snap End A tip onto ${labelFromObjectId(candidateA.fromObjectId)} (${candidateA.missMm.toFixed(2)} mm off)`
+              : "No beam axis within 25 mm of End A tip"
+          }
+        >
+          Align End A
+        </button>
+        <button
+          type="button"
+          className="primary-button"
+          onClick={() => void onAlignEnd("B")}
+          disabled={!candidateB || busyEnd !== null}
+          title={
+            candidateB
+              ? `Snap End B tip onto ${labelFromObjectId(candidateB.fromObjectId)} (${candidateB.missMm.toFixed(2)} mm off)`
+              : "No beam axis within 25 mm of End B tip"
+          }
+        >
+          Align End B
+        </button>
+      </div>
+      {!candidateA && !candidateB && (
+        <div className="snap-to-beam-empty" style={{ marginTop: 6 }}>
+          Neither end tip is within 25 mm of a beam axis.
+        </div>
+      )}
+      {feedback && (
+        <div className="snap-to-beam-feedback" style={{ marginTop: 6 }}>
+          {feedback}
+        </div>
+      )}
     </div>
   );
 }

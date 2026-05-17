@@ -1139,6 +1139,18 @@ class FiberEndSpec(CamelModel):
     # port = endpointWorld + connectorRotation·(faceOffset).
     face_position_mm_body_local: Vec3Mm | None = None
 
+    # alembic 0056 (2026-05-17): fiber collapsed back to a single
+    # SceneObject. End A / End B pose lives inline on this spec in the
+    # fiber body's local frame. The renderer places each ferrule mesh
+    # at (posMm, rotDeg). tensionHandleMm is the wire-EXTENSION
+    # direction in the end's own body-local frame (e.g. (+10, 0, 0)
+    # for end A of a straight fiber along +X). The body Bezier handle
+    # = rotation(rotDeg) · tensionHandleMm. Stored as flat 3-tuples
+    # matching the frontend's [number, number, number] convention.
+    pos_mm: tuple[float, float, float] | None = None
+    rot_deg: tuple[float, float, float] | None = None
+    tension_handle_mm: tuple[float, float, float] | None = None
+
 
 class FiberParams(CamelModel):
     fiber_type: FiberType = FiberType.SINGLE_MODE
@@ -2889,3 +2901,97 @@ class V2RevisionCreate(V2RevisionBase):
 class V2RevisionOut(V2RevisionBase):
     id: uuid.UUID
     created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# AI binding agent — sessions + mutations + events (alembic 0057).
+# ---------------------------------------------------------------------------
+
+
+class AgentSessionCreate(CamelModel):
+    instruction: str = ""
+    # Override the default 5-minute heartbeat window if a longer session
+    # is expected (e.g. uploading + bulk-binding a large catalog). Capped
+    # by the router to 3600 to prevent zombie sessions from accumulating.
+    heartbeat_timeout_sec: int = 300
+
+
+class AgentSessionOut(CamelModel):
+    id: uuid.UUID
+    instruction: str
+    status: Literal["running", "committed", "cancelled", "abandoned"]
+    last_heartbeat_at: datetime
+    heartbeat_timeout_sec: int
+    committed_at: datetime | None
+    cancelled_at: datetime | None
+    cancellation_reason: str | None
+    created_at: datetime
+
+
+class SessionMutationOut(CamelModel):
+    id: uuid.UUID
+    op: Literal["create", "update", "delete"]
+    entity_type: Literal["asset_3d", "component"]
+    entity_id: uuid.UUID
+    after: JsonDict | None
+    undone_at: datetime | None
+    created_at: datetime
+
+
+class AgentSessionStateOut(CamelModel):
+    """Composite payload returned by GET /api/agent-sessions/{id} so the
+    frontend can render the AI panel's review UI in one fetch.
+    """
+
+    session: AgentSessionOut
+    mutations: list[SessionMutationOut]
+
+
+class CommitResult(CamelModel):
+    session_id: uuid.UUID
+    approved_assets: list[uuid.UUID]
+    approved_components: list[uuid.UUID]
+
+
+class CancelResult(CamelModel):
+    session_id: uuid.UUID
+    rolled_back_count: int
+    reason: str
+
+
+class AgentUploadOut(CamelModel):
+    """Response shape for POST /api/agent-sessions/{id}/uploads.
+    Frontend tracks these per-session and replays them in the next
+    /messages POST as attachments.
+    """
+
+    file_id: str
+    filename: str
+    stored_name: str
+    file_path: str
+    kind: Literal["asset_file", "image"]
+    media_type: str | None = None
+    size_bytes: int
+
+
+class AgentAttachmentRef(CamelModel):
+    """One attachment carried in an AgentMessageCreate. The orchestrator
+    looks the file up by `stored_name` under the session's upload dir
+    — clients cannot inject arbitrary paths.
+    """
+
+    stored_name: str
+    filename: str
+    file_path: str
+    kind: Literal["asset_file", "image"]
+    media_type: str | None = None
+
+
+class AgentMessageCreate(CamelModel):
+    """Body for POST /api/agent-sessions/{id}/messages — the user's next
+    turn. The response is an SSE stream of orchestrator events, not a
+    JSON object.
+    """
+
+    content: str
+    attachments: list[AgentAttachmentRef] = []

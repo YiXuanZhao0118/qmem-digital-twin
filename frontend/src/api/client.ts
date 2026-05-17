@@ -1,9 +1,16 @@
 import axios, { AxiosError } from "axios";
 
 import type {
+  AgentAttachmentRef,
+  AgentSession,
+  AgentSessionState,
+  AgentUpload,
   Anchor,
   AssemblyRelation,
   Asset3D,
+  CancelResult,
+  CommitResult,
+  SessionMutation,
   Circuit,
   CircuitCreatePayload,
   CircuitUpdatePayload,
@@ -1219,4 +1226,180 @@ export async function updateRoomDimensionsApi(
     payload,
   );
   return response.data;
+}
+
+
+// ============================================================================
+// AI binding agent — sessions, mutations, approve/cancel/undo.
+// Gated behind VITE_ENABLE_AI_PANEL; these helpers exist so the panel
+// component compiles even when it's not rendered.
+// ============================================================================
+
+export async function createAgentSessionApi(payload: {
+  instruction?: string;
+  heartbeatTimeoutSec?: number;
+}): Promise<AgentSession> {
+  const response = await client.post<AgentSession>(
+    "/api/agent-sessions",
+    payload,
+  );
+  return response.data;
+}
+
+export async function getAgentSessionApi(
+  sessionId: string,
+): Promise<AgentSessionState> {
+  const response = await client.get<AgentSessionState>(
+    `/api/agent-sessions/${sessionId}`,
+  );
+  return response.data;
+}
+
+export async function heartbeatAgentSessionApi(
+  sessionId: string,
+): Promise<AgentSession> {
+  const response = await client.post<AgentSession>(
+    `/api/agent-sessions/${sessionId}/heartbeat`,
+  );
+  return response.data;
+}
+
+export async function commitAgentSessionApi(
+  sessionId: string,
+): Promise<CommitResult> {
+  const response = await client.post<CommitResult>(
+    `/api/agent-sessions/${sessionId}/commit`,
+  );
+  return response.data;
+}
+
+export async function cancelAgentSessionApi(
+  sessionId: string,
+): Promise<CancelResult> {
+  const response = await client.post<CancelResult>(
+    `/api/agent-sessions/${sessionId}/cancel`,
+  );
+  return response.data;
+}
+
+export async function undoLastMutationApi(
+  sessionId: string,
+): Promise<SessionMutation> {
+  const response = await client.post<SessionMutation>(
+    `/api/agent-sessions/${sessionId}/undo-last`,
+  );
+  return response.data;
+}
+
+export async function uploadAgentFileApi(
+  sessionId: string,
+  file: File,
+): Promise<AgentUpload> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await client.post<AgentUpload>(
+    `/api/agent-sessions/${sessionId}/uploads`,
+    form,
+  );
+  return response.data;
+}
+
+
+// ============================================================================
+// SSE-streamed agent turn. POST /api/agent-sessions/{id}/messages returns
+// text/event-stream, which Axios doesn't unwrap incrementally — use fetch
+// + ReadableStream directly so the panel can render each event as it
+// arrives.
+// ============================================================================
+
+export type AgentStreamEvent =
+  | { event: "assistant_chunk"; text: string }
+  | {
+      event: "tool_call";
+      id: string;
+      name: string;
+      input: Record<string, unknown>;
+    }
+  | {
+      event: "tool_result";
+      toolUseId: string;
+      content: unknown;
+      isError: boolean;
+    }
+  | { event: "done"; stopReason: string }
+  | { event: "error"; message: string };
+
+export async function streamAgentMessage(
+  sessionId: string,
+  content: string,
+  onEvent: (event: AgentStreamEvent) => void,
+  options: {
+    attachments?: AgentAttachmentRef[];
+    signal?: AbortSignal;
+  } = {},
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/agent-sessions/${sessionId}/messages`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        content,
+        attachments: options.attachments ?? [],
+      }),
+      signal: options.signal,
+    },
+  );
+  if (!response.ok || !response.body) {
+    const detail = await response.text().catch(() => response.statusText);
+    throw new Error(`SSE request failed (${response.status}): ${detail}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  // SSE wire format: each event is one or more `field: value` lines
+  // terminated by a blank line. We only care about `event:` + `data:`.
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let separatorIndex: number;
+    while ((separatorIndex = buffer.indexOf("\n\n")) !== -1) {
+      const rawEvent = buffer.slice(0, separatorIndex);
+      buffer = buffer.slice(separatorIndex + 2);
+      const parsed = parseSseEvent(rawEvent);
+      if (parsed) onEvent(parsed);
+    }
+  }
+}
+
+function parseSseEvent(raw: string): AgentStreamEvent | null {
+  let eventName = "message";
+  let dataLine = "";
+  for (const line of raw.split("\n")) {
+    if (line.startsWith("event:")) {
+      eventName = line.slice(6).trim();
+    } else if (line.startsWith("data:")) {
+      dataLine += line.slice(5).trim();
+    }
+  }
+  if (!dataLine) return null;
+  try {
+    const data = JSON.parse(dataLine);
+    // Backend payload uses snake_case for some fields; remap the two
+    // that callers consume directly. The rest pass through as-is.
+    if (eventName === "tool_result" && "tool_use_id" in data) {
+      data.toolUseId = data.tool_use_id;
+      data.isError = data.is_error;
+    }
+    if (eventName === "done" && "stop_reason" in data) {
+      data.stopReason = data.stop_reason;
+    }
+    return { event: eventName, ...data } as AgentStreamEvent;
+  } catch {
+    return null;
+  }
 }

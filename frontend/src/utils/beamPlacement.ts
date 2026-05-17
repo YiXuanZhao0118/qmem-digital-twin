@@ -21,7 +21,12 @@ import type {
 } from "../types/digitalTwin";
 import { bodyLocalDirToLabDir, threeToLabPointMm } from "../optical/frames";
 import { getEffectiveApertureMm, getMirrorNormalBodyLocal } from "./v2Bindings";
-import { FIBER_END_TIP_OFFSET_MM } from "./fiberBodyEndpointResolver";
+import { FIBER_FERRULE_TIP_MM } from "./fiberAnchorResolver";
+// FIBER_END_TIP_OFFSET_MM previously used by the fiber_end SceneObject
+// snap-to-beam branch; alembic 0056 removed fiber_end SceneObjects.
+// Fiber end-A / end-B align now operates on the fiber SceneObject's
+// kindParams.endA / endB directly (see ObjectPanel's Align A/B
+// buttons).
 
 export type Vec3 = { x: number; y: number; z: number };
 
@@ -1114,6 +1119,12 @@ export function computeSnapPositionForLink(
 // ordering, no link manipulation — just geometry.
 
 const SNAP_TOLERANCE_MM = 25;
+// Looser tolerance for fiber-end Align A / Align B: a fiber ferrule
+// can sit tens of cm off-axis during initial setup, and the user
+// expects the Align button to pull it onto the nearest beam regardless
+// of how far away the tip currently is. 500 mm covers a generous
+// optical-table working radius without false matches in normal scenes.
+const FIBER_END_SNAP_TOLERANCE_MM = 500;
 
 export type SnapCandidate = {
   /** Source emitter / mirror that radiates this beam. */
@@ -1354,19 +1365,9 @@ export function findSnapToBeam(
       apertureMm: typeof apertureRaw === "number" && apertureRaw > 0 ? apertureRaw : 12.5,
     });
   }
-  // fiber_end SceneObjects use a procedural ferrule (no Asset3D), so the
-  // asset-anchor loop above finds nothing. Inject the conventional `tip`
-  // anchor inline — body-local position matches the offset used by the
-  // resolver in fiberBodyEndpointResolver.ts + the ferrule mesh in
-  // loadAsset.ts's createFiberEndFerrule, so align translates the
-  // SceneObject so the ferrule tip lands on the beam.
-  if (anchorPoints.length === 0 && el.elementKind === "fiber_end") {
-    anchorPoints.push({
-      id: "tip",
-      localPos: { x: 0, y: FIBER_END_TIP_OFFSET_MM, z: 0 },
-      apertureMm: 0.125, // single-mode cladding ≈ 125 µm
-    });
-  }
+  // alembic 0056: fiber_end SceneObjects removed. Fiber end-A / end-B
+  // alignment now operates on the fiber SceneObject's kindParams via
+  // the per-end Align A / Align B buttons in ObjectPanel.
   if (anchorPoints.length === 0) {
     anchorPoints.push({ id: "body", localPos: { x: 0, y: 0, z: 0 }, apertureMm: 12.5 });
   }
@@ -1413,6 +1414,174 @@ export function findSnapToBeam(
     }
   }
   return best;
+}
+
+/** Snap a fiber's End A or End B onto the nearest beam axis. Returns
+ *  the new body-local pose to write to fiber PE.kindParams.endA / endB:
+ *
+ *  - `newEndPosMmBody`: position of the ferrule tip / emission point.
+ *  - `newTensionHandleMmBody`: tension vector pointing along the
+ *    BEAM direction in the end's body-local frame (current magnitude
+ *    preserved). The ferrule auto-orients so its tip points OPPOSITE
+ *    the beam (i.e. faces the source).
+ *
+ *  Geometry (current rendering convention):
+ *    tip_body = posMm
+ *  After alignment we want:
+ *    tip_lab  = closest point on beam to current tip_lab
+ *    tipDir_body = -unit(beam_dir_in_body) ⇒ tension_body = +unit(beam) × |tension|
+ *    posMm_body = bodyR^-1 · (tip_lab - fiberPos_lab)
+ *
+ *  Returns null when no beam axis sits within
+ *  FIBER_END_SNAP_TOLERANCE_MM (500 mm — loose enough to grab a beam
+ *  anywhere on a small optical-table layout) of the current tip. */
+export function findFiberEndSnap(
+  fiberObjectId: string,
+  endRole: "A" | "B",
+  scene: SceneData,
+): {
+  newEndPosMmBody: Vec3;
+  newTensionHandleMmBody: Vec3;
+  missMm: number;
+  fromObjectId: string;
+  fromPort: string;
+  distanceMm: number;
+} | null {
+  const fiberObj = scene.objects.find((o) => o.id === fiberObjectId);
+  if (!fiberObj) return null;
+  const fiberPe = scene.physicsElements.find(
+    (e) => e.objectId === fiberObjectId && e.elementKind === "fiber",
+  );
+  if (!fiberPe) return null;
+  const kp = (fiberPe.kindParams ?? {}) as {
+    endA?: { posMm?: number[]; rotDeg?: number[]; tensionHandleMm?: number[] };
+    endB?: { posMm?: number[]; rotDeg?: number[]; tensionHandleMm?: number[] };
+  };
+  const ep = endRole === "A" ? kp.endA : kp.endB;
+  const posMm = ep?.posMm;
+  const tension = ep?.tensionHandleMm;
+  if (
+    !Array.isArray(posMm) || posMm.length !== 3
+    || !Array.isArray(tension) || tension.length !== 3
+  ) return null;
+
+  const tensionMag = Math.hypot(tension[0], tension[1], tension[2]);
+  if (tensionMag < 1e-6) return null;
+  // Optical tip in body frame = posMm (back/junction) + outward·LENGTH
+  // where outward = -unit(tension). (2026-05-17 clarified contract.)
+  const outwardBody: Vec3 = {
+    x: -tension[0] / tensionMag,
+    y: -tension[1] / tensionMag,
+    z: -tension[2] / tensionMag,
+  };
+  const tipBody: Vec3 = {
+    x: posMm[0] + outwardBody.x * FIBER_FERRULE_TIP_MM,
+    y: posMm[1] + outwardBody.y * FIBER_FERRULE_TIP_MM,
+    z: posMm[2] + outwardBody.z * FIBER_FERRULE_TIP_MM,
+  };
+  // tip body → tip lab via fiber body's pose.
+  const tipOffsetLab = rotateLocalToLab(
+    tipBody,
+    fiberObj.rxDeg,
+    fiberObj.ryDeg,
+    fiberObj.rzDeg,
+  );
+  const tipLab: Vec3 = {
+    x: fiberObj.xMm + tipOffsetLab.x,
+    y: fiberObj.yMm + tipOffsetLab.y,
+    z: fiberObj.zMm + tipOffsetLab.z,
+  };
+
+  const axes = enumerateBeamAxesFromTraces(fiberObjectId)
+    ?? enumerateBeamAxesFromEmitters(scene, fiberObjectId);
+  if (axes.length === 0) return null;
+
+  let best: {
+    closestLab: Vec3;
+    beamDirLab: Vec3;
+    missMm: number;
+    fromObjectId: string;
+    fromPort: string;
+    distanceMm: number;
+  } | null = null;
+  for (const axis of axes) {
+    const toTip = v3sub(tipLab, axis.origin);
+    const t = v3dot(toTip, axis.direction);
+    if (t <= 0) continue;
+    const closest: Vec3 = {
+      x: axis.origin.x + axis.direction.x * t,
+      y: axis.origin.y + axis.direction.y * t,
+      z: axis.origin.z + axis.direction.z * t,
+    };
+    const miss = v3len(v3sub(tipLab, closest));
+    if (miss > FIBER_END_SNAP_TOLERANCE_MM) continue;
+    if (!best || miss < best.missMm) {
+      best = {
+        closestLab: closest,
+        beamDirLab: axis.direction,
+        missMm: miss,
+        fromObjectId: axis.fromObjectId,
+        fromPort: axis.fromPort,
+        distanceMm: t,
+      };
+    }
+  }
+  if (!best) return null;
+
+  // Body inverse rotation (lab → body) for direction vectors.
+  const labDirToBody = (v: Vec3): Vec3 => {
+    const rx = -((fiberObj.rxDeg) * Math.PI) / 180;
+    const ry = -((fiberObj.ryDeg) * Math.PI) / 180;
+    const rz = -((fiberObj.rzDeg) * Math.PI) / 180;
+    const cx = Math.cos(rx), sxr = Math.sin(rx);
+    const cy = Math.cos(ry), syr = Math.sin(ry);
+    const cz = Math.cos(rz), szr = Math.sin(rz);
+    const a = { x: cz * v.x - szr * v.y, y: szr * v.x + cz * v.y, z: v.z };
+    const b = { x: cy * a.x + syr * a.z, y: a.y, z: -syr * a.x + cy * a.z };
+    return { x: b.x, y: cx * b.y - sxr * b.z, z: sxr * b.y + cx * b.z };
+  };
+
+  // Tip lands on beam axis. posMm (= back of connector = junction
+  // = mesh origin) sits FIBER_FERRULE_TIP_MM along the wire-extension
+  // direction (+tension) from the tip — i.e. away from the optical
+  // port, into the body interior.
+  const newTipLab = best.closestLab;
+
+  // Tension direction in body frame = beam direction (= +tau direction
+  // by convention: light propagates in +tau through the fiber, so
+  // entering at end A means continuing in +tau; exiting at end B means
+  // -tau gave the prior leg's direction). Preserve current magnitude.
+  const beamDirBody = labDirToBody(best.beamDirLab);
+  const beamDirBodyMag = Math.hypot(beamDirBody.x, beamDirBody.y, beamDirBody.z);
+  const tauScale = tensionMag / Math.max(beamDirBodyMag, 1e-9);
+  const newTensionHandleMmBody: Vec3 = {
+    x: beamDirBody.x * tauScale,
+    y: beamDirBody.y * tauScale,
+    z: beamDirBody.z * tauScale,
+  };
+  // New posMm lab = tip lab + unit(tension_lab) · FIBER_FERRULE_TIP_MM
+  // = tip lab + beamDir_lab · FIBER_FERRULE_TIP_MM (since tension and
+  // beam point the same way after the align).
+  const newPosMmLab: Vec3 = {
+    x: newTipLab.x + best.beamDirLab.x * FIBER_FERRULE_TIP_MM,
+    y: newTipLab.y + best.beamDirLab.y * FIBER_FERRULE_TIP_MM,
+    z: newTipLab.z + best.beamDirLab.z * FIBER_FERRULE_TIP_MM,
+  };
+  const newPosMmFromFiberOrigin: Vec3 = {
+    x: newPosMmLab.x - fiberObj.xMm,
+    y: newPosMmLab.y - fiberObj.yMm,
+    z: newPosMmLab.z - fiberObj.zMm,
+  };
+  const newEndPosMmBody = labDirToBody(newPosMmFromFiberOrigin);
+
+  return {
+    newEndPosMmBody,
+    newTensionHandleMmBody,
+    missMm: best.missMm,
+    fromObjectId: best.fromObjectId,
+    fromPort: best.fromPort,
+    distanceMm: best.distanceMm,
+  };
 }
 
 /** Build an orthonormal basis (u, v) perpendicular to `direction`.

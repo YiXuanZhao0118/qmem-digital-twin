@@ -5,6 +5,7 @@ from pathlib import Path
 from shutil import copy2
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import crud, schemas
@@ -78,7 +79,12 @@ async def create_component_from_asset(
 
 @router.get("", response_model=list[schemas.Asset3DOut])
 async def list_assets(session: AsyncSession = Depends(get_session)) -> list[Asset3D]:
-    return await crud.list_all(session, Asset3D)
+    # Hide AI-binding-session drafts (alembic 0057). Only the owning agent
+    # session sees its drafts; everything else only sees 'active'.
+    result = await session.scalars(
+        select(Asset3D).where(Asset3D.status == "active")
+    )
+    return list(result.all())
 
 
 @router.post("", response_model=schemas.Asset3DOut, status_code=status.HTTP_201_CREATED)

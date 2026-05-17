@@ -9,12 +9,21 @@
  */
 import {
   ACTIVE_COLLECTION_STORAGE_KEY,
+  HOME_VIEW_STORAGE_KEY,
   TRANSFORM_CURSOR_HIDDEN_STORAGE_KEY,
   TRANSFORM_CURSOR_STORAGE_KEY,
   TRANSFORM_CURSOR_STORAGE_KEY_V1,
 } from "./_constants";
 
 type LabPointLite = { x: number; y: number; z: number };
+
+export type HomeViewPose = {
+  position: LabPointLite;
+  target: LabPointLite;
+  up: LabPointLite;
+};
+
+export type HomeViewState = { left: HomeViewPose | null; right: HomeViewPose | null };
 
 function sanitizeLabPoint(p: Partial<LabPointLite> | null | undefined): LabPointLite {
   return {
@@ -83,6 +92,40 @@ export function saveTransformCursorHidden(value: {
       TRANSFORM_CURSOR_HIDDEN_STORAGE_KEY,
       JSON.stringify(value),
     );
+  } catch {
+    // ignore quota / availability errors
+  }
+}
+
+function sanitizeHomePose(value: unknown): HomeViewPose | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Partial<HomeViewPose>;
+  if (!v.position || !v.target || !v.up) return null;
+  const position = sanitizeLabPoint(v.position);
+  const target = sanitizeLabPoint(v.target);
+  const up = sanitizeLabPoint(v.up);
+  // Reject degenerate up vectors (would let lookAt produce NaN).
+  const upLen = Math.hypot(up.x, up.y, up.z);
+  if (!Number.isFinite(upLen) || upLen < 1e-6) return null;
+  return { position, target, up };
+}
+
+export function loadHomeView(): HomeViewState {
+  if (typeof window === "undefined") return { left: null, right: null };
+  try {
+    const raw = window.localStorage.getItem(HOME_VIEW_STORAGE_KEY);
+    if (!raw) return { left: null, right: null };
+    const parsed = JSON.parse(raw) as Partial<HomeViewState>;
+    return { left: sanitizeHomePose(parsed.left), right: sanitizeHomePose(parsed.right) };
+  } catch {
+    return { left: null, right: null };
+  }
+}
+
+export function saveHomeView(value: HomeViewState): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(HOME_VIEW_STORAGE_KEY, JSON.stringify(value));
   } catch {
     // ignore quota / availability errors
   }

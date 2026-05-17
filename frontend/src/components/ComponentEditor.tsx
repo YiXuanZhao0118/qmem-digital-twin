@@ -28,6 +28,7 @@ import { TransformControls } from "three/examples/jsm/controls/TransformControls
 import { useSceneStore } from "../store/sceneStore";
 import type { Anchor, Asset3D, ComponentItem, ElementKind } from "../types/digitalTwin";
 import { loadAssetObject, type FiberNode } from "../three/loadAsset";
+import { FIBER_FERRULE_TIP_MM } from "../utils/fiberAnchorResolver";
 import { mmToThree, threeToMm } from "../optical/frames";
 import {
   EDITABLE_ANCHOR_IDS,
@@ -134,7 +135,10 @@ type FiberEnd = "A" | "B";
 type FiberSlowAxis = "x" | "y" | "z";
 type FiberSlowAxisDraft = { endA: FiberSlowAxis; endB: FiberSlowAxis };
 
-const DEFAULT_FIBER_FERRULE_TIP_MM = 36.28;
+// Canonical ferrule housing length lives in fiberAnchorResolver.ts. Re-
+// export here under the legacy name so existing call sites keep working
+// after centralising the constant.
+const DEFAULT_FIBER_FERRULE_TIP_MM = FIBER_FERRULE_TIP_MM;
 
 function normalizeVec3(v: { x: number; y: number; z: number }): { x: number; y: number; z: number } {
   const mag = Math.hypot(v.x, v.y, v.z);
