@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-05-17T01:32:40.763Z",
+  "generated_at": "2026-05-18T22:39:32.788Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -69,6 +69,66 @@
     "rf_cable",
     "rf_switch"
   ],
+  "component_anchor_contracts": {
+    "dds_ad9959_pcb": [
+      {
+        "id": "rf_out",
+        "name": "CH0",
+        "position_mm_body_local": {
+          "x": 82.55,
+          "y": -30,
+          "z": 4
+        },
+        "direction_body_local": {
+          "x": 1,
+          "y": 0,
+          "z": 0
+        }
+      },
+      {
+        "id": "rf_out",
+        "name": "CH1",
+        "position_mm_body_local": {
+          "x": 82.55,
+          "y": -10,
+          "z": 4
+        },
+        "direction_body_local": {
+          "x": 1,
+          "y": 0,
+          "z": 0
+        }
+      },
+      {
+        "id": "rf_out",
+        "name": "CH2",
+        "position_mm_body_local": {
+          "x": 82.55,
+          "y": 10,
+          "z": 4
+        },
+        "direction_body_local": {
+          "x": 1,
+          "y": 0,
+          "z": 0
+        }
+      },
+      {
+        "id": "rf_out",
+        "name": "CH3",
+        "position_mm_body_local": {
+          "x": 82.55,
+          "y": 30,
+          "z": 4
+        },
+        "direction_body_local": {
+          "x": 1,
+          "y": 0,
+          "z": 0
+        }
+      }
+    ]
+  },
   "physics_plugins": [
     {
       "id": "laser_source",
@@ -473,10 +533,9 @@
         },
         "align_variant": "translate_anchor_to_beam",
         "align_tolerance_mm": 25,
-        "align_summary": "Pick the flat face on the wireframe (sets intercept_in position). Pick X/Y/Z as the fast-axis direction (stored in directionBodyLocal). Per-instance fast-axis angle around the beam stays in kindParams.fastAxisDegBeamLocal.",
+        "align_summary": "Pick the flat face on the wireframe (sets intercept_in position). Asset-level fast-axis angle is set in PHY Editor → Optical → Components on the intercept_in anchor (fastAxisDegBodyLocal). Per-instance rotation around the beam axis is set in the Object panel.",
         "default_params": {
           "retardanceLambda": 0.5,
-          "fastAxisDegBeamLocal": 0,
           "transmission": 0.99,
           "wavelengthRangeNm": [
             400,
@@ -488,9 +547,7 @@
           "transmission",
           "wavelengthRangeNm"
         ],
-        "state_param_keys": [
-          "fastAxisDegBeamLocal"
-        ],
+        "state_param_keys": [],
         "port_domains": {
           "intercept_in": "optical"
         }

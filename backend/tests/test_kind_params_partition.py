@@ -43,11 +43,15 @@ def test_aom_partition_matches_plugin_declarations():
         assert derived not in state
 
 
-def test_waveplate_partition_separates_retardance_from_fast_axis():
+def test_waveplate_partition_has_no_per_instance_kind_params():
+    """Post-alembic 0060: waveplate has no per-instance kindParams. The
+    fast-axis angle moved to the Asset3D anchor (asset-level fixed) and
+    per-instance rotation lives on SceneObject.properties as a scalar —
+    not via kindParams. Intrinsic = spec sheet, state = empty."""
     intrinsic = set(intrinsic_keys_by_kind().get("waveplate") or [])
     state = set(state_keys_by_kind().get("waveplate") or [])
     assert intrinsic == {"retardanceLambda", "transmission", "wavelengthRangeNm"}
-    assert state == {"fastAxisDegBeamLocal"}
+    assert state == set()
 
 
 def test_rf_amplifier_is_fully_intrinsic_no_state_knobs():

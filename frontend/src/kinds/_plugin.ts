@@ -158,6 +158,37 @@ export interface AnchorContract {
 // Plugin shape
 // =============================================================================
 
+/** Per-component-type anchor template (alembic-time-of-writing 0062).
+ *
+ *  When a single ElementKind covers devices with different physical
+ *  port layouts — e.g. ``rf_source`` covers both a generic
+ *  single-channel synth AND a 4-channel AD9959 DDS evaluation board —
+ *  the plugin declares the layout per componentType via the
+ *  ``componentAnchorContracts`` field. The PHY Editor uses this to
+ *  LOCK anchor identity (no +Add / Delete, id select hidden) while
+ *  still letting users drag each port onto the real STL geometry.
+ *
+ *  Position / direction are in body-local Z-up mm. Both are optional —
+ *  when omitted, the PHY Editor seeds the anchor at the origin and the
+ *  user drags it into place.
+ *
+ *  This is the single source of truth: the backend reads the same data
+ *  via ``kinds_manifest.component_anchor_contracts()``. The previous
+ *  duplicate definition in ``backend/app/components/anchor_contracts.py``
+ *  + ``frontend/src/components/componentAnchorContracts.ts`` has been
+ *  collapsed into the plugin (Stage H).
+ */
+export type ComponentAnchorTemplate = {
+  /** Anchor id — must be one of the kind's required/optional anchors. */
+  readonly id: string;
+  /** Optional display name. When multiple anchors share an id (e.g.
+   *  4 × rf_out on AD9959), the name disambiguates. */
+  readonly name?: string;
+  readonly positionMmBodyLocal?: { x: number; y: number; z: number };
+  readonly directionBodyLocal?: { x: number; y: number; z: number };
+};
+
+
 /** Fields common to all plugins (catalog + rendering). */
 interface ComponentPluginBase {
   /** Stable id — for PhysicsPlugin this is the canonical ElementKind
@@ -198,6 +229,15 @@ interface ComponentPluginBase {
     state: DeviceState | undefined,
     asset?: Asset3D,
   ) => THREE.Object3D;
+
+  /** Optional: per-componentType anchor template lookup. Maps a
+   *  componentType (which must be one of ``componentTypes``) to its
+   *  locked anchor layout. Used by the PHY Editor's "lock anchor
+   *  identity" feature and the upsert scripts' "seed from contract"
+   *  helpers. See ``ComponentAnchorTemplate`` for shape. */
+  readonly componentAnchorContracts?: Readonly<
+    Record<string, readonly ComponentAnchorTemplate[]>
+  >;
 }
 
 /** Plugin whose kind participates in physics — has anchors, align,

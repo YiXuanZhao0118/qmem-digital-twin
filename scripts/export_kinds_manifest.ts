@@ -80,6 +80,13 @@ interface ManifestPassivePlugin {
   asset_name_pattern: string | null;
 }
 
+interface ManifestAnchorTemplate {
+  id: string;
+  name?: string;
+  position_mm_body_local?: { x: number; y: number; z: number };
+  direction_body_local?: { x: number; y: number; z: number };
+}
+
 interface Manifest {
   schema_version: 1;
   generated_at: string;
@@ -89,6 +96,11 @@ interface Manifest {
   /** ElementKind values declared by physics plugins (Pydantic Literal
    *  uses this to validate incoming `kind` strings). */
   element_kinds: string[];
+  /** Per-componentType anchor templates (Stage H, single source of
+   *  truth). Backend reads via ``kinds_manifest.component_anchor_contracts()``
+   *  to drive PHY-Editor "lock anchor identity"; was previously
+   *  duplicated in ``anchor_contracts.py`` + ``componentAnchorContracts.ts``. */
+  component_anchor_contracts: Record<string, ManifestAnchorTemplate[]>;
   physics_plugins: ManifestPhysicsPlugin[];
   passive_plugins: ManifestPassivePlugin[];
 }
@@ -101,9 +113,28 @@ function build(
   const passive: ManifestPassivePlugin[] = [];
   const componentTypeToKind: Record<string, string> = {};
   const elementKinds: string[] = [];
+  const componentAnchorContracts: Record<string, ManifestAnchorTemplate[]> = {};
 
   for (const pUnknown of plugins) {
     const p = pUnknown as any;
+    // Pull componentAnchorContracts off every plugin (physics + passive).
+    // The map's key (componentType) is unique across the registry, so we
+    // can safely flatten into one top-level dict — Pydantic / Python
+    // consumers don't need to know which plugin owns which entry.
+    if (p.componentAnchorContracts) {
+      for (const [ct, templates] of Object.entries(p.componentAnchorContracts)) {
+        componentAnchorContracts[ct] = (templates as any[]).map((t) => ({
+          id: t.id,
+          ...(t.name !== undefined ? { name: t.name } : {}),
+          ...(t.positionMmBodyLocal !== undefined
+            ? { position_mm_body_local: t.positionMmBodyLocal }
+            : {}),
+          ...(t.directionBodyLocal !== undefined
+            ? { direction_body_local: t.directionBodyLocal }
+            : {}),
+        }));
+      }
+    }
     if (isPhysics(pUnknown)) {
       const ek = p.physics.elementKind;
       elementKinds.push(ek);
@@ -155,6 +186,7 @@ function build(
     generated_at: new Date().toISOString(),
     component_type_to_kind: componentTypeToKind,
     element_kinds: elementKinds,
+    component_anchor_contracts: componentAnchorContracts,
     physics_plugins: physics,
     passive_plugins: passive,
   };

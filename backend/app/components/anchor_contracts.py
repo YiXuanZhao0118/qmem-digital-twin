@@ -1,83 +1,81 @@
-"""Per-component-type anchor contracts.
+"""Per-component-type anchor contracts — backend accessor.
 
-Mirrors the per-ElementKind `KIND_REGISTRY` pattern in
-`frontend/src/kinds/_registry.ts`, but at the **component_type**
-level — needed when one ElementKind (e.g. `rf_source`) covers devices
-with different physical port layouts (single-channel synth vs. 4-channel
-AD9959 DDS).
+Stage H consolidated the contract data into the frontend kinds plugin
+definitions (``frontend/src/kinds/<id>/index.ts``'s
+``componentAnchorContracts`` field). The frontend ``export:kinds`` step
+emits the merged contract dictionary into
+``backend/data/kinds.json::component_anchor_contracts``, and this
+module is now a thin reader on top of that.
 
-A component_type appearing in this registry has its anchor identity
-(id + name + count) **locked**: the PHY Editor hides the +Add / Delete
-buttons and the id `<select>`, and the `upsert_*` scripts seed the
-asset's `anchors[]` from this single source of truth so a stale dataset
-can be rebuilt deterministically. Anchor **position/direction** stay
-editable so the user can drag them onto the real STL geometry.
-
-The frontend mirror lives at
-`frontend/src/components/componentAnchorContracts.ts` and must be kept
-in sync. There is no automated consistency check yet — review the two
-files together when editing.
+The legacy ``COMPONENT_ANCHOR_CONTRACTS`` constant still exists as a
+read-only cached view so callers that iterated the dict continue to
+work. New code should prefer :func:`get_anchor_contract` for a single
+lookup or :func:`all_anchor_contracts` for the full map (cached).
 """
 
 from __future__ import annotations
 
-from typing import TypedDict
+from functools import lru_cache
 
+from app.kinds_manifest import component_anchor_contracts
 from app.schemas import AssetAnchorId
 
 
-class Vec3Dict(TypedDict):
-    x: float
-    y: float
-    z: float
+# Keep the legacy field name shape so existing code that imports
+# ``COMPONENT_ANCHOR_CONTRACTS`` directly keeps working. Resolved
+# lazily on first access — module load order shouldn't depend on the
+# manifest being parsed yet.
+def _build_contracts() -> dict[str, list[dict]]:
+    raw = component_anchor_contracts()
+    out: dict[str, list[dict]] = {}
+    for ct, templates in raw.items():
+        out[ct] = [
+            {
+                "id": t["id"],
+                **({"name": t["name"]} if "name" in t else {}),
+                **(
+                    {"positionMmBodyLocal": _vec3(t["position_mm_body_local"])}
+                    if "position_mm_body_local" in t
+                    else {}
+                ),
+                **(
+                    {"directionBodyLocal": _vec3(t["direction_body_local"])}
+                    if "direction_body_local" in t
+                    else {}
+                ),
+            }
+            for t in templates
+        ]
+    return out
 
 
-class AnchorTemplate(TypedDict, total=False):
-    id: AssetAnchorId
-    name: str
-    positionMmBodyLocal: Vec3Dict
-    directionBodyLocal: Vec3Dict
+def _vec3(d: dict[str, float]) -> dict[str, float]:
+    return {"x": float(d["x"]), "y": float(d["y"]), "z": float(d["z"])}
 
 
-COMPONENT_ANCHOR_CONTRACTS: dict[str, list[AnchorTemplate]] = {
-    # Analog Devices AD9959/PCBZ — 4-channel DDS evaluation board.
-    # 4 SMA outputs (CH0..CH3) on the +X edge of the 165.1 x 114.3 x 19.3
-    # mm STL mesh (body centred at origin, Z-up). Z=4 mm puts the anchor on
-    # top of the 9.65-mm-half-thickness PCB; tweak in PHY Editor to match
-    # the actual SMA centre once you eyeball it against the mesh.
-    # REF_IN / SYS_IN / SYS_OUT removed 2026-05-13 — the system clock fans
-    # in from `dds_tcxo_fanout_module` and sync chaining is handled at the
-    # chassis level, not as per-AD9959 anchors.
-    "dds_ad9959_pcb": [
-        {
-            "id": "rf_out",
-            "name": "CH0",
-            "positionMmBodyLocal": {"x": 82.55, "y": -30.0, "z": 4.0},
-            "directionBodyLocal": {"x": 1.0, "y": 0.0, "z": 0.0},
-        },
-        {
-            "id": "rf_out",
-            "name": "CH1",
-            "positionMmBodyLocal": {"x": 82.55, "y": -10.0, "z": 4.0},
-            "directionBodyLocal": {"x": 1.0, "y": 0.0, "z": 0.0},
-        },
-        {
-            "id": "rf_out",
-            "name": "CH2",
-            "positionMmBodyLocal": {"x": 82.55, "y": 10.0, "z": 4.0},
-            "directionBodyLocal": {"x": 1.0, "y": 0.0, "z": 0.0},
-        },
-        {
-            "id": "rf_out",
-            "name": "CH3",
-            "positionMmBodyLocal": {"x": 82.55, "y": 30.0, "z": 4.0},
-            "directionBodyLocal": {"x": 1.0, "y": 0.0, "z": 0.0},
-        },
-    ],
-}
+@lru_cache(maxsize=1)
+def all_anchor_contracts() -> dict[str, list[dict]]:
+    """Full ``componentType → [AnchorTemplate]`` map (cached).
+
+    Pydantic-friendly key shape (``positionMmBodyLocal`` /
+    ``directionBodyLocal``) — same as the legacy ``COMPONENT_ANCHOR_CONTRACTS``
+    constant.
+    """
+    return _build_contracts()
 
 
-def get_anchor_contract(component_type: str) -> list[AnchorTemplate] | None:
+COMPONENT_ANCHOR_CONTRACTS: dict[str, list[dict]] = all_anchor_contracts()
+
+
+def get_anchor_contract(component_type: str) -> list[dict] | None:
     """Return the locked anchor template list for a component_type, or None
     if the component_type isn't in the registry (= no identity lock)."""
-    return COMPONENT_ANCHOR_CONTRACTS.get(component_type)
+    return all_anchor_contracts().get(component_type)
+
+
+__all__ = [
+    "COMPONENT_ANCHOR_CONTRACTS",
+    "all_anchor_contracts",
+    "get_anchor_contract",
+    "AssetAnchorId",  # re-export for downstream type hints
+]

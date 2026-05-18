@@ -16,6 +16,7 @@ import pytest
 from app.kinds_manifest import (
     KindsManifestError,
     asset_name_patterns,
+    component_anchor_contracts,
     component_type_to_kind,
     element_kinds,
     load_manifest,
@@ -187,6 +188,29 @@ class TestOpticalCoverage:
             assert "operatingWavelengthRangeNm" not in dp
             return
         pytest.fail("fiber plugin not found in manifest")
+
+
+class TestComponentAnchorContracts:
+    """Stage H: anchor contracts are now sourced from the manifest
+    (originally duplicated in anchor_contracts.py + the frontend mirror)."""
+
+    def test_dds_ad9959_pcb_has_four_rf_out_anchors(self) -> None:
+        contracts = component_anchor_contracts()
+        templates = contracts.get("dds_ad9959_pcb") or []
+        assert len(templates) == 4
+        assert all(t["id"] == "rf_out" for t in templates)
+        names = {t.get("name") for t in templates}
+        assert names == {"CH0", "CH1", "CH2", "CH3"}
+
+    def test_templates_carry_position_and_direction(self) -> None:
+        templates = component_anchor_contracts().get("dds_ad9959_pcb") or []
+        ch0 = next(t for t in templates if t.get("name") == "CH0")
+        # snake_case from JSON; backend reader converts to camelCase.
+        assert "position_mm_body_local" in ch0
+        assert "direction_body_local" in ch0
+        # +X edge of the PCB, y=-30 puts CH0 at the lower edge.
+        assert ch0["position_mm_body_local"]["x"] == 82.55
+        assert ch0["position_mm_body_local"]["y"] == -30.0
 
 
 class TestManifestMissing:
