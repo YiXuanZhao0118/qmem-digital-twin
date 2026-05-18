@@ -5,7 +5,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/m/ms/msc/msc1/8599-e0w.html",
     "stepBytes": 245889,
     "stepLocal": "scripts\\.step_cache\\msc1.step",
-    "stlPath": "uploads/thorlabs_msc1.stl",
+    "stlPath": "files/stl/thorlabs_msc1.stl",
     "stlBytes": 94084,
     "status": "ok"
   },
@@ -15,7 +15,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/c/cf/cf1/cf125/6535-e0w.html",
     "stepBytes": 1508579,
     "stepLocal": "scripts\\.step_cache\\cf125.step",
-    "stlPath": "uploads/thorlabs_cf125.stl",
+    "stlPath": "files/stl/thorlabs_cf125.stl",
     "stlBytes": 260084,
     "status": "ok"
   },
@@ -25,7 +25,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/m/ms/msc/msc3/TTN132085-e0w.html",
     "stepBytes": 1223404,
     "stepLocal": "scripts\\.step_cache\\msc3.step",
-    "stlPath": "uploads/thorlabs_msc3.stl",
+    "stlPath": "files/stl/thorlabs_msc3.stl",
     "stlBytes": 531484,
     "status": "ok"
   },
@@ -35,7 +35,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/m/mb/mbe/mbe1/MBE1-e0w.html",
     "stepBytes": 1494323,
     "stepLocal": "scripts\\.step_cache\\mbe1.step",
-    "stlPath": "uploads/thorlabs_mbe1.stl",
+    "stlPath": "files/stl/thorlabs_mbe1.stl",
     "stlBytes": 582084,
     "status": "ok"
   },
@@ -45,7 +45,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/s/sb/sbe/sbe1/TTN352413-e0w.html",
     "stepBytes": 2141925,
     "stepLocal": "scripts\\.step_cache\\sbe1.step",
-    "stlPath": "uploads/thorlabs_sbe1.stl",
+    "stlPath": "files/stl/thorlabs_sbe1.stl",
     "stlBytes": 646384,
     "status": "ok"
   },
@@ -55,7 +55,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/s/sb/sbe/sbe1_m/TTN352423-e0w.html",
     "stepBytes": 2275250,
     "stepLocal": "scripts\\.step_cache\\sbe1_m.step",
-    "stlPath": "uploads/thorlabs_sbe1_m.stl",
+    "stlPath": "files/stl/thorlabs_sbe1_m.stl",
     "stlBytes": 657484,
     "status": "ok"
   },
@@ -65,7 +65,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/s/sb/sbe/sbe2/TTN352429-e0w.html",
     "stepBytes": 2321033,
     "stepLocal": "scripts\\.step_cache\\sbe2.step",
-    "stlPath": "uploads/thorlabs_sbe2.stl",
+    "stlPath": "files/stl/thorlabs_sbe2.stl",
     "stlBytes": 865384,
     "status": "ok"
   },
@@ -75,7 +75,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/s/sb/sbe/sbe2_m/TTN352432-e0w.html",
     "stepBytes": 2460802,
     "stepLocal": "scripts\\.step_cache\\sbe2_m.step",
-    "stlPath": "uploads/thorlabs_sbe2_m.stl",
+    "stlPath": "files/stl/thorlabs_sbe2_m.stl",
     "stlBytes": 845184,
     "status": "ok"
   },
@@ -85,7 +85,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/b/be/be1/be1/6789-e0w.html",
     "stepBytes": 1488112,
     "stepLocal": "scripts\\.step_cache\\be1.step",
-    "stlPath": "uploads/thorlabs_be1.stl",
+    "stlPath": "files/stl/thorlabs_be1.stl",
     "stlBytes": 280584,
     "status": "ok"
   },
@@ -95,7 +95,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/b/be/be1/be1_m/6790-e0w.html",
     "stepBytes": 1582576,
     "stepLocal": "scripts\\.step_cache\\be1_m.step",
-    "stlPath": "uploads/thorlabs_be1_m.stl",
+    "stlPath": "files/stl/thorlabs_be1_m.stl",
     "stlBytes": 301884,
     "status": "ok"
   },
@@ -105,7 +105,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/b/be/be1/be1r/TTN106829-e0w.html",
     "stepBytes": 1955281,
     "stepLocal": "scripts\\.step_cache\\be1r.step",
-    "stlPath": "uploads/thorlabs_be1r.stl",
+    "stlPath": "files/stl/thorlabs_be1r.stl",
     "stlBytes": 742284,
     "status": "ok"
   },
@@ -115,7 +115,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/b/be/be1/be1r_m/TTN106832-e0w.html",
     "stepBytes": 2059146,
     "stepLocal": "scripts\\.step_cache\\be1r_m.step",
-    "stlPath": "uploads/thorlabs_be1r_m.stl",
+    "stlPath": "files/stl/thorlabs_be1r_m.stl",
     "stlBytes": 784684,
     "status": "ok"
   },
@@ -125,7 +125,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/s/sc/scf/scf1/TTN349833-e0w.html",
     "stepBytes": 1258850,
     "stepLocal": "scripts\\.step_cache\\scf1.step",
-    "stlPath": "uploads/thorlabs_scf1.stl",
+    "stlPath": "files/stl/thorlabs_scf1.stl",
     "stlBytes": 361484,
     "status": "ok"
   },
@@ -135,7 +135,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/c/cf/cf1/cf175/6600-e0w.html",
     "stepBytes": 1547367,
     "stepLocal": "scripts\\.step_cache\\cf175.step",
-    "stlPath": "uploads/thorlabs_cf175.stl",
+    "stlPath": "files/stl/thorlabs_cf175.stl",
     "stlBytes": 260284,
     "status": "ok"
   },
@@ -145,7 +145,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/c/cf/cf1/cf175c/TTN026564-e0w.html",
     "stepBytes": 2146706,
     "stepLocal": "scripts\\.step_cache\\cf175c.step",
-    "stlPath": "uploads/thorlabs_cf175c.stl",
+    "stlPath": "files/stl/thorlabs_cf175c.stl",
     "stlBytes": 1453284,
     "status": "ok"
   },
@@ -155,7 +155,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/c/cf/cf1/cf175c_m/TTN026566-e0w.html",
     "stepBytes": 2070153,
     "stepLocal": "scripts\\.step_cache\\cf175c_m.step",
-    "stlPath": "uploads/thorlabs_cf175c_m.stl",
+    "stlPath": "files/stl/thorlabs_cf175c_m.stl",
     "stlBytes": 1288884,
     "status": "ok"
   },
@@ -165,7 +165,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/pf/pf8/pf85b/TTN229282-e0w.html",
     "stepBytes": 1829947,
     "stepLocal": "scripts\\.step_cache\\pf85b.step",
-    "stlPath": "uploads/thorlabs_pf85b.stl",
+    "stlPath": "files/stl/thorlabs_pf85b.stl",
     "stlBytes": 530384,
     "status": "ok"
   },
@@ -175,7 +175,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/pf/pf1/pf125b/TTN229026-e0w.html",
     "stepBytes": 1781082,
     "stepLocal": "scripts\\.step_cache\\pf125b.step",
-    "stlPath": "uploads/thorlabs_pf125b.stl",
+    "stlPath": "files/stl/thorlabs_pf125b.stl",
     "stlBytes": 506384,
     "status": "ok"
   },
@@ -185,7 +185,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/pf/pf1/pf175b/TTN203708-e0w.html",
     "stepBytes": 1736391,
     "stepLocal": "scripts\\.step_cache\\pf175b.step",
-    "stlPath": "uploads/thorlabs_pf175b.stl",
+    "stlPath": "files/stl/thorlabs_pf175b.stl",
     "stlBytes": 547684,
     "status": "ok"
   },
@@ -195,7 +195,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/pb/pb4/pb4/PB4-e0w.html",
     "stepBytes": 375893,
     "stepLocal": "scripts\\.step_cache\\pb4.step",
-    "stlPath": "uploads/thorlabs_pb4.stl",
+    "stlPath": "files/stl/thorlabs_pb4.stl",
     "stlBytes": 181484,
     "status": "ok"
   },
@@ -205,7 +205,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/pb/pb4/pb4r/TTN231967-e0w.html",
     "stepBytes": 2088855,
     "stepLocal": "scripts\\.step_cache\\pb4r.step",
-    "stlPath": "uploads/thorlabs_pb4r.stl",
+    "stlPath": "files/stl/thorlabs_pb4r.stl",
     "stlBytes": 912684,
     "status": "ok"
   },
@@ -215,7 +215,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/pb/pb4/pb4_m/PB4_M-e0w.html",
     "stepBytes": 399215,
     "stepLocal": "scripts\\.step_cache\\pb4_m.step",
-    "stlPath": "uploads/thorlabs_pb4_m.stl",
+    "stlPath": "files/stl/thorlabs_pb4_m.stl",
     "stlBytes": 199484,
     "status": "ok"
   },
@@ -225,7 +225,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/pb/pb4/pb4r_m/TTN231968-e0w.html",
     "stepBytes": 2168922,
     "stepLocal": "scripts\\.step_cache\\pb4r_m.step",
-    "stlPath": "uploads/thorlabs_pb4r_m.stl",
+    "stlPath": "files/stl/thorlabs_pb4r_m.stl",
     "stlBytes": 955284,
     "status": "ok"
   },
@@ -235,7 +235,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/po/pol/polaris-ca1/TTN029803-e0w.html",
     "stepBytes": 2617461,
     "stepLocal": "scripts\\.step_cache\\polaris_ca1.step",
-    "stlPath": "uploads/thorlabs_polaris_ca1.stl",
+    "stlPath": "files/stl/thorlabs_polaris_ca1.stl",
     "stlBytes": 1644884,
     "status": "ok"
   },
@@ -245,7 +245,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/po/pol/polaris-ca25_m/TTN035985-e0w.html",
     "stepBytes": 3152950,
     "stepLocal": "scripts\\.step_cache\\polaris_ca25_m.step",
-    "stlPath": "uploads/thorlabs_polaris_ca25_m.stl",
+    "stlPath": "files/stl/thorlabs_polaris_ca25_m.stl",
     "stlBytes": 2964484,
     "status": "ok"
   },
@@ -255,7 +255,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/po/pol/polaris-ca5/TTN319894-e0w.html",
     "stepBytes": 2976558,
     "stepLocal": "scripts\\.step_cache\\polaris_ca5.step",
-    "stlPath": "uploads/thorlabs_polaris_ca5.stl",
+    "stlPath": "files/stl/thorlabs_polaris_ca5.stl",
     "stlBytes": 1653484,
     "status": "ok"
   },
@@ -265,7 +265,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/po/pol/polaris-ca5_m/TTN319895-e0w.html",
     "stepBytes": 2919945,
     "stepLocal": "scripts\\.step_cache\\polaris_ca5_m.step",
-    "stlPath": "uploads/thorlabs_polaris_ca5_m.stl",
+    "stlPath": "files/stl/thorlabs_polaris_ca5_m.stl",
     "stlBytes": 1753884,
     "status": "ok"
   },
@@ -275,7 +275,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/po/pol/polaris-sca1_m/TTN201613-e0w.html",
     "stepBytes": 3392646,
     "stepLocal": "scripts\\.step_cache\\polaris_sca1_m.step",
-    "stlPath": "uploads/thorlabs_polaris_sca1_m.stl",
+    "stlPath": "files/stl/thorlabs_polaris_sca1_m.stl",
     "stlBytes": 3257684,
     "status": "ok"
   },
@@ -285,7 +285,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tb/tbp/tbp/TBP-e0w.html",
     "stepBytes": 1798569,
     "stepLocal": "scripts\\.step_cache\\tbp.step",
-    "stlPath": "uploads/thorlabs_tbp.stl",
+    "stlPath": "files/stl/thorlabs_tbp.stl",
     "stlBytes": 1566484,
     "status": "ok"
   },
@@ -295,7 +295,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tb/tbp/tbp_m/TBP_M-e0w.html",
     "stepBytes": 2031141,
     "stepLocal": "scripts\\.step_cache\\tbp_m.step",
-    "stlPath": "uploads/thorlabs_tbp_m.stl",
+    "stlPath": "files/stl/thorlabs_tbp_m.stl",
     "stlBytes": 1773084,
     "status": "ok"
   },
@@ -305,7 +305,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tb/tbp/tbp05/TBP05-e0w.html",
     "stepBytes": 2071819,
     "stepLocal": "scripts\\.step_cache\\tbp05.step",
-    "stlPath": "uploads/thorlabs_tbp05.stl",
+    "stlPath": "files/stl/thorlabs_tbp05.stl",
     "stlBytes": 1657684,
     "status": "ok"
   },
@@ -315,7 +315,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tb/tbp/tbp05_m/TBP05_M-e0w.html",
     "stepBytes": 2302348,
     "stepLocal": "scripts\\.step_cache\\tbp05_m.step",
-    "stlPath": "uploads/thorlabs_tbp05_m.stl",
+    "stlPath": "files/stl/thorlabs_tbp05_m.stl",
     "stlBytes": 1864284,
     "status": "ok"
   },
@@ -325,7 +325,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/r/rb/rbp/rbp/TTN356114-e0w.html",
     "stepBytes": 1965271,
     "stepLocal": "scripts\\.step_cache\\rbp.step",
-    "stlPath": "uploads/thorlabs_rbp.stl",
+    "stlPath": "files/stl/thorlabs_rbp.stl",
     "stlBytes": 1605484,
     "status": "ok"
   },
@@ -335,7 +335,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/r/rb/rbp/rbp_m/TTN356115-e0w.html",
     "stepBytes": 2204840,
     "stepLocal": "scripts\\.step_cache\\rbp_m.step",
-    "stlPath": "uploads/thorlabs_rbp_m.stl",
+    "stlPath": "files/stl/thorlabs_rbp_m.stl",
     "stlBytes": 1811484,
     "status": "ok"
   },
@@ -345,7 +345,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/r/rb/rbp/rbp1/TTN356116-e0w.html",
     "stepBytes": 1985432,
     "stepLocal": "scripts\\.step_cache\\rbp1.step",
-    "stlPath": "uploads/thorlabs_rbp1.stl",
+    "stlPath": "files/stl/thorlabs_rbp1.stl",
     "stlBytes": 1392484,
     "status": "ok"
   },
@@ -355,7 +355,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/r/rb/rbp/rbp1_m/TTN356117-e0w.html",
     "stepBytes": 2218182,
     "stepLocal": "scripts\\.step_cache\\rbp1_m.step",
-    "stlPath": "uploads/thorlabs_rbp1_m.stl",
+    "stlPath": "files/stl/thorlabs_rbp1_m.stl",
     "stlBytes": 1599284,
     "status": "ok"
   },
@@ -365,7 +365,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/r/rb/rbp/rbp2/TTN356118-e0w.html",
     "stepBytes": 2068005,
     "stepLocal": "scripts\\.step_cache\\rbp2.step",
-    "stlPath": "uploads/thorlabs_rbp2.stl",
+    "stlPath": "files/stl/thorlabs_rbp2.stl",
     "stlBytes": 1646484,
     "status": "ok"
   },
@@ -375,7 +375,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/r/rb/rbp/rbp2_m/TTN356119-e0w.html",
     "stepBytes": 2313762,
     "stepLocal": "scripts\\.step_cache\\rbp2_m.step",
-    "stlPath": "uploads/thorlabs_rbp2_m.stl",
+    "stlPath": "files/stl/thorlabs_rbp2_m.stl",
     "stlBytes": 1853684,
     "status": "ok"
   },
@@ -385,7 +385,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/m/ms/msc/msc2/TTN111196-E0W.html",
     "stepBytes": 1519177,
     "stepLocal": "scripts\\.step_cache\\msc2.step",
-    "stlPath": "uploads/thorlabs_msc2.stl",
+    "stlPath": "files/stl/thorlabs_msc2.stl",
     "stlBytes": 311484,
     "status": "ok"
   },
@@ -395,7 +395,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/c/cf/cf1/cf125c-p5/ttn026560-e0w.html",
     "stepBytes": 2058440,
     "stepLocal": "scripts\\.step_cache\\cf125c.step",
-    "stlPath": "uploads/thorlabs_cf125c.stl",
+    "stlPath": "files/stl/thorlabs_cf125c.stl",
     "stlBytes": 1452884,
     "status": "ok"
   },
@@ -405,7 +405,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/c/cf/cf1/cf125c_m/CF125C_M-e0w.html",
     "stepBytes": 1669730,
     "stepLocal": "scripts\\.step_cache\\cf125c_m.step",
-    "stlPath": "uploads/thorlabs_cf125c_m.stl",
+    "stlPath": "files/stl/thorlabs_cf125c_m.stl",
     "stlBytes": 1157884,
     "status": "ok"
   },
@@ -415,7 +415,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/po/pol/polaris-ca1_m/POLARIS-CA1_M-e0w.html",
     "stepBytes": 2130394,
     "stepLocal": "scripts\\.step_cache\\polaris_ca1_m.step",
-    "stlPath": "uploads/thorlabs_polaris_ca1_m.stl",
+    "stlPath": "files/stl/thorlabs_polaris_ca1_m.stl",
     "stlBytes": 3016684,
     "status": "ok"
   },
@@ -425,7 +425,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/po/pol/polaris-ca5c/POLARIS-CA5C-e0w.html",
     "stepBytes": 2768339,
     "stepLocal": "scripts\\.step_cache\\polaris_ca5c.step",
-    "stlPath": "uploads/thorlabs_polaris_ca5c.stl",
+    "stlPath": "files/stl/thorlabs_polaris_ca5c.stl",
     "stlBytes": 1504484,
     "status": "ok"
   },
@@ -435,7 +435,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/po/pol/polaris-ca5c_m/POLARIS-CA5C_M-e0w.html",
     "stepBytes": 3130925,
     "stepLocal": "scripts\\.step_cache\\polaris_ca5c_m.step",
-    "stlPath": "uploads/thorlabs_polaris_ca5c_m.stl",
+    "stlPath": "files/stl/thorlabs_polaris_ca5c_m.stl",
     "stlBytes": 2643684,
     "status": "ok"
   },
@@ -445,7 +445,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/po/pol/polaris-sca1/POLARIS-SCA1-e0w.html",
     "stepBytes": 2059542,
     "stepLocal": "scripts\\.step_cache\\polaris_sca1.step",
-    "stlPath": "uploads/thorlabs_polaris_sca1.stl",
+    "stlPath": "files/stl/thorlabs_polaris_sca1.stl",
     "stlBytes": 1849284,
     "status": "ok"
   },
@@ -455,7 +455,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/po/pol/polaris-sca25_m/POLARIS-SCA25_M-e0w.html",
     "stepBytes": 2462203,
     "stepLocal": "scripts\\.step_cache\\polaris_sca25_m.step",
-    "stlPath": "uploads/thorlabs_polaris_sca25_m.stl",
+    "stlPath": "files/stl/thorlabs_polaris_sca25_m.stl",
     "stlBytes": 3158084,
     "status": "ok"
   },
@@ -465,7 +465,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tb/tbp/tbp_m-jp/TBP_M-JP-e0w.html",
     "stepBytes": 2223829,
     "stepLocal": "scripts\\.step_cache\\tbp_m_jp.step",
-    "stlPath": "uploads/thorlabs_tbp_m_jp.stl",
+    "stlPath": "files/stl/thorlabs_tbp_m_jp.stl",
     "stlBytes": 1828484,
     "status": "ok"
   },
@@ -475,7 +475,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tb/tbp/tbp05_m-jp/TBP05_M-JP-e0w.html",
     "stepBytes": 2501137,
     "stepLocal": "scripts\\.step_cache\\tbp05_m_jp.step",
-    "stlPath": "uploads/thorlabs_tbp05_m_jp.stl",
+    "stlPath": "files/stl/thorlabs_tbp05_m_jp.stl",
     "stlBytes": 1918084,
     "status": "ok"
   },
@@ -485,7 +485,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/b/bb/bb1/bb1-e03/3544-e0w.html",
     "stepBytes": 1207895,
     "stepLocal": "scripts\\.step_cache\\bb1_e03.step",
-    "stlPath": "uploads/thorlabs_bb1_e03.stl",
+    "stlPath": "files/stl/thorlabs_bb1_e03.stl",
     "stlBytes": 247484,
     "status": "ok"
   },
@@ -495,7 +495,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/pb/pbs/pbs252/19035-e0w.html",
     "stepBytes": 777373,
     "stepLocal": "scripts\\.step_cache\\pbs252.step",
-    "stlPath": "uploads/thorlabs_pbs252.stl",
+    "stlPath": "files/stl/thorlabs_pbs252.stl",
     "stlBytes": 280084,
     "status": "ok"
   },
@@ -505,7 +505,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/w/wp/wph/wphsm05-850/ttn049305-e0w.html",
     "stepBytes": 1618580,
     "stepLocal": "scripts\\.step_cache\\wphsm05_850.step",
-    "stlPath": "uploads/thorlabs_wphsm05_850.stl",
+    "stlPath": "files/stl/thorlabs_wphsm05_850.stl",
     "stlBytes": 1732684,
     "status": "ok"
   },
@@ -515,7 +515,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/p1/p1-/p1-780pm-fc-1/24662-e0w.html",
     "stepBytes": 3562804,
     "stepLocal": "scripts\\.step_cache\\p1_780pm_fc_1.step",
-    "stlPath": "uploads/thorlabs_p1_780pm_fc_1.stl",
+    "stlPath": "files/stl/thorlabs_p1_780pm_fc_1.stl",
     "stlBytes": 13800884,
     "status": "ok"
   },
@@ -525,7 +525,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr0/tr075/6882-e0w.html",
     "stepBytes": 270738,
     "stepLocal": "scripts\\.step_cache\\tr075.step",
-    "stlPath": "uploads/thorlabs_tr075.stl",
+    "stlPath": "files/stl/thorlabs_tr075.stl",
     "stlBytes": 358884,
     "status": "ok"
   },
@@ -535,7 +535,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr1/tr1/0333-e0w.html",
     "stepBytes": 235838,
     "stepLocal": "scripts\\.step_cache\\tr1.step",
-    "stlPath": "uploads/thorlabs_tr1.stl",
+    "stlPath": "files/stl/thorlabs_tr1.stl",
     "stlBytes": 315884,
     "status": "ok"
   },
@@ -545,7 +545,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr1/tr1.5/0334-e0w.html",
     "stepBytes": 231466,
     "stepLocal": "scripts\\.step_cache\\tr1.5.step",
-    "stlPath": "uploads/thorlabs_tr1.5.stl",
+    "stlPath": "files/stl/thorlabs_tr1.5.stl",
     "stlBytes": 303284,
     "status": "ok"
   },
@@ -555,7 +555,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr2/tr2/0335-e0w.html",
     "stepBytes": 232363,
     "stepLocal": "scripts\\.step_cache\\tr2.step",
-    "stlPath": "uploads/thorlabs_tr2.stl",
+    "stlPath": "files/stl/thorlabs_tr2.stl",
     "stlBytes": 303284,
     "status": "ok"
   },
@@ -565,7 +565,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr3/tr3/0336-e0w.html",
     "stepBytes": 231793,
     "stepLocal": "scripts\\.step_cache\\tr3.step",
-    "stlPath": "uploads/thorlabs_tr3.stl",
+    "stlPath": "files/stl/thorlabs_tr3.stl",
     "stlBytes": 303284,
     "status": "ok"
   },
@@ -575,7 +575,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr4/tr4/0337-e0w.html",
     "stepBytes": 231854,
     "stepLocal": "scripts\\.step_cache\\tr4.step",
-    "stlPath": "uploads/thorlabs_tr4.stl",
+    "stlPath": "files/stl/thorlabs_tr4.stl",
     "stlBytes": 303284,
     "status": "ok"
   },
@@ -585,7 +585,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr6/tr6/0338-e0w.html",
     "stepBytes": 231832,
     "stepLocal": "scripts\\.step_cache\\tr6.step",
-    "stlPath": "uploads/thorlabs_tr6.stl",
+    "stlPath": "files/stl/thorlabs_tr6.stl",
     "stlBytes": 303284,
     "status": "ok"
   },
@@ -595,7 +595,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr8/tr8/0339-e0w.html",
     "stepBytes": 231750,
     "stepLocal": "scripts\\.step_cache\\tr8.step",
-    "stlPath": "uploads/thorlabs_tr8.stl",
+    "stlPath": "files/stl/thorlabs_tr8.stl",
     "stlBytes": 303284,
     "status": "ok"
   },
@@ -605,7 +605,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr1/tr10/0340-e0w.html",
     "stepBytes": 231655,
     "stepLocal": "scripts\\.step_cache\\tr10.step",
-    "stlPath": "uploads/thorlabs_tr10.stl",
+    "stlPath": "files/stl/thorlabs_tr10.stl",
     "stlBytes": 303284,
     "status": "ok"
   },
@@ -615,7 +615,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr1/tr12/0341-e0w.html",
     "stepBytes": 232072,
     "stepLocal": "scripts\\.step_cache\\tr12.step",
-    "stlPath": "uploads/thorlabs_tr12.stl",
+    "stlPath": "files/stl/thorlabs_tr12.stl",
     "stlBytes": 303284,
     "status": "ok"
   },
@@ -625,7 +625,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr2/tr20_m/6980-e0w.html",
     "stepBytes": 291509,
     "stepLocal": "scripts\\.step_cache\\tr20_m.step",
-    "stlPath": "uploads/thorlabs_tr20_m.stl",
+    "stlPath": "files/stl/thorlabs_tr20_m.stl",
     "stlBytes": 336684,
     "status": "ok"
   },
@@ -635,7 +635,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr3/tr30_m/0342-e0w.html",
     "stepBytes": 281926,
     "stepLocal": "scripts\\.step_cache\\tr30_m.step",
-    "stlPath": "uploads/thorlabs_tr30_m.stl",
+    "stlPath": "files/stl/thorlabs_tr30_m.stl",
     "stlBytes": 334884,
     "status": "ok"
   },
@@ -645,7 +645,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr4/tr40_m/0343-e0w.html",
     "stepBytes": 281523,
     "stepLocal": "scripts\\.step_cache\\tr40_m.step",
-    "stlPath": "uploads/thorlabs_tr40_m.stl",
+    "stlPath": "files/stl/thorlabs_tr40_m.stl",
     "stlBytes": 334884,
     "status": "ok"
   },
@@ -655,7 +655,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr5/tr50_m/0331-e0w.html",
     "stepBytes": 282070,
     "stepLocal": "scripts\\.step_cache\\tr50_m.step",
-    "stlPath": "uploads/thorlabs_tr50_m.stl",
+    "stlPath": "files/stl/thorlabs_tr50_m.stl",
     "stlBytes": 334884,
     "status": "ok"
   },
@@ -665,7 +665,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr7/tr75_m/0332-e0w.html",
     "stepBytes": 281925,
     "stepLocal": "scripts\\.step_cache\\tr75_m.step",
-    "stlPath": "uploads/thorlabs_tr75_m.stl",
+    "stlPath": "files/stl/thorlabs_tr75_m.stl",
     "stlBytes": 334884,
     "status": "ok"
   },
@@ -675,7 +675,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr1/tr100_m/0344-e0w.html",
     "stepBytes": 281730,
     "stepLocal": "scripts\\.step_cache\\tr100_m.step",
-    "stlPath": "uploads/thorlabs_tr100_m.stl",
+    "stlPath": "files/stl/thorlabs_tr100_m.stl",
     "stlBytes": 334884,
     "status": "ok"
   },
@@ -685,7 +685,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr1/tr150_m/0345-e0w.html",
     "stepBytes": 281433,
     "stepLocal": "scripts\\.step_cache\\tr150_m.step",
-    "stlPath": "uploads/thorlabs_tr150_m.stl",
+    "stlPath": "files/stl/thorlabs_tr150_m.stl",
     "stlBytes": 334884,
     "status": "ok"
   },
@@ -695,7 +695,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr2/tr200_m/0346-e0w.html",
     "stepBytes": 282534,
     "stepLocal": "scripts\\.step_cache\\tr200_m.step",
-    "stlPath": "uploads/thorlabs_tr200_m.stl",
+    "stlPath": "files/stl/thorlabs_tr200_m.stl",
     "stlBytes": 334884,
     "status": "ok"
   },
@@ -705,7 +705,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr2/tr250_m/0347-e0w.html",
     "stepBytes": 281396,
     "stepLocal": "scripts\\.step_cache\\tr250_m.step",
-    "stlPath": "uploads/thorlabs_tr250_m.stl",
+    "stlPath": "files/stl/thorlabs_tr250_m.stl",
     "stlBytes": 334884,
     "status": "ok"
   },
@@ -715,7 +715,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr3/tr300_m/0348-e0w.html",
     "stepBytes": 281569,
     "stepLocal": "scripts\\.step_cache\\tr300_m.step",
-    "stlPath": "uploads/thorlabs_tr300_m.stl",
+    "stlPath": "files/stl/thorlabs_tr300_m.stl",
     "stlBytes": 334884,
     "status": "ok"
   },
@@ -725,7 +725,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr2/tr20_m-jp/8951-e0w.html",
     "stepBytes": 303881,
     "stepLocal": "scripts\\.step_cache\\tr20_m_jp.step",
-    "stlPath": "uploads/thorlabs_tr20_m_jp.stl",
+    "stlPath": "files/stl/thorlabs_tr20_m_jp.stl",
     "stlBytes": 337884,
     "status": "ok"
   },
@@ -735,7 +735,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr3/tr30_m-jp/3065-e0w.html",
     "stepBytes": 288164,
     "stepLocal": "scripts\\.step_cache\\tr30_m_jp.step",
-    "stlPath": "uploads/thorlabs_tr30_m_jp.stl",
+    "stlPath": "files/stl/thorlabs_tr30_m_jp.stl",
     "stlBytes": 334084,
     "status": "ok"
   },
@@ -745,7 +745,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr4/tr40_m-jp/3066-e0w.html",
     "stepBytes": 288015,
     "stepLocal": "scripts\\.step_cache\\tr40_m_jp.step",
-    "stlPath": "uploads/thorlabs_tr40_m_jp.stl",
+    "stlPath": "files/stl/thorlabs_tr40_m_jp.stl",
     "stlBytes": 334084,
     "status": "ok"
   },
@@ -755,7 +755,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr5/tr50_m-jp/3064-e0w.html",
     "stepBytes": 288060,
     "stepLocal": "scripts\\.step_cache\\tr50_m_jp.step",
-    "stlPath": "uploads/thorlabs_tr50_m_jp.stl",
+    "stlPath": "files/stl/thorlabs_tr50_m_jp.stl",
     "stlBytes": 334084,
     "status": "ok"
   },
@@ -765,7 +765,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr7/tr75_m-jp/3067-e0w.html",
     "stepBytes": 288038,
     "stepLocal": "scripts\\.step_cache\\tr75_m_jp.step",
-    "stlPath": "uploads/thorlabs_tr75_m_jp.stl",
+    "stlPath": "files/stl/thorlabs_tr75_m_jp.stl",
     "stlBytes": 334084,
     "status": "ok"
   },
@@ -775,7 +775,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr1/tr100_m-jp/3068-e0w.html",
     "stepBytes": 288021,
     "stepLocal": "scripts\\.step_cache\\tr100_m_jp.step",
-    "stlPath": "uploads/thorlabs_tr100_m_jp.stl",
+    "stlPath": "files/stl/thorlabs_tr100_m_jp.stl",
     "stlBytes": 334084,
     "status": "ok"
   },
@@ -785,7 +785,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr1/tr150_m-jp/3069-e0w.html",
     "stepBytes": 288082,
     "stepLocal": "scripts\\.step_cache\\tr150_m_jp.step",
-    "stlPath": "uploads/thorlabs_tr150_m_jp.stl",
+    "stlPath": "files/stl/thorlabs_tr150_m_jp.stl",
     "stlBytes": 334084,
     "status": "ok"
   },
@@ -795,7 +795,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr2/tr200_m-jp/3070-e0w.html",
     "stepBytes": 288065,
     "stepLocal": "scripts\\.step_cache\\tr200_m_jp.step",
-    "stlPath": "uploads/thorlabs_tr200_m_jp.stl",
+    "stlPath": "files/stl/thorlabs_tr200_m_jp.stl",
     "stlBytes": 334084,
     "status": "ok"
   },
@@ -805,7 +805,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr2/tr250_m-jp/3071-e0w.html",
     "stepBytes": 288054,
     "stepLocal": "scripts\\.step_cache\\tr250_m_jp.step",
-    "stlPath": "uploads/thorlabs_tr250_m_jp.stl",
+    "stlPath": "files/stl/thorlabs_tr250_m_jp.stl",
     "stlBytes": 334084,
     "status": "ok"
   },
@@ -815,7 +815,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr3/tr300_m-jp/3072-e0w.html",
     "stepBytes": 288076,
     "stepLocal": "scripts\\.step_cache\\tr300_m_jp.step",
-    "stlPath": "uploads/thorlabs_tr300_m_jp.stl",
+    "stlPath": "files/stl/thorlabs_tr300_m_jp.stl",
     "stlBytes": 334084,
     "status": "ok"
   },
@@ -825,7 +825,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr2/tr20v_m/TTN020378-e0w.html",
     "stepBytes": 741465,
     "stepLocal": "scripts\\.step_cache\\tr20v_m.step",
-    "stlPath": "uploads/thorlabs_tr20v_m.stl",
+    "stlPath": "files/stl/thorlabs_tr20v_m.stl",
     "stlBytes": 1180884,
     "status": "ok"
   },
@@ -835,7 +835,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr3/tr30v_m/TTN020379-e0w.html",
     "stepBytes": 724039,
     "stepLocal": "scripts\\.step_cache\\tr30v_m.step",
-    "stlPath": "uploads/thorlabs_tr30v_m.stl",
+    "stlPath": "files/stl/thorlabs_tr30v_m.stl",
     "stlBytes": 1175084,
     "status": "ok"
   },
@@ -845,7 +845,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr4/tr40v_m/TTN020380-e0w.html",
     "stepBytes": 723317,
     "stepLocal": "scripts\\.step_cache\\tr40v_m.step",
-    "stlPath": "uploads/thorlabs_tr40v_m.stl",
+    "stlPath": "files/stl/thorlabs_tr40v_m.stl",
     "stlBytes": 1175084,
     "status": "ok"
   },
@@ -855,7 +855,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr5/tr50v_m/TTN020744-e0w.html",
     "stepBytes": 724417,
     "stepLocal": "scripts\\.step_cache\\tr50v_m.step",
-    "stlPath": "uploads/thorlabs_tr50v_m.stl",
+    "stlPath": "files/stl/thorlabs_tr50v_m.stl",
     "stlBytes": 1175084,
     "status": "ok"
   },
@@ -865,7 +865,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr7/tr75v_m/TTN020381-e0w.html",
     "stepBytes": 723503,
     "stepLocal": "scripts\\.step_cache\\tr75v_m.step",
-    "stlPath": "uploads/thorlabs_tr75v_m.stl",
+    "stlPath": "files/stl/thorlabs_tr75v_m.stl",
     "stlBytes": 1175084,
     "status": "ok"
   },
@@ -875,7 +875,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr0/tr075v/TTN020373-e0w.html",
     "stepBytes": 795522,
     "stepLocal": "scripts\\.step_cache\\tr075v.step",
-    "stlPath": "uploads/thorlabs_tr075v.stl",
+    "stlPath": "files/stl/thorlabs_tr075v.stl",
     "stlBytes": 930484,
     "status": "ok"
   },
@@ -885,7 +885,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr1/tr1v/TTN020374-e0w.html",
     "stepBytes": 781384,
     "stepLocal": "scripts\\.step_cache\\tr1v.step",
-    "stlPath": "uploads/thorlabs_tr1v.stl",
+    "stlPath": "files/stl/thorlabs_tr1v.stl",
     "stlBytes": 937484,
     "status": "ok"
   },
@@ -895,7 +895,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr1/tr1.5v/TTN020375-e0w.html",
     "stepBytes": 789794,
     "stepLocal": "scripts\\.step_cache\\tr1.5v.step",
-    "stlPath": "uploads/thorlabs_tr1.5v.stl",
+    "stlPath": "files/stl/thorlabs_tr1.5v.stl",
     "stlBytes": 929084,
     "status": "ok"
   },
@@ -905,7 +905,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr2/tr2v/TTN020376-e0w.html",
     "stepBytes": 788886,
     "stepLocal": "scripts\\.step_cache\\tr2v.step",
-    "stlPath": "uploads/thorlabs_tr2v.stl",
+    "stlPath": "files/stl/thorlabs_tr2v.stl",
     "stlBytes": 929084,
     "status": "ok"
   },
@@ -915,7 +915,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr3/tr3v/TTN020377-e0w.html",
     "stepBytes": 789306,
     "stepLocal": "scripts\\.step_cache\\tr3v.step",
-    "stlPath": "uploads/thorlabs_tr3v.stl",
+    "stlPath": "files/stl/thorlabs_tr3v.stl",
     "stlBytes": 929084,
     "status": "ok"
   },
@@ -925,7 +925,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/pl/pls/pls-hc246_m/TTN337250-e0w.html",
     "stepBytes": 3164999,
     "stepLocal": "scripts\\.step_cache\\pls_hc246_m.step",
-    "stlPath": "uploads/thorlabs_pls_hc246_m.stl",
+    "stlPath": "files/stl/thorlabs_pls_hc246_m.stl",
     "stlBytes": 479584,
     "status": "ok"
   },
@@ -935,7 +935,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/pl/pls/pls-hc373_m/TTN337251-e0w.html",
     "stepBytes": 3163989,
     "stepLocal": "scripts\\.step_cache\\pls_hc373_m.step",
-    "stlPath": "uploads/thorlabs_pls_hc373_m.stl",
+    "stlPath": "files/stl/thorlabs_pls_hc373_m.stl",
     "stlBytes": 492384,
     "status": "ok"
   },
@@ -945,7 +945,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/pl/pls/pls-hc496_m/TTN337252-e0w.html",
     "stepBytes": 3194504,
     "stepLocal": "scripts\\.step_cache\\pls_hc496_m.step",
-    "stlPath": "uploads/thorlabs_pls_hc496_m.stl",
+    "stlPath": "files/stl/thorlabs_pls_hc496_m.stl",
     "stlBytes": 488384,
     "status": "ok"
   },
@@ -955,7 +955,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/pl/pls/pls-hc1/TTN325162-e0w.html",
     "stepBytes": 2777825,
     "stepLocal": "scripts\\.step_cache\\pls_hc1.step",
-    "stlPath": "uploads/thorlabs_pls_hc1.stl",
+    "stlPath": "files/stl/thorlabs_pls_hc1.stl",
     "stlBytes": 426184,
     "status": "ok"
   },
@@ -965,7 +965,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/pl/pls/pls-hc15/TTN325163-e0w.html",
     "stepBytes": 2908665,
     "stepLocal": "scripts\\.step_cache\\pls_hc15.step",
-    "stlPath": "uploads/thorlabs_pls_hc15.stl",
+    "stlPath": "files/stl/thorlabs_pls_hc15.stl",
     "stlBytes": 449084,
     "status": "ok"
   },
@@ -975,7 +975,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/pl/pls/pls-hc2/TTN325164-e0w.html",
     "stepBytes": 2821016,
     "stepLocal": "scripts\\.step_cache\\pls_hc2.step",
-    "stlPath": "uploads/thorlabs_pls_hc2.stl",
+    "stlPath": "files/stl/thorlabs_pls_hc2.stl",
     "stlBytes": 440284,
     "status": "ok"
   },
@@ -985,7 +985,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/pl/pls/pls-h246_m/PLS-H246_M-e0w.html",
     "stepBytes": 3259409,
     "stepLocal": "scripts\\.step_cache\\pls_h246_m.step",
-    "stlPath": "uploads/thorlabs_pls_h246_m.stl",
+    "stlPath": "files/stl/thorlabs_pls_h246_m.stl",
     "stlBytes": 493784,
     "status": "ok"
   },
@@ -995,7 +995,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/pl/pls/pls-h373_m/PLS-H373_M-e0w.html",
     "stepBytes": 3203874,
     "stepLocal": "scripts\\.step_cache\\pls_h373_m.step",
-    "stlPath": "uploads/thorlabs_pls_h373_m.stl",
+    "stlPath": "files/stl/thorlabs_pls_h373_m.stl",
     "stlBytes": 545384,
     "status": "ok"
   },
@@ -1005,7 +1005,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/pl/pls/pls-h496_m/PLS-H496_M-e0w.html",
     "stepBytes": 3199239,
     "stepLocal": "scripts\\.step_cache\\pls_h496_m.step",
-    "stlPath": "uploads/thorlabs_pls_h496_m.stl",
+    "stlPath": "files/stl/thorlabs_pls_h496_m.stl",
     "stlBytes": 542684,
     "status": "ok"
   },
@@ -1015,7 +1015,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/pl/pls/pls-h1/PLS-H1-e0w.html",
     "stepBytes": 2690656,
     "stepLocal": "scripts\\.step_cache\\pls_h1.step",
-    "stlPath": "uploads/thorlabs_pls_h1.stl",
+    "stlPath": "files/stl/thorlabs_pls_h1.stl",
     "stlBytes": 439784,
     "status": "ok"
   },
@@ -1025,7 +1025,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/pl/pls/pls-h15/PLS-H15-e0w.html",
     "stepBytes": 2816026,
     "stepLocal": "scripts\\.step_cache\\pls_h15.step",
-    "stlPath": "uploads/thorlabs_pls_h15.stl",
+    "stlPath": "files/stl/thorlabs_pls_h15.stl",
     "stlBytes": 501684,
     "status": "ok"
   },
@@ -1035,7 +1035,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/pl/pls/pls-h2/PLS-H2-e0w.html",
     "stepBytes": 2727778,
     "stepLocal": "scripts\\.step_cache\\pls_h2.step",
-    "stlPath": "uploads/thorlabs_pls_h2.stl",
+    "stlPath": "files/stl/thorlabs_pls_h2.stl",
     "stlBytes": 493584,
     "status": "ok"
   },
@@ -1045,7 +1045,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/th/th1/th15_m/TTN043872-e0w.html",
     "stepBytes": 330192,
     "stepLocal": "scripts\\.step_cache\\th15_m.step",
-    "stlPath": "uploads/thorlabs_th15_m.stl",
+    "stlPath": "files/stl/thorlabs_th15_m.stl",
     "stlBytes": 333284,
     "status": "ok"
   },
@@ -1055,7 +1055,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/th/th2/th20_m/TTN043873-e0w.html",
     "stepBytes": 330257,
     "stepLocal": "scripts\\.step_cache\\th20_m.step",
-    "stlPath": "uploads/thorlabs_th20_m.stl",
+    "stlPath": "files/stl/thorlabs_th20_m.stl",
     "stlBytes": 333284,
     "status": "ok"
   },
@@ -1065,7 +1065,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/th/th0/th060/TTN043875-e0w.html",
     "stepBytes": 279750,
     "stepLocal": "scripts\\.step_cache\\th060.step",
-    "stlPath": "uploads/thorlabs_th060.stl",
+    "stlPath": "files/stl/thorlabs_th060.stl",
     "stlBytes": 301684,
     "status": "ok"
   },
@@ -1075,7 +1075,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/th/th0/th075/TTN043874-e0w.html",
     "stepBytes": 279826,
     "stepLocal": "scripts\\.step_cache\\th075.step",
-    "stlPath": "uploads/thorlabs_th075.stl",
+    "stlPath": "files/stl/thorlabs_th075.stl",
     "stlBytes": 301684,
     "status": "ok"
   },
@@ -1085,7 +1085,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr5/tr50e_m/19786-e0w.html",
     "stepBytes": 19419473,
     "stepLocal": "scripts\\.step_cache\\tr50e_m.step",
-    "stlPath": "uploads/thorlabs_tr50e_m.stl",
+    "stlPath": "files/stl/thorlabs_tr50e_m.stl",
     "stlBytes": 4736684,
     "status": "ok"
   },
@@ -1095,7 +1095,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr7/tr75e_m/19787-e0w.html",
     "stepBytes": 34934062,
     "stepLocal": "scripts\\.step_cache\\tr75e_m.step",
-    "stlPath": "uploads/thorlabs_tr75e_m.stl",
+    "stlPath": "files/stl/thorlabs_tr75e_m.stl",
     "stlBytes": 8267484,
     "status": "ok"
   },
@@ -1105,7 +1105,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr2/tr2e/19784-e0w.html",
     "stepBytes": 14737970,
     "stepLocal": "scripts\\.step_cache\\tr2e.step",
-    "stlPath": "uploads/thorlabs_tr2e.stl",
+    "stlPath": "files/stl/thorlabs_tr2e.stl",
     "stlBytes": 3615684,
     "status": "ok"
   },
@@ -1115,7 +1115,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr3/tr3e/19785-e0w.html",
     "stepBytes": 25454542,
     "stepLocal": "scripts\\.step_cache\\tr3e.step",
-    "stlPath": "uploads/thorlabs_tr3e.stl",
+    "stlPath": "files/stl/thorlabs_tr3e.stl",
     "stlBytes": 5963484,
     "status": "ok"
   },
@@ -1125,7 +1125,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/trt/trt2_m/13332-e0w.html",
     "stepBytes": 2572904,
     "stepLocal": "scripts\\.step_cache\\trt2_m.step",
-    "stlPath": "uploads/thorlabs_trt2_m.stl",
+    "stlPath": "files/stl/thorlabs_trt2_m.stl",
     "stlBytes": 2969284,
     "status": "ok"
   },
@@ -1135,7 +1135,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/trt/trt2/13013-e0w.html",
     "stepBytes": 3335485,
     "stepLocal": "scripts\\.step_cache\\trt2.step",
-    "stlPath": "uploads/thorlabs_trt2.stl",
+    "stlPath": "files/stl/thorlabs_trt2.stl",
     "stlBytes": 5999484,
     "status": "ok"
   },
@@ -1145,7 +1145,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr7/tr75t_m/13073-e0w.html",
     "stepBytes": 1039698,
     "stepLocal": "scripts\\.step_cache\\tr75t_m.step",
-    "stlPath": "uploads/thorlabs_tr75t_m.stl",
+    "stlPath": "files/stl/thorlabs_tr75t_m.stl",
     "stlBytes": 490684,
     "status": "ok"
   },
@@ -1155,7 +1155,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr7/tr75c_m/13072-e0w.html",
     "stepBytes": 416179,
     "stepLocal": "scripts\\.step_cache\\tr75c_m.step",
-    "stlPath": "uploads/thorlabs_tr75c_m.stl",
+    "stlPath": "files/stl/thorlabs_tr75c_m.stl",
     "stlBytes": 472684,
     "status": "ok"
   },
@@ -1165,7 +1165,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr3/tr3t/13069-e0w.html",
     "stepBytes": 393660,
     "stepLocal": "scripts\\.step_cache\\tr3t.step",
-    "stlPath": "uploads/thorlabs_tr3t.stl",
+    "stlPath": "files/stl/thorlabs_tr3t.stl",
     "stlBytes": 442684,
     "status": "ok"
   },
@@ -1175,7 +1175,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr3/tr3c/13068-e0w.html",
     "stepBytes": 460584,
     "stepLocal": "scripts\\.step_cache\\tr3c.step",
-    "stlPath": "uploads/thorlabs_tr3c.stl",
+    "stlPath": "files/stl/thorlabs_tr3c.stl",
     "stlBytes": 540484,
     "status": "ok"
   },
@@ -1185,7 +1185,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tra/tra20_m/TTN030921-e0w.html",
     "stepBytes": 641081,
     "stepLocal": "scripts\\.step_cache\\tra20_m.step",
-    "stlPath": "uploads/thorlabs_tra20_m.stl",
+    "stlPath": "files/stl/thorlabs_tra20_m.stl",
     "stlBytes": 387684,
     "status": "ok"
   },
@@ -1195,7 +1195,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tra/tra30_m/TTN030923-e0w.html",
     "stepBytes": 623366,
     "stepLocal": "scripts\\.step_cache\\tra30_m.step",
-    "stlPath": "uploads/thorlabs_tra30_m.stl",
+    "stlPath": "files/stl/thorlabs_tra30_m.stl",
     "stlBytes": 368084,
     "status": "ok"
   },
@@ -1205,7 +1205,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tra/tra40_m/TTN030925-e0w.html",
     "stepBytes": 623363,
     "stepLocal": "scripts\\.step_cache\\tra40_m.step",
-    "stlPath": "uploads/thorlabs_tra40_m.stl",
+    "stlPath": "files/stl/thorlabs_tra40_m.stl",
     "stlBytes": 368084,
     "status": "ok"
   },
@@ -1215,7 +1215,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tra/tra50_m/TTN030927-e0w.html",
     "stepBytes": 623327,
     "stepLocal": "scripts\\.step_cache\\tra50_m.step",
-    "stlPath": "uploads/thorlabs_tra50_m.stl",
+    "stlPath": "files/stl/thorlabs_tra50_m.stl",
     "stlBytes": 368084,
     "status": "ok"
   },
@@ -1225,7 +1225,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tra/tra75_m/TTN030929-e0w.html",
     "stepBytes": 623381,
     "stepLocal": "scripts\\.step_cache\\tra75_m.step",
-    "stlPath": "uploads/thorlabs_tra75_m.stl",
+    "stlPath": "files/stl/thorlabs_tra75_m.stl",
     "stlBytes": 368084,
     "status": "ok"
   },
@@ -1235,7 +1235,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tra/tra100_m/TTN030931-e0w.html",
     "stepBytes": 626651,
     "stepLocal": "scripts\\.step_cache\\tra100_m.step",
-    "stlPath": "uploads/thorlabs_tra100_m.stl",
+    "stlPath": "files/stl/thorlabs_tra100_m.stl",
     "stlBytes": 368884,
     "status": "ok"
   },
@@ -1245,7 +1245,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tra/tra150_m/TTN030933-e0w.html",
     "stepBytes": 626634,
     "stepLocal": "scripts\\.step_cache\\tra150_m.step",
-    "stlPath": "uploads/thorlabs_tra150_m.stl",
+    "stlPath": "files/stl/thorlabs_tra150_m.stl",
     "stlBytes": 368884,
     "status": "ok"
   },
@@ -1255,7 +1255,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tra/tra075/TTN030773-e0w.html",
     "stepBytes": 585421,
     "stepLocal": "scripts\\.step_cache\\tra075.step",
-    "stlPath": "uploads/thorlabs_tra075.stl",
+    "stlPath": "files/stl/thorlabs_tra075.stl",
     "stlBytes": 338284,
     "status": "ok"
   },
@@ -1265,7 +1265,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tra/tra1/TTN030775-e0w.html",
     "stepBytes": 583625,
     "stepLocal": "scripts\\.step_cache\\tra1.step",
-    "stlPath": "uploads/thorlabs_tra1.stl",
+    "stlPath": "files/stl/thorlabs_tra1.stl",
     "stlBytes": 354684,
     "status": "ok"
   },
@@ -1275,7 +1275,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tra/tra1.5/TTN030777-e0w.html",
     "stepBytes": 579029,
     "stepLocal": "scripts\\.step_cache\\tra1.5.step",
-    "stlPath": "uploads/thorlabs_tra1.5.stl",
+    "stlPath": "files/stl/thorlabs_tra1.5.stl",
     "stlBytes": 342084,
     "status": "ok"
   },
@@ -1285,7 +1285,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tra/tra2/TTN030779-e0w.html",
     "stepBytes": 579030,
     "stepLocal": "scripts\\.step_cache\\tra2.step",
-    "stlPath": "uploads/thorlabs_tra2.stl",
+    "stlPath": "files/stl/thorlabs_tra2.stl",
     "stlBytes": 342084,
     "status": "ok"
   },
@@ -1295,7 +1295,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tra/tra3/TTN030781-e0w.html",
     "stepBytes": 579113,
     "stepLocal": "scripts\\.step_cache\\tra3.step",
-    "stlPath": "uploads/thorlabs_tra3.stl",
+    "stlPath": "files/stl/thorlabs_tra3.stl",
     "stlBytes": 342084,
     "status": "ok"
   },
@@ -1305,7 +1305,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tra/tra4/TTN030783-e0w.html",
     "stepBytes": 579008,
     "stepLocal": "scripts\\.step_cache\\tra4.step",
-    "stlPath": "uploads/thorlabs_tra4.stl",
+    "stlPath": "files/stl/thorlabs_tra4.stl",
     "stlBytes": 342084,
     "status": "ok"
   },
@@ -1315,7 +1315,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tra/tra6/TTN030785-e0w.html",
     "stepBytes": 579017,
     "stepLocal": "scripts\\.step_cache\\tra6.step",
-    "stlPath": "uploads/thorlabs_tra6.stl",
+    "stlPath": "files/stl/thorlabs_tra6.stl",
     "stlBytes": 342084,
     "status": "ok"
   },
@@ -1325,7 +1325,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr1/tr1m/TTN092155-e0w.html",
     "stepBytes": 1555691,
     "stepLocal": "scripts\\.step_cache\\tr1m.step",
-    "stlPath": "uploads/thorlabs_tr1m.stl",
+    "stlPath": "files/stl/thorlabs_tr1m.stl",
     "stlBytes": 283084,
     "status": "ok"
   },
@@ -1335,7 +1335,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr2/tr2m/TTN092156-e0w.html",
     "stepBytes": 1309650,
     "stepLocal": "scripts\\.step_cache\\tr2m.step",
-    "stlPath": "uploads/thorlabs_tr2m.stl",
+    "stlPath": "files/stl/thorlabs_tr2m.stl",
     "stlBytes": 315884,
     "status": "ok"
   },
@@ -1345,7 +1345,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr3/tr3m/TTN092157-e0w.html",
     "stepBytes": 1390868,
     "stepLocal": "scripts\\.step_cache\\tr3m.step",
-    "stlPath": "uploads/thorlabs_tr3m.stl",
+    "stlPath": "files/stl/thorlabs_tr3m.stl",
     "stlBytes": 346684,
     "status": "ok"
   },
@@ -1355,7 +1355,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr4/tr4m/TTN092158-e0w.html",
     "stepBytes": 1158547,
     "stepLocal": "scripts\\.step_cache\\tr4m.step",
-    "stlPath": "uploads/thorlabs_tr4m.stl",
+    "stlPath": "files/stl/thorlabs_tr4m.stl",
     "stlBytes": 282484,
     "status": "ok"
   },
@@ -1365,7 +1365,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr5/tr5m/TTN092159-e0w.html",
     "stepBytes": 1314162,
     "stepLocal": "scripts\\.step_cache\\tr5m.step",
-    "stlPath": "uploads/thorlabs_tr5m.stl",
+    "stlPath": "files/stl/thorlabs_tr5m.stl",
     "stlBytes": 321084,
     "status": "ok"
   },
@@ -1375,7 +1375,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr6/tr6m/TTN092160-e0w.html",
     "stepBytes": 1381076,
     "stepLocal": "scripts\\.step_cache\\tr6m.step",
-    "stlPath": "uploads/thorlabs_tr6m.stl",
+    "stlPath": "files/stl/thorlabs_tr6m.stl",
     "stlBytes": 347284,
     "status": "ok"
   },
@@ -1385,7 +1385,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr7/tr7m/TTN092161-e0w.html",
     "stepBytes": 1174852,
     "stepLocal": "scripts\\.step_cache\\tr7m.step",
-    "stlPath": "uploads/thorlabs_tr7m.stl",
+    "stlPath": "files/stl/thorlabs_tr7m.stl",
     "stlBytes": 285484,
     "status": "ok"
   },
@@ -1395,7 +1395,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr8/tr8m/TTN092162-e0w.html",
     "stepBytes": 1454384,
     "stepLocal": "scripts\\.step_cache\\tr8m.step",
-    "stlPath": "uploads/thorlabs_tr8m.stl",
+    "stlPath": "files/stl/thorlabs_tr8m.stl",
     "stlBytes": 370684,
     "status": "ok"
   },
@@ -1405,7 +1405,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr9/tr9m/TTN092163-e0w.html",
     "stepBytes": 1411848,
     "stepLocal": "scripts\\.step_cache\\tr9m.step",
-    "stlPath": "uploads/thorlabs_tr9m.stl",
+    "stlPath": "files/stl/thorlabs_tr9m.stl",
     "stlBytes": 348484,
     "status": "ok"
   },
@@ -1415,7 +1415,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/tr/tr1/tr10m/TTN092164-e0w.html",
     "stepBytes": 1369622,
     "stepLocal": "scripts\\.step_cache\\tr10m.step",
-    "stlPath": "uploads/thorlabs_tr10m.stl",
+    "stlPath": "files/stl/thorlabs_tr10m.stl",
     "stlBytes": 331884,
     "status": "ok"
   },
@@ -1425,7 +1425,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/s/sp/spw/spw501/TTN101035-e0w.html",
     "stepBytes": 3249840,
     "stepLocal": "scripts\\.step_cache\\spw501.step",
-    "stlPath": "uploads/thorlabs_spw501.stl",
+    "stlPath": "files/stl/thorlabs_spw501.stl",
     "stlBytes": 673584,
     "status": "ok"
   },
@@ -1435,7 +1435,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph2/ph20_m/24714-e0w.html",
     "stepBytes": 2030246,
     "stepLocal": "scripts\\.step_cache\\ph20_m.step",
-    "stlPath": "uploads/thorlabs_ph20_m.stl",
+    "stlPath": "files/stl/thorlabs_ph20_m.stl",
     "stlBytes": 4718284,
     "status": "ok"
   },
@@ -1445,7 +1445,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph3/ph30_m/23130-e0w.html",
     "stepBytes": 2033164,
     "stepLocal": "scripts\\.step_cache\\ph30_m.step",
-    "stlPath": "uploads/thorlabs_ph30_m.stl",
+    "stlPath": "files/stl/thorlabs_ph30_m.stl",
     "stlBytes": 4718084,
     "status": "ok"
   },
@@ -1455,7 +1455,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph4/ph40_m/23131-e0w.html",
     "stepBytes": 2032397,
     "stepLocal": "scripts\\.step_cache\\ph40_m.step",
-    "stlPath": "uploads/thorlabs_ph40_m.stl",
+    "stlPath": "files/stl/thorlabs_ph40_m.stl",
     "stlBytes": 4718284,
     "status": "ok"
   },
@@ -1465,7 +1465,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph5/ph50_m/23132-e0w.html",
     "stepBytes": 2033679,
     "stepLocal": "scripts\\.step_cache\\ph50_m.step",
-    "stlPath": "uploads/thorlabs_ph50_m.stl",
+    "stlPath": "files/stl/thorlabs_ph50_m.stl",
     "stlBytes": 4718284,
     "status": "ok"
   },
@@ -1475,7 +1475,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph7/ph75_m/23133-e0w.html",
     "stepBytes": 2026323,
     "stepLocal": "scripts\\.step_cache\\ph75_m.step",
-    "stlPath": "uploads/thorlabs_ph75_m.stl",
+    "stlPath": "files/stl/thorlabs_ph75_m.stl",
     "stlBytes": 4718284,
     "status": "ok"
   },
@@ -1485,7 +1485,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph1/ph100_m/23134-e0w.html",
     "stepBytes": 2032297,
     "stepLocal": "scripts\\.step_cache\\ph100_m.step",
-    "stlPath": "uploads/thorlabs_ph100_m.stl",
+    "stlPath": "files/stl/thorlabs_ph100_m.stl",
     "stlBytes": 4718284,
     "status": "ok"
   },
@@ -1495,7 +1495,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph1/ph150_m/23135-e0w.html",
     "stepBytes": 2031612,
     "stepLocal": "scripts\\.step_cache\\ph150_m.step",
-    "stlPath": "uploads/thorlabs_ph150_m.stl",
+    "stlPath": "files/stl/thorlabs_ph150_m.stl",
     "stlBytes": 4718284,
     "status": "ok"
   },
@@ -1529,7 +1529,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph4/ph4/0497-e0w.html",
     "stepBytes": 2123879,
     "stepLocal": "scripts\\.step_cache\\ph4.step",
-    "stlPath": "uploads/thorlabs_ph4.stl",
+    "stlPath": "files/stl/thorlabs_ph4.stl",
     "stlBytes": 4559284,
     "status": "ok"
   },
@@ -1539,7 +1539,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph6/ph6/0499-e0w.html",
     "stepBytes": 2124785,
     "stepLocal": "scripts\\.step_cache\\ph6.step",
-    "stlPath": "uploads/thorlabs_ph6.stl",
+    "stlPath": "files/stl/thorlabs_ph6.stl",
     "stlBytes": 4559284,
     "status": "ok"
   },
@@ -1549,7 +1549,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph2/ph20v_m/TTN020367-e0w.html",
     "stepBytes": 1655668,
     "stepLocal": "scripts\\.step_cache\\ph20v_m.step",
-    "stlPath": "uploads/thorlabs_ph20v_m.stl",
+    "stlPath": "files/stl/thorlabs_ph20v_m.stl",
     "stlBytes": 1178884,
     "status": "ok"
   },
@@ -1559,7 +1559,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph3/ph30v_m/TTN020369-e0w.html",
     "stepBytes": 1653314,
     "stepLocal": "scripts\\.step_cache\\ph30v_m.step",
-    "stlPath": "uploads/thorlabs_ph30v_m.stl",
+    "stlPath": "files/stl/thorlabs_ph30v_m.stl",
     "stlBytes": 1178684,
     "status": "ok"
   },
@@ -1569,7 +1569,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph4/ph40v_m/TTN020370-e0w.html",
     "stepBytes": 1650991,
     "stepLocal": "scripts\\.step_cache\\ph40v_m.step",
-    "stlPath": "uploads/thorlabs_ph40v_m.stl",
+    "stlPath": "files/stl/thorlabs_ph40v_m.stl",
     "stlBytes": 1178884,
     "status": "ok"
   },
@@ -1579,7 +1579,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph5/ph50v_m/TTN020371-e0w.html",
     "stepBytes": 1650885,
     "stepLocal": "scripts\\.step_cache\\ph50v_m.step",
-    "stlPath": "uploads/thorlabs_ph50v_m.stl",
+    "stlPath": "files/stl/thorlabs_ph50v_m.stl",
     "stlBytes": 1178884,
     "status": "ok"
   },
@@ -1589,7 +1589,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph7/ph75v_m/TTN020372-e0w.html",
     "stepBytes": 1650765,
     "stepLocal": "scripts\\.step_cache\\ph75v_m.step",
-    "stlPath": "uploads/thorlabs_ph75v_m.stl",
+    "stlPath": "files/stl/thorlabs_ph75v_m.stl",
     "stlBytes": 1178884,
     "status": "ok"
   },
@@ -1599,7 +1599,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph1/ph1v/TTN020360-e0w.html",
     "stepBytes": 1696807,
     "stepLocal": "scripts\\.step_cache\\ph1v.step",
-    "stlPath": "uploads/thorlabs_ph1v.stl",
+    "stlPath": "files/stl/thorlabs_ph1v.stl",
     "stlBytes": 1136684,
     "status": "ok"
   },
@@ -1609,7 +1609,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph1/ph1.5v/TTN020362-e0w.html",
     "stepBytes": 1693948,
     "stepLocal": "scripts\\.step_cache\\ph1.5v.step",
-    "stlPath": "uploads/thorlabs_ph1.5v.stl",
+    "stlPath": "files/stl/thorlabs_ph1.5v.stl",
     "stlBytes": 1136684,
     "status": "ok"
   },
@@ -1619,7 +1619,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph2/ph2v/TTN020365-e0w.html",
     "stepBytes": 1693514,
     "stepLocal": "scripts\\.step_cache\\ph2v.step",
-    "stlPath": "uploads/thorlabs_ph2v.stl",
+    "stlPath": "files/stl/thorlabs_ph2v.stl",
     "stlBytes": 1136684,
     "status": "ok"
   },
@@ -1629,7 +1629,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph3/ph3v/TTN020366-e0w.html",
     "stepBytes": 1691445,
     "stepLocal": "scripts\\.step_cache\\ph3v.step",
-    "stlPath": "uploads/thorlabs_ph3v.stl",
+    "stlPath": "files/stl/thorlabs_ph3v.stl",
     "stlBytes": 1136684,
     "status": "ok"
   },
@@ -1639,7 +1639,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph2/ph20e_m/23768-e0w.html",
     "stepBytes": 2181368,
     "stepLocal": "scripts\\.step_cache\\ph20e_m.step",
-    "stlPath": "uploads/thorlabs_ph20e_m.stl",
+    "stlPath": "files/stl/thorlabs_ph20e_m.stl",
     "stlBytes": 5668684,
     "status": "ok"
   },
@@ -1649,7 +1649,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph3/ph30e_m/23141-e0w.html",
     "stepBytes": 2181621,
     "stepLocal": "scripts\\.step_cache\\ph30e_m.step",
-    "stlPath": "uploads/thorlabs_ph30e_m.stl",
+    "stlPath": "files/stl/thorlabs_ph30e_m.stl",
     "stlBytes": 5671884,
     "status": "ok"
   },
@@ -1659,7 +1659,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph4/ph40e_m/23142-e0w.html",
     "stepBytes": 2184390,
     "stepLocal": "scripts\\.step_cache\\ph40e_m.step",
-    "stlPath": "uploads/thorlabs_ph40e_m.stl",
+    "stlPath": "files/stl/thorlabs_ph40e_m.stl",
     "stlBytes": 5671884,
     "status": "ok"
   },
@@ -1669,7 +1669,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph5/ph50e_m/23143-e0w.html",
     "stepBytes": 2179840,
     "stepLocal": "scripts\\.step_cache\\ph50e_m.step",
-    "stlPath": "uploads/thorlabs_ph50e_m.stl",
+    "stlPath": "files/stl/thorlabs_ph50e_m.stl",
     "stlBytes": 5671884,
     "status": "ok"
   },
@@ -1679,7 +1679,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph7/ph75e_m/23144-e0w.html",
     "stepBytes": 2178959,
     "stepLocal": "scripts\\.step_cache\\ph75e_m.step",
-    "stlPath": "uploads/thorlabs_ph75e_m.stl",
+    "stlPath": "files/stl/thorlabs_ph75e_m.stl",
     "stlBytes": 5671884,
     "status": "ok"
   },
@@ -1689,7 +1689,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph1/ph100e_m/23145-e0w.html",
     "stepBytes": 2177950,
     "stepLocal": "scripts\\.step_cache\\ph100e_m.step",
-    "stlPath": "uploads/thorlabs_ph100e_m.stl",
+    "stlPath": "files/stl/thorlabs_ph100e_m.stl",
     "stlBytes": 5671884,
     "status": "ok"
   },
@@ -1699,7 +1699,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph1/ph150e_m/23146-e0w.html",
     "stepBytes": 2173575,
     "stepLocal": "scripts\\.step_cache\\ph150e_m.step",
-    "stlPath": "uploads/thorlabs_ph150e_m.stl",
+    "stlPath": "files/stl/thorlabs_ph150e_m.stl",
     "stlBytes": 5671884,
     "status": "ok"
   },
@@ -1709,7 +1709,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph0/ph082e/23767-e0w.html",
     "stepBytes": 2311049,
     "stepLocal": "scripts\\.step_cache\\ph082e.step",
-    "stlPath": "uploads/thorlabs_ph082e.stl",
+    "stlPath": "files/stl/thorlabs_ph082e.stl",
     "stlBytes": 5542484,
     "status": "ok"
   },
@@ -1719,7 +1719,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph1/ph1e/6548-e0w.html",
     "stepBytes": 2302469,
     "stepLocal": "scripts\\.step_cache\\ph1e.step",
-    "stlPath": "uploads/thorlabs_ph1e.stl",
+    "stlPath": "files/stl/thorlabs_ph1e.stl",
     "stlBytes": 5543284,
     "status": "ok"
   },
@@ -1729,7 +1729,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph1/ph1.5e/6554-e0w.html",
     "stepBytes": 2281284,
     "stepLocal": "scripts\\.step_cache\\ph1.5e.step",
-    "stlPath": "uploads/thorlabs_ph1.5e.stl",
+    "stlPath": "files/stl/thorlabs_ph1.5e.stl",
     "stlBytes": 5543284,
     "status": "ok"
   },
@@ -1739,7 +1739,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph2/ph2e/6555-e0w.html",
     "stepBytes": 2286557,
     "stepLocal": "scripts\\.step_cache\\ph2e.step",
-    "stlPath": "uploads/thorlabs_ph2e.stl",
+    "stlPath": "files/stl/thorlabs_ph2e.stl",
     "stlBytes": 5542884,
     "status": "ok"
   },
@@ -1749,7 +1749,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph3/ph3e/6556-e0w.html",
     "stepBytes": 2296443,
     "stepLocal": "scripts\\.step_cache\\ph3e.step",
-    "stlPath": "uploads/thorlabs_ph3e.stl",
+    "stlPath": "files/stl/thorlabs_ph3e.stl",
     "stlBytes": 5542884,
     "status": "ok"
   },
@@ -1759,7 +1759,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph4/ph4e/6557-e0w.html",
     "stepBytes": 2286360,
     "stepLocal": "scripts\\.step_cache\\ph4e.step",
-    "stlPath": "uploads/thorlabs_ph4e.stl",
+    "stlPath": "files/stl/thorlabs_ph4e.stl",
     "stlBytes": 5542884,
     "status": "ok"
   },
@@ -1769,7 +1769,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/p/ph/ph6/ph6e/6577-e0w.html",
     "stepBytes": 2286223,
     "stepLocal": "scripts\\.step_cache\\ph6e.step",
-    "stlPath": "uploads/thorlabs_ph6e.stl",
+    "stlPath": "files/stl/thorlabs_ph6e.stl",
     "stlBytes": 5542884,
     "status": "ok"
   },
@@ -1788,7 +1788,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/u/up/uph/upha/6892-e0w.html",
     "stepBytes": 313512,
     "stepLocal": "scripts\\.step_cache\\upha.step",
-    "stlPath": "uploads/thorlabs_upha.stl",
+    "stlPath": "files/stl/thorlabs_upha.stl",
     "stlBytes": 1332484,
     "status": "ok"
   },
@@ -1798,7 +1798,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/ts/ts6/ts6h_m/23136-e0w.html",
     "stepBytes": 1829337,
     "stepLocal": "scripts\\.step_cache\\ts6h_m.step",
-    "stlPath": "uploads/thorlabs_ts6h_m.stl",
+    "stlPath": "files/stl/thorlabs_ts6h_m.stl",
     "stlBytes": 4462884,
     "status": "ok"
   },
@@ -1808,7 +1808,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/ts/ts2/ts25h/20250-e0w.html",
     "stepBytes": 1773624,
     "stepLocal": "scripts\\.step_cache\\ts25h.step",
-    "stlPath": "uploads/thorlabs_ts25h.stl",
+    "stlPath": "files/stl/thorlabs_ts25h.stl",
     "stlBytes": 4474484,
     "status": "ok"
   },
@@ -1818,7 +1818,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/ts/ts6/ts6hv_m/TTN023787-e0w.html",
     "stepBytes": 1440847,
     "stepLocal": "scripts\\.step_cache\\ts6hv_m.step",
-    "stlPath": "uploads/thorlabs_ts6hv_m.stl",
+    "stlPath": "files/stl/thorlabs_ts6hv_m.stl",
     "stlBytes": 451784,
     "status": "ok"
   },
@@ -1828,7 +1828,7 @@
     "edrawingUrl": "https://media.thorlabs.com/globalassets/items/t/ts/ts2/ts25hv/TTN023788-e0w.html",
     "stepBytes": 1502949,
     "stepLocal": "scripts\\.step_cache\\ts25hv.step",
-    "stlPath": "uploads/thorlabs_ts25hv.stl",
+    "stlPath": "files/stl/thorlabs_ts25hv.stl",
     "stlBytes": 446984,
     "status": "ok"
   }

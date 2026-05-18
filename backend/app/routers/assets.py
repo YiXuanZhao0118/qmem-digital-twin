@@ -12,7 +12,11 @@ from app import crud, schemas
 from app.config import settings
 from app.db import get_session
 from app.models import Asset3D, Component
-from app.services.asset_converter import SUPPORTED_ASSET_EXTENSIONS, VIEWER_ASSET_EXTENSIONS
+from app.services.asset_converter import (
+    SUPPORTED_ASSET_EXTENSIONS,
+    VIEWER_ASSET_EXTENSIONS,
+    subdir_for_ext,
+)
 
 
 router = APIRouter()
@@ -118,7 +122,11 @@ async def upload_component_asset(
     if unit not in {"mm", "m"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unit must be mm or m.")
 
-    upload_dir = settings.asset_root / "uploads"
+    # alembic 0063 layout: viewer-ready exts dropped under
+    # files/<ext>/, CAD sources (STEP/STP/SLDPRT/DXF) under
+    # files/cad_sources/. See asset_converter.subdir_for_ext.
+    subdir = subdir_for_ext(suffix)
+    upload_dir = settings.asset_root / "files" / subdir
     upload_dir.mkdir(parents=True, exist_ok=True)
     filename = safe_upload_name(file.filename or f"{name}{suffix}")
     target = upload_dir / filename
@@ -134,7 +142,7 @@ async def upload_component_asset(
         brand=brand,
         model=model,
         asset_type=suffix.lstrip("."),
-        file_path=f"uploads/{filename}",
+        file_path=f"files/{subdir}/{filename}",
         source="upload",
         unit=unit,
         scale_factor=scale_factor,
@@ -158,7 +166,8 @@ async def import_local_component_asset(
             detail="Import a GLB, GLTF, OBJ, STL, STEP, STP, SLDPRT, or DXF file.",
         )
 
-    upload_dir = settings.asset_root / "uploads"
+    subdir = subdir_for_ext(suffix)
+    upload_dir = settings.asset_root / "files" / subdir
     upload_dir.mkdir(parents=True, exist_ok=True)
     filename = safe_upload_name(source_path.name)
     target = upload_dir / filename
@@ -172,7 +181,7 @@ async def import_local_component_asset(
         brand=payload.brand,
         model=payload.model,
         asset_type=suffix.lstrip("."),
-        file_path=f"uploads/{filename}",
+        file_path=f"files/{subdir}/{filename}",
         source="local_path",
         unit=payload.unit,
         scale_factor=payload.scale_factor,

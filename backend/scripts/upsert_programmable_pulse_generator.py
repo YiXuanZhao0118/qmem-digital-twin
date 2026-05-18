@@ -33,7 +33,7 @@ ASSETS: list[dict[str, object]] = [
     {
         "name": "thumb_antenna_glb",
         "asset_type": "gltf",
-        "file_path": "uploads/thumb_antenna.glb",
+        "file_path": "files/glb/thumb_antenna.glb",
         "source": "Generic 2.4 GHz SMA thumb antenna (user-supplied GLB)",
         "unit": "mm",
         "scale_factor": 1.0,
@@ -41,7 +41,7 @@ ASSETS: list[dict[str, object]] = [
     {
         "name": "bnc_m_rca_f_adapter_glb",
         "asset_type": "gltf",
-        "file_path": "uploads/bnc_m_rca_f_adapter.glb",
+        "file_path": "files/glb/bnc_m_rca_f_adapter.glb",
         "source": "Generic BNC-M / RCA-F coaxial adapter (user-supplied GLB)",
         "unit": "mm",
         "scale_factor": 1.0,

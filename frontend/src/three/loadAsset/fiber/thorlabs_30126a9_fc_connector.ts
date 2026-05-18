@@ -26,7 +26,7 @@ interface FcConnectorOptions {
 //   - All transforms are baked into the cached BufferGeometry: rotateX(-π/2)
 //     swings +Z → +Y, translate(+25 mm in pre-scale frame) puts the cable end
 //     at y=0, then scale 0.01 maps mm → scene units (1 unit = 100 mm).
-const FC_HOUSING_ASSET_PATH = "uploads/thorlabs_fc_apc_30126a9.stl";
+const FC_HOUSING_ASSET_PATH = "files/stl/thorlabs_fc_apc_30126a9.stl";
 let fcHousingApcGeometryCache: THREE.BufferGeometry | null = null;
 let fcHousingPcGeometryCache: THREE.BufferGeometry | null = null;
 let fcHousingLoadPromise: Promise<void> | null = null;

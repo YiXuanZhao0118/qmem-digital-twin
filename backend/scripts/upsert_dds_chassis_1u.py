@@ -37,7 +37,7 @@ ASSETS: list[dict[str, object]] = [
         # any user-edited position/direction already in DB.
         "name": "primitive_dds_ad9959_pcb",
         "asset_type": "stl",
-        "file_path": "uploads/ad9959_pcbz.stl",
+        "file_path": "files/stl/ad9959_pcbz.stl",
         "source": "Analog Devices AD9959/PCBZ STEP (gmsh STEP→STL, decimated)",
         "source_url": "https://www.digikey.tw/en/models/967016?tab=mfr",
         "unit": "mm",
@@ -112,7 +112,7 @@ ASSETS: list[dict[str, object]] = [
     {
         "name": "dds_chassis_1u_glb",
         "asset_type": "gltf",
-        "file_path": "uploads/dds_chassis_1u.glb",
+        "file_path": "files/glb/dds_chassis_1u.glb",
         "source": "Project-supplied DDS 1U chassis enclosure (GLB)",
         "unit": "mm",
         "scale_factor": 1.0,
@@ -120,7 +120,7 @@ ASSETS: list[dict[str, object]] = [
     {
         "name": "dds_chassis_1u_full_stl",
         "asset_type": "stl",
-        "file_path": "uploads/dds_chassis_1u_full.stl",
+        "file_path": "files/stl/dds_chassis_1u_full.stl",
         "source": "Project-supplied DDS 1U chassis full STL",
         "unit": "mm",
         "scale_factor": 1.0,
@@ -138,7 +138,7 @@ COMPONENTS: list[dict[str, object]] = [
         # was rewritten from a procedural box (100×80×16 mm,
         # `primitive://dds_ad9959_pcb`) into a real STL mesh from the
         # ADI evaluation-board STEP (165.1×114.3×19.3 mm,
-        # `uploads/ad9959_pcbz.stl`). Asset row name kept stable so this
+        # `files/stl/ad9959_pcbz.stl`). Asset row name kept stable so this
         # component reference still resolves and no DB rows are orphaned.
         # The frontend `createDdsAd9959Pcb` procedural fallback in
         # loadAsset.ts is now only used if the STL fails to load.

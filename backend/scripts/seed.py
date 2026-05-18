@@ -255,7 +255,7 @@ ASSETS = [
     {
         "name": "thorlabs_cf175cm_p5_stl",
         "asset_type": "stl",
-        "file_path": "uploads/cf175c_m-p5.stl",
+        "file_path": "files/stl/cf175c_m-p5.stl",
         "source": "FreeCAD STEP export",
         "source_url": "https://www.thorlabs.com/item/CF175C_M-P5?aID=4063768eebb43d2e49d40f1ce64ce7a8&aC=2",
         "unit": "mm",
@@ -269,7 +269,7 @@ ASSETS = [
         # `createBoostaProModule` placeholder mesh.
         "name": "toptica_boosta_pro_glb",
         "asset_type": "glb",
-        "file_path": "uploads/toptica_boosta_pro.glb",
+        "file_path": "files/glb/toptica_boosta_pro.glb",
         "source": "user_upload",
         "unit": "mm",
         "scale_factor": 1.0,
@@ -306,7 +306,7 @@ ASSETS = [
         # the asset renders at 1/1000 scale and looks invisible.
         "name": "aom_aa_mt80_glb",
         "asset_type": "glb",
-        "file_path": "uploads/aom_aa_mt80.glb",
+        "file_path": "files/glb/aom_aa_mt80.glb",
         "source": "user_upload",
         "unit": "m",
         "scale_factor": 1.0,
@@ -351,7 +351,7 @@ ASSETS = [
         # freecad_step_to_stl.py).
         "name": "thorlabs_la1614_b_stl",
         "asset_type": "stl",
-        "file_path": "uploads/thorlabs_la1614_b.stl",
+        "file_path": "files/stl/thorlabs_la1614_b.stl",
         "source": "FreeCAD STEP export",
         "source_url": "https://www.thorlabs.com/item/LA1614-B",
         "unit": "mm",
@@ -380,7 +380,7 @@ ASSETS = [
         # AR coating 650–1050 nm. Same import pipeline as LA1614-B.
         "name": "thorlabs_la1540_b_stl",
         "asset_type": "stl",
-        "file_path": "uploads/thorlabs_la1540_b.stl",
+        "file_path": "files/stl/thorlabs_la1540_b.stl",
         "source": "FreeCAD STEP export",
         "source_url": "https://www.thorlabs.com/item/LA1540-B",
         "unit": "mm",
@@ -407,7 +407,7 @@ ASSETS = [
         # STL via FreeCAD (same pipeline as LA1614-B).
         "name": "thorlabs_ks1_stl",
         "asset_type": "stl",
-        "file_path": "uploads/thorlabs_ks1.stl",
+        "file_path": "files/stl/thorlabs_ks1.stl",
         "source": "FreeCAD STEP export",
         "source_url": "https://www.thorlabs.com/item/KS1",
         "unit": "mm",
@@ -419,7 +419,7 @@ ASSETS = [
         # for mounting SM1-threaded optics.
         "name": "thorlabs_ks1t_stl",
         "asset_type": "stl",
-        "file_path": "uploads/thorlabs_ks1t.stl",
+        "file_path": "files/stl/thorlabs_ks1t.stl",
         "source": "FreeCAD STEP export",
         "source_url": "https://www.thorlabs.com/item/KS1T",
         "unit": "mm",
@@ -431,12 +431,12 @@ ASSETS = [
     # 1050 nm) were dropped from the catalog. STEP downloaded per item
     # from /item/<PART> and converted via FreeCAD (thorlabs-component-import
     # skill). Naming: thorlabs_<part-lowercased-with-_>.
-    {"name": "thorlabs_io_3_850_hp_stl",    "asset_type": "stl", "file_path": "uploads/thorlabs_io_3_850_hp.stl",    "source": "FreeCAD STEP export", "source_url": "https://www.thorlabs.com/item/IO-3-850-HP",    "unit": "mm", "scale_factor": 1.0},
-    {"name": "thorlabs_io_3d_850_vlp_stl",  "asset_type": "stl", "file_path": "uploads/thorlabs_io_3d_850_vlp.stl",  "source": "FreeCAD STEP export", "source_url": "https://www.thorlabs.com/item/IO-3D-850-VLP",  "unit": "mm", "scale_factor": 1.0},
-    {"name": "thorlabs_io_5_850_hp_stl",    "asset_type": "stl", "file_path": "uploads/thorlabs_io_5_850_hp.stl",    "source": "FreeCAD STEP export", "source_url": "https://www.thorlabs.com/item/IO-5-850-HP",    "unit": "mm", "scale_factor": 1.0},
-    {"name": "thorlabs_io_5_850_vlp_stl",   "asset_type": "stl", "file_path": "uploads/thorlabs_io_5_850_vlp.stl",   "source": "FreeCAD STEP export", "source_url": "https://www.thorlabs.com/item/IO-5-850-VLP",   "unit": "mm", "scale_factor": 1.0},
-    {"name": "thorlabs_iot_5_850_mp_stl",   "asset_type": "stl", "file_path": "uploads/thorlabs_iot_5_850_mp.stl",   "source": "FreeCAD STEP export", "source_url": "https://www.thorlabs.com/item/IOT-5-850-MP",   "unit": "mm", "scale_factor": 1.0},
-    {"name": "thorlabs_iot_5_850_vlp_stl",  "asset_type": "stl", "file_path": "uploads/thorlabs_iot_5_850_vlp.stl",  "source": "FreeCAD STEP export", "source_url": "https://www.thorlabs.com/item/IOT-5-850-VLP",  "unit": "mm", "scale_factor": 1.0},
+    {"name": "thorlabs_io_3_850_hp_stl",    "asset_type": "stl", "file_path": "files/stl/thorlabs_io_3_850_hp.stl",    "source": "FreeCAD STEP export", "source_url": "https://www.thorlabs.com/item/IO-3-850-HP",    "unit": "mm", "scale_factor": 1.0},
+    {"name": "thorlabs_io_3d_850_vlp_stl",  "asset_type": "stl", "file_path": "files/stl/thorlabs_io_3d_850_vlp.stl",  "source": "FreeCAD STEP export", "source_url": "https://www.thorlabs.com/item/IO-3D-850-VLP",  "unit": "mm", "scale_factor": 1.0},
+    {"name": "thorlabs_io_5_850_hp_stl",    "asset_type": "stl", "file_path": "files/stl/thorlabs_io_5_850_hp.stl",    "source": "FreeCAD STEP export", "source_url": "https://www.thorlabs.com/item/IO-5-850-HP",    "unit": "mm", "scale_factor": 1.0},
+    {"name": "thorlabs_io_5_850_vlp_stl",   "asset_type": "stl", "file_path": "files/stl/thorlabs_io_5_850_vlp.stl",   "source": "FreeCAD STEP export", "source_url": "https://www.thorlabs.com/item/IO-5-850-VLP",   "unit": "mm", "scale_factor": 1.0},
+    {"name": "thorlabs_iot_5_850_mp_stl",   "asset_type": "stl", "file_path": "files/stl/thorlabs_iot_5_850_mp.stl",   "source": "FreeCAD STEP export", "source_url": "https://www.thorlabs.com/item/IOT-5-850-MP",   "unit": "mm", "scale_factor": 1.0},
+    {"name": "thorlabs_iot_5_850_vlp_stl",  "asset_type": "stl", "file_path": "files/stl/thorlabs_iot_5_850_vlp.stl",  "source": "FreeCAD STEP export", "source_url": "https://www.thorlabs.com/item/IOT-5-850-VLP",  "unit": "mm", "scale_factor": 1.0},
 ]
 
 
@@ -868,7 +868,7 @@ COMPONENTS = [
             "slotLengthMm": 44.4,
             "screw": "M6 x 1.0 captive screw",
             "package": "5 pack",
-            "sourceStep": "uploads/603e2c4d-fe81-497d-9953-9440f722f102_cf175c_m-p5-step.step",
+            "sourceStep": "files/cad_sources/603e2c4d-fe81-497d-9953-9440f722f102_cf175c_m-p5-step.step",
             "sourceUrl": "https://www.thorlabs.com/item/CF175C_M-P5?aID=4063768eebb43d2e49d40f1ce64ce7a8&aC=2",
             "edrawingUrl": "https://media.thorlabs.com/globalassets/items/c/cf/cf1/cf175c_m/ttn026566-e0w.html?v=0116105356",
         },
@@ -894,7 +894,7 @@ COMPONENTS = [
             "diameterMm": 12.7,
             "material": "N-BK7",
             "arCoatingRangeNm": [650, 1050],
-            "sourceStep": "uploads/LA1614-B-Step.step",
+            "sourceStep": "files/cad_sources/LA1614-B-Step.step",
             "sourceUrl": "https://www.thorlabs.com/item/LA1614-B",
         },
         "object": {"x_mm": 700, "y_mm": -120, "z_mm": 0, "rz_deg": 0},
@@ -913,7 +913,7 @@ COMPONENTS = [
             "diameterMm": 12.7,
             "material": "N-BK7",
             "arCoatingRangeNm": [650, 1050],
-            "sourceStep": "uploads/LA1540-B-Step.step",
+            "sourceStep": "files/cad_sources/LA1540-B-Step.step",
             "sourceUrl": "https://www.thorlabs.com/item/LA1540-B",
         },
         "object": {"x_mm": 760, "y_mm": -120, "z_mm": 0, "rz_deg": 0},
@@ -933,7 +933,7 @@ COMPONENTS = [
             "opticDiameterMm": 25.4,
             "adjusters": 3,
             "retainingRing": True,
-            "sourceStep": "uploads/KS1-Step.step",
+            "sourceStep": "files/cad_sources/KS1-Step.step",
             "sourceUrl": "https://www.thorlabs.com/item/KS1",
         },
     },
@@ -951,7 +951,7 @@ COMPONENTS = [
             "opticDiameterMm": 25.4,
             "adjusters": 3,
             "internalThread": "SM1",
-            "sourceStep": "uploads/KS1T-Step.step",
+            "sourceStep": "files/cad_sources/KS1T-Step.step",
             "sourceUrl": "https://www.thorlabs.com/item/KS1T",
         },
     },
@@ -1351,7 +1351,7 @@ for _part_key, _meta in _THORLABS_MANIFEST.items():
         {
             "name": f"thorlabs_{_norm}_stl",
             "asset_type": "stl",
-            "file_path": f"uploads/thorlabs_{_norm}.stl",
+            "file_path": f"files/stl/thorlabs_{_norm}.stl",
             "source": "FreeCAD STEP export",
             "source_url": f"https://www.thorlabs.com/item/{_part_key}",
             "unit": "mm",
