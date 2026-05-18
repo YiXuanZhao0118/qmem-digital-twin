@@ -42,11 +42,15 @@ The data model has **three catalog tiers** plus a **scene graph** layered on top
 | Term | Meaning | DB table | API path |
 |------|---------|----------|----------|
 | **Asset** | A 3D file (`.stl` / `.glb` / `.step` / primitive) in the asset library. Owns `anchors[]`. | `assets_3d` | `/api/assets` |
-| **Component** | A part type in the catalog ("AOMO 3080", "DBR-852-TOSA"). Backed by an Asset. | `components` | `/api/components` |
-| **Object** | An **instance** of a Component placed in the scene. Has pose, visibility, locks, per-instance overrides. | `objects` | `/api/objects` |
+| **Component** | A part type in the catalog ("AOMO 3080", "DBR-852-TOSA"). Composed of one or more bindings (asset or sub-component) in a tree. | `components` | `/api/components` |
+| **ComponentBinding** | A node in a Component's composition tree. Each binding targets either an `Asset3D` (raw geometry) or another `Component` (sub-component) with a local transform; `tunable_axes` declares per-instance Euler DoFs. | `component_bindings` | `/api/components/{id}/bindings` · `/api/component-bindings/{id}` |
+| **Object** | An **instance** of a Component placed in the scene. Has pose, visibility, locks, per-instance overrides (including `properties.bindingOverrides` keyed by binding id). | `objects` | `/api/objects` |
 
 `Asset → Component → Object` is the canonical hierarchy. The same Component can
-have many Objects. The left panel shows Components and Objects; underlying
+have many Objects. ComponentBinding generalises the legacy "one Component → one
+Asset" pointer into a tree so e.g. a Faraday isolator can be modelled as
+*body + 2 PBS sub-components + 2 end caps* with per-instance rotational DoFs
+on each end cap. The left panel shows Components and Objects; underlying
 Assets are managed indirectly through component upload/import.
 
 On top of those three tiers the scene graph adds:
@@ -167,17 +171,20 @@ processes in the order above. The stack is reachable at the ports listed in the
                       │             │
                  ┌────▼─────────────▼─────────────────────────────┐
                  │  FastAPI                       :8010           │
-                 │  /api/* (27 routers)  +  /ws (broadcast hub)   │
+                 │  /api/* (28 routers)  +  /ws (broadcast hub)   │
                  │  ┌──────────┐ ┌────────────┐ ┌──────────────┐  │
                  │  │ routers/ │ │ services/  │ │ solvers/     │  │
                  │  └──────────┘ └────────────┘ └──────────────┘  │
                  │  SQLAlchemy async  +  Pydantic schemas         │
+                 │  models/ themed package (hardware/scene/agent/ │
+                 │     physics/timing/interaction/simulation/…)   │
                  └────────────────────────┬───────────────────────┘
                                           │
                  ┌────────────────────────▼───────────────────────┐
-                 │  PostgreSQL    :55432   (Alembic at 0058)      │
-                 │  assets_3d, components, objects, connections,  │
-                 │  collections, optical_links, rf_chain_nodes,   │
+                 │  PostgreSQL    :55432   (Alembic at 0063)      │
+                 │  assets_3d, components, component_bindings,    │
+                 │  objects, connections, collections,            │
+                 │  optical_links, rf_chain_nodes,                │
                  │  physics_elements, beam_paths, simulation_runs │
                  │  timing_programs, collection_templates,        │
                  │  agent_sessions, session_mutations, …          │
@@ -217,7 +224,7 @@ metadata cannot drift between layers.
   Collection so the outliner always has a root node.
 - **`GET /api/health`** liveness probe.
 - **`/ws`** WebSocket (see [WebSocket protocol](#websocket-protocol)).
-- 26 API routers under `/api/...` (full table below).
+- 28 API routers under `/api/...` (full table below). `component_bindings` mounts twice (nested at `/api/components/{id}/bindings` for tree listing/creation + top-level `/api/component-bindings/{id}` for per-row operations), counted as one router.
 
 Config lives in `backend/app/config.py` (Pydantic Settings, reads `.env`):
 `DATABASE_URL`, `CORS_ORIGINS`, `ASSET_ROOT`, plus Onshape and Palace fields
@@ -246,8 +253,9 @@ plugin grows a field.
 
 | Table | Purpose | Notable columns |
 |---|---|---|
-| `assets_3d` | 3D files & their anchors | `file_path`, `unit`, `scale_factor`, `anchors` (JSONB, with `connectorType` after migration 0050). Post-0057 also carries `status` (`active`/`draft`), `created_by_session_id`, `ai_approved_at` |
-| `components` | Catalog | `component_type`, `brand`, `model`, `asset_3d_id`, `properties`, `physics_capabilities`, `archived_at`. Same three lifecycle columns (`status`, `created_by_session_id`, `ai_approved_at`) appended in 0057 |
+| `assets_3d` | 3D files & their anchors | `file_path` (post-0063 lives under `files/<ext>/…` or `agent_uploads/<session_id>/…` — anything else is rejected by `resolve_asset_path`), `unit`, `scale_factor`, `anchors` (JSONB, with `connectorType` after migration 0050; for waveplates `fastAxisDegBodyLocal` is asset-level since 0060). Post-0057 also carries `status` (`active`/`draft`), `created_by_session_id`, `ai_approved_at` |
+| `components` | Catalog | `component_type`, `brand`, `model`, `asset_3d_id` (legacy single-asset pointer, kept around until all read paths move to `component_bindings`), `properties`, `physics_capabilities`, `archived_at`. Same three lifecycle columns (`status`, `created_by_session_id`, `ai_approved_at`) appended in 0057 |
+| `component_bindings` | Composition tree (post-0062) | `component_id` (FK → `components.id`), `parent_binding_id` (self-FK, NULL = root), `target_kind` (`asset`\|`subcomponent`), `asset_3d_id` XOR `sub_component_id`, `role` (e.g. `body`, `end_cap_a`, `pbs_front`), `local_{x,y,z}_mm` + `local_{rx,ry,rz}_deg` (parent-binding-local pose), `tunable_axes` (JSONB declaring per-instance Euler DoFs with `frame`/`min`/`max`/`default`), `sort_order`, `properties`. Three CHECK constraints enforce the XOR target + target_kind alignment + no self-subref; cycle detection in the router walks the candidate sub-component's transitive closure |
 | `objects` | Scene instances | `x/y/z_mm`, `rx/ry/rz_deg`, `visible`, `locked`, `serial_number`, `properties` (per-instance overrides, fiber/rf-cable spline, anchor bindings, emission visuals) |
 | `connections` | RF/TTL/USB cables (older model) | `from_object_id`, `from_port`, `to_object_id`, `to_port`, `connection_type` |
 | `assembly_relations` | CAD-style constraints | `relation_type`, `selector_a`, `selector_b`, `offset_mm`, `angle_deg`, `enabled`, `solved` |
@@ -277,8 +285,9 @@ plugin grows a field.
 
 | Mount | File | Purpose |
 |---|---|---|
-| `/api/assets` | `assets.py` | Asset upload & CRUD; serves anchors editor |
+| `/api/assets` | `assets.py` | Asset upload & CRUD; serves anchors editor. Uploads land under `assets/files/<ext>/<uuid>_<name>.<ext>` (viewer-ready: glb/gltf/obj/stl) or `assets/files/cad_sources/…` (step/stp/sldprt/dxf) after alembic 0063 unified the legacy `uploads/` bucket |
 | `/api/components` | `components.py` | Catalog CRUD; archive/restore; upload-from-file. Owns `auto_create_physics_element_for_object`, which on a fresh `fiber` spawn also creates paired `fiber_end_a` + `fiber_end_b` SceneObjects (3-object cluster, mirroring migration 0052 for new placements) and joins them to the body's collection |
+| `/api/components/{id}/bindings` · `/api/component-bindings/{id}` | `component_bindings.py` | **New (0062)**: ComponentBinding tree CRUD. Nested `GET` returns full binding list in `sort_order` ascending; structure is implied by `parent_binding_id` (multiple roots legal). Top-level routes operate on a single binding by id; the update path **cannot** change the binding's target — to retarget, delete + recreate (keeps cycle protection simple). Cycle protection: creating a `subcomponent`-kind binding walks the candidate sub-component's transitive sub-component closure and rejects with 400 if the container appears in it |
 | `/api/objects` | `objects.py` | Instance CRUD; **bulk batch update** so multi-select doesn't trigger N broadcasts. On fresh `fiber` creation also broadcasts the auto-spawned `fiber_end_a`/`fiber_end_b` SceneObjects + PhysicsElements so the 3-object cluster lands without a page reload |
 | `/api/connections` | `connections.py` | Cable graph CRUD |
 | `/api/assembly-relations` | `assembly_relations.py` | Constraint CRUD + one-shot solve |
@@ -331,8 +340,26 @@ plugin grows a field.
   `spinapi_compile`).
 - `v2_bindings.py` — back-compat layer between legacy `Scene.beam` and modern
   per-instance `kindParams`.
-- `services/asset_converter.py`, `services/touchstone.py`,
-  `services/instrument_polling.py`, `services/onshape_client.py`.
+- `models/` (post Stage C, was a single 1.3k-line `models.py`) — ORM split into themed
+  submodules: `base.py` (`Base`, `JsonDict`, `JsonList`), `hardware.py`
+  (`Asset3D` / `Component` / `ComponentBinding`), `scene.py` (`SceneObject`,
+  `Collection`, `CollectionMember`, `CollectionTemplate`, `SceneView`,
+  `SceneViewCollectionOverride`), `interaction.py` (`Connection`,
+  `OpticalLink`, `RfLink`, `AssemblyRelation`, `BeamPath`),
+  `physics.py` (`PhysicsElement`, `DeviceState`), `timing.py` (`TimingProgram`),
+  `simulation.py` (`SimulationRun`, `BeamSegment`, `Revision`),
+  `agent.py` (`AgentSession`, `SessionMutation`, `ApprovalEvent`),
+  `settings.py` (`AppSetting`), and `modules/{electronics,em,magnetics,rf}.py`
+  (`Circuit`, `EmProblem`, `Mesh`, `Coil`, `MagneticsProblem`, `RfChainNode`).
+  `app.models.__init__` re-exports every name so legacy
+  `from app.models import X` imports continue to resolve unchanged.
+- `services/asset_converter.py` — `SUPPORTED_ASSET_EXTENSIONS`,
+  `VIEWER_ASSET_EXTENSIONS`, `CAD_SOURCE_EXTENSIONS`, `subdir_for_ext`
+  (ext → `files/<ext>/` mapping shared by upload endpoints and migration
+  0063), `resolve_asset_path` (allowlist of `files/` and `agent_uploads/`
+  prefixes; everything else, including stale `uploads/`, is rejected).
+- `services/touchstone.py`, `services/instrument_polling.py`,
+  `services/onshape_client.py`.
 - `services/agent_session.py` (new, 0057) — pure state machine for the AI
   binding agent: `start_session`, `heartbeat`, `undo_last_mutation`,
   `commit_session`, `cancel_session`, `scan_for_abandoned`. Owns the
@@ -363,7 +390,7 @@ plugin grows a field.
 
 ### Alembic migrations
 
-Currently at **revision 0058**. Recent milestones:
+Currently at **revision 0063**. Recent milestones:
 
 | Rev | Title | Purpose |
 |---|---|---|
@@ -377,6 +404,11 @@ Currently at **revision 0058**. Recent milestones:
 | 0056 | fiber_recombine_ends | **Reverses 0052.** A fiber is back to a single SceneObject; End A / End B pose hoisted into the fiber body PE.kindParams in body-local frame (`endA.{posMm,rotDeg,tensionHandleMm,polish,connectorType,…}` and `endB.…`). Moving / rotating the fiber moves the ends with it; per-end Align A / Align B buttons still adjust each end independently. Catalog Component `fiber_end_generic` is archived if no fiber_end SceneObjects remain |
 | 0057 | agent_sessions | Backs the in-browser AI binding agent. Adds `agent_sessions`, `session_mutations`, `approval_events` tables, plus `status` / `created_by_session_id` / `ai_approved_at` columns on `assets_3d` and `components`. Composite indexes: `(status, last_heartbeat_at)` on sessions for the sweeper; `(session_id, undone_at, created_at)` on mutations for the undo hot path; partial `status='active'` indexes on assets_3d and components so list endpoints stay tiny as draft history grows |
 | 0058 | agent_messages_json | Adds `agent_sessions.messages_json` (JSONB, nullable) for the Anthropic SDK `messages[]` array. Loaded by `agent_orchestrator` on every turn and rewritten after the turn so backend restart / browser refresh mid-session resumes the conversation |
+| 0059 | drop_per_object_aperture | Reverses the V2 (0014) per-instance aperture override store. Strips `<anchorId>_apertureMm` flat keys, `perAnchorApertures` maps, and `aperture` payload fields from every `objects.properties`. Aperture is now strictly asset-level — edit on `Asset3D.anchors[].apertureMm` in PHY Editor → Optical → Components, and all SceneObjects sharing the asset share the value. Downgrade is a no-op stub (data is gone — a backup restore is needed if you need it back) |
+| 0060 | waveplate_fast_axis_to_asset | Drains `fastAxisDegBeamLocal` from every waveplate `physics_elements.kind_params` / `intrinsic_params` / `state_params`. Fast-axis angle is now defined on the Asset3D anchor (`intercept_in.fastAxisDegBodyLocal`); per-instance rotation around the beam axis lives on `scene_objects.properties.rotationAroundBeamAxisDeg`. Solver composes `effective = asset + per-instance` at run time via `hydrate_waveplate_fast_axis`. Per-instance angles are discarded; re-establish with the Object panel's WaveplateAdjustControls knob |
+| 0061 | tornos_dedicated_asset | Clones `primitive_box` into a dedicated `coherent_tornos_850_4_primitive` Asset3D and re-points the Coherent TORNOS-850-4 isolator at it, so PHY Editor anchor edits (e.g. `front_pbs` / `back_pbs`) only affect TORNOS rather than the ~30 other unrelated components that shared `primitive_box`. Same split pattern as 0054; idempotent. **Always clone, never share, an Asset3D across components that have user-editable anchors** |
+| 0062 | component_bindings | New `component_bindings` table: polymorphic asset\|subcomponent tree per Component with `parent_binding_id`, `local_*` transform, `tunable_axes` JSONB declaring per-instance Euler DoFs (`{axis: {frame, min, max, default}}`), `role` label, `sort_order`. Three CHECK constraints (`XOR target`, `target_kind matches`, `no self-subref`) + cycle detection in the router. Backfills one root binding per Component that has a non-null `asset_3d_id` (preserves rendering through the legacy path while the new tree fills in). `Component.asset_3d_id` is *not* dropped yet — Stage G removes it once all read paths move off it. Idempotent backfill skips Components that already have ≥1 binding |
+| 0063 | unify_asset_paths | Restructures `assets/` from the flat `uploads/` bucket to extension-grouped `files/<ext>/` (`glb/`, `gltf/`, `obj/`, `stl/`, `cad_sources/`). Single transaction moves files on disk + rewrites `Asset3D.file_path`; if any one file move fails, the whole thing rolls back. `agent_uploads/<session_id>/` is left alone — already per-session-scoped sandbox storage. Mapper lives in `services/asset_converter.subdir_for_ext` (single source of truth for upload endpoint + migration). `resolve_asset_path` now enforces an allowlist (`files/`, `agent_uploads/`) so stale `uploads/` references can't sneak back through a forgotten code path. Procedural rows (`primitive:*`, `procedural:*`) and rows already in `files/` are skipped. Downgrade is a full roundtrip back to `uploads/`, safe for dev |
 
 Earlier highlights: `0027` V2 baseline (real `SimulationRun ↔ BeamSegment` FK),
 `0036` multiphysics dispatch, `0042` rename of `optical_elements` →
@@ -544,9 +576,57 @@ optional `inspector` (React node). The backend reads the same data through
 
 ### Three.js layer (`frontend/src/three/`)
 
-- `loadAsset.ts` — GLTF/OBJ/STL loaders, per-componentType base colors,
-  device-state overrides (overheating amp → red), per-component
-  `properties.colorHex` overrides, mm scale.
+- `loadAsset/` — formerly a single 3.5k-line `loadAsset.ts`; now a barrel
+  (`loadAsset/index.ts`) that orchestrates GLTF/OBJ/STL loaders, per-componentType
+  base colors, device-state overrides (overheating amp → red), per-component
+  `properties.colorHex` overrides, mm scale. The split is **not** by feature
+  but by what the cycle resolver needs first — `index.ts` imports every
+  sub-module that contributes a binding *before* importing
+  `primitive.ts`, because the latter triggers a `kinds/_plugins.ts` →
+  `_renderer_bindings.ts` → `loadAsset` cycle and only the bindings declared
+  before the re-entry point survive that path. Tree:
+  - `materials.ts` — `createBox`, `materialFor`, shared PBR/standard
+    material factories with per-kind colour tables.
+  - `primitive.ts` — `createPrimitive` / `applyAssetScale`; the cycle
+    trigger. Falls back to procedural geometry from `component_type` +
+    `properties` when no Asset3D is present.
+  - `fiber/{index,curve,spline,thorlabs_30126a9_fc_connector,types}.ts` —
+    Bezier spline tube, ferrule transform helpers, FC/APC connector mesh.
+  - `rf_cable/{index,cable_spline,bnc_male_connector,sma_male_connector}.ts`
+    — analogous spline + jack/plug primitives for RF cables.
+  - `passive/mechanical/` — clamping fork, pedestal post, post, post
+    holder, TS2000A laser mount (procedural, no STL).
+  - `passive/electronics/` — DDS MCU board, TCXO module, IEC C14 inlet,
+    instrument chassis 1U, Mean Well IRM30, SMA bulkhead jack, USB-B
+    jack (each a single file under the corresponding subdir).
+  - `passive/text_annotation.ts` — 3D text overlay used by labels.
+  - `stl_builders/` — per-model wrappers that load a specific STL and
+    decorate it with overlays: AD9959 PCB-Z, Thorlabs BB1-E03, PBS252,
+    WPHSM05/850. Used for assets where the raw STL alone isn't enough
+    to communicate the part's physics (mirror coating side, PBS cement
+    plane, waveplate fast-axis marker).
+- `kinds/<kind>/renderer.ts` (new — split off from the old `loadAsset.ts`
+  monolith) — every kind that needs more than primitive geometry now ships
+  a dedicated renderer next to its plugin. Current movers: `aom/renderer.ts`,
+  `tapered_amplifier/renderer.ts`, `rf_amplifier/renderer.ts`,
+  `rf_source/renderer.ts`, `rf_switch/renderer.ts`. Each renderer file
+  is paired with a `models/` subdirectory of per-model mesh recipes
+  (`aaoptoelectronic_mt80`, `toptica_boosta_pro`, `minicircuits_zhl_1_2w_plus`,
+  `analog_devices_ad9959_pcbz`, `minicircuits_zyswa_2_50dr`,
+  `tapered_amplifier/models/generic_chip`). The barrel
+  `kinds/_renderer_bindings.ts` collects these into a
+  `RENDERER_BY_COMPONENT_TYPE` lookup that `loadAsset` consults.
+- `kinds/isolator/pbsOverlay.ts` (new) — single-file home for the
+  isolator's per-model PBS pose table (`ISOLATOR_PBS_DEFAULTS_BY_MODEL`),
+  PBS mini-cube renderer, PBS overlay group builder (shared between TORNOS
+  procedural path and the Thorlabs IO-series STL pipeline), and Thorlabs
+  STL handler. `IsolatorPrismType` differentiates cement-bonded PBS cube
+  (`pbs_cube`, default) from Glan-Laser air-gap calcite prisms
+  (`glan_laser`, used in HP / high-power models). `yRotationDeg` is the
+  recommended single-DoF rotation around body Y (every step lands on a
+  physically valid face-diagonal normal); free `dir` and `rotationDeg`
+  are escape hatches. `IsolatorDevPage.tsx` is a standalone dev page for
+  iterating on overlay geometry without touching the main scene.
 - `rayTrace.ts` — forward ray tracer running in the browser using loaded meshes.
   Emits from laser_source / tapered_amplifier along local +X, dispatches by hit
   componentType (mirror reflect, beam_splitter split, lens/waveplate/aom
@@ -652,6 +732,14 @@ A thin axios layer over `VITE_API_BASE_URL`. Method groups:
   `upsertObjectForComponentApi`
 - **Components**: `createComponentApi`, `updateComponentApi`,
   `deleteComponentApi`, `uploadComponentAssetApi`, `importLocalComponentAssetApi`
+- **Component bindings (new, post-0062)**: `listComponentBindingsApi`,
+  `createComponentBindingApi`, `getComponentBindingApi`,
+  `updateComponentBindingApi`, `deleteComponentBindingApi`. Payload types
+  `ComponentBindingCreatePayload` / `ComponentBindingUpdatePayload`
+  expose `parentBindingId`, `targetKind`, `assetThreeDId`/`subComponentId`,
+  `role`, `localXMm`/`localYMm`/`localZMm`/`localRxDeg`/`localRyDeg`/`localRzDeg`,
+  `tunableAxes`, `sortOrder`, `properties` in camelCase (the backend
+  serialises snake_case → camelCase on the way out)
 - **Assets**: `updateAssetApi`
 - **Assembly**: `createAssemblyRelationApi`, `updateAssemblyRelationApi`,
   `deleteAssemblyRelationApi`, `applyRelationOnceApi`
@@ -692,8 +780,14 @@ close.
 
 ### Top-level types (`frontend/src/types/digitalTwin.ts`)
 
-`SceneObject`, `ComponentItem`, `Asset3D`, `Anchor` (with `connectorType`,
-`derivedFromFiberEndpoint`, `derivedFromRfCableEndpoint`), `OpticalLink`,
+`SceneObject` (now carries `properties.bindingOverrides`, keyed by binding
+id, for per-instance ComponentBinding DoFs — and `properties.rotationAroundBeamAxisDeg`
+for waveplate per-instance rotation post-0060), `ComponentItem`, `ComponentBinding`
+(post-0062 — `targetKind`, `assetThreeDId`/`subComponentId`, `localXMm`…`localRzDeg`,
+`tunableAxes: { [axis]: { frame, min, max, default } }`, `role`, `sortOrder`),
+`Asset3D`, `Anchor` (with `connectorType`, `derivedFromFiberEndpoint`,
+`derivedFromRfCableEndpoint`; waveplate fast-axis lives on
+`Anchor.fastAxisDegBodyLocal` post-0060), `OpticalLink`,
 `PhysicsElement`, `BeamPath`, `OpticalPort`, `Spectrum` /
 `SpectrumComponent` / `GaussianMode` / `JonesVector`, per-kind param structs
 (`LaserSourceParams`, `TaperedAmplifierParams`, `MirrorParams`,
@@ -723,16 +817,45 @@ Rotations in the DB are degrees, ZXZ intrinsic Euler (`rxDeg`, `ryDeg`,
 
 ## Assets pipeline
 
-Drop GLB/glTF/STL files under `assets/` and reference them in `assets_3d.file_path`,
-e.g. `gltf/my_mount.glb`. FastAPI serves the directory at
-`http://localhost:8010/assets/gltf/my_mount.glb`. If no file is present, the
-frontend falls back to primitive geometry derived from `component_type` and
-`properties`.
+Layout (post alembic 0063):
+
+```
+assets/
+  files/
+    glb/          viewer-ready glTF binary
+    gltf/         viewer-ready glTF JSON + sidecar bin
+    obj/          viewer-ready Wavefront OBJ
+    stl/          viewer-ready STL (~195 files)
+    cad_sources/  STEP / STP / SLDPRT / DXF (original CAD geometry — never
+                  rendered directly; sits here for re-export to a
+                  viewer-ready format. ~10 files)
+  agent_uploads/<session_id>/<uuid-prefixed-name>
+                  per-AI-binding-session sandbox; survives commit, is
+                  swept on session timeout (cancel/abandon leaves orphans
+                  — see janitor note in Troubleshooting)
+```
+
+Drop files under the appropriate `assets/files/<ext>/` subdir and reference
+them in `assets_3d.file_path`, e.g. `files/glb/my_mount.glb`. The upload
+endpoints route files automatically via `services/asset_converter.subdir_for_ext`
+(the single mapper used by both `routers/assets.py` upload paths and the
+0063 migration). FastAPI serves the tree at
+`http://localhost:8010/assets/files/glb/my_mount.glb`. If no file is present,
+the frontend falls back to primitive geometry derived from `component_type`
+and `properties`.
+
+`services/asset_converter.resolve_asset_path` enforces an allowlist
+(`files/`, `agent_uploads/`); any other prefix (`uploads/…`, absolute
+paths, `..` traversal) is rejected before the file is opened. This is
+the post-0063 guard against stale references sneaking back in via a
+forgotten code path.
 
 For Onshape STEP → STL conversion see `scripts/convert_step_to_stl.py`.
 The `backend/scripts/upsert_*.py` files generate catalog rows for specific
 parts (BNC adapters, ZHL-1-2W amp, AD9959 chassis, programmable pulse
-generator, …).
+generator, …). Hardcoded `file_path` literals in those scripts were
+rewritten by Stage B; new upserts should always write `files/<ext>/…`
+paths.
 
 ---
 
@@ -920,6 +1043,16 @@ into specific message indices via `messages_json -> N` operators.
   unify the "approve" UI with the existing PHY Editor, and persist
   agent chat transcripts to their own table once the in-memory
   `chat` state grows beyond what `messages_json` already captures.
+- **ComponentBinding read-path migration (Stages D → G).** 0062 added the
+  table and backfilled one root binding per Component but `Component.asset_3d_id`
+  is still the read source of truth for every renderer. Remaining stages:
+  Stage D — frontend reads bindings instead of the legacy pointer in
+  `loadAsset` / PHY Editor; Stage E — per-instance `properties.bindingOverrides`
+  surfaces in the Object panel; Stage F — `IsolatorLinkedRotationGroup` /
+  `pbsOverlay`'s bespoke per-model PBS pose table collapses into a
+  generic binding-driven solver; Stage G — drop `Component.asset_3d_id`
+  once nothing reads it. Until Stage G lands the two pointers must stay
+  in sync (root binding's `asset_3d_id` mirrors the column).
 
 ---
 
@@ -1030,6 +1163,31 @@ keeping in mind while extending the system.
   means a future query that filters on `status='draft'` won't get
   indexed lookups. Acceptable today (draft scans only happen inside
   one session), worth knowing if you ever add a bulk draft viewer.
+- **`Component.asset_3d_id` and `component_bindings` are dual sources of
+  truth.** 0062 backfilled one root binding per Component, but the
+  legacy pointer was not dropped and is still what every renderer
+  reads. Two writers + one read path = inevitable drift if a fresh
+  Component is created via the new bindings router only, or if the
+  bindings tree is edited but the legacy pointer is left stale.
+  Until Stage G ships, keep them in sync (root binding's `asset_3d_id`
+  mirrors the column) or pin all writes to the legacy column. The
+  `auto_create_physics_element_for_object` path is fine — it goes
+  through `Component.asset_3d_id` only.
+- **ComponentBinding cycle protection runs in Python, not SQL.** The
+  router walks the candidate sub-component's transitive closure with
+  a frontier list. Trees are shallow in practice (isolator → PBS is
+  depth 1) so the iterative walk is cheap, but a malicious payload
+  with a wide closure could in theory pull a lot of rows. The CHECK
+  constraint `ck_component_bindings_no_self_subref` only guards depth
+  0; depth ≥ 1 cycles must go through the application path. Don't
+  bypass the router.
+- **Asset-level aperture / fast-axis are global.** Post-0059 and 0060
+  edits to `Asset3D.anchors[].apertureMm` and
+  `Asset3D.anchors[].fastAxisDegBodyLocal` apply to every SceneObject
+  that shares the asset. The TORNOS isolator (0061) was split out of
+  `primitive_box` for this exact reason — if you find yourself wanting
+  per-instance behaviour, the right answer is "clone the asset" not
+  "patch the per-instance override", which is gone.
 
 ### Dev quality of life
 
@@ -1072,7 +1230,9 @@ keeping in mind while extending the system.
 
 ---
 
-*Last regenerated: 2026-05-18 (Alembic revision 0058: fiber-end
-recombine + AI binding agent sessions + persisted Anthropic
-messages_json; refreshed AI binding panel gates + new Page-layout
-panel-defaults table).*
+*Last regenerated: 2026-05-19 (Alembic revision 0063: drop per-object
+aperture override (0059) → waveplate fast-axis moved to Asset (0060) →
+TORNOS isolator gets dedicated Asset (0061) → ComponentBinding tree
+(0062) → asset paths unified under `files/<ext>/` (0063); plus Stage C
+ORM split into themed `models/` package and the `loadAsset/` tree split
+with per-kind `renderer.ts` files + isolator PBS overlay).*
