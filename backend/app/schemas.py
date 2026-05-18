@@ -275,11 +275,84 @@ class ComponentUpdate(CamelModel):
     notes: str | None = None
 
 
+class ComponentBindingBase(CamelModel):
+    """A single node in a Component's binding tree (alembic 0062).
+
+    Frame conventions match SceneObject's: ``(local_x_mm, local_y_mm,
+    local_z_mm)`` is body-local Z-up millimetres relative to the parent
+    binding (or to the Component origin when ``parent_binding_id`` is
+    NULL); Euler angles are XYZ-order degrees.
+    """
+
+    parent_binding_id: uuid.UUID | None = None
+    target_kind: Literal["asset", "subcomponent"]
+    asset_3d_id: uuid.UUID | None = None
+    sub_component_id: uuid.UUID | None = None
+    role: str = "body"
+    local_x_mm: float = 0
+    local_y_mm: float = 0
+    local_z_mm: float = 0
+    local_rx_deg: float = 0
+    local_ry_deg: float = 0
+    local_rz_deg: float = 0
+    tunable_axes: JsonDict = Field(default_factory=dict)
+    sort_order: int = 0
+    properties: JsonDict = Field(default_factory=dict)
+
+
+class ComponentBindingCreate(ComponentBindingBase):
+    @model_validator(mode="after")
+    def _validate_target(self) -> "ComponentBindingCreate":
+        if self.target_kind == "asset":
+            if self.asset_3d_id is None or self.sub_component_id is not None:
+                raise ValueError(
+                    "target_kind='asset' requires asset_3d_id only "
+                    "(sub_component_id must be null)"
+                )
+        else:
+            if self.sub_component_id is None or self.asset_3d_id is not None:
+                raise ValueError(
+                    "target_kind='subcomponent' requires sub_component_id only "
+                    "(asset_3d_id must be null)"
+                )
+        return self
+
+
+class ComponentBindingUpdate(CamelModel):
+    """Update binding pose / role / tunable axes / parent.
+
+    Target (``target_kind`` + ``asset_3d_id`` / ``sub_component_id``) is
+    immutable — to change what a binding points at, delete and recreate.
+    Keeps the cycle check simple and makes the change history readable.
+    """
+
+    parent_binding_id: uuid.UUID | None = None
+    role: str | None = None
+    local_x_mm: float | None = None
+    local_y_mm: float | None = None
+    local_z_mm: float | None = None
+    local_rx_deg: float | None = None
+    local_ry_deg: float | None = None
+    local_rz_deg: float | None = None
+    tunable_axes: JsonDict | None = None
+    sort_order: int | None = None
+    properties: JsonDict | None = None
+
+
+class ComponentBindingOut(ComponentBindingBase):
+    id: uuid.UUID
+    component_id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+
+
 class ComponentOut(ComponentBase):
     id: uuid.UUID
     created_at: datetime
     updated_at: datetime
     archived_at: datetime | None = None
+    # bindings (alembic 0062) are served via GET /api/components/{id}/bindings
+    # so the existing /api/components endpoints stay cheap (no N+1 selectinload).
 
     @computed_field(alias="componentName")
     @property

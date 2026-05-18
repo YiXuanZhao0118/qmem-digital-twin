@@ -18,6 +18,7 @@ from app.routers import (
     circuits,
     collection_templates,
     collections,
+    component_bindings,
     components,
     connections,
     device_states,
@@ -63,6 +64,16 @@ app.mount("/assets", StaticFiles(directory=str(settings.asset_root)), name="asse
 
 app.include_router(assets.router, prefix="/api/assets", tags=["assets"])
 app.include_router(components.router, prefix="/api/components", tags=["components"])
+app.include_router(
+    component_bindings.component_scoped,
+    prefix="/api/components",
+    tags=["component_bindings"],
+)
+app.include_router(
+    component_bindings.binding_scoped,
+    prefix="/api/component-bindings",
+    tags=["component_bindings"],
+)
 app.include_router(objects.router, prefix="/api/objects", tags=["objects"])
 app.include_router(connections.router, prefix="/api/connections", tags=["connections"])
 app.include_router(assembly_relations.router, prefix="/api/assembly-relations", tags=["assembly_relations"])

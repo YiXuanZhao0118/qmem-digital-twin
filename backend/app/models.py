@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, Text, UniqueConstraint, func, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Integer, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -103,9 +103,129 @@ class Component(Base):
         cascade="all, delete-orphan",
         foreign_keys="SceneObject.component_id",
     )
+    bindings: Mapped[list[ComponentBinding]] = relationship(
+        back_populates="component",
+        cascade="all, delete-orphan",
+        foreign_keys="ComponentBinding.component_id",
+        order_by="ComponentBinding.sort_order",
+    )
     # DeviceState, TimingProgram, PhysicsElement are all per-OBJECT now
     # (alembic 0014 + 0015). Reach them via SceneObject.{device_state,
     # timing_program, physics_element}. Component is purely a catalog row.
+
+
+class ComponentBinding(Base):
+    """How a Component is composed from Asset3Ds and/or sub-Components.
+
+    Generalises the legacy ``Component.asset_3d_id`` (single FK) into a
+    tree of bindings where each node holds EITHER raw geometry
+    (``target_kind='asset'`` → ``asset_3d_id``) OR another Component
+    (``target_kind='subcomponent'`` → ``sub_component_id``), positioned
+    by a local transform relative to its parent binding (or to the
+    Component's origin when ``parent_binding_id`` is NULL).
+
+    ``tunable_axes`` declares which Euler axes a SceneObject instance can
+    override per-instance, in which frame, with what bounds. The actual
+    per-instance values live on ``SceneObject.properties.bindingOverrides``
+    keyed by binding id — see alembic 0062 for the rationale.
+
+    Cycle prevention: ``sub_component_id != component_id`` is enforced at
+    DB level; transitive cycles (A → B → A) are checked in the CRUD
+    layer on create/update.
+
+    Example shape (Isolator with 2 PBS sub-components and 2 tunable end
+    caps)::
+
+        root binding (faraday_body.stl, role=body, identity)
+        ├── end cap 1 (end_cap.stl, role=mount, tunable rz)
+        │     └── PBS sub-Component (target_kind=subcomponent)
+        └── end cap 2 (end_cap.stl, role=mount, tunable rz)
+              └── PBS sub-Component (target_kind=subcomponent)
+    """
+
+    __tablename__ = "component_bindings"
+    __table_args__ = (
+        CheckConstraint(
+            "(asset_3d_id IS NULL) != (sub_component_id IS NULL)",
+            name="ck_component_bindings_one_target",
+        ),
+        CheckConstraint(
+            "(target_kind = 'asset' AND asset_3d_id IS NOT NULL AND sub_component_id IS NULL) OR "
+            "(target_kind = 'subcomponent' AND sub_component_id IS NOT NULL AND asset_3d_id IS NULL)",
+            name="ck_component_bindings_target_kind_matches",
+        ),
+        CheckConstraint(
+            "sub_component_id IS NULL OR sub_component_id <> component_id",
+            name="ck_component_bindings_no_self_subref",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    component_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("components.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    parent_binding_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("component_bindings.id", ondelete="CASCADE"),
+    )
+    target_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    asset_3d_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("assets_3d.id", ondelete="RESTRICT"),
+    )
+    sub_component_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("components.id", ondelete="RESTRICT"),
+    )
+    role: Mapped[str] = mapped_column(
+        Text, nullable=False, default="body", server_default="body"
+    )
+    local_x_mm: Mapped[float] = mapped_column(Float, nullable=False, default=0, server_default="0")
+    local_y_mm: Mapped[float] = mapped_column(Float, nullable=False, default=0, server_default="0")
+    local_z_mm: Mapped[float] = mapped_column(Float, nullable=False, default=0, server_default="0")
+    local_rx_deg: Mapped[float] = mapped_column(Float, nullable=False, default=0, server_default="0")
+    local_ry_deg: Mapped[float] = mapped_column(Float, nullable=False, default=0, server_default="0")
+    local_rz_deg: Mapped[float] = mapped_column(Float, nullable=False, default=0, server_default="0")
+    tunable_axes: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    properties: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    component: Mapped[Component] = relationship(
+        back_populates="bindings", foreign_keys=[component_id]
+    )
+    parent: Mapped[ComponentBinding | None] = relationship(
+        remote_side="ComponentBinding.id",
+        foreign_keys=[parent_binding_id],
+        back_populates="children",
+    )
+    children: Mapped[list[ComponentBinding]] = relationship(
+        back_populates="parent",
+        foreign_keys=[parent_binding_id],
+        cascade="all, delete-orphan",
+        order_by="ComponentBinding.sort_order",
+    )
+    asset: Mapped[Asset3D | None] = relationship(foreign_keys=[asset_3d_id])
+    sub_component: Mapped[Component | None] = relationship(foreign_keys=[sub_component_id])
 
 
 class SceneObject(Base):
