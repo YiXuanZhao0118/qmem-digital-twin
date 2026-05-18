@@ -2295,6 +2295,11 @@ class CollectionTemplateInstantiate(CamelModel):
 class SceneOut(CamelModel):
     assets: list[Asset3DOut]
     components: list[ComponentOut]
+    # Catalog composition trees (alembic 0062). Flat list across all
+    # components — the frontend groups by componentId. Keeping it flat
+    # avoids the N+1 problem of fetching per-component, and SceneOut is
+    # already the kitchen-sink "everything for the current scene" payload.
+    component_bindings: list[ComponentBindingOut] = Field(default_factory=list)
     objects: list[SceneObjectOut]
     connections: list[ConnectionOut]
     assembly_relations: list[AssemblyRelationOut] = Field(default_factory=list)

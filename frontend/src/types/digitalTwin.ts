@@ -1052,6 +1052,11 @@ export type TransientRunResponse = {
 export type SceneData = {
   assets: Asset3D[];
   components: ComponentItem[];
+  /** Flat list of all ComponentBindings across every Component in the
+   *  scene (alembic 0062). Group by componentId via
+   *  utils/componentBindings.bindingsFor(). Defaults to [] on legacy
+   *  scenes that pre-date the binding tree. */
+  componentBindings?: ComponentBinding[];
   objects: SceneObject[];
   connections: ConnectionItem[];
   assemblyRelations: AssemblyRelation[];

@@ -14,6 +14,7 @@ from app.models import (
     Collection,
     CollectionMember,
     Component,
+    ComponentBinding,
     Connection,
     DeviceState,
     PhysicsElement,
@@ -43,6 +44,15 @@ async def get_scene(session: AsyncSession = Depends(get_session)) -> schemas.Sce
     assets = list((await session.scalars(select(Asset3D))).all())
     components = list(
         (await session.scalars(select(Component).where(Component.archived_at.is_(None)))).all()
+    )
+    component_bindings = list(
+        (
+            await session.scalars(
+                select(ComponentBinding).order_by(
+                    ComponentBinding.component_id, ComponentBinding.sort_order
+                )
+            )
+        ).all()
     )
     objects = list((await session.scalars(select(SceneObject))).all())
     connections = list((await session.scalars(select(Connection))).all())
@@ -139,6 +149,7 @@ async def get_scene(session: AsyncSession = Depends(get_session)) -> schemas.Sce
     return schemas.SceneOut(
         assets=assets,
         components=components,
+        component_bindings=component_bindings,
         objects=objects,
         connections=connections,
         assembly_relations=assembly_relations,
