@@ -1,0 +1,1025 @@
+/**
+ * IsolatorDevPage — live-tweak page for PBS pose inside an isolator.
+ *
+ * Layout:
+ *   ┌─ header ────────────────────────────────────────────────────┐
+ *   │ Isolator dev   [Model ▼]  ↻ Reset   📋 Copy                 │
+ *   ├─ 3D canvas ──────────────────┬─ right pane ─────────────────┤
+ *   │ Real STL housing (IO series) │ Live-editable TS code:       │
+ *   │ or procedural cylinder       │ "{ front_pbs: { pos: [...    │
+ *   │ (TORNOS), with PBS overlay   │     ...                      │
+ *   │ driven by the right pane.    │ Parse: ✓ / ✗ ...             │
+ *   └──────────────────────────────┴──────────────────────────────┘
+ *
+ * The right pane is the source of truth — typing a number reparses the
+ * block and pushes new values into React state, which rebuilds only the
+ * PBS overlay (and the housing if the model changed). No page reload.
+ */
+import { useEffect, useMemo, useRef, useState } from "react";
+import * as THREE from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
+
+import { resolveAssetUrl, updateComponentApi } from "../../api/client";
+import { useSceneStore } from "../../store/sceneStore";
+import { mmToThree } from "../../three/transformUtils";
+import type { Anchor, Asset3D, ComponentItem } from "../../types/digitalTwin";
+import {
+  buildIsolatorPbsOverlay,
+  buildThorlabsIsolatorObject,
+  isolatorCentroidKey,
+  ISOLATOR_PBS_DEFAULTS_BY_MODEL,
+  type IsolatorLinkedRotationGroup,
+} from "./pbsOverlay";
+// Whole-file source string for the right-panel editor. Vite resolves `?raw`
+// at build time to the file's exact contents (geometry helpers + table +
+// PBS overlay assembly + STL wrapper). User can edit anywhere; the parser
+// below only watches the current model's row.
+import pbsOverlayFileSource from "./pbsOverlay.ts?raw";
+
+const MODELS = Object.keys(ISOLATOR_PBS_DEFAULTS_BY_MODEL);
+
+// Procedural-cylinder fallback dims (used for TORNOS where the asset is
+// `primitive://box`, not an STL file).
+const HOUSING_LENGTHS_MM: Record<string, number> = {
+  "TORNOS-850-4": 51.4,
+};
+const HOUSING_DIAM_MM: Record<string, number> = {
+  "TORNOS-850-4": 22,
+};
+
+// One-shot STL geometry cache so dragging sliders doesn't refetch the
+// file every keystroke. Cleared on full page reload (which is fine, the
+// browser HTTP cache picks up the served file).
+const stlLoader = new STLLoader();
+const stlGeometryCache = new Map<string, Promise<THREE.BufferGeometry>>();
+function loadStlGeometryCached(filePath: string): Promise<THREE.BufferGeometry> {
+  if (!stlGeometryCache.has(filePath)) {
+    stlGeometryCache.set(
+      filePath,
+      stlLoader.loadAsync(resolveAssetUrl(filePath)),
+    );
+  }
+  // Clone so each call gets its own BufferGeometry to mutate (computeBoundingBox
+  // etc.) without contaminating the cache.
+  return stlGeometryCache.get(filePath)!.then((g) => g.clone());
+}
+
+type Vec3 = [number, number, number];
+
+// ────────────────────────────────────────────────────────────────────────
+// Triangle cluster helpers — find the connected coplanar mesh face that
+// the user clicked, then drop all those triangles. STL is non-indexed
+// (one BufferGeometry per triangle, 9 floats), so triangle index = faceIndex.
+// ────────────────────────────────────────────────────────────────────────
+
+/** Vertex key for BFS edge matching. Uses the same 0.5 mm rounding as
+ *  `isolatorCentroidKey` so triangles sharing a "same" vertex resolve
+ *  to identical keys despite floating-point drift. */
+function vertexKey(positions: Float32Array, vertexOffset: number): string {
+  const r = (n: number) => Math.round(n * 2) / 2;
+  return `${r(positions[vertexOffset])},${r(positions[vertexOffset + 1])},${r(positions[vertexOffset + 2])}`;
+}
+function triangleNormal(positions: Float32Array, t: number): [number, number, number] {
+  const o = t * 9;
+  const e1x = positions[o + 3] - positions[o + 0];
+  const e1y = positions[o + 4] - positions[o + 1];
+  const e1z = positions[o + 5] - positions[o + 2];
+  const e2x = positions[o + 6] - positions[o + 0];
+  const e2y = positions[o + 7] - positions[o + 1];
+  const e2z = positions[o + 8] - positions[o + 2];
+  const nx = e1y * e2z - e1z * e2y;
+  const ny = e1z * e2x - e1x * e2z;
+  const nz = e1x * e2y - e1y * e2x;
+  const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+  if (len < 1e-9) return [0, 0, 0];
+  return [nx / len, ny / len, nz / len];
+}
+
+/** BFS from `startTriIdx` over triangles that (a) share an edge with a
+ *  triangle already in the cluster AND (b) have a normal within 18° of
+ *  the start triangle (cos(18°) ≈ 0.95). Returns the cluster's triangle
+ *  indices. Used to spread a single click out to a whole flat face. */
+function findCoplanarCluster(
+  positions: Float32Array,
+  startTriIdx: number,
+): Set<number> {
+  const triangleCount = Math.floor(positions.length / 9);
+  if (startTriIdx >= triangleCount || startTriIdx < 0) return new Set();
+
+  const startNormal = triangleNormal(positions, startTriIdx);
+  // Edge key → triangle indices that contain that edge
+  const edgeToTris = new Map<string, number[]>();
+  for (let t = 0; t < triangleCount; t += 1) {
+    const o = t * 9;
+    const v0 = vertexKey(positions, o + 0);
+    const v1 = vertexKey(positions, o + 3);
+    const v2 = vertexKey(positions, o + 6);
+    const verts = [v0, v1, v2];
+    for (let i = 0; i < 3; i += 1) {
+      const a = verts[i];
+      const b = verts[(i + 1) % 3];
+      const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+      let arr = edgeToTris.get(key);
+      if (!arr) {
+        arr = [];
+        edgeToTris.set(key, arr);
+      }
+      arr.push(t);
+    }
+  }
+
+  const cluster = new Set<number>([startTriIdx]);
+  const queue = [startTriIdx];
+  while (queue.length > 0) {
+    const t = queue.shift()!;
+    const o = t * 9;
+    const verts = [
+      vertexKey(positions, o + 0),
+      vertexKey(positions, o + 3),
+      vertexKey(positions, o + 6),
+    ];
+    for (let i = 0; i < 3; i += 1) {
+      const a = verts[i];
+      const b = verts[(i + 1) % 3];
+      const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+      const neighbors = edgeToTris.get(key);
+      if (!neighbors) continue;
+      for (const n of neighbors) {
+        if (cluster.has(n)) continue;
+        const nNorm = triangleNormal(positions, n);
+        const dot = nNorm[0] * startNormal[0] + nNorm[1] * startNormal[1] + nNorm[2] * startNormal[2];
+        if (dot >= 0.95) {
+          cluster.add(n);
+          queue.push(n);
+        }
+      }
+    }
+  }
+  return cluster;
+}
+
+function disposeObject3D(obj: THREE.Object3D): void {
+  obj.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (m.geometry) m.geometry.dispose();
+    if (m.material) {
+      const mats = Array.isArray(m.material) ? m.material : [m.material];
+      for (const mat of mats) mat.dispose();
+    }
+  });
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Code parser — find the current model's row inside the whole file text
+// and extract its 2 PBS poses. Anything outside that row is left alone.
+// ────────────────────────────────────────────────────────────────────────
+
+const POS_RE = /pos\s*:\s*\[\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\]/g;
+const YROT_RE = /yRotationDeg\s*:\s*([+-]?\d+(?:\.\d+)?)/g;
+const MODEL_ROW_WINDOW = 800; // chars after `"MODEL":` to scan for the row
+
+function parseModelRow(text: string, model: string):
+  | { frontPos: Vec3; frontY: number; backPos: Vec3; backY: number }
+  | null {
+  const escaped = model.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`"${escaped}"\\s*:`);
+  const m = text.match(re);
+  if (!m || m.index === undefined) return null;
+  const chunk = text.slice(m.index, m.index + MODEL_ROW_WINDOW);
+
+  POS_RE.lastIndex = 0;
+  YROT_RE.lastIndex = 0;
+  const positions: Vec3[] = [];
+  const yRots: number[] = [];
+  let mm: RegExpExecArray | null;
+  while ((mm = POS_RE.exec(chunk)) !== null && positions.length < 2) {
+    positions.push([Number(mm[1]), Number(mm[2]), Number(mm[3])]);
+  }
+  while ((mm = YROT_RE.exec(chunk)) !== null && yRots.length < 2) {
+    yRots.push(Number(mm[1]));
+  }
+  if (positions.length !== 2 || yRots.length !== 2) return null;
+  if (positions.some((p) => p.some((n) => !Number.isFinite(n)))) return null;
+  if (yRots.some((y) => !Number.isFinite(y))) return null;
+  return {
+    frontPos: positions[0],
+    frontY: yRots[0],
+    backPos: positions[1],
+    backY: yRots[1],
+  };
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Component
+// ────────────────────────────────────────────────────────────────────────
+
+export function IsolatorDevPage() {
+  const scene = useSceneStore((s) => s.scene);
+  const components = scene.components;
+  const assets = scene.assets;
+
+  const [model, setModel] = useState<string>(MODELS[0]);
+  const [frontPos, setFrontPos] = useState<Vec3>([0, 0, 0]);
+  const [backPos, setBackPos] = useState<Vec3>([0, 0, 0]);
+  const [frontYRot, setFrontYRot] = useState<number>(0);
+  const [backYRot, setBackYRot] = useState<number>(0);
+  // The full pbsOverlay.ts file source, editable. State (frontPos/...)
+  // is the source of truth for the 3D view; the textarea is the source
+  // of truth for the file source. They sync one-way (textarea → state)
+  // via parseModelRow on every edit.
+  const [code, setCode] = useState<string>(pbsOverlayFileSource as string);
+  const [parseStatus, setParseStatus] = useState<"ok" | "error" | "idle">("idle");
+  // STL interior-trim filter — drops triangles within `innerFilterRadiusMm`
+  // of the STL's Z axis (= optical axis in IO-series STL frame). 0 = no
+  // filter. Two reference clicks in the dev page showed the IO-3-850-HP
+  // interior baffles cluster around r ≈ 1.7 / 3.9 mm from Z, so a value
+  // around 4–6 mm cuts them out without touching the outer housing.
+  // 0 = no auto-trim (the user picks faces to remove via middle-click,
+  // then saves them to component.properties via the Save button).
+  const [innerFilterRadiusMm, setInnerFilterRadiusMm] = useState<number>(0);
+  // Triangle counts for the visible STL housing — set by the build effect
+  // so the user can see at a glance whether the filter actually dropped
+  // anything ("12340 → 12180 after filter" etc.).
+  const [triangleCounts, setTriangleCounts] = useState<{ raw: number; rendered: number } | null>(null);
+  // Click-to-delete-face state. Middle-click (scroll wheel button) deletes
+  // the coplanar cluster under the pointer; left-click stays for orbit /
+  // inspect so the user can rotate the scene without accidentally
+  // deleting. Cluster centroids accumulate in `deletedCentroids` and pass
+  // straight to `buildThorlabsIsolatorObject`. "Save" persists them to
+  // `component.properties.isolatorDeletedCentroids` so Lab viewer + the
+  // next dev-page session pick up the deletions automatically.
+  const [deletedCentroids, setDeletedCentroids] = useState<Set<string>>(() => new Set());
+  const [savedCentroids, setSavedCentroids] = useState<Set<string>>(() => new Set());
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const deletedCentroidsRef = useRef(deletedCentroids);
+  useEffect(() => { deletedCentroidsRef.current = deletedCentroids; }, [deletedCentroids]);
+
+  // Linked-rotation group — Shift + middle-click adds a coplanar cluster
+  // to this set; the slider rotates them around `linkRotAxis` at
+  // `linkRotPivotMm` (both in body-local STL frame). Default axis (0,0,1)
+  // matches the STL native long axis for IO/IOT isolators.
+  const [linkedCentroids, setLinkedCentroids] = useState<Set<string>>(() => new Set());
+  const [linkRotDeg, setLinkRotDeg] = useState<number>(0);
+  const [linkRotAxis, setLinkRotAxis] = useState<Vec3>([0, 0, 1]);
+  const [linkRotPivotMm, setLinkRotPivotMm] = useState<Vec3>([0, 0, 0]);
+  // Anchor names whose PBS cube rotates rigidly with the link group. Lock
+  // the crystal's relative pose (pos + yRotationDeg) at link rotationDeg
+  // = 0, then ticking the box makes it rotate along with the marked
+  // triangles when the slider moves.
+  const [linkBoundAnchors, setLinkBoundAnchors] = useState<Set<string>>(() => new Set());
+  const [savedLinked, setSavedLinked] = useState<IsolatorLinkedRotationGroup | null>(null);
+  const linkedCentroidsRef = useRef(linkedCentroids);
+  useEffect(() => { linkedCentroidsRef.current = linkedCentroids; }, [linkedCentroids]);
+
+  // Click-inspect: click a triangle in the 3D viewer to get its centroid /
+  // normal / distances. Useful for working out the right filter condition
+  // when you want to drop interior STL features (PBS mounts, baffles, etc.).
+  const [hitInfo, setHitInfo] = useState<
+    | {
+        which: "housing" | "pbs-overlay" | "other";
+        centroidMm: Vec3;
+        normalMmLocal: Vec3;
+        distFromAxisMm: { x: number; y: number; z: number };
+        areaMm2: number;
+      }
+    | null
+  >(null);
+
+  // Load row values from the table whenever the model changes, AND reset
+  // the textarea to the file source so the visible row matches. Also
+  // seed `deletedCentroids` from the matching component's persisted
+  // `properties.isolatorDeletedCentroids` so prior saved deletions show.
+  useEffect(() => {
+    const def = ISOLATOR_PBS_DEFAULTS_BY_MODEL[model];
+    if (def) {
+      setFrontPos([...def.front_pbs.pos]);
+      setBackPos([...def.back_pbs.pos]);
+      setFrontYRot(def.front_pbs.yRotationDeg ?? 0);
+      setBackYRot(def.back_pbs.yRotationDeg ?? 0);
+    }
+    setCode(pbsOverlayFileSource as string);
+    setParseStatus("idle");
+
+    const component = components.find((c) => c.model === model);
+    const props = component?.properties as {
+      isolatorDeletedCentroids?: string[];
+      isolatorLinkedRotationGroup?: IsolatorLinkedRotationGroup;
+    } | undefined;
+    const persistedDel = props?.isolatorDeletedCentroids ?? [];
+    setDeletedCentroids(new Set(persistedDel));
+    setSavedCentroids(new Set(persistedDel));
+
+    const persistedLink = props?.isolatorLinkedRotationGroup ?? null;
+    setLinkedCentroids(new Set(persistedLink?.centroids ?? []));
+    setLinkRotDeg(persistedLink?.rotationDeg ?? 0);
+    setLinkRotAxis(persistedLink?.axis ?? [0, 0, 1]);
+    setLinkRotPivotMm(persistedLink?.pivotMm ?? [0, 0, 0]);
+    setLinkBoundAnchors(new Set(persistedLink?.boundAnchors ?? []));
+    setSavedLinked(persistedLink);
+
+    setSaveStatus("idle");
+  }, [model, components]);
+
+  // ── Three.js scene ───────────────────────────────────────────────────
+  const mountRef = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
+  const modelGroupRef = useRef<THREE.Object3D | null>(null);
+
+  useEffect(() => {
+    const mount = mountRef.current;
+    if (!mount) return;
+
+    const threeScene = new THREE.Scene();
+    threeScene.background = new THREE.Color("#f6f7f9");
+    threeScene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.75);
+    dirLight.position.set(2, 3, 4);
+    threeScene.add(dirLight);
+    threeScene.add(new THREE.AxesHelper(mmToThree(40)));
+
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.001, 100);
+    camera.position.set(0.8, 0.5, 0.8);
+    camera.lookAt(0, 0, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(mount.clientWidth, mount.clientHeight, false);
+    mount.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+
+    let raf = 0;
+    const animate = () => {
+      raf = requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(threeScene, camera);
+    };
+    animate();
+
+    const ro = new ResizeObserver(() => {
+      const w = mount.clientWidth;
+      const h = mount.clientHeight;
+      renderer.setSize(w, h, false);
+      camera.aspect = w / Math.max(1, h);
+      camera.updateProjectionMatrix();
+    });
+    ro.observe(mount);
+
+    sceneRef.current = threeScene;
+    cameraRef.current = camera;
+    controlsRef.current = controls;
+
+    // ── Raycast + click handlers. Left-click → just inspect (so the user
+    // can orbit / pan via OrbitControls without accidentally deleting).
+    // Middle-click (scroll wheel button), if it wasn't a drag, runs the
+    // same raycast PLUS BFS-and-delete on the housing.
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    const performRaycast = (event: MouseEvent, deleteCluster: boolean, linkCluster: boolean = false) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      const target = modelGroupRef.current;
+      if (!target) { setHitInfo(null); return; }
+      const hits = raycaster.intersectObject(target, true);
+      if (hits.length === 0) { setHitInfo(null); return; }
+      const hit = hits[0];
+      const mesh = hit.object as THREE.Mesh;
+      const geo = mesh.geometry as THREE.BufferGeometry | undefined;
+      const face = hit.face;
+      if (!geo || !face) { setHitInfo(null); return; }
+      const pos = geo.attributes.position as THREE.BufferAttribute;
+      const v1 = new THREE.Vector3().fromBufferAttribute(pos, face.a);
+      const v2 = new THREE.Vector3().fromBufferAttribute(pos, face.b);
+      const v3 = new THREE.Vector3().fromBufferAttribute(pos, face.c);
+      const centroid = new THREE.Vector3().add(v1).add(v2).add(v3).divideScalar(3);
+      const edge1 = new THREE.Vector3().subVectors(v2, v1);
+      const edge2 = new THREE.Vector3().subVectors(v3, v1);
+      const cross = new THREE.Vector3().crossVectors(edge1, edge2);
+      const area = cross.length() / 2;
+      const normal = cross.normalize();
+
+      const which: "housing" | "pbs-overlay" | "other" =
+        mesh.userData.__pbsAnchorName ? "pbs-overlay"
+        : mesh.parent?.name === "isolator_pbs_overlay" ? "pbs-overlay"
+        : "housing";
+
+      if ((deleteCluster || linkCluster) && which === "housing" && typeof hit.faceIndex === "number") {
+        const positions = (geo.attributes.position.array as Float32Array);
+        const cluster = findCoplanarCluster(positions, hit.faceIndex);
+        if (cluster.size > 0) {
+          const targetRef = linkCluster ? linkedCentroidsRef : deletedCentroidsRef;
+          const targetSetter = linkCluster ? setLinkedCentroids : setDeletedCentroids;
+          const next = new Set(targetRef.current);
+          for (const t of cluster) {
+            const o = t * 9;
+            const cx = (positions[o + 0] + positions[o + 3] + positions[o + 6]) / 3;
+            const cy = (positions[o + 1] + positions[o + 4] + positions[o + 7]) / 3;
+            const cz = (positions[o + 2] + positions[o + 5] + positions[o + 8]) / 3;
+            next.add(isolatorCentroidKey(cx, cy, cz));
+          }
+          targetSetter(next);
+        }
+      }
+
+      setHitInfo({
+        which,
+        centroidMm: [centroid.x, centroid.y, centroid.z],
+        normalMmLocal: [normal.x, normal.y, normal.z],
+        distFromAxisMm: {
+          x: Math.sqrt(centroid.y * centroid.y + centroid.z * centroid.z),
+          y: Math.sqrt(centroid.x * centroid.x + centroid.z * centroid.z),
+          z: Math.sqrt(centroid.x * centroid.x + centroid.y * centroid.y),
+        },
+        areaMm2: area,
+      });
+    };
+
+    const onLeftClick = (event: MouseEvent) => performRaycast(event, false);
+
+    // Middle-click delete: `auxclick` fires for non-primary buttons (middle
+    // + right) and — unlike mousedown — only fires after the button is
+    // released without a significant drag. OrbitControls handles middle-
+    // drag via pointer events, so auxclick stays out of its way.
+    const onAuxClick = (event: MouseEvent) => {
+      if (event.button !== 1) return; // middle button only
+      event.preventDefault();
+      // Shift + middle-click → link-rotation group; plain middle-click → delete.
+      if (event.shiftKey) {
+        performRaycast(event, /* deleteCluster */ false, /* linkCluster */ true);
+      } else {
+        performRaycast(event, /* deleteCluster */ true);
+      }
+    };
+    // Also suppress the browser's default middle-button auto-scroll cursor
+    // by preventing the mousedown default. Doesn't interfere with
+    // OrbitControls (which uses pointerdown).
+    const onMiddleMouseDown = (event: MouseEvent) => {
+      if (event.button === 1) event.preventDefault();
+    };
+
+    renderer.domElement.addEventListener("click", onLeftClick);
+    renderer.domElement.addEventListener("auxclick", onAuxClick);
+    renderer.domElement.addEventListener("mousedown", onMiddleMouseDown);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      controls.dispose();
+      renderer.dispose();
+      renderer.domElement.removeEventListener("click", onLeftClick);
+      renderer.domElement.removeEventListener("auxclick", onAuxClick);
+      renderer.domElement.removeEventListener("mousedown", onMiddleMouseDown);
+      if (renderer.domElement.parentNode) {
+        renderer.domElement.parentNode.removeChild(renderer.domElement);
+      }
+      disposeObject3D(threeScene);
+    };
+  }, []);
+
+  // Build / rebuild the visible model whenever state or model changes.
+  useEffect(() => {
+    let cancelled = false;
+    const threeScene = sceneRef.current;
+    if (!threeScene) return;
+
+    if (modelGroupRef.current) {
+      threeScene.remove(modelGroupRef.current);
+      disposeObject3D(modelGroupRef.current);
+      modelGroupRef.current = null;
+    }
+
+    // Build state-driven anchors that buildIsolatorPbsOverlay (and
+    // buildThorlabsIsolatorObject which calls it) will use to position
+    // the PBS cubes.
+    const frontYRad = (frontYRot * Math.PI) / 180;
+    const backYRad = (backYRot * Math.PI) / 180;
+    const anchors: Anchor[] = [
+      {
+        id: "front_pbs",
+        positionMmBodyLocal: { x: frontPos[0], y: frontPos[1], z: frontPos[2] },
+        directionBodyLocal: {
+          x: Math.cos(frontYRad), y: 1, z: -Math.sin(frontYRad),
+        },
+      },
+      {
+        id: "back_pbs",
+        positionMmBodyLocal: { x: backPos[0], y: backPos[1], z: backPos[2] },
+        directionBodyLocal: {
+          x: Math.cos(backYRad), y: 1, z: -Math.sin(backYRad),
+        },
+      },
+    ];
+
+    const component = components.find((c) => c.model === model);
+    const asset = component && component.asset3dId
+      ? assets.find((a) => a.id === component.asset3dId)
+      : undefined;
+
+    const refit = () => {
+      const cam = cameraRef.current;
+      const ctrl = controlsRef.current;
+      const target = modelGroupRef.current;
+      if (!cam || !ctrl || !target) return;
+      const bbox = new THREE.Box3().setFromObject(target);
+      if (bbox.isEmpty()) return;
+      const size = bbox.getSize(new THREE.Vector3());
+      const center = bbox.getCenter(new THREE.Vector3());
+      const r = Math.max(size.x, size.y, size.z) * 1.8;
+      cam.position.copy(center).add(new THREE.Vector3(r, r * 0.7, r));
+      cam.lookAt(center);
+      cam.near = Math.max(0.001, r / 200);
+      cam.far = Math.max(50, r * 50);
+      cam.updateProjectionMatrix();
+      ctrl.target.copy(center);
+      ctrl.update();
+    };
+
+    if (asset && !asset.filePath.startsWith("primitive://") && component) {
+      // Real STL — load & wrap through the same builder the lab viewer uses.
+      loadStlGeometryCached(asset.filePath).then((geometry) => {
+        if (cancelled) return;
+        const fakeAsset: Asset3D = { ...asset, anchors };
+        const fakeComponent: ComponentItem = component;
+        const rawTris = Math.floor((geometry.attributes.position.array as Float32Array).length / 9);
+        // Builder accepts explicit deletion set + linked rotation group so
+        // the dev page's in-progress state overrides the persisted values.
+        const linkedGroup: IsolatorLinkedRotationGroup | null = linkedCentroids.size > 0
+          ? {
+              centroids: [...linkedCentroids],
+              axis: linkRotAxis,
+              pivotMm: linkRotPivotMm,
+              rotationDeg: linkRotDeg,
+              boundAnchors: [...linkBoundAnchors],
+            }
+          : null;
+        const group = buildThorlabsIsolatorObject(
+          geometry, fakeComponent, fakeAsset,
+          innerFilterRadiusMm, deletedCentroids, linkedGroup,
+        );
+        // Count rendered tris by walking the result tree (housing mesh).
+        let renderedTris = 0;
+        group.traverse((o) => {
+          const m = o as THREE.Mesh;
+          if (m.isMesh && m.geometry && (m.geometry as THREE.BufferGeometry).attributes.position) {
+            renderedTris += Math.floor(((m.geometry as THREE.BufferGeometry).attributes.position.array as Float32Array).length / 9);
+          }
+        });
+        setTriangleCounts({ raw: rawTris, rendered: renderedTris });
+        // STL geometry is in raw mm; the lab viewer applies
+        // `applyAssetScale` (÷100) to convert to three units. Same here.
+        group.scale.setScalar(1 / 100);
+        threeScene.add(group);
+        modelGroupRef.current = group;
+        refit();
+      }).catch(() => { /* swallow — keeps the scene empty if the STL can't load */ });
+    } else {
+      // Procedural cylinder fallback (TORNOS or unknown).
+      const lenMm = HOUSING_LENGTHS_MM[model] ?? 50;
+      const diamMm = HOUSING_DIAM_MM[model] ?? 30;
+      const group = new THREE.Group();
+      const housing = new THREE.Mesh(
+        new THREE.CylinderGeometry(
+          mmToThree(diamMm / 2),
+          mmToThree(diamMm / 2),
+          mmToThree(lenMm),
+          48,
+        ),
+        new THREE.MeshStandardMaterial({
+          color: "#b8211b",
+          metalness: 0.55,
+          roughness: 0.5,
+          transparent: true,
+          opacity: 0.25,
+          depthWrite: false,
+        }),
+      );
+      group.add(housing);
+      const overlay = buildIsolatorPbsOverlay(
+        { id: "fake", name: "fake", assetType: "primitive", filePath: "primitive://box", unit: "mm", scaleFactor: 1, anchors },
+        { housingLengthMm: lenMm, opticalAxisBody: "z", unitScale: mmToThree(1) },
+      );
+      group.add(overlay);
+      threeScene.add(group);
+      modelGroupRef.current = group;
+      refit();
+    }
+
+    return () => { cancelled = true; };
+  }, [
+    model, frontPos, backPos, frontYRot, backYRot,
+    components, assets,
+    innerFilterRadiusMm, deletedCentroids,
+    linkedCentroids, linkRotDeg, linkRotAxis, linkRotPivotMm, linkBoundAnchors,
+  ]);
+
+  // ── Handlers ─────────────────────────────────────────────────────────
+  const onCodeChange = (next: string) => {
+    setCode(next);
+    const parsed = parseModelRow(next, model);
+    if (!parsed) {
+      setParseStatus("error");
+      return;
+    }
+    setParseStatus("ok");
+    setFrontPos(parsed.frontPos);
+    setFrontYRot(parsed.frontY);
+    setBackPos(parsed.backPos);
+    setBackYRot(parsed.backY);
+  };
+
+  const onCopy = () => {
+    const tableLine =
+      `  "${model}":    { front_pbs: { pos: [${frontPos.join(", ")}], yRotationDeg: ${frontYRot} },\n` +
+      `                      back_pbs:  { pos: [${backPos.join(", ")}], yRotationDeg: ${backYRot} } },`;
+    void navigator.clipboard.writeText(tableLine);
+  };
+
+  const onResetFromTable = () => {
+    const def = ISOLATOR_PBS_DEFAULTS_BY_MODEL[model];
+    if (!def) return;
+    setFrontPos([...def.front_pbs.pos]);
+    setBackPos([...def.back_pbs.pos]);
+    setFrontYRot(def.front_pbs.yRotationDeg ?? 0);
+    setBackYRot(def.back_pbs.yRotationDeg ?? 0);
+    setCode(pbsOverlayFileSource as string);
+    setParseStatus("idle");
+  };
+
+  // Persist current deletion set + linked rotation group to
+  // `component.properties` so Lab viewer + next dev-page session pick
+  // them up automatically.
+  const onSaveDeletions = async () => {
+    const component = components.find((c) => c.model === model);
+    if (!component) return;
+    setSaveStatus("saving");
+    try {
+      const linkedGroupOut: IsolatorLinkedRotationGroup | null = linkedCentroids.size > 0
+        ? {
+            centroids: [...linkedCentroids],
+            axis: linkRotAxis,
+            pivotMm: linkRotPivotMm,
+            rotationDeg: linkRotDeg,
+            boundAnchors: [...linkBoundAnchors],
+          }
+        : null;
+      const nextProperties = {
+        ...(component.properties ?? {}),
+        isolatorDeletedCentroids: [...deletedCentroids],
+        isolatorLinkedRotationGroup: linkedGroupOut,
+      };
+      await updateComponentApi(component.id, { properties: nextProperties });
+      setSavedCentroids(new Set(deletedCentroids));
+      setSavedLinked(linkedGroupOut);
+      setSaveStatus("saved");
+      setTimeout(() => setSaveStatus("idle"), 1500);
+    } catch {
+      setSaveStatus("error");
+    }
+  };
+
+  // Wipe ALL saved deletions for the current model (factory reset). Asks
+  // for confirmation since this is destructive of prior edits — the user
+  // can re-make them but they'd be lost.
+  const onResetModel = async () => {
+    const component = components.find((c) => c.model === model);
+    if (!component) return;
+    if (savedCentroids.size === 0 && deletedCentroids.size === 0
+        && !savedLinked && linkedCentroids.size === 0) return;
+    if (!window.confirm(`Reset model ${model}? This wipes ${savedCentroids.size} saved deletion(s) and the link-rotation group — the original raw STL will be shown.`)) {
+      return;
+    }
+    setSaveStatus("saving");
+    try {
+      const nextProperties = {
+        ...(component.properties ?? {}),
+        isolatorDeletedCentroids: [],
+        isolatorLinkedRotationGroup: null,
+      };
+      await updateComponentApi(component.id, { properties: nextProperties });
+      setDeletedCentroids(new Set());
+      setSavedCentroids(new Set());
+      setLinkedCentroids(new Set());
+      setLinkRotDeg(0);
+      setLinkBoundAnchors(new Set());
+      setSavedLinked(null);
+      setSaveStatus("saved");
+      setTimeout(() => setSaveStatus("idle"), 1500);
+    } catch {
+      setSaveStatus("error");
+    }
+  };
+
+  const deletionsDirty = useMemo(() => {
+    if (deletedCentroids.size !== savedCentroids.size) return true;
+    for (const k of deletedCentroids) {
+      if (!savedCentroids.has(k)) return true;
+    }
+    return false;
+  }, [deletedCentroids, savedCentroids]);
+
+  const linkedDirty = useMemo(() => {
+    const savedSize = savedLinked?.centroids.length ?? 0;
+    if (linkedCentroids.size !== savedSize) return true;
+    if (savedLinked && linkedCentroids.size > 0) {
+      const savedSet = new Set(savedLinked.centroids);
+      for (const k of linkedCentroids) if (!savedSet.has(k)) return true;
+      if (savedLinked.rotationDeg !== linkRotDeg) return true;
+      if (savedLinked.axis.some((v, i) => v !== linkRotAxis[i])) return true;
+      if (savedLinked.pivotMm.some((v, i) => v !== linkRotPivotMm[i])) return true;
+      const savedBound = new Set(savedLinked.boundAnchors ?? []);
+      if (savedBound.size !== linkBoundAnchors.size) return true;
+      for (const a of linkBoundAnchors) if (!savedBound.has(a)) return true;
+    } else if (linkBoundAnchors.size > 0) {
+      return true;
+    }
+    return false;
+  }, [linkedCentroids, savedLinked, linkRotDeg, linkRotAxis, linkRotPivotMm, linkBoundAnchors]);
+
+  const anyDirty = deletionsDirty || linkedDirty;
+
+  const statusText = useMemo(() => {
+    if (parseStatus === "idle") return "in sync with state";
+    if (parseStatus === "ok") return "✓ parsed";
+    return "✗ parse failed — keep typing";
+  }, [parseStatus]);
+  const statusColour =
+    parseStatus === "error" ? "#c2410c"
+    : parseStatus === "ok" ? "#15803d"
+    : "#64748b";
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: 12, gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <strong>Isolator dev</strong>
+        <label>
+          Model:{" "}
+          <select value={model} onChange={(e) => setModel(e.target.value)}>
+            {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+          Drop interior r&nbsp;&lt;
+          <input
+            type="number"
+            value={innerFilterRadiusMm}
+            step={0.5}
+            min={0}
+            max={30}
+            onChange={(e) => setInnerFilterRadiusMm(Math.max(0, Number(e.target.value)))}
+            style={{ width: 56 }}
+          />
+          <input
+            type="range"
+            min={0}
+            max={20}
+            step={0.5}
+            value={innerFilterRadiusMm}
+            onChange={(e) => setInnerFilterRadiusMm(Number(e.target.value))}
+            style={{ width: 120 }}
+          />
+          mm
+        </label>
+        <button type="button" onClick={onResetFromTable}>↻ Reset from table</button>
+        <button type="button" onClick={onCopy}>📋 Copy table line</button>
+        <span style={{ fontSize: 11, opacity: 0.65 }} title="Middle-click a face on the housing to delete its coplanar cluster. Shift+middle-click to add to the link-rotation group instead.">
+          🖱 mid-click = delete · Shift+mid-click = link-rotate
+        </span>
+        {deletedCentroids.size > 0 && (
+          <button
+            type="button"
+            onClick={() => setDeletedCentroids(new Set(savedCentroids))}
+            style={{ fontSize: 11 }}
+            title="Reset deletions to last saved state (loses unsaved edits)"
+          >
+            ↻ Revert ({deletedCentroids.size})
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onSaveDeletions}
+          disabled={!anyDirty || saveStatus === "saving"}
+          style={{
+            fontSize: 11,
+            background: anyDirty ? "#fde68a" : undefined,
+            border: anyDirty ? "1px solid #ca8a04" : undefined,
+            padding: "2px 8px",
+          }}
+          title="Persist current deletion set + linked rotation group to the component's properties so Lab viewer picks them up too."
+        >
+          {saveStatus === "saving" ? "Saving…"
+            : saveStatus === "saved" ? "✓ Saved"
+            : saveStatus === "error" ? "✗ Save failed"
+            : anyDirty ? "💾 Save changes" : "💾 Saved"}
+        </button>
+        {(savedCentroids.size > 0 || deletedCentroids.size > 0
+          || savedLinked || linkedCentroids.size > 0) && (
+          <button
+            type="button"
+            onClick={onResetModel}
+            disabled={saveStatus === "saving"}
+            style={{
+              fontSize: 11,
+              color: "#b91c1c",
+              border: "1px solid #fecaca",
+              background: "transparent",
+              padding: "2px 8px",
+            }}
+            title="Wipe all saved deletions and the link-rotation group — back to raw STL."
+          >
+            🔄 Reset model
+          </button>
+        )}
+        {triangleCounts && (
+          <span style={{ fontSize: 11, opacity: 0.7, marginLeft: "auto" }}>
+            tris: {triangleCounts.raw}
+            {triangleCounts.rendered !== triangleCounts.raw &&
+              ` → ${triangleCounts.rendered}`}
+          </span>
+        )}
+      </div>
+
+      {/* Link-rotation control row — slider for angle + axis/pivot inputs.
+          Shown whenever the group has at least 1 triangle so it doesn't
+          clutter the header otherwise. */}
+      {linkedCentroids.size > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 11, flexWrap: "wrap", padding: "4px 0", borderTop: "1px solid #e5e7eb", borderBottom: "1px solid #e5e7eb" }}>
+          <strong>🔗 Link rotation</strong>
+          <span style={{ opacity: 0.7 }}>{linkedCentroids.size} tris</span>
+          <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            angle
+            <input
+              type="number"
+              value={linkRotDeg}
+              step={1}
+              min={-180}
+              max={180}
+              onChange={(e) => setLinkRotDeg(Number(e.target.value))}
+              style={{ width: 56 }}
+            />
+            <input
+              type="range"
+              min={-180}
+              max={180}
+              step={1}
+              value={linkRotDeg}
+              onChange={(e) => setLinkRotDeg(Number(e.target.value))}
+              style={{ width: 150 }}
+            />
+            °
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 2 }}>
+            axis
+            {(["x", "y", "z"] as const).map((axis, i) => (
+              <input
+                key={axis}
+                type="number"
+                step={0.1}
+                value={linkRotAxis[i]}
+                onChange={(e) => {
+                  const next: Vec3 = [...linkRotAxis];
+                  next[i] = Number(e.target.value);
+                  setLinkRotAxis(next);
+                }}
+                style={{ width: 48 }}
+                title={`axis.${axis} (body-local)`}
+              />
+            ))}
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 2 }}>
+            pivot
+            {(["x", "y", "z"] as const).map((axis, i) => (
+              <input
+                key={axis}
+                type="number"
+                step={1}
+                value={linkRotPivotMm[i]}
+                onChange={(e) => {
+                  const next: Vec3 = [...linkRotPivotMm];
+                  next[i] = Number(e.target.value);
+                  setLinkRotPivotMm(next);
+                }}
+                style={{ width: 56 }}
+                title={`pivot.${axis} (body-local mm)`}
+              />
+            ))}
+          </label>
+          <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            bind:
+            {(["front_pbs", "back_pbs"] as const).map((name) => (
+              <label
+                key={name}
+                style={{ display: "flex", alignItems: "center", gap: 2, cursor: "pointer", fontSize: 11 }}
+                title={`Lock ${name}'s crystal pose to this link group — rotates together with the marked triangles`}
+              >
+                <input
+                  type="checkbox"
+                  checked={linkBoundAnchors.has(name)}
+                  onChange={(e) => {
+                    const next = new Set(linkBoundAnchors);
+                    if (e.target.checked) next.add(name);
+                    else next.delete(name);
+                    setLinkBoundAnchors(next);
+                  }}
+                />
+                {name === "front_pbs" ? "front" : "back"}
+              </label>
+            ))}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setLinkedCentroids(new Set(savedLinked?.centroids ?? []));
+              setLinkBoundAnchors(new Set(savedLinked?.boundAnchors ?? []));
+              setLinkRotDeg(savedLinked?.rotationDeg ?? 0);
+              setLinkRotAxis(savedLinked?.axis ?? [0, 0, 1]);
+              setLinkRotPivotMm(savedLinked?.pivotMm ?? [0, 0, 0]);
+            }}
+            style={{ fontSize: 11 }}
+            title="Revert link-rotation group to last saved"
+          >
+            ↻ Revert
+          </button>
+        </div>
+      )}
+
+      <div style={{ display: "flex", flex: 1, gap: 12, minHeight: 0 }}>
+        <div style={{ flex: 2, position: "relative", minHeight: 400 }}>
+          <div
+            ref={mountRef}
+            style={{ position: "absolute", inset: 0, background: "#fff", borderRadius: 4 }}
+          />
+          {hitInfo && (
+            <div
+              style={{
+                position: "absolute",
+                left: 8,
+                bottom: 8,
+                maxWidth: 320,
+                background: "rgba(15, 23, 42, 0.92)",
+                color: "#e2e8f0",
+                fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
+                fontSize: 11,
+                lineHeight: 1.4,
+                padding: 10,
+                borderRadius: 4,
+                pointerEvents: "none",
+              }}
+            >
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                Triangle hit — {hitInfo.which}
+              </div>
+              <div>centroid (mm):  ({hitInfo.centroidMm.map((n) => n.toFixed(2)).join(", ")})</div>
+              <div>normal:         ({hitInfo.normalMmLocal.map((n) => n.toFixed(2)).join(", ")})</div>
+              <div>dist from X axis: {hitInfo.distFromAxisMm.x.toFixed(2)} mm</div>
+              <div>dist from Y axis: {hitInfo.distFromAxisMm.y.toFixed(2)} mm</div>
+              <div>dist from Z axis: {hitInfo.distFromAxisMm.z.toFixed(2)} mm</div>
+              <div>area:           {hitInfo.areaMm2.toFixed(3)} mm²</div>
+              <div style={{ marginTop: 4, opacity: 0.7 }}>Click empty space to clear.</div>
+            </div>
+          )}
+        </div>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6, minWidth: 380 }}>
+          <div style={{ fontSize: 12, opacity: 0.75 }}>
+            Whole-file source of <code>pbsOverlay.ts</code>. Edits to the
+            current model's <code>pos</code> / <code>yRotationDeg</code>
+            flow into the 3D view live. Edits elsewhere (materials,
+            geometry) are scratchpad — copy back to the file manually.
+          </div>
+          <textarea
+            value={code}
+            onChange={(e) => onCodeChange(e.target.value)}
+            spellCheck={false}
+            wrap="off"
+            style={{
+              flex: 1,
+              fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
+              fontSize: 11,
+              lineHeight: 1.5,
+              padding: 10,
+              border: `1px solid ${parseStatus === "error" ? "#fda4af" : "#d0d4d9"}`,
+              borderRadius: 4,
+              outline: "none",
+              resize: "none",
+              minHeight: 320,
+              whiteSpace: "pre",
+              overflow: "auto",
+            }}
+          />
+          <div style={{ fontSize: 11, color: statusColour }}>{statusText}</div>
+          <div style={{ fontSize: 11, opacity: 0.6, lineHeight: 1.5 }}>
+            <div><b>pos</b> body-local Z-up mm. z = along optical axis.</div>
+            <div><b>yRotationDeg</b> 0° → cement normal [1, 1, 0]. 90° → [0, 1, -1].</div>
+            <div>Use <b>📋 Copy table line</b> to grab the current row, then paste into the actual file.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

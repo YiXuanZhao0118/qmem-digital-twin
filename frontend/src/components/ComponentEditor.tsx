@@ -54,6 +54,7 @@ import { computeBraggTiltAxisFromRfDirectionBodyLocal } from "../optical/kinds/a
 // dragging through the import boundary yet.
 import {
   ConnectorTypeField,
+  ApertureShapeFields,
   EditableAnchorFields,
   MirrorFaceSection,
   LensFaceSection,
@@ -122,6 +123,7 @@ function anchorToDraft(a: Anchor): AnchorDraft {
     // above: leaving this out lets Save persist the value to the backend
     // but the dropdown re-initialises to "— unset —" on next open.
     connectorType: a.connectorType,
+    fastAxisDegBodyLocal: a.fastAxisDegBodyLocal,
     __key: freshKey(),
   };
 }
@@ -639,6 +641,11 @@ function useViewport(
     faceTrianglesWrapperThree: number[],
     anchorId?: string,
   ) => void,
+  onPbsCubeClick: (
+    anchorName: string,
+    posMmBodyLocal: { x: number; y: number; z: number },
+    dirBodyLocal: { x: number; y: number; z: number },
+  ) => void,
 ): ViewportHandle | null {
   const [handle, setHandle] = useState<ViewportHandle | null>(null);
 
@@ -791,6 +798,26 @@ function useViewport(
       if (hits.length > 0) {
         const key = hits[0].object.userData.__anchorKey as string;
         onAnchorClick(key);
+        return;
+      }
+
+      // PBS cube fallback: clicking the visible PBS cube in an isolator
+      // selects the corresponding anchor (front_pbs / back_pbs). Cubes carry
+      // __pbsAnchorName + body-local pose in userData; outer handler creates
+      // the anchor draft if it doesn't exist yet, then selects it.
+      const pbsHits = raycaster.intersectObjects(wrapper.children, true);
+      for (const hit of pbsHits) {
+        let p: THREE.Object3D | null = hit.object;
+        while (p && !p.userData.__pbsAnchorName) p = p.parent;
+        if (p && p.userData.__pbsAnchorName) {
+          const name = p.userData.__pbsAnchorName as string;
+          const pos = p.userData.__pbsPosMmBodyLocal as { x: number; y: number; z: number } | undefined;
+          const dir = p.userData.__pbsDirBodyLocal as { x: number; y: number; z: number } | undefined;
+          if (pos && dir) {
+            onPbsCubeClick(name, pos, dir);
+            return;
+          }
+        }
       }
     };
     renderer.domElement.addEventListener("click", onClick);
@@ -1662,6 +1689,7 @@ function TaperedAmplifierFaceSection({
           draft={draft}
           updateDraft={updateDraft}
           showDirection={true}
+          showAperture={false}
           apertureMode="scalar"
         />
       </div>
@@ -1801,6 +1829,7 @@ function FiberPatchCableFaceSection({
           draft={draft}
           updateDraft={updateDraft}
           showDirection={true}
+          showAperture={false}
           apertureMode="scalar"
         />
         <button
@@ -2862,6 +2891,36 @@ export function ComponentEditor({ domain = "optical" }: { domain?: "optical" | "
     ) => handlePickFaceRef.current(posMm, dirBodyLocal, outline, triangles, anchorId),
   ).current;
 
+  // PBS cube click in 3D preview: select the matching front_pbs / back_pbs
+  // anchor draft, or auto-create it at the cube's current body-local pose if
+  // missing. Uses a ref to capture the latest drafts (same closure-stability
+  // pattern as handlePickFaceRef above) since useViewport re-fires only on
+  // (component, asset) change.
+  const handlePbsCubeClickRef = useRef<
+    (n: string, p: { x: number; y: number; z: number }, d: { x: number; y: number; z: number }) => void
+  >(() => {});
+  handlePbsCubeClickRef.current = (anchorName, posMm, dirBody) => {
+    const existing = drafts.find((d) => d.id === anchorName);
+    if (existing) {
+      setSelectedAnchorKey(existing.__key);
+      return;
+    }
+    const next: AnchorDraft = {
+      id: anchorName as AnchorDraft["id"],
+      positionMmBodyLocal: { x: posMm.x, y: posMm.y, z: posMm.z },
+      directionBodyLocal: { x: dirBody.x, y: dirBody.y, z: dirBody.z },
+      apertureMm: 4,
+      __key: freshKey(),
+    };
+    setDrafts((prev) => [...prev, next]);
+    setSelectedAnchorKey(next.__key);
+    setDirty(true);
+  };
+  const stablePbsCubeCallback = useRef(
+    (n: string, p: { x: number; y: number; z: number }, d: { x: number; y: number; z: number }) =>
+      handlePbsCubeClickRef.current(n, p, d),
+  ).current;
+
   const viewportHandle = useViewport(
     viewportRef,
     selectedComponent,
@@ -2870,6 +2929,7 @@ export function ComponentEditor({ domain = "optical" }: { domain?: "optical" | "
     setSelectedAnchorKey,
     pickFaceModeRef,
     stablePickFaceCallback,
+    stablePbsCubeCallback,
   );
 
   const selectedDraft = drafts.find((d) => d.__key === selectedAnchorKey) ?? null;
@@ -3225,6 +3285,9 @@ export function ComponentEditor({ domain = "optical" }: { domain?: "optical" | "
   );
   const selectedNeedsDirection =
     selectedDraft != null && dirRequiredIds.has(selectedDraft.id as never);
+  const fastAxisRequiredIds = new Set(kindContract?.anchorsNeedingFastAxis ?? []);
+  const selectedNeedsFastAxis =
+    selectedDraft != null && fastAxisRequiredIds.has(selectedDraft.id as never);
   // V2: aperture is per-instance now; the PHY Editor no longer
   // surfaces a "missing apertureMm" warning. Per-object aperture is
   // edited in the Object panel.
@@ -4346,133 +4409,7 @@ export function ComponentEditor({ domain = "optical" }: { domain?: "optical" | "
                 selectedDraft.id === "ttl_in" ||
                 selectedDraft.id === "trigger_in"
               ) && (
-                <div className="component-editor-aperture">
-                  <label className="component-editor-coord">
-                    <span>Aperture shape</span>
-                    <select
-                      value={(() => {
-                        const explicit = selectedDraft.apertureShape;
-                        if (explicit) return explicit;
-                        // Infer for legacy rows: W+H set → rectangle;
-                        // apertureMm only → circle.
-                        if (
-                          selectedDraft.apertureWidthMm != null &&
-                          selectedDraft.apertureHeightMm != null
-                        ) {
-                          return "rectangle";
-                        }
-                        return "circle";
-                      })()}
-                      onChange={(e) => {
-                        const shape = e.target.value as
-                          | "circle"
-                          | "ellipse"
-                          | "rectangle";
-                        // Seed W/H from 2 × radius when switching from
-                        // circle so the new shape has sensible defaults.
-                        const fallbackHalf = selectedDraft.apertureMm ?? 12.5;
-                        const patch: Partial<AnchorDraft> = {
-                          apertureShape: shape,
-                        };
-                        if (
-                          shape !== "circle" &&
-                          (selectedDraft.apertureWidthMm == null ||
-                            selectedDraft.apertureHeightMm == null)
-                        ) {
-                          patch.apertureWidthMm =
-                            selectedDraft.apertureWidthMm ??
-                            fallbackHalf * 2;
-                          patch.apertureHeightMm =
-                            selectedDraft.apertureHeightMm ??
-                            fallbackHalf * 2;
-                        }
-                        updateDraft(selectedDraft.__key, patch);
-                      }}
-                    >
-                      <option value="circle">Circle</option>
-                      <option value="ellipse">Ellipse</option>
-                      <option value="rectangle">Rectangle</option>
-                    </select>
-                  </label>
-                  {(() => {
-                    const shape =
-                      selectedDraft.apertureShape ??
-                      (selectedDraft.apertureWidthMm != null &&
-                      selectedDraft.apertureHeightMm != null
-                        ? "rectangle"
-                        : "circle");
-                    if (shape === "circle") {
-                      return (
-                        <label className="component-editor-coord">
-                          <span>Radius (mm)</span>
-                          <input
-                            type="number"
-                            step={0.1}
-                            min={0}
-                            value={selectedDraft.apertureMm ?? 12.5}
-                            onChange={(e) => {
-                              const v = Number(e.target.value);
-                              if (!Number.isFinite(v)) return;
-                              updateDraft(selectedDraft.__key, {
-                                apertureMm: v,
-                              });
-                            }}
-                          />
-                        </label>
-                      );
-                    }
-                    const widthLabel =
-                      shape === "ellipse"
-                        ? "Semi-major axis (mm)"
-                        : "Width (mm)";
-                    const heightLabel =
-                      shape === "ellipse"
-                        ? "Semi-minor axis (mm)"
-                        : "Height (mm)";
-                    return (
-                      <>
-                        <label className="component-editor-coord">
-                          <span>{widthLabel}</span>
-                          <input
-                            type="number"
-                            step={0.1}
-                            min={0}
-                            value={
-                              selectedDraft.apertureWidthMm ??
-                              (selectedDraft.apertureMm ?? 12.5) * 2
-                            }
-                            onChange={(e) => {
-                              const v = Number(e.target.value);
-                              if (!Number.isFinite(v)) return;
-                              updateDraft(selectedDraft.__key, {
-                                apertureWidthMm: v,
-                              });
-                            }}
-                          />
-                        </label>
-                        <label className="component-editor-coord">
-                          <span>{heightLabel}</span>
-                          <input
-                            type="number"
-                            step={0.1}
-                            min={0}
-                            value={
-                              selectedDraft.apertureHeightMm ??
-                              (selectedDraft.apertureMm ?? 12.5) * 2
-                            }
-                            onChange={(e) => {
-                              const v = Number(e.target.value);
-                              if (!Number.isFinite(v)) return;
-                              updateDraft(selectedDraft.__key, {
-                                apertureHeightMm: v,
-                              });
-                            }}
-                          />
-                        </label>
-                      </>
-                    );
-                  })()}
-                </div>
+                <ApertureShapeFields draft={selectedDraft} updateDraft={updateDraft} />
               )}
 
               <button
@@ -4583,6 +4520,34 @@ export function ComponentEditor({ domain = "optical" }: { domain?: "optical" | "
 
               {RF_CONNECTOR_ANCHOR_IDS.has(selectedDraft.id) && (
                 <ConnectorTypeField draft={selectedDraft} updateDraft={updateDraft} />
+              )}
+
+              {selectedNeedsFastAxis && (
+                <div className="component-editor-direction">
+                  <div className="component-editor-section-title" style={{ marginTop: 10 }}>
+                    Fast-axis angle (body-local, deg)
+                  </div>
+                  <p style={{ fontSize: 11, opacity: 0.7, marginTop: 0, marginBottom: 6 }}>
+                    Asset-level fast-axis angle of the crystal cut, in
+                    body-local beam coordinates. Per-instance rotation
+                    around the beam axis is layered on top via the
+                    Object panel knob; effective Jones-frame angle =
+                    this + instance rotation.
+                  </p>
+                  <label className="component-editor-coord">
+                    <span>deg</span>
+                    <input
+                      type="number"
+                      step={1}
+                      value={selectedDraft.fastAxisDegBodyLocal ?? 0}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        if (!Number.isFinite(v)) return;
+                        updateDraft(selectedDraft.__key, { fastAxisDegBodyLocal: v });
+                      }}
+                    />
+                  </label>
+                </div>
               )}
 
               <p style={{ fontSize: 11, opacity: 0.65, marginTop: 6 }}>

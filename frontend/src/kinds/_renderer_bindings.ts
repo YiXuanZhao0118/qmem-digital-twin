@@ -17,8 +17,9 @@
  */
 import * as THREE from "three";
 
-import type { ComponentItem, DeviceState } from "../types/digitalTwin";
+import type { Asset3D, ComponentItem, DeviceState } from "../types/digitalTwin";
 import {
+  buildIsolatorPbsOverlay,
   createAom,
   createBox,
   createDdsAd9959Pcb,
@@ -46,7 +47,11 @@ import { getNumericProperty, mmToThree } from "../three/transformUtils";
 
 import type { ComponentPlugin } from "./_plugin";
 
-type Renderer = (component: ComponentItem, state: DeviceState | undefined) => THREE.Object3D;
+type Renderer = (
+  component: ComponentItem,
+  state: DeviceState | undefined,
+  asset?: Asset3D,
+) => THREE.Object3D;
 
 // --- inline renderers for kinds whose pre-M6 geometry was small enough
 // to keep in this file instead of an external helper -------------------
@@ -93,7 +98,7 @@ const renderEom: Renderer = (component, state) => {
   return eom;
 };
 
-const renderIsolator: Renderer = (component, state) => {
+const renderIsolator: Renderer = (component, state, asset) => {
   const diameterMm = getNumericProperty(component.properties, "diameterMm", 22);
   const lengthMm = getNumericProperty(component.properties, "lengthMm", 51.4);
   const ferruleDiameterMm = getNumericProperty(component.properties, "ferruleDiameterMm", 13);
@@ -103,10 +108,15 @@ const renderIsolator: Renderer = (component, state) => {
   const ferruleRadius = mmToThree(ferruleDiameterMm / 2);
   const ferruleLen = mmToThree(ferruleLengthMm);
   const isoGroup = new THREE.Group();
+  const baseMat = materialFor(component, state);
+  baseMat.transparent = true;
+  baseMat.opacity = 0.35;
+  baseMat.depthWrite = false;
   const body = new THREE.Mesh(
     new THREE.CylinderGeometry(bodyRadius, bodyRadius, bodyLength, 40),
-    materialFor(component, state),
+    baseMat,
   );
+  body.renderOrder = 0;
   isoGroup.add(body);
   const steel = new THREE.MeshStandardMaterial({ color: "#cbd5e1", metalness: 0.85, roughness: 0.22 });
   const inFerrule = new THREE.Mesh(
@@ -121,6 +131,16 @@ const renderIsolator: Renderer = (component, state) => {
   );
   outFerrule.position.y = bodyLength / 2 + ferruleLen / 2;
   isoGroup.add(outFerrule);
+
+  const overlay = buildIsolatorPbsOverlay(asset ?? null, {
+    componentModel: component.model ?? undefined,
+    housingLengthMm: lengthMm,
+    opticalAxisBody: "z",
+    unitScale: mmToThree(1),
+  });
+  overlay.renderOrder = 1;
+  isoGroup.add(overlay);
+
   return isoGroup;
 };
 

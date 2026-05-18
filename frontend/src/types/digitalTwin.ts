@@ -60,6 +60,13 @@ export type Anchor = {
    *  left undefined on optical anchors. Edited per-anchor in the
    *  PHY Editor RF / Components view. */
   connectorType?: "sma_male" | "sma_female" | "bnc_male" | "bnc_female";
+  /** Fast-axis angle (degrees) of a waveplate's crystal cut, measured
+   *  in body-local beam coordinates at the anchor. Asset-level fixed
+   *  (PHY Editor → Optical → Components). The per-instance rotation
+   *  around the beam axis lives on SceneObject.transform; effective
+   *  beam-frame angle = this + transform-projection. Only meaningful
+   *  for anchors flagged via plugin `needsFastAxis`. */
+  fastAxisDegBodyLocal?: number;
 };
 
 /** Per-instance rf_cable endpoint link record. Persisted under
@@ -387,8 +394,6 @@ export type LensCylindricalParams = {
 
 export type WaveplateParams = {
   retardanceLambda: number;
-  /** Phase 5: renamed from `fastAxisDeg`. Beam-local Jones-frame angle. */
-  fastAxisDegBeamLocal: number;
   transmission: number;
 };
 

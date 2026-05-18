@@ -34,7 +34,9 @@ import type {
 } from "../../types/digitalTwin";
 import { wavelengthToColor } from "../../three/opticalBeams";
 import { gaussianWaistAtZ, type BeamState } from "../../three/rayTrace";
-import { labMmToThree, mmToThree } from "../../optical/frames";
+import { loadAssetObject } from "../../three/loadAsset";
+import { applyObjectTransform } from "../../three/transformUtils";
+import { mmToThree } from "../../optical/frames";
 import { FloatingPanel } from "../workspace/FloatingPanel";
 import { usePanelLayout } from "../workspace/WorkspaceProvider";
 import { BeamScopeContents } from "./BeamScopePanel";
@@ -43,27 +45,6 @@ const EMITTER_KINDS: ReadonlySet<string> = new Set([
   "laser_source",
   "tapered_amplifier",
 ]);
-
-/** Anchor colour scheme matching OpticalComponentEditor's `anchorColour()`. */
-function anchorColour(id: string): number {
-  switch (id) {
-    case "intercept_in":
-    case "in":
-    case "seed":
-      return 0x22c55e; // green — input port
-    case "intercept_out":
-    case "out":
-      return 0xef4444; // red — output port
-    case "intercept_face":
-      return 0x3b82f6; // blue — reflective face
-    case "optical_anchor":
-      return 0xa855f7; // purple
-    case "center":
-      return 0xfacc15; // yellow
-    default:
-      return 0xf97316; // orange — bbox / helper anchors
-  }
-}
 
 /** Aperture diameter in mm — first checks the PhysicsElement's
  *  `clearApertureMm` / `apertureDiameterMm`, then falls back to the
@@ -88,6 +69,251 @@ function apertureDiameterMm(
     }
   }
   return null;
+}
+
+/** Effective clear-aperture radius (mm) of the asset anchor closest to the
+ *  incoming beam (intercept_in / intercept_face / optical_anchor). Reads
+ *  the V2 schema: `apertureMm` = radius (circle); `apertureWidthMm` /
+ *  `apertureHeightMm` = full extents (ellipse semi-axis = w/2; rectangle
+ *  inscribed circle radius = min(w, h)/2). Returns the limiting radius
+ *  for beam-clipping checks. Falls back to PhysicsElement.kindParams
+ *  `clearApertureMm` (treated as diameter ↦ /2). Null when undefined. */
+function asset_anchor_apertureRadiusMm(
+  el: PhysicsElement | undefined,
+  asset: Asset3D | undefined,
+): number | null {
+  if (asset?.anchors) {
+    for (const id of ["intercept_in", "intercept_face", "intercept_out", "optical_anchor"]) {
+      const anchor = asset.anchors.find((a) => a.id === id);
+      if (!anchor) continue;
+      const shape = anchor.apertureShape
+        ?? (anchor.apertureWidthMm != null && anchor.apertureHeightMm != null ? "rectangle" : "circle");
+      if (shape === "circle") {
+        if (typeof anchor.apertureMm === "number" && anchor.apertureMm > 0) {
+          return anchor.apertureMm;
+        }
+      } else {
+        const w = anchor.apertureWidthMm;
+        const h = anchor.apertureHeightMm;
+        if (typeof w === "number" && typeof h === "number" && w > 0 && h > 0) {
+          return Math.min(w, h) / 2;
+        }
+      }
+    }
+  }
+  // Legacy kindParams.clearApertureMm is a diameter convention (see
+  // apertureCheck.ts: r = apMm / 2). Convert to radius.
+  if (el) {
+    const params = el.kindParams as Record<string, unknown>;
+    const v = params.clearApertureMm;
+    if (typeof v === "number" && v > 0) return v / 2;
+  }
+  return null;
+}
+
+/** Passive optical kinds — wavelengthRangeNm warning fires for these
+ *  (a beam hitting an out-of-range coating / crystal will not behave as
+ *  spec'd, but the solver/ray-tracer doesn't enforce it). Emitter +
+ *  fiber-end kinds are excluded — their wavelength is the *source* of
+ *  truth, not a constraint imposed on incoming light. */
+const PASSIVE_OPTICAL_KINDS: ReadonlySet<string> = new Set([
+  "mirror",
+  "dichroic_mirror",
+  "lens_biconvex",
+  "lens_plano_convex",
+  "lens_cylindrical",
+  "waveplate",
+  "polarizer",
+  "beam_splitter",
+  "isolator",
+  "eom",
+  "aom",
+  "nonlinear_crystal",
+  "saturable_absorber",
+  "fiber_coupler",
+  "fiber",
+]);
+
+/** Kinds whose beam acceptance is described by Gaussian modematching
+ *  (TA seed mode, fiber MFD) rather than a hard clear aperture. The
+ *  Clipping warning is suppressed for these — the matching mode-overlap
+ *  warning is the right physical signal. PHY Editor likewise hides
+ *  apertureMm for these via `showAperture={false}`. */
+const MODEMATCHED_KINDS: ReadonlySet<string> = new Set([
+  "laser_source",
+  "tapered_amplifier",
+  "fiber",
+  "fiber_end",
+]);
+
+type LinkWarning = {
+  key: string;
+  kind: "aperture-too-small" | "wavelength-out-of-range" | "mode-mismatch";
+  message: string;
+};
+
+/** Target Gaussian mode (1/e² waist radius in µm + a human label) the
+ *  incoming beam should match for efficient coupling. TA seeds and
+ *  fiber inputs are the canonical cases. Returns null for kinds whose
+ *  mode acceptance isn't spec'd by a single Gaussian waist. */
+function getModeMatchTarget(
+  kind: string,
+  kindParams: Record<string, unknown>,
+  lookupParams?: (objectId: string) => Record<string, unknown> | null,
+): { waistUm: number; label: string } | null {
+  if (kind === "tapered_amplifier") {
+    const x = kindParams.inputSpatialModeX as { waistUm?: number } | undefined;
+    const y = kindParams.inputSpatialModeY as { waistUm?: number } | undefined;
+    const wx = typeof x?.waistUm === "number" ? x.waistUm : null;
+    const wy = typeof y?.waistUm === "number" ? y.waistUm : null;
+    const w = wx != null && wy != null ? (wx + wy) / 2 : (wx ?? wy);
+    if (w == null || w <= 0) return null;
+    return { waistUm: w, label: "TA seed mode" };
+  }
+  if (kind === "fiber") {
+    // Either end may be the input port. Use endA's MFD as the
+    // approximation — symmetric patch cables (the default) have endA ==
+    // endB, and asymmetric ones are rare. MFD = 2 × 1/e² waist radius.
+    const endA = kindParams.endA as { modeFieldDiameterUm?: number } | undefined;
+    const mfd = endA?.modeFieldDiameterUm;
+    if (typeof mfd !== "number" || mfd <= 0) return null;
+    return { waistUm: mfd / 2, label: "fiber MFD" };
+  }
+  if (kind === "fiber_end") {
+    // Resolve MFD from the paired fiber body's per-end spec.
+    const bodyId = kindParams.fiberBodyObjectId;
+    const role = kindParams.endRole;
+    if (typeof bodyId !== "string" || (role !== "A" && role !== "B") || !lookupParams) {
+      return null;
+    }
+    const bodyParams = lookupParams(bodyId);
+    if (!bodyParams) return null;
+    const end = bodyParams[role === "A" ? "endA" : "endB"] as
+      | { modeFieldDiameterUm?: number }
+      | undefined;
+    const mfd = end?.modeFieldDiameterUm;
+    if (typeof mfd !== "number" || mfd <= 0) return null;
+    return { waistUm: mfd / 2, label: `fiber MFD (end ${role})` };
+  }
+  return null;
+}
+
+/** Gaussian-to-Gaussian power overlap (same waist position, on-axis).
+ *  η = 4 / (w1/w2 + w2/w1)²; ≤ 1. The actual physical coupling is also
+ *  limited by tilt / transverse offset / waist-z mismatch, but waist-
+ *  ratio overlap alone catches the most common misalignment (wrong
+ *  focal length on the coupling lens). */
+function gaussianOverlap(w1: number, w2: number): number {
+  if (w1 <= 0 || w2 <= 0) return 0;
+  const r = w1 / w2 + w2 / w1;
+  return 4 / (r * r);
+}
+
+const MODE_MATCH_WARN_THRESHOLD = 0.8;
+
+function computeLinkWarnings(
+  segments: readonly LiveTraceSegment[],
+  objects: readonly SceneObject[],
+  components: readonly ComponentItem[],
+  assets: readonly Asset3D[],
+  physicsElements: readonly PhysicsElement[],
+): LinkWarning[] {
+  if (segments.length === 0) return [];
+  const objectById = new Map(objects.map((o) => [o.id, o]));
+  const componentById = new Map(components.map((c) => [c.id, c]));
+  const assetById = new Map(assets.map((a) => [a.id, a]));
+  const elementByObjectId = new Map<string, PhysicsElement>();
+  for (const el of physicsElements) elementByObjectId.set(el.objectId, el);
+  const lookupParams = (objectId: string): Record<string, unknown> | null => {
+    const e = elementByObjectId.get(objectId);
+    return e ? ((e.kindParams ?? {}) as Record<string, unknown>) : null;
+  };
+
+  const out: LinkWarning[] = [];
+  const seen = new Set<string>();
+  for (const seg of segments) {
+    if (!seg.hitObjectId) continue;
+    const obj = objectById.get(seg.hitObjectId);
+    if (!obj) continue;
+    const comp = componentById.get(obj.componentId);
+    const asset = comp?.asset3dId ? assetById.get(comp.asset3dId) : undefined;
+    const el = elementByObjectId.get(seg.hitObjectId);
+    const kind = el?.elementKind;
+
+    // [1] Aperture: warn if clear-aperture radius < 3 × beam waist
+    //     (1/e² radius). Standard no-clip guideline — at 3 × waist a
+    //     Gaussian beam contains > 99.97% of its power. Modematched
+    //     kinds (laser/TA/fiber) get the mode-overlap warning instead;
+    //     no clear aperture is defined for them.
+    const skipAperture = kind != null && MODEMATCHED_KINDS.has(kind);
+    const apRadiusMm = skipAperture ? null : asset_anchor_apertureRadiusMm(el, asset);
+    const waistEndMm = seg.waistAtEndUm / 1000;
+    if (apRadiusMm != null && waistEndMm > 0 && apRadiusMm < 3 * waistEndMm) {
+      const key = `ap|${seg.hitObjectId}|${seg.wavelengthNm}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        const beamDiamMm = waistEndMm * 2;
+        const apDiamMm = apRadiusMm * 2;
+        out.push({
+          key,
+          kind: "aperture-too-small",
+          message: `${obj.name}: aperture Ø ${apDiamMm.toFixed(2)} mm < 3× beam Ø ${(beamDiamMm * 3).toFixed(2)} mm (beam Ø ${beamDiamMm.toFixed(2)} mm)`,
+        });
+      }
+    }
+
+    // [2] Wavelength range: warn when beam λ is outside the passive
+    //     optic's spec'd range.
+    if (kind && PASSIVE_OPTICAL_KINDS.has(kind)) {
+      const params = (el?.kindParams ?? {}) as { wavelengthRangeNm?: [number, number] };
+      const range = params.wavelengthRangeNm;
+      if (Array.isArray(range) && range.length === 2) {
+        const [minNm, maxNm] = range;
+        if (
+          typeof minNm === "number" && typeof maxNm === "number"
+          && (seg.wavelengthNm < minNm || seg.wavelengthNm > maxNm)
+        ) {
+          const key = `wl|${seg.hitObjectId}|${seg.wavelengthNm}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            out.push({
+              key,
+              kind: "wavelength-out-of-range",
+              message: `${obj.name}: beam λ ${seg.wavelengthNm.toFixed(1)} nm outside spec [${minNm}, ${maxNm}] nm`,
+            });
+          }
+        }
+      }
+    }
+
+    // [3] Mode matching: warn when incoming beam waist mismatches the
+    //     target's accepted Gaussian mode (TA seed input, fiber MFD)
+    //     by more than the threshold. Uses the simple same-waist-z
+    //     overlap formula η = 4 / (w_in/w_t + w_t/w_in)² — captures
+    //     wrong-focal-length coupling lens, the dominant lab error.
+    if (kind && el) {
+      const target = getModeMatchTarget(
+        kind,
+        (el.kindParams ?? {}) as Record<string, unknown>,
+        lookupParams,
+      );
+      if (target && seg.waistAtEndUm > 0) {
+        const eta = gaussianOverlap(seg.waistAtEndUm, target.waistUm);
+        if (eta < MODE_MATCH_WARN_THRESHOLD) {
+          const key = `mm|${seg.hitObjectId}|${seg.wavelengthNm}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            out.push({
+              key,
+              kind: "mode-mismatch",
+              message: `${obj.name}: mode overlap ${(eta * 100).toFixed(0)}% (beam waist ${seg.waistAtEndUm.toFixed(1)} µm vs ${target.label} ${target.waistUm.toFixed(1)} µm)`,
+            });
+          }
+        }
+      }
+    }
+  }
+  return out;
 }
 
 /** Loose subset of `TraceSegment` we read off `window.__rayTraceDebug`. */
@@ -256,6 +482,12 @@ export function OpticalLinkViewerPanel() {
   // need it to reflect live trace data.
   const [chainEmitterIds, setChainEmitterIds] = useState<Set<string>>(new Set());
 
+  // Aperture / wavelength-range warnings derived from the live ray-trace
+  // segments crossed by this chain. Polled at 250 ms (cheap; segments
+  // rarely change). The polled effect keys off chainEmitterIds + scene
+  // data so warnings refresh when the scene mutates too.
+  const [warnings, setWarnings] = useState<LinkWarning[]>([]);
+
   // ─── Three.js viewport ────────────────────────────────────────────────
   const mountRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -276,6 +508,7 @@ export function OpticalLinkViewerPanel() {
   const setScopeProbeRef = useRef(setScopeProbe);
   const setChainEmitterIdsRef = useRef(setChainEmitterIds);
   const setTasFoldedIntoLaserRef = useRef(setTasFoldedIntoLaser);
+  const scopeProbeRef = useRef(scopeProbe);
   chainEmitterIdsRef.current = chainEmitterIds;
   opticalElementsRef.current = physicsElements;
   opticalLinksRef.current = opticalLinks;
@@ -287,6 +520,7 @@ export function OpticalLinkViewerPanel() {
   setScopeProbeRef.current = setScopeProbe;
   setChainEmitterIdsRef.current = setChainEmitterIds;
   setTasFoldedIntoLaserRef.current = setTasFoldedIntoLaser;
+  scopeProbeRef.current = scopeProbe;
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -349,6 +583,18 @@ export function OpticalLinkViewerPanel() {
     // on `firstRealResize` in onResize.
     let prevContentKey = "";
     let prevCameraFitKey = "";
+    let prevProbeKey = "";
+
+    // Async-loaded mesh wireframes, keyed by SceneObject id. Each entry is
+    // either a Group whose children are LineSegments with the asset's local
+    // transforms baked in, or "pending" while the load is in flight. The
+    // group is cloned (shallow — geometry/material shared) per scene to
+    // apply the scene-object's world transform without mutating the cache.
+    // Filled lazily inside rebuildContent's wireframe pass; survives ticks
+    // but is torn down when the useEffect re-fires (eg. panel hide→show).
+    const wireframeCache = new Map<string, THREE.Group | "pending">();
+    let disposed = false;
+    let probeMarkerGroup: THREE.Group | null = null;
 
     // First-real-resize flag: when the panel is mounted inside a hidden
     // FloatingPanel, mount.clientWidth/Height are 0 at this useEffect
@@ -454,6 +700,11 @@ export function OpticalLinkViewerPanel() {
 
     const VISUAL_BOOST = 4; // amplify Gaussian waist for visibility
     const VISUAL_FLOOR_UM = 30; // never draw thinner than this in µm
+
+    // Most recently observed bbox span — used by updateProbeMarker to size
+    // the marker proportionally to the current scene without re-walking
+    // segments. Updated at the end of rebuildContent.
+    let lastBboxSpan = 1;
 
     const disposeTree = (root: THREE.Object3D) => {
       root.traverse((obj) => {
@@ -680,59 +931,90 @@ export function OpticalLinkViewerPanel() {
         }
       }
 
-      // Pass 3: anchor spheres at every touched scene object. We render
-      // ALL anchors (excluding bbox-helper face anchors `+x` / `-x` / ...)
-      // so the user can see the optic's port topology without seeing the
-      // solid body.
-      const sphereRadius = Math.max(bboxSpan * 0.01, 0.04);
+      // Pass 3: object wireframes at every touched scene object. We load
+      // the same GLB/STEP asset the main scene uses, then extract per-
+      // mesh edge lines via EdgesGeometry(45°). 45° is intentionally
+      // looser than the main scene's 30° selection outline so the panel
+      // shows a sparser silhouette — enough to identify the optic
+      // without cluttering the beam view.
       for (const objectId of touchedObjectIds) {
         const obj = objectById.get(objectId);
-        const asset = assetForObjectId(objectId);
-        if (!obj || !asset?.anchors) continue;
-        for (const anchor of asset.anchors) {
-          // Skip the auto-generated bbox face anchors (`+x`, `-x`, `+y`,
-          // `-y`, `+z`, `-z`) — they're helper origins, not meaningful
-          // optical ports.
-          if (/^[+-][xyz]$/.test(anchor.id)) continue;
-          const local = anchor.positionMmBodyLocal ?? { x: 0, y: 0, z: 0 };
-          // Body-local mm (Z-up) → Three units (Y-up). The axis swap
-          // (z → y, -y → z) matches OpticalComponentEditor's anchor
-          // marker placement, and mmToThree divides by MM_PER_THREE_UNIT
-          // (100) so the panel uses the same scale as the main scene.
-          const localThree = new THREE.Vector3(
-            mmToThree(local.x),
-            mmToThree(local.z),
-            mmToThree(-local.y),
-          );
-          // Apply the object's intrinsic XYZ Euler rotation.
-          const euler = new THREE.Euler(
-            THREE.MathUtils.degToRad(obj.rxDeg),
-            THREE.MathUtils.degToRad(obj.ryDeg),
-            THREE.MathUtils.degToRad(obj.rzDeg),
-            "XYZ",
-          );
-          const quat = new THREE.Quaternion().setFromEuler(euler);
-          localThree.applyQuaternion(quat);
-          // Object origin: lab mm → Three units (frames.labMmToThree
-          // applies the same axis swap + scale used by every other
-          // scene-object renderer in this codebase).
-          const objThree = labMmToThree({ xMm: obj.xMm, yMm: obj.yMm, zMm: obj.zMm });
-          const worldThree = objThree.clone().add(localThree);
-
-          const colour = anchorColour(anchor.id);
-          const sphereGeom = new THREE.SphereGeometry(sphereRadius, 16, 12);
-          const sphereMat = new THREE.MeshBasicMaterial({
-            color: colour,
-            depthTest: false,
-            transparent: true,
-            opacity: 0.9,
-          });
-          const sphere = new THREE.Mesh(sphereGeom, sphereMat);
-          sphere.position.copy(worldThree);
-          sphere.renderOrder = 1000;
-          contentGroup.add(sphere);
+        if (!obj) continue;
+        const cached = wireframeCache.get(objectId);
+        if (cached === "pending") continue;
+        if (!cached) {
+          // Kick off an async load; the next tick after resolve will
+          // see the cache hit and render. We mark "pending" so we don't
+          // dispatch a second load for the same object meanwhile.
+          wireframeCache.set(objectId, "pending");
+          const comp = componentById.get(obj.componentId);
+          if (!comp) {
+            wireframeCache.delete(objectId);
+            continue;
+          }
+          const asset = comp.asset3dId ? assetById.get(comp.asset3dId) : undefined;
+          // Fiber + RF cable wrappers are procedural and read their shape
+          // from per-instance properties (fiberNodes / rfCableNodes /
+          // radiusMm). Pass the SceneObject's properties so the spline
+          // matches what the main scene draws — otherwise loadAssetObject
+          // falls back to catalog defaults and the wireframe sits along
+          // a completely different curve than the actual beam.
+          const loaderProps = (obj.properties ?? null) as
+            | { fiberNodes?: unknown[]; rfCableNodes?: unknown[]; radiusMm?: number }
+            | null;
+          void (async () => {
+            let loaded: THREE.Object3D;
+            try {
+              loaded = await loadAssetObject(
+                comp,
+                asset,
+                undefined,
+                loaderProps as Parameters<typeof loadAssetObject>[3],
+              );
+            } catch {
+              if (!disposed) wireframeCache.delete(objectId);
+              return;
+            }
+            const group = new THREE.Group();
+            group.name = `wireframe-${objectId}`;
+            loaded.updateMatrixWorld(true);
+            const lineMat = new THREE.LineBasicMaterial({
+              color: 0x94a3b8, // slate-400 — muted against dark bg, doesn't fight beam colours
+              transparent: true,
+              opacity: 0.55,
+              depthTest: true,
+            });
+            loaded.traverse((child) => {
+              const mesh = child as THREE.Mesh;
+              if (!(mesh instanceof THREE.Mesh) || !mesh.geometry) return;
+              const edges = new THREE.EdgesGeometry(mesh.geometry, 45);
+              // Bake the mesh's wrapper-local transform into the line
+              // geometry so the group can be cloned-and-translated as a
+              // single rigid unit (no nested matrix bookkeeping at use).
+              edges.applyMatrix4(mesh.matrixWorld);
+              group.add(new THREE.LineSegments(edges, lineMat));
+            });
+            disposeTree(loaded);
+            if (disposed) {
+              disposeTree(group);
+              return;
+            }
+            wireframeCache.set(objectId, group);
+            // Force the next rebuildContent to redraw even though the
+            // segment-key is unchanged — the wireframes are now ready.
+            prevContentKey = "";
+          })();
+          continue;
         }
+        // Cache hit: shallow-clone so the cached prototype stays
+        // untouched and we can apply the scene-object transform to the
+        // clone. EdgesGeometry + LineBasicMaterial are shared by clone(true).
+        const wrapper = cached.clone(true);
+        applyObjectTransform(wrapper, obj);
+        contentGroup.add(wrapper);
       }
+
+      lastBboxSpan = bboxSpan;
 
       // Camera fit — only when the bbox actually changed.
       if (!bbox.isEmpty()) {
@@ -757,12 +1039,103 @@ export function OpticalLinkViewerPanel() {
       }
     };
 
+    // Selection marker at the active scope-probe point. Lives in its own
+    // group so beam/wireframe rebuilds don't dispose it (and probe-only
+    // changes don't trigger a full rebuild). Rendered through any
+    // intervening geometry via depthTest:false + high renderOrder so the
+    // user always sees where their click landed even when the beam tube
+    // would normally occlude it.
+    const updateProbeMarker = () => {
+      const probe = scopeProbeRef.current;
+      const probeKey = probe
+        ? `${probe.pointThree.x.toFixed(3)},${probe.pointThree.y.toFixed(3)},${probe.pointThree.z.toFixed(3)}`
+        : "";
+      if (probeKey === prevProbeKey) return;
+      prevProbeKey = probeKey;
+      if (probeMarkerGroup) {
+        contentGroup.remove(probeMarkerGroup);
+        disposeTree(probeMarkerGroup);
+        probeMarkerGroup = null;
+      }
+      if (!probe) return;
+      const span = lastBboxSpan;
+      const markerRadius = Math.max(span * 0.0012, 0.004);
+      const armLength = Math.max(span * 0.009, 0.03);
+      // Orient the marker's local +z along the beam direction at the
+      // probe. Walk the trace and pick the segment whose centreline is
+      // closest to the probe point — same logic the click handler uses,
+      // recomputed here because the user may have set the probe from a
+      // different panel (main scene) and we don't carry direction in
+      // scopeProbe. Local x is built ⊥ to z via a world-up cross (or
+      // world-x when the beam IS world-up), and y completes the basis.
+      const segs = (window as unknown as { __rayTraceDebug?: LiveTraceSegment[] }).__rayTraceDebug ?? [];
+      const probeVec = new THREE.Vector3(probe.pointThree.x, probe.pointThree.y, probe.pointThree.z);
+      let bestDir: THREE.Vector3 | null = null;
+      let bestDist = Infinity;
+      for (const seg of segs) {
+        const a = new THREE.Vector3(seg.startThree.x, seg.startThree.y, seg.startThree.z);
+        const b = new THREE.Vector3(seg.endThree.x, seg.endThree.y, seg.endThree.z);
+        const ab = b.clone().sub(a);
+        const len2 = ab.lengthSq();
+        if (len2 < 1e-18) continue;
+        let t = probeVec.clone().sub(a).dot(ab) / len2;
+        t = Math.max(0, Math.min(1, t));
+        const onLine = a.clone().addScaledVector(ab, t);
+        const d = onLine.distanceTo(probeVec);
+        if (d < bestDist) {
+          bestDist = d;
+          bestDir = ab.normalize();
+        }
+      }
+      const yellow = 0xfacc15;
+      const group = new THREE.Group();
+      group.name = "probe-marker";
+      group.position.set(probe.pointThree.x, probe.pointThree.y, probe.pointThree.z);
+      if (bestDir) {
+        const worldUp = new THREE.Vector3(0, 1, 0);
+        const seed = Math.abs(bestDir.dot(worldUp)) < 0.95 ? worldUp : new THREE.Vector3(1, 0, 0);
+        const xLocal = new THREE.Vector3().crossVectors(seed, bestDir).normalize();
+        const yLocal = new THREE.Vector3().crossVectors(bestDir, xLocal).normalize();
+        group.quaternion.setFromRotationMatrix(
+          new THREE.Matrix4().makeBasis(xLocal, yLocal, bestDir),
+        );
+      }
+      const sphereMat = new THREE.MeshBasicMaterial({
+        color: yellow,
+        depthTest: false,
+        transparent: true,
+        opacity: 0.95,
+      });
+      const sphere = new THREE.Mesh(new THREE.SphereGeometry(markerRadius, 16, 12), sphereMat);
+      sphere.renderOrder = 3000;
+      group.add(sphere);
+      const lineMat = new THREE.LineBasicMaterial({
+        color: yellow,
+        depthTest: false,
+        transparent: true,
+        opacity: 0.95,
+      });
+      for (const ax of ["x", "y", "z"] as const) {
+        const a = new THREE.Vector3();
+        const b = new THREE.Vector3();
+        a[ax] = -armLength;
+        b[ax] = armLength;
+        const geom = new THREE.BufferGeometry().setFromPoints([a, b]);
+        const line = new THREE.Line(geom, lineMat);
+        line.renderOrder = 3000;
+        group.add(line);
+      }
+      contentGroup.add(group);
+      probeMarkerGroup = group;
+    };
+
     const tick = () => {
       // Skip while the FloatingPanel hosting us is collapsed/hidden — we'd
       // otherwise latch prevContentKey = "(none)" and render into a zero-
       // size viewport before onResize gets a chance to fire.
       if (mount.clientWidth <= 0 || mount.clientHeight <= 0) return;
       rebuildContent();
+      updateProbeMarker();
       controls.update();
       renderer.render(scene, camera);
     };
@@ -770,11 +1143,18 @@ export function OpticalLinkViewerPanel() {
     const intervalId = window.setInterval(tick, 16);
 
     return () => {
+      disposed = true;
       window.clearInterval(intervalId);
       ro.disconnect();
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
       controls.dispose();
+      // Wireframe prototypes live outside contentGroup (they get cloned
+      // in on each rebuild) so the traverse below misses them.
+      for (const entry of wireframeCache.values()) {
+        if (entry !== "pending") disposeTree(entry);
+      }
+      wireframeCache.clear();
       contentGroup.traverse((obj) => {
         const m = obj as THREE.Mesh | THREE.Line;
         const g = (m as THREE.Mesh).geometry as THREE.BufferGeometry | undefined;
@@ -801,6 +1181,35 @@ export function OpticalLinkViewerPanel() {
     // FloatingPanel renders its children for the first time, at which point
     // mountRef.current is set and the renderer can attach.
   }, [panelVisible]);
+
+  // Poll __rayTraceDebug for warnings (aperture clipping + wavelength
+  // out-of-range) every 250 ms. State-set only when the warning list
+  // actually changes so React doesn't re-render at the polling rate.
+  useEffect(() => {
+    if (chainEmitterIds.size === 0) {
+      setWarnings((prev) => (prev.length === 0 ? prev : []));
+      return;
+    }
+    const compute = () => {
+      const win = window as unknown as { __rayTraceDebug?: LiveTraceSegment[] };
+      const all = win.__rayTraceDebug ?? [];
+      const segs = all.filter((s) => chainEmitterIds.has(s.emitterObjectId));
+      return computeLinkWarnings(segs, objects, components, assets, physicsElements);
+    };
+    const sync = () => {
+      const next = compute();
+      setWarnings((prev) => {
+        if (prev.length !== next.length) return next;
+        for (let i = 0; i < prev.length; i++) {
+          if (prev[i].key !== next[i].key || prev[i].message !== next[i].message) return next;
+        }
+        return prev;
+      });
+    };
+    sync();
+    const id = window.setInterval(sync, 250);
+    return () => window.clearInterval(id);
+  }, [chainEmitterIds, objects, components, assets, physicsElements]);
 
   // Does the current scope probe live on one of our chain's segments? Only
   // show the inline BeamScope plots when it does — otherwise the user has
@@ -907,6 +1316,37 @@ export function OpticalLinkViewerPanel() {
             </p>
           )}
         </div>
+        {warnings.length > 0 && (
+          <div
+            style={{
+              flexShrink: 0,
+              maxHeight: "30%",
+              overflow: "auto",
+              padding: "6px 8px",
+              borderLeft: "2px solid #facc15",
+              background: "rgba(250, 204, 21, 0.08)",
+              fontSize: 11,
+            }}
+          >
+            <div style={{ color: "#facc15", fontWeight: 600, marginBottom: 4 }}>
+              ⚠ {warnings.length} link warning{warnings.length === 1 ? "" : "s"}
+            </div>
+            {warnings.map((w) => {
+              const prefix =
+                w.kind === "aperture-too-small"
+                  ? "▸ Clipping: "
+                  : w.kind === "wavelength-out-of-range"
+                    ? "▸ λ range: "
+                    : "▸ Mode match: ";
+              return (
+                <div key={w.key} style={{ marginTop: 2, opacity: 0.9 }}>
+                  {prefix}
+                  {w.message}
+                </div>
+              );
+            })}
+          </div>
+        )}
         {probeBelongsToChain && (
           <div
             style={{

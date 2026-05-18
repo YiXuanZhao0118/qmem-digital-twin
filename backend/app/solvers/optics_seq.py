@@ -87,6 +87,47 @@ _AD9959_VPP_FULL_SCALE = AD9959_VPP_FULL_SCALE
 _RF_LOAD_Z_OHM = RF_LOAD_Z_OHM
 
 
+def hydrate_waveplate_fast_axis(
+    elements: list[PhysicsElement],
+    objects_by_id: dict,
+    components_by_id: dict | None = None,
+    assets_by_id: dict | None = None,
+) -> None:
+    """2026-05-18 refactor: fast-axis composition for waveplates.
+
+    Effective Jones-frame angle = Asset3D.intercept_in.fast_axis_deg_body_local
+    (PHY Editor → Optical → Components) + SceneObject.properties.
+    rotationAroundBeamAxisDeg (Object pane knob). The solver's
+    apply_waveplate consumes ``kindParams.fastAxisDegBeamLocal``; we
+    synthesise that key here so the solver runs unchanged.
+
+    Mutation is in-memory only — DB rows stay clean of these fields.
+    """
+    for e in elements:
+        if e.element_kind != "waveplate":
+            continue
+        scene_object = objects_by_id.get(e.object_id)
+        if scene_object is None:
+            continue
+        comp = (components_by_id or {}).get(getattr(scene_object, "component_id", None))
+        asset = (assets_by_id or {}).get(getattr(comp, "asset_3d_id", None)) if comp is not None else None
+        anchors = list(getattr(asset, "anchors", None) or [])
+        base = 0.0
+        for a in anchors:
+            anchor_id = a.get("id") if isinstance(a, dict) else getattr(a, "id", None)
+            if anchor_id != "intercept_in":
+                continue
+            raw = a.get("fastAxisDegBodyLocal") if isinstance(a, dict) else getattr(a, "fast_axis_deg_body_local", None)
+            if isinstance(raw, (int, float)):
+                base = float(raw)
+            break
+        props = getattr(scene_object, "properties", None) or {}
+        rot = props.get("rotationAroundBeamAxisDeg") if isinstance(props, dict) else None
+        instance = float(rot) if isinstance(rot, (int, float)) else 0.0
+        merged = {**(e.kind_params or {}), "fastAxisDegBeamLocal": base + instance}
+        e.kind_params = merged
+
+
 def hydrate_aom_rf_drive(
     elements: list[PhysicsElement],
     objects_by_id: dict,

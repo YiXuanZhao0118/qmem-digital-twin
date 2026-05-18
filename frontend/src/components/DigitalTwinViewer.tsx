@@ -36,6 +36,7 @@ import { traceBeamsFromLasers, _testReflect, gaussianWaistAtZ, type TraceSegment
 import { disposeFarfieldLobe, makeFarfieldLobe } from "../three/hornFarfield";
 import { disposeRfBadgeSprite, makeRfBadgeSprite } from "../three/rfBadge";
 import { getEmissionVisual } from "../utils/emissionVisuals";
+import { computeWaveplateFastAxisDeg } from "../utils/waveplateAxis";
 import { buildSceneGateOverrides } from "../utils/timingEvaluation";
 import {
   buildAomGateOverridesFromSnapshot,
@@ -1510,16 +1511,17 @@ export function DigitalTwinViewer({
     if (!oe || oe.elementKind !== "waveplate") return;
 
     const params = (oe.kindParams ?? {}) as {
-      fastAxisDegBeamLocal?: number;
-      fastAxisDeg?: number;
       diameterMm?: number;
       clearApertureMm?: number;
     };
-    // Phase 5: kindParams field renamed `fastAxisDeg` →
-    // `fastAxisDegBeamLocal`. Read both for backward compat.
-    const fastAxisDeg = typeof params.fastAxisDegBeamLocal === "number"
-      ? params.fastAxisDegBeamLocal
-      : typeof params.fastAxisDeg === "number" ? params.fastAxisDeg : 0;
+    // Asset anchor `fastAxisDegBodyLocal` (PHY Editor) + SceneObject
+    // `properties.rotationAroundBeamAxisDeg` (Object pane knob) — see
+    // utils/waveplateAxis.ts. Falls back to 0 + 0 when unset.
+    const comp = sceneData.components.find((c) => c.id === selectedObject.componentId);
+    const asset = comp?.asset3dId
+      ? sceneData.assets.find((a) => a.id === comp.asset3dId)
+      : undefined;
+    const fastAxisDeg = computeWaveplateFastAxisDeg(selectedObject, asset);
     // Length of the indicator: a bit longer than the clear aperture so the
     // line clearly extends past the waveplate body (default ~12.7 mm dia,
     // so 18 mm half-length gives an extension on each side).
@@ -1896,6 +1898,18 @@ export function DigitalTwinViewer({
     // any, otherwise 0,0,0). The marker-effect later keeps it in sync as
     // the user moves the cursor.
     controls.target.copy(resolvedViewCenterThreeRef.current);
+    // If the user has saved a custom Home for this panel, open the page in
+    // that exact framing — overriding both the hard-coded HOME_CAMERA_POSITION
+    // set above and the cursor-derived target. Subsequent cursor moves still
+    // pull controls.target along (via the marker effect); this only sets the
+    // starting pose. Same data path as the H gizmo button's restore.
+    const savedHome = useSceneStore.getState().homeView[panelKey];
+    if (savedHome) {
+      camera.position.set(savedHome.position.x, savedHome.position.y, savedHome.position.z);
+      camera.up.set(savedHome.up.x, savedHome.up.y, savedHome.up.z);
+      controls.target.set(savedHome.target.x, savedHome.target.y, savedHome.target.z);
+      camera.lookAt(controls.target);
+    }
     controlsRef.current = controls;
 
     // Mouse mapping (post-rewrite, user request 2026-05-08):

@@ -233,6 +233,7 @@ export function derivedKindRegistry(): Record<
     optionalAnchors: readonly string[];
     anchorsNeedingDirection: readonly string[];
     anchorsNeedingAperture?: readonly string[];
+    anchorsNeedingFastAxis?: readonly string[];
     alignVariant: string;
     alignToleranceMm: number;
     alignSummary: string;
@@ -247,6 +248,7 @@ export function derivedKindRegistry(): Record<
       optionalAnchors: p.physics.anchors.optional,
       anchorsNeedingDirection: p.physics.anchors.needsDirection,
       anchorsNeedingAperture: p.physics.anchors.needsAperture,
+      anchorsNeedingFastAxis: p.physics.anchors.needsFastAxis,
       alignVariant: p.physics.alignVariant,
       alignToleranceMm: p.physics.alignToleranceMm,
       alignSummary: p.physics.alignSummary,

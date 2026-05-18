@@ -30,7 +30,7 @@
 import type { ReactElement } from "react";
 import type * as THREE from "three";
 
-import type { ComponentItem, DeviceState } from "../types/digitalTwin";
+import type { Asset3D, ComponentItem, DeviceState } from "../types/digitalTwin";
 import type { AnchorId } from "./_registry";
 
 // =============================================================================
@@ -146,6 +146,12 @@ export interface AnchorContract {
    *  AOM is the canonical case — both ports need an aperture for
    *  beam-clipping warnings to fire. Defaults to `[]` when omitted. */
   readonly needsAperture?: ReadonlyArray<AnchorId>;
+  /** Subset of required+optional whose `fastAxisDegBodyLocal` is the
+   *  asset-level fast-axis angle (PHY Editor → Optical → Components).
+   *  Waveplate uses this on `intercept_in`. Per-instance rotation
+   *  around the beam axis is applied via SceneObject.transform.
+   *  Defaults to `[]` when omitted. */
+  readonly needsFastAxis?: ReadonlyArray<AnchorId>;
 }
 
 // =============================================================================
@@ -190,6 +196,7 @@ interface ComponentPluginBase {
   readonly renderer?: (
     component: ComponentItem,
     state: DeviceState | undefined,
+    asset?: Asset3D,
   ) => THREE.Object3D;
 }
 

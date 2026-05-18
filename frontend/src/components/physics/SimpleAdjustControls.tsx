@@ -121,8 +121,6 @@ export function WaveplateAdjustControls({
   );
 
   type WaveplateKindParams = {
-    fastAxisDegBeamLocal?: number;
-    fastAxisDeg?: number;  // V2 Phase 5 legacy alias kept for read fallback
     retardanceLambda?: number;
     transmission?: number;
     groupDelayPs?: number;
@@ -132,9 +130,14 @@ export function WaveplateAdjustControls({
   const params = (element.kindParams ?? {}) as WaveplateKindParams;
 
   // ---- field readers (with V2 default fallbacks) --------------------------
-  const fastAxisDeg = typeof params.fastAxisDegBeamLocal === "number"
-    ? params.fastAxisDegBeamLocal
-    : typeof params.fastAxisDeg === "number" ? params.fastAxisDeg : 0;
+  // Per-instance rotation around the beam axis (asset-level fast-axis lives
+  // on Asset3D anchor.fastAxisDegBodyLocal, edited in PHY Editor). Effective
+  // Jones-frame angle = asset value + this scalar.
+  const sceneProps = (sceneObject.properties ?? {}) as Record<string, unknown>;
+  const rotationAroundBeamDeg =
+    typeof sceneProps.rotationAroundBeamAxisDeg === "number"
+      ? sceneProps.rotationAroundBeamAxisDeg
+      : 0;
   const retardance = params.retardanceLambda ?? 0.5;
   const transmission = params.transmission ?? 0.99;
   const groupDelayPs = params.groupDelayPs ?? 0;
@@ -146,30 +149,28 @@ export function WaveplateAdjustControls({
     : "custom";
 
   // ---- writer: shallow-merge a patch into kindParams + persist ------------
-  // Drops the legacy `fastAxisDeg` alias on every save so the row converges
-  // to the canonical V2 shape.
   const persist = async (patch: Partial<WaveplateKindParams>) => {
-    const { fastAxisDeg: _legacy, ...rest } = params;
     await upsertOpticalElement({
       objectId: sceneObject.id,
       elementKind: element.elementKind,
-      kindParams: { ...rest, ...patch },
+      kindParams: { ...params, ...patch },
       inputPorts: element.inputPorts,
       outputPorts: element.outputPorts,
     });
   };
 
-  // Fast-axis rotation commit — keep the quaternion-around-beam math from
-  // the original control; it composes Δθ around `candidate.axisDirection`
-  // into the SceneObject Euler so the 3D mesh tracks the user's typed
-  // angle. If the object isn't snap-aligned, kindParams still update so
-  // the Jones simulation sees the new angle.
-  const commitFastAxis = async (next: number) => {
+  // Rotation-around-beam commit. The 3D mesh tracks the user's typed angle
+  // by composing Δθ around `candidate.axisDirection` into the SceneObject
+  // Euler; the scalar is persisted to SceneObject.properties so the optical
+  // solver (asset.fastAxisDegBodyLocal + rotationAroundBeamAxisDeg) and
+  // future renders read a consistent value. Snap-align is required for the
+  // 3D mesh to update; the stored angle persists either way.
+  const commitRotationAroundBeam = async (next: number) => {
     if (!Number.isFinite(next)) return;
-    const delta = next - fastAxisDeg;
+    const delta = next - rotationAroundBeamDeg;
     if (Math.abs(delta) < 1e-6) return;
 
-    const updates: Partial<SceneObject> = {};
+    const transformPatch: Partial<SceneObject> = {};
     if (candidate?.axisDirection) {
       const dir = candidate.axisDirection;
       const beamAxisThree = labDirToThree(dir).normalize();
@@ -186,16 +187,15 @@ export function WaveplateAdjustControls({
       const currentQuat = new THREE.Quaternion().setFromEuler(currentEuler);
       const newQuat = deltaQuat.multiply(currentQuat);
       const newEuler = new THREE.Euler().setFromQuaternion(newQuat, "YXZ");
-      updates.rxDeg = THREE.MathUtils.radToDeg(newEuler.x);
-      updates.rzDeg = THREE.MathUtils.radToDeg(newEuler.y);
-      updates.ryDeg = -THREE.MathUtils.radToDeg(newEuler.z);
+      transformPatch.rxDeg = THREE.MathUtils.radToDeg(newEuler.x);
+      transformPatch.rzDeg = THREE.MathUtils.radToDeg(newEuler.y);
+      transformPatch.ryDeg = -THREE.MathUtils.radToDeg(newEuler.z);
     }
-    await Promise.all([
-      Object.keys(updates).length > 0
-        ? updateSceneObject(sceneObject.id, updates)
-        : Promise.resolve(),
-      persist({ fastAxisDegBeamLocal: next }),
-    ]);
+    const newProps = { ...sceneProps, rotationAroundBeamAxisDeg: next };
+    await updateSceneObject(sceneObject.id, {
+      ...transformPatch,
+      properties: newProps as SceneObject["properties"],
+    });
   };
 
   // Numeric input cell that commits on blur / Enter (uncontrolled-ish).
@@ -287,15 +287,18 @@ export function WaveplateAdjustControls({
         )}
       </div>
 
-      {/* Fast axis orientation around beam */}
+      {/* Rotation around beam axis — per-instance knob.
+          Asset-level fast-axis angle (fastAxisDegBodyLocal) lives on the
+          intercept_in anchor and is edited in PHY Editor → Optical →
+          Components. */}
       <div style={sectionStyle}>
-        <div style={titleStyle}>Fast axis</div>
+        <div style={titleStyle}>Rotation around beam axis</div>
         <NumberCell
-          label="Angle around beam"
+          label="Rotation"
           suffix="° CW"
-          value={fastAxisDeg}
+          value={rotationAroundBeamDeg}
           step={1}
-          onCommit={(v) => void commitFastAxis(v)}
+          onCommit={(v) => void commitRotationAroundBeam(v)}
         />
         {!candidate ? (
           <div style={{ opacity: 0.7, marginTop: 4, fontSize: 10 }}>
@@ -303,7 +306,7 @@ export function WaveplateAdjustControls({
           </div>
         ) : (
           <div style={{ opacity: 0.6, marginTop: 4, fontSize: 10 }}>
-            Rotation composes around the local beam axis; the 3D mesh follows.
+            Asset fast-axis (PHY Editor) + this rotation = effective Jones-frame angle.
           </div>
         )}
       </div>

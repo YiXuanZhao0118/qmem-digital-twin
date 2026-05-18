@@ -48,10 +48,7 @@ import {
 } from "../../optical/frames";
 import {
   getEffectiveApertureMm,
-  getPerObjectAperture,
   getRfDirectionBodyLocal,
-  setPerObjectAperture,
-  type V2Aperture,
 } from "../../utils/v2Bindings";
 import { resolveAomRfDriveFromScene } from "../../utils/aomRfDrive";
 import { wavelengthToColor } from "../../three/opticalBeams";
@@ -355,9 +352,7 @@ export function AomAdjustControls({
         );
         return;
       }
-      // V2: aperture is per-instance now. Use the effective aperture
-      // (per-object override → asset anchor seed) and only block alignment
-      // if neither path provides one.
+      // Asset-level aperture only (PHY Editor → Optical → Components).
       const inEffAp = getEffectiveApertureMm(sceneObject, inAnchor!, "intercept_in");
       const outEffAp = getEffectiveApertureMm(sceneObject, outAnchor!, "intercept_out");
       if (inEffAp == null || inEffAp <= 0) missing.push("intercept_in.aperture");
@@ -365,7 +360,7 @@ export function AomAdjustControls({
       if (missing.length) {
         setAlignFeedback(
           `AOM ${sceneObject.name} has anchor(s) without aperture: ${missing.join(", ")}. ` +
-          "Edit per-object aperture in the Object panel before aligning.",
+          "Set apertureMm in PHY Editor → Optical → Components before aligning.",
         );
         return;
       }

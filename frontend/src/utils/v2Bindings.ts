@@ -82,154 +82,23 @@ export function getMirrorNormalBodyLocal(
 }
 
 // =============================================================================
-// V2 aperture: per-object scalar override
+// Aperture: asset-level fixed (per-instance override removed 2026-05-18)
 // =============================================================================
-//
-// 2026-05-10 simplification (per user request): aperture is stored as a
-// flat scalar field on `objects.properties` keyed by `<anchorId>_apertureMm`,
-// e.g. `intercept_in_apertureMm`, `intercept_out_apertureMm`. Just a number
-// in millimetres (interpreted as a circular aperture radius). The previous
-// `perAnchorApertures` map of {shape, rMm/xMm/yMm} variants is read on a
-// best-effort fallback so un-migrated rows keep working until the alembic
-// migration drains them.
-//
-// Backward-compat sources, in precedence:
-//   1. objects.properties[`${anchorId}_apertureMm`]                  (new flat)
-//   2. objects.properties.anchorBindings[anchorId].payload.aperture  (legacy V2 binding)
-//   3. objects.properties.perAnchorApertures[anchorId]               (legacy transitional map)
-//   4. asset.anchors[anchorId].apertureMm                            (Layer 2 default seed)
-//   5. null  →  caller picks a kind default
-
-export type V2Aperture =
-  | { shape: "circle"; rMm: number }
-  | { shape: "rectangle"; xMm: number; yMm: number }
-  | { shape: "ellipse"; xMm: number; yMm: number };
-
-/** Convert a V2 aperture shape to a scalar "effective radius mm" — the
- *  largest in-plane half-extent. Used by consumers (beam intercept tests,
- *  apertureCheck) that today expect a single mm number. */
-export function v2ApertureToScalarMm(a: V2Aperture | null | undefined): number | null {
-  if (!a) return null;
-  if (a.shape === "circle") return a.rMm;
-  return Math.max(a.xMm, a.yMm);
-}
-
-function _readBindingPayloadAperture(payload: Record<string, unknown> | undefined): V2Aperture | null {
-  const raw = payload?.aperture;
-  if (!raw || typeof raw !== "object") return null;
-  const shape = (raw as { shape?: unknown }).shape;
-  if (shape === "circle") {
-    const r = (raw as { rMm?: unknown }).rMm;
-    if (typeof r === "number" && r > 0) return { shape: "circle", rMm: r };
-  } else if (shape === "rectangle" || shape === "ellipse") {
-    const x = (raw as { xMm?: unknown }).xMm;
-    const y = (raw as { yMm?: unknown }).yMm;
-    if (typeof x === "number" && typeof y === "number" && x > 0 && y > 0) {
-      return { shape, xMm: x, yMm: y };
-    }
-  }
-  return null;
-}
-
-/** Build the flat per-anchor key — `<anchorId>_apertureMm`. Use this so
- *  callers don't hand-roll the join (which is easy to typo). */
-export function flatApertureKey(anchorId: string): string {
-  return `${anchorId}_apertureMm`;
-}
-
-/** Look up the per-instance aperture override for one (object, anchorId).
- *  Returns a V2Aperture for backward compatibility — flat scalar values
- *  are wrapped as { shape: "circle", rMm }. Reads through the precedence
- *  chain documented above; null when no override is present.
- */
-export function getPerObjectAperture(
-  sceneObject: SceneObject | { properties?: SceneObject["properties"] } | null | undefined,
-  anchorId: string,
-): V2Aperture | null {
-  if (!sceneObject) return null;
-  const props = sceneObject.properties as
-    | (Record<string, unknown> & {
-        anchorBindings?: AnchorBindingV2[];
-        perAnchorApertures?: Record<string, unknown>;
-      })
-    | undefined;
-  if (!props) return null;
-  // [1] new flat scalar
-  const flatKey = flatApertureKey(anchorId);
-  const flat = props[flatKey];
-  if (typeof flat === "number" && flat > 0) {
-    return { shape: "circle", rMm: flat };
-  }
-  // [2] legacy binding payload
-  const bindings = props.anchorBindings ?? [];
-  for (const b of bindings) {
-    if (b.anchorId === anchorId) {
-      const ap = _readBindingPayloadAperture(b.payload);
-      if (ap) return ap;
-    }
-  }
-  // [3] legacy transitional map
-  const map = props.perAnchorApertures;
-  if (map && typeof map === "object") {
-    const raw = (map as Record<string, unknown>)[anchorId];
-    if (raw && typeof raw === "object") {
-      return _readBindingPayloadAperture({ aperture: raw });
-    }
-  }
-  return null;
-}
 
 /** Effective scalar aperture (mm) for one (object, anchor) pair.
- *  Precedence: per-object override → asset anchor's apertureMm → null.
- */
+ *  Aperture is now defined exclusively at the asset level (PHY Editor →
+ *  Optical → Components); all SceneObjects sharing an asset share its
+ *  anchor `apertureMm`. The `sceneObject` parameter is retained for
+ *  callsite ergonomics but unused. Returns null when the asset anchor
+ *  has no apertureMm — caller picks a kind default. */
 export function getEffectiveApertureMm(
-  sceneObject: SceneObject | { properties?: SceneObject["properties"] } | null | undefined,
+  _sceneObject: SceneObject | { properties?: SceneObject["properties"] } | null | undefined,
   assetAnchor: { apertureMm?: number } | null | undefined,
-  anchorId: string,
+  _anchorId: string,
 ): number | null {
-  const override = getPerObjectAperture(sceneObject, anchorId);
-  const fromOverride = v2ApertureToScalarMm(override);
-  if (fromOverride != null && fromOverride > 0) return fromOverride;
   const fromAsset = assetAnchor?.apertureMm;
   if (typeof fromAsset === "number" && fromAsset > 0) return fromAsset;
   return null;
-}
-
-/** Mutate `properties` to set the flat scalar aperture field for a given
- *  anchor. Pass `null` to clear. Returns the updated properties dict;
- *  caller persists via PUT /api/objects/{id}. Aperture shape variants
- *  (rectangle/ellipse) are no longer supported through this writer —
- *  if the legacy V2Aperture shape is passed, it's collapsed to its
- *  largest half-extent and stored as a scalar.
- */
-export function setPerObjectAperture(
-  properties: SceneObject["properties"] | undefined,
-  anchorId: string,
-  aperture: V2Aperture | number | null,
-): SceneObject["properties"] {
-  const out = { ...(properties ?? {}) } as Record<string, unknown> & {
-    perAnchorApertures?: Record<string, V2Aperture>;
-  };
-  const flatKey = flatApertureKey(anchorId);
-  if (aperture == null) {
-    delete out[flatKey];
-  } else {
-    const scalar = typeof aperture === "number"
-      ? aperture
-      : (v2ApertureToScalarMm(aperture) ?? 0);
-    if (scalar > 0) out[flatKey] = scalar;
-    else delete out[flatKey];
-  }
-  // Drain the legacy map for the same anchor on every write so re-saves
-  // converge to the new shape (cheap garbage collection).
-  const map = out.perAnchorApertures;
-  if (map && typeof map === "object" && anchorId in map) {
-    const next = { ...map };
-    delete (next as Record<string, V2Aperture>)[anchorId];
-    if (Object.keys(next).length === 0) delete out.perAnchorApertures;
-    else out.perAnchorApertures = next;
-  }
-  return out as SceneObject["properties"];
 }
 
 // =============================================================================

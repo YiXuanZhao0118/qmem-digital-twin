@@ -35,13 +35,7 @@ import {
   rotateLabDir,
   threeToLabPointMm,
 } from "../../optical/frames";
-import {
-  getEffectiveApertureMm,
-  getPerObjectAperture,
-  getRfDirectionBodyLocal,
-  setPerObjectAperture,
-  type V2Aperture,
-} from "../../utils/v2Bindings";
+import { getRfDirectionBodyLocal } from "../../utils/v2Bindings";
 import { resolveAomRfDriveFromScene } from "../../utils/aomRfDrive";
 import {
   type EmissionKey,

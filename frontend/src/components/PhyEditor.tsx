@@ -31,6 +31,7 @@
 
 import { useSceneStore } from "../store/sceneStore";
 import { ComponentEditor } from "./ComponentEditor";
+import { IsolatorDevPage } from "../kinds/isolator/IsolatorDevPage";
 import { KindsEditor } from "./KindsEditor";
 
 export function PhyEditor() {
@@ -175,25 +176,13 @@ export function PhyEditor() {
           </div>
         </aside>
 
-        {/* RIGHT: selected sub-editor */}
+        {/* RIGHT: selected sub-editor. Default landing (no rail selection)
+            is the IsolatorDevPage — the live PBS tweak tool that used to
+            sit as a rail item itself. Clicking any rail button below
+            switches away from it; closing & re-entering PHY Editor
+            returns to it. */}
         <div className="phy-editor-pane">
-          {!phyEditorView && (
-            <div className="phy-editor-empty">
-              Pick a sub-editor on the left to begin.
-              <br />
-              <span style={{ opacity: 0.6, fontSize: 12 }}>
-                Optical → Kinds: read what each ElementKind expects from
-                its 3D model.
-                <br />
-                Optical → Components: edit the anchor positions on a
-                specific component's GLB.
-                <br />
-                RF → Components: place rf_in / rf_out anchors at the SMA
-                / coax port positions on the 3D model (e.g. each AD9959
-                channel, AOM RF input).
-              </span>
-            </div>
-          )}
+          {!phyEditorView && <IsolatorDevPage />}
           {opticalKinds && <KindsEditor domain="optical" />}
           {opticalComponents && <ComponentEditor domain="optical" />}
           {rfKinds && <KindsEditor domain="rf" />}

@@ -168,6 +168,17 @@ class AssetAnchor(CamelModel):
     # left null on optical anchors. Edited per-anchor in the PHY Editor
     # RF / Components view.
     connector_type: Literal["sma_male", "sma_female", "bnc_male", "bnc_female"] | None = None
+    # Asset-level fast-axis angle (deg) for waveplates and similar
+    # birefringent optics. PHY Editor → Optical → Components edits this on
+    # the intercept_in anchor (gated by plugin needsFastAxis). Per-instance
+    # rotation around the beam axis lives on
+    # SceneObject.properties.rotationAroundBeamAxisDeg; effective Jones-
+    # frame angle = this + that scalar.
+    fast_axis_deg_body_local: float | None = Field(
+        default=None,
+        validation_alias="fastAxisDegBodyLocal",
+        serialization_alias="fastAxisDegBodyLocal",
+    )
 
     @model_validator(mode="before")
     @classmethod

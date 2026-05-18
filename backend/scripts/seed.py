@@ -188,6 +188,17 @@ ASSETS = [
         "scale_factor": 1.0,
     },
     {
+        # Dedicated asset for the Coherent TORNOS isolator so its PBS anchors
+        # (front_pbs / back_pbs) can be edited in PHY Editor without polluting
+        # every other component that also uses primitive_box. Migration
+        # 0061_tornos_dedicated_asset reassigns the component pointer.
+        "name": "coherent_tornos_850_4_primitive",
+        "asset_type": "primitive",
+        "file_path": "primitive://box",
+        "unit": "mm",
+        "scale_factor": 1.0,
+    },
+    {
         "name": "primitive_mirror",
         "asset_type": "primitive",
         "file_path": "primitive://mirror",
@@ -959,7 +970,7 @@ COMPONENTS = [
         "component_type": "isolator",
         "brand": "Coherent",
         "model": "TORNOS-850-4",
-        "asset": "primitive_box",
+        "asset": "coherent_tornos_850_4_primitive",
         "properties": {
             "geometry": "isolator",
             "diameterMm": 22.0,

@@ -126,6 +126,11 @@ export interface KindContract {
    *  required-aperture anchor without a value; runtime align checks
    *  the same. */
   anchorsNeedingAperture?: AnchorId[];
+  /** Anchors whose `fastAxisDegBodyLocal` carries the asset-level fast
+   *  axis angle (waveplate `intercept_in`). Optional — defaults to []
+   *  when omitted. Per-instance rotation around the beam axis is
+   *  layered on top via SceneObject.transform. */
+  anchorsNeedingFastAxis?: AnchorId[];
   alignVariant: KindAlignVariant;
   alignToleranceMm: number;
   /** One-line description of what the align button does. Shown in the

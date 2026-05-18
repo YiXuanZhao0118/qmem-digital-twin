@@ -5,7 +5,7 @@
 // renders four small SVG plots: spectrum, beam profile, wavefront phase, and
 // pulse-temporal envelope.
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useSceneStore } from "../../store/sceneStore";
 import { FloatingPanel } from "../workspace/FloatingPanel";
@@ -427,18 +427,75 @@ function PolarizationDisplay({ jones }: { jones: [number, number, number, number
  *  spectrum / profile / phase / pulse plots. Used both by the legacy
  *  floating BeamScopePanel and embedded inline inside the optical-link
  *  viewer panel. Returns a Fragment (no FloatingPanel chrome). */
+type RawSegment = Record<string, unknown> & {
+  startThree?: { x: number; y: number; z: number };
+  endThree?: { x: number; y: number; z: number };
+  waistAtStartUm?: number;
+  waistAtEndUm?: number;
+  sourceObjectId?: string;
+  hitObjectId?: string;
+  wavelengthNm?: number;
+};
+
 export function BeamScopeContents() {
   const probe = useSceneStore((state) => state.scopeProbe);
   const physicsElements = useSceneStore((state) => state.scene.physicsElements);
+  const sceneObjects = useSceneStore((state) => state.scene.objects);
+
+  // Find every segment whose centreline passes within its own Gaussian
+  // waist of the probe point. When two beams are combined by a PBS or
+  // dichroic, both pass this test at the same probe and the user gets
+  // tabs to inspect each beam separately. Sorted closest-first so the
+  // default tab is the beam the user most likely clicked on. Recomputed
+  // on each store mutation so live changes to the ray trace (e.g., the
+  // user rotates a waveplate upstream) reorder/filter tabs as needed.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const overlappingSegments = useMemo<RawSegment[]>(() => {
+    if (!probe) return [];
+    const allSegs = ((window as unknown as { __rayTraceDebug?: RawSegment[] }).__rayTraceDebug) ?? [];
+    const px = probe.pointThree.x, py = probe.pointThree.y, pz = probe.pointThree.z;
+    type Match = { seg: RawSegment; distThree: number };
+    const matches: Match[] = [];
+    for (const seg of allSegs) {
+      const a = seg.startThree;
+      const b = seg.endThree;
+      if (!a || !b) continue;
+      const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+      const len2 = dx * dx + dy * dy + dz * dz;
+      if (len2 < 1e-18) continue;
+      let t = ((px - a.x) * dx + (py - a.y) * dy + (pz - a.z) * dz) / len2;
+      t = Math.max(0, Math.min(1, t));
+      const cx = a.x + dx * t, cy = a.y + dy * t, cz = a.z + dz * t;
+      const distThree = Math.sqrt((px - cx) ** 2 + (py - cy) ** 2 + (pz - cz) ** 2);
+      // Convert this segment's waist at the probe's t into Three units
+      // (1 Three unit = 100 mm via MM_PER_THREE_UNIT). A segment counts
+      // as "passing through" the probe when the probe is within the
+      // beam's geometric Gaussian radius — physically meaningful, and
+      // for PBS-coincident beams (distance ≈ 0) it always matches.
+      const wStartUm = typeof seg.waistAtStartUm === "number" ? seg.waistAtStartUm : 100;
+      const wEndUm = typeof seg.waistAtEndUm === "number" ? seg.waistAtEndUm : 100;
+      const waistAtProbeUm = wStartUm + (wEndUm - wStartUm) * t;
+      const waistThreshThree = waistAtProbeUm / 100_000; // µm → mm (÷1000) → Three (÷100)
+      if (distThree <= waistThreshThree) matches.push({ seg, distThree });
+    }
+    matches.sort((a, b) => a.distThree - b.distThree);
+    return matches.map((m) => m.seg);
+  }, [probe, physicsElements]);
+
+  const [activeBeamIndex, setActiveBeamIndex] = useState(0);
+  // A fresh probe always defaults to the closest beam.
+  useEffect(() => { setActiveBeamIndex(0); }, [probe]);
+  const safeBeamIndex = Math.min(activeBeamIndex, Math.max(0, overlappingSegments.length - 1));
 
   const snapshot = useMemo(() => {
     if (!probe) return null;
-    // probe.sourceComponentId is legacy — map to the first scene object of
-    // that component, then look up the OE by object_id (alembic 0014).
-    const sourceObj = (useSceneStore.getState().scene.objects).find((o) => o.componentId === probe.sourceComponentId);
-    const laserEl = sourceObj
-      ? physicsElements.find((el) => el.objectId === sourceObj.id)
-      : undefined;
+    // Multi-beam: each tab maps to one segment. The segment's source-
+    // object id determines which emitter's kindParams to use — this is
+    // critical when two different lasers are combined by a PBS, since
+    // each beam has its own waist / wavelength / mode.
+    const bestSeg = overlappingSegments[safeBeamIndex];
+    if (!bestSeg) return null;
+    const laserEl = physicsElements.find((el) => el.objectId === bestSeg.sourceObjectId);
     if (!laserEl) return null;
     const params = (laserEl.kindParams ?? {}) as {
       centerWavelengthNm?: number;
@@ -502,31 +559,11 @@ export function BeamScopeContents() {
         ? "multimode (rendered as TEM₀₀)"
         : "TEM₀₀";
     // probe.powerFactor / probe.polarization are the values AT CLICK TIME —
-    // stale once the user rotates the upstream HWP. Re-derive both from the
-    // current ray-trace by finding the segment whose start point is closest
-    // to the clicked world point. This makes the scope live-update whenever
-    // any upstream optic's kindParams change (the renderer republishes
-    // `__rayTraceDebug` on every scene re-render, and we depend on
-    // `physicsElements` so React re-runs this useMemo).
-    const segs = ((window as unknown as { __rayTraceDebug?: Array<Record<string, unknown>> }).__rayTraceDebug) ?? [];
-    const px = probe.pointThree.x, py = probe.pointThree.y, pz = probe.pointThree.z;
-    let bestSeg: Record<string, unknown> | null = null;
-    let bestDist = Infinity;
-    for (const seg of segs) {
-      const start = seg.startThree as { x: number; y: number; z: number } | undefined;
-      const end = seg.endThree as { x: number; y: number; z: number } | undefined;
-      if (!start || !end) continue;
-      // Distance from probe point to the segment line (clamped between
-      // endpoints) — small for the segment the user actually clicked on.
-      const dx = end.x - start.x, dy = end.y - start.y, dz = end.z - start.z;
-      const len2 = dx * dx + dy * dy + dz * dz;
-      if (len2 < 1e-18) continue;
-      let t = ((px - start.x) * dx + (py - start.y) * dy + (pz - start.z) * dz) / len2;
-      t = Math.max(0, Math.min(1, t));
-      const cx = start.x + dx * t, cy = start.y + dy * t, cz = start.z + dz * t;
-      const d2 = (px - cx) ** 2 + (py - cy) ** 2 + (pz - cz) ** 2;
-      if (d2 < bestDist) { bestDist = d2; bestSeg = seg; }
-    }
+    // stale once the user rotates the upstream HWP. The overlappingSegments
+    // useMemo already picked the live ray-trace segment for this tab (sorted
+    // by distance), so we just consume it. Keeping the same liveFactor / livePol
+    // fallback pattern preserves the pre-multi-beam behaviour for segments
+    // missing those fields.
     const liveFactor = typeof bestSeg?.powerFactorAtStart === "number"
       ? (bestSeg.powerFactorAtStart as number)
       : (typeof probe.powerFactor === "number" ? probe.powerFactor : 1.0);
@@ -622,7 +659,7 @@ export function BeamScopeContents() {
       aomSideband,
       fiberCoupling,
     };
-  }, [probe, physicsElements]);
+  }, [probe, physicsElements, overlappingSegments, safeBeamIndex]);
 
   if (!probe || !snapshot) {
     return (
@@ -802,8 +839,58 @@ export function BeamScopeContents() {
     pulsePoints.push({ x: t, y: isCw ? 1.0 : Math.exp(-(t * t) / 50) });
   }
 
+  const showTabs = overlappingSegments.length > 1;
+
   return (
     <>
+      {showTabs && (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            padding: "4px 6px 6px",
+            borderBottom: "1px solid rgba(255,255,255,0.05)",
+          }}
+        >
+          <div style={{ fontSize: 11, color: "#facc15" }}>
+            {`${overlappingSegments.length} beams overlapping at probe`}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {overlappingSegments.map((seg, i) => {
+              const src = sceneObjects.find((o) => o.id === seg.sourceObjectId);
+              const hit = seg.hitObjectId
+                ? sceneObjects.find((o) => o.id === seg.hitObjectId)
+                : null;
+              const wl =
+                typeof seg.wavelengthNm === "number"
+                  ? `${seg.wavelengthNm.toFixed(0)}nm`
+                  : "?";
+              const label = `${src?.name ?? "(emitter)"} → ${hit?.name ?? "(open)"}  ·  ${wl}`;
+              const active = i === safeBeamIndex;
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setActiveBeamIndex(i)}
+                  style={{
+                    fontSize: 10,
+                    padding: "2px 8px",
+                    borderRadius: 3,
+                    border: "1px solid",
+                    borderColor: active ? "#facc15" : "rgba(255,255,255,0.12)",
+                    background: active ? "rgba(250,204,21,0.15)" : "transparent",
+                    color: active ? "#facc15" : "#9ca3af",
+                    cursor: "pointer",
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
       <div className="beam-scope-segment-header" style={{
         fontSize: 11,
         color: "#9ca3af",

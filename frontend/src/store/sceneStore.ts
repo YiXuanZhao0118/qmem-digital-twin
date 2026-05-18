@@ -209,6 +209,53 @@ import {
   normalizeSceneData,
 } from "./_helpers";
 
+/** One reversible action in the undo/redo history. Created by mutation
+ *  actions that opt into history via recordAction. `description` is the
+ *  short label rendered in the UI; `undo`/`redo` are async because they
+ *  call the backend.
+ *
+ *  When a "create" action is redone, the new entity gets a fresh id —
+ *  the action's implementation is responsible for mutating its own
+ *  `undo` closure to target the new id before recordAction returns
+ *  control. See createObject / createComponent wrappers.
+ */
+export type HistoryEntry = {
+  description: string;
+  undo: () => Promise<void>;
+  redo: () => Promise<void>;
+};
+
+const HISTORY_MAX_DEPTH = 50;
+
+// Persist editorMode + phyEditorView across F5 / browser reload so the
+// user stays on the PHY Editor (or whichever sub-section) they had open.
+// Touch-only helpers; if localStorage is unavailable (private mode, SSR)
+// they degrade silently and the app falls back to the default scene view.
+const PERSIST_KEY = "qmem.editorState";
+type PersistedEditorState = {
+  editorMode?: "scene" | "phy-editor";
+  phyEditorView?:
+    | { domain: "optical" | "rf"; section: "kinds" | "components" }
+    | null;
+};
+function readPersistedEditorState(): PersistedEditorState {
+  try {
+    if (typeof window === "undefined") return {};
+    const raw = window.localStorage.getItem(PERSIST_KEY);
+    return raw ? (JSON.parse(raw) as PersistedEditorState) : {};
+  } catch {
+    return {};
+  }
+}
+function writePersistedEditorState(state: PersistedEditorState): void {
+  try {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(PERSIST_KEY, JSON.stringify(state));
+  } catch {
+    /* ignore */
+  }
+}
+
 type SceneStore = {
   scene: SceneData;
   previewObjectTransforms: Record<string, Partial<Pick<SceneObject, "xMm" | "yMm" | "zMm" | "rxDeg" | "ryDeg" | "rzDeg">>>;
@@ -272,6 +319,16 @@ type SceneStore = {
    *  ``null`` ≡ auto-fit to max(end of all intervals); never shrinks
    *  below max(end) at runtime. */
   userTimelineTotalNs: number | null;
+  // ─── Undo / Redo history (frontend-only, session-local) ──────────
+  undoStack: HistoryEntry[];
+  redoStack: HistoryEntry[];
+  /** True while an undo or redo is in flight. Drops spam-clicks and
+   *  prevents recordAction firing during inverse playback — the
+   *  inverse API call must not itself land in the stack. */
+  undoRedoBusy: boolean;
+  recordAction: (entry: HistoryEntry) => void;
+  undo: () => Promise<void>;
+  redo: () => Promise<void>;
   loadRfChains: () => Promise<void>;
   setScrubTimeNs: (tNs: number | null) => void;
   setUserTimelineTotalNs: (tNs: number | null) => void;
@@ -968,6 +1025,22 @@ function isComponentLocked(component?: ComponentItem): boolean {
   return component?.properties?.locked === true;
 }
 
+/** Build the inverse of a forward patch from the entity's old state.
+ *  The inverse only contains the keys present in the forward patch, so
+ *  applying it restores those exact fields without disturbing anything
+ *  else that may have changed concurrently.
+ */
+function extractInversePatch<T extends Record<string, unknown>>(
+  oldState: T,
+  forwardPatch: Partial<T>,
+): Partial<T> {
+  const inverse: Partial<T> = {};
+  for (const key of Object.keys(forwardPatch) as (keyof T)[]) {
+    inverse[key] = oldState[key];
+  }
+  return inverse;
+}
+
 export const useSceneStore = create<SceneStore>((set, get) => ({
   scene: emptyScene,
   previewObjectTransforms: {},
@@ -978,7 +1051,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   selectedObjectId: null,
   selectedObjectIds: [],
   selectedRelationId: null,
-  editorMode: "scene",
+  editorMode: readPersistedEditorState().editorMode ?? "scene",
   currentModule: "optics_seq",
   recentSimulationRuns: [],
   circuits: [],
@@ -986,12 +1059,15 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   emProblems: [],
   selectedEmProblemId: null,
   meshes: [],
-  phyEditorView: null,
+  phyEditorView: readPersistedEditorState().phyEditorView ?? null,
   editingAssetId: null,
   phyEditorDirty: false,
   rfChains: [],
   scrubTimeNs: null,
   userTimelineTotalNs: null,
+  undoStack: [],
+  redoStack: [],
+  undoRedoBusy: false,
   fiberEditingComponentId: null,
   rfCableEditingObjectId: null,
   transformPivotMode: "median",
@@ -1036,14 +1112,17 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     const targets = selectedTransformObjects(state);
     if (targets.length === 0) return;
     const cursor = state.transformCursorMm.left;
+    const forwardEntries = targets.map((object) => ({
+      id: object.id,
+      forward: { xMm: cursor.x, yMm: cursor.y, zMm: cursor.z } as SceneObjectPatch,
+      inverse: extractInversePatch(object, {
+        xMm: object.xMm,
+        yMm: object.yMm,
+        zMm: object.zMm,
+      }),
+    }));
     const updated = await Promise.all(
-      targets.map((object) =>
-        updateObjectApi(object.id, {
-          xMm: cursor.x,
-          yMm: cursor.y,
-          zMm: cursor.z,
-        }),
-      ),
+      forwardEntries.map((e) => updateObjectApi(e.id, e.forward)),
     );
     set((current) => ({
       scene: {
@@ -1051,6 +1130,19 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         objects: upsertObjects(current.scene.objects, updated),
       },
     }));
+    get().recordAction({
+      description: `Align ${targets.length} object(s) to cursor`,
+      undo: async () => {
+        await Promise.all(
+          forwardEntries.map((e) => updateObjectApi(e.id, e.inverse)),
+        );
+      },
+      redo: async () => {
+        await Promise.all(
+          forwardEntries.map((e) => updateObjectApi(e.id, e.forward)),
+        );
+      },
+    });
   },
 
   async moveSelectedOriginsToCursor() {
@@ -1058,31 +1150,37 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     const targets = selectedTransformObjects(state);
     if (targets.length === 0) return;
     const cursor = state.transformCursorMm.left;
+    const forwardEntries = targets.map((object) => {
+      const scale = objectScale(object);
+      const offset = objectOriginOffset(object);
+      const deltaWorld = {
+        x: object.xMm - cursor.x,
+        y: object.yMm - cursor.y,
+        z: object.zMm - cursor.z,
+      };
+      const deltaLocal = inverseRotateObjectVector(deltaWorld, object);
+      const nextOriginOffset = {
+        x: offset.x + deltaLocal.x / scale,
+        y: offset.y + deltaLocal.y / scale,
+        z: offset.z + deltaLocal.z / scale,
+      };
+      const forward: SceneObjectPatch = {
+        xMm: cursor.x,
+        yMm: cursor.y,
+        zMm: cursor.z,
+        properties: {
+          ...(object.properties ?? {}),
+          originOffsetMm: nextOriginOffset,
+        },
+      };
+      return {
+        id: object.id,
+        forward,
+        inverse: extractInversePatch(object, forward),
+      };
+    });
     const updated = await Promise.all(
-      targets.map((object) => {
-        const scale = objectScale(object);
-        const offset = objectOriginOffset(object);
-        const deltaWorld = {
-          x: object.xMm - cursor.x,
-          y: object.yMm - cursor.y,
-          z: object.zMm - cursor.z,
-        };
-        const deltaLocal = inverseRotateObjectVector(deltaWorld, object);
-        const nextOriginOffset = {
-          x: offset.x + deltaLocal.x / scale,
-          y: offset.y + deltaLocal.y / scale,
-          z: offset.z + deltaLocal.z / scale,
-        };
-        return updateObjectApi(object.id, {
-          xMm: cursor.x,
-          yMm: cursor.y,
-          zMm: cursor.z,
-          properties: {
-            ...(object.properties ?? {}),
-            originOffsetMm: nextOriginOffset,
-          },
-        });
-      }),
+      forwardEntries.map((e) => updateObjectApi(e.id, e.forward)),
     );
     set((current) => ({
       scene: {
@@ -1090,6 +1188,19 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         objects: upsertObjects(current.scene.objects, updated),
       },
     }));
+    get().recordAction({
+      description: `Move ${targets.length} origin(s) to cursor`,
+      undo: async () => {
+        await Promise.all(
+          forwardEntries.map((e) => updateObjectApi(e.id, e.inverse)),
+        );
+      },
+      redo: async () => {
+        await Promise.all(
+          forwardEntries.map((e) => updateObjectApi(e.id, e.forward)),
+        );
+      },
+    });
   },
 
   async rotateSelectedObjectsAroundCursor(axis, degrees) {
@@ -1098,30 +1209,36 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     const targets = selectedTransformObjects(state);
     if (targets.length === 0) return;
     const cursor = state.transformCursorMm.left;
+    const forwardEntries = targets.map((object) => {
+      const rotated = rotateVectorAroundAxis(
+        {
+          x: object.xMm - cursor.x,
+          y: object.yMm - cursor.y,
+          z: object.zMm - cursor.z,
+        },
+        axis,
+        degrees,
+      );
+      const rotationPatch =
+        axis === "x"
+          ? { rxDeg: object.rxDeg + degrees }
+          : axis === "y"
+            ? { ryDeg: object.ryDeg + degrees }
+            : { rzDeg: object.rzDeg + degrees };
+      const forward: SceneObjectPatch = {
+        xMm: cursor.x + rotated.x,
+        yMm: cursor.y + rotated.y,
+        zMm: cursor.z + rotated.z,
+        ...rotationPatch,
+      };
+      return {
+        id: object.id,
+        forward,
+        inverse: extractInversePatch(object, forward),
+      };
+    });
     const updated = await Promise.all(
-      targets.map((object) => {
-        const rotated = rotateVectorAroundAxis(
-          {
-            x: object.xMm - cursor.x,
-            y: object.yMm - cursor.y,
-            z: object.zMm - cursor.z,
-          },
-          axis,
-          degrees,
-        );
-        const rotationPatch =
-          axis === "x"
-            ? { rxDeg: object.rxDeg + degrees }
-            : axis === "y"
-              ? { ryDeg: object.ryDeg + degrees }
-              : { rzDeg: object.rzDeg + degrees };
-        return updateObjectApi(object.id, {
-          xMm: cursor.x + rotated.x,
-          yMm: cursor.y + rotated.y,
-          zMm: cursor.z + rotated.z,
-          ...rotationPatch,
-        });
-      }),
+      forwardEntries.map((e) => updateObjectApi(e.id, e.forward)),
     );
     set((current) => ({
       scene: {
@@ -1129,6 +1246,19 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         objects: upsertObjects(current.scene.objects, updated),
       },
     }));
+    get().recordAction({
+      description: `Rotate ${targets.length} object(s) ${degrees}° around ${axis}`,
+      undo: async () => {
+        await Promise.all(
+          forwardEntries.map((e) => updateObjectApi(e.id, e.inverse)),
+        );
+      },
+      redo: async () => {
+        await Promise.all(
+          forwardEntries.map((e) => updateObjectApi(e.id, e.forward)),
+        );
+      },
+    });
   },
 
   async scaleSelectedObjectsAroundCursor(factor) {
@@ -1137,19 +1267,25 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     const targets = selectedTransformObjects(state);
     if (targets.length === 0) return;
     const cursor = state.transformCursorMm.left;
+    const forwardEntries = targets.map((object) => {
+      const nextScale = Math.max(0.001, objectScale(object) * factor);
+      const forward: SceneObjectPatch = {
+        xMm: cursor.x + (object.xMm - cursor.x) * factor,
+        yMm: cursor.y + (object.yMm - cursor.y) * factor,
+        zMm: cursor.z + (object.zMm - cursor.z) * factor,
+        properties: {
+          ...(object.properties ?? {}),
+          objectScale: nextScale,
+        },
+      };
+      return {
+        id: object.id,
+        forward,
+        inverse: extractInversePatch(object, forward),
+      };
+    });
     const updated = await Promise.all(
-      targets.map((object) => {
-        const nextScale = Math.max(0.001, objectScale(object) * factor);
-        return updateObjectApi(object.id, {
-          xMm: cursor.x + (object.xMm - cursor.x) * factor,
-          yMm: cursor.y + (object.yMm - cursor.y) * factor,
-          zMm: cursor.z + (object.zMm - cursor.z) * factor,
-          properties: {
-            ...(object.properties ?? {}),
-            objectScale: nextScale,
-          },
-        });
-      }),
+      forwardEntries.map((e) => updateObjectApi(e.id, e.forward)),
     );
     set((current) => ({
       scene: {
@@ -1157,6 +1293,19 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         objects: upsertObjects(current.scene.objects, updated),
       },
     }));
+    get().recordAction({
+      description: `Scale ${targets.length} object(s) by ${factor.toFixed(2)}×`,
+      undo: async () => {
+        await Promise.all(
+          forwardEntries.map((e) => updateObjectApi(e.id, e.inverse)),
+        );
+      },
+      redo: async () => {
+        await Promise.all(
+          forwardEntries.map((e) => updateObjectApi(e.id, e.forward)),
+        );
+      },
+    });
   },
 
   setOverlayFlag(kind, visible) {
@@ -1540,6 +1689,37 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     });
     await get().loadScene();
     set({ selectedComponentId: component.id, selectedObjectId: null, selectedObjectIds: [] });
+    // History: undo deletes the spawned object first (FK constraint) and
+    // then the Component. Redo re-runs the same flow and updates the
+    // closed-over ids so a subsequent undo targets the fresh rows.
+    let currentObjectId = obj.id;
+    let currentComponentId = component.id;
+    get().recordAction({
+      description: `Create ${componentType}${name ? ` (${name})` : ""}`,
+      undo: async () => {
+        if (currentObjectId) await deleteObjectApi(currentObjectId);
+        await deleteComponentApi(currentComponentId);
+        await get().loadScene();
+      },
+      redo: async () => {
+        const recreatedComp = await createComponentApi({
+          ...(name ? { name } : {}),
+          componentType,
+          properties: { geometry: componentType },
+        });
+        const recreatedObj = await createObjectApi({
+          componentId: recreatedComp.id,
+          collectionId: get().activeCollectionId,
+          ...cursorSpawnPatch(
+            get().transformCursorMm.left,
+            get().scene.objects.length,
+          ),
+        });
+        currentComponentId = recreatedComp.id;
+        currentObjectId = recreatedObj.id;
+        await get().loadScene();
+      },
+    });
     return component;
   },
 
@@ -1609,6 +1789,33 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         objects: upsertObject(state.scene.objects, obj),
       },
     }));
+    // History: spawning an instance from an existing catalog row — undo
+    // just deletes the new SceneObject. The catalog Component itself
+    // stays put (it might be referenced by other instances).
+    if (obj.id) {
+      let currentObjectId = obj.id;
+      const componentName =
+        scene.components.find((c) => c.id === componentId)?.name ?? "object";
+      get().recordAction({
+        description: `Place ${componentName}`,
+        undo: async () => {
+          await deleteObjectApi(currentObjectId);
+        },
+        redo: async () => {
+          const recreated = await createObjectApi({
+            componentId,
+            collectionId: get().activeCollectionId,
+            ...cursorSpawnPatch(
+              get().transformCursorMm.left,
+              get().scene.objects.length,
+            ),
+            visible: true,
+            locked: false,
+          });
+          if (recreated.id) currentObjectId = recreated.id;
+        },
+      });
+    }
   },
 
   async createProgrammablePulseGenerator({ connectorType }) {
@@ -2684,6 +2891,13 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     const currentObject = get().scene.objects.find((object) => object.id === objectId);
     const safePatch = stripLockedTransformPatch(currentObject, patch);
     if (!safePatch) return;
+    // History: snapshot every field the patch will touch, before the API
+    // call lands. extractInversePatch handles both pose and property
+    // edits — the inverse patch only contains the keys actually changed
+    // so undo doesn't accidentally revert unrelated state.
+    const inverseForSingle = currentObject
+      ? extractInversePatch(currentObject, safePatch)
+      : null;
 
     // Rigid-group expansion: if the leading object lives in a collection
     // sub-tree where rigidTransform=true and the patch carries a pose change,
@@ -2708,6 +2922,16 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         return;
       }
       if (expansion.kind === "group") {
+        // Per-member snapshot — every member gets its own inverse patch
+        // covering exactly the keys the expansion writes to.
+        const groupSnapshot = expansion.entries.map((entry) => {
+          const member = get().scene.objects.find((o) => o.id === entry.id);
+          return {
+            id: entry.id,
+            inverse: member ? extractInversePatch(member, entry.patch) : null,
+            forward: entry.patch,
+          };
+        });
         const updated = await Promise.all(
           expansion.entries.map((entry) => updateObjectApi(entry.id, entry.patch)),
         );
@@ -2724,6 +2948,21 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
               objects: upsertObjects(current.scene.objects, updated),
             },
           };
+        });
+        get().recordAction({
+          description: `Move ${currentObject?.name ?? "objects"} (rigid group)`,
+          undo: async () => {
+            await Promise.all(
+              groupSnapshot
+                .filter((s) => s.inverse !== null)
+                .map((s) => updateObjectApi(s.id, s.inverse!)),
+            );
+          },
+          redo: async () => {
+            await Promise.all(
+              groupSnapshot.map((s) => updateObjectApi(s.id, s.forward)),
+            );
+          },
         });
         return;
       }
@@ -2742,6 +2981,17 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         objects: upsertObject(current.scene.objects, obj),
       },
     }));
+    if (inverseForSingle) {
+      get().recordAction({
+        description: `Update ${currentObject?.name ?? "object"}`,
+        undo: async () => {
+          await updateObjectApi(objectId, inverseForSingle);
+        },
+        redo: async () => {
+          await updateObjectApi(objectId, safePatch);
+        },
+      });
+    }
   },
 
   async updateSceneObjects(entries) {
@@ -2937,6 +3187,9 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
 
   async upsertOpticalElement(payload) {
     const existing = get().scene.physicsElements.find((item) => item.objectId === payload.objectId);
+    // History snapshot: capture the pre-state for both branches.
+    // - existing → undo = updateOpticalElementApi with old fields
+    // - none yet → undo = deleteOpticalElementApi
     let element: PhysicsElement;
     if (existing) {
       const { objectId, ...patch } = payload;
@@ -2952,6 +3205,37 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         scene: { ...state.scene, physicsElements: [...others, element] },
       };
     });
+    const objectName =
+      get().scene.objects.find((o) => o.id === payload.objectId)?.name ?? "object";
+    if (existing) {
+      // Snapshot the touched keys only — the patch shape, restored from
+      // the original element's values. Same pattern as updateSceneObject.
+      const { objectId: _ignored, ...patchShape } = payload;
+      const inverse = extractInversePatch(
+        existing as unknown as Record<string, unknown>,
+        patchShape as unknown as Record<string, unknown>,
+      );
+      get().recordAction({
+        description: `Edit physics: ${objectName}`,
+        undo: async () => {
+          await updateOpticalElementApi(payload.objectId, inverse as Partial<OpticalElementApiPayload>);
+        },
+        redo: async () => {
+          const { objectId, ...patch } = payload;
+          await updateOpticalElementApi(objectId, patch);
+        },
+      });
+    } else {
+      get().recordAction({
+        description: `Add physics: ${objectName}`,
+        undo: async () => {
+          await get().deleteOpticalElement(payload.objectId);
+        },
+        redo: async () => {
+          await createOpticalElementApi(payload);
+        },
+      });
+    }
     return element;
   },
 
@@ -3010,6 +3294,23 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     set((state) => ({
       scene: { ...state.scene, opticalLinks: [...state.scene.opticalLinks, link] },
     }));
+    // History: only the link itself is captured here. The snap-to-axis
+    // step below calls updateSceneObject which records its own entry,
+    // so a "create + snap" lands as two undo steps — that's acceptable
+    // for v1 (the user just hits Ctrl+Z twice). Redo of the link
+    // creation does NOT re-trigger snap; redo of the snap (next entry
+    // in the redoStack) is idempotent so it's harmless.
+    let currentLinkId = link.id;
+    get().recordAction({
+      description: "Create optical link",
+      undo: async () => {
+        await deleteOpticalLinkApi(currentLinkId);
+      },
+      redo: async () => {
+        const recreated = await createOpticalLinkApi(payload);
+        currentLinkId = recreated.id;
+      },
+    });
     // Snap-to-axis: translate the to-object so its intercept point sits
     // exactly on the from-object's beam axis. Skipped when validator says
     // the link is already on-axis (avoid jitter from rounding) or when
@@ -3054,6 +3355,10 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     // pushed the freed to-object 50 mm sideways to keep it off the
     // (former) axis; that was tied to the Suggested-links workflow,
     // which has been retired.
+    // Snapshot before delete so undo can re-create it. We only need
+    // the API-side payload fields; the id changes on re-create and is
+    // re-captured in the redo closure.
+    const linkBefore = get().scene.opticalLinks.find((l) => l.id === linkId);
     await deleteOpticalLinkApi(linkId);
     set((state) => ({
       scene: {
@@ -3061,6 +3366,27 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         opticalLinks: state.scene.opticalLinks.filter((l) => l.id !== linkId),
       },
     }));
+    if (linkBefore) {
+      const recreatePayload: OpticalLinkApiPayload = {
+        fromObjectId: linkBefore.fromObjectId,
+        fromPort: linkBefore.fromPort,
+        toObjectId: linkBefore.toObjectId,
+        toPort: linkBefore.toPort,
+        freeSpaceMm: linkBefore.freeSpaceMm,
+        properties: linkBefore.properties,
+      };
+      let currentLinkId = linkId;
+      get().recordAction({
+        description: "Delete optical link",
+        undo: async () => {
+          const recreated = await createOpticalLinkApi(recreatePayload);
+          currentLinkId = recreated.id;
+        },
+        redo: async () => {
+          await deleteOpticalLinkApi(currentLinkId);
+        },
+      });
+    }
   },
 
   async runOpticalSimulation() {
@@ -3448,6 +3774,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
 
   setEditorMode(mode) {
     set({ editorMode: mode });
+    writePersistedEditorState({ ...readPersistedEditorState(), editorMode: mode });
   },
 
   setCurrentModule(module) {
@@ -3531,6 +3858,60 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     set({ userTimelineTotalNs: tNs });
   },
 
+  recordAction(entry) {
+    // If we're in the middle of an undo/redo, the wrapped API calls
+    // will hit their own snapshot-and-record paths; suppress them so
+    // the inverse doesn't itself land in the stack.
+    if (get().undoRedoBusy) return;
+    set((state) => {
+      const next = [...state.undoStack, entry];
+      const trimmed =
+        next.length > HISTORY_MAX_DEPTH
+          ? next.slice(next.length - HISTORY_MAX_DEPTH)
+          : next;
+      // New action invalidates the redo path — standard editor behavior.
+      return { undoStack: trimmed, redoStack: [] };
+    });
+  },
+
+  async undo() {
+    if (get().undoRedoBusy) return;
+    const stack = get().undoStack;
+    if (stack.length === 0) return;
+    const entry = stack[stack.length - 1];
+    set({ undoStack: stack.slice(0, -1), undoRedoBusy: true });
+    try {
+      await entry.undo();
+      set((state) => ({ redoStack: [...state.redoStack, entry] }));
+    } catch (err) {
+      // Roll the entry back onto the undo stack so the user can retry
+      // or work around it. The entity it targets may have been deleted
+      // by another flow (e.g. AI agent rollback) — that's fine, the
+      // 404 ends up here.
+      console.error("[history] undo failed", err);
+      set((state) => ({ undoStack: [...state.undoStack, entry] }));
+    } finally {
+      set({ undoRedoBusy: false });
+    }
+  },
+
+  async redo() {
+    if (get().undoRedoBusy) return;
+    const stack = get().redoStack;
+    if (stack.length === 0) return;
+    const entry = stack[stack.length - 1];
+    set({ redoStack: stack.slice(0, -1), undoRedoBusy: true });
+    try {
+      await entry.redo();
+      set((state) => ({ undoStack: [...state.undoStack, entry] }));
+    } catch (err) {
+      console.error("[history] redo failed", err);
+      set((state) => ({ redoStack: [...state.redoStack, entry] }));
+    } finally {
+      set({ undoRedoBusy: false });
+    }
+  },
+
   async createEmProblem(payload) {
     const em = await createEmProblemApi(payload);
     set((state) => ({
@@ -3588,6 +3969,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       phyEditorView: null,
       phyEditorDirty: false,
     });
+    writePersistedEditorState({ editorMode: "phy-editor", phyEditorView: null });
   },
 
   closePhyEditor() {
@@ -3597,10 +3979,12 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       editingAssetId: null,
       phyEditorDirty: false,
     });
+    writePersistedEditorState({ editorMode: "scene", phyEditorView: null });
   },
 
   setPhyEditorView(view) {
     set({ phyEditorView: view, phyEditorDirty: false });
+    writePersistedEditorState({ ...readPersistedEditorState(), phyEditorView: view });
   },
 
   setPhyEditorDirty(dirty) {

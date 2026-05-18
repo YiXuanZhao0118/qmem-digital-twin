@@ -99,6 +99,24 @@ export default function App() {
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (isTypingTarget(event.target)) return;
+      // Undo / Redo intercept — must run BEFORE the generic "ignore
+      // Ctrl/Meta combos" guard below. Cmd+Z / Ctrl+Z = undo;
+      // Cmd+Shift+Z / Ctrl+Shift+Z / Cmd+Y / Ctrl+Y = redo.
+      const isMod = event.metaKey || event.ctrlKey;
+      if (isMod && !event.altKey && (event.key === "z" || event.key === "Z")) {
+        event.preventDefault();
+        if (event.shiftKey) {
+          void useSceneStore.getState().redo();
+        } else {
+          void useSceneStore.getState().undo();
+        }
+        return;
+      }
+      if (isMod && !event.altKey && !event.shiftKey && (event.key === "y" || event.key === "Y")) {
+        event.preventDefault();
+        void useSceneStore.getState().redo();
+        return;
+      }
       if (event.metaKey || event.ctrlKey || event.altKey) return;
 
       const overlay = NUMBER_KEY_OVERLAYS[event.key];

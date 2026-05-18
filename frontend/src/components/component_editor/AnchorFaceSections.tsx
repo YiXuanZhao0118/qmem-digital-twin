@@ -78,6 +78,101 @@ export function ConnectorTypeField({
 }
 
 // =============================================================================
+// ApertureShapeFields — Circle / Ellipse / Rectangle shape + size inputs.
+// Shared by EditableAnchorFields and the generic anchor inspector in
+// ComponentEditor.tsx so the three-shape behaviour stays consistent.
+// =============================================================================
+
+function inferShape(d: AnchorDraft): "circle" | "ellipse" | "rectangle" {
+  if (d.apertureShape) return d.apertureShape;
+  if (d.apertureWidthMm != null && d.apertureHeightMm != null) return "rectangle";
+  return "circle";
+}
+
+export function ApertureShapeFields({
+  draft,
+  updateDraft,
+}: {
+  draft: AnchorDraft;
+  updateDraft: (key: string, patch: Partial<AnchorDraft>) => void;
+}) {
+  const shape = inferShape(draft);
+  const widthLabel = shape === "ellipse" ? "Semi-major axis (mm)" : "Width (mm)";
+  const heightLabel = shape === "ellipse" ? "Semi-minor axis (mm)" : "Height (mm)";
+  return (
+    <div className="component-editor-aperture">
+      <label className="component-editor-coord">
+        <span>Aperture shape</span>
+        <select
+          value={shape}
+          onChange={(e) => {
+            const next = e.target.value as "circle" | "ellipse" | "rectangle";
+            const fallbackHalf = draft.apertureMm ?? 12.5;
+            const patch: Partial<AnchorDraft> = { apertureShape: next };
+            if (next !== "circle" && (draft.apertureWidthMm == null || draft.apertureHeightMm == null)) {
+              patch.apertureWidthMm = draft.apertureWidthMm ?? fallbackHalf * 2;
+              patch.apertureHeightMm = draft.apertureHeightMm ?? fallbackHalf * 2;
+            }
+            updateDraft(draft.__key, patch);
+          }}
+        >
+          <option value="circle">Circle (lens, mirror, waveplate)</option>
+          <option value="ellipse">Ellipse</option>
+          <option value="rectangle">Rectangle (PBS / BS cube)</option>
+        </select>
+      </label>
+      {shape === "circle" ? (
+        <label className="component-editor-coord">
+          <span>Radius (mm)</span>
+          <input
+            type="number"
+            step={0.1}
+            min={0}
+            value={draft.apertureMm ?? 12.5}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              if (!Number.isFinite(v)) return;
+              updateDraft(draft.__key, { apertureMm: v });
+            }}
+          />
+        </label>
+      ) : (
+        <>
+          <label className="component-editor-coord">
+            <span>{widthLabel}</span>
+            <input
+              type="number"
+              step={0.1}
+              min={0}
+              value={draft.apertureWidthMm ?? (draft.apertureMm ?? 12.5) * 2}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                if (!Number.isFinite(v)) return;
+                updateDraft(draft.__key, { apertureWidthMm: v });
+              }}
+            />
+          </label>
+          <label className="component-editor-coord">
+            <span>{heightLabel}</span>
+            <input
+              type="number"
+              step={0.1}
+              min={0}
+              value={draft.apertureHeightMm ?? (draft.apertureMm ?? 12.5) * 2}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                if (!Number.isFinite(v)) return;
+                updateDraft(draft.__key, { apertureHeightMm: v });
+              }}
+            />
+          </label>
+        </>
+      )}
+    </div>
+  );
+}
+
+// =============================================================================
 // EditableAnchorFields — reused inside every section below
 // =============================================================================
 
@@ -86,6 +181,7 @@ export function EditableAnchorFields({
   updateDraft,
   showDirection,
   showConnectorType = false,
+  showAperture = true,
   apertureMode: _apertureMode = "scalar",
 }: {
   draft: AnchorDraft;
@@ -96,6 +192,10 @@ export function EditableAnchorFields({
    *  endpoint editor) so they line up with the generic anchor editor's
    *  inline picker. Optical sections leave this false. */
   showConnectorType?: boolean;
+  /** When false, skip the aperture editor. Used by kinds whose beam
+   *  geometry is described by Gaussian modematching (laser_source,
+   *  tapered_amplifier, fiber) rather than a hard clear aperture. */
+  showAperture?: boolean;
   apertureMode?: "scalar" | "rectangle";
 }) {
   return (
@@ -146,9 +246,9 @@ export function EditableAnchorFields({
         </div>
       )}
       {showConnectorType && <ConnectorTypeField draft={draft} updateDraft={updateDraft} />}
-      {/* Aperture inputs intentionally removed (V2). Edit per-object on
-          the Object panel — the value lives in
-          objects.properties.anchorBindings[].payload.aperture. */}
+      {!showConnectorType && showAperture && (
+        <ApertureShapeFields draft={draft} updateDraft={updateDraft} />
+      )}
     </>
   );
 }
@@ -360,6 +460,7 @@ export function LaserSourceFaceSection({
         draft={draft}
         updateDraft={updateDraft}
         showDirection={true}
+        showAperture={false}
       />
     </div>
   );
@@ -430,6 +531,28 @@ export function WaveplateFaceSection({
         updateDraft={updateDraft}
         showDirection={true}
       />
+      <div className="component-editor-section-title" style={{ marginTop: 10 }}>
+        Fast-axis angle (deg, body-local)
+      </div>
+      <p className="mirror-face-hint" style={{ marginTop: 0 }}>
+        Asset-level base angle for the crystal cut, in body-local beam
+        coordinates. Per-instance rotation around the beam axis (Object
+        panel) is layered on top; effective Jones-frame angle = this +
+        instance rotation.
+      </p>
+      <label className="component-editor-coord">
+        <span>deg</span>
+        <input
+          type="number"
+          step={1}
+          value={draft.fastAxisDegBodyLocal ?? 0}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            if (!Number.isFinite(v)) return;
+            updateDraft(draft.__key, { fastAxisDegBodyLocal: v });
+          }}
+        />
+      </label>
     </div>
   );
 }

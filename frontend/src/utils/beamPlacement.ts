@@ -771,10 +771,8 @@ function findInterceptPoint(
         obj.ryDeg,
         obj.rzDeg,
       );
-      // V2: prefer per-object aperture override
-      // (objects.properties.anchorBindings[].payload.aperture or
-      // perAnchorApertures map); fall back to the asset anchor's
-      // legacy apertureMm seed; final fallback to DEFAULT_APERTURE_MM.
+      // Asset anchor's apertureMm (PHY Editor); fall back to
+      // DEFAULT_APERTURE_MM when missing.
       const eff = getEffectiveApertureMm(obj, anchor, anchor.id);
       const aperture = eff && eff > 0 ? eff : DEFAULT_APERTURE_MM;
       return {

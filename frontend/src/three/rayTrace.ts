@@ -52,6 +52,7 @@ import {
 import { getRfDirectionBodyLocal } from "../utils/v2Bindings";
 import { resolveAomRfDriveFromScene } from "../utils/aomRfDrive";
 import { getEmissionVisual } from "../utils/emissionVisuals";
+import { computeWaveplateFastAxisDeg } from "../utils/waveplateAxis";
 
 export const DEFAULT_MAX_LENGTH_MM = 1000;
 export const DEFAULT_MAX_BOUNCES = 8;
@@ -1815,10 +1816,19 @@ function traceOneRay(
       }
     } else if (kind === "waveplate") {
       // HWP / QWP — rotates polarisation. Mirrors backend apply_waveplate.
+      // Asset anchor `fastAxisDegBodyLocal` (PHY Editor) + SceneObject
+      // `properties.rotationAroundBeamAxisDeg` (Object pane knob).
+      const hitObj = ctx.objects.find((o) => o.id === hitObjectId);
+      const hitComp = hitObj
+        ? ctx.components.find((c) => c.id === hitObj.componentId)
+        : undefined;
+      const hitAsset = hitComp?.asset3dId
+        ? ctx.assets.find((a) => a.id === hitComp.asset3dId)
+        : undefined;
       nextPol = applyWaveplate(
         polarization,
         oeParams.retardanceLambda ?? 0.5,
-        oeParams.fastAxisDegBeamLocal ?? oeParams.fastAxisDeg ?? 0,
+        computeWaveplateFastAxisDeg(hitObj, hitAsset),
       );
     } else if (kind === "polarizer") {
       nextPol = applyPolarizer(

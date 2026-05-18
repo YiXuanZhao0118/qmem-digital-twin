@@ -10,7 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
 from app.models import (
+    Asset3D,
     BeamSegment,
+    Component,
     DeviceState,
     PhysicsElement,
     OpticalLink,
@@ -19,7 +21,11 @@ from app.models import (
 )
 from app.schemas import CamelModel
 from app.solvers.optical_solver import solve_chain
-from app.solvers.optics_seq import hydrate_aom_rf_drive, hydrate_laser_kind_params
+from app.solvers.optics_seq import (
+    hydrate_aom_rf_drive,
+    hydrate_laser_kind_params,
+    hydrate_waveplate_fast_axis,
+)
 from app.websocket import manager
 
 
@@ -40,9 +46,18 @@ async def run_optical(session: AsyncSession = Depends(get_session)) -> OpticalRu
     objects_by_id = {
         obj.id: obj for obj in (await session.scalars(select(SceneObject))).all()
     }
+    components_by_id = {
+        c.id: c for c in (await session.scalars(select(Component))).all()
+    }
+    assets_by_id = {
+        a.id: a for a in (await session.scalars(select(Asset3D))).all()
+    }
     device_states = list((await session.scalars(select(DeviceState))).all())
     hydrate_laser_kind_params(elements, objects_by_id)
     hydrate_aom_rf_drive(elements, objects_by_id, device_states=device_states)
+    hydrate_waveplate_fast_axis(
+        elements, objects_by_id, components_by_id=components_by_id, assets_by_id=assets_by_id,
+    )
 
     result = solve_chain(elements, links)
 
@@ -163,9 +178,18 @@ async def run_optical_transient(
     objects_by_id = {
         obj.id: obj for obj in (await session.scalars(select(SceneObject))).all()
     }
+    components_by_id = {
+        c.id: c for c in (await session.scalars(select(Component))).all()
+    }
+    assets_by_id = {
+        a.id: a for a in (await session.scalars(select(Asset3D))).all()
+    }
     device_states = list((await session.scalars(select(DeviceState))).all())
     hydrate_laser_kind_params(elements, objects_by_id)
     hydrate_aom_rf_drive(elements, objects_by_id, device_states=device_states)
+    hydrate_waveplate_fast_axis(
+        elements, objects_by_id, components_by_id=components_by_id, assets_by_id=assets_by_id,
+    )
 
     # alembic 0045: TimingProgram is no longer per-object. Per-object gating
     # factors now come from each object's properties.rfSources[].signal.gateBinding
