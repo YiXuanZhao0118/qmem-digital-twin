@@ -120,6 +120,57 @@ export type ComponentItem = {
   updatedAt?: string;
 };
 
+/** A single node in a Component's binding tree (alembic 0062).
+ *
+ *  Each node holds EITHER raw geometry (`targetKind="asset"` →
+ *  `asset3dId`) OR a nested Component (`targetKind="subcomponent"` →
+ *  `subComponentId`), positioned by a local transform relative to its
+ *  parent binding (or to the Component origin when `parentBindingId` is
+ *  null).
+ *
+ *  `tunableAxes` declares per-instance overridable axes (frame + bounds
+ *  + default); the actual SceneObject-level override values live on
+ *  `SceneObject.properties.bindingOverrides` keyed by binding id.
+ *
+ *  Bindings are NOT eager-loaded onto ComponentItem to keep
+ *  `/api/components` cheap. Fetch via `GET /api/components/{id}/bindings`
+ *  when needed (renderer walk, composite editor).
+ */
+export type ComponentBindingTunableAxisSpec = {
+  /** Frame the override is interpreted in. "parent" = the parent
+   *  binding's body-local frame (or component origin if root); "self" =
+   *  this binding's own body-local frame; "component_root" = always the
+   *  Component's root frame regardless of nesting. */
+  frame: "parent" | "self" | "component_root";
+  min?: number;
+  max?: number;
+  default?: number;
+};
+
+export type ComponentBinding = {
+  id: string;
+  componentId: string;
+  parentBindingId: string | null;
+  targetKind: "asset" | "subcomponent";
+  asset3dId: string | null;
+  subComponentId: string | null;
+  role: string;
+  localXMm: number;
+  localYMm: number;
+  localZMm: number;
+  localRxDeg: number;
+  localRyDeg: number;
+  localRzDeg: number;
+  /** Per-instance DoF declaration. Keys are pose-field names
+   *  (`localXMm`, `localRzDeg`, etc.); each value's `frame` says what
+   *  the override rotates / translates against. */
+  tunableAxes: Record<string, ComponentBindingTunableAxisSpec>;
+  sortOrder: number;
+  properties: Record<string, unknown>;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 export type SceneObject = {
   id: string;
   name: string;

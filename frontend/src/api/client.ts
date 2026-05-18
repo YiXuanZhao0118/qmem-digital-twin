@@ -32,6 +32,7 @@ import type {
   Collection,
   CollectionMember,
   CollectionTemplate,
+  ComponentBinding,
   ComponentItem,
   DeviceState,
   ElementKind,
@@ -165,6 +166,91 @@ export async function updateComponentApi(
 
 export async function deleteComponentApi(componentId: string): Promise<void> {
   await client.delete(`/api/components/${componentId}`);
+}
+
+
+// =============================================================================
+// ComponentBinding (alembic 0062): catalog-level composition tree.
+// =============================================================================
+
+/** Payload for creating a binding under a Component. Either `asset3dId` or
+ *  `subComponentId` must be set (and matching `targetKind`); the backend
+ *  rejects mismatched / dual / empty targets via CHECK constraints. */
+export type ComponentBindingCreatePayload = {
+  parentBindingId?: string | null;
+  targetKind: "asset" | "subcomponent";
+  asset3dId?: string | null;
+  subComponentId?: string | null;
+  role?: string;
+  localXMm?: number;
+  localYMm?: number;
+  localZMm?: number;
+  localRxDeg?: number;
+  localRyDeg?: number;
+  localRzDeg?: number;
+  tunableAxes?: ComponentBinding["tunableAxes"];
+  sortOrder?: number;
+  properties?: Record<string, unknown>;
+};
+
+/** Update is target-immutable — to retarget a binding, delete and recreate.
+ *  Keeps the cycle check trivially correct. */
+export type ComponentBindingUpdatePayload = {
+  parentBindingId?: string | null;
+  role?: string;
+  localXMm?: number;
+  localYMm?: number;
+  localZMm?: number;
+  localRxDeg?: number;
+  localRyDeg?: number;
+  localRzDeg?: number;
+  tunableAxes?: ComponentBinding["tunableAxes"];
+  sortOrder?: number;
+  properties?: Record<string, unknown>;
+};
+
+export async function listComponentBindingsApi(
+  componentId: string,
+): Promise<ComponentBinding[]> {
+  const response = await client.get<ComponentBinding[]>(
+    `/api/components/${componentId}/bindings`,
+  );
+  return response.data;
+}
+
+export async function createComponentBindingApi(
+  componentId: string,
+  payload: ComponentBindingCreatePayload,
+): Promise<ComponentBinding> {
+  const response = await client.post<ComponentBinding>(
+    `/api/components/${componentId}/bindings`,
+    payload,
+  );
+  return response.data;
+}
+
+export async function getComponentBindingApi(
+  bindingId: string,
+): Promise<ComponentBinding> {
+  const response = await client.get<ComponentBinding>(
+    `/api/component-bindings/${bindingId}`,
+  );
+  return response.data;
+}
+
+export async function updateComponentBindingApi(
+  bindingId: string,
+  patch: ComponentBindingUpdatePayload,
+): Promise<ComponentBinding> {
+  const response = await client.put<ComponentBinding>(
+    `/api/component-bindings/${bindingId}`,
+    patch,
+  );
+  return response.data;
+}
+
+export async function deleteComponentBindingApi(bindingId: string): Promise<void> {
+  await client.delete(`/api/component-bindings/${bindingId}`);
 }
 
 export type AssetUpdatePayload = {
