@@ -30,6 +30,7 @@ import type {
   ComponentBinding,
   ComponentItem,
   SceneData,
+  SceneObject,
 } from "../types/digitalTwin";
 
 
@@ -112,6 +113,172 @@ export function primaryAsset(
     return scene.assets.find((a) => a.id === component.asset3dId) ?? null;
   }
   return null;
+}
+
+
+/** Resolved local transform for a binding after per-instance overrides
+ *  have been applied. All six axes are non-optional so renderers can
+ *  consume the same shape without per-axis presence checks. */
+export type ResolvedLocalTransform = {
+  xMm: number;
+  yMm: number;
+  zMm: number;
+  rxDeg: number;
+  ryDeg: number;
+  rzDeg: number;
+};
+
+
+/** One node of a Component's binding tree, resolved to concrete data
+ *  (target object + effective transform). The tree shape mirrors the
+ *  binding tree exactly — ``children`` is the recursive resolution of
+ *  bindings whose parent is this one.
+ *
+ *  ``target`` is a discriminated union so a renderer can switch on
+ *  ``target.kind`` without re-walking the scene to figure out which
+ *  side of the polymorphic FK fired. ``"missing"`` covers the rare
+ *  case where the binding points at an asset / subcomponent the
+ *  scene doesn't include — most consumers should treat it the same
+ *  as a no-op (skip the subtree, log if surprising). */
+export type ResolvedBindingTarget =
+  | { kind: "asset"; asset: Asset3D }
+  | { kind: "subcomponent"; component: ComponentItem }
+  | { kind: "missing"; reason: "asset" | "subcomponent" };
+
+
+export type ResolvedBindingNode = {
+  binding: ComponentBinding;
+  target: ResolvedBindingTarget;
+  /** Effective local transform = binding's declared local* fields
+   *  merged with any per-instance ``SceneObject.properties.bindingOverrides``
+   *  entry for this binding. Override values take precedence per axis. */
+  localTransform: ResolvedLocalTransform;
+  children: ResolvedBindingNode[];
+};
+
+
+function _effectiveTransform(
+  binding: ComponentBinding,
+  override: Record<string, number> | null,
+): ResolvedLocalTransform {
+  // Override may set any subset of axes; missing axes keep the
+  // binding's declared default. Override values are interpreted in the
+  // frame declared by binding.tunableAxes — the renderer applies the
+  // frame mapping after this function returns since frame semantics
+  // depend on the surrounding tree state.
+  const v = (key: keyof ResolvedLocalTransform, fallback: number): number => {
+    if (!override) return fallback;
+    const raw = override[key];
+    return typeof raw === "number" && Number.isFinite(raw) ? raw : fallback;
+  };
+  return {
+    xMm: v("xMm", binding.localXMm),
+    yMm: v("yMm", binding.localYMm),
+    zMm: v("zMm", binding.localZMm),
+    rxDeg: v("rxDeg", binding.localRxDeg),
+    ryDeg: v("ryDeg", binding.localRyDeg),
+    rzDeg: v("rzDeg", binding.localRzDeg),
+  };
+}
+
+
+function _resolveTarget(
+  binding: ComponentBinding,
+  scene: Pick<SceneData, "assets" | "components">,
+): ResolvedBindingTarget {
+  if (binding.targetKind === "asset") {
+    if (!binding.asset3dId) return { kind: "missing", reason: "asset" };
+    const asset = scene.assets.find((a) => a.id === binding.asset3dId);
+    return asset
+      ? { kind: "asset", asset }
+      : { kind: "missing", reason: "asset" };
+  }
+  if (!binding.subComponentId) return { kind: "missing", reason: "subcomponent" };
+  const component = scene.components.find((c) => c.id === binding.subComponentId);
+  return component
+    ? { kind: "subcomponent", component }
+    : { kind: "missing", reason: "subcomponent" };
+}
+
+
+/** Resolve every root binding of ``component`` into a fully-populated
+ *  tree. Walk is purely synchronous + pure-data — the caller does
+ *  whatever it needs (build THREE.Group, compute bounding box, render
+ *  HTML preview, etc.) on the returned structure.
+ *
+ *  ``sceneObject`` carries the per-instance ``bindingOverrides`` map.
+ *  Pass ``null`` for catalog-time previews where no instance exists
+ *  yet — the resolver falls through to declared defaults for every
+ *  axis.
+ *
+ *  Sub-component bindings recurse into the sub-Component's OWN root
+ *  bindings, NOT into a per-instance override (sub-component
+ *  instances don't exist in this scope — the binding tree is purely
+ *  catalog-side). If a sub-Component has its own composite tree, the
+ *  walker descends through it; the result is a flattened renderer
+ *  payload that captures the full assembly geometry.
+ */
+export function resolveBindingTree(
+  component: ComponentItem,
+  sceneObject: SceneObject | null,
+  scene: Pick<SceneData, "componentBindings" | "assets" | "components">,
+): ResolvedBindingNode[] {
+  const overrides =
+    sceneObject?.properties as Record<string, unknown> | undefined;
+  return _resolveLevel(
+    rootBindingsOf(component.id, scene),
+    component.id,
+    overrides,
+    scene,
+    new Set([component.id]),
+  );
+}
+
+
+function _resolveLevel(
+  bindings: ComponentBinding[],
+  ownerComponentId: string,
+  overrides: Record<string, unknown> | undefined,
+  scene: Pick<SceneData, "componentBindings" | "assets" | "components">,
+  visited: Set<string>,
+): ResolvedBindingNode[] {
+  const out: ResolvedBindingNode[] = [];
+  for (const binding of bindings) {
+    const target = _resolveTarget(binding, scene);
+    const override = bindingOverrideFor(binding.id, overrides);
+    const localTransform = _effectiveTransform(binding, override);
+
+    // Recurse into THIS Component's children of the current binding...
+    const childBindings = childrenOf(binding, scene);
+    let children = _resolveLevel(
+      childBindings,
+      ownerComponentId,
+      overrides,
+      scene,
+      visited,
+    );
+
+    // ...AND when this binding points at a sub-Component, splice its
+    // own root bindings in as additional children. Sub-Component
+    // overrides do NOT carry over (no per-instance state at the
+    // sub-Component level — those are baked-in catalog templates).
+    if (target.kind === "subcomponent" && !visited.has(target.component.id)) {
+      const nextVisited = new Set(visited);
+      nextVisited.add(target.component.id);
+      const subRoots = rootBindingsOf(target.component.id, scene);
+      const subChildren = _resolveLevel(
+        subRoots,
+        target.component.id,
+        undefined,
+        scene,
+        nextVisited,
+      );
+      children = [...children, ...subChildren];
+    }
+
+    out.push({ binding, target, localTransform, children });
+  }
+  return out;
 }
 
 
