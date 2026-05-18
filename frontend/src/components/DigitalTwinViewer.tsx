@@ -31,7 +31,10 @@ import type { RfCableEndpointLink } from "../types/digitalTwin";
 import { useSceneStore, TOUCH_OPS, TOUCH_OP_BY_ID, type FeatureKind, type TouchOp } from "../store/sceneStore";
 import { createBeamPath } from "../three/beamPath";
 import { disposeObject, loadAssetObject } from "../three/loadAsset";
-import { shouldRenderViaBindings } from "../three/bindingRendererGate";
+import {
+  buildSceneObjectFromBindings,
+  shouldRenderViaBindings,
+} from "../three/bindingRendererGate";
 import { wavelengthToColor } from "../three/opticalBeams";
 import { traceBeamsFromLasers, _testReflect, gaussianWaistAtZ, type TraceSegment } from "../three/rayTrace";
 import { disposeFarfieldLobe, makeFarfieldLobe } from "../three/hornFarfield";
@@ -3812,27 +3815,30 @@ export function DigitalTwinViewer({
           // Stage A''' gate: when the componentType is allowlisted in
           // three/bindingRendererGate.ts::RENDER_VIA_BINDINGS, walk the
           // ComponentBinding tree via buildBindingTreeObject instead of
-          // calling the legacy single-asset loader below. The allowlist
-          // is empty by default — current path is unchanged. Flip a
+          // calling the legacy single-asset loader. The allowlist is
+          // empty by default — current path is unchanged. Flip a
           // componentType into the allowlist (one-line change in the
           // gate module) to migrate that kind off the legacy renderer.
-          // Implementation lives in Stage A'' (isolator) which fills in
-          // this branch with a raw-asset loader + transform stacking.
-          // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-          shouldRenderViaBindings(component.componentType);
-          const assetObject = await loadAssetObject(
-            component,
-            asset,
-            deviceState,
-            // Per-instance fiberNodes / rfCableNodes / radiusMm live on
-            // the SceneObject; see loadAssetObject signature for the V2
-            // contract.
-            propsForLoader as { fiberNodes?: FiberNode[]; rfCableNodes?: FiberNode[]; radiusMm?: number } | null,
-            {
-              fiberEndA: fiberEndAPlacement,
-              fiberEndB: fiberEndBPlacement,
-            },
-          );
+          // Stage A'' (isolator) is the first real consumer.
+          const assetObject = shouldRenderViaBindings(component.componentType)
+            ? await buildSceneObjectFromBindings(component, placement, sceneData)
+            : await loadAssetObject(
+                component,
+                asset,
+                deviceState,
+                // Per-instance fiberNodes / rfCableNodes / radiusMm live on
+                // the SceneObject; see loadAssetObject signature for the V2
+                // contract.
+                propsForLoader as {
+                  fiberNodes?: FiberNode[];
+                  rfCableNodes?: FiberNode[];
+                  radiusMm?: number;
+                } | null,
+                {
+                  fiberEndA: fiberEndAPlacement,
+                  fiberEndB: fiberEndBPlacement,
+                },
+              );
           if (cancelled) {
             disposeObject(assetObject);
             return;
