@@ -78,8 +78,10 @@ export const ISOLATOR_PBS_DEFAULTS_BY_MODEL: Record<string, {
                       back_pbs:  { pos: [0, 84, 0], rotationDeg: [0, 225, 0], prismType: "glan_laser" } },
   "IO-3D-850-VLP":  { front_pbs: { pos: [0,   4, 0], yRotationDeg:  0 },
                       back_pbs:  { pos: [0,  27, 0], yRotationDeg: 90 } },
-  "IO-5-850-HP":    { front_pbs: { pos: [0, 0, -18], yRotationDeg:  0, prismType: "glan_laser" },
-                      back_pbs:  { pos: [0, 0, +18], yRotationDeg: 90, prismType: "glan_laser" } },
+  // User-saved 2026-05-19: same Glan-Laser pose as IO-3-850-HP (same
+  // chassis family, same housing internals).
+  "IO-5-850-HP":    { front_pbs: { pos: [0, 11, 0], rotationDeg: [0, 270, 0], prismType: "glan_laser" },
+                      back_pbs:  { pos: [0, 84, 0], rotationDeg: [0, 225, 0], prismType: "glan_laser" } },
   "IO-5-850-VLP":   { front_pbs: { pos: [0,   5, 0], yRotationDeg:  0 },
                       back_pbs:  { pos: [0,  60, 0], yRotationDeg: 90 } },
   "IOT-5-850-VLP":  { front_pbs: { pos: [0, -27, 0], yRotationDeg:  0 },
