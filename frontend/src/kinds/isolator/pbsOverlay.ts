@@ -72,8 +72,10 @@ export const ISOLATOR_PBS_DEFAULTS_BY_MODEL: Record<string, {
   // `yRotationDeg` (degrees, single-DOF rotation around body Y) per row.
   // Canonical pose (yRotationDeg=0) = cement normal [1, 1, 0].
   // `prismType` defaults to "pbs_cube"; HP suffix → "glan_laser".
-  "IO-3-850-HP":    { front_pbs: { pos: [0, 70, +13], yRotationDeg: 135, prismType: "glan_laser" },
-                      back_pbs:  { pos: [0,  0, +13], yRotationDeg:   0, prismType: "glan_laser" } },
+  // User-saved Glan-Laser pose 2026-05-19: 3-axis Euler so the prism's
+  // optical axis lines up with the IO-3 housing bore.
+  "IO-3-850-HP":    { front_pbs: { pos: [0, 11, 0], rotationDeg: [0, 270, 0], prismType: "glan_laser" },
+                      back_pbs:  { pos: [0, 84, 0], rotationDeg: [0, 225, 0], prismType: "glan_laser" } },
   "IO-3D-850-VLP":  { front_pbs: { pos: [0,   4, 0], yRotationDeg:  0 },
                       back_pbs:  { pos: [0,  27, 0], yRotationDeg: 90 } },
   "IO-5-850-HP":    { front_pbs: { pos: [0, 0, -18], yRotationDeg:  0, prismType: "glan_laser" },
