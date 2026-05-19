@@ -32,10 +32,22 @@ import type {
 } from "../types/digitalTwin";
 import { mmToThree, labToThreeVector } from "./transformUtils";
 import {
+  MM_PER_THREE_UNIT,
   bodyLocalDirToLabDir,
   bodyLocalDirToWorldThree,
   labDirToThree as labDirToThreeAxisSwap,
 } from "../optical/frames";
+import {
+  type BeamMisaligned,
+  type Mat5,
+  applyOperator,
+  mCurvedMirror,
+  mCylindricalRotated,
+  mFlatMirror,
+  mGlassPlate,
+  mThinLens,
+} from "../optical/generalizedAbcd";
+import { deltaAlphaFromHit } from "./deltaAlphaFromHit";
 import { rotateLocalToLab } from "../utils/beamPlacement";
 import { FIBER_FERRULE_TIP_MM } from "../utils/fiberAnchorResolver";
 import { endpointOutwardBody } from "../utils/fiberAlignment";
@@ -181,32 +193,49 @@ export type TraceSegment = {
   emitterObjectId: string;
 };
 
+/** Per-axis Gaussian waist parameters. The viewer tracks X and Y INDEPENDENTLY
+ *  so astigmatic emitters (laser diodes) and one-axis-only optics (cylindrical
+ *  lenses, wedge prisms) display the correct beam shape. */
+export type BeamAxisState = {
+  waist0Um: number;   // w₀ — beam-waist radius (µm) along this transverse axis
+  waistZUm: number;   // cumulative path-length from emitter to this axis's waist (µm)
+  mSquared: number;
+};
+
 /** Running Gaussian-beam state propagated through traceOneRay. Carries the
- *  current waist parameters AND the path-length position of that waist so
- *  lens transforms can update where the focus is.
+ *  current per-axis waist parameters AND the path-length position of each
+ *  waist so lens transforms can update where the foci are.
  *
  *  Conventions:
- *    - All lengths in µm.
- *    - `waistZUm` is the cumulative path-length from the source emitter at
- *      which the waist sits. Before any lens it equals the laser's
- *      `waistZOffsetMm * 1000`. After a thin-lens hit at path-length
- *      `lensZUm` we re-derive waist0/waistZ from the new q-parameter
- *      (1/q' = 1/q - 1/f).
- *    - `mSquared` and `wavelengthNm` are invariant (Gaussian propagation
- *      preserves M² and λ; lens doesn't change them). */
+ *    - All lengths in µm. `waistZUm` is cumulative path-length from the
+ *      source emitter at which the waist sits.
+ *    - Spherical lenses focus BOTH axes with the same f.
+ *    - Cylindrical lenses focus ONE axis only (the other axis only sees
+ *      the glass plate's Snell-reduced path d/n, applied via applyGlassPlate).
+ *    - `mSquared` is per-axis (preserved by linear propagation).
+ *    - `wavelengthNm` is shared. */
 export type BeamState = {
-  waist0Um: number;   // w₀ — beam-waist radius (µm)
-  waistZUm: number;   // path-length from emitter to waist (µm)
-  mSquared: number;
+  x: BeamAxisState;
+  y: BeamAxisState;
   wavelengthNm: number;
 };
 
-/** Average of the emitter's X and Y forward spatial modes — for visual
- *  rendering we collapse to a single circular cross-section. Reads from
- *  laser_source's `spatialModeX/Y` AND tapered_amplifier's
- *  `outputSpatialModeX/Y` (the TA stores the OUTPUT mode under a different
- *  key). Falls back to 100 µm circular if neither is present. */
-function averageSpatialMode(element: PhysicsElement): BeamState {
+function axisFromParam(
+  mode: { waistUm?: number; mSquared?: number; waistZOffsetMm?: number } | null | undefined,
+  fallbackWaistUm: number,
+): BeamAxisState {
+  return {
+    waist0Um: mode?.waistUm ?? fallbackWaistUm,
+    waistZUm: 1000 * (mode?.waistZOffsetMm ?? 0),
+    mSquared: mode?.mSquared ?? 1,
+  };
+}
+
+/** Build the emitter's forward beam state. Reads laser_source's
+ *  `spatialModeX/Y` AND tapered_amplifier's `outputSpatialModeX/Y` (the TA
+ *  stores the OUTPUT mode under a different key). Falls back to 100 µm
+ *  circular per axis if neither is present. PRESERVES X/Y asymmetry. */
+function astigmaticSpatialMode(element: PhysicsElement): BeamState {
   const params = (element.kindParams ?? {}) as {
     centerWavelengthNm?: number;
     spatialModeX?: { waistUm?: number; mSquared?: number; waistZOffsetMm?: number };
@@ -216,63 +245,168 @@ function averageSpatialMode(element: PhysicsElement): BeamState {
   };
   const xMode = params.spatialModeX ?? params.outputSpatialModeX;
   const yMode = params.spatialModeY ?? params.outputSpatialModeY;
-  const wxUm = xMode?.waistUm ?? 100;
-  const wyUm = yMode?.waistUm ?? 100;
-  const mxSq = xMode?.mSquared ?? 1;
-  const mySq = yMode?.mSquared ?? 1;
-  const wxZ = xMode?.waistZOffsetMm ?? 0;
-  const wyZ = yMode?.waistZOffsetMm ?? 0;
   return {
-    waist0Um: 0.5 * (wxUm + wyUm),
-    waistZUm: 1000 * 0.5 * (wxZ + wyZ),
-    mSquared: 0.5 * (mxSq + mySq),
+    x: axisFromParam(xMode, 100),
+    y: axisFromParam(yMode, 100),
     wavelengthNm: typeof params.centerWavelengthNm === "number" ? params.centerWavelengthNm : 780,
   };
 }
 
-function rayleighRangeUm(state: BeamState): number {
-  const w0 = state.waist0Um;
+function rayleighRangeAxisUm(axis: BeamAxisState, wavelengthNm: number): number {
+  const w0 = axis.waist0Um;
   if (w0 <= 0) return 0;
-  return (Math.PI * w0 * w0) / (state.mSquared * state.wavelengthNm * 1e-3);
+  return (Math.PI * w0 * w0) / (axis.mSquared * wavelengthNm * 1e-3);
 }
 
-/** w(z) for a Gaussian beam with M² scaling. z is path-length from the
- *  emitter (µm). Returns radius in µm. */
-export function gaussianWaistAtZ(zUm: number, state: BeamState): number {
-  const w0 = state.waist0Um;
+/** w(z) along one axis at cumulative path-length zUm (µm). */
+export function gaussianWaistAtZAxis(
+  zUm: number,
+  axis: BeamAxisState,
+  wavelengthNm: number,
+): number {
+  const w0 = axis.waist0Um;
   if (w0 <= 0) return w0;
-  const dz = zUm - state.waistZUm;
-  const zR = rayleighRangeUm(state);
+  const dz = zUm - axis.waistZUm;
+  const zR = rayleighRangeAxisUm(axis, wavelengthNm);
   return w0 * Math.sqrt(1 + (dz / zR) ** 2);
 }
 
-/** Apply a thin lens of focal length `focalUm` at path-length `lensZUm`.
- *  Uses 1/q' = 1/q - 1/f on the complex beam parameter q = (z - z_w) + i·z_R
- *  and re-derives the new waist (w₀') and new waist position (z_w'). After
- *  this the BeamState describes the focused beam downstream of the lens. */
-function applyThinLens(state: BeamState, lensZUm: number, focalUm: number): BeamState {
-  if (state.waist0Um <= 0 || !Number.isFinite(focalUm) || Math.abs(focalUm) < 1e-6) return state;
-  const dz = lensZUm - state.waistZUm;
-  const zR = rayleighRangeUm(state);
-  // q = a + ib where a = dz, b = zR.
-  const a = dz, b = zR;
-  const denom = a * a + b * b;
-  if (denom < 1e-12) return state;
-  // 1/q  = a/denom - i·b/denom  ;  1/q' = 1/q - 1/f
-  const reInv = a / denom - 1 / focalUm;
-  const imInv = -b / denom;
+/** Averaged X/Y spot radius (µm) at cumulative path-length zUm. Used for
+ *  visual rendering as a single circular cross-section. Note: this averages
+ *  AT DISPLAY TIME (not at the emitter), so asymmetric beams get correct
+ *  per-axis Rayleigh ranges. */
+export function gaussianWaistAtZ(zUm: number, state: BeamState): number {
+  const wx = gaussianWaistAtZAxis(zUm, state.x, state.wavelengthNm);
+  const wy = gaussianWaistAtZAxis(zUm, state.y, state.wavelengthNm);
+  return 0.5 * (wx + wy);
+}
+
+/** Apply a thin-lens ABCD update to one axis at cumulative path-length
+ *  `lensZUm`. Uses 1/q' = 1/q - 1/f with q = (z − z_w) + i·z_R, then
+ *  extracts the new waist position and waist0. */
+function applyThinLensAxis(
+  axis: BeamAxisState,
+  wavelengthNm: number,
+  lensZUm: number,
+  focalUm: number,
+): BeamAxisState {
+  if (axis.waist0Um <= 0 || !Number.isFinite(focalUm) || Math.abs(focalUm) < 1e-6) return axis;
+  const dz = lensZUm - axis.waistZUm;
+  const zR = rayleighRangeAxisUm(axis, wavelengthNm);
+  const denom = dz * dz + zR * zR;
+  if (denom < 1e-12) return axis;
+  const reInv = dz / denom - 1 / focalUm;
+  const imInv = -zR / denom;
   const denomInv = reInv * reInv + imInv * imInv;
-  if (denomInv < 1e-30) return state;
-  // q' = 1/(reInv + i·imInv) = (reInv - i·imInv)/denomInv
+  if (denomInv < 1e-30) return axis;
   const reQ = reInv / denomInv;
   const imQ = -imInv / denomInv;
-  // q' has the form (lensZ - waistZ_new) + i·z_R_new ⇒ extract:
   const waistZNew = lensZUm - reQ;
   const zRNew = Math.abs(imQ);
-  if (zRNew < 1e-12) return state;
-  // z_R = π · w₀² / (M² · λ) ⇒ w₀ = √(z_R · M² · λ / π)
-  const w0New = Math.sqrt((zRNew * state.mSquared * state.wavelengthNm * 1e-3) / Math.PI);
-  return { ...state, waist0Um: w0New, waistZUm: waistZNew };
+  if (zRNew < 1e-12) return axis;
+  const w0New = Math.sqrt((zRNew * axis.mSquared * wavelengthNm * 1e-3) / Math.PI);
+  return { ...axis, waist0Um: w0New, waistZUm: waistZNew };
+}
+
+/** Spherical thin lens — focuses BOTH axes with the same focal length. */
+function applyThinLens(state: BeamState, lensZUm: number, focalUm: number): BeamState {
+  return {
+    ...state,
+    x: applyThinLensAxis(state.x, state.wavelengthNm, lensZUm, focalUm),
+    y: applyThinLensAxis(state.y, state.wavelengthNm, lensZUm, focalUm),
+  };
+}
+
+/** Cylindrical lens — focuses ONE axis only (axis='x' or 'y'). The other
+ *  axis is unchanged at the envelope level (its glass-plate body is a
+ *  separate effect handled by applyGlassPlate when thickness is known). */
+function applyCylindricalLens(
+  state: BeamState,
+  lensZUm: number,
+  focalUm: number,
+  cylAxis: "x" | "y",
+): BeamState {
+  if (cylAxis === "x") {
+    return { ...state, x: applyThinLensAxis(state.x, state.wavelengthNm, lensZUm, focalUm) };
+  }
+  return { ...state, y: applyThinLensAxis(state.y, state.wavelengthNm, lensZUm, focalUm) };
+}
+
+/** Bridge BeamState → BeamMisaligned (q-parameter form anchored at currentZUm,
+ *  chief-ray = 0). Used to invoke generalized 5x5 ABCD operators at a hit
+ *  plane. */
+function beamStateToBeamMisaligned(state: BeamState, currentZUm: number): BeamMisaligned {
+  const zRxMm = rayleighRangeAxisUm(state.x, state.wavelengthNm) * 1e-3;
+  const zRyMm = rayleighRangeAxisUm(state.y, state.wavelengthNm) * 1e-3;
+  const qX = { re: (currentZUm - state.x.waistZUm) * 1e-3, im: zRxMm };
+  const qY = { re: (currentZUm - state.y.waistZUm) * 1e-3, im: zRyMm };
+  return {
+    qX,
+    qY,
+    xCMm: 0,
+    yCMm: 0,
+    thetaXCRad: 0,
+    thetaYCRad: 0,
+    wavelengthNm: state.wavelengthNm,
+  };
+}
+
+/** Bridge BeamMisaligned → BeamState (re-derive per-axis waist0, waistZ from
+ *  q at currentZUm). M² is preserved separately because q doesn't carry it. */
+function beamStateFromBeamMisaligned(
+  bm: BeamMisaligned,
+  currentZUm: number,
+  mSquared: { x: number; y: number },
+): BeamState {
+  const lamMm = bm.wavelengthNm * 1e-6;
+  const zRxMm = Math.max(bm.qX.im, 1e-12);
+  const zRyMm = Math.max(bm.qY.im, 1e-12);
+  const w0xMm = Math.sqrt((zRxMm * mSquared.x * lamMm) / Math.PI);
+  const w0yMm = Math.sqrt((zRyMm * mSquared.y * lamMm) / Math.PI);
+  return {
+    x: {
+      waist0Um: w0xMm * 1000,
+      waistZUm: currentZUm - bm.qX.re * 1000,
+      mSquared: mSquared.x,
+    },
+    y: {
+      waist0Um: w0yMm * 1000,
+      waistZUm: currentZUm - bm.qY.re * 1000,
+      mSquared: mSquared.y,
+    },
+    wavelengthNm: bm.wavelengthNm,
+  };
+}
+
+/** Apply a 5x5 augmented ABCD operator to a BeamState at the current hit
+ *  plane. Returns the updated BeamState PLUS the chief-ray drift (lateral
+ *  shift x_c, y_c in mm; angular kick θ_xc, θ_yc in rad) imposed by the
+ *  operator's 5th column. Caller uses the chief-ray drift to translate the
+ *  outgoing ray's origin and rotate its direction in lab frame. */
+function applyOperatorToBeamState(
+  state: BeamState,
+  M: Mat5,
+  currentZUm: number,
+): {
+  nextMode: BeamState;
+  xCMm: number;
+  yCMm: number;
+  thetaXCRad: number;
+  thetaYCRad: number;
+} {
+  const bm = beamStateToBeamMisaligned(state, currentZUm);
+  const out = applyOperator(bm, M);
+  const nextMode = beamStateFromBeamMisaligned(out, currentZUm, {
+    x: state.x.mSquared,
+    y: state.y.mSquared,
+  });
+  return {
+    nextMode,
+    xCMm: out.xCMm,
+    yCMm: out.yCMm,
+    thetaXCRad: out.thetaXCRad,
+    thetaYCRad: out.thetaYCRad,
+  };
 }
 
 const ABSORBING_KINDS: ReadonlySet<ElementKind> = new Set<ElementKind>([
@@ -681,18 +815,12 @@ function taInputSpatialMode(element: PhysicsElement): BeamState {
     outputSpatialModeX?: { waistUm?: number; mSquared?: number; waistZOffsetMm?: number };
     outputSpatialModeY?: { waistUm?: number; mSquared?: number; waistZOffsetMm?: number };
   };
-  const x = params.inputSpatialModeX ?? params.backwardSpatialModeX ?? params.outputSpatialModeX;
-  const y = params.inputSpatialModeY ?? params.backwardSpatialModeY ?? params.outputSpatialModeY;
-  const wxUm = x?.waistUm ?? y?.waistUm ?? 100;
-  const wyUm = y?.waistUm ?? x?.waistUm ?? 100;
-  const mxSq = x?.mSquared ?? y?.mSquared ?? 1;
-  const mySq = y?.mSquared ?? x?.mSquared ?? 1;
-  const wxZ = x?.waistZOffsetMm ?? 0;
-  const wyZ = y?.waistZOffsetMm ?? 0;
+  const xMode = params.inputSpatialModeX ?? params.backwardSpatialModeX ?? params.outputSpatialModeX;
+  const yMode = params.inputSpatialModeY ?? params.backwardSpatialModeY ?? params.outputSpatialModeY;
+  const fallback = xMode?.waistUm ?? yMode?.waistUm ?? 100;
   return {
-    waist0Um: 0.5 * (wxUm + wyUm),
-    waistZUm: 1000 * 0.5 * (wxZ + wyZ),
-    mSquared: 0.5 * (mxSq + mySq),
+    x: axisFromParam(xMode, fallback),
+    y: axisFromParam(yMode, fallback),
     wavelengthNm: typeof params.centerWavelengthNm === "number" ? params.centerWavelengthNm : 780,
   };
 }
@@ -952,8 +1080,21 @@ function traceOneRay(
     // assumed unchanged by the metallic mirror (good approximation for
     // protected silver / gold; not strictly true but close for the visual).
     const oe = elementForObject(hitObjectId, ctx);
-    const refl = Number(((oe?.kindParams ?? {}) as { reflectivity?: number }).reflectivity);
+    const oeParamsMir = (oe?.kindParams ?? {}) as { reflectivity?: number; radiusOfCurvatureMm?: number };
+    const refl = Number(oeParamsMir.reflectivity);
     const r = Number.isFinite(refl) ? Math.max(0, Math.min(1, refl)) : 0.99;
+    // Envelope update: flat mirror flips q (wavefront reversal); curved
+    // mirror adds focusing (f = R/2). Chief-ray dir is already correct via
+    // mesh-normal reflectDirection above, so (δ, α) = 0 in the operator.
+    let nextModeMir = mode;
+    const radiusMm = oeParamsMir.radiusOfCurvatureMm;
+    if (Number.isFinite(radiusMm) && Math.abs(radiusMm as number) > 1e-12) {
+      const op = applyOperatorToBeamState(mode, mCurvedMirror(radiusMm as number), newPathMm * 1000);
+      nextModeMir = op.nextMode;
+    } else {
+      const op = applyOperatorToBeamState(mode, mFlatMirror(), newPathMm * 1000);
+      nextModeMir = op.nextMode;
+    }
     segments.push(
       ...traceOneRay(
         newOrigin,
@@ -965,7 +1106,7 @@ function traceOneRay(
         wavelengthNm,
         maxLengthMm,
         maxBounces,
-        mode,
+        nextModeMir,
         newPathMm,
         sourceComponentId,
         powerFactor * r,
@@ -1265,10 +1406,10 @@ function traceOneRay(
     const mfdExitUm = exitParams.modeFieldDiameterUm ?? 5.3;
     const wfEntryM = (mfdEntryUm / 2) * 1e-6;
     const wfExitM  = (mfdExitUm  / 2) * 1e-6;
-    // Beam waist at hit — the rayTrace's BeamState is a single isotropic
-    // value (waist0Um). MFD overlap is a circular approximation so this
-    // is fine for the MVP; astigmatic beams collapse to their average waist.
-    const wbUm = mode.waist0Um ?? 100;
+    // Beam waist at hit — MFD overlap is a circular approximation, so
+    // collapse astigmatic X/Y waists to their average. (For accurate
+    // astigmatic coupling, the per-axis solver would replace this.)
+    const wbUm = 0.5 * ((mode.x.waist0Um ?? 100) + (mode.y.waist0Um ?? 100));
     const wbM = wbUm * 1e-6;
     // Lateral offset between beam axis and entry anchor (in three units = 100 mm).
     const offsetThree = hitPoint.clone().sub(entryThree);
@@ -1351,10 +1492,14 @@ function traceOneRay(
     // a downstream collimating lens see a far-field source instead of
     // a near-field point. M² ≈ 1 for SM/PM (fiber is a spatial filter).
     const downstreamWaistPathUm = (newPathMm + arcLengthMm) * 1000;
-    const outputMode: BeamState = {
+    const fiberAxis: BeamAxisState = {
       waist0Um: mfdExitUm / 2,
       waistZUm: downstreamWaistPathUm,
       mSquared: 1,
+    };
+    const outputMode: BeamState = {
+      x: fiberAxis,
+      y: { ...fiberAxis },
       wavelengthNm: mode.wavelengthNm ?? lambdaNm,
     };
     const fiberCouplingMeta = {
@@ -1808,11 +1953,64 @@ function traceOneRay(
       transmissionAxisDeg?: number;
       extinctionRatioDb?: number;
     };
+    // D.3b — structural foundation for chief-ray deflection.
+    // Lens dispatch now goes through the generalized 5×5 ABCD operator with
+    // (δ, α) = 0. This is mathematically equivalent to the D.3a per-axis
+    // applyThinLens (since with no misalignment, the 5×5's chief-ray block
+    // is identity), but sets up the path that future work can populate with
+    // geometry-derived (δ, α).
+    //
+    // Why δ, α are currently zero (TODO for D.3c / Phase E):
+    //   - δ = (hit − element_center). `hit.object.getWorldPosition()` gives
+    //     the GLB wrapper origin, NOT the lens's optical center. Computing
+    //     the true center requires resolving an asset anchor (e.g.
+    //     "intercept_in") into world coordinates per SceneObject pose.
+    //   - α from mesh face.normal is the SURFACE normal at the hit point. For
+    //     curved lens faces this varies across the surface and is NOT the
+    //     lens's optical-axis tilt. The correct α needs the lens body-local
+    //     optical axis rotated by SceneObject Euler, compared to beam dir.
+    //
+    // Defaults below: no chief-ray shift / direction change.
+    let nextDir = dir;
+    let nextOriginShift: THREE.Vector3 | null = null;
     if (kind === "lens_biconvex" || kind === "lens_plano_convex" || kind === "lens_cylindrical") {
-      // Apply the thin-lens ABCD on the running Gaussian state.
       const focalMm = typeof oeParams.focalMm === "number" ? oeParams.focalMm : NaN;
       if (Number.isFinite(focalMm)) {
-        nextMode = applyThinLens(mode, newPathMm * 1000, focalMm * 1000);
+        let M: Mat5;
+        if (kind === "lens_cylindrical") {
+          const cylParams = oeParams as { focalMm?: number; cylindricalAxis?: "x" | "y" };
+          const cylAxis: "x" | "y" = cylParams.cylindricalAxis === "y" ? "y" : "x";
+          M = mCylindricalRotated(focalMm, 0, { axis: cylAxis });
+        } else {
+          M = mThinLens(focalMm);
+        }
+        const op = applyOperatorToBeamState(mode, M, newPathMm * 1000);
+        nextMode = op.nextMode;
+        // With (δ, α) = 0, op.xCMm/yCMm/thetaXCRad/thetaYCRad are all 0;
+        // the rotation/shift blocks below stay no-ops. They're kept here so
+        // when geometry-derived (δ, α) lands later, this dispatch already
+        // has the wiring to translate origin + rotate dir accordingly.
+        if (Math.abs(op.xCMm) > 1e-9 || Math.abs(op.yCMm) > 1e-9) {
+          const elementCenterWorld = new THREE.Vector3();
+          hit.object.getWorldPosition(elementCenterWorld);
+          const ml = deltaAlphaFromHit({
+            hitPointWorld: hitPoint,
+            incomingDir: dir,
+            elementCenterWorld,
+            elementNormalWorld: worldNormal,
+          });
+          nextOriginShift = ml.beamEx
+            .clone()
+            .multiplyScalar(op.xCMm / MM_PER_THREE_UNIT)
+            .add(ml.beamEy.clone().multiplyScalar(op.yCMm / MM_PER_THREE_UNIT));
+          if (Math.abs(op.thetaXCRad) > 1e-9 || Math.abs(op.thetaYCRad) > 1e-9) {
+            nextDir = dir
+              .clone()
+              .add(ml.beamEx.clone().multiplyScalar(op.thetaXCRad))
+              .add(ml.beamEy.clone().multiplyScalar(op.thetaYCRad))
+              .normalize();
+          }
+        }
       }
     } else if (kind === "waveplate") {
       // HWP / QWP — rotates polarisation. Mirrors backend apply_waveplate.
@@ -1830,6 +2028,20 @@ function traceOneRay(
         oeParams.retardanceLambda ?? 0.5,
         computeWaveplateFastAxisDeg(hitObj, hitAsset),
       );
+      // Envelope: waveplate body is a glass slab; apply Snell-reduced d/n
+      // propagation when thicknessMm + refractiveIndex are present.
+      const wpParams = oeParams as { thicknessMm?: number; refractiveIndex?: number };
+      if (
+        Number.isFinite(wpParams.thicknessMm) && (wpParams.thicknessMm as number) > 0
+        && Number.isFinite(wpParams.refractiveIndex) && (wpParams.refractiveIndex as number) > 0
+      ) {
+        const op = applyOperatorToBeamState(
+          nextMode,
+          mGlassPlate(wpParams.thicknessMm as number, wpParams.refractiveIndex as number),
+          newPathMm * 1000,
+        );
+        nextMode = op.nextMode;
+      }
     } else if (kind === "polarizer") {
       nextPol = applyPolarizer(
         polarization,
@@ -1862,11 +2074,12 @@ function traceOneRay(
           : 1.0;
       tx = Math.max(0, Math.min(1, txCandidate));
     }
-    const newOrigin = hitPoint.clone().add(dir.clone().multiplyScalar(RAY_EPS_THREE));
+    const originBase = nextOriginShift !== null ? hitPoint.clone().add(nextOriginShift) : hitPoint.clone();
+    const newOrigin = originBase.add(nextDir.clone().multiplyScalar(RAY_EPS_THREE));
     segments.push(
       ...traceOneRay(
         newOrigin,
-        dir,
+        nextDir,
         depth + 1,
         branch,
         ctx,
@@ -2096,7 +2309,7 @@ export function traceBeamsFromLasers(input: {
           wavelengthNm,
           maxLengthMm,
           maxBounces,
-          averageSpatialMode(element),
+          astigmaticSpatialMode(element),
           0,
           obj.componentId,
           1.0,
@@ -2166,7 +2379,7 @@ export function traceBeamsFromLasers(input: {
       ?? (seedCoupling ? saturatedTaPower(taParams, seedCoupling.effectiveSeedPowerMw) : asePower.forwardMw);
     const inputLeakMw = gainPower?.backwardMw ?? asePower.backwardMw;
 
-    const forwardMode = averageSpatialMode(element);
+    const forwardMode = astigmaticSpatialMode(element);
     const backwardMode = backwardSpatialMode(element) ?? forwardMode;
 
     // Output emission — out of the -X face, continuing the seed direction.
@@ -2316,19 +2529,13 @@ function backwardSpatialMode(element: PhysicsElement): BeamState | null {
     backwardSpatialModeX?: { waistUm?: number; mSquared?: number; waistZOffsetMm?: number };
     backwardSpatialModeY?: { waistUm?: number; mSquared?: number; waistZOffsetMm?: number };
   };
-  const x = params.backwardSpatialModeX;
-  const y = params.backwardSpatialModeY;
-  if (!x && !y) return null;
-  const wxUm = x?.waistUm ?? y?.waistUm ?? 100;
-  const wyUm = y?.waistUm ?? x?.waistUm ?? 100;
-  const mxSq = x?.mSquared ?? 1;
-  const mySq = y?.mSquared ?? 1;
-  const wxZ = x?.waistZOffsetMm ?? 0;
-  const wyZ = y?.waistZOffsetMm ?? 0;
+  const xMode = params.backwardSpatialModeX;
+  const yMode = params.backwardSpatialModeY;
+  if (!xMode && !yMode) return null;
+  const fallback = xMode?.waistUm ?? yMode?.waistUm ?? 100;
   return {
-    waist0Um: 0.5 * (wxUm + wyUm),
-    waistZUm: 1000 * 0.5 * (wxZ + wyZ),
-    mSquared: 0.5 * (mxSq + mySq),
+    x: axisFromParam(xMode, fallback),
+    y: axisFromParam(yMode, fallback),
     wavelengthNm: typeof params.centerWavelengthNm === "number" ? params.centerWavelengthNm : 780,
   };
 }
