@@ -86,10 +86,15 @@ export async function buildSceneObjectFromBindings(
   const tree = resolveBindingTree(component, sceneObject, scene);
   const group = await buildBindingTreeObject(tree, async (node) => {
     if (node.target.kind === "missing") return null;
-    if (node.target.kind === "subcomponent") {
-      // Logical container, not a renderable. Empty Group lets the
-      // walker apply this binding's localTransform and then attach
-      // sub-Component bindings as children under it.
+    if (node.target.kind === "subcomponent" || node.target.kind === "empty") {
+      // subcomponent: logical container that recurses into the
+      // sub-Component's own root bindings (resolveBindingTree splices
+      // them in as children).
+      // empty: explicit transform-only node — the user's "PBS Mount"
+      // case in the 5-part isolator decomposition. Carries
+      // localTransform + tunable_axes, no geometry of its own.
+      // Both render as an empty Group that the walker hangs children
+      // under, so the parent transform propagates through.
       return new THREE.Group();
     }
     // Asset node — load via the existing per-kind / per-asset loader.

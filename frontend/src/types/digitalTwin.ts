@@ -181,7 +181,13 @@ export type ComponentBinding = {
   id: string;
   componentId: string;
   parentBindingId: string | null;
-  targetKind: "asset" | "subcomponent";
+  /** "asset"        → asset3dId set, sub-component null (raw geometry).
+   *  "subcomponent" → sub-component set, asset3dId null (nested Component).
+   *  "empty"        → both null; transform-only node (e.g. user's
+   *                   "PBS Mount" in the 5-part isolator decomposition —
+   *                   carries tunable_axes + local transform, no geometry).
+   *  DB CHECK ck_component_bindings_target_shape enforces these shapes. */
+  targetKind: "asset" | "subcomponent" | "empty";
   asset3dId: string | null;
   subComponentId: string | null;
   role: string;

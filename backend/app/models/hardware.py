@@ -162,14 +162,13 @@ class ComponentBinding(Base):
 
     __tablename__ = "component_bindings"
     __table_args__ = (
+        # Three valid shapes (alembic 0066): asset / subcomponent /
+        # empty (transform-only — the user's "PBS Mount" node case).
         CheckConstraint(
-            "(asset_3d_id IS NULL) != (sub_component_id IS NULL)",
-            name="ck_component_bindings_one_target",
-        ),
-        CheckConstraint(
-            "(target_kind = 'asset' AND asset_3d_id IS NOT NULL AND sub_component_id IS NULL) OR "
-            "(target_kind = 'subcomponent' AND sub_component_id IS NOT NULL AND asset_3d_id IS NULL)",
-            name="ck_component_bindings_target_kind_matches",
+            "(target_kind = 'asset' AND asset_3d_id IS NOT NULL AND sub_component_id IS NULL)"
+            " OR (target_kind = 'subcomponent' AND asset_3d_id IS NULL AND sub_component_id IS NOT NULL)"
+            " OR (target_kind = 'empty' AND asset_3d_id IS NULL AND sub_component_id IS NULL)",
+            name="ck_component_bindings_target_shape",
         ),
         CheckConstraint(
             "sub_component_id IS NULL OR sub_component_id <> component_id",

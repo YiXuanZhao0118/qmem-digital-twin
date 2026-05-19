@@ -173,12 +173,14 @@ export async function deleteComponentApi(componentId: string): Promise<void> {
 // ComponentBinding (alembic 0062): catalog-level composition tree.
 // =============================================================================
 
-/** Payload for creating a binding under a Component. Either `asset3dId` or
- *  `subComponentId` must be set (and matching `targetKind`); the backend
- *  rejects mismatched / dual / empty targets via CHECK constraints. */
+/** Payload for creating a binding under a Component. targetKind="asset"
+ *  requires asset3dId; "subcomponent" requires subComponentId; "empty"
+ *  requires both to be null (transform-only node — Mount-style intermediate
+ *  in a binding tree). Backend rejects mismatched shapes via CHECK
+ *  constraints + a Pydantic validator. */
 export type ComponentBindingCreatePayload = {
   parentBindingId?: string | null;
-  targetKind: "asset" | "subcomponent";
+  targetKind: "asset" | "subcomponent" | "empty";
   asset3dId?: string | null;
   subComponentId?: string | null;
   role?: string;

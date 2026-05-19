@@ -143,6 +143,7 @@ export type ResolvedLocalTransform = {
 export type ResolvedBindingTarget =
   | { kind: "asset"; asset: Asset3D }
   | { kind: "subcomponent"; component: ComponentItem }
+  | { kind: "empty" }
   | { kind: "missing"; reason: "asset" | "subcomponent" };
 
 
@@ -192,6 +193,9 @@ function _resolveTarget(
     return asset
       ? { kind: "asset", asset }
       : { kind: "missing", reason: "asset" };
+  }
+  if (binding.targetKind === "empty") {
+    return { kind: "empty" };
   }
   if (!binding.subComponentId) return { kind: "missing", reason: "subcomponent" };
   const component = scene.components.find((c) => c.id === binding.subComponentId);
