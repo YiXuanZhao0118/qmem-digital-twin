@@ -545,7 +545,25 @@ export function IsolatorDevPage() {
       // Real STL — load & wrap through the same builder the lab viewer uses.
       loadStlGeometryCached(asset.filePath).then((geometry) => {
         if (cancelled) return;
-        const fakeAsset: Asset3D = { ...asset, anchors };
+        // IsolatorDevPage edits the bundled PBS / Glan-Laser overlay
+        // directly. Stage A''.9/A''.11 set
+        // viewerHints.bundledOverlay=false on migrated isolator assets
+        // so the Lab viewer doesn't double-render the PBS cubes (the
+        // binding tree now adds them as sub-Components there). That
+        // flag is meaningless here — this page IS the overlay editor.
+        // Force the overlay on regardless, by overriding the flag in
+        // a per-render fakeAsset.
+        const fakeAsset: Asset3D = {
+          ...asset,
+          anchors,
+          properties: {
+            ...(asset.properties ?? {}),
+            viewerHints: {
+              ...(asset.properties?.viewerHints ?? {}),
+              bundledOverlay: true,
+            },
+          },
+        };
         const fakeComponent: ComponentItem = component;
         const rawTris = Math.floor((geometry.attributes.position.array as Float32Array).length / 9);
         // Builder accepts explicit deletion set + linked rotation group so
