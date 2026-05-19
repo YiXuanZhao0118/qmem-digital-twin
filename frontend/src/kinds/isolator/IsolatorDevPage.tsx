@@ -388,6 +388,10 @@ export function IsolatorDevPage() {
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const modelGroupRef = useRef<THREE.Object3D | null>(null);
+  // Overlay div for the Ctrl/Alt + left-drag box-select rectangle.
+  // Updated imperatively from the pointer handlers inside the
+  // init useEffect to avoid React re-render storm at 60fps.
+  const boxOverlayElRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -520,7 +524,127 @@ export function IsolatorDevPage() {
       });
     };
 
-    const onLeftClick = (event: MouseEvent) => performRaycast(event, false);
+    const onLeftClick = (event: MouseEvent) => {
+      // Suppress single-click raycast when the user just finished a
+      // box-select drag — pointerup fires before "click" so we'd
+      // double-handle.
+      if (boxJustSelected) {
+        boxJustSelected = false;
+        return;
+      }
+      performRaycast(event, false);
+    };
+
+    // ── Box-select (Ctrl/Alt + left-drag) ─────────────────────────
+    // While a Ctrl/Alt + left button is held, we draw a dashed
+    // rectangle on top of the canvas. On release every housing
+    // triangle whose projected centroid lands inside the rect gets
+    // added to the matching front/back partition set. OrbitControls
+    // is temporarily disabled during the drag so the left-drag-to-
+    // rotate gesture doesn't fire.
+    let boxSelectMode: "front" | "back" | null = null;
+    let boxStartX = 0;
+    let boxStartY = 0;
+    let boxEndX = 0;
+    let boxEndY = 0;
+    let boxJustSelected = false;
+    const updateBoxOverlay = () => {
+      const el = boxOverlayElRef.current;
+      if (!el) return;
+      if (boxSelectMode === null) {
+        el.style.display = "none";
+        return;
+      }
+      const x = Math.min(boxStartX, boxEndX);
+      const y = Math.min(boxStartY, boxEndY);
+      const w = Math.abs(boxEndX - boxStartX);
+      const h = Math.abs(boxEndY - boxStartY);
+      el.style.display = "block";
+      el.style.left = `${x}px`;
+      el.style.top = `${y}px`;
+      el.style.width = `${w}px`;
+      el.style.height = `${h}px`;
+      el.style.borderColor = boxSelectMode === "front" ? "#1d4ed8" : "#b91c1c";
+      el.style.background = boxSelectMode === "front"
+        ? "rgba(59, 130, 246, 0.12)"
+        : "rgba(239, 68, 68, 0.12)";
+    };
+    const collectTrianglesInRect = (mode: "front" | "back") => {
+      const target = modelGroupRef.current;
+      if (!target) return;
+      const canvasRect = renderer.domElement.getBoundingClientRect();
+      // Box coords are page-relative; convert to canvas-relative.
+      const xmin = Math.min(boxStartX, boxEndX) - canvasRect.left;
+      const ymin = Math.min(boxStartY, boxEndY) - canvasRect.top;
+      const xmax = Math.max(boxStartX, boxEndX) - canvasRect.left;
+      const ymax = Math.max(boxStartY, boxEndY) - canvasRect.top;
+      if (xmax - xmin < 2 || ymax - ymin < 2) return; // tiny drag = no-op
+      const collected = new Set<string>();
+      const worldVec = new THREE.Vector3();
+      target.traverse((obj) => {
+        const mesh = obj as THREE.Mesh;
+        if (!mesh.isMesh || !mesh.geometry) return;
+        // Skip PBS / Glan-Laser overlay meshes (housing only).
+        if (mesh.userData.__pbsAnchorName) return;
+        if (mesh.parent?.name === "isolator_pbs_overlay") return;
+        const positions = (mesh.geometry as THREE.BufferGeometry).attributes
+          .position?.array as Float32Array | undefined;
+        if (!positions) return;
+        const triCount = Math.floor(positions.length / 9);
+        mesh.updateMatrixWorld();
+        for (let t = 0; t < triCount; t += 1) {
+          const o = t * 9;
+          const cx = (positions[o + 0] + positions[o + 3] + positions[o + 6]) / 3;
+          const cy = (positions[o + 1] + positions[o + 4] + positions[o + 7]) / 3;
+          const cz = (positions[o + 2] + positions[o + 5] + positions[o + 8]) / 3;
+          worldVec.set(cx, cy, cz).applyMatrix4(mesh.matrixWorld);
+          worldVec.project(camera);
+          if (worldVec.z < -1 || worldVec.z > 1) continue;
+          const sx = ((worldVec.x + 1) / 2) * canvasRect.width;
+          const sy = ((1 - worldVec.y) / 2) * canvasRect.height;
+          if (sx < xmin || sx > xmax || sy < ymin || sy > ymax) continue;
+          collected.add(isolatorCentroidKey(cx, cy, cz));
+        }
+      });
+      if (collected.size === 0) return;
+      const ref = mode === "front" ? frontPartCentroidsRef : backPartCentroidsRef;
+      const setter = mode === "front" ? setFrontPartCentroids : setBackPartCentroids;
+      const next = new Set(ref.current);
+      for (const k of collected) next.add(k);
+      setter(next);
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      const mode: "front" | "back" | null = event.ctrlKey ? "front"
+        : event.altKey ? "back"
+        : null;
+      if (mode === null) return;
+      boxSelectMode = mode;
+      boxStartX = boxEndX = event.clientX;
+      boxStartY = boxEndY = event.clientY;
+      updateBoxOverlay();
+      controls.enabled = false; // suppress orbit rotate during drag
+      event.preventDefault();
+    };
+    const onPointerMove = (event: PointerEvent) => {
+      if (boxSelectMode === null) return;
+      boxEndX = event.clientX;
+      boxEndY = event.clientY;
+      updateBoxOverlay();
+    };
+    const onPointerUp = (event: PointerEvent) => {
+      if (boxSelectMode === null) return;
+      const mode = boxSelectMode;
+      boxSelectMode = null;
+      controls.enabled = true;
+      const dx = Math.abs(event.clientX - boxStartX);
+      const dy = Math.abs(event.clientY - boxStartY);
+      if (dx > 2 || dy > 2) {
+        collectTrianglesInRect(mode);
+        boxJustSelected = true; // swallow the upcoming "click" event
+      }
+      updateBoxOverlay();
+    };
 
     // Middle-click delete: `auxclick` fires for non-primary buttons (middle
     // + right) and — unlike mousedown — only fires after the button is
@@ -554,6 +678,9 @@ export function IsolatorDevPage() {
     renderer.domElement.addEventListener("click", onLeftClick);
     renderer.domElement.addEventListener("auxclick", onAuxClick);
     renderer.domElement.addEventListener("mousedown", onMiddleMouseDown);
+    renderer.domElement.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
 
     return () => {
       cancelAnimationFrame(raf);
@@ -563,6 +690,9 @@ export function IsolatorDevPage() {
       renderer.domElement.removeEventListener("click", onLeftClick);
       renderer.domElement.removeEventListener("auxclick", onAuxClick);
       renderer.domElement.removeEventListener("mousedown", onMiddleMouseDown);
+      renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
       if (renderer.domElement.parentNode) {
         renderer.domElement.parentNode.removeChild(renderer.domElement);
       }
@@ -978,8 +1108,8 @@ export function IsolatorDevPage() {
         </label>
         <button type="button" onClick={onResetFromTable}>↻ Reset from table</button>
         <button type="button" onClick={onCopy}>📋 Copy table line</button>
-        <span style={{ fontSize: 11, opacity: 0.65 }} title="Modifier keys with mid-click: plain = delete, Shift = link-rotate, Ctrl = mark front partition, Alt = mark back partition.">
-          🖱 mid = delete · Shift = link · Ctrl = front · Alt = back
+        <span style={{ fontSize: 11, opacity: 0.65 }} title="Mid-click marks one cluster. Ctrl/Alt + LEFT-drag draws a rectangle that marks every housing triangle whose centroid lands inside.">
+          🖱 mid: delete · Shift = link · Ctrl = front · Alt = back · Ctrl/Alt + drag = box
         </span>
         {frontPartCentroids.size > 0 && (
           <button
@@ -1249,6 +1379,20 @@ export function IsolatorDevPage() {
           <div
             ref={mountRef}
             style={{ position: "absolute", inset: 0, background: "#fff", borderRadius: 4 }}
+          />
+          {/* Box-select rectangle overlay — updated imperatively via
+              boxOverlayElRef from the pointer handlers. Fixed-position
+              so the rect aligns with page-relative pointer coords. */}
+          <div
+            ref={boxOverlayElRef}
+            style={{
+              position: "fixed",
+              display: "none",
+              pointerEvents: "none",
+              border: "1.5px dashed currentColor",
+              boxSizing: "border-box",
+              zIndex: 10,
+            }}
           />
           {hitInfo && (
             <div
