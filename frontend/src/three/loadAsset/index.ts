@@ -95,6 +95,10 @@ import {
   ISOLATOR_BODY_FILEPATH,
   buildIsolatorBodyObject,
 } from "./procedural/isolator_body";
+import {
+  GLAN_POLARIZER_PRISM_FILEPATH,
+  buildGlanPolarizerPrismObject,
+} from "./procedural/glan_polarizer_prism";
 
 const gltfLoader = new GLTFLoader();
 const objLoader = new OBJLoader();
@@ -174,6 +178,12 @@ export async function loadAssetObject(
   // separately.
   if (asset?.filePath === ISOLATOR_BODY_FILEPATH) {
     const obj = buildIsolatorBodyObject(component, state);
+    obj.name = component.name;
+    return obj;
+  }
+
+  if (asset?.filePath === GLAN_POLARIZER_PRISM_FILEPATH) {
+    const obj = buildGlanPolarizerPrismObject(component, state);
     obj.name = component.name;
     return obj;
   }
