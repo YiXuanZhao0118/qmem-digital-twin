@@ -109,6 +109,16 @@ export type AssetViewerHints = {
    *  ``includeOnlyCentroids`` so the per-asset deletion list still
    *  works inside the kept partition. */
   includeOnlyCentroids?: string[];
+  /** Translate the geometry by ``-recenterOrigin`` (body-local mm)
+   *  after all filters apply, moving the asset's effective origin
+   *  to the named body-frame point. Used by bake-to-asset partition
+   *  flows: a sub-asset's geometry stays in its parent STL's body
+   *  coordinates, so when bound under a Mount at body pose P, the
+   *  geometry recenter aligns its rotation pivot with P. Without
+   *  this, ``binding.local_*_mm`` would double-offset (sub-asset
+   *  STL already carries its body coord + binding adds another
+   *  translation). */
+  recenterOrigin?: [number, number, number];
   /** Drop triangles whose centroid is within R mm of the bbox's
    *  longest axis. Bulk hide of interior baffles concentric with the
    *  optical bore. 0 (or unset) = disabled. */

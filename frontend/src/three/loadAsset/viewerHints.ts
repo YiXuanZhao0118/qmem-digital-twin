@@ -155,10 +155,10 @@ export function applyIncludeOnlyFilter(
 
 
 /** Top-level helper: run every viewer-hint geometry filter declared
- *  on an asset in canonical order (includeOnly → deletion → axis-radius),
- *  returning the resulting geometry. Material hints aren't included
- *  here — they apply to the Mesh, not the BufferGeometry — see
- *  ``materialForHints`` for that path. */
+ *  on an asset in canonical order (includeOnly → deletion → axis-radius
+ *  → recenterOrigin), returning the resulting geometry. Material hints
+ *  aren't included here — they apply to the Mesh, not the
+ *  BufferGeometry — see ``materialForHints`` for that path. */
 export function applyViewerHintsToGeometry(
   geometry: THREE.BufferGeometry,
   hints: AssetViewerHints | undefined,
@@ -175,6 +175,17 @@ export function applyViewerHintsToGeometry(
   }
   if (typeof hints.axisRadiusFilterMm === "number" && hints.axisRadiusFilterMm > 0) {
     out = applyAxisRadiusFilter(out, longestBboxAxis(out), hints.axisRadiusFilterMm);
+  }
+  // recenterOrigin LAST so it operates on the final filtered
+  // geometry. Translates so the named body-frame point becomes
+  // the geometry's origin (i.e. shift by -recenterOrigin).
+  if (hints.recenterOrigin) {
+    const [ox, oy, oz] = hints.recenterOrigin;
+    // STL is in body-local Z-up mm at this point; clone so we don't
+    // mutate the shared cached upstream geometry.
+    const recentered = out.clone();
+    recentered.translate(-ox, -oy, -oz);
+    out = recentered;
   }
   return out;
 }
