@@ -40,6 +40,17 @@ class Asset3D(Base):
     unit: Mapped[str] = mapped_column(Text, nullable=False, default="mm", server_default="mm")
     scale_factor: Mapped[float] = mapped_column(Float, nullable=False, default=1.0, server_default="1")
     anchors: Mapped[JsonList] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+    # Asset-level metadata (alembic 0064). First consumer is
+    # ``viewerHints`` — instructions the generic asset loader honours
+    # regardless of consuming componentType:
+    #   * deletedCentroids: list of "x,y,z" centroid keys to drop from
+    #     STL geometry (replaces the bespoke isolator deletion path);
+    #   * axisRadiusFilterMm: hide triangles within R mm of the
+    #     longest-bbox axis (hides internal baffles);
+    #   * material: { type: "translucent_housing", opacity: ... }.
+    properties: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

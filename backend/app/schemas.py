@@ -211,6 +211,11 @@ class Asset3DBase(CamelModel):
     unit: Literal["mm", "m"] = "mm"
     scale_factor: float = 1.0
     anchors: list[AssetAnchor] = Field(default_factory=list)
+    # Asset-level metadata (alembic 0064). ``viewerHints`` controls
+    # generic loader behaviour — STL deletion, axis-radius filter,
+    # material override — so isolator-shaped housing tricks aren't
+    # locked into the bespoke pbsOverlay path.
+    properties: JsonDict = Field(default_factory=dict)
 
 
 class Asset3DCreate(Asset3DBase):
@@ -226,6 +231,7 @@ class Asset3DUpdate(CamelModel):
     unit: Literal["mm", "m"] | None = None
     scale_factor: float | None = None
     anchors: list[AssetAnchor] | None = None
+    properties: JsonDict | None = None
 
 
 class LocalAssetImport(CamelModel):

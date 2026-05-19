@@ -88,6 +88,30 @@ export type RfCableEndpointLink = {
   targetAnchorName: string;
 };
 
+/** Asset-level viewer hints (alembic 0064). The generic asset loader
+ *  honours these on every STL/GLB/OBJ load regardless of the consuming
+ *  Component's componentType, so the same machinery that hides an
+ *  isolator's internal baffles works for any future housing where the
+ *  raw CAD has more detail than the viewer needs. */
+export type AssetViewerHints = {
+  /** Centroid keys (``"x,y,z"`` rounded to 0.5 mm grid via the same
+   *  helper as kinds/isolator/pbsOverlay::isolatorCentroidKey) to drop
+   *  from the STL on load. Lets the user clip out parts of a vendor
+   *  STL without re-exporting from CAD. */
+  deletedCentroids?: string[];
+  /** Drop triangles whose centroid is within R mm of the bbox's
+   *  longest axis. Bulk hide of interior baffles concentric with the
+   *  optical bore. 0 (or unset) = disabled. */
+  axisRadiusFilterMm?: number;
+  /** Material override applied to every mesh in the loaded asset.
+   *  ``translucent_housing`` is the isolator-style semi-transparent
+   *  metal look — opacity 0.35 by default. */
+  material?: {
+    type: "translucent_housing";
+    opacity?: number;
+  };
+};
+
 export type Asset3D = {
   id: string;
   name: string;
@@ -98,6 +122,12 @@ export type Asset3D = {
   unit: "mm" | "m";
   scaleFactor: number;
   anchors: Anchor[];
+  /** Asset-level metadata bucket; ``viewerHints`` is the main consumer
+   *  today (alembic 0064). Other per-asset fields can live here without
+   *  schema migrations. */
+  properties?: {
+    viewerHints?: AssetViewerHints;
+  } & Record<string, unknown>;
   createdAt?: string;
 };
 
