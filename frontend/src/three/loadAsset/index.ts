@@ -91,6 +91,10 @@ import {
   applyViewerHintsToGeometry,
   materialForHints,
 } from "./viewerHints";
+import {
+  ISOLATOR_BODY_FILEPATH,
+  buildIsolatorBodyObject,
+} from "./procedural/isolator_body";
 
 const gltfLoader = new GLTFLoader();
 const objLoader = new OBJLoader();
@@ -160,6 +164,18 @@ export async function loadAssetObject(
     wrapper.name = component.name;
     wrapper.add(createSmaShortCable(component, state, objectProperties?.rfCableNodes));
     return wrapper;
+  }
+
+  // Stage A''.6 — procedural asset dispatch. ``procedural://<key>``
+  // file paths route to a builder by key, so a Component pointing at
+  // ``procedural://isolator_body`` gets just the body geometry
+  // (cylinder + ferrules) without the legacy renderIsolator's PBS
+  // overlay bundling. The binding tree carries the PBS sub-Components
+  // separately.
+  if (asset?.filePath === ISOLATOR_BODY_FILEPATH) {
+    const obj = buildIsolatorBodyObject(component, state);
+    obj.name = component.name;
+    return obj;
   }
 
   if (!asset || asset.filePath.startsWith("primitive://")) {
