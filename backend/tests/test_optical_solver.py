@@ -26,8 +26,10 @@ from app.solvers.optical_solver import (
     q_at_z,
     rayleigh_range_mm,
     solve_chain,
+    synthesize_field_from_beam,
     waist_um_from_q,
 )
+import numpy as np
 
 
 # --- math primitives --------------------------------------------------------
@@ -260,6 +262,68 @@ def test_waveplate_with_thickness_propagates_q_by_d_over_n():
          "thicknessMm": 1.0, "refractiveIndex": 1.5, "transmission": 1.0},
     )["out"]
     assert math.isclose(out.q_x.real, 20.0 + 1.0 / 1.5, abs_tol=1e-9)
+
+
+# --- Phase F.1: profileKind passthrough + field synthesis -------------------
+
+
+def test_emit_laser_default_profile_kind_is_gaussian():
+    beam = emit_from_laser_source(make_laser_params())
+    assert beam.transverse_mode.get("profileKind") == "gaussian"
+
+
+def test_emit_laser_with_tophat_profile_kind_echoes_metadata():
+    params = make_laser_params()
+    params["profileKind"] = "tophat"
+    params["profileParams"] = {"radiusMm": 0.5}
+    beam = emit_from_laser_source(params)
+    assert beam.transverse_mode["profileKind"] == "tophat"
+    assert beam.transverse_mode["profileParams"]["radiusMm"] == 0.5
+
+
+def test_emit_laser_unknown_profile_kind_falls_back_to_gaussian():
+    params = make_laser_params()
+    params["profileKind"] = "schmaussian"
+    beam = emit_from_laser_source(params)
+    assert beam.transverse_mode["profileKind"] == "gaussian"
+
+
+def test_synthesize_field_gaussian_default():
+    beam = emit_from_laser_source(make_laser_params(power_mw=4.0))
+    x = np.linspace(-1.0, 1.0, 33)
+    y = np.linspace(-1.0, 1.0, 33)
+    field = synthesize_field_from_beam(beam, x, y)
+    assert field.shape == (33, 33)
+    # Power scale: peak amplitude proportional to sqrt(power_mw=4) = 2
+    peak = float(np.max(np.abs(field)))
+    assert peak > 0.0
+
+
+def test_synthesize_field_tophat_uniform_inside_radius():
+    params = make_laser_params(power_mw=9.0)
+    params["profileKind"] = "tophat"
+    params["profileParams"] = {"radiusMm": 0.5}
+    beam = emit_from_laser_source(params)
+    x = np.linspace(-1.0, 1.0, 51)
+    y = np.linspace(-1.0, 1.0, 51)
+    field = synthesize_field_from_beam(beam, x, y)
+    # Center inside → amplitude = sqrt(power_mw) = 3
+    assert math.isclose(abs(field[25, 25]), 3.0, abs_tol=1e-9)
+    # Outside → 0
+    assert abs(field[0, 0]) < 1e-12
+
+
+def test_synthesize_field_hg_mn_picks_correct_mode():
+    params = make_laser_params()
+    params["profileKind"] = "hg_mn"
+    params["profileParams"] = {"m": 1, "n": 0}  # HG_1,0 has one node along x
+    beam = emit_from_laser_source(params)
+    x = np.linspace(-0.6, 0.6, 65)
+    y = np.linspace(-0.6, 0.6, 65)
+    field = synthesize_field_from_beam(beam, x, y)
+    # HG_1,0 vanishes at x = 0 (the node line)
+    centre_line = field[32, :]
+    assert abs(centre_line[32]) < 1e-3
 
 
 def test_pbs_transmitted_with_thickness_acts_as_glass_plate():

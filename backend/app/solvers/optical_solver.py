@@ -444,6 +444,38 @@ def polarization_overlap(seed: JonesArray, target: JonesArray) -> float:
 # --- emitters --------------------------------------------------------------
 
 
+_VALID_PROFILE_KINDS = {"gaussian", "tophat", "super_gauss", "hg_mn", "multimode"}
+
+
+def _resolve_profile_kind(params: dict[str, Any]) -> dict[str, Any]:
+    """Read optional profile-shape descriptor from kindParams. Returns a
+    metadata dict that flows through `Beam.transverse_mode` so downstream
+    consumers (field synthesis, Collins-FFT precision mode) know how to
+    build the actual 2D field for this emitter.
+
+    profileKind: "gaussian" (default) | "tophat" | "super_gauss" |
+                 "hg_mn"  | "multimode"
+    profileParams: dict, kind-specific:
+      - tophat:       {"radiusMm": float}
+      - super_gauss:  {"radiusMm": float, "order": int}
+      - hg_mn:        {"m": int, "n": int}  (single HG_mn mode)
+      - multimode:    {"modes": [(m, n, amp_complex), ...]}
+
+    All q-evolution stays identical to a Gaussian with the same
+    spatialModeX/Y waist — HG_mn modes are q-preserving — so the only
+    place the profile shape matters is Tier-2 field synthesis or Tier-3
+    Collins-FFT.
+    """
+    kind = str(params.get("profileKind") or "gaussian").lower()
+    if kind not in _VALID_PROFILE_KINDS:
+        kind = "gaussian"
+    out: dict[str, Any] = {"profileKind": kind}
+    profile_params = params.get("profileParams")
+    if isinstance(profile_params, dict):
+        out["profileParams"] = dict(profile_params)
+    return out
+
+
 def emit_from_laser_source(params: dict[str, Any]) -> Beam:
     wavelength_nm = float(params["centerWavelengthNm"])
     spectrum = dict(params.get("spectrum") or {})
@@ -452,6 +484,7 @@ def emit_from_laser_source(params: dict[str, Any]) -> Beam:
     transverse = dict(params.get("transverseMode") or {"kind": "TEM00"})
     transverse.setdefault("mSquaredX", float(mode_x.get("mSquared", 1.0)))
     transverse.setdefault("mSquaredY", float(mode_y.get("mSquared", 1.0)))
+    transverse.update(_resolve_profile_kind(params))
     polarization = jones_from_dict(params.get("polarization") or {})
     return Beam(
         spectrum=spectrum,
@@ -480,6 +513,7 @@ def emit_from_tapered_amplifier(params: dict[str, Any], seed: Beam | None) -> Be
         mode_x = params["outputSpatialModeX"]
         mode_y = params["outputSpatialModeY"]
         transverse = dict(params.get("outputTransverseMode") or {"kind": "TEM00"})
+        transverse.update(_resolve_profile_kind(params))
         ase = params["ase"]
         wavelength_nm = 780.241
         spectrum = {
@@ -551,6 +585,7 @@ def emit_from_tapered_amplifier(params: dict[str, Any], seed: Beam | None) -> Be
     transverse = dict(params.get("outputTransverseMode") or {"kind": "TEM00"})
     transverse.setdefault("mSquaredX", float(mode_x.get("mSquared", 1.0)))
     transverse.setdefault("mSquaredY", float(mode_y.get("mSquared", 1.0)))
+    transverse.update(_resolve_profile_kind(params))
     return replace(
         seed,
         spectrum=new_spectrum,
@@ -1072,6 +1107,53 @@ def solve_chain(
             beam_at_input[(link.to_object_id, link.to_port)] = propagated
 
     return result
+
+
+def synthesize_field_from_beam(
+    beam: Beam,
+    x_grid_mm: "np.ndarray",
+    y_grid_mm: "np.ndarray",
+) -> "np.ndarray":
+    """Build a 2D complex field E(x, y) for `beam` on the given grid, using
+    its profileKind metadata. Default ("gaussian") returns HG_00 evaluated
+    at q_x, q_y; "tophat" / "super_gauss" return the canned aperture profile
+    scaled by sqrt(power_mw); "hg_mn" / "multimode" sum the named HG modes.
+
+    Used as the input to collins_fft.collins_5x5_fft for Tier-3 precision
+    propagation, OR for any display layer that wants to render the true
+    profile rather than a single circular spot."""
+    from app.solvers import collins_fft  # noqa: F401  (import deferred to avoid cycle)
+    from app.solvers import hg_modes
+
+    transverse = beam.transverse_mode or {}
+    profile_kind = str(transverse.get("profileKind") or "gaussian").lower()
+    profile_params = transverse.get("profileParams") or {}
+
+    X, Y = np.meshgrid(x_grid_mm, y_grid_mm) if x_grid_mm.ndim == 1 else (x_grid_mm, y_grid_mm)
+
+    if profile_kind == "tophat":
+        radius_mm = float(profile_params.get("radiusMm", 1.0))
+        field = hg_modes.tophat_field(radius_mm, X, Y)
+    elif profile_kind == "super_gauss":
+        radius_mm = float(profile_params.get("radiusMm", 1.0))
+        order = int(profile_params.get("order", 4))
+        field = hg_modes.super_gauss_field(radius_mm, order, X, Y)
+    elif profile_kind == "hg_mn":
+        m = int(profile_params.get("m", 0))
+        n = int(profile_params.get("n", 0))
+        field = hg_modes.hg_field_2d(m, n, X, Y, beam.q_x, beam.q_y, beam.wavelength_nm)
+    elif profile_kind == "multimode":
+        field = np.zeros(X.shape, dtype=np.complex128)
+        for entry in profile_params.get("modes") or []:
+            m, n, amp = entry
+            field += complex(amp) * hg_modes.hg_field_2d(
+                int(m), int(n), X, Y, beam.q_x, beam.q_y, beam.wavelength_nm
+            )
+    else:
+        field = hg_modes.hg_field_2d(0, 0, X, Y, beam.q_x, beam.q_y, beam.wavelength_nm)
+
+    amplitude_scale = math.sqrt(max(beam.power_mw, 0.0))
+    return field * amplitude_scale
 
 
 def _apply_program_factor(
