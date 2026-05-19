@@ -1141,6 +1141,9 @@ export type SceneEvent =
   | { type: "component.created"; payload: ComponentItem }
   | { type: "component.updated"; payload: ComponentItem }
   | { type: "component.deleted"; payload: { id?: string; componentId?: string } }
+  | { type: "component_binding.created"; payload: ComponentBinding }
+  | { type: "component_binding.updated"; payload: ComponentBinding }
+  | { type: "component_binding.deleted"; payload: { id: string; componentId?: string } }
   | { type: "object.updated"; payload: SceneObject }
   | { type: "object.deleted"; payload: { id?: string; objectId?: string } }
   | { type: "assembly_relation.updated"; payload: AssemblyRelation & { deleted?: boolean } }
