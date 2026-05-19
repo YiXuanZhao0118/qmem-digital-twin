@@ -48,6 +48,7 @@ import {
   mThinLens,
 } from "../optical/generalizedAbcd";
 import { deltaAlphaFromHit } from "./deltaAlphaFromHit";
+import { lensOpticalGeometry } from "./lensOpticalGeometry";
 import { rotateLocalToLab } from "../utils/beamPlacement";
 import { FIBER_FERRULE_TIP_MM } from "../utils/fiberAnchorResolver";
 import { endpointOutwardBody } from "../utils/fiberAlignment";
@@ -1953,63 +1954,60 @@ function traceOneRay(
       transmissionAxisDeg?: number;
       extinctionRatioDb?: number;
     };
-    // D.3b — structural foundation for chief-ray deflection.
-    // Lens dispatch now goes through the generalized 5×5 ABCD operator with
-    // (δ, α) = 0. This is mathematically equivalent to the D.3a per-axis
-    // applyThinLens (since with no misalignment, the 5×5's chief-ray block
-    // is identity), but sets up the path that future work can populate with
-    // geometry-derived (δ, α).
-    //
-    // Why δ, α are currently zero (TODO for D.3c / Phase E):
-    //   - δ = (hit − element_center). `hit.object.getWorldPosition()` gives
-    //     the GLB wrapper origin, NOT the lens's optical center. Computing
-    //     the true center requires resolving an asset anchor (e.g.
-    //     "intercept_in") into world coordinates per SceneObject pose.
-    //   - α from mesh face.normal is the SURFACE normal at the hit point. For
-    //     curved lens faces this varies across the surface and is NOT the
-    //     lens's optical-axis tilt. The correct α needs the lens body-local
-    //     optical axis rotated by SceneObject Euler, compared to beam dir.
-    //
-    // Defaults below: no chief-ray shift / direction change.
+    // D.3c — anchor-aware chief-ray deflection.
+    // Lens dispatch routes through the 5×5 operator with geometry-derived
+    // (δ, α) supplied by lensOpticalGeometry: SceneObject lab pose gives
+    // the lens optical centre + optical axis (body-local +X rotated by
+    // SceneObject Euler), bypassing the GLB wrapper / mesh-face-normal
+    // pitfalls of D.3b. With this, decentered or tilted lenses actually
+    // deflect the chief ray and the renderer rotates the outgoing direction
+    // accordingly.
     let nextDir = dir;
     let nextOriginShift: THREE.Vector3 | null = null;
     if (kind === "lens_biconvex" || kind === "lens_plano_convex" || kind === "lens_cylindrical") {
       const focalMm = typeof oeParams.focalMm === "number" ? oeParams.focalMm : NaN;
-      if (Number.isFinite(focalMm)) {
+      const hitObjForLens = ctx.objects.find((o) => o.id === hitObjectId);
+      if (Number.isFinite(focalMm) && hitObjForLens) {
+        const geom = lensOpticalGeometry(hitObjForLens);
+        const ml = deltaAlphaFromHit({
+          hitPointWorld: hitPoint,
+          incomingDir: dir,
+          elementCenterWorld: geom.centerWorldThree,
+          elementNormalWorld: geom.opticalAxisWorldThree,
+        });
         let M: Mat5;
         if (kind === "lens_cylindrical") {
           const cylParams = oeParams as { focalMm?: number; cylindricalAxis?: "x" | "y" };
           const cylAxis: "x" | "y" = cylParams.cylindricalAxis === "y" ? "y" : "x";
-          M = mCylindricalRotated(focalMm, 0, { axis: cylAxis });
+          M = mCylindricalRotated(focalMm, 0, {
+            axis: cylAxis,
+            deltaXMm: ml.deltaXMm,
+            deltaYMm: ml.deltaYMm,
+            alphaXRad: ml.alphaXRad,
+            alphaYRad: ml.alphaYRad,
+          });
         } else {
-          M = mThinLens(focalMm);
+          M = mThinLens(focalMm, {
+            deltaXMm: ml.deltaXMm,
+            deltaYMm: ml.deltaYMm,
+            alphaXRad: ml.alphaXRad,
+            alphaYRad: ml.alphaYRad,
+          });
         }
         const op = applyOperatorToBeamState(mode, M, newPathMm * 1000);
         nextMode = op.nextMode;
-        // With (δ, α) = 0, op.xCMm/yCMm/thetaXCRad/thetaYCRad are all 0;
-        // the rotation/shift blocks below stay no-ops. They're kept here so
-        // when geometry-derived (δ, α) lands later, this dispatch already
-        // has the wiring to translate origin + rotate dir accordingly.
         if (Math.abs(op.xCMm) > 1e-9 || Math.abs(op.yCMm) > 1e-9) {
-          const elementCenterWorld = new THREE.Vector3();
-          hit.object.getWorldPosition(elementCenterWorld);
-          const ml = deltaAlphaFromHit({
-            hitPointWorld: hitPoint,
-            incomingDir: dir,
-            elementCenterWorld,
-            elementNormalWorld: worldNormal,
-          });
           nextOriginShift = ml.beamEx
             .clone()
             .multiplyScalar(op.xCMm / MM_PER_THREE_UNIT)
             .add(ml.beamEy.clone().multiplyScalar(op.yCMm / MM_PER_THREE_UNIT));
-          if (Math.abs(op.thetaXCRad) > 1e-9 || Math.abs(op.thetaYCRad) > 1e-9) {
-            nextDir = dir
-              .clone()
-              .add(ml.beamEx.clone().multiplyScalar(op.thetaXCRad))
-              .add(ml.beamEy.clone().multiplyScalar(op.thetaYCRad))
-              .normalize();
-          }
+        }
+        if (Math.abs(op.thetaXCRad) > 1e-9 || Math.abs(op.thetaYCRad) > 1e-9) {
+          nextDir = dir
+            .clone()
+            .add(ml.beamEx.clone().multiplyScalar(op.thetaXCRad))
+            .add(ml.beamEy.clone().multiplyScalar(op.thetaYCRad))
+            .normalize();
         }
       }
     } else if (kind === "waveplate") {
