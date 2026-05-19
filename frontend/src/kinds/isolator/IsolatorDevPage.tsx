@@ -617,14 +617,26 @@ export function IsolatorDevPage() {
         // edits straight to the overlay. yRotationDeg path takes
         // precedence when frontRotXYZ is null; explicit Euler wins
         // when set (the user opted into 3-axis mode).
+        //
+        // CRITICAL: carry prismType from the pose table. Without
+        // this, the renderer falls back to the default ``pbs_cube``
+        // and HP variants (which the table marks as ``glan_laser``)
+        // get rendered as PBS cubes — Stage A''.11-followup oversight
+        // before this fix.
+        const tableDef = ISOLATOR_PBS_DEFAULTS_BY_MODEL[model];
         const buildPbsEntry = (
           pos: Vec3, yRot: number, rot: Vec3 | null,
-        ): PbsPoseEntry => rot !== null
-          ? { pos, rotationDeg: rot }
-          : { pos, yRotationDeg: yRot };
+          tableEntry: typeof tableDef extends undefined ? undefined : PbsPoseEntry | undefined,
+        ): PbsPoseEntry => {
+          const base: PbsPoseEntry = rot !== null
+            ? { pos, rotationDeg: rot }
+            : { pos, yRotationDeg: yRot };
+          if (tableEntry?.prismType) base.prismType = tableEntry.prismType;
+          return base;
+        };
         const poseOverride = {
-          front_pbs: buildPbsEntry(frontPos, frontYRot, frontRotXYZ),
-          back_pbs: buildPbsEntry(backPos, backYRot, backRotXYZ),
+          front_pbs: buildPbsEntry(frontPos, frontYRot, frontRotXYZ, tableDef?.front_pbs),
+          back_pbs: buildPbsEntry(backPos, backYRot, backRotXYZ, tableDef?.back_pbs),
         };
         const group = buildThorlabsIsolatorObject(
           geometry, fakeComponent, fakeAsset,
