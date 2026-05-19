@@ -22,6 +22,7 @@ from app.solvers.optical_solver import (
     jones_from_dict,
     lens_q,
     nm_to_thz,
+    propagate_beam_precise,
     propagate_q,
     q_at_z,
     rayleigh_range_mm,
@@ -311,6 +312,36 @@ def test_synthesize_field_tophat_uniform_inside_radius():
     assert math.isclose(abs(field[25, 25]), 3.0, abs_tol=1e-9)
     # Outside → 0
     assert abs(field[0, 0]) < 1e-12
+
+
+def test_propagate_beam_precise_gaussian_grows_by_root_2_at_zr():
+    """A 200 µm Gaussian propagated one Rayleigh range should reach ~283 µm
+    spot radius (within FFT-sampling tolerance)."""
+    params = make_laser_params(power_mw=1.0, waist_x=200.0, waist_y=200.0)
+    beam = emit_from_laser_source(params)
+    z_R_mm = beam.q_x.imag  # ≈ 161 mm at 780nm
+    out = propagate_beam_precise(beam, z_R_mm, grid_span_mm=6.0, n_grid=256)
+    # Tolerate 15% (FFT grid sampling)
+    assert math.isclose(out["spot_radius_x_um"], 200.0 * math.sqrt(2.0), rel_tol=0.15)
+
+
+def test_propagate_beam_precise_zero_distance_returns_input():
+    """distance_mm = 0 short-circuits the FFT step; output spot radius
+    should match the input waist within tight tolerance."""
+    params = make_laser_params(power_mw=1.0, waist_x=200.0, waist_y=200.0)
+    beam = emit_from_laser_source(params)
+    out = propagate_beam_precise(beam, 0.0, grid_span_mm=4.0, n_grid=256)
+    assert math.isclose(out["spot_radius_x_um"], 200.0, rel_tol=0.10)
+    assert out["total_power"] > 0.0
+
+
+def test_propagate_beam_precise_intensity_grid_shape():
+    """API contract: returned intensity is (n_grid, n_grid), axes length n_grid."""
+    beam = emit_from_laser_source(make_laser_params(power_mw=1.0))
+    out = propagate_beam_precise(beam, 50.0, grid_span_mm=4.0, n_grid=128)
+    assert out["intensity"].shape == (128, 128)
+    assert len(out["x_axis_mm"]) == 128
+    assert len(out["y_axis_mm"]) == 128
 
 
 def test_synthesize_field_hg_mn_picks_correct_mode():

@@ -1156,6 +1156,80 @@ def synthesize_field_from_beam(
     return field * amplitude_scale
 
 
+def propagate_beam_precise(
+    beam: Beam,
+    distance_mm: float,
+    *,
+    grid_span_mm: float = 6.0,
+    n_grid: int = 256,
+) -> dict[str, Any]:
+    """Tier-3 precision propagation: build the true 2D field for `beam` via
+    its profileKind, push it `distance_mm` of free space through the
+    Collins-FFT propagator, then collect 1D intensity slice + 1/e² spot
+    radius for display.
+
+    This is the entry point a UI "precision mode" toggle would call to
+    compare the analytic Gaussian spot against the diffraction-correct
+    field at a given downstream plane.
+
+    Returns a dict:
+      x_axis_mm:        1D output x coordinates (length n_grid)
+      y_axis_mm:        1D output y coordinates (length n_grid)
+      intensity:        2D |E|² array (n_grid x n_grid)
+      spot_radius_x_um: 1/e² spot radius along x (second-moment 2σ)
+      spot_radius_y_um: 1/e² spot radius along y
+      total_power:      sum of intensity × Δx × Δy (sanity check)
+    """
+    from app.solvers import collins_fft
+    from app.solvers import generalized_abcd
+
+    half = grid_span_mm / 2.0
+    x = np.linspace(-half, half, n_grid, endpoint=False)
+    y = np.linspace(-half, half, n_grid, endpoint=False)
+    X, Y = np.meshgrid(x, y)
+    field_in = synthesize_field_from_beam(beam, X, Y)
+
+    if distance_mm > 0:
+        M = generalized_abcd.m_free_space(distance_mm)
+        field_out, x_out, y_out = collins_fft.collins_5x5_fft(
+            field_in, X, Y, M, beam.wavelength_nm,
+        )
+    else:
+        field_out, x_out, y_out = field_in, X, Y
+
+    intensity = np.abs(field_out) ** 2
+    dx = float(x_out[0, 1] - x_out[0, 0])
+    dy = float(y_out[1, 0] - y_out[0, 0])
+
+    total = float(np.sum(intensity)) * dx * dy
+    line_x = np.sum(intensity, axis=0)
+    line_y = np.sum(intensity, axis=1)
+    cx = x_out[0, :]
+    cy = y_out[:, 0]
+
+    spot_radius_x_um = 0.0
+    spot_radius_y_um = 0.0
+    sum_x = float(np.sum(line_x))
+    sum_y = float(np.sum(line_y))
+    if sum_x > 1e-30:
+        mean_x = float(np.sum(cx * line_x)) / sum_x
+        var_x = float(np.sum((cx - mean_x) ** 2 * line_x)) / sum_x
+        spot_radius_x_um = 2.0 * math.sqrt(max(var_x, 0.0)) * 1000.0
+    if sum_y > 1e-30:
+        mean_y = float(np.sum(cy * line_y)) / sum_y
+        var_y = float(np.sum((cy - mean_y) ** 2 * line_y)) / sum_y
+        spot_radius_y_um = 2.0 * math.sqrt(max(var_y, 0.0)) * 1000.0
+
+    return {
+        "x_axis_mm": cx.tolist(),
+        "y_axis_mm": cy.tolist(),
+        "intensity": intensity,
+        "spot_radius_x_um": spot_radius_x_um,
+        "spot_radius_y_um": spot_radius_y_um,
+        "total_power": total,
+    }
+
+
 def _apply_program_factor(
     kind: str, params: dict[str, Any], factor: float
 ) -> dict[str, Any]:
