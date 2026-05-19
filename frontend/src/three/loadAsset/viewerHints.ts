@@ -123,17 +123,53 @@ export function createTranslucentHousingMaterial(opacity = 0.35): THREE.Material
 }
 
 
+/** Inverse of ``applyDeletionFilter`` — keep ONLY triangles whose
+ *  centroid is in the given set, drop everything else. Used by the
+ *  "mark front / mark back partition" workflow in IsolatorDevPage:
+ *  one STL referenced N times by N Asset3Ds, each materialising a
+ *  different subset of the original geometry. */
+export function applyIncludeOnlyFilter(
+  geometry: THREE.BufferGeometry,
+  includeOnlyCentroids: ReadonlyArray<string> | Set<string>,
+): THREE.BufferGeometry {
+  const set = includeOnlyCentroids instanceof Set
+    ? includeOnlyCentroids
+    : new Set(includeOnlyCentroids);
+  if (set.size === 0) return geometry;
+  const positions = geometry.attributes.position.array as Float32Array;
+  const triangleCount = Math.floor(positions.length / 9);
+  const out: number[] = [];
+  for (let t = 0; t < triangleCount; t += 1) {
+    const o = t * 9;
+    const cx = (positions[o + 0] + positions[o + 3] + positions[o + 6]) / 3;
+    const cy = (positions[o + 1] + positions[o + 4] + positions[o + 7]) / 3;
+    const cz = (positions[o + 2] + positions[o + 5] + positions[o + 8]) / 3;
+    if (!set.has(centroidKey(cx, cy, cz))) continue;
+    for (let k = 0; k < 9; k += 1) out.push(positions[o + k]);
+  }
+  const newGeom = new THREE.BufferGeometry();
+  newGeom.setAttribute("position", new THREE.Float32BufferAttribute(out, 3));
+  newGeom.computeVertexNormals();
+  return newGeom;
+}
+
+
 /** Top-level helper: run every viewer-hint geometry filter declared
- *  on an asset in canonical order (deletion → axis-radius), returning
- *  the resulting geometry. Material hints aren't included here — they
- *  apply to the Mesh, not the BufferGeometry — see ``materialForHints``
- *  for that path. */
+ *  on an asset in canonical order (includeOnly → deletion → axis-radius),
+ *  returning the resulting geometry. Material hints aren't included
+ *  here — they apply to the Mesh, not the BufferGeometry — see
+ *  ``materialForHints`` for that path. */
 export function applyViewerHintsToGeometry(
   geometry: THREE.BufferGeometry,
   hints: AssetViewerHints | undefined,
 ): THREE.BufferGeometry {
   if (!hints) return geometry;
   let out = geometry;
+  // includeOnly first so the per-partition deletion (if any) still
+  // works inside the kept subset.
+  if (hints.includeOnlyCentroids && hints.includeOnlyCentroids.length > 0) {
+    out = applyIncludeOnlyFilter(out, hints.includeOnlyCentroids);
+  }
   if (hints.deletedCentroids && hints.deletedCentroids.length > 0) {
     out = applyDeletionFilter(out, hints.deletedCentroids);
   }

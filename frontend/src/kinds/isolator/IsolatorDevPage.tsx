@@ -287,6 +287,22 @@ export function IsolatorDevPage() {
   const deletedCentroidsRef = useRef(deletedCentroids);
   useEffect(() => { deletedCentroidsRef.current = deletedCentroids; }, [deletedCentroids]);
 
+  // Front / back STL partition (Stage A''.11-followup-2). User marks
+  // triangles via Ctrl/Alt + mid-click; those subsets eventually
+  // bake into their own Asset3Ds via viewerHints.includeOnlyCentroids
+  // so the Lab viewer's binding tree can render them as separate
+  // sub-Assets that move + rotate with their Mount binding. Remaining
+  // (un-marked, un-deleted, un-linked) triangles form the Faraday
+  // body asset.
+  const [frontPartCentroids, setFrontPartCentroids] = useState<Set<string>>(() => new Set());
+  const [backPartCentroids, setBackPartCentroids] = useState<Set<string>>(() => new Set());
+  const frontPartCentroidsRef = useRef(frontPartCentroids);
+  const backPartCentroidsRef = useRef(backPartCentroids);
+  useEffect(() => { frontPartCentroidsRef.current = frontPartCentroids; }, [frontPartCentroids]);
+  useEffect(() => { backPartCentroidsRef.current = backPartCentroids; }, [backPartCentroids]);
+  const [savedFrontPart, setSavedFrontPart] = useState<Set<string>>(() => new Set());
+  const [savedBackPart, setSavedBackPart] = useState<Set<string>>(() => new Set());
+
   // Linked-rotation group — Shift + middle-click adds a coplanar cluster
   // to this set; the slider rotates them around `linkRotAxis` at
   // `linkRotPivotMm` (both in body-local STL frame). Default axis (0,0,1)
@@ -341,6 +357,8 @@ export function IsolatorDevPage() {
     const props = component?.properties as {
       isolatorDeletedCentroids?: string[];
       isolatorLinkedRotationGroup?: IsolatorLinkedRotationGroup;
+      isolatorFrontPartCentroids?: string[];
+      isolatorBackPartCentroids?: string[];
     } | undefined;
     const persistedDel = props?.isolatorDeletedCentroids ?? [];
     setDeletedCentroids(new Set(persistedDel));
@@ -353,6 +371,13 @@ export function IsolatorDevPage() {
     setLinkRotPivotMm(persistedLink?.pivotMm ?? [0, 0, 0]);
     setLinkBoundAnchors(new Set(persistedLink?.boundAnchors ?? []));
     setSavedLinked(persistedLink);
+
+    const persistedFront = props?.isolatorFrontPartCentroids ?? [];
+    const persistedBack = props?.isolatorBackPartCentroids ?? [];
+    setFrontPartCentroids(new Set(persistedFront));
+    setBackPartCentroids(new Set(persistedBack));
+    setSavedFrontPart(new Set(persistedFront));
+    setSavedBackPart(new Set(persistedBack));
 
     setSaveStatus("idle");
   }, [model, components]);
@@ -416,7 +441,8 @@ export function IsolatorDevPage() {
     // same raycast PLUS BFS-and-delete on the housing.
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
-    const performRaycast = (event: MouseEvent, deleteCluster: boolean, linkCluster: boolean = false) => {
+    type ClusterAction = "delete" | "link" | "front" | "back" | null;
+    const performRaycast = (event: MouseEvent, deleteCluster: boolean, linkCluster: boolean = false, partitionCluster: ClusterAction = null) => {
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -446,12 +472,29 @@ export function IsolatorDevPage() {
         : mesh.parent?.name === "isolator_pbs_overlay" ? "pbs-overlay"
         : "housing";
 
-      if ((deleteCluster || linkCluster) && which === "housing" && typeof hit.faceIndex === "number") {
+      const hasClusterAction = deleteCluster || linkCluster || partitionCluster !== null;
+      if (hasClusterAction && which === "housing" && typeof hit.faceIndex === "number") {
         const positions = (geo.attributes.position.array as Float32Array);
         const cluster = findCoplanarCluster(positions, hit.faceIndex);
         if (cluster.size > 0) {
-          const targetRef = linkCluster ? linkedCentroidsRef : deletedCentroidsRef;
-          const targetSetter = linkCluster ? setLinkedCentroids : setDeletedCentroids;
+          // Dispatch which set to mutate based on the action priority:
+          // partition > link > delete (only one fires per click — see
+          // onAuxClick's modifier-key switch).
+          let targetRef: typeof deletedCentroidsRef;
+          let targetSetter: typeof setDeletedCentroids;
+          if (partitionCluster === "front") {
+            targetRef = frontPartCentroidsRef;
+            targetSetter = setFrontPartCentroids;
+          } else if (partitionCluster === "back") {
+            targetRef = backPartCentroidsRef;
+            targetSetter = setBackPartCentroids;
+          } else if (linkCluster) {
+            targetRef = linkedCentroidsRef;
+            targetSetter = setLinkedCentroids;
+          } else {
+            targetRef = deletedCentroidsRef;
+            targetSetter = setDeletedCentroids;
+          }
           const next = new Set(targetRef.current);
           for (const t of cluster) {
             const o = t * 9;
@@ -486,8 +529,16 @@ export function IsolatorDevPage() {
     const onAuxClick = (event: MouseEvent) => {
       if (event.button !== 1) return; // middle button only
       event.preventDefault();
-      // Shift + middle-click → link-rotation group; plain middle-click → delete.
-      if (event.shiftKey) {
+      // Modifier-key dispatch — order matters: partition > link > delete.
+      //   Ctrl + mid-click   → mark as front-part STL subset
+      //   Alt  + mid-click   → mark as back-part STL subset
+      //   Shift + mid-click  → add to link-rotation group
+      //   plain mid-click    → add to delete set
+      if (event.ctrlKey) {
+        performRaycast(event, false, false, "front");
+      } else if (event.altKey) {
+        performRaycast(event, false, false, "back");
+      } else if (event.shiftKey) {
         performRaycast(event, /* deleteCluster */ false, /* linkCluster */ true);
       } else {
         performRaycast(event, /* deleteCluster */ true);
@@ -776,10 +827,14 @@ export function IsolatorDevPage() {
         ...(component.properties ?? {}),
         isolatorDeletedCentroids: [...deletedCentroids],
         isolatorLinkedRotationGroup: linkedGroupOut,
+        isolatorFrontPartCentroids: [...frontPartCentroids],
+        isolatorBackPartCentroids: [...backPartCentroids],
       };
       await updateComponentApi(component.id, { properties: nextProperties });
       setSavedCentroids(new Set(deletedCentroids));
       setSavedLinked(linkedGroupOut);
+      setSavedFrontPart(new Set(frontPartCentroids));
+      setSavedBackPart(new Set(backPartCentroids));
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 1500);
     } catch {
@@ -804,6 +859,8 @@ export function IsolatorDevPage() {
         ...(component.properties ?? {}),
         isolatorDeletedCentroids: [],
         isolatorLinkedRotationGroup: null,
+        isolatorFrontPartCentroids: [],
+        isolatorBackPartCentroids: [],
       };
       await updateComponentApi(component.id, { properties: nextProperties });
       setDeletedCentroids(new Set());
@@ -812,6 +869,10 @@ export function IsolatorDevPage() {
       setLinkRotDeg(0);
       setLinkBoundAnchors(new Set());
       setSavedLinked(null);
+      setFrontPartCentroids(new Set());
+      setBackPartCentroids(new Set());
+      setSavedFrontPart(new Set());
+      setSavedBackPart(new Set());
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 1500);
     } catch {
@@ -845,7 +906,21 @@ export function IsolatorDevPage() {
     return false;
   }, [linkedCentroids, savedLinked, linkRotDeg, linkRotAxis, linkRotPivotMm, linkBoundAnchors]);
 
-  const anyDirty = deletionsDirty || linkedDirty;
+  const setsEqual = (a: Set<string>, b: Set<string>): boolean => {
+    if (a.size !== b.size) return false;
+    for (const k of a) if (!b.has(k)) return false;
+    return true;
+  };
+  const frontPartDirty = useMemo(
+    () => !setsEqual(frontPartCentroids, savedFrontPart),
+    [frontPartCentroids, savedFrontPart],
+  );
+  const backPartDirty = useMemo(
+    () => !setsEqual(backPartCentroids, savedBackPart),
+    [backPartCentroids, savedBackPart],
+  );
+
+  const anyDirty = deletionsDirty || linkedDirty || frontPartDirty || backPartDirty;
 
   const statusText = useMemo(() => {
     if (parseStatus === "idle") return "in sync with state";
@@ -891,9 +966,29 @@ export function IsolatorDevPage() {
         </label>
         <button type="button" onClick={onResetFromTable}>↻ Reset from table</button>
         <button type="button" onClick={onCopy}>📋 Copy table line</button>
-        <span style={{ fontSize: 11, opacity: 0.65 }} title="Middle-click a face on the housing to delete its coplanar cluster. Shift+middle-click to add to the link-rotation group instead.">
-          🖱 mid-click = delete · Shift+mid-click = link-rotate
+        <span style={{ fontSize: 11, opacity: 0.65 }} title="Modifier keys with mid-click: plain = delete, Shift = link-rotate, Ctrl = mark front partition, Alt = mark back partition.">
+          🖱 mid = delete · Shift = link · Ctrl = front · Alt = back
         </span>
+        {frontPartCentroids.size > 0 && (
+          <button
+            type="button"
+            onClick={() => setFrontPartCentroids(new Set(savedFrontPart))}
+            style={{ fontSize: 11, color: "#1d4ed8" }}
+            title="Revert front-partition marks to last saved"
+          >
+            front ({frontPartCentroids.size}) ↻
+          </button>
+        )}
+        {backPartCentroids.size > 0 && (
+          <button
+            type="button"
+            onClick={() => setBackPartCentroids(new Set(savedBackPart))}
+            style={{ fontSize: 11, color: "#b91c1c" }}
+            title="Revert back-partition marks to last saved"
+          >
+            back ({backPartCentroids.size}) ↻
+          </button>
+        )}
         {deletedCentroids.size > 0 && (
           <button
             type="button"

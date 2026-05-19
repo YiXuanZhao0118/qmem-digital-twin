@@ -99,6 +99,16 @@ export type AssetViewerHints = {
    *  from the STL on load. Lets the user clip out parts of a vendor
    *  STL without re-exporting from CAD. */
   deletedCentroids?: string[];
+  /** Inverse of ``deletedCentroids`` — when set, the loader keeps
+   *  ONLY the listed triangles and drops everything else. Lets a
+   *  single STL be referenced multiple times by different Asset3Ds,
+   *  each materialising a different partition (e.g. an isolator
+   *  housing's front / back ferrule mount sub-asset that the user
+   *  defined via IsolatorDevPage's "mark front / mark back" UI).
+   *  When both are present, ``deletedCentroids`` is applied AFTER
+   *  ``includeOnlyCentroids`` so the per-asset deletion list still
+   *  works inside the kept partition. */
+  includeOnlyCentroids?: string[];
   /** Drop triangles whose centroid is within R mm of the bbox's
    *  longest axis. Bulk hide of interior baffles concentric with the
    *  optical bore. 0 (or unset) = disabled. */
