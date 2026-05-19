@@ -325,6 +325,18 @@ export function buildIsolatorPbsOverlay(
      *  Procedural path (already in three units) passes mmToThree(1); STL
      *  path (raw mm frame, scaled later by applyAssetScale) passes 1. */
     unitScale: number;
+    /** Per-render override of the front/back pose entries. Takes
+     *  priority over the static
+     *  ``ISOLATOR_PBS_DEFAULTS_BY_MODEL[componentModel]`` lookup —
+     *  IsolatorDevPage uses this to feed its in-page edits (especially
+     *  3-axis Euler ``rotationDeg`` for Glan-Laser) into the preview
+     *  without round-tripping through the source-code textarea. The
+     *  override has the same shape as a pose-table entry, so any field
+     *  the static table supports works here too. */
+    poseOverride?: {
+      front_pbs?: PbsPoseEntry;
+      back_pbs?: PbsPoseEntry;
+    };
   },
 ): THREE.Group {
   const overlay = new THREE.Group();
@@ -357,8 +369,19 @@ export function buildIsolatorPbsOverlay(
   defaults[1].dir[axisIdxBody] = tilt;
   defaults[1].dir[(axisIdxBody + 2) % 3] = tilt;
 
-  const modelOverride = opts.componentModel
+  // poseOverride (IsolatorDevPage in-page edits) wins over the static
+  // table. Merge per-prism: if the override has only front_pbs, fall
+  // back to the table for back_pbs and vice versa.
+  const tableOverride = opts.componentModel
     ? ISOLATOR_PBS_DEFAULTS_BY_MODEL[opts.componentModel]
+    : undefined;
+  const resolvedFront = opts.poseOverride?.front_pbs ?? tableOverride?.front_pbs;
+  const resolvedBack = opts.poseOverride?.back_pbs ?? tableOverride?.back_pbs;
+  const modelOverride = (resolvedFront || resolvedBack)
+    ? {
+        front_pbs: resolvedFront ?? tableOverride?.front_pbs ?? { pos: defaults[0].posMm },
+        back_pbs: resolvedBack ?? tableOverride?.back_pbs ?? { pos: defaults[1].posMm },
+      }
     : undefined;
   if (modelOverride) {
     for (const [idx, entry] of [modelOverride.front_pbs, modelOverride.back_pbs].entries()) {
@@ -620,6 +643,15 @@ export function buildThorlabsIsolatorObject(
    *  When omitted, falls back to
    *  `component.properties.isolatorLinkedRotationGroup`. */
   linkedRotationGroup?: IsolatorLinkedRotationGroup | null,
+  /** Optional per-render pose override for the front / back PBS or
+   *  Glan-Laser. Forwarded straight to ``buildIsolatorPbsOverlay`` so
+   *  IsolatorDevPage can feed its live-edit values (especially 3-axis
+   *  Euler ``rotationDeg`` for Glan-Laser) into the preview without
+   *  round-tripping through the source-code textarea. */
+  poseOverride?: {
+    front_pbs?: PbsPoseEntry;
+    back_pbs?: PbsPoseEntry;
+  },
 ): THREE.Object3D {
   geometry.computeBoundingBox();
   const bbox = geometry.boundingBox ?? new THREE.Box3();
@@ -687,6 +719,7 @@ export function buildThorlabsIsolatorObject(
     housingLengthMm,
     opticalAxisBody,
     unitScale: 1,
+    poseOverride,
   });
   if (overlay) overlay.renderOrder = 1;
 

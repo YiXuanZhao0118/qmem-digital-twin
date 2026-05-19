@@ -30,6 +30,7 @@ import {
   isolatorCentroidKey,
   ISOLATOR_PBS_DEFAULTS_BY_MODEL,
   type IsolatorLinkedRotationGroup,
+  type PbsPoseEntry,
 } from "./pbsOverlay";
 // Whole-file source string for the right-panel editor. Vite resolves `?raw`
 // at build time to the file's exact contents (geometry helpers + table +
@@ -177,10 +178,24 @@ function disposeObject3D(obj: THREE.Object3D): void {
 
 const POS_RE = /pos\s*:\s*\[\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\]/g;
 const YROT_RE = /yRotationDeg\s*:\s*([+-]?\d+(?:\.\d+)?)/g;
+// 3-axis Euler ``rotationDeg: [rx, ry, rz]`` — Stage A''.11-followup
+// lets Glan-Laser entries (and any PBS that needs a non-Y-axis tilt)
+// override the default alignment.
+const ROT_RE = /rotationDeg\s*:\s*\[\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\]/g;
 const MODEL_ROW_WINDOW = 800; // chars after `"MODEL":` to scan for the row
 
 function parseModelRow(text: string, model: string):
-  | { frontPos: Vec3; frontY: number; backPos: Vec3; backY: number }
+  | {
+      frontPos: Vec3;
+      frontY: number;
+      backPos: Vec3;
+      backY: number;
+      /** Set when the parsed pose entry has an explicit
+       *  ``rotationDeg: [rx, ry, rz]``. ``null`` means the entry uses
+       *  yRotationDeg only (legacy / single-DOF). */
+      frontRot: Vec3 | null;
+      backRot: Vec3 | null;
+    }
   | null {
   const escaped = model.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const re = new RegExp(`"${escaped}"\\s*:`);
@@ -190,14 +205,19 @@ function parseModelRow(text: string, model: string):
 
   POS_RE.lastIndex = 0;
   YROT_RE.lastIndex = 0;
+  ROT_RE.lastIndex = 0;
   const positions: Vec3[] = [];
   const yRots: number[] = [];
+  const rots: Vec3[] = [];
   let mm: RegExpExecArray | null;
   while ((mm = POS_RE.exec(chunk)) !== null && positions.length < 2) {
     positions.push([Number(mm[1]), Number(mm[2]), Number(mm[3])]);
   }
   while ((mm = YROT_RE.exec(chunk)) !== null && yRots.length < 2) {
     yRots.push(Number(mm[1]));
+  }
+  while ((mm = ROT_RE.exec(chunk)) !== null && rots.length < 2) {
+    rots.push([Number(mm[1]), Number(mm[2]), Number(mm[3])]);
   }
   if (positions.length !== 2 || yRots.length !== 2) return null;
   if (positions.some((p) => p.some((n) => !Number.isFinite(n)))) return null;
@@ -207,6 +227,10 @@ function parseModelRow(text: string, model: string):
     frontY: yRots[0],
     backPos: positions[1],
     backY: yRots[1],
+    // rotationDeg is sparse — only present on entries that need it.
+    // The order matches positions/yRots: first match → front, second → back.
+    frontRot: rots[0] ?? null,
+    backRot: rots[1] ?? null,
   };
 }
 
@@ -224,6 +248,14 @@ export function IsolatorDevPage() {
   const [backPos, setBackPos] = useState<Vec3>([0, 0, 0]);
   const [frontYRot, setFrontYRot] = useState<number>(0);
   const [backYRot, setBackYRot] = useState<number>(0);
+  // 3-axis Euler override (Stage A''.11-followup). Non-null = use
+  // ``rotationDeg: [rx, ry, rz]`` instead of the single-axis
+  // ``yRotationDeg`` path. Glan-Laser variants typically need this
+  // because their default alignment composes -90° around three.X with
+  // a y-rotation that single-axis can't express. PBS cubes can use it
+  // too for non-face-diagonal cement normals.
+  const [frontRotXYZ, setFrontRotXYZ] = useState<Vec3 | null>(null);
+  const [backRotXYZ, setBackRotXYZ] = useState<Vec3 | null>(null);
   // The full pbsOverlay.ts file source, editable. State (frontPos/...)
   // is the source of truth for the 3D view; the textarea is the source
   // of truth for the file source. They sync one-way (textarea → state)
@@ -297,6 +329,10 @@ export function IsolatorDevPage() {
       setBackPos([...def.back_pbs.pos]);
       setFrontYRot(def.front_pbs.yRotationDeg ?? 0);
       setBackYRot(def.back_pbs.yRotationDeg ?? 0);
+      // Pre-seed Euler from rotationDeg if the entry has it; else null
+      // (page falls back to yRot path until the user opts in).
+      setFrontRotXYZ(def.front_pbs.rotationDeg ? [...def.front_pbs.rotationDeg] : null);
+      setBackRotXYZ(def.back_pbs.rotationDeg ? [...def.back_pbs.rotationDeg] : null);
     }
     setCode(pbsOverlayFileSource as string);
     setParseStatus("idle");
@@ -577,9 +613,22 @@ export function IsolatorDevPage() {
               boundAnchors: [...linkBoundAnchors],
             }
           : null;
+        // poseOverride feeds the in-page front/back pos + yRot + Euler
+        // edits straight to the overlay. yRotationDeg path takes
+        // precedence when frontRotXYZ is null; explicit Euler wins
+        // when set (the user opted into 3-axis mode).
+        const buildPbsEntry = (
+          pos: Vec3, yRot: number, rot: Vec3 | null,
+        ): PbsPoseEntry => rot !== null
+          ? { pos, rotationDeg: rot }
+          : { pos, yRotationDeg: yRot };
+        const poseOverride = {
+          front_pbs: buildPbsEntry(frontPos, frontYRot, frontRotXYZ),
+          back_pbs: buildPbsEntry(backPos, backYRot, backRotXYZ),
+        };
         const group = buildThorlabsIsolatorObject(
           geometry, fakeComponent, fakeAsset,
-          innerFilterRadiusMm, deletedCentroids, linkedGroup,
+          innerFilterRadiusMm, deletedCentroids, linkedGroup, poseOverride,
         );
         // Count rendered tris by walking the result tree (housing mesh).
         let renderedTris = 0;
@@ -632,6 +681,7 @@ export function IsolatorDevPage() {
     return () => { cancelled = true; };
   }, [
     model, frontPos, backPos, frontYRot, backYRot,
+    frontRotXYZ, backRotXYZ,
     components, assets,
     innerFilterRadiusMm, deletedCentroids,
     linkedCentroids, linkRotDeg, linkRotAxis, linkRotPivotMm, linkBoundAnchors,
@@ -650,12 +700,21 @@ export function IsolatorDevPage() {
     setFrontYRot(parsed.frontY);
     setBackPos(parsed.backPos);
     setBackYRot(parsed.backY);
+    setFrontRotXYZ(parsed.frontRot);
+    setBackRotXYZ(parsed.backRot);
   };
 
   const onCopy = () => {
+    // Emit rotationDeg when the user opted into 3-axis Euler;
+    // otherwise the legacy single-axis yRotationDeg syntax. Parser
+    // reads both back into state via parseModelRow.
+    const rotSnippet = (yRot: number, rot: Vec3 | null): string =>
+      rot !== null
+        ? `rotationDeg: [${rot.join(", ")}]`
+        : `yRotationDeg: ${yRot}`;
     const tableLine =
-      `  "${model}":    { front_pbs: { pos: [${frontPos.join(", ")}], yRotationDeg: ${frontYRot} },\n` +
-      `                      back_pbs:  { pos: [${backPos.join(", ")}], yRotationDeg: ${backYRot} } },`;
+      `  "${model}":    { front_pbs: { pos: [${frontPos.join(", ")}], ${rotSnippet(frontYRot, frontRotXYZ)} },\n` +
+      `                      back_pbs:  { pos: [${backPos.join(", ")}], ${rotSnippet(backYRot, backRotXYZ)} } },`;
     void navigator.clipboard.writeText(tableLine);
   };
 
@@ -666,6 +725,8 @@ export function IsolatorDevPage() {
     setBackPos([...def.back_pbs.pos]);
     setFrontYRot(def.front_pbs.yRotationDeg ?? 0);
     setBackYRot(def.back_pbs.yRotationDeg ?? 0);
+    setFrontRotXYZ(def.front_pbs.rotationDeg ? [...def.front_pbs.rotationDeg] : null);
+    setBackRotXYZ(def.back_pbs.rotationDeg ? [...def.back_pbs.rotationDeg] : null);
     setCode(pbsOverlayFileSource as string);
     setParseStatus("idle");
   };
@@ -966,6 +1027,91 @@ export function IsolatorDevPage() {
           </button>
         </div>
       )}
+
+      {/* Per-prism pose editor (Stage A''.11-followup).
+          Glan-Laser variants frequently need free 3-axis Euler since
+          their default optical-axis alignment can't be expressed by a
+          single yRotationDeg. The "↻" button next to each Euler row
+          collapses back to yRot mode (sets rotXYZ → null). */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", padding: "4px 0", borderTop: "1px solid #e5e7eb", fontSize: 11 }}>
+        {(["front", "back"] as const).map((side) => {
+          const pos = side === "front" ? frontPos : backPos;
+          const setPos = side === "front" ? setFrontPos : setBackPos;
+          const yRot = side === "front" ? frontYRot : backYRot;
+          const setYRot = side === "front" ? setFrontYRot : setBackYRot;
+          const rot = side === "front" ? frontRotXYZ : backRotXYZ;
+          const setRot = side === "front" ? setFrontRotXYZ : setBackRotXYZ;
+          return (
+            <div key={side} style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              <b style={{ minWidth: 38 }}>{side}</b>
+              <span style={{ opacity: 0.6 }}>pos</span>
+              {(["x", "y", "z"] as const).map((axis, i) => (
+                <input
+                  key={`p${axis}`}
+                  type="number"
+                  step={0.5}
+                  value={pos[i]}
+                  onChange={(e) => {
+                    const next: Vec3 = [...pos];
+                    next[i] = Number(e.target.value);
+                    setPos(next);
+                  }}
+                  style={{ width: 50 }}
+                  title={`${side}.pos.${axis} body-local mm`}
+                />
+              ))}
+              {rot === null ? (
+                <>
+                  <span style={{ opacity: 0.6, marginLeft: 4 }}>yRot</span>
+                  <input
+                    type="number"
+                    step={1}
+                    value={yRot}
+                    onChange={(e) => setYRot(Number(e.target.value))}
+                    style={{ width: 50 }}
+                    title={`${side}.yRotationDeg around body Y`}
+                  />°
+                  <button
+                    type="button"
+                    onClick={() => setRot([0, yRot, 0])}
+                    style={{ fontSize: 10, marginLeft: 4 }}
+                    title="Switch to 3-axis Euler (rotationDeg). Needed for Glan-Laser."
+                  >
+                    → rxryrz
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span style={{ opacity: 0.6, marginLeft: 4 }}>rotDeg</span>
+                  {(["rx", "ry", "rz"] as const).map((axis, i) => (
+                    <input
+                      key={`r${axis}`}
+                      type="number"
+                      step={1}
+                      value={rot[i]}
+                      onChange={(e) => {
+                        const next: Vec3 = [...rot];
+                        next[i] = Number(e.target.value);
+                        setRot(next);
+                      }}
+                      style={{ width: 50 }}
+                      title={`${side}.rotationDeg.${axis} body-local (XYZ order)`}
+                    />
+                  ))}°
+                  <button
+                    type="button"
+                    onClick={() => setRot(null)}
+                    style={{ fontSize: 10, marginLeft: 4 }}
+                    title="Switch back to single-axis yRotationDeg"
+                  >
+                    ↻ yRot
+                  </button>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
 
       <div style={{ display: "flex", flex: 1, gap: 12, minHeight: 0 }}>
         <div style={{ flex: 2, position: "relative", minHeight: 400 }}>
