@@ -87,6 +87,10 @@ import { createDdsAd9959Pcb } from "../../kinds/rf_source/renderer";
 // Cycle trigger — by this line every binding _renderer_bindings.ts reads from
 // the barrel has been initialised, so it sees real values, not `undefined`.
 import { applyAssetScale, createPrimitive } from "./primitive";
+import {
+  applyViewerHintsToGeometry,
+  materialForHints,
+} from "./viewerHints";
 
 const gltfLoader = new GLTFLoader();
 const objLoader = new OBJLoader();
@@ -172,8 +176,16 @@ export async function loadAssetObject(
   if (extension === "obj") {
     object = (await objLoader.loadAsync(assetUrl)).clone(true);
   } else if (extension === "stl") {
-    const geometry = await stlLoader.loadAsync(assetUrl);
-    geometry.computeVertexNormals();
+    const rawGeometry = await stlLoader.loadAsync(assetUrl);
+    rawGeometry.computeVertexNormals();
+    // Stage A''.2 — every STL load gets asset.properties.viewerHints
+    // applied to its geometry (deletion-by-centroid + axis-radius
+    // bulk filter). The per-asset hints are empty for now (alembic
+    // 0064 added the column with default {}); A''.4 backfills the
+    // existing isolator deletion data into asset.properties so the
+    // bespoke pbsOverlay filter path collapses onto this generic one.
+    const hints = asset.properties?.viewerHints;
+    const geometry = applyViewerHintsToGeometry(rawGeometry, hints);
     if (isBB1E03Asset(asset)) {
       object = buildBB1E03MirrorObject(geometry, component);
     } else if (isWphsm05Asset(asset)) {
@@ -183,9 +195,17 @@ export async function loadAssetObject(
     } else if (isAd9959PcbAsset(asset)) {
       object = buildAd9959PcbObject(geometry, component);
     } else if (isThorlabsIsolatorAsset(asset)) {
+      // Isolator's WIP path still owns its own translucent housing +
+      // PBS overlay assembly. A''.4 retires it in favour of the
+      // ComponentBinding tree + viewerHints; for now it stays so the
+      // 7 IO-series models keep rendering.
       object = buildThorlabsIsolatorObject(geometry, component, asset);
     } else {
-      object = new THREE.Mesh(geometry, materialFor(component, state));
+      // Material hint wins over the per-component material when set —
+      // lets a housing asset declare "I'm translucent" without the
+      // consuming component needing to know.
+      const material = materialForHints(hints) ?? materialFor(component, state);
+      object = new THREE.Mesh(geometry, material);
     }
   } else {
     object = (await gltfLoader.loadAsync(assetUrl)).scene.clone(true);
