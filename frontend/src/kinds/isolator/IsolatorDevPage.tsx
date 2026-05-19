@@ -534,22 +534,34 @@ export function IsolatorDevPage() {
     // Build state-driven anchors that buildIsolatorPbsOverlay (and
     // buildThorlabsIsolatorObject which calls it) will use to position
     // the PBS cubes.
+    //
+    // ``directionBodyLocal`` is the legacy single-axis hint
+    // (cement-normal vector derived from yRotationDeg). It's ONLY
+    // emitted when frontRotXYZ/backRotXYZ are null (yRot mode). When
+    // the user opted into 3-axis Euler, omitting directionBodyLocal
+    // lets the renderer's ``spec.rotationDegBody`` branch fire — the
+    // anchor-direction check (line 398 of pbsOverlay.ts) would
+    // otherwise win and silently ignore the Euler values.
     const frontYRad = (frontYRot * Math.PI) / 180;
     const backYRad = (backYRot * Math.PI) / 180;
     const anchors: Anchor[] = [
       {
         id: "front_pbs",
         positionMmBodyLocal: { x: frontPos[0], y: frontPos[1], z: frontPos[2] },
-        directionBodyLocal: {
-          x: Math.cos(frontYRad), y: 1, z: -Math.sin(frontYRad),
-        },
+        ...(frontRotXYZ === null ? {
+          directionBodyLocal: {
+            x: Math.cos(frontYRad), y: 1, z: -Math.sin(frontYRad),
+          },
+        } : {}),
       },
       {
         id: "back_pbs",
         positionMmBodyLocal: { x: backPos[0], y: backPos[1], z: backPos[2] },
-        directionBodyLocal: {
-          x: Math.cos(backYRad), y: 1, z: -Math.sin(backYRad),
-        },
+        ...(backRotXYZ === null ? {
+          directionBodyLocal: {
+            x: Math.cos(backYRad), y: 1, z: -Math.sin(backYRad),
+          },
+        } : {}),
       },
     ];
 
