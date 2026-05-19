@@ -676,6 +676,17 @@ export function IsolatorDevPage() {
               boundAnchors: [...linkBoundAnchors],
             }
           : null;
+        // UX: front/back-marked triangles need to disappear from the
+        // dev preview so the user can keep mid-clicking inwards (the
+        // first-marked layer would otherwise block raycasts to deeper
+        // geometry). We do that by feeding the marked sets in as
+        // additional deletions to the Mark-housing renderer — the
+        // actual front/back state stays separate in the
+        // ``frontPartCentroids`` / ``backPartCentroids`` Sets so the
+        // bake-to-assets step can recover the partitions later.
+        const visibleDeletions = new Set(deletedCentroids);
+        for (const k of frontPartCentroids) visibleDeletions.add(k);
+        for (const k of backPartCentroids) visibleDeletions.add(k);
         // poseOverride feeds the in-page front/back pos + yRot + Euler
         // edits straight to the overlay. yRotationDeg path takes
         // precedence when frontRotXYZ is null; explicit Euler wins
@@ -703,7 +714,7 @@ export function IsolatorDevPage() {
         };
         const group = buildThorlabsIsolatorObject(
           geometry, fakeComponent, fakeAsset,
-          innerFilterRadiusMm, deletedCentroids, linkedGroup, poseOverride,
+          innerFilterRadiusMm, visibleDeletions, linkedGroup, poseOverride,
         );
         // Count rendered tris by walking the result tree (housing mesh).
         let renderedTris = 0;
@@ -760,6 +771,7 @@ export function IsolatorDevPage() {
     components, assets,
     innerFilterRadiusMm, deletedCentroids,
     linkedCentroids, linkRotDeg, linkRotAxis, linkRotPivotMm, linkBoundAnchors,
+    frontPartCentroids, backPartCentroids,
   ]);
 
   // ── Handlers ─────────────────────────────────────────────────────────
