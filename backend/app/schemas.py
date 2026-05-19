@@ -211,6 +211,11 @@ class Asset3DBase(CamelModel):
     unit: Literal["mm", "m"] = "mm"
     scale_factor: float = 1.0
     anchors: list[AssetAnchor] = Field(default_factory=list)
+    # Asset-level metadata (alembic 0064). ``viewerHints`` controls
+    # generic loader behaviour — STL deletion, axis-radius filter,
+    # material override — so isolator-shaped housing tricks aren't
+    # locked into the bespoke pbsOverlay path.
+    properties: JsonDict = Field(default_factory=dict)
 
 
 class Asset3DCreate(Asset3DBase):
@@ -226,6 +231,7 @@ class Asset3DUpdate(CamelModel):
     unit: Literal["mm", "m"] | None = None
     scale_factor: float | None = None
     anchors: list[AssetAnchor] | None = None
+    properties: JsonDict | None = None
 
 
 class LocalAssetImport(CamelModel):
@@ -285,7 +291,7 @@ class ComponentBindingBase(CamelModel):
     """
 
     parent_binding_id: uuid.UUID | None = None
-    target_kind: Literal["asset", "subcomponent"]
+    target_kind: Literal["asset", "subcomponent", "empty"]
     asset_3d_id: uuid.UUID | None = None
     sub_component_id: uuid.UUID | None = None
     role: str = "body"
@@ -309,11 +315,17 @@ class ComponentBindingCreate(ComponentBindingBase):
                     "target_kind='asset' requires asset_3d_id only "
                     "(sub_component_id must be null)"
                 )
-        else:
+        elif self.target_kind == "subcomponent":
             if self.sub_component_id is None or self.asset_3d_id is not None:
                 raise ValueError(
                     "target_kind='subcomponent' requires sub_component_id only "
                     "(asset_3d_id must be null)"
+                )
+        else:  # "empty"
+            if self.asset_3d_id is not None or self.sub_component_id is not None:
+                raise ValueError(
+                    "target_kind='empty' must have both asset_3d_id and "
+                    "sub_component_id null (transform-only node)"
                 )
         return self
 

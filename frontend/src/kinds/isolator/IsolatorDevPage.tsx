@@ -15,21 +15,27 @@
  * block and pushes new values into React state, which rebuilds only the
  * PBS overlay (and the housing if the model changed). No page reload.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 
-import { resolveAssetUrl, updateComponentApi } from "../../api/client";
+import {
+  listComponentBindingsApi,
+  resolveAssetUrl,
+  updateComponentApi,
+  updateComponentBindingApi,
+} from "../../api/client";
 import { useSceneStore } from "../../store/sceneStore";
 import { mmToThree } from "../../three/transformUtils";
-import type { Anchor, Asset3D, ComponentItem } from "../../types/digitalTwin";
+import type { Anchor, Asset3D, ComponentBinding, ComponentItem } from "../../types/digitalTwin";
 import {
   buildIsolatorPbsOverlay,
   buildThorlabsIsolatorObject,
   isolatorCentroidKey,
   ISOLATOR_PBS_DEFAULTS_BY_MODEL,
   type IsolatorLinkedRotationGroup,
+  type PbsPoseEntry,
 } from "./pbsOverlay";
 // Whole-file source string for the right-panel editor. Vite resolves `?raw`
 // at build time to the file's exact contents (geometry helpers + table +
@@ -177,10 +183,24 @@ function disposeObject3D(obj: THREE.Object3D): void {
 
 const POS_RE = /pos\s*:\s*\[\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\]/g;
 const YROT_RE = /yRotationDeg\s*:\s*([+-]?\d+(?:\.\d+)?)/g;
+// 3-axis Euler ``rotationDeg: [rx, ry, rz]`` — Stage A''.11-followup
+// lets Glan-Laser entries (and any PBS that needs a non-Y-axis tilt)
+// override the default alignment.
+const ROT_RE = /rotationDeg\s*:\s*\[\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\]/g;
 const MODEL_ROW_WINDOW = 800; // chars after `"MODEL":` to scan for the row
 
 function parseModelRow(text: string, model: string):
-  | { frontPos: Vec3; frontY: number; backPos: Vec3; backY: number }
+  | {
+      frontPos: Vec3;
+      frontY: number;
+      backPos: Vec3;
+      backY: number;
+      /** Set when the parsed pose entry has an explicit
+       *  ``rotationDeg: [rx, ry, rz]``. ``null`` means the entry uses
+       *  yRotationDeg only (legacy / single-DOF). */
+      frontRot: Vec3 | null;
+      backRot: Vec3 | null;
+    }
   | null {
   const escaped = model.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const re = new RegExp(`"${escaped}"\\s*:`);
@@ -190,14 +210,19 @@ function parseModelRow(text: string, model: string):
 
   POS_RE.lastIndex = 0;
   YROT_RE.lastIndex = 0;
+  ROT_RE.lastIndex = 0;
   const positions: Vec3[] = [];
   const yRots: number[] = [];
+  const rots: Vec3[] = [];
   let mm: RegExpExecArray | null;
   while ((mm = POS_RE.exec(chunk)) !== null && positions.length < 2) {
     positions.push([Number(mm[1]), Number(mm[2]), Number(mm[3])]);
   }
   while ((mm = YROT_RE.exec(chunk)) !== null && yRots.length < 2) {
     yRots.push(Number(mm[1]));
+  }
+  while ((mm = ROT_RE.exec(chunk)) !== null && rots.length < 2) {
+    rots.push([Number(mm[1]), Number(mm[2]), Number(mm[3])]);
   }
   if (positions.length !== 2 || yRots.length !== 2) return null;
   if (positions.some((p) => p.some((n) => !Number.isFinite(n)))) return null;
@@ -207,6 +232,10 @@ function parseModelRow(text: string, model: string):
     frontY: yRots[0],
     backPos: positions[1],
     backY: yRots[1],
+    // rotationDeg is sparse — only present on entries that need it.
+    // The order matches positions/yRots: first match → front, second → back.
+    frontRot: rots[0] ?? null,
+    backRot: rots[1] ?? null,
   };
 }
 
@@ -224,6 +253,14 @@ export function IsolatorDevPage() {
   const [backPos, setBackPos] = useState<Vec3>([0, 0, 0]);
   const [frontYRot, setFrontYRot] = useState<number>(0);
   const [backYRot, setBackYRot] = useState<number>(0);
+  // 3-axis Euler override (Stage A''.11-followup). Non-null = use
+  // ``rotationDeg: [rx, ry, rz]`` instead of the single-axis
+  // ``yRotationDeg`` path. Glan-Laser variants typically need this
+  // because their default alignment composes -90° around three.X with
+  // a y-rotation that single-axis can't express. PBS cubes can use it
+  // too for non-face-diagonal cement normals.
+  const [frontRotXYZ, setFrontRotXYZ] = useState<Vec3 | null>(null);
+  const [backRotXYZ, setBackRotXYZ] = useState<Vec3 | null>(null);
   // The full pbsOverlay.ts file source, editable. State (frontPos/...)
   // is the source of truth for the 3D view; the textarea is the source
   // of truth for the file source. They sync one-way (textarea → state)
@@ -254,6 +291,57 @@ export function IsolatorDevPage() {
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const deletedCentroidsRef = useRef(deletedCentroids);
   useEffect(() => { deletedCentroidsRef.current = deletedCentroids; }, [deletedCentroids]);
+
+  // Front / back STL partition (Stage A''.11-followup-2). User marks
+  // triangles via Ctrl/Alt + mid-click; those subsets eventually
+  // bake into their own Asset3Ds via viewerHints.includeOnlyCentroids
+  // so the Lab viewer's binding tree can render them as separate
+  // sub-Assets that move + rotate with their Mount binding. Remaining
+  // (un-marked, un-deleted, un-linked) triangles form the Faraday
+  // body asset.
+  const [frontPartCentroids, setFrontPartCentroids] = useState<Set<string>>(() => new Set());
+  const [backPartCentroids, setBackPartCentroids] = useState<Set<string>>(() => new Set());
+  const frontPartCentroidsRef = useRef(frontPartCentroids);
+  const backPartCentroidsRef = useRef(backPartCentroids);
+  useEffect(() => { frontPartCentroidsRef.current = frontPartCentroids; }, [frontPartCentroids]);
+  useEffect(() => { backPartCentroidsRef.current = backPartCentroids; }, [backPartCentroids]);
+  const [savedFrontPart, setSavedFrontPart] = useState<Set<string>>(() => new Set());
+  const [savedBackPart, setSavedBackPart] = useState<Set<string>>(() => new Set());
+
+  // Binding tree panel state (Branch A — direct edit of binding rows).
+  // Loaded once per model change via listComponentBindingsApi; each
+  // row's pose is edited in ``bindingEdits`` (local until Apply →
+  // updateComponentBindingApi → PATCH /api/component-bindings/{id}).
+  // Lab viewer reflects on hard refresh today; WS broadcast for
+  // binding updates is a follow-up commit.
+  const [bindings, setBindings] = useState<ComponentBinding[] | null>(null);
+  type PoseEdit = { x: number; y: number; z: number; rx: number; ry: number; rz: number };
+  const [bindingEdits, setBindingEdits] = useState<Record<string, PoseEdit>>({});
+  const [bindingApplyState, setBindingApplyState] = useState<Record<string, "idle" | "saving" | "saved" | "error">>({});
+
+  const reloadBindings = useCallback(async (componentId: string | null) => {
+    if (!componentId) {
+      setBindings(null);
+      setBindingEdits({});
+      return;
+    }
+    try {
+      const list = await listComponentBindingsApi(componentId);
+      setBindings(list);
+      const edits: Record<string, PoseEdit> = {};
+      for (const b of list) {
+        edits[b.id] = {
+          x: b.localXMm, y: b.localYMm, z: b.localZMm,
+          rx: b.localRxDeg, ry: b.localRyDeg, rz: b.localRzDeg,
+        };
+      }
+      setBindingEdits(edits);
+      setBindingApplyState({});
+    } catch {
+      setBindings(null);
+      setBindingEdits({});
+    }
+  }, []);
 
   // Linked-rotation group — Shift + middle-click adds a coplanar cluster
   // to this set; the slider rotates them around `linkRotAxis` at
@@ -297,6 +385,10 @@ export function IsolatorDevPage() {
       setBackPos([...def.back_pbs.pos]);
       setFrontYRot(def.front_pbs.yRotationDeg ?? 0);
       setBackYRot(def.back_pbs.yRotationDeg ?? 0);
+      // Pre-seed Euler from rotationDeg if the entry has it; else null
+      // (page falls back to yRot path until the user opts in).
+      setFrontRotXYZ(def.front_pbs.rotationDeg ? [...def.front_pbs.rotationDeg] : null);
+      setBackRotXYZ(def.back_pbs.rotationDeg ? [...def.back_pbs.rotationDeg] : null);
     }
     setCode(pbsOverlayFileSource as string);
     setParseStatus("idle");
@@ -305,6 +397,8 @@ export function IsolatorDevPage() {
     const props = component?.properties as {
       isolatorDeletedCentroids?: string[];
       isolatorLinkedRotationGroup?: IsolatorLinkedRotationGroup;
+      isolatorFrontPartCentroids?: string[];
+      isolatorBackPartCentroids?: string[];
     } | undefined;
     const persistedDel = props?.isolatorDeletedCentroids ?? [];
     setDeletedCentroids(new Set(persistedDel));
@@ -318,8 +412,18 @@ export function IsolatorDevPage() {
     setLinkBoundAnchors(new Set(persistedLink?.boundAnchors ?? []));
     setSavedLinked(persistedLink);
 
+    const persistedFront = props?.isolatorFrontPartCentroids ?? [];
+    const persistedBack = props?.isolatorBackPartCentroids ?? [];
+    setFrontPartCentroids(new Set(persistedFront));
+    setBackPartCentroids(new Set(persistedBack));
+    setSavedFrontPart(new Set(persistedFront));
+    setSavedBackPart(new Set(persistedBack));
+
+    // Load binding tree poses for the Bindings panel.
+    void reloadBindings(component?.id ?? null);
+
     setSaveStatus("idle");
-  }, [model, components]);
+  }, [model, components, reloadBindings]);
 
   // ── Three.js scene ───────────────────────────────────────────────────
   const mountRef = useRef<HTMLDivElement>(null);
@@ -327,6 +431,10 @@ export function IsolatorDevPage() {
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const modelGroupRef = useRef<THREE.Object3D | null>(null);
+  // Overlay div for the Ctrl/Alt + left-drag box-select rectangle.
+  // Updated imperatively from the pointer handlers inside the
+  // init useEffect to avoid React re-render storm at 60fps.
+  const boxOverlayElRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -380,7 +488,8 @@ export function IsolatorDevPage() {
     // same raycast PLUS BFS-and-delete on the housing.
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
-    const performRaycast = (event: MouseEvent, deleteCluster: boolean, linkCluster: boolean = false) => {
+    type ClusterAction = "delete" | "link" | "front" | "back" | null;
+    const performRaycast = (event: MouseEvent, deleteCluster: boolean, linkCluster: boolean = false, partitionCluster: ClusterAction = null) => {
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -410,12 +519,29 @@ export function IsolatorDevPage() {
         : mesh.parent?.name === "isolator_pbs_overlay" ? "pbs-overlay"
         : "housing";
 
-      if ((deleteCluster || linkCluster) && which === "housing" && typeof hit.faceIndex === "number") {
+      const hasClusterAction = deleteCluster || linkCluster || partitionCluster !== null;
+      if (hasClusterAction && which === "housing" && typeof hit.faceIndex === "number") {
         const positions = (geo.attributes.position.array as Float32Array);
         const cluster = findCoplanarCluster(positions, hit.faceIndex);
         if (cluster.size > 0) {
-          const targetRef = linkCluster ? linkedCentroidsRef : deletedCentroidsRef;
-          const targetSetter = linkCluster ? setLinkedCentroids : setDeletedCentroids;
+          // Dispatch which set to mutate based on the action priority:
+          // partition > link > delete (only one fires per click — see
+          // onAuxClick's modifier-key switch).
+          let targetRef: typeof deletedCentroidsRef;
+          let targetSetter: typeof setDeletedCentroids;
+          if (partitionCluster === "front") {
+            targetRef = frontPartCentroidsRef;
+            targetSetter = setFrontPartCentroids;
+          } else if (partitionCluster === "back") {
+            targetRef = backPartCentroidsRef;
+            targetSetter = setBackPartCentroids;
+          } else if (linkCluster) {
+            targetRef = linkedCentroidsRef;
+            targetSetter = setLinkedCentroids;
+          } else {
+            targetRef = deletedCentroidsRef;
+            targetSetter = setDeletedCentroids;
+          }
           const next = new Set(targetRef.current);
           for (const t of cluster) {
             const o = t * 9;
@@ -441,7 +567,127 @@ export function IsolatorDevPage() {
       });
     };
 
-    const onLeftClick = (event: MouseEvent) => performRaycast(event, false);
+    const onLeftClick = (event: MouseEvent) => {
+      // Suppress single-click raycast when the user just finished a
+      // box-select drag — pointerup fires before "click" so we'd
+      // double-handle.
+      if (boxJustSelected) {
+        boxJustSelected = false;
+        return;
+      }
+      performRaycast(event, false);
+    };
+
+    // ── Box-select (Ctrl/Alt + left-drag) ─────────────────────────
+    // While a Ctrl/Alt + left button is held, we draw a dashed
+    // rectangle on top of the canvas. On release every housing
+    // triangle whose projected centroid lands inside the rect gets
+    // added to the matching front/back partition set. OrbitControls
+    // is temporarily disabled during the drag so the left-drag-to-
+    // rotate gesture doesn't fire.
+    let boxSelectMode: "front" | "back" | null = null;
+    let boxStartX = 0;
+    let boxStartY = 0;
+    let boxEndX = 0;
+    let boxEndY = 0;
+    let boxJustSelected = false;
+    const updateBoxOverlay = () => {
+      const el = boxOverlayElRef.current;
+      if (!el) return;
+      if (boxSelectMode === null) {
+        el.style.display = "none";
+        return;
+      }
+      const x = Math.min(boxStartX, boxEndX);
+      const y = Math.min(boxStartY, boxEndY);
+      const w = Math.abs(boxEndX - boxStartX);
+      const h = Math.abs(boxEndY - boxStartY);
+      el.style.display = "block";
+      el.style.left = `${x}px`;
+      el.style.top = `${y}px`;
+      el.style.width = `${w}px`;
+      el.style.height = `${h}px`;
+      el.style.borderColor = boxSelectMode === "front" ? "#1d4ed8" : "#b91c1c";
+      el.style.background = boxSelectMode === "front"
+        ? "rgba(59, 130, 246, 0.12)"
+        : "rgba(239, 68, 68, 0.12)";
+    };
+    const collectTrianglesInRect = (mode: "front" | "back") => {
+      const target = modelGroupRef.current;
+      if (!target) return;
+      const canvasRect = renderer.domElement.getBoundingClientRect();
+      // Box coords are page-relative; convert to canvas-relative.
+      const xmin = Math.min(boxStartX, boxEndX) - canvasRect.left;
+      const ymin = Math.min(boxStartY, boxEndY) - canvasRect.top;
+      const xmax = Math.max(boxStartX, boxEndX) - canvasRect.left;
+      const ymax = Math.max(boxStartY, boxEndY) - canvasRect.top;
+      if (xmax - xmin < 2 || ymax - ymin < 2) return; // tiny drag = no-op
+      const collected = new Set<string>();
+      const worldVec = new THREE.Vector3();
+      target.traverse((obj) => {
+        const mesh = obj as THREE.Mesh;
+        if (!mesh.isMesh || !mesh.geometry) return;
+        // Skip PBS / Glan-Laser overlay meshes (housing only).
+        if (mesh.userData.__pbsAnchorName) return;
+        if (mesh.parent?.name === "isolator_pbs_overlay") return;
+        const positions = (mesh.geometry as THREE.BufferGeometry).attributes
+          .position?.array as Float32Array | undefined;
+        if (!positions) return;
+        const triCount = Math.floor(positions.length / 9);
+        mesh.updateMatrixWorld();
+        for (let t = 0; t < triCount; t += 1) {
+          const o = t * 9;
+          const cx = (positions[o + 0] + positions[o + 3] + positions[o + 6]) / 3;
+          const cy = (positions[o + 1] + positions[o + 4] + positions[o + 7]) / 3;
+          const cz = (positions[o + 2] + positions[o + 5] + positions[o + 8]) / 3;
+          worldVec.set(cx, cy, cz).applyMatrix4(mesh.matrixWorld);
+          worldVec.project(camera);
+          if (worldVec.z < -1 || worldVec.z > 1) continue;
+          const sx = ((worldVec.x + 1) / 2) * canvasRect.width;
+          const sy = ((1 - worldVec.y) / 2) * canvasRect.height;
+          if (sx < xmin || sx > xmax || sy < ymin || sy > ymax) continue;
+          collected.add(isolatorCentroidKey(cx, cy, cz));
+        }
+      });
+      if (collected.size === 0) return;
+      const ref = mode === "front" ? frontPartCentroidsRef : backPartCentroidsRef;
+      const setter = mode === "front" ? setFrontPartCentroids : setBackPartCentroids;
+      const next = new Set(ref.current);
+      for (const k of collected) next.add(k);
+      setter(next);
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      const mode: "front" | "back" | null = event.ctrlKey ? "front"
+        : event.altKey ? "back"
+        : null;
+      if (mode === null) return;
+      boxSelectMode = mode;
+      boxStartX = boxEndX = event.clientX;
+      boxStartY = boxEndY = event.clientY;
+      updateBoxOverlay();
+      controls.enabled = false; // suppress orbit rotate during drag
+      event.preventDefault();
+    };
+    const onPointerMove = (event: PointerEvent) => {
+      if (boxSelectMode === null) return;
+      boxEndX = event.clientX;
+      boxEndY = event.clientY;
+      updateBoxOverlay();
+    };
+    const onPointerUp = (event: PointerEvent) => {
+      if (boxSelectMode === null) return;
+      const mode = boxSelectMode;
+      boxSelectMode = null;
+      controls.enabled = true;
+      const dx = Math.abs(event.clientX - boxStartX);
+      const dy = Math.abs(event.clientY - boxStartY);
+      if (dx > 2 || dy > 2) {
+        collectTrianglesInRect(mode);
+        boxJustSelected = true; // swallow the upcoming "click" event
+      }
+      updateBoxOverlay();
+    };
 
     // Middle-click delete: `auxclick` fires for non-primary buttons (middle
     // + right) and — unlike mousedown — only fires after the button is
@@ -450,8 +696,16 @@ export function IsolatorDevPage() {
     const onAuxClick = (event: MouseEvent) => {
       if (event.button !== 1) return; // middle button only
       event.preventDefault();
-      // Shift + middle-click → link-rotation group; plain middle-click → delete.
-      if (event.shiftKey) {
+      // Modifier-key dispatch — order matters: partition > link > delete.
+      //   Ctrl + mid-click   → mark as front-part STL subset
+      //   Alt  + mid-click   → mark as back-part STL subset
+      //   Shift + mid-click  → add to link-rotation group
+      //   plain mid-click    → add to delete set
+      if (event.ctrlKey) {
+        performRaycast(event, false, false, "front");
+      } else if (event.altKey) {
+        performRaycast(event, false, false, "back");
+      } else if (event.shiftKey) {
         performRaycast(event, /* deleteCluster */ false, /* linkCluster */ true);
       } else {
         performRaycast(event, /* deleteCluster */ true);
@@ -467,6 +721,9 @@ export function IsolatorDevPage() {
     renderer.domElement.addEventListener("click", onLeftClick);
     renderer.domElement.addEventListener("auxclick", onAuxClick);
     renderer.domElement.addEventListener("mousedown", onMiddleMouseDown);
+    renderer.domElement.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
 
     return () => {
       cancelAnimationFrame(raf);
@@ -476,6 +733,9 @@ export function IsolatorDevPage() {
       renderer.domElement.removeEventListener("click", onLeftClick);
       renderer.domElement.removeEventListener("auxclick", onAuxClick);
       renderer.domElement.removeEventListener("mousedown", onMiddleMouseDown);
+      renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
       if (renderer.domElement.parentNode) {
         renderer.domElement.parentNode.removeChild(renderer.domElement);
       }
@@ -498,22 +758,34 @@ export function IsolatorDevPage() {
     // Build state-driven anchors that buildIsolatorPbsOverlay (and
     // buildThorlabsIsolatorObject which calls it) will use to position
     // the PBS cubes.
+    //
+    // ``directionBodyLocal`` is the legacy single-axis hint
+    // (cement-normal vector derived from yRotationDeg). It's ONLY
+    // emitted when frontRotXYZ/backRotXYZ are null (yRot mode). When
+    // the user opted into 3-axis Euler, omitting directionBodyLocal
+    // lets the renderer's ``spec.rotationDegBody`` branch fire — the
+    // anchor-direction check (line 398 of pbsOverlay.ts) would
+    // otherwise win and silently ignore the Euler values.
     const frontYRad = (frontYRot * Math.PI) / 180;
     const backYRad = (backYRot * Math.PI) / 180;
     const anchors: Anchor[] = [
       {
         id: "front_pbs",
         positionMmBodyLocal: { x: frontPos[0], y: frontPos[1], z: frontPos[2] },
-        directionBodyLocal: {
-          x: Math.cos(frontYRad), y: 1, z: -Math.sin(frontYRad),
-        },
+        ...(frontRotXYZ === null ? {
+          directionBodyLocal: {
+            x: Math.cos(frontYRad), y: 1, z: -Math.sin(frontYRad),
+          },
+        } : {}),
       },
       {
         id: "back_pbs",
         positionMmBodyLocal: { x: backPos[0], y: backPos[1], z: backPos[2] },
-        directionBodyLocal: {
-          x: Math.cos(backYRad), y: 1, z: -Math.sin(backYRad),
-        },
+        ...(backRotXYZ === null ? {
+          directionBodyLocal: {
+            x: Math.cos(backYRad), y: 1, z: -Math.sin(backYRad),
+          },
+        } : {}),
       },
     ];
 
@@ -545,7 +817,25 @@ export function IsolatorDevPage() {
       // Real STL — load & wrap through the same builder the lab viewer uses.
       loadStlGeometryCached(asset.filePath).then((geometry) => {
         if (cancelled) return;
-        const fakeAsset: Asset3D = { ...asset, anchors };
+        // IsolatorDevPage edits the bundled PBS / Glan-Laser overlay
+        // directly. Stage A''.9/A''.11 set
+        // viewerHints.bundledOverlay=false on migrated isolator assets
+        // so the Lab viewer doesn't double-render the PBS cubes (the
+        // binding tree now adds them as sub-Components there). That
+        // flag is meaningless here — this page IS the overlay editor.
+        // Force the overlay on regardless, by overriding the flag in
+        // a per-render fakeAsset.
+        const fakeAsset: Asset3D = {
+          ...asset,
+          anchors,
+          properties: {
+            ...(asset.properties ?? {}),
+            viewerHints: {
+              ...(asset.properties?.viewerHints ?? {}),
+              bundledOverlay: true,
+            },
+          },
+        };
         const fakeComponent: ComponentItem = component;
         const rawTris = Math.floor((geometry.attributes.position.array as Float32Array).length / 9);
         // Builder accepts explicit deletion set + linked rotation group so
@@ -559,9 +849,45 @@ export function IsolatorDevPage() {
               boundAnchors: [...linkBoundAnchors],
             }
           : null;
+        // UX: front/back-marked triangles need to disappear from the
+        // dev preview so the user can keep mid-clicking inwards (the
+        // first-marked layer would otherwise block raycasts to deeper
+        // geometry). We do that by feeding the marked sets in as
+        // additional deletions to the Mark-housing renderer — the
+        // actual front/back state stays separate in the
+        // ``frontPartCentroids`` / ``backPartCentroids`` Sets so the
+        // bake-to-assets step can recover the partitions later.
+        const visibleDeletions = new Set(deletedCentroids);
+        for (const k of frontPartCentroids) visibleDeletions.add(k);
+        for (const k of backPartCentroids) visibleDeletions.add(k);
+        // poseOverride feeds the in-page front/back pos + yRot + Euler
+        // edits straight to the overlay. yRotationDeg path takes
+        // precedence when frontRotXYZ is null; explicit Euler wins
+        // when set (the user opted into 3-axis mode).
+        //
+        // CRITICAL: carry prismType from the pose table. Without
+        // this, the renderer falls back to the default ``pbs_cube``
+        // and HP variants (which the table marks as ``glan_laser``)
+        // get rendered as PBS cubes — Stage A''.11-followup oversight
+        // before this fix.
+        const tableDef = ISOLATOR_PBS_DEFAULTS_BY_MODEL[model];
+        const buildPbsEntry = (
+          pos: Vec3, yRot: number, rot: Vec3 | null,
+          tableEntry: typeof tableDef extends undefined ? undefined : PbsPoseEntry | undefined,
+        ): PbsPoseEntry => {
+          const base: PbsPoseEntry = rot !== null
+            ? { pos, rotationDeg: rot }
+            : { pos, yRotationDeg: yRot };
+          if (tableEntry?.prismType) base.prismType = tableEntry.prismType;
+          return base;
+        };
+        const poseOverride = {
+          front_pbs: buildPbsEntry(frontPos, frontYRot, frontRotXYZ, tableDef?.front_pbs),
+          back_pbs: buildPbsEntry(backPos, backYRot, backRotXYZ, tableDef?.back_pbs),
+        };
         const group = buildThorlabsIsolatorObject(
           geometry, fakeComponent, fakeAsset,
-          innerFilterRadiusMm, deletedCentroids, linkedGroup,
+          innerFilterRadiusMm, visibleDeletions, linkedGroup, poseOverride,
         );
         // Count rendered tris by walking the result tree (housing mesh).
         let renderedTris = 0;
@@ -614,10 +940,64 @@ export function IsolatorDevPage() {
     return () => { cancelled = true; };
   }, [
     model, frontPos, backPos, frontYRot, backYRot,
+    frontRotXYZ, backRotXYZ,
     components, assets,
     innerFilterRadiusMm, deletedCentroids,
     linkedCentroids, linkRotDeg, linkRotAxis, linkRotPivotMm, linkBoundAnchors,
+    frontPartCentroids, backPartCentroids,
   ]);
+
+  // ── Binding tree edit handlers (Branch A) ────────────────────────────
+  const setBindingEditField = (
+    bindingId: string,
+    field: keyof PoseEdit,
+    value: number,
+  ) => {
+    setBindingEdits((prev) => ({
+      ...prev,
+      [bindingId]: { ...prev[bindingId], [field]: value },
+    }));
+    setBindingApplyState((prev) => ({ ...prev, [bindingId]: "idle" }));
+  };
+  const applyBindingEdit = async (bindingId: string) => {
+    const edit = bindingEdits[bindingId];
+    if (!edit) return;
+    setBindingApplyState((prev) => ({ ...prev, [bindingId]: "saving" }));
+    try {
+      await updateComponentBindingApi(bindingId, {
+        localXMm: edit.x, localYMm: edit.y, localZMm: edit.z,
+        localRxDeg: edit.rx, localRyDeg: edit.ry, localRzDeg: edit.rz,
+      });
+      setBindingApplyState((prev) => ({ ...prev, [bindingId]: "saved" }));
+      // Refetch so any server-side normalisation lands locally too.
+      const component = components.find((c) => c.model === model);
+      if (component) await reloadBindings(component.id);
+    } catch {
+      setBindingApplyState((prev) => ({ ...prev, [bindingId]: "error" }));
+    }
+  };
+  const bindingDisplayLabel = (b: ComponentBinding): string => {
+    const role = (b.properties as { role_label?: string } | null)?.role_label;
+    if (role) return role;
+    if (b.parentBindingId === null) return "root (body)";
+    return `${b.role} (${b.targetKind})`;
+  };
+  /** Sort bindings into the canonical "5-element" reading order:
+   *  root → front_mount → front_pbs → front_piece → back_mount →
+   *  back_pbs → back_piece. Anything else falls to the bottom. */
+  const sortedBindings = useMemo(() => {
+    if (!bindings) return null;
+    const order = (b: ComponentBinding): number => {
+      if (b.parentBindingId === null) return 0;
+      const role = (b.properties as { role_label?: string } | null)?.role_label ?? "";
+      const map: Record<string, number> = {
+        front_mount: 1, front_pbs: 2, front_glan_laser: 2, front_piece: 3,
+        back_mount: 4, back_pbs: 5, back_glan_laser: 5, back_piece: 6,
+      };
+      return map[role] ?? 99;
+    };
+    return [...bindings].sort((a, b) => order(a) - order(b));
+  }, [bindings]);
 
   // ── Handlers ─────────────────────────────────────────────────────────
   const onCodeChange = (next: string) => {
@@ -632,12 +1012,21 @@ export function IsolatorDevPage() {
     setFrontYRot(parsed.frontY);
     setBackPos(parsed.backPos);
     setBackYRot(parsed.backY);
+    setFrontRotXYZ(parsed.frontRot);
+    setBackRotXYZ(parsed.backRot);
   };
 
   const onCopy = () => {
+    // Emit rotationDeg when the user opted into 3-axis Euler;
+    // otherwise the legacy single-axis yRotationDeg syntax. Parser
+    // reads both back into state via parseModelRow.
+    const rotSnippet = (yRot: number, rot: Vec3 | null): string =>
+      rot !== null
+        ? `rotationDeg: [${rot.join(", ")}]`
+        : `yRotationDeg: ${yRot}`;
     const tableLine =
-      `  "${model}":    { front_pbs: { pos: [${frontPos.join(", ")}], yRotationDeg: ${frontYRot} },\n` +
-      `                      back_pbs:  { pos: [${backPos.join(", ")}], yRotationDeg: ${backYRot} } },`;
+      `  "${model}":    { front_pbs: { pos: [${frontPos.join(", ")}], ${rotSnippet(frontYRot, frontRotXYZ)} },\n` +
+      `                      back_pbs:  { pos: [${backPos.join(", ")}], ${rotSnippet(backYRot, backRotXYZ)} } },`;
     void navigator.clipboard.writeText(tableLine);
   };
 
@@ -648,6 +1037,8 @@ export function IsolatorDevPage() {
     setBackPos([...def.back_pbs.pos]);
     setFrontYRot(def.front_pbs.yRotationDeg ?? 0);
     setBackYRot(def.back_pbs.yRotationDeg ?? 0);
+    setFrontRotXYZ(def.front_pbs.rotationDeg ? [...def.front_pbs.rotationDeg] : null);
+    setBackRotXYZ(def.back_pbs.rotationDeg ? [...def.back_pbs.rotationDeg] : null);
     setCode(pbsOverlayFileSource as string);
     setParseStatus("idle");
   };
@@ -673,10 +1064,14 @@ export function IsolatorDevPage() {
         ...(component.properties ?? {}),
         isolatorDeletedCentroids: [...deletedCentroids],
         isolatorLinkedRotationGroup: linkedGroupOut,
+        isolatorFrontPartCentroids: [...frontPartCentroids],
+        isolatorBackPartCentroids: [...backPartCentroids],
       };
       await updateComponentApi(component.id, { properties: nextProperties });
       setSavedCentroids(new Set(deletedCentroids));
       setSavedLinked(linkedGroupOut);
+      setSavedFrontPart(new Set(frontPartCentroids));
+      setSavedBackPart(new Set(backPartCentroids));
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 1500);
     } catch {
@@ -701,6 +1096,8 @@ export function IsolatorDevPage() {
         ...(component.properties ?? {}),
         isolatorDeletedCentroids: [],
         isolatorLinkedRotationGroup: null,
+        isolatorFrontPartCentroids: [],
+        isolatorBackPartCentroids: [],
       };
       await updateComponentApi(component.id, { properties: nextProperties });
       setDeletedCentroids(new Set());
@@ -709,6 +1106,10 @@ export function IsolatorDevPage() {
       setLinkRotDeg(0);
       setLinkBoundAnchors(new Set());
       setSavedLinked(null);
+      setFrontPartCentroids(new Set());
+      setBackPartCentroids(new Set());
+      setSavedFrontPart(new Set());
+      setSavedBackPart(new Set());
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 1500);
     } catch {
@@ -742,7 +1143,21 @@ export function IsolatorDevPage() {
     return false;
   }, [linkedCentroids, savedLinked, linkRotDeg, linkRotAxis, linkRotPivotMm, linkBoundAnchors]);
 
-  const anyDirty = deletionsDirty || linkedDirty;
+  const setsEqual = (a: Set<string>, b: Set<string>): boolean => {
+    if (a.size !== b.size) return false;
+    for (const k of a) if (!b.has(k)) return false;
+    return true;
+  };
+  const frontPartDirty = useMemo(
+    () => !setsEqual(frontPartCentroids, savedFrontPart),
+    [frontPartCentroids, savedFrontPart],
+  );
+  const backPartDirty = useMemo(
+    () => !setsEqual(backPartCentroids, savedBackPart),
+    [backPartCentroids, savedBackPart],
+  );
+
+  const anyDirty = deletionsDirty || linkedDirty || frontPartDirty || backPartDirty;
 
   const statusText = useMemo(() => {
     if (parseStatus === "idle") return "in sync with state";
@@ -788,9 +1203,29 @@ export function IsolatorDevPage() {
         </label>
         <button type="button" onClick={onResetFromTable}>↻ Reset from table</button>
         <button type="button" onClick={onCopy}>📋 Copy table line</button>
-        <span style={{ fontSize: 11, opacity: 0.65 }} title="Middle-click a face on the housing to delete its coplanar cluster. Shift+middle-click to add to the link-rotation group instead.">
-          🖱 mid-click = delete · Shift+mid-click = link-rotate
+        <span style={{ fontSize: 11, opacity: 0.65 }} title="Mid-click marks one cluster. Ctrl/Alt + LEFT-drag draws a rectangle that marks every housing triangle whose centroid lands inside.">
+          🖱 mid: delete · Shift = link · Ctrl = front · Alt = back · Ctrl/Alt + drag = box
         </span>
+        {frontPartCentroids.size > 0 && (
+          <button
+            type="button"
+            onClick={() => setFrontPartCentroids(new Set(savedFrontPart))}
+            style={{ fontSize: 11, color: "#1d4ed8" }}
+            title="Revert front-partition marks to last saved"
+          >
+            front ({frontPartCentroids.size}) ↻
+          </button>
+        )}
+        {backPartCentroids.size > 0 && (
+          <button
+            type="button"
+            onClick={() => setBackPartCentroids(new Set(savedBackPart))}
+            style={{ fontSize: 11, color: "#b91c1c" }}
+            title="Revert back-partition marks to last saved"
+          >
+            back ({backPartCentroids.size}) ↻
+          </button>
+        )}
         {deletedCentroids.size > 0 && (
           <button
             type="button"
@@ -949,11 +1384,194 @@ export function IsolatorDevPage() {
         </div>
       )}
 
+      {/* Binding tree pose editor (Branch A — direct edit of the
+          ComponentBinding rows). Each row PATCHes
+          /api/component-bindings/{id} on Apply. Lab viewer reflects
+          changes on hard refresh today; WS broadcast for binding
+          updates is a follow-up. */}
+      {sortedBindings && sortedBindings.length > 0 && (
+        <div style={{
+          padding: "6px 0", borderTop: "1px solid #e5e7eb",
+          fontSize: 11, display: "flex", flexDirection: "column", gap: 4,
+        }}>
+          <div style={{ fontWeight: 600, opacity: 0.7 }}>
+            Binding tree poses ({sortedBindings.length})
+            <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 8 }}>
+              edits PATCH the binding row directly · Lab viewer needs hard-refresh until WS sync lands
+            </span>
+          </div>
+          {sortedBindings.map((b) => {
+            const edit = bindingEdits[b.id];
+            if (!edit) return null;
+            const applyState = bindingApplyState[b.id] ?? "idle";
+            const dirty = edit.x !== b.localXMm || edit.y !== b.localYMm || edit.z !== b.localZMm
+              || edit.rx !== b.localRxDeg || edit.ry !== b.localRyDeg || edit.rz !== b.localRzDeg;
+            return (
+              <div key={b.id} style={{
+                display: "flex", flexWrap: "wrap", alignItems: "center", gap: 4,
+                opacity: b.parentBindingId === null ? 0.7 : 1, // root usually identity
+              }}>
+                <b style={{ minWidth: 110, color: b.targetKind === "asset" ? "#1d4ed8"
+                  : b.targetKind === "subcomponent" ? "#15803d"
+                  : "#7c3aed" }}>
+                  {bindingDisplayLabel(b)}
+                </b>
+                <span style={{ opacity: 0.55 }}>{b.targetKind}</span>
+                <span style={{ opacity: 0.6, marginLeft: 4 }}>pos</span>
+                {(["x", "y", "z"] as const).map((axis) => (
+                  <input
+                    key={`p${axis}`}
+                    type="number"
+                    step={0.5}
+                    value={edit[axis]}
+                    onChange={(e) => setBindingEditField(b.id, axis, Number(e.target.value))}
+                    style={{ width: 56 }}
+                    title={`${bindingDisplayLabel(b)}.local_${axis}_mm`}
+                  />
+                ))}
+                <span style={{ opacity: 0.6, marginLeft: 4 }}>rot</span>
+                {(["rx", "ry", "rz"] as const).map((axis) => (
+                  <input
+                    key={`r${axis}`}
+                    type="number"
+                    step={1}
+                    value={edit[axis]}
+                    onChange={(e) => setBindingEditField(b.id, axis, Number(e.target.value))}
+                    style={{ width: 56 }}
+                    title={`${bindingDisplayLabel(b)}.local_${axis}_deg (XYZ order)`}
+                  />
+                ))}°
+                <button
+                  type="button"
+                  onClick={() => applyBindingEdit(b.id)}
+                  disabled={!dirty || applyState === "saving"}
+                  style={{
+                    fontSize: 11, marginLeft: 4, padding: "1px 8px",
+                    background: dirty ? "#fde68a" : undefined,
+                    border: dirty ? "1px solid #ca8a04" : "1px solid #d1d5db",
+                  }}
+                  title="PATCH this binding's local_*_mm/deg to the server"
+                >
+                  {applyState === "saving" ? "…"
+                    : applyState === "saved" ? "✓"
+                    : applyState === "error" ? "✗"
+                    : "Apply"}
+                </button>
+                {Object.keys(b.tunableAxes).length > 0 && (
+                  <span style={{ fontSize: 10, opacity: 0.55, marginLeft: 4 }}>
+                    tunable: {Object.keys(b.tunableAxes).join(",")}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Per-prism pose editor (Stage A''.11-followup).
+          Glan-Laser variants frequently need free 3-axis Euler since
+          their default optical-axis alignment can't be expressed by a
+          single yRotationDeg. The "↻" button next to each Euler row
+          collapses back to yRot mode (sets rotXYZ → null). */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", padding: "4px 0", borderTop: "1px solid #e5e7eb", fontSize: 11 }}>
+        {(["front", "back"] as const).map((side) => {
+          const pos = side === "front" ? frontPos : backPos;
+          const setPos = side === "front" ? setFrontPos : setBackPos;
+          const yRot = side === "front" ? frontYRot : backYRot;
+          const setYRot = side === "front" ? setFrontYRot : setBackYRot;
+          const rot = side === "front" ? frontRotXYZ : backRotXYZ;
+          const setRot = side === "front" ? setFrontRotXYZ : setBackRotXYZ;
+          return (
+            <div key={side} style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              <b style={{ minWidth: 38 }}>{side}</b>
+              <span style={{ opacity: 0.6 }}>pos</span>
+              {(["x", "y", "z"] as const).map((axis, i) => (
+                <input
+                  key={`p${axis}`}
+                  type="number"
+                  step={0.5}
+                  value={pos[i]}
+                  onChange={(e) => {
+                    const next: Vec3 = [...pos];
+                    next[i] = Number(e.target.value);
+                    setPos(next);
+                  }}
+                  style={{ width: 50 }}
+                  title={`${side}.pos.${axis} body-local mm`}
+                />
+              ))}
+              {rot === null ? (
+                <>
+                  <span style={{ opacity: 0.6, marginLeft: 4 }}>yRot</span>
+                  <input
+                    type="number"
+                    step={1}
+                    value={yRot}
+                    onChange={(e) => setYRot(Number(e.target.value))}
+                    style={{ width: 50 }}
+                    title={`${side}.yRotationDeg around body Y`}
+                  />°
+                  <button
+                    type="button"
+                    onClick={() => setRot([0, yRot, 0])}
+                    style={{ fontSize: 10, marginLeft: 4 }}
+                    title="Switch to 3-axis Euler (rotationDeg). Needed for Glan-Laser."
+                  >
+                    → rxryrz
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span style={{ opacity: 0.6, marginLeft: 4 }}>rotDeg</span>
+                  {(["rx", "ry", "rz"] as const).map((axis, i) => (
+                    <input
+                      key={`r${axis}`}
+                      type="number"
+                      step={1}
+                      value={rot[i]}
+                      onChange={(e) => {
+                        const next: Vec3 = [...rot];
+                        next[i] = Number(e.target.value);
+                        setRot(next);
+                      }}
+                      style={{ width: 50 }}
+                      title={`${side}.rotationDeg.${axis} body-local (XYZ order)`}
+                    />
+                  ))}°
+                  <button
+                    type="button"
+                    onClick={() => setRot(null)}
+                    style={{ fontSize: 10, marginLeft: 4 }}
+                    title="Switch back to single-axis yRotationDeg"
+                  >
+                    ↻ yRot
+                  </button>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
       <div style={{ display: "flex", flex: 1, gap: 12, minHeight: 0 }}>
         <div style={{ flex: 2, position: "relative", minHeight: 400 }}>
           <div
             ref={mountRef}
             style={{ position: "absolute", inset: 0, background: "#fff", borderRadius: 4 }}
+          />
+          {/* Box-select rectangle overlay — updated imperatively via
+              boxOverlayElRef from the pointer handlers. Fixed-position
+              so the rect aligns with page-relative pointer coords. */}
+          <div
+            ref={boxOverlayElRef}
+            style={{
+              position: "fixed",
+              display: "none",
+              pointerEvents: "none",
+              border: "1.5px dashed currentColor",
+              boxSizing: "border-box",
+              zIndex: 10,
+            }}
           />
           {hitInfo && (
             <div

@@ -39,6 +39,7 @@ const KIND_UNION_MEMBERS: ElementKind[] = [
   "lens_cylindrical",
   "waveplate",
   "polarizer",
+  "glan_polarizer",
   "beam_splitter",
   "fiber_coupler",
   "fiber",

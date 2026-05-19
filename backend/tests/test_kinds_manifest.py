@@ -67,9 +67,12 @@ class TestComponentTypeToKind:
 
 
 class TestElementKinds:
-    def test_returns_29_kinds(self) -> None:
+    def test_returns_30_kinds(self) -> None:
+        # Bumped 29 → 30 in Stage A''.3 with the new ``glan_polarizer``
+        # plugin (Glan-Laser calcite polariser, the high-power isolator
+        # variant of PBS cube).
         kinds = element_kinds()
-        assert len(kinds) == 29, f"expected 29 ElementKinds, got {len(kinds)}: {kinds}"
+        assert len(kinds) == 30, f"expected 30 ElementKinds, got {len(kinds)}: {kinds}"
 
     def test_covers_full_spectrum(self) -> None:
         kinds = set(element_kinds())

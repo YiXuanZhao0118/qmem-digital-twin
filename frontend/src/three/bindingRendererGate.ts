@@ -39,22 +39,43 @@ import { loadAssetObject } from "./loadAsset";
 import { buildBindingTreeObject } from "./bindingTreeObject";
 
 
-// Empty by default — every componentType currently goes through the
-// legacy ``loadAssetObject`` path. Adding "isolator" here is the
-// switch-flip for Stage A''; the visual diff between the bespoke
-// pbsOverlay path and the binding-tree path is the test that the
-// migration succeeded.
+// Per-componentType force-on (rarely needed once per-Component opt-in
+// works). Empty today; keep around so a kind whose data hasn't been
+// fully migrated can be temporarily routed through the binding tree
+// for testing.
 export const RENDER_VIA_BINDINGS: ReadonlySet<string> = new Set<string>([
-  // "isolator",
+  // "isolator",  // not flipped here — per-Component opt-in below covers it
   // "mirror_mount",
 ]);
 
 
-/** Returns true when ``componentType``'s render path should walk the
- *  ComponentBinding tree (via ``buildBindingTreeObject``) instead of
- *  the legacy ``loadAssetObject`` single-asset path. */
-export function shouldRenderViaBindings(componentType: string): boolean {
-  return RENDER_VIA_BINDINGS.has(componentType);
+/** Returns true when this specific Component's render path should walk
+ *  the ComponentBinding tree (via ``buildBindingTreeObject``) instead
+ *  of the legacy ``loadAssetObject`` single-asset path.
+ *
+ *  Decision (in order):
+ *    1. componentType is in the force-on allowlist → true.
+ *    2. Component has any non-root binding in the scene → true. This
+ *       is the per-Component opt-in: the alembic data migration that
+ *       gives a Component a sub-Component or empty-Mount child binding
+ *       (e.g. Stage A''.7's TORNOS-850-4 5-part tree) flips it onto
+ *       the binding-tree path automatically. Components whose only
+ *       binding is the 0062-backfilled root (single asset) stay on
+ *       the legacy path → visual no-op for 500+ catalog rows.
+ */
+export function shouldRenderViaBindings(
+  componentType: string,
+  componentId: string,
+  scene: Pick<SceneData, "componentBindings">,
+): boolean {
+  if (RENDER_VIA_BINDINGS.has(componentType)) return true;
+  const bindings = scene.componentBindings ?? [];
+  for (const b of bindings) {
+    if (b.componentId === componentId && b.parentBindingId !== null) {
+      return true;
+    }
+  }
+  return false;
 }
 
 
@@ -86,10 +107,15 @@ export async function buildSceneObjectFromBindings(
   const tree = resolveBindingTree(component, sceneObject, scene);
   const group = await buildBindingTreeObject(tree, async (node) => {
     if (node.target.kind === "missing") return null;
-    if (node.target.kind === "subcomponent") {
-      // Logical container, not a renderable. Empty Group lets the
-      // walker apply this binding's localTransform and then attach
-      // sub-Component bindings as children under it.
+    if (node.target.kind === "subcomponent" || node.target.kind === "empty") {
+      // subcomponent: logical container that recurses into the
+      // sub-Component's own root bindings (resolveBindingTree splices
+      // them in as children).
+      // empty: explicit transform-only node — the user's "PBS Mount"
+      // case in the 5-part isolator decomposition. Carries
+      // localTransform + tunable_axes, no geometry of its own.
+      // Both render as an empty Group that the walker hangs children
+      // under, so the parent transform propagates through.
       return new THREE.Group();
     }
     // Asset node — load via the existing per-kind / per-asset loader.

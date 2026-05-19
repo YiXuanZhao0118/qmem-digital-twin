@@ -40,6 +40,17 @@ class Asset3D(Base):
     unit: Mapped[str] = mapped_column(Text, nullable=False, default="mm", server_default="mm")
     scale_factor: Mapped[float] = mapped_column(Float, nullable=False, default=1.0, server_default="1")
     anchors: Mapped[JsonList] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+    # Asset-level metadata (alembic 0064). First consumer is
+    # ``viewerHints`` — instructions the generic asset loader honours
+    # regardless of consuming componentType:
+    #   * deletedCentroids: list of "x,y,z" centroid keys to drop from
+    #     STL geometry (replaces the bespoke isolator deletion path);
+    #   * axisRadiusFilterMm: hide triangles within R mm of the
+    #     longest-bbox axis (hides internal baffles);
+    #   * material: { type: "translucent_housing", opacity: ... }.
+    properties: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -151,14 +162,13 @@ class ComponentBinding(Base):
 
     __tablename__ = "component_bindings"
     __table_args__ = (
+        # Three valid shapes (alembic 0066): asset / subcomponent /
+        # empty (transform-only — the user's "PBS Mount" node case).
         CheckConstraint(
-            "(asset_3d_id IS NULL) != (sub_component_id IS NULL)",
-            name="ck_component_bindings_one_target",
-        ),
-        CheckConstraint(
-            "(target_kind = 'asset' AND asset_3d_id IS NOT NULL AND sub_component_id IS NULL) OR "
-            "(target_kind = 'subcomponent' AND sub_component_id IS NOT NULL AND asset_3d_id IS NULL)",
-            name="ck_component_bindings_target_kind_matches",
+            "(target_kind = 'asset' AND asset_3d_id IS NOT NULL AND sub_component_id IS NULL)"
+            " OR (target_kind = 'subcomponent' AND asset_3d_id IS NULL AND sub_component_id IS NOT NULL)"
+            " OR (target_kind = 'empty' AND asset_3d_id IS NULL AND sub_component_id IS NULL)",
+            name="ck_component_bindings_target_shape",
         ),
         CheckConstraint(
             "sub_component_id IS NULL OR sub_component_id <> component_id",

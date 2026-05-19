@@ -47,12 +47,12 @@ describe("ComponentPlugin alignment with legacy tables", () => {
     // mirror_mount which started in M1 as a sample = 51 total. Snapshot
     // value so a regression (someone deletes a plugin) shows up
     // immediately.
-    // 29 physics (incl. programmable_pulse_generator + fiber_end) +
-    // mirror_mount (physics-flagged passive) + 22 PASSIVE_PLUGINS = 52.
-    // Bumped to 52 in Phase A of the fiber two-end split; was 51 pre-PPG,
-    // 52 after PPG, 53 after fiber_end — adjust here when the registry
-    // grows again.
-    expect(PLUGINS.length).toBe(53);
+    // 30 physics (incl. programmable_pulse_generator + fiber_end +
+    // glan_polarizer) + mirror_mount (physics-flagged passive) +
+    // 23 PASSIVE_PLUGINS = 54. Was 51 pre-PPG, 52 after PPG, 53 after
+    // fiber_end, 54 after Stage A''.3 added glan_polarizer (the
+    // Glan-Laser calcite polariser used by high-power isolators).
+    expect(PLUGINS.length).toBe(54);
 
     // Every legacy ElementKind has a physics plugin claiming it.
     const physicsIds = new Set(
@@ -61,7 +61,7 @@ describe("ComponentPlugin alignment with legacy tables", () => {
     const expectedKinds = [
       "laser_source", "tapered_amplifier", "mirror", "dichroic_mirror",
       "lens_biconvex", "lens_plano_convex", "lens_cylindrical",
-      "waveplate", "polarizer", "beam_splitter", "fiber_coupler",
+      "waveplate", "polarizer", "glan_polarizer", "beam_splitter", "fiber_coupler",
       "fiber", "fiber_end", "isolator", "aom", "eom", "nonlinear_crystal",
       "saturable_absorber", "detector", "camera", "spectrometer",
       "wavemeter", "beam_dump", "rf_source", "rf_amplifier",

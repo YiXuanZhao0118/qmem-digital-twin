@@ -33,6 +33,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import crud, schemas
 from app.db import get_session
 from app.models import Asset3D, Component, ComponentBinding
+from app.websocket import manager
+
+
+def binding_payload(binding: ComponentBinding) -> dict[str, object]:
+    """CamelCase JSON of a ComponentBinding for WS broadcast. Matches
+    the shape the frontend ``ComponentBinding`` type expects so
+    sceneStore can upsert directly into ``scene.componentBindings``."""
+    return schemas.ComponentBindingOut.model_validate(binding).model_dump(
+        mode="json", by_alias=True
+    )
 
 
 # Two routers — one nested under /components, one top-level for /{binding_id}.
@@ -156,6 +166,7 @@ async def create_binding(
     session.add(binding)
     await session.commit()
     await session.refresh(binding)
+    await manager.broadcast("component_binding.created", binding_payload(binding))
     return binding
 
 
@@ -195,6 +206,7 @@ async def update_binding(
     crud.apply_updates(binding, updates)
     await session.commit()
     await session.refresh(binding)
+    await manager.broadcast("component_binding.updated", binding_payload(binding))
     return binding
 
 
@@ -205,4 +217,8 @@ async def delete_binding(
     binding = await crud.get_or_404(session, ComponentBinding, binding_id)
     await session.delete(binding)
     await session.commit()
+    await manager.broadcast(
+        "component_binding.deleted",
+        {"id": str(binding_id), "componentId": str(binding.component_id)},
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -72,12 +72,16 @@ export const ISOLATOR_PBS_DEFAULTS_BY_MODEL: Record<string, {
   // `yRotationDeg` (degrees, single-DOF rotation around body Y) per row.
   // Canonical pose (yRotationDeg=0) = cement normal [1, 1, 0].
   // `prismType` defaults to "pbs_cube"; HP suffix → "glan_laser".
-  "IO-3-850-HP":    { front_pbs: { pos: [0, 70, +13], yRotationDeg: 135, prismType: "glan_laser" },
-                      back_pbs:  { pos: [0,  0, +13], yRotationDeg:   0, prismType: "glan_laser" } },
+  // User-saved Glan-Laser pose 2026-05-19: 3-axis Euler so the prism's
+  // optical axis lines up with the IO-3 housing bore.
+  "IO-3-850-HP":    { front_pbs: { pos: [0, 11, 0], rotationDeg: [0, 270, 0], prismType: "glan_laser" },
+                      back_pbs:  { pos: [0, 84, 0], rotationDeg: [0, 225, 0], prismType: "glan_laser" } },
   "IO-3D-850-VLP":  { front_pbs: { pos: [0,   4, 0], yRotationDeg:  0 },
                       back_pbs:  { pos: [0,  27, 0], yRotationDeg: 90 } },
-  "IO-5-850-HP":    { front_pbs: { pos: [0, 0, -18], yRotationDeg:  0, prismType: "glan_laser" },
-                      back_pbs:  { pos: [0, 0, +18], yRotationDeg: 90, prismType: "glan_laser" } },
+  // User-saved 2026-05-19: same Glan-Laser pose as IO-3-850-HP (same
+  // chassis family, same housing internals).
+  "IO-5-850-HP":    { front_pbs: { pos: [0, 11, 0], rotationDeg: [0, 270, 0], prismType: "glan_laser" },
+                      back_pbs:  { pos: [0, 84, 0], rotationDeg: [0, 225, 0], prismType: "glan_laser" } },
   "IO-5-850-VLP":   { front_pbs: { pos: [0,   5, 0], yRotationDeg:  0 },
                       back_pbs:  { pos: [0,  60, 0], yRotationDeg: 90 } },
   "IOT-5-850-VLP":  { front_pbs: { pos: [0, -27, 0], yRotationDeg:  0 },
@@ -325,6 +329,18 @@ export function buildIsolatorPbsOverlay(
      *  Procedural path (already in three units) passes mmToThree(1); STL
      *  path (raw mm frame, scaled later by applyAssetScale) passes 1. */
     unitScale: number;
+    /** Per-render override of the front/back pose entries. Takes
+     *  priority over the static
+     *  ``ISOLATOR_PBS_DEFAULTS_BY_MODEL[componentModel]`` lookup —
+     *  IsolatorDevPage uses this to feed its in-page edits (especially
+     *  3-axis Euler ``rotationDeg`` for Glan-Laser) into the preview
+     *  without round-tripping through the source-code textarea. The
+     *  override has the same shape as a pose-table entry, so any field
+     *  the static table supports works here too. */
+    poseOverride?: {
+      front_pbs?: PbsPoseEntry;
+      back_pbs?: PbsPoseEntry;
+    };
   },
 ): THREE.Group {
   const overlay = new THREE.Group();
@@ -357,8 +373,19 @@ export function buildIsolatorPbsOverlay(
   defaults[1].dir[axisIdxBody] = tilt;
   defaults[1].dir[(axisIdxBody + 2) % 3] = tilt;
 
-  const modelOverride = opts.componentModel
+  // poseOverride (IsolatorDevPage in-page edits) wins over the static
+  // table. Merge per-prism: if the override has only front_pbs, fall
+  // back to the table for back_pbs and vice versa.
+  const tableOverride = opts.componentModel
     ? ISOLATOR_PBS_DEFAULTS_BY_MODEL[opts.componentModel]
+    : undefined;
+  const resolvedFront = opts.poseOverride?.front_pbs ?? tableOverride?.front_pbs;
+  const resolvedBack = opts.poseOverride?.back_pbs ?? tableOverride?.back_pbs;
+  const modelOverride = (resolvedFront || resolvedBack)
+    ? {
+        front_pbs: resolvedFront ?? tableOverride?.front_pbs ?? { pos: defaults[0].posMm },
+        back_pbs: resolvedBack ?? tableOverride?.back_pbs ?? { pos: defaults[1].posMm },
+      }
     : undefined;
   if (modelOverride) {
     for (const [idx, entry] of [modelOverride.front_pbs, modelOverride.back_pbs].entries()) {
@@ -620,6 +647,15 @@ export function buildThorlabsIsolatorObject(
    *  When omitted, falls back to
    *  `component.properties.isolatorLinkedRotationGroup`. */
   linkedRotationGroup?: IsolatorLinkedRotationGroup | null,
+  /** Optional per-render pose override for the front / back PBS or
+   *  Glan-Laser. Forwarded straight to ``buildIsolatorPbsOverlay`` so
+   *  IsolatorDevPage can feed its live-edit values (especially 3-axis
+   *  Euler ``rotationDeg`` for Glan-Laser) into the preview without
+   *  round-tripping through the source-code textarea. */
+  poseOverride?: {
+    front_pbs?: PbsPoseEntry;
+    back_pbs?: PbsPoseEntry;
+  },
 ): THREE.Object3D {
   geometry.computeBoundingBox();
   const bbox = geometry.boundingBox ?? new THREE.Box3();
@@ -673,19 +709,30 @@ export function buildThorlabsIsolatorObject(
   const housing = new THREE.Mesh(staticGeom, housingMat);
   housing.renderOrder = 0;
 
-  const overlay = buildIsolatorPbsOverlay(asset, {
+  // Stage A''.9 — when an asset opts out of the bundled overlay (via
+  // viewerHints.bundledOverlay=false), the legacy PBS-cube overlay
+  // is suppressed entirely. The consuming Component's binding tree
+  // is expected to add PBS sub-Component bindings instead, avoiding
+  // the double-render that would otherwise happen on Components
+  // with a populated 5-part binding tree.
+  const hints = (asset.properties as { viewerHints?: { bundledOverlay?: boolean } } | undefined)?.viewerHints;
+  const suppressOverlay = hints?.bundledOverlay === false;
+
+  const overlay = suppressOverlay ? null : buildIsolatorPbsOverlay(asset, {
     componentModel: component.model ?? undefined,
     housingLengthMm,
     opticalAxisBody,
     unitScale: 1,
+    poseOverride,
   });
-  overlay.renderOrder = 1;
+  if (overlay) overlay.renderOrder = 1;
 
   // Apply the link rotation to PBS cubes whose anchor name is in
   // `boundAnchors`. The cube keeps its base pose (pos + yRotationDeg)
   // set at link rotationDeg = 0; this additional rotation moves the
   // crystal together with the rotatable mechanical component.
-  if (resolvedLinked
+  if (overlay
+      && resolvedLinked
       && resolvedLinked.rotationDeg !== 0
       && resolvedLinked.boundAnchors
       && resolvedLinked.boundAnchors.length > 0) {
@@ -715,6 +762,6 @@ export function buildThorlabsIsolatorObject(
     linkedMesh.userData.__isolatorLinkedRotation = true;
     group.add(linkedMesh);
   }
-  group.add(overlay);
+  if (overlay) group.add(overlay);
   return group;
 }

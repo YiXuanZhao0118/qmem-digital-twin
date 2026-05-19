@@ -88,6 +88,59 @@ export type RfCableEndpointLink = {
   targetAnchorName: string;
 };
 
+/** Asset-level viewer hints (alembic 0064). The generic asset loader
+ *  honours these on every STL/GLB/OBJ load regardless of the consuming
+ *  Component's componentType, so the same machinery that hides an
+ *  isolator's internal baffles works for any future housing where the
+ *  raw CAD has more detail than the viewer needs. */
+export type AssetViewerHints = {
+  /** Centroid keys (``"x,y,z"`` rounded to 0.5 mm grid via the same
+   *  helper as kinds/isolator/pbsOverlay::isolatorCentroidKey) to drop
+   *  from the STL on load. Lets the user clip out parts of a vendor
+   *  STL without re-exporting from CAD. */
+  deletedCentroids?: string[];
+  /** Inverse of ``deletedCentroids`` — when set, the loader keeps
+   *  ONLY the listed triangles and drops everything else. Lets a
+   *  single STL be referenced multiple times by different Asset3Ds,
+   *  each materialising a different partition (e.g. an isolator
+   *  housing's front / back ferrule mount sub-asset that the user
+   *  defined via IsolatorDevPage's "mark front / mark back" UI).
+   *  When both are present, ``deletedCentroids`` is applied AFTER
+   *  ``includeOnlyCentroids`` so the per-asset deletion list still
+   *  works inside the kept partition. */
+  includeOnlyCentroids?: string[];
+  /** Translate the geometry by ``-recenterOrigin`` (body-local mm)
+   *  after all filters apply, moving the asset's effective origin
+   *  to the named body-frame point. Used by bake-to-asset partition
+   *  flows: a sub-asset's geometry stays in its parent STL's body
+   *  coordinates, so when bound under a Mount at body pose P, the
+   *  geometry recenter aligns its rotation pivot with P. Without
+   *  this, ``binding.local_*_mm`` would double-offset (sub-asset
+   *  STL already carries its body coord + binding adds another
+   *  translation). */
+  recenterOrigin?: [number, number, number];
+  /** Drop triangles whose centroid is within R mm of the bbox's
+   *  longest axis. Bulk hide of interior baffles concentric with the
+   *  optical bore. 0 (or unset) = disabled. */
+  axisRadiusFilterMm?: number;
+  /** Material override applied to every mesh in the loaded asset.
+   *  ``translucent_housing`` is the isolator-style semi-transparent
+   *  metal look — opacity 0.35 by default. */
+  material?: {
+    type: "translucent_housing";
+    opacity?: number;
+  };
+  /** Suppresses the per-asset builder's bundled "decorative overlay"
+   *  geometry — currently the only consumer is the legacy Thorlabs
+   *  isolator builder, which adds PBS cubes inside the housing as a
+   *  bundle. When the housing's Component has a binding tree adding
+   *  PBSs as sub-Components, the bundled overlay would double-render
+   *  them — so the data migration that builds the binding tree also
+   *  sets ``bundledOverlay: false`` on the housing's Asset3D. Default
+   *  ``true`` (legacy behaviour preserved). */
+  bundledOverlay?: boolean;
+};
+
 export type Asset3D = {
   id: string;
   name: string;
@@ -98,6 +151,12 @@ export type Asset3D = {
   unit: "mm" | "m";
   scaleFactor: number;
   anchors: Anchor[];
+  /** Asset-level metadata bucket; ``viewerHints`` is the main consumer
+   *  today (alembic 0064). Other per-asset fields can live here without
+   *  schema migrations. */
+  properties?: {
+    viewerHints?: AssetViewerHints;
+  } & Record<string, unknown>;
   createdAt?: string;
 };
 
@@ -151,7 +210,13 @@ export type ComponentBinding = {
   id: string;
   componentId: string;
   parentBindingId: string | null;
-  targetKind: "asset" | "subcomponent";
+  /** "asset"        → asset3dId set, sub-component null (raw geometry).
+   *  "subcomponent" → sub-component set, asset3dId null (nested Component).
+   *  "empty"        → both null; transform-only node (e.g. user's
+   *                   "PBS Mount" in the 5-part isolator decomposition —
+   *                   carries tunable_axes + local transform, no geometry).
+   *  DB CHECK ck_component_bindings_target_shape enforces these shapes. */
+  targetKind: "asset" | "subcomponent" | "empty";
   asset3dId: string | null;
   subComponentId: string | null;
   role: string;
@@ -350,6 +415,7 @@ export type ElementKind =
   | "lens_cylindrical"
   | "waveplate"
   | "polarizer"
+  | "glan_polarizer"
   | "beam_splitter"
   | "dichroic_mirror"
   | "fiber_coupler"
@@ -1075,6 +1141,9 @@ export type SceneEvent =
   | { type: "component.created"; payload: ComponentItem }
   | { type: "component.updated"; payload: ComponentItem }
   | { type: "component.deleted"; payload: { id?: string; componentId?: string } }
+  | { type: "component_binding.created"; payload: ComponentBinding }
+  | { type: "component_binding.updated"; payload: ComponentBinding }
+  | { type: "component_binding.deleted"; payload: { id: string; componentId?: string } }
   | { type: "object.updated"; payload: SceneObject }
   | { type: "object.deleted"; payload: { id?: string; objectId?: string } }
   | { type: "assembly_relation.updated"; payload: AssemblyRelation & { deleted?: boolean } }

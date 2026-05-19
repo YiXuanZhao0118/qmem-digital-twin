@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-05-18T22:39:32.788Z",
+  "generated_at": "2026-05-19T00:23:06.076Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -14,6 +14,7 @@
     "lens_cylindrical": "lens_cylindrical",
     "waveplate": "waveplate",
     "polarizer": "polarizer",
+    "glan_polarizer": "glan_polarizer",
     "beam_splitter": "beam_splitter",
     "fiber_coupler": "fiber_coupler",
     "fiber": "fiber",
@@ -48,6 +49,7 @@
     "lens_cylindrical",
     "waveplate",
     "polarizer",
+    "glan_polarizer",
     "beam_splitter",
     "fiber_coupler",
     "fiber",
@@ -593,6 +595,63 @@
         "intrinsic_param_keys": null,
         "state_param_keys": null,
         "port_domains": {}
+      }
+    },
+    {
+      "id": "glan_polarizer",
+      "display_name": "Glan-Laser",
+      "component_types": [
+        "glan_polarizer"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Passive",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "glan_polarizer",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical"
+        ],
+        "anchors": {
+          "required": [
+            "intercept_in"
+          ],
+          "optional": [
+            "intercept_out"
+          ],
+          "needs_direction": [],
+          "needs_aperture": [
+            "intercept_in"
+          ]
+        },
+        "align_variant": "translate_anchor_to_beam",
+        "align_tolerance_mm": 25,
+        "align_summary": "Glan-Laser calcite polariser — two right-angle prisms with an air gap. intercept_in translates to the beam axis (translation only). The rejected polarisation exits the side at ~68° from the optical axis via the air gap's TIR; intercept_out can be set to capture that path.",
+        "default_params": {
+          "transmissionAxisDegBeamLocal": 0,
+          "extinctionRatioDb": 55,
+          "transmission": 0.92,
+          "wedgeAngleDeg": 38,
+          "airGapMm": 0.05,
+          "wavelengthRangeNm": [
+            400,
+            1100
+          ]
+        },
+        "intrinsic_param_keys": [
+          "wedgeAngleDeg",
+          "airGapMm",
+          "transmission",
+          "extinctionRatioDb",
+          "wavelengthRangeNm"
+        ],
+        "state_param_keys": [
+          "transmissionAxisDegBeamLocal"
+        ],
+        "port_domains": {
+          "intercept_in": "optical",
+          "intercept_out": "optical"
+        }
       }
     },
     {

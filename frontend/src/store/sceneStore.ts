@@ -4136,6 +4136,28 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
               components: upsertById(scene.components, event.payload),
             },
           };
+        case "component_binding.created":
+        case "component_binding.updated":
+          return {
+            scene: {
+              ...scene,
+              componentBindings: upsertById(
+                scene.componentBindings ?? [],
+                event.payload,
+              ),
+            },
+          };
+        case "component_binding.deleted": {
+          const bid = event.payload.id;
+          return {
+            scene: {
+              ...scene,
+              componentBindings: (scene.componentBindings ?? []).filter(
+                (b) => b.id !== bid,
+              ),
+            },
+          };
+        }
         case "component.deleted": {
           const componentId = event.payload.componentId ?? event.payload.id;
           const removedObjectIds = new Set(
