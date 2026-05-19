@@ -15,15 +15,20 @@
  * block and pushes new values into React state, which rebuilds only the
  * PBS overlay (and the housing if the model changed). No page reload.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 
-import { resolveAssetUrl, updateComponentApi } from "../../api/client";
+import {
+  listComponentBindingsApi,
+  resolveAssetUrl,
+  updateComponentApi,
+  updateComponentBindingApi,
+} from "../../api/client";
 import { useSceneStore } from "../../store/sceneStore";
 import { mmToThree } from "../../three/transformUtils";
-import type { Anchor, Asset3D, ComponentItem } from "../../types/digitalTwin";
+import type { Anchor, Asset3D, ComponentBinding, ComponentItem } from "../../types/digitalTwin";
 import {
   buildIsolatorPbsOverlay,
   buildThorlabsIsolatorObject,
@@ -303,6 +308,41 @@ export function IsolatorDevPage() {
   const [savedFrontPart, setSavedFrontPart] = useState<Set<string>>(() => new Set());
   const [savedBackPart, setSavedBackPart] = useState<Set<string>>(() => new Set());
 
+  // Binding tree panel state (Branch A — direct edit of binding rows).
+  // Loaded once per model change via listComponentBindingsApi; each
+  // row's pose is edited in ``bindingEdits`` (local until Apply →
+  // updateComponentBindingApi → PATCH /api/component-bindings/{id}).
+  // Lab viewer reflects on hard refresh today; WS broadcast for
+  // binding updates is a follow-up commit.
+  const [bindings, setBindings] = useState<ComponentBinding[] | null>(null);
+  type PoseEdit = { x: number; y: number; z: number; rx: number; ry: number; rz: number };
+  const [bindingEdits, setBindingEdits] = useState<Record<string, PoseEdit>>({});
+  const [bindingApplyState, setBindingApplyState] = useState<Record<string, "idle" | "saving" | "saved" | "error">>({});
+
+  const reloadBindings = useCallback(async (componentId: string | null) => {
+    if (!componentId) {
+      setBindings(null);
+      setBindingEdits({});
+      return;
+    }
+    try {
+      const list = await listComponentBindingsApi(componentId);
+      setBindings(list);
+      const edits: Record<string, PoseEdit> = {};
+      for (const b of list) {
+        edits[b.id] = {
+          x: b.localXMm, y: b.localYMm, z: b.localZMm,
+          rx: b.localRxDeg, ry: b.localRyDeg, rz: b.localRzDeg,
+        };
+      }
+      setBindingEdits(edits);
+      setBindingApplyState({});
+    } catch {
+      setBindings(null);
+      setBindingEdits({});
+    }
+  }, []);
+
   // Linked-rotation group — Shift + middle-click adds a coplanar cluster
   // to this set; the slider rotates them around `linkRotAxis` at
   // `linkRotPivotMm` (both in body-local STL frame). Default axis (0,0,1)
@@ -379,8 +419,11 @@ export function IsolatorDevPage() {
     setSavedFrontPart(new Set(persistedFront));
     setSavedBackPart(new Set(persistedBack));
 
+    // Load binding tree poses for the Bindings panel.
+    void reloadBindings(component?.id ?? null);
+
     setSaveStatus("idle");
-  }, [model, components]);
+  }, [model, components, reloadBindings]);
 
   // ── Three.js scene ───────────────────────────────────────────────────
   const mountRef = useRef<HTMLDivElement>(null);
@@ -904,6 +947,58 @@ export function IsolatorDevPage() {
     frontPartCentroids, backPartCentroids,
   ]);
 
+  // ── Binding tree edit handlers (Branch A) ────────────────────────────
+  const setBindingEditField = (
+    bindingId: string,
+    field: keyof PoseEdit,
+    value: number,
+  ) => {
+    setBindingEdits((prev) => ({
+      ...prev,
+      [bindingId]: { ...prev[bindingId], [field]: value },
+    }));
+    setBindingApplyState((prev) => ({ ...prev, [bindingId]: "idle" }));
+  };
+  const applyBindingEdit = async (bindingId: string) => {
+    const edit = bindingEdits[bindingId];
+    if (!edit) return;
+    setBindingApplyState((prev) => ({ ...prev, [bindingId]: "saving" }));
+    try {
+      await updateComponentBindingApi(bindingId, {
+        localXMm: edit.x, localYMm: edit.y, localZMm: edit.z,
+        localRxDeg: edit.rx, localRyDeg: edit.ry, localRzDeg: edit.rz,
+      });
+      setBindingApplyState((prev) => ({ ...prev, [bindingId]: "saved" }));
+      // Refetch so any server-side normalisation lands locally too.
+      const component = components.find((c) => c.model === model);
+      if (component) await reloadBindings(component.id);
+    } catch {
+      setBindingApplyState((prev) => ({ ...prev, [bindingId]: "error" }));
+    }
+  };
+  const bindingDisplayLabel = (b: ComponentBinding): string => {
+    const role = (b.properties as { role_label?: string } | null)?.role_label;
+    if (role) return role;
+    if (b.parentBindingId === null) return "root (body)";
+    return `${b.role} (${b.targetKind})`;
+  };
+  /** Sort bindings into the canonical "5-element" reading order:
+   *  root → front_mount → front_pbs → front_piece → back_mount →
+   *  back_pbs → back_piece. Anything else falls to the bottom. */
+  const sortedBindings = useMemo(() => {
+    if (!bindings) return null;
+    const order = (b: ComponentBinding): number => {
+      if (b.parentBindingId === null) return 0;
+      const role = (b.properties as { role_label?: string } | null)?.role_label ?? "";
+      const map: Record<string, number> = {
+        front_mount: 1, front_pbs: 2, front_glan_laser: 2, front_piece: 3,
+        back_mount: 4, back_pbs: 5, back_glan_laser: 5, back_piece: 6,
+      };
+      return map[role] ?? 99;
+    };
+    return [...bindings].sort((a, b) => order(a) - order(b));
+  }, [bindings]);
+
   // ── Handlers ─────────────────────────────────────────────────────────
   const onCodeChange = (next: string) => {
     setCode(next);
@@ -1286,6 +1381,90 @@ export function IsolatorDevPage() {
           >
             ↻ Revert
           </button>
+        </div>
+      )}
+
+      {/* Binding tree pose editor (Branch A — direct edit of the
+          ComponentBinding rows). Each row PATCHes
+          /api/component-bindings/{id} on Apply. Lab viewer reflects
+          changes on hard refresh today; WS broadcast for binding
+          updates is a follow-up. */}
+      {sortedBindings && sortedBindings.length > 0 && (
+        <div style={{
+          padding: "6px 0", borderTop: "1px solid #e5e7eb",
+          fontSize: 11, display: "flex", flexDirection: "column", gap: 4,
+        }}>
+          <div style={{ fontWeight: 600, opacity: 0.7 }}>
+            Binding tree poses ({sortedBindings.length})
+            <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 8 }}>
+              edits PATCH the binding row directly · Lab viewer needs hard-refresh until WS sync lands
+            </span>
+          </div>
+          {sortedBindings.map((b) => {
+            const edit = bindingEdits[b.id];
+            if (!edit) return null;
+            const applyState = bindingApplyState[b.id] ?? "idle";
+            const dirty = edit.x !== b.localXMm || edit.y !== b.localYMm || edit.z !== b.localZMm
+              || edit.rx !== b.localRxDeg || edit.ry !== b.localRyDeg || edit.rz !== b.localRzDeg;
+            return (
+              <div key={b.id} style={{
+                display: "flex", flexWrap: "wrap", alignItems: "center", gap: 4,
+                opacity: b.parentBindingId === null ? 0.7 : 1, // root usually identity
+              }}>
+                <b style={{ minWidth: 110, color: b.targetKind === "asset" ? "#1d4ed8"
+                  : b.targetKind === "subcomponent" ? "#15803d"
+                  : "#7c3aed" }}>
+                  {bindingDisplayLabel(b)}
+                </b>
+                <span style={{ opacity: 0.55 }}>{b.targetKind}</span>
+                <span style={{ opacity: 0.6, marginLeft: 4 }}>pos</span>
+                {(["x", "y", "z"] as const).map((axis) => (
+                  <input
+                    key={`p${axis}`}
+                    type="number"
+                    step={0.5}
+                    value={edit[axis]}
+                    onChange={(e) => setBindingEditField(b.id, axis, Number(e.target.value))}
+                    style={{ width: 56 }}
+                    title={`${bindingDisplayLabel(b)}.local_${axis}_mm`}
+                  />
+                ))}
+                <span style={{ opacity: 0.6, marginLeft: 4 }}>rot</span>
+                {(["rx", "ry", "rz"] as const).map((axis) => (
+                  <input
+                    key={`r${axis}`}
+                    type="number"
+                    step={1}
+                    value={edit[axis]}
+                    onChange={(e) => setBindingEditField(b.id, axis, Number(e.target.value))}
+                    style={{ width: 56 }}
+                    title={`${bindingDisplayLabel(b)}.local_${axis}_deg (XYZ order)`}
+                  />
+                ))}°
+                <button
+                  type="button"
+                  onClick={() => applyBindingEdit(b.id)}
+                  disabled={!dirty || applyState === "saving"}
+                  style={{
+                    fontSize: 11, marginLeft: 4, padding: "1px 8px",
+                    background: dirty ? "#fde68a" : undefined,
+                    border: dirty ? "1px solid #ca8a04" : "1px solid #d1d5db",
+                  }}
+                  title="PATCH this binding's local_*_mm/deg to the server"
+                >
+                  {applyState === "saving" ? "…"
+                    : applyState === "saved" ? "✓"
+                    : applyState === "error" ? "✗"
+                    : "Apply"}
+                </button>
+                {Object.keys(b.tunableAxes).length > 0 && (
+                  <span style={{ fontSize: 10, opacity: 0.55, marginLeft: 4 }}>
+                    tunable: {Object.keys(b.tunableAxes).join(",")}
+                  </span>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
