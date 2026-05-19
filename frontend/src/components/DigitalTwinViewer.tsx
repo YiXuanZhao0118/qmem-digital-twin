@@ -3812,15 +3812,18 @@ export function DigitalTwinViewer({
           };
           const fiberEndAPlacement = toPlacement(fiberKp.endA);
           const fiberEndBPlacement = toPlacement(fiberKp.endB);
-          // Stage A''' gate: when the componentType is allowlisted in
-          // three/bindingRendererGate.ts::RENDER_VIA_BINDINGS, walk the
-          // ComponentBinding tree via buildBindingTreeObject instead of
-          // calling the legacy single-asset loader. The allowlist is
-          // empty by default — current path is unchanged. Flip a
-          // componentType into the allowlist (one-line change in the
-          // gate module) to migrate that kind off the legacy renderer.
-          // Stage A'' (isolator) is the first real consumer.
-          const assetObject = shouldRenderViaBindings(component.componentType)
+          // Stage A''' gate: routes through the ComponentBinding tree
+          // when this specific Component has a non-trivial binding tree
+          // (any non-root binding present — see
+          // ``shouldRenderViaBindings`` for the decision logic). Stage
+          // A''.7's TORNOS-850-4 migration is the first Component to
+          // qualify; the 500+ catalog rows backfilled with only a single
+          // root binding stay on the legacy path → visual no-op.
+          const assetObject = shouldRenderViaBindings(
+            component.componentType,
+            component.id,
+            sceneData,
+          )
             ? await buildSceneObjectFromBindings(component, placement, sceneData)
             : await loadAssetObject(
                 component,
