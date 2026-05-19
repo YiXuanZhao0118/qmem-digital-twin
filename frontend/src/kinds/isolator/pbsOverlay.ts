@@ -673,19 +673,29 @@ export function buildThorlabsIsolatorObject(
   const housing = new THREE.Mesh(staticGeom, housingMat);
   housing.renderOrder = 0;
 
-  const overlay = buildIsolatorPbsOverlay(asset, {
+  // Stage A''.9 — when an asset opts out of the bundled overlay (via
+  // viewerHints.bundledOverlay=false), the legacy PBS-cube overlay
+  // is suppressed entirely. The consuming Component's binding tree
+  // is expected to add PBS sub-Component bindings instead, avoiding
+  // the double-render that would otherwise happen on Components
+  // with a populated 5-part binding tree.
+  const hints = (asset.properties as { viewerHints?: { bundledOverlay?: boolean } } | undefined)?.viewerHints;
+  const suppressOverlay = hints?.bundledOverlay === false;
+
+  const overlay = suppressOverlay ? null : buildIsolatorPbsOverlay(asset, {
     componentModel: component.model ?? undefined,
     housingLengthMm,
     opticalAxisBody,
     unitScale: 1,
   });
-  overlay.renderOrder = 1;
+  if (overlay) overlay.renderOrder = 1;
 
   // Apply the link rotation to PBS cubes whose anchor name is in
   // `boundAnchors`. The cube keeps its base pose (pos + yRotationDeg)
   // set at link rotationDeg = 0; this additional rotation moves the
   // crystal together with the rotatable mechanical component.
-  if (resolvedLinked
+  if (overlay
+      && resolvedLinked
       && resolvedLinked.rotationDeg !== 0
       && resolvedLinked.boundAnchors
       && resolvedLinked.boundAnchors.length > 0) {
@@ -715,6 +725,6 @@ export function buildThorlabsIsolatorObject(
     linkedMesh.userData.__isolatorLinkedRotation = true;
     group.add(linkedMesh);
   }
-  group.add(overlay);
+  if (overlay) group.add(overlay);
   return group;
 }

@@ -110,6 +110,15 @@ export type AssetViewerHints = {
     type: "translucent_housing";
     opacity?: number;
   };
+  /** Suppresses the per-asset builder's bundled "decorative overlay"
+   *  geometry — currently the only consumer is the legacy Thorlabs
+   *  isolator builder, which adds PBS cubes inside the housing as a
+   *  bundle. When the housing's Component has a binding tree adding
+   *  PBSs as sub-Components, the bundled overlay would double-render
+   *  them — so the data migration that builds the binding tree also
+   *  sets ``bundledOverlay: false`` on the housing's Asset3D. Default
+   *  ``true`` (legacy behaviour preserved). */
+  bundledOverlay?: boolean;
 };
 
 export type Asset3D = {
