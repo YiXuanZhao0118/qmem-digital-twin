@@ -358,6 +358,61 @@ class ComponentBindingOut(ComponentBindingBase):
     updated_at: datetime
 
 
+class ObjectBindingBase(CamelModel):
+    """Per-SceneObject override of a ComponentBinding (alembic 0076).
+
+    Catalog-shared baselines live on ``ComponentBinding``; per-instance
+    deltas live here. The renderer composes
+    ``effective = component_binding.local* + delta*`` per axis at draw
+    time. ``None`` on a delta field means "no override for that axis"
+    (distinct from "explicit 0 override").
+
+    ``asset_3d_id_override`` optionally swaps which Asset3D the binding
+    renders for this specific scene-object instance.
+    """
+
+    component_binding_id: uuid.UUID
+    local_x_mm_delta: float | None = None
+    local_y_mm_delta: float | None = None
+    local_z_mm_delta: float | None = None
+    local_rx_deg_delta: float | None = None
+    local_ry_deg_delta: float | None = None
+    local_rz_deg_delta: float | None = None
+    asset_3d_id_override: uuid.UUID | None = None
+    properties: JsonDict = Field(default_factory=dict)
+
+
+class ObjectBindingCreate(ObjectBindingBase):
+    """Create / upsert payload. ``component_binding_id`` is required;
+    omitting all delta fields produces a row that's a no-op visually
+    (useful for asset_3d_id_override-only rows)."""
+
+
+class ObjectBindingUpdate(CamelModel):
+    """Update an existing ObjectBinding row. ``component_binding_id``
+    is immutable — to point at a different ComponentBinding, delete and
+    recreate (matches ComponentBindingUpdate's target-immutable rule).
+
+    Per-axis deltas are individually nullable; pass ``None`` to clear an
+    axis's override, pass a number to set it."""
+
+    local_x_mm_delta: float | None = None
+    local_y_mm_delta: float | None = None
+    local_z_mm_delta: float | None = None
+    local_rx_deg_delta: float | None = None
+    local_ry_deg_delta: float | None = None
+    local_rz_deg_delta: float | None = None
+    asset_3d_id_override: uuid.UUID | None = None
+    properties: JsonDict | None = None
+
+
+class ObjectBindingOut(ObjectBindingBase):
+    id: uuid.UUID
+    object_id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+
+
 class ComponentOut(ComponentBase):
     id: uuid.UUID
     created_at: datetime
@@ -2313,6 +2368,11 @@ class SceneOut(CamelModel):
     # already the kitchen-sink "everything for the current scene" payload.
     component_bindings: list[ComponentBindingOut] = Field(default_factory=list)
     objects: list[SceneObjectOut]
+    # Per-SceneObject overrides on top of component_bindings (alembic 0076).
+    # Flat list across all objects, joined by (objectId, componentBindingId)
+    # on the renderer side. Empty for SceneObjects with no per-instance
+    # tweaks — the common case.
+    object_bindings: list[ObjectBindingOut] = Field(default_factory=list)
     connections: list[ConnectionOut]
     assembly_relations: list[AssemblyRelationOut] = Field(default_factory=list)
     beam_paths: list[BeamPathOut]

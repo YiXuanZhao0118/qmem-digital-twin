@@ -56,6 +56,7 @@ import { LaserSourceControls } from "./LaserSourceControls";
 import { AomAdjustControls } from "./AomAdjustControls";
 import { TaperedAmplifierAdjustControls } from "./TaperedAmplifierAdjustControls";
 import { KindParamsEditor } from "./KindParamsEditor";
+import { BindingTreeAdjustControls } from "../BindingTreeAdjustControls";
 import { AlignToBeamSection } from "./_shared";
 
 type Props = {
@@ -140,6 +141,9 @@ export function PhysicsElementPanel({ component, sceneObject }: Props) {
           <AlignToBeamSection sceneObject={sceneObject} elementKind={existing.elementKind as ElementKind} element={existing} />
           {domain === "optical" && (
             <KindParamsEditor element={existing} sceneObject={sceneObject} />
+          )}
+          {domain === "optical" && (
+            <BindingTreeAdjustControls component={component} />
           )}
         </AdjustErrorBoundary>
       )}

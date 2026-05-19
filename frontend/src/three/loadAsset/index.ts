@@ -88,6 +88,7 @@ import { createDdsAd9959Pcb } from "../../kinds/rf_source/renderer";
 // the barrel has been initialised, so it sees real values, not `undefined`.
 import { applyAssetScale, createPrimitive } from "./primitive";
 import {
+  applyIncludeOnlyFilter,
   applyViewerHintsToGeometry,
   materialForHints,
 } from "./viewerHints";
@@ -225,6 +226,42 @@ export async function loadAssetObject(
       // PBS overlay assembly. A''.4 retires it in favour of the
       // ComponentBinding tree + viewerHints; for now it stays so the
       // 7 IO-series models keep rendering.
+      //
+      // Sub-piece assets (front_piece / back_piece) point at the SAME
+      // STL with viewerHints.includeOnlyCentroids to extract just their
+      // tris. Routing them through buildThorlabsIsolatorObject would
+      // (a) layer another translucent housing on top of the body asset
+      // (making everything look opaque from accumulated alpha) and
+      // (b) add a duplicate PBS overlay. Detect the subset case and
+      // render as a plain translucent mesh, mirroring the dev page's
+      // piece sub-mesh treatment.
+      const isSubsetPiece = !!(hints?.includeOnlyCentroids && hints.includeOnlyCentroids.length > 0);
+      if (isSubsetPiece) {
+        // Skip recenterOrigin AND the wrapper/auto-centering below (early
+        // return). The piece bindings have localXMm/YMm/ZMm = 0 and the
+        // dev page renders pieces at their NATIVE STL positions (rotating
+        // around the body origin). Recentering or bbox-centering shifts
+        // pieces to their own individual centroids, scattering them away
+        // from the housing. Use raw geometry filtered only by includeOnly,
+        // apply scale, and return without the wrapping done below.
+        const pieceGeom = applyIncludeOnlyFilter(rawGeometry, hints!.includeOnlyCentroids!);
+        const isFrontPiece = /front_piece/i.test(asset.name);
+        const isBackPiece = /back_piece/i.test(asset.name);
+        const pieceColor = isFrontPiece ? "#1e3a8a"
+                         : isBackPiece ? "#7c2d12"
+                         : "#1a1a1c";
+        const pieceMesh = new THREE.Mesh(pieceGeom, new THREE.MeshStandardMaterial({
+          color: pieceColor,
+          metalness: 0.55,
+          roughness: 0.5,
+          transparent: true,
+          opacity: 0.55,
+          depthWrite: false,
+        }));
+        pieceMesh.name = component.name;
+        applyAssetScale(pieceMesh, asset);
+        return pieceMesh;
+      }
       object = buildThorlabsIsolatorObject(geometry, component, asset);
     } else {
       // Material hint wins over the per-component material when set —
@@ -311,7 +348,14 @@ export async function loadAssetObject(
       const [bx, by, bz] = apertureForward;
       const apertureShift = new THREE.Vector3(bx, bz, -by).divideScalar(100);
       object.position.sub(apertureShift);
-    } else {
+    } else if (component.componentType !== "isolator") {
+      // Skip bbox auto-centering for isolators: the body asset and the
+      // piece sub-Assets are siblings in the binding tree but the body
+      // mesh's bbox center is far from the body's STL origin. Centering
+      // shifts the body but not the pieces (which have their own
+      // bindings and centroids), scattering pieces away from the
+      // housing. Keep the isolator at its native STL origin so the
+      // pieces align — matches the dev page's rendering.
       const bbox = new THREE.Box3().setFromObject(object);
       if (!bbox.isEmpty()) {
         const centerVec = bbox.getCenter(new THREE.Vector3());

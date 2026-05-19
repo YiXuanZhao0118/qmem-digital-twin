@@ -1390,6 +1390,13 @@ export function DigitalTwinViewer({
         // two endPose snapshots — changes when Align A/B writes back
         // or node-edit drags an endpoint).
         fiberEndsRefKey?: string;
+        // ObjectBinding (alembic 0076) cache key: hashes the per-axis
+        // deltas of every ObjectBinding row for THIS sceneObject so the
+        // wrapper rebuilds when the user drags BindingTreeAdjustControls
+        // sliders. Reference equality on objectBindings won't catch
+        // these — zustand always reuses the array when nothing changes
+        // but creates a new array when ANY row changes (full scene).
+        objectBindingsRefKey?: string;
       }
     >
   >(new Map());
@@ -3630,13 +3637,24 @@ export function DigitalTwinViewer({
             ? resolveEffectiveFiberBodyState(placement, component)
             : null;
         const fiberEndsRefKeyNow = fiberStateForCache?.linkWatchKey ?? "";
+        // Hash all ObjectBinding deltas for THIS placement so the
+        // wrapper rebuilds when the user drags a BindingTreeAdjustControls
+        // slider. Empty string when this object has no overrides.
+        const objectBindingsRefKeyNow = (sceneData.objectBindings ?? [])
+          .filter((b) => b.objectId === placement.id)
+          .map((b) =>
+            `${b.componentBindingId}:${b.localXMmDelta},${b.localYMmDelta},${b.localZMmDelta},${b.localRxDegDelta},${b.localRyDegDelta},${b.localRzDegDelta},${b.asset3dIdOverride ?? ""}`,
+          )
+          .sort()
+          .join("|");
         const canReuse =
           cached !== undefined &&
           cached.componentRef === component &&
           cached.assetRef === asset &&
           cached.stateRef === deviceState &&
           (component.componentType !== "fiber" ||
-            cached.fiberEndsRefKey === fiberEndsRefKeyNow);
+            cached.fiberEndsRefKey === fiberEndsRefKeyNow) &&
+          cached.objectBindingsRefKey === objectBindingsRefKeyNow;
 
         let wrapper: THREE.Group;
         if (canReuse && cached) {
@@ -3896,6 +3914,7 @@ export function DigitalTwinViewer({
             rfCableEffectiveNodesRef: rfCableSeed?.effectiveNodes,
             rfCableLinkWatchKey: rfCableSeed?.linkWatchKey,
             fiberEndsRefKey: fiberEndsRefKeyNow,
+            objectBindingsRefKey: objectBindingsRefKeyNow,
           });
         }
 

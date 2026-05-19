@@ -206,6 +206,46 @@ export type ComponentBindingTunableAxisSpec = {
   default?: number;
 };
 
+/** Per-SceneObject override of a ComponentBinding's pose / asset
+ *  (alembic 0076). Catalog-shared baseline lives on ComponentBinding;
+ *  per-instance deltas live here. Renderer composes
+ *  `effective = component_binding.local* + delta*` per axis. `null` on
+ *  a delta means "no override for that axis" (distinct from "explicit
+ *  0"). Unique per (objectId, componentBindingId). */
+export type ObjectBinding = {
+  id: string;
+  objectId: string;
+  componentBindingId: string;
+  localXMmDelta: number | null;
+  localYMmDelta: number | null;
+  localZMmDelta: number | null;
+  localRxDegDelta: number | null;
+  localRyDegDelta: number | null;
+  localRzDegDelta: number | null;
+  /** Optional per-instance asset swap on the same binding (e.g. this
+   *  isolator instance uses a damaged housing variant). null = use the
+   *  binding's declared asset. */
+  asset3dIdOverride: string | null;
+  properties: Record<string, unknown>;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type ObjectBindingUpsertPayload = {
+  componentBindingId: string;
+  localXMmDelta?: number | null;
+  localYMmDelta?: number | null;
+  localZMmDelta?: number | null;
+  localRxDegDelta?: number | null;
+  localRyDegDelta?: number | null;
+  localRzDegDelta?: number | null;
+  asset3dIdOverride?: string | null;
+  properties?: Record<string, unknown>;
+};
+
+export type ObjectBindingUpdatePayload = Omit<ObjectBindingUpsertPayload, "componentBindingId">;
+
+
 export type ComponentBinding = {
   id: string;
   componentId: string;
@@ -1123,6 +1163,10 @@ export type SceneData = {
    *  utils/componentBindings.bindingsFor(). Defaults to [] on legacy
    *  scenes that pre-date the binding tree. */
   componentBindings?: ComponentBinding[];
+  /** Flat list of per-instance overrides across every SceneObject in
+   *  the scene (alembic 0076). Empty for objects with no per-instance
+   *  tweaks. Renderer joins by (objectId, componentBindingId). */
+  objectBindings?: ObjectBinding[];
   objects: SceneObject[];
   connections: ConnectionItem[];
   assemblyRelations: AssemblyRelation[];

@@ -17,6 +17,7 @@ from app.models import (
     ComponentBinding,
     Connection,
     DeviceState,
+    ObjectBinding,
     PhysicsElement,
     OpticalLink,
     RfLink,
@@ -55,6 +56,15 @@ async def get_scene(session: AsyncSession = Depends(get_session)) -> schemas.Sce
         ).all()
     )
     objects = list((await session.scalars(select(SceneObject))).all())
+    object_bindings = list(
+        (
+            await session.scalars(
+                select(ObjectBinding).order_by(
+                    ObjectBinding.object_id, ObjectBinding.created_at
+                )
+            )
+        ).all()
+    )
     connections = list((await session.scalars(select(Connection))).all())
     assembly_relations = list((await session.scalars(select(AssemblyRelation))).all())
     beam_paths = list((await session.scalars(select(BeamPath))).all())
@@ -151,6 +161,7 @@ async def get_scene(session: AsyncSession = Depends(get_session)) -> schemas.Sce
         components=components,
         component_bindings=component_bindings,
         objects=objects,
+        object_bindings=object_bindings,
         connections=connections,
         assembly_relations=assembly_relations,
         beam_paths=beam_paths,

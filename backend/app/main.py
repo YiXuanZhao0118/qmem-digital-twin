@@ -26,6 +26,7 @@ from app.routers import (
     em_problems,
     magnetics_problems,
     meshes,
+    object_bindings,
     rf_chains,
     objects,
     physics_elements,
@@ -75,6 +76,16 @@ app.include_router(
     tags=["component_bindings"],
 )
 app.include_router(objects.router, prefix="/api/objects", tags=["objects"])
+app.include_router(
+    object_bindings.object_scoped,
+    prefix="/api/objects",
+    tags=["object_bindings"],
+)
+app.include_router(
+    object_bindings.binding_scoped,
+    prefix="/api/object-bindings",
+    tags=["object_bindings"],
+)
 app.include_router(connections.router, prefix="/api/connections", tags=["connections"])
 app.include_router(assembly_relations.router, prefix="/api/assembly-relations", tags=["assembly_relations"])
 app.include_router(beam_paths.router, prefix="/api/beam-paths", tags=["beam_paths"])

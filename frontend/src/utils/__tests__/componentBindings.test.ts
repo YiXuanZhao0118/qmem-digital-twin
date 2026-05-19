@@ -16,7 +16,6 @@ import type {
   SceneObject,
 } from "../../types/digitalTwin";
 import {
-  bindingOverrideFor,
   bindingsFor,
   childrenOf,
   primaryAsset,
@@ -79,7 +78,7 @@ function binding(partial: Partial<ComponentBinding> & {
 }
 
 
-function sceneObject(componentId: string, overrides?: Record<string, Record<string, number>>): SceneObject {
+function sceneObject(componentId: string): SceneObject {
   return {
     id: "obj_1",
     name: "obj_1",
@@ -92,7 +91,33 @@ function sceneObject(componentId: string, overrides?: Record<string, Record<stri
     rzDeg: 0,
     visible: true,
     locked: false,
-    properties: overrides ? { bindingOverrides: overrides } : {},
+    properties: {},
+  };
+}
+
+
+/** Build an ObjectBinding row (alembic 0076) for tests. Unspecified
+ *  delta axes default to null = "no override". */
+function objectBinding(
+  objectId: string,
+  componentBindingId: string,
+  deltas: Partial<{
+    xMm: number; yMm: number; zMm: number;
+    rxDeg: number; ryDeg: number; rzDeg: number;
+  }> = {},
+) {
+  return {
+    id: `${objectId}__${componentBindingId}`,
+    objectId,
+    componentBindingId,
+    localXMmDelta: deltas.xMm ?? null,
+    localYMmDelta: deltas.yMm ?? null,
+    localZMmDelta: deltas.zMm ?? null,
+    localRxDegDelta: deltas.rxDeg ?? null,
+    localRyDegDelta: deltas.ryDeg ?? null,
+    localRzDegDelta: deltas.rzDeg ?? null,
+    asset3dIdOverride: null,
+    properties: {},
   };
 }
 
@@ -187,28 +212,6 @@ describe("primaryAsset", () => {
 });
 
 
-// ---------------------------------------------------------------------------
-// bindingOverrideFor
-// ---------------------------------------------------------------------------
-
-
-describe("bindingOverrideFor", () => {
-  it("returns the override entry for a known binding", () => {
-    const props = { bindingOverrides: { "binding-1": { rzDeg: 1.7 } } };
-    expect(bindingOverrideFor("binding-1", props)).toEqual({ rzDeg: 1.7 });
-  });
-
-  it("returns null when bindingOverrides is missing", () => {
-    expect(bindingOverrideFor("b", undefined)).toBeNull();
-    expect(bindingOverrideFor("b", {})).toBeNull();
-    expect(bindingOverrideFor("b", null)).toBeNull();
-  });
-
-  it("returns null for bindings not present in the override map", () => {
-    const props = { bindingOverrides: { other: { rzDeg: 5 } } };
-    expect(bindingOverrideFor("missing", props)).toBeNull();
-  });
-});
 
 
 // ---------------------------------------------------------------------------
@@ -235,7 +238,7 @@ describe("resolveBindingTree", () => {
     expect(tree[0].children).toEqual([]);
   });
 
-  it("applies SceneObject.bindingOverrides per axis with declared default fallback", () => {
+  it("applies scene.objectBindings deltas on top of the ComponentBinding baseline", () => {
     const a = asset("a");
     const c = component("c");
     const root = binding({
@@ -245,15 +248,18 @@ describe("resolveBindingTree", () => {
       localXMm: 5,
       localRzDeg: 30,
     });
-    const obj = sceneObject(c.id, { r: { rzDeg: 1.7 } });
+    const obj = sceneObject(c.id);
+    const ob = objectBinding(obj.id, "r", { rzDeg: 1.7 });
     const tree = resolveBindingTree(c, obj, {
       componentBindings: [root],
+      objectBindings: [ob],
       assets: [a],
       components: [c],
     });
-    // xMm keeps the declared 5; rzDeg overridden to 1.7.
+    // xMm has no override row → keeps baseline 5.
+    // rzDeg has delta 1.7 → effective = baseline 30 + delta 1.7 = 31.7.
     expect(tree[0].localTransform.xMm).toBe(5);
-    expect(tree[0].localTransform.rzDeg).toBe(1.7);
+    expect(tree[0].localTransform.rzDeg).toBeCloseTo(31.7, 9);
   });
 
   it("walks a composite tree (Isolator pattern: body + 2 end caps + PBS sub-components)", () => {

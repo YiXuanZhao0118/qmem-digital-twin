@@ -255,6 +255,50 @@ export async function deleteComponentBindingApi(bindingId: string): Promise<void
   await client.delete(`/api/component-bindings/${bindingId}`);
 }
 
+// =============================================================================
+// ObjectBindings (alembic 0076) — per-SceneObject overrides
+// =============================================================================
+
+export async function listObjectBindingsApi(
+  objectId: string,
+): Promise<import("../types/digitalTwin").ObjectBinding[]> {
+  const response = await client.get<import("../types/digitalTwin").ObjectBinding[]>(
+    `/api/objects/${objectId}/object-bindings`,
+  );
+  return response.data;
+}
+
+/** Upsert by (objectId, componentBindingId). Backend uses the unique
+ *  constraint on that pair to update-in-place when a row exists,
+ *  matching the slider-drag interaction (one row per knob, re-posted
+ *  on every change). Use updateObjectBindingApi when you already have
+ *  the binding id. */
+export async function upsertObjectBindingApi(
+  objectId: string,
+  payload: import("../types/digitalTwin").ObjectBindingUpsertPayload,
+): Promise<import("../types/digitalTwin").ObjectBinding> {
+  const response = await client.post<import("../types/digitalTwin").ObjectBinding>(
+    `/api/objects/${objectId}/object-bindings`,
+    payload,
+  );
+  return response.data;
+}
+
+export async function updateObjectBindingApi(
+  bindingId: string,
+  patch: import("../types/digitalTwin").ObjectBindingUpdatePayload,
+): Promise<import("../types/digitalTwin").ObjectBinding> {
+  const response = await client.put<import("../types/digitalTwin").ObjectBinding>(
+    `/api/object-bindings/${bindingId}`,
+    patch,
+  );
+  return response.data;
+}
+
+export async function deleteObjectBindingApi(bindingId: string): Promise<void> {
+  await client.delete(`/api/object-bindings/${bindingId}`);
+}
+
 export type AssetUpdatePayload = {
   name?: string;
   assetType?: string;

@@ -29,6 +29,7 @@ import type {
   Asset3D,
   ComponentBinding,
   ComponentItem,
+  ObjectBinding,
   SceneData,
   SceneObject,
 } from "../types/digitalTwin";
@@ -151,8 +152,9 @@ export type ResolvedBindingNode = {
   binding: ComponentBinding;
   target: ResolvedBindingTarget;
   /** Effective local transform = binding's declared local* fields
-   *  merged with any per-instance ``SceneObject.properties.bindingOverrides``
-   *  entry for this binding. Override values take precedence per axis. */
+   *  PLUS any per-instance ``SceneObject.properties.bindingOverrides``
+   *  delta for this binding. Override values are added per axis; the
+   *  binding row stays the catalog-shared calibrated baseline. */
   localTransform: ResolvedLocalTransform;
   children: ResolvedBindingNode[];
 };
@@ -160,25 +162,28 @@ export type ResolvedBindingNode = {
 
 function _effectiveTransform(
   binding: ComponentBinding,
-  override: Record<string, number> | null,
+  objectBinding: ObjectBinding | null | undefined,
 ): ResolvedLocalTransform {
-  // Override may set any subset of axes; missing axes keep the
-  // binding's declared default. Override values are interpreted in the
-  // frame declared by binding.tunableAxes — the renderer applies the
-  // frame mapping after this function returns since frame semantics
-  // depend on the surrounding tree state.
-  const v = (key: keyof ResolvedLocalTransform, fallback: number): number => {
-    if (!override) return fallback;
-    const raw = override[key];
-    return typeof raw === "number" && Number.isFinite(raw) ? raw : fallback;
-  };
+  // ADDITIVE semantics: ObjectBinding.local_*_delta values are added on
+  // top of the ComponentBinding's declared baseline. ``null`` on a
+  // delta means "no override for that axis" → contributes zero. Keeps
+  // the catalog-shared baseline as the source of truth and lets
+  // per-instance overrides stack tunable adjustments without
+  // overwriting it.
+  //
+  // Deltas are interpreted in the frame declared by
+  // binding.tunableAxes — the renderer applies the frame mapping after
+  // this function returns since frame semantics depend on the
+  // surrounding tree state.
+  const num = (v: number | null | undefined): number =>
+    typeof v === "number" && Number.isFinite(v) ? v : 0;
   return {
-    xMm: v("xMm", binding.localXMm),
-    yMm: v("yMm", binding.localYMm),
-    zMm: v("zMm", binding.localZMm),
-    rxDeg: v("rxDeg", binding.localRxDeg),
-    ryDeg: v("ryDeg", binding.localRyDeg),
-    rzDeg: v("rzDeg", binding.localRzDeg),
+    xMm: binding.localXMm + num(objectBinding?.localXMmDelta),
+    yMm: binding.localYMm + num(objectBinding?.localYMmDelta),
+    zMm: binding.localZMm + num(objectBinding?.localZMmDelta),
+    rxDeg: binding.localRxDeg + num(objectBinding?.localRxDegDelta),
+    ryDeg: binding.localRyDeg + num(objectBinding?.localRyDegDelta),
+    rzDeg: binding.localRzDeg + num(objectBinding?.localRzDegDelta),
   };
 }
 
@@ -225,10 +230,19 @@ function _resolveTarget(
 export function resolveBindingTree(
   component: ComponentItem,
   sceneObject: SceneObject | null,
-  scene: Pick<SceneData, "componentBindings" | "assets" | "components">,
+  scene: Pick<SceneData, "componentBindings" | "objectBindings" | "assets" | "components">,
 ): ResolvedBindingNode[] {
-  const overrides =
-    sceneObject?.properties as Record<string, unknown> | undefined;
+  // Build a Map<componentBindingId, ObjectBinding> filtered to this
+  // sceneObject — the renderer composes baseline + delta per binding
+  // at draw time via _effectiveTransform.
+  const overrides = new Map<string, ObjectBinding>();
+  if (sceneObject) {
+    for (const ob of scene.objectBindings ?? []) {
+      if (ob.objectId === sceneObject.id) {
+        overrides.set(ob.componentBindingId, ob);
+      }
+    }
+  }
   return _resolveLevel(
     rootBindingsOf(component.id, scene),
     component.id,
@@ -242,15 +256,15 @@ export function resolveBindingTree(
 function _resolveLevel(
   bindings: ComponentBinding[],
   ownerComponentId: string,
-  overrides: Record<string, unknown> | undefined,
+  overrides: Map<string, ObjectBinding>,
   scene: Pick<SceneData, "componentBindings" | "assets" | "components">,
   visited: Set<string>,
 ): ResolvedBindingNode[] {
   const out: ResolvedBindingNode[] = [];
   for (const binding of bindings) {
     const target = _resolveTarget(binding, scene);
-    const override = bindingOverrideFor(binding.id, overrides);
-    const localTransform = _effectiveTransform(binding, override);
+    const objectBinding = overrides.get(binding.id);
+    const localTransform = _effectiveTransform(binding, objectBinding);
 
     // Recurse into THIS Component's children of the current binding...
     const childBindings = childrenOf(binding, scene);
@@ -273,7 +287,7 @@ function _resolveLevel(
       const subChildren = _resolveLevel(
         subRoots,
         target.component.id,
-        undefined,
+        new Map(),
         scene,
         nextVisited,
       );
@@ -286,23 +300,64 @@ function _resolveLevel(
 }
 
 
-/** Read a per-instance pose override from a SceneObject's properties
- *  for a given binding. Returns the overlay dict (e.g. ``{rzDeg: 1.7}``)
- *  or null when the SceneObject has no overrides for that binding.
+/** A "link group" lets several sibling bindings move as one unit when
+ *  the user adjusts a single slider — e.g. an isolator's
+ *  `front_glan_laser` + `front_piece` both rotate together when the
+ *  user drags the "Front" slider. Convention:
  *
- *  The shape on the SceneObject is
- *  ``properties.bindingOverrides[<bindingId>] = { rxDeg?, ryDeg?,
- *  rzDeg?, xMm?, yMm?, zMm? }``. Renderer composes
- *  effective = binding.local* + override.* per-axis at draw time.
+ *    binding.properties.linkGroup: string
+ *
+ *  Bindings without the field stand on their own. The UI groups
+ *  bindings by this value and writes the SAME override delta to every
+ *  binding in a group simultaneously, so the rotation/translation
+ *  stays synchronised across the group.
+ *
+ *  Read here keeps the convention in one place; downstream callers
+ *  (BindingTreeAdjustControls) use it to render the panel layout.
  */
-export function bindingOverrideFor(
-  bindingId: string,
-  sceneObjectProperties: Record<string, unknown> | undefined | null,
-): Record<string, number> | null {
-  if (!sceneObjectProperties) return null;
-  const overrides = sceneObjectProperties.bindingOverrides;
-  if (!overrides || typeof overrides !== "object") return null;
-  const entry = (overrides as Record<string, unknown>)[bindingId];
-  if (!entry || typeof entry !== "object") return null;
-  return entry as Record<string, number>;
+export function bindingLinkGroup(binding: ComponentBinding): string | null {
+  const v = (binding.properties as { linkGroup?: unknown } | null | undefined)?.linkGroup;
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
+
+/** Group a component's bindings by their declared linkGroup. Bindings
+ *  without a linkGroup land in their own single-entry group (keyed by
+ *  the binding's role_label, or its id as a last resort).
+ *
+ *  Returns groups in stable insertion order — caller renders sliders
+ *  in that order. */
+export function groupBindingsByLink(
+  bindings: ComponentBinding[],
+): Map<string, ComponentBinding[]> {
+  const out = new Map<string, ComponentBinding[]>();
+  for (const b of bindings) {
+    const link = bindingLinkGroup(b);
+    if (link !== null) {
+      const existing = out.get(link);
+      if (existing) existing.push(b);
+      else out.set(link, [b]);
+      continue;
+    }
+    const roleLabel = (b.properties as { role_label?: unknown } | null | undefined)?.role_label;
+    const standaloneKey = (typeof roleLabel === "string" && roleLabel) || b.id;
+    out.set(standaloneKey, [b]);
+  }
+  return out;
+}
+
+
+/** Intersection of `tunableAxes` keys across a set of bindings — the
+ *  axes that can be uniformly adjusted on every binding in the group.
+ *  Used by the generic Object panel to decide which sliders to show
+ *  for a link group: if not every binding declares the axis as
+ *  tunable, we skip it (writing an override only to some bindings
+ *  would visibly desync the group). */
+export function commonTunableAxes(
+  bindings: ComponentBinding[],
+): string[] {
+  if (bindings.length === 0) return [];
+  const first = bindings[0].tunableAxes ?? {};
+  const candidate = Object.keys(first);
+  return candidate.filter((axis) => bindings.every((b) => (b.tunableAxes ?? {})[axis] !== undefined));
 }

@@ -55,6 +55,8 @@ import {
   updateComponentApi,
   updateEmProblemApi,
   updateObjectApi,
+  upsertObjectBindingApi,
+  deleteObjectBindingApi,
   updateOpticalElementApi,
   updateOpticalLinkApi,
   updateSceneViewApi,
@@ -644,6 +646,18 @@ type SceneStore = {
    *  filtered out before any network call to keep parity with the
    *  single-object lock protection. */
   deleteObjects: (objectIds: ReadonlyArray<string>) => Promise<void>;
+  /** Upsert a per-instance ObjectBinding override (alembic 0076). Keyed
+   *  by (objectId, componentBindingId): if a row exists for that pair,
+   *  it's updated in place; otherwise a new row is created. Backend
+   *  enforces the uniqueness via DB constraint. Slider drags POST this
+   *  on every change — UPSERT semantics keep the row id stable. */
+  upsertObjectBinding: (
+    objectId: string,
+    payload: import("../types/digitalTwin").ObjectBindingUpsertPayload,
+  ) => Promise<import("../types/digitalTwin").ObjectBinding>;
+  /** Delete an ObjectBinding row. The renderer reverts to the
+   *  ComponentBinding's baseline pose / asset on the next rebuild. */
+  deleteObjectBinding: (bindingId: string) => Promise<void>;
   setComponentCapabilities: (
     componentId: string,
     capabilities: PhysicsCapability[],
@@ -3178,6 +3192,30 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     });
   },
 
+  async upsertObjectBinding(objectId, payload) {
+    const binding = await upsertObjectBindingApi(objectId, payload);
+    // Optimistically upsert into local store so subscribers re-render
+    // without waiting for the WS round-trip. The incoming WS event then
+    // upserts again (no-op when id + values match) — see the WS handler.
+    set((state) => ({
+      scene: {
+        ...state.scene,
+        objectBindings: upsertById(state.scene.objectBindings ?? [], binding),
+      },
+    }));
+    return binding;
+  },
+
+  async deleteObjectBinding(bindingId) {
+    await deleteObjectBindingApi(bindingId);
+    set((state) => ({
+      scene: {
+        ...state.scene,
+        objectBindings: (state.scene.objectBindings ?? []).filter((b) => b.id !== bindingId),
+      },
+    }));
+  },
+
   async setComponentCapabilities(componentId, capabilities) {
     const updated = await updateComponentApi(componentId, { physicsCapabilities: capabilities } as Partial<ComponentItem>);
     set((state) => ({
@@ -4153,6 +4191,28 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
             scene: {
               ...scene,
               componentBindings: (scene.componentBindings ?? []).filter(
+                (b) => b.id !== bid,
+              ),
+            },
+          };
+        }
+        case "object_binding.created":
+        case "object_binding.updated":
+          return {
+            scene: {
+              ...scene,
+              objectBindings: upsertById(
+                scene.objectBindings ?? [],
+                event.payload,
+              ),
+            },
+          };
+        case "object_binding.deleted": {
+          const bid = event.payload.id;
+          return {
+            scene: {
+              ...scene,
+              objectBindings: (scene.objectBindings ?? []).filter(
                 (b) => b.id !== bid,
               ),
             },

@@ -105,6 +105,10 @@ export async function buildSceneObjectFromBindings(
   scene: Pick<SceneData, "componentBindings" | "assets" | "components">,
 ): Promise<THREE.Object3D> {
   const tree = resolveBindingTree(component, sceneObject, scene);
+  // Per-instance binding-override deltas are applied INSIDE
+  // resolveBindingTree (via _effectiveTransform) using the standard
+  // SceneObject.properties.bindingOverrides[bindingId] path. No
+  // component-specific branch here.
   const group = await buildBindingTreeObject(tree, async (node) => {
     if (node.target.kind === "missing") return null;
     if (node.target.kind === "subcomponent" || node.target.kind === "empty") {

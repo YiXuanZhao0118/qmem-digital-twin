@@ -37,6 +37,7 @@ import {
   type IsolatorLinkedRotationGroup,
   type PbsPoseEntry,
 } from "./pbsOverlay";
+import { applyIncludeOnlyFilter } from "../../three/loadAsset/viewerHints";
 // Whole-file source string for the right-panel editor. Vite resolves `?raw`
 // at build time to the file's exact contents (geometry helpers + table +
 // PBS overlay assembly + STL wrapper). User can edit anywhere; the parser
@@ -308,6 +309,18 @@ export function IsolatorDevPage() {
   const [savedFrontPart, setSavedFrontPart] = useState<Set<string>>(() => new Set());
   const [savedBackPart, setSavedBackPart] = useState<Set<string>>(() => new Set());
 
+  // Preview visibility toggles (per-session, not persisted).
+  //   partitionsVisible: false = front/back marked triangles get added
+  //     to visibleDeletions (current default, lets click-through reach
+  //     inner geometry). true = they stay rendered so the user can see
+  //     what they've marked in context.
+  //   opaqueHousing: false = housing renders at the translucent
+  //     opacity=0.35 isolator look. true = fully opaque so the user
+  //     can inspect the housing exterior without inner geometry
+  //     bleeding through.
+  const [partitionsVisible, setPartitionsVisible] = useState<boolean>(false);
+  const [opaqueHousing, setOpaqueHousing] = useState<boolean>(false);
+
   // Binding tree panel state (Branch A — direct edit of binding rows).
   // Loaded once per model change via listComponentBindingsApi; each
   // row's pose is edited in ``bindingEdits`` (local until Apply →
@@ -337,6 +350,26 @@ export function IsolatorDevPage() {
       }
       setBindingEdits(edits);
       setBindingApplyState({});
+      // Seed the per-prism state from the prism bindings so the live
+      // preview reflects whatever's persisted, not just the static
+      // ISOLATOR_PBS_DEFAULTS table. Without this, the PBS overlay
+      // stays at the table defaults until the user manually clicks
+      // Apply on the binding row.
+      for (const b of list) {
+        const role = (b.properties as { role_label?: string } | null)?.role_label;
+        const side: "front" | "back" | null =
+          role === "front_glan_laser" || role === "front_pbs" ? "front"
+          : role === "back_glan_laser" || role === "back_pbs" ? "back"
+          : null;
+        if (!side) continue;
+        const pos: Vec3 = [b.localXMm, b.localYMm, b.localZMm];
+        const rot: Vec3 = [b.localRxDeg, b.localRyDeg, b.localRzDeg];
+        // Always seed 3-axis Euler mode so the per-prism editor shows
+        // all three rx/ry/rz sliders immediately — users can drag any
+        // axis without first flipping a mode toggle.
+        if (side === "front") { setFrontPos(pos); setFrontYRot(b.localRyDeg); setFrontRotXYZ(rot); }
+        else { setBackPos(pos); setBackYRot(b.localRyDeg); setBackRotXYZ(rot); }
+      }
     } catch {
       setBindings(null);
       setBindingEdits({});
@@ -446,7 +479,48 @@ export function IsolatorDevPage() {
     const dirLight = new THREE.DirectionalLight(0xffffff, 0.75);
     dirLight.position.set(2, 3, 4);
     threeScene.add(dirLight);
-    threeScene.add(new THREE.AxesHelper(mmToThree(40)));
+    // Body-frame axes drawn directly on the three.js scene. The
+    // bindings store body-local Z-up mm + XYZ-order Euler degrees, but
+    // three.js is Y-up; the standard AxesHelper would label the
+    // OPTICAL axis (three +Y) as "Y" which doesn't match what a binding
+    // rxDeg/ryDeg/rzDeg field rotates around. Draw the body frame
+    // instead so a label "Z" sits on the axis that binding rzDeg
+    // actually rotates around.
+    //   body X  →  three +X  (red)
+    //   body Y  →  three -Z  (blue, points in three -Z direction)
+    //   body Z  →  three +Y  (green, the optical / housing-long axis)
+    const axisLen = mmToThree(120);
+    const labelOff = mmToThree(135);
+    const addBodyAxis = (
+      label: string,
+      color: string,
+      endThree: [number, number, number],
+      labelPos: [number, number, number],
+    ) => {
+      const geom = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(...endThree),
+      ]);
+      const line = new THREE.Line(geom, new THREE.LineBasicMaterial({ color }));
+      threeScene.add(line);
+      const canvas = document.createElement("canvas");
+      canvas.width = 96; canvas.height = 96;
+      const ctx = canvas.getContext("2d")!;
+      ctx.fillStyle = color;
+      ctx.font = "bold 64px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, 48, 50);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.needsUpdate = true;
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
+      sprite.position.set(...labelPos);
+      sprite.scale.setScalar(mmToThree(18));
+      threeScene.add(sprite);
+    };
+    addBodyAxis("X", "#dc2626", [axisLen, 0, 0], [labelOff, 0, 0]);
+    addBodyAxis("Y", "#2563eb", [0, 0, -axisLen], [0, 0, -labelOff]);
+    addBodyAxis("Z", "#16a34a", [0, axisLen, 0], [0, labelOff, 0]);
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.001, 100);
     camera.position.set(0.8, 0.5, 0.8);
@@ -849,14 +923,12 @@ export function IsolatorDevPage() {
               boundAnchors: [...linkBoundAnchors],
             }
           : null;
-        // UX: front/back-marked triangles need to disappear from the
-        // dev preview so the user can keep mid-clicking inwards (the
-        // first-marked layer would otherwise block raycasts to deeper
-        // geometry). We do that by feeding the marked sets in as
-        // additional deletions to the Mark-housing renderer — the
-        // actual front/back state stays separate in the
-        // ``frontPartCentroids`` / ``backPartCentroids`` Sets so the
-        // bake-to-assets step can recover the partitions later.
+        // UX: front/back-marked triangles always get stripped from the
+        // main housing. When partitionsVisible=false they're just hidden
+        // (so mid-click can reach deeper geometry). When true they get
+        // re-rendered below as separately-posed sub-meshes following
+        // their front_piece / back_piece binding rows — same as the Lab
+        // viewer's viewerHints.includeOnlyCentroids path.
         const visibleDeletions = new Set(deletedCentroids);
         for (const k of frontPartCentroids) visibleDeletions.add(k);
         for (const k of backPartCentroids) visibleDeletions.add(k);
@@ -888,7 +960,136 @@ export function IsolatorDevPage() {
         const group = buildThorlabsIsolatorObject(
           geometry, fakeComponent, fakeAsset,
           innerFilterRadiusMm, visibleDeletions, linkedGroup, poseOverride,
+          opaqueHousing,
         );
+        // Attach a small body-frame XYZ axis triad to each PBS / Glan-Laser
+        // sub-group so the user can see how the front/back prism's local
+        // frame is oriented after the binding rotation. Body axes:
+        //   X (red)   → three +X
+        //   Y (blue)  → three -Z
+        //   Z (green) → three +Y
+        // (mm units; the parent group's 1/100 scale converts to three).
+        const overlayChild = group.children.find((c) => c.name === "isolator_pbs_overlay");
+        if (overlayChild) {
+          const addLocalAxis = (
+            parent: THREE.Object3D,
+            label: string,
+            color: string,
+            endMm: [number, number, number],
+            labelPosMm: [number, number, number],
+          ) => {
+            const lineGeom = new THREE.BufferGeometry().setFromPoints([
+              new THREE.Vector3(0, 0, 0),
+              new THREE.Vector3(...endMm),
+            ]);
+            const line = new THREE.Line(
+              lineGeom,
+              new THREE.LineBasicMaterial({ color, depthTest: false }),
+            );
+            line.renderOrder = 10;
+            parent.add(line);
+            const canvas = document.createElement("canvas");
+            canvas.width = 64; canvas.height = 64;
+            const ctx = canvas.getContext("2d")!;
+            ctx.fillStyle = color;
+            ctx.font = "bold 44px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(label, 32, 34);
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.needsUpdate = true;
+            const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+              map: tex, transparent: true, depthTest: false,
+            }));
+            sprite.position.set(...labelPosMm);
+            sprite.scale.setScalar(8);
+            sprite.renderOrder = 11;
+            parent.add(sprite);
+          };
+          for (const pbs of overlayChild.children) {
+            addLocalAxis(pbs, "X", "#dc2626", [20, 0, 0], [25, 0, 0]);
+            addLocalAxis(pbs, "Y", "#2563eb", [0, 0, -20], [0, 0, -25]);
+            addLocalAxis(pbs, "Z", "#16a34a", [0, 20, 0], [0, 25, 0]);
+          }
+        }
+        // Render front_piece / back_piece partitions as separately-posed
+        // sub-meshes so binding-row edits on those rows visibly move the
+        // marked tris in the dev preview (matches the Lab viewer's
+        // behavior where each piece is its own Asset3D positioned by its
+        // ComponentBinding). Position is body-local mm (parent group's
+        // scale 1/100 converts to three units); rotation is XYZ Euler
+        // degrees as the rest of this page treats it.
+        if (partitionsVisible) {
+          const bindingFor = (label: string): ComponentBinding | undefined =>
+            bindings?.find((b) =>
+              (b.properties as { role_label?: string } | null)?.role_label === label,
+            );
+          // Pieces preserve their OWN binding pose as a baseline and
+          // rotate together with the prism only by the DELTA the user
+          // applied via the per-prism slider. So if front_piece was at
+          // (0, 0, 0) and front_glan_laser at (0, 270, 0), dragging the
+          // slider to (0, 280, 0) shifts both by +10° around Y — piece
+          // ends up at (0, 10, 0), glan_laser at (0, 280, 0). The
+          // relative offset (270° between them) is kept.
+          const toRad = THREE.MathUtils.degToRad;
+          const bindingToQuat = (rxDeg: number, ryDeg: number, rzDeg: number): THREE.Quaternion => {
+            // Same body-frame mapping as pbsOverlay's overlay builder
+            // (rx→three.x, rz→three.y, -ry→three.z) with XYZ Euler so
+            // pieces and glan_lasers interpret a binding identically.
+            const e = new THREE.Euler(toRad(rxDeg), toRad(rzDeg), toRad(-ryDeg), "XYZ");
+            return new THREE.Quaternion().setFromEuler(e);
+          };
+          const sides: ReadonlyArray<{
+            side: "front" | "back";
+            tris: Set<string>;
+            pieceBinding: ComponentBinding | undefined;
+            prismBinding: ComponentBinding | undefined;
+            color: string;
+            currentRot: Vec3;
+          }> = [
+            { side: "front", tris: frontPartCentroids,
+              pieceBinding: bindingFor("front_piece"),
+              prismBinding: bindingFor("front_glan_laser") ?? bindingFor("front_pbs"),
+              color: "#1e3a8a",
+              currentRot: frontRotXYZ ?? [0, frontYRot, 0] },
+            { side: "back", tris: backPartCentroids,
+              pieceBinding: bindingFor("back_piece"),
+              prismBinding: bindingFor("back_glan_laser") ?? bindingFor("back_pbs"),
+              color: "#7c2d12",
+              currentRot: backRotXYZ ?? [0, backYRot, 0] },
+          ];
+          for (const { tris, pieceBinding, prismBinding, color, currentRot } of sides) {
+            if (tris.size === 0 || !pieceBinding) continue;
+            const subGeom = applyIncludeOnlyFilter(geometry, tris);
+            const mat = new THREE.MeshStandardMaterial({
+              color,
+              metalness: 0.55,
+              roughness: 0.5,
+              transparent: !opaqueHousing,
+              opacity: opaqueHousing ? 1 : 0.55,
+              depthWrite: opaqueHousing,
+            });
+            const mesh = new THREE.Mesh(subGeom, mat);
+            mesh.position.set(pieceBinding.localXMm, pieceBinding.localYMm, pieceBinding.localZMm);
+            // Q_piece = Q_delta * Q_pieceBaseline, where
+            //   Q_delta = Q_currentPrism * Q_prismBaseline^-1
+            // When the slider hasn't moved (currentRot === prismBinding),
+            // Q_delta is identity → piece sits at its own binding pose,
+            // preserving the relative angle the user set up. Dragging the
+            // slider applies the same delta rotation to both prism and
+            // piece, keeping their relative orientation locked.
+            const qPieceBase = bindingToQuat(pieceBinding.localRxDeg, pieceBinding.localRyDeg, pieceBinding.localRzDeg);
+            if (prismBinding) {
+              const qPrismBase = bindingToQuat(prismBinding.localRxDeg, prismBinding.localRyDeg, prismBinding.localRzDeg);
+              const qCurrent = bindingToQuat(currentRot[0], currentRot[1], currentRot[2]);
+              const qDelta = qCurrent.clone().multiply(qPrismBase.clone().invert());
+              mesh.quaternion.copy(qDelta.multiply(qPieceBase));
+            } else {
+              mesh.quaternion.copy(qPieceBase);
+            }
+            group.add(mesh);
+          }
+        }
         // Count rendered tris by walking the result tree (housing mesh).
         let renderedTris = 0;
         group.traverse((o) => {
@@ -945,6 +1146,8 @@ export function IsolatorDevPage() {
     innerFilterRadiusMm, deletedCentroids,
     linkedCentroids, linkRotDeg, linkRotAxis, linkRotPivotMm, linkBoundAnchors,
     frontPartCentroids, backPartCentroids,
+    partitionsVisible, opaqueHousing,
+    bindings,
   ]);
 
   // ── Binding tree edit handlers (Branch A) ────────────────────────────
@@ -969,6 +1172,36 @@ export function IsolatorDevPage() {
         localRxDeg: edit.rx, localRyDeg: edit.ry, localRzDeg: edit.rz,
       });
       setBindingApplyState((prev) => ({ ...prev, [bindingId]: "saved" }));
+      // Mirror the saved pose into the per-prism state so the dev-page
+      // preview reflects the change immediately (the preview is driven by
+      // frontPos / backPos / frontYRot / backYRot / frontRotXYZ /
+      // backRotXYZ, NOT by the bindings list). Only the prism rows have
+      // a per-prism counterpart; piece/mount/body rows have no live
+      // preview to update (front_piece / back_piece are baked into the
+      // housing STL and only show separately in the Lab viewer).
+      const binding = bindings?.find((b) => b.id === bindingId);
+      const role = (binding?.properties as { role_label?: string } | null)?.role_label;
+      const side: "front" | "back" | null =
+        role === "front_glan_laser" || role === "front_pbs" ? "front"
+        : role === "back_glan_laser" || role === "back_pbs" ? "back"
+        : null;
+      if (side === "front") {
+        setFrontPos([edit.x, edit.y, edit.z]);
+        if (edit.rx === 0 && edit.rz === 0) {
+          setFrontYRot(edit.ry);
+          setFrontRotXYZ(null);
+        } else {
+          setFrontRotXYZ([edit.rx, edit.ry, edit.rz]);
+        }
+      } else if (side === "back") {
+        setBackPos([edit.x, edit.y, edit.z]);
+        if (edit.rx === 0 && edit.rz === 0) {
+          setBackYRot(edit.ry);
+          setBackRotXYZ(null);
+        } else {
+          setBackRotXYZ([edit.rx, edit.ry, edit.rz]);
+        }
+      }
       // Refetch so any server-side normalisation lands locally too.
       const component = components.find((c) => c.model === model);
       if (component) await reloadBindings(component.id);
@@ -1206,6 +1439,32 @@ export function IsolatorDevPage() {
         <span style={{ fontSize: 11, opacity: 0.65 }} title="Mid-click marks one cluster. Ctrl/Alt + LEFT-drag draws a rectangle that marks every housing triangle whose centroid lands inside.">
           🖱 mid: delete · Shift = link · Ctrl = front · Alt = back · Ctrl/Alt + drag = box
         </span>
+        <button
+          type="button"
+          onClick={() => setPartitionsVisible((v) => !v)}
+          style={{
+            fontSize: 11,
+            background: partitionsVisible ? "#dcfce7" : undefined,
+            border: partitionsVisible ? "1px solid #16a34a" : undefined,
+            padding: "2px 8px",
+          }}
+          title="Show the front/back (part 1 & 3) marked triangles back in the preview. Off by default so mid-click can reach deeper geometry."
+        >
+          {partitionsVisible ? "👁 Parts 1&3 shown" : "👁 Show parts 1&3"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpaqueHousing((v) => !v)}
+          style={{
+            fontSize: 11,
+            background: opaqueHousing ? "#dcfce7" : undefined,
+            border: opaqueHousing ? "1px solid #16a34a" : undefined,
+            padding: "2px 8px",
+          }}
+          title="Render the housing fully opaque instead of the default translucent (0.35) look."
+        >
+          {opaqueHousing ? "◼ Opaque" : "◻ Make opaque"}
+        </button>
         {frontPartCentroids.size > 0 && (
           <button
             type="button"
@@ -1510,6 +1769,16 @@ export function IsolatorDevPage() {
                     onChange={(e) => setYRot(Number(e.target.value))}
                     style={{ width: 50 }}
                     title={`${side}.yRotationDeg around body Y`}
+                  />
+                  <input
+                    type="range"
+                    min={-360}
+                    max={360}
+                    step={1}
+                    value={yRot}
+                    onChange={(e) => setYRot(Number(e.target.value))}
+                    style={{ width: 120 }}
+                    title={`${side}.yRotationDeg drag to rotate live`}
                   />°
                   <button
                     type="button"
@@ -1523,21 +1792,40 @@ export function IsolatorDevPage() {
               ) : (
                 <>
                   <span style={{ opacity: 0.6, marginLeft: 4 }}>rotDeg</span>
-                  {(["rx", "ry", "rz"] as const).map((axis, i) => (
-                    <input
-                      key={`r${axis}`}
-                      type="number"
-                      step={1}
-                      value={rot[i]}
-                      onChange={(e) => {
-                        const next: Vec3 = [...rot];
-                        next[i] = Number(e.target.value);
-                        setRot(next);
-                      }}
-                      style={{ width: 50 }}
-                      title={`${side}.rotationDeg.${axis} body-local (XYZ order)`}
-                    />
-                  ))}°
+                  {(["rx", "ry", "rz"] as const).map((axis, i) => {
+                    const axisColor = axis === "rx" ? "#dc2626" : axis === "ry" ? "#2563eb" : "#16a34a";
+                    return (
+                      <span key={`r${axis}`} style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+                        <span style={{ color: axisColor, fontWeight: 600, fontSize: 10 }}>{axis.toUpperCase()}</span>
+                        <input
+                          type="number"
+                          step={1}
+                          value={rot[i]}
+                          onChange={(e) => {
+                            const next: Vec3 = [...rot];
+                            next[i] = Number(e.target.value);
+                            setRot(next);
+                          }}
+                          style={{ width: 50 }}
+                          title={`${side}.rotationDeg.${axis} body-local — rotates around body ${axis === "rx" ? "X (red)" : axis === "ry" ? "Y (blue)" : "Z (green)"}`}
+                        />
+                        <input
+                          type="range"
+                          min={-360}
+                          max={360}
+                          step={1}
+                          value={rot[i]}
+                          onChange={(e) => {
+                            const next: Vec3 = [...rot];
+                            next[i] = Number(e.target.value);
+                            setRot(next);
+                          }}
+                          style={{ width: 100, accentColor: axisColor }}
+                          title={`${side}.${axis} drag to rotate live around body ${axis === "rx" ? "X" : axis === "ry" ? "Y" : "Z"}`}
+                        />
+                      </span>
+                    );
+                  })}°
                   <button
                     type="button"
                     onClick={() => setRot(null)}

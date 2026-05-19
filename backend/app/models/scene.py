@@ -67,8 +67,100 @@ class SceneObject(Base):
     device_state: Mapped[DeviceState | None] = relationship(
         back_populates="object", cascade="all, delete-orphan"
     )
+    object_bindings: Mapped[list[ObjectBinding]] = relationship(
+        back_populates="object",
+        cascade="all, delete-orphan",
+        primaryjoin="SceneObject.id == ObjectBinding.object_id",
+    )
     # TimingProgram is no longer per-object (alembic 0045) — consumers
     # reference programs by id via JSONB refs in ``properties``.
+
+
+class ObjectBinding(Base):
+    """Per-SceneObject override of a ComponentBinding's pose / asset.
+
+    Catalog-shared baselines live on ``ComponentBinding`` (one per
+    Component template); per-instance tweaks live here (one row per
+    (SceneObject, ComponentBinding) pair). The renderer composes
+    ``effective = component_binding.local* + object_binding.delta*``
+    per axis at draw time.
+
+    Why a table instead of ``SceneObject.properties.bindingOverrides``?
+    See alembic 0076 — first-class entity gets FK cascade, indexes for
+    "all overrides for binding X" queries, and WS event channels so
+    other clients see live changes. The legacy properties-JSON shape
+    was a prototype.
+
+    Per-axis nullability: ``NULL`` means "no override for this axis",
+    distinguishing it from "explicit 0 override". Sparse storage avoids
+    row-bloat for the common case where only one axis is being tweaked.
+
+    ``asset_3d_id_override`` optionally swaps which Asset3D the binding
+    renders for this specific instance (covers the "damaged-housing
+    variant" case). NULL means "use the binding's declared asset".
+
+    Unique on (object_id, component_binding_id) — overrides compose
+    rather than stack.
+    """
+
+    __tablename__ = "object_bindings"
+    __table_args__ = (
+        UniqueConstraint(
+            "object_id",
+            "component_binding_id",
+            name="uq_object_bindings_object_binding",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    object_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("objects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    component_binding_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("component_bindings.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # Per-axis delta overrides. Nullable so "no override" is
+    # distinguishable from "explicit 0 override".
+    local_x_mm_delta: Mapped[float | None] = mapped_column(Float)
+    local_y_mm_delta: Mapped[float | None] = mapped_column(Float)
+    local_z_mm_delta: Mapped[float | None] = mapped_column(Float)
+    local_rx_deg_delta: Mapped[float | None] = mapped_column(Float)
+    local_ry_deg_delta: Mapped[float | None] = mapped_column(Float)
+    local_rz_deg_delta: Mapped[float | None] = mapped_column(Float)
+    # Optional per-instance asset swap on the same binding.
+    asset_3d_id_override: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("assets_3d.id", ondelete="RESTRICT"),
+    )
+    properties: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    object: Mapped[SceneObject] = relationship(
+        back_populates="object_bindings", foreign_keys=[object_id]
+    )
+    component_binding: Mapped[ComponentBinding] = relationship(
+        foreign_keys=[component_binding_id]
+    )
+    asset_override: Mapped[Asset3D | None] = relationship(foreign_keys=[asset_3d_id_override])
 
 
 class SceneView(Base):

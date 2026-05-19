@@ -656,6 +656,10 @@ export function buildThorlabsIsolatorObject(
     front_pbs?: PbsPoseEntry;
     back_pbs?: PbsPoseEntry;
   },
+  /** When true, the housing renders fully opaque instead of the default
+   *  translucent (opacity 0.35) look. Used by IsolatorDevPage to let the
+   *  user inspect the exterior without inner geometry bleeding through. */
+  opaqueHousing: boolean = false,
 ): THREE.Object3D {
   geometry.computeBoundingBox();
   const bbox = geometry.boundingBox ?? new THREE.Box3();
@@ -691,9 +695,9 @@ export function buildThorlabsIsolatorObject(
     color: "#1a1a1c",
     metalness: 0.55,
     roughness: 0.5,
-    transparent: true,
-    opacity: 0.35,
-    depthWrite: false,
+    transparent: !opaqueHousing,
+    opacity: opaqueHousing ? 1 : 0.35,
+    depthWrite: opaqueHousing ? true : false,
   });
 
   // Linked-rotation: partition the filtered housing geometry into static
