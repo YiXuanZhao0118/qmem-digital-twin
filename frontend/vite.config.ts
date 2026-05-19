@@ -7,6 +7,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": "http://localhost:8010",
+      "/assets": "http://localhost:8010",
       "/ws": { target: "ws://localhost:8010", ws: true },
     },
   },
