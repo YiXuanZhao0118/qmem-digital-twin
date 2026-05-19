@@ -27,6 +27,7 @@ import { eomPlugin } from "./eom";
 import { fiberPlugin } from "./fiber";
 import { fiberCouplerPlugin } from "./fiber_coupler";
 import { fiberEndPlugin } from "./fiber_end";
+import { glanPolarizerPlugin } from "./glan_polarizer";
 import { hornAntennaPlugin } from "./horn_antenna";
 import { isolatorPlugin } from "./isolator";
 import { laserSourcePlugin } from "./laser_source";
@@ -81,6 +82,7 @@ export const PHYSICS_PLUGINS: readonly PhysicsPlugin[] = [
   lensCylindricalPlugin,
   waveplatePlugin,
   polarizerPlugin,
+  glanPolarizerPlugin,
   beamSplitterPlugin,
   fiberCouplerPlugin,
   fiberPlugin,

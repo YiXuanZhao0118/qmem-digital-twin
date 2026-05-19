@@ -380,6 +380,7 @@ export type ElementKind =
   | "lens_cylindrical"
   | "waveplate"
   | "polarizer"
+  | "glan_polarizer"
   | "beam_splitter"
   | "dichroic_mirror"
   | "fiber_coupler"
