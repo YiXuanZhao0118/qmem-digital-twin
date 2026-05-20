@@ -22,12 +22,15 @@ from app.solvers.optical_solver import (
     jones_from_dict,
     lens_q,
     nm_to_thz,
+    propagate_beam_precise,
     propagate_q,
     q_at_z,
     rayleigh_range_mm,
     solve_chain,
+    synthesize_field_from_beam,
     waist_um_from_q,
 )
+import numpy as np
 
 
 # --- math primitives --------------------------------------------------------
@@ -187,6 +190,189 @@ def test_lens_spherical_modifies_both_axes():
     assert out["out"].q_y != beam.q_y
     # x and y should match for spherical lens
     assert math.isclose(out["out"].q_x.real, out["out"].q_y.real, abs_tol=1e-9)
+
+
+def test_chief_ray_defaults_to_zero():
+    beam = make_beam()
+    assert beam.x_c_mm == 0 and beam.y_c_mm == 0
+    assert beam.theta_xc_rad == 0 and beam.theta_yc_rad == 0
+
+
+def test_lens_spherical_no_kick_on_centered_beam():
+    beam = make_beam()
+    out = apply_lens_spherical(beam, {"focalMm": 100.0, "transmission": 1.0})["out"]
+    assert math.isclose(out.theta_xc_rad, 0.0, abs_tol=1e-12)
+    assert math.isclose(out.theta_yc_rad, 0.0, abs_tol=1e-12)
+
+
+def test_lens_spherical_kicks_off_axis_chief_ray():
+    """An on-axis beam tilted by θ hits a centered lens — the lens applies
+    standard ABCD chief-ray kick. After lens, θ_xc' = D·θ + C·x_c, with the
+    new x_c = A·x_c + B·θ (thin lens: A=1, B=0, C=-1/f, D=1)."""
+    beam = replace_beam(make_beam(), x_c_mm=0.5, theta_xc_rad=0.0)
+    out = apply_lens_spherical(beam, {"focalMm": 100.0, "transmission": 1.0})["out"]
+    # x_c unchanged (A=1, B=0); θ_xc gains -x_c/f = -0.005 rad
+    assert math.isclose(out.x_c_mm, 0.5, abs_tol=1e-12)
+    assert math.isclose(out.theta_xc_rad, -0.5 / 100.0, abs_tol=1e-12)
+
+
+def test_mirror_flips_q_per_spec():
+    beam = replace_beam(make_beam(), q_x=complex(50.0, 30.0), q_y=complex(50.0, 30.0))
+    out = apply_mirror(beam, {"reflectivity": 1.0})["out"]
+    assert math.isclose(out.q_x.real, -50.0, abs_tol=1e-12)
+    assert math.isclose(out.q_x.imag, -30.0, abs_tol=1e-12)
+
+
+# --- Phase E.1: curved mirror + plate thickness optional kindParams ---------
+
+
+def test_mirror_curved_focuses_collimated_beam():
+    """Concave mirror R=200mm has f = R/2 = 100mm. A collimated beam (waist
+    at the mirror) reflects + focuses ~100mm AHEAD of the mirror. Combined
+    with q-flip, the resulting q.real ≈ -100 mm (waist is "ahead" of mirror
+    in the reflected frame)."""
+    beam = replace_beam(make_beam(), q_x=complex(0.0, 4030.0), q_y=complex(0.0, 4030.0))  # 1mm collimated
+    out = apply_mirror(beam, {"radiusOfCurvatureMm": 200.0, "reflectivity": 1.0})["out"]
+    # New waist sits ~100mm AHEAD (negative q.real) AFTER the q-flip + focus.
+    assert math.isclose(out.q_x.real, -100.0, rel_tol=0.02)
+
+
+def test_mirror_no_radius_acts_as_flat():
+    """Mirror with no radiusOfCurvatureMm behaves identically to the bare
+    flat-mirror dispatch (just q flip + reflectivity power attenuation)."""
+    beam = replace_beam(make_beam(), q_x=complex(50.0, 30.0), q_y=complex(50.0, 30.0))
+    out = apply_mirror(beam, {"reflectivity": 1.0})["out"]
+    assert math.isclose(out.q_x.real, -50.0, abs_tol=1e-12)
+    assert math.isclose(out.q_x.imag, -30.0, abs_tol=1e-12)
+
+
+def test_waveplate_no_thickness_preserves_q():
+    """Without thicknessMm + refractiveIndex, the waveplate body acts as
+    identity at the envelope level — only Jones changes."""
+    beam = replace_beam(make_beam(), q_x=complex(20.0, 50.0), q_y=complex(20.0, 50.0))
+    out = apply_waveplate(beam, {"retardanceLambda": 0.5, "fastAxisDeg": 0.0})["out"]
+    assert math.isclose(out.q_x.real, 20.0, abs_tol=1e-12)
+
+
+def test_waveplate_with_thickness_propagates_q_by_d_over_n():
+    """With thicknessMm = 1mm, n = 1.5 → d/n ≈ 0.6667 mm added to q.real."""
+    beam = replace_beam(make_beam(), q_x=complex(20.0, 50.0), q_y=complex(20.0, 50.0))
+    out = apply_waveplate(
+        beam,
+        {"retardanceLambda": 0.5, "fastAxisDeg": 0.0,
+         "thicknessMm": 1.0, "refractiveIndex": 1.5, "transmission": 1.0},
+    )["out"]
+    assert math.isclose(out.q_x.real, 20.0 + 1.0 / 1.5, abs_tol=1e-9)
+
+
+# --- Phase F.1: profileKind passthrough + field synthesis -------------------
+
+
+def test_emit_laser_default_profile_kind_is_gaussian():
+    beam = emit_from_laser_source(make_laser_params())
+    assert beam.transverse_mode.get("profileKind") == "gaussian"
+
+
+def test_emit_laser_with_tophat_profile_kind_echoes_metadata():
+    params = make_laser_params()
+    params["profileKind"] = "tophat"
+    params["profileParams"] = {"radiusMm": 0.5}
+    beam = emit_from_laser_source(params)
+    assert beam.transverse_mode["profileKind"] == "tophat"
+    assert beam.transverse_mode["profileParams"]["radiusMm"] == 0.5
+
+
+def test_emit_laser_unknown_profile_kind_falls_back_to_gaussian():
+    params = make_laser_params()
+    params["profileKind"] = "schmaussian"
+    beam = emit_from_laser_source(params)
+    assert beam.transverse_mode["profileKind"] == "gaussian"
+
+
+def test_synthesize_field_gaussian_default():
+    beam = emit_from_laser_source(make_laser_params(power_mw=4.0))
+    x = np.linspace(-1.0, 1.0, 33)
+    y = np.linspace(-1.0, 1.0, 33)
+    field = synthesize_field_from_beam(beam, x, y)
+    assert field.shape == (33, 33)
+    # Power scale: peak amplitude proportional to sqrt(power_mw=4) = 2
+    peak = float(np.max(np.abs(field)))
+    assert peak > 0.0
+
+
+def test_synthesize_field_tophat_uniform_inside_radius():
+    params = make_laser_params(power_mw=9.0)
+    params["profileKind"] = "tophat"
+    params["profileParams"] = {"radiusMm": 0.5}
+    beam = emit_from_laser_source(params)
+    x = np.linspace(-1.0, 1.0, 51)
+    y = np.linspace(-1.0, 1.0, 51)
+    field = synthesize_field_from_beam(beam, x, y)
+    # Center inside → amplitude = sqrt(power_mw) = 3
+    assert math.isclose(abs(field[25, 25]), 3.0, abs_tol=1e-9)
+    # Outside → 0
+    assert abs(field[0, 0]) < 1e-12
+
+
+def test_propagate_beam_precise_gaussian_grows_by_root_2_at_zr():
+    """A 200 µm Gaussian propagated one Rayleigh range should reach ~283 µm
+    spot radius (within FFT-sampling tolerance)."""
+    params = make_laser_params(power_mw=1.0, waist_x=200.0, waist_y=200.0)
+    beam = emit_from_laser_source(params)
+    z_R_mm = beam.q_x.imag  # ≈ 161 mm at 780nm
+    out = propagate_beam_precise(beam, z_R_mm, grid_span_mm=6.0, n_grid=256)
+    # Tolerate 15% (FFT grid sampling)
+    assert math.isclose(out["spot_radius_x_um"], 200.0 * math.sqrt(2.0), rel_tol=0.15)
+
+
+def test_propagate_beam_precise_zero_distance_returns_input():
+    """distance_mm = 0 short-circuits the FFT step; output spot radius
+    should match the input waist within tight tolerance."""
+    params = make_laser_params(power_mw=1.0, waist_x=200.0, waist_y=200.0)
+    beam = emit_from_laser_source(params)
+    out = propagate_beam_precise(beam, 0.0, grid_span_mm=4.0, n_grid=256)
+    assert math.isclose(out["spot_radius_x_um"], 200.0, rel_tol=0.10)
+    assert out["total_power"] > 0.0
+
+
+def test_propagate_beam_precise_intensity_grid_shape():
+    """API contract: returned intensity is (n_grid, n_grid), axes length n_grid."""
+    beam = emit_from_laser_source(make_laser_params(power_mw=1.0))
+    out = propagate_beam_precise(beam, 50.0, grid_span_mm=4.0, n_grid=128)
+    assert out["intensity"].shape == (128, 128)
+    assert len(out["x_axis_mm"]) == 128
+    assert len(out["y_axis_mm"]) == 128
+
+
+def test_synthesize_field_hg_mn_picks_correct_mode():
+    params = make_laser_params()
+    params["profileKind"] = "hg_mn"
+    params["profileParams"] = {"m": 1, "n": 0}  # HG_1,0 has one node along x
+    beam = emit_from_laser_source(params)
+    x = np.linspace(-0.6, 0.6, 65)
+    y = np.linspace(-0.6, 0.6, 65)
+    field = synthesize_field_from_beam(beam, x, y)
+    # HG_1,0 vanishes at x = 0 (the node line)
+    centre_line = field[32, :]
+    assert abs(centre_line[32]) < 1e-3
+
+
+def test_pbs_transmitted_with_thickness_acts_as_glass_plate():
+    """PBS with thicknessMm = 12.7 (Thorlabs PBS252) propagates q by d/n on
+    the transmitted arm."""
+    amp = 1.0 / math.sqrt(2.0)
+    beam = replace_beam(make_beam(100.0), polarization=(complex(amp), complex(amp)),
+                        q_x=complex(0.0, 50.0), q_y=complex(0.0, 50.0))
+    out = apply_beam_splitter(
+        beam,
+        {"polarizing": True, "transmissionAxisDeg": 0.0, "transmission": 1.0,
+         "thicknessMm": 12.7, "refractiveIndex": 1.515},
+    )
+    # transmitted arm: q advanced by d/n ≈ 8.38 mm
+    assert math.isclose(out["out_t"].q_x.real, 12.7 / 1.515, abs_tol=1e-6)
+    # reflected arm: q flipped (sign reversal)
+    assert math.isclose(out["out_r"].q_x.real, 0.0, abs_tol=1e-12)
+    assert math.isclose(out["out_r"].q_x.imag, -50.0, abs_tol=1e-12)
 
 
 def test_beam_splitter_50_50_splits_power_equally():
@@ -350,9 +536,11 @@ def test_solve_chain_simple_laser_to_mirror_to_detector():
     seg2 = next(s for s in result.segments if s["optical_link_id"] == link2.id)
     assert math.isclose(seg1["power_mw"], 50.0, abs_tol=1e-9)
     assert math.isclose(seg2["power_mw"], 50.0 * 0.9, abs_tol=1e-9)
-    # After 100mm propagation, q.real should advance by 100mm
+    # After 100mm free-space, q.real = 100mm (waist at emitter, 100mm behind).
     assert math.isclose(seg1["spatial_x"]["qReal"], 100.0, abs_tol=1e-6)
-    assert math.isclose(seg2["spatial_x"]["qReal"], 100.0 + 200.0, abs_tol=1e-6)
+    # Mirror flips q (wavefront-curvature reversal, Siegman §17): q.real
+    # 100 → -100, then +200mm free-space → -100 + 200 = 100.
+    assert math.isclose(seg2["spatial_x"]["qReal"], -100.0 + 200.0, abs_tol=1e-6)
 
 
 def test_solve_chain_aom_bragg_selected_order():

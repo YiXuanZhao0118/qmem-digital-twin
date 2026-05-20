@@ -25,6 +25,8 @@ from typing import Any, Iterable
 import numpy as np
 import numpy.typing as npt
 
+from app.solvers import generalized_abcd
+
 
 SPEED_OF_LIGHT_M_PER_S = 299_792_458.0
 
@@ -329,6 +331,16 @@ class Beam:
     # When present, the envelope IS the temporal information and `power_mw`
     # becomes a derived quantity (mean of |E|² over the envelope).
     envelope: "PulseEnvelopeArrays | None" = None
+    # ------------------------------------------------------------ chief-ray
+    # Beam-local chief-ray state, updated by generalized 5x5 ABCD operators
+    # (see app.solvers.generalized_abcd). Defaults to 0 so existing emitter
+    # constructors stay back-compat. Tracks lateral drift + tilt induced by
+    # misaligned elements (decentered lens → δ/f kick, glass plate tilt →
+    # (d/n)·θ shift, etc.).
+    x_c_mm: float = 0.0
+    y_c_mm: float = 0.0
+    theta_xc_rad: float = 0.0
+    theta_yc_rad: float = 0.0
 
     def with_power(self, factor: float) -> "Beam":
         scale = math.sqrt(max(factor, 0.0))
@@ -376,6 +388,12 @@ class Beam:
             "polarization_jones": jones_to_dict(self.polarization),
             "power_mw": self.power_mw,
             "propagation_axis_local": list(self.propagation_axis_local),
+            "chief_ray": {
+                "xCMm": self.x_c_mm,
+                "yCMm": self.y_c_mm,
+                "thetaXCRad": self.theta_xc_rad,
+                "thetaYCRad": self.theta_yc_rad,
+            },
         }
 
 
@@ -426,6 +444,38 @@ def polarization_overlap(seed: JonesArray, target: JonesArray) -> float:
 # --- emitters --------------------------------------------------------------
 
 
+_VALID_PROFILE_KINDS = {"gaussian", "tophat", "super_gauss", "hg_mn", "multimode"}
+
+
+def _resolve_profile_kind(params: dict[str, Any]) -> dict[str, Any]:
+    """Read optional profile-shape descriptor from kindParams. Returns a
+    metadata dict that flows through `Beam.transverse_mode` so downstream
+    consumers (field synthesis, Collins-FFT precision mode) know how to
+    build the actual 2D field for this emitter.
+
+    profileKind: "gaussian" (default) | "tophat" | "super_gauss" |
+                 "hg_mn"  | "multimode"
+    profileParams: dict, kind-specific:
+      - tophat:       {"radiusMm": float}
+      - super_gauss:  {"radiusMm": float, "order": int}
+      - hg_mn:        {"m": int, "n": int}  (single HG_mn mode)
+      - multimode:    {"modes": [(m, n, amp_complex), ...]}
+
+    All q-evolution stays identical to a Gaussian with the same
+    spatialModeX/Y waist — HG_mn modes are q-preserving — so the only
+    place the profile shape matters is Tier-2 field synthesis or Tier-3
+    Collins-FFT.
+    """
+    kind = str(params.get("profileKind") or "gaussian").lower()
+    if kind not in _VALID_PROFILE_KINDS:
+        kind = "gaussian"
+    out: dict[str, Any] = {"profileKind": kind}
+    profile_params = params.get("profileParams")
+    if isinstance(profile_params, dict):
+        out["profileParams"] = dict(profile_params)
+    return out
+
+
 def emit_from_laser_source(params: dict[str, Any]) -> Beam:
     wavelength_nm = float(params["centerWavelengthNm"])
     spectrum = dict(params.get("spectrum") or {})
@@ -434,6 +484,7 @@ def emit_from_laser_source(params: dict[str, Any]) -> Beam:
     transverse = dict(params.get("transverseMode") or {"kind": "TEM00"})
     transverse.setdefault("mSquaredX", float(mode_x.get("mSquared", 1.0)))
     transverse.setdefault("mSquaredY", float(mode_y.get("mSquared", 1.0)))
+    transverse.update(_resolve_profile_kind(params))
     polarization = jones_from_dict(params.get("polarization") or {})
     return Beam(
         spectrum=spectrum,
@@ -462,6 +513,7 @@ def emit_from_tapered_amplifier(params: dict[str, Any], seed: Beam | None) -> Be
         mode_x = params["outputSpatialModeX"]
         mode_y = params["outputSpatialModeY"]
         transverse = dict(params.get("outputTransverseMode") or {"kind": "TEM00"})
+        transverse.update(_resolve_profile_kind(params))
         ase = params["ase"]
         wavelength_nm = 780.241
         spectrum = {
@@ -533,6 +585,7 @@ def emit_from_tapered_amplifier(params: dict[str, Any], seed: Beam | None) -> Be
     transverse = dict(params.get("outputTransverseMode") or {"kind": "TEM00"})
     transverse.setdefault("mSquaredX", float(mode_x.get("mSquared", 1.0)))
     transverse.setdefault("mSquaredY", float(mode_y.get("mSquared", 1.0)))
+    transverse.update(_resolve_profile_kind(params))
     return replace(
         seed,
         spectrum=new_spectrum,
@@ -571,14 +624,53 @@ def _nm_offset_to_mhz(offset_nm: float, center_wavelength_nm: float) -> float:
 # --- per-kind dispatchers --------------------------------------------------
 
 
+def _apply_op(beam: Beam, M: "np.ndarray") -> Beam:
+    """Apply a 5x5 augmented ABCD operator to a Beam — updates q_x, q_y AND
+    chief-ray (x_c, y_c, theta_xc, theta_yc) in one shot. Other Beam fields
+    (spectrum, polarization, power_mw, envelope, transverse_mode) pass through
+    unchanged; their physics is handled by the surrounding dispatch."""
+    bm = generalized_abcd.BeamMisaligned(
+        q_x=beam.q_x,
+        q_y=beam.q_y,
+        x_c_mm=beam.x_c_mm,
+        y_c_mm=beam.y_c_mm,
+        theta_xc_rad=beam.theta_xc_rad,
+        theta_yc_rad=beam.theta_yc_rad,
+        wavelength_nm=beam.wavelength_nm,
+    )
+    out = generalized_abcd.apply_operator(bm, M)
+    return replace(
+        beam,
+        q_x=out.q_x,
+        q_y=out.q_y,
+        x_c_mm=out.x_c_mm,
+        y_c_mm=out.y_c_mm,
+        theta_xc_rad=out.theta_xc_rad,
+        theta_yc_rad=out.theta_yc_rad,
+    )
+
+
 def apply_mirror(beam: Beam, params: dict[str, Any]) -> dict[str, Beam]:
-    return {"out": beam.with_power(float(params.get("reflectivity", 0.99)))}
+    # Mirror dispatch:
+    #   - radiusOfCurvatureMm present + finite + non-zero → curved mirror,
+    #     uses 5x5 m_curved_mirror (q-flip + thin-lens focus with f = R/2).
+    #     Convention per spec: concave R > 0 (focuses), convex R < 0.
+    #   - Otherwise → flat mirror, just q-flip (envelope size preserved).
+    # α decenter / tilt source TBD — geometry-derived (δ, α) comes from a
+    # future layer; we pass 0 unconditionally here.
+    radius_mm_raw = params.get("radiusOfCurvatureMm")
+    if isinstance(radius_mm_raw, (int, float)) and abs(float(radius_mm_raw)) > 1e-12:
+        M = generalized_abcd.m_curved_mirror(float(radius_mm_raw))
+    else:
+        M = generalized_abcd.m_flat_mirror()
+    out = _apply_op(beam, M)
+    return {"out": out.with_power(float(params.get("reflectivity", 0.99)))}
 
 
 def apply_lens_spherical(beam: Beam, params: dict[str, Any]) -> dict[str, Beam]:
     f = float(params["focalMm"])
     transmission = float(params.get("transmission", 0.99))
-    out = replace(beam, q_x=lens_q(beam.q_x, f), q_y=lens_q(beam.q_y, f))
+    out = _apply_op(beam, generalized_abcd.m_thin_lens(f))
     return {"out": out.with_power(transmission)}
 
 
@@ -586,10 +678,8 @@ def apply_lens_cylindrical(beam: Beam, params: dict[str, Any]) -> dict[str, Beam
     f = float(params["focalMm"])
     axis = params.get("cylindricalAxis", "x")
     transmission = float(params.get("transmission", 0.99))
-    if axis == "x":
-        out = replace(beam, q_x=lens_q(beam.q_x, f))
-    else:
-        out = replace(beam, q_y=lens_q(beam.q_y, f))
+    cyl_axis = "y" if axis == "y" else "x"
+    out = _apply_op(beam, generalized_abcd.m_cylindrical_standard(f, axis=cyl_axis))
     return {"out": out.with_power(transmission)}
 
 
@@ -614,7 +704,28 @@ def apply_waveplate(beam: Beam, params: dict[str, Any]) -> dict[str, Beam]:
         float(_kp_first(params, "fastAxisDegBeamLocal", "fastAxisDeg", default=0.0)),
     )
     j = jones_apply_matrix(beam.polarization, matrix)
-    return {"out": replace(beam, polarization=j).with_power(float(params.get("transmission", 0.99)))}
+    # Waveplate body is a (typically birefringent) slab; envelope still gets
+    # the standard Snell-reduced d/n free-space step + tilt-shift via the
+    # glass-plate operator. Only applied when thicknessMm + refractiveIndex
+    # are both present; otherwise pass-through (back-compat for catalogs that
+    # don't yet expose these params).
+    out = replace(beam, polarization=j)
+    out = _apply_plate_if_thick(out, params)
+    return {"out": out.with_power(float(params.get("transmission", 0.99)))}
+
+
+def _apply_plate_if_thick(beam: Beam, params: dict[str, Any]) -> Beam:
+    """Apply m_glass_plate (envelope d/n + chief-ray α-shift) to `beam` iff
+    `thicknessMm` (> 0) and `refractiveIndex` (> 0) are both in params.
+    Otherwise returns the beam unchanged. Common helper for waveplate body,
+    PBS-T arm, window, isolator-T, etc."""
+    d_raw = params.get("thicknessMm")
+    n_raw = params.get("refractiveIndex")
+    if not isinstance(d_raw, (int, float)) or float(d_raw) <= 0:
+        return beam
+    if not isinstance(n_raw, (int, float)) or float(n_raw) <= 0:
+        return beam
+    return _apply_op(beam, generalized_abcd.m_glass_plate(float(d_raw), float(n_raw)))
 
 
 def apply_polarizer(beam: Beam, params: dict[str, Any]) -> dict[str, Beam]:
@@ -669,13 +780,21 @@ def apply_beam_splitter(beam: Beam, params: dict[str, Any]) -> dict[str, Beam]:
         # the PBS eigenstate itself: transmitted = P-axis, reflected = S-axis.
         t_jones = jones_apply_matrix((complex(1.0), complex(0.0)), rot_back)
         r_jones = jones_apply_matrix((complex(0.0), complex(1.0)), rot_back)
-        transmitted = replace(beam, polarization=t_jones).with_power(t_factor)
-        reflected = replace(beam, polarization=r_jones).with_power(r_factor)
+        # Transmitted: equivalent to a glass plate of cube-edge thickness D.
+        # Reflected: equivalent to a flat-mirror q-flip. Both gated by
+        # optional kindParams so existing PBS rows behave as before.
+        t_pre = _apply_plate_if_thick(replace(beam, polarization=t_jones), params)
+        r_pre = _apply_op(replace(beam, polarization=r_jones), generalized_abcd.m_flat_mirror())
+        transmitted = t_pre.with_power(t_factor)
+        reflected = r_pre.with_power(r_factor)
         return {"out_t": transmitted, "out_r": reflected}
 
     t = float(params.get("splitRatioTransmitted", 0.5))
-    transmitted = beam.with_power(t * transmission)
-    reflected = beam.with_power((1.0 - t) * transmission)
+    # Non-polarising BS: same envelope treatment per arm as PBS.
+    t_pre = _apply_plate_if_thick(beam, params)
+    r_pre = _apply_op(beam, generalized_abcd.m_flat_mirror())
+    transmitted = t_pre.with_power(t * transmission)
+    reflected = r_pre.with_power((1.0 - t) * transmission)
     return {"out_t": transmitted, "out_r": reflected}
 
 
@@ -975,10 +1094,11 @@ def solve_chain(
                 new_envelope = propagate_envelope(
                     new_envelope, link.free_space_mm, refractive_index=1.0,
                 )
+            # Free-space 5x5 ABCD: propagates q and carries chief-ray drift by
+            # L·θ in each axis. Equivalent to the old per-axis propagate_q on
+            # symmetric beams; superset for off-axis / tilted chief rays.
             propagated = replace(
-                beam,
-                q_x=propagate_q(beam.q_x, link.free_space_mm),
-                q_y=propagate_q(beam.q_y, link.free_space_mm),
+                _apply_op(beam, generalized_abcd.m_free_space(link.free_space_mm)),
                 envelope=new_envelope,
             )
             result.segments.append(
@@ -987,6 +1107,127 @@ def solve_chain(
             beam_at_input[(link.to_object_id, link.to_port)] = propagated
 
     return result
+
+
+def synthesize_field_from_beam(
+    beam: Beam,
+    x_grid_mm: "np.ndarray",
+    y_grid_mm: "np.ndarray",
+) -> "np.ndarray":
+    """Build a 2D complex field E(x, y) for `beam` on the given grid, using
+    its profileKind metadata. Default ("gaussian") returns HG_00 evaluated
+    at q_x, q_y; "tophat" / "super_gauss" return the canned aperture profile
+    scaled by sqrt(power_mw); "hg_mn" / "multimode" sum the named HG modes.
+
+    Used as the input to collins_fft.collins_5x5_fft for Tier-3 precision
+    propagation, OR for any display layer that wants to render the true
+    profile rather than a single circular spot."""
+    from app.solvers import collins_fft  # noqa: F401  (import deferred to avoid cycle)
+    from app.solvers import hg_modes
+
+    transverse = beam.transverse_mode or {}
+    profile_kind = str(transverse.get("profileKind") or "gaussian").lower()
+    profile_params = transverse.get("profileParams") or {}
+
+    X, Y = np.meshgrid(x_grid_mm, y_grid_mm) if x_grid_mm.ndim == 1 else (x_grid_mm, y_grid_mm)
+
+    if profile_kind == "tophat":
+        radius_mm = float(profile_params.get("radiusMm", 1.0))
+        field = hg_modes.tophat_field(radius_mm, X, Y)
+    elif profile_kind == "super_gauss":
+        radius_mm = float(profile_params.get("radiusMm", 1.0))
+        order = int(profile_params.get("order", 4))
+        field = hg_modes.super_gauss_field(radius_mm, order, X, Y)
+    elif profile_kind == "hg_mn":
+        m = int(profile_params.get("m", 0))
+        n = int(profile_params.get("n", 0))
+        field = hg_modes.hg_field_2d(m, n, X, Y, beam.q_x, beam.q_y, beam.wavelength_nm)
+    elif profile_kind == "multimode":
+        field = np.zeros(X.shape, dtype=np.complex128)
+        for entry in profile_params.get("modes") or []:
+            m, n, amp = entry
+            field += complex(amp) * hg_modes.hg_field_2d(
+                int(m), int(n), X, Y, beam.q_x, beam.q_y, beam.wavelength_nm
+            )
+    else:
+        field = hg_modes.hg_field_2d(0, 0, X, Y, beam.q_x, beam.q_y, beam.wavelength_nm)
+
+    amplitude_scale = math.sqrt(max(beam.power_mw, 0.0))
+    return field * amplitude_scale
+
+
+def propagate_beam_precise(
+    beam: Beam,
+    distance_mm: float,
+    *,
+    grid_span_mm: float = 6.0,
+    n_grid: int = 256,
+) -> dict[str, Any]:
+    """Tier-3 precision propagation: build the true 2D field for `beam` via
+    its profileKind, push it `distance_mm` of free space through the
+    Collins-FFT propagator, then collect 1D intensity slice + 1/e² spot
+    radius for display.
+
+    This is the entry point a UI "precision mode" toggle would call to
+    compare the analytic Gaussian spot against the diffraction-correct
+    field at a given downstream plane.
+
+    Returns a dict:
+      x_axis_mm:        1D output x coordinates (length n_grid)
+      y_axis_mm:        1D output y coordinates (length n_grid)
+      intensity:        2D |E|² array (n_grid x n_grid)
+      spot_radius_x_um: 1/e² spot radius along x (second-moment 2σ)
+      spot_radius_y_um: 1/e² spot radius along y
+      total_power:      sum of intensity × Δx × Δy (sanity check)
+    """
+    from app.solvers import collins_fft
+    from app.solvers import generalized_abcd
+
+    half = grid_span_mm / 2.0
+    x = np.linspace(-half, half, n_grid, endpoint=False)
+    y = np.linspace(-half, half, n_grid, endpoint=False)
+    X, Y = np.meshgrid(x, y)
+    field_in = synthesize_field_from_beam(beam, X, Y)
+
+    if distance_mm > 0:
+        M = generalized_abcd.m_free_space(distance_mm)
+        field_out, x_out, y_out = collins_fft.collins_5x5_fft(
+            field_in, X, Y, M, beam.wavelength_nm,
+        )
+    else:
+        field_out, x_out, y_out = field_in, X, Y
+
+    intensity = np.abs(field_out) ** 2
+    dx = float(x_out[0, 1] - x_out[0, 0])
+    dy = float(y_out[1, 0] - y_out[0, 0])
+
+    total = float(np.sum(intensity)) * dx * dy
+    line_x = np.sum(intensity, axis=0)
+    line_y = np.sum(intensity, axis=1)
+    cx = x_out[0, :]
+    cy = y_out[:, 0]
+
+    spot_radius_x_um = 0.0
+    spot_radius_y_um = 0.0
+    sum_x = float(np.sum(line_x))
+    sum_y = float(np.sum(line_y))
+    if sum_x > 1e-30:
+        mean_x = float(np.sum(cx * line_x)) / sum_x
+        var_x = float(np.sum((cx - mean_x) ** 2 * line_x)) / sum_x
+        spot_radius_x_um = 2.0 * math.sqrt(max(var_x, 0.0)) * 1000.0
+    if sum_y > 1e-30:
+        mean_y = float(np.sum(cy * line_y)) / sum_y
+        var_y = float(np.sum((cy - mean_y) ** 2 * line_y)) / sum_y
+        spot_radius_y_um = 2.0 * math.sqrt(max(var_y, 0.0)) * 1000.0
+
+    return {
+        "x_axis_mm": cx.tolist(),
+        "y_axis_mm": cy.tolist(),
+        "intensity": intensity,
+        "spot_radius_x_um": spot_radius_x_um,
+        "spot_radius_y_um": spot_radius_y_um,
+        "total_power": total,
+    }
 
 
 def _apply_program_factor(
