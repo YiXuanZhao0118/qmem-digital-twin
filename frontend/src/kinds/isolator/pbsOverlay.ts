@@ -162,29 +162,46 @@ function findAnchorByName(
   );
 }
 
-/** Build a physically-accurate Glan-Laser polariser pair — two calcite
- *  right-angle prisms separated by a thin air gap along their hypotenuse
- *  faces.
+/** Build a Glan-Laser polariser pair — two calcite right-angle prisms
+ *  separated by a thin air gap along their hypotenuse faces.
  *
- *  Geometry (physical frame, before alignment rotation):
- *    - Aperture: `sizeUnit × sizeUnit` (X, Y)
- *    - Length:   `sizeUnit / tan(wedgeAngle)` along Z (optical axis)
- *    - Cut plane: tilts `wedgeAngle` from optical axis. Goes from the
- *                 +Y/-Z edge of the box to the -Y/+Z edge.
- *    - Wedge angle 38° matches calcite Glan-Laser specs at 850 nm
- *      (near-Brewster for E-ray transmission, TIR for O-ray; the rejected
- *      O-ray exits the side at ~68° via the escape window).
+ *  Defaults match the user's catalog spec (the prism actually used
+ *  inside IO-3-850-HP / IO-5-850-HP):
+ *    - Body cross-section: 6.5 × 6.5 mm (X, Y)
+ *    - Body length:        7.5 mm along Z
+ *    - Cut plane:          body diagonal — passes through corners 2, 3, 4, 5
+ *                          (from -Y/-Z edge to +Y/+Z edge). Implicit
+ *                          wedge angle = atan(sizeMm/lengthMm) ≈ 40.9°,
+ *                          slightly off from the canonical 38° but
+ *                          honours the body envelope exactly.
+ *    - Air gap:            0.3 mm (5 % of sizeMm, exaggerated from
+ *                          the real ~50 µm for 3D-viewer legibility)
+ *
+ *  Geometry MUST stay in sync with
+ *  ``loadAsset/procedural/glan_polarizer_prism.ts`` (the canonical
+ *  asset the binding tree references for HP isolator sub-components).
+ *  A Stage A''' followup should collapse this duplication by having
+ *  the Composer render the sub-component asset via the binding tree
+ *  renderer instead of via this inline builder.
  *
  *  The whole assembly is then rotated so the cut-plane outward normal
  *  (from Prism A) aligns with the canonical cement normal (1, 0, 1)/√2 —
  *  this lets the caller's anchor-alignment quaternion logic stay the
- *  same for both `pbs_cube` and `glan_laser` prism types. */
-function buildGlanLaserPrism(sizeUnit: number): THREE.Object3D {
-  const wedgeAngleDeg = 38;
-  const wedgeRad = (wedgeAngleDeg * Math.PI) / 180;
+ *  same for both `pbs_cube` and `glan_laser` prism types.
+ *
+ *  Output frame: raw mm. The Composer's parent group has scale 1/100
+ *  which converts to three units. The TORNOS procedural path doesn't
+ *  invoke Glan-Laser (TORNOS-850-4 uses pbs_cube), so the legacy
+ *  "sizeUnit-scaled" output the previous version produced is no longer
+ *  needed — sizeUnit is kept on the signature for binary compat with
+ *  the dispatch in ``buildIsolatorPbsOverlay`` but ignored. */
+function buildGlanLaserPrism(_sizeUnit: number): THREE.Object3D {
+  const sizeMm = 6.5;
+  const lengthMm = 7.5;
+  const airGapMm = 0.3;
 
-  const a = sizeUnit;
-  const L = a / Math.tan(wedgeRad);
+  const a = sizeMm;
+  const L = lengthMm;
   const ha = a / 2;
   const hL = L / 2;
 
@@ -203,45 +220,40 @@ function buildGlanLaserPrism(sizeUnit: number): THREE.Object3D {
     envMapIntensity: 1.5,
   });
 
-  // Box corners (physical frame, optical axis = Z).
-  // Bottom (Y = -ha): 0..3; top (Y = +ha): 4..7.
+  // 8 body corners (X = ±ha, Y = ±ha, Z = ±hL). Cut plane L·y + a·z = 0
+  // passes through corners 2, 3, 4, 5 (body diagonal).
+  //   Prism A (L·y + a·z > 0, contains corners 6, 7): top-back wedge
+  //   Prism B (L·y + a·z < 0, contains corners 0, 1): bottom-front wedge
   const c: number[][] = [
     [-ha, -ha, -hL], [+ha, -ha, -hL], [+ha, -ha, +hL], [-ha, -ha, +hL],
     [-ha, +ha, -hL], [+ha, +ha, -hL], [+ha, +ha, +hL], [-ha, +ha, +hL],
   ];
-  // Cut plane: L*y + a*z = 0. Passes through corners 2, 3, 4, 5.
-  //   Prism A (L*y + a*z > 0, contains 6, 7) — outward cut normal (0,-L,-a)
-  //   Prism B (L*y + a*z < 0, contains 0, 1) — outward cut normal (0,+L,+a)
 
   const buildPrismGeom = (tris: number[][]): THREE.BufferGeometry => {
     const verts: number[] = [];
-    for (const t of tris) {
-      for (const ci of t) verts.push(c[ci][0], c[ci][1], c[ci][2]);
-    }
+    for (const t of tris) for (const ci of t) verts.push(c[ci][0], c[ci][1], c[ci][2]);
     const geom = new THREE.BufferGeometry();
     geom.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
     geom.computeVertexNormals();
     return geom;
   };
 
-  // Prism A face triangulation (CCW from outside):
-  //   +X end: (2, 5, 6)
-  //   -X end: (3, 7, 4)
-  //   +Y face: (4, 6, 5), (4, 7, 6)
-  //   +Z face: (2, 7, 3), (2, 6, 7)
-  //   cut face (outward -Y-Z): (2, 3, 4), (2, 4, 5)
+  // Prism A faces (CCW from outside):
+  //   +X cap (2, 5, 6) | -X cap (3, 7, 4)
+  //   +Y face (4, 6, 5) (4, 7, 6)
+  //   +Z aperture (2, 7, 3) (2, 6, 7)
+  //   cut face outward -Y-Z (2, 3, 4) (2, 4, 5)
   const prismAGeom = buildPrismGeom([
     [2, 5, 6], [3, 7, 4],
     [4, 6, 5], [4, 7, 6],
     [2, 7, 3], [2, 6, 7],
     [2, 3, 4], [2, 4, 5],
   ]);
-  // Prism B face triangulation:
-  //   +X end: (1, 2, 5)
-  //   -X end: (0, 4, 3)
-  //   -Y face: (0, 1, 2), (0, 2, 3)
-  //   -Z face: (0, 5, 1), (0, 4, 5)
-  //   cut face (outward +Y+Z): (3, 5, 4), (3, 2, 5)
+  // Prism B faces:
+  //   +X cap (1, 2, 5) | -X cap (0, 4, 3)
+  //   -Y face (0, 1, 2) (0, 2, 3)
+  //   -Z aperture (0, 5, 1) (0, 4, 5)
+  //   cut face outward +Y+Z (3, 5, 4) (3, 2, 5)
   const prismBGeom = buildPrismGeom([
     [1, 2, 5], [0, 4, 3],
     [0, 1, 2], [0, 2, 3],
@@ -249,54 +261,26 @@ function buildGlanLaserPrism(sizeUnit: number): THREE.Object3D {
     [3, 5, 4], [3, 2, 5],
   ]);
 
-  // Keep geometry in PHYSICAL frame (optical axis = Z, length = L).
-  // The caller (buildIsolatorPbsOverlay) does Glan-Laser-specific alignment
-  // by composing rotations directly on the returned Group's quaternion —
-  // optical axis → body Z, yRotationDeg → rotation around optical axis.
   const prismA = new THREE.Mesh(prismAGeom, crystal);
   const prismB = new THREE.Mesh(prismBGeom, crystal);
 
-  // Air gap: offset each prism along its outward cut normal (physical frame).
+  // Air gap along the cut-plane normal direction (L, a) in (Y, Z).
+  // Cut plane equation L·y + a·z = 0; corners 6, 7 (and the cut-plane
+  // boundary) belong to Prism A on the +(L, a) side; corners 0, 1 to
+  // Prism B on the −(L, a) side. To open the gap each prism translates
+  // along its OWN outward normal (away from the other), so Prism A
+  // moves in +(offY, offZ) and Prism B in −(offY, offZ). Sign error
+  // here would push the halves through each other instead of apart
+  // — that's the "晶體又重疊了" bug carried from the legacy code.
   const cutNorm = Math.hypot(L, a);
-  const gap = a * 0.03;
-  const offY = (gap * L) / cutNorm;
-  const offZ = (gap * a) / cutNorm;
-  prismA.position.set(0, -offY, -offZ);
-  prismB.position.set(0, +offY, +offZ);
+  const offY = (airGapMm * L) / cutNorm;
+  const offZ = (airGapMm * a) / cutNorm;
+  prismA.position.set(0, +offY, +offZ);
+  prismB.position.set(0, -offY, -offZ);
 
   const group = new THREE.Group();
   group.add(prismA);
   group.add(prismB);
-
-  // Escape window marker — pinkish arrow showing the rejected O-polarization
-  // exit direction (~68° from optical axis after Snell at the -Y side face).
-  // Physical frame: arrow start on -Y face, direction in -Y+Z plane.
-  const escapeAngleRad = (68 * Math.PI) / 180;
-  const escapeDir = new THREE.Vector3(0, -Math.sin(escapeAngleRad), Math.cos(escapeAngleRad));
-  const escapeOrigin = new THREE.Vector3(0, -ha - a * 0.05, 0);
-  const arrowLen = a * 1.2;
-  const escapeArrow = new THREE.ArrowHelper(
-    escapeDir,
-    escapeOrigin,
-    arrowLen,
-    0xff4477,
-    arrowLen * 0.25,
-    arrowLen * 0.18,
-  );
-  escapeArrow.traverse((c) => {
-    const m = (c as THREE.Mesh | THREE.Line).material as THREE.Material | THREE.Material[] | undefined;
-    if (!m) return;
-    const mats = Array.isArray(m) ? m : [m];
-    for (const mat of mats) {
-      (mat as THREE.Material & { depthTest?: boolean; depthWrite?: boolean }).depthTest = false;
-      (mat as THREE.Material & { depthTest?: boolean; depthWrite?: boolean }).depthWrite = false;
-      mat.transparent = true;
-    }
-  });
-  escapeArrow.renderOrder = 2;
-  escapeArrow.userData.__glanEscapeArrow = true;
-  group.add(escapeArrow);
-
   return group;
 }
 
@@ -656,10 +640,11 @@ export function buildThorlabsIsolatorObject(
     front_pbs?: PbsPoseEntry;
     back_pbs?: PbsPoseEntry;
   },
-  /** When true, the housing renders fully opaque instead of the default
-   *  translucent (opacity 0.35) look. Used by IsolatorDevPage to let the
-   *  user inspect the exterior without inner geometry bleeding through. */
-  opaqueHousing: boolean = false,
+  /** When true (default), the housing renders fully opaque — matches the
+   *  real metal-housing isolator look. Set false from the dev page's
+   *  "See through" toggle (or via SceneObject.properties.translucentHousing)
+   *  to drop opacity to 0.35 so internal prisms are visible. */
+  opaqueHousing: boolean = true,
 ): THREE.Object3D {
   geometry.computeBoundingBox();
   const bbox = geometry.boundingBox ?? new THREE.Box3();

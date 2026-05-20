@@ -206,6 +206,58 @@ def jones_polarizer_matrix(transmission_axis_deg: float, transmission: float, ex
     return (a, b, c, d)
 
 
+def jones_glan_laser_matrix(
+    transmission_axis_deg: float,
+    transmission: float,
+    extinction_db: float,
+    beam_tilt_rad: float = 0.0,
+    angular_degradation_per_rad2: float = 0.0,
+) -> tuple[complex, complex, complex, complex]:
+    """Glan-Laser calcite-prism polariser Jones matrix.
+
+    Same form as ``jones_polarizer_matrix`` but the effective extinction
+    grows quadratically with chief-ray tilt:
+
+        ε(θ) = ε₀ + α · θ²
+
+    where ε₀ = 10^(-extinction_db/10) is the on-axis extinction and α
+    (1/rad²) is the angular degradation constant. Physically: outside
+    the design cone the air-gap TIR condition starts breaking and the
+    rejected polarisation leaks into the transmission port. For α = 0
+    this reduces to the ideal polariser case.
+    """
+    theta = math.radians(transmission_axis_deg)
+    co = math.cos(theta)
+    si = math.sin(theta)
+    eps_ideal = 10.0 ** (-extinction_db / 10.0)
+    eps_eff = max(
+        eps_ideal + angular_degradation_per_rad2 * beam_tilt_rad * beam_tilt_rad,
+        0.0,
+    )
+    pass_amp = math.sqrt(transmission)
+    leak_amp = math.sqrt(transmission * eps_eff)
+    a = complex(co * co * pass_amp + si * si * leak_amp)
+    b = complex(co * si * (pass_amp - leak_amp))
+    c = complex(co * si * (pass_amp - leak_amp))
+    d = complex(si * si * pass_amp + co * co * leak_amp)
+    return (a, b, c, d)
+
+
+def jones_faraday_matrix(rotation_deg: float) -> tuple[complex, complex, complex, complex]:
+    """Faraday rotator Jones matrix — NON-RECIPROCAL rotation in lab frame.
+
+    Forward and backward propagation both rotate by the same +rotation_deg
+    when expressed in fixed lab-frame x,y axes: the magnetic field B sets
+    the sense of rotation and reversing k does NOT reverse the sign. This
+    is the property that makes optical isolators work — round-trip
+    rotation is 2·rotation_deg, not 0.
+    """
+    theta = math.radians(rotation_deg)
+    co = math.cos(theta)
+    si = math.sin(theta)
+    return (complex(co), complex(-si), complex(si), complex(co))
+
+
 # --- PulseEnvelope (numpy-backed for fast math) ----------------------------
 #
 # This is the in-memory companion of the Pydantic `PulseEnvelope` schema. We
@@ -741,6 +793,162 @@ def apply_polarizer(beam: Beam, params: dict[str, Any]) -> dict[str, Beam]:
     return {"out": replace(beam, polarization=j).with_power(factor)}
 
 
+def apply_glan_laser(beam: Beam, params: dict[str, Any]) -> dict[str, Beam]:
+    """Glan-Laser calcite-prism polariser — splits incident beam into TWO
+    output beams (mirrors the polarising-PBS dispatch shape).
+
+    Output ports:
+      * ``out``   — E-ray (extraordinary): polarisation parallel to the
+                    transmission axis, transmits straight through the
+                    crystal (×``transmission``, typ. 0.92).
+      * ``out_r`` — O-ray (ordinary): polarisation orthogonal to the
+                    transmission axis, hits TIR at the air-gap cut plane
+                    and exits the side at ~67° from the optical axis.
+                    Reflectivity ~0.99 (clean TIR for calcite at 850 nm).
+
+    Both ports carry the extinction-leak from the opposite polarisation:
+    the E-port gets ε of the O-ray amplitude, the R-port gets ε of the
+    E-ray amplitude. ε(θ) = ε₀ + α·θ² (chief-ray-tilt degradation).
+
+    Reused as the Part-1 / Part-3 building block inside ``apply_isolator``
+    — the isolator only consumes the ``out`` port (transmitted E-ray);
+    the ``out_r`` port emits the rejected polarisation as a free beam
+    segment for visualisation.
+    """
+    # Pass-axis angle (degrees from beam-frame x).
+    e_axis_deg = float(_kp_first(
+        params, "transmissionAxisDegBeamLocal", "transmissionAxisDeg", default=0.0,
+    ))
+    transmission = float(params.get("transmission", 0.92))
+    extinction_db = float(params.get("extinctionRatioDb", 55.0))
+    # Chief-ray-tilt-induced extinction degradation.
+    tilt_rad = math.sqrt(
+        beam.theta_xc_rad * beam.theta_xc_rad
+        + beam.theta_yc_rad * beam.theta_yc_rad
+    )
+    eps_ideal = 10.0 ** (-extinction_db / 10.0)
+    eps_eff = max(
+        eps_ideal + float(params.get("angularDegradationAlpha", 0.0)) * tilt_rad * tilt_rad,
+        0.0,
+    )
+    # TIR reflectivity at the calcite-air interface for the O-ray. Near
+    # unity at the 38.5° wedge for 850 nm calcite. User-overridable for
+    # damaged/contaminated air gaps via ``tirReflectivity``.
+    tir_reflectivity = float(params.get("tirReflectivity", 0.99))
+
+    # Project input polarisation onto pass-axis and reject-axis directly
+    # (avoid jones_rotation: its convention is R(-angle) which causes
+    # off-by-sign bugs when the helper is used for "frame transform"
+    # semantics — see Phase 17 history). For pass-axis at angle θ_p in
+    # the beam frame, the orthonormal device basis is:
+    #     ê_pass   = ( cos θ_p,  sin θ_p)
+    #     ê_reject = (-sin θ_p,  cos θ_p)
+    # Projections of input (Ex, Ey):
+    #     e_amp = Ex·cos θ_p + Ey·sin θ_p
+    #     o_amp = -Ex·sin θ_p + Ey·cos θ_p
+    theta_rad = math.radians(e_axis_deg)
+    co = math.cos(theta_rad)
+    si = math.sin(theta_rad)
+    ex, ey = beam.polarization
+    in_intensity = abs(ex) ** 2 + abs(ey) ** 2
+    if in_intensity < 1e-30:
+        zero = beam.with_power(0.0)
+        return {"out": zero, "out_r": zero}
+    e_amp = ex * co + ey * si
+    o_amp = -ex * si + ey * co
+
+    # Power split:
+    #   E port = E-amp through pass (×transmission) + O-amp leak (×ε)
+    #   O port = O-amp reflected (×R_TIR)           + E-amp leak (×ε)
+    e_intensity_frac = abs(e_amp) ** 2 / in_intensity
+    o_intensity_frac = abs(o_amp) ** 2 / in_intensity
+    t_factor = e_intensity_frac * transmission + o_intensity_frac * eps_eff
+    r_factor = o_intensity_frac * tir_reflectivity + e_intensity_frac * eps_eff
+
+    # Branch polarisations: each port carries a pure eigenstate of the
+    # device (E port = ê_pass, R port = ê_reject), expressed back in
+    # the beam frame.
+    t_jones = (complex(co), complex(si))
+    r_jones = (complex(-si), complex(co))
+
+    transmitted = replace(beam, polarization=t_jones).with_power(t_factor)
+    reflected = replace(beam, polarization=r_jones).with_power(r_factor)
+
+    # ABCD propagation: the transmitted beam goes through the crystal
+    # (astigmatic Glan slab when wedge + n + L all present; symmetric
+    # glass plate otherwise). The reflected beam exits the side face
+    # without further slab propagation — the cut interface is the optical
+    # boundary and the chief-ray reflection direction is computed by the
+    # frontend ray tracer using coatingNormalBodyLocal.
+    length_raw = _kp_first(params, "lengthMm", "thicknessMm")
+    n_raw = params.get("refractiveIndex")
+    wedge_raw = params.get("wedgeAngleDeg")
+    has_full_glan_geometry = (
+        isinstance(length_raw, (int, float)) and float(length_raw) > 0
+        and isinstance(n_raw, (int, float)) and float(n_raw) > 0
+        and isinstance(wedge_raw, (int, float))
+    )
+    if has_full_glan_geometry:
+        M = generalized_abcd.m_glan_slab(
+            length_mm=float(length_raw),
+            refractive_index=float(n_raw),
+            wedge_angle_deg=float(wedge_raw),
+            air_gap_dB_x_mm=float(params.get("airGapAstigmatismMm", 0.0)),
+            augmented_offset_x_mm=float(params.get("augmentedOffsetXMm", 0.0)),
+        )
+        transmitted = _apply_op(transmitted, M)
+    else:
+        plate_params = params
+        if "lengthMm" in params and "thicknessMm" not in params:
+            plate_params = {**params, "thicknessMm": params["lengthMm"]}
+        transmitted = _apply_plate_if_thick(transmitted, plate_params)
+    # Reflected beam q-flip: the cut plane acts as a mirror for the O-ray.
+    reflected = _apply_op(reflected, generalized_abcd.m_flat_mirror())
+
+    return {"out": transmitted, "out_r": reflected}
+
+
+def apply_faraday_rotator(beam: Beam, params: dict[str, Any]) -> Beam:
+    """Faraday rotator (TGG body): Jones polarization rotation + 5×5
+    Faraday-slab geometric propagation.
+
+    NOT a per-port dispatcher — returns a Beam, not dict[str, Beam]. Used
+    as the Part-2 building block inside ``apply_isolator``. Rotation is
+    non-reciprocal: the same ``jones_faraday_matrix`` applies to both
+    forward and backward propagation in lab-frame coordinates.
+
+    Geometric propagation prefers the Faraday-slab ABCD operator
+    (B_x = B_y = L/n + θ_F-rotated tilt coupling + E_x/E_y augmented
+    offsets) when ``lengthMm`` + ``refractiveIndex`` are both supplied.
+    Falls back to the symmetric glass-plate operator otherwise.
+    """
+    rotation_deg = float(params.get("faradayRotationDeg", 45.0))
+    matrix = jones_faraday_matrix(rotation_deg)
+    j = jones_apply_matrix(beam.polarization, matrix)
+    out = replace(beam, polarization=j)
+    length_raw = _kp_first(params, "lengthMm", "thicknessMm")
+    n_raw = params.get("refractiveIndex")
+    has_slab_geometry = (
+        isinstance(length_raw, (int, float)) and float(length_raw) > 0
+        and isinstance(n_raw, (int, float)) and float(n_raw) > 0
+    )
+    if has_slab_geometry:
+        M = generalized_abcd.m_faraday_slab(
+            length_mm=float(length_raw),
+            refractive_index=float(n_raw),
+            rotation_deg=rotation_deg,
+            augmented_offset_x_mm=float(params.get("augmentedOffsetXMm", 0.0)),
+            augmented_offset_y_mm=float(params.get("augmentedOffsetYMm", 0.0)),
+        )
+        out = _apply_op(out, M)
+    else:
+        plate_params = params
+        if "lengthMm" in params and "thicknessMm" not in params:
+            plate_params = {**params, "thicknessMm": params["lengthMm"]}
+        out = _apply_plate_if_thick(out, plate_params)
+    return out
+
+
 def apply_beam_splitter(beam: Beam, params: dict[str, Any]) -> dict[str, Beam]:
     transmission = float(params.get("transmission", 0.99))
     polarizing = bool(params.get("polarizing", False))
@@ -869,8 +1077,52 @@ def apply_fiber(beam: Beam, params: dict[str, Any]) -> dict[str, Beam]:
 
 
 def apply_isolator(beam: Beam, params: dict[str, Any]) -> dict[str, Beam]:
-    forward_loss_db = float(params.get("forwardLossDb", 0.5))
-    return {"out": beam.with_power(10.0 ** (-forward_loss_db / 10.0))}
+    """Optical isolator: input Glan-Laser → Faraday rotator → output Glan-Laser.
+
+    Composes ``apply_glan_laser``/``apply_faraday_rotator`` to enforce that
+    the IO-*-HP variants reuse the Glan_laser physics defined for the
+    standalone kind — same code path, no separate model.
+
+    Output ports:
+      * ``out``         — main forward transmission (back Glan E-ray).
+                          This is what downstream OpticalLinks should wire to.
+      * ``out_r_front`` — front Glan's TIR-rejected O-ray (energy from
+                          the rejected polarisation of the input beam,
+                          dumped sideways out of the front Glan's air-gap
+                          cut). The whole point of the isolator's
+                          *backward* direction blocking lives in this port
+                          for the back→Faraday→front reverse pass.
+      * ``out_r_back``  — back Glan's TIR-rejected O-ray (residual after
+                          the Faraday-rotated beam hits the back analyser).
+
+    Both reject ports are crucial for visualising why the isolator
+    actually isolates — without them the chain appeared lossless even
+    when the user fed it a polarisation the device should reject.
+
+    Nested kindParams (the canonical shape for the 3-part formulation):
+
+        frontGlan: dict   — params consumed by apply_glan_laser (input polariser)
+        faraday:   dict   — params consumed by apply_faraday_rotator (TGG body)
+        backGlan:  dict   — params consumed by apply_glan_laser (output analyser)
+
+    Back-compat: when none of those nested keys are present, falls back to
+    the legacy single-knob behaviour (multiply by 10^(-forwardLossDb/10)).
+    Older isolator rows that only have ``forwardLossDb`` keep working.
+    """
+    front = params.get("frontGlan")
+    back = params.get("backGlan")
+    faraday = params.get("faraday")
+    if not (isinstance(front, dict) and isinstance(back, dict) and isinstance(faraday, dict)):
+        forward_loss_db = float(params.get("forwardLossDb", 0.5))
+        return {"out": beam.with_power(10.0 ** (-forward_loss_db / 10.0))}
+    front_outputs = apply_glan_laser(beam, front)
+    after_faraday = apply_faraday_rotator(front_outputs["out"], faraday)
+    back_outputs = apply_glan_laser(after_faraday, back)
+    return {
+        "out": back_outputs["out"],
+        "out_r_front": front_outputs["out_r"],
+        "out_r_back": back_outputs["out_r"],
+    }
 
 
 def apply_aom(beam: Beam, params: dict[str, Any], port: str) -> Beam | None:
@@ -1279,6 +1531,8 @@ def _dispatch_element(
         return apply_waveplate(beam, params)
     if kind == "polarizer":
         return apply_polarizer(beam, params)
+    if kind == "glan_polarizer":
+        return apply_glan_laser(beam, params)
     if kind == "beam_splitter":
         return apply_beam_splitter(beam, params)
     if kind == "dichroic_mirror":

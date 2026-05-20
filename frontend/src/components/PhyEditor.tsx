@@ -29,9 +29,11 @@
  * this wrapper just routes to them.
  */
 
+import { useEffect, useState } from "react";
+
 import { useSceneStore } from "../store/sceneStore";
 import { ComponentEditor } from "./ComponentEditor";
-import { IsolatorDevPage } from "../kinds/isolator/IsolatorDevPage";
+import { ComponentComposer } from "./ComponentComposer";
 import { KindsEditor } from "./KindsEditor";
 
 export function PhyEditor() {
@@ -39,6 +41,26 @@ export function PhyEditor() {
   const setPhyEditorView = useSceneStore((s) => s.setPhyEditorView);
   const closePhyEditor = useSceneStore((s) => s.closePhyEditor);
   const phyEditorDirty = useSceneStore((s) => s.phyEditorDirty);
+  const sceneComponents = useSceneStore((s) => s.scene.components);
+  const sceneBindings = useSceneStore((s) => s.scene.componentBindings);
+  const loadScene = useSceneStore((s) => s.loadScene);
+
+  // Ensure scene + componentBindings are loaded when the PHY Editor opens.
+  // App.tsx triggers loadScene on cold start, but if the user navigates
+  // straight into PHY Editor before that finishes (or if the store was
+  // reset to an empty state for any reason), the bindings array can be
+  // empty here — which then makes ComponentEditor's viewport fall back
+  // to the legacy single-root path and skip the binding-tree composer.
+  // One-shot fetch: re-trigger loadScene if components OR bindings are
+  // absent. No-op once data arrives.
+  useEffect(() => {
+    if (sceneComponents.length === 0 || (sceneBindings ?? []).length === 0) {
+      void loadScene();
+    }
+  }, [loadScene, sceneComponents.length, sceneBindings]);
+  // Binding dev lives behind a top-right button (no longer the default
+  // landing). Local state — closing & re-entering PHY Editor resets it.
+  const [bindingDevOpen, setBindingDevOpen] = useState(false);
 
   const promptIfDirty = (action: string): boolean => {
     if (!phyEditorDirty) return true;
@@ -67,6 +89,19 @@ export function PhyEditor() {
       return;
     }
     setPhyEditorView(view);
+    // Picking a rail item exits Binding dev — the pane only ever shows
+    // one thing at a time.
+    if (view) setBindingDevOpen(false);
+  };
+
+  const openBindingDev = () => {
+    if (bindingDevOpen) {
+      setBindingDevOpen(false);
+      return;
+    }
+    if (!promptIfDirty("open Binding dev")) return;
+    setPhyEditorView(null);
+    setBindingDevOpen(true);
   };
 
   const opticalActive = phyEditorView?.domain === "optical";
@@ -98,6 +133,15 @@ export function PhyEditor() {
         {phyEditorDirty && (
           <span style={{ color: "#fbbf24" }}>● Unsaved</span>
         )}
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={openBindingDev}
+          style={bindingDevOpen ? { background: "#fde68a", borderColor: "#ca8a04" } : undefined}
+          title="Live binding-tree tweak tool (isolator-focused today)"
+        >
+          🔧 Binding dev
+        </button>
       </div>
 
       <div className="phy-editor-body">
@@ -176,17 +220,16 @@ export function PhyEditor() {
           </div>
         </aside>
 
-        {/* RIGHT: selected sub-editor. Default landing (no rail selection)
-            is the IsolatorDevPage — the live PBS tweak tool that used to
-            sit as a rail item itself. Clicking any rail button below
-            switches away from it; closing & re-entering PHY Editor
-            returns to it. */}
+        {/* RIGHT: selected sub-editor. Default landing is empty — the
+            user picks a rail item (Kinds / Components) OR clicks the
+            top-right "🔧 Binding dev" button to open the binding-tree
+            tweak tool. The two paths are mutually exclusive in the pane. */}
         <div className="phy-editor-pane">
-          {!phyEditorView && <IsolatorDevPage />}
-          {opticalKinds && <KindsEditor domain="optical" />}
-          {opticalComponents && <ComponentEditor domain="optical" />}
-          {rfKinds && <KindsEditor domain="rf" />}
-          {rfComponents && <ComponentEditor domain="rf" />}
+          {bindingDevOpen && <ComponentComposer />}
+          {!bindingDevOpen && opticalKinds && <KindsEditor domain="optical" />}
+          {!bindingDevOpen && opticalComponents && <ComponentEditor domain="optical" />}
+          {!bindingDevOpen && rfKinds && <KindsEditor domain="rf" />}
+          {!bindingDevOpen && rfComponents && <ComponentEditor domain="rf" />}
         </div>
       </div>
     </div>

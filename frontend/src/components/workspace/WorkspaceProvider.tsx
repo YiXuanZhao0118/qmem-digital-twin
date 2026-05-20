@@ -113,11 +113,11 @@ const PANEL_DEFS: { id: PanelId; title: string; defaultLayout: PanelLayout }[] =
     id: "ai-binding",
     title: "AI Binding",
     // Three gates control this panel; all read VITE_ENABLE_AI_PANEL.
-    // When the flag is on, the component mounts (App.tsx), the panel
-    // is visible on first load (this default), and the Window menu
-    // lists it (TopBar.tsx). Flip the env var off + reset layout to
-    // hide everywhere.
-    defaultLayout: { x: -340, y: 80, w: 380, h: 520, visible: true, collapsed: false, z: 3 },
+    // When the flag is off (current default), the component doesn't
+    // mount (App.tsx), this `visible: false` keeps the panel closed
+    // even when someone flips only the env var on, and TopBar.tsx
+    // hides it from the Window menu too.
+    defaultLayout: { x: -340, y: 80, w: 380, h: 520, visible: false, collapsed: false, z: 3 },
   },
 ];
 

@@ -28,6 +28,10 @@ import { TransformControls } from "three/examples/jsm/controls/TransformControls
 import { useSceneStore } from "../store/sceneStore";
 import type { Anchor, Asset3D, ComponentItem, ElementKind } from "../types/digitalTwin";
 import { loadAssetObject, type FiberNode } from "../three/loadAsset";
+import {
+  buildSceneObjectFromBindings,
+  shouldRenderViaBindings,
+} from "../three/bindingRendererGate";
 import { FIBER_FERRULE_TIP_MM } from "../utils/fiberAnchorResolver";
 import { mmToThree, threeToMm } from "../optical/frames";
 import {
@@ -39,6 +43,7 @@ import {
   type KindContract,
 } from "../kinds/_registry";
 import { componentTypeToElementKind } from "../utils/elementDefaults";
+import { derivedDefaultKindParams } from "../kinds/_plugins";
 import {
   COMPONENT_ANCHOR_CONTRACTS,
   anchorMatchesTemplate,
@@ -61,6 +66,8 @@ import {
   LaserSourceFaceSection,
   WaveplateFaceSection,
   BeamSplitterFaceSection,
+  GlanLaserFaceSection,
+  IsolatorInternalsSection,
 } from "./component_editor/AnchorFaceSections";
 
 /** Map an AnchorId to a stable hue/colour for the marker sphere. Picks
@@ -631,6 +638,16 @@ function useViewport(
   mountRef: React.RefObject<HTMLDivElement>,
   component: ComponentItem | null,
   asset: Asset3D | undefined,
+  /** Scene data needed to walk the binding tree for composite Components
+   *  (IO-3-850-HP and other multi-piece kinds). When the Component only
+   *  has a single root binding (the 0062-backfilled common case), the
+   *  loader falls back to the legacy single-asset path so the 500+
+   *  catalogue rows behave identically to before.
+   *
+   *  ⚠️ NOT named ``scene`` — the useEffect body declares its own
+   *  ``const scene = new THREE.Scene()`` that would otherwise shadow
+   *  this parameter, making ``scene.componentBindings`` read undefined. */
+  sceneData: { componentBindings?: ComponentBinding[]; assets: Asset3D[]; components: ComponentItem[] },
   onAnchorDrag: (key: string, posMm: { x: number; y: number; z: number }) => void,
   onAnchorClick: (key: string) => void,
   pickFaceModeRef: React.MutableRefObject<boolean>,
@@ -939,8 +956,20 @@ function useViewport(
       });
     }
 
-    // Load the GLB / primitive into the wrapper.
-    loadAssetObject(component, asset, undefined).then((obj) => {
+    // Load the GLB / primitive into the wrapper. Composite Components
+    // (IO-3-850-HP and friends with non-trivial binding trees) route
+    // through buildSceneObjectFromBindings so all child meshes — Glan
+    // sub-Components, mount empties, baked piece assets — appear at
+    // their correct local transforms instead of only the root STL.
+    const useBindingTree = shouldRenderViaBindings(
+      component.componentType,
+      component.id,
+      sceneData,
+    );
+    const loadPromise = useBindingTree
+      ? buildSceneObjectFromBindings(component, null, sceneData)
+      : loadAssetObject(component, asset, undefined);
+    loadPromise.then((obj) => {
       if (cancelled) return;
       wrapper.add(obj);
       applyWireframe(obj);
@@ -1036,87 +1065,6 @@ function useViewport(
         fiberSlowAxisGroup.remove(child);
         disposeNode(child);
       }
-      if (!isFiberViewport || !fiberSlowAxisAngles) return;
-      const slowMat = new THREE.MeshBasicMaterial({
-        color: 0x66d9ff,
-        depthTest: false,
-        depthWrite: false,
-        transparent: true,
-        opacity: 0.95,
-      });
-      const labelMat = (text: string) => {
-        const canvas = document.createElement("canvas");
-        canvas.width = 256;
-        canvas.height = 96;
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.fillStyle = "rgba(8, 47, 73, 0.82)";
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          ctx.fillStyle = "#66d9ff";
-          ctx.font = "bold 32px 'Inter', 'Segoe UI', sans-serif";
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 1);
-        }
-        const tex = new THREE.CanvasTexture(canvas);
-        tex.anisotropy = 4;
-        return new THREE.SpriteMaterial({
-          map: tex,
-          transparent: true,
-          depthTest: false,
-          depthWrite: false,
-        });
-      };
-      const rodLength = mmToThree(12);
-      const rodRadius = mmToThree(0.28);
-      const addAxis = (draft: AnchorDraft | undefined, axisName: FiberSlowAxis, label: string) => {
-        if (!draft) return;
-        const p = draft.positionMmBodyLocal;
-        const base = new THREE.Vector3(
-          mmToThree(p.x),
-          mmToThree(p.z),
-          mmToThree(-p.y),
-        );
-        const n = draft.directionBodyLocal
-          ? new THREE.Vector3(
-              draft.directionBodyLocal.x,
-              draft.directionBodyLocal.z,
-              -draft.directionBodyLocal.y,
-            )
-          : new THREE.Vector3(0, 0, 1);
-        if (n.lengthSq() > 1e-12) base.addScaledVector(n.normalize(), mmToThree(1.2));
-        const axis = fiberSlowAxisVectorThree(axisName).normalize();
-        const rod = new THREE.Mesh(
-          new THREE.CylinderGeometry(rodRadius, rodRadius, rodLength, 10),
-          slowMat.clone(),
-        );
-        rod.position.copy(base);
-        rod.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), axis);
-        rod.renderOrder = 1002;
-        fiberSlowAxisGroup.add(rod);
-
-        const tipA = new THREE.Mesh(
-          new THREE.SphereGeometry(rodRadius * 2.2, 10, 8),
-          slowMat.clone(),
-        );
-        tipA.position.copy(base).addScaledVector(axis, rodLength / 2);
-        tipA.renderOrder = 1003;
-        fiberSlowAxisGroup.add(tipA);
-        const tipB = tipA.clone();
-        tipB.material = slowMat.clone();
-        tipB.position.copy(base).addScaledVector(axis, -rodLength / 2);
-        fiberSlowAxisGroup.add(tipB);
-
-        const sprite = new THREE.Sprite(labelMat(label));
-        sprite.position.copy(base).addScaledVector(axis, rodLength * 0.7);
-        sprite.position.y += mmToThree(3);
-        sprite.scale.set(mmToThree(18), mmToThree(6), 1);
-        sprite.renderOrder = 1004;
-        fiberSlowAxisGroup.add(sprite);
-      };
-      addAxis(lastSyncDrafts.find((d) => d.id === "intercept_in"), fiberSlowAxisAngles.endA, "A slow");
-      addAxis(lastSyncDrafts.find((d) => d.id === "intercept_out"), fiberSlowAxisAngles.endB, "B slow");
-      slowMat.dispose();
     }
 
     function renderFiberHoleRings() {
@@ -1149,24 +1097,6 @@ function useViewport(
           __fiberHoleDirBodyLocal: dir,
           __fiberHoleLabel: label,
         };
-        // Visible aperture ring: what the user sees.
-        const ring = new THREE.Mesh(
-          new THREE.RingGeometry(inner, outer, 48),
-          new THREE.MeshBasicMaterial({
-            color: 0xfacc15,
-            transparent: true,
-            opacity: 0.92,
-            side: THREE.DoubleSide,
-            depthTest: false,
-            depthWrite: false,
-          }),
-        );
-        ring.position.copy(position);
-        ring.quaternion.copy(orientation);
-        ring.renderOrder = 1005;
-        Object.assign(ring.userData, metadata);
-        fiberHoleRingGroup.add(ring);
-
         // Invisible hit disk: makes clicking the hole center forgiving.
         const hitDisk = new THREE.Mesh(
           new THREE.CircleGeometry(hitRadius, 48),
@@ -1282,7 +1212,7 @@ function useViewport(
             (child as THREE.ArrowHelper).dispose?.();
           }
         }
-        if (d.directionBodyLocal) {
+        if (d.directionBodyLocal && !isFiberViewport) {
           const dB = d.directionBodyLocal;
           // Body-local Z-up direction ??three Y-up direction (no scaling).
           const dThree = new THREE.Vector3(dB.x, dB.z, -dB.y);
@@ -1589,8 +1519,13 @@ function useViewport(
       });
       setHandle(null);
     };
+    // scene.componentBindings is included so the viewport rebuilds when a
+    // child binding's transform / sub-Component pointer changes (e.g.
+    // someone edits the IO-3-850-HP binding tree elsewhere). Other scene
+    // fields (objects, links) are NOT dependencies — they don't affect
+    // the catalog-component-level mesh composition.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [component?.id, asset?.id]);
+  }, [component?.id, asset?.id, sceneData.componentBindings]);
 
   return handle;
 }
@@ -2288,6 +2223,28 @@ export function ComponentEditor({ domain = "optical" }: { domain?: "optical" | "
   const updateAssetAnchors = useSceneStore((s) => s.updateAssetAnchors);
   const updateComponent = useSceneStore((s) => s.updateComponent);
   const setPhyEditorDirty = useSceneStore((s) => s.setPhyEditorDirty);
+  const loadScene = useSceneStore((s) => s.loadScene);
+  const loadStatus = useSceneStore((s) => s.loadStatus);
+
+  // Ensure scene + componentBindings are loaded when the catalogue editor
+  // opens. App.tsx triggers loadScene on cold start, but if the user lands
+  // here before that resolves (or the store sat in "idle" for any reason),
+  // scene.components and scene.componentBindings can both be empty here —
+  // which makes shouldRenderViaBindings return false and the viewport
+  // falls back to the legacy single-root path, hiding the IO-3-850-HP
+  // Glan sub-Components. Trigger whenever bindings array is empty, not
+  // only on "idle" status — handles the "loaded but bindings field
+  // truncated by an upstream race" edge case too. loadScene itself is
+  // idempotent (sets loading → ready → ready).
+  useEffect(() => {
+    const bindingsLen = (scene.componentBindings ?? []).length;
+    // Trigger whenever scene OR componentBindings is empty — handles both
+    // "cold start before App.tsx loadScene resolves" and "store reset to
+    // empty for any reason" edge cases. loadScene is idempotent.
+    if (scene.components.length === 0 || bindingsLen === 0) {
+      void loadScene();
+    }
+  }, [loadStatus, scene.components.length, scene.componentBindings, loadScene]);
 
   const componentsWithFunction = useMemo(() => {
     // Phase 7.4 follow-up: switched from `kindsWithFunction` (alignVariant
@@ -2411,6 +2368,18 @@ export function ComponentEditor({ domain = "optical" }: { domain?: "optical" | "
   // (Component.properties.beamSplitterType ??Phase 2; for now we
   // infer from kindParams.polarizing).
   const isBeamSplitterKind = kindContract?.kind === "beam_splitter";
+  // Glan-Laser: same anchor pattern as PBS (intercept_in marks the slanted
+  // air-gap cut, NOT the entry face). The cut is a TIR reflector for the
+  // O-ray, physically equivalent to PBS's diagonal cement plane. Single-
+  // face editing: snap to body centre + click the cut-normal direction
+  // (default (0, cos 38°, sin 38°) for a 38° wedge calcite design).
+  const isGlanLaserKind = kindContract?.kind === "glan_polarizer";
+  // Isolator: read-only summary of the 3-stage chain (Glan + Faraday +
+  // Glan). The two Glan sub-Components are owned by the binding tree —
+  // we show them here as labelled rows with an "Edit →" link that
+  // navigates to the GlanLaserCalcitePrism editor. Faraday central plane
+  // is owned by the isolator itself; displayed from kindParams.faraday.
+  const isIsolatorKind = kindContract?.kind === "isolator";
   // Tapered Amplifier is the first DUAL-ANCHOR kind: separate INPUT
   // and OUTPUT face anchors, both face-pickable from the wireframe,
   // both with rectangular apertures (chip TA waveguide). The two
@@ -2431,7 +2400,8 @@ export function ComponentEditor({ domain = "optical" }: { domain?: "optical" | "
   // one anchor.
   const isLaserSourceKind = kindContract?.kind === "laser_source";
   const isSingleFaceKind =
-    isMirrorKind || isLensKind || isWaveplateKind || isBeamSplitterKind || isLaserSourceKind;
+    isMirrorKind || isLensKind || isWaveplateKind || isBeamSplitterKind ||
+    isGlanLaserKind || isLaserSourceKind;
   // Combined flag for "kind has a dedicated editor UX" ??hides the
   // generic anchor-list / Selected coordinate-grid UI in the right
   // pane. Single-face kinds + TA + AOM all qualify.
@@ -2504,14 +2474,19 @@ export function ComponentEditor({ domain = "optical" }: { domain?: "optical" | "
     //   lens / waveplate / beam_splitter ??intercept_in
     if (isSingleFaceKind && !initial.some((d) => d.id === singleFaceAnchorId)) {
       // Per-kind default direction:
-      //   beam_splitter: +X+Y diagonal (Thorlabs PBS / BS cube orientation)
-      //   laser_source : +X (canonical emission direction along body +X)
-      //   others       : undefined (user picks face → BFS-computed normal)
+      //   beam_splitter:  +X+Y diagonal (Thorlabs PBS / BS cube orientation)
+      //   glan_polarizer: (0, cos 38°, sin 38°) — cut normal for the
+      //                   standard 38° calcite wedge at 850 nm
+      //   laser_source :  +X (canonical emission direction along body +X)
+      //   others       :  undefined (user picks face → BFS-computed normal)
+      const GLAN_DEFAULT_WEDGE_RAD = (38 * Math.PI) / 180;
       const defaultDir = isBeamSplitterKind
         ? { x: Math.SQRT1_2, y: Math.SQRT1_2, z: 0 }
-        : isLaserSourceKind
-          ? { x: 1, y: 0, z: 0 }
-          : undefined;
+        : isGlanLaserKind
+          ? { x: 0, y: Math.cos(GLAN_DEFAULT_WEDGE_RAD), z: Math.sin(GLAN_DEFAULT_WEDGE_RAD) }
+          : isLaserSourceKind
+            ? { x: 1, y: 0, z: 0 }
+            : undefined;
       // For laser_source, try to migrate the legacy "+x" auto-bbox
       // anchor into the editable "out" anchor so user-set position +
       // direction survives on first open. Without this, the user opens
@@ -2637,6 +2612,7 @@ export function ComponentEditor({ domain = "optical" }: { domain?: "optical" | "
     isTaperedAmplifierKind,
     isAomKind,
     isBeamSplitterKind,
+    isGlanLaserKind,
     singleFaceAnchorId,
     isFiberKind,
     selectedComponent?.id,
@@ -2925,6 +2901,7 @@ export function ComponentEditor({ domain = "optical" }: { domain?: "optical" | "
     viewportRef,
     selectedComponent,
     editedAsset,
+    scene,
     handleAnchorDrag,
     setSelectedAnchorKey,
     pickFaceModeRef,
@@ -2958,7 +2935,7 @@ export function ComponentEditor({ domain = "optical" }: { domain?: "optical" | "
     // tracer is going to use as the splitting plane. Use rectangular
     // dimensions when set; fall back to 2?apertureMm ? 2?apertureMm
     // (square) for legacy anchors.
-    if (isBeamSplitterKind && selectedDraft?.directionBodyLocal) {
+    if ((isBeamSplitterKind || isGlanLaserKind) && selectedDraft?.directionBodyLocal) {
       const fallback = (selectedDraft.apertureMm ?? 12.5) * 2;
       const widthMm = selectedDraft.apertureWidthMm ?? fallback;
       const heightMm = selectedDraft.apertureHeightMm ?? fallback;
@@ -3043,6 +3020,7 @@ export function ComponentEditor({ domain = "optical" }: { domain?: "optical" | "
     isFiberKind,
     fiberSlowAxisDraft,
     isBeamSplitterKind,
+    isGlanLaserKind,
     isAomKind,
     selectedComponent,
     selectedDraft,
@@ -3712,6 +3690,59 @@ export function ComponentEditor({ domain = "optical" }: { domain?: "optical" | "
             </div>
           )}
 
+          {/* Glan-Laser overlay: pick the slanted air-gap cut surface.
+              Unlike PBS (whose cement plane is INSIDE the cube and not
+              raycastable), the Glan-Laser's cut IS one of the visible
+              faces of the procedural mesh — between the two prisms across
+              the air gap. So we use the same face-pick flow as Mirror /
+              Waveplate, plus the PBS-style Snap-to-centre + Flip helpers
+              for fine-tuning. */}
+          {isGlanLaserKind && selectedComponent && editedAsset && (
+            <div className="editor-viewport-tools" role="group" aria-label="Glan-Laser cut tools">
+              <button
+                type="button"
+                className={
+                  "editor-viewport-tool editor-viewport-pick" +
+                  (pickFaceMode ? " is-active" : "")
+                }
+                onClick={() => setPickFaceMode((v) => !v)}
+                title={
+                  pickFaceMode
+                    ? "Cancel face-pick (or press ESC). Click the slanted cut surface in the 3D viewer."
+                    : "Click the slanted air-gap cut surface in the 3D viewer — the auto-detected face normal becomes coatingNormalBodyLocal."
+                }
+              >
+                {pickFaceMode
+                  ? "Click the cut surface (ESC)"
+                  : pickedOutline.length > 0
+                    ? "Pick a different face"
+                    : "Pick cut surface"}
+              </button>
+
+              <button
+                type="button"
+                className="editor-viewport-tool editor-viewport-pick"
+                onClick={handleSnapBodyCenter}
+                title="Place anchor at the body centre (0,0,0 in body-local). Direction is preserved."
+              >
+                Snap to body centre
+              </button>
+
+              <div className="editor-viewport-side-row">
+                <span className="editor-viewport-side-label">Direction:</span>
+                <button
+                  type="button"
+                  className="editor-viewport-side-btn"
+                  onClick={handleBSFlip}
+                  title="Negate the current direction (= flip which side of the cut the picked normal points to)."
+                  disabled={!selectedDraft?.directionBodyLocal}
+                >
+                  Flip normal
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Laser-source overlay: pick exit face (sets out.position +
               out.directionBodyLocal = OUTWARD normal) + X/Y/Z preset
               direction buttons for cases where the laser body is just a
@@ -4313,6 +4344,91 @@ export function ComponentEditor({ domain = "optical" }: { domain?: "optical" | "
                 bsType={bsType}
                 splitRatio={kp.splitRatioTransmitted}
                 updateDraft={updateDraft}
+              />
+            );
+          })()}
+
+          {isGlanLaserKind && (() => {
+            // Pull wedge angle from the FIRST scene-instance kindParams of
+            // this Glan-Laser component so the normal hint shown to the
+            // user matches whatever physical wedge the simulator is using.
+            // Falls back to plugin default 38° (calcite at 850 nm) when no
+            // instance exists yet.
+            const firstInst = scene.objects.find((o) => o.componentId === selectedComponent?.id);
+            const el = firstInst
+              ? scene.physicsElements.find((e) => e.objectId === firstInst.id)
+              : null;
+            const kp = (el?.kindParams ?? {}) as { wedgeAngleDeg?: number };
+            return (
+              <GlanLaserFaceSection
+                draft={selectedDraft}
+                hasOutline={pickedOutline.length > 0}
+                wedgeAngleDeg={kp.wedgeAngleDeg}
+                updateDraft={updateDraft}
+              />
+            );
+          })()}
+
+          {isIsolatorKind && selectedComponent && (() => {
+            // Resolve sub-Component bindings: filter the isolator's
+            // component_bindings for targetKind="subcomponent", then
+            // look up each subComponentId in the components list. The
+            // binding's role label (set by migration 0071) tells us
+            // which slot — "front_glan_laser" / "back_glan_laser".
+            const bindings = (scene.componentBindings ?? []).filter(
+              (b) => b.componentId === selectedComponent.id
+                && b.targetKind === "subcomponent"
+                && b.subComponentId,
+            );
+            const subcomponents = bindings.flatMap((b) => {
+              const sub = scene.components.find((c) => c.id === b.subComponentId);
+              if (!sub) return [];
+              // Migration 0071 stored slot info in properties.role_label
+              // (binding.role is a generic "internal_part"). Prefer that;
+              // fall back to b.role if missing.
+              const props = (b.properties ?? {}) as { role_label?: unknown };
+              const roleLabel = typeof props.role_label === "string" ? props.role_label : b.role;
+              return [{ roleLabel, binding: b, subComponent: sub }];
+            });
+            // Reuse the same first-instance kindParams trick the BS
+            // section uses — the catalog-level isolator doesn't have its
+            // own kindParams so we sample any live scene instance to
+            // show the user "the values the simulator would use today".
+            const firstInst = scene.objects.find(
+              (o) => o.componentId === selectedComponent.id,
+            );
+            const el = firstInst
+              ? scene.physicsElements.find((e) => e.objectId === firstInst.id)
+              : null;
+            // Fallback chain: live scene instance kindParams >> plugin
+            // defaultParams from the isolator manifest. This way the
+            // catalogue editor view always shows the actual values that
+            // would be used by the simulator, even before any
+            // IO-3-850-HP has been dropped into a scene.
+            const pluginDefaults = (derivedDefaultKindParams().isolator ?? {}) as {
+              frontGlan?: Record<string, number>;
+              backGlan?: Record<string, number>;
+              faraday?: Record<string, number>;
+            };
+            const instanceKp = (el?.kindParams ?? {}) as {
+              frontGlan?: Record<string, number>;
+              backGlan?: Record<string, number>;
+              faraday?: Record<string, number>;
+            };
+            const isoKp = {
+              frontGlan: { ...pluginDefaults.frontGlan, ...instanceKp.frontGlan },
+              backGlan:  { ...pluginDefaults.backGlan,  ...instanceKp.backGlan },
+              faraday:   { ...pluginDefaults.faraday,   ...instanceKp.faraday },
+            };
+            return (
+              <IsolatorInternalsSection
+                isolatorComponent={selectedComponent}
+                subcomponents={subcomponents}
+                kindParams={isoKp}
+                onNavigateToSubcomponent={(componentId) => {
+                  const target = scene.components.find((c) => c.id === componentId);
+                  if (target) handlePickComponent(target);
+                }}
               />
             );
           })()}

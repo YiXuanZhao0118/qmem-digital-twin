@@ -1,37 +1,35 @@
 /**
  * Procedural Glan-Laser calcite polariser — two right-angle prisms
- * separated by a thin air gap.
+ * separated by a thin air gap, cut along the body diagonal.
  *
  * Extracted from ``kinds/isolator/pbsOverlay.ts::buildGlanLaserPrism``
  * in Stage A''.11-prep so the prism geometry is an Asset3D the binding
- * tree can reference. The legacy pbsOverlay produced this geometry
- * inline as part of its bundled "PBS overlay" for high-power isolator
- * models (Thorlabs IO-*-HP); after A''.11 lands the HP isolator
- * binding trees will reference this builder as a ``glan_polarizer``
- * sub-Component instead.
- *
- * Renderer dispatch:
- *   Asset3D.filePath = "procedural://glan_polarizer_prism"
- *     → ``loadAsset/index.ts`` dispatches to
- *       ``buildGlanLaserPrismObject(component)``
- *     → returns the calcite prism pair + escape-arrow marker.
+ * tree can reference. After A''.11 the HP isolator binding trees
+ * reference this builder as a ``glan_polarizer`` sub-Component.
  *
  * Geometry contract (physical frame, before alignment rotation):
- *   - Aperture: ``sizeMm × sizeMm`` in (X, Y)
- *   - Length:   ``sizeMm / tan(wedgeAngle)`` along Z (optical axis)
- *   - Cut plane tilts ``wedgeAngle`` from optical axis
- *   - Wedge angle 38° matches calcite Glan-Laser at 850 nm
- *     (near-Brewster for E-ray, TIR for O-ray, escape ~68°)
+ *   - Body cross-section: ``sizeMm × sizeMm`` in (X, Y). The OUTER
+ *     crystal envelope, NOT the clear aperture.
+ *   - Body length: ``lengthMm`` along Z (optical axis).
+ *   - Cut plane: body diagonal, passing through the 4 corners on the
+ *     plane ``L·y + a·z = 0`` (where a = sizeMm, L = lengthMm). The
+ *     implicit wedge angle is ``atan(sizeMm/lengthMm)``; for the
+ *     defaults below ≈ 40.9°, close to the canonical 38° calcite
+ *     Glan-Laser spec. We use the simpler 8-vertex body-diagonal cut
+ *     so a single shape covers any (sizeMm, lengthMm) pair without
+ *     clamping — the elongated-prism variant (12-vertex internal cut
+ *     for L >> sizeMm/tan(38°), e.g. Thorlabs GL5-B at 21 mm) lived
+ *     here previously but was removed when no catalog Component used
+ *     it; re-add if a longer Glan-Laser variant lands.
  *
- * ``component.properties`` overrides:
- *   - ``sizeMm`` (default 5): aperture dimension
- *   - ``wedgeAngleDeg`` (default 38): cut-plane angle
- *   - ``airGapMm`` (default 0.15 = 3% of sizeMm): prism separation
- *
- * The legacy buildGlanLaserPrism is left in pbsOverlay.ts for now to
- * serve the un-migrated isolators; once A''.11 ships the HP binding
- * trees + A''.12 deletes pbsOverlay, this becomes the sole producer
- * of Glan-Laser geometry in the renderer.
+ * ``component.properties`` overrides (defaults match the user's
+ * catalog spec for the HP-isolator prism):
+ *   - ``sizeMm`` (default 6.5): body cross-section W = H.
+ *   - ``lengthMm`` (default 7.5): body length along the optical axis.
+ *   - ``airGapMm`` (default 5 % of sizeMm ≈ 0.325 mm): visible
+ *     separation between the two prisms along the cut normal. The
+ *     real device has a ~50 µm gap; we exaggerate for 3D-viewer
+ *     legibility. Override to match physical hardware if needed.
  */
 import * as THREE from "three";
 
@@ -51,22 +49,28 @@ export function buildGlanPolarizerPrismObject(
   component: ComponentItem,
   _state?: DeviceState,
 ): THREE.Object3D {
-  const sizeMm = getNumericProperty(component.properties, "sizeMm", 5);
-  const wedgeAngleDeg = getNumericProperty(
-    component.properties,
-    "wedgeAngleDeg",
-    38,
-  );
+  // Default body envelope (the prism actually used inside
+  // IO-3-850-HP / IO-5-850-HP):
+  //   - cross-section sizeMm × sizeMm in (X, Y)
+  //   - length lengthMm along Z (optical axis)
+  // Cut plane = body diagonal (corners 2-3-4-5). Implicit wedge =
+  // atan(sizeMm/lengthMm) ≈ 40.9° at the default 6.5/7.5. The legacy
+  // 8-vertex shape (also used by the Composer's bundled overlay) is
+  // sufficient for these compact prisms. Elongated GL5-B-style prisms
+  // (L >> sizeMm/tan(38°)) would need a 12-vertex internal-cut shape;
+  // we removed that branch when no catalog Component used it.
+  const sizeMm = getNumericProperty(component.properties, "sizeMm", 6.5);
+  const lengthMm = getNumericProperty(component.properties, "lengthMm", 7.5);
+  // Real Glan-Laser air gap is ~50 µm (hairline at this scale), but for
+  // 3D-viewer legibility we exaggerate to ~5 % of body width.
   const airGapMm = getNumericProperty(
     component.properties,
     "airGapMm",
-    sizeMm * 0.03,
+    sizeMm * 0.05,
   );
 
-  const sizeUnit = mmToThree(sizeMm);
-  const wedgeRad = (wedgeAngleDeg * Math.PI) / 180;
-  const a = sizeUnit;
-  const L = a / Math.tan(wedgeRad);
+  const a = mmToThree(sizeMm);          // body cross-section (X, Y)
+  const L = mmToThree(lengthMm);        // body length along Z
   const ha = a / 2;
   const hL = L / 2;
 
@@ -84,6 +88,10 @@ export function buildGlanPolarizerPrismObject(
     envMapIntensity: 1.5,
   });
 
+  // 8 body corners. Cut plane L·y + a·z = 0 passes through corners
+  // 2, 3, 4, 5 (body diagonal from -Y/+Z to +Y/-Z).
+  //   Prism A (L·y + a·z > 0, contains 6, 7): top-back wedge
+  //   Prism B (L·y + a·z < 0, contains 0, 1): bottom-front wedge
   const c: number[][] = [
     [-ha, -ha, -hL], [+ha, -ha, -hL], [+ha, -ha, +hL], [-ha, -ha, +hL],
     [-ha, +ha, -hL], [+ha, +ha, -hL], [+ha, +ha, +hL], [-ha, +ha, +hL],
@@ -98,60 +106,47 @@ export function buildGlanPolarizerPrismObject(
     return geom;
   };
 
+  // Prism A faces (CCW from outside):
+  //   +X cap (2, 5, 6) | -X cap (3, 7, 4)
+  //   +Y face (4, 6, 5) (4, 7, 6)
+  //   +Z aperture (2, 7, 3) (2, 6, 7)
+  //   cut face outward -Y-Z (2, 3, 4) (2, 4, 5)
   const prismAGeom = buildPrismGeom([
     [2, 5, 6], [3, 7, 4],
     [4, 6, 5], [4, 7, 6],
     [2, 7, 3], [2, 6, 7],
     [2, 3, 4], [2, 4, 5],
   ]);
+  // Prism B faces:
+  //   +X cap (1, 2, 5) | -X cap (0, 4, 3)
+  //   -Y face (0, 1, 2) (0, 2, 3)
+  //   -Z aperture (0, 5, 1) (0, 4, 5)
+  //   cut face outward +Y+Z (3, 5, 4) (3, 2, 5)
   const prismBGeom = buildPrismGeom([
     [1, 2, 5], [0, 4, 3],
     [0, 1, 2], [0, 2, 3],
     [0, 5, 1], [0, 4, 5],
     [3, 5, 4], [3, 2, 5],
   ]);
+
   const prismA = new THREE.Mesh(prismAGeom, crystal);
   const prismB = new THREE.Mesh(prismBGeom, crystal);
 
-  // Air gap: offset each prism along its outward cut normal.
+  // Air gap along cut-plane normal (L, a) in (Y, Z). Prism A is on
+  // the +(L, a) side of the cut plane → moves in +(offY, offZ);
+  // Prism B on the -(L, a) side → moves the opposite direction.
+  // Sign mistake here pushes the halves through each other instead of
+  // apart (the original cause of "晶體又重疊了").
   const cutNorm = Math.hypot(L, a);
   const gapUnit = mmToThree(airGapMm);
   const offY = (gapUnit * L) / cutNorm;
   const offZ = (gapUnit * a) / cutNorm;
-  prismA.position.set(0, -offY, -offZ);
-  prismB.position.set(0, +offY, +offZ);
+  prismA.position.set(0, +offY, +offZ);
+  prismB.position.set(0, -offY, -offZ);
 
   const group = new THREE.Group();
   group.add(prismA);
   group.add(prismB);
-
-  // Escape window marker — pinkish arrow showing the rejected O-ray
-  // exit direction (~68° from optical axis after Snell at the -Y side).
-  const escapeAngleRad = (68 * Math.PI) / 180;
-  const escapeDir = new THREE.Vector3(0, -Math.sin(escapeAngleRad), Math.cos(escapeAngleRad));
-  const escapeOrigin = new THREE.Vector3(0, -ha - a * 0.05, 0);
-  const arrowLen = a * 1.2;
-  const escapeArrow = new THREE.ArrowHelper(
-    escapeDir,
-    escapeOrigin,
-    arrowLen,
-    0xff4477,
-    arrowLen * 0.25,
-    arrowLen * 0.18,
-  );
-  escapeArrow.traverse((child) => {
-    const m = (child as THREE.Mesh | THREE.Line).material as THREE.Material | THREE.Material[] | undefined;
-    if (!m) return;
-    const mats = Array.isArray(m) ? m : [m];
-    for (const mat of mats) {
-      (mat as THREE.Material & { depthTest?: boolean; depthWrite?: boolean }).depthTest = false;
-      (mat as THREE.Material & { depthTest?: boolean; depthWrite?: boolean }).depthWrite = false;
-      mat.transparent = true;
-    }
-  });
-  escapeArrow.renderOrder = 2;
-  escapeArrow.userData.__glanEscapeArrow = true;
-  group.add(escapeArrow);
 
   return group;
 }

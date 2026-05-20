@@ -162,6 +162,24 @@ async def cancel_session(
         raise _session_locked(str(e)) from e
 
 
+@router.post("/{session_id}/unlock", response_model=schemas.UnlockResult)
+async def unlock_session(
+    session_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+) -> object:
+    """Reverse a previous commit's lock. Idempotent — safe to call
+    twice; the second call returns empty lists. Only works on
+    committed sessions; cancelled/abandoned ones never had a lock to
+    reverse.
+    """
+    try:
+        return await agent_session_svc.unlock_session(session, session_id)
+    except SessionNotFoundError as e:
+        raise _session_not_found(str(e)) from e
+    except RuntimeError as e:
+        raise _session_locked(str(e)) from e
+
+
 @router.post("/{session_id}/undo-last", response_model=schemas.SessionMutationOut)
 async def undo_last(
     session_id: uuid.UUID,

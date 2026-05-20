@@ -35,6 +35,10 @@ import type {
 import { wavelengthToColor } from "../../three/opticalBeams";
 import { gaussianWaistAtZ, type BeamState } from "../../three/rayTrace";
 import { loadAssetObject } from "../../three/loadAsset";
+import {
+  buildSceneObjectFromBindings,
+  shouldRenderViaBindings,
+} from "../../three/bindingRendererGate";
 import { applyObjectTransform } from "../../three/transformUtils";
 import { mmToThree } from "../../optical/frames";
 import { FloatingPanel } from "../workspace/FloatingPanel";
@@ -420,6 +424,8 @@ export function OpticalLinkViewerPanel() {
   const opticalLinks = useSceneStore((s) => s.scene.opticalLinks);
   const components = useSceneStore((s) => s.scene.components);
   const assets = useSceneStore((s) => s.scene.assets);
+  const componentBindings = useSceneStore((s) => s.scene.componentBindings);
+  const objectBindings = useSceneStore((s) => s.scene.objectBindings);
   const selectedObjectId = useSceneStore((s) => s.selectedObjectId);
   const scopeProbe = useSceneStore((s) => s.scopeProbe);
   const setScopeProbe = useSceneStore((s) => s.setScopeProbe);
@@ -503,6 +509,8 @@ export function OpticalLinkViewerPanel() {
   const objectsRef = useRef(objects);
   const componentsRef = useRef(components);
   const assetsRef = useRef(assets);
+  const componentBindingsRef = useRef(componentBindings);
+  const objectBindingsRef = useRef(objectBindings);
   const selectedEmitterIdRef = useRef<string | null>(null);
   const tasFoldedIntoLaserRef = useRef<Set<string>>(tasFoldedIntoLaser);
   const setScopeProbeRef = useRef(setScopeProbe);
@@ -515,6 +523,8 @@ export function OpticalLinkViewerPanel() {
   objectsRef.current = objects;
   componentsRef.current = components;
   assetsRef.current = assets;
+  componentBindingsRef.current = componentBindings;
+  objectBindingsRef.current = objectBindings;
   selectedEmitterIdRef.current = selectedEmitterId;
   tasFoldedIntoLaserRef.current = tasFoldedIntoLaser;
   setScopeProbeRef.current = setScopeProbe;
@@ -592,7 +602,33 @@ export function OpticalLinkViewerPanel() {
     // apply the scene-object's world transform without mutating the cache.
     // Filled lazily inside rebuildContent's wireframe pass; survives ticks
     // but is torn down when the useEffect re-fires (eg. panel hide→show).
-    const wireframeCache = new Map<string, THREE.Group | "pending">();
+    //
+    // `digest` tags each entry with the per-object override state it was
+    // built from (objectBindings deltas for composite components). When
+    // the live digest changes — eg. the user drags an isolator's front
+    // glan-laser rotation slider — the lookup misses and the wireframe
+    // is rebuilt with the new pose. Without this the panel would freeze
+    // the wireframe at whatever rotations were active on first render.
+    const wireframeCache = new Map<string, { digest: string; group: THREE.Group | "pending" }>();
+    const wireframeDigest = (objectId: string): string => {
+      const obs = objectBindingsRef.current ?? [];
+      // Order-stable: a single objectId never has duplicate
+      // componentBindingId rows. We hash every per-binding delta the
+      // resolver could consume (XYZ translate + RxRyRz rotate +
+      // asset override). Match resolveBindingTree's _effectiveTransform
+      // — any field NOT covered here can cause stale wireframes.
+      const parts: string[] = [];
+      for (const ob of obs) {
+        if (ob.objectId !== objectId) continue;
+        parts.push(
+          `${ob.componentBindingId}|` +
+            `${ob.localXMmDelta},${ob.localYMmDelta},${ob.localZMmDelta},` +
+            `${ob.localRxDegDelta},${ob.localRyDegDelta},${ob.localRzDegDelta}|` +
+            `${ob.asset3dIdOverride ?? ""}`,
+        );
+      }
+      return parts.join(";");
+    };
     let disposed = false;
     let probeMarkerGroup: THREE.Group | null = null;
 
@@ -781,8 +817,23 @@ export function OpticalLinkViewerPanel() {
         ? []
         : allSegments.filter((s) => chainIds.has(s.emitterObjectId));
 
+      // Per-instance objectBinding deltas feed into the wireframe
+      // pose (Pass 3). Fold a digest of them into the content key so
+      // an isolator-rotation edit invalidates `prevContentKey` and the
+      // wireframe rebuilds — without this the rebuild short-circuits
+      // (segments unchanged because the rotation doesn't bend the beam)
+      // and the panel keeps drawing the prior pose.
+      const obDigest = (objectBindingsRef.current ?? [])
+        .map(
+          (ob) =>
+            `${ob.objectId}|${ob.componentBindingId}|` +
+            `${ob.localXMmDelta},${ob.localYMmDelta},${ob.localZMmDelta},` +
+            `${ob.localRxDegDelta},${ob.localRyDegDelta},${ob.localRzDegDelta}|` +
+            `${ob.asset3dIdOverride ?? ""}`,
+        )
+        .join(";");
       const key = chainIds.size === 0
-        ? "(none)"
+        ? `(none)|${obDigest}`
         : segments
             .map(
               (s) =>
@@ -791,7 +842,7 @@ export function OpticalLinkViewerPanel() {
                 `${s.hitObjectId ?? ""}|${s.wavelengthNm}|` +
                 `${s.waistAtStartUm.toFixed(3)}|${s.waistAtEndUm.toFixed(3)}`,
             )
-            .join(";");
+            .join(";") + `|ob:${obDigest}`;
       if (key === prevContentKey) return;
       prevContentKey = key;
 
@@ -940,13 +991,22 @@ export function OpticalLinkViewerPanel() {
       for (const objectId of touchedObjectIds) {
         const obj = objectById.get(objectId);
         if (!obj) continue;
+        const currentDigest = wireframeDigest(objectId);
         const cached = wireframeCache.get(objectId);
-        if (cached === "pending") continue;
-        if (!cached) {
+        if (cached && cached.group === "pending") continue;
+        if (cached && cached.digest !== currentDigest) {
+          // Stale entry — the user changed an objectBinding override
+          // (e.g. rotated the front_glan_laser of an isolator). Drop
+          // the cached wireframe so the load path below rebuilds with
+          // the current pose.
+          if (cached.group !== "pending") disposeTree(cached.group);
+          wireframeCache.delete(objectId);
+        }
+        if (!wireframeCache.has(objectId)) {
           // Kick off an async load; the next tick after resolve will
           // see the cache hit and render. We mark "pending" so we don't
           // dispatch a second load for the same object meanwhile.
-          wireframeCache.set(objectId, "pending");
+          wireframeCache.set(objectId, { digest: currentDigest, group: "pending" });
           const comp = componentById.get(obj.componentId);
           if (!comp) {
             wireframeCache.delete(objectId);
@@ -962,15 +1022,40 @@ export function OpticalLinkViewerPanel() {
           const loaderProps = (obj.properties ?? null) as
             | { fiberNodes?: unknown[]; rfCableNodes?: unknown[]; radiusMm?: number }
             | null;
+          // Composite components (e.g. IO-3-850-HP / IO-5-850-HP isolators
+          // with front_glan_laser / front_piece / back_glan_laser /
+          // back_piece children) load through the binding tree — same
+          // gate the main scene uses. Routing them through the legacy
+          // single-asset loader would only draw the root body and drop
+          // every sub-Component / piece child.
+          const bindings = componentBindingsRef.current ?? [];
+          const useBindingTree = shouldRenderViaBindings(
+            comp.componentType,
+            comp.id,
+            { componentBindings: bindings },
+          );
           void (async () => {
             let loaded: THREE.Object3D;
             try {
-              loaded = await loadAssetObject(
-                comp,
-                asset,
-                undefined,
-                loaderProps as Parameters<typeof loadAssetObject>[3],
-              );
+              loaded = useBindingTree
+                ? await buildSceneObjectFromBindings(comp, obj, {
+                    componentBindings: bindings,
+                    // Per-instance bindingOverrides (e.g. the user's
+                    // front/back rotation adjustments on an isolator)
+                    // live on objectBindings. resolveBindingTree reads
+                    // them through scene.objectBindings; without this
+                    // the wireframe ignores per-instance rotations and
+                    // shows the catalog default pose.
+                    objectBindings: objectBindingsRef.current ?? [],
+                    assets: assetsRef.current,
+                    components: componentsRef.current,
+                  })
+                : await loadAssetObject(
+                    comp,
+                    asset,
+                    undefined,
+                    loaderProps as Parameters<typeof loadAssetObject>[3],
+                  );
             } catch {
               if (!disposed) wireframeCache.delete(objectId);
               return;
@@ -999,7 +1084,7 @@ export function OpticalLinkViewerPanel() {
               disposeTree(group);
               return;
             }
-            wireframeCache.set(objectId, group);
+            wireframeCache.set(objectId, { digest: currentDigest, group });
             // Force the next rebuildContent to redraw even though the
             // segment-key is unchanged — the wireframes are now ready.
             prevContentKey = "";
@@ -1009,7 +1094,9 @@ export function OpticalLinkViewerPanel() {
         // Cache hit: shallow-clone so the cached prototype stays
         // untouched and we can apply the scene-object transform to the
         // clone. EdgesGeometry + LineBasicMaterial are shared by clone(true).
-        const wrapper = cached.clone(true);
+        const entry = wireframeCache.get(objectId)!;
+        if (entry.group === "pending") continue;
+        const wrapper = entry.group.clone(true);
         applyObjectTransform(wrapper, obj);
         contentGroup.add(wrapper);
       }
@@ -1152,7 +1239,7 @@ export function OpticalLinkViewerPanel() {
       // Wireframe prototypes live outside contentGroup (they get cloned
       // in on each rebuild) so the traverse below misses them.
       for (const entry of wireframeCache.values()) {
-        if (entry !== "pending") disposeTree(entry);
+        if (entry.group !== "pending") disposeTree(entry.group);
       }
       wireframeCache.clear();
       contentGroup.traverse((obj) => {

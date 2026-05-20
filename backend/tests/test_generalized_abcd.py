@@ -12,8 +12,10 @@ from app.solvers.generalized_abcd import (
     m_curved_mirror,
     m_cylindrical_rotated,
     m_cylindrical_standard,
+    m_faraday_slab,
     m_flat_mirror,
     m_free_space,
+    m_glan_slab,
     m_glass_plate,
     m_pbs_reflected,
     m_pbs_transmitted,
@@ -132,6 +134,110 @@ def test_glass_plate_snell_reduced():
     assert M[2, 3] == pytest.approx(d / n)
     assert M[0, 4] == pytest.approx(0.002 * d * (1.0 - 1.0 / n))
     assert M[2, 4] == pytest.approx(0.001 * d * (1.0 - 1.0 / n))
+
+
+def test_glan_slab_astigmatic_B_xy():
+    """Glan slab: B_x = L/n + ΔB_air, B_y = L/n. The user-spec compact
+    catalogue model (L=7.5 mm, n_e=1.48, ΔB=0.05 mm) → B_y = 5.0676 mm,
+    B_x = 5.1176 mm."""
+    M = m_glan_slab(7.5, 1.48, wedge_angle_deg=38.5, air_gap_dB_x_mm=0.05)
+    expected_By = 7.5 / 1.48
+    assert M[2, 3] == pytest.approx(expected_By)
+    assert M[0, 1] == pytest.approx(expected_By + 0.05)
+    # M[0,1] strictly greater than M[2,3] — that's the whole point.
+    assert M[0, 1] > M[2, 3]
+    # No augmented offset by default.
+    assert M[0, 4] == 0.0
+
+
+def test_glan_slab_zero_astigmatism_reduces_to_glass_plate_diagonal():
+    """ΔB_x = 0 should make B_x == B_y == L/n (matches m_glass_plate's
+    diagonal block for the same L, n)."""
+    L, n = 7.5, 1.48
+    M_glan = m_glan_slab(L, n, air_gap_dB_x_mm=0.0)
+    assert M_glan[0, 1] == pytest.approx(M_glan[2, 3])
+    assert M_glan[0, 1] == pytest.approx(L / n)
+
+
+def test_glan_slab_augmented_offset_lands_in_M04():
+    """E_x augmented term sits in M[0,4] and survives matrix multiply
+    against the augmented (x, θ_x, y, θ_y, 1) state vector."""
+    M = m_glan_slab(7.5, 1.48, augmented_offset_x_mm=0.12)
+    assert M[0, 4] == pytest.approx(0.12)
+    # On-axis input → x_out = 0 + 0 + 0.12·1 = 0.12 mm.
+    v_in = np.array([0.0, 0.0, 0.0, 0.0, 1.0])
+    v_out = M @ v_in
+    assert v_out[0] == pytest.approx(0.12)
+    # y unaffected.
+    assert v_out[2] == 0.0
+
+
+def test_glan_slab_rejects_bad_inputs():
+    with pytest.raises(ValueError):
+        m_glan_slab(7.5, 0.0)
+    with pytest.raises(ValueError):
+        m_glan_slab(7.5, -1.0)
+    with pytest.raises(ValueError):
+        m_glan_slab(-1.0, 1.48)
+
+
+def test_faraday_slab_symmetric_B_xy():
+    """Faraday slab is geometrically symmetric (TGG end faces flat):
+    B_x = B_y = L/n. For the user-spec TGG (L=8 mm, n=1.95) → 4.103 mm."""
+    M = m_faraday_slab(8.0, 1.95, rotation_deg=45.0)
+    expected = 8.0 / 1.95
+    assert M[0, 1] == pytest.approx(expected)
+    assert M[2, 3] == pytest.approx(expected)
+    assert M[0, 1] == M[2, 3]
+
+
+def test_faraday_slab_tilt_rotation_block():
+    """45° tilt rotation: incoming (θ_x, θ_y) = (1, 0) → outgoing
+    (cos 45°, -sin 45°). Block sits in rows 1,3 / cols 1,3."""
+    M = m_faraday_slab(8.0, 1.95, rotation_deg=45.0)
+    inv_sqrt2 = 1.0 / math.sqrt(2.0)
+    # M[1,1] = cos 45°, M[1,3] = sin 45°
+    assert M[1, 1] == pytest.approx(inv_sqrt2)
+    assert M[1, 3] == pytest.approx(inv_sqrt2)
+    # M[3,1] = -sin 45°, M[3,3] = cos 45°
+    assert M[3, 1] == pytest.approx(-inv_sqrt2)
+    assert M[3, 3] == pytest.approx(inv_sqrt2)
+    # Apply to (0, 1, 0, 0, 1) — pure +x tilt.
+    v_in = np.array([0.0, 1.0, 0.0, 0.0, 1.0])
+    v_out = M @ v_in
+    # θ_x_out = cos 45° = 1/√2; θ_y_out = -sin 45° = -1/√2.
+    assert v_out[1] == pytest.approx(inv_sqrt2)
+    assert v_out[3] == pytest.approx(-inv_sqrt2)
+
+
+def test_faraday_slab_zero_rotation_reduces_to_glass_plate_block():
+    """rotation_deg = 0 → identity tilt block → matches a symmetric
+    glass-plate diagonal (no tilt coupling)."""
+    M = m_faraday_slab(8.0, 1.95, rotation_deg=0.0)
+    assert M[1, 1] == pytest.approx(1.0)
+    assert M[1, 3] == pytest.approx(0.0)
+    assert M[3, 1] == pytest.approx(0.0)
+    assert M[3, 3] == pytest.approx(1.0)
+
+
+def test_faraday_slab_augmented_offsets():
+    """E_x lands in M[0,4], E_y in M[2,4]. On-axis input picks them up
+    as constant lateral shifts."""
+    M = m_faraday_slab(8.0, 1.95, rotation_deg=45.0,
+                       augmented_offset_x_mm=0.1, augmented_offset_y_mm=-0.05)
+    assert M[0, 4] == pytest.approx(0.1)
+    assert M[2, 4] == pytest.approx(-0.05)
+    v_in = np.array([0.0, 0.0, 0.0, 0.0, 1.0])
+    v_out = M @ v_in
+    assert v_out[0] == pytest.approx(0.1)
+    assert v_out[2] == pytest.approx(-0.05)
+
+
+def test_faraday_slab_rejects_bad_inputs():
+    with pytest.raises(ValueError):
+        m_faraday_slab(8.0, 0.0)
+    with pytest.raises(ValueError):
+        m_faraday_slab(-1.0, 1.95)
 
 
 def test_rotation_orthogonal():

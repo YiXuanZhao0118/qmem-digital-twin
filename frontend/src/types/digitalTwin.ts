@@ -1788,6 +1788,12 @@ export type CancelResult = {
   reason: string;
 };
 
+export type UnlockResult = {
+  sessionId: string;
+  unlockedAssets: string[];
+  unlockedComponents: string[];
+};
+
 export type AgentAttachmentKind = "asset_file" | "image";
 
 export type AgentUpload = {

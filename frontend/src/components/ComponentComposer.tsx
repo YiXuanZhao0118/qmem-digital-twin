@@ -1,19 +1,29 @@
 /**
- * IsolatorDevPage — live-tweak page for PBS pose inside an isolator.
+ * ComponentComposer — live-tweak page for a Component's binding tree
+ * + per-asset STL partitioning. Today wired to the isolator preset
+ * (model dropdown is isolator-only, 3D preview goes through
+ * `buildThorlabsIsolatorObject`); planned to generalise to any composite
+ * Component as later steps land (root picker / new mode / atomic save).
  *
  * Layout:
  *   ┌─ header ────────────────────────────────────────────────────┐
- *   │ Isolator dev   [Model ▼]  ↻ Reset   📋 Copy                 │
- *   ├─ 3D canvas ──────────────────┬─ right pane ─────────────────┤
- *   │ Real STL housing (IO series) │ Live-editable TS code:       │
- *   │ or procedural cylinder       │ "{ front_pbs: { pos: [...    │
- *   │ (TORNOS), with PBS overlay   │     ...                      │
- *   │ driven by the right pane.    │ Parse: ✓ / ✗ ...             │
- *   └──────────────────────────────┴──────────────────────────────┘
+ *   │ Component composer  [Model ▼]  inner r<  partition toggles  │
+ *   │                                          save / reset       │
+ *   ├─ link rotation row (only when ≥1 linked tri) ───────────────┤
+ *   ├─ Binding tree poses ────────────────────────────────────────┤
+ *   │ root(body) / front_mount / front_pbs / front_piece /        │
+ *   │ back_mount / back_pbs / back_piece                          │
+ *   │ each row: pos[x,y,z] + rot[rx,ry,rz] + Apply button         │
+ *   │ Apply PATCHes /api/component-bindings/{id} directly.        │
+ *   ├─ 3D preview canvas (full width) ────────────────────────────┤
+ *   │ STL housing + PBS / Glan-Laser overlay,                     │
+ *   │ pose driven LIVE from in-progress `bindingEdits`.           │
+ *   └─────────────────────────────────────────────────────────────┘
  *
- * The right pane is the source of truth — typing a number reparses the
- * block and pushes new values into React state, which rebuilds only the
- * PBS overlay (and the housing if the model changed). No page reload.
+ * Source of truth: ComponentBinding rows in the database. The page's
+ * `bindingEdits` is the in-progress local-edit buffer; the 3D preview's
+ * poseOverride is derived from it so edits show before the user clicks
+ * Apply (which commits to the server).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
@@ -21,29 +31,31 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 
 import {
+  createComponentBindingApi,
+  deleteComponentBindingApi,
   listComponentBindingsApi,
   resolveAssetUrl,
   updateComponentApi,
   updateComponentBindingApi,
-} from "../../api/client";
-import { useSceneStore } from "../../store/sceneStore";
-import { mmToThree } from "../../three/transformUtils";
-import type { Anchor, Asset3D, ComponentBinding, ComponentItem } from "../../types/digitalTwin";
+} from "../api/client";
+import { useSceneStore } from "../store/sceneStore";
+import { mmToThree } from "../three/transformUtils";
+import type { Asset3D, ComponentBinding, ComponentItem } from "../types/digitalTwin";
 import {
   buildIsolatorPbsOverlay,
   buildThorlabsIsolatorObject,
   isolatorCentroidKey,
   ISOLATOR_PBS_DEFAULTS_BY_MODEL,
   type IsolatorLinkedRotationGroup,
+  type IsolatorPrismType,
   type PbsPoseEntry,
-} from "./pbsOverlay";
-import { applyIncludeOnlyFilter } from "../../three/loadAsset/viewerHints";
-// Whole-file source string for the right-panel editor. Vite resolves `?raw`
-// at build time to the file's exact contents (geometry helpers + table +
-// PBS overlay assembly + STL wrapper). User can edit anywhere; the parser
-// below only watches the current model's row.
-import pbsOverlayFileSource from "./pbsOverlay.ts?raw";
+} from "../kinds/isolator/pbsOverlay";
+import { applyIncludeOnlyFilter } from "../three/loadAsset/viewerHints";
+import { buildSceneObjectFromBindings } from "../three/bindingRendererGate";
 
+// Model dropdown options. Static isolator list while the composer is
+// isolator-only; later steps (root picker / new mode) will replace this
+// with a dynamic component picker.
 const MODELS = Object.keys(ISOLATOR_PBS_DEFAULTS_BY_MODEL);
 
 // Procedural-cylinder fallback dims (used for TORNOS where the asset is
@@ -178,96 +190,51 @@ function disposeObject3D(obj: THREE.Object3D): void {
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// Code parser — find the current model's row inside the whole file text
-// and extract its 2 PBS poses. Anything outside that row is left alone.
-// ────────────────────────────────────────────────────────────────────────
-
-const POS_RE = /pos\s*:\s*\[\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\]/g;
-const YROT_RE = /yRotationDeg\s*:\s*([+-]?\d+(?:\.\d+)?)/g;
-// 3-axis Euler ``rotationDeg: [rx, ry, rz]`` — Stage A''.11-followup
-// lets Glan-Laser entries (and any PBS that needs a non-Y-axis tilt)
-// override the default alignment.
-const ROT_RE = /rotationDeg\s*:\s*\[\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\]/g;
-const MODEL_ROW_WINDOW = 800; // chars after `"MODEL":` to scan for the row
-
-function parseModelRow(text: string, model: string):
-  | {
-      frontPos: Vec3;
-      frontY: number;
-      backPos: Vec3;
-      backY: number;
-      /** Set when the parsed pose entry has an explicit
-       *  ``rotationDeg: [rx, ry, rz]``. ``null`` means the entry uses
-       *  yRotationDeg only (legacy / single-DOF). */
-      frontRot: Vec3 | null;
-      backRot: Vec3 | null;
-    }
-  | null {
-  const escaped = model.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(`"${escaped}"\\s*:`);
-  const m = text.match(re);
-  if (!m || m.index === undefined) return null;
-  const chunk = text.slice(m.index, m.index + MODEL_ROW_WINDOW);
-
-  POS_RE.lastIndex = 0;
-  YROT_RE.lastIndex = 0;
-  ROT_RE.lastIndex = 0;
-  const positions: Vec3[] = [];
-  const yRots: number[] = [];
-  const rots: Vec3[] = [];
-  let mm: RegExpExecArray | null;
-  while ((mm = POS_RE.exec(chunk)) !== null && positions.length < 2) {
-    positions.push([Number(mm[1]), Number(mm[2]), Number(mm[3])]);
-  }
-  while ((mm = YROT_RE.exec(chunk)) !== null && yRots.length < 2) {
-    yRots.push(Number(mm[1]));
-  }
-  while ((mm = ROT_RE.exec(chunk)) !== null && rots.length < 2) {
-    rots.push([Number(mm[1]), Number(mm[2]), Number(mm[3])]);
-  }
-  if (positions.length !== 2 || yRots.length !== 2) return null;
-  if (positions.some((p) => p.some((n) => !Number.isFinite(n)))) return null;
-  if (yRots.some((y) => !Number.isFinite(y))) return null;
-  return {
-    frontPos: positions[0],
-    frontY: yRots[0],
-    backPos: positions[1],
-    backY: yRots[1],
-    // rotationDeg is sparse — only present on entries that need it.
-    // The order matches positions/yRots: first match → front, second → back.
-    frontRot: rots[0] ?? null,
-    backRot: rots[1] ?? null,
-  };
-}
-
-// ────────────────────────────────────────────────────────────────────────
 // Component
 // ────────────────────────────────────────────────────────────────────────
 
-export function IsolatorDevPage() {
+export function ComponentComposer() {
   const scene = useSceneStore((s) => s.scene);
   const components = scene.components;
   const assets = scene.assets;
 
-  const [model, setModel] = useState<string>(MODELS[0]);
-  const [frontPos, setFrontPos] = useState<Vec3>([0, 0, 0]);
-  const [backPos, setBackPos] = useState<Vec3>([0, 0, 0]);
-  const [frontYRot, setFrontYRot] = useState<number>(0);
-  const [backYRot, setBackYRot] = useState<number>(0);
-  // 3-axis Euler override (Stage A''.11-followup). Non-null = use
-  // ``rotationDeg: [rx, ry, rz]`` instead of the single-axis
-  // ``yRotationDeg`` path. Glan-Laser variants typically need this
-  // because their default alignment composes -90° around three.X with
-  // a y-rotation that single-axis can't express. PBS cubes can use it
-  // too for non-face-diagonal cement normals.
-  const [frontRotXYZ, setFrontRotXYZ] = useState<Vec3 | null>(null);
-  const [backRotXYZ, setBackRotXYZ] = useState<Vec3 | null>(null);
-  // The full pbsOverlay.ts file source, editable. State (frontPos/...)
-  // is the source of truth for the 3D view; the textarea is the source
-  // of truth for the file source. They sync one-way (textarea → state)
-  // via parseModelRow on every edit.
-  const [code, setCode] = useState<string>(pbsOverlayFileSource as string);
-  const [parseStatus, setParseStatus] = useState<"ok" | "error" | "idle">("idle");
+  // Composite components = any component whose binding tree has at least
+  // one non-root binding (i.e. anything actually worth composing /
+  // editing). Filters out the 280+ legacy single-asset components that
+  // 0062 backfilled into one-row root-only trees.
+  const compositeComponents = useMemo(() => {
+    const cb = scene.componentBindings ?? [];
+    const compositeIds = new Set<string>();
+    for (const b of cb) if (b.parentBindingId !== null) compositeIds.add(b.componentId);
+    return components.filter((c) => compositeIds.has(c.id))
+      .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+  }, [components, scene.componentBindings]);
+
+  // Selected component id (the one being edited). Defaults to the
+  // first composite, but if the user hasn't loaded a scene yet
+  // (compositeComponents empty), falls back to the first isolator from
+  // the static MODELS list so the legacy demo path still has something
+  // to show.
+  const [selectedComponentId, setSelectedComponentId] = useState<string>(() => {
+    return compositeComponents[0]?.id
+      ?? components.find((c) => c.model === MODELS[0])?.id
+      ?? "";
+  });
+
+  // Derived from selectedComponentId — recomputes whenever the scene's
+  // component list or the user's selection changes.
+  const selectedComponent = useMemo(
+    () => components.find((c) => c.id === selectedComponentId) ?? null,
+    [components, selectedComponentId],
+  );
+  // Convenience flag for branching the renderer + showing isolator-only
+  // editing UI (STL deletion, link rotation, partition marking).
+  const isIsolator = selectedComponent?.componentType === "isolator";
+  // `model` kept as a derived string for the isolator-side overlay
+  // table lookup (ISOLATOR_PBS_DEFAULTS_BY_MODEL[model]) and for the
+  // legacy code paths still keyed on the model name. Non-isolator
+  // selections give `model = ""` which the table lookup safely misses.
+  const model = selectedComponent?.model ?? "";
   // STL interior-trim filter — drops triangles within `innerFilterRadiusMm`
   // of the STL's Z axis (= optical axis in IO-series STL frame). 0 = no
   // filter. Two reference clicks in the dev page showed the IO-3-850-HP
@@ -319,7 +286,10 @@ export function IsolatorDevPage() {
   //     can inspect the housing exterior without inner geometry
   //     bleeding through.
   const [partitionsVisible, setPartitionsVisible] = useState<boolean>(false);
-  const [opaqueHousing, setOpaqueHousing] = useState<boolean>(false);
+  // Default opaque — matches the real metal-housing look. Toggle button
+  // (top toolbar) lets the user drop to translucent (opacity 0.35) when
+  // they want to inspect the internal prisms / partition marks.
+  const [opaqueHousing, setOpaqueHousing] = useState<boolean>(true);
 
   // Binding tree panel state (Branch A — direct edit of binding rows).
   // Loaded once per model change via listComponentBindingsApi; each
@@ -350,26 +320,6 @@ export function IsolatorDevPage() {
       }
       setBindingEdits(edits);
       setBindingApplyState({});
-      // Seed the per-prism state from the prism bindings so the live
-      // preview reflects whatever's persisted, not just the static
-      // ISOLATOR_PBS_DEFAULTS table. Without this, the PBS overlay
-      // stays at the table defaults until the user manually clicks
-      // Apply on the binding row.
-      for (const b of list) {
-        const role = (b.properties as { role_label?: string } | null)?.role_label;
-        const side: "front" | "back" | null =
-          role === "front_glan_laser" || role === "front_pbs" ? "front"
-          : role === "back_glan_laser" || role === "back_pbs" ? "back"
-          : null;
-        if (!side) continue;
-        const pos: Vec3 = [b.localXMm, b.localYMm, b.localZMm];
-        const rot: Vec3 = [b.localRxDeg, b.localRyDeg, b.localRzDeg];
-        // Always seed 3-axis Euler mode so the per-prism editor shows
-        // all three rx/ry/rz sliders immediately — users can drag any
-        // axis without first flipping a mode toggle.
-        if (side === "front") { setFrontPos(pos); setFrontYRot(b.localRyDeg); setFrontRotXYZ(rot); }
-        else { setBackPos(pos); setBackYRot(b.localRyDeg); setBackRotXYZ(rot); }
-      }
     } catch {
       setBindings(null);
       setBindingEdits({});
@@ -407,26 +357,14 @@ export function IsolatorDevPage() {
     | null
   >(null);
 
-  // Load row values from the table whenever the model changes, AND reset
-  // the textarea to the file source so the visible row matches. Also
-  // seed `deletedCentroids` from the matching component's persisted
-  // `properties.isolatorDeletedCentroids` so prior saved deletions show.
+  // Model change: seed isolator STL-specific state from the matched
+  // Component's persisted `properties` (centroid sets, link rotation
+  // group). Pose state used to be seeded from the static
+  // ISOLATOR_PBS_DEFAULTS_BY_MODEL table here; after Step 1 the binding
+  // tree's rows are the source of truth, so `reloadBindings` below is
+  // sufficient.
   useEffect(() => {
-    const def = ISOLATOR_PBS_DEFAULTS_BY_MODEL[model];
-    if (def) {
-      setFrontPos([...def.front_pbs.pos]);
-      setBackPos([...def.back_pbs.pos]);
-      setFrontYRot(def.front_pbs.yRotationDeg ?? 0);
-      setBackYRot(def.back_pbs.yRotationDeg ?? 0);
-      // Pre-seed Euler from rotationDeg if the entry has it; else null
-      // (page falls back to yRot path until the user opts in).
-      setFrontRotXYZ(def.front_pbs.rotationDeg ? [...def.front_pbs.rotationDeg] : null);
-      setBackRotXYZ(def.back_pbs.rotationDeg ? [...def.back_pbs.rotationDeg] : null);
-    }
-    setCode(pbsOverlayFileSource as string);
-    setParseStatus("idle");
-
-    const component = components.find((c) => c.model === model);
+    const component = selectedComponent;
     const props = component?.properties as {
       isolatorDeletedCentroids?: string[];
       isolatorLinkedRotationGroup?: IsolatorLinkedRotationGroup;
@@ -456,7 +394,7 @@ export function IsolatorDevPage() {
     void reloadBindings(component?.id ?? null);
 
     setSaveStatus("idle");
-  }, [model, components, reloadBindings]);
+  }, [selectedComponent, reloadBindings]);
 
   // ── Three.js scene ───────────────────────────────────────────────────
   const mountRef = useRef<HTMLDivElement>(null);
@@ -521,6 +459,67 @@ export function IsolatorDevPage() {
     addBodyAxis("X", "#dc2626", [axisLen, 0, 0], [labelOff, 0, 0]);
     addBodyAxis("Y", "#2563eb", [0, 0, -axisLen], [0, 0, -labelOff]);
     addBodyAxis("Z", "#16a34a", [0, axisLen, 0], [0, labelOff, 0]);
+
+    // ── Test beams (binding-dev only) ────────────────────────────────
+    // Two virtual laser beams travelling along body +Y to validate the
+    // GlanLaserCalcitePrism interactions while editing the IO-3-850-HP
+    // binding tree. Drawn directly in body-frame; the composer's three
+    // mapping is body X → +X, body Y → -Z, body Z → +Y.
+    //
+    //   beam_y5  : starts at body (0, 5,  0)   direction body +Y
+    //   beam_y20 : starts at body (0, 20, 0)   direction body +Y
+    //
+    // Beam length in body-frame mm. Long enough to cross both Glan
+    // slabs of any reasonable IO-*-HP binding-tree pose.
+    const addTestBeam = (yStartMm: number, label: string, hueHex: string) => {
+      const beamLengthMm = 120;
+      // body (0, y, 0) → three (0, 0, -y/100); body +Y → three -Z.
+      const startThree = new THREE.Vector3(0, 0, -mmToThree(yStartMm));
+      const endThree = new THREE.Vector3(
+        0,
+        0,
+        -mmToThree(yStartMm + beamLengthMm),
+      );
+      const geom = new THREE.BufferGeometry().setFromPoints([startThree, endThree]);
+      const mat = new THREE.LineBasicMaterial({
+        color: hueHex,
+        linewidth: 2,
+        transparent: true,
+        opacity: 0.85,
+      });
+      const line = new THREE.Line(geom, mat);
+      line.userData.__testBeam = label;
+      threeScene.add(line);
+      // Small sphere at the start point so the user sees where it emits.
+      const dot = new THREE.Mesh(
+        new THREE.SphereGeometry(mmToThree(1.5), 12, 12),
+        new THREE.MeshBasicMaterial({ color: hueHex }),
+      );
+      dot.position.copy(startThree);
+      threeScene.add(dot);
+      // Floating label "Beam y=5" / "Beam y=20" at the start point.
+      const canvas = document.createElement("canvas");
+      canvas.width = 256;
+      canvas.height = 64;
+      const ctx = canvas.getContext("2d")!;
+      ctx.fillStyle = "rgba(255,255,255,0.85)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = hueHex;
+      ctx.font = "bold 32px sans-serif";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, 8, 32);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.needsUpdate = true;
+      const sprite = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: tex, transparent: true }),
+      );
+      sprite.position.copy(startThree).add(new THREE.Vector3(mmToThree(3), mmToThree(3), 0));
+      sprite.scale.set(mmToThree(40), mmToThree(10), 1);
+      threeScene.add(sprite);
+    };
+    addTestBeam(5, "Beam y=5 → +Y", "#ef4444");
+    addTestBeam(20, "Beam y=20 → +Y", "#f59e0b");
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.001, 100);
     camera.position.set(0.8, 0.5, 0.8);
@@ -829,41 +828,15 @@ export function IsolatorDevPage() {
       modelGroupRef.current = null;
     }
 
-    // Build state-driven anchors that buildIsolatorPbsOverlay (and
-    // buildThorlabsIsolatorObject which calls it) will use to position
-    // the PBS cubes.
-    //
-    // ``directionBodyLocal`` is the legacy single-axis hint
-    // (cement-normal vector derived from yRotationDeg). It's ONLY
-    // emitted when frontRotXYZ/backRotXYZ are null (yRot mode). When
-    // the user opted into 3-axis Euler, omitting directionBodyLocal
-    // lets the renderer's ``spec.rotationDegBody`` branch fire — the
-    // anchor-direction check (line 398 of pbsOverlay.ts) would
-    // otherwise win and silently ignore the Euler values.
-    const frontYRad = (frontYRot * Math.PI) / 180;
-    const backYRad = (backYRot * Math.PI) / 180;
-    const anchors: Anchor[] = [
-      {
-        id: "front_pbs",
-        positionMmBodyLocal: { x: frontPos[0], y: frontPos[1], z: frontPos[2] },
-        ...(frontRotXYZ === null ? {
-          directionBodyLocal: {
-            x: Math.cos(frontYRad), y: 1, z: -Math.sin(frontYRad),
-          },
-        } : {}),
-      },
-      {
-        id: "back_pbs",
-        positionMmBodyLocal: { x: backPos[0], y: backPos[1], z: backPos[2] },
-        ...(backRotXYZ === null ? {
-          directionBodyLocal: {
-            x: Math.cos(backYRad), y: 1, z: -Math.sin(backYRad),
-          },
-        } : {}),
-      },
-    ];
+    // The 3D preview's prism poseOverride is derived from `bindingEdits`
+    // below (the in-progress edits of the binding-tree rows). We always
+    // pass `rotationDeg: [rx, ry, rz]` to the renderer — single-axis
+    // yRotationDeg mode no longer has a UI control after Step 1, so the
+    // Euler path is the only one. Anchors with `directionBodyLocal` are
+    // intentionally omitted so the renderer's `spec.rotationDegBody`
+    // branch fires (pbsOverlay.ts line ~396).
 
-    const component = components.find((c) => c.model === model);
+    const component = selectedComponent;
     const asset = component && component.asset3dId
       ? assets.find((a) => a.id === component.asset3dId)
       : undefined;
@@ -887,8 +860,22 @@ export function IsolatorDevPage() {
       ctrl.update();
     };
 
-    if (asset && !asset.filePath.startsWith("primitive://") && component) {
-      // Real STL — load & wrap through the same builder the lab viewer uses.
+    if (!isIsolator && component) {
+      // Generic path — any composite Component that isn't an isolator
+      // goes through the binding-tree renderer (the same one the Lab
+      // viewer uses). No STL editing affordances (centroid delete,
+      // partition marking, link rotation) — those are isolator-only.
+      void buildSceneObjectFromBindings(component, null, scene).then((obj) => {
+        if (cancelled) return;
+        threeScene.add(obj);
+        modelGroupRef.current = obj;
+        setTriangleCounts(null);
+        refit();
+      }).catch(() => { /* silent — empty scene if the tree can't load */ });
+    } else if (asset && !asset.filePath.startsWith("primitive://") && component) {
+      // Isolator STL path — load & wrap through the bespoke isolator
+      // builder so STL editing tools (centroid delete, partition
+      // marking, link rotation, PBS / Glan-Laser overlay) work.
       loadStlGeometryCached(asset.filePath).then((geometry) => {
         if (cancelled) return;
         // IsolatorDevPage edits the bundled PBS / Glan-Laser overlay
@@ -899,9 +886,13 @@ export function IsolatorDevPage() {
         // flag is meaningless here — this page IS the overlay editor.
         // Force the overlay on regardless, by overriding the flag in
         // a per-render fakeAsset.
+        // Fake asset with empty anchors so the renderer falls back to
+        // poseOverride for prism positions (anchor.positionMmBodyLocal
+        // would otherwise win over poseOverride.pos — see pbsOverlay.ts
+        // line ~383).
         const fakeAsset: Asset3D = {
           ...asset,
-          anchors,
+          anchors: [],
           properties: {
             ...(asset.properties ?? {}),
             viewerHints: {
@@ -932,31 +923,34 @@ export function IsolatorDevPage() {
         const visibleDeletions = new Set(deletedCentroids);
         for (const k of frontPartCentroids) visibleDeletions.add(k);
         for (const k of backPartCentroids) visibleDeletions.add(k);
-        // poseOverride feeds the in-page front/back pos + yRot + Euler
-        // edits straight to the overlay. yRotationDeg path takes
-        // precedence when frontRotXYZ is null; explicit Euler wins
-        // when set (the user opted into 3-axis mode).
+        // Derive poseOverride from the in-progress binding edits — the
+        // user's slider drags / number edits in the Binding tree poses
+        // panel feed into the preview live, before they click Apply.
+        // Falls back to the binding row's persisted pose when no edit
+        // has been touched yet for that row.
         //
-        // CRITICAL: carry prismType from the pose table. Without
-        // this, the renderer falls back to the default ``pbs_cube``
-        // and HP variants (which the table marks as ``glan_laser``)
-        // get rendered as PBS cubes — Stage A''.11-followup oversight
-        // before this fix.
-        const tableDef = ISOLATOR_PBS_DEFAULTS_BY_MODEL[model];
-        const buildPbsEntry = (
-          pos: Vec3, yRot: number, rot: Vec3 | null,
-          tableEntry: typeof tableDef extends undefined ? undefined : PbsPoseEntry | undefined,
-        ): PbsPoseEntry => {
-          const base: PbsPoseEntry = rot !== null
-            ? { pos, rotationDeg: rot }
-            : { pos, yRotationDeg: yRot };
-          if (tableEntry?.prismType) base.prismType = tableEntry.prismType;
-          return base;
-        };
-        const poseOverride = {
-          front_pbs: buildPbsEntry(frontPos, frontYRot, frontRotXYZ, tableDef?.front_pbs),
-          back_pbs: buildPbsEntry(backPos, backYRot, backRotXYZ, tableDef?.back_pbs),
-        };
+        // prismType is derived from role_label so HP variants (which
+        // use Glan-Laser calcite prisms) render correctly. Without this,
+        // the renderer defaults to pbs_cube for every PBS slot.
+        const poseOverride: { front_pbs?: PbsPoseEntry; back_pbs?: PbsPoseEntry } = {};
+        for (const b of bindings ?? []) {
+          const role = (b.properties as { role_label?: string } | null)?.role_label;
+          const slot: "front_pbs" | "back_pbs" | null =
+            role === "front_glan_laser" || role === "front_pbs" ? "front_pbs"
+            : role === "back_glan_laser" || role === "back_pbs" ? "back_pbs"
+            : null;
+          if (!slot) continue;
+          const prismType: IsolatorPrismType = role && role.includes("glan_laser")
+            ? "glan_laser" : "pbs_cube";
+          const edit = bindingEdits[b.id];
+          const pos: Vec3 = edit
+            ? [edit.x, edit.y, edit.z]
+            : [b.localXMm, b.localYMm, b.localZMm];
+          const rot: Vec3 = edit
+            ? [edit.rx, edit.ry, edit.rz]
+            : [b.localRxDeg, b.localRyDeg, b.localRzDeg];
+          poseOverride[slot] = { pos, rotationDeg: rot, prismType };
+        }
         const group = buildThorlabsIsolatorObject(
           geometry, fakeComponent, fakeAsset,
           innerFilterRadiusMm, visibleDeletions, linkedGroup, poseOverride,
@@ -1024,9 +1018,18 @@ export function IsolatorDevPage() {
             bindings?.find((b) =>
               (b.properties as { role_label?: string } | null)?.role_label === label,
             );
+          // For the prism's "current" rotation we read the in-progress
+          // `bindingEdits` entry — the user's slider drags propagate
+          // live to the piece's delta rotation. Piece pose is read from
+          // the binding row directly (its bindingEdits, if any).
+          const currentRotFor = (b: ComponentBinding | undefined): Vec3 => {
+            if (!b) return [0, 0, 0];
+            const e = bindingEdits[b.id];
+            return e ? [e.rx, e.ry, e.rz] : [b.localRxDeg, b.localRyDeg, b.localRzDeg];
+          };
           // Pieces preserve their OWN binding pose as a baseline and
           // rotate together with the prism only by the DELTA the user
-          // applied via the per-prism slider. So if front_piece was at
+          // applied via the binding row. So if front_piece was at
           // (0, 0, 0) and front_glan_laser at (0, 270, 0), dragging the
           // slider to (0, 280, 0) shifts both by +10° around Y — piece
           // ends up at (0, 10, 0), glan_laser at (0, 280, 0). The
@@ -1039,6 +1042,8 @@ export function IsolatorDevPage() {
             const e = new THREE.Euler(toRad(rxDeg), toRad(rzDeg), toRad(-ryDeg), "XYZ");
             return new THREE.Quaternion().setFromEuler(e);
           };
+          const frontPrism = bindingFor("front_glan_laser") ?? bindingFor("front_pbs");
+          const backPrism = bindingFor("back_glan_laser") ?? bindingFor("back_pbs");
           const sides: ReadonlyArray<{
             side: "front" | "back";
             tris: Set<string>;
@@ -1049,14 +1054,14 @@ export function IsolatorDevPage() {
           }> = [
             { side: "front", tris: frontPartCentroids,
               pieceBinding: bindingFor("front_piece"),
-              prismBinding: bindingFor("front_glan_laser") ?? bindingFor("front_pbs"),
-              color: "#1e3a8a",
-              currentRot: frontRotXYZ ?? [0, frontYRot, 0] },
+              prismBinding: frontPrism,
+              color: "#1a1a1c",
+              currentRot: currentRotFor(frontPrism) },
             { side: "back", tris: backPartCentroids,
               pieceBinding: bindingFor("back_piece"),
-              prismBinding: bindingFor("back_glan_laser") ?? bindingFor("back_pbs"),
-              color: "#7c2d12",
-              currentRot: backRotXYZ ?? [0, backYRot, 0] },
+              prismBinding: backPrism,
+              color: "#1a1a1c",
+              currentRot: currentRotFor(backPrism) },
           ];
           for (const { tris, pieceBinding, prismBinding, color, currentRot } of sides) {
             if (tris.size === 0 || !pieceBinding) continue;
@@ -1066,7 +1071,7 @@ export function IsolatorDevPage() {
               metalness: 0.55,
               roughness: 0.5,
               transparent: !opaqueHousing,
-              opacity: opaqueHousing ? 1 : 0.55,
+              opacity: opaqueHousing ? 1 : 0.35,
               depthWrite: opaqueHousing,
             });
             const mesh = new THREE.Mesh(subGeom, mat);
@@ -1129,7 +1134,7 @@ export function IsolatorDevPage() {
       );
       group.add(housing);
       const overlay = buildIsolatorPbsOverlay(
-        { id: "fake", name: "fake", assetType: "primitive", filePath: "primitive://box", unit: "mm", scaleFactor: 1, anchors },
+        { id: "fake", name: "fake", assetType: "primitive", filePath: "primitive://box", unit: "mm", scaleFactor: 1, anchors: [] },
         { housingLengthMm: lenMm, opticalAxisBody: "z", unitScale: mmToThree(1) },
       );
       group.add(overlay);
@@ -1140,14 +1145,12 @@ export function IsolatorDevPage() {
 
     return () => { cancelled = true; };
   }, [
-    model, frontPos, backPos, frontYRot, backYRot,
-    frontRotXYZ, backRotXYZ,
-    components, assets,
+    selectedComponent, isIsolator, scene, assets,
     innerFilterRadiusMm, deletedCentroids,
     linkedCentroids, linkRotDeg, linkRotAxis, linkRotPivotMm, linkBoundAnchors,
     frontPartCentroids, backPartCentroids,
     partitionsVisible, opaqueHousing,
-    bindings,
+    bindings, bindingEdits,
   ]);
 
   // ── Binding tree edit handlers (Branch A) ────────────────────────────
@@ -1172,48 +1175,156 @@ export function IsolatorDevPage() {
         localRxDeg: edit.rx, localRyDeg: edit.ry, localRzDeg: edit.rz,
       });
       setBindingApplyState((prev) => ({ ...prev, [bindingId]: "saved" }));
-      // Mirror the saved pose into the per-prism state so the dev-page
-      // preview reflects the change immediately (the preview is driven by
-      // frontPos / backPos / frontYRot / backYRot / frontRotXYZ /
-      // backRotXYZ, NOT by the bindings list). Only the prism rows have
-      // a per-prism counterpart; piece/mount/body rows have no live
-      // preview to update (front_piece / back_piece are baked into the
-      // housing STL and only show separately in the Lab viewer).
-      const binding = bindings?.find((b) => b.id === bindingId);
-      const role = (binding?.properties as { role_label?: string } | null)?.role_label;
-      const side: "front" | "back" | null =
-        role === "front_glan_laser" || role === "front_pbs" ? "front"
-        : role === "back_glan_laser" || role === "back_pbs" ? "back"
-        : null;
-      if (side === "front") {
-        setFrontPos([edit.x, edit.y, edit.z]);
-        if (edit.rx === 0 && edit.rz === 0) {
-          setFrontYRot(edit.ry);
-          setFrontRotXYZ(null);
-        } else {
-          setFrontRotXYZ([edit.rx, edit.ry, edit.rz]);
-        }
-      } else if (side === "back") {
-        setBackPos([edit.x, edit.y, edit.z]);
-        if (edit.rx === 0 && edit.rz === 0) {
-          setBackYRot(edit.ry);
-          setBackRotXYZ(null);
-        } else {
-          setBackRotXYZ([edit.rx, edit.ry, edit.rz]);
-        }
-      }
-      // Refetch so any server-side normalisation lands locally too.
-      const component = components.find((c) => c.model === model);
+      // Refetch so any server-side normalisation lands locally too —
+      // bindings list is the persisted truth, bindingEdits the in-progress
+      // edits. The preview's poseOverride is derived from bindingEdits so
+      // it already reflected the new values before Apply; this refetch
+      // just keeps the persisted-side in sync.
+      const component = selectedComponent;
       if (component) await reloadBindings(component.id);
     } catch {
       setBindingApplyState((prev) => ({ ...prev, [bindingId]: "error" }));
     }
   };
+  /** Apply every dirty binding-row edit in one go. PATCHes run in
+   *  parallel; failures are recorded per-row so the user sees which one
+   *  blew up. Useful when re-tuning a whole component (e.g. shifting
+   *  front_glan_laser + back_glan_laser after the Glan-Laser asset got
+   *  geometry-adjusted) without clicking Apply on every row. */
+  const applyAllDirtyBindings = async () => {
+    if (!bindings) return;
+    const dirty = bindings.filter((b) => {
+      const e = bindingEdits[b.id];
+      if (!e) return false;
+      return e.x !== b.localXMm || e.y !== b.localYMm || e.z !== b.localZMm
+        || e.rx !== b.localRxDeg || e.ry !== b.localRyDeg || e.rz !== b.localRzDeg;
+    });
+    if (dirty.length === 0) return;
+    setBindingApplyState((prev) => {
+      const next = { ...prev };
+      for (const b of dirty) next[b.id] = "saving";
+      return next;
+    });
+    const results = await Promise.allSettled(
+      dirty.map((b) => {
+        const e = bindingEdits[b.id]!;
+        return updateComponentBindingApi(b.id, {
+          localXMm: e.x, localYMm: e.y, localZMm: e.z,
+          localRxDeg: e.rx, localRyDeg: e.ry, localRzDeg: e.rz,
+        });
+      }),
+    );
+    setBindingApplyState((prev) => {
+      const next = { ...prev };
+      results.forEach((r, i) => {
+        next[dirty[i].id] = r.status === "fulfilled" ? "saved" : "error";
+      });
+      return next;
+    });
+    const component = selectedComponent;
+    if (component) await reloadBindings(component.id);
+  };
+  /** Count of dirty (locally-edited, unsaved) binding rows. Drives the
+   *  "Save all" button's badge + disabled state. */
+  const dirtyBindingCount = useMemo(() => {
+    if (!bindings) return 0;
+    let n = 0;
+    for (const b of bindings) {
+      const e = bindingEdits[b.id];
+      if (!e) continue;
+      if (e.x !== b.localXMm || e.y !== b.localYMm || e.z !== b.localZMm
+        || e.rx !== b.localRxDeg || e.ry !== b.localRyDeg || e.rz !== b.localRzDeg) {
+        n += 1;
+      }
+    }
+    return n;
+  }, [bindings, bindingEdits]);
   const bindingDisplayLabel = (b: ComponentBinding): string => {
     const role = (b.properties as { role_label?: string } | null)?.role_label;
     if (role) return role;
     if (b.parentBindingId === null) return "root (body)";
     return `${b.role} (${b.targetKind})`;
+  };
+
+  // ── Add-child binding state (Step 2) ─────────────────────────────────
+  // `addChildOpenFor` holds the parent binding id whose inline "+"
+  // form is currently open (null = no form open). Only one form open
+  // at a time keeps the UI quiet. Form state lives in `addChildDraft`;
+  // submitting POSTs /api/components/{id}/bindings then refreshes the
+  // tree.
+  type AddChildKind = "asset" | "subcomponent" | "empty";
+  type AddChildDraft = {
+    targetKind: AddChildKind;
+    asset3dId: string;
+    subComponentId: string;
+    roleLabel: string;
+  };
+  const [addChildOpenFor, setAddChildOpenFor] = useState<string | null>(null);
+  const [addChildDraft, setAddChildDraft] = useState<AddChildDraft>({
+    targetKind: "asset",
+    asset3dId: "",
+    subComponentId: "",
+    roleLabel: "",
+  });
+  const [addChildStatus, setAddChildStatus] = useState<"idle" | "saving" | "error">("idle");
+  const [deleteBindingStatus, setDeleteBindingStatus] = useState<Record<string, "idle" | "saving" | "error">>({});
+
+  const openAddChildForm = (parentBindingId: string) => {
+    setAddChildOpenFor(parentBindingId);
+    setAddChildDraft({
+      targetKind: "asset",
+      asset3dId: assets[0]?.id ?? "",
+      subComponentId: "",
+      roleLabel: "",
+    });
+    setAddChildStatus("idle");
+  };
+
+  const submitAddChild = async (parentBindingId: string) => {
+    const component = selectedComponent;
+    if (!component) return;
+    const draft = addChildDraft;
+    // Validate per-target-kind required fields up-front so we don't
+    // round-trip an obviously-bad POST. Backend's CHECK constraint +
+    // Pydantic validator would also catch this but the inline UX is
+    // cleaner if we refuse early.
+    if (draft.targetKind === "asset" && !draft.asset3dId) {
+      setAddChildStatus("error");
+      return;
+    }
+    if (draft.targetKind === "subcomponent" && !draft.subComponentId) {
+      setAddChildStatus("error");
+      return;
+    }
+    setAddChildStatus("saving");
+    try {
+      await createComponentBindingApi(component.id, {
+        parentBindingId,
+        targetKind: draft.targetKind,
+        asset3dId: draft.targetKind === "asset" ? draft.asset3dId : null,
+        subComponentId: draft.targetKind === "subcomponent" ? draft.subComponentId : null,
+        role: draft.roleLabel || "child",
+        properties: draft.roleLabel ? { role_label: draft.roleLabel } : {},
+      });
+      setAddChildOpenFor(null);
+      await reloadBindings(component.id);
+    } catch {
+      setAddChildStatus("error");
+    }
+  };
+
+  const deleteBinding = async (b: ComponentBinding) => {
+    const component = selectedComponent;
+    if (!component) return;
+    const label = bindingDisplayLabel(b);
+    if (!window.confirm(`Delete binding "${label}"? Child bindings will cascade.`)) return;
+    setDeleteBindingStatus((prev) => ({ ...prev, [b.id]: "saving" }));
+    try {
+      await deleteComponentBindingApi(b.id);
+      await reloadBindings(component.id);
+    } catch {
+      setDeleteBindingStatus((prev) => ({ ...prev, [b.id]: "error" }));
+    }
   };
   /** Sort bindings into the canonical "5-element" reading order:
    *  root → front_mount → front_pbs → front_piece → back_mount →
@@ -1233,54 +1344,11 @@ export function IsolatorDevPage() {
   }, [bindings]);
 
   // ── Handlers ─────────────────────────────────────────────────────────
-  const onCodeChange = (next: string) => {
-    setCode(next);
-    const parsed = parseModelRow(next, model);
-    if (!parsed) {
-      setParseStatus("error");
-      return;
-    }
-    setParseStatus("ok");
-    setFrontPos(parsed.frontPos);
-    setFrontYRot(parsed.frontY);
-    setBackPos(parsed.backPos);
-    setBackYRot(parsed.backY);
-    setFrontRotXYZ(parsed.frontRot);
-    setBackRotXYZ(parsed.backRot);
-  };
-
-  const onCopy = () => {
-    // Emit rotationDeg when the user opted into 3-axis Euler;
-    // otherwise the legacy single-axis yRotationDeg syntax. Parser
-    // reads both back into state via parseModelRow.
-    const rotSnippet = (yRot: number, rot: Vec3 | null): string =>
-      rot !== null
-        ? `rotationDeg: [${rot.join(", ")}]`
-        : `yRotationDeg: ${yRot}`;
-    const tableLine =
-      `  "${model}":    { front_pbs: { pos: [${frontPos.join(", ")}], ${rotSnippet(frontYRot, frontRotXYZ)} },\n` +
-      `                      back_pbs:  { pos: [${backPos.join(", ")}], ${rotSnippet(backYRot, backRotXYZ)} } },`;
-    void navigator.clipboard.writeText(tableLine);
-  };
-
-  const onResetFromTable = () => {
-    const def = ISOLATOR_PBS_DEFAULTS_BY_MODEL[model];
-    if (!def) return;
-    setFrontPos([...def.front_pbs.pos]);
-    setBackPos([...def.back_pbs.pos]);
-    setFrontYRot(def.front_pbs.yRotationDeg ?? 0);
-    setBackYRot(def.back_pbs.yRotationDeg ?? 0);
-    setFrontRotXYZ(def.front_pbs.rotationDeg ? [...def.front_pbs.rotationDeg] : null);
-    setBackRotXYZ(def.back_pbs.rotationDeg ? [...def.back_pbs.rotationDeg] : null);
-    setCode(pbsOverlayFileSource as string);
-    setParseStatus("idle");
-  };
-
   // Persist current deletion set + linked rotation group to
   // `component.properties` so Lab viewer + next dev-page session pick
   // them up automatically.
   const onSaveDeletions = async () => {
-    const component = components.find((c) => c.model === model);
+    const component = selectedComponent;
     if (!component) return;
     setSaveStatus("saving");
     try {
@@ -1316,7 +1384,7 @@ export function IsolatorDevPage() {
   // for confirmation since this is destructive of prior edits — the user
   // can re-make them but they'd be lost.
   const onResetModel = async () => {
-    const component = components.find((c) => c.model === model);
+    const component = selectedComponent;
     if (!component) return;
     if (savedCentroids.size === 0 && deletedCentroids.size === 0
         && !savedLinked && linkedCentroids.size === 0) return;
@@ -1392,26 +1460,39 @@ export function IsolatorDevPage() {
 
   const anyDirty = deletionsDirty || linkedDirty || frontPartDirty || backPartDirty;
 
-  const statusText = useMemo(() => {
-    if (parseStatus === "idle") return "in sync with state";
-    if (parseStatus === "ok") return "✓ parsed";
-    return "✗ parse failed — keep typing";
-  }, [parseStatus]);
-  const statusColour =
-    parseStatus === "error" ? "#c2410c"
-    : parseStatus === "ok" ? "#15803d"
-    : "#64748b";
-
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: 12, gap: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <strong>Isolator dev</strong>
+        <strong>Component composer</strong>
         <label>
-          Model:{" "}
-          <select value={model} onChange={(e) => setModel(e.target.value)}>
-            {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+          Edit component:{" "}
+          <select
+            value={selectedComponentId}
+            onChange={(e) => setSelectedComponentId(e.target.value)}
+            style={{ maxWidth: 260 }}
+          >
+            {compositeComponents.length === 0 && (
+              <option value="">— no composite components in scene —</option>
+            )}
+            {compositeComponents.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name} {c.model ? `· ${c.model}` : ""} ({c.componentType})
+              </option>
+            ))}
           </select>
         </label>
+        {selectedComponent
+          ? (
+            <span style={{ fontSize: 11, opacity: 0.7 }} title={`Component ${selectedComponent.id}`}>
+              ✎ editing&nbsp;<b>{selectedComponent.name}</b>&nbsp;
+              <span style={{ opacity: 0.7 }}>({selectedComponent.componentType})</span>
+            </span>
+          ) : (
+            <span style={{ fontSize: 11, color: "#b91c1c" }} title="No component selected — pick one from the dropdown">
+              ⚠ no component selected
+            </span>
+          )}
+        {isIsolator && (<>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
           Drop interior r&nbsp;&lt;
           <input
@@ -1434,8 +1515,6 @@ export function IsolatorDevPage() {
           />
           mm
         </label>
-        <button type="button" onClick={onResetFromTable}>↻ Reset from table</button>
-        <button type="button" onClick={onCopy}>📋 Copy table line</button>
         <span style={{ fontSize: 11, opacity: 0.65 }} title="Mid-click marks one cluster. Ctrl/Alt + LEFT-drag draws a rectangle that marks every housing triangle whose centroid lands inside.">
           🖱 mid: delete · Shift = link · Ctrl = front · Alt = back · Ctrl/Alt + drag = box
         </span>
@@ -1537,12 +1616,18 @@ export function IsolatorDevPage() {
               ` → ${triangleCounts.rendered}`}
           </span>
         )}
+        </>)}
+        {!isIsolator && selectedComponent && (
+          <span style={{ fontSize: 11, opacity: 0.55, marginLeft: "auto" }} title="STL editing tools (centroid delete / partition / link rotation) are isolator-only. Other composite components render via the generic binding tree.">
+            generic binding tree mode · no STL editing
+          </span>
+        )}
       </div>
 
       {/* Link-rotation control row — slider for angle + axis/pivot inputs.
           Shown whenever the group has at least 1 triangle so it doesn't
           clutter the header otherwise. */}
-      {linkedCentroids.size > 0 && (
+      {isIsolator && linkedCentroids.size > 0 && (
         <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 11, flexWrap: "wrap", padding: "4px 0", borderTop: "1px solid #e5e7eb", borderBottom: "1px solid #e5e7eb" }}>
           <strong>🔗 Link rotation</strong>
           <span style={{ opacity: 0.7 }}>{linkedCentroids.size} tris</span>
@@ -1653,9 +1738,25 @@ export function IsolatorDevPage() {
           padding: "6px 0", borderTop: "1px solid #e5e7eb",
           fontSize: 11, display: "flex", flexDirection: "column", gap: 4,
         }}>
-          <div style={{ fontWeight: 600, opacity: 0.7 }}>
+          <div style={{ fontWeight: 600, opacity: 0.7, display: "flex", alignItems: "center", gap: 8 }}>
             Binding tree poses ({sortedBindings.length})
-            <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 8 }}>
+            <button
+              type="button"
+              onClick={() => void applyAllDirtyBindings()}
+              disabled={dirtyBindingCount === 0}
+              style={{
+                fontSize: 11,
+                padding: "1px 8px",
+                background: dirtyBindingCount > 0 ? "#fde68a" : undefined,
+                border: dirtyBindingCount > 0 ? "1px solid #ca8a04" : "1px solid #d1d5db",
+              }}
+              title="PATCH every row whose pos/rot has been locally edited but not yet Applied. Runs in parallel."
+            >
+              {dirtyBindingCount > 0
+                ? `💾 Save all (${dirtyBindingCount})`
+                : "💾 Saved"}
+            </button>
+            <span style={{ fontSize: 10, opacity: 0.6, fontWeight: 400 }}>
               edits PATCH the binding row directly · Lab viewer needs hard-refresh until WS sync lands
             </span>
           </div>
@@ -1721,128 +1822,139 @@ export function IsolatorDevPage() {
                     tunable: {Object.keys(b.tunableAxes).join(",")}
                   </span>
                 )}
+                <button
+                  type="button"
+                  onClick={() => openAddChildForm(b.id)}
+                  style={{
+                    fontSize: 11, marginLeft: 4, padding: "1px 6px",
+                    background: addChildOpenFor === b.id ? "#dcfce7" : undefined,
+                    border: "1px solid #d1d5db",
+                  }}
+                  title="Add a child binding under this one"
+                >
+                  + child
+                </button>
+                {b.parentBindingId !== null && (
+                  <button
+                    type="button"
+                    onClick={() => void deleteBinding(b)}
+                    disabled={deleteBindingStatus[b.id] === "saving"}
+                    style={{
+                      fontSize: 11, marginLeft: 2, padding: "1px 6px",
+                      color: "#b91c1c", border: "1px solid #fecaca", background: "transparent",
+                    }}
+                    title="Delete this binding (cascades to its descendants)"
+                  >
+                    {deleteBindingStatus[b.id] === "saving" ? "…"
+                      : deleteBindingStatus[b.id] === "error" ? "✗" : "🗑"}
+                  </button>
+                )}
               </div>
             );
           })}
+
+          {/* Inline + child form. Single instance — only one parent
+              binding may have the form open at a time. */}
+          {addChildOpenFor && sortedBindings.some((b) => b.id === addChildOpenFor) && (() => {
+            const parent = sortedBindings.find((b) => b.id === addChildOpenFor)!;
+            const draft = addChildDraft;
+            const setDraft = (patch: Partial<AddChildDraft>) => setAddChildDraft({ ...draft, ...patch });
+            return (
+              <div style={{
+                marginLeft: 24, marginTop: 4, padding: 8,
+                background: "#f3f4f6", borderLeft: "2px solid #16a34a", borderRadius: 4,
+                display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, fontSize: 11,
+              }}>
+                <b style={{ color: "#15803d" }}>+ child of {bindingDisplayLabel(parent)}</b>
+                <label>
+                  kind:&nbsp;
+                  <select
+                    value={draft.targetKind}
+                    onChange={(e) => setDraft({ targetKind: e.target.value as AddChildKind })}
+                  >
+                    <option value="asset">asset</option>
+                    <option value="subcomponent">subcomponent</option>
+                    <option value="empty">empty (transform-only)</option>
+                  </select>
+                </label>
+                {draft.targetKind === "asset" && (
+                  <label>
+                    asset:&nbsp;
+                    <select
+                      value={draft.asset3dId}
+                      onChange={(e) => setDraft({ asset3dId: e.target.value })}
+                      style={{ maxWidth: 220 }}
+                    >
+                      <option value="">— pick —</option>
+                      {assets.map((a) => (
+                        <option key={a.id} value={a.id}>{a.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {draft.targetKind === "subcomponent" && (
+                  <label>
+                    component:&nbsp;
+                    <select
+                      value={draft.subComponentId}
+                      onChange={(e) => setDraft({ subComponentId: e.target.value })}
+                      style={{ maxWidth: 240 }}
+                    >
+                      <option value="">— pick —</option>
+                      {components
+                        .filter((c) => c.id !== selectedComponentId)
+                        .map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name} {c.model ? `(${c.model})` : `(${c.componentType})`}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                )}
+                <label>
+                  role:&nbsp;
+                  <input
+                    type="text"
+                    value={draft.roleLabel}
+                    onChange={(e) => setDraft({ roleLabel: e.target.value })}
+                    placeholder="e.g. front_mount"
+                    style={{ width: 140 }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => void submitAddChild(addChildOpenFor!)}
+                  disabled={addChildStatus === "saving"}
+                  style={{
+                    fontSize: 11, padding: "1px 8px",
+                    background: "#86efac", border: "1px solid #16a34a",
+                  }}
+                >
+                  {addChildStatus === "saving" ? "Saving…"
+                    : addChildStatus === "error" ? "✗ Retry" : "Create"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAddChildOpenFor(null)}
+                  style={{ fontSize: 11, padding: "1px 8px" }}
+                >
+                  Cancel
+                </button>
+                <span style={{ fontSize: 10, opacity: 0.6 }}>
+                  pos / rot default to identity — adjust in the row after creation
+                </span>
+              </div>
+            );
+          })()}
         </div>
       )}
 
-      {/* Per-prism pose editor (Stage A''.11-followup).
-          Glan-Laser variants frequently need free 3-axis Euler since
-          their default optical-axis alignment can't be expressed by a
-          single yRotationDeg. The "↻" button next to each Euler row
-          collapses back to yRot mode (sets rotXYZ → null). */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", padding: "4px 0", borderTop: "1px solid #e5e7eb", fontSize: 11 }}>
-        {(["front", "back"] as const).map((side) => {
-          const pos = side === "front" ? frontPos : backPos;
-          const setPos = side === "front" ? setFrontPos : setBackPos;
-          const yRot = side === "front" ? frontYRot : backYRot;
-          const setYRot = side === "front" ? setFrontYRot : setBackYRot;
-          const rot = side === "front" ? frontRotXYZ : backRotXYZ;
-          const setRot = side === "front" ? setFrontRotXYZ : setBackRotXYZ;
-          return (
-            <div key={side} style={{ display: "flex", gap: 4, alignItems: "center" }}>
-              <b style={{ minWidth: 38 }}>{side}</b>
-              <span style={{ opacity: 0.6 }}>pos</span>
-              {(["x", "y", "z"] as const).map((axis, i) => (
-                <input
-                  key={`p${axis}`}
-                  type="number"
-                  step={0.5}
-                  value={pos[i]}
-                  onChange={(e) => {
-                    const next: Vec3 = [...pos];
-                    next[i] = Number(e.target.value);
-                    setPos(next);
-                  }}
-                  style={{ width: 50 }}
-                  title={`${side}.pos.${axis} body-local mm`}
-                />
-              ))}
-              {rot === null ? (
-                <>
-                  <span style={{ opacity: 0.6, marginLeft: 4 }}>yRot</span>
-                  <input
-                    type="number"
-                    step={1}
-                    value={yRot}
-                    onChange={(e) => setYRot(Number(e.target.value))}
-                    style={{ width: 50 }}
-                    title={`${side}.yRotationDeg around body Y`}
-                  />
-                  <input
-                    type="range"
-                    min={-360}
-                    max={360}
-                    step={1}
-                    value={yRot}
-                    onChange={(e) => setYRot(Number(e.target.value))}
-                    style={{ width: 120 }}
-                    title={`${side}.yRotationDeg drag to rotate live`}
-                  />°
-                  <button
-                    type="button"
-                    onClick={() => setRot([0, yRot, 0])}
-                    style={{ fontSize: 10, marginLeft: 4 }}
-                    title="Switch to 3-axis Euler (rotationDeg). Needed for Glan-Laser."
-                  >
-                    → rxryrz
-                  </button>
-                </>
-              ) : (
-                <>
-                  <span style={{ opacity: 0.6, marginLeft: 4 }}>rotDeg</span>
-                  {(["rx", "ry", "rz"] as const).map((axis, i) => {
-                    const axisColor = axis === "rx" ? "#dc2626" : axis === "ry" ? "#2563eb" : "#16a34a";
-                    return (
-                      <span key={`r${axis}`} style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
-                        <span style={{ color: axisColor, fontWeight: 600, fontSize: 10 }}>{axis.toUpperCase()}</span>
-                        <input
-                          type="number"
-                          step={1}
-                          value={rot[i]}
-                          onChange={(e) => {
-                            const next: Vec3 = [...rot];
-                            next[i] = Number(e.target.value);
-                            setRot(next);
-                          }}
-                          style={{ width: 50 }}
-                          title={`${side}.rotationDeg.${axis} body-local — rotates around body ${axis === "rx" ? "X (red)" : axis === "ry" ? "Y (blue)" : "Z (green)"}`}
-                        />
-                        <input
-                          type="range"
-                          min={-360}
-                          max={360}
-                          step={1}
-                          value={rot[i]}
-                          onChange={(e) => {
-                            const next: Vec3 = [...rot];
-                            next[i] = Number(e.target.value);
-                            setRot(next);
-                          }}
-                          style={{ width: 100, accentColor: axisColor }}
-                          title={`${side}.${axis} drag to rotate live around body ${axis === "rx" ? "X" : axis === "ry" ? "Y" : "Z"}`}
-                        />
-                      </span>
-                    );
-                  })}°
-                  <button
-                    type="button"
-                    onClick={() => setRot(null)}
-                    style={{ fontSize: 10, marginLeft: 4 }}
-                    title="Switch back to single-axis yRotationDeg"
-                  >
-                    ↻ yRot
-                  </button>
-                </>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
+      {/* 3D preview canvas — full-width after the textarea pane was
+          removed in the Step 1 refactor. Pose edits flow from the
+          Binding tree poses panel above into `bindingEdits`, which the
+          rebuild useEffect turns into `poseOverride` for the renderer. */}
       <div style={{ display: "flex", flex: 1, gap: 12, minHeight: 0 }}>
-        <div style={{ flex: 2, position: "relative", minHeight: 400 }}>
+        <div style={{ flex: 1, position: "relative", minHeight: 400 }}>
           <div
             ref={mountRef}
             style={{ position: "absolute", inset: 0, background: "#fff", borderRadius: 4 }}
@@ -1890,40 +2002,6 @@ export function IsolatorDevPage() {
               <div style={{ marginTop: 4, opacity: 0.7 }}>Click empty space to clear.</div>
             </div>
           )}
-        </div>
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6, minWidth: 380 }}>
-          <div style={{ fontSize: 12, opacity: 0.75 }}>
-            Whole-file source of <code>pbsOverlay.ts</code>. Edits to the
-            current model's <code>pos</code> / <code>yRotationDeg</code>
-            flow into the 3D view live. Edits elsewhere (materials,
-            geometry) are scratchpad — copy back to the file manually.
-          </div>
-          <textarea
-            value={code}
-            onChange={(e) => onCodeChange(e.target.value)}
-            spellCheck={false}
-            wrap="off"
-            style={{
-              flex: 1,
-              fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
-              fontSize: 11,
-              lineHeight: 1.5,
-              padding: 10,
-              border: `1px solid ${parseStatus === "error" ? "#fda4af" : "#d0d4d9"}`,
-              borderRadius: 4,
-              outline: "none",
-              resize: "none",
-              minHeight: 320,
-              whiteSpace: "pre",
-              overflow: "auto",
-            }}
-          />
-          <div style={{ fontSize: 11, color: statusColour }}>{statusText}</div>
-          <div style={{ fontSize: 11, opacity: 0.6, lineHeight: 1.5 }}>
-            <div><b>pos</b> body-local Z-up mm. z = along optical axis.</div>
-            <div><b>yRotationDeg</b> 0° → cement normal [1, 1, 0]. 90° → [0, 1, -1].</div>
-            <div>Use <b>📋 Copy table line</b> to grab the current row, then paste into the actual file.</div>
-          </div>
         </div>
       </div>
     </div>

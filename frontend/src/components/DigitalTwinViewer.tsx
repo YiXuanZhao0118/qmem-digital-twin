@@ -1397,6 +1397,10 @@ export function DigitalTwinViewer({
         // these — zustand always reuses the array when nothing changes
         // but creates a new array when ANY row changes (full scene).
         objectBindingsRefKey?: string;
+        // Per-instance rendering hint key (e.g. opaqueHousing toggle on
+        // SceneObject.properties). Same idea as objectBindingsRefKey but
+        // for SceneObject.properties-based render preferences.
+        renderHintsKey?: string;
       }
     >
   >(new Map());
@@ -3392,22 +3396,8 @@ export function DigitalTwinViewer({
         const aomElement = sceneData.physicsElements.find((e) => e.objectId === placement.id);
         addAomTiltAxisMarker(wrapper, aomAsset, aomElement, component);
       }
-      if (component.componentType === "fiber") {
-        const beamEntryEnd =
-          (placement.properties as { beamEntryEnd?: "A" | "B" } | undefined)?.beamEntryEnd;
-        if (beamEntryEnd === "A" || beamEntryEnd === "B") {
-          const fiberAnchors =
-            (component.properties as
-              | {
-                  fiberAnchors?: {
-                    id: string;
-                    positionMmBodyLocal?: { x: number; y: number; z: number };
-                  }[];
-                }
-              | undefined)?.fiberAnchors;
-          addFiberBeamFlowIndicator(wrapper, beamEntryEnd, fiberAnchors);
-        }
-      }
+      // Fiber beam-flow indicator (green entry ring, red exit ring, orange
+      // midpoint arrow) removed per user request — too visually noisy.
       if (selectedRelationObjectIds.has(placement.id) || draftRelationObjectIds.has(placement.id)) {
         addObjectAxesHelper(
           wrapper,
@@ -3647,6 +3637,15 @@ export function DigitalTwinViewer({
           )
           .sort()
           .join("|");
+        // Per-instance rendering hint key (e.g. translucentHousing
+        // toggle). Stored under SceneObject.properties; canReuse
+        // otherwise wouldn't see a placement.properties flip since
+        // componentRef + assetRef are still equal. Cheap
+        // stringification of every hint we honour today.
+        const renderHintsKeyNow = (() => {
+          const p = placement.properties as { translucentHousing?: unknown } | undefined;
+          return `tr=${p?.translucentHousing === true ? "1" : "0"}`;
+        })();
         const canReuse =
           cached !== undefined &&
           cached.componentRef === component &&
@@ -3654,7 +3653,8 @@ export function DigitalTwinViewer({
           cached.stateRef === deviceState &&
           (component.componentType !== "fiber" ||
             cached.fiberEndsRefKey === fiberEndsRefKeyNow) &&
-          cached.objectBindingsRefKey === objectBindingsRefKeyNow;
+          cached.objectBindingsRefKey === objectBindingsRefKeyNow &&
+          cached.renderHintsKey === renderHintsKeyNow;
 
         let wrapper: THREE.Group;
         if (canReuse && cached) {
@@ -3915,6 +3915,7 @@ export function DigitalTwinViewer({
             rfCableLinkWatchKey: rfCableSeed?.linkWatchKey,
             fiberEndsRefKey: fiberEndsRefKeyNow,
             objectBindingsRefKey: objectBindingsRefKeyNow,
+            renderHintsKey: renderHintsKeyNow,
           });
         }
 

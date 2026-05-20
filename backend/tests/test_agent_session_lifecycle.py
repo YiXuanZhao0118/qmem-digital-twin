@@ -399,6 +399,64 @@ async def test_sweeper_rolls_back_session_with_expired_heartbeat(session_tracker
 
 
 @pytest.mark.asyncio
+async def test_unlock_clears_ai_approved_at_and_writes_event(session_tracker):
+    """After commit, unlock_session() flips ai_approved_at back to None
+    on every entity the session approved and writes one 'unlock' event
+    per entity. Second call is a no-op (idempotent).
+    """
+    async with AsyncSessionLocal() as db:
+        sess = await agent_session_svc.start_session(db)
+        session_tracker.append(sess.id)
+        asset = await agent_tools.create_asset(
+            db,
+            session_id=sess.id,
+            name=f"unlock-target-{sess.id}",
+            asset_type="glb",
+            file_path="/tmp/u.glb",
+        )
+        comp = await agent_tools.create_component(
+            db,
+            session_id=sess.id,
+            name=f"unlock-comp-{sess.id}",
+            component_type=_pick_kind(),
+            asset_3d_id=asset.id,
+        )
+        await agent_session_svc.commit_session(db, sess.id)
+
+    async with AsyncSessionLocal() as db:
+        # Verify the lock is set before we unlock.
+        approved_asset = await db.get(Asset3D, asset.id)
+        assert approved_asset.ai_approved_at is not None
+
+        result = await agent_session_svc.unlock_session(db, sess.id)
+        assert asset.id in result["unlocked_assets"]
+        assert comp.id in result["unlocked_components"]
+
+    async with AsyncSessionLocal() as db:
+        # Lock is gone; rows stay active.
+        a = await db.get(Asset3D, asset.id)
+        c = await db.get(Component, comp.id)
+        assert a.ai_approved_at is None
+        assert c.ai_approved_at is None
+        assert a.status == "active"
+        assert c.status == "active"
+
+        # Audit trail records the unlock.
+        events = await db.scalars(
+            select(ApprovalEvent).where(
+                ApprovalEvent.session_id == sess.id,
+                ApprovalEvent.event_type == "unlock",
+            )
+        )
+        assert len(events.all()) == 2  # one per entity
+
+        # Idempotent: second call returns empty lists, no new events.
+        result2 = await agent_session_svc.unlock_session(db, sess.id)
+        assert result2["unlocked_assets"] == []
+        assert result2["unlocked_components"] == []
+
+
+@pytest.mark.asyncio
 async def test_locked_active_asset_still_bindable_in_new_session(session_tracker):
     """Approved assets should remain usable as FK targets: a fresh
     session can create a new Component pointing at a previously-locked

@@ -13,13 +13,18 @@ from app.solvers.optical_solver import (
     apply_aom,
     apply_beam_splitter,
     apply_dichroic_mirror,
+    apply_faraday_rotator,
+    apply_glan_laser,
+    apply_isolator,
     apply_lens_spherical,
     apply_mirror,
     apply_polarizer,
     apply_waveplate,
     emit_from_laser_source,
     emit_from_tapered_amplifier,
+    jones_faraday_matrix,
     jones_from_dict,
+    jones_glan_laser_matrix,
     lens_q,
     nm_to_thz,
     propagate_beam_precise,
@@ -436,6 +441,278 @@ def test_polarizer_blocks_orthogonal_polarization():
     })
     # Should be heavily attenuated (~ 30 dB extinction → ~ 0.1% remaining)
     assert out["out"].power_mw < 1.0
+
+
+# --- Glan-Laser + Faraday rotator (IO-*-HP isolator building blocks) -------
+
+
+def _h_beam(power_mw: float = 100.0) -> Beam:
+    """Horizontally polarised beam, on-axis, no chief-ray tilt."""
+    return Beam(
+        spectrum={}, q_x=complex(0, 100), q_y=complex(0, 100), transverse_mode={},
+        polarization=(complex(1.0), complex(0.0)),
+        power_mw=power_mw, wavelength_nm=780.0,
+    )
+
+
+def _v_beam(power_mw: float = 100.0) -> Beam:
+    return Beam(
+        spectrum={}, q_x=complex(0, 100), q_y=complex(0, 100), transverse_mode={},
+        polarization=(complex(0.0), complex(1.0)),
+        power_mw=power_mw, wavelength_nm=780.0,
+    )
+
+
+def test_glan_laser_blocks_orthogonal_polarization():
+    out = apply_glan_laser(_v_beam(), {
+        "transmissionAxisDegBeamLocal": 0.0,
+        "transmission": 1.0,
+        "extinctionRatioDb": 55.0,
+    })
+    # 55 dB extinction → ~ 3.16e-6 leakage of 100 mW → < 1e-3 mW.
+    assert out["out"].power_mw < 1e-3
+
+
+def test_glan_laser_emits_out_and_out_r_ports():
+    """apply_glan_laser returns two output ports: E-ray transmitted (out)
+    + O-ray TIR reflected (out_r). H-polarised input through axis=0° Glan
+    transmits ~92 %; V-polarised input reflects ~99 % (TIR)."""
+    h_in = _h_beam(power_mw=100.0)
+    out = apply_glan_laser(h_in, {
+        "transmissionAxisDegBeamLocal": 0.0,
+        "transmission": 0.92,
+        "extinctionRatioDb": 55.0,
+    })
+    assert set(out.keys()) == {"out", "out_r"}
+    # H input + axis 0° → fully transmitted (×0.92), almost nothing reflected.
+    assert out["out"].power_mw > 91.0
+    assert out["out_r"].power_mw < 1e-3
+    # V input + axis 0° → mostly TIR reflected (×0.99).
+    v_in = _v_beam(power_mw=100.0)
+    out_v = apply_glan_laser(v_in, {
+        "transmissionAxisDegBeamLocal": 0.0,
+        "transmission": 0.92,
+        "extinctionRatioDb": 55.0,
+    })
+    assert out_v["out_r"].power_mw > 98.0
+    assert out_v["out"].power_mw < 1e-3
+
+
+def test_glan_laser_45deg_input_splits_evenly_with_axis_0():
+    """45° polarised input + axis=0° Glan → half E, half O → equal split
+    after T_e ≈ R_o (within ε)."""
+    beam = Beam(
+        spectrum={}, q_x=complex(0, 100), q_y=complex(0, 100), transverse_mode={},
+        polarization=(complex(1.0 / math.sqrt(2.0)), complex(1.0 / math.sqrt(2.0))),
+        power_mw=100.0, wavelength_nm=780.0,
+    )
+    out = apply_glan_laser(beam, {
+        "transmissionAxisDegBeamLocal": 0.0,
+        "transmission": 0.92,
+        "extinctionRatioDb": 55.0,
+        "tirReflectivity": 0.99,
+    })
+    # 50% × 0.92 = 46 mW transmitted, 50% × 0.99 = 49.5 mW reflected.
+    assert math.isclose(out["out"].power_mw, 46.0, abs_tol=1.0)
+    assert math.isclose(out["out_r"].power_mw, 49.5, abs_tol=1.0)
+
+
+def test_glan_laser_angular_degradation_increases_leakage():
+    # Tilted-beam variant: ε(θ) = ε₀ + α·θ²; bigger tilt → more leakage.
+    base = _v_beam(power_mw=100.0)
+    tilted = replace_beam(base, theta_xc_rad=0.05)  # 50 mrad
+    on_axis = apply_glan_laser(base, {
+        "transmissionAxisDegBeamLocal": 0.0,
+        "transmission": 1.0,
+        "extinctionRatioDb": 55.0,
+        "angularDegradationAlpha": 0.1,
+    })
+    off_axis = apply_glan_laser(tilted, {
+        "transmissionAxisDegBeamLocal": 0.0,
+        "transmission": 1.0,
+        "extinctionRatioDb": 55.0,
+        "angularDegradationAlpha": 0.1,
+    })
+    assert off_axis["out"].power_mw > on_axis["out"].power_mw
+
+
+def test_faraday_rotator_rotates_horizontal_to_45deg():
+    out = apply_faraday_rotator(_h_beam(), {"faradayRotationDeg": 45.0})
+    j = out.polarization
+    # H -> (cos45°, sin45°) = (1/√2, 1/√2)
+    assert math.isclose(abs(j[0]), 1.0 / math.sqrt(2.0), abs_tol=1e-9)
+    assert math.isclose(abs(j[1]), 1.0 / math.sqrt(2.0), abs_tol=1e-9)
+
+
+def test_faraday_jones_matrix_round_trip_doubles_rotation():
+    # The defining non-reciprocity test: applying the matrix twice in lab
+    # frame (= one forward + one backward pass) gives 2·θ rotation, not 0.
+    j_in = (complex(1.0), complex(0.0))
+    m = jones_faraday_matrix(45.0)
+    j_once = (m[0] * j_in[0] + m[1] * j_in[1], m[2] * j_in[0] + m[3] * j_in[1])
+    j_twice = (m[0] * j_once[0] + m[1] * j_once[1], m[2] * j_once[0] + m[3] * j_once[1])
+    # H -> 45° -> 90° (Ex = 0, |Ey| = 1)
+    assert abs(j_twice[0]) < 1e-9
+    assert math.isclose(abs(j_twice[1]), 1.0, abs_tol=1e-9)
+
+
+def test_isolator_forward_transmits_with_proper_alignment():
+    # Ideal alignment: input axis 0°, Faraday 45°, output axis 45°.
+    forward = apply_isolator(_h_beam(power_mw=100.0), {
+        "frontGlan": {
+            "transmissionAxisDegBeamLocal": 0.0,
+            "transmission": 1.0,
+            "extinctionRatioDb": 55.0,
+        },
+        "faraday": {"faradayRotationDeg": 45.0},
+        "backGlan": {
+            "transmissionAxisDegBeamLocal": 45.0,
+            "transmission": 1.0,
+            "extinctionRatioDb": 55.0,
+        },
+    })
+    # T_forward ≈ η_1 · η_3 = 1.0 with ideal transmissions.
+    assert forward["out"].power_mw > 99.0
+
+
+def test_isolator_blocks_backward_45deg_light():
+    # Backward 45°-polarised light passes the back Glan, gets +45° Faraday
+    # in lab frame (non-reciprocity), and slams into the 0° front Glan.
+    backward_45 = Beam(
+        spectrum={}, q_x=complex(0, 100), q_y=complex(0, 100), transverse_mode={},
+        polarization=(complex(1.0 / math.sqrt(2.0)), complex(1.0 / math.sqrt(2.0))),
+        power_mw=100.0, wavelength_nm=780.0,
+    )
+    # Reverse order: back -> faraday (same matrix, lab frame) -> front.
+    after_back = apply_glan_laser(backward_45, {
+        "transmissionAxisDegBeamLocal": 45.0,
+        "transmission": 1.0,
+        "extinctionRatioDb": 55.0,
+    })["out"]
+    after_faraday = apply_faraday_rotator(after_back, {"faradayRotationDeg": 45.0})
+    after_front = apply_glan_laser(after_faraday, {
+        "transmissionAxisDegBeamLocal": 0.0,
+        "transmission": 1.0,
+        "extinctionRatioDb": 55.0,
+    })["out"]
+    # T_reverse ≈ ε of the FRONT Glan (single polariser rejects the
+    # 90°-rotated backward light). 55 dB extinction → 3.16e-6 of 100 mW
+    # ≈ 3.16e-4 mW. Net isolation ≈ 55 dB, matching IO-*-HP spec.
+    assert after_front.power_mw < 1e-3
+    assert after_front.power_mw < 0.01 * 100.0  # > 20 dB isolation sanity
+
+
+def test_isolator_exposes_internal_glan_rejections():
+    """apply_isolator surfaces BOTH internal Glan rejected beams as
+    output ports (not just the main forward `out`). H-polarised input
+    into a front-Glan-at-45° / faraday-45° / back-Glan-0° config:
+      - front Glan (45°) sees H, splits ~50/50 → out_r_front carries
+        ~49.5 % of input power
+      - what transmits forward (~46 %) gets Faraday-rotated to 90°
+      - back Glan (0°) sees 90°, fully reflects → out_r_back ~99 % of
+        the post-Faraday power → ~46 mW
+      - net forward `out` is essentially zero (blocked by back Glan)
+    """
+    h_in = _h_beam(power_mw=100.0)
+    out = apply_isolator(h_in, {
+        "frontGlan": {
+            "transmissionAxisDegBeamLocal": 45.0,
+            "transmission": 0.92,
+            "extinctionRatioDb": 55.0,
+            "tirReflectivity": 0.99,
+        },
+        "faraday": {"faradayRotationDeg": 45.0},
+        "backGlan": {
+            "transmissionAxisDegBeamLocal": 0.0,
+            "transmission": 0.92,
+            "extinctionRatioDb": 55.0,
+            "tirReflectivity": 0.99,
+        },
+    })
+    assert set(out.keys()) == {"out", "out_r_front", "out_r_back"}
+    # Front Glan rejected ~half the input.
+    assert math.isclose(out["out_r_front"].power_mw, 49.5, abs_tol=2.0)
+    # What got through (~46 mW) became 90° after Faraday; back Glan (0°)
+    # then reflects almost all of it.
+    assert math.isclose(out["out_r_back"].power_mw, 46.0 * 0.99, abs_tol=2.0)
+    # Net forward is essentially blocked.
+    assert out["out"].power_mw < 0.001
+
+
+def test_isolator_legacy_forwardloss_path_still_works():
+    # Old isolator rows without frontGlan/backGlan/faraday keep working.
+    out = apply_isolator(_h_beam(power_mw=100.0), {"forwardLossDb": 0.5})
+    # 0.5 dB loss → ~ 89% power retained.
+    assert math.isclose(out["out"].power_mw, 100.0 * 10 ** (-0.05), rel_tol=1e-9)
+
+
+def test_glan_laser_astigmatic_q_evolution():
+    """When wedge + n + length all present, apply_glan_laser uses the
+    astigmatic 5×5 operator: q_x advances by L/n + ΔB_air, q_y by L/n."""
+    beam = _h_beam(power_mw=100.0)
+    L, n, dB = 7.5, 1.48, 0.05
+    out = apply_glan_laser(beam, {
+        "transmissionAxisDegBeamLocal": 0.0,
+        "transmission": 1.0,
+        "extinctionRatioDb": 55.0,
+        "lengthMm": L,
+        "refractiveIndex": n,
+        "wedgeAngleDeg": 38.5,
+        "airGapAstigmatismMm": dB,
+    })["out"]
+    # For an on-waist input (q = i·z_R), free-space-style q advances by
+    # adding the real B; so Re(q_x) = L/n + ΔB, Re(q_y) = L/n. The
+    # imaginary part (Rayleigh range) is unchanged.
+    expected_real_x = L / n + dB
+    expected_real_y = L / n
+    assert out.q_x.real == pytest.approx(expected_real_x, abs=1e-9)
+    assert out.q_y.real == pytest.approx(expected_real_y, abs=1e-9)
+    assert out.q_x.real > out.q_y.real  # astigmatism is real
+
+
+def test_faraday_rotator_uses_faraday_slab_when_L_and_n_set():
+    """apply_faraday_rotator with lengthMm + refractiveIndex routes to
+    m_faraday_slab. Per the user's specified 5×5 matrix:
+      - chief-ray tilt rotates by θ_F (cos/sin coupling in rows 1,3)
+      - q-parameter advances as (A·q + B)/(C·q + D) where A=1, B=L/n,
+        C=0, D=cos θ_F → q_out = (q + L/n) / cos θ_F
+    """
+    beam = _h_beam(power_mw=100.0)
+    # Add a +x tilt so we can see the Faraday tilt rotation kick in.
+    beam = replace_beam(beam, theta_xc_rad=0.01, theta_yc_rad=0.0)
+    L, n = 8.0, 1.95
+    out = apply_faraday_rotator(beam, {
+        "faradayRotationDeg": 45.0,
+        "lengthMm": L,
+        "refractiveIndex": n,
+    })
+    inv_sqrt2 = 1.0 / math.sqrt(2.0)
+    # ABCD-derived q: q_out = (q_in + L/n) / cos θ_F. With q_in = 0+100j:
+    expected_q_real = (L / n) / inv_sqrt2     # (0 + L/n) / cos 45°
+    expected_q_imag = 100.0 / inv_sqrt2       # 100j / cos 45°
+    assert out.q_x.real == pytest.approx(expected_q_real)
+    assert out.q_x.imag == pytest.approx(expected_q_imag)
+    # B_x = B_y → x and y q evolve identically (symmetric, no astigmatism).
+    assert out.q_x.real == pytest.approx(out.q_y.real)
+    assert out.q_x.imag == pytest.approx(out.q_y.imag)
+    # Tilt rotated by 45°: θ_x_out = cos·θ_x, θ_y_out = -sin·θ_x.
+    assert out.theta_xc_rad == pytest.approx(0.01 * inv_sqrt2, abs=1e-9)
+    assert out.theta_yc_rad == pytest.approx(-0.01 * inv_sqrt2, abs=1e-9)
+
+
+def test_glan_laser_no_wedge_falls_back_to_glass_plate():
+    """When wedgeAngleDeg is missing, apply_glan_laser uses the symmetric
+    glass-plate operator instead — q_x and q_y advance equally."""
+    beam = _h_beam(power_mw=100.0)
+    out = apply_glan_laser(beam, {
+        "transmissionAxisDegBeamLocal": 0.0,
+        "transmission": 1.0,
+        "extinctionRatioDb": 55.0,
+        "thicknessMm": 7.5,
+        "refractiveIndex": 1.48,
+        # NB: no wedgeAngleDeg
+    })["out"]
+    assert out.q_x.real == pytest.approx(out.q_y.real, abs=1e-9)
 
 
 # --- chain traversal --------------------------------------------------------

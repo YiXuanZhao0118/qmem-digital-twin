@@ -108,10 +108,21 @@ AssetAnchorId = Literal[
     "tip",
     # Optical-isolator internal PBS cube anchors. Each marks the diagonal
     # cement interface (position = cube centre, direction = coating normal,
-    # apertureMm = half the active interface size). See the `isolator` kind
-    # in frontend _registry.ts for the alignment semantics.
+    # apertureMm = half the active interface size). LEGACY from the old
+    # monolithic PBS+Faraday+PBS model — the 3-stage Glan→Faraday→Glan
+    # architecture moves these onto the GlanLaserCalcitePrism
+    # sub-Components (each with its own `intercept_in` cut anchor).
+    # Kept here so existing alembic-seeded scenes still validate.
     "front_pbs",
     "back_pbs",
+    # Faraday rotator central plane (2026-05-20 isolator refactor). Marks
+    # the TGG slab's centre plane normal to the optical axis — that's
+    # where `m_faraday_slab`'s 5×5 ABCD transformation is applied. Owned
+    # by the isolator Component itself (not by a sub-Component); the two
+    # Glan slabs sit on either side as binding-tree sub-Components.
+    # Position = isolator body centre, direction = +Z optical axis,
+    # apertureMm = TGG clear aperture (typ. ⌀4.7 mm for IO-3-850-HP).
+    "faraday_centre",
 ]
 
 
@@ -3118,6 +3129,17 @@ class CancelResult(CamelModel):
     session_id: uuid.UUID
     rolled_back_count: int
     reason: str
+
+
+class UnlockResult(CamelModel):
+    """Result of POST /api/agent-sessions/{id}/unlock — lists which
+    entities had `ai_approved_at` cleared. Idempotent: re-unlocking a
+    session returns empty lists.
+    """
+
+    session_id: uuid.UUID
+    unlocked_assets: list[uuid.UUID]
+    unlocked_components: list[uuid.UUID]
 
 
 class AgentUploadOut(CamelModel):

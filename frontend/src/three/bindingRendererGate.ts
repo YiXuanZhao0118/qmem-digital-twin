@@ -102,13 +102,25 @@ export function shouldRenderViaBindings(
 export async function buildSceneObjectFromBindings(
   component: ComponentItem,
   sceneObject: SceneObject | null,
-  scene: Pick<SceneData, "componentBindings" | "assets" | "components">,
+  scene: Pick<SceneData, "componentBindings" | "objectBindings" | "assets" | "components">,
 ): Promise<THREE.Object3D> {
   const tree = resolveBindingTree(component, sceneObject, scene);
   // Per-instance binding-override deltas are applied INSIDE
-  // resolveBindingTree (via _effectiveTransform) using the standard
-  // SceneObject.properties.bindingOverrides[bindingId] path. No
-  // component-specific branch here.
+  // resolveBindingTree (via _effectiveTransform), which reads them off
+  // ``scene.objectBindings`` filtered by ``sceneObject.id``. Callers
+  // MUST pass objectBindings to get per-instance pose adjustments
+  // (e.g. the isolator's front/back glan-laser rotation slider) —
+  // omitting it freezes the asset at its catalog default pose.
+  //
+  // Per-instance rendering hints (e.g. ``translucentHousing``) live on
+  // the SceneObject's properties and forward through every asset load
+  // in this tree so body + piece sub-meshes flip together. Generic
+  // channel — add a new key to the type when a new hint shows up.
+  const renderHints = sceneObject
+    ? {
+        translucentHousing: (sceneObject.properties as { translucentHousing?: unknown } | undefined)?.translucentHousing === true,
+      }
+    : null;
   const group = await buildBindingTreeObject(tree, async (node) => {
     if (node.target.kind === "missing") return null;
     if (node.target.kind === "subcomponent" || node.target.kind === "empty") {
@@ -131,7 +143,7 @@ export async function buildSceneObjectFromBindings(
     // for the legacy single-asset path and a composite Component
     // (isolator, mirror_mount, …) never has fiber-style per-instance
     // state on its root.
-    return loadAssetObject(component, node.target.asset, undefined, null, null);
+    return loadAssetObject(component, node.target.asset, undefined, null, null, renderHints);
   });
   // The walker may produce a Group with one child (legacy single-root
   // case) or many children (composite). Either way the outer Group is

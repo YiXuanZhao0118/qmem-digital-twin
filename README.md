@@ -311,7 +311,7 @@ plugin grows a field.
 | `/api/revisions` | `revisions.py` | Whole-scene snapshots |
 | `/api/collections` | `collections.py` | Outliner CRUD + member reorder; bootstraps master |
 | `/api/collection-templates` | `collection_templates.py` | **New (0053)**: save/instantiate collection snapshots at a target pose |
-| `/api/agent-sessions` | `agent_sessions.py` | **New (0057+0058)**: AI binding session lifecycle — `POST /` start · `GET /{id}` review (session + mutations) · `POST /{id}/heartbeat` · `POST /{id}/uploads` (multipart, asset 50 MB / image 10 MB cap, stored under `assets/agent_uploads/<session>/`) · `POST /{id}/messages` (SSE-streamed agent turn — yields `assistant_chunk` / `tool_call` / `tool_result` / `done` / `error`) · `POST /{id}/undo-last` · `POST /{id}/commit` (drafts → active, `ai_approved_at` set) · `POST /{id}/cancel` (reverse-replay mutation log). 409 on any write to a terminal session |
+| `/api/agent-sessions` | `agent_sessions.py` | **New (0057+0058)**: AI binding session lifecycle — `POST /` start · `GET /{id}` review (session + mutations) · `POST /{id}/heartbeat` · `POST /{id}/uploads` (multipart, asset 50 MB / image 10 MB cap, stored under `assets/agent_uploads/<session>/`) · `POST /{id}/messages` (SSE-streamed agent turn — yields `assistant_chunk` / `tool_call` / `tool_result` / `done` / `error`) · `POST /{id}/undo-last` · `POST /{id}/commit` (drafts → active, `ai_approved_at` set) · `POST /{id}/cancel` (reverse-replay mutation log) · `POST /{id}/unlock` (**new, Phase 2**: reverses a previous commit's lock by clearing `ai_approved_at` on every entity this session created — idempotent, only valid on `status='committed'` sessions; writes one `unlock` ApprovalEvent per entity. The session row itself stays `committed`; to re-edit the rows the user opens a new agent session and the now-unlocked rows become touchable again). 409 on any write to a terminal session |
 | `/api/timing-programs` | `timing_programs.py` | TimingProgram CRUD + `/compile` to SpinCore opcodes |
 | `/api/app-settings` | `app_settings.py` | Singleton settings (room dimensions, …) |
 | `/api` | `scene.py` | `GET /api/scene` — single denormalized snapshot for frontend hydration |
@@ -320,7 +320,8 @@ plugin grows a field.
 
 | File | What it computes |
 |---|---|
-| `optical_solver.py` | Core CW Gaussian-beam propagator (q-parameter, Jones polarization, spectrum lineshapes). Astigmatic X/Y. |
+| `generalized_abcd.py` | **New (Phase 2, 2026-05).** 5×5 augmented-matrix ABCD propagation for misaligned optical systems. State vector `(x, θ_x, y, θ_y, 1)` in `(mm, rad)`; q-parameter (Gaussian beam) propagates via per-axis 2×2 sub-blocks while chief-ray (centre + tilt) goes through the FULL 5×5 multiply so rotated cylindrical optics couple x↔y correctly. Operator constructors: `m_free_space`, `m_thin_lens` (with decenter Δ and tilt α — `M[1,4] = Δ/f + α·(1-1/f)`), `m_cylindrical_standard` / `m_cylindrical_rotated` (focusing in one axis + glass-plate Snell shift in the other), `m_rotation`, `m_flat_mirror` (tilt α doubles into chief ray, no decenter term), `m_curved_mirror` (`f = R/2`), `m_glass_plate` (`B = d/n` + plate-shift `(1-1/n)·d·α`), `m_glan_slab` (ASTIGMATIC — `B_x ≠ B_y` from the wedged air-gap cut + augmented `E_x` lateral offset; `wedge_angle_deg` documented for downstream Jones builders, not in the matrix), `m_faraday_slab` (SYMMETRIC `B_x = B_y = L/n` + θ_F-rotated tilt coupling block + `E_x`/`E_y` augmented offsets — the geometric counterpart of the non-reciprocal Jones rotation), `m_pbs_reflected` / `m_pbs_transmitted`. `BeamMisaligned` dataclass carries `q_x`, `q_y`, chief-ray (x_c, y_c, θ_xc, θ_yc), wavelength. `apply_operator` does both updates in parallel. `q_from_waist`, `waist_um_from_q`, `spot_radius_um`, `radius_of_curvature_mm` helpers. Cross-axis coupling on the q-parameter (off-diagonal A_x, B_x, …) is NOT modelled — per-axis scalar-q split is exact for x/y-decoupled operators and approximate for rotated cyl unless the input beam is rotationally symmetric |
+| `optical_solver.py` | Core CW Gaussian-beam propagator (q-parameter, Jones polarization, spectrum lineshapes). Astigmatic X/Y. Post Phase 2 hosts new dispatchers for the isolator's 3-stage architecture: `jones_glan_laser_matrix` (extinction degrades quadratically with chief-ray tilt: `ε(θ) = ε₀ + α·θ²`), `jones_faraday_matrix` (non-reciprocal — same rotation forward and backward in lab frame), `apply_glan_laser` (TWO output ports: `out` = transmitted E-ray, `out_r` = TIR-rejected O-ray exiting the side at ~67-68° — same dispatch shape as a polarising PBS; both carry the opposite polarisation's extinction leak), `apply_faraday_rotator` (Jones rotation + 5×5 `m_faraday_slab` geometric propagation; not a port dispatcher — returns a single Beam), `apply_isolator` (the user-facing chain: `front Glan → Faraday → back Glan` with **three** output ports — `out` = main forward transmission, `out_r_front` = front Glan's rejected O-ray, `out_r_back` = back Glan's rejected O-ray; back-compat falls through to the legacy `forwardLossDb` single-knob multiplier when `frontGlan`/`backGlan`/`faraday` nested dicts are absent). `_dispatch_element` routes the `glan_polarizer` kind to `apply_glan_laser` |
 | `optics_seq.py` | Sequential ray-trace adapter wrapping `optical_solver.solve_chain`; persists `BeamSegment` rows per link. |
 | `optics_cavity.py` / `optics_crystal.py` | Phase D placeholders (linewidth/finesse; harmonic generation / OPO). |
 | `rf_propagation.py` | Forward BFS over RF chain (DDS → amp → AOM), accumulates gain/loss; mirrors frontend `rfPropagation.ts` exactly. |
@@ -393,7 +394,7 @@ plugin grows a field.
 
 ### Alembic migrations
 
-Currently at **revision 0076**. Recent milestones:
+Currently at **revision 0081**. Recent milestones:
 
 | Rev | Title | Purpose |
 |---|---|---|
@@ -425,6 +426,11 @@ Currently at **revision 0076**. Recent milestones:
 | 0074 | io_3_hp_bake_partitions | Bakes the IO-3-850-HP front (~1937 tris) and back (~2174 tris) STL partitions the user marked via IsolatorDevPage's Ctrl/Alt + drag box-select into two new sub-`Asset3D` rows. Each sub-Asset references the SAME housing STL file but with `viewerHints.includeOnlyCentroids` to extract just its partition + `viewerHints.recenterOrigin` to shift the kept geometry by −(Mount's body-local pose) so its effective origin lands at the Mount (otherwise the sub-asset's STL coords would double-offset under the Mount binding's own local translation). Each gets bound under the matching Mount so it moves rigidly with the Glan-Laser |
 | 0075 | io_3_hp_flatten_mounts | User-driven flatten of IO-3-850-HP's tree: drops the two empty Mount intermediates and reparents all four (PBS + piece × front + back) children directly under the root body, copying the Mount's local pose + `tunable_axes` onto each. Each of the 5 (root + 4 children) is now independently positionable via the Bindings panel. The Mount layer was useful when PBS + piece needed to rotate together via a shared `tunable_axes`; the user prefers per-child control here |
 | 0076 | object_bindings | Promotes the ad-hoc `SceneObject.properties.bindingOverrides` JSON dict to a first-class `object_bindings` table — FK cascade on `component_binding_id`, indexes for "all overrides for binding X" queries, WS event channel for live cross-client sync, and per-axis schema validation that catches typos. Per-axis deltas are `nullable=True` (not `DEFAULT 0`) so the renderer can distinguish "no override declared for this axis" from "explicit 0 override". Sparse storage avoids row-bloat for the common case where only one axis (e.g. `ry_deg`) is being tweaked. `asset_3d_id_override` lets the same row swap which Asset3D the binding renders. Backfill walks every legacy `bindingOverrides` entry → row + strips the legacy key (idempotent via NOT EXISTS); downgrade re-packs rows back into the JSON dict, so a roundtrip preserves state |
+| 0077 | io_5_hp_link | Brings IO-5-850-HP up to parity with IO-3-850-HP (0075). Three data-shape changes in one go: (1) flatten empty `role=mount` intermediate bindings — copy their pose + `tunable_axes` down to each child, reparent children to the Mount's parent, delete the Mount row; (2) stamp `properties.linkGroup = 'front'` / `'back'` on every side-tagged binding (`role_label` starts with `front_` / `back_`) so `BindingTreeAdjustControls` renders one slider per side driving prism + piece together; (3) widen `tunable_axes.ry_deg` to `min=0 max=360` matching the IO-3 range. Idempotent. Does NOT create `front_piece` / `back_piece` rows — those land in 0078 after IO-5 borrows IO-3's baked partition data |
+| 0078 | io_5_hp_clone_io_3 | User confirmed IO-5-850-HP and IO-3-850-HP are physically the same housing (same internal optics, differ only in max power rating). Migration repoints the IO-5 body Asset3D's `file_path` to `thorlabs_io_3_850_hp.stl`, copies the IO-3 body's `viewerHints` (`deletedCentroids`, `bundledOverlay`), clones the IO-3 piece Asset3D rows + piece bindings (with `includeOnlyCentroids` + `recenterOrigin` copied byte-for-byte plus `linkGroup` + `role_label`), and copies `Component.properties.isolator*` partition data over so the ComponentComposer dev page sees the same baseline. Idempotent + reversible — downgrade restores the IO-5 STL pointer and drops the cloned piece rows |
+| 0079 | glan_prism_physical | Pins the catalogue GlanLaserCalcitePrism Component to the compact prism geometry: `sizeMm=8.5`, `lengthMm=7.5`, `wedgeAngleDeg=38.5` (`airGapMm` intentionally left at the plugin default 0.05 mm). The procedural renderer (`glan_polarizer_prism.ts`) reads these off `component.properties` so a fresh PhysicsElement seeded from the catalog inherits the right physical size. The 5×5 ABCD operator (`m_glan_slab`) consumes `lengthMm`, `refractiveIndex`, `wedgeAngleDeg`, `airGapAstigmatismMm` — none of which depend on the transverse cross-section (W/H) |
+| 0080 | isolator_nested_chain | Fixes a silent legacy fallback: `apply_isolator` (the new 3-stage Glan→Faraday→Glan formulation, Phase 2) gates the full nested chain on presence of `frontGlan` + `backGlan` + `faraday` dicts in `kind_params`. Rows seeded before that gate landed have only flat keys (`forwardLossDb`, `isolationDb`, …) and silently fall through to the single-knob power multiplier, missing polarisation-axis transmission/rejection physics, Faraday non-reciprocity, and out_r_front / out_r_back rejected-beam visualisation. Migration scans every `physics_elements` row with `element_kind='isolator'` and splices in canonical nested defaults when any of the three keys is missing. Flat keys are preserved — they coexist; the gate only checks the nested dict presence |
+| 0081 | glan_prism_w_h_6_5 | Phase 21 refinement: refines `Component.properties.sizeMm` on GlanLaserCalcitePrism from 8.5 → 6.5 mm so the procedural prism renders as a compact 6.5 × 6.5 × 7.5 mm crystal. Length / wedge / `n_e` from 0079 unchanged. ABCD unaffected — `m_glan_slab` ignores transverse W/H |
 
 Earlier highlights: `0027` V2 baseline (real `SimulationRun ↔ BeamSegment` FK),
 `0036` multiphysics dispatch, `0042` rename of `optical_elements` →
@@ -460,6 +466,12 @@ The page is a single full-viewport `.workspace-shell` with three regions:
 
 PhyEditor takes over the whole canvas when
 `sceneStore.editorMode === "phy-editor"` (full-screen anchors/spec editor).
+The PHY Editor header carries a "🔧 Binding dev" toggle (top-right) that
+mounts the `ComponentComposer` live binding-tree tweak page in the right
+pane, mutually exclusive with the Kinds / Components rail items. The
+default landing is empty — the user picks a rail item or opens Binding
+dev explicitly (the old IsolatorDevPage auto-landing was retired in
+Phase 2).
 
 ### Page layout — floating panels
 
@@ -486,7 +498,7 @@ Defaults (from `PANEL_DEFS` in `workspace/WorkspaceProvider.tsx`):
 | `rf-link` | RF link | 360, 80 | 720 × 520 | no | 2 |
 | `solver-console` | Solver console | −340, 600 (right column, below Object) | 320 × 260 | yes | 2 |
 | `magnetics` | Magnetics overlay | −340, 80 | 320 × 460 | no | 2 |
-| `ai-binding` | AI Binding | −340, 80 | 380 × 520 | yes (only when `VITE_ENABLE_AI_PANEL=true`) | 3 |
+| `ai-binding` | AI Binding | −340, 80 | 380 × 520 | no (open it from the Window menu after enabling `VITE_ENABLE_AI_PANEL=true`) | 3 |
 
 Layout rules:
 
@@ -525,17 +537,17 @@ Keyboard shortcuts:
 | 3D viewport | `DigitalTwinViewer.tsx`, `DualViewerSplit.tsx` | Three.js canvas; dual viewport with draggable split |
 | Catalog & outliner | `AssetLibraryPanel.tsx` (exports `ComponentsCatalogPanel`, `OutlinerFloatingPanel`), `OutlinerPanel.tsx` | Drag-to-instantiate catalog; nested collections tree |
 | Object editor | `ComponentPanel.tsx`, `IntrinsicSpecPanel.tsx` | Pose / visibility / locks / per-instance physics |
-| PHY editor (full screen) | `PhyEditor.tsx`, `ComponentEditor.tsx`, `KindsEditor.tsx`, `component_editor/AnchorFaceSections.tsx` | Catalog metadata + anchor editor |
+| PHY editor (full screen) | `PhyEditor.tsx`, `ComponentEditor.tsx`, `KindsEditor.tsx`, `component_editor/AnchorFaceSections.tsx`, `ComponentComposer.tsx` | Catalog metadata + anchor editor. `AnchorFaceSections.tsx` ships per-componentType face-section components — Mirror / LaserSource / Waveplate / BeamSplitter and now `GlanLaserFaceSection` (mirrors PBS — the slanted air-gap cut is physically a TIR reflector, expected `n = (0, cos θ_w, sin θ_w)` cut-plane normal at 38.5°) and `IsolatorInternalsSection` (read-only summary of the 2× Glan slabs + Faraday central plane inside an isolator; each Glan row links out to its own GlanLaserCalcitePrism editor). `ComponentEditor` viewport reads `shouldRenderViaBindings` and routes composite Components through `buildSceneObjectFromBindings` so child meshes (Glan sub-Components, mount empties, baked piece assets) appear at their correct local transforms instead of only the root STL. `ComponentComposer.tsx` is the standalone live binding-tree tweak page that replaced `kinds/isolator/IsolatorDevPage.tsx` in Phase 2 |
 | Timing | `PulseTimingPanel.tsx` | Edit TimingProgram intervals |
 | RF | `RfLinkPanel.tsx`, `ScrubTimeRfReadout.tsx` | Per-port Vpp / dBm / freq readout; chain inspector |
-| Optical | `optical/OpticalLinkViewerPanel.tsx`, `optical/BeamScopePanel.tsx`, `optical/CursorMenu.tsx`, `optical/TargetLinksSection.tsx`, `optical/CapabilityPills.tsx` | Beam inspection, ray-scope viewer, cursor menu |
+| Optical | `optical/OpticalLinkViewerPanel.tsx`, `optical/BeamScopePanel.tsx`, `optical/CursorMenu.tsx`, `optical/TargetLinksSection.tsx`, `optical/CapabilityPills.tsx` | Beam inspection, ray-scope viewer, cursor menu. **Phase 2 fix**: the panel's wireframe cache now tags every cached `THREE.Group` with a `digest` derived from the per-object `objectBindings` deltas (`componentBindingId|XYZRxRyRz delta|asset3dIdOverride`). When a user drags an isolator's per-side rotation slider, the digest changes, the cache lookup misses, and the wireframe rebuilds with the new pose — without the digest, the panel froze the wireframe at first render and ignored subsequent slider updates. The same digest is also folded into the panel-level `contentKey` so the parent rebuild gate fires too |
 | Assembly | `TouchCoincidencePanel.tsx`, `AlignPanel.tsx`, `VisibilityControls.tsx` | Constraint solver UI + visibility kit |
 | Per-kind physics | `physics/PhysicsElementPanel.tsx`, `LaserSourceControls.tsx`, `AomAdjustControls.tsx`, `TaperedAmplifierAdjustControls.tsx`, `SimpleAdjustControls.tsx`, `_shared.tsx` | Kind-specific inspectors, extracted from a previously 4000-line monolith |
-| Binding-tree per-instance editor | `BindingTreeAdjustControls.tsx` (new, post-0076) | Generic slider panel for ANY composite component's binding tree. Reads `component.componentBindings`, groups them by `binding.properties.linkGroup`, then renders a numeric + range input per `commonTunableAxes(group)`. Writes go through `sceneStore.upsertObjectBinding` (one row per binding in the link group, so a single slider drag drives `front_glan_laser` + `front_piece` together). Dragging back to 0 with no other axis set deletes the row so the renderer reverts to the catalog baseline. New components opt in just by declaring `tunable_axes` on their bindings — no component-specific code. Mounted from `PhysicsElementPanel` for optical-domain elements |
+| Binding-tree per-instance editor | `BindingTreeAdjustControls.tsx` (new, post-0076) | Generic slider panel for ANY composite component's binding tree. Reads `component.componentBindings`, groups them by `binding.properties.linkGroup`, then renders a numeric + range input per `commonTunableAxes(group)`. Writes go through `sceneStore.upsertObjectBinding` (one row per binding in the link group, so a single slider drag drives `front_glan_laser` + `front_piece` together). Dragging back to 0 with no other axis set deletes the row so the renderer reverts to the catalog baseline. New components opt in just by declaring `tunable_axes` on their bindings — no component-specific code. Mounted from `PhysicsElementPanel` for optical-domain elements. **Phase 2 addition**: a per-instance "See through" checkbox writes `sceneObject.properties.translucentHousing = true` so the renderer drops the isolator housing to 0.35 opacity for the selected instance (default is opaque metal); the legacy `opaqueHousing` key is cleaned up when the toggle is touched. Gated on `componentType === "isolator"` for now — generic enough to fan out by adding new keys to the same block |
 | Power & state | `InstrumentPowerPanel.tsx` | Enabled / temperature / pressure readouts |
 | DDS specifics | `DdsChassisObjectControls.tsx`, `Ad9959ObjectControls.tsx` | AD9959 chassis & per-chip UIs |
 | Toolbar | `SceneToolbar.tsx`, `ToolbarHint.tsx`, `NumberField.tsx`, `CollapsibleSection.tsx` | Initial Setup button, shortcut help, shared inputs |
-| AI binding (alpha) | `AIBindingPanel.tsx` | Drives the agent_orchestrator from the browser. Gated behind `VITE_ENABLE_AI_PANEL=true`. Three local states (`idle` / `running` / `terminal`) map to `agent_sessions.status`. 30 s heartbeat keeps the backend sweeper from auto-abandoning the session. Chat transcript is purely display state; the persisted source of truth for "what got created" is the `mutations` list from `GET /{id}`. Default layout is `visible: true` (post-`WorkspaceProvider` flip) — once the env flag is on, the panel opens with the workspace instead of needing a Window-menu click |
+| AI binding (alpha) | `AIBindingPanel.tsx` | Drives the agent_orchestrator from the browser. Gated behind `VITE_ENABLE_AI_PANEL=true`. Three local states (`idle` / `running` / `terminal`) map to `agent_sessions.status`. 30 s heartbeat keeps the backend sweeper from auto-abandoning the session. Chat transcript is purely display state; the persisted source of truth for "what got created" is the `mutations` list from `GET /{id}`. **Phase 2 addition**: terminal panel now exposes an Unlock button (committed sessions only) wired to `unlockAgentSessionApi` → `POST /api/agent-sessions/{id}/unlock`; success renders a summary row with the count of unlocked assets / components; busy + idempotency-locked while in flight. Default layout flipped back to `visible: false` (the env flag is off by default; even if someone flips only the env var on, the panel stays closed until they open it from the Window menu — kept symmetric with the `App.tsx` and `TopBar.tsx` gates) |
 
 ### Zustand store (`store/sceneStore.ts`)
 
@@ -647,23 +659,28 @@ optional `inspector` (React node). The backend reads the same data through
   are escape hatches. `buildThorlabsIsolatorObject` accepts an
   `opaqueHousing: boolean` flag (default false) so IsolatorDevPage can
   inspect the housing exterior without inner geometry bleeding through.
-- `kinds/isolator/IsolatorDevPage.tsx` — full-screen authoring page
-  for new isolator decompositions; not mounted in the workspace
-  layout, reached via a router stub. Five live panels: (1) Three.js
-  preview with body-frame axes drawn directly on the scene (because
-  bindings store body-local Z-up while three.js is Y-up — the
-  standard `AxesHelper` would mislabel optical axis vs. binding
-  rzDeg axis); (2) per-prism 3-axis Euler editor for the Glan-Laser
-  / PBS pose, seeded from the prism's binding row on model change so
-  the live preview matches what's persisted; (3) Ctrl/Alt + mid-click
-  partition marker (front = Ctrl, back = Alt) with Ctrl/Alt + left-drag
-  box-select — front-marked triangles paint blue, back-marked paint
-  red; (4) preview visibility toggles (`partitionsVisible`,
-  `opaqueHousing` — both per-session, not persisted); (5) Branch A
-  binding-tree pose editor that loads via `listComponentBindingsApi`
-  and applies via `updateComponentBindingApi`. Marked partitions are
-  ultimately exported to an alembic migration (0074 was the first
-  output) with `viewerHints.includeOnlyCentroids` + `recenterOrigin`.
+- `components/ComponentComposer.tsx` (**new, Phase 2** — replaces the
+  retired `kinds/isolator/IsolatorDevPage.tsx`) — full-screen live
+  binding-tree tweak page reached via the PHY Editor top-right "🔧
+  Binding dev" button (no longer the default landing). Layout: header
+  row (Model dropdown + inner-r partition toggles + save / reset),
+  link-rotation row (visible only when ≥1 linked triangle marked),
+  Binding tree poses table (one row per binding — `root(body)` /
+  `front_mount` / `front_pbs` / `front_piece` / `back_mount` /
+  `back_pbs` / `back_piece`, each with pos[x,y,z] + rot[rx,ry,rz] +
+  Apply button that PATCHes `/api/component-bindings/{id}` directly),
+  and a full-width 3D preview canvas driven LIVE from the in-progress
+  `bindingEdits` buffer (so an edit shows before Apply commits).
+  Source of truth is the ComponentBinding rows in the DB; the page's
+  `bindingEdits` is the local-edit buffer; the preview's poseOverride
+  is derived from it. Today wired to the isolator preset (model
+  dropdown is isolator-only, 3D path goes through
+  `buildThorlabsIsolatorObject`); planned generalisations: root picker,
+  new mode, atomic save. Marked partitions still export to an alembic
+  migration (0074 / 0078 baked on top of this workflow) with
+  `viewerHints.includeOnlyCentroids` + `recenterOrigin`. The mutually-
+  exclusive "🔧 Binding dev" toggle in `PhyEditor.tsx` opens this and
+  hides the Kinds/Components rail sub-editors
 - `rayTrace.ts` — forward ray tracer running in the browser using loaded meshes.
   Emits from laser_source / tapered_amplifier along local +X, dispatches by hit
   componentType (mirror reflect, beam_splitter split, lens/waveplate/aom
@@ -811,7 +828,10 @@ A thin axios layer over `VITE_API_BASE_URL`. Method groups:
 - **AI binding agent (alpha, post-0057)**: `createAgentSessionApi`,
   `getAgentSessionApi`, `heartbeatAgentSessionApi`,
   `commitAgentSessionApi`, `cancelAgentSessionApi`,
-  `undoLastMutationApi`, `uploadAgentFileApi`. The
+  `undoLastMutationApi`, `uploadAgentFileApi`,
+  `unlockAgentSessionApi` (**new, Phase 2** — POST
+  `/api/agent-sessions/{id}/unlock`; returns `UnlockResult`
+  `{sessionId, unlockedAssets[], unlockedComponents[]}`). The
   `streamAgentMessage` helper does *not* go through axios — POST
   `/api/agent-sessions/{id}/messages` returns `text/event-stream`,
   which axios doesn't unwrap incrementally, so the helper uses
@@ -844,12 +864,31 @@ JSON dict was promoted to first-class `ObjectBinding` rows by 0076),
 `PhysicsElement`, `BeamPath`, `OpticalPort`, `Spectrum` /
 `SpectrumComponent` / `GaussianMode` / `JonesVector`, per-kind param structs
 (`LaserSourceParams`, `TaperedAmplifierParams`, `MirrorParams`,
-`LensSphericalParams`, `WaveplateParams`, `FiberParams`, …), `AssemblyRelation` /
+`LensSphericalParams`, `WaveplateParams`, `FiberParams`, `GlanPolarizerParams`
+(Phase 2 — gained physical-spec keys `lengthMm` / `refractiveIndex` /
+`airGapAstigmatismMm` / `augmentedOffsetXMm` / `coatingNormalBodyLocal`
+so the procedural prism + 5×5 ABCD operator are catalog-tunable),
+`IsolatorParams` + nested `IsolatorGlanParams` / `IsolatorFaradayParams`
+(Phase 2 — when `frontGlan` + `faraday` + `backGlan` are all present the
+simulator runs the 3-stage Glan→Faraday→Glan composition; missing any
+falls back to the legacy single-knob `forwardLossDb`), …),
+`UnlockResult` (Phase 2 — `sessionId` + `unlockedAssets[]` +
+`unlockedComponents[]`), `AssemblyRelation` /
 `RelationType` / `GeometrySelector`, `Collection` / `CollectionMember` /
 `CollectionTemplate`, `TimingProgram`, `RfSourceParams` / `RfAmplifierParams` /
 `RfCableEndpointLink` / `RfChainNode`, `DeviceState`, `SimulationModule` /
 `SimulationRunV2`, `Circuit`, `EmProblem`, `Mesh`, `ElementKind` (union of all
 ~31 kind strings), `PhysicsCapability`.
+
+Anchor reference: `AssetAnchorId` literal union (in `backend/app/schemas.py`)
+gained `faraday_centre` (Phase 2 — marks the TGG slab's central plane
+normal to the optical axis; position = isolator body centre, direction =
++Z, apertureMm = TGG clear aperture, typ. ⌀4.7 mm for IO-3-850-HP). The
+legacy `front_pbs` / `back_pbs` anchors remain in the union for back-
+compat with alembic-seeded scenes but are no longer the canonical
+isolator alignment surface — the 3-stage architecture puts each Glan
+slab's cut interface anchor on its own GlanLaserCalcitePrism
+sub-Component.
 
 ---
 
@@ -1049,6 +1088,18 @@ Any attempt to touch an `ai_approved_at IS NOT NULL` row raises
   mutation row (keeps it for audit), and lets the agent try again on
   the next turn. Raises `UndoBlockedError` if undoing would violate a
   FK from a not-yet-undone later mutation.
+- `POST /unlock` (**new, Phase 2**) — reverses a previous commit's
+  *lock* (not the lifecycle). For every entity this session created
+  (via the `op='create'`, `undone_at IS NULL` mutation log), clears
+  `ai_approved_at` if it is still set; writes one `unlock`
+  ApprovalEvent per entity. Only valid on `status='committed'`
+  sessions — cancelled / abandoned sessions never had a lock to
+  reverse, running sessions haven't approved anything yet. Idempotent:
+  re-running returns empty `unlockedAssets` / `unlockedComponents`
+  lists. The session row stays `committed`; to re-edit the rows the
+  user starts a new agent session and the now-unlocked rows become
+  touchable again. Useful when an approved Component needs another
+  pass of agent edits.
 
 ### SSE event stream
 
@@ -1121,6 +1172,10 @@ into specific message indices via `messages_json -> N` operators.
   unify the "approve" UI with the existing PHY Editor, and persist
   agent chat transcripts to their own table once the in-memory
   `chat` state grows beyond what `messages_json` already captures.
+  Phase 2 already landed the `POST /unlock` escape hatch for "I
+  committed too early — let me re-edit"; the next step is to expose
+  it from the AI panel of the *new* (current) session as well, not
+  just the panel that did the original commit.
 - **ComponentBinding read-path migration (Stages D → G).** 0062 added the
   table; 0064–0076 worked through the read-path flip — every isolator
   family (TORNOS / IO-VLP / IO-HP / IO-3-HP-flat) now renders through
@@ -1312,7 +1367,47 @@ keeping in mind while extending the system.
   rigidly. If you only need per-child rotation, flat is simpler.
   Picking the wrong shape isn't a bug — but if the user expects "PBS
   and piece rotate together" you want the Mount; if they expect
-  "each independently positionable", flatten.
+  "each independently positionable", flatten. Phase 2 paired this
+  with the `linkGroup` mechanism (0077): when prism + piece must
+  rotate together in the flat tree, give them the same
+  `properties.linkGroup` string and `BindingTreeAdjustControls`
+  renders ONE slider that updates both rows.
+- **Generalized 5×5 ABCD scalar-q split is approximate for rotated
+  cylindrical optics.** `apply_operator` in
+  `solvers/generalized_abcd.py` updates `q_x` and `q_y` independently
+  from the diagonal 2×2 sub-blocks of M, so it's exact for x/y-
+  decoupled operators (free space, spherical lens, glass plate, flat
+  / curved mirror, axis-aligned cyl, PBS arms, Glan slab, Faraday
+  slab) but ignores off-diagonal coupling that arises from
+  `m_cylindrical_rotated` unless the input beam is rotationally
+  symmetric (`q_x = q_y`). The chief-ray 5×5 vector multiply IS exact
+  — only the scalar-q split is approximate. If you ever need
+  off-axis-rotated cyl with astigmatic input, the way forward is a
+  full 2×2 complex-q matrix (not the scalar split today).
+- **Isolator nested-chain gate is silent on missing keys.**
+  `apply_isolator` runs the full 3-stage Glan→Faraday→Glan
+  composition only when `kindParams.frontGlan` + `backGlan` +
+  `faraday` are ALL present as dicts. Missing any falls back to the
+  legacy `forwardLossDb` single-knob power multiplier — no error,
+  the chain just renders lossy. 0080 backfilled the nested defaults
+  onto every pre-existing `physics_elements` row; new isolator rows
+  inherit them from the plugin's `defaultParams`. If a fresh scene
+  starts looking like the isolator is invisible (forward power
+  passes through, no `out_r_front` / `out_r_back` rejected-beam
+  segments, polarisation untouched) check the row's `kind_params`
+  first — the gate is the most likely culprit.
+- **GlanLaserCalcitePrism geometry lives in TWO places.** The 3D
+  procedural renderer (`glan_polarizer_prism.ts`) reads
+  `component.properties.{sizeMm, lengthMm, wedgeAngleDeg}` for the
+  visual prism dimensions; the 5×5 ABCD operator (`m_glan_slab`)
+  reads `kindParams.{lengthMm, refractiveIndex, wedgeAngleDeg,
+  airGapAstigmatismMm, augmentedOffsetXMm}` for the optical math.
+  Migrations 0079 + 0081 set the Component-level geometry; the
+  plugin's `defaultParams` seed the per-PhysicsElement keys.
+  Editing only one of them (e.g. tweaking `lengthMm` on the
+  Component but not on existing PhysicsElement rows) leaves the
+  renderer and the solver disagreeing. Re-running 0080 is the
+  safest way to re-align after a Component-level change.
 
 ### Dev quality of life
 
@@ -1355,14 +1450,29 @@ keeping in mind while extending the system.
 
 ---
 
-*Last regenerated: 2026-05-20 (Alembic revision 0076: Asset3D
-`properties` JSONB with `viewerHints` (0064) → isolator binding-tree
-migration sweep (TORNOS 0065/0067 → empty target_kind 0066 → VLP 0068
-+ viewerHints fix 0069 → isolator deletion data lifted to asset 0070
-→ HP Glan-Laser bindings 0071 → HP Glan poses 0072/0073 → HP partition
-sub-assets baked 0074 → HP flattened 0075) → `object_bindings` first-
-class table for per-instance overrides (0076); plus the new
-`BindingTreeAdjustControls` panel, generic `viewerHints` loader, and
-IsolatorDevPage authoring flow; previous epoch was Stage C ORM split
-into themed `models/` package and the `loadAsset/` tree split
-with per-kind `renderer.ts` files + isolator PBS overlay).*
+*Last regenerated: 2026-05-21 (Alembic revision 0081 — Phase 2 isolator
+re-architecture: legacy monolithic PBS+Faraday+PBS retired in favour of
+the 3-stage Glan-Laser → Faraday → Glan-Laser chain). New backend
+solver `solvers/generalized_abcd.py` introduces the 5×5 augmented-matrix
+ABCD propagator (`m_glan_slab`, `m_faraday_slab`, `m_thin_lens` with
+decenter/tilt, `m_cylindrical_*`, `m_curved_mirror`, …); `optical_solver`
+gains `apply_glan_laser` (two ports — transmitted E-ray + TIR-rejected
+O-ray) and `apply_faraday_rotator`, then `apply_isolator` composes the
+three with `out_r_front` / `out_r_back` rejected-beam ports.
+Schema: `faraday_centre` anchor added (TGG central plane), legacy
+`front_pbs`/`back_pbs` retained for back-compat; alembic 0077 ports
+IO-5-HP to the same flat tree + linkGroup as IO-3-HP, 0078 borrows the
+IO-3 housing + piece partitions, 0079 + 0081 nail down the
+GlanLaserCalcitePrism physical size (7.5 × 6.5 × 6.5 mm, wedge 38.5°,
+n_e 1.48), 0080 backfills the nested 3-stage chain into every existing
+isolator PhysicsElement so legacy scenes get the new physics without a
+manual edit. Agent sessions gain `POST /unlock` to reverse a commit's
+`ai_approved_at` lock. Frontend: `IsolatorDevPage` retired and replaced
+by the standalone `ComponentComposer` page (opened via the new "🔧
+Binding dev" toggle in PHY Editor); `BindingTreeAdjustControls` adds a
+per-instance "See through" toggle for translucent isolator housings;
+`AIBindingPanel` gains an Unlock button; `OpticalLinkViewerPanel`
+wireframe cache now keys on a per-instance objectBindings digest so
+slider drags actually re-render. Previous epoch (0076): `object_bindings`
+first-class table + `BindingTreeAdjustControls` + generic `viewerHints`
+asset loader + IsolatorDevPage authoring flow.*

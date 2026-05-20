@@ -15,7 +15,7 @@
  * created" is the mutations list returned by GET /{id} — the chat
  * transcript is for human readability.
  */
-import { Check, Lock, Paperclip, Send, Trash2, Undo2, X } from "lucide-react";
+import { Check, Lock, Paperclip, Send, Trash2, Undo2, Unlock, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -26,6 +26,7 @@ import {
   heartbeatAgentSessionApi,
   streamAgentMessage,
   undoLastMutationApi,
+  unlockAgentSessionApi,
   uploadAgentFileApi,
   type AgentStreamEvent,
 } from "../api/client";
@@ -299,6 +300,28 @@ export function AIBindingPanel() {
     setErrorMsg(null);
   }, []);
 
+  const [unlockSummary, setUnlockSummary] = useState<{
+    assets: number;
+    components: number;
+  } | null>(null);
+
+  const handleUnlock = useCallback(async () => {
+    if (state.kind !== "terminal" || state.session.status !== "committed") return;
+    setBusy(true);
+    setErrorMsg(null);
+    try {
+      const result = await unlockAgentSessionApi(state.session.id);
+      setUnlockSummary({
+        assets: result.unlockedAssets.length,
+        components: result.unlockedComponents.length,
+      });
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : "Unlock failed.");
+    } finally {
+      setBusy(false);
+    }
+  }, [state]);
+
   const liveMutations = useMemo(() => {
     if (state.kind === "idle") return [];
     return state.mutations.filter((m) => m.undoneAt === null);
@@ -504,13 +527,36 @@ export function AIBindingPanel() {
                 </div>
               </div>
             )}
-            <button
-              type="button"
-              className="ai-binding-primary"
-              onClick={handleReset}
-            >
-              Start new session
-            </button>
+            {unlockSummary && (
+              <div className="ai-binding-summary">
+                <div>
+                  Unlocked {unlockSummary.assets} asset(s),{" "}
+                  {unlockSummary.components} component(s). Start a new
+                  session to edit them.
+                </div>
+              </div>
+            )}
+            <div className="ai-binding-controls">
+              {state.session.status === "committed" && (
+                <button
+                  type="button"
+                  className="ai-binding-secondary"
+                  onClick={handleUnlock}
+                  disabled={busy || unlockSummary !== null}
+                  title="Clear ai_approved_at on every entity this session locked"
+                >
+                  <Unlock size={14} />
+                  Unlock
+                </button>
+              )}
+              <button
+                type="button"
+                className="ai-binding-primary"
+                onClick={handleReset}
+              >
+                Start new session
+              </button>
+            </div>
           </div>
         )}
 

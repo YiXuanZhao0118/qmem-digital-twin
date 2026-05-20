@@ -25,6 +25,48 @@
  *     contract. mirror_mount, optical_post, mounting_clamp, tool, ...
  *
  * Both share `ComponentPluginBase`; `physics` is the discriminator.
+ *
+ * -------------------------------------------------------------------------
+ * COMPOSITE COMPONENT AUTHORING RULES (composite = a Component whose
+ * ComponentBinding tree contains sub-Components or multiple assets — the
+ * IO-3-850-HP isolator is the canonical example: housing STL + 2 ×
+ * GlanLaserCalcitePrism sub-Components + 2 × baked piece assets).
+ *
+ *  1. ANCHOR OWNERSHIP. An Asset3D anchor belongs to the plugin that
+ *     physically owns the surface it marks. A composite Component
+ *     declares ONLY anchors for features it owns directly — e.g. the
+ *     isolator declares ``faraday_centre`` (the TGG central plane it
+ *     owns), and DOES NOT re-declare ``intercept_in`` cut anchors that
+ *     belong to its GlanLaserCalcitePrism sub-Components. Re-declaring
+ *     sub-Component anchors on the outer plugin produces "Anchors (5)"
+ *     ghost rows in the PHY Editor that don't map to any physical
+ *     surface of the outer Component — the symptom Phase 14 fixed.
+ *
+ *  2. PHYSICS PARAM REUSE. A composite Component's nested kindParams
+ *     (e.g. ``isolator.defaultParams.frontGlan``) MUST be derived from
+ *     the sub-Component plugin's ``defaultParams`` via spread, not
+ *     copy-pasted. Pattern:
+ *
+ *         frontGlan: {
+ *           ...glanPolarizerPlugin.physics.defaultParams,
+ *           transmissionAxisDegBeamLocal: 0.0,   // overrides only
+ *         }
+ *
+ *     Copy-pasting silently drifts when the sub-plugin updates a value
+ *     (e.g. refining n_e at a new wavelength) — the standalone Glan
+ *     gets the new value but the isolator-nested copy stays stale, and
+ *     the solver produces different results for "same" Glan-Laser in
+ *     two contexts.
+ *
+ *  3. SUB-COMPONENT INSTANCES SHARE ONE PhysicsElement. Today a composite
+ *     SceneObject still maps to ONE PhysicsElement row whose kindParams
+ *     carries the nested sub-Component params. Sub-Components do NOT
+ *     produce their own PhysicsElements at scene-instance time. If you
+ *     want per-sub-Component instance editing, build it on top of the
+ *     nested kindParams shape (see Phase 11's IsolatorInternalsSection)
+ *     — do not split into multiple PhysicsElements without first
+ *     migrating the 1:1 unique constraint on physics_elements.object_id.
+ * -------------------------------------------------------------------------
  */
 
 import type { ReactElement } from "react";

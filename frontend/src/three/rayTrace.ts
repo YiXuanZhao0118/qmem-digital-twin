@@ -441,6 +441,11 @@ const REFLECTING_KINDS: ReadonlySet<ElementKind> = new Set<ElementKind>([
 
 const SPLITTING_KINDS: ReadonlySet<ElementKind> = new Set<ElementKind>([
   "beam_splitter",
+  // Glan-Laser: E-ray transmits straight through (out), O-ray hits TIR
+  // at the air-gap cut and exits the side (out_r). Same 2-port split
+  // pattern as a polarising PBS; the backend dispatcher emits both
+  // ports from apply_glan_laser.
+  "glan_polarizer",
 ]);
 
 type TraceContext = {
@@ -696,6 +701,44 @@ function applyPolarizer(
   const a: [number, number] = [co * co * passAmp + si * si * leakAmp, 0];
   const b: [number, number] = [co * si * (passAmp - leakAmp), 0];
   return applyJonesMatrix(j, a, b, b, [si * si * passAmp + co * co * leakAmp, 0]);
+}
+
+/** Faraday rotator Jones matrix — non-reciprocal rotation in lab frame.
+ *  Mirrors backend jones_faraday_matrix: ((cos θ, -sin θ), (sin θ, cos θ)).
+ *  Used as the Part-2 building block inside the three-stage isolator. */
+function applyFaradayRotator(j: JonesTuple, rotationDeg: number): JonesTuple {
+  const theta = (rotationDeg * Math.PI) / 180;
+  const co = Math.cos(theta);
+  const si = Math.sin(theta);
+  return applyJonesMatrix(j, [co, 0], [-si, 0], [si, 0], [co, 0]);
+}
+
+/** Optical isolator — applies front Glan-Laser polarizer → Faraday rotator →
+ *  back Glan-Laser polarizer in sequence, mirroring backend apply_isolator's
+ *  forward "out" port. Each Glan-Laser is modelled by jones_polarizer_matrix
+ *  with its own pass-axis (transmissionAxisDegBeamLocal) and extinction; the
+ *  Faraday body rotates the Jones state by faradayRotationDeg without power
+ *  loss. Returns the post-isolator Jones state; the caller derives the
+ *  transmission factor from |J_out|² / |J_in|² (same idiom as polarizer). */
+function applyIsolatorThreeStage(
+  j: JonesTuple,
+  front: { transmissionAxisDegBeamLocal?: number; transmissionAxisDeg?: number; transmission?: number; extinctionRatioDb?: number },
+  faraday: { faradayRotationDeg?: number },
+  back: { transmissionAxisDegBeamLocal?: number; transmissionAxisDeg?: number; transmission?: number; extinctionRatioDb?: number },
+): JonesTuple {
+  const j1 = applyPolarizer(
+    j,
+    front.transmissionAxisDegBeamLocal ?? front.transmissionAxisDeg ?? 0,
+    front.transmission ?? 0.92,
+    front.extinctionRatioDb ?? 55,
+  );
+  const j2 = applyFaradayRotator(j1, faraday.faradayRotationDeg ?? 45);
+  return applyPolarizer(
+    j2,
+    back.transmissionAxisDegBeamLocal ?? back.transmissionAxisDeg ?? 0,
+    back.transmission ?? 0.92,
+    back.extinctionRatioDb ?? 55,
+  );
 }
 
 /** Idealised PBS visualisation. The output **direction** is FIXED — the
@@ -1151,7 +1194,25 @@ function traceOneRay(
 
     const oe = elementForObject(hitObjectId, ctx);
     const kp = oe?.kindParams as { coatingNormalBodyLocal?: number[]; coatingNormalLocal?: number[] } | undefined;
-    const coating = bindingNormal ?? kp?.coatingNormalBodyLocal ?? kp?.coatingNormalLocal;
+    // Glan-Laser: the cut-plane normal is owned by the Asset3D's
+    // intercept_in anchor (settable via PHY Editor face-pick — Phase 8).
+    // The kindParams copy is only the plugin's seed default and goes
+    // stale the moment the user customises the asset. Prefer the asset
+    // anchor as the live source of truth; fall back to kindParams when
+    // the asset hasn't declared one yet.
+    let assetCutNormal: number[] | undefined;
+    if (kind === "glan_polarizer" && hitObj) {
+      const hitComp = ctx.components.find((c) => c.id === hitObj.componentId);
+      const asset = hitComp?.asset3dId
+        ? ctx.assets.find((a) => a.id === hitComp.asset3dId)
+        : null;
+      const interceptIn = asset?.anchors?.find((a) => a.id === "intercept_in");
+      const dir = interceptIn?.directionBodyLocal;
+      if (dir && typeof dir.x === "number" && typeof dir.y === "number" && typeof dir.z === "number") {
+        assetCutNormal = [dir.x, dir.y, dir.z];
+      }
+    }
+    const coating = assetCutNormal ?? bindingNormal ?? kp?.coatingNormalBodyLocal ?? kp?.coatingNormalLocal;
     let coatingNormalWorld: THREE.Vector3 | null = null;
     if (Array.isArray(coating) && coating.length >= 3 && hitObj) {
       coatingNormalWorld = bodyLocalDirToWorldThree(
@@ -2047,15 +2108,39 @@ function traceOneRay(
         oeParams.transmission ?? 0.95,
         oeParams.extinctionRatioDb ?? 30,
       );
+    } else if (kind === "isolator") {
+      // Mirrors backend apply_isolator forward "out" port:
+      //   front Glan-Laser polarizer → Faraday rotator → back Glan-Laser polarizer.
+      // Power loss is captured by the Jones-norm drop across the two Glan-Laser
+      // projections (same convention used for `polarizer` below).
+      const isoParams = (oe?.kindParams ?? {}) as {
+        frontGlan?: { transmissionAxisDegBeamLocal?: number; transmissionAxisDeg?: number; transmission?: number; extinctionRatioDb?: number };
+        faraday?: { faradayRotationDeg?: number };
+        backGlan?: { transmissionAxisDegBeamLocal?: number; transmissionAxisDeg?: number; transmission?: number; extinctionRatioDb?: number };
+      };
+      if (isoParams.frontGlan && isoParams.faraday && isoParams.backGlan) {
+        nextPol = applyIsolatorThreeStage(
+          polarization,
+          isoParams.frontGlan,
+          isoParams.faraday,
+          isoParams.backGlan,
+        );
+      }
     }
     // Power attenuation: each pass-through optic applies its `transmission`
     // (lens / waveplate / polarizer / fibre coupler / isolator) or
     // `baseEfficiency` (AOM ±1st order) factor. Default 1.0 if neither is
     // present so unknown elements don't silently drop power. For polarizers
-    // the power factor is captured by the new |Jones|² (polarizer projects
-    // intensity), so use the Jones-norm-squared ratio as the multiplier.
+    // and the three-stage isolator the power factor is captured by the new
+    // |Jones|² drop (each polariser projects intensity), so use the Jones-
+    // norm-squared ratio as the multiplier.
+    const isThreeStageIsolator =
+      kind === "isolator" &&
+      typeof (oe?.kindParams as { frontGlan?: unknown })?.frontGlan === "object" &&
+      typeof (oe?.kindParams as { faraday?: unknown })?.faraday === "object" &&
+      typeof (oe?.kindParams as { backGlan?: unknown })?.backGlan === "object";
     let tx: number;
-    if (kind === "polarizer") {
+    if (kind === "polarizer" || isThreeStageIsolator) {
       const inI = polarization[0] ** 2 + polarization[1] ** 2 + polarization[2] ** 2 + polarization[3] ** 2;
       const outI = nextPol[0] ** 2 + nextPol[1] ** 2 + nextPol[2] ** 2 + nextPol[3] ** 2;
       tx = inI > 1e-12 ? outI / inI : 0;

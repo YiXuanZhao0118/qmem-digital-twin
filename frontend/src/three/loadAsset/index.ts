@@ -127,6 +127,14 @@ export async function loadAssetObject(
     fiberEndA?: FiberEndPlacement | null;
     fiberEndB?: FiberEndPlacement | null;
   } | null,
+  /** Per-instance rendering hints surfaced from `sceneObject.properties`.
+   *  Currently isolator-only (`translucentHousing` flips housing + piece
+   *  sub-mesh materials from the default opaque metal look to a 0.35
+   *  see-through inspection mode). Generic channel so future
+   *  per-instance render preferences can land here. */
+  renderHints?: {
+    translucentHousing?: boolean;
+  } | null,
 ): Promise<THREE.Object3D> {
   if (component.componentType === "optical_table") {
     const table = createNewportOpticalTable();
@@ -245,24 +253,31 @@ export async function loadAssetObject(
         // from the housing. Use raw geometry filtered only by includeOnly,
         // apply scale, and return without the wrapping done below.
         const pieceGeom = applyIncludeOnlyFilter(rawGeometry, hints!.includeOnlyCentroids!);
-        const isFrontPiece = /front_piece/i.test(asset.name);
-        const isBackPiece = /back_piece/i.test(asset.name);
-        const pieceColor = isFrontPiece ? "#1e3a8a"
-                         : isBackPiece ? "#7c2d12"
-                         : "#1a1a1c";
+        // Piece sub-meshes inherit the SAME housing material as the
+        // body — uniform metal-housing look. Default = opaque (matches
+        // a real metal isolator); user can flip to translucent via
+        // BindingTreeAdjustControls' "See through" toggle when they
+        // want to inspect internal prisms.
+        const seeThrough = renderHints?.translucentHousing === true;
         const pieceMesh = new THREE.Mesh(pieceGeom, new THREE.MeshStandardMaterial({
-          color: pieceColor,
+          color: "#1a1a1c",
           metalness: 0.55,
           roughness: 0.5,
-          transparent: true,
-          opacity: 0.55,
-          depthWrite: false,
+          transparent: seeThrough,
+          opacity: seeThrough ? 0.35 : 1,
+          depthWrite: !seeThrough,
         }));
         pieceMesh.name = component.name;
         applyAssetScale(pieceMesh, asset);
         return pieceMesh;
       }
-      object = buildThorlabsIsolatorObject(geometry, component, asset);
+      // Body asset: opaqueHousing flag on buildThorlabsIsolatorObject
+      // is true unless the user opted into see-through inspection.
+      object = buildThorlabsIsolatorObject(
+        geometry, component, asset,
+        0, undefined, undefined, undefined,
+        renderHints?.translucentHousing !== true,
+      );
     } else {
       // Material hint wins over the per-component material when set —
       // lets a housing asset declare "I'm translucent" without the

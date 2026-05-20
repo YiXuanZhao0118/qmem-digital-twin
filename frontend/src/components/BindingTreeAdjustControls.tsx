@@ -76,6 +76,7 @@ const AXIS_FIELD_TO_DELTA_KEY: Record<
 export function BindingTreeAdjustControls({ component }: { component: ComponentItem }) {
   const upsertObjectBinding = useSceneStore((s) => s.upsertObjectBinding);
   const deleteObjectBinding = useSceneStore((s) => s.deleteObjectBinding);
+  const updateSceneObject = useSceneStore((s) => s.updateSceneObject);
   // Read stable references from the store, then derive the filtered
   // arrays via useMemo. Filtering inside the selector returns a new
   // array on every render, which zustand's Object.is comparison sees
@@ -165,9 +166,48 @@ export function BindingTreeAdjustControls({ component }: { component: ComponentI
     );
   };
 
+  // Per-instance rendering hint: "See through" toggle. Lives on
+  // sceneObject.properties.translucentHousing (boolean, default false).
+  // The renderer's default is OPAQUE (real metal isolator look);
+  // checking this lets the user inspect the internal prisms by
+  // dropping the housing to 0.35 opacity. Isolator-only for now —
+  // gated on componentType so the toggle only shows where the
+  // renderer honours it. Generic enough that adding new hints later
+  // is one more checkbox in this block.
+  const translucentHousing = Boolean(
+    (sceneObject?.properties as { translucentHousing?: unknown } | undefined)?.translucentHousing,
+  );
+  const setTranslucentHousing = async (next: boolean) => {
+    if (!sceneObject) return;
+    const existing = (sceneObject.properties ?? {}) as Record<string, unknown>;
+    const props = { ...existing };
+    if (next) props.translucentHousing = true;
+    else delete props.translucentHousing;
+    // Clean up the legacy `opaqueHousing` key so we're not carrying
+    // two flags with overlapping semantics on the same object.
+    delete props.opaqueHousing;
+    await updateSceneObject(sceneObject.id, { properties: props });
+  };
+  const showTranslucentToggle = component.componentType === "isolator";
+
   return (
     <div className="physics-panel-kind-params" style={{ marginTop: 6 }}>
       <div className="physics-panel-kind-params-header">Per-instance adjustments</div>
+      {showTranslucentToggle && (
+        <label
+          className="physics-panel-kind-params-field"
+          style={{ display: "flex", alignItems: "center", gap: 8, paddingBottom: 4 }}
+          title="Render the housing translucent (opacity 0.35) so the internal prisms are visible through it. Default is opaque metal."
+        >
+          <input
+            type="checkbox"
+            disabled={!hasInstance}
+            checked={translucentHousing}
+            onChange={(e) => void setTranslucentHousing(e.target.checked)}
+          />
+          <span>See through</span>
+        </label>
+      )}
       <div className="physics-panel-kind-params-grid">
         {tunableGroups.map(({ name, bindings, axes }) =>
           axes.map((axisKey) => {

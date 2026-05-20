@@ -270,6 +270,74 @@ async def cancel_session(
     }
 
 
+async def unlock_session(
+    db: AsyncSession, session_id: uuid.UUID
+) -> dict[str, object]:
+    """Reverse a commit — clear ``ai_approved_at`` on every entity this
+    session locked, so the AI tool layer can mutate them again.
+
+    Idempotent: if a row was already unlocked (either by a previous
+    call or because another session re-approved and we got out of sync)
+    we leave it alone. The session row itself stays 'committed' — this
+    operation reverses the *lock*, not the lifecycle. To re-edit the
+    bindings, the user starts a new agent session and the now-unlocked
+    rows are touchable again.
+
+    Writes one ``unlock`` ApprovalEvent per entity for the audit trail.
+    """
+    sess = await db.get(AgentSession, session_id)
+    if sess is None:
+        raise SessionNotFoundError(str(session_id))
+    if sess.status != "committed":
+        # Cancelled / abandoned sessions never had a lock to reverse;
+        # 'running' sessions haven't approved anything yet.
+        raise RuntimeError(
+            f"Session {session_id} is {sess.status!r}; only 'committed' "
+            "sessions can be unlocked."
+        )
+
+    # Find every entity this session created (via the mutation log) and
+    # check it's still locked. The session may have committed N entities
+    # but a follow-up session might have already unlocked or replaced
+    # some of them — only flip the ones that are still locked.
+    mutations_result = await db.scalars(
+        select(SessionMutation).where(
+            SessionMutation.session_id == session_id,
+            SessionMutation.op == "create",
+            SessionMutation.undone_at.is_(None),
+        )
+    )
+    mutations = list(mutations_result.all())
+
+    unlocked_assets: list[uuid.UUID] = []
+    unlocked_components: list[uuid.UUID] = []
+    for mut in mutations:
+        cls = _model_for(mut.entity_type)
+        entity = await db.get(cls, mut.entity_id)
+        if entity is None or entity.ai_approved_at is None:
+            continue
+        entity.ai_approved_at = None
+        if mut.entity_type == "asset_3d":
+            unlocked_assets.append(mut.entity_id)
+        else:
+            unlocked_components.append(mut.entity_id)
+        db.add(
+            ApprovalEvent(
+                event_type="unlock",
+                entity_type=mut.entity_type,
+                entity_id=mut.entity_id,
+                session_id=session_id,
+            )
+        )
+
+    await db.commit()
+    return {
+        "session_id": session_id,
+        "unlocked_assets": unlocked_assets,
+        "unlocked_components": unlocked_components,
+    }
+
+
 async def undo_last_mutation(
     db: AsyncSession, session_id: uuid.UUID
 ) -> SessionMutation:

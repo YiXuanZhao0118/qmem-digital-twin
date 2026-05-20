@@ -5,6 +5,7 @@ import type {
   AgentSession,
   AgentSessionState,
   AgentUpload,
+  UnlockResult,
   Anchor,
   AssemblyRelation,
   Asset3D,
@@ -1410,6 +1411,15 @@ export async function cancelAgentSessionApi(
 ): Promise<CancelResult> {
   const response = await client.post<CancelResult>(
     `/api/agent-sessions/${sessionId}/cancel`,
+  );
+  return response.data;
+}
+
+export async function unlockAgentSessionApi(
+  sessionId: string,
+): Promise<UnlockResult> {
+  const response = await client.post<UnlockResult>(
+    `/api/agent-sessions/${sessionId}/unlock`,
   );
   return response.data;
 }

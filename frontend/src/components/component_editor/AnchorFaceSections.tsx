@@ -17,13 +17,23 @@
  *   - LaserSourceFaceSection
  *   - WaveplateFaceSection
  *   - BeamSplitterFaceSection (pbs / bs)
+ *   - GlanLaserFaceSection  (slanted cut interface — same anchor pattern
+ *                            as PBS, the air-gap cut is a TIR reflector)
+ *   - IsolatorInternalsSection (read-only summary of the 2× Glan slabs +
+ *                            Faraday central plane inside an isolator;
+ *                            each Glan row links out to its own
+ *                            GlanLaserCalcitePrism editor)
  *
  * Complex sections (TaperedAmplifier, FiberPatchCable, Aom) still
  * live in ComponentEditor.tsx — they pull in helpers from
  * elsewhere in that file (computeBraggTiltAxisFromRfDirectionBodyLocal,
  * useState hooks, etc.) and are a separate extraction pass.
  */
-import type { Anchor } from "../../types/digitalTwin";
+import type {
+  Anchor,
+  ComponentBinding,
+  ComponentItem,
+} from "../../types/digitalTwin";
 
 /** Simple anchor draft state: the editor mutates this in-memory; only
  *  the Save button promotes it to the store + backend.
@@ -638,6 +648,306 @@ export function BeamSplitterFaceSection({
         showDirection={true}
         apertureMode="rectangle"
       />
+    </div>
+  );
+}
+
+
+// =============================================================================
+// GlanLaserFaceSection — mirrors BeamSplitterFaceSection (the slanted air-gap
+// cut inside a Glan-Laser is physically a TIR reflector, equivalent to PBS's
+// diagonal cement plane).
+// =============================================================================
+
+export function GlanLaserFaceSection({
+  draft,
+  hasOutline: _hasOutline,
+  wedgeAngleDeg,
+  updateDraft,
+}: {
+  draft: AnchorDraft | null;
+  hasOutline: boolean;
+  /** Wedge angle from kindParams (default 38° for calcite at 850 nm).
+   *  Drives the cut-plane normal hint shown to the user. */
+  wedgeAngleDeg?: number;
+  updateDraft: (key: string, patch: Partial<AnchorDraft>) => void;
+}) {
+  if (!draft) {
+    return (
+      <div className="component-editor-section">
+        <div className="component-editor-section-title">Slanted cut interface</div>
+        <div style={{ fontSize: 12, opacity: 0.7 }}>
+          No anchor available - load a component with an Asset3D first.
+        </div>
+      </div>
+    );
+  }
+
+  const dirSet = !!draft.directionBodyLocal;
+  const wedge = wedgeAngleDeg ?? 38;
+  const wedgeRad = (wedge * Math.PI) / 180;
+  const expectedNy = Math.cos(wedgeRad);
+  const expectedNz = Math.sin(wedgeRad);
+
+  return (
+    <div className="component-editor-section">
+      <div className="component-editor-section-title">
+        Slanted cut interface - <code style={{ fontSize: 11 }}>GLAN-LASER</code>
+      </div>
+      <div className="mirror-face-status">
+        <div>
+          <strong style={{ color: "#a78bfa" }}>Glan-Laser Polariser</strong>
+        </div>
+        <div style={{ fontSize: 11, opacity: 0.7, marginTop: 2 }}>
+          E-ray (parallel polarisation) transmits straight through; O-ray
+          (orthogonal polarisation) hits TIR at the air-gap cut and exits
+          the side at ~67-68° from the optical axis (per
+          kindParams.transmissionAxisDegBeamLocal). ER from kindParams.
+        </div>
+        <div style={{ marginTop: 6 }}>
+          {dirSet ? (
+            <>
+              <span style={{ color: "#facc15" }}>Interface placed</span>
+              <span style={{ opacity: 0.65, marginLeft: 6 }}>
+                center ({draft.positionMmBodyLocal.x.toFixed(2)},{" "}
+                {draft.positionMmBodyLocal.y.toFixed(2)},{" "}
+                {draft.positionMmBodyLocal.z.toFixed(2)}) mm
+              </span>
+              <div style={{ opacity: 0.65, marginTop: 4, fontSize: 11 }}>
+                coating normal = ({draft.directionBodyLocal!.x.toFixed(3)},{" "}
+                {draft.directionBodyLocal!.y.toFixed(3)},{" "}
+                {draft.directionBodyLocal!.z.toFixed(3)})
+              </div>
+              <div style={{ opacity: 0.55, marginTop: 2, fontSize: 10 }}>
+                expected for {wedge}° wedge: (0.000, {expectedNy.toFixed(3)},{" "}
+                {expectedNz.toFixed(3)})
+              </div>
+            </>
+          ) : (
+            <span style={{ color: "#f87171" }}>No coating normal set</span>
+          )}
+        </div>
+      </div>
+      <p className="mirror-face-hint">
+        The air-gap cut between the two right-angle calcite prisms acts as a
+        TIR reflector — same role as a PBS cube's diagonal cement plane.
+        Snap the anchor to the body centre and set the direction to the cut
+        normal: for a wedge angle θ from the optical axis Z, the normal
+        sits at (0, cos θ, sin θ). The interface is RECTANGULAR (aperture ×
+        aperture / sin θ) — set width and height independently below.
+      </p>
+      <EditableAnchorFields
+        draft={draft}
+        updateDraft={updateDraft}
+        showDirection={true}
+        apertureMode="rectangle"
+      />
+    </div>
+  );
+}
+
+
+// =============================================================================
+// IsolatorInternalsSection — read-only summary of the 3-stage chain
+// (front Glan slab + Faraday central plane + back Glan slab) inside an
+// isolator Component. Each Glan row is a non-editable view + a link that
+// navigates to the GlanLaserCalcitePrism editor.
+// =============================================================================
+
+/** Minimal shape of the nested isolator kindParams the section needs to
+ *  display. All optional — when missing, the section shows "(plugin
+ *  default)" for the affected fields. */
+export interface IsolatorInternalsKindParams {
+  frontGlan?: {
+    transmissionAxisDegBeamLocal?: number;
+    transmission?: number;
+    extinctionRatioDb?: number;
+    lengthMm?: number;
+    refractiveIndex?: number;
+    wedgeAngleDeg?: number;
+  };
+  backGlan?: {
+    transmissionAxisDegBeamLocal?: number;
+    transmission?: number;
+    extinctionRatioDb?: number;
+    lengthMm?: number;
+    refractiveIndex?: number;
+    wedgeAngleDeg?: number;
+  };
+  faraday?: {
+    faradayRotationDeg?: number;
+    lengthMm?: number;
+    refractiveIndex?: number;
+    augmentedOffsetXMm?: number;
+    augmentedOffsetYMm?: number;
+  };
+}
+
+interface IsolatorInternalsSubcomponent {
+  /** Slot label — the migration 0071 convention stores
+   *  "front_glan_laser" / "back_glan_laser" in binding.properties.role_label
+   *  (not in binding.role, which is hardcoded "internal_part"). Caller
+   *  resolves and passes the effective label here so slot matching
+   *  works regardless of which field future migrations use. */
+  roleLabel: string;
+  binding: ComponentBinding;
+  subComponent: ComponentItem;
+}
+
+export function IsolatorInternalsSection({
+  isolatorComponent,
+  subcomponents,
+  kindParams,
+  onNavigateToSubcomponent,
+}: {
+  isolatorComponent: ComponentItem;
+  /** Pre-resolved by the parent — typically 2 Glan slabs (front + back).
+   *  Caller filters component_bindings for targetKind="subcomponent" and
+   *  looks up each subComponentId in the components list. */
+  subcomponents: IsolatorInternalsSubcomponent[];
+  /** kindParams from the FIRST scene instance of this isolator (the
+   *  parent ComponentEditor already infers this for the BS section). */
+  kindParams: IsolatorInternalsKindParams;
+  /** Called when the user clicks a Glan slab's "Edit →" link. Should
+   *  switch the PHY Editor's selected component to the given
+   *  sub-Component id (use the existing handlePickComponent flow so the
+   *  dirty-check prompt fires). */
+  onNavigateToSubcomponent: (componentId: string) => void;
+}) {
+  const front = kindParams.frontGlan ?? {};
+  const back = kindParams.backGlan ?? {};
+  const faraday = kindParams.faraday ?? {};
+
+  const fmt = (v: number | undefined, unit = "", digits = 3): string =>
+    typeof v === "number" && Number.isFinite(v)
+      ? `${v.toFixed(digits)}${unit}`
+      : "(plugin default)";
+
+  // Match a binding role to the nested Glan kindParams slot. Catalogue
+  // role labels include "front_glan_laser" / "back_glan_laser"; allow
+  // shorter "front"/"back" aliases for future migrations.
+  const slotFor = (role: string): "front" | "back" | null => {
+    const r = role.toLowerCase();
+    if (r.includes("front")) return "front";
+    if (r.includes("back")) return "back";
+    return null;
+  };
+
+  return (
+    <div className="component-editor-section">
+      <div className="component-editor-section-title">
+        Isolator internals - <code style={{ fontSize: 11 }}>{isolatorComponent.name}</code>
+      </div>
+      <p className="mirror-face-hint">
+        Read-only view of the 3-stage chain (Glan-Laser → Faraday Rotator
+        → Glan-Laser). Glan-slab optics live on the
+        <code style={{ margin: "0 3px" }}>GlanLaserCalcitePrism</code>
+        sub-Component — click the link on each row to edit there. The
+        Faraday central plane is owned by the isolator and edited via
+        kindParams in the Object panel of each scene instance.
+      </p>
+
+      {/* === Front Glan slab === */}
+      {subcomponents
+        .filter((s) => slotFor(s.roleLabel) === "front")
+        .map((s) => {
+          const p = front;
+          return (
+            <div key={s.binding.id} className="mirror-face-status" style={{ marginTop: 4 }}>
+              <div>
+                <strong style={{ color: "#a78bfa" }}>
+                  Front Glan slab (m_glan_slab)
+                </strong>
+                <span style={{ opacity: 0.65, fontSize: 11, marginLeft: 8 }}>
+                  → {s.subComponent.name}
+                </span>
+              </div>
+              <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4, lineHeight: 1.5 }}>
+                axis = {fmt(p.transmissionAxisDegBeamLocal, "°", 1)} ·{" "}
+                T = {fmt(p.transmission, "", 2)} ·{" "}
+                ER = {fmt(p.extinctionRatioDb, " dB", 0)}<br />
+                L = {fmt(p.lengthMm, " mm", 2)} ·{" "}
+                n_e = {fmt(p.refractiveIndex, "", 2)} ·{" "}
+                wedge = {fmt(p.wedgeAngleDeg, "°", 1)}
+              </div>
+              <button
+                type="button"
+                className="editor-viewport-side-btn"
+                style={{ marginTop: 6 }}
+                onClick={() => onNavigateToSubcomponent(s.subComponent.id)}
+                title={`Open ${s.subComponent.name} in this PHY editor to edit its anchor / cut interface.`}
+              >
+                Edit in {s.subComponent.name} →
+              </button>
+            </div>
+          );
+        })}
+
+      {/* === Faraday central plane (owned by the isolator itself) === */}
+      <div className="mirror-face-status" style={{ marginTop: 8 }}>
+        <div>
+          <strong style={{ color: "#fbbf24" }}>
+            Faraday central plane (m_faraday_slab)
+          </strong>
+          <span style={{ opacity: 0.65, fontSize: 11, marginLeft: 8 }}>
+            anchor: faraday_centre
+          </span>
+        </div>
+        <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4, lineHeight: 1.5 }}>
+          θ_F = {fmt(faraday.faradayRotationDeg, "°", 1)} ·{" "}
+          L = {fmt(faraday.lengthMm, " mm", 2)} ·{" "}
+          n (TGG) = {fmt(faraday.refractiveIndex, "", 2)}<br />
+          E_x = {fmt(faraday.augmentedOffsetXMm, " mm", 3)} ·{" "}
+          E_y = {fmt(faraday.augmentedOffsetYMm, " mm", 3)}
+        </div>
+        <div style={{ fontSize: 10, opacity: 0.55, marginTop: 4 }}>
+          Edit per-instance via Object panel kindParams.faraday — central
+          plane sits at body centre normal to the optical axis.
+        </div>
+      </div>
+
+      {/* === Back Glan slab === */}
+      {subcomponents
+        .filter((s) => slotFor(s.roleLabel) === "back")
+        .map((s) => {
+          const p = back;
+          return (
+            <div key={s.binding.id} className="mirror-face-status" style={{ marginTop: 8 }}>
+              <div>
+                <strong style={{ color: "#a78bfa" }}>
+                  Back Glan slab (m_glan_slab)
+                </strong>
+                <span style={{ opacity: 0.65, fontSize: 11, marginLeft: 8 }}>
+                  → {s.subComponent.name}
+                </span>
+              </div>
+              <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4, lineHeight: 1.5 }}>
+                axis = {fmt(p.transmissionAxisDegBeamLocal, "°", 1)} ·{" "}
+                T = {fmt(p.transmission, "", 2)} ·{" "}
+                ER = {fmt(p.extinctionRatioDb, " dB", 0)}<br />
+                L = {fmt(p.lengthMm, " mm", 2)} ·{" "}
+                n_e = {fmt(p.refractiveIndex, "", 2)} ·{" "}
+                wedge = {fmt(p.wedgeAngleDeg, "°", 1)}
+              </div>
+              <button
+                type="button"
+                className="editor-viewport-side-btn"
+                style={{ marginTop: 6 }}
+                onClick={() => onNavigateToSubcomponent(s.subComponent.id)}
+                title={`Open ${s.subComponent.name} in this PHY editor to edit its anchor / cut interface.`}
+              >
+                Edit in {s.subComponent.name} →
+              </button>
+            </div>
+          );
+        })}
+
+      {subcomponents.length === 0 && (
+        <div style={{ fontSize: 12, color: "#f87171", marginTop: 4 }}>
+          No sub-Component bindings found. Run migration 0071 to seed the
+          IO-3-850-HP / IO-5-850-HP binding tree with Glan sub-Components.
+        </div>
+      )}
     </div>
   );
 }

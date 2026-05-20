@@ -619,20 +619,31 @@
           "optional": [
             "intercept_out"
           ],
-          "needs_direction": [],
+          "needs_direction": [
+            "intercept_in"
+          ],
           "needs_aperture": [
             "intercept_in"
           ]
         },
         "align_variant": "translate_anchor_to_beam",
         "align_tolerance_mm": 25,
-        "align_summary": "Glan-Laser calcite polariser — two right-angle prisms with an air gap. intercept_in translates to the beam axis (translation only). The rejected polarisation exits the side at ~68° from the optical axis via the air gap's TIR; intercept_out can be set to capture that path.",
+        "align_summary": "Glan-Laser calcite polariser — two right-angle prisms with an air gap. intercept_in marks the slanted cut interface (the TIR reflector): position = body centre, direction = cut-plane normal (coatingNormalBodyLocal, default [0, cos(38°), sin(38°)] for a wedge tilted 38° from the optical axis), aperture = active interface size. Same role as a PBS cube's diagonal cement plane. The rejected O-ray exits the side at ~67-68° from the optical axis; intercept_out captures that path.",
         "default_params": {
           "transmissionAxisDegBeamLocal": 0,
           "extinctionRatioDb": 55,
           "transmission": 0.92,
-          "wedgeAngleDeg": 38,
+          "wedgeAngleDeg": 38.5,
           "airGapMm": 0.05,
+          "lengthMm": 7.5,
+          "refractiveIndex": 1.48,
+          "airGapAstigmatismMm": 0.05,
+          "augmentedOffsetXMm": 0,
+          "coatingNormalBodyLocal": [
+            0,
+            0.7826081692851781,
+            0.6225146366376195
+          ],
           "wavelengthRangeNm": [
             400,
             1100
@@ -641,8 +652,13 @@
         "intrinsic_param_keys": [
           "wedgeAngleDeg",
           "airGapMm",
+          "lengthMm",
+          "refractiveIndex",
+          "airGapAstigmatismMm",
+          "augmentedOffsetXMm",
           "transmission",
           "extinctionRatioDb",
+          "coatingNormalBodyLocal",
           "wavelengthRangeNm"
         ],
         "state_param_keys": [
@@ -905,23 +921,19 @@
         ],
         "anchors": {
           "required": [
-            "intercept_in"
+            "faraday_centre"
           ],
-          "optional": [
-            "intercept_out",
-            "front_pbs",
-            "back_pbs"
-          ],
+          "optional": [],
           "needs_direction": [
-            "intercept_in"
+            "faraday_centre"
           ],
           "needs_aperture": [
-            "intercept_in"
+            "faraday_centre"
           ]
         },
         "align_variant": "translate_anchor_to_beam",
         "align_tolerance_mm": 25,
-        "align_summary": "Optical isolator = PBS + Faraday Rotator + PBS in series. intercept_in / intercept_out are the device's outer ports; front_pbs / back_pbs (optional) mark each PBS cube's diagonal cement interface (position = cube centre, direction = coating normal). The two PBS directions implicitly fix the device's transmission axis; faradayRotationDeg (typ. 45°) is in kindParams.",
+        "align_summary": "Optical isolator = Glan-Laser + Faraday Rotator + Glan-Laser in series. The two Glan slabs are sub-Components (GlanLaserCalcitePrism) in the isolator's binding tree — each owns its own cut interface anchor. The isolator itself only owns faraday_centre: the TGG slab's central plane normal to the optical axis. Position = isolator body centre, direction = +Z optical axis. Faraday physics: m_faraday_slab 5×5 with B_x = B_y = L/n + θ_F rotation of chief-ray tilt + E_x/E_y augmented offsets. kindParams.faraday.{faradayRotationDeg, lengthMm, refractiveIndex, augmentedOffsetXMm, augmentedOffsetYMm} drive the matrix.",
         "default_params": {
           "forwardLossDb": 0.5,
           "isolationDb": 40,
@@ -930,7 +942,54 @@
           "wavelengthRangeNm": [
             400,
             1100
-          ]
+          ],
+          "frontGlan": {
+            "transmissionAxisDegBeamLocal": 0,
+            "extinctionRatioDb": 55,
+            "transmission": 0.92,
+            "wedgeAngleDeg": 38.5,
+            "airGapMm": 0.05,
+            "lengthMm": 7.5,
+            "refractiveIndex": 1.48,
+            "airGapAstigmatismMm": 0.05,
+            "augmentedOffsetXMm": 0,
+            "coatingNormalBodyLocal": [
+              0,
+              0.7826081692851781,
+              0.6225146366376195
+            ],
+            "wavelengthRangeNm": [
+              400,
+              1100
+            ]
+          },
+          "faraday": {
+            "faradayRotationDeg": 45,
+            "lengthMm": 8,
+            "refractiveIndex": 1.95,
+            "augmentedOffsetXMm": 0,
+            "augmentedOffsetYMm": 0
+          },
+          "backGlan": {
+            "transmissionAxisDegBeamLocal": 45,
+            "extinctionRatioDb": 55,
+            "transmission": 0.92,
+            "wedgeAngleDeg": 38.5,
+            "airGapMm": 0.05,
+            "lengthMm": 7.5,
+            "refractiveIndex": 1.48,
+            "airGapAstigmatismMm": 0.05,
+            "augmentedOffsetXMm": 0,
+            "coatingNormalBodyLocal": [
+              0,
+              0.7826081692851781,
+              0.6225146366376195
+            ],
+            "wavelengthRangeNm": [
+              400,
+              1100
+            ]
+          }
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,

@@ -221,6 +221,143 @@ def m_glass_plate(
     return M
 
 
+def m_glan_slab(
+    length_mm: float,
+    refractive_index: float,
+    *,
+    wedge_angle_deg: float = 38.5,
+    air_gap_dB_x_mm: float = 0.0,
+    augmented_offset_x_mm: float = 0.0,
+) -> npt.NDArray[np.float64]:
+    """Glan-Laser calcite-prism body — ASTIGMATIC propagation.
+
+    Differs from ``m_glass_plate`` in two ways that matter for accurate
+    Glan-Laser modelling:
+
+      1. **B_x ≠ B_y** (astigmatism). The slanted air-gap cut introduces
+         extra x-axis optical path via refraction at the wedged
+         interface. Effective ΔB_x is typically a few tens of µm for
+         calcite Glan-Lasers (38.5° wedge, 50-100 µm air gap). Pass the
+         empirical correction via ``air_gap_dB_x_mm``; default 0 reduces
+         to a symmetric slab.
+
+      2. **Augmented offset M[0,4] = E_x**. Optional constant lateral
+         shift of the optical axis along x (reflects manufacturing
+         tolerances or a deliberate decenter). Independent of input
+         tilt — added as a constant via the augmented 5th column.
+
+    5×5 form:
+
+        [1   B_x   0   0    E_x]
+        [0   1     0   0    0  ]
+        [0   0     1   B_y  0  ]
+        [0   0     0   1    0  ]
+        [0   0     0   0    1  ]
+
+    where B_x = L/n + air_gap_dB_x_mm, B_y = L/n.
+
+    ``wedge_angle_deg`` is documented for callers and downstream Jones-
+    matrix builders (cut-plane normal = (0, cos θ, sin θ)); it does not
+    enter the ABCD matrix directly — the caller pre-computes
+    air_gap_dB_x_mm from the air-gap thickness if needed.
+
+    Args:
+        length_mm: Body length along Z (typical Thorlabs GL5-B: 21 mm;
+            user-spec for compact catalogue model: 7.5 mm).
+        refractive_index: Effective ordinary/extraordinary index along
+            the propagation direction. For calcite at 850 nm: n_e ≈ 1.48
+            for the transmitted E-ray.
+        wedge_angle_deg: Documentation-only field, default 38.5°.
+        air_gap_dB_x_mm: x-axis astigmatic B correction from the wedged
+            air gap. Empirical; defaults to 0.
+        augmented_offset_x_mm: Constant E_x lateral shift in M[0,4].
+            Defaults to 0.
+    """
+    if refractive_index <= 0:
+        raise ValueError("refractive index must be positive")
+    if length_mm < 0:
+        raise ValueError("length must be non-negative")
+    _ = wedge_angle_deg  # documented, not used in the matrix directly
+    base = length_mm / refractive_index
+    M = np.eye(5)
+    M[0, 1] = base + air_gap_dB_x_mm
+    M[2, 3] = base
+    M[0, 4] = augmented_offset_x_mm
+    return M
+
+
+def m_faraday_slab(
+    length_mm: float,
+    refractive_index: float,
+    *,
+    rotation_deg: float = 45.0,
+    augmented_offset_x_mm: float = 0.0,
+    augmented_offset_y_mm: float = 0.0,
+) -> npt.NDArray[np.float64]:
+    """Faraday rotator (TGG) body — SYMMETRIC L/n propagation + θ_F-rotated
+    tilt coupling + augmented x/y offsets.
+
+    Differs from ``m_glan_slab`` in two ways that reflect the physical
+    nature of a Faraday rotator:
+
+      1. **B_x = B_y = L/n** (symmetric, no astigmatism). TGG end faces
+         are flat and isotropic — no slanted air gap to break the x/y
+         symmetry the way the Glan-Laser cut does.
+      2. **Tilt-rotation block** in rows 1/3, cols 1/3:
+
+             ⎡ cos θ_F   sin θ_F ⎤
+             ⎣ -sin θ_F  cos θ_F ⎦
+
+         This rotates the chief-ray TILT direction by θ_F (independent
+         of the Jones-matrix polarization rotation, which is handled
+         separately by apply_faraday_rotator). Physically: the
+         non-reciprocal magnetic-optic medium rotates everything in the
+         transverse plane — both polarization AND ray-angle direction.
+
+    Augmented offsets E_x (M[0,4]) and E_y (M[2,4]) seed constant
+    lateral shifts into the chief ray (decenter / manufacturing
+    tolerance). Both default 0 for ideal alignment.
+
+    5×5 form (matches the user's specification):
+
+        [1   L/n    0    0       E_x]
+        [0   cosθ   0    sinθ    0  ]
+        [0   0      1    L/n     E_y]
+        [0  -sinθ   0    cosθ    0  ]
+        [0   0      0    0       1  ]
+
+    Args:
+        length_mm: TGG body length along Z. Typical 850 nm Faraday
+            rotator: 6-10 mm (depends on Verdet constant × B-field for
+            45° rotation).
+        refractive_index: TGG index along the propagation direction.
+            n ≈ 1.95 at 850 nm.
+        rotation_deg: Faraday polarization-rotation angle. Default 45°.
+            Same value used by the Jones matrix in
+            apply_faraday_rotator — kept consistent so the geometric
+            tilt rotation and polarization rotation stay in lockstep.
+        augmented_offset_x_mm: Constant E_x lateral shift, M[0,4].
+        augmented_offset_y_mm: Constant E_y lateral shift, M[2,4].
+    """
+    if refractive_index <= 0:
+        raise ValueError("refractive index must be positive")
+    if length_mm < 0:
+        raise ValueError("length must be non-negative")
+    base = length_mm / refractive_index
+    theta = math.radians(rotation_deg)
+    c, s = math.cos(theta), math.sin(theta)
+    M = np.eye(5)
+    M[0, 1] = base
+    M[2, 3] = base
+    M[1, 1] = c
+    M[1, 3] = s
+    M[3, 1] = -s
+    M[3, 3] = c
+    M[0, 4] = augmented_offset_x_mm
+    M[2, 4] = augmented_offset_y_mm
+    return M
+
+
 def m_pbs_reflected(
     *,
     alpha_x_rad: float = 0.0,
