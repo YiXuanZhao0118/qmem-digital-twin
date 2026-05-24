@@ -16,6 +16,7 @@ import {
   mPbsReflected,
   mPbsTransmitted,
   mRotation,
+  mSplitterReflectionAdvanced,
   mThinLens,
   qFromWaist,
   radiusOfCurvatureMm,
@@ -51,13 +52,13 @@ describe("5×5 operator structure", () => {
     const f = 100, dx = 0.5, dy = -0.3, ax = 0.001, ay = 0.002;
     const M = mThinLens(f, { deltaXMm: dx, deltaYMm: dy, alphaXRad: ax, alphaYRad: ay });
     const invF = 1 / f;
-    expect(M[1 * 5 + 4]).toBeCloseTo(dx * invF + ay * (1 - invF));
-    expect(M[3 * 5 + 4]).toBeCloseTo(dy * invF + ax * (1 - invF));
+    expect(M[1 * 5 + 4]).toBeCloseTo(dx * invF - ax);
+    expect(M[3 * 5 + 4]).toBeCloseTo(dy * invF - ay);
   });
 
   it("cylindrical x-axis: focus in x + glass plate in y", () => {
     const f = 50, d = 5, n = 1.515;
-    const M = mCylindricalStandard(f, { axis: "x", thicknessMm: d, refractiveIndex: n, alphaXRad: 0.01 });
+    const M = mCylindricalStandard(f, { axis: "x", thicknessMm: d, refractiveIndex: n, alphaYRad: 0.01 });
     expect(M[1 * 5 + 0]).toBeCloseTo(-1 / f);
     expect(M[2 * 5 + 3]).toBeCloseTo(d / n);
     expect(M[2 * 5 + 4]).toBeCloseTo(0.01 * d * (1 - 1 / n));
@@ -72,24 +73,41 @@ describe("5×5 operator structure", () => {
 
   it("flat mirror has no decenter term (per spec)", () => {
     const M = mFlatMirror({ alphaXRad: 0.003, alphaYRad: 0.004 });
-    expect(M[1 * 5 + 1]).toBe(-1);
-    expect(M[3 * 5 + 3]).toBe(-1);
-    expect(M[1 * 5 + 4]).toBeCloseTo(2 * 0.004);
-    expect(M[3 * 5 + 4]).toBeCloseTo(2 * 0.003);
+    expect(M[1 * 5 + 1]).toBe(1);
+    expect(M[3 * 5 + 3]).toBe(1);
+    expect(M[1 * 5 + 4]).toBeCloseTo(2 * 0.003);
+    expect(M[3 * 5 + 4]).toBeCloseTo(2 * 0.004);
   });
 
   it("curved mirror: f = R/2 + reflection", () => {
     const R = 200;
-    const M = mCurvedMirror(R, { deltaXMm: 0.1, alphaYRad: 0.005 });
+    const M = mCurvedMirror(R, { deltaXMm: 0.1, alphaXRad: 0.005 });
     const invF = 2 / R;
     expect(M[1 * 5 + 0]).toBeCloseTo(-invF);
-    expect(M[1 * 5 + 1]).toBe(-1);
+    expect(M[1 * 5 + 1]).toBe(1);
     expect(M[1 * 5 + 4]).toBeCloseTo(0.1 * invF + 2 * 0.005);
   });
 
-  it("PBS reflected ≡ flat mirror", () => {
-    const t = { alphaXRad: 0.003, alphaYRad: 0.004 };
-    expect(mPbsReflected(t)).toEqual(mFlatMirror(t));
+  it("PBS reflected uses advanced splitter model", () => {
+    const L = 12.7, n = 1.515;
+    const plateAlpha = 0.001, coatingAlpha = 0.003;
+    const M = mPbsReflected(L, n, {
+      plateAlphaXRad: plateAlpha,
+      coatingAlphaXRad: coatingAlpha,
+      reflectionFraction: 0.5,
+    });
+    const s = L * (1 - 1 / n);
+    expect(M[0 * 5 + 1]).toBeCloseTo(L / n);
+    expect(M[1 * 5 + 4]).toBeCloseTo(2 * coatingAlpha);
+    expect(M[0 * 5 + 4]).toBeCloseTo(
+      plateAlpha * s + (L * 0.5 / n) * 2 * coatingAlpha,
+    );
+  });
+
+  it("splitter reflection rejects bad inputs", () => {
+    expect(() => mSplitterReflectionAdvanced(1, 0)).toThrow();
+    expect(() => mSplitterReflectionAdvanced(-1, 1.5)).toThrow();
+    expect(() => mSplitterReflectionAdvanced(1, 1.5, { reflectionFraction: 1.1 })).toThrow();
   });
 
   it("PBS transmitted ≡ glass plate of cube edge length", () => {
@@ -101,8 +119,8 @@ describe("5×5 operator structure", () => {
     const d = 10, n = 1.5;
     const M = mGlassPlate(d, n, { alphaXRad: 0.001, alphaYRad: 0.002 });
     expect(M[0 * 5 + 1]).toBeCloseTo(d / n);
-    expect(M[0 * 5 + 4]).toBeCloseTo(0.002 * d * (1 - 1 / n));
-    expect(M[2 * 5 + 4]).toBeCloseTo(0.001 * d * (1 - 1 / n));
+    expect(M[0 * 5 + 4]).toBeCloseTo(0.001 * d * (1 - 1 / n));
+    expect(M[2 * 5 + 4]).toBeCloseTo(0.002 * d * (1 - 1 / n));
   });
 
   it("rotation matrix is orthogonal", () => {
@@ -178,8 +196,8 @@ describe("applyOperator — q-ABCD law", () => {
     const q0 = { re: 50, im: 30 };
     const beam = beamMisaligned({ qX: q0, qY: q0, wavelengthNm: WAVELENGTH_NM });
     const out = applyOperator(beam, mFlatMirror());
-    expect(out.qX.re).toBeCloseTo(-q0.re);
-    expect(out.qX.im).toBeCloseTo(-q0.im);
+    expect(out.qX.re).toBeCloseTo(q0.re);
+    expect(out.qX.im).toBeCloseTo(q0.im);
   });
 
   it("glass plate adds d/n to q.re", () => {
@@ -220,7 +238,7 @@ describe("applyOperator — chief-ray", () => {
 
   it("tilted mirror deflects by 2α", () => {
     beam = beamMisaligned({ qX: q0, qY: q0, wavelengthNm: WAVELENGTH_NM });
-    const out = applyOperator(beam, mFlatMirror({ alphaYRad: 0.005 }));
+    const out = applyOperator(beam, mFlatMirror({ alphaXRad: 0.005 }));
     expect(out.thetaXCRad).toBeCloseTo(2 * 0.005);
   });
 

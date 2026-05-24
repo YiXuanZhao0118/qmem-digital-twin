@@ -1,0 +1,115 @@
+{
+  "id": "glan_laser_io5_850",
+  "vendorPart": "Thorlabs IO-5-850-HP internal Glan-Laser",
+  "displayName": "Glan-Laser Prism (IO-5-850-HP, L=7.5mm)",
+  "geometryRef": "files/stl/glan_polarizer_calcite_prism.stl",
+  "geometryRefGlb": null,
+  "bodyFrameRotation": null,
+
+  "kind": "pbs",
+  "wavelengthRangeNm": [350, 2300],
+
+  "physicalDimensionsMm": {
+    "L": 7.5,
+    "clearApertureMm": 5.0,
+    "W": 6.5,
+    "H": 6.5
+  },
+
+  "faces": [
+    { "id": "A1",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": -3.75 },
+      "normalBodyLocal":     { "x": 0, "y": 0, "z": -1 },
+      "apertureMm": 2.5,
+      "apertureShape": "circle",
+      "_role": "external input face"
+    },
+    { "id": "A2",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": 3.75 },
+      "normalBodyLocal":     { "x": 0, "y": 0, "z": 1 },
+      "apertureMm": 2.5,
+      "apertureShape": "circle",
+      "_role": "external p-transmit output face"
+    },
+    { "id": "A3",
+      "positionMmBodyLocal": { "x": 3.25, "y": 0, "z": 0 },
+      "normalBodyLocal":     { "x": 1, "y": 0, "z": 0 },
+      "apertureMm": 3.0,
+      "apertureShape": "rectangle",
+      "_role": "external side exit face for s-pol reject"
+    },
+    { "id": "B1",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": 0 },
+      "normalBodyLocal":     { "x": 0.6225, "y": 0, "z": -0.7826 },
+      "apertureMm": 5.0,
+      "apertureShape": "rectangle",
+      "_role": "INTERNAL gap interface (crystal-1 / air), 38.5° cut. Used by glan_reject_s mirror formula."
+    },
+    { "id": "B2",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": 0.15 },
+      "normalBodyLocal":     { "x": 0.6225, "y": 0, "z": -0.7826 },
+      "apertureMm": 5.0,
+      "apertureShape": "rectangle",
+      "_role": "INTERNAL gap interface (air / crystal-2), parallel to B1, offset by air-gap thickness 0.15mm."
+    }
+  ],
+
+  "transitions": [
+    {
+      "in": "A1", "via": ["B1", "B2"], "out": "A2",
+      "op": "glan_transmit_p",
+      "matrix5x5": [
+        [1, 5.53, 0, 0,    0],
+        [0, 1,    0, 0,    0],
+        [0, 0,    1, 5.07, 0],
+        [0, 0,    0, 1,    0],
+        [0, 0,    0, 0,    1]
+      ],
+      "_note": "Forward p-pol transmission across gap. B_x = L/n_e + d_gap·(cos²θ_i/cos²θ_t − 1) = 5.07 + 0.15·3.052 = 5.53 mm. B_y = L/n_e = 5.07 mm."
+    },
+    {
+      "in": "A1", "via": ["B1"], "out": "A3",
+      "op": "glan_reject_s",
+      "_note": "Forward s-pol reject. TIR at B1 + Snell at A3 — output direction derived, not hard-coded."
+    },
+    {
+      "in": "A2", "via": ["B2", "B1"], "out": "A1",
+      "op": "glan_transmit_p",
+      "matrix5x5": [
+        [1, 5.53, 0, 0,    0],
+        [0, 1,    0, 0,    0],
+        [0, 0,    1, 5.07, 0],
+        [0, 0,    0, 1,    0],
+        [0, 0,    0, 0,    1]
+      ],
+      "_note": "Reverse p-pol transmission."
+    },
+    {
+      "in": "A2", "via": ["B2"], "out": "A3",
+      "op": "glan_reject_s",
+      "_note": "Reverse s-pol reject (rarely triggered)."
+    }
+  ],
+
+  "defaultParams": {
+    "transmissionAxisDegBodyLocal": 0,
+    "extinctionRatioPpDb": 100000,
+    "extinctionRatioSpDb": 30,
+    "refractiveIndex_e": 1.48,
+    "refractiveIndex_o": 1.66,
+    "airGapAngleDeg": 38.5,
+    "airGapThicknessMm": 0.15,
+    "lengthMm": 7.5,
+    "B_y_mm": 5.07,
+    "B_x_mm": 5.53,
+    "E_x_offset_coef": 4.07
+  },
+
+  "mechanicalAnchors": [],
+
+  "notes": {
+    "topology": "PBS-like beam splitter. 5 faces (A1, A2, A3 external; B1, B2 internal gap). Power conservation T_p + T_s = 1. Same physics as IO-3, longer crystal.",
+    "rejectGeometry": "Same as IO-3: B1 normal at 38.5° from optical axis, mirror reflect + Snell at A3 gives reject in air ≈ (0.928, 0, -0.374). Real Glan-Laser TIR behavior (reject exits backward in z).",
+    "variant": "IO-5-850-HP has LARGER crystal (L=7.5mm, 5mm clear aperture) than IO-3 (L=5.0mm, 3mm clear)."
+  }
+}

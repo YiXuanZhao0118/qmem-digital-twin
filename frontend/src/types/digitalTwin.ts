@@ -151,6 +151,13 @@ export type Asset3D = {
   unit: "mm" | "m";
   scaleFactor: number;
   anchors: Anchor[];
+  catalogId?: string | null;
+  physicsKind?: string | null;
+  faces?: Array<Record<string, unknown>> | null;
+  transitions?: Array<Record<string, unknown>> | null;
+  defaultParams?: Record<string, unknown> | null;
+  wavelengthRangeNm?: number[] | null;
+  bodyFrameRotation?: Record<string, unknown> | null;
   /** Asset-level metadata bucket; ``viewerHints`` is the main consumer
    *  today (alembic 0064). Other per-asset fields can live here without
    *  schema migrations. */
@@ -171,6 +178,8 @@ export type ComponentItem = {
   model?: string | null;
   // serialNumber moved to SceneObject in alembic 0015 (per-physical-unit).
   asset3dId?: string | null;
+  catalogId?: string | null;
+  exposedFaces?: Array<Record<string, unknown>> | null;
   properties: Record<string, unknown>;
   physicsCapabilities: PhysicsCapability[];
   notes?: string | null;
@@ -289,6 +298,8 @@ export type SceneObject = {
   visible: boolean;
   locked: boolean;
   serialNumber?: string | null;
+  paramOverrides?: Record<string, Record<string, unknown>> | null;
+  dynamicSources?: Record<string, unknown> | null;
   properties: {
     size?: { x: number; y: number; z: number };
     locked?: ObjectLock;
@@ -551,7 +562,18 @@ export type LensCylindricalParams = {
 
 export type WaveplateParams = {
   retardanceLambda: number;
+  retardanceDeg?: number | null;
   transmission: number;
+  designWavelengthNm?: number | null;
+  wavelengthRangeNm?: [number, number] | null;
+  lengthMm?: number | null;
+  thicknessMm?: number | null;
+  refractiveIndex?: number | null;
+  clearApertureMm?: number | null;
+  plateAlphaXRad?: number | null;
+  plateAlphaYRad?: number | null;
+  material?: string | null;
+  plateType?: string | null;
 };
 
 export type PolarizerParams = {

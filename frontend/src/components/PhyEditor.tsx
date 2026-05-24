@@ -19,7 +19,7 @@
  *
  * Navigation:
  *   - Left rail: hierarchical PHY-domain tree. Clicking "Kinds" or
- *     "Components" under "Optical" switches the right pane.
+ *     "ASSET3D" under "Optical" switches the right pane.
  *   - Top bar: a single "Back to scene" returns to the main viewport.
  *     If the active sub-editor has unsaved drafts (sceneStore.phyEditorDirty),
  *     a confirm prompt appears first. Same prompt fires on switching tabs.
@@ -32,6 +32,7 @@
 import { useEffect, useState } from "react";
 
 import { useSceneStore } from "../store/sceneStore";
+import { Asset3DV3Editor } from "./Asset3DV3Editor";
 import { ComponentEditor } from "./ComponentEditor";
 import { ComponentComposer } from "./ComponentComposer";
 import { KindsEditor } from "./KindsEditor";
@@ -174,8 +175,8 @@ export function PhyEditor() {
                 switchView({ domain: "optical", section: "components" })
               }
             >
-              optical_component
-              <span className="phy-editor-rail-hint">anchor geometry</span>
+              ASSET3D
+              <span className="phy-editor-rail-hint">faces + transitions</span>
             </button>
           </div>
 
@@ -221,16 +222,90 @@ export function PhyEditor() {
         </aside>
 
         {/* RIGHT: selected sub-editor. Default landing is empty — the
-            user picks a rail item (Kinds / Components) OR clicks the
+            user picks a rail item (Kinds / ASSET3D) OR clicks the
             top-right "🔧 Binding dev" button to open the binding-tree
             tweak tool. The two paths are mutually exclusive in the pane. */}
         <div className="phy-editor-pane">
           {bindingDevOpen && <ComponentComposer />}
           {!bindingDevOpen && opticalKinds && <KindsEditor domain="optical" />}
-          {!bindingDevOpen && opticalComponents && <ComponentEditor domain="optical" />}
+          {!bindingDevOpen && opticalComponents && (
+            <OpticalAssetSwitch />
+          )}
           {!bindingDevOpen && rfKinds && <KindsEditor domain="rf" />}
-          {!bindingDevOpen && rfComponents && <ComponentEditor domain="rf" />}
+          {!bindingDevOpen && rfComponents && <RfAssetSwitch />}
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Optical ASSET3D pane — tabs between the new v3 Asset3D catalog browser
+ * (default) and the legacy v2 ComponentEditor. The v3 view consumes
+ * /api/v3/assets3d via useV3Catalog; the v2 view edits the existing
+ * anchors-based component data.
+ */
+function OpticalAssetSwitch() {
+  return <AssetDomainSwitch domain="optical" />;
+}
+
+/**
+ * RF ASSET3D pane — mirror of OpticalAssetSwitch for the RF tracer side.
+ * v3 tab gates the Asset3D editor to RF assets (rf_source, rf_amplifier,
+ * rf_cable, rf_switch, programmable_pulse_generator, horn_antenna) with
+ * face.domain ∈ {"rf","ttl"}; v2 tab keeps the legacy anchors editor for
+ * rows that haven't been migrated yet.
+ */
+function RfAssetSwitch() {
+  return <AssetDomainSwitch domain="rf" />;
+}
+
+function AssetDomainSwitch({ domain }: { domain: "optical" | "rf" }) {
+  const [tab, setTab] = useState<"v3" | "v2">("v3");
+  const tabBtn = (key: "v3" | "v2", label: string, hint: string) => (
+    <button
+      type="button"
+      onClick={() => setTab(key)}
+      style={{
+        background: tab === key ? "#1e3a52" : "transparent",
+        color: tab === key ? "#4ec9b0" : "#94a3b8",
+        border: "none",
+        borderBottom: tab === key ? "2px solid #4ec9b0" : "2px solid transparent",
+        padding: "6px 12px",
+        cursor: "pointer",
+        fontFamily: "ui-monospace, monospace",
+        fontSize: 12,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-start",
+        gap: 2,
+      }}
+    >
+      <span style={{ fontWeight: 600 }}>{label}</span>
+      <span style={{ fontSize: 10, opacity: 0.7 }}>{hint}</span>
+    </button>
+  );
+  const v3Hint = domain === "rf"
+    ? "faces (rf/ttl) · transitions · defaultParams"
+    : "faces · transitions · defaultParams";
+  const v2Hint = domain === "rf"
+    ? "legacy rf_in/rf_out anchors"
+    : "legacy anchors editor";
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      <div
+        style={{
+          display: "flex",
+          borderBottom: "1px solid #1e293b",
+          background: "#0f172a",
+        }}
+      >
+        {tabBtn("v3", "v3 Asset3D", v3Hint)}
+        {tabBtn("v2", "v2 Components", v2Hint)}
+      </div>
+      <div style={{ flex: 1, overflow: "hidden", minHeight: 0 }}>
+        {tab === "v3" && <Asset3DV3Editor domain={domain} />}
+        {tab === "v2" && <ComponentEditor domain={domain} />}
       </div>
     </div>
   );

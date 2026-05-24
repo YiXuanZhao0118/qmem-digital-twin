@@ -52,6 +52,11 @@ class SceneObject(Base):
     # different serials (or one with a serial, others NULL).
     serial_number: Mapped[str | None] = mapped_column(Text)
     properties: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    # Asset-Physics-Model v3 (alembic 0082). Per-instance kind-coefficient
+    # overrides (keyed by binding_id) and dynamic source values (laser power,
+    # AOM RF freq, beam profile, ...). See docs/asset-physics-model.md §5.
+    param_overrides: Mapped[JsonDict | None] = mapped_column(JSONB)
+    dynamic_sources: Mapped[JsonDict | None] = mapped_column(JSONB)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

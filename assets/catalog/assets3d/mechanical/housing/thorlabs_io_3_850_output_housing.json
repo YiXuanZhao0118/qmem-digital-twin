@@ -1,0 +1,36 @@
+{
+  "id": "thorlabs_io_3_850_output_housing",
+  "vendorPart": "IO-3-850-HP (output section housing)",
+  "displayName": "IO3-850 Output Housing",
+  "geometryRef": "files/stl/thorlabs_io_3_850_hp/output_housing.stl",
+  "geometryRefGlb": null,
+  "bodyFrameRotation": null,
+
+  "kind": null,
+  "wavelengthRangeNm": null,
+
+  "_CALIBRATION_STATUS": "estimated bbox ??user to refine after STL split measurement",
+
+  "physicalDimensionsMm": {
+    "L": 15,
+    "W": 20,
+    "H": 20
+  },
+
+  "faces": [],
+  "transitions": [],
+  "defaultParams": {},
+
+  "mechanicalAnchors": [
+    { "id": "mount_face_back",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": 7.5 },
+      "normalBodyLocal":     { "x": 0, "y": 0, "z": 1 } },
+    { "id": "sm05_thread",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": 7.5 } }
+  ],
+
+  "notes": {
+    "role": "Mechanical only ??holds output Glan-Laser polarizer.",
+    "outputPolRotation": "Output Glan-Laser binding has local_rz_deg=45 in component"
+  }
+}

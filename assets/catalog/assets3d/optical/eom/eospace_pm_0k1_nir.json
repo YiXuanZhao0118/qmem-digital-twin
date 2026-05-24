@@ -1,0 +1,46 @@
+{
+  "id": "eospace_pm_0k1_nir",
+  "vendorPart": "PM-0K1-NIR",
+  "displayName": "EOSpace PM-0K1-NIR Phase Modulator (generic NIR)",
+  "geometryRef": null,
+  "geometryRefGlb": null,
+  "bodyFrameRotation": null,
+
+  "kind": "eom",
+  "wavelengthRangeNm": [780, 1550],
+
+  "physicalDimensionsMm": { "L": 60, "W": 12, "H": 12 },
+
+  "faces": [
+    { "id": "A",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": -30 },
+      "normalBodyLocal":     { "x": 0, "y": 0, "z": -1 },
+      "apertureMm": 0.5,
+      "apertureShape": "circle" },
+    { "id": "B",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": 30 },
+      "normalBodyLocal":     { "x": 0, "y": 0, "z": 1 },
+      "apertureMm": 0.5,
+      "apertureShape": "circle" }
+  ],
+
+  "transitions": [
+    { "in": "A", "out": "B", "op": "eom_passthrough" },
+    { "in": "B", "out": "A", "op": "eom_passthrough" }
+  ],
+
+  "defaultParams": {
+    "vPiV": 4.5,
+    "modulationBandwidthGHz": 10,
+    "insertionLossDb": 4.0,
+    "material": "LiNbO3",
+    "requiresRfDrive": true
+  },
+
+  "mechanicalAnchors": [],
+
+  "notes": {
+    "stub": "Physics op is passthrough. Real Pockels-effect modulation (Jones phase shift driven by RF signal at V_pi) is TODO.",
+    "spec": "EOSpace PM-0K1-NIR generic NIR fiber-coupled phase modulator, ~10 GHz bandwidth, LiNbO3 waveguide, V_pi ~4.5 V."
+  }
+}

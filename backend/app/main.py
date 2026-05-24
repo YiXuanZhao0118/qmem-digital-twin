@@ -40,6 +40,8 @@ from app.routers import (
     simulations,
     timing_programs,
     touchstone,
+    v3_catalog,
+    v3_solver,
 )
 from app.routers.collections import get_master_collection
 from app.services.agent_session import scan_for_abandoned
@@ -65,6 +67,8 @@ app.mount("/assets", StaticFiles(directory=str(settings.asset_root)), name="asse
 
 app.include_router(assets.router, prefix="/api/assets", tags=["assets"])
 app.include_router(components.router, prefix="/api/components", tags=["components"])
+app.include_router(v3_catalog.router, prefix="/api")
+app.include_router(v3_solver.router, prefix="/api")
 app.include_router(
     component_bindings.component_scoped,
     prefix="/api/components",

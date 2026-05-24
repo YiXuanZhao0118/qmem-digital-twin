@@ -1,0 +1,65 @@
+{
+  "id": "dbr_852_tosa_high_power_laser_source",
+  "vendorPart": "DBR-852-TOSA-HighPower",
+  "displayName": "DBR852_TOSA_HighPower_Source",
+  "geometryRef": "files/stl/dbr_852_tosa.stl",
+  "geometryRefGlb": null,
+  "bodyFrameRotation": null,
+
+  "kind": "laser_source",
+  "wavelengthRangeNm": [840, 860],
+
+  "physicalDimensionsMm": {
+    "L": 13.8,
+    "W": 22.0,
+    "H": 12.0
+  },
+
+  "faces": [
+    {
+      "id": "out",
+      "positionMmBodyLocal": { "x": 5.974999904632568, "y": 0, "z": 0 },
+      "normalBodyLocal": { "x": 1, "y": 0, "z": 0 },
+      "apertureMm": 12.5,
+      "apertureShape": "circle"
+    }
+  ],
+
+  "transitions": [
+    { "in": "out", "out": "out", "op": "emit_laser_source" }
+  ],
+
+  "defaultParams": {
+    "centerWavelengthNm": 852.347,
+    "spectrum": {
+      "centerWavelengthNm": 852.347,
+      "wavelengthReference": "vacuum",
+      "linewidth": { "kind": "delta" }
+    },
+    "spatialModeX": {
+      "waistUm": 500,
+      "waistZOffsetMm": 0,
+      "mSquared": 1.0
+    },
+    "spatialModeY": {
+      "waistUm": 500,
+      "waistZOffsetMm": 0,
+      "mSquared": 1.0
+    },
+    "transverseMode": { "kind": "TEM00" },
+    "polarization": {
+      "basis": "beamLocalXY",
+      "jones": { "exRe": 1, "exIm": 0, "eyRe": 0, "eyIm": 0 },
+      "normalization": "unit_jones"
+    },
+    "nominalPowerMw": 40.0
+  },
+
+  "mechanicalAnchors": [],
+
+  "notes": {
+    "geometry": "Matches the existing LASER_SOURCE0 DBR 852 nm TOSA STL. Body +x is the emitted optical axis.",
+    "sourceModel": "laser_source is a scene emitter. The out face normal defines the emitted chief-ray direction.",
+    "legacyAnchor": "Derived from the existing +x/out anchor on DBR 852nm TOSA body."
+  }
+}

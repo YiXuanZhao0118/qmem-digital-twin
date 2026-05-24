@@ -1,0 +1,45 @@
+{
+  "name": "mirror_normal_incidence",
+  "description": "Flat mirror at z=0 with +z normal. Ray comes in along -z, reflects back along +z. Reflectivity 100%.",
+  "asset": {
+    "catalogId": "test_flat_mirror",
+    "kind": "mirror",
+    "faces": [
+      { "id": "A",
+        "positionMmBodyLocal": {"x": 0, "y": 0, "z": 0},
+        "normalBodyLocal":     {"x": 0, "y": 0, "z": 1},
+        "apertureMm": 12.7,
+        "apertureShape": "circle" }
+    ],
+    "transitions": [
+      { "in": "A", "out": "A", "op": "reflect_specular" }
+    ],
+    "defaultParams": { "reflectivity": 1.0 }
+  },
+  "rayIn": {
+    "origin":       {"x": 0, "y": 0, "z": 10},
+    "direction":    {"x": 0, "y": 0, "z": -1},
+    "wavelengthNm": 780,
+    "waistRadiusMm": 0.5,
+    "powerMw":       1.0,
+    "jones":        [{"re": 1, "im": 0}, {"re": 0, "im": 0}]
+  },
+  "expected": {
+    "finalRayCount": 1,
+    "rays": [
+      {
+        "origin":       {"x": 0, "y": 0, "z": 0},
+        "direction":    {"x": 0, "y": 0, "z": 1},
+        "pathLengthMm": 10.0,
+        "powerMw":      1.0,
+        "wavelengthNm": 780
+      }
+    ]
+  },
+  "tolerance": {
+    "positionMm": 1e-9,
+    "directionAbs": 1e-12,
+    "powerMw": 1e-12,
+    "qAbs": 1e-6
+  }
+}

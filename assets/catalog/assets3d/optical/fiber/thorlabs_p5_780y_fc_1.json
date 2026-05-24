@@ -1,0 +1,32 @@
+{
+  "id": "thorlabs_p5_780y_fc_1",
+  "vendorPart": "P5-780Y-FC-1",
+  "displayName": "Thorlabs P5-780Y-FC-1 (SM, PC/APC hybrid, 1m, 780nm)",
+  "geometryRef": null,
+  "geometryRefGlb": null,
+  "bodyFrameRotation": null,
+  "kind": "fiber",
+  "wavelengthRangeNm": [700, 970],
+  "physicalDimensionsMm": { "lengthMm": 1000, "claddingDiameterUm": 125, "coreDiameterUm": 4.4 },
+  "faces": [
+    { "id": "A", "positionMmBodyLocal": { "x": 0, "y": 0, "z": -500 }, "normalBodyLocal": { "x": 0, "y": 0, "z": -1 }, "apertureMm": 0.125, "apertureShape": "circle" },
+    { "id": "B", "positionMmBodyLocal": { "x": 0, "y": 0, "z": 500 }, "normalBodyLocal": { "x": 0, "y": 0, "z": 1 }, "apertureMm": 0.125, "apertureShape": "circle" }
+  ],
+  "transitions": [
+    { "in": "A", "out": "B", "op": "fiber_propagate" },
+    { "in": "B", "out": "A", "op": "fiber_propagate" }
+  ],
+  "defaultParams": {
+    "fiberType": "SM",
+    "endAPolish": "PC",
+    "endBPolish": "APC",
+    "centerWavelengthNm": 780,
+    "modeFieldDiameterUm": 5.0,
+    "attenuationDbPerKm": 4.0,
+    "lengthMm": 1000,
+    "jacketColor": "yellow",
+    "apcAngleDeg": 8
+  },
+  "mechanicalAnchors": [],
+  "notes": { "spec": "SM 780nm hybrid: A=PC flat, B=APC angled. Use for in-line coupling where one side feeds free-space launch (PC) and the other goes to angled connector." }
+}

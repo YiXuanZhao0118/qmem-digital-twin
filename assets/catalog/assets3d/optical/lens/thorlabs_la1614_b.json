@@ -1,0 +1,76 @@
+{
+  "id": "thorlabs_la1614_b",
+  "vendorPart": "LA1614-B",
+  "displayName": "Plano-Convex Lens f=75mm AR(650-1050nm)",
+  "geometryRef": "files/stl/thorlabs_la1540_b.stl",
+  "geometryRefGlb": null,
+  "bodyFrameRotation": null,
+
+  "kind": "lens",
+  "wavelengthRangeNm": [650, 1050],
+
+  "physicalDimensionsMm": {
+    "L": 3.6,
+    "diameterMm": 25.4
+  },
+
+  "faces": [
+    { "id": "A",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": -1.8 },
+      "normalBodyLocal":     { "x": 0, "y": 0, "z": -1 },
+      "apertureMm": 12.7,
+      "apertureShape": "circle" },
+    { "id": "B",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": 1.8 },
+      "normalBodyLocal":     { "x": 0, "y": 0, "z": 1 },
+      "apertureMm": 12.7,
+      "apertureShape": "circle" }
+  ],
+
+  "transitions": [
+    {
+      "in": "A", "out": "B", "op": "abcd_thin_lens",
+      "_note": "A=convex side. Same recipe as LA1540-B: M_cf = [[1,0],[-(n-1)/R,n]]·[[1,d/n],[0,1]]·[[1,0],[0,1/n]] with R=38.6, d=3.6, n=1.5168.",
+      "matrix5x5": [
+        [1.0,        1.5645, 0,          0,      0],
+        [-0.01339,   0.97905, 0,          0,      0],
+        [0,          0,       1.0,        1.5645, 0],
+        [0,          0,       -0.01339,   0.97905, 0],
+        [0,          0,       0,          0,      1]
+      ]
+    },
+    {
+      "in": "B", "out": "A", "op": "abcd_thin_lens",
+      "_note": "B=flat side. M_fc = [[1,0],[0,n]]·[[1,d/n],[0,1]]·[[1,0],[-(n-1)/R,1/n]].",
+      "matrix5x5": [
+        [0.96822,    1.5645, 0,          0,      0],
+        [-0.02031,   1.0,    0,          0,      0],
+        [0,          0,      0.96822,    1.5645, 0],
+        [0,          0,      -0.02031,   1.0,    0],
+        [0,          0,      0,          0,      1]
+      ]
+    }
+  ],
+
+  "defaultParams": {
+    "focalLengthMm": 75,
+    "lensShape": "plano_convex",
+    "convexFace": "A",
+    "radiusOfCurvatureMm": 38.6,
+    "centerThicknessMm": 3.6,
+    "refractiveIndex": 1.5168,
+    "arResidualR": 0.005,
+    "material": "N-BK7"
+  },
+
+  "mechanicalAnchors": [
+    { "id": "edge_top",
+      "positionMmBodyLocal": { "x": 0, "y": 12.7, "z": 0 } }
+  ],
+
+  "notes": {
+    "calibrationStatus": "5x5 derived from same recipe as LA1540-B; only R changes (7.74mm -> 38.6mm).",
+    "spec": "Thorlabs LA1614-B: f=75mm, 1-inch plano-convex, AR-B coating 650-1050nm, N-BK7 substrate, center thickness 3.6mm, R=38.6mm.",
+    "geometryRefNote": "Reusing thorlabs_la1540_b.stl as placeholder geometry. Swap for LA1614-B STL when imported."
+  }
+}

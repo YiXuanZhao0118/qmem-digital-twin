@@ -1,0 +1,31 @@
+{
+  "id": "dbr_852_tosa_high_power",
+  "vendorPart": "DBR-852-TOSA-HighPower",
+  "displayName": "DBR-852-TOSA-HighPower",
+  "componentType": "laser_source",
+  "wavelengthCenterNm": 852.347,
+  "bindings": [
+    {
+      "bindingId": "source",
+      "assetId": "dbr_852_tosa_high_power_laser_source",
+      "localXMm": 0,
+      "localYMm": 0,
+      "localZMm": 0,
+      "localRxDeg": 0,
+      "localRyDeg": 0,
+      "localRzDeg": 0,
+      "tunableAxes": []
+    }
+  ],
+  "exposedFaces": [
+    {
+      "componentFaceId": "out",
+      "assetBindingId": "source",
+      "assetFaceId": "out"
+    }
+  ],
+  "notes": {
+    "sceneObject": "LASER_SOURCE0 stores live beam values in SceneObject.dynamicSources.",
+    "legacyBridge": "The old properties.opticalSources[] payload may remain as a UI compatibility mirror."
+  }
+}

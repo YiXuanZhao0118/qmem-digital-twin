@@ -1,0 +1,65 @@
+{
+  "name": "aom_plus1_order",
+  "description": "AOM diffract_aom op, A1->B1 +1 order face pair. 780nm laser, 80 MHz RF, TeO2 (n=2.26, v=4200 m/s), L=1.6 mm. Expected: ray tilted by +2 theta_B along body +x RF side, power = baseEfficiency (0.85).",
+  "asset": {
+    "catalogId": "test_aom_te02_80",
+    "kind": "aom",
+    "faces": [
+      {
+        "id": "A1",
+        "positionMmBodyLocal": { "x": 0, "y": 0, "z": -0.8 },
+        "normalBodyLocal": { "x": 0, "y": 0, "z": -1 },
+        "apertureMm": 1.0,
+        "apertureShape": "circle"
+      },
+      {
+        "id": "B1",
+        "positionMmBodyLocal": { "x": 0, "y": 0, "z": 0.8 },
+        "normalBodyLocal": { "x": 0, "y": 0, "z": 1 },
+        "apertureMm": 1.0,
+        "apertureShape": "circle"
+      }
+    ],
+    "transitions": [
+      { "in": "A1", "out": "B1", "op": "diffract_aom", "params": { "order": 1 } }
+    ],
+    "defaultParams": {
+      "centerFreqMhz": 80,
+      "acousticVelocityMps": 4200,
+      "refractiveIndex": 2.26,
+      "crystalLengthMm": 1.6,
+      "baseEfficiency": 0.85
+    }
+  },
+  "rayIn": {
+    "origin": { "x": 0, "y": 0, "z": -5 },
+    "direction": { "x": 0, "y": 0, "z": 1 },
+    "wavelengthNm": 780,
+    "waistRadiusMm": 0.5,
+    "powerMw": 1.0,
+    "jones": [{ "re": 1, "im": 0 }, { "re": 0, "im": 0 }]
+  },
+  "expected": {
+    "finalRayCount": 1,
+    "rays": [
+      {
+        "origin": { "x": 0, "y": 0, "z": 0.8 },
+        "direction": { "x": 0.0148567329156272, "y": 0, "z": 0.999889632653061 },
+        "pathLengthMm": 5.8,
+        "powerMw": 0.85,
+        "wavelengthNm": 780
+      }
+    ]
+  },
+  "tolerance": {
+    "positionMm": 1e-9,
+    "directionAbs": 1e-9,
+    "powerMw": 1e-12,
+    "qAbs": 1e-6
+  },
+  "notes": {
+    "direction": "theta_B = asin(780e-9 * 80e6 / (2 * 4200)) = 7.4286e-3 rad. +1 order deflects by +2 theta_B = 1.4857e-2 rad along body +x RF side.",
+    "power": "Order +1 efficiency = baseEfficiency = 0.85",
+    "pathLength": "Free-space 4.2 (z=-5 to z=-0.8 face A1) + slab 1.6 mm = 5.8 mm"
+  }
+}

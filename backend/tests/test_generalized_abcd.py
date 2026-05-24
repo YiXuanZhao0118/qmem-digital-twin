@@ -20,6 +20,7 @@ from app.solvers.generalized_abcd import (
     m_pbs_reflected,
     m_pbs_transmitted,
     m_rotation,
+    m_splitter_reflection_advanced,
     m_thin_lens,
     q_from_waist,
     radius_of_curvature_mm,
@@ -61,15 +62,15 @@ def test_thin_lens_decenter_tilt_per_spec():
     M = m_thin_lens(f, delta_x_mm=dx, delta_y_mm=dy,
                     alpha_x_rad=ax, alpha_y_rad=ay)
     inv_f = 1.0 / f
-    assert M[1, 4] == pytest.approx(dx * inv_f + ay * (1.0 - inv_f))
-    assert M[3, 4] == pytest.approx(dy * inv_f + ax * (1.0 - inv_f))
+    assert M[1, 4] == pytest.approx(dx * inv_f - ax)
+    assert M[3, 4] == pytest.approx(dy * inv_f - ay)
 
 
 def test_cylindrical_x_axis_has_focus_in_x_and_plate_in_y():
     """x-focusing cyl lens with thickness d, index n: y-block is glass plate."""
     f, d, n = 50.0, 5.0, 1.515
     M = m_cylindrical_standard(f, axis="x", thickness_mm=d, refractive_index=n,
-                               alpha_x_rad=0.01)
+                               alpha_y_rad=0.01)
     # x-block: focusing
     assert M[1, 0] == pytest.approx(-1.0 / f)
     # y-block: glass plate (d/n in B element)
@@ -98,25 +99,46 @@ def test_cylindrical_default_thickness_zero_recovers_thin_lens_only_in_focus_axi
 def test_flat_mirror_has_no_decenter_term():
     """Spec: mirror's 5th column has only 2α, no δ."""
     M = m_flat_mirror(alpha_x_rad=0.003, alpha_y_rad=0.004)
-    assert M[1, 1] == -1.0 and M[3, 3] == -1.0
-    assert M[1, 4] == pytest.approx(2.0 * 0.004)
-    assert M[3, 4] == pytest.approx(2.0 * 0.003)
+    assert M[1, 1] == 1.0 and M[3, 3] == 1.0
+    assert M[1, 4] == pytest.approx(2.0 * 0.003)
+    assert M[3, 4] == pytest.approx(2.0 * 0.004)
 
 
 def test_curved_mirror_combines_focus_and_reflection():
     R = 200.0
-    M = m_curved_mirror(R, delta_x_mm=0.1, alpha_y_rad=0.005)
+    M = m_curved_mirror(R, delta_x_mm=0.1, alpha_x_rad=0.005)
     inv_f = 2.0 / R
     assert M[1, 0] == pytest.approx(-inv_f)
-    assert M[1, 1] == -1.0
+    assert M[1, 1] == 1.0
     assert M[1, 4] == pytest.approx(0.1 * inv_f + 2.0 * 0.005)
 
 
-def test_pbs_reflected_equals_flat_mirror():
-    np.testing.assert_allclose(
-        m_pbs_reflected(alpha_x_rad=0.003, alpha_y_rad=0.004),
-        m_flat_mirror(alpha_x_rad=0.003, alpha_y_rad=0.004),
+def test_pbs_reflected_uses_advanced_splitter_model():
+    L, n = 12.7, 1.515
+    plate_alpha = 0.001
+    coating_alpha = 0.003
+    M = m_pbs_reflected(
+        L,
+        n,
+        plate_alpha_x_rad=plate_alpha,
+        coating_alpha_x_rad=coating_alpha,
+        reflection_fraction=0.5,
     )
+    s = L * (1.0 - 1.0 / n)
+    assert M[0, 1] == pytest.approx(L / n)
+    assert M[1, 4] == pytest.approx(2.0 * coating_alpha)
+    assert M[0, 4] == pytest.approx(
+        plate_alpha * s + (L * 0.5 / n) * 2.0 * coating_alpha
+    )
+
+
+def test_splitter_reflection_rejects_bad_inputs():
+    with pytest.raises(ValueError):
+        m_splitter_reflection_advanced(1.0, 0.0)
+    with pytest.raises(ValueError):
+        m_splitter_reflection_advanced(-1.0, 1.5)
+    with pytest.raises(ValueError):
+        m_splitter_reflection_advanced(1.0, 1.5, reflection_fraction=1.1)
 
 
 def test_pbs_transmitted_equals_glass_plate():
@@ -132,8 +154,8 @@ def test_glass_plate_snell_reduced():
     M = m_glass_plate(d, n, alpha_x_rad=0.001, alpha_y_rad=0.002)
     assert M[0, 1] == pytest.approx(d / n)
     assert M[2, 3] == pytest.approx(d / n)
-    assert M[0, 4] == pytest.approx(0.002 * d * (1.0 - 1.0 / n))
-    assert M[2, 4] == pytest.approx(0.001 * d * (1.0 - 1.0 / n))
+    assert M[0, 4] == pytest.approx(0.001 * d * (1.0 - 1.0 / n))
+    assert M[2, 4] == pytest.approx(0.002 * d * (1.0 - 1.0 / n))
 
 
 def test_glan_slab_astigmatic_B_xy():
@@ -320,13 +342,13 @@ def test_thin_lens_focuses_collimated_beam_to_focal_length():
     assert -out.q_x.real == pytest.approx(f_mm, rel=0.01)
 
 
-def test_mirror_inverts_q():
-    """Per spec: q_out = -q_in for a flat mirror (wavefront curvature reverses)."""
+def test_flat_mirror_leaves_q_unchanged_in_unfolded_frame():
+    """Unfolded-frame spec: q_out = q_in for a flat mirror."""
     q0 = complex(50.0, 30.0)  # generic non-trivial q
     beam = BeamMisaligned(q_x=q0, q_y=q0, wavelength_nm=WAVELENGTH_NM)
     out = apply_operator(beam, m_flat_mirror())
-    assert out.q_x == pytest.approx(-q0)
-    assert out.q_y == pytest.approx(-q0)
+    assert out.q_x == pytest.approx(q0)
+    assert out.q_y == pytest.approx(q0)
 
 
 def test_glass_plate_propagates_q_by_d_over_n():
@@ -374,7 +396,7 @@ def test_tilted_mirror_deflects_by_2_alpha():
     """Tilt α on mirror gives 2α deflection of reflected angle."""
     q0 = q_from_waist(500.0, 0.0, WAVELENGTH_NM)
     beam = BeamMisaligned(q_x=q0, q_y=q0, wavelength_nm=WAVELENGTH_NM)
-    out = apply_operator(beam, m_flat_mirror(alpha_y_rad=0.005))
+    out = apply_operator(beam, m_flat_mirror(alpha_x_rad=0.005))
     assert out.theta_xc_rad == pytest.approx(2.0 * 0.005)
 
 

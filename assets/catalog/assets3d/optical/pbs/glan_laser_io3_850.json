@@ -1,0 +1,117 @@
+{
+  "id": "glan_laser_io3_850",
+  "vendorPart": "Thorlabs IO-3-850-HP internal Glan-Laser",
+  "displayName": "Glan-Laser Prism (IO-3-850-HP, L=5.0mm)",
+  "geometryRef": "files/stl/glan_polarizer_calcite_prism.stl",
+  "geometryRefGlb": null,
+  "bodyFrameRotation": null,
+
+  "kind": "pbs",
+  "wavelengthRangeNm": [350, 2300],
+
+  "physicalDimensionsMm": {
+    "L": 5.0,
+    "clearApertureMm": 3.0,
+    "W": 6.5,
+    "H": 6.5
+  },
+
+  "faces": [
+    { "id": "A1",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": -2.5 },
+      "normalBodyLocal":     { "x": 0, "y": 0, "z": -1 },
+      "apertureMm": 1.5,
+      "apertureShape": "circle",
+      "_role": "external input face, perpendicular to optical axis (Snell at this face is identity for normal incidence)"
+    },
+    { "id": "A2",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": 2.5 },
+      "normalBodyLocal":     { "x": 0, "y": 0, "z": 1 },
+      "apertureMm": 1.5,
+      "apertureShape": "circle",
+      "_role": "external output face for p-pol transmit (Snell identity)"
+    },
+    { "id": "A3",
+      "positionMmBodyLocal": { "x": 3.25, "y": 0, "z": 0 },
+      "normalBodyLocal":     { "x": 1, "y": 0, "z": 0 },
+      "apertureMm": 3.0,
+      "apertureShape": "rectangle",
+      "_role": "external side exit face for s-pol reject. Outward normal +x, perpendicular to optical axis. Snell here refracts the in-crystal TIR-reflected beam into air."
+    },
+    { "id": "B1",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": 0 },
+      "normalBodyLocal":     { "x": 0.6225, "y": 0, "z": -0.7826 },
+      "apertureMm": 3.0,
+      "apertureShape": "rectangle",
+      "_role": "INTERNAL gap interface (crystal-1 / air). Real surface normal at 38.5° from optical axis, tilted to direct s-pol TIR-reflection toward +x side. Used by glan_reject_s via mirror formula."
+    },
+    { "id": "B2",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": 0.1 },
+      "normalBodyLocal":     { "x": 0.6225, "y": 0, "z": -0.7826 },
+      "apertureMm": 3.0,
+      "apertureShape": "rectangle",
+      "_role": "INTERNAL gap interface (air / crystal-2), parallel to B1, offset by air-gap thickness. p-pol transmits across B1+B2 with cancelling Snell refractions."
+    }
+  ],
+
+  "transitions": [
+    {
+      "in": "A1", "via": ["B1", "B2"], "out": "A2",
+      "op": "glan_transmit_p",
+      "matrix5x5": [
+        [1, 3.74, 0, 0,    0],
+        [0, 1,    0, 0,    0],
+        [0, 0,    1, 3.38, 0],
+        [0, 0,    0, 1,    0],
+        [0, 0,    0, 0,    1]
+      ],
+      "_note": "Forward p-pol transmission across both gap interfaces. Net Snell cancels for parallel-plate gap; matrix5x5 captures internal lateral shift + astigmatism. B_x = L/n_e + d_gap·(cos²θ_i/cos²θ_t − 1) = 3.38 + 0.12·3.052 = 3.74 mm. B_y = L/n_e = 3.38 mm."
+    },
+    {
+      "in": "A1", "via": ["B1"], "out": "A3",
+      "op": "glan_reject_s",
+      "_note": "Forward s-pol reject. Beam TIR-mirrors off B1 (in crystal-1), then Snell-refracts through A3 into air. Output direction emerges from mirror + Snell — NOT hard-coded. Expected air direction ≈ (0.928, 0, -0.374) with n_o = 1.66."
+    },
+    {
+      "in": "A2", "via": ["B2", "B1"], "out": "A1",
+      "op": "glan_transmit_p",
+      "matrix5x5": [
+        [1, 3.74, 0, 0,    0],
+        [0, 1,    0, 0,    0],
+        [0, 0,    1, 3.38, 0],
+        [0, 0,    0, 1,    0],
+        [0, 0,    0, 0,    1]
+      ],
+      "_note": "Reverse p-pol transmission (reciprocal)."
+    },
+    {
+      "in": "A2", "via": ["B2"], "out": "A3",
+      "op": "glan_reject_s",
+      "_note": "Reverse s-pol reject (rarely triggered — IO design assumes one-way input)."
+    }
+  ],
+
+  "defaultParams": {
+    "transmissionAxisDegBodyLocal": 0,
+    "extinctionRatioPpDb": 100000,
+    "extinctionRatioSpDb": 30,
+    "refractiveIndex_e": 1.48,
+    "refractiveIndex_o": 1.66,
+    "airGapAngleDeg": 38.5,
+    "airGapThicknessMm": 0.12,
+    "lengthMm": 5.0,
+    "B_y_mm": 3.38,
+    "B_x_mm": 3.74,
+    "E_x_offset_coef": 2.72
+  },
+
+  "mechanicalAnchors": [],
+
+  "notes": {
+    "topology": "PBS-like beam splitter (NOT absorbing polarizer). 5 faces: A1 (input), A2 (transmit), A3 (side reject), B1 + B2 (internal gap interfaces). 4 transitions with multi-hop via chain. Power conservation T_p + T_s = 1.",
+    "rejectGeometry": "B1 normal (0.6225, 0, -0.7826) = (sin 38.5°, 0, -cos 38.5°), 38.5° from optical axis, outward toward source side. Mirror reflect of k=(0,0,1) gives k_crystal=(0.974, 0, -0.225) in crystal-1, then Snell at A3 (n_o=1.66 → 1) gives k_air≈(0.928, 0, -0.374). Reject exits BACKWARD in z (real Glan-Laser TIR behavior).",
+    "tirCheck": "sin 38.5° = 0.6225 > 1/n_o = 1/1.66 = 0.6024, so o-ray (s-pol) undergoes TIR at B1. e-ray (p-pol, n_e=1.486): sin 38.5° < 1/n_e = 0.673, so e-ray transmits across gap (no TIR).",
+    "ExOffset": "Augmented matrix E_x term (input-tilt-induced lateral shift): E_x ≈ L·θ_x_in·(1 − 1/n_e²) = 2.72·θ_x_in. Set to 0 here since matrix5x5 only encodes the slab+astigmatism; tracer doesn't yet thread input-tilt into E_x.",
+    "variant": "IO-3-850-HP has SMALLER crystal (L=5.0mm, 3mm clear aperture) than IO-5 (L=7.5mm, 5mm clear)."
+  }
+}

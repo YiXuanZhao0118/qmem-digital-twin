@@ -1,0 +1,79 @@
+{
+  "id": "thorlabs_io_3_850_faraday_rod",
+  "vendorPart": "IO-3-850-HP (Faraday rod core)",
+  "displayName": "FaradayRod_IO3_850",
+  "geometryRef": "files/stl/thorlabs_io_3_850_hp/faraday_rod.stl",
+  "geometryRefGlb": null,
+  "bodyFrameRotation": null,
+
+  "kind": "faraday_rotator",
+  "wavelengthRangeNm": [840, 860],
+
+  "_ROOT_MODEL_NOTE": "This Asset3D defines the IO-3 component's coordinate origin (0,0,0). All other bindings in the IO-3 component position themselves relative to this rod's center.",
+
+  "_CALIBRATION_STATUS": "estimated ??user to refine: lengthMm, refractiveIndex, face z positions",
+
+  "physicalDimensionsMm": {
+    "L": 18,
+    "diameterMm": 4
+  },
+
+  "faces": [
+    { "id": "A",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": -9 },
+      "normalBodyLocal":     { "x": 0, "y": 0, "z": -1 },
+      "apertureMm": 4.0,
+      "apertureShape": "circle" },
+
+    { "id": "B",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": 9 },
+      "normalBodyLocal":     { "x": 0, "y": 0, "z": 1 },
+      "apertureMm": 4.0,
+      "apertureShape": "circle" }
+  ],
+
+  "transitions": [
+    {
+      "in": "A", "out": "B",
+      "op": "faraday_rotate",
+      "matrix5x5": [
+        [1, 9.231, 0, 0,     0],
+        [0, 1,     0, 0,     0],
+        [0, 0,     1, 9.231, 0],
+        [0, 0,     0, 1,     0],
+        [0, 0,     0, 0,     1]
+      ],
+      "_note": "B = L/n = 18/1.95 = 9.231 mm. Jones rotation +45° applied separately by op."
+    },
+    {
+      "in": "B", "out": "A",
+      "op": "faraday_rotate",
+      "matrix5x5": [
+        [1, 9.231, 0, 0,     0],
+        [0, 1,     0, 0,     0],
+        [0, 0,     1, 9.231, 0],
+        [0, 0,     0, 1,     0],
+        [0, 0,     0, 0,     1]
+      ],
+      "_note": "Non-reciprocal: reverse direction ALSO rotates Jones by +45° (NOT -45°)"
+    }
+  ],
+
+  "defaultParams": {
+    "rotationDeg": 45,
+    "reciprocal": false,
+    "lengthMm": 18,
+    "refractiveIndex": 1.95,
+    "arResidualR": 0.005,
+    "VerdetConstantRadPerTeslaMm": 0.0427,
+    "material": "TGG"
+  },
+
+  "mechanicalAnchors": [],
+
+  "notes": {
+    "rootModel": "User-defined as the root model of IO-3-850-HP component coordinate system",
+    "rotation": "Faraday rotation is encoded in the op (jones rotation by +45°), not in matrix5x5",
+    "ARFresnel": "0.5% residual reflection at each face ??handled via ghost ray"
+  }
+}

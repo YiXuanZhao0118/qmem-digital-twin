@@ -270,6 +270,17 @@ def test_waveplate_with_thickness_propagates_q_by_d_over_n():
     assert math.isclose(out.q_x.real, 20.0 + 1.0 / 1.5, abs_tol=1e-9)
 
 
+def test_waveplate_with_length_alias_propagates_q_by_l_over_n():
+    """v3 assets use lengthMm; legacy solver accepts it as plate thickness."""
+    beam = replace_beam(make_beam(), q_x=complex(20.0, 50.0), q_y=complex(20.0, 50.0))
+    out = apply_waveplate(
+        beam,
+        {"retardanceLambda": 0.5, "fastAxisDeg": 0.0,
+         "lengthMm": 2.0, "refractiveIndex": 1.5, "transmission": 1.0},
+    )["out"]
+    assert math.isclose(out.q_x.real, 20.0 + 2.0 / 1.5, abs_tol=1e-9)
+
+
 # --- Phase F.1: profileKind passthrough + field synthesis -------------------
 
 

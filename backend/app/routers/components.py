@@ -209,7 +209,11 @@ DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
     "lens_cylindrical": {"focalMm": 100.0, "cylindricalAxis": "x", "transmission": 0.99},
     # V2 Phase 4 (alembic 0030): axis angles moved to
     # objects.properties.anchorBindings[polarizationReference].payload.axisDegBeamLocal.
-    "waveplate": {"retardanceLambda": 0.5, "transmission": 0.99},
+    "waveplate": {
+        "retardanceLambda": 0.5,
+        "transmission": 0.99,
+        "wavelengthRangeNm": [400.0, 1100.0],
+    },
     "polarizer": {"extinctionRatioDb": 30.0, "transmission": 0.95},
     # V2 Phase 6 (alembic 0032): coating normal + PBS axis moved to bindings.
     "beam_splitter": {
@@ -577,6 +581,47 @@ def default_kind_params_for_component(kind: str, component: Component) -> dict[s
         override = props.get("isolatorKindParamsOverride")
         if isinstance(override, dict):
             _deep_merge_dict(kind_params, override)
+    if kind == "waveplate":
+        # Per-template kindParams override: vendor plate Components can carry
+        # spec-sheet optical constants while the fast-axis angle remains on
+        # the Asset3D anchor / per-object rotation contract.
+        props = component.properties or {}
+        override = props.get("waveplateKindParamsOverride")
+        if isinstance(override, dict):
+            _deep_merge_dict(kind_params, override)
+        for prop_key, param_key in (
+            ("designWavelengthNm", "designWavelengthNm"),
+            ("retardanceLambda", "retardanceLambda"),
+            ("retardanceDeg", "retardanceDeg"),
+            ("transmission", "transmission"),
+            ("lengthMm", "lengthMm"),
+            ("thicknessMm", "thicknessMm"),
+            ("refractiveIndex", "refractiveIndex"),
+            ("clearApertureMm", "clearApertureMm"),
+            ("plateAlphaXRad", "plateAlphaXRad"),
+            ("plateAlphaYRad", "plateAlphaYRad"),
+        ):
+            value = props.get(prop_key)
+            if isinstance(value, (int, float)):
+                kind_params[param_key] = float(value)
+        for prop_key, param_key in (
+            ("material", "material"),
+            ("plateType", "plateType"),
+        ):
+            value = props.get(prop_key)
+            if isinstance(value, str) and value:
+                kind_params[param_key] = value
+        value = props.get("wavelengthRangeNm")
+        if (
+            isinstance(value, list)
+            and len(value) == 2
+            and all(isinstance(item, (int, float)) for item in value)
+        ):
+            kind_params["wavelengthRangeNm"] = [float(value[0]), float(value[1])]
+        if "lengthMm" in kind_params and "thicknessMm" not in kind_params:
+            kind_params["thicknessMm"] = kind_params["lengthMm"]
+        if "thicknessMm" in kind_params and "lengthMm" not in kind_params:
+            kind_params["lengthMm"] = kind_params["thicknessMm"]
     if kind == "beam_splitter" and _looks_like_pbs_component(component):
         kind_params.update(
             {
@@ -698,10 +743,19 @@ async def auto_create_physics_element_for_object(
     if kind not in DEFAULT_KIND_PARAMS:
         return None
 
+    wavelength_range = [400.0, 1100.0]
+    raw_range = kind_params.get("wavelengthRangeNm")
+    if (
+        isinstance(raw_range, list)
+        and len(raw_range) == 2
+        and all(isinstance(item, (int, float)) for item in raw_range)
+    ):
+        wavelength_range = [float(raw_range[0]), float(raw_range[1])]
+
     physics_element = PhysicsElement(
         object_id=scene_object.id,
         element_kind=kind,
-        wavelength_range_nm=[400.0, 1100.0],
+        wavelength_range_nm=wavelength_range,
         input_ports=list(default_ports.get("input", []) or []),
         output_ports=list(default_ports.get("output", []) or []),
         kind_params=kind_params,

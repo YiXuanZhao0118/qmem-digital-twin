@@ -27,7 +27,7 @@ from app.models import (
 )
 from app.routers.collections import canonical_collection_members, get_master_collection
 from app.v2_bindings import (
-    get_optical_source,
+    get_laser_beam_for_kind_params,
     legacy_aom_kind_params_from_binding,
     legacy_beam_splitter_kind_params_from_bindings,
     legacy_isolator_kind_params_from_binding,
@@ -90,8 +90,7 @@ async def get_scene(session: AsyncSession = Depends(get_session)) -> schemas.Sce
         if scene_object is None:
             continue
         if el.element_kind == "laser_source":
-            source = get_optical_source(scene_object)
-            beam = source.get("beam") if isinstance(source, dict) else None
+            beam = get_laser_beam_for_kind_params(scene_object)
             if isinstance(beam, dict):
                 payload["kindParams"] = {
                     **(payload.get("kindParams") or {}),

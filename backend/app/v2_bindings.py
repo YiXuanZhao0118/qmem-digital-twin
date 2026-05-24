@@ -62,6 +62,13 @@ V2_TRACKED_LASER_KEYS = (
     "transverseMode",
     "polarization",
 )
+LASER_DYNAMIC_SOURCE_BEAM_KEYS = (
+    "powerMw",
+    "spectrum",
+    "polarization",
+    "spatialEnvelope",
+    "transverseMode",
+)
 
 
 def pick_optical_surface_anchor_id(asset_anchors: list[Any] | None) -> str | None:
@@ -181,6 +188,81 @@ def get_optical_source(scene_object: SceneObject | dict[str, Any] | None) -> dic
         if isinstance(s, dict):
             return s
     return None
+
+
+def _scene_object_dynamic_sources(
+    scene_object: SceneObject | dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if scene_object is None:
+        return None
+    if isinstance(scene_object, dict):
+        raw = scene_object.get("dynamicSources")
+        if raw is None:
+            raw = scene_object.get("dynamic_sources")
+    else:
+        raw = scene_object.dynamic_sources
+    return raw if isinstance(raw, dict) else None
+
+
+def get_laser_beam_for_kind_params(
+    scene_object: SceneObject | dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return the canonical beam payload used to synthesise laser kindParams.
+
+    V3 laser objects keep the live optical coefficients on ``dynamic_sources``.
+    Older V2 objects keep them under ``properties.opticalSources[].beam``.
+    Prefer the V3 location so Object panel, Optical Link panel, and the v3
+    solver all see the same beam after edits.
+    """
+    dynamic = _scene_object_dynamic_sources(scene_object)
+    if dynamic is not None and any(k in dynamic for k in LASER_DYNAMIC_SOURCE_BEAM_KEYS):
+        return dynamic
+    source = get_optical_source(scene_object)
+    beam = source.get("beam") if isinstance(source, dict) else None
+    return beam if isinstance(beam, dict) else None
+
+
+def laser_dynamic_sources_from_beam(
+    source: dict[str, Any] | None,
+    beam: dict[str, Any],
+    *,
+    existing: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the v3 ``SceneObject.dynamic_sources`` laser payload.
+
+    The payload intentionally mirrors the BeamSource shape at top level so v3
+    PhysicsOps can read ``dynamic.spectrum`` / ``dynamic.powerMw`` directly,
+    while preserving face/binding metadata used by the Asset3D route.
+    """
+    dynamic = dict(existing or {})
+    for stale_alias in ("centerWavelengthNm", "laserPowerMw", "nominalPowerMw", "beam"):
+        dynamic.pop(stale_alias, None)
+    dynamic.update({k: v for k, v in beam.items() if k in LASER_DYNAMIC_SOURCE_BEAM_KEYS})
+    if isinstance(source, dict):
+        source_id = source.get("id")
+        binding_id = source.get("bindingId")
+        if source_id is not None:
+            dynamic["sourceId"] = source_id
+        if binding_id is not None:
+            dynamic.setdefault("legacyBindingId", binding_id)
+    dynamic.setdefault("componentFaceId", "out")
+    dynamic.setdefault("assetBindingId", "source")
+    dynamic.setdefault("assetFaceId", "out")
+    return dynamic
+
+
+def write_laser_dynamic_sources(
+    scene_object: SceneObject,
+    source: dict[str, Any] | None,
+    beam: dict[str, Any],
+) -> None:
+    """Synchronise a laser BeamSource into the v3 dynamic source slot."""
+    scene_object.dynamic_sources = laser_dynamic_sources_from_beam(
+        source,
+        beam,
+        existing=scene_object.dynamic_sources if isinstance(scene_object.dynamic_sources, dict) else None,
+    )
+    flag_modified(scene_object, "dynamic_sources")
 
 
 def legacy_laser_kind_params_from_beam(beam: dict[str, Any]) -> dict[str, Any]:
@@ -888,17 +970,21 @@ async def bootstrap_laser_default_binding_and_source(
     }
     properties = append_binding(scene_object.properties, binding)
 
-    # Add a default opticalSource if none exists for this binding.
+    # Add a default opticalSource if none exists for this binding, and mirror
+    # it into dynamic_sources for the v3 Asset3D solver path.
     sources = list(properties.get("opticalSources") or [])
-    sources.append({
+    beam = default_laser_beam()
+    source = {
         "id": uuid7_str(),
         "bindingId": binding["id"],
         "enabled": True,
-        "beam": default_laser_beam(),
-    })
+        "beam": beam,
+    }
+    sources.append(source)
     properties["opticalSources"] = sources
 
     scene_object.properties = properties
+    write_laser_dynamic_sources(scene_object, source, beam)
     flag_modified(scene_object, "properties")
     return True
 

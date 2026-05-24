@@ -1,0 +1,32 @@
+{
+  "id": "thorlabs_p1_780pm_fc_1",
+  "vendorPart": "P1-780PM-FC-1",
+  "displayName": "Thorlabs P1-780PM-FC-1 (PM, PC/PC, 1m, 780nm)",
+  "geometryRef": null,
+  "geometryRefGlb": null,
+  "bodyFrameRotation": null,
+  "kind": "fiber",
+  "wavelengthRangeNm": [770, 850],
+  "physicalDimensionsMm": { "lengthMm": 1000, "claddingDiameterUm": 125, "coreDiameterUm": 4.5 },
+  "faces": [
+    { "id": "A", "positionMmBodyLocal": { "x": 0, "y": 0, "z": -500 }, "normalBodyLocal": { "x": 0, "y": 0, "z": -1 }, "apertureMm": 0.125, "apertureShape": "circle" },
+    { "id": "B", "positionMmBodyLocal": { "x": 0, "y": 0, "z": 500 }, "normalBodyLocal": { "x": 0, "y": 0, "z": 1 }, "apertureMm": 0.125, "apertureShape": "circle" }
+  ],
+  "transitions": [
+    { "in": "A", "out": "B", "op": "fiber_propagate" },
+    { "in": "B", "out": "A", "op": "fiber_propagate" }
+  ],
+  "defaultParams": {
+    "fiberType": "PM",
+    "endAPolish": "PC",
+    "endBPolish": "PC",
+    "centerWavelengthNm": 780,
+    "modeFieldDiameterUm": 5.3,
+    "attenuationDbPerKm": 3.0,
+    "extinctionRatioDb": 25,
+    "lengthMm": 1000,
+    "jacketColor": "blue"
+  },
+  "mechanicalAnchors": [],
+  "notes": { "spec": "PM Panda 780nm blue jacket, both ends PC polished. Polarization-maintaining via stress rods." }
+}

@@ -2,8 +2,18 @@ import { definePhysicsPlugin } from "../_plugin";
 
 export interface WaveplateParams extends Record<string, unknown> {
   retardanceLambda: number;
+  retardanceDeg?: number;
   transmission: number;
+  designWavelengthNm?: number;
   wavelengthRangeNm: [number, number];
+  lengthMm?: number;
+  thicknessMm?: number;
+  refractiveIndex?: number;
+  clearApertureMm?: number;
+  plateAlphaXRad?: number;
+  plateAlphaYRad?: number;
+  material?: string;
+  plateType?: string;
 }
 
 export const waveplatePlugin = definePhysicsPlugin<WaveplateParams>({
@@ -32,7 +42,21 @@ export const waveplatePlugin = definePhysicsPlugin<WaveplateParams>({
       transmission: 0.99,
       wavelengthRangeNm: [400, 1100],
     },
-    intrinsicParamKeys: ["retardanceLambda", "transmission", "wavelengthRangeNm"],
+    intrinsicParamKeys: [
+      "retardanceLambda",
+      "retardanceDeg",
+      "transmission",
+      "designWavelengthNm",
+      "wavelengthRangeNm",
+      "lengthMm",
+      "thicknessMm",
+      "refractiveIndex",
+      "clearApertureMm",
+      "plateAlphaXRad",
+      "plateAlphaYRad",
+      "material",
+      "plateType",
+    ],
     stateParamKeys: [],
     portDomains: { intercept_in: "optical" },
   },

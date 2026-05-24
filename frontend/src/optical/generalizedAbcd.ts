@@ -3,7 +3,7 @@
  *
  * TypeScript port of `backend/app/solvers/generalized_abcd.py`. Same API,
  * same physics, same operator definitions (lens, cylindrical, mirror,
- * curved-mirror, PBS, glass plate, rotation). See the Python module's
+ * curved-mirror, splitter/PBS, glass plate, rotation). See the Python module's
  * docstring for the full convention table.
  *
  * Conventions: lengths in mm, angles in rad, wavelength in nm.
@@ -102,13 +102,12 @@ export function mThinLens(focalMm: number, misalign: LensMisalign = {}): Mat5 {
   }
   const { deltaXMm = 0, deltaYMm = 0, alphaXRad = 0, alphaYRad = 0 } = misalign;
   const invF = 1.0 / focalMm;
-  const oneMinusInvF = 1.0 - invF;
 
   const M = mat5Identity();
   setAt(M, 1, 0, -invF);
   setAt(M, 3, 2, -invF);
-  setAt(M, 1, 4, deltaXMm * invF + alphaYRad * oneMinusInvF);
-  setAt(M, 3, 4, deltaYMm * invF + alphaXRad * oneMinusInvF);
+  setAt(M, 1, 4, deltaXMm * invF - alphaXRad);
+  setAt(M, 3, 4, deltaYMm * invF - alphaYRad);
   return M;
 }
 
@@ -131,21 +130,20 @@ export function mCylindricalStandard(focalMm: number, params: CylindricalParams 
   } = params;
   if (refractiveIndex <= 0) throw new Error("refractive index must be positive");
   const invF = 1.0 / focalMm;
-  const oneMinusInvF = 1.0 - invF;
   const dOverN = thicknessMm / refractiveIndex;
   const plateShift = thicknessMm * (1.0 - 1.0 / refractiveIndex);
 
   const M = mat5Identity();
   if (axis === "x") {
     setAt(M, 1, 0, -invF);
-    setAt(M, 1, 4, deltaXMm * invF + alphaYRad * oneMinusInvF);
+    setAt(M, 1, 4, deltaXMm * invF - alphaXRad);
     setAt(M, 2, 3, dOverN);
-    setAt(M, 2, 4, alphaXRad * plateShift);
+    setAt(M, 2, 4, alphaYRad * plateShift);
   } else if (axis === "y") {
     setAt(M, 0, 1, dOverN);
-    setAt(M, 0, 4, alphaYRad * plateShift);
+    setAt(M, 0, 4, alphaXRad * plateShift);
     setAt(M, 3, 2, -invF);
-    setAt(M, 3, 4, deltaYMm * invF + alphaXRad * oneMinusInvF);
+    setAt(M, 3, 4, deltaYMm * invF - alphaYRad);
   } else {
     throw new Error(`axis must be 'x' or 'y', got ${axis}`);
   }
@@ -181,10 +179,8 @@ export type MirrorTilt = { alphaXRad?: number; alphaYRad?: number };
 export function mFlatMirror(tilt: MirrorTilt = {}): Mat5 {
   const { alphaXRad = 0, alphaYRad = 0 } = tilt;
   const M = mat5Identity();
-  setAt(M, 1, 1, -1.0);
-  setAt(M, 3, 3, -1.0);
-  setAt(M, 1, 4, 2.0 * alphaYRad);
-  setAt(M, 3, 4, 2.0 * alphaXRad);
+  setAt(M, 1, 4, 2.0 * alphaXRad);
+  setAt(M, 3, 4, 2.0 * alphaYRad);
   return M;
 }
 
@@ -195,11 +191,9 @@ export function mCurvedMirror(radiusMm: number, misalign: LensMisalign = {}): Ma
 
   const M = mat5Identity();
   setAt(M, 1, 0, -invF);
-  setAt(M, 1, 1, -1.0);
   setAt(M, 3, 2, -invF);
-  setAt(M, 3, 3, -1.0);
-  setAt(M, 1, 4, deltaXMm * invF + 2.0 * alphaYRad);
-  setAt(M, 3, 4, deltaYMm * invF + 2.0 * alphaXRad);
+  setAt(M, 1, 4, deltaXMm * invF + 2.0 * alphaXRad);
+  setAt(M, 3, 4, deltaYMm * invF + 2.0 * alphaYRad);
   return M;
 }
 
@@ -212,13 +206,60 @@ export function mGlassPlate(thicknessMm: number, refractiveIndex: number, tilt: 
   const M = mat5Identity();
   setAt(M, 0, 1, dOverN);
   setAt(M, 2, 3, dOverN);
-  setAt(M, 0, 4, alphaYRad * plateShift);
-  setAt(M, 2, 4, alphaXRad * plateShift);
+  setAt(M, 0, 4, alphaXRad * plateShift);
+  setAt(M, 2, 4, alphaYRad * plateShift);
   return M;
 }
 
-export function mPbsReflected(tilt: MirrorTilt = {}): Mat5 {
-  return mFlatMirror(tilt);
+export type SplitterReflectionParams = {
+  plateAlphaXRad?: number;
+  plateAlphaYRad?: number;
+  coatingAlphaXRad?: number;
+  coatingAlphaYRad?: number;
+  reflectionFraction?: number;
+};
+
+export function mSplitterReflectionAdvanced(
+  glassPathMm: number,
+  refractiveIndex: number,
+  params: SplitterReflectionParams = {},
+): Mat5 {
+  if (refractiveIndex <= 0) throw new Error("refractive index must be positive");
+  if (glassPathMm < 0) throw new Error("glass path must be non-negative");
+  const {
+    plateAlphaXRad = 0,
+    plateAlphaYRad = 0,
+    coatingAlphaXRad = 0,
+    coatingAlphaYRad = 0,
+    reflectionFraction = 0.5,
+  } = params;
+  if (reflectionFraction < 0 || reflectionFraction > 1) {
+    throw new Error("reflectionFraction must be between 0 and 1");
+  }
+  const prePath = glassPathMm * reflectionFraction;
+  const postPath = glassPathMm - prePath;
+  return compose(
+    mGlassPlate(prePath, refractiveIndex, {
+      alphaXRad: plateAlphaXRad,
+      alphaYRad: plateAlphaYRad,
+    }),
+    mFlatMirror({
+      alphaXRad: coatingAlphaXRad,
+      alphaYRad: coatingAlphaYRad,
+    }),
+    mGlassPlate(postPath, refractiveIndex, {
+      alphaXRad: plateAlphaXRad,
+      alphaYRad: plateAlphaYRad,
+    }),
+  );
+}
+
+export function mPbsReflected(
+  glassPathMm = 0,
+  refractiveIndex = 1,
+  params: SplitterReflectionParams = {},
+): Mat5 {
+  return mSplitterReflectionAdvanced(glassPathMm, refractiveIndex, params);
 }
 
 export function mPbsTransmitted(cubeSizeMm: number, refractiveIndex: number, tilt: MirrorTilt = {}): Mat5 {

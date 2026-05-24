@@ -590,8 +590,8 @@ export function LaserSourceControls({
       </div>
 
       <p className="snap-to-beam-empty" style={{ marginTop: 8, fontSize: 10, opacity: 0.65 }}>
-        V2: this form edits <code>objects.properties.opticalSources[].beam</code> via the
-        backend translator; <code>kindParams</code> in DB stays empty for laser_source.
+        Source fields are mirrored to <code>objects.dynamicSources</code> for v3
+        Asset3D ops and to <code>opticalSources[].beam</code> for the legacy ray view.
       </p>
     </div>
   );

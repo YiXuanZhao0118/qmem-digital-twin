@@ -1,0 +1,31 @@
+{
+  "id": "thorlabs_p1_780a_fc_1",
+  "vendorPart": "P1-780A-FC-1",
+  "displayName": "Thorlabs P1-780A-FC-1 (SM, PC/PC, 1m, 780nm)",
+  "geometryRef": null,
+  "geometryRefGlb": null,
+  "bodyFrameRotation": null,
+  "kind": "fiber",
+  "wavelengthRangeNm": [700, 970],
+  "physicalDimensionsMm": { "lengthMm": 1000, "claddingDiameterUm": 125, "coreDiameterUm": 4.4 },
+  "faces": [
+    { "id": "A", "positionMmBodyLocal": { "x": 0, "y": 0, "z": -500 }, "normalBodyLocal": { "x": 0, "y": 0, "z": -1 }, "apertureMm": 0.125, "apertureShape": "circle" },
+    { "id": "B", "positionMmBodyLocal": { "x": 0, "y": 0, "z": 500 }, "normalBodyLocal": { "x": 0, "y": 0, "z": 1 }, "apertureMm": 0.125, "apertureShape": "circle" }
+  ],
+  "transitions": [
+    { "in": "A", "out": "B", "op": "fiber_propagate" },
+    { "in": "B", "out": "A", "op": "fiber_propagate" }
+  ],
+  "defaultParams": {
+    "fiberType": "SM",
+    "endAPolish": "PC",
+    "endBPolish": "PC",
+    "centerWavelengthNm": 780,
+    "modeFieldDiameterUm": 5.0,
+    "attenuationDbPerKm": 4.0,
+    "lengthMm": 1000,
+    "jacketColor": "yellow"
+  },
+  "mechanicalAnchors": [],
+  "notes": { "spec": "SM 780nm yellow jacket, both ends PC polished. Length variable via Bezier spline." }
+}

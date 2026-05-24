@@ -19,6 +19,7 @@ from app.v2_bindings import (
     V2_TRACKED_POLARIZER_KEYS,
     V2_TRACKED_WAVEPLATE_KEYS,
     beam_from_legacy_laser_kind_params,
+    get_laser_beam_for_kind_params,
     get_optical_source,
     legacy_aom_kind_params_from_binding,
     legacy_beam_splitter_kind_params_from_bindings,
@@ -29,6 +30,7 @@ from app.v2_bindings import (
     write_aom_rf_direction_body_local,
     write_beam_splitter_coating_normal,
     write_isolator_axis_deg_beam_local,
+    write_laser_dynamic_sources,
     write_polarizer_axis_deg_beam_local,
     write_waveplate_axis_deg_beam_local,
 )
@@ -117,8 +119,7 @@ async def _serialize_physics_elements(
         if scene_object is None:
             continue
         if el.element_kind == "laser_source":
-            source = get_optical_source(scene_object)
-            beam = source.get("beam") if isinstance(source, dict) else None
+            beam = get_laser_beam_for_kind_params(scene_object)
             if isinstance(beam, dict):
                 payload["kindParams"] = {
                     **(payload.get("kindParams") or {}),
@@ -153,6 +154,10 @@ async def _serialize_physics_elements(
 
 def element_payload(element: PhysicsElement) -> dict[str, object]:
     return schemas.OpticalElementOut.model_validate(element).model_dump(mode="json", by_alias=True)
+
+
+def object_payload(scene_object: SceneObject) -> dict[str, object]:
+    return schemas.SceneObjectOut.model_validate(scene_object).model_dump(mode="json", by_alias=True)
 
 
 async def _get_by_object(session: AsyncSession, object_id: uuid.UUID) -> PhysicsElement | None:
@@ -242,6 +247,7 @@ async def update_physics_element(
         kind_params=merged.kind_params,
     )
     element.kind_params = merged.kind_params
+    object_to_broadcast: SceneObject | None = None
 
     # V2 Phase 4 (alembic 0030): if the (V1-style) caller sent a
     # waveplate fast axis or polarizer transmission axis, translate it to
@@ -340,14 +346,17 @@ async def update_physics_element(
                     new_beam = beam_from_legacy_laser_kind_params(v1_changes)
                     properties = dict(scene_object.properties or {})
                     sources = list(properties.get("opticalSources") or [])
-                    sources.append({"id": "tmp", "bindingId": "tmp", "enabled": True, "beam": new_beam})
+                    source = {"id": "tmp", "bindingId": "tmp", "enabled": True, "beam": new_beam}
+                    sources.append(source)
                     properties["opticalSources"] = sources
                     scene_object.properties = properties
+                    write_laser_dynamic_sources(scene_object, source, new_beam)
                     flag_modified(scene_object, "properties")
                 else:
                     # Merge legacy fields onto the existing beam by round-tripping
                     # through the inverse translator on the merged set.
-                    current_legacy = legacy_laser_kind_params_from_beam(source.get("beam") or {})
+                    current_beam = get_laser_beam_for_kind_params(scene_object) or source.get("beam") or {}
+                    current_legacy = legacy_laser_kind_params_from_beam(current_beam)
                     merged_legacy = {**current_legacy, **v1_changes}
                     new_beam = beam_from_legacy_laser_kind_params(merged_legacy)
                     properties = dict(scene_object.properties or {})
@@ -367,15 +376,21 @@ async def update_physics_element(
                         new_sources.append({**source, "beam": new_beam})
                     properties["opticalSources"] = new_sources
                     scene_object.properties = properties
+                    write_laser_dynamic_sources(scene_object, source, new_beam)
                     flag_modified(scene_object, "properties")
+                object_to_broadcast = scene_object
 
     await session.commit()
     await session.refresh(element)
+    if object_to_broadcast is not None:
+        await session.refresh(object_to_broadcast)
 
     # Re-synthesise legacy kindParams for the response so the caller sees the
     # post-write beam state in the legacy shape it sent.
     payloads = await _serialize_physics_elements(session, [element])
     await manager.broadcast("physics_element.updated", payloads[0])
+    if object_to_broadcast is not None:
+        await manager.broadcast("object.updated", object_payload(object_to_broadcast))
     return payloads[0]
 
 

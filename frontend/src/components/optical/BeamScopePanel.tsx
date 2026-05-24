@@ -433,8 +433,14 @@ type RawSegment = Record<string, unknown> & {
   waistAtStartUm?: number;
   waistAtEndUm?: number;
   sourceObjectId?: string;
+  emitterObjectId?: string;
   hitObjectId?: string;
   wavelengthNm?: number;
+  beamMode?: {
+    x?: { waist0Um?: number; waistZUm?: number; mSquared?: number };
+    y?: { waist0Um?: number; waistZUm?: number; mSquared?: number };
+    wavelengthNm?: number;
+  };
 };
 
 export function BeamScopeContents() {
@@ -495,9 +501,12 @@ export function BeamScopeContents() {
     // each beam has its own waist / wavelength / mode.
     const bestSeg = overlappingSegments[safeBeamIndex];
     if (!bestSeg) return null;
-    const laserEl = physicsElements.find((el) => el.objectId === bestSeg.sourceObjectId);
-    if (!laserEl) return null;
-    const params = (laserEl.kindParams ?? {}) as {
+    // sourceObjectId is the previous optic on downstream segments; the
+    // source beam definition comes from the stable original emitter id.
+    const emitterObjectId = bestSeg.emitterObjectId ?? bestSeg.sourceObjectId;
+    const emitterEl = physicsElements.find((el) => el.objectId === emitterObjectId);
+    if (!emitterEl) return null;
+    const params = (emitterEl.kindParams ?? {}) as {
       centerWavelengthNm?: number;
       spatialModeX?: { waistUm?: number; mSquared?: number; waistZOffsetMm?: number };
       spatialModeY?: { waistUm?: number; mSquared?: number; waistZOffsetMm?: number };
@@ -517,21 +526,35 @@ export function BeamScopeContents() {
           fwhmMhz?: number;
           amplitude?: number;
           centerOffsetMhz?: number;
+          offsetMhz?: number;
         }>;
       };
     };
-    const wavelengthNm = params.centerWavelengthNm ?? 780;
-    const modeX: AxisMode = {
-      waist0Um: params.spatialModeX?.waistUm ?? 100,
-      mSquared: params.spatialModeX?.mSquared ?? 1,
-      waistZOffsetMm: params.spatialModeX?.waistZOffsetMm ?? 0,
+    const liveMode = bestSeg.beamMode;
+    const wavelengthNm =
+      typeof bestSeg.wavelengthNm === "number"
+        ? bestSeg.wavelengthNm
+        : typeof liveMode?.wavelengthNm === "number"
+        ? liveMode.wavelengthNm
+        : params.centerWavelengthNm ?? 780;
+    const liveAxis = (
+      axis: { waist0Um?: number; waistZUm?: number; mSquared?: number } | undefined,
+      fallback: { waistUm?: number; mSquared?: number; waistZOffsetMm?: number } | undefined,
+      fallbackWaistUm: number,
+    ): AxisMode => ({
+      waist0Um: axis?.waist0Um ?? fallback?.waistUm ?? fallbackWaistUm,
+      mSquared: axis?.mSquared ?? fallback?.mSquared ?? 1,
+      waistZOffsetMm:
+        typeof axis?.waistZUm === "number"
+          ? axis.waistZUm / 1000
+          : fallback?.waistZOffsetMm ?? 0,
       wavelengthNm,
+    });
+    const modeX: AxisMode = {
+      ...liveAxis(liveMode?.x, params.spatialModeX, 100),
     };
     const modeY: AxisMode = {
-      waist0Um: params.spatialModeY?.waistUm ?? 100,
-      mSquared: params.spatialModeY?.mSquared ?? 1,
-      waistZOffsetMm: params.spatialModeY?.waistZOffsetMm ?? 0,
-      wavelengthNm,
+      ...liveAxis(liveMode?.y, params.spatialModeY, 100),
     };
     const zMm = probe.zMm;
     const wxUm = waistAtZUmAxis(zMm, modeX);
@@ -630,7 +653,7 @@ export function BeamScopeContents() {
         ? aomSideband.centerWavelengthNm
         : wavelengthNm;
     return {
-      laserEl,
+      emitterEl,
       params,
       modeX,
       modeY,
@@ -720,7 +743,7 @@ export function BeamScopeContents() {
       displayWavelengthNm - spectrumSpanNm / 2 + (i / (N - 1)) * spectrumSpanNm;
     let amp = 0;
     components.forEach((c, idx) => {
-      const offMhz = c.centerOffsetMhz ?? 0;
+      const offMhz = c.centerOffsetMhz ?? c.offsetMhz ?? 0;
       // Convert this component's centre-offset MHz → nm offset
       const offHz = offMhz * 1e6;
       const offNm =

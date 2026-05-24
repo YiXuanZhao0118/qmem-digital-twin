@@ -1,0 +1,104 @@
+{
+  "id": "thorlabs_pbs252",
+  "vendorPart": "PBS252",
+  "displayName": "Thorlabs PBS252 Polarizing Beamsplitter Cube (1 inch)",
+  "geometryRef": "files/stl/thorlabs_pbs252.stl",
+  "geometryRefGlb": null,
+  "bodyFrameRotation": null,
+
+  "kind": "pbs",
+  "wavelengthRangeNm": [620, 1000],
+
+  "physicalDimensionsMm": { "L": 25.4, "W": 25.4, "H": 25.4 },
+
+  "faces": [
+    { "id": "back",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": -12.7 },
+      "normalBodyLocal":     { "x": 0, "y": 0, "z": -1 },
+      "apertureMm": 12.7, "apertureShape": "rectangle",
+      "_role": "external face, beam enters/exits along -z"
+    },
+    { "id": "front",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": 12.7 },
+      "normalBodyLocal":     { "x": 0, "y": 0, "z": 1 },
+      "apertureMm": 12.7, "apertureShape": "rectangle",
+      "_role": "external face, beam enters/exits along +z"
+    },
+    { "id": "left",
+      "positionMmBodyLocal": { "x": -12.7, "y": 0, "z": 0 },
+      "normalBodyLocal":     { "x": -1, "y": 0, "z": 0 },
+      "apertureMm": 12.7, "apertureShape": "rectangle",
+      "_role": "external face, beam enters/exits along -x"
+    },
+    { "id": "right",
+      "positionMmBodyLocal": { "x": 12.7, "y": 0, "z": 0 },
+      "normalBodyLocal":     { "x": 1, "y": 0, "z": 0 },
+      "apertureMm": 12.7, "apertureShape": "rectangle",
+      "_role": "external face, beam enters/exits along +x"
+    },
+    { "id": "B1",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": 0 },
+      "normalBodyLocal":     { "x": -0.7071067811865476, "y": 0, "z": 0.7071067811865476 },
+      "apertureMm": 17.96, "apertureShape": "rectangle",
+      "_role": "INTERNAL Brewster plate at 45° diagonal (xz plane). Real surface normal (-0.7071, 0, 0.7071). Aperture = side·sqrt(2) ~ 17.96 mm. Used by pbs_reflect_s via mirror formula."
+    }
+  ],
+
+  "transitions": [
+    {
+      "in": "back", "via": ["B1"], "out": "front",
+      "op": "pbs_transmit_p",
+      "_note": "p-pol transmits straight through the Brewster plate (back -> front along +z)."
+    },
+    {
+      "in": "back", "via": ["B1"], "out": "right",
+      "op": "pbs_reflect_s",
+      "_note": "s-pol mirror-reflects off B1 (normal (-0.7071,0,0.7071)). k=(0,0,1) -> k_out=(1,0,0) = right exit."
+    },
+    {
+      "in": "front", "via": ["B1"], "out": "back",
+      "op": "pbs_transmit_p",
+      "_note": "p-pol straight through (front -> back along -z)."
+    },
+    {
+      "in": "front", "via": ["B1"], "out": "left",
+      "op": "pbs_reflect_s",
+      "_note": "s-pol mirror-reflects off B1. k=(0,0,-1) -> k_out=(-1,0,0) = left exit."
+    },
+    {
+      "in": "right", "via": ["B1"], "out": "left",
+      "op": "pbs_transmit_p",
+      "_note": "p-pol straight through (right -> left along -x)."
+    },
+    {
+      "in": "right", "via": ["B1"], "out": "back",
+      "op": "pbs_reflect_s",
+      "_note": "s-pol mirror-reflects off B1. k=(-1,0,0) -> k_out=(0,0,-1) = back exit."
+    },
+    {
+      "in": "left", "via": ["B1"], "out": "right",
+      "op": "pbs_transmit_p",
+      "_note": "p-pol straight through (left -> right along +x)."
+    },
+    {
+      "in": "left", "via": ["B1"], "out": "front",
+      "op": "pbs_reflect_s",
+      "_note": "s-pol mirror-reflects off B1. k=(1,0,0) -> k_out=(0,0,1) = front exit."
+    }
+  ],
+
+  "defaultParams": {
+    "cubeSizeMm": 25.4,
+    "extinctionRatioPpDb": 30,
+    "extinctionRatioSpDb": 20,
+    "refractiveIndex": 1.5168
+  },
+
+  "mechanicalAnchors": [],
+
+  "notes": {
+    "topology": "Cube PBS with single internal Brewster plate B1 at 45 deg (xz diagonal, normal (-0.7071, 0, 0.7071)). 4 external faces + 1 internal face. 8 transitions (4 transmit pairs + 4 reflect pairs).",
+    "reflectGeometry": "B1 normal pairs reflections via mirror formula k_out = k_in - 2(k.n)n. Resulting pairs: back<->right, front<->left. (Previous catalog had a 4-cycle back->right->front->left->back which is physically inconsistent with a single plate -- fixed in this revision.)",
+    "transmitPairs": "Straight-through pairs: back<->front (along z), left<->right (along x). For these, k unchanged; only Jones projection + 5x5 slab applies."
+  }
+}

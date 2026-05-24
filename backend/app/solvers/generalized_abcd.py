@@ -11,10 +11,12 @@ plus follow-up notes:
 5x5 state vector: (x, theta_x, y, theta_y, 1)^T
 Units: lengths in mm, angles in rad, wavelength in nm.
 
-NOTE on the (1 - 1/f) term inside thin-lens / cylindrical-lens 5th-column
-corrections: the spec writes this expression literally; we implement it
-with f in mm. If callers intended SI-meter normalisation, divide f
-accordingly before constructing the operator.
+Convention notes:
+  - Mirror operators use the unfolded ray-tracing frame: D = +1, so a flat
+    mirror leaves q unchanged and misalignment appears as a chief-ray angle
+    kick.
+  - Small plate tilts use same-axis lateral shifts:
+      alpha_x -> x, alpha_y -> y.
 """
 
 from __future__ import annotations
@@ -49,19 +51,20 @@ def m_thin_lens(
 ) -> npt.NDArray[np.float64]:
     """Thin spherical lens with decenter delta and tilt alpha.
 
-        M[1,4] = delta_x/f + alpha_y * (1 - 1/f)
-        M[3,4] = delta_y/f + alpha_x * (1 - 1/f)
+    Same-axis convention:
+
+        M[1,4] = delta_x/f - alpha_x
+        M[3,4] = delta_y/f - alpha_y
     """
     if abs(focal_mm) < 1e-12:
         raise ValueError("focal length must be non-zero")
     inv_f = 1.0 / focal_mm
-    one_minus_inv_f = 1.0 - inv_f
 
     M = np.eye(5)
     M[1, 0] = -inv_f
     M[3, 2] = -inv_f
-    M[1, 4] = delta_x_mm * inv_f + alpha_y_rad * one_minus_inv_f
-    M[3, 4] = delta_y_mm * inv_f + alpha_x_rad * one_minus_inv_f
+    M[1, 4] = delta_x_mm * inv_f - alpha_x_rad
+    M[3, 4] = delta_y_mm * inv_f - alpha_y_rad
     return M
 
 
@@ -91,7 +94,6 @@ def m_cylindrical_standard(
     if refractive_index <= 0:
         raise ValueError("refractive index must be positive")
     inv_f = 1.0 / focal_mm
-    one_minus_inv_f = 1.0 - inv_f
     d_over_n = thickness_mm / refractive_index
     plate_shift = thickness_mm * (1.0 - 1.0 / refractive_index)
 
@@ -99,17 +101,17 @@ def m_cylindrical_standard(
     if axis == "x":
         # Focus in x
         M[1, 0] = -inv_f
-        M[1, 4] = delta_x_mm * inv_f + alpha_y_rad * one_minus_inv_f
+        M[1, 4] = delta_x_mm * inv_f - alpha_x_rad
         # Glass plate in y
         M[2, 3] = d_over_n
-        M[2, 4] = alpha_x_rad * plate_shift
+        M[2, 4] = alpha_y_rad * plate_shift
     elif axis == "y":
         # Glass plate in x
         M[0, 1] = d_over_n
-        M[0, 4] = alpha_y_rad * plate_shift
+        M[0, 4] = alpha_x_rad * plate_shift
         # Focus in y
         M[3, 2] = -inv_f
-        M[3, 4] = delta_y_mm * inv_f + alpha_x_rad * one_minus_inv_f
+        M[3, 4] = delta_y_mm * inv_f - alpha_y_rad
     else:
         raise ValueError(f"axis must be 'x' or 'y', got {axis!r}")
     return M
@@ -164,13 +166,15 @@ def m_flat_mirror(
     alpha_x_rad: float = 0.0,
     alpha_y_rad: float = 0.0,
 ) -> npt.NDArray[np.float64]:
-    """Flat mirror with tilt alpha. No decenter term: translating the mirror
-    does not deflect the reflected ray; only tilting it does."""
+    """Flat mirror in the unfolded ray-tracing frame.
+
+    A flat mirror leaves q unchanged (D = +1) and adds same-axis chief-ray
+    angle kicks from mirror tilt. No decenter term: translating the mirror
+    does not deflect the reflected ray; only tilting it does.
+    """
     M = np.eye(5)
-    M[1, 1] = -1.0
-    M[3, 3] = -1.0
-    M[1, 4] = 2.0 * alpha_y_rad
-    M[3, 4] = 2.0 * alpha_x_rad
+    M[1, 4] = 2.0 * alpha_x_rad
+    M[3, 4] = 2.0 * alpha_y_rad
     return M
 
 
@@ -182,8 +186,11 @@ def m_curved_mirror(
     alpha_x_rad: float = 0.0,
     alpha_y_rad: float = 0.0,
 ) -> npt.NDArray[np.float64]:
-    """Curved mirror: f = R/2 (concave R>0, convex R<0). Combines flat-mirror
-    reflection with thin-lens focusing."""
+    """Curved mirror in the unfolded ray-tracing frame.
+
+    f = R/2 (concave R>0, convex R<0). Combines mirror tilt with spherical
+    focusing; D stays +1 so q follows the same law as a thin lens.
+    """
     if abs(radius_mm) < 1e-12:
         raise ValueError("radius of curvature must be non-zero")
     f_mm = radius_mm / 2.0
@@ -191,11 +198,9 @@ def m_curved_mirror(
 
     M = np.eye(5)
     M[1, 0] = -inv_f
-    M[1, 1] = -1.0
     M[3, 2] = -inv_f
-    M[3, 3] = -1.0
-    M[1, 4] = delta_x_mm * inv_f + 2.0 * alpha_y_rad
-    M[3, 4] = delta_y_mm * inv_f + 2.0 * alpha_x_rad
+    M[1, 4] = delta_x_mm * inv_f + 2.0 * alpha_x_rad
+    M[3, 4] = delta_y_mm * inv_f + 2.0 * alpha_y_rad
     return M
 
 
@@ -216,8 +221,8 @@ def m_glass_plate(
     M = np.eye(5)
     M[0, 1] = d_over_n
     M[2, 3] = d_over_n
-    M[0, 4] = alpha_y_rad * plate_shift
-    M[2, 4] = alpha_x_rad * plate_shift
+    M[0, 4] = alpha_x_rad * plate_shift
+    M[2, 4] = alpha_y_rad * plate_shift
     return M
 
 
@@ -358,13 +363,80 @@ def m_faraday_slab(
     return M
 
 
-def m_pbs_reflected(
+def m_splitter_reflection_advanced(
+    glass_path_mm: float,
+    refractive_index: float,
     *,
-    alpha_x_rad: float = 0.0,
-    alpha_y_rad: float = 0.0,
+    plate_alpha_x_rad: float = 0.0,
+    plate_alpha_y_rad: float = 0.0,
+    coating_alpha_x_rad: float = 0.0,
+    coating_alpha_y_rad: float = 0.0,
+    reflection_fraction: float = 0.5,
 ) -> npt.NDArray[np.float64]:
-    """PBS reflected arm (s-polarisation). Same as flat mirror per spec."""
-    return m_flat_mirror(alpha_x_rad=alpha_x_rad, alpha_y_rad=alpha_y_rad)
+    """Advanced PBS / dichroic reflected arm.
+
+    Model the reflected branch as:
+
+        glass path before coating -> internal coating mirror -> glass path after
+
+    in the unfolded frame. The total q path is ``glass_path_mm / n``.
+    ``reflection_fraction`` is the fraction of the glass path before the
+    coating; 0.5 represents a centered diagonal coating. Plate tilt contributes
+    lateral shift over the whole glass path. Coating tilt contributes an
+    angular kick and, because the post-reflection glass segment carries that
+    kick, an additional lateral shift of
+    ``(post_path/n) * 2 * coating_alpha``.
+    """
+    if refractive_index <= 0:
+        raise ValueError("refractive index must be positive")
+    if glass_path_mm < 0:
+        raise ValueError("glass path must be non-negative")
+    if not 0 <= reflection_fraction <= 1:
+        raise ValueError("reflection_fraction must be between 0 and 1")
+
+    pre_path = glass_path_mm * reflection_fraction
+    post_path = glass_path_mm - pre_path
+    # Keep the construction explicit so the convention is visible.
+    return compose(
+        m_glass_plate(
+            pre_path,
+            refractive_index,
+            alpha_x_rad=plate_alpha_x_rad,
+            alpha_y_rad=plate_alpha_y_rad,
+        ),
+        m_flat_mirror(
+            alpha_x_rad=coating_alpha_x_rad,
+            alpha_y_rad=coating_alpha_y_rad,
+        ),
+        m_glass_plate(
+            post_path,
+            refractive_index,
+            alpha_x_rad=plate_alpha_x_rad,
+            alpha_y_rad=plate_alpha_y_rad,
+        ),
+    )
+
+
+def m_pbs_reflected(
+    glass_path_mm: float = 0.0,
+    refractive_index: float = 1.0,
+    *,
+    plate_alpha_x_rad: float = 0.0,
+    plate_alpha_y_rad: float = 0.0,
+    coating_alpha_x_rad: float = 0.0,
+    coating_alpha_y_rad: float = 0.0,
+    reflection_fraction: float = 0.5,
+) -> npt.NDArray[np.float64]:
+    """PBS reflected arm (s-polarisation), advanced splitter model."""
+    return m_splitter_reflection_advanced(
+        glass_path_mm,
+        refractive_index,
+        plate_alpha_x_rad=plate_alpha_x_rad,
+        plate_alpha_y_rad=plate_alpha_y_rad,
+        coating_alpha_x_rad=coating_alpha_x_rad,
+        coating_alpha_y_rad=coating_alpha_y_rad,
+        reflection_fraction=reflection_fraction,
+    )
 
 
 def m_pbs_transmitted(

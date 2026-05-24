@@ -45,3 +45,5 @@ assets/agent_uploads/
 # Uvicorn dev-server logs — historical noise, should never have been tracked
 backend/uvicorn.out.log
 backend/uvicorn.err.log
+backend/uvicorn-*.log
+backend/uvicorn-*.err.log

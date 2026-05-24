@@ -23,7 +23,9 @@ from app.v2_bindings import (
     V2_TRACKED_LASER_KEYS,
     beam_from_legacy_laser_kind_params,
     default_laser_beam,
+    get_laser_beam_for_kind_params,
     get_optical_source,
+    laser_dynamic_sources_from_beam,
     legacy_laser_kind_params_from_beam,
 )
 
@@ -179,6 +181,39 @@ def test_get_optical_source_accepts_dict_object_shape():
     src = {"id": "uuid", "bindingId": "b", "enabled": True, "beam": beam}
     found = get_optical_source({"properties": {"opticalSources": [src]}})
     assert found is src
+
+
+def test_laser_kind_params_source_prefers_dynamic_sources():
+    legacy_beam = default_laser_beam(wavelength_nm=780.241, power_mw=1.0)
+    dynamic_beam = default_laser_beam(wavelength_nm=852.0, power_mw=40.0)
+    obj = SimpleNamespace(
+        properties={"opticalSources": [{"id": "src", "bindingId": "bind", "beam": legacy_beam}]},
+        dynamic_sources={**dynamic_beam, "sourceId": "src", "assetFaceId": "out"},
+    )
+
+    beam = get_laser_beam_for_kind_params(obj)
+    assert beam is obj.dynamic_sources
+    legacy = legacy_laser_kind_params_from_beam(beam)
+    assert legacy["centerWavelengthNm"] == 852.0
+    assert legacy["nominalPowerMw"] == 40.0
+
+
+def test_laser_dynamic_sources_from_beam_preserves_v3_face_metadata():
+    beam = default_laser_beam(wavelength_nm=852.0, power_mw=40.0)
+    source = {"id": "src-1", "bindingId": "legacy-binding"}
+    dynamic = laser_dynamic_sources_from_beam(
+        source,
+        beam,
+        existing={"assetBindingId": "source", "assetFaceId": "custom-out", "note": "keep"},
+    )
+
+    assert dynamic["sourceId"] == "src-1"
+    assert dynamic["legacyBindingId"] == "legacy-binding"
+    assert dynamic["assetBindingId"] == "source"
+    assert dynamic["assetFaceId"] == "custom-out"
+    assert dynamic["note"] == "keep"
+    assert dynamic["powerMw"] == 40.0
+    assert dynamic["spectrum"]["centerWavelengthNm"] == 852.0
 
 
 # ---- default_laser_beam shape compatibility ------------------------------

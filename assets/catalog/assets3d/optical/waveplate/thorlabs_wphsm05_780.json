@@ -1,0 +1,63 @@
+{
+  "id": "thorlabs_wphsm05_780",
+  "vendorPart": "WPHSM05-780",
+  "displayName": "Thorlabs WPHSM05-780 Half-Wave Plate @ 780nm",
+  "geometryRef": "files/stl/thorlabs_wphsm05_850.stl",
+  "geometryRefGlb": null,
+  "bodyFrameRotation": null,
+
+  "kind": "waveplate",
+  "wavelengthRangeNm": [770, 790],
+
+  "physicalDimensionsMm": {
+    "L": 2.0,
+    "diameterMm": 12.7,
+    "clearApertureMm": 10.0
+  },
+
+  "faces": [
+    {
+      "id": "A",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": -1.0 },
+      "normalBodyLocal": { "x": 0, "y": 0, "z": -1 },
+      "apertureMm": 5.0,
+      "apertureShape": "circle"
+    },
+    {
+      "id": "B",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": 1.0 },
+      "normalBodyLocal": { "x": 0, "y": 0, "z": 1 },
+      "apertureMm": 5.0,
+      "apertureShape": "circle"
+    }
+  ],
+
+  "transitions": [
+    { "in": "A", "out": "B", "op": "jones_waveplate" },
+    { "in": "B", "out": "A", "op": "jones_waveplate" }
+  ],
+
+  "defaultParams": {
+    "designWavelengthNm": 780,
+    "wavelengthRangeNm": [770, 790],
+    "retardanceLambda": 0.5,
+    "retardanceDeg": 180,
+    "fastAxisDegBeamLocal": 0,
+    "lengthMm": 2.0,
+    "thicknessMm": 2.0,
+    "refractiveIndex": 1.55,
+    "clearApertureMm": 10.0,
+    "transmission": 0.99,
+    "plateType": "zero_order_half_wave",
+    "material": "crystal_quartz"
+  },
+
+  "mechanicalAnchors": [],
+
+  "notes": {
+    "convention": "Body +x = fast axis at fastAxisDegBeamLocal=0. Rotate by setting fastAxisDegBeamLocal or applying a binding rotation around body +z (the optical axis).",
+    "geometryRef": "Uses the existing WPHSM05 SM05-mount STL as the mechanical envelope; optical spec is WPHSM05-780.",
+    "aperture": "Thorlabs lists a 10.0 mm clear aperture. Face apertureMm stores radius, so both optical faces use 5.0 mm.",
+    "faceConvention": "Canonical v3 two-port topology uses physical faces A/B. Forward and reverse behavior is represented by directed transitions A->B and B->A. Both directions use the same reciprocal Jones waveplate matrix."
+  }
+}

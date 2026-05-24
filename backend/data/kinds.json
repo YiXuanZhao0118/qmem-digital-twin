@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-05-19T00:23:06.076Z",
+  "generated_at": "2026-05-23T23:43:21.727Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -546,8 +546,18 @@
         },
         "intrinsic_param_keys": [
           "retardanceLambda",
+          "retardanceDeg",
           "transmission",
-          "wavelengthRangeNm"
+          "designWavelengthNm",
+          "wavelengthRangeNm",
+          "lengthMm",
+          "thicknessMm",
+          "refractiveIndex",
+          "clearApertureMm",
+          "plateAlphaXRad",
+          "plateAlphaYRad",
+          "material",
+          "plateType"
         ],
         "state_param_keys": [],
         "port_domains": {

@@ -1,0 +1,77 @@
+{
+  "id": "thorlabs_la1540_b",
+  "vendorPart": "LA1540-B",
+  "displayName": "Plano-Convex Lens f=15mm AR(650-1050nm)",
+  "geometryRef": "files/stl/thorlabs_la1540_b.stl",
+  "geometryRefGlb": null,
+  "bodyFrameRotation": null,
+
+  "kind": "lens",
+  "wavelengthRangeNm": [650, 1050],
+
+  "physicalDimensionsMm": {
+    "L": 3.6,
+    "diameterMm": 25.4
+  },
+
+  "faces": [
+    { "id": "A",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": -1.8 },
+      "normalBodyLocal":     { "x": 0, "y": 0, "z": -1 },
+      "apertureMm": 12.7,
+      "apertureShape": "circle" },
+    { "id": "B",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": 1.8 },
+      "normalBodyLocal":     { "x": 0, "y": 0, "z": 1 },
+      "apertureMm": 12.7,
+      "apertureShape": "circle" }
+  ],
+
+  "transitions": [
+    {
+      "in": "A", "out": "B", "op": "abcd_thin_lens",
+      "_note": "A=convex side. Beam enters convex first, exits flat. BFL ≈ 14.98 mm.",
+      "matrix5x5": [
+        [1.0,         1.56475324, 0,           0,          0],
+        [-0.06677003, 0.89552139, 0,           0,          0],
+        [0,           0,          1.0,         1.56475324, 0],
+        [0,           0,          -0.06677003, 0.89552139, 0],
+        [0,           0,          0,           0,          1]
+      ]
+    },
+    {
+      "in": "B", "out": "A", "op": "abcd_thin_lens",
+      "_note": "B=flat side. Beam enters flat first, exits convex. BFL ≈ 8.31 mm. Different from convex-first by design — orientation-dependent thick-lens behaviour.",
+      "matrix5x5": [
+        [0.84152684,  1.56475324, 0,           0,          0],
+        [-0.10127678, 1.0,        0,           0,          0],
+        [0,           0,          0.84152684,  1.56475324, 0],
+        [0,           0,          -0.10127678, 1.0,        0],
+        [0,           0,          0,           0,          1]
+      ]
+    }
+  ],
+
+  "defaultParams": {
+    "focalLengthMm": 15,
+    "lensShape": "plano_convex",
+    "convexFace": "A",
+    "radiusOfCurvatureMm": 7.74,
+    "centerThicknessMm": 3.6,
+    "refractiveIndex": 1.5168,
+    "arResidualR": 0.005,
+    "material": "N-BK7"
+  },
+
+  "mechanicalAnchors": [
+    { "id": "edge_top",
+      "positionMmBodyLocal": { "x": 0, "y": 12.7, "z": 0 } }
+  ],
+
+  "notes": {
+    "calibrationStatus": "Thick-lens 5×5 matrix derived from user-provided convex→flat / flat→convex matrices.",
+    "thickLensDerivation": "M_cf = [[1,0],[-(n-1)/R,n]]·[[1,d/n],[0,1]]·[[1,0],[0,1/n]] with n=1.5168, R=7.74mm, d=3.6mm. M_fc = [[1,0],[0,n]]·[[1,d/n],[0,1]]·[[1,0],[-(n-1)/R,1/n]].",
+    "principalPlanes": "BFL_convex_first (14.98mm) differs from BFL_flat_first (8.31mm). Caller must place focus distance per the orientation.",
+    "aberration": "Phase 6 TODO: Seidel coefficient W_040 differs by orientation (convex-first has more spherical aberration). Not in current 5×5 paraxial model."
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "id": "generic_780nm_gaussian_laser",
+  "vendorPart": "Generic 780nm Gaussian Laser",
+  "displayName": "GenericGaussianLaser_780",
+  "geometryRef": "files/glb/laser_source_generic.glb",
+  "geometryRefGlb": "files/glb/laser_source_generic.glb",
+  "bodyFrameRotation": null,
+
+  "kind": "laser_source",
+  "wavelengthRangeNm": [760, 800],
+
+  "physicalDimensionsMm": {
+    "L": 30,
+    "W": 20,
+    "H": 20
+  },
+
+  "faces": [
+    {
+      "id": "out",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": 0 },
+      "normalBodyLocal": { "x": 0, "y": 0, "z": 1 },
+      "apertureMm": 1.0,
+      "apertureShape": "circle"
+    }
+  ],
+
+  "transitions": [
+    { "in": "out", "out": "out", "op": "emit_laser_source" }
+  ],
+
+  "defaultParams": {
+    "centerWavelengthNm": 780.241,
+    "spectrum": {
+      "centerWavelengthNm": 780.241,
+      "linewidthMhz": 0.1
+    },
+    "spatialModeX": {
+      "waistUm": 250,
+      "waistZOffsetMm": 0,
+      "mSquared": 1.05
+    },
+    "spatialModeY": {
+      "waistUm": 80,
+      "waistZOffsetMm": 1.2,
+      "mSquared": 1.3
+    },
+    "transverseMode": { "kind": "TEM00" },
+    "polarization": { "exRe": 1, "exIm": 0, "eyRe": 0, "eyIm": 0 },
+    "nominalPowerMw": 50.0
+  },
+
+  "mechanicalAnchors": [],
+
+  "notes": {
+    "geometry": "Body +z is the emitted optical axis. The out face normal defines the beam direction.",
+    "sourceModel": "laser_source is a scene emitter. The solver emits from this asset when no manual initialRays are supplied.",
+    "dynamicOverrides": "SceneObject.dynamicSources can override centerWavelengthNm, laserPowerMw/powerMw, polarization, and spatial mode values."
+  }
+}

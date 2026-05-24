@@ -1,0 +1,60 @@
+{
+  "id": "aa_mt80_a1_5_ir",
+  "vendorPart": "MT80-A1.5-IR",
+  "displayName": "AA Opto-Electronic MT80-A1.5-IR AOM (80 MHz, IR)",
+  "geometryRef": "files/glb/aom_aa_mt80.glb",
+  "geometryRefGlb": "files/glb/aom_aa_mt80.glb",
+  "bodyFrameRotation": null,
+
+  "kind": "aom",
+  "wavelengthRangeNm": [780, 1100],
+
+  "physicalDimensionsMm": {
+    "L": 1.6,
+    "W": 16,
+    "H": 8
+  },
+
+  "faces": [
+    { "id": "A",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": -0.8 },
+      "normalBodyLocal":     { "x": 0, "y": 0, "z": -1 },
+      "apertureMm": 1.5,
+      "apertureShape": "circle" },
+    { "id": "B",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": 0.8 },
+      "normalBodyLocal":     { "x": 0, "y": 0, "z": 1 },
+      "apertureMm": 1.5,
+      "apertureShape": "circle" }
+  ],
+
+  "transitions": [
+    { "in": "A", "out": "B", "op": "diffract_aom", "params": { "order": 1 } },
+    { "in": "B", "out": "A", "op": "diffract_aom", "params": { "order": -1 } }
+  ],
+
+  "defaultParams": {
+    "centerFreqMhz": 80,
+    "requiresRfDrive": true,
+    "acousticVelocityMps": 4200,
+    "refractiveIndex": 2.26,
+    "crystalLengthMm": 1.6,
+    "acousticBeamWidthMm": 1.5,
+    "figureOfMeritM2": 3.4e-14,
+    "rfPowerMaxW": 2.0,
+    "rfPropagationDirectionBodyLocal": [1, 0, 0],
+    "baseEfficiency": 0.85,
+    "material": "TeO2",
+    "modulationBandwidthMhz": 30
+  },
+
+  "mechanicalAnchors": [],
+
+  "notes": {
+    "geometry": "Body +z = optical axis from physical face A to physical face B. RF travels along +x via rfPropagationDirectionBodyLocal (perpendicular to optical axis). Aperture 1.5 mm (A1.5 = 1.5 mm clear aperture, vs A1 = 1.0 mm).",
+    "variant": "MT80-A1.5-IR: 80 MHz center freq, 1.5 mm aperture, IR coating (780-1100 nm). RF bandwidth ~30 MHz around center (vs MT110-A1 with 110 MHz center / 50 MHz BW).",
+    "bragg": "Bragg angle theta_B = lambda * f_rf / (2 * n * v_a). At 780nm, 80MHz: theta_B = 780e-9 * 80e6 / (2 * 2.26 * 4200) ~ 3.29 mrad ~ 0.19 deg.",
+    "dynamicFreq": "SceneObject.dynamicSources.aomFreqMhz overrides centerFreqMhz at trace time.",
+    "dynamicRfPower": "SceneObject.dynamicSources.rfDrivePowerW / aomRfVpp resolved from post-amplifier RF chain."
+  }
+}

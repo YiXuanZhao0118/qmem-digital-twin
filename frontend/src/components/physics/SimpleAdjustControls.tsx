@@ -122,7 +122,18 @@ export function WaveplateAdjustControls({
 
   type WaveplateKindParams = {
     retardanceLambda?: number;
+    retardanceDeg?: number;
     transmission?: number;
+    designWavelengthNm?: number;
+    wavelengthRangeNm?: [number, number];
+    lengthMm?: number;
+    thicknessMm?: number;
+    refractiveIndex?: number;
+    clearApertureMm?: number;
+    plateAlphaXRad?: number;
+    plateAlphaYRad?: number;
+    material?: string;
+    plateType?: string;
     groupDelayPs?: number;
     gvdFs2?: number;
   };
@@ -140,6 +151,13 @@ export function WaveplateAdjustControls({
       : 0;
   const retardance = params.retardanceLambda ?? 0.5;
   const transmission = params.transmission ?? 0.99;
+  const designWavelengthNm = params.designWavelengthNm ?? 780;
+  const wavelengthRangeNm = params.wavelengthRangeNm ?? [400, 1100];
+  const plateLengthMm = params.lengthMm ?? params.thicknessMm ?? 0;
+  const refractiveIndex = params.refractiveIndex ?? 1.55;
+  const clearApertureMm = params.clearApertureMm ?? 10;
+  const plateAlphaXRad = params.plateAlphaXRad ?? 0;
+  const plateAlphaYRad = params.plateAlphaYRad ?? 0;
   const groupDelayPs = params.groupDelayPs ?? 0;
   const gvdFs2 = params.gvdFs2 ?? 0;
 
@@ -320,6 +338,75 @@ export function WaveplateAdjustControls({
           step={0.01}
           onCommit={(v) => v >= 0 && v <= 1 && void persist({ transmission: v })}
         />
+      </div>
+
+      {/* Plate / q propagation */}
+      <div style={sectionStyle}>
+        <div style={titleStyle}>Plate / q propagation</div>
+        <div style={grid2}>
+          <NumberCell
+            label="Design wavelength"
+            suffix="nm"
+            value={designWavelengthNm}
+            step={1}
+            onCommit={(v) => v > 0 && void persist({ designWavelengthNm: v })}
+          />
+          <NumberCell
+            label="Clear aperture"
+            suffix="mm dia"
+            value={clearApertureMm}
+            step={0.1}
+            onCommit={(v) => v > 0 && void persist({ clearApertureMm: v })}
+          />
+          <NumberCell
+            label="Length"
+            suffix="mm"
+            value={plateLengthMm}
+            step={0.01}
+            onCommit={(v) => v > 0 && void persist({ lengthMm: v, thicknessMm: v })}
+          />
+          <NumberCell
+            label="Index"
+            value={refractiveIndex}
+            step={0.001}
+            onCommit={(v) => v > 0 && void persist({ refractiveIndex: v })}
+          />
+          <NumberCell
+            label="Range min"
+            suffix="nm"
+            value={wavelengthRangeNm[0]}
+            step={1}
+            onCommit={(v) => v > 0 && v < wavelengthRangeNm[1] && void persist({ wavelengthRangeNm: [v, wavelengthRangeNm[1]] })}
+          />
+          <NumberCell
+            label="Range max"
+            suffix="nm"
+            value={wavelengthRangeNm[1]}
+            step={1}
+            onCommit={(v) => v > wavelengthRangeNm[0] && void persist({ wavelengthRangeNm: [wavelengthRangeNm[0], v] })}
+          />
+        </div>
+      </div>
+
+      {/* Plate tilt */}
+      <div style={sectionStyle}>
+        <div style={titleStyle}>Plate tilt</div>
+        <div style={grid2}>
+          <NumberCell
+            label="alpha x"
+            suffix="rad"
+            value={plateAlphaXRad}
+            step={0.001}
+            onCommit={(v) => void persist({ plateAlphaXRad: v })}
+          />
+          <NumberCell
+            label="alpha y"
+            suffix="rad"
+            value={plateAlphaYRad}
+            step={0.001}
+            onCommit={(v) => void persist({ plateAlphaYRad: v })}
+          />
+        </div>
       </div>
 
       {/* Dispersion (advanced) */}

@@ -2089,14 +2089,15 @@ function traceOneRay(
       );
       // Envelope: waveplate body is a glass slab; apply Snell-reduced d/n
       // propagation when thicknessMm + refractiveIndex are present.
-      const wpParams = oeParams as { thicknessMm?: number; refractiveIndex?: number };
+      const wpParams = oeParams as { thicknessMm?: number; lengthMm?: number; refractiveIndex?: number };
+      const thicknessMm = wpParams.thicknessMm ?? wpParams.lengthMm;
       if (
-        Number.isFinite(wpParams.thicknessMm) && (wpParams.thicknessMm as number) > 0
+        Number.isFinite(thicknessMm) && (thicknessMm as number) > 0
         && Number.isFinite(wpParams.refractiveIndex) && (wpParams.refractiveIndex as number) > 0
       ) {
         const op = applyOperatorToBeamState(
           nextMode,
-          mGlassPlate(wpParams.thicknessMm as number, wpParams.refractiveIndex as number),
+          mGlassPlate(thicknessMm as number, wpParams.refractiveIndex as number),
           newPathMm * 1000,
         );
         nextMode = op.nextMode;

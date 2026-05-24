@@ -1,0 +1,60 @@
+{
+  "name": "dichroic_shortpass_at_650",
+  "description": "Shortpass dichroic mirror, cutoff 700nm. 650nm input is below cutoff → full transmit. Tests the dichroic_transmit op and the wavelength-conditional T(λ) function.",
+  "asset": {
+    "catalogId": "test_dichroic_sp_700",
+    "kind": "dichroic_mirror",
+    "faces": [
+      { "id": "A",
+        "positionMmBodyLocal": {"x": 0, "y": 0, "z": 0},
+        "normalBodyLocal":     {"x": 0, "y": 0, "z": 1},
+        "apertureMm": 12.7,
+        "apertureShape": "circle" },
+      { "id": "Bt",
+        "positionMmBodyLocal": {"x": 0, "y": 0, "z": 6},
+        "normalBodyLocal":     {"x": 0, "y": 0, "z": 1},
+        "apertureMm": 12.7,
+        "apertureShape": "circle" }
+    ],
+    "transitions": [
+      { "in": "A", "out": "Bt", "op": "dichroic_transmit" }
+    ],
+    "defaultParams": {
+      "cutoffWavelengthNm": 700,
+      "isShortPass": true,
+      "substrateThicknessMm": 6,
+      "refractiveIndex": 1.4585
+    }
+  },
+  "rayIn": {
+    "origin":        {"x": 0, "y": 0, "z": -5},
+    "direction":     {"x": 0, "y": 0, "z": 1},
+    "wavelengthNm":  650,
+    "waistRadiusMm": 0.5,
+    "powerMw":       1.0,
+    "jones":         [{"re": 1, "im": 0}, {"re": 0, "im": 0}]
+  },
+  "expected": {
+    "finalRayCount": 1,
+    "rays": [
+      {
+        "origin":       {"x": 0, "y": 0, "z": 6},
+        "direction":    {"x": 0, "y": 0, "z": 1},
+        "pathLengthMm": 11.0,
+        "powerMw":      1.0,
+        "wavelengthNm": 650
+      }
+    ]
+  },
+  "tolerance": {
+    "positionMm": 1e-9,
+    "directionAbs": 1e-12,
+    "powerMw": 1e-12,
+    "qAbs": 1e-6
+  },
+  "notes": {
+    "wavelength": "650 nm < 700 nm cutoff → T = 1 (shortpass).",
+    "pathLength": "Free-space 5 (z=-5 to z=0 face A) + substrate 6 = 11 mm.",
+    "verification": "Both frontend (TS) and backend (Python) must agree T+R=1 at any λ; this fixture pins T=1 at 650nm."
+  }
+}

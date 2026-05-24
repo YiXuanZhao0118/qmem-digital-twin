@@ -1,0 +1,48 @@
+{
+  "id": "thorlabs_bb1_e03",
+  "vendorPart": "BB1-E03",
+  "displayName": "Thorlabs BB1-E03 Broadband Dielectric Mirror (750-1100 nm)",
+  "geometryRef": "files/stl/thorlabs_bb1_e03.stl",
+  "geometryRefGlb": null,
+  "bodyFrameRotation": null,
+
+  "kind": "mirror",
+  "wavelengthRangeNm": [750, 1100],
+
+  "physicalDimensionsMm": {
+    "L": 6.0,
+    "diameterMm": 25.4
+  },
+
+  "faces": [
+    { "id": "A",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": 0 },
+      "normalBodyLocal":     { "x": 0, "y": 0, "z": 1 },
+      "apertureMm": 12.7,
+      "apertureShape": "circle",
+      "_role": "front reflective surface — E03 broadband dielectric coating, R > 99% over 750-1100 nm at 0-45 deg AOI"
+    }
+  ],
+
+  "transitions": [
+    { "in": "A", "out": "A", "op": "reflect_specular" }
+  ],
+
+  "defaultParams": {
+    "reflectivity": 0.99,
+    "coating": "e03_broadband_dielectric",
+    "substrate": "n_bk7",
+    "aoiRangeDeg": [0, 45]
+  },
+
+  "mechanicalAnchors": [
+    { "id": "rear_mount",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": -6.0 } }
+  ],
+
+  "notes": {
+    "convention": "Body +z = outward surface normal. Reflection: d' = d - 2(d.n)n via reflect_specular op.",
+    "coating": "E03 = Thorlabs broadband dielectric, R_avg > 99% over 750-1100 nm at AOI 0-45 deg (s and p averaged). Substrate is N-BK7 (1-inch, 6 mm thick).",
+    "geometry": "Standard 1-inch round mirror in a 6 mm thick substrate. STL at files/stl/thorlabs_bb1_e03.stl is the actual Thorlabs CAD."
+  }
+}

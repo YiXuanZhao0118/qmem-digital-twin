@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.schemas import (
+    AssetAnchor,
     DEFAULT_PORTS,
     EMITTER_KINDS,
     KIND_PARAMS_MODELS,
@@ -18,6 +19,17 @@ from app.routers.components import default_kind_params_for_component
 
 
 # --- per-kind defaults / dispatch -------------------------------------------
+
+
+def test_asset_anchor_accepts_custom_mechanical_ids():
+    anchor = AssetAnchor.model_validate({
+        "id": "mount_face_front",
+        "positionMmBodyLocal": {"x": 1.0, "y": 2.0, "z": 3.0},
+        "directionBodyLocal": {"x": 0.0, "y": 0.0, "z": 1.0},
+        "type": "face",
+    })
+
+    assert anchor.id == "mount_face_front"
 
 
 def test_every_kind_has_param_model_and_default_ports():
@@ -71,6 +83,32 @@ def test_generic_beam_splitter_defaults_to_non_polarizing():
     params = default_kind_params_for_component("beam_splitter", component)
 
     assert params["polarizing"] is False
+
+
+def test_waveplate_component_override_maps_plate_specs():
+    component = Component(
+        name="thorlabs_wphsm05_780",
+        component_type="waveplate",
+        model="WPHSM05-780",
+        properties={
+            "waveplateKindParamsOverride": {
+                "designWavelengthNm": 780.0,
+                "wavelengthRangeNm": [770.0, 790.0],
+                "retardanceLambda": 0.5,
+                "lengthMm": 2.0,
+                "refractiveIndex": 1.55,
+                "clearApertureMm": 10.0,
+            },
+        },
+    )
+    params = default_kind_params_for_component("waveplate", component)
+
+    assert params["designWavelengthNm"] == 780.0
+    assert params["wavelengthRangeNm"] == [770.0, 790.0]
+    assert params["lengthMm"] == 2.0
+    assert params["thicknessMm"] == 2.0
+    assert params["refractiveIndex"] == 1.55
+    assert params["clearApertureMm"] == 10.0
 
 
 def test_sink_kinds_have_no_outputs():

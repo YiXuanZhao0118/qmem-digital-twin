@@ -1,0 +1,56 @@
+{
+  "name": "lens_basic",
+  "description": "Single thin lens, on-axis ray at waist. f=50mm, lambda=780nm, w0=0.5mm.",
+  "asset": {
+    "catalogId": "test_thin_lens_50mm",
+    "kind": "lens",
+    "faces": [
+      { "id": "A",
+        "positionMmBodyLocal": {"x": 0, "y": 0, "z": -1.5},
+        "normalBodyLocal": {"x": 0, "y": 0, "z": -1},
+        "apertureMm": 12.7,
+        "apertureShape": "circle" },
+      { "id": "B",
+        "positionMmBodyLocal": {"x": 0, "y": 0, "z": 1.5},
+        "normalBodyLocal": {"x": 0, "y": 0, "z": 1},
+        "apertureMm": 12.7,
+        "apertureShape": "circle" }
+    ],
+    "transitions": [
+      { "in": "A", "out": "B", "op": "abcd_thin_lens" }
+    ],
+    "defaultParams": { "focalLengthMm": 50 }
+  },
+  "rayIn": {
+    "origin":       {"x": 0, "y": 0, "z": -10},
+    "direction":    {"x": 0, "y": 0, "z": 1},
+    "wavelengthNm": 780,
+    "waistRadiusMm": 0.5,
+    "powerMw":       1.0,
+    "jones":        [{"re": 1, "im": 0}, {"re": 0, "im": 0}]
+  },
+  "expected": {
+    "finalRayCount": 1,
+    "rays": [
+      {
+        "origin":       {"x": 0, "y": 0, "z": 1.5},
+        "direction":    {"x": 0, "y": 0, "z": 1},
+        "pathLengthMm": 11.5,
+        "powerMw":      1.0,
+        "wavelengthNm": 780,
+        "qxAfterLens":  {"re": -49.89784480512158, "im": 2.478606809978835},
+        "qyAfterLens":  {"re": -49.89784480512158, "im": 2.478606809978835}
+      }
+    ]
+  },
+  "tolerance": {
+    "positionMm": 1e-9,
+    "directionAbs": 1e-12,
+    "powerMw": 1e-12,
+    "qAbs": 1e-6
+  },
+  "notes": {
+    "qDerivation": "Computed in Python: zR = pi*0.25/0.00078 = 1006.9207223044209 mm. q_in = i*zR. q_out = q_in/(1 - q_in/50). Exact result: re=-49.877015632733546, im=2.47671015840184.",
+    "freeSpacePropagation": "Note: this tracer does NOT propagate q during free-space travel from ray.origin (z=-10) to lens face A (z=-1.5). q at lens entry equals q at ray origin = i*zR. Adding free-space q propagation is Phase 4 work."
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "id": "thorlabs_wphsm05_780",
+  "vendorPart": "WPHSM05-780",
+  "displayName": "Thorlabs WPHSM05-780 Half-Wave Plate @ 780nm",
+  "componentType": "waveplate",
+  "wavelengthCenterNm": 780,
+  "bindings": [
+    {
+      "bindingId": "plate",
+      "assetId": "thorlabs_wphsm05_780",
+      "localXMm": 0,
+      "localYMm": 0,
+      "localZMm": 0,
+      "localRxDeg": 0,
+      "localRyDeg": 0,
+      "localRzDeg": 0,
+      "tunableAxes": []
+    }
+  ],
+  "exposedFaces": [
+    {
+      "componentFaceId": "optical_in",
+      "assetBindingId": "plate",
+      "assetFaceId": "A"
+    },
+    {
+      "componentFaceId": "optical_out",
+      "assetBindingId": "plate",
+      "assetFaceId": "B"
+    },
+    {
+      "componentFaceId": "optical_in_reverse",
+      "assetBindingId": "plate",
+      "assetFaceId": "B"
+    },
+    {
+      "componentFaceId": "optical_out_reverse",
+      "assetBindingId": "plate",
+      "assetFaceId": "A"
+    }
+  ],
+  "notes": {
+    "sourceUrl": "https://www.thorlabs.com/thorproduct.cfm?partnumber=WPHSM05-780",
+    "clearApertureMm": 10.0,
+    "waveplateKindParamsOverride": {
+      "designWavelengthNm": 780,
+      "wavelengthRangeNm": [770, 790],
+      "retardanceLambda": 0.5,
+      "retardanceDeg": 180,
+      "transmission": 0.99,
+      "lengthMm": 2.0,
+      "thicknessMm": 2.0,
+      "refractiveIndex": 1.55,
+      "clearApertureMm": 10.0,
+      "plateType": "zero_order_half_wave",
+      "material": "crystal_quartz"
+    },
+    "legacyBridge": "Waveplate fast axis remains asset/anchor level; per-object rotation around beam axis remains SceneObject.properties.rotationAroundBeamAxisDeg."
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "name": "polarizer_malus_30deg",
+  "description": "Linear polarizer with transmission axis at 30deg from beam-local +s. Input: pure +s. Malus's law: P_out = cos^2(30) = 0.75.",
+  "asset": {
+    "catalogId": "test_polarizer",
+    "kind": "polarizer",
+    "faces": [
+      { "id": "A1",
+        "positionMmBodyLocal": {"x": 0, "y": 0, "z": -3.75},
+        "normalBodyLocal":     {"x": 0, "y": 0, "z": -1},
+        "apertureMm": 6.0,
+        "apertureShape": "rectangle" },
+      { "id": "B1",
+        "positionMmBodyLocal": {"x": 0, "y": 0, "z": 3.75},
+        "normalBodyLocal":     {"x": 0, "y": 0, "z": 1},
+        "apertureMm": 6.0,
+        "apertureShape": "rectangle" }
+    ],
+    "transitions": [
+      { "in": "A1", "out": "B1", "op": "jones_polarizer" }
+    ],
+    "defaultParams": { "transmissionAxisDegBeamLocal": 30 }
+  },
+  "rayIn": {
+    "origin":       {"x": 0, "y": 0, "z": -10},
+    "direction":    {"x": 0, "y": 0, "z": 1},
+    "wavelengthNm": 780,
+    "waistRadiusMm": 0.5,
+    "powerMw":       1.0,
+    "jones":        [{"re": 1, "im": 0}, {"re": 0, "im": 0}]
+  },
+  "expected": {
+    "finalRayCount": 1,
+    "rays": [
+      {
+        "origin":       {"x": 0, "y": 0, "z": 3.75},
+        "direction":    {"x": 0, "y": 0, "z": 1},
+        "pathLengthMm": 13.75,
+        "powerMw":      0.75,
+        "wavelengthNm": 780
+      }
+    ]
+  },
+  "tolerance": {
+    "positionMm": 1e-9,
+    "directionAbs": 1e-12,
+    "powerMw": 1e-12,
+    "qAbs": 1e-6
+  }
+}

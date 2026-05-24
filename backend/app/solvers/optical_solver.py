@@ -771,13 +771,23 @@ def _apply_plate_if_thick(beam: Beam, params: dict[str, Any]) -> Beam:
     `thicknessMm` (> 0) and `refractiveIndex` (> 0) are both in params.
     Otherwise returns the beam unchanged. Common helper for waveplate body,
     PBS-T arm, window, isolator-T, etc."""
-    d_raw = params.get("thicknessMm")
+    d_raw = _kp_first(params, "thicknessMm", "lengthMm")
     n_raw = params.get("refractiveIndex")
     if not isinstance(d_raw, (int, float)) or float(d_raw) <= 0:
         return beam
     if not isinstance(n_raw, (int, float)) or float(n_raw) <= 0:
         return beam
-    return _apply_op(beam, generalized_abcd.m_glass_plate(float(d_raw), float(n_raw)))
+    alpha_x = float(_kp_first(params, "plateAlphaXRad", "alphaXRad", default=0.0) or 0.0)
+    alpha_y = float(_kp_first(params, "plateAlphaYRad", "alphaYRad", default=0.0) or 0.0)
+    return _apply_op(
+        beam,
+        generalized_abcd.m_glass_plate(
+            float(d_raw),
+            float(n_raw),
+            alpha_x_rad=alpha_x,
+            alpha_y_rad=alpha_y,
+        ),
+    )
 
 
 def apply_polarizer(beam: Beam, params: dict[str, Any]) -> dict[str, Beam]:

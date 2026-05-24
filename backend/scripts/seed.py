@@ -1074,7 +1074,7 @@ _THORLABS_BULK = [
     # ---- Polarising beamsplitters (added 2026-05-04) ----
     ("PBS252", "beam_splitter", "primitive_box", -590, -700),
     # ---- Waveplates (added 2026-05-04) ----
-    ("WPHSM05-850", "waveplate", "primitive_lens", -500, -700),
+    ("WPHSM05-780", "waveplate", "thorlabs_wphsm05_850_stl", -500, -700),
     # ---- Fiber patch cables (consolidated 2026-05-09) ----
     # The procedural FC connector renderer differentiates jacket colour
     # (SM yellow / PM blue) and per-end polish (PC flat boot vs APC
@@ -1405,6 +1405,33 @@ for _part, _ctype, _asset, _x, _y in _THORLABS_BULK:
         _iso_meta = _build_isolator_meta(_part)
         if _iso_meta:
             _props.update(_iso_meta)
+    if _ctype == "waveplate" and _part == "WPHSM05-780":
+        _props.update(
+            {
+                "sourceUrl": "https://www.thorlabs.com/thorproduct.cfm?partnumber=WPHSM05-780",
+                "clearApertureMm": 10.0,
+                "diameterMm": 12.7,
+                "lengthMm": 2.0,
+                "thicknessMm": 2.0,
+                "designWavelengthNm": 780.0,
+                "wavelengthRangeNm": [770.0, 790.0],
+                "plateType": "zero_order_half_wave",
+                "material": "crystal_quartz",
+                "waveplateKindParamsOverride": {
+                    "designWavelengthNm": 780.0,
+                    "wavelengthRangeNm": [770.0, 790.0],
+                    "retardanceLambda": 0.5,
+                    "retardanceDeg": 180.0,
+                    "transmission": 0.99,
+                    "lengthMm": 2.0,
+                    "thicknessMm": 2.0,
+                    "refractiveIndex": 1.55,
+                    "clearApertureMm": 10.0,
+                    "plateType": "zero_order_half_wave",
+                    "material": "crystal_quartz",
+                },
+            }
+        )
     # Ø25.0 mm RS-series pedestal pillar posts & post spacers — feed the
     # primitive renderer the actual Thorlabs dimensions instead of the
     # 12.7 mm × 50 mm fallback. Pedestal posts get a wider flange at the

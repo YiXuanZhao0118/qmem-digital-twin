@@ -1,0 +1,50 @@
+{
+  "id": "toptica_boosta_pro",
+  "vendorPart": "BoosTA pro",
+  "displayName": "TOPTICA BoosTA pro Tapered Amplifier",
+  "geometryRef": null,
+  "geometryRefGlb": null,
+  "bodyFrameRotation": null,
+
+  "kind": "tapered_amplifier",
+  "wavelengthRangeNm": [750, 1080],
+
+  "physicalDimensionsMm": { "L": 350, "W": 220, "H": 95 },
+
+  "faces": [
+    { "id": "A",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": -175 },
+      "normalBodyLocal":     { "x": 0, "y": 0, "z": -1 },
+      "apertureMm": 2.0,
+      "apertureShape": "circle",
+      "_role": "seed beam input (fiber-coupled or free-space, depending on model)"
+    },
+    { "id": "B",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": 175 },
+      "normalBodyLocal":     { "x": 0, "y": 0, "z": 1 },
+      "apertureMm": 3.0,
+      "apertureShape": "circle",
+      "_role": "amplified output (broadened spatial mode after taper)"
+    }
+  ],
+
+  "transitions": [
+    { "in": "A", "out": "B", "op": "ta_amplify" }
+  ],
+
+  "defaultParams": {
+    "gainLinear": 100.0,
+    "saturationPowerMw": 50.0,
+    "nominalOutputPowerW": 2.0,
+    "centerWavelengthNm": 780,
+    "driveCurrentMaxA": 4.0,
+    "requiresElectricalDrive": true
+  },
+
+  "mechanicalAnchors": [],
+
+  "notes": {
+    "stub": "Op is scalar gainLinear multiplier. Real log-saturation P_out = P_sat * log(1 + P_in/P_sat * (G_ss - 1)) + ASE noise floor is TODO.",
+    "spec": "TOPTICA BoosTA pro: typical 2 W output @ 780nm, seed power ~10-50 mW, broadband 750-1080 nm coverage with model variants. Spatial mode highly asymmetric at output (fast axis ~3 um, slow axis ~200 um) — beam shaping optics typically follow."
+  }
+}

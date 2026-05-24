@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
+import sqlalchemy as sa
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
@@ -68,6 +69,18 @@ class Asset3D(Base):
     )
     ai_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # Asset-Physics-Model v3 (alembic 0082). Nullable while v2 anchors-based
+    # data coexists. See docs/asset-physics-model.md for schema.
+    catalog_id: Mapped[str | None] = mapped_column(Text, unique=False)
+    physics_kind: Mapped[str | None] = mapped_column(Text)
+    faces: Mapped[JsonList | None] = mapped_column(JSONB)
+    transitions: Mapped[JsonList | None] = mapped_column(JSONB)
+    default_params: Mapped[JsonDict | None] = mapped_column(JSONB)
+    wavelength_range_nm: Mapped[list[float] | None] = mapped_column(
+        sa.ARRAY(sa.Float())
+    )
+    body_frame_rotation: Mapped[JsonDict | None] = mapped_column(JSONB)
+
     components: Mapped[list[Component]] = relationship(back_populates="asset")
 
 
@@ -113,6 +126,11 @@ class Component(Base):
         PG_UUID(as_uuid=True), ForeignKey("agent_sessions.id", ondelete="SET NULL")
     )
     ai_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # Asset-Physics-Model v3 (alembic 0082). Component carries no kind in v3 —
+    # physics lives on Asset3D — but exposes named ports for outer rays.
+    catalog_id: Mapped[str | None] = mapped_column(Text)
+    exposed_faces: Mapped[JsonList | None] = mapped_column(JSONB)
 
     asset: Mapped[Asset3D | None] = relationship(back_populates="components")
     objects: Mapped[list[SceneObject]] = relationship(

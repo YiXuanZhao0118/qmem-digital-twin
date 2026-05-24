@@ -52,8 +52,9 @@ const EMITTER_KINDS: ReadonlySet<string> = new Set([
 
 /** Aperture diameter in mm — first checks the PhysicsElement's
  *  `clearApertureMm` / `apertureDiameterMm`, then falls back to the
- *  Asset3D's intercept anchor `apertureMm`. Returns null only when nothing
- *  meaningful is configured. */
+ *  Asset3D's intercept anchor. Anchor `apertureMm` is a circle radius, so
+ *  it is doubled here. Returns null only when nothing meaningful is
+ *  configured. */
 function apertureDiameterMm(
   el: PhysicsElement | undefined,
   asset: Asset3D | undefined,
@@ -62,7 +63,7 @@ function apertureDiameterMm(
     const params = el.kindParams as Record<string, unknown>;
     for (const key of ["clearApertureMm", "apertureDiameterMm"]) {
       const v = params[key];
-      if (typeof v === "number" && v > 0) return v;
+      if (typeof v === "number" && v > 0) return v * 2;
     }
   }
   if (asset?.anchors) {
@@ -334,8 +335,112 @@ type LiveTraceSegment = {
   waistAtStartUm: number;
   waistAtEndUm: number;
   powerFactorAtStart: number;
+  nominalPowerMwAtSource?: number;
   polarizationAtStart: [number, number, number, number];
 };
+
+type EmitterSourceSummary = {
+  name: string;
+  sourcePowerMw: number;
+  livePowerMw: number;
+  wavelengthNm: number;
+  linewidth: string;
+  mode: string;
+  waist: string;
+  mSquared: string;
+  sourceJones: string;
+  liveJones: string;
+};
+
+function finiteOr(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function formatCompact(value: number, digits = 3): string {
+  if (!Number.isFinite(value)) return "?";
+  return Number.isInteger(value) ? value.toFixed(0) : value.toFixed(digits);
+}
+
+function jonesTupleLabel(values: readonly number[]): string {
+  return `[${values.map((v) => formatCompact(v, 3)).join(", ")}]`;
+}
+
+function sourceJonesFromParams(params: Record<string, unknown>): [number, number, number, number] {
+  const pol = (params.polarization ?? {}) as Record<string, unknown>;
+  return [
+    finiteOr(pol.exRe, 1),
+    finiteOr(pol.exIm, 0),
+    finiteOr(pol.eyRe, 0),
+    finiteOr(pol.eyIm, 0),
+  ];
+}
+
+function modeLabelFromParams(params: Record<string, unknown>): string {
+  const tm = (params.transverseMode ?? {}) as Record<string, unknown>;
+  const kind = typeof tm.kind === "string" ? tm.kind : "TEM00";
+  if (kind === "TEM_mn") {
+    return `HG ${Math.max(0, Math.round(finiteOr(tm.indicesM, 0)))},${Math.max(0, Math.round(finiteOr(tm.indicesN, 0)))}`;
+  }
+  if (kind === "LG_pl") {
+    return `LG p=${Math.max(0, Math.round(finiteOr(tm.indicesP, 0)))}, l=${Math.round(finiteOr(tm.indicesL, 0))}`;
+  }
+  if (kind === "multimode") return "multimode";
+  return "TEM00";
+}
+
+function linewidthLabelFromParams(params: Record<string, unknown>): string {
+  const spectrum = (params.spectrum ?? {}) as Record<string, unknown>;
+  const components = Array.isArray(spectrum.components) ? spectrum.components : [];
+  const first = (components[0] ?? {}) as Record<string, unknown>;
+  const lineshape = typeof first.lineshape === "string" ? first.lineshape : "delta";
+  if (lineshape === "gaussian" || lineshape === "lorentzian") {
+    return `${lineshape} ${formatCompact(finiteOr(first.fwhmMhz, 0), 3)} MHz`;
+  }
+  if (lineshape === "voigt") {
+    return `voigt G ${formatCompact(finiteOr(first.voigtGaussianFwhmMhz, 0), 3)} / L ${formatCompact(finiteOr(first.voigtLorentzianFwhmMhz, 0), 3)} MHz`;
+  }
+  return "delta";
+}
+
+function sourceSummaryForEmitter(
+  emitterId: string | null,
+  objects: readonly SceneObject[],
+  physicsElements: readonly PhysicsElement[],
+): EmitterSourceSummary | null {
+  if (!emitterId) return null;
+  const element = physicsElements.find((el) => el.objectId === emitterId);
+  if (!element) return null;
+  const objectName = objects.find((obj) => obj.id === emitterId)?.name ?? emitterId.slice(0, 8);
+  const params = (element.kindParams ?? {}) as Record<string, unknown>;
+  const win = window as unknown as { __rayTraceDebug?: LiveTraceSegment[] };
+  const liveSegment =
+    (win.__rayTraceDebug ?? []).find((seg) => seg.emitterObjectId === emitterId && seg.sourceObjectId === emitterId)
+    ?? (win.__rayTraceDebug ?? []).find((seg) => seg.emitterObjectId === emitterId);
+
+  const sourcePowerMw = finiteOr(params.nominalPowerMw, finiteOr(liveSegment?.nominalPowerMwAtSource, 1));
+  const liveNominal = finiteOr(liveSegment?.nominalPowerMwAtSource, sourcePowerMw);
+  const liveFactor = finiteOr(liveSegment?.powerFactorAtStart, 1);
+  const wavelengthNm = finiteOr(liveSegment?.wavelengthNm, finiteOr(params.centerWavelengthNm, 780));
+  const sx = (params.spatialModeX ?? {}) as Record<string, unknown>;
+  const sy = (params.spatialModeY ?? {}) as Record<string, unknown>;
+  const sourceJones = sourceJonesFromParams(params);
+  const liveJones = Array.isArray(liveSegment?.polarizationAtStart)
+    ? liveSegment!.polarizationAtStart
+    : sourceJones;
+
+  return {
+    name: objectName,
+    sourcePowerMw,
+    livePowerMw: liveNominal * liveFactor,
+    wavelengthNm,
+    linewidth: linewidthLabelFromParams(params),
+    mode: modeLabelFromParams(params),
+    waist: `${formatCompact(finiteOr(sx.waistUm, 100), 1)} x ${formatCompact(finiteOr(sy.waistUm, 100), 1)} um`,
+    mSquared: `${formatCompact(finiteOr(sx.mSquared, 1), 2)} x ${formatCompact(finiteOr(sy.mSquared, 1), 2)}`,
+    sourceJones: jonesTupleLabel(sourceJones),
+    liveJones: jonesTupleLabel(liveJones),
+  };
+}
 
 /** Walk the OpticalLink graph forward from `rootObjectId`, returning every
  *  object on a downstream emitter chain (ie. follow links whose `toObject`
@@ -486,6 +591,11 @@ export function OpticalLinkViewerPanel() {
   // `chainEmitterIds` is also tick-maintained — the segment filter
   // depends on it, and so does the inline-scope visibility check, so we
   // need it to reflect live trace data.
+  const selectedEmitterSummary = useMemo(
+    () => sourceSummaryForEmitter(selectedEmitterId, objects, physicsElements),
+    [selectedEmitterId, objects, physicsElements],
+  );
+
   const [chainEmitterIds, setChainEmitterIds] = useState<Set<string>>(new Set());
 
   // Aperture / wavelength-range warnings derived from the live ray-trace
@@ -840,7 +950,10 @@ export function OpticalLinkViewerPanel() {
                 `${s.startThree.x},${s.startThree.y},${s.startThree.z}|` +
                 `${s.endThree.x},${s.endThree.y},${s.endThree.z}|` +
                 `${s.hitObjectId ?? ""}|${s.wavelengthNm}|` +
-                `${s.waistAtStartUm.toFixed(3)}|${s.waistAtEndUm.toFixed(3)}`,
+                `${s.waistAtStartUm.toFixed(3)}|${s.waistAtEndUm.toFixed(3)}|` +
+                `${(s.nominalPowerMwAtSource ?? 0).toFixed(6)}|` +
+                `${s.powerFactorAtStart.toFixed(6)}|` +
+                `${s.polarizationAtStart.map((v) => v.toFixed(6)).join(",")}`,
             )
             .join(";") + `|ob:${obDigest}`;
       if (key === prevContentKey) return;
@@ -1374,6 +1487,52 @@ export function OpticalLinkViewerPanel() {
             )}
           </select>
         </label>
+        {selectedEmitterSummary && (
+          <div
+            style={{
+              flexShrink: 0,
+              display: "grid",
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+              gap: "4px 10px",
+              padding: "6px 8px",
+              borderLeft: "2px solid #38bdf8",
+              background: "rgba(56, 189, 248, 0.07)",
+              fontSize: 11,
+              lineHeight: 1.35,
+            }}
+          >
+            <div style={{ gridColumn: "1 / -1", color: "#38bdf8", fontWeight: 600 }}>
+              {selectedEmitterSummary.name} source state
+            </div>
+            <div>
+              <strong>P src</strong>: {selectedEmitterSummary.sourcePowerMw.toFixed(2)} mW
+            </div>
+            <div>
+              <strong>P live</strong>: {selectedEmitterSummary.livePowerMw.toFixed(2)} mW
+            </div>
+            <div>
+              <strong>lambda</strong>: {selectedEmitterSummary.wavelengthNm.toFixed(3)} nm
+            </div>
+            <div>
+              <strong>line</strong>: {selectedEmitterSummary.linewidth}
+            </div>
+            <div>
+              <strong>mode</strong>: {selectedEmitterSummary.mode}
+            </div>
+            <div>
+              <strong>waist</strong>: {selectedEmitterSummary.waist}
+            </div>
+            <div>
+              <strong>M2</strong>: {selectedEmitterSummary.mSquared}
+            </div>
+            <div title="Raw source Jones from Object panel">
+              <strong>Jones src</strong>: {selectedEmitterSummary.sourceJones}
+            </div>
+            <div style={{ gridColumn: "1 / -1" }} title="Normalized live Jones on the first traced segment">
+              <strong>Jones live</strong>: {selectedEmitterSummary.liveJones}
+            </div>
+          </div>
+        )}
         <div
           style={{
             flex: probeBelongsToChain ? 1.2 : 1,
