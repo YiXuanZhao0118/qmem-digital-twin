@@ -236,7 +236,7 @@ function evalFilter(
       return !evalFilter(componentId, expr.clause, scene, cache);
     case "component_type": {
       const c = scene.components.find((x) => x.id === componentId);
-      return c ? expr.values.includes(c.componentType) : false;
+      return c && c.kindId != null ? expr.values.includes(c.kindId) : false;
     }
     case "physics_capability": {
       const c = scene.components.find((x) => x.id === componentId);
@@ -304,8 +304,8 @@ export function isObjectVisible(object: SceneObject, ctx: RenderableContext): bo
   if (!object.visible) return false;
   if (ctx.session.hiddenObjectIds.has(object.id)) return false;
   if (ctx.soloAllowed && !ctx.soloAllowed.has(object.id)) return false;
-  // Force-visible override (request: collection viewBox=false 但個別 object
-  // 改 true 仍可見). When the user explicitly toggles visibility ON for an
+  // Force-visible override (request: collection viewBox=false but an
+  // individual object toggled to true should still be visible). When the user explicitly toggles visibility ON for an
   // object inside an otherwise-hidden collection, the object id ends up
   // in session.forceVisibleObjectIds — bypass the collection gate so the
   // object resurfaces. We still respect overlayFlags / object.visible /

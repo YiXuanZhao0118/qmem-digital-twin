@@ -356,11 +356,16 @@ type SceneObject = {
 
 ## 6. Kind Registry
 
-存在 code,**不存 DB**(避免 ORM 序列化複雜物理函式)。
+**Split between DB(metadata) 與 code(PhysicsOp)**(alembic 0086, 2026-05-25 起):
+
+- **DB `kinds` table** 存可序列化的 metadata:`name`、`display_name`、`domain`、`op_set_name`、`default_params`、`face_template`、`needs_aperture`、`wavelength_range_nm`、`description`。前後端透過 `/api/kinds` 做 CRUD。
+- **Code REGISTRY** 存 PhysicsOp 實作(`abcd_lens`、`jones_polarizer`、`diffract_aom`...)。函式不適合 ORM 序列化,所以留在 code 兩端鏡像(frontend `src/optical/registry.ts` ↔ backend `app/optical/registry.py`)。
+- **DB row 透過 `op_set_name` 引用 code 端的 op 集合**。建一個新 kind row(例如 `my_custom_lens`)→ 設 `op_set_name = "lens_biconvex"` → tracer 用 lens_biconvex 的 ops 跑這個 kind。要做**真正新的物理行為**仍要在 code 註冊新 op,才能讓 UI 的 `op_set_name` dropdown 出現新選項。
 
 ```typescript
-// frontend/src/optical/kinds/registry.ts
-// backend/app/optical/kinds/registry.py — 鏡像
+// frontend/src/optical/registry.ts
+// backend/app/optical/registry.py — 鏡像
+// 只負責 PhysicsOp(callable 函式),沒有 metadata。
 
 type OpticalKind = 
   | "laser_source" | "tapered_amplifier"
@@ -384,7 +389,7 @@ type RfKind =                             // ★ RF 圖節點(走 §7.5 RF trace
   | "programmable_pulse_generator"        // emitter(TTL/Trigger 域):綁 Pulse&Timing TimingProgram
   | "horn_antenna"                        // sink:輻射出系統
 
-type Kind = OpticalKind | RfKind          // Asset3D.kind 允許其中之一
+type Kind = OpticalKind | RfKind          // Asset3D.kind 允許其中之一(且必須對應到 DB kinds.name)
 
 type PhysicsOp = (
   rayIn: BeamRay,                       // (origin, dir, λ, jones, power) in face-local frame
@@ -394,20 +399,34 @@ type PhysicsOp = (
   dynamic?: DynamicSources              // 來自 SceneObject (laser power etc.)
 ) => BeamRay[]                          // 多條輸出(diffraction orders / BS 雙臂)
 
-// 每個 kind 註冊自己的 op 與預設 transitions
+// 每個 op set 註冊自己的 ops(僅函式,metadata 在 DB)
 const REGISTRY: Record<OpticalKind, {
   ops: Record<string, PhysicsOp>        // op name → impl
-  defaultTransitions: (asset: Asset3D) => Transition[]
-  defaultParams: KindParams
-  needsAperture: boolean
-  faceTemplate: (params: KindParams) => Face[]    // 用於 PHY Editor 建 asset
 }>
 ```
 
-**Registry 的角色**:
-- 提供 PhysicsOp 實作(`abcd_lens`、`jones_polarizer`、`diffract_aom`...)
-- 提供 PHY Editor 建立新 Asset 時的 face/transition 範本(使用者不用每次手填)
-- **不存資料** — Asset3D 一旦建立,它的 faces/transitions 就固化在 Asset3D 上,跟 registry 解耦
+```sql
+-- DB schema (alembic 0086)
+CREATE TABLE kinds (
+  id                UUID PRIMARY KEY,
+  name              TEXT UNIQUE NOT NULL,         -- 對應 Asset3D.physics_kind
+  display_name      TEXT NOT NULL,
+  domain            TEXT NOT NULL,                -- 'optical' | 'rf' | 'mechanical'
+  op_set_name       TEXT NOT NULL,                -- 指到 code REGISTRY 的 key
+  default_params    JSONB NOT NULL DEFAULT '{}',
+  face_template     JSONB NOT NULL DEFAULT '{}',  -- anchors 範本(required / optional / needs_direction / needs_aperture)
+  needs_aperture    BOOL  NOT NULL DEFAULT false,
+  wavelength_range_nm FLOAT[],
+  description       TEXT,
+  created_at, updated_at …
+);
+```
+
+**Registry / Kind table 的角色分工**:
+- **Code REGISTRY**:提供 PhysicsOp 實作(`abcd_lens`、`jones_polarizer`、`diffract_aom`...);UI 不能新增,要 PR 改 code
+- **DB `kinds`**:提供 kind metadata(display name、defaultParams、faceTemplate);UI 在 PHY Editor → 🔧 Binding dev → Kinds tab 做 CRUD;新 row 要選一個 code 端註冊過的 `op_set_name`
+- **Asset3D 仍是固化的**:建好後它的 faces/transitions/default_params 都存自己一份,改 kinds row 不會回頭動已建好的 Asset3D(避免遠端追溯改 production scene)
+- **新增「真正新物理」的流程**:(1) 在 code 加 PhysicsOp + register;(2) UI 開 Kinds tab → 新增一個 row,opSetName 選新註冊的那個
 
 ---
 

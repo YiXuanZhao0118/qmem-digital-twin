@@ -46,7 +46,7 @@ function component(id: string, asset3dId: string | null = null): ComponentItem {
   return {
     id,
     name: `comp_${id}`,
-    componentType: "custom_3d",
+    kindId: "none",
     asset3dId,
     properties: {},
     physicsCapabilities: [],

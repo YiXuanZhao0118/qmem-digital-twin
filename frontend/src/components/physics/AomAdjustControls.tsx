@@ -1181,11 +1181,12 @@ export function AomAdjustControls({
           : `${currentOrder > 0 ? "+1" : "−1"} = diffracted by ${currentOrder > 0 ? "+" : "−"}2θ_B; ` +
             `zeroth retains (1−η) ≈ ${((1 - efficiencyEst) * 100).toFixed(1)}%.`}
       </p>
-      {/* (Phase 7.1 移除) Bragg tilt axis r (°) 手動輸入。Tilt 軸現在
-          自動 = b̂×â（PHY Editor 的 intercept_in/out 定義 b̂、Component
-          metadata 的 acousticAxisBodyLocal 定義 â），純幾何推導，沒有
-          獨立 DoF。Schema 中的 `braggTiltAxisDegLab` 保留供舊資料讀取，
-          但 align 不再讀取這個欄位。 */}
+      {/* (Removed in Phase 7.1) Manual input for Bragg tilt axis r (°). The
+          tilt axis is now automatically derived as b̂×â (PHY Editor's
+          intercept_in/out defines b̂, Component metadata's
+          acousticAxisBodyLocal defines â) -- pure geometric derivation, no
+          independent DoF. Schema's `braggTiltAxisDegLab` is retained for
+          legacy data, but align no longer reads this field. */}
       <button
         type="button"
         className="primary-button"

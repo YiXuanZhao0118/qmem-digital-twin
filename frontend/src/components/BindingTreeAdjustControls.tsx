@@ -50,7 +50,7 @@ function axisLabel(axisKey: string): string {
   }
 }
 
-function defaultRange(field: ReturnType<typeof axisToField>): { min: number; max: number; step: number } {
+function defaultRange(field: NonNullable<ReturnType<typeof axisToField>>): { min: number; max: number; step: number } {
   if (field.endsWith("Deg")) return { min: 0, max: 360, step: 1 };
   return { min: -200, max: 200, step: 0.5 };
 }
@@ -188,7 +188,7 @@ export function BindingTreeAdjustControls({ component }: { component: ComponentI
     delete props.opaqueHousing;
     await updateSceneObject(sceneObject.id, { properties: props });
   };
-  const showTranslucentToggle = component.componentType === "isolator";
+  const showTranslucentToggle = component.kindId === "isolator";
 
   return (
     <div className="physics-panel-kind-params" style={{ marginTop: 6 }}>

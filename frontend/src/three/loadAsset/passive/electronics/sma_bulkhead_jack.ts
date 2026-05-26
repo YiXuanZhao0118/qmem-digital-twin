@@ -21,7 +21,7 @@ export function createSmaBulkheadJack(): THREE.Object3D {
   // back-shaft. Matches a real Amphenol 132357 panel-mount SMA-F which
   // ships as flange + threaded shaft + lock washer + lock nut — the prior
   // model only rendered the flange + front barrel, which is why the user
-  // reported "sma 母頭少了螺帽".
+  // reported "the sma female jack is missing the nut".
   const hexThickness = mmToThree(1);
   const hexRadius = mmToThree(5.0);
   const hex = new THREE.Mesh(

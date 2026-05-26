@@ -82,7 +82,7 @@ export function IntrinsicSpecPanel({ component, sceneObject }: Props) {
   // Resolve plugin via componentType. PassivePlugins (mirror_mount, posts,
   // …) don't have a physics block and therefore no intrinsic params —
   // we hide the panel entirely for those.
-  const plugin = component ? pluginForComponentType(component.componentType) : null;
+  const plugin = component && component.kindId != null ? pluginForComponentType(component.kindId) : null;
   const physicsPlugin = plugin && isPhysicsPlugin(plugin) ? plugin : null;
 
   const physicsElement: PhysicsElement | undefined = useMemo(

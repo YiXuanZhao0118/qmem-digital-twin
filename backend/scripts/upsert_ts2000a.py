@@ -24,7 +24,7 @@ ASSET = {
 
 COMPONENT = {
     "name": "more_photonics_ts2000a_laser_mount",
-    "component_type": "laser_diode_mount",
+    "kind_id": "laser_diode_mount",
     "brand": "More Photonics / Photodigm",
     "model": "TS-2000-A",
     "properties": {

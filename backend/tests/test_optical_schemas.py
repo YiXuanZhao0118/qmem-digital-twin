@@ -59,7 +59,7 @@ def test_aom_has_three_output_ports():
 def test_pbs_component_defaults_to_polarizing_beam_splitter():
     component = Component(
         name="thorlabs_pbs252",
-        component_type="beam_splitter",
+        kind_id="beam_splitter",
         model="PBS252",
         properties={"sourceUrl": "https://www.thorlabs.com/item/PBS252"},
         notes="Polarizing beamsplitter cube.",
@@ -75,7 +75,7 @@ def test_pbs_component_defaults_to_polarizing_beam_splitter():
 def test_generic_beam_splitter_defaults_to_non_polarizing():
     component = Component(
         name="generic_beam_splitter",
-        component_type="beam_splitter",
+        kind_id="beam_splitter",
         model="BS",
         properties={},
         notes="Generic non-polarizing cube.",
@@ -88,7 +88,7 @@ def test_generic_beam_splitter_defaults_to_non_polarizing():
 def test_waveplate_component_override_maps_plate_specs():
     component = Component(
         name="thorlabs_wphsm05_780",
-        component_type="waveplate",
+        kind_id="waveplate",
         model="WPHSM05-780",
         properties={
             "waveplateKindParamsOverride": {

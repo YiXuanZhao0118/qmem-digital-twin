@@ -26,10 +26,14 @@ import { dichroicMirrorPlugin } from "./dichroic_mirror";
 import { eomPlugin } from "./eom";
 import { fiberPlugin } from "./fiber";
 import { fiberCouplerPlugin } from "./fiber_coupler";
-import { fiberEndPlugin } from "./fiber_end";
+// Phase 9.X — fiberEndPlugin removed. fiber Asset3D now owns both tip
+// anchors (tip_a + tip_b) directly; the separate fiber_end kind +
+// SceneObject split is gone. See docs/asset-physics-model.md §6.
 import { glanPolarizerPlugin } from "./glan_polarizer";
 import { hornAntennaPlugin } from "./horn_antenna";
-import { isolatorPlugin } from "./isolator";
+// Phase 9.X — isolatorPlugin removed. Isolators are Component-level
+// compositions (Glan + Faraday + Glan via ComponentBindings) — physics
+// emerges from sub-Asset3Ds, not from an isolator-specific op.
 import { laserSourcePlugin } from "./laser_source";
 import { lensBiconvexPlugin } from "./lens_biconvex";
 import { lensCylindricalPlugin } from "./lens_cylindrical";
@@ -86,8 +90,9 @@ export const PHYSICS_PLUGINS: readonly PhysicsPlugin[] = [
   beamSplitterPlugin,
   fiberCouplerPlugin,
   fiberPlugin,
-  fiberEndPlugin,
-  isolatorPlugin,
+  // fiberEndPlugin + isolatorPlugin removed (Phase 9.X):
+  //   - fiber now owns both tips on a single Asset3D
+  //   - isolator is a Component composition, not a kind
   // Active / nonlinear optical
   aomPlugin,
   eomPlugin,

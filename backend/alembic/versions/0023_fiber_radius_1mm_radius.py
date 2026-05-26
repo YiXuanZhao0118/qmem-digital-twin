@@ -4,7 +4,7 @@ Revision ID: 0023_fiber_radius_1mm_radius
 Revises: 0022_fiber_radius_1mm
 
 Follow-up to 0022. The user originally asked for "1 mm" fiber and 0022
-read it as diameter (radius 0.5 mm). They clarified "半徑 1mm" — they
+read it as diameter (radius 0.5 mm). They clarified "radius 1mm" — they
 meant 1 mm radius (= 2 mm diameter). The frontend defaults + seed.py
 were also corrected from 0.5 to 1.0; this migration brings existing DB
 rows in line.

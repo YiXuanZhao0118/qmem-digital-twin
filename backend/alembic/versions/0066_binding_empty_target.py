@@ -6,8 +6,8 @@ Revises: 0065_tornos_binding_tree
 Stage A''.5 — the binding tree needs intermediate nodes that carry a
 local transform + tunable_axes but have no geometry of their own. The
 canonical case is the user's "PBS Mount" node in the 5-part isolator
-decomposition (前 PBS → 前 PBS Mount → Faraday body → 後 PBS Mount →
-後 PBS): the Mount rotates around an axis defined relative to the
+decomposition (front PBS → front PBS Mount → Faraday body → back PBS Mount →
+back PBS): the Mount rotates around an axis defined relative to the
 Faraday body, the PBS sub-Component is rigid to the Mount, and the
 Mount itself is a structural concept without its own renderable
 geometry today.

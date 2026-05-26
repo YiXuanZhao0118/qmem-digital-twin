@@ -127,7 +127,7 @@ async def _build_template_tree(
 
     def is_excluded(obj: SceneObject) -> bool:
         comp = components_by_id.get(obj.component_id)
-        return comp is not None and comp.component_type in EXCLUDED_COMPONENT_TYPES
+        return comp is not None and comp.kind_id in EXCLUDED_COMPONENT_TYPES
 
     snapshotable_objects = {
         oid: obj for oid, obj in objects.items() if not is_excluded(obj)
@@ -287,7 +287,7 @@ async def _instantiate_tree(
         # connectivity is re-built via the RF Link panel after the
         # template lands. New templates (post 2026-05-16) already
         # drop these on save; this guard keeps idempotency.
-        if component.component_type in {
+        if component.kind_id in {
             "rf_cable",
             "sma_cable",
             "programmable_pulse_generator",

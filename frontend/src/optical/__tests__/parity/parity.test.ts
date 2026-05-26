@@ -26,14 +26,18 @@ import "../../kinds/waveplate/physics";
 
 import { type ParityFixture, runFixture } from "./runner";
 
+// JSON imports lose tuple narrowing on `jones: [Complex, Complex]`
+// (TS widens to `{re,im}[]`), so the double-cast through `unknown` is
+// required to land each fixture as a ParityFixture without weakening
+// the tuple constraint at the type-def site.
 const FIXTURES: ParityFixture[] = [
-  aomPlus1 as ParityFixture,
-  dichroicShortpass as ParityFixture,
-  lensBasic as ParityFixture,
-  mirrorNormal as ParityFixture,
-  pbsTransmit45 as ParityFixture,
-  polarizerMalus as ParityFixture,
-  waveplateHwp45 as ParityFixture,
+  aomPlus1 as unknown as ParityFixture,
+  dichroicShortpass as unknown as ParityFixture,
+  lensBasic as unknown as ParityFixture,
+  mirrorNormal as unknown as ParityFixture,
+  pbsTransmit45 as unknown as ParityFixture,
+  polarizerMalus as unknown as ParityFixture,
+  waveplateHwp45 as unknown as ParityFixture,
 ];
 
 describe("parity / v3 tracer golden fixtures", () => {

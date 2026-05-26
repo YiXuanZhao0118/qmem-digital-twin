@@ -1143,7 +1143,7 @@ export function OpticalLinkViewerPanel() {
           // every sub-Component / piece child.
           const bindings = componentBindingsRef.current ?? [];
           const useBindingTree = shouldRenderViaBindings(
-            comp.componentType,
+            comp.kindId ?? "",
             comp.id,
             { componentBindings: bindings },
           );

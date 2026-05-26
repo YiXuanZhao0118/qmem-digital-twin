@@ -20,7 +20,7 @@ import { client } from "../api/client";
 export type V3Vec3 = { x: number; y: number; z: number };
 
 /** Face transport domain — gates which tracer + which links the face
- *  participates in. See asset-physics-model.md §3 "Face `domain` 規約".
+ *  participates in. See asset-physics-model.md §3 "Face `domain` convention".
  *  Undefined / null is treated as "optical" for back-compat with rows
  *  written before the field existed. */
 export type V3FaceDomain = "optical" | "rf" | "ttl";
@@ -55,7 +55,8 @@ export type V3Asset = {
   name: string;
   assetType: string;
   filePath: string;
-  physicsKind: string | null;
+  /** Classification slug (alembic 0090). Pointer into the Kind registry. */
+  kindId: string | null;
   faces: V3Face[] | null;
   transitions: V3Transition[] | null;
   defaultParams: Record<string, unknown> | null;
@@ -65,13 +66,78 @@ export type V3Asset = {
 };
 
 export type V3AssetUpdate = Partial<{
-  physicsKind: string | null;
+  kindId: string | null;
   faces: V3Face[] | null;
   transitions: V3Transition[] | null;
   defaultParams: Record<string, unknown> | null;
   wavelengthRangeNm: [number, number] | null;
   bodyFrameRotation: { x: number; y: number; z: number; w: number } | null;
+  properties: Record<string, unknown>;
 }>;
+
+/** Payload for ``POST /api/v3/assets3d`` — creates a new Asset3D row.
+ *  When ``sourceCatalogId`` is supplied the backend copies geometry +
+ *  physics fields from that asset (fork). Otherwise the new asset is
+ *  a blank shell. ``catalogId`` slug shape + uniqueness are enforced
+ *  in the DB (alembic 0088); bad slugs return 400. */
+export type V3AssetCreate = {
+  catalogId: string;
+  name: string;
+  sourceCatalogId?: string;
+  assetType?: string;
+  filePath?: string;
+  kindId?: string;
+};
+
+export type V3AssetUpload = {
+  file: File;
+  catalogId: string;
+  name: string;
+  kindId?: string;
+  domain?: "optical" | "rf" | "mechanical";
+  unit?: "mm" | "m";
+  scaleFactor?: number;
+  precisionPreset?: "preview" | "standard" | "high";
+  preserveColors?: boolean;
+};
+
+type UploadComponentFallbackResponse = {
+  asset3dId?: string | null;
+  asset3DId?: string | null;
+};
+
+const viewerAssetExtensions = new Set(["glb", "gltf", "obj", "stl"]);
+const cadSourceExtensions = new Set(["step", "stp", "sldprt", "dxf"]);
+
+function extensionFromFilename(filename: string): string {
+  const ext = filename.split("?")[0].split(".").pop()?.toLowerCase() ?? "";
+  return ext === filename.toLowerCase() ? "" : ext;
+}
+
+function uploadMetadata(payload: V3AssetUpload): Record<string, unknown> {
+  const assetType = extensionFromFilename(payload.file.name);
+  const viewerReady = viewerAssetExtensions.has(assetType);
+  const cadSource = cadSourceExtensions.has(assetType);
+  return {
+    sourceFilename: payload.file.name,
+    uploadedAssetType: assetType,
+    viewerReady,
+    conversionStatus: viewerReady ? "ready" : "cad_source_only",
+    colorImportStatus: assetType === "glb" || assetType === "gltf"
+      ? "from_file"
+      : cadSource
+        ? "pending_conversion"
+        : "not_available",
+    cadImport: {
+      sourceFormat: assetType,
+      targetFormat: "glb",
+      precisionPreset: payload.precisionPreset ?? "standard",
+      preserveColors: payload.preserveColors ?? true,
+      recommendedSolidWorksExport: "STEP AP242 with Export appearance enabled",
+    },
+    ...(payload.domain ? { domains: [payload.domain] } : {}),
+  };
+}
 
 export type V3ComponentBinding = {
   bindingId: string;
@@ -95,7 +161,8 @@ export type V3Component = {
   id: string;
   catalogId: string;
   name: string;
-  componentType: string;
+  /** Classification slug (alembic 0090). Pointer into the Kind registry. */
+  kindId: string | null;
   brand: string | null;
   model: string | null;
   exposedFaces: V3ExposedFace[] | null;
@@ -118,7 +185,13 @@ type V3CatalogState = {
 
   fetchAll: () => Promise<void>;
   refresh: () => Promise<void>;
-  updateAsset: (catalogId: string, patch: V3AssetUpdate) => Promise<V3Asset>;
+  /** `key` is catalog_id slug for seeded rows or row UUID for legacy
+   *  mechanical Asset3Ds that have catalog_id = NULL. Backend resolves
+   *  either form against the same row. */
+  updateAsset: (key: string, patch: V3AssetUpdate) => Promise<V3Asset>;
+  deleteAsset: (key: string) => Promise<void>;
+  createAsset: (payload: V3AssetCreate) => Promise<V3Asset>;
+  uploadAsset: (payload: V3AssetUpload) => Promise<V3Asset>;
   getAssetByCatalogId: (catalogId: string) => V3Asset | undefined;
   getAssetByDbId: (dbId: string) => V3Asset | undefined;
   getAssetsByKind: (kind: string) => V3Asset[];
@@ -136,9 +209,15 @@ export const useV3Catalog = create<V3CatalogState>((set, get) => ({
     if (get().status === "loading") return;
     set({ status: "loading", error: null });
     try {
+      // has_v3=false returns the FULL Asset3D / Component catalog, not just
+      // rows that already have a stable catalog_id slug. Binding dev needs
+      // the full set (mechanical-bucket Asset3Ds without catalog_id outnumber
+      // the v3-seeded ones ~9-to-1); the editor's domain filter handles the
+      // optical/rf/mechanical bucketing client-side from physicsKind and
+      // properties.domainOverride.
       const [assetsRes, componentsRes] = await Promise.all([
-        client.get<V3Asset[]>("/api/v3/assets3d"),
-        client.get<V3Component[]>("/api/v3/components"),
+        client.get<V3Asset[]>("/api/v3/assets3d", { params: { has_v3: false } }),
+        client.get<V3Component[]>("/api/v3/components", { params: { has_v3: false } }),
       ]);
       set({
         assets: assetsRes.data,
@@ -158,18 +237,98 @@ export const useV3Catalog = create<V3CatalogState>((set, get) => ({
     await get().fetchAll();
   },
 
-  updateAsset: async (catalogId, patch) => {
+  updateAsset: async (key, patch) => {
+    // `key` accepts catalog_id slug OR row UUID (backend resolves both).
+    // Local state diff is keyed on the returned row's id so it doesn't
+    // matter which form the caller passed.
     const res = await client.put<V3Asset>(
-      `/api/v3/assets3d/${encodeURIComponent(catalogId)}`,
+      `/api/v3/assets3d/${encodeURIComponent(key)}`,
       patch,
     );
     const updated = res.data;
     set((state) => ({
       assets: state.assets.map((asset) =>
-        asset.catalogId === catalogId ? updated : asset,
+        asset.id === updated.id ? updated : asset,
       ),
     }));
     return updated;
+  },
+
+  deleteAsset: async (key) => {
+    await client.delete(`/api/v3/assets3d/${encodeURIComponent(key)}`);
+    set((state) => ({
+      assets: state.assets.filter(
+        (asset) => asset.catalogId !== key && asset.id !== key,
+      ),
+      // Bindings inside components also went away server-side; refresh
+      // the component view next time it's read by clearing loadedAt.
+      loadedAt: null,
+    }));
+  },
+
+  createAsset: async (payload) => {
+    const res = await client.post<V3Asset>("/api/v3/assets3d", payload);
+    const created = res.data;
+    set((state) => ({ assets: [...state.assets, created] }));
+    return created;
+  },
+
+  uploadAsset: async (payload) => {
+    const form = new FormData();
+    form.append("file", payload.file);
+    form.append("catalog_id", payload.catalogId);
+    form.append("name", payload.name);
+    if (payload.kindId) form.append("kind_id", payload.kindId);
+    if (payload.domain) form.append("domain", payload.domain);
+    form.append("unit", payload.unit ?? "mm");
+    form.append("scale_factor", String(payload.scaleFactor ?? 1));
+    form.append("precision_preset", payload.precisionPreset ?? "standard");
+    form.append("preserve_colors", String(payload.preserveColors ?? true));
+
+    try {
+      const res = await client.post<V3Asset>("/api/v3/assets3d/upload", form, {
+        timeout: 60000,
+      });
+      const created = res.data;
+      set((state) => ({ assets: [...state.assets, created] }));
+      return created;
+    } catch (error) {
+      const status = (error as { response?: { status?: number } }).response?.status;
+      if (status !== 405) throw error;
+
+      // Older running backends may route /api/v3/assets3d/upload through
+      // /api/v3/assets3d/{catalog_id}, returning 405 until the server is
+      // restarted. Fall back to the existing component-upload path, then
+      // stamp the created Asset3D with the v3 catalog fields the editor
+      // needs.
+      const fallbackForm = new FormData();
+      fallbackForm.append("file", payload.file);
+      fallbackForm.append("name", payload.name);
+      fallbackForm.append("kind_id", "none");
+      fallbackForm.append("unit", payload.unit ?? "mm");
+      fallbackForm.append("scale_factor", String(payload.scaleFactor ?? 1));
+      const fallback = await client.post<UploadComponentFallbackResponse>(
+        "/api/assets/upload-component",
+        fallbackForm,
+        { timeout: 60000 },
+      );
+      const assetId = fallback.data.asset3dId ?? fallback.data.asset3DId;
+      if (!assetId) {
+        throw new Error("Fallback upload succeeded but did not return asset3dId.");
+      }
+
+      const updated = await client.put<V3Asset>(`/api/assets/${encodeURIComponent(assetId)}`, {
+        name: payload.name,
+        catalogId: payload.catalogId,
+        kindId: payload.kindId ?? (payload.domain === "mechanical" ? "none" : null),
+        properties: uploadMetadata(payload),
+        faces: [],
+        transitions: [],
+        defaultParams: {},
+      });
+      await get().refresh();
+      return get().assets.find((asset) => asset.id === updated.data.id) ?? updated.data;
+    }
   },
 
   getAssetByCatalogId: (catalogId) =>
@@ -179,7 +338,7 @@ export const useV3Catalog = create<V3CatalogState>((set, get) => ({
     get().assets.find((a) => a.id === dbId),
 
   getAssetsByKind: (kind) =>
-    get().assets.filter((a) => a.physicsKind === kind),
+    get().assets.filter((a) => a.kindId === kind),
 
   getComponentByCatalogId: (catalogId) =>
     get().components.find((c) => c.catalogId === catalogId),

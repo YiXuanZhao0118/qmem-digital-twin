@@ -99,7 +99,18 @@ def register_ops(kind: OpticalKind, ops: dict[str, PhysicsOp]) -> None:
 def get_op(kind: OpticalKind, op_name: str) -> PhysicsOp:
     entry = _REGISTRY.get(kind)
     if entry is None:
-        raise KeyError(f'kind "{kind}" not registered')
+        # Fallback: DB-backed kinds (alembic 0086, Phase 5) reference an
+        # existing op set via ``op_set_name``. ``my_custom_lens`` → look
+        # up ``op_set_name = "lens_biconvex"`` → use the lens_biconvex
+        # ops. Import locally so this module stays usable in test setups
+        # that don't boot the FastAPI app.
+        from app.optical.db_kinds import get_op_set_for_kind
+
+        op_set = get_op_set_for_kind(kind)
+        if op_set is not None:
+            entry = _REGISTRY.get(op_set)
+        if entry is None:
+            raise KeyError(f'kind "{kind}" not registered')
     op = entry.ops.get(op_name)
     if op is None:
         raise KeyError(f'op "{op_name}" not found in kind "{kind}"')
@@ -108,6 +119,15 @@ def get_op(kind: OpticalKind, op_name: str) -> PhysicsOp:
 
 def has_op(kind: OpticalKind, op_name: str) -> bool:
     entry = _REGISTRY.get(kind)
+    if entry is not None:
+        return op_name in entry.ops
+    # Same fallback path as ``get_op``.
+    from app.optical.db_kinds import get_op_set_for_kind
+
+    op_set = get_op_set_for_kind(kind)
+    if op_set is None:
+        return False
+    entry = _REGISTRY.get(op_set)
     return entry is not None and op_name in entry.ops
 
 

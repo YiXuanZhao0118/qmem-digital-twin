@@ -237,7 +237,7 @@ const PERSIST_KEY = "qmem.editorState";
 type PersistedEditorState = {
   editorMode?: "scene" | "phy-editor";
   phyEditorView?:
-    | { domain: "optical" | "rf"; section: "kinds" | "components" }
+    | { domain: "optical" | "rf" | "mechanical"; section: "kinds" | "components" | "composer" }
     | null;
 };
 function readPersistedEditorState(): PersistedEditorState {
@@ -297,7 +297,7 @@ type SceneStore = {
    *  editor "home" (left rail visible, right pane shows a hint asking
    *  the user to pick a sub-editor). */
   phyEditorView:
-    | { domain: "optical" | "rf"; section: "kinds" | "components" }
+    | { domain: "optical" | "rf" | "mechanical"; section: "kinds" | "components" | "composer" }
     | null;
   /** Asset3D currently being edited (anchors[]). When `phyEditorView`
    *  is not the optical_components editor, this is null. */
@@ -362,7 +362,7 @@ type SceneStore = {
    *  optical → components). When null, returns to the editor home. */
   setPhyEditorView: (
     view:
-      | { domain: "optical" | "rf"; section: "kinds" | "components" }
+      | { domain: "optical" | "rf" | "mechanical"; section: "kinds" | "components" | "composer" }
       | null,
   ) => void;
   /** Persist anchor edits for an Asset3D. Goes through the backend
@@ -429,11 +429,11 @@ type SceneStore = {
   duplicateSceneView: (viewId: string) => Promise<SceneView>;
   createViewFromCurrentVisibility: (name: string) => Promise<SceneView>;
   loadScene: () => Promise<void>;
-  createComponent: (name: string | undefined, componentType: string) => Promise<ComponentItem>;
+  createComponent: (name: string | undefined, kindId: string) => Promise<ComponentItem>;
   uploadComponentAsset: (payload: {
     file: File;
     name: string;
-    componentType: string;
+    kindId: string;
     brand?: string;
     model?: string;
     unit?: "mm" | "m";
@@ -442,7 +442,7 @@ type SceneStore = {
   importLocalComponentAsset: (payload: {
     sourcePath: string;
     name?: string;
-    componentType: string;
+    kindId: string;
     brand?: string;
     model?: string;
     unit?: "mm" | "m";
@@ -1688,13 +1688,13 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     }
   },
 
-  async createComponent(name, componentType) {
-    // `name` is optional — backend defaults to model (fallback component_type)
+  async createComponent(name, kindId) {
+    // `name` is optional — backend defaults to model (fallback kind_id)
     // with `-N` suffixing on collision.
     const component = await createComponentApi({
       ...(name ? { name } : {}),
-      componentType,
-      properties: { geometry: componentType },
+      kindId,
+      properties: { geometry: kindId },
     });
     const obj = await createObjectApi({
       componentId: component.id,
@@ -1709,7 +1709,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     let currentObjectId = obj.id;
     let currentComponentId = component.id;
     get().recordAction({
-      description: `Create ${componentType}${name ? ` (${name})` : ""}`,
+      description: `Create ${kindId}${name ? ` (${name})` : ""}`,
       undo: async () => {
         if (currentObjectId) await deleteObjectApi(currentObjectId);
         await deleteComponentApi(currentComponentId);
@@ -1718,8 +1718,8 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       redo: async () => {
         const recreatedComp = await createComponentApi({
           ...(name ? { name } : {}),
-          componentType,
-          properties: { geometry: componentType },
+          kindId,
+          properties: { geometry: kindId },
         });
         const recreatedObj = await createObjectApi({
           componentId: recreatedComp.id,
@@ -1776,13 +1776,13 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     // so we reject the placement up front and log a console hint instead.
     const component = scene.components.find((c) => c.id === componentId);
     if (
-      component?.componentType === "rf_cable" ||
-      component?.componentType === "sma_cable" ||
-      component?.componentType === "programmable_pulse_generator"
+      component?.kindId === "rf_cable" ||
+      component?.kindId === "sma_cable" ||
+      component?.kindId === "programmable_pulse_generator"
     ) {
       // eslint-disable-next-line no-console
       console.warn(
-        `[sceneStore] Placing ${component.componentType} from the catalog is not allowed — ` +
+        `[sceneStore] Placing ${component.kindId} from the catalog is not allowed — ` +
           "use the RF Link panel to create cables or Pulse & Timing outputs.",
       );
       return;
@@ -1843,7 +1843,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     const programName = `CH${ppgCount}`;
 
     const component = state.scene.components.find((candidate) => {
-      if (candidate.componentType !== "programmable_pulse_generator") return false;
+      if (candidate.kindId !== "programmable_pulse_generator") return false;
       const props = candidate.properties as Record<string, unknown>;
       return props.connectorType === connectorType;
     });
@@ -1936,7 +1936,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     const initialText = (text && text.trim().length > 0) ? text : "Text";
     const component = await createComponentApi({
       name: initialText,
-      componentType: "text_annotation",
+      kindId: "text_annotation",
       properties: {
         text: initialText,
         textColor: "#ffffff",
@@ -2056,8 +2056,8 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     }));
   },
   async clearRfCableEndpointLink(objectId, end) {
-    // Per the user-facing cable contract ("只要 cable 有一端 unlink 就直接
-    // 移除"): unlinking either end now DELETES the cable object outright
+    // Per the user-facing cable contract ("if either end of a cable is
+    // unlinked, remove the cable"): unlinking either end now DELETES the cable object outright
     // instead of leaving it dangling with one anchored end and one free
     // end. The two-mode design (free spline gizmo + linked endpoint) was
     // confusing the user because a freed end snapped to (0, 0, 0) by
@@ -2292,7 +2292,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     if (!obj) return [];
     const component = state.scene.components.find((c) => c.id === obj.componentId);
     if (!component) return [];
-    if (component.componentType !== "rf_cable" && component.componentType !== "sma_cable") {
+    if (component.kindId !== "rf_cable" && component.kindId !== "sma_cable") {
       return [];
     }
     const objProps = obj.properties as { rfCableNodes?: FiberNodePersist[] } | undefined;
@@ -2568,7 +2568,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     };
     const rfCables = state.scene.components.filter(
       (c) =>
-        (c.componentType === "rf_cable" || c.componentType === "sma_cable")
+        (c.kindId === "rf_cable" || c.kindId === "sma_cable")
         && !c.archivedAt,
     );
     const cablePick = (() => {
@@ -2597,8 +2597,8 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       // behaviour). User can still swap to a matching variant later.
       const fallback =
         rfCables[0]
-        ?? state.scene.components.find((c) => c.componentType === "rf_cable")
-        ?? state.scene.components.find((c) => c.componentType === "sma_cable");
+        ?? state.scene.components.find((c) => c.kindId === "rf_cable")
+        ?? state.scene.components.find((c) => c.kindId === "sma_cable");
       return fallback ? { component: fallback, swap: false } : null;
     })();
     if (!cablePick) return null;
@@ -3045,8 +3045,8 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     // mutation in stripLockedTransformPatch. Silently no-op so that a
     // multi-select delete (Promise.all over deleteObject(...)) skips locked
     // members and removes only the unlocked ones, matching the user-facing
-    // spec: "若 select 多個 objects 他也在其中 執行 delete 不會 delete locked
-    // 的 objects". Backend also returns 409 on locked as defense-in-depth.
+    // spec: "if multiple objects are selected and a locked one is among
+    // them, executing delete will not delete the locked objects". Backend also returns 409 on locked as defense-in-depth.
     //
     // Implementation note: delegates to `deleteObjects` so the single-
     // object path goes through the same set() reducer as bulk delete.
@@ -3071,7 +3071,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     if (toDelete.length === 0) return;
     // Cable contract: any rf_cable that points to a doomed object via
     // either of its endpoint links would be left dangling, and our
-    // user-facing rule is "cable 一端 unlink 就直接移除". Walk the cable
+    // user-facing rule is "if either end of a cable is unlinked, remove the cable". Walk the cable
     // list ONCE, gather cables whose A or B targets a deleted object,
     // and roll them into the same delete batch. Closure over `toDelete`
     // is intentional — we add to it before issuing API calls.

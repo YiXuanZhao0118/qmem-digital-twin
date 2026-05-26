@@ -22,7 +22,7 @@ ASSET = {
 
 COMPONENT = {
     "name": "optical_table_1",
-    "component_type": "optical_table",
+    "kind_id": "optical_table",
     "brand": "Newport",
     "model": "RS4000 1200x3600x457 + S-2000A",
     "properties": {

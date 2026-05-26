@@ -429,7 +429,9 @@ export function SceneViewEditor({
 
   const componentTypeOptions = useMemo(() => {
     const set = new Set<string>();
-    for (const c of scene.components) set.add(c.componentType);
+    for (const c of scene.components) {
+      if (c.kindId != null) set.add(c.kindId);
+    }
     return [...set].sort();
   }, [scene.components]);
 

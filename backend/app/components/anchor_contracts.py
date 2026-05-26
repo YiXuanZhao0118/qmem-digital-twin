@@ -67,10 +67,10 @@ def all_anchor_contracts() -> dict[str, list[dict]]:
 COMPONENT_ANCHOR_CONTRACTS: dict[str, list[dict]] = all_anchor_contracts()
 
 
-def get_anchor_contract(component_type: str) -> list[dict] | None:
-    """Return the locked anchor template list for a component_type, or None
-    if the component_type isn't in the registry (= no identity lock)."""
-    return all_anchor_contracts().get(component_type)
+def get_anchor_contract(kind_id: str) -> list[dict] | None:
+    """Return the locked anchor template list for a kind_id, or None
+    if the kind_id isn't in the registry (= no identity lock)."""
+    return all_anchor_contracts().get(kind_id)
 
 
 __all__ = [

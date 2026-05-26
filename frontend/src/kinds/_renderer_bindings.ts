@@ -177,7 +177,7 @@ const renderOpticalTable: Renderer = () => {
 // with different physical models. Dispatch on componentType inside the
 // renderer keeps the binding flat.
 const renderRfSource: Renderer = (component, state) => {
-  if (component.componentType === "dds_ad9959_pcb") {
+  if (component.kindId === "dds_ad9959_pcb") {
     return createDdsAd9959Pcb(component, state);
   }
   // Default rf_generator / rf_source: 280 x 220 x 100 mm chassis box.

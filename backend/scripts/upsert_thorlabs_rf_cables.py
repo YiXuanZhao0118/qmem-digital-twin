@@ -43,7 +43,7 @@ ASSETS: list[dict[str, object]] = [
 COMPONENTS: list[dict[str, object]] = [
     {
         "name": "thorlabs_ca2906_sma_cable",
-        "component_type": "rf_cable",
+        "kind_id": "rf_cable",
         "brand": "Thorlabs",
         "model": "CA2906",
         "asset": "primitive_thorlabs_ca2906_cable",

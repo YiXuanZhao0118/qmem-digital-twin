@@ -18,7 +18,7 @@ export function saveOverlayFlagsToStorage(flags: OverlayFlags): void {
   try {
     localStorage.setItem(OVERLAY_KEY, JSON.stringify(flags));
   } catch {
-    // localStorage 滿了或 Safari private mode
+    // localStorage full or Safari private mode
   }
 }
 

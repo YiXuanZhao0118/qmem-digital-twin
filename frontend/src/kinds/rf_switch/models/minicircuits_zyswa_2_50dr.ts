@@ -19,7 +19,7 @@ import { createSmaBulkheadJack } from "../../../three/loadAsset/passive/electron
  *     (back), +5V on +Z (front), both in the upper half so they line up
  *     with the silkscreen "-5V" / "+5V" edge labels on the top. A small
  *     GND chassis-ground lug sits on the +Z (front) face, offset toward
- *     the +X edge ("上面偏側邊"). The TTL pin is co-located with the +5V
+ *     the +X edge ("upper side, off-center"). The TTL pin is co-located with the +5V
  *     feedthrough on the real PCB header; we model it visually as the
  *     same group.
  *   - Mounting flanges extend the footprint along ±Z to match the

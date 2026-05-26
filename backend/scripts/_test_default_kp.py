@@ -14,12 +14,12 @@ from app.routers.components import default_kind_params_for_component
 async def main() -> None:
     async with AsyncSessionLocal() as s:
         comp = (await s.scalars(
-            select(Component).where(Component.component_type == "fiber").where(Component.archived_at.is_(None)).limit(1)
+            select(Component).where(Component.kind_id == "fiber").where(Component.archived_at.is_(None)).limit(1)
         )).first()
         if comp is None:
             print("no fiber component")
             return
-        print("Component:", comp.name, "componentType:", comp.component_type)
+        print("Component:", comp.name, "kindId:", comp.kind_id)
         print("Component.properties.fiberNodes:", comp.properties.get("fiberNodes"))
         kp = default_kind_params_for_component("fiber", comp)
         print("default_kind_params_for_component output endA:")

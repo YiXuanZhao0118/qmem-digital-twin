@@ -152,7 +152,8 @@ export type Asset3D = {
   scaleFactor: number;
   anchors: Anchor[];
   catalogId?: string | null;
-  physicsKind?: string | null;
+  /** Classification slug (alembic 0090). Pointer into the Kind registry. */
+  kindId?: string | null;
   faces?: Array<Record<string, unknown>> | null;
   transitions?: Array<Record<string, unknown>> | null;
   defaultParams?: Record<string, unknown> | null;
@@ -167,13 +168,25 @@ export type Asset3D = {
   createdAt?: string;
 };
 
-export type PhysicsCapability = "stress" | "optical" | "rf" | "em" | "thermal" | "fluid" | "quantum";
+export type PhysicsCapability =
+  | "stress"
+  | "optical"
+  | "rf"
+  | "em"
+  | "thermal"
+  | "fluid"
+  | "quantum"
+  // "mechanical" is the composer-rail bucket marker for passive parts
+  // (posts, mounts, chassis) that have no physics participation but
+  // still need a domain so the Binding dev rail can categorize them.
+  | "mechanical";
 
 export type ComponentItem = {
   id: string;
   name: string;
   componentName?: string;
-  componentType: string;
+  /** Classification slug (alembic 0090). Pointer into the Kind registry. */
+  kindId?: string | null;
   brand?: string | null;
   model?: string | null;
   // serialNumber moved to SceneObject in alembic 0015 (per-physical-unit).
@@ -1210,6 +1223,12 @@ export type SceneEvent =
   | { type: "component_binding.created"; payload: ComponentBinding }
   | { type: "component_binding.updated"; payload: ComponentBinding }
   | { type: "component_binding.deleted"; payload: { id: string; componentId?: string } }
+  // ObjectBinding lifecycle events — per-object overrides of the
+  // component's binding tree (alembic 0066). Mirrors component_binding.*
+  // but keyed on object_id instead of component_id.
+  | { type: "object_binding.created"; payload: ObjectBinding }
+  | { type: "object_binding.updated"; payload: ObjectBinding }
+  | { type: "object_binding.deleted"; payload: { id: string; objectId?: string } }
   | { type: "object.updated"; payload: SceneObject }
   | { type: "object.deleted"; payload: { id?: string; objectId?: string } }
   | { type: "assembly_relation.updated"; payload: AssemblyRelation & { deleted?: boolean } }

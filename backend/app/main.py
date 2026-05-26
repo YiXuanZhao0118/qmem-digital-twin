@@ -24,6 +24,7 @@ from app.routers import (
     device_states,
     coils,
     em_problems,
+    kinds,
     magnetics_problems,
     meshes,
     object_bindings,
@@ -67,6 +68,7 @@ app.mount("/assets", StaticFiles(directory=str(settings.asset_root)), name="asse
 
 app.include_router(assets.router, prefix="/api/assets", tags=["assets"])
 app.include_router(components.router, prefix="/api/components", tags=["components"])
+app.include_router(kinds.router, prefix="/api/kinds", tags=["kinds"])
 app.include_router(v3_catalog.router, prefix="/api")
 app.include_router(v3_solver.router, prefix="/api")
 app.include_router(
@@ -132,6 +134,18 @@ async def _ensure_master_collection() -> None:
         await get_master_collection(session)
 
 
+@app.on_event("startup")
+async def _hydrate_kind_cache() -> None:
+    """Load ``kinds`` table into the in-process op_set_name cache so
+    the tracer can resolve DB-only kinds (those created via the UI
+    with ``op_set_name`` pointing at a code-registered op set). See
+    ``app.optical.db_kinds`` and docs/asset-physics-model.md §6."""
+    from app.optical.db_kinds import hydrate_kind_cache
+
+    async with AsyncSessionLocal() as session:
+        await hydrate_kind_cache(session)
+
+
 async def _sweep_abandoned_sessions_loop() -> None:
     """Periodically reaps AI binding sessions whose heartbeat has lapsed.
 
@@ -140,7 +154,7 @@ async def _sweep_abandoned_sessions_loop() -> None:
     session. Thereafter the loop sleeps ``_SWEEPER_INTERVAL_SEC``
     seconds between sweeps.
 
-    Each sweep gets its own DB session — the long-running loop must
+    Each sweep gets its own DB session ??the long-running loop must
     not hold a single connection open for hours.
     """
     while True:
@@ -154,7 +168,7 @@ async def _sweep_abandoned_sessions_loop() -> None:
                     [str(sid) for sid in abandoned],
                 )
         except Exception:
-            # A bad sweep must not kill the loop — the next tick gets
+            # A bad sweep must not kill the loop ??the next tick gets
             # a fresh DB session and tries again.
             _log.exception("agent_session_sweeper: sweep failed")
         await asyncio.sleep(_SWEEPER_INTERVAL_SEC)
@@ -162,7 +176,7 @@ async def _sweep_abandoned_sessions_loop() -> None:
 
 @app.on_event("startup")
 async def _start_agent_session_sweeper() -> None:
-    # fire-and-forget — the task lives for the lifetime of the FastAPI
+    # fire-and-forget ??the task lives for the lifetime of the FastAPI
     # process; uvicorn shutdown cancels it cleanly when the loop closes.
     asyncio.create_task(_sweep_abandoned_sessions_loop())
 

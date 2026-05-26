@@ -167,10 +167,50 @@ class TraceStep:
 
 
 @dataclass
+class LabSegment:
+    """One straight beam segment between hits, in LAB frame coords.
+
+    Built by ``trace_ray_scene`` for rendering: each dequeued ray's
+    origin → its nearest face hit (or escape point) becomes one
+    segment. Carries enough metadata for the viewer to colour by
+    wavelength + opacity by power, and to look up which asset/face the
+    segment terminated on.
+
+    Phase 7.1: also carries the SceneObject IDs of the emitter
+    (laser_source / TA) and source (previously-hit asset that fired
+    this ray) so the OpticalLinkViewerPanel can adapt v3 segments to
+    its TraceSegment shape without recomputing chains.
+    """
+    start: Vec3
+    end: Vec3
+    wavelength_nm: float
+    power_mw: float
+    scene_object_id: str | None       # which SceneObject the segment ends on (None on escape)
+    binding_id: str | None
+    asset_catalog_id: str | None
+    face_in_id: str | None
+    op: str | None                    # op fired at the hit face (None on escape)
+    is_terminal: bool                 # True = escape, sink-absorption, or zero-power continuation
+    # Phase 7.1: chain provenance.
+    emitter_scene_object_id: str | None = None  # original laser_source / TA that started this branch
+    source_scene_object_id: str | None = None   # asset that fired the ray carrying this segment
+    jones_re_x: float = 1.0   # Polarisation at segment start: Re(E_x)
+    jones_im_x: float = 0.0
+    jones_re_y: float = 0.0
+    jones_im_y: float = 0.0
+    qx_re_at_start: float = 0.0
+    qx_im_at_start: float = 0.0
+    qy_re_at_start: float = 0.0
+    qy_im_at_start: float = 0.0
+    path_length_mm_at_start: float = 0.0
+
+
+@dataclass
 class TraceResult:
     final_rays: list[BeamRay]
     steps: list[TraceStep]
     terminated: str   # 'escaped' | 'max_steps' | 'power_threshold'
+    lab_segments: list[LabSegment] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -190,6 +230,7 @@ def trace_ray_through_asset(
 ) -> TraceResult:
     final_rays: list[BeamRay] = []
     steps: list[TraceStep] = []
+    lab_segments: list[LabSegment] = []
     queue: list[BeamRay] = [initial_ray]
     total_steps = 0
     terminated = "escaped"
@@ -241,7 +282,10 @@ def trace_ray_through_asset(
         ))
         total_steps += 1
 
-    return TraceResult(final_rays=final_rays, steps=steps, terminated=terminated)
+    return TraceResult(
+        final_rays=final_rays, steps=steps,
+        terminated=terminated, lab_segments=lab_segments,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -368,12 +412,26 @@ def _source_dummy_ray(ctx: PhysicsOpContext) -> BeamRay:
 
 
 def emit_scene_source_rays(scene: V3Scene) -> list[BeamRay]:
-    """Emit rays from all laser_source scene objects.
+    """Emit rays from all laser_source scene objects (legacy variant).
 
-    Source assets are emitters, so they do not wait for an incoming ray to
-    intersect a face.
+    Kept for back-compat; new code should call
+    :func:`emit_scene_source_rays_with_provenance` to also receive the
+    emitting SceneObject id (needed for chain rendering in v3 panels).
     """
-    rays: list[BeamRay] = []
+    return [r for r, _emitter, _source in emit_scene_source_rays_with_provenance(scene)]
+
+
+def emit_scene_source_rays_with_provenance(
+    scene: V3Scene,
+) -> list[tuple[BeamRay, str, str]]:
+    """Emit rays from all laser_source / TA scene objects, paired with
+    their (emitter_scene_object_id, source_scene_object_id).
+
+    For a fresh emit both ids equal the emitter slot's scene_object_id;
+    they diverge later as the chain propagates (emitter stays constant,
+    source becomes the last-hit slot).
+    """
+    out: list[tuple[BeamRay, str, str]] = []
     for slot in flatten_scene(scene):
         if slot.asset.kind != "laser_source":
             continue
@@ -399,46 +457,88 @@ def emit_scene_source_rays(scene: V3Scene) -> list[BeamRay]:
                         ray_body.jones, ray_body.direction, out_dir_lab,
                         lambda v: dir_body_to_lab_t(v, slot.effective_transform),
                     )
-                    rays.append(ray_body.replaced(
+                    ray_lab = ray_body.replaced(
                         origin=point_body_to_lab_t(ray_body.origin, slot.effective_transform),
                         direction=out_dir_lab,
                         jones=jones_lab,
                         exclude_face_key=_encode_exclude_slot(
                             slot.scene_object_id, slot.binding_id, ctx.face_out.id,
                         ),
-                    ))
-    return rays
+                    )
+                    out.append((ray_lab, slot.scene_object_id, slot.scene_object_id))
+    return out
 
 
 def trace_ray_scene(
     initial_ray: BeamRay,
     scene: V3Scene,
     options: TraceOptions = TraceOptions(),
+    *,
+    escape_distance_mm: float = 1000.0,
+    emitter_scene_object_id: str | None = None,
+    source_scene_object_id: str | None = None,
 ) -> TraceResult:
+    """Trace one initial ray through the scene; build TraceResult.
+
+    Phase 7.1: ``emitter_scene_object_id`` / ``source_scene_object_id``
+    are threaded through the BFS queue so each LabSegment carries the
+    chain provenance. Callers that have the emitter id (e.g.
+    ``solve_v3_scene`` using ``emit_scene_source_rays_with_provenance``)
+    pass it in; callers with arbitrary rays leave them None.
+    """
     slots = flatten_scene(scene)
     final_rays: list[BeamRay] = []
     steps: list[TraceStep] = []
-    queue: list[BeamRay] = [initial_ray]
+    lab_segments: list[LabSegment] = []
+    # Queue items: (ray, source_obj_id, emitter_obj_id). source updates
+    # to the last-hit slot as the chain propagates; emitter is constant.
+    queue: list[tuple[BeamRay, str | None, str | None]] = [
+        (initial_ray, source_scene_object_id, emitter_scene_object_id),
+    ]
     total_steps = 0
     terminated = "escaped"
 
     while queue:
         if total_steps >= options.max_steps:
             terminated = "max_steps"
-            final_rays.extend(queue)
+            final_rays.extend(r for r, _s, _e in queue)
             break
 
-        ray = queue.pop(0)
+        ray, source_obj_id, emitter_obj_id = queue.pop(0)
         if ray.power_mw < options.power_threshold_mw:
             terminated = "power_threshold"
             continue
 
         hit = _nearest_scene_hit(ray, slots)
         if hit is None:
+            # Escape: render a tail of `escape_distance_mm` so the user
+            # sees where the beam was heading even without a target.
+            tail_end = Vec3(
+                ray.origin.x + ray.direction.x * escape_distance_mm,
+                ray.origin.y + ray.direction.y * escape_distance_mm,
+                ray.origin.z + ray.direction.z * escape_distance_mm,
+            )
+            lab_segments.append(LabSegment(
+                start=ray.origin, end=tail_end,
+                wavelength_nm=ray.wavelength_nm, power_mw=ray.power_mw,
+                scene_object_id=None, binding_id=None,
+                asset_catalog_id=None, face_in_id=None, op=None,
+                is_terminal=True,
+                emitter_scene_object_id=emitter_obj_id,
+                source_scene_object_id=source_obj_id,
+                jones_re_x=ray.jones[0].real, jones_im_x=ray.jones[0].imag,
+                jones_re_y=ray.jones[1].real, jones_im_y=ray.jones[1].imag,
+                qx_re_at_start=ray.qx.real, qx_im_at_start=ray.qx.imag,
+                qy_re_at_start=ray.qy.real, qy_im_at_start=ray.qy.imag,
+                path_length_mm_at_start=ray.path_length_mm,
+            ))
             final_rays.append(ray)
             continue
 
         slot = hit.slot
+        # Lab-frame hit point (for rendering — needed before we go body-side).
+        hit_lab = point_body_to_lab_t(hit.hit_body, slot.effective_transform)
+
         dir_body = dir_lab_to_body_t(ray.direction, slot.effective_transform)
         # Free-space q propagation: q' = q + L
         # Jones basis lab → body (Phase 4c).
@@ -457,8 +557,47 @@ def trace_ray_scene(
 
         matches = _find_transition_contexts(slot.asset, hit.face)
         if not matches:
+            # Sink: ray reached a face with no defined transition (e.g.
+            # detector / beam_dump). Render this leg, then terminate.
+            lab_segments.append(LabSegment(
+                start=ray.origin, end=hit_lab,
+                wavelength_nm=ray.wavelength_nm, power_mw=ray.power_mw,
+                scene_object_id=slot.scene_object_id,
+                binding_id=slot.binding_id,
+                asset_catalog_id=slot.asset.catalog_id,
+                face_in_id=hit.face.id,
+                op=None,
+                is_terminal=True,
+                emitter_scene_object_id=emitter_obj_id,
+                source_scene_object_id=source_obj_id,
+                jones_re_x=ray.jones[0].real, jones_im_x=ray.jones[0].imag,
+                jones_re_y=ray.jones[1].real, jones_im_y=ray.jones[1].imag,
+                qx_re_at_start=ray.qx.real, qx_im_at_start=ray.qx.imag,
+                qy_re_at_start=ray.qy.real, qy_im_at_start=ray.qy.imag,
+                path_length_mm_at_start=ray.path_length_mm,
+            ))
             final_rays.append(ray.replaced(power_mw=0))
             continue
+
+        # Render the segment that brought us to this hit. Subsequent
+        # out_rays will spawn their own segments when they're dequeued.
+        lab_segments.append(LabSegment(
+            start=ray.origin, end=hit_lab,
+            wavelength_nm=ray.wavelength_nm, power_mw=ray.power_mw,
+            scene_object_id=slot.scene_object_id,
+            binding_id=slot.binding_id,
+            asset_catalog_id=slot.asset.catalog_id,
+            face_in_id=hit.face.id,
+            op=matches[0][0],
+            is_terminal=False,
+            emitter_scene_object_id=emitter_obj_id,
+            source_scene_object_id=source_obj_id,
+            jones_re_x=ray.jones[0].real, jones_im_x=ray.jones[0].imag,
+            jones_re_y=ray.jones[1].real, jones_im_y=ray.jones[1].imag,
+            qx_re_at_start=ray.qx.real, qx_im_at_start=ray.qx.imag,
+            qy_re_at_start=ray.qy.real, qy_im_at_start=ray.qy.imag,
+            path_length_mm_at_start=ray.path_length_mm,
+        ))
 
         step_out_rays: list[BeamRay] = []
         for op_name, ctx in matches:
@@ -490,7 +629,9 @@ def trace_ray_scene(
                 if out_ray_lab.power_mw < options.power_threshold_mw:
                     final_rays.append(out_ray_lab)
                 else:
-                    queue.append(out_ray_lab)
+                    # Source for the next segment = the slot we just
+                    # passed through; emitter unchanged.
+                    queue.append((out_ray_lab, slot.scene_object_id, emitter_obj_id))
 
         steps.append(TraceStep(
             asset=slot.asset, face_in=hit.face,
@@ -499,4 +640,7 @@ def trace_ray_scene(
         ))
         total_steps += 1
 
-    return TraceResult(final_rays=final_rays, steps=steps, terminated=terminated)
+    return TraceResult(
+        final_rays=final_rays, steps=steps,
+        terminated=terminated, lab_segments=lab_segments,
+    )

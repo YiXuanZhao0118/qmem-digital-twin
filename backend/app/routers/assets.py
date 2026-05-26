@@ -15,6 +15,7 @@ from app.models import Asset3D, Component
 from app.services.asset_converter import (
     SUPPORTED_ASSET_EXTENSIONS,
     VIEWER_ASSET_EXTENSIONS,
+    convert_cad_source_to_stl,
     subdir_for_ext,
 )
 
@@ -45,7 +46,7 @@ async def create_component_from_asset(
     session: AsyncSession,
     *,
     name: str,
-    component_type: str,
+    kind_id: str,
     brand: str | None,
     model: str | None,
     asset_type: str,
@@ -69,7 +70,7 @@ async def create_component_from_asset(
 
     component = Component(
         name=name,
-        component_type=component_type,
+        kind_id=kind_id,
         brand=brand,
         model=model,
         asset_3d_id=asset.id,
@@ -106,7 +107,7 @@ async def create_asset(
 async def upload_component_asset(
     file: UploadFile = File(...),
     name: str = Form(...),
-    component_type: str = Form("custom_3d"),
+    kind_id: str = Form("custom_3d"),
     brand: str | None = Form(None),
     model: str | None = Form(None),
     unit: str = Form("mm"),
@@ -135,14 +136,22 @@ async def upload_component_asset(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty.")
     target.write_bytes(content)
 
+    source_path = f"files/{subdir}/{filename}"
+    conversion = convert_cad_source_to_stl(
+        source_path,
+        output_stem=name,
+    ) if suffix in {".step", ".stp"} else None
+    viewer_path = conversion.viewer_relative_path if conversion and conversion.ok else source_path
+    viewer_type = conversion.viewer_asset_type if conversion and conversion.ok else suffix.lstrip(".")
+
     return await create_component_from_asset(
         session,
         name=name,
-        component_type=component_type,
+        kind_id=kind_id,
         brand=brand,
         model=model,
-        asset_type=suffix.lstrip("."),
-        file_path=f"files/{subdir}/{filename}",
+        asset_type=viewer_type,
+        file_path=viewer_path,
         source="upload",
         unit=unit,
         scale_factor=scale_factor,
@@ -177,7 +186,7 @@ async def import_local_component_asset(
     return await create_component_from_asset(
         session,
         name=name,
-        component_type=payload.component_type,
+        kind_id=payload.kind_id,
         brand=payload.brand,
         model=payload.model,
         asset_type=suffix.lstrip("."),

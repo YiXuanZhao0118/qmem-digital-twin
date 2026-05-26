@@ -229,7 +229,7 @@ export function ComponentComposer() {
   );
   // Convenience flag for branching the renderer + showing isolator-only
   // editing UI (STL deletion, link rotation, partition marking).
-  const isIsolator = selectedComponent?.componentType === "isolator";
+  const isIsolator = selectedComponent?.kindId === "isolator";
   // `model` kept as a derived string for the isolator-side overlay
   // table lookup (ISOLATOR_PBS_DEFAULTS_BY_MODEL[model]) and for the
   // legacy code paths still keyed on the model name. Non-isolator
@@ -1476,7 +1476,7 @@ export function ComponentComposer() {
             )}
             {compositeComponents.map((c) => (
               <option key={c.id} value={c.id}>
-                {c.name} {c.model ? `· ${c.model}` : ""} ({c.componentType})
+                {c.name} {c.model ? `· ${c.model}` : ""} ({c.kindId ?? ""})
               </option>
             ))}
           </select>
@@ -1485,7 +1485,7 @@ export function ComponentComposer() {
           ? (
             <span style={{ fontSize: 11, opacity: 0.7 }} title={`Component ${selectedComponent.id}`}>
               ✎ editing&nbsp;<b>{selectedComponent.name}</b>&nbsp;
-              <span style={{ opacity: 0.7 }}>({selectedComponent.componentType})</span>
+              <span style={{ opacity: 0.7 }}>({selectedComponent.kindId ?? ""})</span>
             </span>
           ) : (
             <span style={{ fontSize: 11, color: "#b91c1c" }} title="No component selected — pick one from the dropdown">
@@ -1905,7 +1905,7 @@ export function ComponentComposer() {
                         .filter((c) => c.id !== selectedComponentId)
                         .map((c) => (
                           <option key={c.id} value={c.id}>
-                            {c.name} {c.model ? `(${c.model})` : `(${c.componentType})`}
+                            {c.name} {c.model ? `(${c.model})` : `(${c.kindId ?? ""})`}
                           </option>
                         ))}
                     </select>

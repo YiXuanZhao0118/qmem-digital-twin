@@ -2,98 +2,60 @@
   "id": "thorlabs_io_3_850_hp",
   "vendorPart": "IO-3-850-HP",
   "displayName": "Thorlabs IO-3-850-HP Isolator",
+  "componentType": "optical_component",
   "wavelengthCenterNm": 850,
-
-  "_COORDINATE_ROOT": "Faraday rod (binding 'faraday') sits at component origin (0,0,0). All other bindings position relative to Faraday rod center.",
-
-  "_CALIBRATION_STATUS": "estimated z offsets - user to refine after measuring split STL bbox centers in CAD",
 
   "bindings": [
     {
-      "bindingId": "input_pol",
-      "assetId": "glan_laser_io3_850",
-      "local_x_mm": 0,
-      "local_y_mm": 0,
-      "local_z_mm": -18,
-      "local_rx_deg": 0,
-      "local_ry_deg": 0,
-      "local_rz_deg": 0,
-      "tunableAxes": []
-    },
-    {
-      "bindingId": "input_housing",
-      "assetId": "thorlabs_io_3_850_input_housing",
-      "local_x_mm": 0,
-      "local_y_mm": 0,
-      "local_z_mm": -15,
-      "local_rx_deg": 0,
-      "local_ry_deg": 0,
-      "local_rz_deg": 0,
-      "tunableAxes": []
-    },
-    {
       "bindingId": "faraday",
       "assetId": "thorlabs_io_3_850_faraday_rod",
-      "local_x_mm": 0,
-      "local_y_mm": 0,
-      "local_z_mm": 0,
-      "local_rx_deg": 0,
-      "local_ry_deg": 0,
-      "local_rz_deg": 0,
-      "tunableAxes": [],
-      "_note": "ROOT - fixed at (0,0,0)"
+      "localXMm": 0,
+      "localYMm": 0,
+      "localZMm": 0,
+      "localRxDeg": 0,
+      "localRyDeg": 0,
+      "localRzDeg": 0,
+      "tunableAxes": []
     },
     {
-      "bindingId": "middle_housing",
-      "assetId": "thorlabs_io_3_850_middle_housing",
-      "local_x_mm": 0,
-      "local_y_mm": 0,
-      "local_z_mm": 0,
-      "local_rx_deg": 0,
-      "local_ry_deg": 0,
-      "local_rz_deg": 0,
-      "tunableAxes": [],
-      "_note": "Magnet housing concentric with Faraday rod"
+      "bindingId": "input_pol",
+      "assetId": "glan_laser_io3_850",
+      "localXMm": 0,
+      "localYMm": 0,
+      "localZMm": -18,
+      "localRxDeg": 0,
+      "localRyDeg": 0,
+      "localRzDeg": 0,
+      "tunableAxes": []
     },
     {
       "bindingId": "output_pol",
       "assetId": "glan_laser_io3_850",
-      "local_x_mm": 0,
-      "local_y_mm": 0,
-      "local_z_mm": 18,
-      "local_rx_deg": 0,
-      "local_ry_deg": 0,
-      "local_rz_deg": 45,
-      "tunableAxes": [],
-      "_note": "rz=45deg - transmission axis aligned with Faraday +45deg rotated polarization"
-    },
-    {
-      "bindingId": "output_housing",
-      "assetId": "thorlabs_io_3_850_output_housing",
-      "local_x_mm": 0,
-      "local_y_mm": 0,
-      "local_z_mm": 15,
-      "local_rx_deg": 0,
-      "local_ry_deg": 0,
-      "local_rz_deg": 0,
+      "localXMm": 0,
+      "localYMm": 0,
+      "localZMm": 18,
+      "localRxDeg": 0,
+      "localRyDeg": 0,
+      "localRzDeg": 45,
       "tunableAxes": []
     }
   ],
 
   "exposedFaces": [
-    { "componentFaceId": "optical_in",
+    {
+      "componentFaceId": "optical_in",
       "assetBindingId": "input_pol",
-      "assetFaceId": "A" },
-    { "componentFaceId": "optical_out",
+      "assetFaceId": "A"
+    },
+    {
+      "componentFaceId": "optical_out",
       "assetBindingId": "output_pol",
-      "assetFaceId": "B" }
+      "assetFaceId": "B"
+    }
   ],
 
   "notes": {
-    "totalLengthMm": 51,
-    "assetCount": "5 unique Asset3D (Glan-Laser shared across 2 bindings, 6 bindings total)",
-    "behaviorForward": "ray hits input_pol.A -> transmit +x polarization -> faraday.A -> +45deg -> output_pol.A (rz=45deg) -> transmit",
-    "behaviorReverse": "ray hits output_pol.B -> transmit +45deg -> faraday.B -> another +45deg (non-reciprocal) = 90deg -> input_pol.B (0deg) -> BLOCKED",
-    "isolationDb": "30~40 typical for IO-3-850-HP"
+    "assetCount": "2 unique Asset3D: thorlabs_io_3_850_faraday_rod plus reused glan_laser_io3_850.",
+    "scope": "Reduced to the requested Asset3D whitelist; removed non-whitelisted IO-3 housing/root piece bindings."
   }
 }

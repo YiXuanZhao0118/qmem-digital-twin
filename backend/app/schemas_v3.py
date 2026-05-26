@@ -34,7 +34,15 @@ class QuaternionV3(CamelModel):
 
 
 class FaceV3(CamelModel):
-    """Optical port on an Asset3D. See asset-physics-model.md §3."""
+    """Port on an Asset3D. See asset-physics-model.md §3.
+
+    ``domain`` decides which tracer the face participates in:
+      - ``"optical"`` (default for back-compat): §7 ray tracer
+      - ``"rf"``:                                §7.5 RF tracer
+      - ``"ttl"``:                               §7.5 RF tracer pre-pass
+                                                 (switch control state)
+    Rows written before the field existed are treated as ``"optical"``.
+    """
     id: str
     position_mm_body_local: Vec3V3
     normal_body_local: Optional[Vec3V3] = None
@@ -42,6 +50,7 @@ class FaceV3(CamelModel):
     aperture_shape: Literal["rectangle", "ellipse", "circle"] = "rectangle"
     aperture_width_mm: Optional[float] = None
     aperture_height_mm: Optional[float] = None
+    domain: Optional[Literal["optical", "rf", "ttl"]] = None
 
 
 class TransferMatrixV3(CamelModel):
@@ -112,7 +121,7 @@ class Asset3DV3Out(CamelModel):
     name: str
     asset_type: str
     file_path: str
-    physics_kind: Optional[str] = None
+    kind_id: Optional[str] = None
     faces: Optional[list[FaceV3]] = None
     transitions: Optional[list[TransitionV3]] = None
     default_params: Optional[dict[str, Any]] = None
@@ -123,12 +132,38 @@ class Asset3DV3Out(CamelModel):
 
 class Asset3DV3Update(CamelModel):
     """Editable v3 fields for the Asset3D catalog editor."""
-    physics_kind: Optional[str] = None
+    kind_id: Optional[str] = None
     faces: Optional[list[FaceV3]] = None
     transitions: Optional[list[TransitionV3]] = None
     default_params: Optional[dict[str, Any]] = None
     wavelength_range_nm: Optional[list[float]] = None
     body_frame_rotation: Optional[QuaternionV3] = None
+    # Free-form properties JSONB. Phase 9.10 adds bodyFramePositionMm
+    # (the CAD-frame offset where the body origin sits) here rather than
+    # adding a dedicated column, so the editor can ship without a schema
+    # migration. Callers should send the full merged dict — partial keys
+    # would clobber unrelated entries.
+    properties: Optional[dict[str, Any]] = None
+
+
+class Asset3DV3Create(CamelModel):
+    """Payload for ``POST /api/v3/assets3d`` — creates a new Asset3D row.
+
+    Two creation modes:
+      • Blank: caller supplies ``catalog_id`` + ``name`` (+ optional
+        ``file_path`` / ``asset_type``). All other fields default empty.
+      • Fork: caller supplies ``source_catalog_id`` to copy file_path,
+        faces, body_frame_rotation, default_params, anchors, and the
+        Phase 9.10 properties bag from an existing asset. Editor's
+        "+ New Asset3D" workflow uses this to spawn an editable variant
+        of an existing catalog entry without touching the original.
+    """
+    catalog_id: str
+    name: str
+    source_catalog_id: Optional[str] = None
+    asset_type: Optional[str] = None
+    file_path: Optional[str] = None
+    kind_id: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +193,7 @@ class ComponentV3In(CamelModel):
     id: str
     vendor_part: Optional[str] = None
     display_name: Optional[str] = None
-    component_type: str = "optical_component"
+    kind_id: str = "none"
     wavelength_center_nm: Optional[float] = None
     bindings: list[ComponentBindingV3In] = Field(default_factory=list)
     exposed_faces: list[ExposedFaceV3] = Field(default_factory=list)
@@ -169,7 +204,7 @@ class ComponentV3Out(CamelModel):
     id: uuid.UUID
     catalog_id: Optional[str] = None
     name: str
-    component_type: str
+    kind_id: Optional[str] = None
     brand: Optional[str] = None
     model: Optional[str] = None
     exposed_faces: Optional[list[ExposedFaceV3]] = None

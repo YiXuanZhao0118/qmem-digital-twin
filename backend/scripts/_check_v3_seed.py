@@ -12,7 +12,7 @@ async def main() -> None:
     async with AsyncSessionLocal() as session:
         print("=== Asset3D v3 rows ===")
         rows = (await session.execute(text(
-            "SELECT catalog_id, physics_kind, name FROM assets_3d "
+            "SELECT catalog_id, kind_id, name FROM assets_3d "
             "WHERE catalog_id IS NOT NULL ORDER BY catalog_id"
         ))).all()
         for r in rows:

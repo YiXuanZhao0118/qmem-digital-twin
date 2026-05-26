@@ -177,7 +177,7 @@ function makePoseTransforms(pose: CablePose) {
  *  this end is mated to) plus the live pose of that target + the live
  *  cable's own pose, return the body-local spline node + handle that
  *  put the cable's end-port AT the target anchor lab position with
- *  outward anti-parallel to target's outward (the "點重合 方向相反"
+ *  outward anti-parallel to target's outward (the "coincident points, opposite directions"
  *  invariant from the user's align spec).
  *
  *  Returns null when the link can't be resolved (target SceneObject /

@@ -81,10 +81,10 @@ async def require_unique_object_name(
 
 
 async def next_object_name(session: AsyncSession, component: Component) -> str:
-    # Default = component_type uppercased (the "category") + 0-based index,
+    # Default = kind_id uppercased (the "category") + 0-based index,
     # e.g. AOM0, AOM1, MIRROR0. Falls back to "OBJECT" if the component has
     # no type tag for some reason. Confirmed with user 2026-05-16.
-    base = (component.component_type or "").strip().upper() or "OBJECT"
+    base = (component.kind_id or "").strip().upper() or "OBJECT"
     index = 0
     while True:
         candidate = f"{base}{index}"

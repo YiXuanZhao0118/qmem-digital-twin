@@ -93,17 +93,17 @@ async def require_unique_component_name(
     return normalized
 
 
-def _default_component_base_name(model: str | None, component_type: str) -> str:
-    base = (model or "").strip() or (component_type or "").strip()
+def _default_component_base_name(model: str | None, kind_id: str) -> str:
+    base = (model or "").strip() or (kind_id or "").strip()
     return base or "component"
 
 
 async def next_component_name(
     session: AsyncSession,
     model: str | None,
-    component_type: str,
+    kind_id: str,
 ) -> str:
-    base = _default_component_base_name(model, component_type)
+    base = _default_component_base_name(model, kind_id)
     if not await component_name_exists(session, base):
         return base
     index = 2
@@ -717,7 +717,7 @@ def default_kind_params_for_component(kind: str, component: Component) -> dict[s
 async def auto_create_physics_element_for_object(
     session: AsyncSession, scene_object: SceneObject, component: Component
 ) -> PhysicsElement | None:
-    """If `component.component_type` maps to a known optical kind AND no
+    """If `component.kind_id` maps to a known optical kind AND no
     PhysicsElement exists for this OBJECT yet, create one with default
     ports + kind_params keyed by `scene_object.id`.
 
@@ -725,7 +725,7 @@ async def auto_create_physics_element_for_object(
     participation is per-OBJECT (alembic 0014) so this is called per
     scene-object insert, not per component insert.
     """
-    kind = OPTICAL_COMPONENT_TYPE_TO_KIND.get((component.component_type or "").strip())
+    kind = OPTICAL_COMPONENT_TYPE_TO_KIND.get((component.kind_id or "").strip())
     if kind is None:
         return None
     stmt = select(PhysicsElement).where(PhysicsElement.object_id == scene_object.id)
@@ -852,7 +852,7 @@ async def create_component(
         values["name"] = await require_unique_component_name(session, requested_name)
     else:
         values["name"] = await next_component_name(
-            session, values.get("model"), values["component_type"]
+            session, values.get("model"), values.get("kind_id") or "component"
         )
     component = Component(**values)
     session.add(component)

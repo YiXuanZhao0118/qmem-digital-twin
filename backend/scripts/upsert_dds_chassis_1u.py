@@ -131,7 +131,7 @@ ASSETS: list[dict[str, object]] = [
 COMPONENTS: list[dict[str, object]] = [
     {
         "name": "dds_ad9959_pcb_module",
-        "component_type": "dds_ad9959_pcb",
+        "kind_id": "dds_ad9959_pcb",
         "brand": "Analog Devices",
         "model": "AD9959/PCBZ 4-channel DDS evaluation board",
         # Promoted 2026-05-13: the `primitive_dds_ad9959_pcb` asset row
@@ -159,7 +159,7 @@ COMPONENTS: list[dict[str, object]] = [
     },
     {
         "name": "dds_mcu_controller_board",
-        "component_type": "mcu_board",
+        "kind_id": "mcu_board",
         "brand": "QMEM",
         "model": "USB-SPI x5 controller",
         "asset": "primitive_dds_mcu_board",
@@ -174,7 +174,7 @@ COMPONENTS: list[dict[str, object]] = [
     },
     {
         "name": "dds_tcxo_fanout_module",
-        "component_type": "tcxo_module",
+        "kind_id": "tcxo_module",
         "brand": "QMEM",
         "model": "20 MHz TCXO + 1:5 fanout",
         "asset": "primitive_dds_tcxo_module",
@@ -189,7 +189,7 @@ COMPONENTS: list[dict[str, object]] = [
     },
     {
         "name": "dds_chassis_power_supply",
-        "component_type": "power_supply_ac_dc",
+        "kind_id": "power_supply_ac_dc",
         "brand": "Mean Well",
         "model": "IRM-30-5",
         "asset": "primitive_meanwell_irm30_5",
@@ -210,7 +210,7 @@ COMPONENTS: list[dict[str, object]] = [
     # so re-running the upsert won't re-create the duplicate.
     {
         "name": "dds_sma_bulkhead_jack",
-        "component_type": "sma_jack",
+        "kind_id": "sma_jack",
         "brand": "Amphenol RF",
         "model": "132357 (panel-mount SMA-F)",
         "asset": "primitive_sma_bulkhead_jack",
@@ -223,7 +223,7 @@ COMPONENTS: list[dict[str, object]] = [
     },
     {
         "name": "dds_chassis_usb_b_jack",
-        "component_type": "usb_b_jack",
+        "kind_id": "usb_b_jack",
         "brand": "Generic",
         "model": "USB-B panel jack",
         "asset": "primitive_usb_b_receptacle",
@@ -235,7 +235,7 @@ COMPONENTS: list[dict[str, object]] = [
     },
     {
         "name": "dds_chassis_iec_c14_inlet",
-        "component_type": "iec_c14_inlet",
+        "kind_id": "iec_c14_inlet",
         "brand": "Schurter",
         "model": "GST series C14 inlet",
         "asset": "primitive_iec_c14_inlet",
@@ -248,7 +248,7 @@ COMPONENTS: list[dict[str, object]] = [
     },
     {
         "name": "dds_chassis_1u_enclosure",
-        "component_type": "instrument_chassis",
+        "kind_id": "instrument_chassis",
         "brand": "QMEM",
         "model": "DDS 5xAD9959 1U enclosure",
         "asset": "dds_chassis_1u_glb",
@@ -263,7 +263,7 @@ COMPONENTS: list[dict[str, object]] = [
     },
     {
         "name": "dds_chassis_1u_enclosure_primitive",
-        "component_type": "instrument_chassis",
+        "kind_id": "instrument_chassis",
         "brand": "QMEM",
         "model": "DDS 1U enclosure (primitive fallback)",
         "asset": "primitive_instrument_chassis_1u",

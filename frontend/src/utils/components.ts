@@ -12,7 +12,7 @@ export function getComponentDisplayLabel(component: ComponentItem): string {
   const full = getComponentName(component);
   if (full.startsWith("thorlabs_")) {
     const tail = full.slice("thorlabs_".length);
-    const typePrefix = `${component.componentType}_`;
+    const typePrefix = `${component.kindId ?? ""}_`;
     if (tail.startsWith(typePrefix)) {
       return tail.slice(typePrefix.length).toUpperCase();
     }
@@ -23,7 +23,7 @@ export function getComponentDisplayLabel(component: ComponentItem): string {
 
 export function isOpticalTableComponent(component: ComponentItem): boolean {
   return (
-    component.componentType === "optical_table" ||
+    component.kindId === "optical_table" ||
     getComponentName(component).toLowerCase().includes("optical_table")
   );
 }

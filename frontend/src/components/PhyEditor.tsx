@@ -1,40 +1,18 @@
 /**
- * PhyEditor — full-page sub-page wrapping the per-domain physics
- * editors. Activated when `sceneStore.editorMode === "phy-editor"`.
+ * PhyEditor — full-page sub-page wrapping per-domain physics editors.
+ * Activated when `sceneStore.editorMode === "phy-editor"`.
  *
- * Layout:
- *   ┌──── Top bar ──────────────────────────────────────────────────┐
- *   │ ← Back to scene             PHY Editor                        │
- *   ├──────────────┬────────────────────────────────────────────────┤
- *   │ ▼ Optical    │                                                │
- *   │   • Kinds    │   <selected sub-editor's content>              │
- *   │   • Components                                                │
- *   │              │                                                │
- *   │ ▷ Electrical │                                                │
- *   │   (soon)     │                                                │
- *   │              │                                                │
- *   │ ▷ Mechanical │                                                │
- *   │   (soon)     │                                                │
- *   └──────────────┴────────────────────────────────────────────────┘
- *
- * Navigation:
- *   - Left rail: hierarchical PHY-domain tree. Clicking "Kinds" or
- *     "ASSET3D" under "Optical" switches the right pane.
- *   - Top bar: a single "Back to scene" returns to the main viewport.
- *     If the active sub-editor has unsaved drafts (sceneStore.phyEditorDirty),
- *     a confirm prompt appears first. Same prompt fires on switching tabs.
- *
- * The sub-editors themselves (`KindsEditor`,
- * `ComponentEditor`) own their own Save buttons and dirty state;
- * this wrapper just routes to them.
+ * Layout: left rail (PHY domains) + right pane (selected sub-editor).
+ * All editors mount in binding-dev mode so the catalog (Kinds /
+ * Asset3D / Components) is always CRUD-capable. Default landing =
+ * optical kinds catalog.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 
 import { useSceneStore } from "../store/sceneStore";
 import { Asset3DV3Editor } from "./Asset3DV3Editor";
-import { ComponentEditor } from "./ComponentEditor";
-import { ComponentComposer } from "./ComponentComposer";
+import { ComponentsV2Editor } from "./ComponentsV2Editor";
 import { KindsEditor } from "./KindsEditor";
 
 export function PhyEditor() {
@@ -46,22 +24,15 @@ export function PhyEditor() {
   const sceneBindings = useSceneStore((s) => s.scene.componentBindings);
   const loadScene = useSceneStore((s) => s.loadScene);
 
-  // Ensure scene + componentBindings are loaded when the PHY Editor opens.
-  // App.tsx triggers loadScene on cold start, but if the user navigates
-  // straight into PHY Editor before that finishes (or if the store was
-  // reset to an empty state for any reason), the bindings array can be
-  // empty here — which then makes ComponentEditor's viewport fall back
-  // to the legacy single-root path and skip the binding-tree composer.
-  // One-shot fetch: re-trigger loadScene if components OR bindings are
-  // absent. No-op once data arrives.
+  // One-shot fetch: if the user navigates straight into PHY Editor before
+  // App.tsx's cold-start loadScene finishes (or the store was reset),
+  // re-trigger loadScene so the editors have the component binding tree
+  // they need. No-op once data arrives.
   useEffect(() => {
     if (sceneComponents.length === 0 || (sceneBindings ?? []).length === 0) {
       void loadScene();
     }
   }, [loadScene, sceneComponents.length, sceneBindings]);
-  // Binding dev lives behind a top-right button (no longer the default
-  // landing). Local state — closing & re-entering PHY Editor resets it.
-  const [bindingDevOpen, setBindingDevOpen] = useState(false);
 
   const promptIfDirty = (action: string): boolean => {
     if (!phyEditorDirty) return true;
@@ -77,7 +48,7 @@ export function PhyEditor() {
 
   const switchView = (
     view:
-      | { domain: "optical" | "rf"; section: "kinds" | "components" }
+      | { domain: "optical" | "rf" | "mechanical"; section: "kinds" | "components" | "composer" }
       | null,
   ) => {
     if (
@@ -90,28 +61,28 @@ export function PhyEditor() {
       return;
     }
     setPhyEditorView(view);
-    // Picking a rail item exits Binding dev — the pane only ever shows
-    // one thing at a time.
-    if (view) setBindingDevOpen(false);
-  };
-
-  const openBindingDev = () => {
-    if (bindingDevOpen) {
-      setBindingDevOpen(false);
-      return;
-    }
-    if (!promptIfDirty("open Binding dev")) return;
-    setPhyEditorView(null);
-    setBindingDevOpen(true);
   };
 
   const opticalActive = phyEditorView?.domain === "optical";
   const opticalKinds = opticalActive && phyEditorView?.section === "kinds";
   const opticalComponents =
     opticalActive && phyEditorView?.section === "components";
+  const opticalComposer =
+    opticalActive && phyEditorView?.section === "composer";
   const rfActive = phyEditorView?.domain === "rf";
   const rfKinds = rfActive && phyEditorView?.section === "kinds";
   const rfComponents = rfActive && phyEditorView?.section === "components";
+  const rfComposer = rfActive && phyEditorView?.section === "composer";
+  const mechanicalActive = phyEditorView?.domain === "mechanical";
+  const mechanicalAsset3D =
+    mechanicalActive && phyEditorView?.section === "components";
+  const mechanicalComposer =
+    mechanicalActive && phyEditorView?.section === "composer";
+
+  // Default landing (no rail item selected) shows the optical kinds
+  // catalog — same content as clicking the rail's Kinds entry, so the
+  // user sees what kinds exist without having to click anything first.
+  const showDefaultLanding = phyEditorView === null;
 
   return (
     <div className="phy-editor">
@@ -127,26 +98,35 @@ export function PhyEditor() {
           <strong>PHY Editor</strong>
           {phyEditorView && (
             <span style={{ opacity: 0.7, marginLeft: 8 }}>
-              · {phyEditorView.domain} → {phyEditorView.section}
+              · {phyEditorView.domain} → {
+                // Internal section names ("components" routes the Asset3D
+                // editor; "composer" routes the Components composer) are
+                // historical and confuse anyone reading the breadcrumb.
+                // Surface user-facing labels that match the rail.
+                phyEditorView.section === "components"
+                  ? "asset3d"
+                  : phyEditorView.section === "composer"
+                    ? "components"
+                    : phyEditorView.section
+              }
             </span>
           )}
         </div>
         {phyEditorDirty && (
           <span style={{ color: "#fbbf24" }}>● Unsaved</span>
         )}
-        <button
-          type="button"
-          className="secondary-button"
-          onClick={openBindingDev}
-          style={bindingDevOpen ? { background: "#fde68a", borderColor: "#ca8a04" } : undefined}
-          title="Live binding-tree tweak tool (isolator-focused today)"
-        >
-          🔧 Binding dev
-        </button>
       </div>
 
-      <div className="phy-editor-body">
-        {/* LEFT: PHY domain tree */}
+      <div
+        className="phy-editor-body"
+        // Grid auto-tracks default to `minmax(auto, ...)` which forces the
+        // track to grow to fit content — that breaks the inner editors'
+        // `flex: 1; overflow: auto` because the cell expands instead of
+        // capping the editor's height. Force `minmax(0, 1fr)` so the
+        // editor (KindsEditor / Asset3DV3Editor / ComponentsV2Editor)
+        // is bounded by the viewport and owns its own scrollbar.
+        style={{ gridTemplateRows: "minmax(0, 1fr)" }}
+      >
         <aside className="phy-editor-rail">
           <div className="phy-editor-rail-header">PHY domains</div>
 
@@ -178,6 +158,19 @@ export function PhyEditor() {
               ASSET3D
               <span className="phy-editor-rail-hint">faces + transitions</span>
             </button>
+            <button
+              type="button"
+              className={
+                "phy-editor-rail-item" +
+                (opticalComposer ? " is-active" : "")
+              }
+              onClick={() =>
+                switchView({ domain: "optical", section: "composer" })
+              }
+            >
+              COMPONENTS
+              <span className="phy-editor-rail-hint">compose optical Asset3D</span>
+            </button>
           </div>
 
           <div className="phy-editor-domain">
@@ -205,8 +198,21 @@ export function PhyEditor() {
                 switchView({ domain: "rf", section: "components" })
               }
             >
-              rf_component
-              <span className="phy-editor-rail-hint">rf_in / rf_out anchors</span>
+              ASSET3D
+              <span className="phy-editor-rail-hint">faces + transitions</span>
+            </button>
+            <button
+              type="button"
+              className={
+                "phy-editor-rail-item" +
+                (rfComposer ? " is-active" : "")
+              }
+              onClick={() =>
+                switchView({ domain: "rf", section: "composer" })
+              }
+            >
+              COMPONENTS
+              <span className="phy-editor-rail-hint">compose RF Asset3D</span>
             </button>
           </div>
 
@@ -215,97 +221,48 @@ export function PhyEditor() {
             <div className="phy-editor-rail-soon">coming later</div>
           </div>
 
-          <div className="phy-editor-domain phy-editor-domain-disabled">
-            <div className="phy-editor-domain-title">▷ Mechanical</div>
-            <div className="phy-editor-rail-soon">coming later</div>
+          <div className="phy-editor-domain">
+            <div className="phy-editor-domain-title">▼ Mechanical</div>
+            <button
+              type="button"
+              className={
+                "phy-editor-rail-item" +
+                (mechanicalAsset3D ? " is-active" : "")
+              }
+              onClick={() =>
+                switchView({ domain: "mechanical", section: "components" })
+              }
+            >
+              ASSET3D
+              <span className="phy-editor-rail-hint">faces + transitions</span>
+            </button>
+            <button
+              type="button"
+              className={
+                "phy-editor-rail-item" +
+                (mechanicalComposer ? " is-active" : "")
+              }
+              onClick={() =>
+                switchView({ domain: "mechanical", section: "composer" })
+              }
+            >
+              COMPONENTS
+              <span className="phy-editor-rail-hint">compose Asset3D into a component</span>
+            </button>
           </div>
         </aside>
 
-        {/* RIGHT: selected sub-editor. Default landing is empty — the
-            user picks a rail item (Kinds / ASSET3D) OR clicks the
-            top-right "🔧 Binding dev" button to open the binding-tree
-            tweak tool. The two paths are mutually exclusive in the pane. */}
         <div className="phy-editor-pane">
-          {bindingDevOpen && <ComponentComposer />}
-          {!bindingDevOpen && opticalKinds && <KindsEditor domain="optical" />}
-          {!bindingDevOpen && opticalComponents && (
-            <OpticalAssetSwitch />
-          )}
-          {!bindingDevOpen && rfKinds && <KindsEditor domain="rf" />}
-          {!bindingDevOpen && rfComponents && <RfAssetSwitch />}
+          {showDefaultLanding && <KindsEditor domain="optical" />}
+          {opticalKinds && <KindsEditor domain="optical" />}
+          {opticalComponents && <Asset3DV3Editor domain="optical" mode="binding-dev" />}
+          {opticalComposer && <ComponentsV2Editor domain="optical" mode="binding-dev" />}
+          {rfKinds && <KindsEditor domain="rf" />}
+          {rfComponents && <Asset3DV3Editor domain="rf" mode="binding-dev" />}
+          {rfComposer && <ComponentsV2Editor domain="rf" mode="binding-dev" />}
+          {mechanicalAsset3D && <Asset3DV3Editor domain="mechanical" mode="binding-dev" />}
+          {mechanicalComposer && <ComponentsV2Editor domain="mechanical" mode="binding-dev" />}
         </div>
-      </div>
-    </div>
-  );
-}
-
-/**
- * Optical ASSET3D pane — tabs between the new v3 Asset3D catalog browser
- * (default) and the legacy v2 ComponentEditor. The v3 view consumes
- * /api/v3/assets3d via useV3Catalog; the v2 view edits the existing
- * anchors-based component data.
- */
-function OpticalAssetSwitch() {
-  return <AssetDomainSwitch domain="optical" />;
-}
-
-/**
- * RF ASSET3D pane — mirror of OpticalAssetSwitch for the RF tracer side.
- * v3 tab gates the Asset3D editor to RF assets (rf_source, rf_amplifier,
- * rf_cable, rf_switch, programmable_pulse_generator, horn_antenna) with
- * face.domain ∈ {"rf","ttl"}; v2 tab keeps the legacy anchors editor for
- * rows that haven't been migrated yet.
- */
-function RfAssetSwitch() {
-  return <AssetDomainSwitch domain="rf" />;
-}
-
-function AssetDomainSwitch({ domain }: { domain: "optical" | "rf" }) {
-  const [tab, setTab] = useState<"v3" | "v2">("v3");
-  const tabBtn = (key: "v3" | "v2", label: string, hint: string) => (
-    <button
-      type="button"
-      onClick={() => setTab(key)}
-      style={{
-        background: tab === key ? "#1e3a52" : "transparent",
-        color: tab === key ? "#4ec9b0" : "#94a3b8",
-        border: "none",
-        borderBottom: tab === key ? "2px solid #4ec9b0" : "2px solid transparent",
-        padding: "6px 12px",
-        cursor: "pointer",
-        fontFamily: "ui-monospace, monospace",
-        fontSize: 12,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "flex-start",
-        gap: 2,
-      }}
-    >
-      <span style={{ fontWeight: 600 }}>{label}</span>
-      <span style={{ fontSize: 10, opacity: 0.7 }}>{hint}</span>
-    </button>
-  );
-  const v3Hint = domain === "rf"
-    ? "faces (rf/ttl) · transitions · defaultParams"
-    : "faces · transitions · defaultParams";
-  const v2Hint = domain === "rf"
-    ? "legacy rf_in/rf_out anchors"
-    : "legacy anchors editor";
-  return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <div
-        style={{
-          display: "flex",
-          borderBottom: "1px solid #1e293b",
-          background: "#0f172a",
-        }}
-      >
-        {tabBtn("v3", "v3 Asset3D", v3Hint)}
-        {tabBtn("v2", "v2 Components", v2Hint)}
-      </div>
-      <div style={{ flex: 1, overflow: "hidden", minHeight: 0 }}>
-        {tab === "v3" && <Asset3DV3Editor domain={domain} />}
-        {tab === "v2" && <ComponentEditor domain={domain} />}
       </div>
     </div>
   );

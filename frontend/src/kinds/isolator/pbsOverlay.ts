@@ -271,7 +271,7 @@ function buildGlanLaserPrism(_sizeUnit: number): THREE.Object3D {
   // along its OWN outward normal (away from the other), so Prism A
   // moves in +(offY, offZ) and Prism B in −(offY, offZ). Sign error
   // here would push the halves through each other instead of apart
-  // — that's the "晶體又重疊了" bug carried from the legacy code.
+  // — that's the "crystals overlapping again" bug carried from the legacy code.
   const cutNorm = Math.hypot(L, a);
   const offY = (airGapMm * L) / cutNorm;
   const offZ = (airGapMm * a) / cutNorm;

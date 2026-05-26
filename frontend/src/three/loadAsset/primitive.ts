@@ -17,7 +17,7 @@ export function createPrimitive(
   const group = new THREE.Group();
   group.name = component.name;
 
-  const plugin = pluginForComponentType(component.componentType);
+  const plugin = pluginForComponentType(component.kindId ?? "");
   let mesh: THREE.Object3D;
   if (plugin?.renderer) {
     mesh = plugin.renderer(component, state, asset ?? undefined);

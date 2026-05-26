@@ -2,7 +2,7 @@
   "id": "thorlabs_p1_780pm_fc_1",
   "vendorPart": "P1-780PM-FC-1",
   "displayName": "Thorlabs P1-780PM-FC-1 (PM, PC/PC, 1m, 780nm)",
-  "geometryRef": null,
+  "geometryRef": "files/stl/thorlabs_p1_780pm_fc_1.stl",
   "geometryRefGlb": null,
   "bodyFrameRotation": null,
   "kind": "fiber",

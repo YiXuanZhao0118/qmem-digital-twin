@@ -43,7 +43,7 @@
         [0, 0,     0, 1,     0],
         [0, 0,     0, 0,     1]
       ],
-      "_note": "B = L/n = 18/1.95 = 9.231 mm. Jones rotation +45° applied separately by op."
+      "_note": "B = L/n = 18/1.95 = 9.231 mm. Jones rotation +45 deg applied separately by op."
     },
     {
       "in": "B", "out": "A",
@@ -55,7 +55,7 @@
         [0, 0,     0, 1,     0],
         [0, 0,     0, 0,     1]
       ],
-      "_note": "Non-reciprocal: reverse direction ALSO rotates Jones by +45° (NOT -45°)"
+      "_note": "Non-reciprocal: reverse direction ALSO rotates Jones by +45 deg (NOT -45 deg)"
     }
   ],
 
@@ -73,7 +73,7 @@
 
   "notes": {
     "rootModel": "User-defined as the root model of IO-3-850-HP component coordinate system",
-    "rotation": "Faraday rotation is encoded in the op (jones rotation by +45°), not in matrix5x5",
+    "rotation": "Faraday rotation is encoded in the op (jones rotation by +45 deg), not in matrix5x5",
     "ARFresnel": "0.5% residual reflection at each face ??handled via ghost ray"
   }
 }

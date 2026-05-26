@@ -232,7 +232,7 @@ class Asset3DBase(CamelModel):
     # locked into the bespoke pbsOverlay path.
     properties: JsonDict = Field(default_factory=dict)
     catalog_id: str | None = None
-    physics_kind: str | None = None
+    kind_id: str | None = None
     faces: JsonList | None = None
     transitions: JsonList | None = None
     default_params: JsonDict | None = None
@@ -255,7 +255,7 @@ class Asset3DUpdate(CamelModel):
     anchors: list[AssetAnchor] | None = None
     properties: JsonDict | None = None
     catalog_id: str | None = None
-    physics_kind: str | None = None
+    kind_id: str | None = None
     faces: JsonList | None = None
     transitions: JsonList | None = None
     default_params: JsonDict | None = None
@@ -266,7 +266,7 @@ class Asset3DUpdate(CamelModel):
 class LocalAssetImport(CamelModel):
     source_path: str
     name: str | None = None
-    component_type: str = "custom_3d"
+    kind_id: str = "custom_3d"
     brand: str | None = None
     model: str | None = None
     unit: Literal["mm", "m"] = "mm"
@@ -283,7 +283,8 @@ PhysicsCapability = Literal["stress", "optical", "rf", "em", "thermal", "fluid",
 
 class ComponentBase(CamelModel):
     name: str
-    component_type: str
+    # Classification slug — pointer into the Kind registry.
+    kind_id: str | None = None
     brand: str | None = None
     model: str | None = None
     # serial_number relocated to SceneObject in alembic 0015 (per-physical-unit).
@@ -303,7 +304,7 @@ class ComponentCreate(ComponentBase):
 
 class ComponentUpdate(CamelModel):
     name: str | None = None
-    component_type: str | None = None
+    kind_id: str | None = None
     brand: str | None = None
     model: str | None = None
     asset_3d_id: uuid.UUID | None = None
@@ -3211,3 +3212,46 @@ class AgentMessageCreate(CamelModel):
 
     content: str
     attachments: list[AgentAttachmentRef] = []
+
+
+# ── Kind catalog (alembic 0086) ──────────────────────────────────────────────
+# CRUD schemas for the new ``kinds`` table. See docs/asset-physics-model.md §6.
+
+
+class KindBase(CamelModel):
+    name: str
+    display_name: str
+    domain: Literal["optical", "rf", "mechanical"]
+    op_set_name: str
+    default_params: JsonDict = {}
+    face_template: JsonDict = {}
+    needs_aperture: bool = False
+    wavelength_range_nm: list[float] | None = None
+    description: str | None = None
+
+
+class KindCreate(KindBase):
+    pass
+
+
+class KindUpdate(CamelModel):
+    """All fields optional — only the provided ones get patched.
+
+    ``name`` / ``domain`` / ``op_set_name`` are intentionally omitted:
+    renaming would break Asset3D references, and changing domain or
+    op_set would silently change tracer behavior. To rename or re-domain
+    a kind, create a new one and migrate references explicitly.
+    """
+
+    display_name: str | None = None
+    default_params: JsonDict | None = None
+    face_template: JsonDict | None = None
+    needs_aperture: bool | None = None
+    wavelength_range_nm: list[float] | None = None
+    description: str | None = None
+
+
+class KindOut(KindBase):
+    id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime

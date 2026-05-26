@@ -52,7 +52,7 @@ ASSETS: list[dict[str, object]] = [
 COMPONENTS: list[dict[str, object]] = [
     {
         "name": "programmable_pulse_generator_sma",
-        "component_type": "programmable_pulse_generator",
+        "kind_id": "programmable_pulse_generator",
         "brand": "Generic",
         "model": "Programmable Pulse Generator (SMA)",
         "asset": "thumb_antenna_glb",
@@ -64,7 +64,7 @@ COMPONENTS: list[dict[str, object]] = [
     },
     {
         "name": "programmable_pulse_generator_bnc",
-        "component_type": "programmable_pulse_generator",
+        "kind_id": "programmable_pulse_generator",
         "brand": "Generic",
         "model": "Programmable Pulse Generator (BNC)",
         "asset": "bnc_m_rca_f_adapter_glb",

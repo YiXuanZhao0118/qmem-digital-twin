@@ -30,23 +30,23 @@
   "transitions": [
     {
       "in": "A", "out": "B", "op": "abcd_thin_lens",
-      "_note": "A=convex side. Same recipe as LA1540-B: M_cf = [[1,0],[-(n-1)/R,n]]·[[1,d/n],[0,1]]·[[1,0],[0,1/n]] with R=38.6, d=3.6, n=1.5168.",
+      "_note": "A=convex side. Beam enters convex first, exits flat. BFL = 72.34 mm (collimated y=1 → y_out=0.9682, θ_out=-0.01339; focus at 72.34 mm past the flat vertex). R=38.6, d=3.6, n=1.5168.",
       "matrix5x5": [
-        [1.0,        1.5645, 0,          0,      0],
-        [-0.01339,   0.97905, 0,          0,      0],
-        [0,          0,       1.0,        1.5645, 0],
-        [0,          0,       -0.01339,   0.97905, 0],
-        [0,          0,       0,          0,      1]
+        [0.96822,    2.3734, 0,          0,      0],
+        [-0.01339,   1.0,    0,          0,      0],
+        [0,          0,      0.96822,    2.3734, 0],
+        [0,          0,      -0.01339,   1.0,    0],
+        [0,          0,      0,          0,      1]
       ]
     },
     {
       "in": "B", "out": "A", "op": "abcd_thin_lens",
-      "_note": "B=flat side. M_fc = [[1,0],[0,n]]·[[1,d/n],[0,1]]·[[1,0],[-(n-1)/R,1/n]].",
+      "_note": "B=flat side. Beam enters flat first, exits convex. BFL = 74.69 mm (collimated y=1 → y_out=1.0, θ_out=-0.01339; focus at 74.69 mm past the convex vertex).",
       "matrix5x5": [
-        [0.96822,    1.5645, 0,          0,      0],
-        [-0.02031,   1.0,    0,          0,      0],
-        [0,          0,      0.96822,    1.5645, 0],
-        [0,          0,      -0.02031,   1.0,    0],
+        [1.0,        2.3734, 0,          0,      0],
+        [-0.01339,   0.96822, 0,         0,      0],
+        [0,          0,      1.0,        2.3734, 0],
+        [0,          0,      -0.01339,   0.96822, 0],
         [0,          0,      0,          0,      1]
       ]
     }
@@ -69,8 +69,11 @@
   ],
 
   "notes": {
-    "calibrationStatus": "5x5 derived from same recipe as LA1540-B; only R changes (7.74mm -> 38.6mm).",
+    "calibrationStatus": "Paraxial thick-lens ABCD with consistent [y, θ] convention (geometric translation d=3.6mm). Same recipe as LA1540-B; only R changes (7.74mm → 38.6mm).",
+    "thickLensDerivation": "Convex-first M_cf = M_flat_out · M_translate · M_convex_in = [[1,0],[0,n]] · [[1,d],[0,1]] · [[1,0],[-(n-1)/(n·R),1/n]]. Flat-first M_fc = M_convex_out · M_translate · M_flat_in = [[1,0],[-(n-1)/R,n]] · [[1,d],[0,1]] · [[1,0],[0,1/n]]. n=1.5168, R=38.6mm, d=3.6mm.",
+    "principalPlanes": "EFL = R/(n-1) = 74.69 mm (≈75 mm nominal). BFL_convex_first = EFL·(1 − d(n-1)/(n·R)) = 72.34 mm. BFL_flat_first = EFL = 74.69 mm.",
     "spec": "Thorlabs LA1614-B: f=75mm, 1-inch plano-convex, AR-B coating 650-1050nm, N-BK7 substrate, center thickness 3.6mm, R=38.6mm.",
-    "geometryRefNote": "Reusing thorlabs_la1540_b.stl as placeholder geometry. Swap for LA1614-B STL when imported."
+    "geometryRefNote": "Reusing thorlabs_la1540_b.stl as placeholder geometry. Swap for LA1614-B STL when imported.",
+    "previousMatrixBug": "Earlier matrices used [[1,d/n],[0,1]] for translation while keeping physical-angle refraction matrices — mixed conventions produced a wrong B entry. Fixed 2026-05 together with LA1540-B."
   }
 }

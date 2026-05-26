@@ -29,12 +29,12 @@ type CategoryKey = "optical" | "electronics" | "mechanical" | "infrastructure" |
 type CategoryDef = { key: CategoryKey; label: string; order: number };
 
 const CATEGORY_DEFS: Record<CategoryKey, CategoryDef> = {
-  optical: { key: "optical", label: "Optical / 光學", order: 1 },
-  electronics: { key: "electronics", label: "Electronics & RF / 電子・RF", order: 2 },
-  mechanical: { key: "mechanical", label: "Mounts & Mechanics / 機械", order: 3 },
-  infrastructure: { key: "infrastructure", label: "Workspace / 桌面・機箱", order: 4 },
-  misc: { key: "misc", label: "Annotations / 註解", order: 5 },
-  other: { key: "other", label: "Uncategorized / 未分類", order: 99 },
+  optical: { key: "optical", label: "Optical", order: 1 },
+  electronics: { key: "electronics", label: "Electronics & RF", order: 2 },
+  mechanical: { key: "mechanical", label: "Mounts & Mechanics", order: 3 },
+  infrastructure: { key: "infrastructure", label: "Workspace", order: 4 },
+  misc: { key: "misc", label: "Annotations", order: 5 },
+  other: { key: "other", label: "Uncategorized", order: 99 },
 };
 
 // Pre-P2 these were 5 hand-maintained `new Set<string>([...])` literals
@@ -149,7 +149,7 @@ export function ComponentsCatalogPanel() {
     const needle = filter.trim().toLowerCase();
     if (!needle) return scene.components;
     return scene.components.filter((component) =>
-      `${getComponentName(component)} ${component.componentType} ${component.brand ?? ""} ${component.model ?? ""}`
+      `${getComponentName(component)} ${component.kindId ?? ""} ${component.brand ?? ""} ${component.model ?? ""}`
         .toLowerCase()
         .includes(needle),
     );
@@ -163,7 +163,7 @@ export function ComponentsCatalogPanel() {
   const componentCategories = useMemo(() => {
     const categories = new Map<CategoryKey, { def: CategoryDef; types: Map<string, ComponentItem[]> }>();
     for (const component of visibleComponents) {
-      const typeKey = component.componentType?.trim() || "uncategorized";
+      const typeKey = component.kindId?.trim() || "uncategorized";
       const def = categoryForComponentType(typeKey);
       let bucket = categories.get(def.key);
       if (!bucket) {
@@ -259,9 +259,9 @@ export function ComponentsCatalogPanel() {
                                       follows the same rule: SMA and BNC
                                       variants only enter via the RF Link
                                       panel. */}
-                                  {component.componentType !== "rf_cable" &&
-                                    component.componentType !== "sma_cable" &&
-                                    component.componentType !== "programmable_pulse_generator" && (
+                                  {component.kindId !== "rf_cable" &&
+                                    component.kindId !== "sma_cable" &&
+                                    component.kindId !== "programmable_pulse_generator" && (
                                       <span
                                         className="row-action"
                                         title="Place component as object"

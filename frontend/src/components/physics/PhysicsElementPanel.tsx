@@ -7,7 +7,7 @@ import type { ComponentItem, ElementKind, PhysicsElement, SceneObject } from "..
 import {
   DOMAIN_TITLES,
   KIND_LABELS,
-  componentTypeToElementKind,
+  kindIdToElementKind,
   domainForElementKind,
 } from "../../utils/elementDefaults";
 import {
@@ -97,7 +97,7 @@ export function PhysicsElementPanel({ component, sceneObject }: Props) {
   const existing = sceneObject
     ? findElementForObject(physicsElements, sceneObject.id)
     : undefined;
-  const mappedKind = componentTypeToElementKind(component.componentType);
+  const mappedKind = component.kindId != null ? kindIdToElementKind(component.kindId) : null;
 
   const [error, setError] = useState<string>("");
   const [busy, setBusy] = useState<boolean>(false);
@@ -135,7 +135,7 @@ export function PhysicsElementPanel({ component, sceneObject }: Props) {
           <div className="physics-auto-register-text">
             <strong>Not yet registered.</strong>
             <span>
-              Component type <code>{component.componentType}</code> maps to{" "}
+              Component type <code>{component.kindId}</code> maps to{" "}
               <code>{KIND_LABELS[mappedKind]}</code>. One click to add the
               solver-visible row with sensible defaults — you can fine-tune the
               params below afterwards.

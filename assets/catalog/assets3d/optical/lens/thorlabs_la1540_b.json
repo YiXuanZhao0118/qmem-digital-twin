@@ -10,18 +10,18 @@
   "wavelengthRangeNm": [650, 1050],
 
   "physicalDimensionsMm": {
-    "L": 3.6,
+    "L": 5.1,
     "diameterMm": 25.4
   },
 
   "faces": [
     { "id": "A",
-      "positionMmBodyLocal": { "x": 0, "y": 0, "z": -1.8 },
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": -2.55 },
       "normalBodyLocal":     { "x": 0, "y": 0, "z": -1 },
       "apertureMm": 12.7,
       "apertureShape": "circle" },
     { "id": "B",
-      "positionMmBodyLocal": { "x": 0, "y": 0, "z": 1.8 },
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": 2.55 },
       "normalBodyLocal":     { "x": 0, "y": 0, "z": 1 },
       "apertureMm": 12.7,
       "apertureShape": "circle" }
@@ -30,24 +30,24 @@
   "transitions": [
     {
       "in": "A", "out": "B", "op": "abcd_thin_lens",
-      "_note": "A=convex side. Beam enters convex first, exits flat. BFL ≈ 14.98 mm.",
+      "_note": "A=convex side. Beam enters convex first, exits flat. EFL = 14.95 mm, BFL = 11.58 mm (collimated y=1 → y_out=0.7748, θ_out=-0.0669; focus at y/|θ| = 11.58 mm past the flat vertex). Computed from R=7.7 mm, d=5.1 mm, n=1.515.",
       "matrix5x5": [
-        [1.0,         1.56475324, 0,           0,          0],
-        [-0.06677003, 0.89552139, 0,           0,          0],
-        [0,           0,          1.0,         1.56475324, 0],
-        [0,           0,          -0.06677003, 0.89552139, 0],
-        [0,           0,          0,           0,          1]
+        [0.7748,    3.3663, 0,         0,      0],
+        [-0.06688,  1.0,    0,         0,      0],
+        [0,         0,      0.7748,    3.3663, 0],
+        [0,         0,      -0.06688,  1.0,    0],
+        [0,         0,      0,         0,      1]
       ]
     },
     {
       "in": "B", "out": "A", "op": "abcd_thin_lens",
-      "_note": "B=flat side. Beam enters flat first, exits convex. BFL ≈ 8.31 mm. Different from convex-first by design — orientation-dependent thick-lens behaviour.",
+      "_note": "B=flat side. Beam enters flat first, exits convex. EFL = 14.95 mm, BFL = 14.95 mm (collimated y=1 → y_out=1.0, θ_out=-0.0669; focus at 14.95 mm past the convex vertex — for plano-convex the rear principal plane sits AT the convex vertex when entered flat-first).",
       "matrix5x5": [
-        [0.84152684,  1.56475324, 0,           0,          0],
-        [-0.10127678, 1.0,        0,           0,          0],
-        [0,           0,          0.84152684,  1.56475324, 0],
-        [0,           0,          -0.10127678, 1.0,        0],
-        [0,           0,          0,           0,          1]
+        [1.0,       3.3663, 0,         0,      0],
+        [-0.06688,  0.7748, 0,         0,      0],
+        [0,         0,      1.0,       3.3663, 0],
+        [0,         0,      -0.06688,  0.7748, 0],
+        [0,         0,      0,         0,      1]
       ]
     }
   ],
@@ -56,9 +56,9 @@
     "focalLengthMm": 15,
     "lensShape": "plano_convex",
     "convexFace": "A",
-    "radiusOfCurvatureMm": 7.74,
-    "centerThicknessMm": 3.6,
-    "refractiveIndex": 1.5168,
+    "radiusOfCurvatureMm": 7.7,
+    "centerThicknessMm": 5.1,
+    "refractiveIndex": 1.515,
     "arResidualR": 0.005,
     "material": "N-BK7"
   },
@@ -69,9 +69,11 @@
   ],
 
   "notes": {
-    "calibrationStatus": "Thick-lens 5×5 matrix derived from user-provided convex→flat / flat→convex matrices.",
-    "thickLensDerivation": "M_cf = [[1,0],[-(n-1)/R,n]]·[[1,d/n],[0,1]]·[[1,0],[0,1/n]] with n=1.5168, R=7.74mm, d=3.6mm. M_fc = [[1,0],[0,n]]·[[1,d/n],[0,1]]·[[1,0],[-(n-1)/R,1/n]].",
-    "principalPlanes": "BFL_convex_first (14.98mm) differs from BFL_flat_first (8.31mm). Caller must place focus distance per the orientation.",
-    "aberration": "Phase 6 TODO: Seidel coefficient W_040 differs by orientation (convex-first has more spherical aberration). Not in current 5×5 paraxial model."
+    "calibrationStatus": "Paraxial thick-lens ABCD in [y, θ] convention (θ in radians, geometric translation d=5.1 mm). Geometry + index now match Thorlabs LA1540-B datasheet.",
+    "thickLensDerivation": "Convex-first: M_cf = M_flat_out · M_translate · M_convex_in = [[1,0],[0,n]] · [[1,d],[0,1]] · [[1,0],[-(n-1)/(n·R),1/n]]. Flat-first: M_fc = M_convex_out · M_translate · M_flat_in = [[1,0],[-(n-1)/R,n]] · [[1,d],[0,1]] · [[1,0],[0,1/n]]. With n=1.515, R=7.7 mm, d=5.1 mm.",
+    "principalPlanes": "EFL = R/(n-1) = 14.95 mm (≈15 mm spec). BFL_convex_first = EFL·(1 − d(n-1)/(n·R)) = 11.58 mm (Thorlabs spec ≈11.66 mm). BFL_flat_first = EFL = 14.95 mm (H′ at convex vertex for plano-convex flat-first).",
+    "aberration": "Phase 6 TODO: Seidel coefficient W_040 differs by orientation (convex-first has more spherical aberration). Not in current 5×5 paraxial model.",
+    "alignmentError": "5th column of matrix5x5 is intentionally zero. Per-instance misalignment (Δx, Δy, Δθx, Δθy) is provided by the binding's local pose (localXMm/YMm/RxDeg/RyDeg) — the ray tracer transforms world→body via the binding pivot so an off-axis ray correctly enters the ideal 2×2 ABCD with the right (x, θx). Encoding misalignment in the matrix's 5th column (Siegman convention) would double-count.",
+    "matrixHistory": "2026-05-A: Geometry updated to actual Thorlabs spec (d=3.6→5.1 mm, R=7.74→7.7 mm, n=1.5168→1.515). 2026-05: ABCD entries derived with consistent [y, θ] convention + geometric translation d (earlier asset mixed conventions and put d/n² in the B entry)."
   }
 }

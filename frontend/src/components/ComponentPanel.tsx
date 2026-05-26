@@ -21,7 +21,7 @@ import { CapabilityPills } from "./optical/CapabilityPills";
 import { PhysicsElementPanel } from "./physics/PhysicsElementPanel";
 import { AlignPanel } from "./AlignPanel";
 import { NumberField } from "./NumberField";
-import { componentTypeToElementKind } from "../utils/elementDefaults";
+import { kindIdToElementKind } from "../utils/elementDefaults";
 import { capabilityProfile } from "../kinds/_capabilityProfile";
 
 type DraftObject = Required<Omit<SceneObjectPatch, "name" | "properties" | "serialNumber">> & {
@@ -55,11 +55,11 @@ function pulseTimingCapabilityFor(
   }) ?? {};
   const isTtl =
     props.hasTtlGateInput === true ||
-    (props.hasTtlGateInput !== false && TTL_GATE_KINDS.has(component.componentType));
+    (props.hasTtlGateInput !== false && component.kindId != null && TTL_GATE_KINDS.has(component.kindId));
   if (isTtl) return { allowed: true, mode: "ttl" };
   const isTrigger =
     props.hasTriggerInput === true ||
-    (props.hasTriggerInput !== false && TRIGGER_KINDS.has(component.componentType));
+    (props.hasTriggerInput !== false && component.kindId != null && TRIGGER_KINDS.has(component.kindId));
   if (isTrigger) return { allowed: true, mode: "trigger" };
   return { allowed: false, mode: "none" };
 }
@@ -1899,7 +1899,7 @@ export function ComponentPanel() {
         <dl className="detail-list">
           <div>
             <dt>Type</dt>
-            <dd>{component.componentType}</dd>
+            <dd>{component.kindId}</dd>
           </div>
           <div>
             <dt>Brand</dt>
@@ -1974,8 +1974,8 @@ export function ComponentPanel() {
       )}
 
       {!placement &&
-        component.componentType !== "rf_cable" &&
-        component.componentType !== "sma_cable" && (
+        component.kindId !== "rf_cable" &&
+        component.kindId !== "sma_cable" && (
           // Cables aren't instantiable from the catalog — they're
           // created exclusively via the RF Link panel's drag-to-connect
           // flow. Hide the button entirely so the store contract
@@ -2083,26 +2083,26 @@ export function ComponentPanel() {
           </section>
 
           {/* === Content (text_annotation only) === */}
-          {component.componentType === "text_annotation" && (
+          {component.kindId === "text_annotation" && (
             <TextAnnotationEditor component={component} />
           )}
 
           {/* === Connections: cable/fiber node + endpoint editor. Wrapped
               in a uniformly-headed section so cables/fibers slot into the
               same skeleton as everything else. */}
-          {(component.componentType === "fiber"
-            || component.componentType === "rf_cable"
-            || component.componentType === "sma_cable") && (
+          {(component.kindId === "fiber"
+            || component.kindId === "rf_cable"
+            || component.kindId === "sma_cable") && (
             <section className="edit-section">
               <h3>
                 <Layers3 size={17} />
                 Connections
               </h3>
-              {component.componentType === "fiber" && (
+              {component.kindId === "fiber" && (
                 <FiberEditor component={component} />
               )}
-              {(component.componentType === "rf_cable"
-                || component.componentType === "sma_cable") && (
+              {(component.kindId === "rf_cable"
+                || component.kindId === "sma_cable") && (
                 <RfCableEditor component={component} />
               )}
             </section>
@@ -2113,11 +2113,11 @@ export function ComponentPanel() {
               hide when the kind hasn't been migrated to the Phase-2
               plugin partition. */}
           {(component?.physicsCapabilities?.includes("optical") ||
-            componentTypeToElementKind(component?.componentType) !== null) && (
+            (component?.kindId != null && kindIdToElementKind(component.kindId) !== null)) && (
             <>
               <IntrinsicSpecPanel component={component} sceneObject={placement} />
               <PhysicsElementPanel component={component} sceneObject={placement} />
-              {component.componentType === "dds_ad9959_pcb" && (
+              {component.kindId === "dds_ad9959_pcb" && (
                 <Ad9959ObjectControls component={component} />
               )}
             </>
@@ -2126,7 +2126,7 @@ export function ComponentPanel() {
           {/* dds_chassis is a passive carrier (no elementKind) — its
               channel-routing controls don't fit Spec/Parameters but
               still belong below the identity block, not in the middle. */}
-          {component.componentType === "instrument_chassis"
+          {component.kindId === "instrument_chassis"
             && (component.name?.startsWith("dds_chassis") ?? false) && (
               <DdsChassisObjectControls component={component} />
             )}
@@ -2136,7 +2136,7 @@ export function ComponentPanel() {
             (() => {
               // rf_cable has no "Remove object" affordance — both ends are
               // anchored to other objects, and the user-facing rule
-              // ("cable 一端 unlink 就直接移除") means severing either end
+              // ("if either end of a cable is unlinked, remove the cable") means severing either end
               // is the same operation as deleting the cable. Surface two
               // end-labelled buttons (A / B) so the user sees which
               // upstream / downstream object they're disconnecting from.

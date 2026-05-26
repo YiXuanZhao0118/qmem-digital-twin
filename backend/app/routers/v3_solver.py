@@ -13,10 +13,13 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db import get_session
 from app.optical.beam_ray import BeamRay, Vec3, make_beam_ray
+from app.optical.db_scene_loader import load_scene_from_db
 from app.optical.ray_tracer_v3 import (
     TraceOptions,
     V3AssetSnapshot,
@@ -256,4 +259,41 @@ async def run_v3_solver(request: SolverRunRequest) -> dict:
     from app.optical import kinds  # noqa: F401
 
     result = solve_v3_scene(scene, rays, opts)
+    return result.to_dict()
+
+
+class SolverRunFromDbRequest(CamelModel):
+    """Options-only request body — scene is loaded from DB."""
+    options: Optional[TraceOptionsIn] = None
+    initial_rays: list[RayIn] = Field(default_factory=list)
+
+
+@router.post("/run-from-db")
+async def run_v3_solver_from_db(
+    request: SolverRunFromDbRequest = SolverRunFromDbRequest(),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Trace the current DB scene with the v3 ANCHOR tracer (Phase 9.8).
+
+    Loads SceneObject → Component → ComponentBinding → Asset3D from DB,
+    builds the anchor-centric V3AnchorScene, runs the anchor tracer
+    (single-anchor + offset/tilt → ABCD 5×5 for paraxial elements; v1
+    closed-form for AOM / fiber). Returns the same SolverResult JSON
+    schema as before (segments, labSegments, finalRays).
+    """
+    # Eager-load all anchor ops + emitter helper so registry populated.
+    from app.optical import anchor_ops  # noqa: F401
+    from app.optical.anchor_tracer import AnchorTraceOptions
+    from app.optical.db_scene_loader import load_anchor_scene_from_db
+    from app.optical.solver_v3 import solve_anchor_scene
+
+    scene = await load_anchor_scene_from_db(session)
+    rays = [_to_beam_ray(r) for r in request.initial_rays]
+    opts = AnchorTraceOptions()
+    if request.options:
+        opts = AnchorTraceOptions(
+            max_steps=request.options.max_steps,
+            power_threshold_mw=request.options.power_threshold_mw,
+        )
+    result = solve_anchor_scene(scene, rays, opts)
     return result.to_dict()

@@ -83,7 +83,7 @@ function isPowered(
   // toggle even when the kind defaults to powered.
   const props = (component.properties as { requiresPower?: unknown }) ?? {};
   if (props.requiresPower === false) return false;
-  return POWER_KINDS.has(component.componentType);
+  return component.kindId != null && POWER_KINDS.has(component.kindId);
 }
 
 export function InstrumentPowerPanel() {
@@ -104,7 +104,7 @@ export function InstrumentPowerPanel() {
         objectId: obj.id,
         objectName: obj.name || "(unnamed)",
         componentName: comp?.name ?? "(unknown component)",
-        componentType: comp?.componentType ?? "",
+        componentType: comp?.kindId ?? "",
         on: deviceStatePower(state),
       });
     }

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-05-23T23:43:21.727Z",
+  "generated_at": "2026-05-25T14:37:48.649Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -18,8 +18,6 @@
     "beam_splitter": "beam_splitter",
     "fiber_coupler": "fiber_coupler",
     "fiber": "fiber",
-    "fiber_end": "fiber_end",
-    "isolator": "isolator",
     "aom": "aom",
     "eom": "eom",
     "nonlinear_crystal": "nonlinear_crystal",
@@ -53,8 +51,6 @@
     "beam_splitter",
     "fiber_coupler",
     "fiber",
-    "fiber_end",
-    "isolator",
     "aom",
     "eom",
     "nonlinear_crystal",
@@ -862,144 +858,6 @@
           "polarizationExtinctionRatioDb": 25,
           "bandwidthMhzKm": null,
           "randomJonesSeed": null
-        },
-        "intrinsic_param_keys": null,
-        "state_param_keys": null,
-        "port_domains": {}
-      }
-    },
-    {
-      "id": "fiber_end",
-      "display_name": "Fiber End",
-      "component_types": [
-        "fiber_end"
-      ],
-      "asset_category": "optical",
-      "catalog_group": "Passive",
-      "asset_name_pattern": null,
-      "physics": {
-        "element_kind": "fiber_end",
-        "primary_domain": "optical",
-        "default_physics": [
-          "optical"
-        ],
-        "anchors": {
-          "required": [
-            "tip"
-          ],
-          "optional": [],
-          "needs_direction": [
-            "tip"
-          ],
-          "needs_aperture": [
-            "tip"
-          ]
-        },
-        "align_variant": "translate_anchor_to_beam",
-        "align_tolerance_mm": 25,
-        "align_summary": "Per-end ferrule for a fiber. The `tip` anchor is the external optical face — Align End snaps it onto the closest beam-path segment within alignToleranceMm (≤25 mm). The paired hidden fiber body wrapper's spline endpoint re-derives from this object's pose at draw time, so moving / aligning a fiber_end automatically drags the cable spline.",
-        "default_params": {
-          "connectorType": null,
-          "polish": null,
-          "slowAxisDegInBodyFrame": null,
-          "fiberBodyObjectId": null,
-          "endRole": "A",
-          "wavelengthRangeNm": [
-            770,
-            790
-          ]
-        },
-        "intrinsic_param_keys": null,
-        "state_param_keys": null,
-        "port_domains": {}
-      }
-    },
-    {
-      "id": "isolator",
-      "display_name": "Isolator",
-      "component_types": [
-        "isolator"
-      ],
-      "asset_category": "optical",
-      "catalog_group": "Passive",
-      "asset_name_pattern": null,
-      "physics": {
-        "element_kind": "isolator",
-        "primary_domain": "optical",
-        "default_physics": [
-          "optical"
-        ],
-        "anchors": {
-          "required": [
-            "faraday_centre"
-          ],
-          "optional": [],
-          "needs_direction": [
-            "faraday_centre"
-          ],
-          "needs_aperture": [
-            "faraday_centre"
-          ]
-        },
-        "align_variant": "translate_anchor_to_beam",
-        "align_tolerance_mm": 25,
-        "align_summary": "Optical isolator = Glan-Laser + Faraday Rotator + Glan-Laser in series. The two Glan slabs are sub-Components (GlanLaserCalcitePrism) in the isolator's binding tree — each owns its own cut interface anchor. The isolator itself only owns faraday_centre: the TGG slab's central plane normal to the optical axis. Position = isolator body centre, direction = +Z optical axis. Faraday physics: m_faraday_slab 5×5 with B_x = B_y = L/n + θ_F rotation of chief-ray tilt + E_x/E_y augmented offsets. kindParams.faraday.{faradayRotationDeg, lengthMm, refractiveIndex, augmentedOffsetXMm, augmentedOffsetYMm} drive the matrix.",
-        "default_params": {
-          "forwardLossDb": 0.5,
-          "isolationDb": 40,
-          "faradayRotationDeg": 45,
-          "transmissionAxisDegBeamLocal": 0,
-          "wavelengthRangeNm": [
-            400,
-            1100
-          ],
-          "frontGlan": {
-            "transmissionAxisDegBeamLocal": 0,
-            "extinctionRatioDb": 55,
-            "transmission": 0.92,
-            "wedgeAngleDeg": 38.5,
-            "airGapMm": 0.05,
-            "lengthMm": 7.5,
-            "refractiveIndex": 1.48,
-            "airGapAstigmatismMm": 0.05,
-            "augmentedOffsetXMm": 0,
-            "coatingNormalBodyLocal": [
-              0,
-              0.7826081692851781,
-              0.6225146366376195
-            ],
-            "wavelengthRangeNm": [
-              400,
-              1100
-            ]
-          },
-          "faraday": {
-            "faradayRotationDeg": 45,
-            "lengthMm": 8,
-            "refractiveIndex": 1.95,
-            "augmentedOffsetXMm": 0,
-            "augmentedOffsetYMm": 0
-          },
-          "backGlan": {
-            "transmissionAxisDegBeamLocal": 45,
-            "extinctionRatioDb": 55,
-            "transmission": 0.92,
-            "wedgeAngleDeg": 38.5,
-            "airGapMm": 0.05,
-            "lengthMm": 7.5,
-            "refractiveIndex": 1.48,
-            "airGapAstigmatismMm": 0.05,
-            "augmentedOffsetXMm": 0,
-            "coatingNormalBodyLocal": [
-              0,
-              0.7826081692851781,
-              0.6225146366376195
-            ],
-            "wavelengthRangeNm": [
-              400,
-              1100
-            ]
-          }
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,

@@ -191,6 +191,95 @@ export function applyViewerHintsToGeometry(
 }
 
 
+// ---------------------------------------------------------------------------
+// Cluster detection for "mid-click to delete a flat face" geometry editing.
+//
+// Originally lived inline in ComponentComposer; moved here so the
+// Binding-dev Asset3D editor can call it without depending on the
+// composer. BFS over triangles that (a) share an edge with a triangle
+// already in the cluster AND (b) have a normal within ~18° of the start
+// triangle. Returns the cluster's triangle indices — the caller maps
+// each to its centroid key and adds them to viewerHints.deletedCentroids.
+// ---------------------------------------------------------------------------
+
+function _vertexKey(positions: Float32Array, offset: number): string {
+  // 0.5 mm rounding — same as centroidKey above so adjacent triangles
+  // sharing a vertex still resolve to identical keys (STL exports can
+  // produce float drift between supposedly-shared vertices).
+  const r = (n: number) => Math.round(n * 2) / 2;
+  return `${r(positions[offset])},${r(positions[offset + 1])},${r(positions[offset + 2])}`;
+}
+
+function _triangleNormal(positions: Float32Array, triIdx: number): [number, number, number] {
+  const o = triIdx * 9;
+  const ax = positions[o + 3] - positions[o + 0];
+  const ay = positions[o + 4] - positions[o + 1];
+  const az = positions[o + 5] - positions[o + 2];
+  const bx = positions[o + 6] - positions[o + 0];
+  const by = positions[o + 7] - positions[o + 1];
+  const bz = positions[o + 8] - positions[o + 2];
+  const nx = ay * bz - az * by;
+  const ny = az * bx - ax * bz;
+  const nz = ax * by - ay * bx;
+  const len = Math.hypot(nx, ny, nz);
+  if (len < 1e-12) return [0, 0, 0];
+  return [nx / len, ny / len, nz / len];
+}
+
+export function findCoplanarCluster(
+  positions: Float32Array,
+  startTriIdx: number,
+): Set<number> {
+  const triangleCount = Math.floor(positions.length / 9);
+  if (startTriIdx >= triangleCount || startTriIdx < 0) return new Set();
+  const startNormal = _triangleNormal(positions, startTriIdx);
+  const edgeToTris = new Map<string, number[]>();
+  for (let t = 0; t < triangleCount; t += 1) {
+    const o = t * 9;
+    const v0 = _vertexKey(positions, o + 0);
+    const v1 = _vertexKey(positions, o + 3);
+    const v2 = _vertexKey(positions, o + 6);
+    const verts = [v0, v1, v2];
+    for (let i = 0; i < 3; i += 1) {
+      const a = verts[i];
+      const b = verts[(i + 1) % 3];
+      const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+      let arr = edgeToTris.get(key);
+      if (!arr) { arr = []; edgeToTris.set(key, arr); }
+      arr.push(t);
+    }
+  }
+  const cluster = new Set<number>([startTriIdx]);
+  const queue = [startTriIdx];
+  while (queue.length > 0) {
+    const t = queue.shift()!;
+    const o = t * 9;
+    const verts = [
+      _vertexKey(positions, o + 0),
+      _vertexKey(positions, o + 3),
+      _vertexKey(positions, o + 6),
+    ];
+    for (let i = 0; i < 3; i += 1) {
+      const a = verts[i];
+      const b = verts[(i + 1) % 3];
+      const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+      const neighbors = edgeToTris.get(key);
+      if (!neighbors) continue;
+      for (const n of neighbors) {
+        if (cluster.has(n)) continue;
+        const nNorm = _triangleNormal(positions, n);
+        const dot = nNorm[0] * startNormal[0] + nNorm[1] * startNormal[1] + nNorm[2] * startNormal[2];
+        if (dot >= 0.95) {
+          cluster.add(n);
+          queue.push(n);
+        }
+      }
+    }
+  }
+  return cluster;
+}
+
+
 /** Material picker for viewer-hint-driven loads. Returns the requested
  *  material when the hint matches a known type, otherwise ``null`` —
  *  caller falls back to its default (``materialFor(component, state)``

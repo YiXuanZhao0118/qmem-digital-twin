@@ -131,7 +131,7 @@ async def test_commit_flips_drafts_to_active_and_sets_approved(session_tracker):
             db,
             session_id=sess.id,
             name=f"test-comp-{sess.id}",
-            component_type=_pick_kind(),
+            kind_id=_pick_kind(),
             asset_3d_id=asset.id,
         )
 
@@ -217,7 +217,7 @@ async def test_undo_blocked_when_draft_component_still_references_asset(session_
             db,
             session_id=sess.id,
             name=f"c-{sess.id}",
-            component_type=_pick_kind(),
+            kind_id=_pick_kind(),
             asset_3d_id=asset.id,
         )
 
@@ -280,7 +280,7 @@ async def test_cancel_rolls_back_all_drafts(session_tracker):
             db,
             session_id=sess.id,
             name=f"cancel-c-{sess.id}",
-            component_type=_pick_kind(),
+            kind_id=_pick_kind(),
             asset_3d_id=asset.id,
         )
 
@@ -418,7 +418,7 @@ async def test_unlock_clears_ai_approved_at_and_writes_event(session_tracker):
             db,
             session_id=sess.id,
             name=f"unlock-comp-{sess.id}",
-            component_type=_pick_kind(),
+            kind_id=_pick_kind(),
             asset_3d_id=asset.id,
         )
         await agent_session_svc.commit_session(db, sess.id)
@@ -487,7 +487,7 @@ async def test_locked_active_asset_still_bindable_in_new_session(session_tracker
             db,
             session_id=sess2.id,
             name=f"new-comp-{sess2.id}",
-            component_type=_pick_kind(),
+            kind_id=_pick_kind(),
             asset_3d_id=asset.id,
         )
         assert comp.asset_3d_id == asset.id

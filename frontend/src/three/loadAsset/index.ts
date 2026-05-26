@@ -136,7 +136,7 @@ export async function loadAssetObject(
     translucentHousing?: boolean;
   } | null,
 ): Promise<THREE.Object3D> {
-  if (component.componentType === "optical_table") {
+  if (component.kindId === "optical_table") {
     const table = createNewportOpticalTable();
     table.name = component.name;
     return table;
@@ -148,7 +148,7 @@ export async function loadAssetObject(
   // template's component.properties.fiberNodes is the legacy fallback for
   // pre-2026-05-11 rows. The two ferrules are placed at body-local
   // poses from fiber PE.kindParams.endA / endB (alembic 0056).
-  if (component.componentType === "fiber") {
+  if (component.kindId === "fiber") {
     const wrapper = new THREE.Group();
     wrapper.name = component.name;
     wrapper.add(createFiberSplineObject(
@@ -170,8 +170,8 @@ export async function loadAssetObject(
   // Without nodes we fall back to the straight-cylinder rendering — same
   // appearance as before the spline mode landed.
   if (
-    component.componentType === "rf_cable" ||
-    component.componentType === "sma_cable"
+    component.kindId === "rf_cable" ||
+    component.kindId === "sma_cable"
   ) {
     const wrapper = new THREE.Group();
     wrapper.name = component.name;
@@ -344,7 +344,7 @@ export async function loadAssetObject(
   //      arbitrary catalog assets where we don't have semantic anchors.
   // Optical-table is excluded — it's already anchored at its top-surface
   // centre by createNewportOpticalTable.
-  if (component.componentType !== "optical_table") {
+  if (component.kindId !== "optical_table") {
     const wrapper = new THREE.Group();
     wrapper.name = component.name;
     wrapper.add(object);
@@ -363,7 +363,7 @@ export async function loadAssetObject(
       const [bx, by, bz] = apertureForward;
       const apertureShift = new THREE.Vector3(bx, bz, -by).divideScalar(100);
       object.position.sub(apertureShift);
-    } else if (component.componentType !== "isolator") {
+    } else if (component.kindId !== "isolator") {
       // Skip bbox auto-centering for isolators: the body asset and the
       // piece sub-Assets are siblings in the binding tree but the body
       // mesh's bbox center is far from the body's STL origin. Centering

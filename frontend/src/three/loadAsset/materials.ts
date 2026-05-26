@@ -9,8 +9,8 @@ function colorForComponent(component: ComponentItem, state?: DeviceState): THREE
   const temperatureC = typeof deviceState.temperatureC === "number" ? deviceState.temperatureC : 0;
   const pressurePa = typeof deviceState.pressurePa === "number" ? deviceState.pressurePa : 0;
 
-  if (component.componentType === "rf_amplifier" && temperatureC > 45) return "#dc2626";
-  if (component.componentType === "vacuum_chamber" && pressurePa > 0.01) return "#dc2626";
+  if (component.kindId === "rf_amplifier" && temperatureC > 45) return "#dc2626";
+  if (component.kindId === "vacuum_chamber" && pressurePa > 0.01) return "#dc2626";
   if (enabled === false) return "#6b7280";
 
   const colorOverride = (component.properties as { colorHex?: unknown } | null | undefined)?.colorHex;
@@ -18,7 +18,7 @@ function colorForComponent(component: ComponentItem, state?: DeviceState): THREE
     return colorOverride;
   }
 
-  switch (component.componentType) {
+  switch (component.kindId) {
     case "optical_table":
       return "#3f4742";
     case "vacuum_chamber":
@@ -87,15 +87,16 @@ export function materialFor(
   component: ComponentItem,
   state?: DeviceState,
 ): THREE.MeshStandardMaterial {
-  const transparent = component.componentType === "vacuum_chamber" || component.componentType === "lens";
-  const isPolished = ["mirror", "optical_post", "pedestal_post", "post_spacer", "clamping_fork", "laser_diode_mount", "sma_jack", "usb_b_jack"].includes(component.componentType);
-  const isAnodized = component.componentType === "mirror_mount" || component.componentType === "isolator" || component.componentType === "instrument_chassis" || component.componentType === "power_supply_ac_dc";
+  const transparent = component.kindId === "vacuum_chamber" || component.kindId === "lens";
+  const isPolished = component.kindId != null
+    && ["mirror", "optical_post", "pedestal_post", "post_spacer", "clamping_fork", "laser_diode_mount", "sma_jack", "usb_b_jack"].includes(component.kindId);
+  const isAnodized = component.kindId === "mirror_mount" || component.kindId === "isolator" || component.kindId === "instrument_chassis" || component.kindId === "power_supply_ac_dc";
   return new THREE.MeshStandardMaterial({
     color: colorForComponent(component, state),
     metalness: isPolished ? 0.75 : isAnodized ? 0.55 : 0.12,
     roughness: isPolished ? 0.2 : isAnodized ? 0.5 : 0.42,
     transparent,
-    opacity: component.componentType === "vacuum_chamber" ? 0.72 : component.componentType === "lens" ? 0.82 : 1,
+    opacity: component.kindId === "vacuum_chamber" ? 0.72 : component.kindId === "lens" ? 0.82 : 1,
   });
 }
 

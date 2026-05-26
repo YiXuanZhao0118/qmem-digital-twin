@@ -136,7 +136,7 @@ export function buildGlanPolarizerPrismObject(
   // the +(L, a) side of the cut plane → moves in +(offY, offZ);
   // Prism B on the -(L, a) side → moves the opposite direction.
   // Sign mistake here pushes the halves through each other instead of
-  // apart (the original cause of "晶體又重疊了").
+  // apart (the original cause of "crystals overlapping again").
   const cutNorm = Math.hypot(L, a);
   const gapUnit = mmToThree(airGapMm);
   const offY = (gapUnit * L) / cutNorm;

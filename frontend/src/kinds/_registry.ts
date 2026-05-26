@@ -72,6 +72,10 @@ export type AnchorId =
   // `isolator` kind below.
   | "front_pbs"
   | "back_pbs"
+  // Faraday rod centre — used by the `isolator` composite kind to mark
+  // the rotation axis pivot between the two PBS halves. Position only;
+  // direction inferred from front_pbs → back_pbs vector.
+  | "faraday_centre"
   | "+x" | "-x" | "+y" | "-y" | "+z" | "-z";
 
 /** Anchor IDs the Editor inspector exposes in its dropdown. We

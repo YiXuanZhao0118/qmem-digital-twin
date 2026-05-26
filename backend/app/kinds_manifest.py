@@ -64,9 +64,11 @@ def load_manifest() -> dict[str, Any]:
 
 
 def component_type_to_kind() -> dict[str, str]:
-    """Replaces the hand-maintained
-    `OPTICAL_COMPONENT_TYPE_TO_KIND` constant in
-    `routers/components.py`. Same shape; derived from frontend plugins.
+    """DEPRECATED (M5): kind_id replaces component_type; this map is now
+    effectively an identity over the catalog keys. Retained because
+    callers still rely on the keys to enumerate valid kind identifiers
+    (e.g. ``list_kinds()`` in the agent tool layer). Treat the return
+    value as the set of recognised kind ids.
     """
     return dict(load_manifest()["component_type_to_kind"])
 

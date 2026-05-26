@@ -67,7 +67,7 @@ COMPONENTS: list[dict[str, object]] = [
     {
         "name": "rf_cable_sma_to_bnc",
         "asset": "primitive_rf_cable_sma_to_bnc",
-        "component_type": "rf_cable",
+        "kind_id": "rf_cable",
         "brand": "Generic",
         "model": "SMA to BNC cable",
         "physics_capabilities": ["rf"],
@@ -91,7 +91,7 @@ COMPONENTS: list[dict[str, object]] = [
     {
         "name": "rf_cable_bnc_to_bnc",
         "asset": "primitive_rf_cable_bnc_to_bnc",
-        "component_type": "rf_cable",
+        "kind_id": "rf_cable",
         "brand": "Generic",
         "model": "BNC cable",
         "physics_capabilities": ["rf"],

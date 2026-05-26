@@ -27,12 +27,12 @@ from app.models import Component, SceneObject  # noqa: E402
 
 
 def _component_base(component: Component) -> str:
-    base = (component.model or "").strip() or (component.component_type or "").strip()
+    base = (component.model or "").strip() or (component.kind_id or "").strip()
     return base or "component"
 
 
-def _object_base(component_type: str | None) -> str:
-    return (component_type or "").strip().upper() or "OBJECT"
+def _object_base(kind_id: str | None) -> str:
+    return (kind_id or "").strip().upper() or "OBJECT"
 
 
 async def main() -> None:
@@ -77,7 +77,7 @@ async def main() -> None:
         ctype_by_cid = dict(
             (cid, ctype)
             for cid, ctype in (
-                await session.execute(select(Component.id, Component.component_type))
+                await session.execute(select(Component.id, Component.kind_id))
             )
         )
 

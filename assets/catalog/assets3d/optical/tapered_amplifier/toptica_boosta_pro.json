@@ -2,7 +2,7 @@
   "id": "toptica_boosta_pro",
   "vendorPart": "BoosTA pro",
   "displayName": "TOPTICA BoosTA pro Tapered Amplifier",
-  "geometryRef": null,
+  "geometryRef": "files/glb/toptica_boosta_pro.glb",
   "geometryRefGlb": null,
   "bodyFrameRotation": null,
 

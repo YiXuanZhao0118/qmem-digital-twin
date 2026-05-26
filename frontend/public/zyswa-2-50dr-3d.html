@@ -402,7 +402,7 @@ function makeGndPin() {
 }
 {
   const gnd = makeGndPin();
-  // front face (+Z), upper area, offset toward +X side ("上面偏側邊")
+  // front face (+Z), upper area, offset toward +X side ("upper side, off-center")
   gnd.rotation.x = Math.PI/2; // pin axis now points +Z (outward from front face)
   gnd.position.set(D.bodyW/2 - 4.0, D.bodyH/4, D.bodyW/2);
   root.add(gnd);

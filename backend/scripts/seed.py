@@ -443,7 +443,7 @@ ASSETS = [
 COMPONENTS = [
     {
         "name": "optical_table_1",
-        "component_type": "optical_table",
+        "kind_id": "optical_table",
         "brand": "Newport",
         "model": "RS4000 1200x3600x457 + S-2000A",
         "asset": "primitive_table",
@@ -467,7 +467,7 @@ COMPONENTS = [
     },
     {
         "name": "vacuum_chamber_1",
-        "component_type": "vacuum_chamber",
+        "kind_id": "vacuum_chamber",
         "brand": "QMEM",
         "model": "Rb-memory-cell",
         "asset": "primitive_chamber",
@@ -477,7 +477,7 @@ COMPONENTS = [
     },
     {
         "name": "laser_852nm_1",
-        "component_type": "laser",
+        "kind_id": "laser",
         "brand": "Toptica",
         "model": "DL pro 852",
         "asset": "primitive_box",
@@ -487,7 +487,7 @@ COMPONENTS = [
     },
     {
         "name": "laser_894nm_1",
-        "component_type": "laser",
+        "kind_id": "laser",
         "brand": "Toptica",
         "model": "DL pro 894",
         "asset": "primitive_box",
@@ -497,7 +497,7 @@ COMPONENTS = [
     },
     {
         "name": "mirror_001",
-        "component_type": "mirror",
+        "kind_id": "mirror",
         "brand": "Thorlabs",
         "model": "PF10-03-P01",
         "asset": "primitive_mirror",
@@ -506,7 +506,7 @@ COMPONENTS = [
     },
     {
         "name": "mirror_002",
-        "component_type": "mirror",
+        "kind_id": "mirror",
         "brand": "Thorlabs",
         "model": "PF10-03-P01",
         "asset": "primitive_mirror",
@@ -515,7 +515,7 @@ COMPONENTS = [
     },
     {
         "name": "lens_001",
-        "component_type": "lens",
+        "kind_id": "lens",
         "brand": "Edmund Optics",
         "model": "AC254-150-B",
         "asset": "primitive_lens",
@@ -524,7 +524,7 @@ COMPONENTS = [
     },
     {
         "name": "aom_001",
-        "component_type": "aom",
+        "kind_id": "aom",
         "brand": "Gooch & Housego",
         "model": "AOMO 3080",
         "asset": "primitive_box",
@@ -534,7 +534,7 @@ COMPONENTS = [
     },
     {
         "name": "eom_9ghz_001",
-        "component_type": "eom",
+        "kind_id": "eom",
         "brand": "Qubig",
         "model": "PM-C9G",
         "asset": "primitive_box",
@@ -548,7 +548,7 @@ COMPONENTS = [
         # user can replace with a specific PM-0K1-* / PM-0S5-* / PM-AV*-* variant
         # via the Object panel after dragging into the scene.
         "name": "eom_eospace_pm_nir",
-        "component_type": "eom",
+        "kind_id": "eom",
         "brand": "EOSpace",
         "model": "PM-0K1-NIR (generic)",
         "asset": "primitive_box",
@@ -566,7 +566,7 @@ COMPONENTS = [
         # Bragg condition 2*Λ*sin(θ_B)=λ/n, deflection θ=λf/v_a, ±1 order
         # frequency shift ±f_acoustic.
         "name": "aa_optoelectronic_mt80_a1_5_ir",
-        "component_type": "aom",
+        "kind_id": "aom",
         "brand": "AA Optoelectronic",
         "model": "MT80-A1.5-IR",
         # GLB carries the real housing geometry (input/output through-holes,
@@ -633,7 +633,7 @@ COMPONENTS = [
         # max amplifier current 1.1 A. Limited life-time, no warranty outside
         # 680..690 nm.
         "name": "toptica_ta_0690_0500_2",
-        "component_type": "tapered_amplifier",
+        "kind_id": "tapered_amplifier",
         "brand": "TOPTICA Photonics",
         "model": "TA-0690-0500-2",
         "asset": "primitive_box",
@@ -681,7 +681,7 @@ COMPONENTS = [
         # The seed enters the BACKWARD port and the amplified beam exits
         # the FORWARD port; ASE leaks out BOTH faces even without a seed.
         "name": "toptica_boosta_pro",
-        "component_type": "tapered_amplifier",
+        "kind_id": "tapered_amplifier",
         "brand": "TOPTICA Photonics",
         "model": "BoosTA pro",
         # Real GLB from TOPTICA — includes housing colours, panel features,
@@ -721,7 +721,7 @@ COMPONENTS = [
     },
     {
         "name": "rf_generator_001",
-        "component_type": "rf_generator",
+        "kind_id": "rf_generator",
         "brand": "Rohde & Schwarz",
         "model": "SMB100A",
         "asset": "primitive_box",
@@ -731,7 +731,7 @@ COMPONENTS = [
     },
     {
         "name": "rf_amp_001",
-        "component_type": "rf_amplifier",
+        "kind_id": "rf_amplifier",
         "brand": "Mini-Circuits",
         "model": "ZHL-42W+",
         "asset": "primitive_box",
@@ -758,7 +758,7 @@ COMPONENTS = [
     },
     {
         "name": "rf_amp_zhl_1_2w_plus_001",
-        "component_type": "rf_amplifier",
+        "kind_id": "rf_amplifier",
         "brand": "Mini-Circuits",
         "model": "ZHL-1-2W+",
         "asset": "primitive_box",
@@ -792,7 +792,7 @@ COMPONENTS = [
     },
     {
         "name": "thorlabs_post_holder_ph50em",
-        "component_type": "post_holder",
+        "kind_id": "post_holder",
         "brand": "Thorlabs",
         "model": "PH50E/M",
         "asset": "primitive_thorlabs_post_holder",
@@ -809,7 +809,7 @@ COMPONENTS = [
     },
     {
         "name": "thorlabs_post_tr50m",
-        "component_type": "optical_post",
+        "kind_id": "optical_post",
         "brand": "Thorlabs",
         "model": "TR50/M",
         "asset": "primitive_thorlabs_post",
@@ -826,7 +826,7 @@ COMPONENTS = [
     },
     {
         "name": "thorlabs_clamping_fork_cf038cm_p5",
-        "component_type": "clamping_fork",
+        "kind_id": "clamping_fork",
         "brand": "Thorlabs",
         "model": "CF038C/M-P5",
         "asset": "primitive_thorlabs_clamping_fork",
@@ -843,7 +843,7 @@ COMPONENTS = [
     },
     {
         "name": "thorlabs_clamping_fork_cf175cm_p5_edrawing",
-        "component_type": "clamping_fork_3d_model",
+        "kind_id": "clamping_fork_3d_model",
         "brand": "Thorlabs",
         "model": "CF175C/M-P5",
         "asset": "thorlabs_cf175cm_p5_edrawing",
@@ -859,7 +859,7 @@ COMPONENTS = [
     },
     {
         "name": "thorlabs_clamping_fork_cf175cm_p5",
-        "component_type": "clamping_fork",
+        "kind_id": "clamping_fork",
         "brand": "Thorlabs",
         "model": "CF175C/M-P5",
         "asset": "thorlabs_cf175cm_p5_stl",
@@ -884,7 +884,7 @@ COMPONENTS = [
         # filtering. Object is parked in front of the laser path —
         # user can drag it into a real beam line in the viewer.
         "name": "thorlabs_lens_la1614_b",
-        "component_type": "lens_plano_convex",
+        "kind_id": "lens_plano_convex",
         "brand": "Thorlabs",
         "model": "LA1614-B",
         "asset": "thorlabs_la1614_b_stl",
@@ -903,7 +903,7 @@ COMPONENTS = [
         # Thorlabs LA1540-B — N-BK7 plano-convex, Ø1/2", f = 15 mm.
         # Short-focal companion to LA1614-B for tight focusing setups.
         "name": "thorlabs_lens_la1540_b",
-        "component_type": "lens_plano_convex",
+        "kind_id": "lens_plano_convex",
         "brand": "Thorlabs",
         "model": "LA1540-B",
         "asset": "thorlabs_la1540_b_stl",
@@ -924,7 +924,7 @@ COMPONENTS = [
         # Pure mechanical mount: no OPTICAL_COMPONENT_TYPE_TO_KIND mapping,
         # so auto-register is skipped — renders as STL only.
         "name": "thorlabs_mirror_mount_ks1",
-        "component_type": "mirror_mount",
+        "kind_id": "mirror_mount",
         "brand": "Thorlabs",
         "model": "KS1",
         "asset": "thorlabs_ks1_stl",
@@ -942,7 +942,7 @@ COMPONENTS = [
         # 3 adjusters. Internal SM1 threading lets it hold SM1-threaded
         # optics directly (no retaining ring needed).
         "name": "thorlabs_mirror_mount_ks1t",
-        "component_type": "mirror_mount",
+        "kind_id": "mirror_mount",
         "brand": "Thorlabs",
         "model": "KS1T",
         "asset": "thorlabs_ks1t_stl",
@@ -967,7 +967,7 @@ COMPONENTS = [
         # a per-component override; isolator default stays #1a1a1c).
         # forwardLossDb = -10 * log10(0.95) ≈ 0.22 for the spec ≥95% T.
         "name": "coherent_tornos_850_4",
-        "component_type": "isolator",
+        "kind_id": "isolator",
         "brand": "Coherent",
         "model": "TORNOS-850-4",
         "asset": "coherent_tornos_850_4_primitive",
@@ -1452,7 +1452,7 @@ for _part, _ctype, _asset, _x, _y in _THORLABS_BULK:
         _props.setdefault("heightMm", _RS_LENGTHS_MM[_part])
     _component_entry: dict[str, object] = {
         "name": f"thorlabs_{_norm}",
-        "component_type": _ctype,
+        "kind_id": _ctype,
         "brand": "Thorlabs",
         "model": _part.replace("_M", "/M"),
         "asset": _final_asset,

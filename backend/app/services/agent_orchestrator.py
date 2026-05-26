@@ -86,7 +86,7 @@ def _serialize_component(comp: Component) -> dict[str, Any]:
     return {
         "id": str(comp.id),
         "name": comp.name,
-        "component_type": comp.component_type,
+        "kind_id": comp.kind_id,
         "asset_3d_id": str(comp.asset_3d_id) if comp.asset_3d_id else None,
         "brand": comp.brand,
         "model": comp.model,

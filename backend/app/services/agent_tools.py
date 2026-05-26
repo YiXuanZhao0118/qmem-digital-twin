@@ -94,7 +94,7 @@ def _snapshot(entity: Asset3D | Component) -> dict[str, Any]:
     return {
         "id": str(entity.id),
         "name": entity.name,
-        "component_type": entity.component_type,
+        "kind_id": entity.kind_id,
         "asset_3d_id": str(entity.asset_3d_id) if entity.asset_3d_id else None,
     }
 
@@ -105,7 +105,7 @@ def _snapshot(entity: Asset3D | Component) -> dict[str, Any]:
 
 
 def list_kinds() -> list[str]:
-    """Return every valid ``component_type`` the agent may pass to
+    """Return every valid ``kind_id`` the agent may pass to
     :func:`create_component`. Derived from the frontend plugin
     manifest so backend + frontend never drift.
     """
@@ -214,7 +214,7 @@ async def create_component(
     *,
     session_id: uuid.UUID,
     name: str,
-    component_type: str,
+    kind_id: str,
     asset_3d_id: uuid.UUID | None = None,
     brand: str | None = None,
     model: str | None = None,
@@ -225,7 +225,7 @@ async def create_component(
 
     Validation:
       * Session is running.
-      * ``component_type`` is a known kind (sourced from the manifest).
+      * ``kind_id`` is a known kind (sourced from the manifest).
       * If ``asset_3d_id`` is given, the referenced asset must be
         either ``status='active'`` *and not* ai_approved-locked, or a
         draft this session owns. Locked active assets ARE allowed to
@@ -240,9 +240,9 @@ async def create_component(
         raise ToolValidationError("Component name cannot be empty.")
 
     valid_kinds = set(kinds_manifest.component_type_to_kind().keys())
-    if component_type not in valid_kinds:
+    if kind_id not in valid_kinds:
         raise ToolValidationError(
-            f"Unknown component_type {component_type!r}. "
+            f"Unknown kind_id {kind_id!r}. "
             f"Call list_kinds() to see valid values."
         )
 
@@ -263,7 +263,7 @@ async def create_component(
 
     comp = Component(
         name=name.strip(),
-        component_type=component_type,
+        kind_id=kind_id,
         asset_3d_id=asset_3d_id,
         brand=brand,
         model=model,

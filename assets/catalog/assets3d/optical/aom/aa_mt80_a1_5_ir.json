@@ -25,7 +25,16 @@
       "positionMmBodyLocal": { "x": 0, "y": 0, "z": 0.8 },
       "normalBodyLocal":     { "x": 0, "y": 0, "z": 1 },
       "apertureMm": 1.5,
-      "apertureShape": "circle" }
+      "apertureShape": "circle" },
+    { "id": "rf_in",
+      "domain": "rf",
+      "positionMmBodyLocal": { "x": 15.0, "y": 0, "z": 0 },
+      "normalBodyLocal":     { "x": 1, "y": 0, "z": 0 },
+      "apertureMm": 0,
+      "apertureShape": "circle",
+      "_role": "AOM piezo transducer RF input (SMA). Position = transducerOffsetFromCenterMmX × rfPropagationDirectionBodyLocal. RF sink: read by diffract_aom op from §7.5 tracer's signalAtPort, not a ray-tracer entry face — no transition listed.",
+      "_USER_TODO": "x=15mm is the migration 0083 default — refine to the actual SMA jack offset on the MT80-A1.5 housing."
+    }
   ],
 
   "transitions": [

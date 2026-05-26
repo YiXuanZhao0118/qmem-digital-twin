@@ -36,10 +36,16 @@ import {
   shouldRenderViaBindings,
 } from "../three/bindingRendererGate";
 import { wavelengthToColor } from "../three/opticalBeams";
-import { traceBeamsFromLasers, _testReflect, gaussianWaistAtZ, type TraceSegment } from "../three/rayTrace";
+// Phase 8.6 — `traceBeamsFromLasers` + `gaussianWaistAtZ` + `getEmissionVisual`
+// + the local `buildTraceLine` fn were removed when the renderer switched
+// to v3 (Phase 7.3). `_testReflect` stays for the global window helper
+// below; `TraceSegment` type is still consumed by click/snap handlers
+// reading window.__rayTraceDebug (which the adapter populates).
+import { _testReflect, type TraceSegment } from "../three/rayTrace";
+import { runV3SolverFromDbApi, type V3LabSegment, type V3SolverResult } from "../api/client";
+import { adaptV3LabSegmentsToTraceSegments } from "../three/v3TraceAdapter";
 import { disposeFarfieldLobe, makeFarfieldLobe } from "../three/hornFarfield";
 import { disposeRfBadgeSprite, makeRfBadgeSprite } from "../three/rfBadge";
-import { getEmissionVisual } from "../utils/emissionVisuals";
 import { computeWaveplateFastAxisDeg } from "../utils/waveplateAxis";
 import { buildSceneGateOverrides } from "../utils/timingEvaluation";
 import {
@@ -61,115 +67,13 @@ import { ToolbarHint } from "./ToolbarHint";
 
 (window as unknown as { __testReflect?: typeof _testReflect }).__testReflect = _testReflect;
 
-function buildTraceLine(
-  segment: TraceSegment,
-  maxPowerOnPath: number,
-  colorOverrideHex: string | null,
-): THREE.Object3D {
-  const colour = colorOverrideHex
-    ? new THREE.Color(colorOverrideHex)
-    : wavelengthToColor(segment.aomSideband?.centerWavelengthNm ?? segment.wavelengthNm);
-  // Colour stays constant along the chain: a beam keeps its source colour
-  // through mirrors / PBS / AOM / lens / waveplate / etc. Reflected vs
-  // transmitted branches are distinguished by position and power-driven
-  // opacity, not by a hue shift.
+// Phase 8.6: `buildTraceLine(segment, maxPowerOnPath, colorOverrideHex)`
+// was deleted here when the v3 rendering swap removed its only call
+// site. The new path in `renderRayTraces` builds a simpler THREE.Line
+// per v3 lab-segment with wavelength → colour and a constant opacity.
+// Restore from git history if the per-segment volumetric tube + waist
+// sampling is needed again.
 
-  // Visual radius is now drawn at TRUE 1× scale with no minimum-width floor
-  // (2026-05-12, per user). Earlier versions had VISUAL_BOOST=4 and
-  // VISUAL_FLOOR_UM=30 to keep narrow beams visually obvious, but that made
-  // a fiber output (MFD/2 ≈ 5 µm) render ≈ 120 µm wide right at the ferrule
-  // and never visibly diverge — the user couldn't see Gaussian expansion at
-  // all. With BOOST=1 / floor=0, a fiber-output beam starts at its true
-  // ~5 µm radius (effectively a line at scene scale) and fans out following
-  // the real w(z) = w0·√(1 + (z/zR)²) curve. The centerline (Line geometry
-  // below) keeps the beam visible even where the tube radius is sub-pixel.
-  const VISUAL_BOOST = 1;
-  const VISUAL_FLOOR_UM = 0;
-
-  const start = segment.startThree.clone();
-  const end = segment.endThree.clone();
-  const length = start.distanceTo(end);
-  if (length < 1e-6) return new THREE.Group();
-
-  // Sample w(z) at N points along the segment and revolve the resulting
-  // profile with LatheGeometry. A single CylinderGeometry from waistStart →
-  // waistEnd produces a LINEAR taper which silently flattens any focus pinch
-  // that falls between the endpoints (e.g. lens → distant element with the
-  // focal point in between would render as a monotonically expanding wedge
-  // even though the real Gaussian beam pinches and re-expands). Sampling
-  // along z makes the focus visible, and means moving a pass-through optic
-  // (HWP / polarizer) along the beam doesn't change the apparent profile.
-  const startZUm = segment.pathLengthFromSourceMmAtStart * 1000;
-  const endZUm = (segment.pathLengthFromSourceMmAtStart + segment.lengthMm) * 1000;
-  const N = 32;
-  const profile: THREE.Vector2[] = [];
-  for (let i = 0; i <= N; i++) {
-    const t = i / N;
-    const zUm = startZUm + (endZUm - startZUm) * t;
-    const radiusUm = Math.max(gaussianWaistAtZ(zUm, segment.beamMode), VISUAL_FLOOR_UM);
-    // 1e-9 Three units floor prevents zero-radius geometry (NaN normals)
-    // without imposing a visually meaningful minimum.
-    const radiusThree = Math.max(mmToThree(radiusUm / 1000) * VISUAL_BOOST, 1e-9);
-    profile.push(new THREE.Vector2(radiusThree, length * t));
-  }
-  const geometry = new THREE.LatheGeometry(profile, 24);
-
-  // Power-driven opacity. Stronger beam → more opaque, weaker → faded;
-  // normalised against the brightest segment from the same emitter so HWP
-  // rotation that shifts power between two PBS arms is visible as opacity
-  // asymmetry. Curve: alpha = 1 - exp(-K · relPower), normalised so
-  // relPower=0 maps to ALPHA_MIN and relPower=1 maps to ALPHA_MAX. ALPHA_MAX
-  // < 1 keeps a baseline transparency on even the strongest beam so
-  // overlapping segments don't fully occlude each other.
-  const ALPHA_MIN = 0.04;
-  const ALPHA_MAX = 0.7;
-  const ALPHA_K = 2.5;
-  // Absolute mW = nominal × factor. Caller (DigitalTwinViewer) computes
-  // maxPowerOnPath in the SAME absolute-mW unit so this division stays in
-  // [0, 1]. For backward TA emission the factor is 1.0 but the nominal is
-  // small, so the product is small → low alpha → faded backward beam.
-  const segPowerMw = segment.nominalPowerMwAtSource * segment.powerFactorAtStart;
-  const relPower = maxPowerOnPath > 1e-12
-    ? Math.max(0, Math.min(1, segPowerMw / maxPowerOnPath))
-    : 0;
-  const curve = (1 - Math.exp(-ALPHA_K * relPower)) / (1 - Math.exp(-ALPHA_K));
-  const tubeAlpha = ALPHA_MIN + curve * (ALPHA_MAX - ALPHA_MIN);
-  // Centerline gets a stronger floor so a near-extinct branch still shows
-  // *where* it goes (faint hair-line) while the volumetric tube can fade
-  // almost entirely.
-  const lineAlpha = Math.max(0.25, ALPHA_MIN + curve * (0.95 - 0.25));
-
-  const material = new THREE.MeshBasicMaterial({
-    color: colour,
-    transparent: true,
-    opacity: tubeAlpha,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-  });
-  const tube = new THREE.Mesh(geometry, material);
-  tube.position.copy(start);
-  const dir = end.clone().sub(start).normalize();
-  const yAxis = new THREE.Vector3(0, 1, 0);
-  tube.quaternion.setFromUnitVectors(yAxis, dir);
-  tube.renderOrder = 900;
-
-  // Add a thin centerline so very narrow beams are still visible
-  const lineGeom = new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(0, length, 0),
-  ]);
-  const line = new THREE.Line(
-    lineGeom,
-    new THREE.LineBasicMaterial({ color: colour, transparent: true, opacity: lineAlpha, depthWrite: false }),
-  );
-  line.renderOrder = 901;
-  tube.add(line);
-
-  tube.userData.traceBranch = segment.branch;
-  tube.userData.traceDepth = segment.depth;
-  tube.userData.beamSegment = segment;
-  return tube;
-}
 import { createLabPhotoRoom } from "../three/photoRoom";
 import { applyObjectGeometryOffset, applyObjectTransform, mmToThree } from "../three/transformUtils";
 import { relationTarget, worldAnchor } from "../utils/relationAnchors";
@@ -995,7 +899,7 @@ function createAxisLabel(text: string, color: string, position: THREE.Vector3, v
     context.arc(64, 64, 44, 0, Math.PI * 2);
     context.fill();
     context.fillStyle = "#ffffff";
-    // Bigger label font — user requested "加大字體".
+    // Bigger label font — user requested "larger font".
     context.font = `800 ${text.length > 1 ? 56 : 68}px Arial`;
     context.textAlign = "center";
     context.textBaseline = "middle";
@@ -1051,7 +955,7 @@ function createGlobalAxesGizmo(): THREE.Group {
   group.add(createAxisHitTarget(new THREE.Vector3(0, 0, 0), "#f8fafc", "home", 0.34));
 
   for (const axis of axes) {
-    // Thicker shaft + bigger arrow head per user request "軸也加粗".
+    // Thicker shaft + bigger arrow head per user request "thicken the axes too".
     // ArrowHelper(dir, origin, length, color, headLength, headWidth).
     // Shaft thickness comes from a wrapping cylinder (Line is 1px on most
     // GPUs) — wrap the ArrowHelper with an extra cylinder along the axis.
@@ -1102,7 +1006,7 @@ type DigitalTwinViewerProps = {
 };
 
 /** Pie-chart overlay for the 6 face-touch ops with this fixed wedge order
- *  (per user request "上 1 2 3 / 下 1 2 3"):
+ *  (per user request "top 1 2 3 / bottom 1 2 3"):
  *    Top half left→right    : V·E (upper-left), V·F (top), E·F (upper-right)
  *    Bottom half left→right : V·V (lower-left), E·E (bottom), F·F (lower-right)
  *  Centre button toggles the snap direction (A→B / B→A). Only visible when
@@ -1420,6 +1324,17 @@ export function DigitalTwinViewer({
   // useEffect can request a beam-only refresh when scrubTimeNs or PB
   // bindings change, without rebuilding component meshes.
   const redrawBeamsRef = useRef<() => void>(() => {});
+
+  // Phase 6.5 — cached v3 backend trace. Updated by the fetch effect
+  // when sceneData mutates (debounced). Consumed by renderRayTraces.
+  // Ref instead of state so the rebuild useEffect doesn't re-fire on
+  // each fetch; renderRayTraces reads .current and is invoked via
+  // redrawBeamsRef when the fetch resolves.
+  const v3LabSegmentsRef = useRef<V3LabSegment[]>([]);
+  // Phase 7.2 — full V3SolverResult cached so renderRayTraces can run
+  // the v3 → TraceSegment adapter, used to populate the legacy
+  // `window.__rayTraceDebug` contract that downstream panels read.
+  const v3SolverResultRef = useRef<V3SolverResult | null>(null);
   const placementGizmoRef = useRef<PlacementGizmo | null>(null);
   const snapOverlayRef = useRef<SnapOverlay | null>(null);
   const faceHighlightRef = useRef<THREE.Group | null>(null);
@@ -1502,6 +1417,42 @@ export function DigitalTwinViewer({
     () => sceneData.objects.find((object) => object.id === selectedObjectId) ?? null,
     [sceneData.objects, selectedObjectId],
   );
+
+  // Phase 6.5 — fetch v3 backend trace whenever the scene changes.
+  // The legacy in-browser raycaster (`traceBeamsFromLasers`) ignores
+  // Asset3D faces / transitions and approximates each component as a
+  // single mesh hit at its centre, so a lens trace doesn't show the
+  // real entry offset on face A. The backend v3 tracer does proper
+  // ray-plane intersection per face and reports lab-frame segments.
+  // Result is cached in v3LabSegmentsRef; renderRayTraces reads it.
+  //
+  // 150 ms debounce so dragging an object doesn't fire one fetch per
+  // frame. Backend reads from DB, so during an active drag the result
+  // is one-step stale until the WS commit lands — acceptable for MVP.
+  useEffect(() => {
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      runV3SolverFromDbApi()
+        .then((result) => {
+          if (cancelled) return;
+          v3LabSegmentsRef.current = result.labSegments ?? [];
+          v3SolverResultRef.current = result;
+          redrawBeamsRef.current?.();
+        })
+        .catch(() => {
+          // Silent — backend down or scene empty. Renderer falls back
+          // to an empty trace; no beams shown until fetch recovers.
+          if (cancelled) return;
+          v3LabSegmentsRef.current = [];
+          v3SolverResultRef.current = null;
+          redrawBeamsRef.current?.();
+        });
+    }, 150);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [sceneData]);
 
   // Fast-axis indicator on the selected waveplate. Drawn as a thin yellow
   // line lying in the waveplate's transverse plane (perpendicular to the
@@ -2822,7 +2773,7 @@ export function DigitalTwinViewer({
         for (const obj of objects) {
           // Skip the optical table — selecting it via a marquee that grazes
           // the floor is almost always unintended.
-          const cmpType = stateNow.scene.components.find((c) => c.id === obj.componentId)?.componentType;
+          const cmpType = stateNow.scene.components.find((c) => c.id === obj.componentId)?.kindId;
           if (cmpType === "optical_table") continue;
           // Hidden objects are not selectable. Per-object override of
           // collection visibility (request #2) is plumbed through
@@ -2970,7 +2921,7 @@ export function DigitalTwinViewer({
       // Hide/Solo menu on every pan release is noisy. Other components
       // still get the menu.
       const stateNow = useSceneStore.getState();
-      const cmpType = stateNow.scene.components.find((c) => c.id === componentId)?.componentType;
+      const cmpType = stateNow.scene.components.find((c) => c.id === componentId)?.kindId;
       if (cmpType === "optical_table") {
         setCtxMenu(null);
         return;
@@ -3243,7 +3194,7 @@ export function DigitalTwinViewer({
     }
     const component = sceneData.components.find((c) => c.id === selectedObj.componentId);
     if (!component) return;
-    const ct = component.componentType;
+    const ct = component.kindId;
     if (ct === "fiber") {
       if (fiberEditingComponentId !== component.id) enterFiberEdit(component.id);
     } else if (ct === "rf_cable" || ct === "sma_cable") {
@@ -3385,13 +3336,13 @@ export function DigitalTwinViewer({
      *  `stripDynamicDecorations` first if the wrapper is a reused cached
      *  one. */
     function decorate(wrapper: THREE.Group, placement: SceneObject, component: ComponentItem): void {
-      if (selectedObjectIdSet.has(placement.id) && component.componentType !== "optical_table") {
+      if (selectedObjectIdSet.has(placement.id) && component.kindId !== "optical_table") {
         addWireframeOutline(wrapper);
       }
-      if (component.componentType === "tapered_amplifier") {
+      if (component.kindId === "tapered_amplifier") {
         addTaPortLabels(wrapper, component);
       }
-      if (component.componentType === "aom" && selectedObjectIdSet.has(placement.id)) {
+      if (component.kindId === "aom" && selectedObjectIdSet.has(placement.id)) {
         const aomAsset = component.asset3dId ? assetById.get(component.asset3dId) : undefined;
         const aomElement = sceneData.physicsElements.find((e) => e.objectId === placement.id);
         addAomTiltAxisMarker(wrapper, aomAsset, aomElement, component);
@@ -3444,8 +3395,8 @@ export function DigitalTwinViewer({
         component: ComponentItem,
       ): { effectiveNodes: FiberNode[]; linkWatchKey: string } | null => {
         if (
-          component.componentType !== "rf_cable"
-          && component.componentType !== "sma_cable"
+          component.kindId !== "rf_cable"
+          && component.kindId !== "sma_cable"
         ) return null;
         const compLen = (component.properties as { lengthMm?: number } | undefined)?.lengthMm;
         const lengthMm = typeof compLen === "number" ? compLen : 150;
@@ -3537,7 +3488,7 @@ export function DigitalTwinViewer({
         component: ComponentItem,
       ): { effectiveNodes: FiberNode[]; linkWatchKey: string;
            endA: FiberEndKindParams | null; endB: FiberEndKindParams | null } | null => {
-        if (component.componentType !== "fiber") return null;
+        if (component.kindId !== "fiber") return null;
         const fiberPe = sceneData.physicsElements.find(
           (e) => e.objectId === placement.id && e.elementKind === "fiber",
         );
@@ -3623,7 +3574,7 @@ export function DigitalTwinViewer({
         // Compute a watch key up-front so cache invalidates when those
         // change (Align A/B button, node-edit endpoint drag, etc.).
         const fiberStateForCache =
-          component.componentType === "fiber"
+          component.kindId === "fiber"
             ? resolveEffectiveFiberBodyState(placement, component)
             : null;
         const fiberEndsRefKeyNow = fiberStateForCache?.linkWatchKey ?? "";
@@ -3651,7 +3602,7 @@ export function DigitalTwinViewer({
           cached.componentRef === component &&
           cached.assetRef === asset &&
           cached.stateRef === deviceState &&
-          (component.componentType !== "fiber" ||
+          (component.kindId !== "fiber" ||
             cached.fiberEndsRefKey === fiberEndsRefKeyNow) &&
           cached.objectBindingsRefKey === objectBindingsRefKeyNow &&
           cached.renderHintsKey === renderHintsKeyNow;
@@ -3676,7 +3627,7 @@ export function DigitalTwinViewer({
           // but the rendered tube + connectors would visually freeze on
           // their initial pose. Re-apply the tube geometry and connector
           // transforms when those per-instance refs change.
-          if (component.componentType === "fiber") {
+          if (component.kindId === "fiber") {
             const objProps = (placement.properties ?? {}) as {
               fiberNodes?: FiberNode[]; radiusMm?: number;
             };
@@ -3780,7 +3731,7 @@ export function DigitalTwinViewer({
           // the stored object.properties.fiberNodes (which can be
           // stale relative to a freshly-aligned endA/endB.posMm).
           const fiberSeedForLoader =
-            component.componentType === "fiber"
+            component.kindId === "fiber"
               ? resolveEffectiveFiberBodyState(placement, component)
               : null;
           let propsForLoader = placement.properties as
@@ -3838,7 +3789,7 @@ export function DigitalTwinViewer({
           // qualify; the 500+ catalog rows backfilled with only a single
           // root binding stay on the legacy path → visual no-op.
           const assetObject = shouldRenderViaBindings(
-            component.componentType,
+            component.kindId ?? "",
             component.id,
             sceneData,
           )
@@ -3886,13 +3837,13 @@ export function DigitalTwinViewer({
             fiberNodes?: FiberNode[]; radiusMm?: number;
           };
           const seedFiberNodes =
-            component.componentType === "fiber"
+            component.kindId === "fiber"
               ? ((fiberObjProps.fiberNodes && fiberObjProps.fiberNodes.length >= 2)
                   ? fiberObjProps.fiberNodes
                   : fiberCompProps.fiberNodes)
               : undefined;
           const seedFiberRadius =
-            component.componentType === "fiber"
+            component.kindId === "fiber"
               ? (typeof fiberObjProps.radiusMm === "number"
                   ? fiberObjProps.radiusMm
                   : typeof fiberCompProps.radiusMm === "number"
@@ -3900,7 +3851,7 @@ export function DigitalTwinViewer({
                     : 1.0)
               : undefined;
           const fiberSeed =
-            component.componentType === "fiber"
+            component.kindId === "fiber"
               ? resolveEffectiveFiberBodyState(placement, component)
               : null;
           wrapperCache.set(placement.id, {
@@ -4068,44 +4019,65 @@ export function DigitalTwinViewer({
     function renderRayTraces() {
       if (!renderCtx.overlayFlags.beam_segments) return;
       clearGroup(beamGroup);
-      const traces = traceBeamsFromLasers({
-        scene: sceneData,
-        componentGroup,
-        gateOverrides: gateOverridesRef.current,
-        aomFreqOverrideMhz: aomFreqOverrideRef.current,
-        poweredOffObjectIds: poweredOffObjectIdsRef.current,
-      });
+
+      // Phase 6.5 — draw beams from the v3 backend trace (lab segments
+      // returned by `/api/v3/solver/run-from-db`). The legacy in-browser
+      // raycaster (`traceBeamsFromLasers`) approximated each component
+      // as a mesh hit at its centre, so a lens trace ignored the actual
+      // face A/B geometry. The v3 tracer does proper face intersection
+      // and reports the real hit offset / tilt; rendering those lab
+      // segments shows the user where the beam genuinely enters each
+      // optic.
+      //
+      // Lab frame uses Z-up + mm; three.js uses Y-up + units = mm/100.
+      // Mapping: three.x = lab.x/100, three.y = lab.z/100, three.z = -lab.y/100.
+      //
+      // Phase 7.3 — legacy in-browser `traceBeamsFromLasers` is no
+      // longer invoked. `window.__rayTraceDebug` is now populated by
+      // adapting v3 lab segments into the legacy TraceSegment shape so
+      // consumers (OpticalLinkViewerPanel, beam-scope, snap-to-beam)
+      // keep working with v3 as the sole physics source. Fields v3
+      // doesn't yet track (taSeedCoupling, fiberCoupling, etc.) come
+      // back undefined — those panels will show fewer diagnostics
+      // until Phase 7.5+ adds the missing telemetry to v3.
+      const v3Result = v3SolverResultRef.current;
+      const adaptedTraces = v3Result
+        ? adaptV3LabSegmentsToTraceSegments(v3Result, sceneData)
+        : [];
+
+      const labSegments = v3LabSegmentsRef.current;
       const win = window as unknown as {
+        __v3LabSegments?: V3LabSegment[];
         __rayTraceDebug?: TraceSegment[];
         __beamGroup?: THREE.Group;
       };
-      win.__rayTraceDebug = traces;
+      win.__v3LabSegments = labSegments;
+      // Adapter output is structurally compatible with TraceSegment for
+      // the fields consumers read; the missing optional fields default
+      // to undefined (matching TraceSegment's `?` optionality).
+      win.__rayTraceDebug = adaptedTraces as unknown as TraceSegment[];
       win.__beamGroup = beamGroup;
-      // Per-emitter max ABSOLUTE power so each tube's opacity scales against
-      // the brightest beam from the same source. Absolute = factor × source
-      // nominal — needed because a tapered amplifier emits forward AND
-      // backward beams that share the sourceComponentId but have very
-      // different absolute powers (forward typically 10-100× backward at
-      // saturated drive). Normalising on factor alone would make both look
-      // equally bright, hiding the asymmetry. Using absolute keeps the
-      // forward beam much more opaque than the backward one — matching
-      // physical intuition.
-      const maxBySource = new Map<string, number>();
-      for (const seg of traces) {
-        const absMw = seg.nominalPowerMwAtSource * seg.powerFactorAtStart;
-        const cur = maxBySource.get(seg.sourceComponentId) ?? 0;
-        if (absMw > cur) maxBySource.set(seg.sourceComponentId, absMw);
-      }
-      for (const segment of traces) {
-        const maxP = maxBySource.get(segment.sourceComponentId) ?? 1.0;
-        // emitterObjectId stays constant from the original emitter down to
-        // every descendant segment (unlike sourceObjectId which becomes the
-        // last-hit optic on recursive calls). Using it here means a custom
-        // beam colour set on a laser/TA carries through AOM diffraction,
-        // PBS splits, mirror reflections, lens passes, etc.
-        const emitterObj = sceneData.objects.find((o) => o.id === segment.emitterObjectId);
-        const colorOverride = getEmissionVisual(emitterObj, segment.emissionKey).colorHex;
-        beamGroup.add(buildTraceLine(segment, maxP, colorOverride));
+      for (const seg of labSegments) {
+        const startThree = new THREE.Vector3(
+          mmToThree(seg.start.x),
+          mmToThree(seg.start.z),
+          mmToThree(-seg.start.y),
+        );
+        const endThree = new THREE.Vector3(
+          mmToThree(seg.end.x),
+          mmToThree(seg.end.z),
+          mmToThree(-seg.end.y),
+        );
+        const colorHex = wavelengthToColor(seg.wavelengthNm);
+        const geom = new THREE.BufferGeometry().setFromPoints([startThree, endThree]);
+        const mat = new THREE.LineBasicMaterial({
+          color: colorHex,
+          transparent: true,
+          opacity: 0.85,
+        });
+        const line = new THREE.Line(geom, mat);
+        line.userData.v3Segment = seg;
+        beamGroup.add(line);
       }
     }
 
@@ -5711,7 +5683,7 @@ export function DigitalTwinViewer({
       if (!sceneObject) continue;
       const component = sceneData.components.find((c) => c.id === sceneObject.componentId);
       if (!component) continue;
-      const ct = component.componentType;
+      const ct = component.kindId;
       if (ct !== "rf_cable" && ct !== "sma_cable") continue;
       if (rfCableEditingObjectId === objectId) continue; // edit gizmo already covers this
 

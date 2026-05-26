@@ -298,7 +298,7 @@ def make_bare_placement(component_id, *, size=(40, 40, 40)) -> SceneObject:
 async def test_anchor_for_falls_back_to_standard_when_no_overrides():
     # No placement anchors, no asset, component has no asset_3d_id → standard box.
     component_id = uuid.uuid4()
-    component = Component(id=component_id, name="c", component_type="custom_3d", properties={})
+    component = Component(id=component_id, name="c", kind_id="custom_3d", properties={})
     session = FakeSession({component_id: component}, {})
 
     placement = make_bare_placement(component_id, size=(40, 40, 40))
@@ -327,7 +327,7 @@ async def test_anchor_for_uses_asset_anchor_when_no_placement_override():
         ],
     )
     component = Component(
-        id=component_id, name="c", component_type="custom_3d", asset_3d_id=asset_id, properties={}
+        id=component_id, name="c", kind_id="custom_3d", asset_3d_id=asset_id, properties={}
     )
     session = FakeSession({component_id: component}, {asset_id: asset})
 
@@ -348,7 +348,7 @@ async def test_anchor_for_placement_override_beats_asset():
         anchors=[{"id": "+x", "localPosition": {"x": 999, "y": 0, "z": 0}}],  # asset value
     )
     component = Component(
-        id=component_id, name="c", component_type="custom_3d", asset_3d_id=asset_id, properties={}
+        id=component_id, name="c", kind_id="custom_3d", asset_3d_id=asset_id, properties={}
     )
     session = FakeSession({component_id: component}, {asset_id: asset})
 
@@ -376,7 +376,7 @@ async def test_anchor_for_falls_through_asset_to_standard_when_id_not_in_asset()
         anchors=[{"id": "fiber_port", "localPosition": {"x": 12, "y": 0, "z": 0}}],
     )
     component = Component(
-        id=component_id, name="c", component_type="custom_3d", asset_3d_id=asset_id, properties={}
+        id=component_id, name="c", kind_id="custom_3d", asset_3d_id=asset_id, properties={}
     )
     session = FakeSession({component_id: component}, {asset_id: asset})
 

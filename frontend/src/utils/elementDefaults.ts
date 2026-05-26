@@ -28,15 +28,24 @@ import {
   derivedRfDomainKinds,
 } from "../kinds/_plugins";
 
-const COMPONENT_TYPE_TO_KIND: Record<string, ElementKind> =
+const KIND_ID_TO_ELEMENT_KIND: Record<string, ElementKind> =
   derivedComponentTypeToKind() as Record<string, ElementKind>;
 
-export function componentTypeToElementKind(
-  componentType: string | null | undefined,
+/** Resolve a stored `kind_id` slug to a canonical ElementKind. Returns
+ *  null when the slug doesn't match any registered plugin alias. Used by
+ *  the catalog UI to gate "this is a physics-typed element" affordances
+ *  and by PhysicsElementPanel to pick the kind-specific param editor. */
+export function kindIdToElementKind(
+  kindId: string | null | undefined,
 ): ElementKind | null {
-  if (!componentType) return null;
-  return COMPONENT_TYPE_TO_KIND[componentType.trim()] ?? null;
+  if (!kindId) return null;
+  return KIND_ID_TO_ELEMENT_KIND[kindId.trim()] ?? null;
 }
+
+/** @deprecated since alembic 0090. Use {@link kindIdToElementKind}; the
+ *  parameter is now a `kind_id` slug, not a `componentType` string. Kept
+ *  as a thin alias for any callers that haven't migrated yet. */
+export const componentTypeToElementKind = kindIdToElementKind;
 
 export const KIND_LABELS: Record<ElementKind, string> =
   derivedKindLabels() as Record<ElementKind, string>;
@@ -59,8 +68,8 @@ export function domainForElementKind(kind: ElementKind | null | undefined): Elem
 }
 
 export const DOMAIN_TITLES: Record<ElementDomain, string> = {
-  optical: "Optical / 光學",
-  rf: "Electronics & RF / 電子・RF",
+  optical: "Optical",
+  rf: "Electronics & RF",
 };
 
 export const KIND_GROUPS: { label: string; kinds: ElementKind[] }[] =

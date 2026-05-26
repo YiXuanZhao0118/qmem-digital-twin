@@ -95,7 +95,7 @@ function apiErrorMessage(error: unknown): string {
     }
 
     if (error.request) {
-      return `Network Error: cannot reach backend at ${API_BASE_URL}. 請確認後端 uvicorn 是否正在執行，以及 port 是否為 8010。`;
+      return `Network Error: cannot reach backend at ${API_BASE_URL}. Please ensure the backend uvicorn is running and that the port is 8010.`;
     }
 
     return error.message;
@@ -145,7 +145,7 @@ export async function deleteObjectApi(objectId: string): Promise<void> {
 
 export async function createComponentApi(payload: {
   name?: string;
-  componentType: string;
+  kindId: string;
   brand?: string;
   model?: string;
   properties?: Record<string, unknown>;
@@ -159,7 +159,7 @@ export async function createComponentApi(payload: {
 
 export async function updateComponentApi(
   componentId: string,
-  patch: Partial<Pick<ComponentItem, "name" | "componentType" | "brand" | "model" | "properties" | "notes">>,
+  patch: Partial<Pick<ComponentItem, "name" | "kindId" | "brand" | "model" | "properties" | "notes" | "physicsCapabilities">>,
 ): Promise<ComponentItem> {
   const response = await client.put<ComponentItem>(`/api/components/${componentId}`, patch);
   return response.data;
@@ -167,6 +167,113 @@ export async function updateComponentApi(
 
 export async function deleteComponentApi(componentId: string): Promise<void> {
   await client.delete(`/api/components/${componentId}`);
+}
+
+
+// =============================================================================
+// Kind catalog (alembic 0086). See docs/asset-physics-model.md §6.
+// =============================================================================
+
+export type KindDomain = "optical" | "rf" | "mechanical";
+
+export type KindRow = {
+  id: string;
+  name: string;
+  displayName: string;
+  domain: KindDomain;
+  opSetName: string;
+  defaultParams: Record<string, unknown>;
+  faceTemplate: Record<string, unknown>;
+  needsAperture: boolean;
+  wavelengthRangeNm: number[] | null;
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type KindCreatePayload = {
+  name: string;
+  displayName: string;
+  domain: KindDomain;
+  opSetName: string;
+  defaultParams?: Record<string, unknown>;
+  faceTemplate?: Record<string, unknown>;
+  needsAperture?: boolean;
+  wavelengthRangeNm?: number[] | null;
+  description?: string | null;
+};
+
+export type KindPatchPayload = {
+  displayName?: string;
+  defaultParams?: Record<string, unknown>;
+  faceTemplate?: Record<string, unknown>;
+  needsAperture?: boolean;
+  wavelengthRangeNm?: number[] | null;
+  description?: string | null;
+};
+
+export async function listKindsApi(domain?: KindDomain): Promise<KindRow[]> {
+  const params = domain ? { domain } : undefined;
+  const response = await client.get<KindRow[]>("/api/kinds", { params });
+  return response.data;
+}
+
+export async function createKindApi(payload: KindCreatePayload): Promise<KindRow> {
+  const response = await client.post<KindRow>("/api/kinds", payload);
+  return response.data;
+}
+
+export async function updateKindApi(
+  kindId: string,
+  patch: KindPatchPayload,
+): Promise<KindRow> {
+  const response = await client.patch<KindRow>(`/api/kinds/${kindId}`, patch);
+  return response.data;
+}
+
+export async function deleteKindApi(kindId: string): Promise<void> {
+  await client.delete(`/api/kinds/${kindId}`);
+}
+
+// ─── v3 ray-tracer ────────────────────────────────────────────────────────
+
+export type V3LabSegment = {
+  start: { x: number; y: number; z: number };
+  end: { x: number; y: number; z: number };
+  wavelengthNm: number;
+  powerMw: number;
+  sceneObjectId: string | null;
+  bindingId: string | null;
+  assetCatalogId: string | null;
+  faceInId: string | null;
+  op: string | null;
+  isTerminal: boolean;
+  // Phase 7.1 provenance + start-of-segment ray state.
+  emitterSceneObjectId: string | null;
+  sourceSceneObjectId: string | null;
+  jones: [{ re: number; im: number }, { re: number; im: number }];
+  qxAtStart: { re: number; im: number };
+  qyAtStart: { re: number; im: number };
+  pathLengthMmAtStart: number;
+};
+
+export type V3SolverResult = {
+  runId: string;
+  segments: unknown[];
+  labSegments: V3LabSegment[];
+  finalRays: unknown[];
+  errors: string[];
+  warnings: string[];
+};
+
+/** Trace the current DB scene with the v3 ray tracer. Body-less POST —
+ *  the server loads the scene from the live DB. */
+export async function runV3SolverFromDbApi(): Promise<V3SolverResult> {
+  const response = await client.post<V3SolverResult>(
+    "/api/v3/solver/run-from-db",
+    {},
+  );
+  return response.data;
 }
 
 
@@ -407,7 +514,7 @@ export async function applyRelationOnceApi(relationId: string): Promise<SceneObj
 export async function uploadComponentAssetApi(payload: {
   file: File;
   name: string;
-  componentType: string;
+  kindId: string;
   brand?: string;
   model?: string;
   unit?: "mm" | "m";
@@ -416,7 +523,7 @@ export async function uploadComponentAssetApi(payload: {
   const form = new FormData();
   form.append("file", payload.file);
   form.append("name", payload.name);
-  form.append("component_type", payload.componentType);
+  form.append("kind_id", payload.kindId);
   if (payload.brand) form.append("brand", payload.brand);
   if (payload.model) form.append("model", payload.model);
   form.append("unit", payload.unit ?? "mm");
@@ -429,7 +536,7 @@ export async function uploadComponentAssetApi(payload: {
 export async function importLocalComponentAssetApi(payload: {
   sourcePath: string;
   name?: string;
-  componentType: string;
+  kindId: string;
   brand?: string;
   model?: string;
   unit?: "mm" | "m";

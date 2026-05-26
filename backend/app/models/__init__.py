@@ -9,7 +9,7 @@ new file in the same layer.
 
 from app.models.base import Base, JsonDict, JsonList  # noqa: F401
 from app.models.agent import AgentSession, ApprovalEvent, SessionMutation  # noqa: F401
-from app.models.hardware import Asset3D, Component, ComponentBinding  # noqa: F401
+from app.models.hardware import Asset3D, Component, ComponentBinding, Kind  # noqa: F401
 from app.models.interaction import AssemblyRelation, BeamPath, Connection, OpticalLink, RfLink  # noqa: F401
 from app.models.modules.electronics import Circuit  # noqa: F401
 from app.models.modules.em import EmProblem, Mesh  # noqa: F401
@@ -42,6 +42,7 @@ __all__ = [
     "Connection",
     "DeviceState",
     "EmProblem",
+    "Kind",
     "MagneticsProblem",
     "Mesh",
     "ObjectBinding",

@@ -7,6 +7,21 @@ graph propagation, SPICE, EM FEM, DC magnetostatics) on demand. The scene is
 the single source of truth — every panel reads from it, every event mutates it,
 and every solver returns into it.
 
+> **Schema epoch.** Currently at **alembic 0090** — the legacy
+> `components.component_type` and `assets_3d.physics_kind` columns
+> were collapsed into a single `kind_id` slug pointing at the new
+> `kinds` registry table (alembic 0086) and the legacy columns were
+> dropped (0090). Asset-Physics-Model v3 has graduated from a
+> behind-flag experiment to the **sole** physics path: the v3
+> anchor-centric ray tracer
+> ([`backend/app/optical/anchor_tracer.py`](backend/app/optical/anchor_tracer.py)
+> + [`anchor_ops/`](backend/app/optical/anchor_ops/)) is what
+> [`three/v3TraceAdapter.ts`](frontend/src/three/v3TraceAdapter.ts)
+> feeds to every downstream consumer that used to read the legacy
+> `TraceSegment` shape. v2's `componentType` dispatch is gone; UI
+> types still expose a `kindId` field for compat reads but the
+> backend writes the new shape exclusively.
+
 > **Two reading orders:**
 > - This README is a top-down architectural map (backend ↔ frontend ↔ data).
 > - [`docs/vibe coding.md`](docs/vibe%20coding.md) is the running notebook
@@ -290,6 +305,7 @@ plugin grows a field.
 | `timing_programs` | Reusable interval schedule | `intervals: [{spinCoreStartNs, spinCoreEndNs}]` (slim, post-0051) |
 | `collection_templates` | Reusable subtree snapshot (post-0053) | `tree` (recursive collection + relative member poses) |
 | `app_settings` | Singleton lab-wide config | `key`, `value` (e.g. `room_dimensions`) |
+| `kinds` | **New (0086)** — Kind metadata registry | `name` (slug), `display_name`, `domain` (`optical`/`rf`/`mechanical`), `op_set_name` (string FK into the code-only PhysicsOp registry — multiple Kind rows can share one op set, e.g. `my_custom_lens` → `lens_biconvex`), `default_params` JSONB, `face_template` JSONB, `needs_aperture`, `wavelength_range_nm` REAL[], `description`. Backfilled from `backend/data/kinds.json` at upgrade time. Read at FastAPI startup into the in-process `_KIND_TO_OP_SET` cache in `app.optical.db_kinds` so the tracer's `get_op` can dispatch on user-created kind slugs without a DB roundtrip on every ray |
 | `agent_sessions` | One AI binding conversation (post-0057) | `instruction`, `status`, `last_heartbeat_at`, `heartbeat_timeout_sec`, `committed_at`/`cancelled_at`/`cancellation_reason`, `messages_json` (Anthropic SDK history persisted across turns, added in 0058) |
 | `session_mutations` | Append-only log of agent writes (post-0057) | `op`, `entity_type` (`asset_3d`/`component`), `entity_id`, `before`/`after` JSONB, `undone_at` |
 | `approval_events` | Audit log of approve/unlock/modify_blocked/rolled_back (post-0057) | `event_type`, `entity_type`/`entity_id`, `session_id`, `metadata` (column kept as `metadata`; ORM attr is `event_metadata` because `DeclarativeBase.metadata` is reserved) |
@@ -299,6 +315,7 @@ plugin grows a field.
 | Mount | File | Purpose |
 |---|---|---|
 | `/api/assets` | `assets.py` | Asset upload & CRUD; serves anchors editor. Uploads land under `assets/files/<ext>/<uuid>_<name>.<ext>` (viewer-ready: glb/gltf/obj/stl) or `assets/files/cad_sources/…` (step/stp/sldprt/dxf) after alembic 0063 unified the legacy `uploads/` bucket |
+| `/api/kinds` | `kinds.py` | **New (0086)**: CRUD for the Kind registry table. `GET /` lists rows (filter `?domain=optical|rf|mechanical`); `POST /` creates a new kind metadata row (must reference an `op_set_name` that exists in the code-only PhysicsOp registry — to add genuinely new physics behavior you still need to write and register a PhysicsOp in `app/optical/kinds/<kind>/physics.py`); `PATCH /{kind_id}` edits display name / default params / face template / wavelength range / needs_aperture / description (renaming `name` and `op_set_name` is blocked — the tracer-side cache invalidation would be racy); `DELETE /{kind_id}` is 409-blocked if any `assets_3d.kind_id` row still references the slug. Every mutation refreshes `_KIND_TO_OP_SET` via `set_kind_cache_entry` / `remove_kind_cache_entry` so the in-process tracer dispatch sees the change on the next ray |
 | `/api/components` | `components.py` | Catalog CRUD; archive/restore; upload-from-file. Owns `auto_create_physics_element_for_object`, which on a fresh `fiber` spawn also creates paired `fiber_end_a` + `fiber_end_b` SceneObjects (3-object cluster, mirroring migration 0052 for new placements) and joins them to the body's collection |
 | `/api/components/{id}/bindings` · `/api/component-bindings/{id}` | `component_bindings.py` | **New (0062)**: ComponentBinding tree CRUD. Nested `GET` returns full binding list in `sort_order` ascending; structure is implied by `parent_binding_id` (multiple roots legal). Top-level routes operate on a single binding by id; the update path **cannot** change the binding's target — to retarget, delete + recreate (keeps cycle protection simple). Cycle protection: creating a `subcomponent`-kind binding walks the candidate sub-component's transitive sub-component closure and rejects with 400 if the container appears in it |
 | `/api/objects` | `objects.py` | Instance CRUD; **bulk batch update** so multi-select doesn't trigger N broadcasts. On fresh `fiber` creation also broadcasts the auto-spawned `fiber_end_a`/`fiber_end_b` SceneObjects + PhysicsElements so the 3-object cluster lands without a page reload |
@@ -322,8 +339,8 @@ plugin grows a field.
 | `/api/revisions` | `revisions.py` | Whole-scene snapshots |
 | `/api/collections` | `collections.py` | Outliner CRUD + member reorder; bootstraps master |
 | `/api/collection-templates` | `collection_templates.py` | **New (0053)**: save/instantiate collection snapshots at a target pose |
-| `/api/v3/assets3d` · `/api/v3/components` | `v3_catalog.py` | **New (alembic 0082)**: read-only catalog API over the Asset-Physics-Model v3 columns (`physics_kind`, `faces[]`, `transitions[]`, `default_params`, `wavelength_range_nm`, `body_frame_rotation`, plus `exposed_faces` on Component). `GET /v3/assets3d?has_v3=true&physics_kind=lens` lists v3-seeded rows (filter by physics kind); `GET /v3/assets3d/{catalog_id}` fetches one; `PUT /v3/assets3d/{catalog_id}` updates the editable v3 metadata fields (faces / transitions / default_params / wavelength_range / body_frame_rotation). `/v3/components/{catalog_id}` returns the Component with its `bindings[]` already flattened (binding id + asset DB id + local pose + sort order). Stable string `catalog_id` keys mirror the JSON files under `assets/catalog/` so `backend/scripts/seed_v3_assets.py` can upsert deterministically |
-| `/api/v3/solver/run` | `v3_solver.py` | **New (Phase 3)**: stateless POST endpoint that runs the v3 face-based ray tracer on a caller-supplied `V3Scene` + initial rays. Body is `{scene: {objects:[…]}, initialRays:[…], options?:{maxSteps, powerThresholdMw}}`; each `SceneObject` carries either an `asset` (single-asset trace) or a `component` (multi-binding trace). Returns `SolverResult` `{segments[], finalRays[], errors[], warnings[]}` — JSON-safe BeamRay serialisation lives in `app.optical.solver_v3.beam_ray_to_dict`. Eager-imports `app.optical.kinds` on first call so every op (lens / mirror / polarizer / waveplate / pbs / dichroic-mirror / faraday-rotator / aom-v3 / glan-laser / eom / fiber / laser-source / tapered-amplifier) is registered before dispatch. No DB writes; a `/run/{scene_id}` variant that loads a V3Scene from existing assets/components/objects rows is the next milestone |
+| `/api/v3/assets3d` · `/api/v3/components` | `v3_catalog.py` | **Catalog (0082, 0087-0090)**: full CRUD over the Asset-Physics-Model v3 columns. As of 0089/0090 the classification field is `kind_id` (replaces `physics_kind`); as of 0087 anchors are stored on a JSONB `anchors[]` column and read by the new anchor-based tracer (legacy `faces[]` / `transitions[]` remain populated for solver-DB seeding but the anchor list is canonical for the tracer). `GET /v3/assets3d?has_v3=true&kind_id=lens` lists v3-seeded rows; `POST /v3/assets3d` creates a new catalog row (slug-shape enforced by `ck_assets_catalog_id_slug_shape`, alembic 0088); `POST /v3/assets3d/upload-stl` uploads a viewer-ready STL and creates the catalog row + slug in one shot; `GET/PUT/DELETE /v3/assets3d/{catalog_id}` operate on a single row by stable slug. `/v3/components` mirrors the same shape: list / get / put on `catalog_id`. Slug constraint: lower-snake-case (`^[a-z0-9_]+$`), unique-non-null per table. The JSON catalog under `assets/catalog/` is the source of truth for fresh installs; `backend/scripts/seed_v3_assets.py` is idempotent |
+| `/api/v3/solver/run` · `/api/v3/solver/run-from-db` | `v3_solver.py` | **Phase 3+**: two entry points. `POST /run` is stateless — body is `{scene: {objects:[…]}, initialRays:[…], options?:{maxSteps, powerThresholdMw}}`; each `SceneObject` carries either an `asset` (single-asset trace) or a `component` (multi-binding trace). `POST /run-from-db` (Phase 9.7) takes only `{options?}` and rebuilds the V3Scene from live `assets_3d` + `components` + `component_bindings` + `objects` rows via `app.optical.db_scene_loader.load_anchor_scene_from_db` — the Lab viewer + UI panels call this so they don't have to serialize the scene first. Both return `SolverResult` `{segments[], finalRays[], errors[], warnings[]}`. Anchor-tracer path: as of Phase 9.2 (alembic 0087) the tracer dispatches on Asset3D's `anchors[]` column instead of `faces[]` + `transitions[]`; see `app.optical.anchor_tracer.trace_anchor_scene`. Eager-imports `app.optical.kinds` and `app.optical.anchor_ops` on first call so every op is registered before dispatch |
 | `/api/agent-sessions` | `agent_sessions.py` | **New (0057+0058)**: AI binding session lifecycle — `POST /` start · `GET /{id}` review (session + mutations) · `POST /{id}/heartbeat` · `POST /{id}/uploads` (multipart, asset 50 MB / image 10 MB cap, stored under `assets/agent_uploads/<session>/`) · `POST /{id}/messages` (SSE-streamed agent turn — yields `assistant_chunk` / `tool_call` / `tool_result` / `done` / `error`) · `POST /{id}/undo-last` · `POST /{id}/commit` (drafts → active, `ai_approved_at` set) · `POST /{id}/cancel` (reverse-replay mutation log) · `POST /{id}/unlock` (**new, Phase 2**: reverses a previous commit's lock by clearing `ai_approved_at` on every entity this session created — idempotent, only valid on `status='committed'` sessions; writes one `unlock` ApprovalEvent per entity. The session row itself stays `committed`; to re-edit the rows the user opens a new agent session and the now-unlocked rows become touchable again). 409 on any write to a terminal session |
 | `/api/timing-programs` | `timing_programs.py` | TimingProgram CRUD + `/compile` to SpinCore opcodes |
 | `/api/app-settings` | `app_settings.py` | Singleton settings (room dimensions, …) |
@@ -407,7 +424,7 @@ plugin grows a field.
 
 ### Alembic migrations
 
-Currently at **revision 0081**. Recent milestones:
+Currently at **revision 0090**. Recent milestones:
 
 | Rev | Title | Purpose |
 |---|---|---|
@@ -444,7 +461,15 @@ Currently at **revision 0081**. Recent milestones:
 | 0079 | glan_prism_physical | Pins the catalogue GlanLaserCalcitePrism Component to the compact prism geometry: `sizeMm=8.5`, `lengthMm=7.5`, `wedgeAngleDeg=38.5` (`airGapMm` intentionally left at the plugin default 0.05 mm). The procedural renderer (`glan_polarizer_prism.ts`) reads these off `component.properties` so a fresh PhysicsElement seeded from the catalog inherits the right physical size. The 5×5 ABCD operator (`m_glan_slab`) consumes `lengthMm`, `refractiveIndex`, `wedgeAngleDeg`, `airGapAstigmatismMm` — none of which depend on the transverse cross-section (W/H) |
 | 0080 | isolator_nested_chain | Fixes a silent legacy fallback: `apply_isolator` (the new 3-stage Glan→Faraday→Glan formulation, Phase 2) gates the full nested chain on presence of `frontGlan` + `backGlan` + `faraday` dicts in `kind_params`. Rows seeded before that gate landed have only flat keys (`forwardLossDb`, `isolationDb`, …) and silently fall through to the single-knob power multiplier, missing polarisation-axis transmission/rejection physics, Faraday non-reciprocity, and out_r_front / out_r_back rejected-beam visualisation. Migration scans every `physics_elements` row with `element_kind='isolator'` and splices in canonical nested defaults when any of the three keys is missing. Flat keys are preserved — they coexist; the gate only checks the nested dict presence |
 | 0081 | glan_prism_w_h_6_5 | Phase 21 refinement: refines `Component.properties.sizeMm` on GlanLaserCalcitePrism from 8.5 → 6.5 mm so the procedural prism renders as a compact 6.5 × 6.5 × 7.5 mm crystal. Length / wedge / `n_e` from 0079 unchanged. ABCD unaffected — `m_glan_slab` ignores transverse W/H |
-| 0082 | v3_asset_physics_columns | **Asset-Physics-Model v3 schema landing.** Adds (a) on `assets_3d`: `catalog_id` TEXT (unique partial index on non-null — stable string slug used by `assets/catalog/**/*.json` files and the v3 seed script), `physics_kind` TEXT, `faces` JSONB (port geometry — id, body-local position, optional normal, aperture size + shape, optional domain `optical`/`rf`/`ttl`), `transitions` JSONB (face_in → face_out + op + params + optional 2×2 ABCD / 5×5 matrix + optional `via[]` chain for multi-hop reflective elements), `default_params` JSONB, `wavelength_range_nm` REAL[], `body_frame_rotation` JSONB quaternion (CAD axis correction so body +Z = optical axis). (b) on `components`: `catalog_id` TEXT, `exposed_faces` JSONB (mapping component-face id → asset-binding id + asset-face id). (c) on `objects`: `param_overrides` + `dynamic_sources` JSONB so per-instance optical tweaks no longer have to ride on `properties.kindParams`. All columns nullable — v2 anchor/kindParams data coexists indefinitely. Downgrade drops every new column |
+| 0082 | v3_asset_physics_columns | **Asset-Physics-Model v3 schema landing.** Adds (a) on `assets_3d`: `catalog_id` TEXT (stable slug used by `assets/catalog/**/*.json`), `physics_kind` TEXT, `faces` JSONB (port geometry — id, body-local position, optional normal, aperture size + shape, optional domain `optical`/`rf`/`ttl`), `transitions` JSONB (face_in → face_out + op + params + optional 2×2 ABCD / 5×5 matrix + optional `via[]` chain for multi-hop reflective elements), `default_params` JSONB, `wavelength_range_nm` REAL[], `body_frame_rotation` JSONB quaternion (CAD axis correction so body +Z = optical axis). (b) on `components`: `catalog_id` TEXT, `exposed_faces` JSONB. (c) on `objects`: `param_overrides` + `dynamic_sources` JSONB. All columns nullable — v2 anchor/kindParams data coexists indefinitely. (Note: `physics_kind` was dropped in 0090 once `kind_id` superseded it.) Downgrade drops every new column |
+| 0083 | aom_v3_rf_in_face | Phase RF.2 increment. Backfills a third `rf_in` face onto every AOM Asset3D (`physics_kind='aom'` or legacy `component_type='aom'` orphans). Position derived from `defaultParams.transducerOffsetFromCenterMmX` (fallback 15 mm) along `defaultParams.rfPropagationDirectionBodyLocal` (fallback (1, 0, 0)); domain=`rf`. The legacy side-channel `rfPropagationDirectionBodyLocal` stays for back-compat but `rf_in.normalBodyLocal` is the source of truth. NOT added to `transitions[]` — the AOM PhysicsOp reads it as an RF sink, not a ray-tracer entry/exit face. Idempotent (skips if `rf_in` already present); downgrade strips the face (destructive of user-edited rf_in placements) |
+| 0084 | rf_v3_backfill | Phase RF.2 cleanup. Backfills `physics_kind` / `faces` / `transitions` / `default_params` on the 8 RF Asset3D rows not previously seeded for v3 (rf_source / programmable_pulse_generator / rf_amplifier / rf_cable × 3 / rf_switch). Pinned by asset name; shared `primitive_box` is intentionally not touched. Idempotent (skips rows with non-null `physics_kind`). Downgrade clears the v3 fields on those 8 rows — dev-only |
+| 0085 | io_3_hp_flatten_to_5_assets | IO-3-850-HP: retire the 7-binding workaround tree (0071+0074) and the `thorlabs_io_3_850_faraday_rod` full-assembly Asset3D in favour of a flat 5-binding shape: `hp_root` (faraday_rotator kind) + `glan_front` + `glan_back` (pbs kind) + `front_piece` + `back_piece` (mechanical). All siblings under the Component, no Mount intermediates. Migration only **cleans** legacy state; new bindings + new Asset3Ds are populated by re-running `backend/scripts/seed_v3_assets.py` against the updated JSON catalog. The 3 new STL slice files are produced by `backend/scripts/split_io_3_hp_stl.py`. Downgrade is a no-op |
+| 0086 | kinds_table | **New `kinds` table** — per-kind metadata (display name, default params, face template, needs_aperture, wavelength range, domain) moves out of the code-only registry into a DB row. PhysicsOps stay in code; each Kind row references one via `op_set_name` (lookup target in the `_REGISTRY` dict — e.g. a user-created `my_custom_lens` slug can reuse the built-in `lens_biconvex` op set). Backfill walks `backend/data/kinds.json` (generated from the frontend plugin registry) and inserts one row per physics_plugin. The tracer consults `app.optical.db_kinds._KIND_TO_OP_SET` (hydrated at FastAPI startup, refreshed by the Kind CRUD endpoints) as a fallback in `get_op` |
+| 0087 | assets_anchors_column | Phase 9.1. Makes `assets_3d.anchors` JSONB the canonical anchor-centric store (it was already present from v1/v2). Each anchor = `{id, positionMmBodyLocal, axisXBodyLocal, axisYBodyLocal, axisZBodyLocal, apertureMm, apertureShape}`. Data transformation happens in `backend/scripts/backfill_asset_anchors.py` (idempotent, separate from this migration). `faces` + `transitions` columns remain in parallel for the legacy face-based tracer; Phase 9.8 drops them after the anchor tracer is the only reader |
+| 0088 | catalog_id_constraints | Phase 9.11. Adds CHECK (`^[a-z0-9_]+$` lower-snake-case slug when non-null) + UNIQUE (NULLS DISTINCT — multiple instance leaves with NULL slug are still allowed) constraints to `assets_3d.catalog_id` + `components.catalog_id`. Pre-audited free of bad shapes / duplicates so the constraints land without data churn. Catches accidental garbage (spaces, capitals, slashes) before it lands in the catalog |
+| 0089 | kind_id_column | Phase 9.13. Adds a unified `kind_id` TEXT column to BOTH `components` and `assets_3d`, indexed for filter queries. Backfills `kind_id = component_type` on Components and `kind_id = physics_kind` on Asset3D (verbatim copy — no alias canonicalization). Legacy columns kept; the actual drop is 0090 |
+| 0090 | drop_legacy_kind_columns | Phase 9.14. Drops `components.component_type` and `assets_3d.physics_kind` now that `kind_id` is the canonical classification field everywhere (ORM models, FastAPI schemas, every router, every frontend type). Downgrade re-adds the columns nullable and re-backfills from `kind_id` so a rollback can round-trip |
 
 Earlier highlights: `0027` V2 baseline (real `SimulationRun ↔ BeamSegment` FK),
 `0036` multiphysics dispatch, `0042` rename of `optical_elements` →
@@ -551,7 +576,7 @@ Keyboard shortcuts:
 | 3D viewport | `DigitalTwinViewer.tsx`, `DualViewerSplit.tsx` | Three.js canvas; dual viewport with draggable split |
 | Catalog & outliner | `AssetLibraryPanel.tsx` (exports `ComponentsCatalogPanel`, `OutlinerFloatingPanel`), `OutlinerPanel.tsx` | Drag-to-instantiate catalog; nested collections tree |
 | Object editor | `ComponentPanel.tsx`, `IntrinsicSpecPanel.tsx` | Pose / visibility / locks / per-instance physics |
-| PHY editor (full screen) | `PhyEditor.tsx`, `ComponentEditor.tsx`, `KindsEditor.tsx`, `component_editor/AnchorFaceSections.tsx`, `ComponentComposer.tsx` | Catalog metadata + anchor editor. `AnchorFaceSections.tsx` ships per-componentType face-section components — Mirror / LaserSource / Waveplate / BeamSplitter and now `GlanLaserFaceSection` (mirrors PBS — the slanted air-gap cut is physically a TIR reflector, expected `n = (0, cos θ_w, sin θ_w)` cut-plane normal at 38.5°) and `IsolatorInternalsSection` (read-only summary of the 2× Glan slabs + Faraday central plane inside an isolator; each Glan row links out to its own GlanLaserCalcitePrism editor). `ComponentEditor` viewport reads `shouldRenderViaBindings` and routes composite Components through `buildSceneObjectFromBindings` so child meshes (Glan sub-Components, mount empties, baked piece assets) appear at their correct local transforms instead of only the root STL. `ComponentComposer.tsx` is the standalone live binding-tree tweak page that replaced `kinds/isolator/IsolatorDevPage.tsx` in Phase 2 |
+| PHY editor (full screen) | `PhyEditor.tsx`, `BindingDevPanel.tsx`, `KindsEditor.tsx`, `Asset3DV3Editor.tsx`, `ComponentsV2Editor.tsx`, `ComponentComposer.tsx` | Catalog metadata + anchor editor. The legacy `ComponentEditor.tsx` + `component_editor/AnchorFaceSections.tsx` + `componentAnchorContracts.ts` were retired with the v2 dispatch flip; the read-only legacy landing is gone. `BindingDevPanel.tsx` (mounted by the 🔧 Binding dev toggle in PHY Editor) is the unified CRUD shell — left rail groups items by PHY domain (Optical / RF / Electrical placeholder / Mechanical), right pane mounts exactly one editor at a time (`KindsEditor` / `Asset3DV3Editor` / `ComponentsV2Editor`) so the 3D context (THREE.WebGLRenderer) only lives for the active rail item — avoids two renderers fighting for the same canvas. `KindsEditor` does CRUD against `/api/kinds`. `Asset3DV3Editor` edits faces / transitions / anchors / wavelength range / body_frame_rotation against `/api/v3/assets3d`. `ComponentsV2Editor` composes Asset3Ds into a Component via flat asset bindings (`parentBindingId=null`, `targetKind="asset"`); subcomponent and empty-target bindings are out of MVP scope — see source-level note. `ComponentComposer.tsx` is the live binding-tree tweak page that replaced `kinds/isolator/IsolatorDevPage.tsx` in Phase 2 (per-row pose/rot Apply buttons, live 3D preview from in-progress edits before commit) |
 | Timing | `PulseTimingPanel.tsx` | Edit TimingProgram intervals |
 | RF | `RfLinkPanel.tsx`, `ScrubTimeRfReadout.tsx` | Per-port Vpp / dBm / freq readout; chain inspector |
 | Optical | `optical/OpticalLinkViewerPanel.tsx`, `optical/BeamScopePanel.tsx`, `optical/CursorMenu.tsx`, `optical/TargetLinksSection.tsx`, `optical/CapabilityPills.tsx` | Beam inspection, ray-scope viewer, cursor menu. **Phase 2 fix**: the panel's wireframe cache now tags every cached `THREE.Group` with a `digest` derived from the per-object `objectBindings` deltas (`componentBindingId|XYZRxRyRz delta|asset3dIdOverride`). When a user drags an isolator's per-side rotation slider, the digest changes, the cache lookup misses, and the wireframe rebuilds with the new pose — without the digest, the panel froze the wireframe at first render and ignored subsequent slider updates. The same digest is also folded into the panel-level `contentKey` so the parent rebuild gate fires too |
@@ -695,7 +720,20 @@ optional `inspector` (React node). The backend reads the same data through
   `viewerHints.includeOnlyCentroids` + `recenterOrigin`. The mutually-
   exclusive "🔧 Binding dev" toggle in `PhyEditor.tsx` opens this and
   hides the Kinds/Components rail sub-editors
-- `rayTrace.ts` — forward ray tracer running in the browser using loaded meshes.
+- `v3TraceAdapter.ts` (**new, Phase 7.2**) — converts a
+  `V3SolverResult.labSegments[]` snapshot into the legacy
+  `TraceSegment` shape that downstream consumers still read off
+  `window.__rayTraceDebug` (OpticalLinkViewerPanel reads
+  `seg.emitterObjectId` to filter chains, BeamScope reads
+  `polarizationAtStart` + `beamMode`, snap-to-beam uses
+  `startThree`/`endThree`). Waist is recomputed from the segment's
+  q-parameter (`q(z) = (z − z_waist) + i·zR` → `w₀ = √(zR · λ / π)`
+  → `w(z) = w₀ · √(1 + (Δz/zR)²)` under M² = 1). Fields the v3
+  tracer doesn't yet track (`taSeedCoupling`, `aomSideband`,
+  `fiberCoupling`) stay undefined; `branch` defaults to "main";
+  `depth = 0`. Once the v3 solver emits an explicit BeamMode the
+  heuristic recompute disappears.
+- `rayTrace.ts` — legacy forward ray tracer running in the browser using loaded meshes.
   Emits from laser_source / tapered_amplifier along local +X, dispatches by hit
   componentType (mirror reflect, beam_splitter split, lens/waveplate/aom
   pass-through, detector/camera absorb). Bounded by 8 bounces and 1000 mm
@@ -1197,11 +1235,15 @@ for the post-Phase-3b audit.
 | `jones.py` | s/p basis math + frame transforms (`jones_body_to_lab`, `jones_lab_to_body`) — needed because Jones vectors are expressed in beam-local frame, not body- or lab-frame |
 | `pose.py` | `V3Pose` (mm + ZXZ Euler degrees), `V3Transform`, `compose_transforms`, `pose_to_transform`, plus lab↔body point and direction transforms (uses THREE-equivalent quaternion math but returns plain `Vec3` so the rest of the package stays renderer-agnostic — paves the way for the Phase 5 Rust/WASM port) |
 | `registry.py` | `Face` dataclass, `PhysicsOpContext`, `register_kind` / `register_ops` / `get_op` / `has_op`. **Code-only registry — no DB tables**. Each kind module under `kinds/` calls `register_kind` at import time; the v3 solver eager-imports `app.optical.kinds` so dispatch never sees an unregistered op |
-| `ray_tracer_v3.py` | `intersect_face` (ray-plane + aperture test, `exclude_face_id` to prevent re-hitting the face the ray just left), `nearest_face_hit`, `trace_ray_through_asset` (single-asset trace, Phase 3a), `trace_ray_scene` (full scene trace with per-object lab↔body transforms, Phase 3b). Multi-hop `via[]` support for PBS / Glan-Laser / dichroic internal reflection chains |
-| `solver_v3.py` | Orchestrator: runs `trace_ray_scene` over the scene + initial rays, serialises BeamRays to JSON-safe dicts. Stateless (no DB writes — distinct from the v2 `solve_chain` which persists `BeamSegment` rows) |
+| `ray_tracer_v3.py` | Legacy face-based tracer (Phase 3). `intersect_face` (ray-plane + aperture test, `exclude_face_id` to prevent re-hitting the face the ray just left), `nearest_face_hit`, `trace_ray_through_asset` (single-asset trace, Phase 3a), `trace_ray_scene` (full scene trace with per-object lab↔body transforms, Phase 3b). Multi-hop `via[]` support for PBS / Glan-Laser / dichroic internal reflection chains. Kept in parallel until Phase 9.8 drops `faces`/`transitions` |
+| `anchor_tracer.py` | **Phase 9.2 anchor-centric tracer.** Dispatches on `Asset3D.anchors[]` instead of `faces[]` + `transitions[]`. Each anchor carries its own local tri-axis (`axisX` = propagation/normal, `axisY` / `axisZ` = transverse). Beam state at a hit is the 5×5 augmented vector `[y, θ_y, z, θ_z, 1]` in the anchor's local frame (transverse offsets + tilts). `V3Anchor` / `V3AnchorScene` / `V3AnchorBindingSlot` dataclasses; `intersect_anchor` (ray-plane + circular-aperture test), `nearest_anchor_hit` (PRIMARY anchors only — `intercept_in` / `intercept_out` / `port_*` are align-only, not tracer entries), `trace_ray_anchor_scene` (scene-wide). Per-kind ops live in `anchor_ops/<kind>.py` and take `(ray_in_body, asset, anchor_hit, ctx) → list[BeamRay]`; multi-output ops (PBS p/s branch, AOM ±1 orders) return ≥ 2 rays |
+| `anchor_ops/{aom,emit_laser_source,fiber,lens,mirror,misc_ops,pbs,polarizer,waveplate}.py` | Anchor-tracer per-kind PhysicsOps. `misc_ops.py` bundles the smaller kinds (dichroic_mirror / eom / waveplate / etc.) that don't need their own file. Each module's `register()` is called from `anchor_ops/__init__.py`'s eager import at startup; the v3 solver always sees them registered |
+| `solver_v3.py` | Orchestrator: runs `trace_ray_scene` (face-based) **or** `trace_ray_anchor_scene` (anchor-based) over the scene + initial rays, serialises BeamRays to JSON-safe dicts. Stateless (no DB writes — distinct from the v2 `solve_chain` which persists `BeamSegment` rows) |
+| `db_kinds.py` | DB-backed `{kind_name: op_set_name}` cache (`_KIND_TO_OP_SET`). Hydrated at FastAPI startup from the `kinds` table (alembic 0086); refreshed by the Kind CRUD endpoints via `set_kind_cache_entry` / `remove_kind_cache_entry`. Used by `registry.get_op` as a fallback when the kind name isn't a literal `_REGISTRY` key. Kept separate from `registry.py` because that file is parity-mirrored to TypeScript on the frontend — DB / SQLAlchemy imports must NOT leak into the parity contract |
+| `db_scene_loader.py` | Builds a complete `V3Scene` + `V3AnchorScene` snapshot directly from `assets_3d` + `components` + `component_bindings` + `objects` rows so the `/v3/solver/run-from-db` endpoint doesn't require callers to ship a serialized scene. Objects whose Asset3Ds lack v3 fields (kind_id / faces / transitions) are skipped silently — v2-only objects coexist while migration proceeds. Dynamic sources (laser power, channel freq) come from `SceneObject.properties` for now (v2 location); when Phase 7 adds a dedicated `dynamic_sources` column the lookup moves there |
 | `geometry.py` | Pure geometric helpers shared across ops (Snell, reflection, intersection primitives) |
-| `kinds/<kind>/physics.py` | Per-kind PhysicsOp implementations: `aom_v3/`, `dichroic_mirror/`, `eom/`, `faraday_rotator/`, `fiber/`, `glan_laser/`, `laser_source/`, `lens/`, `mirror/`, `pbs/`, `polarizer/`, `tapered_amplifier/`, `waveplate/`. Each kind exports `register()` that calls `register_kind` once; `kinds/__init__.py` eager-imports all of them |
-| `schemas_v3.py` (in `backend/app/`) | Additive Pydantic schemas: `FaceV3`, `TransitionV3`, `TransferMatrixV3`, `Asset3DV3In/Out/Update`, `ComponentV3Out`, `QuaternionV3` etc. Does NOT modify `schemas.py` — v2 callers stay on Asset3DOut / ComponentOut |
+| `kinds/<kind>/physics.py` | Legacy face-based PhysicsOp implementations: `aom_v3/`, `dichroic_mirror/`, `eom/`, `faraday_rotator/`, `fiber/`, `glan_laser/`, `laser_source/`, `lens/`, `mirror/`, `pbs/`, `polarizer/`, `tapered_amplifier/`, `waveplate/`. Each kind exports `register()` that calls `register_kind` once; `kinds/__init__.py` eager-imports all of them. Will retire when the anchor tracer is the only reader |
+| `schemas_v3.py` (in `backend/app/`) | Additive Pydantic schemas: `FaceV3`, `TransitionV3`, `TransferMatrixV3`, `Asset3DV3In/Out/Update`, `ComponentV3Out`, `QuaternionV3` etc. Coexists with `schemas.py` |
 
 ### Frontend (`frontend/src/optical/`)
 
@@ -1229,6 +1271,13 @@ same op names, same numerical results to within 1 × 10⁻⁶ tolerance
   `getAssetsByKind(kind)`, `getComponentByCatalogId(slug)`,
   `updateAsset(catalogId, patch)`. Cached after first fetch; explicit
   `refresh()` to invalidate.
+- [`frontend/src/store/kindsStore.ts`](frontend/src/store/kindsStore.ts) —
+  Zustand store backing the Kind registry (alembic 0086). Cached list
+  from `/api/kinds`; `byDomain('optical'|'rf'|'mechanical')` selector
+  feeds the `kind_id` `<select>` in `ComponentsV2Editor` and
+  `Asset3DV3Editor`. Status atom (`idle`/`loading`/`ready`/`error`);
+  explicit `refresh()` after the user CRUDs a kind. Loaded once on
+  first read.
 - [`frontend/src/store/v3FeatureFlags.ts`](frontend/src/store/v3FeatureFlags.ts) —
   the `useV3RayTracer` opt-in flag. Sources (priority): URL query
   param `?useV3RayTracer=1`/`=0` → localStorage
@@ -1284,21 +1333,35 @@ collisions surface as DB errors rather than silent duplication.
   the same golden JSON as the backend so the two language
   implementations stay numerically in lockstep).
 
-### What's NOT yet plumbed
+### Status — what shipped, what's still legacy
 
-- v3 catalogue rows render through their **own** preview canvas
-  (Asset3DV3Editor) but the production `DigitalTwinViewer` is still
-  hard-wired to v2 anchor + kindParams data. The `useV3RayTracer`
-  flag exists; the dispatcher swap inside `three/rayTrace.ts` is the
-  next step.
-- The v3 solver REST endpoint is **stateless** — it takes a serialized
-  scene in the request. A DB-backed `POST /v3/solver/run/{scene_id}`
-  that loads from `assets_3d` + `components` + `objects` is a
-  follow-up; until then the frontend has to ship the V3Scene snapshot
-  itself.
-- `ComponentBinding` rows do not yet expose v3 fields (e.g. per-binding
-  face overrides). Phase 3c will graft `tunable_axes` semantics onto
-  the v3 tree.
+- **v3 dispatcher swap landed.** `DigitalTwinViewer` consumes v3
+  anchor tracer output through
+  [`three/v3TraceAdapter.ts`](frontend/src/three/v3TraceAdapter.ts);
+  the `useV3RayTracer` flag is no longer consulted (the file remains
+  as a no-op stub for one release in case URL bookmarks still set
+  it).
+- **v3 solver DB-loader landed.** `POST /v3/solver/run-from-db` loads
+  the V3Scene directly from `assets_3d` + `components` +
+  `component_bindings` + `objects` via
+  `db_scene_loader.load_anchor_scene_from_db`. The stateless
+  `POST /v3/solver/run` is still available for external callers and
+  parity tests.
+- **Anchor tracer is the default.** `app.optical.anchor_tracer`
+  reads `Asset3D.anchors` (alembic 0087) and is the production path.
+  Legacy `ray_tracer_v3` still exists and reads
+  `Asset3D.faces` / `Asset3D.transitions`; Phase 9.8 drops those two
+  columns once no call sites remain.
+- **`kind_id` everywhere.** Alembic 0090 dropped
+  `components.component_type` and `assets_3d.physics_kind`; the new
+  `kinds` table (0086) is the metadata registry; the in-process
+  `_KIND_TO_OP_SET` cache resolves a row's slug to its `op_set_name`
+  so the tracer can dispatch on user-created kinds without a DB
+  roundtrip.
+- **`ComponentBinding` per-binding v3 fields are still pending.**
+  The `ObjectBinding` per-axis delta path (0076) is the current
+  escape hatch; Phase 3c will graft `tunable_axes` semantics onto
+  the v3 tree directly.
 
 ---
 
@@ -1584,6 +1647,44 @@ keeping in mind while extending the system.
   re-render path, because the v2 renderer reads `Asset3D.anchors`
   (the old shape) instead. Until the v3 dispatcher swap lands the
   two surfaces evolve independently.
+- **Anchor tracer vs face tracer overlap (Phase 9 transition).** The
+  anchor tracer (`anchor_tracer.py`) is the production path, but the
+  face tracer (`ray_tracer_v3.py`) is still in the package and still
+  reads `Asset3D.faces` + `Asset3D.transitions`. If you author a new
+  Asset3D and only populate `anchors[]` (skipping faces/transitions),
+  the anchor tracer is happy but any legacy code path that still
+  imports `nearest_face_hit` will hit an empty face list and trace
+  nothing through that asset silently. Until Phase 9.8 drops the two
+  columns, seed BOTH shapes for new catalog rows (`seed_v3_assets.py`
+  does this automatically — only hand-written catalog edits are at
+  risk).
+- **Kind cache is hydrated at FastAPI startup ONLY.** `db_kinds.py`'s
+  `_KIND_TO_OP_SET` is rebuilt by `kinds.py` router on every
+  POST/PATCH/DELETE, but a direct SQL UPDATE against the `kinds`
+  table bypasses the cache and the tracer keeps returning the stale
+  `op_set_name`. If you need to fix up a kind via psql / Adminer,
+  restart the uvicorn process or POST a no-op patch through the
+  router so the cache invalidator runs.
+- **`v3TraceAdapter.ts` waist is a heuristic, not a tracked value.**
+  Until the v3 solver emits explicit `BeamMode` per segment, waist
+  in TraceSegment-shaped output (BeamScope, OpticalLinkViewer,
+  snap-to-beam) is recomputed from the q-parameter under M² = 1.
+  Anything that depends on accurate w(z) for non-fundamental modes
+  (multi-mode fiber output, depolarised TA seed) will be wrong by
+  the M² factor. Tracked as a Phase 7.3 follow-up.
+- **`/v3/solver/run-from-db` silently skips Objects whose Asset3Ds
+  lack v3 fields.** This is intentional — v2-only objects coexist
+  with v3 during the migration — but means a typo'd `kind_id` (or a
+  legacy row whose `kind_id` was never backfilled) just doesn't show
+  up in the trace, no error. If a scene's trace is mysteriously
+  short, check `assets_3d.kind_id IS NULL` for the row first.
+- **Slug-shape constraint (alembic 0088) is per-table, not
+  cross-table.** `assets_3d.catalog_id` and `components.catalog_id`
+  each have their own UNIQUE; the same slug can live on both an
+  Asset3D and a Component (and usually does — `coherent_tornos_850_4`
+  the Asset3D + `coherent_tornos_850_4` the Component). The
+  `seed_v3_assets.py` upsert relies on this — don't add a global
+  UNIQUE across both tables or the seed breaks.
 - **GlanLaserCalcitePrism geometry lives in TWO places.** The 3D
   procedural renderer (`glan_polarizer_prism.ts`) reads
   `component.properties.{sizeMm, lengthMm, wedgeAngleDeg}` for the
@@ -1638,27 +1739,50 @@ keeping in mind while extending the system.
 
 ---
 
-*Last regenerated: 2026-05-25 (Alembic revision **0082** — Asset-Physics-Model
-v3 schema landing). The v3 columns
+*Last regenerated: 2026-05-27 (Alembic revision **0090** — legacy
+`component_type` / `physics_kind` columns dropped). The
+classification field across the whole stack is now `kind_id`, an
+FK-style slug into the new `kinds` table (alembic 0086). The
+`/api/kinds` router gives the UI live CRUD over Kind metadata
+(display name, default params, face template, needs_aperture,
+wavelength range) without requiring a TypeScript change; PhysicsOps
+stay in code and each row points at one via `op_set_name`. The v3
+ray tracer is the **sole** physics path: anchor-centric tracer
+([`anchor_tracer.py`](backend/app/optical/anchor_tracer.py) +
+[`anchor_ops/`](backend/app/optical/anchor_ops/)) reads
+`Asset3D.anchors` (canonical store after alembic 0087); the legacy
+face/transition tracer (`ray_tracer_v3.py`) still exists for one
+more release while parity tests drain. Downstream consumers that
+used to read the legacy `TraceSegment` shape are now fed by
+[`three/v3TraceAdapter.ts`](frontend/src/three/v3TraceAdapter.ts).
+New REST: `POST /v3/solver/run-from-db` (loads scene from live
+rows — no body needed). PHY Editor's "🔧 Binding dev" toggle now
+mounts `BindingDevPanel.tsx` (unified Kinds / Asset3D /
+Components CRUD with a single-active-rail-item canvas). New
+migrations since the previous epoch: 0083 backfills the AOM
+`rf_in` face; 0084 backfills v3 metadata onto 8 RF Asset3Ds; 0085
+retires the IO-3-850-HP 7-binding workaround for a flat 5-asset
+shape (per-slice STLs produced by
+`backend/scripts/split_io_3_hp_stl.py`); 0086 lands the `kinds`
+registry table; 0087 marks `assets_3d.anchors` as canonical; 0088
+adds catalog-id slug-shape + uniqueness constraints; 0089 adds
+unified `kind_id` columns; 0090 drops the legacy ones.
+
+Previous epoch (Alembic 0082 — Asset-Physics-Model v3 schema landing):
+the v3 columns
 (`assets_3d.{catalog_id, physics_kind, faces, transitions,
 default_params, wavelength_range_nm, body_frame_rotation}`,
 `components.{catalog_id, exposed_faces}`,
-`objects.{param_overrides, dynamic_sources}`) ship alongside the
+`objects.{param_overrides, dynamic_sources}`) shipped alongside the
 existing v2 anchor / kindParams data — all nullable, no breaking
-change for v2 readers. New routers `/api/v3/assets3d` +
-`/api/v3/components` (read + edit metadata) and `/api/v3/solver/run`
-(stateless face-based ray trace) expose the new model; a feature
-flag `?useV3RayTracer=1` (Zustand `useV3FeatureFlags`) lets dev
-sessions opt in to the v3 dispatcher. Backend package
-`backend/app/optical/` and frontend package `frontend/src/optical/`
-mirror each other line-for-line — same BeamRay struct, same op names,
-golden-JSON parity tests in `__tests__/parity/`. Per-kind ops
-landed: `lens`, `mirror`, `polarizer`, `waveplate`, `pbs`,
-`dichroic_mirror`, `faraday_rotator`, `aom_v3`, `glan_laser`, `eom`,
-`fiber` (with full `optical/fiber/` sub-package for Bessel mode
-coupling, bend loss, Fresnel, polarisation), `laser_source`,
-`tapered_amplifier`. Editor UI: `Asset3DV3Editor` (faces +
-transitions + live STL preview), `dev/V3RayTracerToggle`.
+change for v2 readers. Backend package `backend/app/optical/` and
+frontend package `frontend/src/optical/` mirror each other
+line-for-line — same BeamRay struct, same op names, golden-JSON
+parity tests in `__tests__/parity/`. Per-kind ops landed: `lens`,
+`mirror`, `polarizer`, `waveplate`, `pbs`, `dichroic_mirror`,
+`faraday_rotator`, `aom_v3`, `glan_laser`, `eom`, `fiber` (with full
+`optical/fiber/` sub-package for Bessel mode coupling, bend loss,
+Fresnel, polarisation), `laser_source`, `tapered_amplifier`.
 Catalog seed: `backend/scripts/seed_v3_assets.py` upserts from
 `assets/catalog/{kinds,assets3d,components}/**/*.json` by
 `catalog_id`.

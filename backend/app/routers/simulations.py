@@ -41,65 +41,44 @@ class OpticalRunResponse(CamelModel):
 
 @router.post("/optical/run", response_model=OpticalRunResponse, status_code=status.HTTP_200_OK)
 async def run_optical(session: AsyncSession = Depends(get_session)) -> OpticalRunResponse:
-    elements = list((await session.scalars(select(PhysicsElement))).all())
-    links = list((await session.scalars(select(OpticalLink))).all())
-    objects_by_id = {
-        obj.id: obj for obj in (await session.scalars(select(SceneObject))).all()
-    }
-    components_by_id = {
-        c.id: c for c in (await session.scalars(select(Component))).all()
-    }
-    assets_by_id = {
-        a.id: a for a in (await session.scalars(select(Asset3D))).all()
-    }
-    device_states = list((await session.scalars(select(DeviceState))).all())
-    hydrate_laser_kind_params(elements, objects_by_id)
-    hydrate_aom_rf_drive(elements, objects_by_id, device_states=device_states)
-    hydrate_waveplate_fast_axis(
-        elements, objects_by_id, components_by_id=components_by_id, assets_by_id=assets_by_id,
-    )
+    """Run the production optical simulation (Phase 7.4: now v3-backed).
 
-    result = solve_chain(elements, links)
+    The endpoint contract is preserved (run_id + segment_count + errors +
+    warnings) but the underlying solver is now ``solve_v3_scene``. Old
+    PhysicsElement.kind_params hydrators are bypassed because v3 reads
+    physics directly from Asset3D faces / transitions / default_params
+    (and per-instance overrides via dynamic_sources).
 
-    if not result.errors:
-        # V2 Phase 1 (alembic 0027) added a FK from
-        # beam_segments.simulation_run_id → simulation_runs.id, so any
-        # segment we persist must reference a real SimulationRun row.
-        # solve_chain still makes up an in-memory uuid for `result.run_id`;
-        # promote it to a persisted SimulationRun row here so the FK is
-        # satisfied. Status defaults to "completed" and warnings are
-        # stashed verbatim — keeps the route audit-friendly without
-        # pulling the solver into the DB layer.
-        sim_run = SimulationRun(
-            id=result.run_id,
-            status="completed",
-            warnings=list(result.warnings),
-        )
-        session.add(sim_run)
-        await session.flush()  # ensure simulation_runs row exists before FK check on beam_segments
-        # Replace any prior segments for these links so the table doesn't grow
-        # unbounded across runs (a future runs table will switch this to append).
-        link_ids = [link.id for link in links]
-        if link_ids:
-            await session.execute(delete(BeamSegment).where(BeamSegment.optical_link_id.in_(link_ids)))
-        for segment in result.segments:
-            session.add(BeamSegment(**segment))
-        await session.commit()
+    BeamSegment persistence is skipped: the legacy table is keyed on
+    optical_link_id, but v3 has no optical_link concept (the tracer is
+    pure geometric). Persisting v3 results to a new table is a follow-up.
+    A warning is emitted so callers know not to expect new
+    beam_segments rows.
+    """
+    # Phase 9.8 — production simulation now runs through anchor tracer.
+    from app.optical import anchor_ops  # noqa: F401
+    from app.optical.anchor_tracer import AnchorTraceOptions
+    from app.optical.db_scene_loader import load_anchor_scene_from_db
+    from app.optical.solver_v3 import solve_anchor_scene
+
+    scene = await load_anchor_scene_from_db(session)
+    result = solve_anchor_scene(scene, [], AnchorTraceOptions())
 
     payload = OpticalRunResponse(
         run_id=result.run_id,
-        segment_count=len(result.segments),
-        errors=result.errors,
-        warnings=result.warnings,
+        segment_count=len(result.lab_segments),
+        errors=list(result.errors),
+        warnings=list(result.warnings) + [
+            "v3 endpoint — BeamSegment table persistence is deferred; "
+            "consumers should read /api/v3/solver/run-from-db instead.",
+        ],
     )
     await manager.broadcast(
         "optical_simulation.completed",
         payload.model_dump(mode="json", by_alias=True),
     )
-    # Trigger every connected client to re-pull /api/scene so the new
-    # beam_segments show up.
-    if not result.errors:
-        await manager.broadcast("scene.reload", {"reason": "optical_simulation"})
+    # No DB writes happen on this path anymore; skip the scene.reload
+    # broadcast so clients don't churn waiting for non-existent rows.
     return payload
 
 

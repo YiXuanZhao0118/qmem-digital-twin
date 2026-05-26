@@ -2,7 +2,7 @@
   "id": "glan_laser_io3_850",
   "vendorPart": "Thorlabs IO-3-850-HP internal Glan-Laser",
   "displayName": "Glan-Laser Prism (IO-3-850-HP, L=5.0mm)",
-  "geometryRef": "files/stl/glan_polarizer_calcite_prism.stl",
+  "geometryRef": null,
   "geometryRefGlb": null,
   "bodyFrameRotation": null,
 

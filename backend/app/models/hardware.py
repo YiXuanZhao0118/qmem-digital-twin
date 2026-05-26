@@ -72,7 +72,8 @@ class Asset3D(Base):
     # Asset-Physics-Model v3 (alembic 0082). Nullable while v2 anchors-based
     # data coexists. See docs/asset-physics-model.md for schema.
     catalog_id: Mapped[str | None] = mapped_column(Text, unique=False)
-    physics_kind: Mapped[str | None] = mapped_column(Text)
+    # Classification slug (alembic 0089/0090). Pointer into the Kind registry.
+    kind_id: Mapped[str | None] = mapped_column(Text)
     faces: Mapped[JsonList | None] = mapped_column(JSONB)
     transitions: Mapped[JsonList | None] = mapped_column(JSONB)
     default_params: Mapped[JsonDict | None] = mapped_column(JSONB)
@@ -80,6 +81,15 @@ class Asset3D(Base):
         sa.ARRAY(sa.Float())
     )
     body_frame_rotation: Mapped[JsonDict | None] = mapped_column(JSONB)
+    # Phase 9.1 anchor-centric schema (alembic 0087). Replaces faces[] +
+    # transitions[] as the primary physics anchor structure. Each anchor
+    # carries position + explicit local axes (X = propagation/normal,
+    # Y = transverse reference like fast axis / s-polarization basis,
+    # Z = X × Y). The tracer reads this column once Phase 9.2 lands;
+    # faces[] / transitions[] are retired in Phase 9.8.
+    anchors: Mapped[JsonList] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
 
     components: Mapped[list[Component]] = relationship(back_populates="asset")
 
@@ -94,7 +104,8 @@ class Component(Base):
         server_default=text("gen_random_uuid()"),
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    component_type: Mapped[str] = mapped_column(Text, nullable=False)
+    # Classification slug (alembic 0089/0090). Pointer into the Kind registry.
+    kind_id: Mapped[str | None] = mapped_column(Text)
     brand: Mapped[str | None] = mapped_column(Text)
     model: Mapped[str | None] = mapped_column(Text)
     # serial_number lives on SceneObject now (alembic 0015) — a serial
@@ -147,6 +158,77 @@ class Component(Base):
     # DeviceState, TimingProgram, PhysicsElement are all per-OBJECT now
     # (alembic 0014 + 0015). Reach them via SceneObject.{device_state,
     # timing_program, physics_element}. Component is purely a catalog row.
+
+
+class Kind(Base):
+    """Kind metadata catalog (alembic 0086).
+
+    Moves per-kind metadata (defaultParams template, faceTemplate, etc.)
+    from the code-only registry into a DB row that the UI can CRUD. The
+    actual PhysicsOp implementations stay in code (see
+    ``app.optical.registry`` / frontend ``src/optical/registry.ts``) and
+    each Kind row references one of those by ``op_set_name``. New rows
+    created via the UI reuse an existing op set — to introduce truly new
+    physics behavior you still need a code change.
+
+    See docs/asset-physics-model.md §6.
+    """
+
+    __tablename__ = "kinds"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    # Lookup key referenced by ``Asset3D.kind_id``. Unique. e.g.
+    # "lens", "my_custom_lens".
+    name: Mapped[str] = mapped_column(Text, nullable=False, unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    # "optical" | "rf" | "mechanical". CHECK-constrained.
+    domain: Mapped[str] = mapped_column(Text, nullable=False)
+    # Name of the code-side op set this kind dispatches through. For
+    # built-in kinds, equal to ``name`` (e.g. "lens" → "lens"). For
+    # user-created variants, points to an existing entry (e.g.
+    # "my_custom_lens" → op_set_name = "lens" so it reuses the lens ops).
+    op_set_name: Mapped[str] = mapped_column(Text, nullable=False)
+    # Template defaults used when an Asset3D of this kind is created. The
+    # Asset3D row stores its own copy in ``default_params`` so editing
+    # this template later doesn't retroactively change existing assets.
+    default_params: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+    # Face template (anchors / required / optional). Same as
+    # frontend physics-plugin "anchors" block. Pure metadata used by
+    # the Asset3D editor's "create new asset" form.
+    face_template: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+    needs_aperture: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+    wavelength_range_nm: Mapped[list[float] | None] = mapped_column(
+        sa.ARRAY(sa.Float())
+    )
+    description: Mapped[str | None] = mapped_column(Text)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "domain IN ('optical', 'rf', 'mechanical')",
+            name="kind_domain_check",
+        ),
+    )
 
 
 class ComponentBinding(Base):

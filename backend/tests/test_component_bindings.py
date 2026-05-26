@@ -72,7 +72,7 @@ async def _mk_asset(db, name_suffix: str) -> Asset3D:
 async def _mk_component(db, name_suffix: str) -> Component:
     component = Component(
         name=f"test_binding_comp_{name_suffix}_{uuid.uuid4().hex[:6]}",
-        component_type="custom_3d",
+        kind_id="custom_3d",
     )
     db.add(component)
     await db.flush()

@@ -3,14 +3,14 @@
 Idempotent — upserts by `catalog_id`. Run after `alembic upgrade head`
 on the v3 migration (0082+).
 
-  Asset3D JSON  → assets_3d row (v3 columns: physics_kind, faces,
+  Asset3D JSON  → assets_3d row (v3 columns: kind_id, faces,
                   transitions, default_params, wavelength_range_nm,
                   body_frame_rotation)
   Component JSON → components row + ComponentBinding rows resolved from
                    asset catalog_id refs to UUID FKs
 
 Mechanical-only assets (Asset3D.kind == null in JSON) seed with
-physics_kind=null + empty faces/transitions; only geometry + properties
+kind_id=null + empty faces/transitions; only geometry + properties
 are populated.
 
 Usage:
@@ -76,7 +76,7 @@ async def upsert_asset3d(session, payload: Asset3DV3In) -> Asset3D:
             asset_type=asset_type,
             file_path=payload.geometry_ref or "",
             anchors=mech_anchors_json,
-            physics_kind=payload.kind,
+            kind_id=payload.kind,
             faces=faces_json,
             transitions=transitions_json,
             default_params=payload.default_params or {},
@@ -96,19 +96,25 @@ async def upsert_asset3d(session, payload: Asset3DV3In) -> Asset3D:
         existing.asset_type = asset_type
         existing.file_path = payload.geometry_ref or existing.file_path
         existing.anchors = mech_anchors_json
-        existing.physics_kind = payload.kind
+        existing.kind_id = payload.kind
         existing.faces = faces_json
         existing.transitions = transitions_json
         existing.default_params = payload.default_params or {}
         existing.wavelength_range_nm = payload.wavelength_range_nm
         existing.body_frame_rotation = body_rot
-        existing.properties = {
+        # Preserve viewerHints (centroid filters, etc.) baked by alembic
+        # migrations like 0074 — re-seeding shouldn't wipe them.
+        preserved_vh = (existing.properties or {}).get("viewerHints")
+        new_properties = {
             "vendorPart": payload.vendor_part,
             "displayName": payload.display_name,
             "physicalDimensionsMm": payload.physical_dimensions_mm or {},
             "geometryRefGlb": payload.geometry_ref_glb,
             "notes": payload.notes or {},
         }
+        if preserved_vh is not None:
+            new_properties["viewerHints"] = preserved_vh
+        existing.properties = new_properties
 
     return existing
 
@@ -140,7 +146,7 @@ async def upsert_component(session, payload: ComponentV3In) -> Component:
         existing = Component(
             catalog_id=payload.id,
             name=name,
-            component_type=payload.component_type,
+            kind_id=payload.kind_id,
             brand=None,
             model=payload.vendor_part,
             exposed_faces=exposed_json,
@@ -149,7 +155,7 @@ async def upsert_component(session, payload: ComponentV3In) -> Component:
         session.add(existing)
     else:
         existing.name = name
-        existing.component_type = payload.component_type
+        existing.kind_id = payload.kind_id
         existing.model = payload.vendor_part
         existing.exposed_faces = exposed_json
         existing.properties = {**(existing.properties or {}), **next_properties}

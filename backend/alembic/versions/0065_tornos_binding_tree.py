@@ -23,7 +23,7 @@ already used by ``kinds/isolator/pbsOverlay.ts::ISOLATOR_PBS_DEFAULTS_BY_MODEL``
 so the binding-tree render lands visually identical to today's
 bespoke pbsOverlay path. ``tunable_axes.ry_deg`` exposes the
 per-instance rotation knob (matches the user's
-"前 PBS Mount 相對 Faraday part 依照某個軸旋轉" requirement) — the
+"front PBS Mount rotates around some axis relative to the Faraday part" requirement) — the
 SceneObject's ``properties.bindingOverrides`` carries the actual
 value.
 
