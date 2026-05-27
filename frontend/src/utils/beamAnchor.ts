@@ -11,6 +11,7 @@
 //  3. Body center (no offset)                                   (final fallback)
 
 import type { PhysicsElement, Asset3D, ComponentItem, SceneObject } from "../types/digitalTwin";
+import { anchorObjectLocalLegacyDir, anchorObjectLocalPos } from "./anchorAccess";
 import { rotateLocalToLab, type Vec3 } from "./beamPlacement";
 import { getMirrorNormalBodyLocal } from "./v2Bindings";
 
@@ -60,10 +61,8 @@ export function getBeamAnchor(
     const a = asset.anchors.find((x) => x.id === OPTICAL_ANCHOR_ID);
     if (a) {
       return {
-        offsetLocalMm: { x: a.positionMmBodyLocal.x, y: a.positionMmBodyLocal.y, z: a.positionMmBodyLocal.z },
-        normalLocal: a.directionBodyLocal
-          ? { x: a.directionBodyLocal.x, y: a.directionBodyLocal.y, z: a.directionBodyLocal.z }
-          : null,
+        offsetLocalMm: anchorObjectLocalPos(a, asset),
+        normalLocal: anchorObjectLocalLegacyDir(a, asset),
         source: "asset_anchor",
       };
     }

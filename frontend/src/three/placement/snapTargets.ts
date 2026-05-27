@@ -12,7 +12,9 @@
 import * as THREE from "three";
 
 import type { LabPoint, SceneSnapshot, SnapTarget } from "./engine";
-import { threeToLabPointMm } from "../../optical/frames";
+import { bodyLocalDirToLabDir, threeToLabPointMm } from "../../optical/frames";
+import type { Anchor, Asset3D, SceneObject } from "../../types/digitalTwin";
+import { anchorObjectLocalPos } from "../../utils/anchorAccess";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Shared lab-frame vector helpers (kept local to avoid coupling to beamSnap)
@@ -483,14 +485,13 @@ export function collectAnchorSnaps(
     if (ignoreObjectId !== null && obj.id === ignoreObjectId) continue;
     const comp = compById.get(obj.componentId);
     if (!comp?.asset3dId) continue;
-    const asset = assetById.get(comp.asset3dId);
-    const anchors = (asset as { anchors?: Array<{ id: string; positionMmBodyLocal?: { x: number; y: number; z: number } }> } | undefined)?.anchors;
+    const asset = assetById.get(comp.asset3dId) as Asset3D | undefined;
+    const anchors = asset?.anchors as Anchor[] | undefined;
     if (!anchors?.length) continue;
     for (const anchor of anchors) {
-      const lp = anchor.positionMmBodyLocal;
-      if (!lp) continue;
-      // Apply the SceneObject's lab-frame pose to anchor's local position.
-      const world = applyLabPose(lp, obj);
+      if (!anchor.positionMmBodyLocal) continue; /* raw-anchor-ok: presence check */
+      const local = anchorObjectLocalPos(anchor, asset);
+      const world = applyLabPose(local, obj);
       out.push({
         kind: "anchor",
         pointLab: world,
@@ -509,24 +510,8 @@ function applyLabPose(
   local: { x: number; y: number; z: number },
   obj: { xMm: number; yMm: number; zMm: number; rxDeg: number; ryDeg: number; rzDeg: number },
 ): LabPoint {
-  const rx = (obj.rxDeg * Math.PI) / 180;
-  const ry = (obj.ryDeg * Math.PI) / 180;
-  const rz = (obj.rzDeg * Math.PI) / 180;
-  // Ry
-  let x = local.x * Math.cos(ry) + local.z * Math.sin(ry);
-  let y = local.y;
-  let z = -local.x * Math.sin(ry) + local.z * Math.cos(ry);
-  // Rx
-  const y1 = y * Math.cos(rx) - z * Math.sin(rx);
-  const z1 = y * Math.sin(rx) + z * Math.cos(rx);
-  y = y1;
-  z = z1;
-  // Rz
-  const x2 = x * Math.cos(rz) - y * Math.sin(rz);
-  const y2 = x * Math.sin(rz) + y * Math.cos(rz);
-  x = x2;
-  y = y2;
-  return { x: x + obj.xMm, y: y + obj.yMm, z: z + obj.zMm };
+  const rotated = bodyLocalDirToLabDir(local, obj as SceneObject);
+  return { x: rotated.x + obj.xMm, y: rotated.y + obj.yMm, z: rotated.z + obj.zMm };
 }
 
 // ───────────────────────────────────────────────────────────────────────────

@@ -9,8 +9,20 @@ from sqlalchemy import select
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.db import AsyncSessionLocal  # noqa: E402
-from app.models import Asset3D, Component, SceneObject  # noqa: E402
+from app.models import Asset3D, Component, Kind, SceneObject  # noqa: E402
 
+
+KIND = {
+    "name": "optical_table",
+    "display_name": "Optical Table",
+    "domain": "mechanical",
+    "op_set_name": "optical_table",
+    "default_params": {},
+    "face_template": {},
+    "needs_aperture": False,
+    "wavelength_range_nm": None,
+    "description": "Passive mechanical optical table primitive used as the lab reference surface.",
+}
 
 ASSET = {
     "name": "primitive_table",
@@ -18,6 +30,7 @@ ASSET = {
     "file_path": "primitive://table",
     "unit": "mm",
     "scale_factor": 1.0,
+    "kind_id": "optical_table",
 }
 
 COMPONENT = {
@@ -52,6 +65,15 @@ SCENE_OBJECT = {
 
 async def main() -> None:
     async with AsyncSessionLocal() as session:
+        kind = await session.scalar(select(Kind).where(Kind.name == KIND["name"]))
+        if kind is None:
+            kind = Kind(**KIND)
+            session.add(kind)
+            await session.flush()
+        else:
+            for key, value in KIND.items():
+                setattr(kind, key, value)
+
         asset = await session.scalar(select(Asset3D).where(Asset3D.name == ASSET["name"]))
         if asset is None:
             asset = Asset3D(**ASSET)

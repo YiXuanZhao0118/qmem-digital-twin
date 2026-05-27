@@ -19,17 +19,51 @@ function Get-PortOwner($port) {
     Select-Object -ExpandProperty OwningProcess -Unique
 }
 
-# Stop whoever owns :8010
-$pids = Get-PortOwner 8010
-foreach ($procId in $pids) {
-  if (-not $procId) { continue }
-  try {
-    $proc = Get-Process -Id $procId -ErrorAction Stop
-    Write-Host ("[backend] stopping PID {0} ({1})" -f $procId, $proc.Name) -ForegroundColor Yellow
-    Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
-  } catch {}
+function Get-UvicornPythonPids {
+  # `uvicorn --reload` spawns a WatchFiles parent + a child worker. When
+  # the parent exits ungracefully the child keeps the socket but
+  # `Get-NetTCPConnection.OwningProcess` may still report the dead
+  # parent PID, so the standard owner-kill path is a no-op. Falling
+  # back to "kill any python.exe that has uvicorn / app.main in its
+  # command line" catches the orphaned worker reliably.
+  Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -and $_.CommandLine -match 'uvicorn|app\.main:app' } |
+    Select-Object -ExpandProperty ProcessId -Unique
 }
+
+function Stop-Pids($pids, $label) {
+  foreach ($procId in $pids) {
+    if (-not $procId) { continue }
+    try {
+      $proc = Get-Process -Id $procId -ErrorAction Stop
+      Write-Host ("[backend] stopping $label PID {0} ({1})" -f $procId, $proc.Name) -ForegroundColor Yellow
+      Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+    } catch {
+      # Process already gone — owner socket may still report it. Fine,
+      # the orphan-worker sweep below will catch the real listener.
+    }
+  }
+}
+
+# Pass 1: kill whoever the kernel says owns :8010.
+Stop-Pids (Get-PortOwner 8010) 'port-owner'
 Start-Sleep -Milliseconds 500
+
+# Pass 2: kill any orphan uvicorn-worker python.exe that survived.
+$orphans = Get-UvicornPythonPids
+if ($orphans) {
+  Write-Host ("[backend] orphan uvicorn worker(s) detected: {0} — sweeping" -f ($orphans -join ',')) -ForegroundColor Yellow
+  Stop-Pids $orphans 'orphan-worker'
+  Start-Sleep -Milliseconds 500
+}
+
+# Pass 3: verify the port is actually free now. If something else
+# still squats on :8010 (unrelated service?), abort rather than start
+# a second uvicorn that'll silently lose the bind race.
+$stillOwned = Get-PortOwner 8010
+if ($stillOwned) {
+  throw "Port :8010 still owned by PID(s) $($stillOwned -join ',') after pre-flight sweep. Investigate manually before retrying."
+}
 
 if (-not (Test-Path -LiteralPath $VenvPython)) {
   throw "Backend venv not found at $VenvPython"

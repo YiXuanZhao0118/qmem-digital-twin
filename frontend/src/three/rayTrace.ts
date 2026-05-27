@@ -1,9 +1,36 @@
-// Geometry-driven forward ray tracer.
+// ⚠️ DEPRECATED — legacy in-browser geometry tracer (§16.1 of
+// docs/frame-anchor-architecture.md). The Phase 9.8 anchor-based
+// backend solver (backend/app/optical/solver_v3.py:solve_anchor_scene,
+// invoked via /api/v3/solver/run-from-db) is the canonical production
+// path. DigitalTwinViewer.renderRayTraces() now feeds beams from the
+// backend's V3 lab segments, NOT this module.
 //
-// Unlike the topology solver in `backend/app/solvers/optical_solver.py`, this
-// runs in the browser and uses the actual loaded 3D meshes for hit detection.
+// What's still alive here (and why this file is not deleted):
+//   - `TraceSegment` type — the shape exposed on
+//     `window.__rayTraceDebug` for cross-component consumers
+//     (snap-to-beam, OpticalLinkViewerPanel, BeamScopePanel). The
+//     v3 adapter in `three/v3TraceAdapter.ts` produces values
+//     conforming to this type.
+//   - `gaussianWaistAtZ` / `BeamState` — pure math helpers used by
+//     OpticalLinkViewerPanel for visual taper rendering.
+//   - `_testReflect` — exposed on `window.__testReflect` for the
+//     in-browser test helper (some Playwright / manual debugging
+//     paths poke it directly).
 //
-// Behaviour:
+// What is FROZEN (do not extend, do not call from new code):
+//   - `traceBeamsFromLasers` and the whole forward-recursion engine.
+//     No production code path calls it as of 2026-05-27.
+//   - All the per-kind dispatch (mirror reflect, polariser split,
+//     AOM Bragg geometry, etc.) — duplicates of backend physics in
+//     `optical/kinds/**/physics.ts` + anchor tracer ops in
+//     `backend/app/optical/anchor_ops/`.
+//
+// If you need a NEW physics behaviour: add it on the backend
+// (anchor_ops + solver_v3). If you need to change ray rendering:
+// edit `DigitalTwinViewer.renderRayTraces()` which consumes the
+// backend's lab segments. Do NOT extend this file.
+//
+// Original Behaviour (for historical reference only):
 //   1. For every laser_source / tapered_amplifier SceneObject, emit a ray
 //      starting at the SceneObject origin, pointing along the SceneObject's
 //      local +X axis (rotated by rxDeg/ryDeg/rzDeg).
@@ -50,6 +77,11 @@ import {
 import { deltaAlphaFromHit } from "./deltaAlphaFromHit";
 import { lensOpticalGeometry } from "./lensOpticalGeometry";
 import { rotateLocalToLab } from "../utils/beamPlacement";
+import {
+  anchorObjectLocalAxisZ,
+  anchorObjectLocalPos,
+  anchorObjectLocalPrimaryDir,
+} from "../utils/anchorAccess";
 import { FIBER_FERRULE_TIP_MM } from "../utils/fiberAnchorResolver";
 import { endpointOutwardBody } from "../utils/fiberAlignment";
 import { emissionFromObject } from "./opticalBeams";
@@ -989,9 +1021,9 @@ function aomTraversalFromRay(
     : undefined;
   const inAnchor = asset?.anchors?.find((a) => a.id === "intercept_in");
   const outAnchor = asset?.anchors?.find((a) => a.id === "intercept_out");
-  const inBody = inAnchor?.positionMmBodyLocal;
-  const outBody = outAnchor?.positionMmBodyLocal;
-  if (!inBody || !outBody) return { sign: 1, entryPortId: "intercept_in" };
+  if (!inAnchor || !outAnchor) return { sign: 1, entryPortId: "intercept_in" };
+  const inBody = anchorObjectLocalPos(inAnchor, asset);
+  const outBody = anchorObjectLocalPos(outAnchor, asset);
 
   const bBody = {
     x: outBody.x - inBody.x,
@@ -1194,22 +1226,35 @@ function traceOneRay(
 
     const oe = elementForObject(hitObjectId, ctx);
     const kp = oe?.kindParams as { coatingNormalBodyLocal?: number[]; coatingNormalLocal?: number[] } | undefined;
-    // Glan-Laser: the cut-plane normal is owned by the Asset3D's
-    // intercept_in anchor (settable via PHY Editor face-pick — Phase 8).
-    // The kindParams copy is only the plugin's seed default and goes
-    // stale the moment the user customises the asset. Prefer the asset
-    // anchor as the live source of truth; fall back to kindParams when
-    // the asset hasn't declared one yet.
+    // Phase 9.8 primary anchor read: the polarizing surface normal is
+    // the asset's intercept_face / intercept_in anchor's axisX (the
+    // coating normal). axisZ is the transmission axis (p-pol) — picked
+    // up below in the Malus split. Legacy fallbacks: v2 anchor
+    // directionBodyLocal, then physics_elements.kindParams. lab_sense
+    // is honored automatically by bodyLocalDirToWorldThree(obj).
     let assetCutNormal: number[] | undefined;
-    if (kind === "glan_polarizer" && hitObj) {
+    let assetTransmissionAxisBody: { x: number; y: number; z: number } | undefined;
+    if (hitObj) {
       const hitComp = ctx.components.find((c) => c.id === hitObj.componentId);
       const asset = hitComp?.asset3dId
         ? ctx.assets.find((a) => a.id === hitComp.asset3dId)
         : null;
-      const interceptIn = asset?.anchors?.find((a) => a.id === "intercept_in");
-      const dir = interceptIn?.directionBodyLocal;
-      if (dir && typeof dir.x === "number" && typeof dir.y === "number" && typeof dir.z === "number") {
-        assetCutNormal = [dir.x, dir.y, dir.z];
+      const primaryAnchor =
+        asset?.anchors?.find((a) => a.id === "intercept_face")
+        ?? asset?.anchors?.find((a) => a.id === "intercept_in");
+      // primaryDir = axisX (Phase 9.1) ?? legacy directionBodyLocal,
+      // both returned in object-local CAD frame (R_body × d).
+      const primaryDir = primaryAnchor
+        ? anchorObjectLocalPrimaryDir(primaryAnchor, asset)
+        : null;
+      const axisZ = primaryAnchor
+        ? anchorObjectLocalAxisZ(primaryAnchor, asset)
+        : null;
+      if (primaryDir) {
+        assetCutNormal = [primaryDir.x, primaryDir.y, primaryDir.z];
+      }
+      if (axisZ) {
+        assetTransmissionAxisBody = { x: axisZ.x, y: axisZ.y, z: axisZ.z };
       }
     }
     const coating = assetCutNormal ?? bindingNormal ?? kp?.coatingNormalBodyLocal ?? kp?.coatingNormalLocal;
@@ -1283,6 +1328,32 @@ function traceOneRay(
     let reflPol = polarization;
     let transFactor: number;
     let reflFactor: number;
+    // Phase 9.8: derive the transmission-axis angle from the asset
+    // anchor's axisZ (p-pol direction in body frame). Falls back to
+    // physics_elements.kindParams when the anchor lacks tri-axis data
+    // (legacy backfills). Projecting body-frame axisZ → world (via
+    // bodyLocalDirToWorldThree, which honors lab_sense) → beam-perp
+    // plane → angle in beam-local (Ex, Ey) basis gives the same value
+    // applyPolarisingPBS expects.
+    let derivedTransAxisDeg: number | undefined;
+    if (assetTransmissionAxisBody && hitObj) {
+      const axisZWorld = bodyLocalDirToWorldThree(assetTransmissionAxisBody, hitObj);
+      const dotZD = axisZWorld.dot(dir);
+      const projected = axisZWorld.clone().sub(dir.clone().multiplyScalar(dotZD));
+      if (projected.lengthSq() > 1e-12) {
+        projected.normalize();
+        // Build beam-local (Ex, Ey) basis matching the probe-beam
+        // convention (world up = +Z; fallback +X when beam parallel to
+        // world up). Ex = "s"-like (in plane defined by beam + world
+        // up), Ey = beam × Ex.
+        const GLOBAL_UP = new THREE.Vector3(0, 0, 1);
+        const FALLBACK_UP = new THREE.Vector3(1, 0, 0);
+        const up = Math.abs(dir.dot(GLOBAL_UP)) > 0.999 ? FALLBACK_UP : GLOBAL_UP;
+        const ex = up.clone().sub(dir.clone().multiplyScalar(dir.dot(up))).normalize();
+        const ey = dir.clone().cross(ex).normalize();
+        derivedTransAxisDeg = Math.atan2(projected.dot(ey), projected.dot(ex)) * 180 / Math.PI;
+      }
+    }
     if (params.polarizing === true) {
       // Polarising PBS — output direction is FIXED at P-axis (transmitted)
       // / S-axis (reflected); per-branch power = Malus-law projection × T.
@@ -1291,8 +1362,12 @@ function traceOneRay(
       // to the optic, not the input.
       const split = applyPolarisingPBS(
         polarization,
-        // Phase 5: prefer the new beam-frame-suffixed key.
-        params.transmissionAxisDegBeamLocal ?? params.transmissionAxisDeg ?? 0,
+        // Phase 9.8: anchor-derived axisZ first; legacy kindParams
+        // (Phase 5+, transmissionAxisDegBeamLocal) as fallback.
+        derivedTransAxisDeg
+          ?? params.transmissionAxisDegBeamLocal
+          ?? params.transmissionAxisDeg
+          ?? 0,
         tx,
         params.extinctionRatioDb ?? 30,
       );
@@ -1877,13 +1952,13 @@ function traceOneRay(
           : undefined;
         const inAnchor = asset?.anchors?.find((a) => a.id === "intercept_in");
         const outAnchor = asset?.anchors?.find((a) => a.id === "intercept_out");
-        const inBody = inAnchor?.positionMmBodyLocal;
-        const outBody = outAnchor?.positionMmBodyLocal;
-        if (inBody && outBody) {
+        if (inAnchor && outAnchor) {
+          const inLocal = anchorObjectLocalPos(inAnchor, asset);
+          const outLocal = anchorObjectLocalPos(outAnchor, asset);
           pivotBody = {
-            x: 0.5 * (inBody.x + outBody.x),
-            y: 0.5 * (inBody.y + outBody.y),
-            z: 0.5 * (inBody.z + outBody.z),
+            x: 0.5 * (inLocal.x + outLocal.x),
+            y: 0.5 * (inLocal.y + outLocal.y),
+            z: 0.5 * (inLocal.z + outLocal.z),
           };
         }
       }
@@ -2325,8 +2400,11 @@ export function traceBeamsFromLasers(input: {
     const apertureProps = component?.properties as
       | { apertureForwardMmBodyLocal?: number[]; apertureForwardLocalMm?: number[] }
       | undefined;
-    const inAnchorPos = element.elementKind === "tapered_amplifier"
-      ? asset?.anchors?.find((a) => a.id === "intercept_in")?.positionMmBodyLocal
+    const inAnchorRaw = element.elementKind === "tapered_amplifier"
+      ? asset?.anchors?.find((a) => a.id === "intercept_in")
+      : undefined;
+    const inAnchorPos = inAnchorRaw
+      ? anchorObjectLocalPos(inAnchorRaw, asset)
       : undefined;
     // Anchor path bypasses meshAperturePoint — anchor positions are
     // wrapper-local (relative to SceneObject origin, same convention the
@@ -2474,7 +2552,10 @@ export function traceBeamsFromLasers(input: {
     const apertureBackProps = component?.properties as
       | { apertureBackwardMmBodyLocal?: number[]; apertureBackwardLocalMm?: number[] }
       | undefined;
-    const outAnchorPos = asset?.anchors?.find((a) => a.id === "intercept_out")?.positionMmBodyLocal;
+    const outAnchorRaw = asset?.anchors?.find((a) => a.id === "intercept_out");
+    const outAnchorPos = outAnchorRaw
+      ? anchorObjectLocalPos(outAnchorRaw, asset)
+      : undefined;
     // Same anchor-path / meshAperturePoint split as intercept_in above —
     // anchor is wrapper-local (alignment formula), legacy field is GLB-frame.
     const apertureBackwardLegacy = apertureBackProps?.apertureBackwardMmBodyLocal

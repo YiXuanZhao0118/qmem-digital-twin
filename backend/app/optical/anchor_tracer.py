@@ -120,23 +120,23 @@ def intersect_anchor(
 
 
 # Primary anchor IDs that the tracer considers during ray-plane
-# intersection. Other anchors (intercept_in / intercept_out / port_*)
-# are align hints for UX (Phase 9.7), NOT trace targets — including them
-# in the trace causes spurious passthrough segments per asset.
+# intersection. After Phase 9.8 anchor naming cleanup, the canonical
+# names come straight from kind.face_template — every optical asset
+# carries one or more of `intercept_in / intercept_out / intercept_face`
+# (plus rf_in/out/ttl_in for RF). Two derived/special anchors stay:
+#   - interaction_center: synthesized at load time for AOM from the
+#                          midpoint of intercept_in and intercept_out.
+#   - optical_center:     used only by faraday_rotator (single-anchor
+#                          kind defined separately from the spec).
 PRIMARY_ANCHOR_IDS = frozenset({
-    "optical_center",          # slab elements (lens, waveplate, polarizer, EOM, Faraday, TA)
-    "reflection_surface",      # mirror, dichroic_mirror
-    "coating_plane",           # PBS / BS / Glan internal Brewster plate
-    "interaction_center",      # AOM
-    "tip_a", "tip_b",          # fiber two-tip model
-    "emit_point",              # laser_source (emitter; also a valid hit for downstream ops to skip)
-    "absorber_face",           # beam_dump
-    "sensor_face",             # detector, camera
-    "slit_face",               # spectrometer
-    "input_face",              # wavemeter
-    "transmission_plane",      # polarizer (alias)
-    "crystal_center",          # nonlinear_crystal
-    "slab_center",             # generic slab fallback
+    "intercept_in",            # transmissive entry face (lens, waveplate, eom, polarizer,
+                               # nonlinear, saturable, beam_dump, camera, detector, wavemeter,
+                               # fiber-in, glan_polarizer, TA-in)
+    "intercept_out",           # transmissive exit face (laser_source, fiber-out, TA-out)
+    "intercept_face",          # reflective / coating face (mirror, dichroic_mirror,
+                               # PBS / beam_splitter)
+    "interaction_center",      # AOM (synthesized at load from intercept_in/out midpoint)
+    "optical_center",          # faraday_rotator (single-anchor non-reciprocal element)
 })
 
 
@@ -224,22 +224,27 @@ def beam_state_from_anchor_hit(
 
     Beam state convention (paraxial 5×5):
         y     = perpendicular offset along axisY
-        θ_y   = ray.direction.axisY / ray.direction.axisX  (tilt)
+        θ_y   = ray.direction.axisY / |ray.direction.axisX| (slope)
         z     = perpendicular offset along axisZ
-        θ_z   = ray.direction.axisZ / ray.direction.axisX
+        θ_z   = ray.direction.axisZ / |ray.direction.axisX|
+
+    Uses |dx| so θ_y / θ_z keep their geometric sign regardless of whether
+    the ray hits the anchor head-on (d·axisX > 0) or anti-parallel
+    (d·axisX < 0). The propagation-direction sign is recovered from the
+    input direction in ``out_ray_from_state``.
     """
     n_x = hit.anchor.axis_x_body
     n_y = hit.anchor.axis_y_body
     n_z = hit.anchor.axis_z_body
     d = ray_body.direction
-    dx = d.dot(n_x)
-    if abs(dx) < 1e-12:
+    abs_dx = abs(d.dot(n_x))
+    if abs_dx < 1e-12:
         return hit.offset_y_body, 0.0, hit.offset_z_body, 0.0
     return (
         hit.offset_y_body,
-        d.dot(n_y) / dx,
+        d.dot(n_y) / abs_dx,
         hit.offset_z_body,
-        d.dot(n_z) / dx,
+        d.dot(n_z) / abs_dx,
     )
 
 
@@ -251,23 +256,44 @@ def out_ray_from_state(
     flip_propagation: bool = False,
 ) -> BeamRay:
     """Reconstruct an out-going BeamRay (still in body frame) from a
-    post-op (y, θ_y, z, θ_z) state. If flip_propagation=True, the ray
-    travels back along -axisX (e.g. mirror)."""
-    sign = -1.0 if flip_propagation else 1.0
-    n_x = Vec3(*[v * sign for v in (anchor.axis_x_body.x, anchor.axis_x_body.y, anchor.axis_x_body.z)])
+    post-op (y, θ_y, z, θ_z) state.
+
+    Output propagation direction follows the input ray's incidence sign:
+      - Transmission (flip_propagation=False): same axial direction as
+        input (beam passes through the slab forward).
+      - Reflection (flip_propagation=True): reversed axial direction
+        (mirror reflects back through whichever face it entered).
+
+    This makes slab/lens/polarizer ops symmetric — anchors whose axisX
+    happens to point "back" toward the upstream emitter (after R_body /
+    scene rotation) still transmit forward instead of bouncing back.
+    """
+    inc_dot = (
+        base_ray.direction.x * anchor.axis_x_body.x
+        + base_ray.direction.y * anchor.axis_x_body.y
+        + base_ray.direction.z * anchor.axis_x_body.z
+    )
+    incidence_sign = 1.0 if inc_dot >= 0 else -1.0
+    out_sign = incidence_sign * (-1.0 if flip_propagation else 1.0)
+
+    n_x = Vec3(
+        anchor.axis_x_body.x * out_sign,
+        anchor.axis_x_body.y * out_sign,
+        anchor.axis_x_body.z * out_sign,
+    )
     new_origin = Vec3(
         anchor.position_body.x + y * anchor.axis_y_body.x + z * anchor.axis_z_body.x,
         anchor.position_body.y + y * anchor.axis_y_body.y + z * anchor.axis_z_body.y,
         anchor.position_body.z + y * anchor.axis_y_body.z + z * anchor.axis_z_body.z,
     )
-    # direction = axisX + θ_y · axisY + θ_z · axisZ (then normalize)
+    # direction = signed axisX + θ_y · axisY + θ_z · axisZ (then normalize)
     dx, dy, dz = n_x.x, n_x.y, n_x.z
     dx += theta_y * anchor.axis_y_body.x + theta_z * anchor.axis_z_body.x
     dy += theta_y * anchor.axis_y_body.y + theta_z * anchor.axis_z_body.y
     dz += theta_y * anchor.axis_y_body.z + theta_z * anchor.axis_z_body.z
     mag = math.sqrt(dx * dx + dy * dy + dz * dz)
     if mag < 1e-12:
-        new_dir = anchor.axis_x_body
+        new_dir = n_x
     else:
         new_dir = Vec3(dx / mag, dy / mag, dz / mag)
     return base_ray.replaced(origin=new_origin, direction=new_dir)

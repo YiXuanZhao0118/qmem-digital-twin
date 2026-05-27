@@ -1,4 +1,5 @@
 import type { Anchor, Asset3D, AssemblyRelation, ComponentItem, GeometrySelector, SceneObject } from "../types/digitalTwin";
+import { anchorObjectLocalLegacyDir, anchorObjectLocalPos } from "./anchorAccess";
 
 export type VecObject = { x: number; y: number; z: number };
 
@@ -241,8 +242,31 @@ export function worldAnchor(
   const assetAnchor = placementAnchor ? null : findCustomAnchor(asset?.anchors, anchorId);
   const standard = !placementAnchor && !assetAnchor ? localAnchor(anchorId, objectSize(object, component)) : null;
 
-  const localPosition = placementAnchor?.positionMmBodyLocal ?? assetAnchor?.positionMmBodyLocal ?? standard!.position;
-  const localDirection = placementAnchor?.directionBodyLocal ?? assetAnchor?.directionBodyLocal ?? standard?.direction;
+  // Asset-level anchors live in BODY frame (Phase 9.10/9.11). Convert to
+  // object-local CAD frame via anchorAccess helpers. Placement overrides
+  // and standard box anchors stay in object-local frame as-is — they were
+  // authored after the body-frame transform.
+  let localPosition: VecObject;
+  if (placementAnchor) {
+    // Per-instance placement override is authored in object-local frame
+    // already (lives on SceneObject.properties.anchors), so no body→CAD
+    // transform is needed.
+    localPosition = placementAnchor.positionMmBodyLocal; /* raw-anchor-ok: placement override is object-local */
+  } else if (assetAnchor) {
+    localPosition = anchorObjectLocalPos(assetAnchor, asset ?? null);
+  } else {
+    localPosition = standard!.position;
+  }
+
+  let localDirection: VecObject | undefined;
+  if (placementAnchor?.directionBodyLocal) { /* raw-anchor-ok: placement override is object-local */
+    localDirection = placementAnchor.directionBodyLocal; /* raw-anchor-ok: placement override is object-local */
+  } else if (assetAnchor) {
+    localDirection = anchorObjectLocalLegacyDir(assetAnchor, asset ?? null) ?? undefined;
+    if (!localDirection) localDirection = standard?.direction;
+  } else {
+    localDirection = standard?.direction;
+  }
 
   const rotatedPosition = rotateVec(
     scaleVec(addVec(objectOriginOffset(object), localPosition), objectScale(object)),

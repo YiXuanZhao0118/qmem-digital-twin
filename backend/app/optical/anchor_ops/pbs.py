@@ -1,7 +1,10 @@
-"""PBS / beam_splitter anchor op (Phase 9.4).
+"""PBS / beam_splitter anchor op (Phase 9.4; Glan-Laser added Phase 9.8).
 
-Single primary anchor: ``coating_plane`` at the cube's internal Brewster
-plate centre.
+Single primary anchor: ``intercept_face`` at the polarizer's internal
+coating / air-gap centre. Shared by:
+  - 45° cube PBS (Thorlabs PBS252 etc.) — params ``cubeSizeMm`` + ``refractiveIndex``.
+  - Glan-Laser air-gap polarizer (Thorlabs IO-3/IO-5) — params
+    ``lengthMm`` + ``refractiveIndex_e``/``refractiveIndex_o``.
   axisX = coating normal (the surface the beam reflects off in s)
   axisY = s-polarisation reference axis (in coating plane)
   axisZ = p-polarisation reference axis (= axisX × axisY)
@@ -47,13 +50,41 @@ def _jones_mag2(j: tuple[complex, complex]) -> float:
     return _jones_mag2_component(j, 0) + _jones_mag2_component(j, 1)
 
 
+def _pick_length_mm(params: dict) -> float:
+    """Length of the polarizer body along the beam axis.
+      - PBS cube: ``cubeSizeMm`` (BK7 cube edge).
+      - Glan-Laser / calcite air-gap polarizer: ``lengthMm`` (calcite
+        prism length; the cube param doesn't apply).
+    Falls back to a 1-inch cube when neither is set."""
+    for key in ("cubeSizeMm", "lengthMm"):
+        v = params.get(key)
+        if isinstance(v, (int, float)) and v > 0:
+            return float(v)
+    return 25.4
+
+
+def _pick_refractive_index(params: dict) -> float:
+    """Effective refractive index used for the ABCD slab propagation
+    L/n. For PBS cubes it's the isotropic glass index; for Glan-Laser
+    calcite we use the ordinary index (s-ray bulk medium) — the
+    extraordinary index governs the actual air-gap reflection condition
+    but the bulk-propagation slab is dominated by the o-ray geometry."""
+    n = params.get("refractiveIndex")
+    if isinstance(n, (int, float)) and n > 0:
+        return float(n)
+    n_o = params.get("refractiveIndex_o")
+    if isinstance(n_o, (int, float)) and n_o > 0:
+        return float(n_o)
+    return 1.5168  # BK7 default
+
+
 def pbs_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
-    if ctx.anchor.id != "coating_plane":
+    if ctx.anchor.id != "intercept_face":
         return [ray_in]
 
     y, theta_y, z, theta_z = beam_state_from_anchor_hit(ray_in, ctx.hit)
-    cube_size = float(ctx.params.get("cubeSizeMm", 25.4))
-    n_index = float(ctx.params.get("refractiveIndex", 1.5168))
+    cube_size = _pick_length_mm(ctx.params)
+    n_index = _pick_refractive_index(ctx.params)
     L_over_n = cube_size / n_index
 
     mag_in = _jones_mag2(ray_in.jones)

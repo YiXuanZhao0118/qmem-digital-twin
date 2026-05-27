@@ -52,7 +52,17 @@ const MECHANICAL_TYPES = TYPES_BY_CATEGORY.mechanical;
 const INFRASTRUCTURE_TYPES = TYPES_BY_CATEGORY.infrastructure;
 const MISC_TYPES = TYPES_BY_CATEGORY.misc;
 
-function categoryForComponentType(componentType: string): CategoryDef {
+// Mirrors ComponentsV2Editor.classifyComponentDomain so the catalog
+// groups components the same way PHY Editor does:
+//   1. physicsCapabilities wins (matches PHY Editor's domain rails)
+//   2. kindId-based plugin category as fallback
+// This keeps capability-pill toggles (Object panel) and PHY Editor's
+// DomainToggleField in lockstep with where a component appears here.
+function categoryForComponent(component: ComponentItem): CategoryDef {
+  const caps = (component.physicsCapabilities ?? []) as readonly string[];
+  if (caps.includes("optical")) return CATEGORY_DEFS.optical;
+  if (caps.includes("rf")) return CATEGORY_DEFS.electronics;
+  const componentType = component.kindId?.trim() || "uncategorized";
   if (OPTICAL_TYPES.has(componentType)) return CATEGORY_DEFS.optical;
   if (ELECTRONICS_TYPES.has(componentType)) return CATEGORY_DEFS.electronics;
   if (MECHANICAL_TYPES.has(componentType)) return CATEGORY_DEFS.mechanical;
@@ -164,7 +174,7 @@ export function ComponentsCatalogPanel() {
     const categories = new Map<CategoryKey, { def: CategoryDef; types: Map<string, ComponentItem[]> }>();
     for (const component of visibleComponents) {
       const typeKey = component.kindId?.trim() || "uncategorized";
-      const def = categoryForComponentType(typeKey);
+      const def = categoryForComponent(component);
       let bucket = categories.get(def.key);
       if (!bucket) {
         bucket = { def, types: new Map() };

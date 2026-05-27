@@ -107,7 +107,7 @@ def emit_anchor_source_rays(
         if slot.asset.kind != "laser_source":
             continue
         for anchor in slot.asset.anchors:
-            if anchor.id != "emit_point":
+            if anchor.id != "intercept_out":
                 continue
             ray = _ray_from_anchor(
                 anchor, slot.effective_transform,

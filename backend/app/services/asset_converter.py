@@ -78,6 +78,7 @@ def convert_cad_source_to_stl(
     source_relative_path: str,
     *,
     output_stem: str | None = None,
+    precision_preset: str = "standard",
     timeout_sec: int = 180,
 ) -> CadConversionResult:
     """Convert a CAD source file into a viewer-ready STL via FreeCAD.
@@ -127,9 +128,10 @@ def convert_cad_source_to_stl(
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / output_name
 
+    safe_precision = precision_preset if precision_preset in {"preview", "standard", "high"} else "standard"
     code = (
         "import sys; "
-        f"sys.argv=[r'{script}', r'{source_path}', r'{output_path}']; "
+        f"sys.argv=[r'{script}', r'{source_path}', r'{output_path}', '{safe_precision}']; "
         f"exec(open(r'{script}', encoding='utf-8').read())"
     )
     completed = subprocess.run(

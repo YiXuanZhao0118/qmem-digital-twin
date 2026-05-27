@@ -21,6 +21,7 @@ from app.models import (  # noqa: E402
     Component,
     Connection,
     DeviceState,
+    Kind,
     SceneObject,
 )
 from app.routers.collections import get_master_collection  # noqa: E402
@@ -179,6 +180,7 @@ ASSETS = [
         "file_path": "primitive://table",
         "unit": "mm",
         "scale_factor": 1.0,
+        "kind_id": "optical_table",
     },
     {
         "name": "primitive_box",
@@ -1527,6 +1529,33 @@ CONNECTIONS = [
 ]
 
 
+KINDS = [
+    {
+        "name": "optical_table",
+        "display_name": "Optical Table",
+        "domain": "mechanical",
+        "op_set_name": "optical_table",
+        "default_params": {},
+        "face_template": {},
+        "needs_aperture": False,
+        "wavelength_range_nm": None,
+        "description": "Passive mechanical optical table primitive used as the lab reference surface.",
+    },
+]
+
+
+async def upsert_kind(session, kind_data: dict[str, object]) -> Kind:
+    result = await session.scalars(select(Kind).where(Kind.name == kind_data["name"]))
+    kind = result.first()
+    if kind is None:
+        kind = Kind(**kind_data)
+        session.add(kind)
+    else:
+        for key, value in kind_data.items():
+            setattr(kind, key, value)
+    return kind
+
+
 async def upsert_asset(session, asset_data: dict[str, object]) -> Asset3D:
     result = await session.scalars(select(Asset3D).where(Asset3D.name == asset_data["name"]))
     asset = result.first()
@@ -1671,6 +1700,10 @@ async def seed() -> None:
         await connection.run_sync(Base.metadata.create_all)
 
     async with AsyncSessionLocal() as session:
+        for kind_data in KINDS:
+            await upsert_kind(session, kind_data.copy())
+        await session.flush()
+
         assets_by_name: dict[str, Asset3D] = {}
         for asset_data in ASSETS:
             asset = await upsert_asset(session, asset_data.copy())

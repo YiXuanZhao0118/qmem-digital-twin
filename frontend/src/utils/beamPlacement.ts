@@ -20,6 +20,7 @@ import type {
   SceneObject,
 } from "../types/digitalTwin";
 import { bodyLocalDirToLabDir, threeToLabPointMm } from "../optical/frames";
+import { anchorObjectLocalLegacyDir, anchorObjectLocalPos } from "./anchorAccess";
 import { getEffectiveApertureMm, getMirrorNormalBodyLocal } from "./v2Bindings";
 import { FIBER_FERRULE_TIP_MM } from "./fiberAnchorResolver";
 // FIBER_END_TIP_OFFSET_MM previously used by the fiber_end SceneObject
@@ -128,9 +129,9 @@ function beamStartPosLab(obj: SceneObject, scene: SceneData): Vec3 {
     ? scene.assets.find((a) => a.id === component.asset3dId)
     : undefined;
   const anchor = asset?.anchors?.find((a) => a.id === "+x" || a.id === "out");
-  if (!anchor?.positionMmBodyLocal) return objectPosLab(obj);
+  if (!anchor?.positionMmBodyLocal) return objectPosLab(obj); /* raw-anchor-ok: presence check */
   const off = rotateLocalToLab(
-    { x: anchor.positionMmBodyLocal.x, y: anchor.positionMmBodyLocal.y, z: anchor.positionMmBodyLocal.z },
+    anchorObjectLocalPos(anchor, asset),
     obj.rxDeg,
     obj.ryDeg,
     obj.rzDeg,
@@ -166,8 +167,8 @@ function mirrorNormalLocal(obj: SceneObject, scene: SceneData): Vec3 | null {
     ? scene.assets.find((a) => a.id === component.asset3dId)
     : undefined;
   const optical = asset?.anchors?.find((a) => a.id === "optical_anchor");
-  if (optical?.directionBodyLocal) {
-    const d = optical.directionBodyLocal;
+  const d = optical ? anchorObjectLocalLegacyDir(optical, asset) : null;
+  if (d) {
     const len = Math.hypot(d.x, d.y, d.z);
     if (len > 1e-9) return { x: d.x / len, y: d.y / len, z: d.z / len };
   }
@@ -190,9 +191,9 @@ function reflectivePosLab(obj: SceneObject, scene: SceneData): Vec3 {
     ? scene.assets.find((a) => a.id === component.asset3dId)
     : undefined;
   const optical = asset?.anchors?.find((a) => a.id === "optical_anchor");
-  if (optical?.positionMmBodyLocal) {
+  if (optical?.positionMmBodyLocal) { /* raw-anchor-ok: presence check */
     const off = rotateLocalToLab(
-      { x: optical.positionMmBodyLocal.x, y: optical.positionMmBodyLocal.y, z: optical.positionMmBodyLocal.z },
+      anchorObjectLocalPos(optical, asset),
       obj.rxDeg,
       obj.ryDeg,
       obj.rzDeg,
@@ -244,7 +245,7 @@ function computeOutgoingDirection(
       ? scene.assets.find((a) => a.id === component.asset3dId)
       : undefined;
     const anchor = asset?.anchors?.find((a) => a.id === "+x" || a.id === "out");
-    const localDir = anchor?.directionBodyLocal
+    const localDir = (anchor && anchorObjectLocalLegacyDir(anchor, asset))
       ?? { x: 1, y: 0, z: 0 };
     return v3norm(rotated(localDir));
   }
@@ -760,13 +761,9 @@ function findInterceptPoint(
   const candidates = [toPort, "in", "out", "intercept_in", "intercept_out", "intercept_face", "seed"];
   for (const wantedId of candidates) {
     const anchor = asset.anchors.find((a) => a.id === wantedId);
-    if (anchor?.positionMmBodyLocal) {
+    if (anchor?.positionMmBodyLocal) { /* raw-anchor-ok: presence check */
       const localOffset = rotateLocalToLab(
-        {
-          x: anchor.positionMmBodyLocal.x,
-          y: anchor.positionMmBodyLocal.y,
-          z: anchor.positionMmBodyLocal.z,
-        },
+        anchorObjectLocalPos(anchor, asset),
         obj.rxDeg,
         obj.ryDeg,
         obj.rzDeg,
@@ -1355,11 +1352,11 @@ export function findSnapToBeam(
     ) {
       continue;
     }
-    if (!a.positionMmBodyLocal) continue;
+    if (!a.positionMmBodyLocal) continue; /* raw-anchor-ok: presence check */
     const apertureRaw = (a as unknown as { apertureMm?: number }).apertureMm;
     anchorPoints.push({
       id,
-      localPos: { x: a.positionMmBodyLocal.x, y: a.positionMmBodyLocal.y, z: a.positionMmBodyLocal.z },
+      localPos: anchorObjectLocalPos(a, asset),
       apertureMm: typeof apertureRaw === "number" && apertureRaw > 0 ? apertureRaw : 12.5,
     });
   }

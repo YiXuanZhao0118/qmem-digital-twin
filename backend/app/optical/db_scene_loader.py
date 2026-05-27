@@ -170,19 +170,150 @@ def _anchor_from_dict(d: dict) -> V3Anchor:
     )
 
 
+def _derive_aom_interaction_center(anchors: list[dict]) -> dict | None:
+    """AOM stores intercept_in + intercept_out as the entry / exit faces.
+    The Bragg interaction physics happens at the crystal midpoint, which
+    is the midpoint of those two faces. Synthesize ``interaction_center``
+    from that midpoint at load time so the tracer's primary-anchor hit
+    test has a target without us storing a redundant anchor row.
+    """
+    in_a = next((a for a in anchors if a.get("id") == "intercept_in"), None)
+    out_a = next((a for a in anchors if a.get("id") == "intercept_out"), None)
+    if not in_a or not out_a:
+        return None
+    in_pos = in_a.get("positionMmBodyLocal") or {}
+    out_pos = out_a.get("positionMmBodyLocal") or {}
+    midpoint = {
+        "x": (float(in_pos.get("x", 0)) + float(out_pos.get("x", 0))) / 2.0,
+        "y": (float(in_pos.get("y", 0)) + float(out_pos.get("y", 0))) / 2.0,
+        "z": (float(in_pos.get("z", 0)) + float(out_pos.get("z", 0))) / 2.0,
+    }
+    # Use intercept_in's tri-axis frame for the synthetic anchor — both
+    # face the same way along the optical axis so the basis is shared.
+    return {
+        "id": "interaction_center",
+        "positionMmBodyLocal": midpoint,
+        "axisXBodyLocal": in_a["axisXBodyLocal"],
+        "axisYBodyLocal": in_a["axisYBodyLocal"],
+        "axisZBodyLocal": in_a["axisZBodyLocal"],
+        "apertureMm": in_a.get("apertureMm", 0),
+        "apertureShape": in_a.get("apertureShape", "circle"),
+    }
+
+
+def _quat_rotate_vec(q: dict, v: tuple[float, float, float]) -> tuple[float, float, float]:
+    """Apply quaternion (x, y, z, w) to 3-vector. Uses the cross-product
+    formula: v' = v + 2·q_xyz × (q_xyz × v + q_w·v). When q is degenerate
+    (zero length or missing components), returns v unchanged."""
+    try:
+        qx, qy, qz, qw = float(q["x"]), float(q["y"]), float(q["z"]), float(q["w"])
+    except (KeyError, TypeError, ValueError):
+        return v
+    if qx == 0 and qy == 0 and qz == 0 and qw == 0:
+        return v
+    vx, vy, vz = v
+    # First cross: q_xyz × v
+    c1x = qy * vz - qz * vy
+    c1y = qz * vx - qx * vz
+    c1z = qx * vy - qy * vx
+    # + q_w * v
+    tx = c1x + qw * vx
+    ty = c1y + qw * vy
+    tz = c1z + qw * vz
+    # Second cross: q_xyz × (c1 + q_w v)
+    c2x = qy * tz - qz * ty
+    c2y = qz * tx - qx * tz
+    c2z = qx * ty - qy * tx
+    return (vx + 2.0 * c2x, vy + 2.0 * c2y, vz + 2.0 * c2z)
+
+
+def _apply_body_frame_to_anchor(
+    anchor: dict,
+    body_frame_rotation: dict | None,
+    body_frame_position_mm: dict | None,
+) -> dict:
+    """Rotate body-frame anchor (position + tri-axis) by R_body into CAD frame.
+
+    Frame convention (Phase 9.12, matches PHY-Editor probe beam):
+      - SceneObject lab pose is the Lab Sense pose shown in ObjectPanel.
+      - `bodyFramePositionMm` + `body_frame_rotation` define the Asset3D
+        body frame below that Lab Sense pose.
+      - Anchors are stored below the body frame.
+
+    So anchor lab position = SceneObject pose · (R_body × anchor.position).
+    object-local position = bodyFramePositionMm + R_body * anchor.position.
+    R_body rotates the anchor
+    position and tri-axis from body→CAD coords (CAD = lab when scene rot
+    is identity).
+    """
+    out = dict(anchor)
+    pos = anchor.get("positionMmBodyLocal") or {}
+    ax = anchor.get("axisXBodyLocal") or {}
+    ay = anchor.get("axisYBodyLocal") or {}
+    az = anchor.get("axisZBodyLocal") or {}
+    try:
+        p = (float(pos.get("x", 0)), float(pos.get("y", 0)), float(pos.get("z", 0)))
+        x = (float(ax.get("x", 0)), float(ax.get("y", 0)), float(ax.get("z", 0)))
+        y = (float(ay.get("x", 0)), float(ay.get("y", 0)), float(ay.get("z", 0)))
+        z = (float(az.get("x", 0)), float(az.get("y", 0)), float(az.get("z", 0)))
+    except (TypeError, ValueError):
+        return out
+    # Lab Sense formula: object local = bodyFramePositionMm + R_body * anchor.
+    if body_frame_rotation:
+        p = _quat_rotate_vec(body_frame_rotation, p)
+        x = _quat_rotate_vec(body_frame_rotation, x)
+        y = _quat_rotate_vec(body_frame_rotation, y)
+        z = _quat_rotate_vec(body_frame_rotation, z)
+    if isinstance(body_frame_position_mm, dict):
+        try:
+            p = (
+                p[0] + float(body_frame_position_mm.get("x", 0) or 0),
+                p[1] + float(body_frame_position_mm.get("y", 0) or 0),
+                p[2] + float(body_frame_position_mm.get("z", 0) or 0),
+            )
+        except (TypeError, ValueError):
+            pass
+    out["positionMmBodyLocal"] = {"x": p[0], "y": p[1], "z": p[2]}
+    out["axisXBodyLocal"] = {"x": x[0], "y": x[1], "z": x[2]}
+    out["axisYBodyLocal"] = {"x": y[0], "y": y[1], "z": y[2]}
+    out["axisZBodyLocal"] = {"x": z[0], "y": z[1], "z": z[2]}
+    return out
+
+
 def anchor_asset_to_snapshot(asset: Asset3D) -> V3AssetAnchorSnapshot | None:
     """Build the anchor-centric snapshot from Asset3D, or None if no
     anchors are populated yet (Phase 9.1 backfill not run for this row).
+
+    Phase 9.8 body→CAD: anchors stored in body frame are pre-transformed
+    by R_body (asset.body_frame_rotation) + body-origin offset
+    (asset.properties.bodyFramePositionMm) so downstream tracer sees
+    them in CAD frame, ready to compose with the SceneObject pose.
     """
     if not asset.kind_id:
         return None
-    anchors = asset.anchors or []
+    anchors = list(asset.anchors or [])
     if not anchors:
         return None
     # Only accept the NEW schema (anchors with axisX/Y/Z). Legacy v2
     # anchors (intercept_in / etc. without tri-axis) are ignored.
     if not isinstance(anchors[0], dict) or "axisXBodyLocal" not in anchors[0]:
         return None
+    # AOM: derive interaction_center from intercept_in/out midpoint when
+    # missing. The stored data only carries the boundary faces; the
+    # tracer's primary-anchor hit test needs interaction_center to fire
+    # the Bragg op.
+    if asset.kind_id == "aom" and not any(
+        a.get("id") == "interaction_center" for a in anchors
+    ):
+        synth = _derive_aom_interaction_center(anchors)
+        if synth is not None:
+            anchors.append(synth)
+    # Pre-transform body→CAD when the asset declares a body-frame
+    # rotation / offset. Null R_body + null offset → no-op.
+    bfr = asset.body_frame_rotation
+    bfp = (asset.properties or {}).get("bodyFramePositionMm") if asset.properties else None
+    if bfr or bfp:
+        anchors = [_apply_body_frame_to_anchor(a, bfr, bfp) for a in anchors]
     return V3AssetAnchorSnapshot(
         catalog_id=asset.catalog_id or asset.name,
         kind=asset.kind_id,

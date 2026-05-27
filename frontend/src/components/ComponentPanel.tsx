@@ -1,4 +1,4 @@
-import { Check, Clock, Crosshair, Layers3, Lock, Move3D, Plus, RotateCw, Trash2, Type, Unlock } from "lucide-react";
+import { Clock, Crosshair, Layers3, Lock, Move3D, Plus, RotateCw, Trash2, Type, Unlock } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
@@ -189,7 +189,7 @@ function MultiSelectTransformPanel({ objects }: { objects: SceneObject[] }) {
         <div className="identity-pose-row">
           <span className="identity-pose-label">
             <Crosshair size={13} />
-            Group centre position mm
+            Group Lab Sense position mm
           </span>
           <div className="number-grid">
             {(["xMm", "yMm", "zMm"] as const).map((key) => (
@@ -212,7 +212,7 @@ function MultiSelectTransformPanel({ objects }: { objects: SceneObject[] }) {
         <div className="identity-pose-row">
           <span className="identity-pose-label">
             <RotateCw size={13} />
-            Group centre rotation deg
+            Group Lab Sense rotation deg
           </span>
           <div className="number-grid">
             {(["rxDeg", "ryDeg", "rzDeg"] as const).map((key) => (
@@ -1699,7 +1699,7 @@ export function ComponentPanel() {
   const selectedObjectIds = useSceneStore((state) => state.selectedObjectIds);
   const ensureObjectForComponent = useSceneStore((state) => state.ensureObjectForComponent);
   const updateComponent = useSceneStore((state) => state.updateComponent);
-  const deleteComponent = useSceneStore((state) => state.deleteComponent);
+  const openPhyEditor = useSceneStore((state) => state.openPhyEditor);
   const updateSceneObject = useSceneStore((state) => state.updateSceneObject);
   const deleteObject = useSceneStore((state) => state.deleteObject);
 
@@ -1749,7 +1749,6 @@ export function ComponentPanel() {
     return objects.length > 0 ? objects : placement ? [placement] : [];
   }, [placement, scene.objects, selectedObjectIds]);
   const [draft, setDraft] = useState<DraftObject>(emptyDraft);
-  const [componentNameDraft, setComponentNameDraft] = useState("");
   const dirtyRef = useRef(false);
   const componentLocked = isComponentLocked(component);
   // Direct x/y/z/rx/ry/rz editing is always allowed. The previous P2
@@ -1757,10 +1756,6 @@ export function ComponentPanel() {
   // Beam Placement panel was retired — users align via the per-object
   // "Snap to beam" button instead and can still nudge by typing.
   const positionLocked = draft.locked;
-
-  useEffect(() => {
-    setComponentNameDraft(component ? getComponentName(component) : "");
-  }, [component?.id, component?.name, component?.componentName]);
 
   useEffect(() => {
     setConfirmingRemove(false);
@@ -1864,22 +1859,6 @@ export function ComponentPanel() {
     });
   };
 
-  const saveComponentName = () => {
-    const nextName = componentNameDraft.trim();
-    if (!component || !nextName || nextName === component.name) return;
-    void updateComponent(component.id, { name: nextName });
-  };
-
-  const removeComponent = () => {
-    if (!component) return;
-    if (componentLocked) return;
-    const objectCount = scene.objects.filter((object) => object.componentId === component.id).length;
-    const suffix = objectCount === 1 ? "1 object" : `${objectCount} objects`;
-    if (window.confirm(`Delete ${getComponentName(component)} and remove its ${suffix} from the scene?`)) {
-      void deleteComponent(component.id);
-    }
-  };
-
   if (!component) {
     return (
       <FloatingPanel id="object" title="Object">
@@ -1924,19 +1903,28 @@ export function ComponentPanel() {
             <Layers3 size={17} />
             Component
           </h3>
-          <label>
-            <span>Name</span>
-            <input value={componentNameDraft} onChange={(event) => setComponentNameDraft(event.target.value)} />
-          </label>
-          <div className="action-row">
+          {/* Renaming and deleting the component template are authored in
+              PHY Editor → COMPONENTS so the catalog and Asset3D bindings
+              stay in sync. This panel only surfaces instance-level state. */}
+          <p style={{ margin: "4px 0 8px", fontSize: 11, opacity: 0.75 }}>
+            Edit name &amp; delete in{" "}
             <button
-              className="primary-button"
-              disabled={!componentNameDraft.trim() || componentNameDraft.trim() === component.name}
-              onClick={saveComponentName}
+              type="button"
+              onClick={openPhyEditor}
+              style={{
+                background: "none",
+                border: "none",
+                padding: 0,
+                color: "var(--accent, #2563eb)",
+                textDecoration: "underline",
+                cursor: "pointer",
+                font: "inherit",
+              }}
             >
-              <Check size={16} />
-              Save name
+              PHY Editor
             </button>
+          </p>
+          <div className="action-row">
             <label className="lock-toggle">
               <input
                 type="checkbox"
@@ -1946,15 +1934,6 @@ export function ComponentPanel() {
               {componentLocked ? <Lock size={15} /> : <Unlock size={15} />}
               Lock
             </label>
-            <button
-              className="danger-button"
-              disabled={componentLocked}
-              title={componentLocked ? "Locked component cannot be deleted" : "Delete component"}
-              onClick={removeComponent}
-            >
-              {componentLocked ? <Lock size={16} /> : <Trash2 size={16} />}
-              Delete component
-            </button>
           </div>
         </section>
       )}
@@ -2014,7 +1993,7 @@ export function ComponentPanel() {
                 <div className="identity-pose-row">
                   <span className="identity-pose-label">
                     <Move3D size={13} />
-                    Position mm
+                    Lab Sense position mm
                   </span>
                   <div className="number-grid">
                     {(["xMm", "yMm", "zMm"] as const).map((key) => (
@@ -2040,7 +2019,7 @@ export function ComponentPanel() {
                 <div className="identity-pose-row">
                   <span className="identity-pose-label">
                     <RotateCw size={13} />
-                    Rotation deg
+                    Lab Sense rotation deg
                   </span>
                   <div className="number-grid">
                     {(["rxDeg", "ryDeg", "rzDeg"] as const).map((key) => (

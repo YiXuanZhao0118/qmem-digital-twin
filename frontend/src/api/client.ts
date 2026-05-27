@@ -529,7 +529,7 @@ export async function uploadComponentAssetApi(payload: {
   form.append("unit", payload.unit ?? "mm");
   form.append("scale_factor", String(payload.scaleFactor ?? 1));
 
-  const response = await client.post<ComponentItem>("/api/assets/upload-component", form, { timeout: 60000 });
+  const response = await client.post<ComponentItem>("/api/assets/upload-component", form, { timeout: 600000 });
   return response.data;
 }
 
@@ -549,7 +549,7 @@ export async function importLocalComponentAssetApi(payload: {
       scaleFactor: 1,
       ...payload,
     },
-    { timeout: 60000 },
+    { timeout: 600000 },
   );
   return response.data;
 }

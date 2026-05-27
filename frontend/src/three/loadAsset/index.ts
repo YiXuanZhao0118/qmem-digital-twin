@@ -332,49 +332,68 @@ export async function loadAssetObject(
   // code calls applyObjectTransform on the wrapper, which means user-set
   // (xMm, yMm, zMm) lands the chosen anchor at exactly that lab position.
   //
-  // Two anchors supported:
-  //   1. apertureForwardLocalMm (in component.properties): user-supplied
-  //      [bx, by, bz] in Blender's NATIVE frame (X right, Y forward, Z up,
-  //      mm). Used for emitter components like the BoosTA pro TA — places
-  //      the OUTPUT APERTURE at the wrapper origin so the SceneObject's
-  //      lab position equals the BEAM EMISSION POINT. Lets the user place
-  //      the TA at a known beam-line coordinate without compensating for
-  //      bbox geometry.
-  //   2. Default: bbox center → wrapper origin. Sensible fallback for
-  //      arbitrary catalog assets where we don't have semantic anchors.
+  // Anchors, in priority order:
+  //   1. `asset.properties.bodyFramePositionMm` (CAD-frame mm, Phase 9.10
+  //      semantics): the body-origin offset in CAD axes. The lab viewer
+  //      keeps the mesh at its native CAD frame so a CAD point P appears
+  //      at wrapper-local P/100 (three units). beam / anchor code adds
+  //      bfo as a CAD-axis offset (`R_body × B + bfo`), so a body anchor
+  //      lands at the same lab position the mesh draws it. Anchors and
+  //      mesh therefore line up by construction without a separate
+  //      body-frame mesh shift.
+  //   2. Legacy `component.properties.apertureForwardLocalMm`: BoosTA-pro
+  //      style aperture anchor in Blender frame. Kept for un-migrated
+  //      laser/TA rows. Skipped when the asset declares a body frame.
+  //   3. Default: bbox center → wrapper origin. Sensible fallback when
+  //      no semantic anchor is declared. Also skipped when the asset
+  //      declares a body frame (otherwise the bbox shift would offset
+  //      the mesh away from the bfo-positioned beam anchor).
   // Optical-table is excluded — it's already anchored at its top-surface
   // centre by createNewportOpticalTable.
   if (component.kindId !== "optical_table") {
     const wrapper = new THREE.Group();
     wrapper.name = component.name;
     wrapper.add(object);
-    // Phase 6: prefer the new frame-suffixed key
-    // (`apertureForwardMmBodyLocal`), fall back to legacy
-    // `apertureForwardLocalMm` for un-migrated rows.
-    const apertureProps = component.properties as
-      | { apertureForwardMmBodyLocal?: number[]; apertureForwardLocalMm?: number[] }
-      | undefined;
-    const apertureForward = apertureProps?.apertureForwardMmBodyLocal
-      ?? apertureProps?.apertureForwardLocalMm;
-    if (apertureForward && apertureForward.length === 3) {
-      // Blender (X, Y, Z) → glTF/three (X, Z, -Y); mm → three units (÷100).
-      // The shift is applied AS POSITION on `object` (which lives in
-      // wrapper-local space, no scale), so values are in three units.
-      const [bx, by, bz] = apertureForward;
-      const apertureShift = new THREE.Vector3(bx, bz, -by).divideScalar(100);
-      object.position.sub(apertureShift);
-    } else if (component.kindId !== "isolator") {
-      // Skip bbox auto-centering for isolators: the body asset and the
-      // piece sub-Assets are siblings in the binding tree but the body
-      // mesh's bbox center is far from the body's STL origin. Centering
-      // shifts the body but not the pieces (which have their own
-      // bindings and centroids), scattering pieces away from the
-      // housing. Keep the isolator at its native STL origin so the
-      // pieces align — matches the dev page's rendering.
-      const bbox = new THREE.Box3().setFromObject(object);
-      if (!bbox.isEmpty()) {
-        const centerVec = bbox.getCenter(new THREE.Vector3());
-        object.position.sub(centerVec);
+
+    const bfo = (asset.properties as { bodyFramePositionMm?: { x: number; y: number; z: number } } | undefined)?.bodyFramePositionMm;
+    const bfr = (asset.bodyFrameRotation ?? null) as { x: number; y: number; z: number; w: number } | null;
+    const hasBodyFrame = (bfo && (bfo.x !== 0 || bfo.y !== 0 || bfo.z !== 0)) || bfr !== null;
+
+    if (hasBodyFrame) {
+      // Body-frame assets: leave the mesh at its native CAD frame.
+      // beam / anchor / snap code already adds bfo + R_body × anchor in
+      // CAD axes, so a body anchor at position B sits at lab
+      // `obj.xyz + rotateVecLab(R_body × B + bfo, obj.rxyz)` for both
+      // beam and mesh — no separate mesh shift needed.
+    } else {
+      // Phase 6: prefer the new frame-suffixed key
+      // (`apertureForwardMmBodyLocal`), fall back to legacy
+      // `apertureForwardLocalMm` for un-migrated rows.
+      const apertureProps = component.properties as
+        | { apertureForwardMmBodyLocal?: number[]; apertureForwardLocalMm?: number[] }
+        | undefined;
+      const apertureForward = apertureProps?.apertureForwardMmBodyLocal
+        ?? apertureProps?.apertureForwardLocalMm;
+      if (apertureForward && apertureForward.length === 3) {
+        // Blender (X, Y, Z) → glTF/three (X, Z, -Y); mm → three units (÷100).
+        // The shift is applied AS POSITION on `object` (which lives in
+        // wrapper-local space, no scale), so values are in three units.
+        const [bx, by, bz] = apertureForward;
+        const apertureShift = new THREE.Vector3(bx, bz, -by).divideScalar(100);
+        object.position.sub(apertureShift);
+      } else if (component.kindId !== "isolator") {
+        // Skip bbox auto-centering for isolators: the body asset and the
+        // piece sub-Assets are siblings in the binding tree but the body
+        // mesh's bbox center is far from the body's STL origin. Centering
+        // shifts the body but not the pieces (which have their own
+        // bindings and centroids), scattering pieces away from the
+        // housing. Keep the isolator at its native STL origin so the
+        // pieces align — matches the dev page's rendering.
+        const bbox = new THREE.Box3().setFromObject(object);
+        if (!bbox.isEmpty()) {
+          const centerVec = bbox.getCenter(new THREE.Vector3());
+          object.position.sub(centerVec);
+        }
       }
     }
     return wrapper;

@@ -20,19 +20,22 @@ import * as THREE from "three";
 
 import type { Anchor, Asset3D, ComponentItem, SceneData, SceneObject } from "../types/digitalTwin";
 import { labMmToThree, labToThreeVector, sceneObjectToQuaternion } from "../optical/frames";
+import { anchorObjectLocalLegacyDir, anchorObjectLocalPos } from "./anchorAccess";
 
 type RfCableEndpoints = {
   A?: { targetObjectId: string; targetAnchorId: string; targetAnchorName: string };
   B?: { targetObjectId: string; targetAnchorId: string; targetAnchorName: string };
 };
 
-function anchorPosThree(anchor: Anchor): THREE.Vector3 {
-  const p = anchor.positionMmBodyLocal;
+function anchorPosThree(anchor: Anchor, asset: Asset3D | null | undefined): THREE.Vector3 {
+  // Asset anchors live in body frame — convert to object-local CAD frame
+  // before treating as an offset from the SceneObject's pose.
+  const p = anchorObjectLocalPos(anchor, asset);
   return labMmToThree({ xMm: p.x, yMm: p.y, zMm: p.z });
 }
 
-function anchorDirThree(anchor: Anchor): THREE.Vector3 {
-  const d = anchor.directionBodyLocal ?? { x: 1, y: 0, z: 0 };
+function anchorDirThree(anchor: Anchor, asset: Asset3D | null | undefined): THREE.Vector3 {
+  const d = anchorObjectLocalLegacyDir(anchor, asset) ?? { x: 1, y: 0, z: 0 };
   return labToThreeVector([d.x, d.y, d.z]).normalize();
 }
 
@@ -64,6 +67,7 @@ function findConnectingCable(scene: SceneData, ppgObjectId: string): {
 function targetAnchorLabPose(
   targetObj: SceneObject,
   anchor: Anchor,
+  targetAsset: Asset3D | null | undefined,
 ): { posThree: THREE.Vector3; dirThree: THREE.Vector3 } {
   const targetThreePos = labMmToThree({
     xMm: targetObj.xMm,
@@ -71,8 +75,8 @@ function targetAnchorLabPose(
     zMm: targetObj.zMm,
   });
   const targetQuat = sceneObjectToQuaternion(targetObj);
-  const posBodyThree = anchorPosThree(anchor);
-  const dirBodyThree = anchorDirThree(anchor);
+  const posBodyThree = anchorPosThree(anchor, targetAsset);
+  const dirBodyThree = anchorDirThree(anchor, targetAsset);
   const posLabThree = posBodyThree.clone().applyQuaternion(targetQuat).add(targetThreePos);
   const dirLabThree = dirBodyThree.clone().applyQuaternion(targetQuat).normalize();
   return { posThree: posLabThree, dirThree: dirLabThree };
@@ -85,7 +89,7 @@ function findAnchor(
   objectId: string,
   anchorId: string,
   anchorName: string,
-): { obj: SceneObject; anchor: Anchor } | null {
+): { obj: SceneObject; anchor: Anchor; asset: Asset3D } | null {
   const obj = scene.objects.find((o) => o.id === objectId);
   if (!obj) return null;
   const comp = scene.components.find((c) => c.id === obj.componentId);
@@ -96,7 +100,7 @@ function findAnchor(
     (a) => a.id === anchorId && (a.name ?? a.id) === anchorName,
   );
   if (!anchor) return null;
-  return { obj, anchor };
+  return { obj, anchor, asset };
 }
 
 /** Resolve the PPG's own rf_out anchor from its asset. The body-local
@@ -145,13 +149,13 @@ export function computePpgMountedThreePose(
   );
   if (!resolved) return null;
 
-  const target = targetAnchorLabPose(resolved.obj, resolved.anchor);
+  const target = targetAnchorLabPose(resolved.obj, resolved.anchor, resolved.asset);
   // Mating: PPG.rf_out should face the OPPOSITE of the target port's
   // outward normal so the two coax connector faces meet.
   const matingDir = target.dirThree.clone().negate().normalize();
 
-  const ppgAnchorBodyPos = anchorPosThree(ppgAnchor);
-  const ppgAnchorBodyDir = anchorDirThree(ppgAnchor);
+  const ppgAnchorBodyPos = anchorPosThree(ppgAnchor, ppgAsset);
+  const ppgAnchorBodyDir = anchorDirThree(ppgAnchor, ppgAsset);
 
   const quaternion = new THREE.Quaternion().setFromUnitVectors(
     ppgAnchorBodyDir,

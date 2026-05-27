@@ -70,7 +70,7 @@ register_anchor_op("faraday_rotator", faraday_anchor_op)
 # ── EOM ────────────────────────────────────────────────────────────────────
 
 def eom_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
-    if ctx.anchor.id != "optical_center":
+    if ctx.anchor.id != "intercept_in":
         return [ray_in]
     out_ray = _slab_passthrough(ray_in, ctx)
     # Dynamic retardance from drive voltage (linear EO):
@@ -91,7 +91,7 @@ register_anchor_op("eom", eom_anchor_op)
 def tapered_amplifier_anchor_op(
     ray_in: BeamRay, ctx: AnchorOpContext,
 ) -> list[BeamRay]:
-    if ctx.anchor.id != "optical_center":
+    if ctx.anchor.id != "intercept_in":
         return [ray_in]
     out_ray = _slab_passthrough(ray_in, ctx)
     # Saturable gain: P_out = P_sat · ln(1 + (e^{G0/P_sat} - 1)·(P_in / P_sat))
@@ -124,7 +124,7 @@ register_anchor_op("wavemeter", _terminal_sink_op)
 
 def nonlinear_crystal_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
     """SHG / OPO stub: passthrough, no wavelength conversion in v1."""
-    if ctx.anchor.id != "optical_center":
+    if ctx.anchor.id != "intercept_in":
         return [ray_in]
     return [_slab_passthrough(ray_in, ctx)]
 
@@ -135,7 +135,7 @@ register_anchor_op("nonlinear_crystal", nonlinear_crystal_op)
 def saturable_absorber_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
     """Intensity-dependent transmission T(I) = T0 + (Tsat-T0)·I/(I+Isat).
     v1 approximation — beam treated as having intensity = power / (π·w₀²)."""
-    if ctx.anchor.id != "optical_center":
+    if ctx.anchor.id != "intercept_in":
         return [ray_in]
     out_ray = _slab_passthrough(ray_in, ctx)
     T0 = float(ctx.params.get("smallSignalTransmittance", 0.5))

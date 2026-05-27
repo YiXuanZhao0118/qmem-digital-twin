@@ -27,6 +27,7 @@ import {
   setEmissionVisualPatch,
 } from "../../utils/emissionVisuals";
 import { wavelengthToColor } from "../../three/opticalBeams";
+import { anchorObjectLocalPos } from "../../utils/anchorAccess";
 import * as THREE from "three";
 import {
   bodyLocalDirToThree,
@@ -324,8 +325,12 @@ export function TaperedAmplifierAdjustControls({
       return;
     }
 
-    const inBody = inAnchor!.positionMmBodyLocal;
-    const outBody = outAnchor!.positionMmBodyLocal;
+    // Object-local CAD positions — `bodyToLab` only applies SceneObject
+    // pose (no body-frame), so we lift body-frame anchors → CAD frame
+    // first. Axis = (out - in) in CAD frame, which is the right axis to
+    // align against the beam (body axis rotated by R_body).
+    const inBody = anchorObjectLocalPos(inAnchor!, assetRow);
+    const outBody = anchorObjectLocalPos(outAnchor!, assetRow);
     const axisBodyRaw = {
       x: outBody.x - inBody.x,
       y: outBody.y - inBody.y,

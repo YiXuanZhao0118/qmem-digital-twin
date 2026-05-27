@@ -39,7 +39,7 @@ from app.optical.beam_ray import BeamRay, Vec3
 
 
 def _other_tip(asset_anchors, hit_id: str) -> V3Anchor | None:
-    target = "tip_b" if hit_id == "tip_a" else "tip_a"
+    target = "intercept_out" if hit_id == "intercept_in" else "intercept_in"
     return next((a for a in asset_anchors if a.id == target), None)
 
 
@@ -58,7 +58,7 @@ def _q_at_waist(w0_um: float, wavelength_nm: float) -> complex:
 
 
 def fiber_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
-    if ctx.anchor.id not in ("tip_a", "tip_b"):
+    if ctx.anchor.id not in ("intercept_in", "intercept_out"):
         return [ray_in]
 
     out_anchor = _other_tip(ctx.asset.anchors, ctx.anchor.id)

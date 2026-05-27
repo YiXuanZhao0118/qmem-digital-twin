@@ -47,3 +47,12 @@ backend/uvicorn.out.log
 backend/uvicorn.err.log
 backend/uvicorn-*.log
 backend/uvicorn-*.err.log
+
+# Per-user CAD source / STL bakes — UUID-prefixed uploads from
+# Asset3DV3Editor and the AI agent path. Some run hundreds of MB and
+# exceed GitHub's 100 MB push limit. The original (un-prefixed)
+# vendor STEP / STL files stay tracked; UUID-prefixed copies are dev
+# artifacts and should not ride to GitHub.
+assets/files/cad_sources/[0-9a-f]*-[0-9a-f]*-[0-9a-f]*-[0-9a-f]*-[0-9a-f]*_*.st[pe]
+assets/files/cad_sources/[0-9a-f]*-[0-9a-f]*-[0-9a-f]*-[0-9a-f]*-[0-9a-f]*_*.stp
+assets/files/stl/[0-9a-f]*-[0-9a-f]*-[0-9a-f]*-[0-9a-f]*-[0-9a-f]*_*.stl

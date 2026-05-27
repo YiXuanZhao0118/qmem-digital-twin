@@ -85,6 +85,24 @@ class MechanicalAnchorV3(CamelModel):
     normal_body_local: Optional[Vec3V3] = None
 
 
+class AnchorV3(CamelModel):
+    """Phase 9.1 anchor schema (alembic 0087). Each anchor has a position
+    + three orthogonal body-local axes (X = propagation/normal,
+    Y = transverse reference, Z = X × Y). The PHY Editor edits only
+    axisX directly; Y/Z are derived on save. See
+    docs/asset-physics-model.md §3.x.
+    """
+    id: str
+    position_mm_body_local: Vec3V3
+    axis_x_body_local: Vec3V3
+    axis_y_body_local: Vec3V3
+    axis_z_body_local: Vec3V3
+    aperture_mm: Optional[float] = None
+    aperture_shape: Optional[Literal["rectangle", "ellipse", "circle"]] = None
+    aperture_width_mm: Optional[float] = None
+    aperture_height_mm: Optional[float] = None
+
+
 # ---------------------------------------------------------------------------
 # Asset3D v3
 # ---------------------------------------------------------------------------
@@ -124,6 +142,7 @@ class Asset3DV3Out(CamelModel):
     kind_id: Optional[str] = None
     faces: Optional[list[FaceV3]] = None
     transitions: Optional[list[TransitionV3]] = None
+    anchors: Optional[list[dict[str, Any]]] = None
     default_params: Optional[dict[str, Any]] = None
     wavelength_range_nm: Optional[list[float]] = None
     body_frame_rotation: Optional[QuaternionV3] = None
@@ -135,14 +154,21 @@ class Asset3DV3Update(CamelModel):
     kind_id: Optional[str] = None
     faces: Optional[list[FaceV3]] = None
     transitions: Optional[list[TransitionV3]] = None
+    # Phase 9.8: PHY Editor's primary write target — replaces faces[] +
+    # transitions[] over time. Anchors use the Phase 9.1 tri-axis schema
+    # (axisX/Y/Z) consumed by the anchor tracer. Editor sends the full
+    # merged list on every save.
+    anchors: Optional[list[AnchorV3]] = None
     default_params: Optional[dict[str, Any]] = None
     wavelength_range_nm: Optional[list[float]] = None
     body_frame_rotation: Optional[QuaternionV3] = None
-    # Free-form properties JSONB. Phase 9.10 adds bodyFramePositionMm
-    # (the CAD-frame offset where the body origin sits) here rather than
-    # adding a dedicated column, so the editor can ship without a schema
-    # migration. Callers should send the full merged dict — partial keys
-    # would clobber unrelated entries.
+    # Free-form properties JSONB. Phase 9.10 added bodyFramePositionMm
+    # here (rather than as a dedicated column) so the editor could ship
+    # without a schema migration. Phase 9.11 re-interpreted the value as
+    # a BODY-frame offset (was CAD frame), aligning it with the rest of
+    # the asset-physics model — see docs/asset-physics-model.md §3.1.
+    # Callers should send the full merged dict — partial keys would
+    # clobber unrelated entries.
     properties: Optional[dict[str, Any]] = None
 
 

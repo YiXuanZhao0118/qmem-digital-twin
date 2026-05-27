@@ -36,7 +36,7 @@ def _jones_mag2(j: tuple[complex, complex]) -> float:
 
 
 def polarizer_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
-    if ctx.anchor.id != "optical_center":
+    if ctx.anchor.id != "intercept_in":
         return [ray_in]
 
     y, theta_y, z, theta_z = beam_state_from_anchor_hit(ray_in, ctx.hit)

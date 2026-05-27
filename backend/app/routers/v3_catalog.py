@@ -201,6 +201,7 @@ async def upload_asset3d_v3(
     conversion = convert_cad_source_to_stl(
         relative_path,
         output_stem=catalog_id,
+        precision_preset=precision_preset,
     ) if suffix in {".step", ".stp"} else None
     viewer_path = conversion.viewer_relative_path if conversion and conversion.ok else relative_path
     viewer_asset_type = conversion.viewer_asset_type if conversion and conversion.ok else asset_type
@@ -298,6 +299,15 @@ async def update_asset3d_by_catalog_id(
             [t.model_dump(by_alias=True, exclude_none=True) for t in payload.transitions]
             if payload.transitions is not None
             else None
+        )
+    if "anchors" in fields:
+        # Phase 9.8: editor's primary write path. Replaces faces[]/
+        # transitions[] over time. Pass-through-store as camelCase dicts
+        # — the Phase 9.1 tracer reads positionMmBodyLocal / axisX/Y/Z.
+        row.anchors = (
+            [a.model_dump(by_alias=True, exclude_none=True) for a in payload.anchors]
+            if payload.anchors is not None
+            else []
         )
     if "default_params" in fields:
         row.default_params = payload.default_params

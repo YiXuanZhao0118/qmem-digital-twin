@@ -36,6 +36,11 @@ import {
   shouldRenderViaBindings,
 } from "../three/bindingRendererGate";
 import { wavelengthToColor } from "../three/opticalBeams";
+import {
+  type DebugLabSegment,
+  type DebugTraceSegment,
+  publishQmemDebug,
+} from "../three/debugBridge";
 // Phase 8.6 — `traceBeamsFromLasers` + `gaussianWaistAtZ` + `getEmissionVisual`
 // + the local `buildTraceLine` fn were removed when the renderer switched
 // to v3 (Phase 7.3). `_testReflect` stays for the global window helper
@@ -77,6 +82,7 @@ import { ToolbarHint } from "./ToolbarHint";
 import { createLabPhotoRoom } from "../three/photoRoom";
 import { applyObjectGeometryOffset, applyObjectTransform, mmToThree } from "../three/transformUtils";
 import { relationTarget, worldAnchor } from "../utils/relationAnchors";
+import { anchorObjectLocalLegacyDir, anchorObjectLocalPos } from "../utils/anchorAccess";
 import { computeBraggTiltAxisFromRfDirectionBodyLocal } from "../optical/kinds/aom/physics";
 import type { Asset3D, ComponentItem, DeviceState, PhysicsElement, SceneObject } from "../types/digitalTwin";
 import {
@@ -516,9 +522,10 @@ function addAomTiltAxisMarker(
     ? { x: Number(rfArr[0]) || 0, y: Number(rfArr[1]) || 0, z: Number(rfArr[2]) || 0 }
     : { x: -1, y: 0, z: 0 };
 
-  // body-local Z-up vectors (mm for positions, unitless for direction)
-  const inP = inAnchor.positionMmBodyLocal;
-  const outP = outAnchor.positionMmBodyLocal;
+  // Asset anchors live in body frame — convert to object-local CAD frame
+  // (R_body × pos + bfp) before placing the arrow on the wrapper.
+  const inP = anchorObjectLocalPos(inAnchor, asset);
+  const outP = anchorObjectLocalPos(outAnchor, asset);
   const bBody = { x: outP.x - inP.x, y: outP.y - inP.y, z: outP.z - inP.z };
   const bMag = Math.hypot(bBody.x, bBody.y, bBody.z);
   if (bMag < 1e-6) return;
@@ -684,7 +691,7 @@ function addFiberBeamFlowIndicator(
   // spline rotates / translates.
   const findAnchorPos = (anchorId: string) => {
     const a = (fiberAnchors ?? []).find((x) => x.id === anchorId);
-    const p = a?.positionMmBodyLocal;
+    const p = a?.positionMmBodyLocal; /* raw-anchor-ok: fiber asset is procedural — no body frame; connector-local placement */
     if (p && Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z)) {
       return { x: p.x, y: p.y, z: p.z };
     }
@@ -3436,6 +3443,11 @@ export function DigitalTwinViewer({
               && (a.name ?? a.id) === link.targetAnchorName,
           );
           if (!targetAnchor) return;
+          // Body-frame → object-local: target asset stores anchor in body
+          // frame; resolveLinkedRfCableEndpoint expects object-local
+          // coords (its bodyToLab is just object-pose without body-frame).
+          const anchorPosLocal = anchorObjectLocalPos(targetAnchor, targetAsset);
+          const anchorDirLocal = anchorObjectLocalLegacyDir(targetAnchor, targetAsset);
           const resolved = resolveLinkedRfCableEndpoint({
             endpoint: end,
             cablePose,
@@ -3443,17 +3455,9 @@ export function DigitalTwinViewer({
               xMm: targetObj.xMm, yMm: targetObj.yMm, zMm: targetObj.zMm,
               rxDeg: targetObj.rxDeg, ryDeg: targetObj.ryDeg, rzDeg: targetObj.rzDeg,
             },
-            targetAnchorPosBodyMm: [
-              targetAnchor.positionMmBodyLocal.x,
-              targetAnchor.positionMmBodyLocal.y,
-              targetAnchor.positionMmBodyLocal.z,
-            ],
-            targetAnchorDirBody: targetAnchor.directionBodyLocal
-              ? [
-                  targetAnchor.directionBodyLocal.x,
-                  targetAnchor.directionBodyLocal.y,
-                  targetAnchor.directionBodyLocal.z,
-                ]
+            targetAnchorPosBodyMm: [anchorPosLocal.x, anchorPosLocal.y, anchorPosLocal.z],
+            targetAnchorDirBody: anchorDirLocal
+              ? [anchorDirLocal.x, anchorDirLocal.y, anchorDirLocal.z]
               : [1, 0, 0],
           });
           if (!resolved) return;
@@ -3469,7 +3473,10 @@ export function DigitalTwinViewer({
                 ? resolved.handleMmBody
                 : stored[idx].handleOutMm,
           };
-          watchKeyParts.push(
+          // Cache-invalidation digest — value is hashed, never composed
+          // with pose. Any change in the raw field flips the key, which
+          // is the intent.
+          watchKeyParts.push( // raw-anchor-ok: digest of stored body-frame value
             `${end}:${link.targetObjectId}:${link.targetAnchorId}:${link.targetAnchorName}:${targetObj.xMm.toFixed(3)},${targetObj.yMm.toFixed(3)},${targetObj.zMm.toFixed(3)},${targetObj.rxDeg.toFixed(3)},${targetObj.ryDeg.toFixed(3)},${targetObj.rzDeg.toFixed(3)}:${targetAnchor.positionMmBodyLocal.x},${targetAnchor.positionMmBodyLocal.y},${targetAnchor.positionMmBodyLocal.z}`,
           );
         };
@@ -4046,17 +4053,16 @@ export function DigitalTwinViewer({
         : [];
 
       const labSegments = v3LabSegmentsRef.current;
-      const win = window as unknown as {
-        __v3LabSegments?: V3LabSegment[];
-        __rayTraceDebug?: TraceSegment[];
-        __beamGroup?: THREE.Group;
-      };
-      win.__v3LabSegments = labSegments;
-      // Adapter output is structurally compatible with TraceSegment for
-      // the fields consumers read; the missing optional fields default
-      // to undefined (matching TraceSegment's `?` optionality).
-      win.__rayTraceDebug = adaptedTraces as unknown as TraceSegment[];
-      win.__beamGroup = beamGroup;
+      // Single chokepoint for the cross-component debug bridge — see
+      // three/debugBridge.ts for the type + consumer notes. Adapter
+      // output is structurally compatible with TraceSegment for the
+      // fields consumers read; missing optional fields default to
+      // undefined (matches TraceSegment's `?` optionality).
+      publishQmemDebug({
+        v3LabSegments: labSegments as unknown as DebugLabSegment[],
+        rayTraceDebug: adaptedTraces as unknown as DebugTraceSegment[],
+        beamGroup,
+      });
       for (const seg of labSegments) {
         const startThree = new THREE.Vector3(
           mmToThree(seg.start.x),

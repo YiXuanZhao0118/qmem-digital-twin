@@ -10,6 +10,7 @@ import type {
   OpticalLink,
   SceneObject,
 } from "../types/digitalTwin";
+import { anchorObjectLocalPos, anchorObjectLocalPrimaryDir } from "../utils/anchorAccess";
 import { labToThreeVector, mmToThree } from "./transformUtils";
 
 const DEFAULT_RAY_LENGTH_MM = 600;
@@ -91,12 +92,12 @@ export function wavelengthToColor(wavelengthNm: number): THREE.Color {
 
 function findEmitterAnchor(asset: Asset3D | undefined): Anchor | null {
   if (!asset?.anchors) return null;
-  // Prefer the user-editable `out` anchor (PHY Editor → Optical →
-  // Components → Laser Source writes here). Fall back to the legacy
-  // auto-bbox `+x` anchor when `out` is missing — this preserves the
-  // pre-rewrite default behaviour for laser assets that haven't been
-  // touched in the editor yet.
+  // Phase 9.8 spec: laser_source's required anchor is `intercept_out`.
+  // Legacy fallbacks: pre-Phase-9.8 `out` (laser-source kind) and the
+  // even-older auto-bbox `+x` anchor, so this still works for assets
+  // that haven't been migrated through the editor yet.
   return (
+    asset.anchors.find((a) => a.id === "intercept_out") ??
     asset.anchors.find((a) => a.id === "out") ??
     asset.anchors.find((a) => a.id === "+x") ??
     null
@@ -104,24 +105,48 @@ function findEmitterAnchor(asset: Asset3D | undefined): Anchor | null {
 }
 
 /** World-space emission origin and direction (lab coords) for a placement.
- * Falls back to placement origin + rotated +X axis when the asset has no
- * dedicated emitter anchor. */
+ * Reads the laser's emitter anchor (Phase 9.8 `intercept_out`, with
+ * legacy fallbacks). Direction = anchor.axisXBodyLocal (propagation /
+ * face normal, per spec §3.1) with fallback to legacy
+ * directionBodyLocal.
+ *
+ * Frame convention (Lab Sense / PHY-Editor probe beam):
+ *   - placement.xMm/yMm/zMm is the Lab Sense pose shown in ObjectPanel.
+ *   - bodyFramePositionMm + bodyFrameRotation define the Asset3D body frame.
+ *   - bodyFrameRotation (R_body) rotates anchor.position + direction
+ *     from body frame into object-local coords. Object-local == lab when SceneObject rot
+ *     is identity.
+ *   - `bodyFramePositionMm` is part of the Lab Sense anchor transform
+ *     and is applied here before the SceneObject pose.
+ *   - SceneObject (rxDeg/ryDeg/rzDeg) finally maps CAD → lab.
+ * Falls back to placement origin + rotated +X axis when no anchor is
+ * found at all. */
 export function emissionFromObject(
   placement: SceneObject,
   asset: Asset3D | undefined,
 ): { origin: THREE.Vector3; direction: THREE.Vector3 } {
   const anchor = findEmitterAnchor(asset);
-  const positionMmBodyLocal = anchor?.positionMmBodyLocal ?? { x: 0, y: 0, z: 0 };
-  const directionBodyLocal = anchor?.directionBodyLocal ?? { x: 1, y: 0, z: 0 };
+  // anchorAccess gives us body→object-local in one step (R_body × p + bfp
+  // for position; R_body × d for direction).
+  const cadPos = anchor
+    ? anchorObjectLocalPos(anchor, asset)
+    : { x: 0, y: 0, z: 0 };
+  const cadDirRaw = anchor
+    ? anchorObjectLocalPrimaryDir(anchor, asset)
+    : null;
+  const cadDirVec = cadDirRaw ?? { x: 1, y: 0, z: 0 };
+
+  const cadAnchorPos = new THREE.Vector3(cadPos.x, cadPos.y, cadPos.z);
+  const cadDir = new THREE.Vector3(cadDirVec.x, cadDirVec.y, cadDirVec.z);
 
   const offset = rotateVecLab(
-    new THREE.Vector3(positionMmBodyLocal.x, positionMmBodyLocal.y, positionMmBodyLocal.z),
+    cadAnchorPos,
     placement.rxDeg,
     placement.ryDeg,
     placement.rzDeg,
   );
   const direction = rotateVecLab(
-    new THREE.Vector3(directionBodyLocal.x, directionBodyLocal.y, directionBodyLocal.z),
+    cadDir,
     placement.rxDeg,
     placement.ryDeg,
     placement.rzDeg,

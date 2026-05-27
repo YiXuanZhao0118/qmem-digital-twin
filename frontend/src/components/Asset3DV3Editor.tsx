@@ -8,8 +8,19 @@
  *   - defaultParams: kind-level optical constants used by PhysicsOps
  */
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { Edit3, Eye, EyeOff, Plus, RefreshCw, Save, Trash2, Upload, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+
+import {
+  ICON_BUTTON,
+  INPUT,
+  PRIMARY_BUTTON,
+  SECTION_LABEL,
+  TABLE,
+  TD,
+  TEXTAREA,
+  TH,
+} from "./phyEditorTheme";
+import { Eye, EyeOff, Plus, RefreshCw, Save, Trash2, Upload, X } from "lucide-react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
@@ -27,34 +38,42 @@ import {
   type V3Vec3,
   useV3Catalog,
 } from "../store/v3CatalogStore";
+import { createZhl12wPlusAmplifier } from "../kinds/rf_amplifier/renderer";
+import { createRfSwitch } from "../kinds/rf_switch/renderer";
+import { createSmaShortCable } from "../three/loadAsset/rf_cable";
 import { applyDeletionFilter, applyIncludeOnlyFilter, applyViewerHintsToGeometry, centroidKey, findCoplanarCluster } from "../three/loadAsset/viewerHints";
-import type { AssetViewerHints } from "../types/digitalTwin";
-import {
-  domainForElementKind,
-  type ElementDomain,
-} from "../utils/elementDefaults";
+import type { AssetViewerHints, ComponentItem } from "../types/digitalTwin";
+import { domainForElementKind } from "../utils/elementDefaults";
 import type { ElementKind } from "../types/digitalTwin";
 
 const stlLoader = new STLLoader();
 const gltfLoader = new GLTFLoader();
 const objLoader = new OBJLoader();
 
-type DraftFace = {
+/** Draft row in the PHY Editor's Anchors table (Phase 9.8 — replaces
+ *  the old Faces table). Each anchor has a position + two body-local
+ *  axes the user edits directly:
+ *    - axisX (nx/ny/nz): propagation / face normal
+ *    - axisY (yx/yy/yz): transverse reference (slow axis for PM fiber,
+ *                        fast axis for waveplate, transmission axis
+ *                        for polarizer, acoustic axis for AOM, etc.)
+ *  axisZ is derived as X × Y on save (after Gram-Schmidt orthogonalizing
+ *  Y against X), so we don't store it in the draft. */
+type DraftAnchor = {
   id: string;
   px: string;
   py: string;
   pz: string;
-  hasNormal: boolean;
   nx: string;
   ny: string;
   nz: string;
+  yx: string;
+  yy: string;
+  yz: string;
   apertureMm: string;
-  apertureShape: V3Face["apertureShape"];
+  apertureShape: "rectangle" | "ellipse" | "circle";
   apertureWidthMm: string;
   apertureHeightMm: string;
-  domain: V3FaceDomain;                 // "optical" | "rf" | "ttl"; rows written
-                                        // before this field defaulted to "optical"
-                                        // via draftFromAsset()
 };
 
 type DraftTransition = {
@@ -86,7 +105,7 @@ type AssetDraft = {
   // Snapshot of asset.properties so we can merge our bodyFramePositionMm
   // edit back without clobbering other keys.
   properties: Record<string, unknown>;
-  faces: DraftFace[];
+  anchors: DraftAnchor[];
   transitions: DraftTransition[];
   defaultParamsText: string;
 };
@@ -250,71 +269,6 @@ const KIND_GUIDES: KindGuide[] = [
   },
 ];
 
-const SECTION_LABEL: CSSProperties = {
-  fontSize: 11,
-  fontWeight: 700,
-  letterSpacing: 0.4,
-  textTransform: "uppercase",
-  color: "#6b7280",
-  marginTop: 12,
-  marginBottom: 6,
-};
-
-const TABLE: CSSProperties = {
-  width: "100%",
-  borderCollapse: "collapse",
-  fontFamily: "ui-monospace, monospace",
-  fontSize: 11,
-};
-
-const TH: CSSProperties = {
-  textAlign: "left",
-  padding: "4px 6px",
-  borderBottom: "1px solid #d8ded8",
-  color: "#6b7280",
-  fontWeight: 600,
-};
-
-const TD: CSSProperties = {
-  padding: "4px 6px",
-  borderBottom: "1px solid #e9ece9",
-  fontFamily: "ui-monospace, monospace",
-  fontSize: 11,
-  color: "#1f2937",
-  verticalAlign: "top",
-};
-
-const INPUT: CSSProperties = {
-  width: "100%",
-  minWidth: 0,
-  boxSizing: "border-box",
-  background: "#ffffff",
-  color: "#1f2937",
-  border: "1px solid #d8ded8",
-  padding: "4px 5px",
-  fontFamily: "ui-monospace, monospace",
-  fontSize: 11,
-};
-
-const TEXTAREA: CSSProperties = {
-  ...INPUT,
-  resize: "vertical",
-  minHeight: 54,
-  lineHeight: 1.35,
-};
-
-const ICON_BUTTON: CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: 28,
-  height: 28,
-  border: "1px solid #d8ded8",
-  background: "#ffffff",
-  color: "#1f2937",
-  cursor: "pointer",
-};
-
 function n(value: number | null | undefined): string {
   return value === null || value === undefined ? "" : String(value);
 }
@@ -357,21 +311,53 @@ function draftFromAsset(asset: V3Asset): AssetDraft {
     bodyFramePositionMmY: n(pos?.y),
     bodyFramePositionMmZ: n(pos?.z),
     properties: props,
-    faces: (asset.faces ?? []).map((face) => ({
-      id: face.id,
-      px: n(face.positionMmBodyLocal.x),
-      py: n(face.positionMmBodyLocal.y),
-      pz: n(face.positionMmBodyLocal.z),
-      hasNormal: !!face.normalBodyLocal,
-      nx: n(face.normalBodyLocal?.x),
-      ny: n(face.normalBodyLocal?.y),
-      nz: n(face.normalBodyLocal?.z),
-      apertureMm: n(face.apertureMm),
-      apertureShape: face.apertureShape,
-      apertureWidthMm: n(face.apertureWidthMm),
-      apertureHeightMm: n(face.apertureHeightMm),
-      domain: (face.domain ?? "optical") as V3FaceDomain,
-    })),
+    anchors: (asset.anchors ?? []).map((rawAnchor) => {
+      // The anchors[] JSONB column has historical schema drift: clean
+      // Phase 9.1 rows use camelCase (`positionMmBodyLocal`,
+      // `axisXBodyLocal`), but older backfills wrote snake_case
+      // (`position_mm_body_local`, `direction_body_local`) plus extra
+      // `name` / `type` fields. Read both shapes, project down to the
+      // editor's draft form (position + axisX as the "normal").
+      const a = rawAnchor as Record<string, unknown>;
+      const pos = (a.positionMmBodyLocal ?? a.position_mm_body_local ?? {}) as {
+        x?: number; y?: number; z?: number;
+      };
+      const axisX = (a.axisXBodyLocal ?? a.direction_body_local ?? {}) as {
+        x?: number; y?: number; z?: number;
+      };
+      const axisY = (a.axisYBodyLocal ?? {}) as {
+        x?: number; y?: number; z?: number;
+      };
+      const apertureMm = (a.apertureMm ?? a.aperture_mm) as number | undefined;
+      const apertureShape = (a.apertureShape ?? a.aperture_shape) as
+        | DraftAnchor["apertureShape"]
+        | undefined;
+      const apertureWidthMm = (a.apertureWidthMm ?? a.aperture_width_mm) as
+        | number
+        | undefined;
+      const apertureHeightMm = (a.apertureHeightMm ?? a.aperture_height_mm) as
+        | number
+        | undefined;
+      // axisY default = world +Y when unset. The serializer will
+      // Gram-Schmidt-orthogonalize it against axisX, so as long as Y
+      // isn't parallel to X the result is well-defined.
+      return {
+        id: String(a.id ?? ""),
+        px: n(pos.x),
+        py: n(pos.y),
+        pz: n(pos.z),
+        nx: n(axisX.x),
+        ny: n(axisX.y),
+        nz: n(axisX.z),
+        yx: n(axisY.x ?? 0),
+        yy: n(axisY.y ?? 1),
+        yz: n(axisY.z ?? 0),
+        apertureMm: n(apertureMm),
+        apertureShape: apertureShape ?? "circle",
+        apertureWidthMm: n(apertureWidthMm),
+        apertureHeightMm: n(apertureHeightMm),
+      };
+    }),
     transitions: (asset.transitions ?? []).map((transition) => ({
       in: transition.in,
       viaText: (transition.via ?? []).join(", "),
@@ -478,19 +464,18 @@ function _makeApertureFillGeometry(
   return geo;
 }
 
-function facePosition(face: DraftFace): THREE.Vector3 | null {
-  const x = readDraftNumber(face.px);
-  const y = readDraftNumber(face.py);
-  const z = readDraftNumber(face.pz);
+function facePosition(anchor: DraftAnchor): THREE.Vector3 | null {
+  const x = readDraftNumber(anchor.px);
+  const y = readDraftNumber(anchor.py);
+  const z = readDraftNumber(anchor.pz);
   if (x === null || y === null || z === null) return null;
   return new THREE.Vector3(x, y, z);
 }
 
-function faceNormal(face: DraftFace): THREE.Vector3 {
-  if (!face.hasNormal) return new THREE.Vector3(0, 0, 1);
-  const x = readDraftNumber(face.nx) ?? 0;
-  const y = readDraftNumber(face.ny) ?? 0;
-  const z = readDraftNumber(face.nz) ?? 1;
+function faceNormal(anchor: DraftAnchor): THREE.Vector3 {
+  const x = readDraftNumber(anchor.nx) ?? 0;
+  const y = readDraftNumber(anchor.ny) ?? 0;
+  const z = readDraftNumber(anchor.nz) ?? 1;
   const normal = new THREE.Vector3(x, y, z);
   return normal.lengthSq() > 1e-12 ? normal.normalize() : new THREE.Vector3(0, 0, 1);
 }
@@ -720,6 +705,113 @@ function normalizeLoadedModelUnits(object: THREE.Object3D, sceneScaleMm: number)
   }
 }
 
+function inferProceduralKind(asset: V3Asset): string | null {
+  if (asset.kindId) return asset.kindId;
+  if (asset.catalogId === "minicircuits_zhl_1_2w_plus") return "rf_amplifier";
+  if (asset.catalogId === "minicircuits_zyswa_2_50dr") return "rf_switch";
+  if (
+    asset.catalogId === "thorlabs_ca2906"
+    || asset.catalogId === "generic_rf_cable_sma_to_bnc"
+    || asset.catalogId === "generic_rf_cable_bnc_to_bnc"
+    || asset.filePath === "primitive://sma_short_cable"
+  ) {
+    return "rf_cable";
+  }
+  return null;
+}
+
+function proceduralPreviewProperties(asset: V3Asset, kindId: string): Record<string, unknown> {
+  const props: Record<string, unknown> = {
+    ...(asset.defaultParams ?? {}),
+    ...(asset.properties ?? {}),
+  };
+  if (kindId === "rf_cable") {
+    if (asset.catalogId === "thorlabs_ca2906") {
+      return {
+        lengthMm: 152.4,
+        cableType: "RG-316",
+        connectorType: "sma",
+        endAConnector: "sma",
+        endBConnector: "sma",
+        jacketColor: "#c4a884",
+        ...props,
+      };
+    }
+    if (asset.catalogId === "generic_rf_cable_sma_to_bnc") {
+      return {
+        lengthMm: 300,
+        cableType: "RG-316",
+        connectorType: "sma",
+        endAConnector: "sma",
+        endBConnector: "bnc",
+        jacketColor: "#c4a884",
+        ...props,
+      };
+    }
+    if (asset.catalogId === "generic_rf_cable_bnc_to_bnc") {
+      return {
+        lengthMm: 300,
+        cableType: "RG-58",
+        connectorType: "bnc",
+        endAConnector: "bnc",
+        endBConnector: "bnc",
+        jacketColor: "#1f2937",
+        ...props,
+      };
+    }
+  }
+  return props;
+}
+
+function proceduralPreviewModel(asset: V3Asset): string | null {
+  if (asset.catalogId === "minicircuits_zhl_1_2w_plus") return "ZHL-1-2W+";
+  if (asset.catalogId === "minicircuits_zyswa_2_50dr") return "ZYSWA-2-50DR";
+  if (asset.catalogId === "thorlabs_ca2906") return "CA2906";
+  if (asset.catalogId === "generic_rf_cable_sma_to_bnc") return "SMA to BNC cable";
+  if (asset.catalogId === "generic_rf_cable_bnc_to_bnc") return "BNC cable";
+  return null;
+}
+
+function buildProceduralFaceLocatorModel(asset: V3Asset): THREE.Object3D | null {
+  const isProceduralPath =
+    asset.assetType === "primitive"
+    || asset.filePath.startsWith("primitive://")
+    || asset.filePath.startsWith("procedural:");
+  if (!isProceduralPath) return null;
+  const kindId = inferProceduralKind(asset);
+  if (!kindId) return null;
+  const component: ComponentItem = {
+    id: `face-locator-${asset.id}`,
+    name: asset.name,
+    kindId,
+    brand: asset.catalogId.startsWith("minicircuits_")
+      ? "Mini-Circuits"
+      : asset.catalogId.startsWith("thorlabs_")
+        ? "Thorlabs"
+        : "Generic",
+    model: proceduralPreviewModel(asset),
+    asset3dId: asset.id,
+    catalogId: asset.catalogId,
+    properties: proceduralPreviewProperties(asset, kindId),
+    physicsCapabilities: ["rf"],
+  };
+
+  let model: THREE.Object3D | null = null;
+  if (kindId === "rf_cable") model = createSmaShortCable(component);
+  if (kindId === "rf_amplifier") model = createZhl12wPlusAmplifier(component);
+  if (kindId === "rf_switch") model = createRfSwitch(component);
+  if (!model) return null;
+
+  // Procedural scene renderers are authored in the main viewer's three.js
+  // frame (Y-up, units = mm / 100). The face locator uses body-local mm
+  // directly, same as STL vertices and anchor coordinates.
+  const bodyMm = new THREE.Group();
+  bodyMm.add(model);
+  bodyMm.scale.setScalar(100);
+  bodyMm.rotation.x = Math.PI / 2;
+  return bodyMm;
+}
+
 function makeFaceLabel(text: string, color: string): THREE.Sprite {
   const canvas = document.createElement("canvas");
   canvas.width = 256;
@@ -748,63 +840,96 @@ function makeFaceLabel(text: string, color: string): THREE.Sprite {
   return sprite;
 }
 
+/** Build an orthonormal body-local basis from user-provided axisX +
+ *  axisY. axisX is normalized; axisY is Gram-Schmidt orthogonalized
+ *  against axisX (any component along X is projected out) then
+ *  normalized; axisZ = axisX × axisY. The user-facing axisY *direction*
+ *  is preserved as much as possible — this is the semantic axis (slow
+ *  / fast / transmission / acoustic). If axisY is parallel to axisX
+ *  (degenerate), fall back to world +Y or +Z whichever is less
+ *  parallel to X. */
+function deriveOrthonormalBasis(
+  ax: { x: number; y: number; z: number },
+  ay: { x: number; y: number; z: number },
+): {
+  axisX: { x: number; y: number; z: number };
+  axisY: { x: number; y: number; z: number };
+  axisZ: { x: number; y: number; z: number };
+} {
+  const xLen = Math.hypot(ax.x, ax.y, ax.z);
+  if (xLen < 1e-9) {
+    throw new Error("axisX direction must be non-zero (set nx/ny/nz)");
+  }
+  const X = { x: ax.x / xLen, y: ax.y / xLen, z: ax.z / xLen };
+
+  // Pick the user's axisY; fall back to a world axis if degenerate.
+  let Yseed = ay;
+  if (Math.hypot(ay.x, ay.y, ay.z) < 1e-9) {
+    Yseed = Math.abs(X.y) > 0.95 ? { x: 0, y: 0, z: 1 } : { x: 0, y: 1, z: 0 };
+  }
+  // Gram-Schmidt: Y' = Yseed − (Yseed·X) X
+  let dotYX = Yseed.x * X.x + Yseed.y * X.y + Yseed.z * X.z;
+  let Yp = {
+    x: Yseed.x - dotYX * X.x,
+    y: Yseed.y - dotYX * X.y,
+    z: Yseed.z - dotYX * X.z,
+  };
+  let yLen = Math.hypot(Yp.x, Yp.y, Yp.z);
+  if (yLen < 1e-9) {
+    // axisY collapsed onto axisX — Yseed was parallel to X. Pick a
+    // world fallback that's not parallel to X.
+    Yseed = Math.abs(X.y) > 0.95 ? { x: 0, y: 0, z: 1 } : { x: 0, y: 1, z: 0 };
+    dotYX = Yseed.x * X.x + Yseed.y * X.y + Yseed.z * X.z;
+    Yp = {
+      x: Yseed.x - dotYX * X.x,
+      y: Yseed.y - dotYX * X.y,
+      z: Yseed.z - dotYX * X.z,
+    };
+    yLen = Math.hypot(Yp.x, Yp.y, Yp.z);
+  }
+  const Y = { x: Yp.x / yLen, y: Yp.y / yLen, z: Yp.z / yLen };
+  const Z = {
+    x: X.y * Y.z - X.z * Y.y,
+    y: X.z * Y.x - X.x * Y.z,
+    z: X.x * Y.y - X.y * Y.x,
+  };
+  return { axisX: X, axisY: Y, axisZ: Z };
+}
+
 function draftToPatch(draft: AssetDraft): V3AssetUpdate {
-  const faces: V3Face[] = draft.faces.map((face, index) => {
-    const id = face.id.trim();
-    if (!id) throw new Error(`face ${index + 1} id is required`);
-    const width = readOptionalNumber(face.apertureWidthMm, `${id}.apertureWidthMm`);
-    const height = readOptionalNumber(face.apertureHeightMm, `${id}.apertureHeightMm`);
+  // Phase 9.8 cutover: editor writes anchors[] only. faces[] and
+  // transitions[] are no longer authored here (tracer reads anchors[]).
+  const anchors = draft.anchors.map((a, index) => {
+    const id = a.id.trim();
+    if (!id) throw new Error(`anchor ${index + 1} id is required`);
+    const width = readOptionalNumber(a.apertureWidthMm, `${id}.apertureWidthMm`);
+    const height = readOptionalNumber(a.apertureHeightMm, `${id}.apertureHeightMm`);
+    const { axisX, axisY, axisZ } = deriveOrthonormalBasis(
+      {
+        x: readNumber(a.nx, `${id}.axisX.x`),
+        y: readNumber(a.ny, `${id}.axisX.y`),
+        z: readNumber(a.nz, `${id}.axisX.z`),
+      },
+      {
+        x: readNumber(a.yx, `${id}.axisY.x`),
+        y: readNumber(a.yy, `${id}.axisY.y`),
+        z: readNumber(a.yz, `${id}.axisY.z`),
+      },
+    );
     return {
       id,
       positionMmBodyLocal: {
-        x: readNumber(face.px, `${id}.position.x`),
-        y: readNumber(face.py, `${id}.position.y`),
-        z: readNumber(face.pz, `${id}.position.z`),
+        x: readNumber(a.px, `${id}.position.x`),
+        y: readNumber(a.py, `${id}.position.y`),
+        z: readNumber(a.pz, `${id}.position.z`),
       },
-      normalBodyLocal: face.hasNormal
-        ? {
-            x: readNumber(face.nx, `${id}.normal.x`),
-            y: readNumber(face.ny, `${id}.normal.y`),
-            z: readNumber(face.nz, `${id}.normal.z`),
-          }
-        : null,
-      apertureMm: readNumber(face.apertureMm, `${id}.apertureMm`),
-      apertureShape: face.apertureShape,
+      axisXBodyLocal: axisX,
+      axisYBodyLocal: axisY,
+      axisZBodyLocal: axisZ,
+      apertureMm: readNumber(a.apertureMm, `${id}.apertureMm`),
+      apertureShape: a.apertureShape,
       ...(width !== null ? { apertureWidthMm: width } : {}),
       ...(height !== null ? { apertureHeightMm: height } : {}),
-      // Persist domain only when non-optical to avoid noisy diffs on
-      // legacy optical assets that never carried the field.
-      ...(face.domain && face.domain !== "optical" ? { domain: face.domain } : {}),
-    };
-  });
-
-  const transitions: V3Transition[] = draft.transitions.map((transition, index) => {
-    const inFace = transition.in.trim();
-    const outRaw = transition.outText.trim();
-    const op = transition.op.trim();
-    if (!inFace) throw new Error(`transition ${index + 1} in face is required`);
-    if (!outRaw) throw new Error(`transition ${index + 1} out face is required`);
-    if (!op) throw new Error(`transition ${index + 1} op is required`);
-
-    const params = readOptionalJson<Record<string, unknown>>(transition.paramsText, "params");
-    const matrix5x5 = readOptionalJson<number[][]>(transition.matrix5x5Text, "matrix5x5");
-    const abcd = readOptionalJson<number[][]>(transition.abcdText, "abcd");
-    const out = outRaw.includes(",")
-      ? outRaw.split(",").map((part) => part.trim()).filter(Boolean)
-      : outRaw;
-    const viaRaw = transition.viaText.trim();
-    const via = viaRaw === ""
-      ? null
-      : viaRaw.split(",").map((part) => part.trim()).filter(Boolean);
-
-    return {
-      in: inFace,
-      out,
-      op,
-      ...(via && via.length > 0 ? { via } : {}),
-      ...(params !== undefined ? { params } : {}),
-      ...(matrix5x5 !== undefined ? { matrix5x5 } : {}),
-      ...(abcd !== undefined ? { abcd } : {}),
     };
   });
 
@@ -836,12 +961,11 @@ function draftToPatch(draft: AssetDraft): V3AssetUpdate {
   return {
     kindId: kindIdValue,
     wavelengthRangeNm,
-    // body_frame_rotation now stores the CAD-to-body rotation (the
+    // body_frame_rotation stores the CAD-to-body rotation (the
     // body-frame origin's orientation relative to the CAD STL). User
     // edits via Euler rx/ry/rz, persisted as a quaternion.
     bodyFrameRotation: draft.bodyFrameRotation,
-    faces,
-    transitions,
+    anchors,
     defaultParams: readJsonObject(draft.defaultParamsText, "defaultParams"),
     properties: nextProps,
   };
@@ -990,7 +1114,7 @@ function KindGuidePanel({ selectedKind }: { selectedKind: string | null }) {
 function FaceLocator3D({
   asset,
   draft,
-  selectedFaceIndex,
+  selectedAnchorIndex,
   onSelectFace,
   onMoveFace,
   onAutoPlaceFace,
@@ -1005,7 +1129,7 @@ function FaceLocator3D({
 }: {
   asset: V3Asset;
   draft: AssetDraft;
-  selectedFaceIndex: number | null;
+  selectedAnchorIndex: number | null;
   onSelectFace: (index: number) => void;
   onMoveFace: (index: number, position: THREE.Vector3) => void;
   onAutoPlaceFace: (index: number, position: THREE.Vector3, normal: THREE.Vector3) => void;
@@ -1044,7 +1168,7 @@ function FaceLocator3D({
   lockedCentroidsRef.current = lockedCentroids ?? new Set();
   const mountRef = useRef<HTMLDivElement | null>(null);
   const callbacksRef = useRef({ onSelectFace, onMoveFace, onAutoPlaceFace });
-  const selectedFaceIndexRef = useRef(selectedFaceIndex);
+  const selectedAnchorIndexRef = useRef(selectedAnchorIndex);
   const [modelStatus, setModelStatus] = useState<"loading" | "loaded" | "proxy">("loading");
   const [autoPick, setAutoPick] = useState(false);
   const autoPickRef = useRef(autoPick);
@@ -1056,12 +1180,12 @@ function FaceLocator3D({
   // update the groups live as the user types.
   const bodyFramePositionRef = useRef(bodyFramePositionMm);
   const bodyFrameRotationRef = useRef(bodyFrameRotation);
-  const modelGroupRef = useRef<THREE.Group | null>(null);          // outer: rotation
-  const modelInnerGroupRef = useRef<THREE.Group | null>(null);     // inner: translation
+  const modelGroupRef = useRef<THREE.Group | null>(null);          // outer: translation (body-frame offset)
+  const modelInnerGroupRef = useRef<THREE.Group | null>(null);     // inner: rotation R_body⁻¹
   bodyFramePositionRef.current = bodyFramePositionMm;
   bodyFrameRotationRef.current = bodyFrameRotation;
   // Picked-face wireframe overlay survives useEffect remounts (which fire on
-  // every draft.faces edit, including the one auto-pick itself triggers).
+  // every draft.anchors edit, including the one auto-pick itself triggers).
   const pickedFaceWireframeRef = useRef<{
     vertices: Float32Array;
     faceIndex: number;
@@ -1076,7 +1200,7 @@ function FaceLocator3D({
   } | null>(null);
 
   callbacksRef.current = { onSelectFace, onMoveFace, onAutoPlaceFace };
-  selectedFaceIndexRef.current = selectedFaceIndex;
+  selectedAnchorIndexRef.current = selectedAnchorIndex;
   autoPickRef.current = autoPick;
 
   // Read viewer hints from the *draft* so mid-click cluster deletions
@@ -1131,7 +1255,7 @@ function FaceLocator3D({
     const root = new THREE.Group();
     scene.add(root);
 
-    const facePositions = draft.faces
+    const facePositions = draft.anchors
       .map(facePosition)
       .filter((position): position is THREE.Vector3 => position !== null);
     const faceBox = new THREE.Box3();
@@ -1194,17 +1318,21 @@ function FaceLocator3D({
     root.add(bodyAxesGroup);
 
     // Wrap the loaded STL/proxy in two nested groups so the user can
-    // adjust position + rotation live. Outer group's quaternion = R_body
-    // (rotates STL into body-aligned orientation), inner group's
-    // position = -body_origin (slides body origin onto world zero).
-    // Net transform: world_point = R_body * (cad_point - body_origin).
+    // adjust position + rotation live. INNER group rotates the STL into
+    // body-aligned orientation (R_body⁻¹). OUTER group then translates
+    // by −body_origin in BODY frame, sliding the body origin onto world
+    // zero AFTER the rotation has aligned the axes.
+    // Net transform: world_point = R_body⁻¹ × cad_point − body_origin
+    // (body-frame offset — see docs/asset-physics-model.md §3.1).
     const modelGroup = new THREE.Group();
     const modelInnerGroup = new THREE.Group();
     {
       const p = bodyFramePositionRef.current;
       const q = bodyFrameRotationRef.current;
-      modelInnerGroup.position.set(-p.x, -p.y, -p.z);
-      if (q) modelGroup.quaternion.set(q.x, q.y, q.z, q.w).invert();
+      const shift = new THREE.Vector3(p.x, p.y, p.z);
+      if (q) shift.applyQuaternion(new THREE.Quaternion(q.x, q.y, q.z, q.w).invert());
+      modelGroup.position.set(-shift.x, -shift.y, -shift.z);
+      if (q) modelInnerGroup.quaternion.set(q.x, q.y, q.z, q.w).invert();
     }
     modelGroup.add(modelInnerGroup);
     root.add(modelGroup);
@@ -1219,38 +1347,38 @@ function FaceLocator3D({
     markerMaterial.depthTest = false;
     selectedMaterial.depthTest = false;
 
-    draft.faces.forEach((face, index) => {
-      const position = facePosition(face);
+    draft.anchors.forEach((anchor, index) => {
+      const position = facePosition(anchor);
       if (!position) return;
-      const normal = faceNormal(face);
+      const normal = faceNormal(anchor);
       const group = new THREE.Group();
       group.position.copy(position);
       group.userData.faceIndex = index;
 
       const sphere = new THREE.Mesh(
         new THREE.SphereGeometry(markerRadius, 20, 14),
-        index === selectedFaceIndex ? selectedMaterial : markerMaterial,
+        index === selectedAnchorIndex ? selectedMaterial : markerMaterial,
       );
       sphere.renderOrder = 30;
       sphere.userData.faceIndex = index;
       group.add(sphere);
       selectable.push(sphere);
 
-      const aperture = readDraftNumber(face.apertureMm) ?? markerRadius * 3;
-      // Per-face width/height: if user filled them, use them; otherwise
-      // default to aperture ? 2 (square / circle inscribed in apertureMm
+      const aperture = readDraftNumber(anchor.apertureMm) ?? markerRadius * 3;
+      // Per-anchor width/height: if user filled them, use them; otherwise
+      // default to aperture × 2 (square / circle inscribed in apertureMm
       // half-extent). Clamped to markerRadius so tiny apertures stay
       // visible.
-      const wMm = readDraftNumber(face.apertureWidthMm) ?? aperture * 2;
-      const hMm = readDraftNumber(face.apertureHeightMm) ?? aperture * 2;
+      const wMm = readDraftNumber(anchor.apertureWidthMm) ?? aperture * 2;
+      const hMm = readDraftNumber(anchor.apertureHeightMm) ?? aperture * 2;
       const drawW = Math.max(wMm, markerRadius * 2.8);
       const drawH = Math.max(hMm, markerRadius * 2.8);
       const thickness = Math.max(Math.max(drawW, drawH) * 0.04, markerRadius * 0.2);
-      const isInternalFace = /^B\d+/.test(face.id);  // B1, B2, ... = internal reflective interface
+      const isInternalFace = /^B\d+/.test(anchor.id);  // B1, B2, ... = internal reflective interface
       const ring = new THREE.Mesh(
-        _makeApertureOutlineGeometry(face.apertureShape, drawW, drawH, thickness),
+        _makeApertureOutlineGeometry(anchor.apertureShape, drawW, drawH, thickness),
         new THREE.MeshBasicMaterial({
-          color: index === selectedFaceIndex ? "#fbbf24" : (isInternalFace ? "#f472b6" : "#38bdf8"),
+          color: index === selectedAnchorIndex ? "#fbbf24" : (isInternalFace ? "#f472b6" : "#38bdf8"),
           transparent: true,
           opacity: 0.7,
           side: THREE.DoubleSide,
@@ -1267,9 +1395,9 @@ function FaceLocator3D({
       // distinguish Glan-Laser (B1/B2 tilted) from a plain box.
       if (isInternalFace) {
         const disk = new THREE.Mesh(
-          _makeApertureFillGeometry(face.apertureShape, drawW, drawH),
+          _makeApertureFillGeometry(anchor.apertureShape, drawW, drawH),
           new THREE.MeshBasicMaterial({
-            color: index === selectedFaceIndex ? "#fbbf24" : "#f472b6",
+            color: index === selectedAnchorIndex ? "#fbbf24" : "#f472b6",
             transparent: true,
             opacity: 0.18,
             side: THREE.DoubleSide,
@@ -1285,7 +1413,7 @@ function FaceLocator3D({
         normal,
         new THREE.Vector3(),
         normalLength,
-        index === selectedFaceIndex ? "#fbbf24" : "#a78bfa",
+        index === selectedAnchorIndex ? "#fbbf24" : "#a78bfa",
         normalLength * 0.22,
         normalLength * 0.1,
       );
@@ -1301,7 +1429,7 @@ function FaceLocator3D({
       });
       group.add(arrow);
 
-      const label = makeFaceLabel(face.id, index === selectedFaceIndex ? "#fbbf24" : "#22d3ee");
+      const label = makeFaceLabel(anchor.id, index === selectedAnchorIndex ? "#fbbf24" : "#22d3ee");
       label.position.copy(normal.clone().multiplyScalar(normalLength * 1.12));
       label.renderOrder = 31;
       group.add(label);
@@ -1358,7 +1486,7 @@ function FaceLocator3D({
       // the face cluster only when nothing useful is declared.
       const dims = ((asset.properties ?? {}) as Record<string, unknown>).physicalDimensionsMm as
         | Record<string, number> | undefined;
-      const firstFaceShape = draft.faces[0]?.apertureShape;
+      const firstFaceShape = draft.anchors[0]?.apertureShape;
       const center = faceBox.getCenter(new THREE.Vector3());
       const material = new THREE.MeshStandardMaterial({
         color: "#6b7280",
@@ -1434,7 +1562,22 @@ function FaceLocator3D({
 
     async function loadModel() {
       const path = asset.filePath;
-      if (!path || path.startsWith("primitive://")) {
+      if (!path) {
+        addProxyBox();
+        return;
+      }
+      const proceduralModel = buildProceduralFaceLocatorModel(asset);
+      if (proceduralModel) {
+        modelInnerGroup.add(proceduralModel);
+        proceduralModel.updateMatrixWorld(true);
+        proceduralModel.traverse((child) => {
+          if (child instanceof THREE.Mesh) modelMeshes.push(child);
+        });
+        setModelStatus("loaded");
+        fitCameraToObject();
+        return;
+      }
+      if (path.startsWith("primitive://") || path.startsWith("procedural:") || asset.assetType === "primitive") {
         addProxyBox();
         return;
       }
@@ -1544,7 +1687,7 @@ function FaceLocator3D({
         pickedFaceOverlay = null;
       }
       const data = pickedFaceWireframeRef.current;
-      if (!data || data.faceIndex !== selectedFaceIndexRef.current) return;
+      if (!data || data.faceIndex !== selectedAnchorIndexRef.current) return;
       if (data.forFilePath !== asset.filePath) {
         pickedFaceWireframeRef.current = null;
         return;
@@ -1727,7 +1870,7 @@ function FaceLocator3D({
           callbacksRef.current.onSelectFace(faceIndex);
           return;
         }
-        const selectedIdx = selectedFaceIndexRef.current;
+        const selectedIdx = selectedAnchorIndexRef.current;
         if (selectedIdx === null || modelMeshes.length === 0) return;
         const meshHit = raycaster.intersectObjects(modelMeshes, true)[0];
         if (!meshHit) return;
@@ -1883,35 +2026,48 @@ function FaceLocator3D({
       });
       mount.removeChild(renderer.domElement);
     };
-  }, [asset.filePath, viewerHintsKey, lockedCentroidsKey, showLocks, draft.faces, selectedFaceIndex]);
+  }, [asset.filePath, viewerHintsKey, lockedCentroidsKey, showLocks, draft.anchors, selectedAnchorIndex]);
 
   // Reflect external body-frame origin position edits live into the
-  // inner translation group, and rotation edits into the outer rotation
-  // group, so the user sees the STL shift / spin as they type.
-  useEffect(() => {
-    const inner = modelInnerGroupRef.current;
-    if (inner) {
-      inner.position.set(
-        -bodyFramePositionMm.x,
-        -bodyFramePositionMm.y,
-        -bodyFramePositionMm.z,
-      );
-    }
-  }, [bodyFramePositionMm.x, bodyFramePositionMm.y, bodyFramePositionMm.z]);
-
+  // outer translation group, and rotation edits into the inner rotation
+  // group, so the user sees the STL shift / spin as they type. Body-
+  // frame offset semantic: x/y/z mm are along body axes (post-rotation),
+  // so tweaking z mm moves the STL along scene Z regardless of R_body.
   useEffect(() => {
     const outer = modelGroupRef.current;
-    if (!outer) return;
+    if (outer) {
+      const shift = new THREE.Vector3(
+        bodyFramePositionMm.x,
+        bodyFramePositionMm.y,
+        bodyFramePositionMm.z,
+      );
+      if (bodyFrameRotation) {
+        shift.applyQuaternion(
+          new THREE.Quaternion(
+            bodyFrameRotation.x,
+            bodyFrameRotation.y,
+            bodyFrameRotation.z,
+            bodyFrameRotation.w,
+          ).invert(),
+        );
+      }
+      outer.position.set(-shift.x, -shift.y, -shift.z);
+    }
+  }, [bodyFramePositionMm.x, bodyFramePositionMm.y, bodyFramePositionMm.z, bodyFrameRotation]);
+
+  useEffect(() => {
+    const inner = modelInnerGroupRef.current;
+    if (!inner) return;
     if (bodyFrameRotation) {
-      outer.quaternion
+      inner.quaternion
         .set(bodyFrameRotation.x, bodyFrameRotation.y, bodyFrameRotation.z, bodyFrameRotation.w)
         .invert();
     } else {
-      outer.quaternion.identity();
+      inner.quaternion.identity();
     }
   }, [bodyFrameRotation]);
 
-  const selected = selectedFaceIndex !== null ? draft.faces[selectedFaceIndex] : null;
+  const selected = selectedAnchorIndex !== null ? draft.anchors[selectedAnchorIndex] : null;
   const canDeleteGeometry = Boolean(onDeleteCluster);
   const fileExtension = asset.filePath.split("?")[0].split(".").pop()?.toLowerCase() ?? "";
   const isCadSourceFile = ["step", "stp", "sldprt", "dxf"].includes(fileExtension);
@@ -1923,7 +2079,7 @@ function FaceLocator3D({
         ? "proxy view"
         : "loading model";
 
-  const autoPickDisabled = selectedFaceIndex === null || modelStatus !== "loaded";
+  const autoPickDisabled = selectedAnchorIndex === null || modelStatus !== "loaded";
 
   return (
     <div style={{ border: "1px solid #38bdf8", background: "#020617", marginBottom: 10 }}>
@@ -1971,9 +2127,9 @@ function FaceLocator3D({
                   ? isCadSourceFile
                     ? "STEP/STP/SLDPRT/DXF must be converted to GLB/STL/OBJ before auto-pick can inspect geometry."
                     : "Load a model (STL/GLB/GLTF/OBJ) to enable auto-pick"
-                  : selectedFaceIndex === null
+                  : selectedAnchorIndex === null
                     ? "Select a face marker first"
-                    : "Click a face or closed loop on the model to auto-center"
+                    : "Click a triangle or closed loop on the model to auto-center the selected anchor"
               }
               style={{
                 padding: "3px 8px",
@@ -2138,10 +2294,24 @@ function BodyFrameOriginEditor({
   return (
     <>
       <div style={{ ...SECTION_LABEL, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span>Body frame origin (CAD-frame offset, mm + rotation, deg)</span>
+        <span>Body frame origin (Lab Sense offset, mm + rotation, deg)</span>
         <span style={{ fontSize: 10, color: "#4b5563", textTransform: "none" }}>
           body +Z = optical axis | +X/+Y = polarization basis
         </span>
+      </div>
+
+      {/* §17.4 UX hint: x/y/z are CAD-axis offsets (i.e. the body origin's
+          position in the asset's native STL coordinate system), NOT the
+          PHY scene's visual x/y/z after the body-frame rotation. Setting
+          z=6.875 on an asset with a 90° Y rotation in body frame moves
+          the STL along PHY scene X (-R_body⁻¹ × ẑ), which surprises new
+          users. The hint just makes the convention explicit; the actual
+          math sits in docs/frame-anchor-architecture.md §3 + §11.2. */}
+      <div
+        style={{ fontSize: 10, color: "#6b7280", marginTop: 4 }}
+        title="Inputs are in the asset's CAD axes (STL native). The PHY preview shows R_body⁻¹ × (cad − bfp); with a non-identity body rotation, typing z=N moves the STL along R_body⁻¹·ẑ in PHY scene, which may not look like 'scene Z'. See docs/frame-anchor-architecture.md §3."
+      >
+        Inputs are CAD-axis offsets — visual direction in PHY scene depends on the body-rotation set below.
       </div>
 
       <div style={{ display: "flex", gap: 6, marginTop: 6, alignItems: "center" }}>
@@ -2154,6 +2324,7 @@ function BodyFrameOriginEditor({
             placeholder="0"
             onChange={(e) => onPositionChange("x", e.target.value)}
             style={{ ...inputStyle, marginLeft: 4 }}
+            title="CAD-frame X (STL native). Not visual PHY scene X unless body rotation is identity."
           />
         </label>
         <label style={{ fontSize: 10, color: "#22c55e", fontWeight: 600 }}>
@@ -2165,6 +2336,7 @@ function BodyFrameOriginEditor({
             placeholder="0"
             onChange={(e) => onPositionChange("y", e.target.value)}
             style={{ ...inputStyle, marginLeft: 4 }}
+            title="CAD-frame Y."
           />
         </label>
         <label style={{ fontSize: 10, color: "#3b82f6", fontWeight: 600 }}>
@@ -2176,6 +2348,7 @@ function BodyFrameOriginEditor({
             placeholder="0"
             onChange={(e) => onPositionChange("z", e.target.value)}
             style={{ ...inputStyle, marginLeft: 4 }}
+            title="CAD-frame Z."
           />
         </label>
       </div>
@@ -2211,22 +2384,6 @@ function BodyFrameOriginEditor({
             style={{ ...inputStyle, marginLeft: 4 }}
           />
         </label>
-        <button
-          type="button"
-          onClick={() => {
-            onPositionChange("x", "");
-            onPositionChange("y", "");
-            onPositionChange("z", "");
-            onRotationChange(null);
-          }}
-          style={{
-            marginLeft: "auto", fontSize: 10, padding: "2px 8px",
-            border: "1px solid #d8ded8", background: "#fff", cursor: "pointer",
-          }}
-          title="Clear offset + rotation (body frame = CAD frame)"
-        >
-          ??clear
-        </button>
       </div>
 
       <div style={{ fontSize: 10, color: "#4b5563", marginTop: 6, lineHeight: 1.45 }}>
@@ -2240,62 +2397,6 @@ function BodyFrameOriginEditor({
         3D preview, not here.
       </div>
     </>
-  );
-}
-
-/** Multi-select domain chip row for Asset3D's properties.domains. An
- *  asset can belong to several composer rails (e.g. AOM = optical + rf;
- *  isolator-housing = optical + mechanical). Empty list = fall back to
- *  the kind-derived classification. */
-function DomainChips({
-  value,
-  onChange,
-}: {
-  value: ReadonlyArray<string>;
-  onChange: (next: string[]) => void;
-}) {
-  const set = new Set(value);
-  const toggle = (cap: string) => {
-    const next = new Set(set);
-    if (next.has(cap)) next.delete(cap);
-    else next.add(cap);
-    onChange([...next]);
-  };
-  return (
-    <div style={{ marginTop: 6 }}>
-      <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 3 }}>
-        domains (multi-select; empty = inferred from kind_id)
-      </div>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {(["optical", "rf", "mechanical"] as const).map((cap) => {
-          const on = set.has(cap);
-          return (
-            <button
-              key={cap}
-              type="button"
-              onClick={() => toggle(cap)}
-              style={{
-                fontSize: 11,
-                padding: "3px 10px",
-                background: on ? "#0f766e" : "transparent",
-                color: on ? "#ffffff" : "#242726",
-                border: `1px solid ${on ? "#115e59" : "#d8ded8"}`,
-                borderRadius: 4,
-                cursor: "pointer",
-                fontFamily: "'Menlo', 'Consolas', monospace",
-              }}
-            >
-              {cap}
-            </button>
-          );
-        })}
-        {value.length === 0 && (
-          <span style={{ fontSize: 10, color: "#9ca3af" }}>
-            (inferred)
-          </span>
-        )}
-      </div>
-    </div>
   );
 }
 
@@ -2313,7 +2414,7 @@ function KindSelectInline({
 }: {
   value: string;
   kinds: Array<{ name: string; displayName: string; domain: string }>;
-  parentDomain: ElementDomain;
+  parentDomain: "optical" | "rf" | "mechanical";
   onChange: (v: string) => void;
 }) {
   const scoped = useMemo(() => {
@@ -2350,22 +2451,35 @@ function AssetEditForm({
   asset,
   draft,
   setDraft,
-  selectedFaceIndex,
-  setSelectedFaceIndex,
+  selectedAnchorIndex,
+  setSelectedAnchorIndex,
   parentDomain,
   mode,
 }: {
   asset: V3Asset;
   draft: AssetDraft;
   setDraft: (draft: AssetDraft) => void;
-  selectedFaceIndex: number | null;
-  setSelectedFaceIndex: (index: number | null) => void;
-  parentDomain: ElementDomain;
+  selectedAnchorIndex: number | null;
+  setSelectedAnchorIndex: (index: number | null) => void;
+  parentDomain: "optical" | "rf" | "mechanical";
   mode: Asset3DV3EditorMode;
 }) {
   const isBindingDev = mode === "binding-dev";
-  const isPhyEditor = mode === "phy-editor";
   const kinds = useKindsStore((s) => s.kinds);
+
+  // face_id is a kind-level contract: kinds.face_template lists which
+  // face ids are `required` + `optional` for this kind. Build a closed
+  // set from the asset's kind so the face_id picker can offer only
+  // those — typing a freeform id would silently desync the asset from
+  // the kind contract and break tracer lookups.
+  const faceIdTemplate = useMemo(() => {
+    const template = kinds.find((k) => k.name === draft.kindId)?.faceTemplate as
+      | { required?: string[]; optional?: string[] }
+      | undefined;
+    const required = Array.isArray(template?.required) ? template!.required! : [];
+    const optional = Array.isArray(template?.optional) ? template!.optional! : [];
+    return { required, optional, all: [...required, ...optional] };
+  }, [kinds, draft.kindId]);
 
   // Geometry edits (mid-click cluster delete + "Revert geometry") stage
   // in draft.properties.viewerHints and only commit on Save Changes.
@@ -2459,24 +2573,54 @@ function AssetEditForm({
 
   const handleClearLocks = () => setLockedCentroids(new Set());
 
-  const updateFace = (index: number, patch: Partial<DraftFace>) => {
-    const next = [...draft.faces];
+  const updateAnchor = (index: number, patch: Partial<DraftAnchor>) => {
+    const next = [...draft.anchors];
     next[index] = { ...next[index], ...patch };
-    setDraft({ ...draft, faces: next });
+    setDraft({ ...draft, anchors: next });
+  };
+
+  // Enforce axisY ⟂ axisX on blur: project user's axisY onto the plane
+  // perpendicular to axisX (Gram-Schmidt), normalize, write back into
+  // the draft. Skips when axisX is degenerate (length ≈ 0) so the user
+  // can fix axisX without the helper fighting them. Falls back to the
+  // current displayed value if the projection collapses (axisY parallel
+  // to axisX) — leaves the data alone, lets the user choose how to fix.
+  const orthogonalizeAnchorY = (index: number) => {
+    const a = draft.anchors[index];
+    if (!a) return;
+    const xv = { x: readDraftNumber(a.nx), y: readDraftNumber(a.ny), z: readDraftNumber(a.nz) };
+    const yv = { x: readDraftNumber(a.yx), y: readDraftNumber(a.yy), z: readDraftNumber(a.yz) };
+    if (xv.x === null || xv.y === null || xv.z === null) return;
+    if (yv.x === null || yv.y === null || yv.z === null) return;
+    const xLen = Math.hypot(xv.x, xv.y, xv.z);
+    if (xLen < 1e-9) return;
+    const Xh = { x: xv.x / xLen, y: xv.y / xLen, z: xv.z / xLen };
+    const dot = yv.x * Xh.x + yv.y * Xh.y + yv.z * Xh.z;
+    const Yp = {
+      x: yv.x - dot * Xh.x,
+      y: yv.y - dot * Xh.y,
+      z: yv.z - dot * Xh.z,
+    };
+    const yLen = Math.hypot(Yp.x, Yp.y, Yp.z);
+    if (yLen < 1e-9) return;
+    updateAnchor(index, {
+      yx: mmText(Yp.x / yLen),
+      yy: mmText(Yp.y / yLen),
+      yz: mmText(Yp.z / yLen),
+    });
   };
   const moveFace = (index: number, position: THREE.Vector3) => {
-    updateFace(index, {
+    updateAnchor(index, {
       px: mmText(position.x),
       py: mmText(position.y),
       pz: mmText(position.z),
     });
   };
   const autoPlaceFace = (index: number, position: THREE.Vector3, normal: THREE.Vector3) => {
-    updateFace(index, {
+    updateAnchor(index, {
       px: mmText(position.x),
       py: mmText(position.y),
       pz: mmText(position.z),
-      hasNormal: true,
       nx: mmText(normal.x),
       ny: mmText(normal.y),
       nz: mmText(normal.z),
@@ -2576,8 +2720,8 @@ function AssetEditForm({
       <FaceLocator3D
         asset={asset}
         draft={draft}
-        selectedFaceIndex={selectedFaceIndex}
-        onSelectFace={setSelectedFaceIndex}
+        selectedAnchorIndex={selectedAnchorIndex}
+        onSelectFace={setSelectedAnchorIndex}
         onMoveFace={moveFace}
         onAutoPlaceFace={autoPlaceFace}
         bodyFramePositionMm={{
@@ -2586,7 +2730,7 @@ function AssetEditForm({
           z: Number(draft.bodyFramePositionMmZ) || 0,
         }}
         bodyFrameRotation={draft.bodyFrameRotation}
-        readOnlyGeometry={isBindingDev}
+        readOnlyGeometry={false}
         onDeleteCluster={handleDeleteCluster}
         lockedCentroids={lockedCentroids}
         onToggleLockCluster={handleToggleLockCluster}
@@ -2594,31 +2738,20 @@ function AssetEditForm({
         showLocks={showLocks}
       />
 
-      {/* Identity ??physics_kind is catalog-level (Binding dev only),
-          wavelength range is physics tuning (PHY Editor only). */}
+      {/* Identity — physics_kind is catalog identity, wavelength range
+          is physics tuning. Both editable here. */}
       <div style={SECTION_LABEL}>Identity</div>
-      <div style={{ display: "grid", gridTemplateColumns: parentDomain === "rf" || isBindingDev ? "minmax(0, 1fr)" : "minmax(0, 1fr) 120px 120px", gap: 8 }}>
-        {isBindingDev && (
-          <label style={{ fontSize: 11, color: "#6b7280" }}>
-            kind_id
-            <KindSelectInline
-              value={draft.kindId}
-              kinds={kinds}
-              parentDomain={parentDomain}
-              onChange={(v) => setDraft({ ...draft, kindId: v })}
-            />
-            <DomainChips
-              value={(draft.properties as { domains?: string[] } | undefined)?.domains ?? []}
-              onChange={(next) => {
-                const nextProps = { ...draft.properties };
-                if (next.length > 0) nextProps.domains = next;
-                else delete (nextProps as { domains?: unknown }).domains;
-                setDraft({ ...draft, properties: nextProps });
-              }}
-            />
-          </label>
-        )}
-        {isPhyEditor && parentDomain !== "rf" && (
+      <div style={{ display: "grid", gridTemplateColumns: parentDomain === "rf" ? "minmax(0, 1fr)" : "minmax(0, 1fr) 120px 120px", gap: 8 }}>
+        <label style={{ fontSize: 11, color: "#6b7280" }}>
+          kind_id
+          <KindSelectInline
+            value={draft.kindId}
+            kinds={kinds}
+            parentDomain={parentDomain}
+            onChange={(v) => setDraft({ ...draft, kindId: v })}
+          />
+        </label>
+        {parentDomain !== "rf" && (
           <>
             <label style={{ fontSize: 11, color: "#6b7280" }}>
               lambda min
@@ -2642,60 +2775,60 @@ function AssetEditForm({
         )}
       </div>
 
-      {/* Body frame origin is PHY-Editor-only (per the surface split:
-          Binding dev establishes the initial offset on STL upload and
-          PHY Editor fine-tunes it). */}
-      {isPhyEditor && (
-        <BodyFrameOriginEditor
-          x={draft.bodyFramePositionMmX}
-          y={draft.bodyFramePositionMmY}
-          z={draft.bodyFramePositionMmZ}
-          rotation={draft.bodyFrameRotation}
-          onPositionChange={(axis, value) =>
-            setDraft({
-              ...draft,
-              ...(axis === "x" ? { bodyFramePositionMmX: value } : {}),
-              ...(axis === "y" ? { bodyFramePositionMmY: value } : {}),
-              ...(axis === "z" ? { bodyFramePositionMmZ: value } : {}),
-            })
-          }
-          onRotationChange={(next) => setDraft({ ...draft, bodyFrameRotation: next })}
-        />
-      )}
+      <BodyFrameOriginEditor
+        x={draft.bodyFramePositionMmX}
+        y={draft.bodyFramePositionMmY}
+        z={draft.bodyFramePositionMmZ}
+        rotation={draft.bodyFrameRotation}
+        onPositionChange={(axis, value) =>
+          setDraft({
+            ...draft,
+            ...(axis === "x" ? { bodyFramePositionMmX: value } : {}),
+            ...(axis === "y" ? { bodyFramePositionMmY: value } : {}),
+            ...(axis === "z" ? { bodyFramePositionMmZ: value } : {}),
+          })
+        }
+        onRotationChange={(next) => setDraft({ ...draft, bodyFrameRotation: next })}
+      />
 
       <div style={{ ...SECTION_LABEL, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span>Faces ({draft.faces.length})</span>
+        <span>Anchors ({draft.anchors.length})</span>
         {isBindingDev && (
           <IconButton
-            title="Add face"
+            title="Add anchor"
             onClick={() => {
-              const nextIndex = draft.faces.length;
-              // RF/TTL faces don't participate in ray-plane intersection,
-              // so apertureMm defaults to 0; optical faces keep a sensible
-              // 1mm half-radius default.
-              const isRfParent = parentDomain === "rf";
+              const nextIndex = draft.anchors.length;
+              // Auto-pick the first unused required id from the kind's
+              // template so the new anchor is born compliant. Falls
+              // back to a placeholder if every required slot is taken
+              // or the kind has no template.
+              const used = new Set(draft.anchors.map((a) => a.id));
+              const nextRequired = faceIdTemplate.required.find((id) => !used.has(id));
+              const nextOptional = faceIdTemplate.optional.find((id) => !used.has(id));
+              const newId = nextRequired ?? nextOptional ?? `anchor_${nextIndex + 1}`;
               setDraft({
                 ...draft,
-                faces: [
-                  ...draft.faces,
+                anchors: [
+                  ...draft.anchors,
                   {
-                    id: isRfParent ? `rf_out` : `F${draft.faces.length + 1}`,
+                    id: newId,
                     px: "0",
                     py: "0",
                     pz: "0",
-                    hasNormal: true,
                     nx: "0",
                     ny: "0",
                     nz: "1",
-                    apertureMm: isRfParent ? "0" : "1",
+                    yx: "0",
+                    yy: "1",
+                    yz: "0",
+                    apertureMm: "1",
                     apertureShape: "circle",
                     apertureWidthMm: "",
                     apertureHeightMm: "",
-                    domain: isRfParent ? "rf" : "optical",
                   },
                 ],
               });
-              setSelectedFaceIndex(nextIndex);
+              setSelectedAnchorIndex(nextIndex);
             }}
           >
             <Plus size={15} />
@@ -2706,106 +2839,80 @@ function AssetEditForm({
       <table style={TABLE}>
         <thead>
           <tr>
-            <th style={{ ...TH, width: 80 }}>face_id</th>
-            <th style={{ ...TH, width: 84 }}>domain</th>
-            {isPhyEditor && (
-              <>
-                <th style={TH}>position x/y/z</th>
-                <th style={TH}>normal x/y/z</th>
-                <th style={{ ...TH, width: 88 }}>aperture</th>
-                <th style={{ ...TH, width: 105 }}>shape</th>
-                <th style={TH}>width/height</th>
-              </>
-            )}
+            <th style={{ ...TH, width: 110 }}>anchor_id</th>
+            <th style={TH}>position x/y/z</th>
+            <th style={TH}>axisX (propagation) x/y/z</th>
+            <th style={TH}>axisY (slow / fast / transmit) x/y/z</th>
+            <th style={{ ...TH, width: 88 }}>aperture</th>
+            <th style={{ ...TH, width: 105 }}>shape</th>
+            <th style={TH}>width/height</th>
             {isBindingDev && <th style={{ ...TH, width: 34 }} />}
           </tr>
         </thead>
         <tbody>
-          {draft.faces.map((face, index) => (
+          {draft.anchors.map((anchor, index) => (
             <tr
-              key={`${face.id}-${index}`}
-              onClick={() => setSelectedFaceIndex(index)}
-              style={{ background: index === selectedFaceIndex ? "#f3f4f1" : "transparent" }}
+              key={`${anchor.id}-${index}`}
+              onClick={() => setSelectedAnchorIndex(index)}
+              style={{ background: index === selectedAnchorIndex ? "#f3f4f1" : "transparent" }}
             >
-              {/* face id (name) and domain are catalog identity ??editable
-                  in Binding dev, read-only label in PHY Editor (kind
-                  declares the required face set). */}
+              {/* anchor_id is fixed by the kind's anchor template
+                  (kinds.face_template) — Phase 9.8 enforces a 1:1
+                  match between asset.anchors[].id and the template's
+                  required list, so the editor displays the id as a
+                  read-only label. axisY / axisZ are derived from
+                  axisX on save (deriveOrthonormalBasis). */}
               <td style={TD}>
-                {isBindingDev ? (
-                  <input value={face.id} onChange={(event) => updateFace(index, { id: event.target.value })} style={INPUT} />
-                ) : (
-                  <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 600 }}>{face.id}</span>
-                )}
+                <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 600 }}>{anchor.id}</span>
               </td>
               <td style={TD}>
-                {isBindingDev ? (
-                  <select
-                    value={face.domain}
-                    onChange={(event) => updateFace(index, { domain: event.target.value as V3FaceDomain })}
-                    style={INPUT}
-                    title="optical: ray tracer; rf/ttl: §7.5 RF tracer"
-                  >
-                    <option value="optical">optical</option>
-                    <option value="rf">rf</option>
-                    <option value="ttl">ttl</option>
-                  </select>
-                ) : (
-                  <span style={{ fontSize: 11, color: "#4b5563" }}>{face.domain}</span>
-                )}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
+                  <input value={anchor.px} onChange={(event) => updateAnchor(index, { px: event.target.value })} style={INPUT} type="number" step="0.01" />
+                  <input value={anchor.py} onChange={(event) => updateAnchor(index, { py: event.target.value })} style={INPUT} type="number" step="0.01" />
+                  <input value={anchor.pz} onChange={(event) => updateAnchor(index, { pz: event.target.value })} style={INPUT} type="number" step="0.01" />
+                </div>
               </td>
-              {isPhyEditor && (
-                <>
-                  <td style={TD}>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
-                      <input value={face.px} onChange={(event) => updateFace(index, { px: event.target.value })} style={INPUT} type="number" step="0.01" />
-                      <input value={face.py} onChange={(event) => updateFace(index, { py: event.target.value })} style={INPUT} type="number" step="0.01" />
-                      <input value={face.pz} onChange={(event) => updateFace(index, { pz: event.target.value })} style={INPUT} type="number" step="0.01" />
-                    </div>
-                  </td>
-                  <td style={TD}>
-                    <label style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 4, color: "#6b7280" }}>
-                      <input
-                        type="checkbox"
-                        checked={face.hasNormal}
-                        onChange={(event) => updateFace(index, { hasNormal: event.target.checked })}
-                      />
-                      normal
-                    </label>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
-                      <input value={face.nx} onChange={(event) => updateFace(index, { nx: event.target.value })} style={INPUT} type="number" step="0.01" disabled={!face.hasNormal} />
-                      <input value={face.ny} onChange={(event) => updateFace(index, { ny: event.target.value })} style={INPUT} type="number" step="0.01" disabled={!face.hasNormal} />
-                      <input value={face.nz} onChange={(event) => updateFace(index, { nz: event.target.value })} style={INPUT} type="number" step="0.01" disabled={!face.hasNormal} />
-                    </div>
-                  </td>
-                  <td style={TD}>
-                    <input value={face.apertureMm} onChange={(event) => updateFace(index, { apertureMm: event.target.value })} style={INPUT} type="number" step="0.01" />
-                  </td>
-                  <td style={TD}>
-                    <select
-                      value={face.apertureShape}
-                      onChange={(event) => updateFace(index, { apertureShape: event.target.value as V3Face["apertureShape"] })}
-                      style={INPUT}
-                    >
-                      <option value="circle">circle</option>
-                      <option value="ellipse">ellipse</option>
-                      <option value="rectangle">rectangle</option>
-                    </select>
-                  </td>
-                  <td style={TD}>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
-                      <input value={face.apertureWidthMm} onChange={(event) => updateFace(index, { apertureWidthMm: event.target.value })} style={INPUT} type="number" step="0.01" placeholder="w" />
-                      <input value={face.apertureHeightMm} onChange={(event) => updateFace(index, { apertureHeightMm: event.target.value })} style={INPUT} type="number" step="0.01" placeholder="h" />
-                    </div>
-                  </td>
-                </>
-              )}
+              <td style={TD}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
+                  <input value={anchor.nx} onChange={(event) => updateAnchor(index, { nx: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={INPUT} type="number" step="0.01" />
+                  <input value={anchor.ny} onChange={(event) => updateAnchor(index, { ny: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={INPUT} type="number" step="0.01" />
+                  <input value={anchor.nz} onChange={(event) => updateAnchor(index, { nz: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={INPUT} type="number" step="0.01" />
+                </div>
+              </td>
+              <td style={TD}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
+                  <input value={anchor.yx} onChange={(event) => updateAnchor(index, { yx: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={INPUT} type="number" step="0.01" />
+                  <input value={anchor.yy} onChange={(event) => updateAnchor(index, { yy: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={INPUT} type="number" step="0.01" />
+                  <input value={anchor.yz} onChange={(event) => updateAnchor(index, { yz: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={INPUT} type="number" step="0.01" />
+                </div>
+              </td>
+              <td style={TD}>
+                <input value={anchor.apertureMm} onChange={(event) => updateAnchor(index, { apertureMm: event.target.value })} style={INPUT} type="number" step="0.01" />
+              </td>
+              <td style={TD}>
+                <select
+                  value={anchor.apertureShape}
+                  onChange={(event) => updateAnchor(index, { apertureShape: event.target.value as V3Face["apertureShape"] })}
+                  style={INPUT}
+                >
+                  <option value="circle">circle</option>
+                  <option value="ellipse">ellipse</option>
+                  <option value="rectangle">rectangle</option>
+                </select>
+              </td>
+              <td style={TD}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+                  <input value={anchor.apertureWidthMm} onChange={(event) => updateAnchor(index, { apertureWidthMm: event.target.value })} style={INPUT} type="number" step="0.01" placeholder="w" />
+                  <input value={anchor.apertureHeightMm} onChange={(event) => updateAnchor(index, { apertureHeightMm: event.target.value })} style={INPUT} type="number" step="0.01" placeholder="h" />
+                </div>
+              </td>
               {isBindingDev && (
                 <td style={TD}>
                   <IconButton
-                    title="Remove face"
+                    title="Remove anchor"
                     onClick={() => {
-                      setDraft({ ...draft, faces: draft.faces.filter((_, i) => i !== index) });
-                      setSelectedFaceIndex(null);
+                      setDraft({ ...draft, anchors: draft.anchors.filter((_, i) => i !== index) });
+                      setSelectedAnchorIndex(null);
                     }}
                   >
                     <Trash2 size={14} />
@@ -2855,7 +2962,6 @@ export function Asset3DV3Editor({
   mode = "binding-dev",
 }: { domain?: V3EditorDomain; mode?: Asset3DV3EditorMode } = {}) {
   const isBindingDev = mode === "binding-dev";
-  const isPhyEditor = mode === "phy-editor";
   const assets = useV3Catalog((state) => state.assets);
   const status = useV3Catalog((state) => state.status);
   const error = useV3Catalog((state) => state.error);
@@ -2870,9 +2976,8 @@ export function Asset3DV3Editor({
   const [kindFilter, setKindFilter] = useState<string>("all");
   const [search, setSearch] = useState<string>("");
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
-  const [editMode, setEditMode] = useState(false);
   const [draft, setDraft] = useState<AssetDraft | null>(null);
-  const [selectedFaceIndex, setSelectedFaceIndex] = useState<number | null>(0);
+  const [selectedAnchorIndex, setSelectedAnchorIndex] = useState<number | null>(0);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -2931,6 +3036,9 @@ export function Asset3DV3Editor({
       if (!rawKind) return domain === "mechanical";
       // "none" is the mechanical placeholder kind.
       if (rawKind === "none") return domain === "mechanical";
+      const registryKind = kinds.find((k) => k.name === rawKind);
+      if (registryKind?.domain === domain) return true;
+      if (registryKind && registryKind.domain !== domain) return false;
       const kind = rawKind as ElementKind;
       const kindDomain = domainForElementKind(kind);
       if (kindDomain === domain) return true;
@@ -2941,7 +3049,7 @@ export function Asset3DV3Editor({
       if (domain === "rf" && faceDomains.includes("ttl")) return true;
       return false;
     });
-  }, [assets, domain]);
+  }, [assets, domain, kinds]);
 
   const kindOptions = useMemo(() => {
     const set = new Set<string>();
@@ -3006,12 +3114,11 @@ export function Asset3DV3Editor({
   useEffect(() => {
     if (selected) {
       setDraft(draftFromAsset(selected));
-      setSelectedFaceIndex((selected.faces?.length ?? 0) > 0 ? 0 : null);
+      setSelectedAnchorIndex((selected.anchors?.length ?? 0) > 0 ? 0 : null);
     } else {
       setDraft(null);
-      setSelectedFaceIndex(null);
+      setSelectedAnchorIndex(null);
     }
-    setEditMode(false);
     setSaveError(null);
   }, [selected?.id]);
 
@@ -3028,10 +3135,10 @@ export function Asset3DV3Editor({
       // checkpoint progress and expects to keep working. Cancel /
       // close still exit edit mode normally.
       setDraft(draftFromAsset(updated));
-      const nextFaceCount = updated.faces?.length ?? 0;
-      setSelectedFaceIndex((prev) => {
-        if (nextFaceCount === 0) return null;
-        if (prev === null || prev >= nextFaceCount) return 0;
+      const nextAnchorCount = updated.anchors?.length ?? 0;
+      setSelectedAnchorIndex((prev) => {
+        if (nextAnchorCount === 0) return null;
+        if (prev === null || prev >= nextAnchorCount) return 0;
         return prev;
       });
     } catch (err) {
@@ -3053,7 +3160,6 @@ export function Asset3DV3Editor({
     setSaveError(null);
     try {
       await deleteAsset(selected.catalogId ?? selected.id);
-      setEditMode(false);
       setSelectedAssetId(null);
       setDraft(null);
     } catch (err) {
@@ -3086,12 +3192,7 @@ export function Asset3DV3Editor({
           <button
             type="button"
             onClick={() => openNewAssetModal()}
-            style={{
-              width: "100%", marginBottom: 6,
-              padding: "4px 8px", fontSize: 11,
-              border: "1px solid #ca8a04", background: "#fde68a",
-              cursor: "pointer", fontWeight: 600,
-            }}
+            style={{ ...PRIMARY_BUTTON, width: "100%", marginBottom: 6 }}
             title="Create a new Asset3D row, optionally forked from an existing one."
           >
             + New Asset3D
@@ -3172,10 +3273,21 @@ export function Asset3DV3Editor({
             </div>
           </div>
           <div style={{ display: "flex", gap: 6 }}>
-            {!editMode && selected && (
+            {selected && draft && (
               <>
-                <IconButton title="Edit asset" onClick={() => setEditMode(true)}>
-                  <Edit3 size={14} />
+                <IconButton title="Save changes" onClick={() => void save()} disabled={saving}>
+                  <Save size={14} />
+                </IconButton>
+                <IconButton
+                  title="Revert unsaved changes"
+                  onClick={() => {
+                    setDraft(draftFromAsset(selected));
+                    setSelectedAnchorIndex((selected.anchors?.length ?? 0) > 0 ? 0 : null);
+                    setSaveError(null);
+                  }}
+                  disabled={saving}
+                >
+                  <X size={15} />
                 </IconButton>
                 {isBindingDev && (
                   <IconButton
@@ -3188,25 +3300,6 @@ export function Asset3DV3Editor({
                 )}
               </>
             )}
-            {editMode && (
-              <>
-                <IconButton title="Save changes" onClick={() => void save()} disabled={saving}>
-                  <Save size={14} />
-                </IconButton>
-                <IconButton
-                  title="Cancel editing"
-                  onClick={() => {
-                    if (selected) setDraft(draftFromAsset(selected));
-                    setSelectedFaceIndex((selected?.faces?.length ?? 0) > 0 ? 0 : null);
-                    setEditMode(false);
-                    setSaveError(null);
-                  }}
-                  disabled={saving}
-                >
-                  <X size={15} />
-                </IconButton>
-              </>
-            )}
           </div>
         </div>
 
@@ -3216,15 +3309,14 @@ export function Asset3DV3Editor({
               Select an asset from the list to inspect or edit its v3 {domain} definition.
             </div>
           )}
-          {selected && !editMode && <AssetReadOnly asset={selected} />}
-          {selected && editMode && draft && (
+          {selected && draft && (
             <AssetEditForm
               asset={selected}
               draft={draft}
               setDraft={setDraft}
-              selectedFaceIndex={selectedFaceIndex}
-              setSelectedFaceIndex={setSelectedFaceIndex}
-              parentDomain={domain === "mechanical" ? "optical" : domain}
+              selectedAnchorIndex={selectedAnchorIndex}
+              setSelectedAnchorIndex={setSelectedAnchorIndex}
+              parentDomain={domain}
               mode={mode}
             />
           )}
@@ -3233,7 +3325,7 @@ export function Asset3DV3Editor({
               {saveError}
             </div>
           )}
-          <KindGuidePanel selectedKind={editMode ? draft?.kindId || selected?.kindId || null : selected?.kindId ?? null} />
+          <KindGuidePanel selectedKind={draft?.kindId || selected?.kindId || null} />
         </div>
       </main>
       {isBindingDev && newAssetModal?.open && (
@@ -3439,7 +3531,6 @@ export function Asset3DV3Editor({
                     setNewAssetModal(null);
                     setNewAssetError(null);
                     setSelectedAssetId(created.id);
-                    setEditMode(true);
                   } catch (err) {
                     setNewAssetError(err instanceof Error ? err.message : String(err));
                   } finally {

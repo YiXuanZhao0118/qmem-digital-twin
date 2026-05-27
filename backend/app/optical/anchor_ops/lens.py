@@ -42,9 +42,7 @@ def _q_after_lens(q: complex, f_mm: float) -> complex:
 
 
 def lens_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
-    if ctx.anchor.id != "optical_center":
-        # secondary anchors (intercept_in / intercept_out) — beam passes
-        # through without lens action (they're align hints)
+    if ctx.anchor.id != "intercept_in":
         return [ray_in]
 
     y, theta_y, z, theta_z = beam_state_from_anchor_hit(ray_in, ctx.hit)
@@ -66,7 +64,7 @@ def lens_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
 
 
 def lens_cylindrical_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
-    if ctx.anchor.id != "optical_center":
+    if ctx.anchor.id != "intercept_in":
         return [ray_in]
 
     y, theta_y, z, theta_z = beam_state_from_anchor_hit(ray_in, ctx.hit)

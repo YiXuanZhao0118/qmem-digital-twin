@@ -74,6 +74,7 @@ export function PhyEditor() {
   const rfComponents = rfActive && phyEditorView?.section === "components";
   const rfComposer = rfActive && phyEditorView?.section === "composer";
   const mechanicalActive = phyEditorView?.domain === "mechanical";
+  const mechanicalKinds = mechanicalActive && phyEditorView?.section === "kinds";
   const mechanicalAsset3D =
     mechanicalActive && phyEditorView?.section === "components";
   const mechanicalComposer =
@@ -227,6 +228,19 @@ export function PhyEditor() {
               type="button"
               className={
                 "phy-editor-rail-item" +
+                (mechanicalKinds ? " is-active" : "")
+              }
+              onClick={() =>
+                switchView({ domain: "mechanical", section: "kinds" })
+              }
+            >
+              mechanical_kinds
+              <span className="phy-editor-rail-hint">contract registry</span>
+            </button>
+            <button
+              type="button"
+              className={
+                "phy-editor-rail-item" +
                 (mechanicalAsset3D ? " is-active" : "")
               }
               onClick={() =>
@@ -260,6 +274,7 @@ export function PhyEditor() {
           {rfKinds && <KindsEditor domain="rf" />}
           {rfComponents && <Asset3DV3Editor domain="rf" mode="binding-dev" />}
           {rfComposer && <ComponentsV2Editor domain="rf" mode="binding-dev" />}
+          {mechanicalKinds && <KindsEditor domain="mechanical" />}
           {mechanicalAsset3D && <Asset3DV3Editor domain="mechanical" mode="binding-dev" />}
           {mechanicalComposer && <ComponentsV2Editor domain="mechanical" mode="binding-dev" />}
         </div>

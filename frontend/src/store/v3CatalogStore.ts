@@ -49,6 +49,21 @@ export type V3Transition = {
   abcd?: number[][] | null;
 };
 
+/** Phase 9.1 anchor schema (alembic 0087). The anchor tracer's primary
+ *  input — replaces faces[] + transitions[] (Phase 9.8). PHY Editor
+ *  edits these directly; axisY/axisZ are derived from axisX on save. */
+export type V3Anchor = {
+  id: string;
+  positionMmBodyLocal: V3Vec3;
+  axisXBodyLocal: V3Vec3;
+  axisYBodyLocal: V3Vec3;
+  axisZBodyLocal: V3Vec3;
+  apertureMm?: number | null;
+  apertureShape?: "rectangle" | "ellipse" | "circle" | null;
+  apertureWidthMm?: number | null;
+  apertureHeightMm?: number | null;
+};
+
 export type V3Asset = {
   id: string;
   catalogId: string;
@@ -57,8 +72,14 @@ export type V3Asset = {
   filePath: string;
   /** Classification slug (alembic 0090). Pointer into the Kind registry. */
   kindId: string | null;
+  /** v3-era schema, being retired (Phase 9.8). Anchors[] is the new
+   *  authority. Kept for back-compat reads while migration completes. */
   faces: V3Face[] | null;
   transitions: V3Transition[] | null;
+  /** Phase 9.1+ tri-axis anchors. PHY Editor's primary write target.
+   *  Mixed-schema legacy entries (snake_case, with name/type fields)
+   *  may appear from older backfills — see Phase 2 cleanup migration. */
+  anchors: Record<string, unknown>[] | null;
   defaultParams: Record<string, unknown> | null;
   wavelengthRangeNm: [number, number] | null;
   bodyFrameRotation: { x: number; y: number; z: number; w: number } | null;
@@ -69,6 +90,7 @@ export type V3AssetUpdate = Partial<{
   kindId: string | null;
   faces: V3Face[] | null;
   transitions: V3Transition[] | null;
+  anchors: V3Anchor[] | null;
   defaultParams: Record<string, unknown> | null;
   wavelengthRangeNm: [number, number] | null;
   bodyFrameRotation: { x: number; y: number; z: number; w: number } | null;
@@ -287,7 +309,7 @@ export const useV3Catalog = create<V3CatalogState>((set, get) => ({
 
     try {
       const res = await client.post<V3Asset>("/api/v3/assets3d/upload", form, {
-        timeout: 60000,
+        timeout: 600000,
       });
       const created = res.data;
       set((state) => ({ assets: [...state.assets, created] }));
@@ -310,7 +332,7 @@ export const useV3Catalog = create<V3CatalogState>((set, get) => ({
       const fallback = await client.post<UploadComponentFallbackResponse>(
         "/api/assets/upload-component",
         fallbackForm,
-        { timeout: 60000 },
+        { timeout: 600000 },
       );
       const assetId = fallback.data.asset3dId ?? fallback.data.asset3DId;
       if (!assetId) {

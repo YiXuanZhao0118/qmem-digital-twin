@@ -146,6 +146,102 @@ async def _hydrate_kind_cache() -> None:
         await hydrate_kind_cache(session)
 
 
+@app.on_event("startup")
+async def _audit_legacy_anchor_ids() -> None:
+    """Warn on assets whose anchors still use legacy id aliases
+    (`optical_anchor`, `out`, `+x`, `in`, `seed`). The canonical post-
+    Phase-9.1 ids are `intercept_in` / `intercept_out` /
+    `intercept_face` / `interaction_center` / `rf_in` / `rf_out` /
+    `ttl_in` / `trigger_in` / `mount_*`.
+
+    A clean DB has zero legacy hits; the fallback chains in
+    `beamAnchor.ts:OPTICAL_ANCHOR_ID`, `opticalBeams.ts:findEmitterAnchor`,
+    and `beamPlacement.computeBeamStart` are kept only to handle
+    user-uploaded assets authored before the rename. When this audit
+    reports zero hits across all installs for a release cycle, the
+    fallbacks can be removed (§16.2 of docs/frame-anchor-architecture.md).
+    """
+    from sqlalchemy import select
+
+    from app.models import Asset3D
+
+    LEGACY = {"optical_anchor", "out", "+x", "in", "seed"}
+
+    async with AsyncSessionLocal() as session:
+        rows = (await session.scalars(select(Asset3D))).all()
+        hits: list[tuple[str, str]] = []  # (catalog_id, legacy_id)
+        for asset in rows:
+            for raw in (asset.anchors or []):
+                if not isinstance(raw, dict):
+                    continue
+                aid = raw.get("id")
+                if isinstance(aid, str) and aid in LEGACY:
+                    hits.append((asset.catalog_id or str(asset.id), aid))
+        if hits:
+            _log.warning(
+                "anchor-id audit: %d legacy anchor id(s) found — "
+                "rename via PHY Editor to canonical (intercept_in/out/face). "
+                "Sample: %s",
+                len(hits),
+                ", ".join(f"{c}/{a}" for c, a in hits[:10]) + (
+                    f" (+{len(hits) - 10} more)" if len(hits) > 10 else ""
+                ),
+            )
+
+
+@app.on_event("startup")
+async def _audit_body_frame_consistency() -> None:
+    """Warn on assets where ``bodyFramePositionMm`` + ``body_frame_rotation``
+    might have been mis-rotated by alembic 0091. The migration was
+    intended to switch the value from CAD-axes (Phase 9.10) to body-axes
+    (Phase 9.11), but the rest of the codebase still treats it as CAD-
+    axes (see ``docs/frame-anchor-architecture.md §3``). Rows with a
+    non-identity ``body_frame_rotation`` AND a non-zero
+    ``bodyFramePositionMm`` need a human to compare PHY-Editor vs Lab
+    scene placement and confirm the value is what they intended.
+
+    This is a non-fatal warning. The audit runs once on startup and
+    prints a list of (catalog_id, bfp, R_body) tuples to the log."""
+    from sqlalchemy import select
+
+    from app.models import Asset3D
+
+    async with AsyncSessionLocal() as session:
+        rows = (await session.scalars(select(Asset3D))).all()
+        suspect: list[tuple[str, dict, dict]] = []
+        for asset in rows:
+            bfr = asset.body_frame_rotation
+            bfp = (asset.properties or {}).get("bodyFramePositionMm") if asset.properties else None
+            if not bfr or not bfp:
+                continue
+            # Identity quaternion = (0, 0, 0, ±1).
+            qx = float(bfr.get("x") or 0)
+            qy = float(bfr.get("y") or 0)
+            qz = float(bfr.get("z") or 0)
+            qw = float(bfr.get("w") or 0)
+            if abs(qx) < 1e-9 and abs(qy) < 1e-9 and abs(qz) < 1e-9 and abs(abs(qw) - 1) < 1e-9:
+                continue
+            # Zero offset is also fine — rotation has nothing to twist.
+            px = float(bfp.get("x") or 0)
+            py = float(bfp.get("y") or 0)
+            pz = float(bfp.get("z") or 0)
+            if abs(px) < 1e-9 and abs(py) < 1e-9 and abs(pz) < 1e-9:
+                continue
+            suspect.append((asset.catalog_id or str(asset.id), bfp, bfr))
+
+        if suspect:
+            _log.warning(
+                "body-frame audit: %d asset(s) have bfp != 0 AND R_body != I — "
+                "their stored value may have been rotated by alembic 0091 "
+                "(see docs/frame-anchor-architecture.md §3). Visually verify "
+                "PHY Editor body-origin alignment vs Lab scene placement for: %s",
+                len(suspect),
+                ", ".join(catalog for catalog, _, _ in suspect[:10]) + (
+                    f" (+{len(suspect) - 10} more)" if len(suspect) > 10 else ""
+                ),
+            )
+
+
 async def _sweep_abandoned_sessions_loop() -> None:
     """Periodically reaps AI binding sessions whose heartbeat has lapsed.
 

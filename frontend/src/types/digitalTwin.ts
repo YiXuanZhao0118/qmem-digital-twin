@@ -28,6 +28,14 @@ export type Anchor = {
    *  un-instantiated catalog entry). */
   positionMmBodyLocal: { x: number; y: number; z: number };
   directionBodyLocal?: { x: number; y: number; z: number };
+  /** Phase 9.1 tri-axis schema (alembic 0087): the three orthogonal
+   *  body-local axes the anchor tracer reads. X = propagation/normal,
+   *  Y = transverse reference (fast axis / s-polarization basis),
+   *  Z = X × Y. PHY Editor edits axisX directly and derives Y/Z on
+   *  save. Legacy rows that pre-date Phase 9.1 may omit these. */
+  axisXBodyLocal?: { x: number; y: number; z: number };
+  axisYBodyLocal?: { x: number; y: number; z: number };
+  axisZBodyLocal?: { x: number; y: number; z: number };
   apertureMm?: number;
   /** Rectangular aperture, used by anchors whose active area is
    *  asymmetric (e.g. PBS / BS cube diagonal cement plane). Falls back

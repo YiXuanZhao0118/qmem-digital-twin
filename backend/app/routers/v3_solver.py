@@ -232,9 +232,27 @@ def _to_beam_ray(r: RayIn) -> BeamRay:
 # Endpoint
 # ---------------------------------------------------------------------------
 
-@router.post("/run")
+@router.post("/run", deprecated=True)
 async def run_v3_solver(request: SolverRunRequest) -> dict:
-    """Run v3 ray tracer on caller-supplied scene + initial rays.
+    """⚠️  DEPRECATED — kept for tests / parity checks only.
+
+    Run the **legacy face-based** v3 ray tracer on a caller-supplied
+    scene + initial rays. The production path is ``POST /run-from-db``,
+    which loads the live SceneObject / Component / ComponentBinding
+    graph from the DB and uses the **anchor-based** tracer
+    (``solve_anchor_scene``, Phase 9.8+).
+
+    Why this still exists:
+    * ``backend/tests/optical/test_solver_v3*.py`` exercises the
+      face-based orchestrator end-to-end; the test suite would lose
+      coverage if this endpoint were removed.
+    * The face-based code is the reference for parity checks against
+      the anchor-based path (see ``docs/asset-physics-model.md``).
+
+    Frontend consumers should NEVER call this endpoint; ``api/client.ts``
+    only references ``/run-from-db``. New tooling / integrations should
+    also target ``/run-from-db``. See ``docs/frame-anchor-architecture.md``
+    §16.1 for the deprecation plan around the legacy tracer.
 
     Returns:
         SolverResult JSON (segments, finalRays, errors, warnings).

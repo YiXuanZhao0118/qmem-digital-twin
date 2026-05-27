@@ -161,6 +161,27 @@ class AssetAnchor(CamelModel):
         validation_alias="directionBodyLocal",
         serialization_alias="directionBodyLocal",
     )
+    # Phase 9.1 tri-axis schema (alembic 0087, Phase 9.8 exposed). PHY
+    # Editor + anchor tracer use these; legacy direction_body_local covers v2
+    # back-compat. axisX = propagation/normal, axisY = transverse
+    # reference (slow / fast / transmission / acoustic axis),
+    # axisZ = X × Y. /api/scene must include these so the FE probe
+    # beam can read PBS / waveplate / fiber polarization axes.
+    axis_x_body_local: Vec3Mm | None = Field(
+        default=None,
+        validation_alias="axisXBodyLocal",
+        serialization_alias="axisXBodyLocal",
+    )
+    axis_y_body_local: Vec3Mm | None = Field(
+        default=None,
+        validation_alias="axisYBodyLocal",
+        serialization_alias="axisYBodyLocal",
+    )
+    axis_z_body_local: Vec3Mm | None = Field(
+        default=None,
+        validation_alias="axisZBodyLocal",
+        serialization_alias="axisZBodyLocal",
+    )
     aperture_mm: float | None = None
     # Rectangular aperture (e.g. PBS / BS cube diagonal cement plane is
     # a rectangle, not a square). When both width + height are set the

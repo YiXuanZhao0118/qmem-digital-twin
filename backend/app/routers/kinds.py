@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import schemas
 from app.db import get_session
-from app.kinds_manifest import element_kinds
+from app.kinds_manifest import element_kinds, load_manifest
 from app.models import Asset3D, Kind
 from app.optical.db_kinds import (
     remove_kind_cache_entry,
@@ -39,12 +39,17 @@ def _kind_out(kind: Kind) -> dict:
 def _registered_op_set_names() -> set[str]:
     """All op-set names a Kind row may reference.
 
-    Today this is the union of the manifest's element_kinds (which
-    covers every code-defined plugin). When the optical / RF code
-    registries diverge from the manifest, this is the place to widen
-    the source.
+    Physics kinds point at code-defined op sets. Passive mechanical
+    kinds such as ``optical_table`` are metadata-only, but still need a
+    stable op-set slug so the Kinds editor can create and retain them.
     """
-    return set(element_kinds())
+    manifest = load_manifest()
+    passive_ids = {
+        plugin["id"]
+        for plugin in manifest.get("passive_plugins", [])
+        if isinstance(plugin, dict) and isinstance(plugin.get("id"), str)
+    }
+    return set(element_kinds()) | passive_ids
 
 
 @router.get("", response_model=list[schemas.KindOut])

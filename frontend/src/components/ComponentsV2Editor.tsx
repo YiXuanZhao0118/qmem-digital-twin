@@ -65,6 +65,19 @@ import {
   kindIdToElementKind,
   domainForElementKind,
 } from "../utils/elementDefaults";
+import { mThinLens } from "../optical/generalizedAbcd";
+import {
+  ASIDE_STYLE,
+  asideItemStyle,
+  ERROR_BANNER,
+  INPUT,
+  MAIN_BODY_STYLE,
+  PRIMARY_BUTTON,
+  SECTION_LABEL,
+  SHELL_STYLE,
+  TD,
+  TH,
+} from "./phyEditorTheme";
 
 export type ComposerDomain = "optical" | "rf" | "mechanical";
 
@@ -160,66 +173,19 @@ function DomainBadge({ domain }: { domain: ComposerDomain }) {
   );
 }
 
-const inputStyle: React.CSSProperties = {
-  background: "#ffffff",
-  color: "#1f2937",
-  border: "1px solid #d8ded8",
-  padding: "4px 6px",
-  fontFamily: "ui-monospace, monospace",
-  fontSize: 12,
-  borderRadius: 2,
-};
-
-const btnPrimary: React.CSSProperties = {
-  background: "#ffffff",
-  color: "#4ec9b0",
-  border: "1px solid #4ec9b0",
-  padding: "4px 10px",
-  fontFamily: "ui-monospace, monospace",
-  fontSize: 12,
-  cursor: "pointer",
-  borderRadius: 2,
-};
-
+// Local style aliases — wire the long-standing names in this file to
+// the shared phy-editor theme so all three editors render with the
+// same colors / font / spacing.
+const inputStyle = INPUT;
+const btnPrimary = PRIMARY_BUTTON;
 const btnDanger: React.CSSProperties = {
+  ...PRIMARY_BUTTON,
   background: "transparent",
   color: "#f87171",
-  border: "1px solid #7f1d1d",
-  padding: "4px 10px",
-  fontFamily: "ui-monospace, monospace",
-  fontSize: 12,
-  cursor: "pointer",
-  borderRadius: 2,
+  borderColor: "#7f1d1d",
 };
-
-const sectionStyle: React.CSSProperties = {
-  marginTop: 16,
-  padding: 12,
-  background: "#fbfbf8",
-  border: "1px solid #e9ece9",
-  borderRadius: 2,
-};
-
-const sectionHeaderStyle: React.CSSProperties = {
-  margin: 0,
-  marginBottom: 8,
-  fontSize: 11,
-  letterSpacing: 1,
-  color: "#6b7280",
-  fontFamily: "ui-monospace, monospace",
-};
-
-const thStyle: React.CSSProperties = {
-  textAlign: "left",
-  padding: "4px 6px",
-  color: "#4b5563",
-  fontWeight: 400,
-};
-
-const tdStyle: React.CSSProperties = {
-  padding: "4px 6px",
-  borderBottom: "1px solid #e9ece9",
-};
+const thStyle = TH;
+const tdStyle = TD;
 
 /** Editor mode — controls which fields are editable.
  *  - "binding-dev": catalog editor. Compose bindings (add/remove + role +
@@ -239,7 +205,6 @@ export function ComponentsV2Editor({
   mode?: ComponentsV2EditorMode;
 }) {
   const isBindingDev = mode === "binding-dev";
-  const isPhyEditor = mode === "phy-editor";
   const allComponents = useSceneStore((s) => s.scene.components);
   const assets = useSceneStore((s) => s.scene.assets);
   const loadScene = useSceneStore((s) => s.loadScene);
@@ -468,102 +433,58 @@ export function ComponentsV2Editor({
   };
 
   return (
-    // minHeight: 0 here lets the aside/main flex children be bounded by
-    // the parent's height instead of growing forever — required so
-    // `overflow-y: auto` on the component list and the main pane
-    // actually scrolls when the catalog exceeds the viewport.
-    <div style={{ display: "flex", height: "100%", minHeight: 0, color: "#1f2937" }}>
+    // SHELL_STYLE (shared with Asset3DV3Editor + KindsEditor) uses CSS
+    // grid with `minmax(0, 1fr)` for the main column so the aside and
+    // main both stay bounded by the viewport — required for their own
+    // overflow-y: auto to actually scroll when the catalog grows.
+    <div style={SHELL_STYLE}>
       {/* LEFT: components list */}
-      <aside
-        style={{
-          width: 280,
-          borderRight: "1px solid #e9ece9",
-          display: "flex",
-          flexDirection: "column",
-          minHeight: 0,
-          background: "#f3f4f1",
-        }}
-      >
-        <div
-          style={{
-            padding: 8,
-            borderBottom: "1px solid #e9ece9",
-            display: "flex",
-            flexDirection: "column",
-            gap: 6,
-          }}
-        >
-          {isBindingDev && (
-            <button
-              type="button"
-              onClick={handleCreateComponent}
-              style={btnPrimary}
-            >
-              + New Component
-            </button>
-          )}
-          <input
-            type="text"
-            placeholder="filter by name / type"
-            value={filterText}
-            onChange={(e) => setFilterText(e.target.value)}
-            style={inputStyle}
-          />
-          <div style={{ fontSize: 11, opacity: 0.6 }}>
-            {filtered.length} of {components.length} components
-          </div>
+      <aside style={ASIDE_STYLE}>
+        {isBindingDev && (
+          <button
+            type="button"
+            onClick={handleCreateComponent}
+            style={{ ...PRIMARY_BUTTON, width: "100%", marginBottom: 6 }}
+          >
+            + New Component
+          </button>
+        )}
+        <input
+          type="text"
+          placeholder="filter by name / type"
+          value={filterText}
+          onChange={(e) => setFilterText(e.target.value)}
+          style={{ ...inputStyle, marginBottom: 6 }}
+        />
+        <div style={{ fontSize: 10, color: "#4b5563", marginBottom: 6 }}>
+          {filtered.length} of {components.length} components
         </div>
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-          {filtered.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              onClick={() => setSelectedId(c.id)}
-              style={{
-                display: "block",
-                width: "100%",
-                padding: 8,
-                textAlign: "left",
-                background: c.id === selectedId ? "#ffffff" : "transparent",
-                color: c.id === selectedId ? "#4ec9b0" : "#374151",
-                border: "none",
-                borderBottom: "1px solid #e9ece9",
-                cursor: "pointer",
-                fontFamily: "ui-monospace, monospace",
-                fontSize: 12,
-              }}
-            >
-              <div style={{ fontWeight: 600 }}>{c.name}</div>
-              <div style={{ fontSize: 10, opacity: 0.7 }}>
-                kind: {c.kindId ?? ""}
-              </div>
-            </button>
-          ))}
-        </div>
+        {filtered.map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => setSelectedId(c.id)}
+            style={asideItemStyle(c.id === selectedId)}
+          >
+            <div style={{ fontWeight: 700 }}>{c.name}</div>
+            <div style={{ fontSize: 10, color: "#6b7280" }}>
+              kind: {c.kindId ?? ""}
+            </div>
+          </button>
+        ))}
       </aside>
 
       {/* RIGHT: detail */}
-      <main style={{ flex: 1, minHeight: 0, minWidth: 0, overflowY: "auto", padding: 16 }}>
+      <main style={{ ...MAIN_BODY_STYLE }}>
         {error && (
-          <div
-            style={{
-              background: "#fecaca",
-              color: "#7f1d1d",
-              padding: 8,
-              marginBottom: 12,
-              fontSize: 12,
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
+          <div style={ERROR_BANNER}>
             <span>{error}</span>
             <button
               type="button"
               onClick={() => setError(null)}
               style={{
                 background: "transparent",
-                color: "#7f1d1d",
+                color: ERROR_BANNER.color,
                 border: "none",
                 cursor: "pointer",
                 fontSize: 14,
@@ -608,70 +529,64 @@ export function ComponentsV2Editor({
               )}
             </header>
 
-            <section style={sectionStyle}>
-              <h3 style={sectionHeaderStyle}>IDENTITY</h3>
-              <IdentityField
-                label="name"
-                value={selected.name}
-                onCommit={(v) => handlePatchComponent({ name: v })}
-              />
-              {/* kind_id / brand / model are catalog-classification fields
-                  edited only in Binding dev; PHY Editor only sees them. */}
-              {isBindingDev && (
-                <>
-                  <KindSelectField
-                    label="kind_id"
-                    value={selected.kindId ?? ""}
-                    kinds={kinds}
-                    onCommit={(v) => handlePatchComponent({ kindId: v })}
-                  />
-                  <IdentityField
-                    label="brand"
-                    value={selected.brand ?? ""}
-                    onCommit={(v) =>
-                      handlePatchComponent({ brand: v ? v : null })
-                    }
-                  />
-                  <IdentityField
-                    label="model"
-                    value={selected.model ?? ""}
-                    onCommit={(v) =>
-                      handlePatchComponent({ model: v ? v : null })
-                    }
-                  />
-                  <DomainToggleField
-                    capabilities={selected.physicsCapabilities ?? []}
-                    onCommit={(next) =>
-                      handlePatchComponent({ physicsCapabilities: next })
-                    }
-                  />
-                </>
-              )}
-            </section>
+            <div style={SECTION_LABEL}>Identity</div>
+            <IdentityField
+              label="name"
+              value={selected.name}
+              onCommit={(v) => handlePatchComponent({ name: v })}
+            />
+            {/* kind_id / brand / model are catalog-classification fields
+                edited only in Binding dev; PHY Editor only sees them. */}
+            {isBindingDev && (
+              <>
+                <KindSelectField
+                  label="kind_id"
+                  value={selected.kindId ?? ""}
+                  kinds={kinds}
+                  onCommit={(v) => handlePatchComponent({ kindId: v })}
+                />
+                <IdentityField
+                  label="brand"
+                  value={selected.brand ?? ""}
+                  onCommit={(v) =>
+                    handlePatchComponent({ brand: v ? v : null })
+                  }
+                />
+                <IdentityField
+                  label="model"
+                  value={selected.model ?? ""}
+                  onCommit={(v) =>
+                    handlePatchComponent({ model: v ? v : null })
+                  }
+                />
+                <DomainToggleField
+                  capabilities={selected.physicsCapabilities ?? []}
+                  onCommit={(next) =>
+                    handlePatchComponent({ physicsCapabilities: next })
+                  }
+                />
+              </>
+            )}
 
-            <section style={sectionStyle}>
-              <h3 style={sectionHeaderStyle}>3D PREVIEW</h3>
-              <ComponentPreview3D
-                bindings={bindings}
-                assetById={assetById}
-                parentComponent={selected ?? null}
-                selectedBindingId={selectedBindingId}
-                onSelectBinding={setSelectedBindingId}
-                onPatchBinding={handlePatchBinding}
-              />
-            </section>
+            <div style={SECTION_LABEL}>3D preview</div>
+            <ComponentPreview3D
+              bindings={bindings}
+              assetById={assetById}
+              parentComponent={selected ?? null}
+              selectedBindingId={selectedBindingId}
+              onSelectBinding={setSelectedBindingId}
+              onPatchBinding={handlePatchBinding}
+            />
 
-            <section style={sectionStyle}>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
-              >
-                <h3 style={sectionHeaderStyle}>
-                  BINDINGS ({childBindings.length})
-                </h3>
+            <div
+              style={{
+                ...SECTION_LABEL,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <span>Bindings ({childBindings.length})</span>
                 {isBindingDev && (
                   <button
                     type="button"
@@ -707,16 +622,12 @@ export function ComponentsV2Editor({
                       <th style={thStyle}>role</th>
                       <th style={thStyle}>asset3d</th>
                       <th style={thStyle} title="Pick a parent binding to attach this one to. Children move/rotate together with their parent — picking a root and parenting everything else under it lets the whole composite move as a unit when placed as an object.">parent</th>
-                      {isPhyEditor && (
-                        <>
-                          <th style={thStyle}>x mm</th>
-                          <th style={thStyle}>y mm</th>
-                          <th style={thStyle}>z mm</th>
-                          <th style={thStyle}>rx°</th>
-                          <th style={thStyle}>ry°</th>
-                          <th style={thStyle}>rz°</th>
-                        </>
-                      )}
+                      <th style={thStyle}>x mm</th>
+                      <th style={thStyle}>y mm</th>
+                      <th style={thStyle}>z mm</th>
+                      <th style={thStyle}>rx°</th>
+                      <th style={thStyle}>ry°</th>
+                      <th style={thStyle}>rz°</th>
                       {isBindingDev && <th style={thStyle}></th>}
                     </tr>
                   </thead>
@@ -737,7 +648,6 @@ export function ComponentsV2Editor({
                   </tbody>
                 </table>
               )}
-            </section>
           </>
         )}
       </main>
@@ -1071,7 +981,6 @@ function BindingRow({
   onRemove: () => void;
 }) {
   const isBindingDev = mode === "binding-dev";
-  const isPhyEditor = mode === "phy-editor";
   const asset = assets.find((a) => a.id === binding.asset3dId);
   // Candidate parents = every other binding except this one's own
   // descendants. Picking a descendant would create a cycle the backend
@@ -1225,12 +1134,12 @@ function BindingRow({
           ))}
         </select>
       </td>
-      {isPhyEditor && poseField("localXMm")}
-      {isPhyEditor && poseField("localYMm")}
-      {isPhyEditor && poseField("localZMm")}
-      {isPhyEditor && poseField("localRxDeg")}
-      {isPhyEditor && poseField("localRyDeg")}
-      {isPhyEditor && poseField("localRzDeg")}
+      {poseField("localXMm")}
+      {poseField("localYMm")}
+      {poseField("localZMm")}
+      {poseField("localRxDeg")}
+      {poseField("localRyDeg")}
+      {poseField("localRzDeg")}
       {isBindingDev && (
         <td style={tdStyle}>
           <button
@@ -1984,14 +1893,14 @@ function ComponentPreview3D({
         const hitKind = hitAsset?.kindId ?? null;
 
         // Power split per kind:
-        //   mirror          ??100 % reflect (no transmit)
-        //   dichroic_mirror ??100 % reflect (wavelength-dependent in
+        //   mirror          — 100 % reflect (no transmit)
+        //   dichroic_mirror — 100 % reflect (wavelength-dependent in
         //                       reality; we don't track lambda here)
-        //   beam_splitter   ??50/50 split (the catalog asset can
-        //                       declare reflection / transmission, but
-        //                       the preview keeps it simple)
-        //   pbs             ??Malus' law against the polarizer's
-        //                       body +x transmission axis
+        //   beam_splitter   — Malus' law against the anchor's
+        //                       axisZ (p-pol / transmission axis,
+        //                       per Phase 9.1 anchor convention).
+        //                       Falls back to 50/50 if the asset
+        //                       lacks tri-axis anchor data.
         // Anything not in reflectiveKinds defaults to full transmit
         // with no reject branch (lens, waveplate, faraday, ...).
         let transmitFrac = 1.0;
@@ -2000,15 +1909,24 @@ function ComponentPreview3D({
           transmitFrac = 0.0;
           rejectFrac = 1.0;
         } else if (hitKind === "beam_splitter") {
-          transmitFrac = 0.5;
-          rejectFrac = 0.5;
-        } else if (hitKind === "pbs") {
+          // PBS / Glan-Laser: split by polarization. Transmission axis
+          // = asset anchor's axisZ (in body frame). axisY is s-pol →
+          // reflects, axisZ is p-pol → transmits.
+          const anchors = (hitAsset?.anchors ?? []) as ReadonlyArray<{
+            id?: string;
+            axisZBodyLocal?: { x: number; y: number; z: number };
+          }>;
+          const matchAnchor = anchors.find(
+            (a) => a.id === bestFace!.faceId && a.axisZBodyLocal,
+          ) ?? anchors.find((a) => a.axisZBodyLocal);
+          const zLocal = matchAnchor?.axisZBodyLocal;
           const pivot = pivotByBindingIdRef.current.get(bestFace.bindingId);
-          if (pivot) {
+          if (zLocal && pivot) {
             pivot.updateWorldMatrix(true, false);
-            const bodyXWorld = new THREE.Vector3(1, 0, 0).transformDirection(pivot.matrixWorld);
-            const projected = bodyXWorld.clone()
-              .sub(dir.clone().multiplyScalar(dir.dot(bodyXWorld)));
+            const transAxisWorld = new THREE.Vector3(zLocal.x, zLocal.y, zLocal.z)
+              .transformDirection(pivot.matrixWorld);
+            const projected = transAxisWorld.clone()
+              .sub(dir.clone().multiplyScalar(dir.dot(transAxisWorld)));
             if (projected.lengthSq() > 1e-12) {
               projected.normalize();
               const { s, p } = beamLocalSP(dir);
@@ -2018,7 +1936,17 @@ function ComponentPreview3D({
               const deltaRad = (currentPolDeg - polAxisDeg) * Math.PI / 180;
               transmitFrac = Math.cos(deltaRad) ** 2;
               rejectFrac = 1 - transmitFrac;
+            } else {
+              // Beam direction parallel to transmission axis (rare
+              // edge case) — fall back to 50/50 so the viz doesn't
+              // silently flatten one branch.
+              transmitFrac = 0.5;
+              rejectFrac = 0.5;
             }
+          } else {
+            // Legacy / non-polarizing beam_splitter — keep equal split.
+            transmitFrac = 0.5;
+            rejectFrac = 0.5;
           }
         }
 
@@ -2052,9 +1980,33 @@ function ComponentPreview3D({
         // transition with no matrix (op = glan_reject_s), `find`
         // prefers the matrix-bearing transmit branch.
         const transitions = transitionsByBinding.get(bestFace.bindingId) ?? [];
-        const transition = transitions.find(
+        let transition = transitions.find(
           (t) => t.in === bestFace!.faceId && t.matrix5x5 && t.matrix5x5.length >= 4,
         );
+        // Lens fallback: when no explicit transition is defined, dispatch
+        // through the generalized-ABCD operator (1aba98a-style). Build
+        // mThinLens(focalLengthMm) on the fly from the asset's defaultParams
+        // and apply it at the same face (input = output).
+        if (!transition && (hitKind === "lens_plano_convex" || hitKind === "lens_biconvex")) {
+          const focalLengthMm = (
+            hitAsset?.defaultParams as { focalLengthMm?: number } | undefined | null
+          )?.focalLengthMm;
+          if (typeof focalLengthMm === "number" && Math.abs(focalLengthMm) > 1e-12) {
+            const flat = mThinLens(focalLengthMm);
+            const nested: number[][] = [
+              flat.slice(0, 5),
+              flat.slice(5, 10),
+              flat.slice(10, 15),
+              flat.slice(15, 20),
+              flat.slice(20, 25),
+            ];
+            transition = {
+              in: bestFace.faceId,
+              out: bestFace.faceId,
+              matrix5x5: nested,
+            };
+          }
+        }
         const matrixResult = transition
           ? applyMatrix5x5(bestFace, transition, hitPoint, dir)
           : null;
@@ -2145,22 +2097,22 @@ function ComponentPreview3D({
       }
       const ext = filePath.split("?")[0].split(".").pop()?.toLowerCase();
       const url = resolveAssetUrl(filePath);
-      // Lab-sense coordinate: world face center = lab_sense
-      //   ∘ ( body_frame_origin + R_body · face.position ).
+      // Body-frame offset semantic (see docs/asset-physics-model.md §3.1):
+      //   body_point = R_body⁻¹ × cad_point − body_origin (body frame)
       // The binding pose carries lab_sense (pivot); the asset's
-      // body_frame_origin lives in properties.bodyFramePositionMm and
-      // R_body in asset.bodyFrameRotation. Nest two groups under pivot
-      // so the STL ends up displayed in body-frame orientation with the
-      // body origin at the pivot's local zero (outer rotation R⁻¹, inner
-      // translation −origin).
+      // body_origin lives in properties.bodyFramePositionMm (BODY frame
+      // since Phase 9.11) and R_body in asset.bodyFrameRotation. Nest
+      // two groups under pivot — inner rotates the STL into body
+      // orientation (R⁻¹), outer then translates by −origin in body
+      // frame to land the body origin at the pivot's local zero.
       const bfo = ((asset.properties ?? {}) as Record<string, unknown>).bodyFramePositionMm as
         | { x?: number; y?: number; z?: number } | null | undefined;
       const bfr = (asset.bodyFrameRotation ?? null) as
         | { x: number; y: number; z: number; w: number } | null;
-      const modelGroup = new THREE.Group();           // outer: R_body⁻¹
-      const modelInnerGroup = new THREE.Group();      // inner: −body_origin
-      modelInnerGroup.position.set(-(bfo?.x ?? 0), -(bfo?.y ?? 0), -(bfo?.z ?? 0));
-      if (bfr) modelGroup.quaternion.set(bfr.x, bfr.y, bfr.z, bfr.w).invert();
+      const modelGroup = new THREE.Group();           // outer: −body_origin (body frame)
+      const modelInnerGroup = new THREE.Group();      // inner: R_body⁻¹
+      modelGroup.position.set(-(bfo?.x ?? 0), -(bfo?.y ?? 0), -(bfo?.z ?? 0));
+      if (bfr) modelInnerGroup.quaternion.set(bfr.x, bfr.y, bfr.z, bfr.w).invert();
       modelGroup.add(modelInnerGroup);
       pivot.add(modelGroup);
       const hints = (asset.properties as { viewerHints?: AssetViewerHints } | undefined)?.viewerHints;
@@ -2183,6 +2135,16 @@ function ComponentPreview3D({
           modelInnerGroup.add(mesh);
         } else if (ext === "glb" || ext === "gltf") {
           const g = await gltfLoader.loadAsync(url);
+          // GLB files in this repo are exported with inconsistent units:
+          // most are in mm (matching scene unit) but some (e.g. aom_aa_mt80)
+          // are in metres. The V3 API doesn't expose Asset3D.unit, so use
+          // a bbox heuristic — natural extent < 1 ⇒ metres, scale ×1000.
+          const bbox = new THREE.Box3().setFromObject(g.scene);
+          const sz = new THREE.Vector3();
+          bbox.getSize(sz);
+          if (Math.max(sz.x, sz.y, sz.z) < 1) {
+            g.scene.scale.multiplyScalar(1000);
+          }
           modelInnerGroup.add(g.scene);
         } else {
           modelInnerGroup.add(makePlaceholder(asset.catalogId ?? "asset"));

@@ -51,6 +51,7 @@ import {
   getRfDirectionBodyLocal,
 } from "../../utils/v2Bindings";
 import { resolveAomRfDriveFromScene } from "../../utils/aomRfDrive";
+import { anchorObjectLocalPos } from "../../utils/anchorAccess";
 import { wavelengthToColor } from "../../three/opticalBeams";
 
 function wavelengthHex(wavelengthNm: number): string {
@@ -365,9 +366,13 @@ export function AomAdjustControls({
         return;
       }
 
-      // [2] Body-local D1/D2/D3 from anchors + RF direction.
-      const inBody = inAnchor!.positionMmBodyLocal;
-      const outBody = outAnchor!.positionMmBodyLocal;
+      // [2] Body-local D1/D2/D3 from anchors + RF direction. The physics
+      // here is intentionally body-frame: `aomBodyFrameBodyLocal` takes
+      // body-frame in / out / RF and returns a body-frame (D1,D2,D3)
+      // basis that the rest of the align math composes with `R_body` and
+      // SceneObject pose. Applying body→CAD here would skew the basis.
+      const inBody = inAnchor!.positionMmBodyLocal; /* raw-anchor-ok: physics body-frame */
+      const outBody = outAnchor!.positionMmBodyLocal; /* raw-anchor-ok: physics body-frame */
       const rfBody = {
         x: rfDirectionLocal[0],
         y: rfDirectionLocal[1],
@@ -386,16 +391,21 @@ export function AomAdjustControls({
       const D3Body = bodyFrame.D3;
 
       // [3] Current world-frame anchor positions (for upstream-beam search).
-      const bodyToLab = (bodyMm: { x: number; y: number; z: number }) => {
-        const rotated = rotateLabDir(bodyMm, sceneObject);
+      // anchorObjectLocalPos lifts body-frame anchor → object-local CAD
+      // before the SceneObject rotation, so `bodyToLab` (which only does
+      // pose, not body-frame) lands the anchor in the correct lab spot.
+      const objLocalToLab = (localMm: { x: number; y: number; z: number }) => {
+        const rotated = rotateLabDir(localMm, sceneObject);
         return {
           x: sceneObject.xMm + rotated.x,
           y: sceneObject.yMm + rotated.y,
           z: sceneObject.zMm + rotated.z,
         };
       };
-      const inLab = bodyToLab(inBody);
-      const outLab = bodyToLab(outBody);
+      const inLocal = anchorObjectLocalPos(inAnchor!, assetRow ?? null);
+      const outLocal = anchorObjectLocalPos(outAnchor!, assetRow ?? null);
+      const inLab = objLocalToLab(inLocal);
+      const outLab = objLocalToLab(outLocal);
 
       // [4] Walk live ray-trace segments, pick the upstream beam whose
       //     closest-approach hits one of the AOM anchors. Beam-first
@@ -671,7 +681,7 @@ export function AomAdjustControls({
         y: 0.5 * (inBody.y + outBody.y),
         z: 0.5 * (inBody.z + outBody.z),
       };
-      const midpointLabOld = bodyToLab(midpointBody);
+      const midpointLabOld = objLocalToLab(midpointBody);
       // best.closest is the foot of the perpendicular from the OLD entry
       // anchor onto the beam — it's a known point on the beam ray. We
       // project the OLD midpoint onto the same beam ray to get the

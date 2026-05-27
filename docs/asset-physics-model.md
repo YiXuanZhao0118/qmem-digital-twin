@@ -11,6 +11,16 @@ Canonical face rule:
 - Do not create duplicate faces such as `A1/B1/A2/B2` just to encode direction.
 - Direction, branch, non-reciprocity, diffraction order, and RF side belong on `transitions[]` (`op`, `params`, dynamic sources), not in face names.
 
+**Phase 9.13 Lab Sense frame rule**:
+
+- ObjectPanel `x/y/z mm` and `rx/ry/rz deg` are the Lab Sense pose. They are not the Asset3D body origin unless the body-frame origin is zero.
+- `bodyFramePositionMm` + `bodyFrameRotation` define the Asset3D body-frame origin under that Lab Sense pose.
+- `anchors[]` are defined under the Body frame origin. For identity SceneObject rotation, the anchor position seen by Lab Sense is:
+  `lab_sense + bodyFramePositionMm + R_body * anchor.positionMmBodyLocal`.
+- Anchor direction/tri-axis uses rotation only:
+  `lab_rotation * R_body * anchor.axisX/Y/ZBodyLocal`.
+- This is not visual-only. The same rule must be used by the Lab viewer beams, backend anchor tracer, placement snap targets, and PHY Editor probe-beam preview.
+
 ---
 
 ## 1. 動機
@@ -125,9 +135,24 @@ Asset3D 用一個 body frame 記錄 face 位置與法向。**Tracer 的物理計
 純粹**對齊 CAD STL 到 body frame**,跟物理無關。
 - 你先決定 body frame 的 face 座標 → 例如 face A 在 (0,0,-2.5)、face B 在 (0,0,+2.5) → body +Z = A→B
 - 如果 STL 是用 CAD +X 當建模軸,直接 import 會跟 face marker 差 90° → 設 `bodyFrameRotation` 把 CAD frame 旋到 body frame,讓 STL 顯示對齊
-- **設值不影響 tracer**;tracer 只看 face 幾何
+- **設值會影響 tracer / Lab Sense beam**;tracer 看到的是套用 body frame origin 後的 anchor 幾何
 
 PhyEditor 的 "Body frame orientation" 下拉就是設這個 quaternion(`+Z (default)` / `±X` / `±Y` / `-Z` 6 種常見軸對齊)。
+
+**`bodyFramePositionMm` 的職責**(Phase 9.10 加, 9.11 改為 body-frame 語意):
+
+跟 `bodyFrameRotation` 配對使用,把 body **原點**從 CAD STL 的原點搬到正確位置。`bodyFrameRotation` 處理軸向、`bodyFramePositionMm` 處理位移,兩者合起來是 CAD ↔ body 的完整 rigid transform。
+
+座標系:**body frame**(Phase 9.11 起;9.10 時是 CAD frame,已 migrate)。意思是 `x/y/z mm` 是沿 body 軸的偏移,使用者在 PHY Editor 看到 body 軸對齊 scene 軸後,直接調整 z mm 就是沿 scene Z 方向走,不會受 `bodyFrameRotation` 影響。
+
+顯示時套用的 transform(`Asset3DV3Editor.tsx:1147`):
+```
+display_point = R_body⁻¹ × cad_point − body_origin_body
+```
+- 先把 STL 旋轉成 body 方位(`R_body⁻¹`)
+- 再用 body 軸偏移把 body 原點挪到 scene 原點
+
+**設值會影響 tracer / Lab Sense beam**;tracer 與 Lab viewer 都必須先把 anchor 從 Body frame origin 轉到 Lab Sense 下的位置。`bodyFramePositionMm` 不再只是 STL 視覺對齊欄位。
 
 ---
 
