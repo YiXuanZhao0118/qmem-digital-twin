@@ -40,6 +40,7 @@ import {
   shouldRenderViaBindings,
 } from "../../three/bindingRendererGate";
 import { applyObjectTransform } from "../../three/transformUtils";
+import { anchorObjectLocalAxisX, anchorObjectLocalPos } from "../../utils/anchorAccess";
 import { mmToThree } from "../../optical/frames";
 import { FloatingPanel } from "../workspace/FloatingPanel";
 import { usePanelLayout } from "../workspace/WorkspaceProvider";
@@ -144,6 +145,68 @@ const PASSIVE_OPTICAL_KINDS: ReadonlySet<string> = new Set([
  *  Clipping warning is suppressed for these — the matching mode-overlap
  *  warning is the right physical signal. PHY Editor likewise hides
  *  apertureMm for these via `showAperture={false}`. */
+/** Build the PBS reflective-coating face overlay — a translucent pink
+ *  quad + bright outline at the internal coating plane, oriented by the
+ *  coating normal. Mirrors the Asset3D editor's internal-B*-face disk so
+ *  the Optical Link panel shows WHERE the beam reflects off the cube
+ *  diagonal. Geometry is authored in the asset's CAD/body frame scaled
+ *  to three units (÷100) — the same frame as the wireframe edges it gets
+ *  parented alongside — so the wrapper's applyObjectTransform places it
+ *  correctly in lab. Returns null when the asset isn't a beam_splitter or
+ *  carries no coating face / intercept_face anchor. */
+function buildPbsCoatingFaceGroup(asset: Asset3D): THREE.Group | null {
+  if (asset.kindId !== "beam_splitter") return null;
+  // The intercept_face anchor's axisX IS the coating normal. Read it +
+  // its position through anchorAccess so R_body / bfo are applied (the
+  // glan-laser beam splitters carry a body rotation) — these land the
+  // coating plane in the same CAD/object frame as the wireframe edges.
+  const anc = asset.anchors.find((a) => a.id === "intercept_face");
+  if (!anc) return null;
+  const axisX = anchorObjectLocalAxisX(anc, asset);
+  if (!axisX) return null;
+  const normal = new THREE.Vector3(axisX.x, axisX.y, axisX.z);
+  if (normal.lengthSq() < 1e-9) return null;
+  normal.normalize();
+  const posObj = anchorObjectLocalPos(anc, asset);
+  const centerMm = new THREE.Vector3(posObj.x, posObj.y, posObj.z);
+  // Aperture EXTENT is a frame-invariant scalar (mm), so read it directly
+  // from the explicit B1 coating face when present (36 × 25.4 mm diagonal
+  // for the PBS252 cube), else fall back to the anchor's aperture, else a
+  // 1-inch-cube default.
+  const faces = (asset.faces ?? []) as Array<Record<string, unknown>>;
+  const b1 = faces.find((f) => f.id === "B1");
+  const wMm = Number(b1?.apertureWidthMm) || anc.apertureMm || 25.4;
+  const hMm = Number(b1?.apertureHeightMm) || anc.apertureMm || 25.4;
+
+  const group = new THREE.Group();
+  group.name = "pbs-coating-face";
+  group.position.set(centerMm.x / 100, centerMm.y / 100, centerMm.z / 100);
+  // PlaneGeometry's face normal is +Z; rotate it onto the coating normal.
+  group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
+
+  const w = mmToThree(wMm);
+  const h = mmToThree(hMm);
+  const fill = new THREE.Mesh(
+    new THREE.PlaneGeometry(w, h),
+    new THREE.MeshBasicMaterial({
+      color: 0xf472b6, // pink — matches the PHY editor's internal-face disk
+      transparent: true,
+      opacity: 0.22,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    }),
+  );
+  fill.renderOrder = 20;
+  group.add(fill);
+  const outline = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.PlaneGeometry(w, h)),
+    new THREE.LineBasicMaterial({ color: 0xf9a8d4, transparent: true, opacity: 0.9 }),
+  );
+  outline.renderOrder = 21;
+  group.add(outline);
+  return group;
+}
+
 const MODEMATCHED_KINDS: ReadonlySet<string> = new Set([
   "laser_source",
   "tapered_amplifier",
@@ -1192,6 +1255,17 @@ export function OpticalLinkViewerPanel() {
               edges.applyMatrix4(mesh.matrixWorld);
               group.add(new THREE.LineSegments(edges, lineMat));
             });
+            // PBS reflective-coating face overlay (like the Asset3D
+            // editor's B*-face disk) so the user sees the surface the
+            // beam reflects off. Baked into the cached group in the same
+            // CAD/body÷100 frame as the wireframe edges; the wrapper's
+            // applyObjectTransform then carries it to the lab pose.
+            // Single-asset path only — composites (isolator) load the
+            // glan coatings through the binding tree, not this `asset`.
+            if (asset) {
+              const coatingFace = buildPbsCoatingFaceGroup(asset);
+              if (coatingFace) group.add(coatingFace);
+            }
             disposeTree(loaded);
             if (disposed) {
               disposeTree(group);
