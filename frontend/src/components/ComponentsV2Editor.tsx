@@ -84,6 +84,46 @@ import {
 
 export type ComposerDomain = "optical" | "rf" | "mechanical";
 
+/** Walks a procedural tube/jacket wrapper, finds the mesh tagged
+ *  `userData[roleKey] === "tube"`, and swaps its TubeGeometry for a
+ *  CylinderGeometry of equivalent length + radius (Y-axis cylinder
+ *  rotated to lie along the longest extent). three.js TubeGeometry
+ *  twists the cross-section vertices 360° around a straight Bezier
+ *  curve due to Frenet-frame fallback (mrdoob/three.js#16040) — the
+ *  twist is invisible on uniform-colour smooth cylinders but shows up
+ *  as a spiral on fibers, which is what makes the PHY editor preview
+ *  look curved when the underlying geometry is actually straight. The
+ *  cylindrical replacement is rotationally symmetric so it can never
+ *  twist regardless of camera angle. Duplicated in Asset3DV3Editor —
+ *  keep in sync. */
+function replaceSpiralTubeWithCylinder(
+  root: THREE.Object3D,
+  roleKey: "fiberRole" | "rfCableRole",
+): void {
+  root.traverse((node) => {
+    if (!(node instanceof THREE.Mesh)) return;
+    if (node.userData?.[roleKey] !== "tube") return;
+    const bbox = new THREE.Box3().setFromBufferAttribute(
+      node.geometry.attributes.position as THREE.BufferAttribute,
+    );
+    const size = bbox.getSize(new THREE.Vector3());
+    const center = bbox.getCenter(new THREE.Vector3());
+    const axes: Array<["x" | "y" | "z", number]> = [
+      ["x", size.x], ["y", size.y], ["z", size.z],
+    ];
+    axes.sort((a, b) => b[1] - a[1]);
+    const heightAxis = axes[0][0];
+    const length = axes[0][1];
+    const radius = (axes[1][1] + axes[2][1]) / 4;
+    const cyl = new THREE.CylinderGeometry(radius, radius, length, 18);
+    if (heightAxis === "x") cyl.rotateZ(Math.PI / 2);
+    else if (heightAxis === "z") cyl.rotateX(Math.PI / 2);
+    cyl.translate(center.x, center.y, center.z);
+    node.geometry.dispose();
+    node.geometry = cyl;
+  });
+}
+
 /**
  * Classify a Component into one of three composer domains.
  *
@@ -2117,6 +2157,15 @@ function ComponentPreview3D({
         const obj = asset.kindId === "fiber"
           ? createFiberSplineObject(fakeComp, straightNodes)
           : createSmaShortCable(fakeComp);
+        // three.js TubeGeometry twists the cross-section 360° on a
+        // perfectly-straight CubicBezier (Frenet frame fallback —
+        // mrdoob/three.js#16040). The twist is invisible on the
+        // thick reddish-brown RF cable jacket but shows up as a
+        // spiral pattern on the thin fiber jacket. Swap the
+        // spiraling tube for a plain CylinderGeometry.
+        if (asset.kindId === "fiber") {
+          replaceSpiralTubeWithCylinder(obj, "fiberRole");
+        }
         // Procedural builders author geometry in main-viewer three.js
         // frame (Y-up, 1 unit = 100 mm). The binding preview frame is
         // mm (matches STL vertices), so scale ×100. Rotate 90° about X

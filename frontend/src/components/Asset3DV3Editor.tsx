@@ -774,6 +774,46 @@ function proceduralPreviewModel(asset: V3Asset): string | null {
   return null;
 }
 
+/** Walks a procedural tube/jacket wrapper, finds the mesh tagged
+ *  `userData[roleKey] === "tube"`, and swaps its TubeGeometry for a
+ *  CylinderGeometry of equivalent length + radius (Y-axis cylinder
+ *  rotated to lie along X). TubeGeometry's Frenet-frame fallback
+ *  twists the cross-section by 360° on a perfectly-straight curve —
+ *  invisible on smooth uniform-colour cylinders but it shows up on
+ *  fibers as a spiral artefact. The replacement is rotationally
+ *  symmetric so it can't twist regardless of view angle. */
+function replaceSpiralTubeWithCylinder(
+  root: THREE.Object3D,
+  roleKey: "fiberRole" | "rfCableRole",
+): void {
+  root.traverse((node) => {
+    if (!(node instanceof THREE.Mesh)) return;
+    if (node.userData?.[roleKey] !== "tube") return;
+    const bbox = new THREE.Box3().setFromBufferAttribute(
+      node.geometry.attributes.position as THREE.BufferAttribute,
+    );
+    const size = bbox.getSize(new THREE.Vector3());
+    const center = bbox.getCenter(new THREE.Vector3());
+    // The procedural tube lies along its longest axis. Use that as the
+    // cylinder height; the smaller two extents average to the diameter.
+    const axes: Array<["x" | "y" | "z", number]> = [
+      ["x", size.x], ["y", size.y], ["z", size.z],
+    ];
+    axes.sort((a, b) => b[1] - a[1]);
+    const heightAxis = axes[0][0];
+    const length = axes[0][1];
+    const radius = (axes[1][1] + axes[2][1]) / 4; // avg / 2
+    const cyl = new THREE.CylinderGeometry(radius, radius, length, 18);
+    // CylinderGeometry's default axis is +Y. Re-orient so the cylinder
+    // axis matches whichever world axis the tube ran along.
+    if (heightAxis === "x") cyl.rotateZ(Math.PI / 2);
+    else if (heightAxis === "z") cyl.rotateX(Math.PI / 2);
+    cyl.translate(center.x, center.y, center.z);
+    node.geometry.dispose();
+    node.geometry = cyl;
+  });
+}
+
 function buildProceduralFaceLocatorModel(asset: V3Asset): THREE.Object3D | null {
   const isProceduralPath =
     asset.assetType === "primitive"
@@ -815,6 +855,16 @@ function buildProceduralFaceLocatorModel(asset: V3Asset): THREE.Object3D | null 
       { posMm: [150, 0, 0] },
     ];
     model = createFiberSplineObject(component, straightNodes);
+    // three.js TubeGeometry's Frenet-frame computation twists the
+    // cross-section vertices 360° around the curve when fed a
+    // perfectly-straight CubicBezier (a known artefact — see e.g.
+    // mrdoob/three.js#16040). On the thin yellow / blue / orange
+    // fiber jacket that twist shows up as a visible spiral pattern,
+    // even though the surface is rotationally symmetric. The thicker
+    // RF-cable jacket hides it, which is why the user sees "fiber
+    // spirals, rf cable straight". Replace the spiraling tube with a
+    // plain CylinderGeometry (no Frenet frame → no twist).
+    replaceSpiralTubeWithCylinder(model, "fiberRole");
   }
   if (!model) return null;
 
@@ -1281,7 +1331,12 @@ function FaceLocator3D({
     }
     const faceSize = faceBox.getSize(new THREE.Vector3());
     const sceneScale = Math.max(faceSize.x, faceSize.y, faceSize.z, 10);
-    const markerRadius = Math.max(sceneScale * 0.08, 2.2);
+    // Anchor sphere + normal arrow sizing. Halved from the original
+    // (sceneScale * 0.08 / 2.2) so the markers don't dwarf the mesh on
+    // small assets (fiber + rf_cable in particular). Arrow LENGTH stays
+    // the same (normalLength); only THICKNESS shrinks via the
+    // headLength / headWidth args to ArrowHelper below.
+    const markerRadius = Math.max(sceneScale * 0.04, 1.2);
     const normalLength = Math.max(sceneScale * 0.6, 12);
 
     const grid = new THREE.GridHelper(sceneScale * 1.6, 12, "#d8ded8", "#ffffff");
@@ -1308,8 +1363,11 @@ function FaceLocator3D({
     for (const [dir, color] of bodyAxisColors) {
       // Shaft = thin cylinder along axis, depthTest false so it pokes through
       // the proxy cube; renderOrder ensures it draws after transparent CAD.
+      // Thickness halved (0.018 → 0.009 shaft, 0.05 → 0.025 head, 0.15 →
+      // 0.10 head length) per user feedback that the RGB body-axis triad
+      // dwarfed thin assets (fiber / rf_cable) in the preview.
       const shaftLen = bodyArmLen * 0.85;
-      const shaftRad = bodyArmLen * 0.018;
+      const shaftRad = bodyArmLen * 0.009;
       const shaft = new THREE.Mesh(
         new THREE.CylinderGeometry(shaftRad, shaftRad, shaftLen, 12),
         new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false }),
@@ -1320,8 +1378,8 @@ function FaceLocator3D({
       shaft.renderOrder = 50;
       bodyAxesGroup.add(shaft);
 
-      const headLen = bodyArmLen * 0.15;
-      const headRad = bodyArmLen * 0.05;
+      const headLen = bodyArmLen * 0.10;
+      const headRad = bodyArmLen * 0.025;
       const head = new THREE.Mesh(
         new THREE.ConeGeometry(headRad, headLen, 16),
         new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false }),
@@ -1425,13 +1483,16 @@ function FaceLocator3D({
         group.add(disk);
       }
 
+      // Anchor normal arrow. Head length / width halved (0.22 → 0.12,
+      // 0.10 → 0.05) so the arrowhead reads as a slim indicator rather
+      // than a fat cone obscuring the aperture ring next to it.
       const arrow = new THREE.ArrowHelper(
         normal,
         new THREE.Vector3(),
         normalLength,
         index === selectedAnchorIndex ? "#fbbf24" : "#a78bfa",
-        normalLength * 0.22,
-        normalLength * 0.1,
+        normalLength * 0.12,
+        normalLength * 0.05,
       );
       arrow.renderOrder = 30;
       arrow.traverse((child) => {
