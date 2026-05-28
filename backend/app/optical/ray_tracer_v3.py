@@ -15,6 +15,7 @@ from app.optical.jones import jones_body_to_lab, jones_lab_to_body
 from app.optical.pose import (
     V3Pose,
     V3Transform,
+    binding_pose_to_transform,
     compose_transforms,
     dir_body_to_lab,
     dir_body_to_lab_t,
@@ -340,7 +341,12 @@ def flatten_scene(scene: V3Scene) -> list[V3BindingSlot]:
             ))
         if so.component is not None:
             for b in so.component.bindings:
-                t_b = pose_to_transform(b.local_pose)
+                # Binding pose uses the RAW XYZ rotation, not the object
+                # pose's YXZ lab->three remap — see binding_pose_to_transform
+                # + db_scene_loader.load_anchor_scene_from_db. (This V3Scene
+                # face path is currently unused — load_scene_from_db has no
+                # caller — but kept consistent with the live anchor path.)
+                t_b = binding_pose_to_transform(b.local_pose)
                 slots.append(V3BindingSlot(
                     scene_object_id=so.id, binding_id=b.binding_id,
                     asset=b.asset,

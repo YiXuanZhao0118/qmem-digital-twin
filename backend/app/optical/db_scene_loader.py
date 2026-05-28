@@ -29,7 +29,12 @@ from app.optical.anchor_tracer import (
     V3AssetAnchorSnapshot,
 )
 from app.optical.beam_ray import Vec3
-from app.optical.pose import V3Pose, compose_transforms, pose_to_transform
+from app.optical.pose import (
+    V3Pose,
+    binding_pose_to_transform,
+    compose_transforms,
+    pose_to_transform,
+)
 from app.optical.ray_tracer_v3 import (
     V3AssetSnapshot,
     V3ComponentBinding,
@@ -357,7 +362,15 @@ async def load_anchor_scene_from_db(session: AsyncSession) -> V3AnchorScene:
             if snap is None:
                 continue
 
-            local_transform = pose_to_transform(V3Pose(
+            # Binding pose uses the RAW XYZ rotation (binding_pose_to_transform),
+            # NOT the object pose's YXZ lab->three remap. A binding positions a
+            # child within the parent CAD frame; the remap is only for placing
+            # the whole object into the Y-up scene. Matches the PHY editor's
+            # poseFromBinding so the solver's beam reflects off the same
+            # coating/rotation orientation the Component preview draws (the
+            # IO-3-850-HP glans, binding rz=180/225, were rotated about the
+            # wrong axis under the YXZ remap).
+            local_transform = binding_pose_to_transform(V3Pose(
                 x_mm=b.local_x_mm, y_mm=b.local_y_mm, z_mm=b.local_z_mm,
                 rx_deg=b.local_rx_deg, ry_deg=b.local_ry_deg, rz_deg=b.local_rz_deg,
             ))

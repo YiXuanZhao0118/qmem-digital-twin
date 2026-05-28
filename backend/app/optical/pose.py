@@ -103,6 +103,35 @@ def pose_to_transform(pose: V3Pose) -> V3Transform:
     )
 
 
+def _binding_rotation_of(pose: V3Pose) -> Rotation:
+    """Raw XYZ Euler for ComponentBinding local poses — matches the PHY
+    Editor's ComponentsV2Editor.poseFromBinding (THREE.Euler(rx, ry, rz,
+    "XYZ")) and the frontend bindingTreeObject.applyBindingLocalTransform.
+
+    A binding positions a child asset within the PARENT's CAD frame, so it
+    does NOT use the lab->three (rx, rz, -ry) "YXZ" remap that the
+    SceneObject pose uses (that remap converts a Z-up lab pose into the
+    Y-up three.js scene). Composing a binding through that remap rotated
+    composite pieces (the IO-3-850-HP glans, binding rz=180/225) about the
+    wrong axis, so the solver's beam diverged from the Component preview's
+    coating / rotation faces. See docs/frame-anchor-architecture.md."""
+    return Rotation.from_euler(
+        "XYZ",
+        [pose.rx_deg, pose.ry_deg, pose.rz_deg],
+        degrees=True,
+    )
+
+
+def binding_pose_to_transform(pose: V3Pose) -> V3Transform:
+    """V3Transform for a ComponentBinding local pose. Translation is raw
+    (x, y, z); rotation is raw XYZ (NOT the object pose's YXZ remap) — see
+    _binding_rotation_of."""
+    return V3Transform(
+        origin=Vec3(pose.x_mm, pose.y_mm, pose.z_mm),
+        rotation=_binding_rotation_of(pose),
+    )
+
+
 def identity_transform() -> V3Transform:
     return V3Transform(origin=Vec3(0, 0, 0), rotation=Rotation.identity())
 
