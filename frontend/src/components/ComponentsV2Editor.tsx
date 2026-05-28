@@ -56,7 +56,10 @@ import {
 import { createSmaShortCable } from "../three/loadAsset/rf_cable";
 import { createFiberSplineObject } from "../three/loadAsset/fiber/spline";
 import type { FiberNode } from "../three/loadAsset/fiber";
+import { anchorObjectLocalAxisX, anchorObjectLocalPos } from "../utils/anchorAccess";
+import { getNumericProperty } from "../three/transformUtils";
 import type {
+  Anchor,
   Asset3D,
   AssetViewerHints,
   ComponentBinding,
@@ -83,6 +86,113 @@ import {
 } from "./phyEditorTheme";
 
 export type ComposerDomain = "optical" | "rf" | "mechanical";
+
+/** Build a physics-face overlay for a binding's asset, so the Component
+ *  preview shows WHERE/HOW each optic acts on the beam — mirroring the
+ *  Optical Link panel's PBS coating overlay:
+ *    - beam_splitter (Glan / PBS): a translucent PINK quad in the coating
+ *      plane (perpendicular to the intercept_face anchor's axisX = the
+ *      coating normal) → the reflective surface.
+ *    - faraday_rotator: a translucent AMBER disk perpendicular to the
+ *      optical axis (optical_center axisX) + a curved arrow spanning the
+ *      asset's rotationDeg → the polarization-rotation plane.
+ *  Positions/orientations come through anchorAccess so R_body / bfp are
+ *  honoured (same frame as the meshes). Returns null for other kinds.
+ *  Geometry is authored in a local frame with +Z = the face normal, then
+ *  the group is oriented onto that normal in CAD/body mm. */
+function buildPhysicsFaceOverlay(asset: Asset3D): THREE.Object3D | null {
+  const anchorById = (id: string): Anchor | undefined =>
+    (asset.anchors ?? []).find((a) => a.id === id);
+  const orientAt = (
+    group: THREE.Group, normal: { x: number; y: number; z: number },
+    pos: { x: number; y: number; z: number },
+  ): void => {
+    const n = new THREE.Vector3(normal.x, normal.y, normal.z);
+    if (n.lengthSq() < 1e-9) return;
+    n.normalize();
+    group.position.set(pos.x, pos.y, pos.z);
+    group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
+  };
+
+  if (asset.kindId === "beam_splitter") {
+    const anc = anchorById("intercept_face");
+    const n = anc ? anchorObjectLocalAxisX(anc, asset) : null;
+    if (!anc || !n) return null;
+    const params = { ...(asset.defaultParams ?? {}), ...(asset.properties ?? {}) };
+    const sizeMm = getNumericProperty(params, "sizeMm", 6.5);
+    const lengthMm = getNumericProperty(params, "lengthMm", 7.5);
+    const w = sizeMm * 1.1;
+    const h = Math.hypot(sizeMm, lengthMm) * 1.05; // span the diagonal cut
+    const group = new THREE.Group();
+    group.name = "reflection-face";
+    group.add(new THREE.Mesh(
+      new THREE.PlaneGeometry(w, h),
+      new THREE.MeshBasicMaterial({
+        color: 0xf472b6, transparent: true, opacity: 0.28,
+        side: THREE.DoubleSide, depthWrite: false, depthTest: false,
+      }),
+    ));
+    const outline = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.PlaneGeometry(w, h)),
+      new THREE.LineBasicMaterial({ color: 0xf9a8d4, transparent: true, opacity: 0.95, depthTest: false }),
+    );
+    group.add(outline);
+    group.children.forEach((c) => { c.renderOrder = 40; });
+    orientAt(group, n, anchorObjectLocalPos(anc, asset));
+    return group;
+  }
+
+  if (asset.kindId === "faraday_rotator") {
+    const anc = anchorById("optical_center");
+    const axis = anc ? anchorObjectLocalAxisX(anc, asset) : null;
+    if (!anc || !axis) return null;
+    const r = Math.min(anc.apertureMm ?? 6, 8); // clear-aperture radius, capped
+    const rotDeg = getNumericProperty(asset.defaultParams ?? {}, "rotationDeg", 45);
+    const group = new THREE.Group();
+    group.name = "faraday-rotation-face";
+    const AMBER = 0xf59e0b;
+    group.add(new THREE.Mesh(
+      new THREE.CircleGeometry(r, 48),
+      new THREE.MeshBasicMaterial({
+        color: AMBER, transparent: true, opacity: 0.22,
+        side: THREE.DoubleSide, depthWrite: false, depthTest: false,
+      }),
+    ));
+    const ringPts: THREE.Vector3[] = [];
+    for (let i = 0; i <= 48; i += 1) {
+      const t = (i / 48) * Math.PI * 2;
+      ringPts.push(new THREE.Vector3(r * Math.cos(t), r * Math.sin(t), 0));
+    }
+    const lineMat = new THREE.LineBasicMaterial({ color: AMBER, transparent: true, opacity: 0.95, depthTest: false });
+    group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(ringPts), lineMat));
+    // Curved rotation arrow spanning rotationDeg (caps the visual at 90°).
+    const arcR = r * 0.62;
+    const arcDeg = Math.min(Math.abs(rotDeg), 90);
+    const arcPts: THREE.Vector3[] = [];
+    const segs = 28;
+    for (let i = 0; i <= segs; i += 1) {
+      const t = (i / segs) * arcDeg * Math.PI / 180;
+      arcPts.push(new THREE.Vector3(arcR * Math.cos(t), arcR * Math.sin(t), 0));
+    }
+    group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(arcPts), lineMat));
+    const endT = arcDeg * Math.PI / 180;
+    const head = new THREE.Mesh(
+      new THREE.ConeGeometry(arcR * 0.16, arcR * 0.4, 10),
+      new THREE.MeshBasicMaterial({ color: AMBER, depthTest: false }),
+    );
+    head.position.set(arcR * Math.cos(endT), arcR * Math.sin(endT), 0);
+    head.quaternion.setFromUnitVectors(
+      new THREE.Vector3(0, 1, 0),
+      new THREE.Vector3(-Math.sin(endT), Math.cos(endT), 0), // arc tangent (CCW)
+    );
+    group.add(head);
+    group.children.forEach((c) => { c.renderOrder = 40; });
+    orientAt(group, axis, anchorObjectLocalPos(anc, asset));
+    return group;
+  }
+
+  return null;
+}
 
 /** Walks a procedural tube/jacket wrapper, finds the mesh tagged
  *  `userData[roleKey] === "tube"`, and swaps its TubeGeometry for a
@@ -2112,6 +2222,13 @@ function ComponentPreview3D({
       const asset = assetById.get(b.asset3dId);
       if (!asset) return null;
       const pivot = poseFromBinding(b);
+      // Physics-face overlay (reflection coating for beam splitters, the
+      // polarization-rotation plane for faraday rotators) so the isolator
+      // preview shows how each piece acts on the beam — like the Optical
+      // Link panel. Added to the pivot so it tracks the binding pose;
+      // null for kinds without a physics face.
+      const physicsFace = buildPhysicsFaceOverlay(asset);
+      if (physicsFace) pivot.add(physicsFace);
       const filePath = asset.filePath ?? "";
 
       // Procedural assets — call the same builder the lab viewer uses.
