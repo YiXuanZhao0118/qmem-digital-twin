@@ -41,6 +41,7 @@ import {
 import { createZhl12wPlusAmplifier } from "../kinds/rf_amplifier/renderer";
 import { createRfSwitch } from "../kinds/rf_switch/renderer";
 import { createSmaShortCable } from "../three/loadAsset/rf_cable";
+import { createFiberSplineObject } from "../three/loadAsset/fiber/spline";
 import { applyDeletionFilter, applyIncludeOnlyFilter, applyViewerHintsToGeometry, centroidKey, findCoplanarCluster } from "../three/loadAsset/viewerHints";
 import type { AssetViewerHints, ComponentItem } from "../types/digitalTwin";
 import { domainForElementKind } from "../utils/elementDefaults";
@@ -800,6 +801,15 @@ function buildProceduralFaceLocatorModel(asset: V3Asset): THREE.Object3D | null 
   if (kindId === "rf_cable") model = createSmaShortCable(component);
   if (kindId === "rf_amplifier") model = createZhl12wPlusAmplifier(component);
   if (kindId === "rf_switch") model = createRfSwitch(component);
+  if (kindId === "fiber") {
+    // Fiber preview = same Bezier spline + 2 FC ferrules the lab scene
+    // viewer renders, so the PHY editor matches Object Sense. Catalog
+    // fibers don't carry a fiberNodes spline yet, so createFiberSpline-
+    // Object falls back to its built-in straight 2-node default
+    // (~300 mm along +X with 100 mm tangent handles) — long enough for
+    // both connector ferrules + jacket to be clearly visible.
+    model = createFiberSplineObject(component);
+  }
   if (!model) return null;
 
   // Procedural scene renderers are authored in the main viewer's three.js

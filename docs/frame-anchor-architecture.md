@@ -674,6 +674,24 @@ Backend 端 `db_scene_loader.py` 的 `_apply_body_frame_to_anchor` 之前 uvicor
   - **TA / AOM / PBS / iso** 的 body-frame 軸跟 lab beam 方向 mis-align,Object Panel 的 Align to beam 鈕(或手動 `ryDeg=±90`)就能修
   - **Isolator (IO-3-850-HP)** asset 的 `anchors` 是空的 — Phase 9.1 backfill 沒涵蓋這顆,要在 PHY Editor 手動補 `intercept_in/out` + 內部 PBS face anchors
 
+## 14.8 2026-05-28 PHY Editor 預覽 procedural dispatch(fiber + rf_cable)
+
+**痛點**: PHY editor 兩個 pane — Asset3D 編輯器 vs Component 編輯器 — 對 `kindId=fiber` 與 `kindId=rf_cable` 兩種 procedural asset 的 fallback path 不一致:
+- Asset3D 編輯器: `buildProceduralFaceLocatorModel` 只有 rf_cable / rf_amplifier / rf_switch dispatch,fiber 走 proxy box → 預覽空殼,沒 connector + tube
+- Component 編輯器: `ComponentPreview3D.loadOne` 對所有 `primitive://` 走灰色 placeholder cube → 兩種 cable 都看不到 jacket + connector
+
+**做法**:
+- [`Asset3DV3Editor.tsx:805`](../frontend/src/components/Asset3DV3Editor.tsx) 加 `if (kindId === "fiber") model = createFiberSplineObject(component);`,沿用 rf_cable 既有的 `bodyMm.scale.setScalar(100) + rotation.x = π/2` wrapper
+- [`ComponentsV2Editor.tsx:2099-2121`](../frontend/src/components/ComponentsV2Editor.tsx) 在 `primitive://` placeholder fallback 之前插 per-kind 分派:fiber → `createFiberSplineObject`,rf_cable → `createSmaShortCable`,兩者都用 `parentComponent` 當 props 來源(已帶 `lengthMm` / `endAConnector` / `endBConnector`)再套相同 bodyMm wrapper
+
+**驗證**:
+- `npx tsc --noEmit` clean
+- `npm run check:anchors` clean
+- 程式式 geometry test: `createSmaShortCable(CA2906) + bodyMm.scale.setScalar(100)` → wrapper world bbox 185 × 6 × 7 mm,符合 Thorlabs CA2906 datasheet(152.4 mm jacket + 2 × ~16 mm SMA male connector)
+- fiber 預覽截圖確認 FC connector + Bezier spline tube 出現
+
+**為什麼這算 frame-system 相關**: 兩個 editor 都用相同的「procedural builder 輸出 three-units(1 unit = 100 mm) → bodyMm wrapper scale ×100 + rotation X 90°」轉換到 PHY editor 的「1 unit = 1 mm,Y-up」frame。沒這個 wrapper procedural geometry 會比實際物理尺寸小 100 倍,看起來像 invisible point — 跟 Asset3D 編輯器既有的 rf_cable 處理一致。
+
 ---
 
 # Part C — 優化路線圖

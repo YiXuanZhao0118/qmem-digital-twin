@@ -3795,29 +3795,43 @@ export function DigitalTwinViewer({
           // A''.7's TORNOS-850-4 migration is the first Component to
           // qualify; the 500+ catalog rows backfilled with only a single
           // root binding stay on the legacy path → visual no-op.
-          const assetObject = shouldRenderViaBindings(
-            component.kindId ?? "",
-            component.id,
-            sceneData,
-          )
-            ? await buildSceneObjectFromBindings(component, placement, sceneData)
-            : await loadAssetObject(
-                component,
-                asset,
-                deviceState,
-                // Per-instance fiberNodes / rfCableNodes / radiusMm live on
-                // the SceneObject; see loadAssetObject signature for the V2
-                // contract.
-                propsForLoader as {
-                  fiberNodes?: FiberNode[];
-                  rfCableNodes?: FiberNode[];
-                  radiusMm?: number;
-                } | null,
-                {
-                  fiberEndA: fiberEndAPlacement,
-                  fiberEndB: fiberEndBPlacement,
-                },
-              );
+          // Isolate per-placement asset load: a missing STL / GLB / 404
+          // on ONE object must not crash the for-loop and skip every
+          // subsequent SceneObject. Without this, e.g. the isolator's
+          // glan-laser sub-asset 404 used to silently kill rendering of
+          // every later object in the iteration order (TA, DDS, cables).
+          let assetObject: THREE.Object3D | null = null;
+          try {
+            assetObject = shouldRenderViaBindings(
+              component.kindId ?? "",
+              component.id,
+              sceneData,
+            )
+              ? await buildSceneObjectFromBindings(component, placement, sceneData)
+              : await loadAssetObject(
+                  component,
+                  asset,
+                  deviceState,
+                  // Per-instance fiberNodes / rfCableNodes / radiusMm live on
+                  // the SceneObject; see loadAssetObject signature for the V2
+                  // contract.
+                  propsForLoader as {
+                    fiberNodes?: FiberNode[];
+                    rfCableNodes?: FiberNode[];
+                    radiusMm?: number;
+                  } | null,
+                  {
+                    fiberEndA: fiberEndAPlacement,
+                    fiberEndB: fiberEndBPlacement,
+                  },
+                );
+          } catch (err) {
+            console.error(
+              `[DigitalTwinViewer] asset load failed for ${placement.name} (component=${component.name}); skipping this object — rest of scene still renders.`,
+              err,
+            );
+            continue;
+          }
           if (cancelled) {
             disposeObject(assetObject);
             return;

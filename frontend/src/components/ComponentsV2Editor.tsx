@@ -53,6 +53,8 @@ import {
   GLAN_POLARIZER_PRISM_FILEPATH,
   buildGlanPolarizerPrismObject,
 } from "../three/loadAsset/procedural/glan_polarizer_prism";
+import { createSmaShortCable } from "../three/loadAsset/rf_cable";
+import { createFiberSplineObject } from "../three/loadAsset/fiber/spline";
 import type {
   Asset3D,
   AssetViewerHints,
@@ -2086,6 +2088,35 @@ function ComponentPreview3D({
           } as ComponentItem),
         );
         pivot.add(procObj);
+        return pivot;
+      }
+
+      // Per-kind procedural renderers — same builders the lab viewer
+      // uses, so the PHY editor's Component preview matches Object
+      // Sense for fibers (tube + 2 FC ferrules) and rf cables (jacket
+      // + SMA / BNC end connectors per endA/B). Without these the
+      // primitive:// fallback below paints just a placeholder cube.
+      if (asset.kindId === "fiber" || asset.kindId === "rf_cable") {
+        const fakeComp: ComponentItem = parentComponent ?? ({
+          id: `preview-${asset.id}`,
+          name: asset.name ?? "preview",
+          kindId: asset.kindId,
+          properties: { ...(asset.properties ?? {}), ...(asset.defaultParams ?? {}) },
+          physicsCapabilities: asset.kindId === "fiber" ? ["optical"] : ["rf"],
+        } as ComponentItem);
+        const obj = asset.kindId === "fiber"
+          ? createFiberSplineObject(fakeComp)
+          : createSmaShortCable(fakeComp);
+        // Procedural builders author geometry in main-viewer three.js
+        // frame (Y-up, 1 unit = 100 mm). The binding preview frame is
+        // mm (matches STL vertices), so scale ×100. Rotate 90° about X
+        // to swap Y/Z up — same convention as Asset3DV3Editor's body
+        // wrap.
+        const bodyMm = new THREE.Group();
+        bodyMm.add(obj);
+        bodyMm.scale.setScalar(100);
+        bodyMm.rotation.x = Math.PI / 2;
+        pivot.add(bodyMm);
         return pivot;
       }
 
