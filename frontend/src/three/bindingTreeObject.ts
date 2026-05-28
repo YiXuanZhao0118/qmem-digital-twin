@@ -17,15 +17,25 @@
  *
  * Frame contract
  * --------------
- * Binding's local transform is body-local Z-up mm + XYZ-order Euler
- * degrees (same convention as SceneObject's pose fields). This module
- * converts to three's Y-up mm/100 frame using the same mapping as
- * ``frames.ts::labMmToThree`` / ``sceneObjectToQuaternion`` so the
- * tree composes correctly with the rest of the renderer's math.
+ * Binding's local transform positions a child asset within the PARENT's
+ * CAD frame — the SAME frame the loaded meshes live in (loadAssetObject
+ * scales STL/procedural geometry to mm/100 but does NOT swap axes). So
+ * the binding pose is applied RAW: per-axis /100 scale, no lab→three
+ * y↔z swap, XYZ Euler. The SceneObject's pose (applyObjectTransform via
+ * sceneObjectToQuaternion) then converts the whole assembled tree from
+ * CAD frame to lab/three in one step.
+ *
+ * ⚠️ Earlier this used ``labMmToThree`` (which y↔z-swaps) + a YXZ Euler
+ * "to match sceneObjectToQuaternion". That put binding POSITIONS in
+ * three's Y-up frame while the meshes they position stayed in CAD frame
+ * → composite pieces scattered onto the wrong axis (IO-3-850-HP glans
+ * flew off perpendicular to the housing). Raw composition matches
+ * ComponentsV2Editor's ``poseFromBinding`` (the editor the user tunes
+ * against) AND the backend solver's raw binding composition.
  */
 import * as THREE from "three";
 
-import { labMmToThree } from "../optical/frames";
+import { mmToThree } from "../optical/frames";
 import type { ResolvedBindingNode } from "../utils/componentBindings";
 
 
@@ -69,26 +79,23 @@ export async function buildBindingTreeObject(
 
 
 /** Apply a binding's effective local transform (post-override) to a
- *  THREE.Object3D. Position is body-local mm → three units via the
- *  standard frames mapping; rotation uses the same YXZ Euler order as
- *  ``sceneObjectToQuaternion`` so child transforms compose with the
- *  parent's pose without surprises. */
+ *  THREE.Object3D, in the parent's CAD frame (no lab→three swap). Per-
+ *  axis /100 scale matches the meshes (loadAssetObject's mm/100); the
+ *  RAW XYZ Euler matches ComponentsV2Editor's poseFromBinding so the
+ *  Component editor preview and the lab viewer compose pieces
+ *  identically. The SceneObject pose converts the assembled tree to
+ *  lab/three afterwards. */
 export function applyBindingLocalTransform(
   obj: THREE.Object3D,
   node: ResolvedBindingNode,
 ): void {
   const t = node.localTransform;
-  const pos = labMmToThree({ xMm: t.xMm, yMm: t.yMm, zMm: t.zMm });
-  obj.position.copy(pos);
-  // YXZ ordering with rx → three.x, rz → three.y, -ry → three.z
-  // matches frames.ts::sceneObjectToQuaternion. The binding's body
-  // frame and a SceneObject's body frame share the same convention,
-  // so the same Euler composition applies.
+  obj.position.set(mmToThree(t.xMm), mmToThree(t.yMm), mmToThree(t.zMm));
   const euler = new THREE.Euler(
     THREE.MathUtils.degToRad(t.rxDeg),
+    THREE.MathUtils.degToRad(t.ryDeg),
     THREE.MathUtils.degToRad(t.rzDeg),
-    THREE.MathUtils.degToRad(-t.ryDeg),
-    "YXZ",
+    "XYZ",
   );
   obj.quaternion.setFromEuler(euler);
 }
