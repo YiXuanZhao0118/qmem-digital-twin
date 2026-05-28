@@ -2128,7 +2128,22 @@ function ComponentPreview3D({
             physicsCapabilities: ["optical"],
           } as ComponentItem),
         );
-        pivot.add(procObj);
+        // buildGlanPolarizerPrismObject authors geometry in the main-
+        // viewer three.js frame (1 unit = 100 mm, via mmToThree). This
+        // Component preview loads sibling STL meshes at raw mm (1 unit =
+        // 1 mm — no applyAssetScale), so the prism must be scaled ×100 to
+        // share the same units; without it the prism renders 100× too
+        // small (a near-invisible dot) inside the IO-3-850-HP housing.
+        // No axis rotation: the prism builder already uses Z as the
+        // optical axis, matching the CAD STL convention, so it lines up
+        // with the housing and the binding-pose layout (which steps the
+        // pieces along Z). The lab viewer keeps both in three-frame
+        // instead (STL ÷100, prism native) — same relative geometry,
+        // just a different global unit.
+        const procMm = new THREE.Group();
+        procMm.add(procObj);
+        procMm.scale.setScalar(100);
+        pivot.add(procMm);
         return pivot;
       }
 
@@ -2187,24 +2202,22 @@ function ComponentPreview3D({
       }
       const ext = filePath.split("?")[0].split(".").pop()?.toLowerCase();
       const url = resolveAssetUrl(filePath);
-      // Body-frame offset semantic (see docs/asset-physics-model.md §3.1):
-      //   body_point = R_body⁻¹ × cad_point − body_origin (body frame)
-      // The binding pose carries lab_sense (pivot); the asset's
-      // body_origin lives in properties.bodyFramePositionMm (BODY frame
-      // since Phase 9.11) and R_body in asset.bodyFrameRotation. Nest
-      // two groups under pivot — inner rotates the STL into body
-      // orientation (R⁻¹), outer then translates by −origin in body
-      // frame to land the body origin at the pivot's local zero.
-      const bfo = ((asset.properties ?? {}) as Record<string, unknown>).bodyFramePositionMm as
-        | { x?: number; y?: number; z?: number } | null | undefined;
-      const bfr = (asset.bodyFrameRotation ?? null) as
-        | { x: number; y: number; z: number; w: number } | null;
-      const modelGroup = new THREE.Group();           // outer: −body_origin (body frame)
-      const modelInnerGroup = new THREE.Group();      // inner: R_body⁻¹
-      modelGroup.position.set(-(bfo?.x ?? 0), -(bfo?.y ?? 0), -(bfo?.z ?? 0));
-      if (bfr) modelInnerGroup.quaternion.set(bfr.x, bfr.y, bfr.z, bfr.w).invert();
-      modelGroup.add(modelInnerGroup);
-      pivot.add(modelGroup);
+      // Mesh placement MUST match the lab viewer (Object Sense) so a
+      // composite Component (isolator etc.) reads identically in both
+      // places. The lab viewer's loadAssetObject keeps body-frame
+      // assets at their NATIVE CAD frame — it does NOT shift by
+      // −bodyFramePositionMm or rotate by R_body⁻¹, because the
+      // body-frame offset only relocates *anchors* (computed as
+      // `R_body × anchor + bfo` in CAD axes), not the drawn mesh (see
+      // loadAsset/index.ts §"Anchor strategy" + docs/frame-anchor-
+      // architecture.md §3). The previous code here applied −bfo +
+      // R_body⁻¹, which pushed the IO-3-850-HP STL housing +47.05 mm in
+      // Z away from its (body-frame-less, procedural) Glan prisms while
+      // the lab viewer left them aligned. Keep the mesh at CAD frame;
+      // the binding pose (pivot) is the only transform, exactly as the
+      // lab viewer's buildBindingTreeObject stacks it.
+      const modelInnerGroup = new THREE.Group();
+      pivot.add(modelInnerGroup);
       const hints = (asset.properties as { viewerHints?: AssetViewerHints } | undefined)?.viewerHints;
       try {
         if (ext === "stl") {
