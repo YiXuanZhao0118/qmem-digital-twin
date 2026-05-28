@@ -727,6 +727,36 @@ function proceduralPreviewProperties(asset: V3Asset, kindId: string): Record<str
     ...(asset.defaultParams ?? {}),
     ...(asset.properties ?? {}),
   };
+  if (kindId === "fiber") {
+    // Fiber asset specs live in `defaultParams` as `fiberType` ("SM"/
+    // "PM"/"MM") + `endAPolish`/`endBPolish` ("PC"/"APC"). The renderer
+    // (`createFiberSplineObject`) instead reads a nested
+    // `fiberKindParamsOverride` with the long enum names. Bridge the two
+    // so each catalog fiber paints its true jacket colour (SM=yellow,
+    // PM=blue) and APC ends get the green boot — without this every
+    // fiber falls back to the PM-blue + PC default and they all look
+    // identical. The Component preview already works because the fiber
+    // *Component* row carries a proper fiberKindParamsOverride.
+    const ftRaw = String(props.fiberType ?? "").toUpperCase();
+    const fiberType =
+      ftRaw === "PM" || ftRaw === "POLARIZATION_MAINTAINING"
+        ? "polarization_maintaining"
+        : ftRaw === "MM" || ftRaw === "MULTI_MODE"
+          ? "multi_mode"
+          : "single_mode";
+    const normPolish = (v: unknown): "PC" | "UPC" | "APC" | "AR" => {
+      const s = String(v ?? "PC").toUpperCase();
+      return s === "APC" || s === "UPC" || s === "AR" ? (s as "APC" | "UPC" | "AR") : "PC";
+    };
+    return {
+      ...props,
+      fiberKindParamsOverride: {
+        fiberType,
+        endA: { polish: normPolish(props.endAPolish) },
+        endB: { polish: normPolish(props.endBPolish) },
+      },
+    };
+  }
   if (kindId === "rf_cable") {
     if (asset.catalogId === "thorlabs_ca2906") {
       return {
