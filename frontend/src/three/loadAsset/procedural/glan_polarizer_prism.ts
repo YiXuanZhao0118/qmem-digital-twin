@@ -148,5 +148,18 @@ export function buildGlanPolarizerPrismObject(
   group.add(prismA);
   group.add(prismB);
 
+  // Align the visible diagonal cut with the physics coating face (the
+  // asset's `intercept_face` / B1 anchor, normal (0.6225, 0, −0.7826) in
+  // the X-Z plane), which is what both tracers actually reflect off.
+  // The geometry above cuts in the Y-Z plane (cut normal (0, L, a)); a
+  // +90° rotation about the optical axis (Z) maps that normal to
+  // (−L, 0, a) — anti-parallel to the coating normal, i.e. the SAME
+  // plane — so the air gap you see IS the reflective surface. Rotating
+  // about Z leaves the optical axis and the square cross-section
+  // unchanged, so the prism still seats in the housing identically;
+  // only the internal cut turns 90°. Without this the beam reflected off
+  // a plane perpendicular to the visible cut ("反射面跟可見切面差 90°").
+  group.rotateZ(Math.PI / 2);
+
   return group;
 }
