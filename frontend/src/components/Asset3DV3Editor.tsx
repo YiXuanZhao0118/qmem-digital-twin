@@ -42,6 +42,7 @@ import { createZhl12wPlusAmplifier } from "../kinds/rf_amplifier/renderer";
 import { createRfSwitch } from "../kinds/rf_switch/renderer";
 import { createSmaShortCable } from "../three/loadAsset/rf_cable";
 import { createFiberSplineObject } from "../three/loadAsset/fiber/spline";
+import type { FiberNode } from "../three/loadAsset/fiber";
 import { applyDeletionFilter, applyIncludeOnlyFilter, applyViewerHintsToGeometry, centroidKey, findCoplanarCluster } from "../three/loadAsset/viewerHints";
 import type { AssetViewerHints, ComponentItem } from "../types/digitalTwin";
 import { domainForElementKind } from "../utils/elementDefaults";
@@ -803,12 +804,17 @@ function buildProceduralFaceLocatorModel(asset: V3Asset): THREE.Object3D | null 
   if (kindId === "rf_switch") model = createRfSwitch(component);
   if (kindId === "fiber") {
     // Fiber preview = same Bezier spline + 2 FC ferrules the lab scene
-    // viewer renders, so the PHY editor matches Object Sense. Catalog
-    // fibers don't carry a fiberNodes spline yet, so createFiberSpline-
-    // Object falls back to its built-in straight 2-node default
-    // (~300 mm along +X with 100 mm tangent handles) — long enough for
-    // both connector ferrules + jacket to be clearly visible.
-    model = createFiberSplineObject(component);
+    // viewer renders. Object Sense paints freshly-spawned fibers as a
+    // straight line between two anchor nodes (no curve handles), so we
+    // pass an explicit 2-node straight spline here — overrides the
+    // builder's curved default and matches what the user sees in the
+    // lab viewer. Centred at origin so it sits inside the body-axes
+    // gizmo cluster instead of being offset 50 mm in +Z.
+    const straightNodes: FiberNode[] = [
+      { posMm: [-150, 0, 0] },
+      { posMm: [150, 0, 0] },
+    ];
+    model = createFiberSplineObject(component, straightNodes);
   }
   if (!model) return null;
 

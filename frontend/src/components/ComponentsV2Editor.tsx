@@ -55,6 +55,7 @@ import {
 } from "../three/loadAsset/procedural/glan_polarizer_prism";
 import { createSmaShortCable } from "../three/loadAsset/rf_cable";
 import { createFiberSplineObject } from "../three/loadAsset/fiber/spline";
+import type { FiberNode } from "../three/loadAsset/fiber";
 import type {
   Asset3D,
   AssetViewerHints,
@@ -2104,8 +2105,17 @@ function ComponentPreview3D({
           properties: { ...(asset.properties ?? {}), ...(asset.defaultParams ?? {}) },
           physicsCapabilities: asset.kindId === "fiber" ? ["optical"] : ["rf"],
         } as ComponentItem);
+        // Force a straight 2-node spline so the preview matches the
+        // Object Sense rendering of a freshly-spawned cable (which is
+        // also straight). createFiberSplineObject's built-in default
+        // adds a +Z offset + tangent handles that make the tube look
+        // curved / spiralled in the PHY editor viewport.
+        const straightNodes: FiberNode[] = [
+          { posMm: [-150, 0, 0] },
+          { posMm: [150, 0, 0] },
+        ];
         const obj = asset.kindId === "fiber"
-          ? createFiberSplineObject(fakeComp)
+          ? createFiberSplineObject(fakeComp, straightNodes)
           : createSmaShortCable(fakeComp);
         // Procedural builders author geometry in main-viewer three.js
         // frame (Y-up, 1 unit = 100 mm). The binding preview frame is
