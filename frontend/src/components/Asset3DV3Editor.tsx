@@ -29,6 +29,7 @@ import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 
 import { resolveAssetUrl } from "../api/client";
 import { useKindsStore } from "../store/kindsStore";
+import { useSceneStore } from "../store/sceneStore";
 import {
   type V3Asset,
   type V3AssetUpdate,
@@ -3246,6 +3247,16 @@ export function Asset3DV3Editor({
       // checkpoint progress and expects to keep working. Cancel /
       // close still exit edit mode normally.
       setDraft(draftFromAsset(updated));
+      // The Asset3D editor writes to the V3 catalog store (useV3Catalog),
+      // but every OTHER consumer of asset data — the lab viewer, the
+      // Optical Link panel, and the PHY editor's Component preview
+      // (ComponentsV2Editor reads useSceneStore.scene.assets) — reads
+      // from the scene store. Without this refresh those views keep
+      // rendering the pre-edit asset (e.g. a Component that references
+      // io_3_850_hp_back_piece won't pick up anchor / body-frame / mesh
+      // edits). loadScene re-fetches the scene and preserves the user's
+      // current selection, so the edit propagates everywhere at once.
+      void useSceneStore.getState().loadScene();
       const nextAnchorCount = updated.anchors?.length ?? 0;
       setSelectedAnchorIndex((prev) => {
         if (nextAnchorCount === 0) return null;
@@ -3273,6 +3284,10 @@ export function Asset3DV3Editor({
       await deleteAsset(selected.catalogId ?? selected.id);
       setSelectedAssetId(null);
       setDraft(null);
+      // deleteAsset also drops ComponentBinding rows that referenced
+      // this asset — refresh the scene store so the Component preview /
+      // lab viewer stop rendering the now-deleted asset + its bindings.
+      void useSceneStore.getState().loadScene();
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err));
     } finally {
