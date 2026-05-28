@@ -2119,15 +2119,22 @@ function ComponentPreview3D({
       // commonly appears as a binding; isolator-body bindings carry
       // their own STL via the housing asset, not this code path.
       if (filePath === GLAN_POLARIZER_PRISM_FILEPATH) {
-        const procObj = buildGlanPolarizerPrismObject(
-          parentComponent ?? ({
-            id: "preview",
-            name: "preview",
-            kindId: "glan_polarizer",
-            properties: {},
-            physicsCapabilities: ["optical"],
-          } as ComponentItem),
-        );
+        // Read the prism geometry (sizeMm / lengthMm) from the GLAN
+        // ASSET's own params, NOT parentComponent. The glan here is a
+        // binding CHILD of the isolator, so parentComponent is the
+        // isolator — feeding it would make the builder fall back to the
+        // 7.5 mm default and ignore the glan asset's real lengthMm (e.g.
+        // the IO-3-850-HP prism's 5.0 mm). Merge defaultParams then
+        // properties so a per-asset override wins, matching the fiber /
+        // rf_cable dispatch above.
+        const glanComp: ComponentItem = {
+          id: `preview-${asset.id}`,
+          name: asset.name ?? "glan",
+          kindId: asset.kindId ?? "glan_polarizer",
+          properties: { ...(asset.defaultParams ?? {}), ...(asset.properties ?? {}) },
+          physicsCapabilities: ["optical"],
+        } as ComponentItem;
+        const procObj = buildGlanPolarizerPrismObject(glanComp);
         // buildGlanPolarizerPrismObject authors geometry in the main-
         // viewer three.js frame (1 unit = 100 mm, via mmToThree). This
         // Component preview loads sibling STL meshes at raw mm (1 unit =
