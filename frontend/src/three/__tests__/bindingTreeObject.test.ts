@@ -84,16 +84,20 @@ function makeNode(
 
 
 describe("applyBindingLocalTransform", () => {
-  it("maps body-local mm to three units via labMmToThree convention", () => {
+  it("maps binding mm to three units RAW (no lab↔three axis swap)", () => {
     const obj = new THREE.Object3D();
-    // x=10, y=20, z=30 body-local → three (10/100, 30/100, -20/100)
+    // The binding pose lives in the parent CAD frame — the same frame as
+    // the meshes it positions — so it's applied per-axis with NO y↔z
+    // swap: x=10, y=20, z=30 → three (10/100, 20/100, 30/100). (This is
+    // the fix for composites scattering: labMmToThree's swap put binding
+    // positions in a different frame than their un-swapped meshes.)
     applyBindingLocalTransform(
       obj,
       makeNode("n", makeTransform({ xMm: 10, yMm: 20, zMm: 30 })),
     );
     expect(obj.position.x).toBeCloseTo(mmToThree(10));
-    expect(obj.position.y).toBeCloseTo(mmToThree(30));
-    expect(obj.position.z).toBeCloseTo(mmToThree(-20));
+    expect(obj.position.y).toBeCloseTo(mmToThree(20));
+    expect(obj.position.z).toBeCloseTo(mmToThree(30));
   });
 
   it("identity transform yields zero position + identity quaternion", () => {
@@ -109,19 +113,16 @@ describe("applyBindingLocalTransform", () => {
     expect(obj.quaternion.w).toBeCloseTo(1);
   });
 
-  it("rz=90deg rotates +x_body to +y_body (90° around body Z)", () => {
-    // Body-frame check: a +X body-direction (1,0,0) should rotate to
-    // +Y body (0,1,0) under a +90° body-Z rotation. After labMmToThree
-    // axis swap: body (0,1,0) maps to three (0, 0, -1). So a vector
-    // at body (1,0,0) — i.e. three (1, 0, 0) — should end up at
-    // three (0, 0, -1).
+  it("rz=90deg rotates +x to +y (90° about three Z, raw XYZ Euler)", () => {
+    // Raw CAD-frame composition (matches ComponentsV2Editor.poseFromBinding):
+    // binding rz → rotation about three Z, so +X (1,0,0) → +Y (0,1,0).
     const obj = new THREE.Object3D();
     applyBindingLocalTransform(obj, makeNode("n", makeTransform({ rzDeg: 90 })));
-    const v = new THREE.Vector3(1, 0, 0); // +X in three is also +X in body
+    const v = new THREE.Vector3(1, 0, 0);
     v.applyQuaternion(obj.quaternion);
     expect(v.x).toBeCloseTo(0, 5);
-    expect(v.y).toBeCloseTo(0, 5);
-    expect(v.z).toBeCloseTo(-1, 5);
+    expect(v.y).toBeCloseTo(1, 5);
+    expect(v.z).toBeCloseTo(0, 5);
   });
 });
 
