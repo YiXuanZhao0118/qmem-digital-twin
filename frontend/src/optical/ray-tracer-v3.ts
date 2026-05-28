@@ -32,6 +32,7 @@ import {
   vec3Sub,
 } from "./beam-ray";
 import { jonesBodyToLab, jonesLabToBody } from "./jones";
+import { calculateProfileClipping } from "./profileUtils";
 import {
   type V3Pose,
   type V3Transform,
@@ -86,6 +87,8 @@ export type FaceHit = {
   face: Face;
   t: number;                  // ray-parameter at hit (along ray.direction)
   point: Vec3;                // hit position in same frame as ray
+  offsetFromCenterMm: number; // chief-ray distance from the face centre, in
+                              // the face plane — feeds aperture clipping
 };
 
 /** Ray-plane intersection. Returns null if the ray is parallel to the
@@ -123,7 +126,7 @@ export function intersectFace(
   const r = Math.sqrt(vec3Dot(offPerp, offPerp));
   if (r > face.apertureMm + 1e-9) return null;
 
-  return { face, t, point: hit };
+  return { face, t, point: hit, offsetFromCenterMm: r };
 }
 
 /** Find the nearest face hit across an asset's faces, optionally excluding
@@ -396,6 +399,8 @@ type SceneHit = {
   tLab: number;
   /** Hit point in body-local frame (op consumes this). */
   hitBody: Vec3;
+  /** Chief-ray distance from the face centre (face plane) — aperture clip. */
+  offsetFromCenterMm: number;
 };
 
 /** Find the nearest face hit across all flattened (scene × binding)
@@ -421,7 +426,7 @@ function nearestSceneHit(
       const hit = intersectFace(rayBody, face, { excludeFaceId });
       if (!hit) continue;
       if (best === null || hit.t < best.tLab) {
-        best = { slot, face, tLab: hit.t, hitBody: hit.point };
+        best = { slot, face, tLab: hit.t, hitBody: hit.point, offsetFromCenterMm: hit.offsetFromCenterMm };
       }
     }
   }
@@ -547,13 +552,29 @@ export function traceRayScene(
       ray.jones, ray.direction, dirBody,
       (v) => dirLabToBodyT(v, slot.effectiveTransform),
     );
+    // Propagate the Gaussian q to the face, then apply aperture clipping:
+    // a wide beam whose footprint overruns the clear aperture loses energy
+    // (vignetting). Profile-aware (ray / top-hat / gaussian) and ≈1 for a
+    // small beam well inside the aperture, so it's a no-op for the usual
+    // chief-ray setups. See profileUtils.calculateProfileClipping.
+    const qxAtFace = { re: ray.qx.re + tLab, im: ray.qx.im };
+    const qyAtFace = { re: ray.qy.re + tLab, im: ray.qy.im };
+    const apertureTransmission = calculateProfileClipping(
+      sceneHit.offsetFromCenterMm,
+      hitFace.apertureMm,
+      ray.profile,
+      qxAtFace,
+      qyAtFace,
+      ray.wavelengthNm,
+    );
     const rayAtFaceBody: BeamRay = {
       ...ray,
       origin: hitBody,
       direction: dirBody,
       jones: jonesBody,
-      qx: { re: ray.qx.re + tLab, im: ray.qx.im },
-      qy: { re: ray.qy.re + tLab, im: ray.qy.im },
+      qx: qxAtFace,
+      qy: qyAtFace,
+      powerMw: ray.powerMw * apertureTransmission,
       pathLengthMm: ray.pathLengthMm + tLab,
     };
 

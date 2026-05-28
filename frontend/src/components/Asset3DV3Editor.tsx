@@ -2525,16 +2525,19 @@ function KindSelectInline({
   onChange,
 }: {
   value: string;
-  kinds: Array<{ name: string; displayName: string; domain: string }>;
-  parentDomain: "optical" | "rf" | "mechanical";
+  kinds: Array<{ name: string; displayName: string; domains: string[] }>;
+  parentDomain: "all" | "optical" | "rf" | "mechanical";
   onChange: (v: string) => void;
 }) {
   const scoped = useMemo(() => {
-    // Mechanical rail: rail is parentDomain "optical" (forced by editor —
-    // see Asset3DV3Editor below where parentDomain is computed), so we
-    // fall back to listing every kind to let mechanical assets pick
-    // anything. Optical/RF rails narrow to their domain.
-    const filtered = kinds.filter((k) => k.domain === parentDomain);
+    // "all" filter lists every kind. Otherwise narrow to kinds that
+    // include this domain (multi-domain kinds like AOM appear under each
+    // of their domains). Empty result falls back to the full list so a
+    // mechanical asset can still pick something.
+    const filtered =
+      parentDomain === "all"
+        ? kinds
+        : kinds.filter((k) => k.domains.includes(parentDomain));
     return filtered.length > 0 ? filtered : kinds;
   }, [kinds, parentDomain]);
   const valueInRegistry = scoped.some((k) => k.name === value);
@@ -2573,7 +2576,7 @@ function AssetEditForm({
   setDraft: (draft: AssetDraft) => void;
   selectedAnchorIndex: number | null;
   setSelectedAnchorIndex: (index: number | null) => void;
-  parentDomain: "optical" | "rf" | "mechanical";
+  parentDomain: "all" | "optical" | "rf" | "mechanical";
   mode: Asset3DV3EditorMode;
 }) {
   const isBindingDev = mode === "binding-dev";
@@ -3070,9 +3073,9 @@ export type V3EditorDomain = "optical" | "rf" | "mechanical";
 export type Asset3DV3EditorMode = "binding-dev" | "phy-editor";
 
 export function Asset3DV3Editor({
-  domain = "optical",
+  domain = "all",
   mode = "binding-dev",
-}: { domain?: V3EditorDomain; mode?: Asset3DV3EditorMode } = {}) {
+}: { domain?: "all" | V3EditorDomain; mode?: Asset3DV3EditorMode } = {}) {
   const isBindingDev = mode === "binding-dev";
   const assets = useV3Catalog((state) => state.assets);
   const status = useV3Catalog((state) => state.status);
@@ -3130,6 +3133,8 @@ export function Asset3DV3Editor({
   // Mechanical because its kind is non-empty.
   const domainAssets = useMemo(() => {
     return assets.filter((asset) => {
+      // "all" filter: every asset, regardless of domain.
+      if (domain === "all") return true;
       // Multi-domain support: properties.domains[] is a user-set list of
       // composer rails this asset belongs to. When any entry matches the
       // current rail, include the asset ??same semantics as Component's
@@ -3149,8 +3154,8 @@ export function Asset3DV3Editor({
       // "none" is the mechanical placeholder kind.
       if (rawKind === "none") return domain === "mechanical";
       const registryKind = kinds.find((k) => k.name === rawKind);
-      if (registryKind?.domain === domain) return true;
-      if (registryKind && registryKind.domain !== domain) return false;
+      if (registryKind?.domains.includes(domain)) return true;
+      if (registryKind && !registryKind.domains.includes(domain)) return false;
       const kind = rawKind as ElementKind;
       const kindDomain = domainForElementKind(kind);
       if (kindDomain === domain) return true;
@@ -3642,7 +3647,10 @@ export function Asset3DV3Editor({
                         file: newAssetModal.file,
                         catalogId: newAssetModal.catalogId,
                         name: newAssetModal.name.trim(),
-                        domain,
+                        // A new asset needs a concrete domain; "all" is a
+                        // view filter, not a classification — default to
+                        // optical (the editor's historical default).
+                        domain: domain === "all" ? "optical" : domain,
                         unit: newAssetModal.unit,
                         scaleFactor,
                         precisionPreset: newAssetModal.precisionPreset,

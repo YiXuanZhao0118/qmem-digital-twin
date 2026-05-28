@@ -6,6 +6,17 @@ Convention:
     +s_beam = projection of GLOBAL_UP onto plane perpendicular to z_beam
     +p_beam = z_beam × s_beam     (right-handed)
 
+NOTE (parity / 2026-05-28): the frontend mirror
+(frontend/src/optical/jones.ts) was re-anchored so +s_beam = up × z_beam
+(in-table horizontal ⇒ 0° = horizontal) to fix the optical-link Pol angle
+display. This backend copy still uses the vertical-anchored s, so the two
+now DIVERGE by 90° in the absolute polarization-angle reference. Matching
+the backend is a deliberate follow-up — note tests/optical/
+test_solver_v3_isolator.py already fails forward-pass at 0.5 power
+(pre-existing frontend↔backend tracer divergence in how element
+body-rotations compose with the s-frame), so backend parity must fix that
+too, not just copy the one-line re-anchor.
+
 Reflection / refraction change beam direction → s/p basis must be
 rotated to express the same physical polarization in the new frame.
 """

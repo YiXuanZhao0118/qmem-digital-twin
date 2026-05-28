@@ -96,15 +96,31 @@ function buildChildrenIndex(collections: Collection[]): ChildrenIndex {
 function buildObjectsByCollection(
   objects: SceneObject[],
   members: CollectionMember[],
+  masterCollectionId: string | null,
 ): ObjectsByCollection {
   const objectById = new Map(objects.map((object) => [object.id, object]));
   const out: ObjectsByCollection = new Map();
+  const assigned = new Set<string>();
   for (const member of members) {
     const object = objectById.get(member.objectId);
     if (!object) continue;
+    assigned.add(object.id);
     const list = out.get(member.collectionId);
     if (list) list.push(object);
     else out.set(member.collectionId, [object]);
+  }
+  // Objects with no CollectionMember row fall back to Master so they stay
+  // visible and removable. The normal create_object API always assigns a
+  // home, but data seeded outside that flow can skip it (e.g.
+  // upsert_optical_table.py) — without this they render in 3D yet vanish
+  // from the tree, leaving no way to rename/lock/delete them.
+  if (masterCollectionId) {
+    for (const object of objects) {
+      if (assigned.has(object.id)) continue;
+      const list = out.get(masterCollectionId);
+      if (list) list.push(object);
+      else out.set(masterCollectionId, [object]);
+    }
   }
   for (const [, list] of out) list.sort((a, b) => a.name.localeCompare(b.name));
   return out;
@@ -217,10 +233,14 @@ export function OutlinerPanel() {
     [visibleObjects],
   );
 
+  const masterCollectionId = useMemo(
+    () => collections.find((collection) => collection.parentId === null)?.id ?? null,
+    [collections],
+  );
   const childrenIndex = useMemo(() => buildChildrenIndex(collections), [collections]);
   const objectsByCollection = useMemo(
-    () => buildObjectsByCollection(visibleObjects, collectionMembers),
-    [visibleObjects, collectionMembers],
+    () => buildObjectsByCollection(visibleObjects, collectionMembers, masterCollectionId),
+    [visibleObjects, collectionMembers, masterCollectionId],
   );
 
   /** All object IDs reachable from a collection, walking child collections

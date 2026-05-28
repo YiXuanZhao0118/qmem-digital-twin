@@ -61,7 +61,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0091_body_frame_position_to_body_frame"
+revision = "0091_body_frame_position"
 down_revision = "0090_drop_legacy_kind_columns"
 branch_labels = None
 depends_on = None

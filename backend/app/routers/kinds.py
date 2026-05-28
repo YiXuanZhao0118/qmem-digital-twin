@@ -57,9 +57,11 @@ async def list_kinds(
     domain: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[Kind]:
-    stmt = select(Kind).order_by(Kind.domain, Kind.name)
+    stmt = select(Kind).order_by(Kind.name)
     if domain is not None:
-        stmt = stmt.where(Kind.domain == domain)
+        # Match if the requested domain is one of the kind's domains, so a
+        # multi-domain part (e.g. AOM = optical+rf) shows up under each.
+        stmt = stmt.where(Kind.domains.any(domain))
     return list((await session.scalars(stmt)).all())
 
 

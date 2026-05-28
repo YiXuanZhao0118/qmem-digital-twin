@@ -3242,7 +3242,7 @@ class AgentMessageCreate(CamelModel):
 class KindBase(CamelModel):
     name: str
     display_name: str
-    domain: Literal["optical", "rf", "mechanical"]
+    domains: list[Literal["optical", "rf", "mechanical"]] = Field(min_length=1)
     op_set_name: str
     default_params: JsonDict = {}
     face_template: JsonDict = {}
@@ -3258,13 +3258,18 @@ class KindCreate(KindBase):
 class KindUpdate(CamelModel):
     """All fields optional — only the provided ones get patched.
 
-    ``name`` / ``domain`` / ``op_set_name`` are intentionally omitted:
-    renaming would break Asset3D references, and changing domain or
-    op_set would silently change tracer behavior. To rename or re-domain
-    a kind, create a new one and migrate references explicitly.
+    ``name`` and ``op_set_name`` are intentionally omitted: renaming
+    would break Asset3D references, and changing the op set would
+    silently change tracer behavior. ``domains`` *is* patchable — it is a
+    pure classification facet (which PHY Editor filters a kind appears
+    under), not tracer behavior, and multi-domain editing is the whole
+    point of the kinds editor.
     """
 
     display_name: str | None = None
+    domains: list[Literal["optical", "rf", "mechanical"]] | None = Field(
+        default=None, min_length=1
+    )
     default_params: JsonDict | None = None
     face_template: JsonDict | None = None
     needs_aperture: bool | None = None

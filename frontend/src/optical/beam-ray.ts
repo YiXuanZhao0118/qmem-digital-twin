@@ -26,6 +26,15 @@ import { type Complex, qAtWaist } from "./fiber/gaussian";
 
 export type Vec3 = { x: number; y: number; z: number };
 
+/** Transverse beam profile (cross-section shape). Carried through the
+ *  tracer so aperture clipping isn't hardcoded to Gaussian. The Gaussian
+ *  envelope itself still lives in qx/qy (astigmatic); this only tags the
+ *  cross-section kind. Absent ⇒ treated as `gaussian` for backward compat. */
+export type BeamProfile =
+  | { kind: "ray" }                        // ideal geometric line (binary aperture)
+  | { kind: "top_hat"; radiusMm: number }  // flat-top disc of fixed radius
+  | { kind: "gaussian" };                  // Gaussian envelope (uses qx/qy)
+
 export type BeamRay = {
   // ---- Chief ray (lab frame, mm) ----
   origin: Vec3;
@@ -34,6 +43,9 @@ export type BeamRay = {
   // ---- Gaussian beam envelope (per-axis q-parameter) ----
   qx: Complex;                // qx = (z − z_waist_x) + i·zR_x
   qy: Complex;                // qy = (z − z_waist_y) + i·zR_y
+
+  // ---- Transverse profile (cross-section kind for aperture clipping) ----
+  profile?: BeamProfile;      // absent ⇒ gaussian (uses qx/qy)
 
   // ---- Spectrum & energy ----
   wavelengthNm: number;
@@ -68,6 +80,7 @@ export function makeBeamRay(opts: {
   waistRadiusMm?: number;     // defaults to 0.5 mm
   powerMw?: number;           // defaults to 1.0
   jones?: [Complex, Complex]; // defaults to [+s, 0]
+  profile?: BeamProfile;      // defaults to { kind: "gaussian" }
 }): BeamRay {
   const lambdaMm = opts.wavelengthNm * 1e-6;
   const w0Mm = opts.waistRadiusMm ?? 0.5;
@@ -80,6 +93,7 @@ export function makeBeamRay(opts: {
     wavelengthNm: opts.wavelengthNm,
     powerMw: opts.powerMw ?? 1.0,
     jones: opts.jones ?? [ONE_C, ZERO_C],
+    profile: opts.profile ?? { kind: "gaussian" },
     pathLengthMm: 0,
     phaseAccumRad: 0,
   };

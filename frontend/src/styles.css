@@ -5121,6 +5121,38 @@ body.is-timing-bar-drag * {
   padding: 0 10px;
 }
 
+.phy-editor-section-group {
+  margin-bottom: 16px;
+}
+
+.phy-editor-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 4px;
+}
+
+.phy-editor-chip {
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--line, #d8ded8);
+  border-radius: 999px;
+  color: var(--ink, #242726);
+  font-family: 'Inter', 'Segoe UI', sans-serif;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.phy-editor-chip:hover {
+  background: var(--accent-soft, rgba(15, 118, 110, 0.08));
+}
+
+.phy-editor-chip.is-active {
+  background: var(--accent, #0f766e);
+  border-color: var(--accent-strong, #115e59);
+  color: #ffffff;
+}
+
 .phy-editor-pane {
   background: var(--panel, #fbfbf8);
   display: flex;

@@ -6,9 +6,14 @@
  * Frame convention:
  *   Jones = [E_s, E_p] in **beam-local s/p frame**, where
  *     +z_beam = beam.direction (unit)
- *     +s_beam = projection of a global "up" reference onto the plane
- *               perpendicular to z_beam (then normalized)
- *     +p_beam = z_beam × s_beam       (right-handed)
+ *     +s_beam = normalize(up × z_beam) — the in-plane transverse axis
+ *               perpendicular to BOTH the beam and the "up" reference.
+ *               For a beam running horizontally across the table this is
+ *               an in-table (horizontal) axis, so a 0°-referenced
+ *               polarization / element axis (transmissionAxisDegBeamLocal
+ *               = 0, fast axis = 0, …) is HORIZONTAL, not vertical.
+ *     +p_beam = z_beam × s_beam       (right-handed; z_beam = s × p)
+ *               (≈ vertical for a horizontal beam).
  *
  * When direction changes (e.g. mirror reflection), the s/p basis flips
  * parity and must be rotated to express the same physical polarization
@@ -23,8 +28,6 @@ import { type Complex, cMul, cAdd } from "./fiber/gaussian";
 import {
   type Vec3,
   vec3Dot,
-  vec3Scale,
-  vec3Sub,
   normalize,
 } from "./beam-ray";
 
@@ -42,10 +45,15 @@ export function beamLocalSP(direction: Vec3): { s: Vec3; p: Vec3 } {
   // Choose up reference: prefer GLOBAL_UP unless beam is parallel to it.
   const dotUp = vec3Dot(d, GLOBAL_UP);
   const up = Math.abs(dotUp) > 0.999 ? FALLBACK_UP : GLOBAL_UP;
-  // s = up - (up·d)·d, then normalize → perpendicular to d in the (d, up) plane
-  const upMinusProj = vec3Sub(up, vec3Scale(d, vec3Dot(up, d)));
-  const s = normalize(upMinusProj);
-  // p = d × s (right-handed)
+  // s = up × d, normalized → perpendicular to BOTH up and d, so it lies in
+  // the horizontal (table) plane for a non-vertical beam. This makes a
+  // 0°-referenced polarization / element axis horizontal, not vertical.
+  const s = normalize({
+    x: up.y * d.z - up.z * d.y,
+    y: up.z * d.x - up.x * d.z,
+    z: up.x * d.y - up.y * d.x,
+  });
+  // p = d × s (right-handed: d = s × p)
   const p: Vec3 = {
     x: d.y * s.z - d.z * s.y,
     y: d.z * s.x - d.x * s.z,

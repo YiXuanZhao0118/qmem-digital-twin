@@ -1533,7 +1533,7 @@ KINDS = [
     {
         "name": "optical_table",
         "display_name": "Optical Table",
-        "domain": "mechanical",
+        "domains": ["mechanical"],
         "op_set_name": "optical_table",
         "default_params": {},
         "face_template": {},

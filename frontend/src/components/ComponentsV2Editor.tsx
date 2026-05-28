@@ -235,22 +235,28 @@ function replaceSpiralTubeWithCylinder(
 }
 
 /**
- * Classify a Component into one of three composer domains.
+ * The set of composer domains a Component belongs to. A part can span
+ * more than one (e.g. an AOM is optical + RF), so this returns every
+ * matching domain rather than a single primary.
  *
  * Priority:
- *   1. `physicsCapabilities` — explicit declaration (only ~21/290 today)
+ *   1. `physicsCapabilities` — explicit declaration (may list several)
  *   2. `componentType` → ElementKind → ElementDomain (optical/rf via kinds
  *      registry; covers most components that have a physics kind)
  *   3. Fallback "mechanical" — posts, mounts, annotations, chassis, etc.
  *      that don't map to any kind.
  */
-function classifyComponentDomain(c: ComponentItem): ComposerDomain {
+function componentDomains(c: ComponentItem): ComposerDomain[] {
   const caps = c.physicsCapabilities as readonly string[];
-  if (caps.includes("optical")) return "optical";
-  if (caps.includes("rf")) return "rf";
-  const kind = c.kindId != null ? kindIdToElementKind(c.kindId) : null;
-  if (kind) return domainForElementKind(kind);
-  return "mechanical";
+  const out = new Set<ComposerDomain>();
+  if (caps.includes("optical")) out.add("optical");
+  if (caps.includes("rf")) out.add("rf");
+  if (caps.includes("mechanical")) out.add("mechanical");
+  if (out.size === 0) {
+    const kind = c.kindId != null ? kindIdToElementKind(c.kindId) : null;
+    out.add(kind ? domainForElementKind(kind) : "mechanical");
+  }
+  return Array.from(out);
 }
 
 /** Mirrors the Asset3DV3Editor `domainAssets` bucketing, but returns the
@@ -350,11 +356,70 @@ const tdStyle = TD;
  *  Both modes share the 3D preview + probe-beam viz. */
 export type ComponentsV2EditorMode = "binding-dev" | "phy-editor";
 
+/** Derive a probe-beam origin + direction that runs along the component's
+ *  exposed optical axis (the `optical_in` → `optical_out` faces from
+ *  `exposedFaces`). Resolves each exposed face to its world position via
+ *  the owning binding's pivot, so the beam traverses the real optical
+ *  elements wherever they sit, instead of the hardcoded component z-axis.
+ *  Returns null when the component doesn't declare both optical ports. */
+function computeProbeOpticalAim(
+  component: { exposedFaces?: unknown } | null,
+  bindings: ReadonlyArray<{ id: string; role?: string | null; asset3dId?: string | null }>,
+  pivotById: ReadonlyMap<string, THREE.Object3D>,
+  assetById: ReadonlyMap<string, unknown>,
+): { pos: { x: number; y: number; z: number }; dir: { x: number; y: number; z: number } } | null {
+  const exposed = Array.isArray(component?.exposedFaces)
+    ? (component!.exposedFaces as Array<Record<string, unknown>>)
+    : [];
+  const faceWorld = (componentFaceId: string): THREE.Vector3 | null => {
+    const ef = exposed.find((e) => e?.componentFaceId === componentFaceId);
+    const bindingKey = ef?.assetBindingId;
+    if (typeof bindingKey !== "string") return null;
+    // exposedFaces may reference the binding by its UUID or its role name.
+    const binding = bindings.find((b) => b.id === bindingKey || b.role === bindingKey);
+    if (!binding) return null;
+    const pivot = pivotById.get(binding.id);
+    if (!pivot) return null;
+    // Prefer the exact exposed face position; fall back to the binding's
+    // own origin when the referenced face id isn't present on the bound
+    // asset. Some catalog rows reference faces that don't exist on their
+    // asset (e.g. IO-3-850-HP's exposedFaces name "A"/"B" while the Glan
+    // prism asset only has "B1"); using the binding origin still gives a
+    // usable optical_in → optical_out axis through the real elements.
+    const faceId = ef?.assetFaceId;
+    const asset = binding.asset3dId
+      ? (assetById.get(binding.asset3dId) as
+          | { faces?: ReadonlyArray<{ id?: string; positionMmBodyLocal?: { x: number; y: number; z: number } | null }> | null }
+          | undefined)
+      : undefined;
+    const face = typeof faceId === "string"
+      ? (asset?.faces ?? []).find((f) => f?.id === faceId)
+      : undefined;
+    const p = face?.positionMmBodyLocal;
+    const local = p ? new THREE.Vector3(p.x, p.y, p.z) : new THREE.Vector3(0, 0, 0);
+    return local.applyMatrix4(pivot.matrixWorld);
+  };
+  const inPos = faceWorld("optical_in");
+  const outPos = faceWorld("optical_out");
+  if (!inPos || !outPos) return null;
+  const axis = outPos.clone().sub(inPos);
+  if (axis.lengthSq() < 1e-9) return null;
+  axis.normalize();
+  // Start the probe a bit before the input face so the entry segment is
+  // visible, then aim straight through to the output face.
+  const standoff = Math.max(outPos.distanceTo(inPos) * 0.6, 20);
+  const origin = inPos.clone().sub(axis.clone().multiplyScalar(standoff));
+  return {
+    pos: { x: origin.x, y: origin.y, z: origin.z },
+    dir: { x: axis.x, y: axis.y, z: axis.z },
+  };
+}
+
 export function ComponentsV2Editor({
   domain,
   mode = "binding-dev",
 }: {
-  domain: ComposerDomain;
+  domain: "all" | ComposerDomain;
   mode?: ComponentsV2EditorMode;
 }) {
   const isBindingDev = mode === "binding-dev";
@@ -362,11 +427,15 @@ export function ComponentsV2Editor({
   const assets = useSceneStore((s) => s.scene.assets);
   const loadScene = useSceneStore((s) => s.loadScene);
 
-  // Show only Components whose classification matches this editor's domain.
-  // The same source list (`scene.components`) is filtered three different
-  // ways by the three rail items (Optical / RF / Mechanical COMPONENTS).
+  // Filter the shared `scene.components` list by the active domain chip.
+  // "all" shows everything; a specific domain shows every component that
+  // belongs to it, including multi-domain parts (an AOM is in both
+  // Optical and RF).
   const components = useMemo(
-    () => allComponents.filter((c) => classifyComponentDomain(c) === domain),
+    () =>
+      domain === "all"
+        ? allComponents
+        : allComponents.filter((c) => componentDomains(c).includes(domain)),
     [allComponents, domain],
   );
 
@@ -985,13 +1054,16 @@ function KindSelectField({
 }: {
   label: string;
   value: string;
-  kinds: Array<{ name: string; displayName: string; domain: string }>;
+  kinds: Array<{ name: string; displayName: string; domains: string[] }>;
   onCommit: (v: string) => void;
 }) {
   const byDomain = useMemo(() => {
     const out: Record<string, typeof kinds> = { optical: [], rf: [], mechanical: [] };
+    // A multi-domain kind appears under each of its domains' optgroups.
     for (const k of kinds) {
-      (out[k.domain] ?? (out[k.domain] = [])).push(k);
+      for (const d of k.domains) {
+        (out[d] ?? (out[d] = [])).push(k);
+      }
     }
     for (const arr of Object.values(out)) arr.sort((a, b) => a.name.localeCompare(b.name));
     return out;
@@ -1430,6 +1502,10 @@ function ComponentPreview3D({
   // uses it to re-parent the gizmo under the selected binding's parent
   // chain so orientation drags compose correctly across nested levels.
   const pivotByBindingIdRef = useRef<Map<string, THREE.Object3D>>(new Map());
+  // Component id whose optical axis the probe beam was last auto-aimed to.
+  // Re-aim only on a component switch so manual probe tweaks within a
+  // component aren't clobbered on every pose edit.
+  const autoAimedRef = useRef<string | null>(null);
   // Probe-beam visualization lives in component frame (under `root`) so
   // the beam is traced through *every* binding's faces, not just the
   // selected one. Rebuilt when bindings or beam controls change.
@@ -2421,6 +2497,23 @@ function ComponentPreview3D({
       }
       pivotByBindingIdRef.current = pivotById;
       root.updateMatrixWorld(true);
+      // On a component switch, aim the probe beam along the exposed
+      // optical axis (optical_in → optical_out) so it traverses the real
+      // optical elements instead of the hardcoded component z-axis.
+      // autoAimedRef gates this to component changes so manual probe
+      // tweaks aren't clobbered when only a pose field is edited.
+      if (componentId && componentId !== autoAimedRef.current) {
+        const aim = computeProbeOpticalAim(parentComponent, bindings, pivotById, assetById);
+        if (aim) {
+          beamRef.current = { ...beamRef.current, pos: aim.pos, dir: aim.dir };
+          setBeamPos(aim.pos);
+          setBeamDir(aim.dir);
+          // Mark aimed only on success: bindings load async, so the first
+          // effect run can see an empty list. Retry on the later run that
+          // has them rather than locking in a miss.
+          autoAimedRef.current = componentId;
+        }
+      }
       rebuildGizmo();
       rebuildProbeBeam();
       if (restoreCamera) applyCachedCamera();

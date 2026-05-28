@@ -44,5 +44,5 @@ export const useKindsStore = create<KindsState>((set, get) => ({
     await get().fetchAll();
   },
 
-  byDomain: (domain) => get().kinds.filter((k) => k.domain === domain),
+  byDomain: (domain) => get().kinds.filter((k) => k.domains.includes(domain)),
 }));

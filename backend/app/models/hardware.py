@@ -186,8 +186,14 @@ class Kind(Base):
     # "lens", "my_custom_lens".
     name: Mapped[str] = mapped_column(Text, nullable=False, unique=True, index=True)
     display_name: Mapped[str] = mapped_column(Text, nullable=False)
-    # "optical" | "rf" | "mechanical". CHECK-constrained.
-    domain: Mapped[str] = mapped_column(Text, nullable=False)
+    # Domains this kind participates in, e.g. ["optical", "rf"] for an AOM
+    # (optical beam path + RF drive port). Non-empty; each element is one
+    # of optical/rf/mechanical (CHECK-constrained). Replaces the old
+    # single ``domain`` column (alembic 0092) so a part that is both
+    # optical and RF surfaces under every matching PHY Editor filter.
+    domains: Mapped[list[str]] = mapped_column(
+        sa.ARRAY(Text), nullable=False, default=list, server_default="{}"
+    )
     # Name of the code-side op set this kind dispatches through. For
     # built-in kinds, equal to ``name`` (e.g. "lens" → "lens"). For
     # user-created variants, points to an existing entry (e.g.
@@ -225,8 +231,12 @@ class Kind(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "domain IN ('optical', 'rf', 'mechanical')",
-            name="kind_domain_check",
+            "domains <@ ARRAY['optical', 'rf', 'mechanical']::text[]",
+            name="kind_domains_subset_check",
+        ),
+        CheckConstraint(
+            "cardinality(domains) >= 1",
+            name="kind_domains_nonempty_check",
         ),
     )
 

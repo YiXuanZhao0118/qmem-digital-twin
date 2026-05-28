@@ -43,6 +43,7 @@ import {
 
 type EditDraft = {
   displayName: string;
+  domains: KindDomain[];
   defaultParams: string;
   faceTemplate: string;
   needsAperture: boolean;
@@ -50,9 +51,18 @@ type EditDraft = {
   description: string;
 };
 
+const ALL_DOMAINS: KindDomain[] = ["optical", "rf", "mechanical"];
+
+const DOMAIN_BADGE_BG: Record<KindDomain, string> = {
+  optical: "#2563eb",
+  rf: "#d97706",
+  mechanical: "#6b7280",
+};
+
 function rowToDraft(row: KindRow): EditDraft {
   return {
     displayName: row.displayName,
+    domains: row.domains,
     defaultParams: JSON.stringify(row.defaultParams ?? {}, null, 2),
     faceTemplate: JSON.stringify(row.faceTemplate ?? {}, null, 2),
     needsAperture: row.needsAperture,
@@ -86,9 +96,9 @@ function parseJsonObject(s: string, fieldLabel: string): Record<string, unknown>
 }
 
 export function KindsEditor({
-  domain = "optical",
+  domain = "all",
   readOnly = false,
-}: { domain?: KindDomain; readOnly?: boolean } = {}) {
+}: { domain?: "all" | KindDomain; readOnly?: boolean } = {}) {
   const [rows, setRows] = useState<KindRow[]>([]);
   const [loadStatus, setLoadStatus] = useState<"idle" | "loading" | "error">("idle");
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -104,7 +114,7 @@ export function KindsEditor({
   const [createDraft, setCreateDraft] = useState<KindCreatePayload>({
     name: "",
     displayName: "",
-    domain,
+    domains: domain === "all" ? ["optical"] : [domain],
     opSetName: "",
     defaultParams: {},
     faceTemplate: {},
@@ -132,7 +142,7 @@ export function KindsEditor({
     setLoadStatus("loading");
     setLoadError(null);
     try {
-      const data = await listKindsApi(domain);
+      const data = await listKindsApi(domain === "all" ? undefined : domain);
       setRows(data);
       setLoadStatus("idle");
     } catch (e) {
@@ -175,8 +185,12 @@ export function KindsEditor({
     setEditError(null);
     let patch: KindPatchPayload;
     try {
+      if (editDraft.domains.length === 0) {
+        throw new Error("at least one domain is required");
+      }
       patch = {
         displayName: editDraft.displayName,
+        domains: editDraft.domains,
         defaultParams: parseJsonObject(editDraft.defaultParams, "defaultParams"),
         faceTemplate: parseJsonObject(editDraft.faceTemplate, "faceTemplate"),
         needsAperture: editDraft.needsAperture,
@@ -213,6 +227,9 @@ export function KindsEditor({
       if (!payload.name) throw new Error("name is required");
       if (!payload.displayName) throw new Error("displayName is required");
       if (!payload.opSetName) throw new Error("opSetName is required");
+      if (!payload.domains || payload.domains.length === 0) {
+        throw new Error("at least one domain is required");
+      }
     } catch (e) {
       setCreateStatus("error");
       setCreateError((e as Error).message);
@@ -225,7 +242,7 @@ export function KindsEditor({
       setCreateDraft({
         name: "",
         displayName: "",
-        domain,
+        domains: domain === "all" ? ["optical"] : [domain],
         opSetName: "",
         defaultParams: {},
         faceTemplate: {},
@@ -258,7 +275,14 @@ export function KindsEditor({
     }
   };
 
-  const domainLabel = domain === "rf" ? "RF" : domain === "mechanical" ? "Mechanical" : "Optical";
+  const domainLabel =
+    domain === "all"
+      ? "All domains"
+      : domain === "rf"
+        ? "RF"
+        : domain === "mechanical"
+          ? "Mechanical"
+          : "Optical";
 
   const filtered = useMemo(() => {
     const needle = filterText.trim().toLowerCase();
@@ -293,6 +317,12 @@ export function KindsEditor({
 
   const startCreate = () => {
     if (editingId) cancelEdit();
+    // Seed the new kind's domains from the active filter so creating
+    // from a domain-scoped view pre-checks that domain.
+    setCreateDraft((d) => ({
+      ...d,
+      domains: domain === "all" ? ["optical"] : [domain],
+    }));
     setCreateOpen(true);
   };
 
@@ -308,13 +338,17 @@ export function KindsEditor({
   //   - viewing existing  → Edit + Delete (suppressed in read-only)
   const isEditing = !!editingId && !!editDraft;
   const headerTitle = createOpen
-    ? `+ New kind (${domainLabel})`
+    ? domain === "all"
+      ? "+ New kind"
+      : `+ New kind (${domainLabel})`
     : selectedRow?.displayName ?? `Select a kind`;
   const headerSubtitle = createOpen
     ? "draft"
     : selectedRow
       ? selectedRow.name
-      : `${rows.length} ${domain}-element kind${rows.length === 1 ? "" : "s"} (DB)`;
+      : `${rows.length} kind${rows.length === 1 ? "" : "s"}${
+          domain === "all" ? "" : ` · ${domainLabel}`
+        } (DB)`;
   const delStatus = selectedRow ? deleteStatus[selectedRow.id] ?? "idle" : "idle";
 
   return (
@@ -365,6 +399,9 @@ export function KindsEditor({
           >
             <div style={{ fontWeight: 700 }}>{row.displayName}</div>
             <div style={{ fontSize: 10, color: "#6b7280" }}>{row.name}</div>
+            <div style={{ marginTop: 3 }}>
+              <DomainBadges domains={row.domains} />
+            </div>
           </button>
         ))}
       </aside>
@@ -489,6 +526,12 @@ export function KindsEditor({
                 </Field>
               </FieldGrid>
 
+              <div style={SECTION_LABEL}>domains</div>
+              <DomainCheckboxes
+                value={editDraft.domains}
+                onChange={(domains) => setEditDraft({ ...editDraft, domains })}
+              />
+
               <div style={SECTION_LABEL}>defaultParams (JSON)</div>
               <textarea
                 value={editDraft.defaultParams}
@@ -532,6 +575,12 @@ export function KindsEditor({
                   <tr>
                     <td style={{ ...TD, color: "#6b7280" }}>name</td>
                     <td style={TD}>{selectedRow.displayName}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ ...TD, color: "#6b7280" }}>domains</td>
+                    <td style={TD}>
+                      <DomainBadges domains={selectedRow.domains} />
+                    </td>
                   </tr>
                   <tr>
                     <td style={{ ...TD, color: "#6b7280" }}>op_set</td>
@@ -624,6 +673,12 @@ export function KindsEditor({
                 </Field>
               </FieldGrid>
 
+              <div style={SECTION_LABEL}>domains</div>
+              <DomainCheckboxes
+                value={createDraft.domains}
+                onChange={(domains) => setCreateDraft({ ...createDraft, domains })}
+              />
+
               <div style={SECTION_LABEL}>defaultParams (JSON)</div>
               <textarea
                 value={createJsonDrafts.defaultParams}
@@ -684,6 +739,57 @@ function FieldGrid({ children }: { children: React.ReactNode }) {
       }}
     >
       {children}
+    </div>
+  );
+}
+
+function DomainBadges({ domains }: { domains: KindDomain[] }) {
+  return (
+    <span style={{ display: "inline-flex", gap: 4, flexWrap: "wrap" }}>
+      {domains.map((d) => (
+        <span
+          key={d}
+          style={{
+            fontSize: 9,
+            padding: "1px 5px",
+            borderRadius: 3,
+            background: DOMAIN_BADGE_BG[d],
+            color: "#fff",
+            textTransform: "uppercase",
+            letterSpacing: "0.03em",
+          }}
+        >
+          {d}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function DomainCheckboxes({
+  value,
+  onChange,
+}: {
+  value: KindDomain[];
+  onChange: (next: KindDomain[]) => void;
+}) {
+  const toggle = (d: KindDomain) =>
+    onChange(value.includes(d) ? value.filter((x) => x !== d) : [...value, d]);
+  return (
+    <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+      {ALL_DOMAINS.map((d) => (
+        <label
+          key={d}
+          style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#6b7280" }}
+        >
+          <input
+            type="checkbox"
+            checked={value.includes(d)}
+            onChange={() => toggle(d)}
+          />
+          {d}
+        </label>
+      ))}
     </div>
   );
 }

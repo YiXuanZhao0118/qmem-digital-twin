@@ -234,17 +234,45 @@ const HISTORY_MAX_DEPTH = 50;
 // Touch-only helpers; if localStorage is unavailable (private mode, SSR)
 // they degrade silently and the app falls back to the default scene view.
 const PERSIST_KEY = "qmem.editorState";
+
+/** A selection inside the PHY Editor sub-page. The rail's top level is
+ *  the catalog section (Kinds / Asset3D / Components); ``domain`` is a
+ *  cross-cutting filter ("all" plus the three PHY domains) because a
+ *  part can belong to more than one domain (e.g. an AOM is optical+rf),
+ *  so domain can no longer be the primary axis of the tree. */
+export type PhyEditorView = {
+  section: "kinds" | "asset3d" | "components";
+  domain: "all" | "optical" | "rf" | "mechanical";
+};
+
+/** Validate a persisted view against the current schema. Returns null
+ *  for anything that doesn't match — including the pre-rail-flip shape
+ *  ({ domain, section: "components" | "composer" }), which we'd rather
+ *  reset to the editor home than restore into the wrong sub-editor. */
+function normalizePhyEditorView(v: unknown): PhyEditorView | null {
+  if (!v || typeof v !== "object") return null;
+  const { section, domain } = v as Record<string, unknown>;
+  const sectionOk =
+    section === "kinds" || section === "asset3d" || section === "components";
+  const domainOk =
+    domain === "all" ||
+    domain === "optical" ||
+    domain === "rf" ||
+    domain === "mechanical";
+  return sectionOk && domainOk ? ({ section, domain } as PhyEditorView) : null;
+}
+
 type PersistedEditorState = {
   editorMode?: "scene" | "phy-editor";
-  phyEditorView?:
-    | { domain: "optical" | "rf" | "mechanical"; section: "kinds" | "components" | "composer" }
-    | null;
+  phyEditorView?: PhyEditorView | null;
 };
 function readPersistedEditorState(): PersistedEditorState {
   try {
     if (typeof window === "undefined") return {};
     const raw = window.localStorage.getItem(PERSIST_KEY);
-    return raw ? (JSON.parse(raw) as PersistedEditorState) : {};
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as PersistedEditorState;
+    return { ...parsed, phyEditorView: normalizePhyEditorView(parsed.phyEditorView) };
   } catch {
     return {};
   }
@@ -296,11 +324,9 @@ type SceneStore = {
   /** Currently active PHY editor view inside the sub-page. `null` =
    *  editor "home" (left rail visible, right pane shows a hint asking
    *  the user to pick a sub-editor). */
-  phyEditorView:
-    | { domain: "optical" | "rf" | "mechanical"; section: "kinds" | "components" | "composer" }
-    | null;
+  phyEditorView: PhyEditorView | null;
   /** Asset3D currently being edited (anchors[]). When `phyEditorView`
-   *  is not the optical_components editor, this is null. */
+   *  is not the Asset3D editor, this is null. */
   editingAssetId: string | null;
   /** Set by sub-editors when their in-memory drafts have unsaved
    *  changes. PhyEditor's top-bar Back button reads this to decide
@@ -359,12 +385,8 @@ type SceneStore = {
   /** Close the PHY editor and return to the main scene. */
   closePhyEditor: () => void;
   /** Switch to a specific sub-editor inside the PHY editor (e.g.
-   *  optical → components). When null, returns to the editor home. */
-  setPhyEditorView: (
-    view:
-      | { domain: "optical" | "rf" | "mechanical"; section: "kinds" | "components" | "composer" }
-      | null,
-  ) => void;
+   *  Asset3D filtered to RF). When null, returns to the editor home. */
+  setPhyEditorView: (view: PhyEditorView | null) => void;
   /** Persist anchor edits for an Asset3D. Goes through the backend
    *  PUT /api/assets/{id} so other clients see the change via WS. */
   updateAssetAnchors: (

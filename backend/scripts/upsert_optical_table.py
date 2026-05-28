@@ -9,13 +9,14 @@ from sqlalchemy import select
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.db import AsyncSessionLocal  # noqa: E402
-from app.models import Asset3D, Component, Kind, SceneObject  # noqa: E402
+from app.models import Asset3D, CollectionMember, Component, Kind, SceneObject  # noqa: E402
+from app.routers.collections import get_master_collection  # noqa: E402
 
 
 KIND = {
     "name": "optical_table",
     "display_name": "Optical Table",
-    "domain": "mechanical",
+    "domains": ["mechanical"],
     "op_set_name": "optical_table",
     "default_params": {},
     "face_template": {},
@@ -102,10 +103,25 @@ async def main() -> None:
             scene_objects[0] if scene_objects else None,
         )
         if scene_object is None:
-            session.add(SceneObject(component_id=component.id, **SCENE_OBJECT))
+            scene_object = SceneObject(component_id=component.id, **SCENE_OBJECT)
+            session.add(scene_object)
         else:
             for key, value in SCENE_OBJECT.items():
                 setattr(scene_object, key, value)
+        await session.flush()
+
+        # The Outliner is keyed by collection membership: a SceneObject with no
+        # CollectionMember renders in 3D but is invisible to (and unremovable
+        # from) the collection tree. Mirror create_object / seed.py and
+        # guarantee a Master Collection home.
+        existing_member = await session.scalars(
+            select(CollectionMember).where(CollectionMember.object_id == scene_object.id)
+        )
+        if existing_member.first() is None:
+            master = await get_master_collection(session)
+            session.add(
+                CollectionMember(collection_id=master.id, object_id=scene_object.id)
+            )
 
         await session.commit()
         print("Upserted locked optical table component.")

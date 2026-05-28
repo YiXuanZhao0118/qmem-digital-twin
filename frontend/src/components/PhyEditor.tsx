@@ -1,19 +1,51 @@
 /**
- * PhyEditor — full-page sub-page wrapping per-domain physics editors.
+ * PhyEditor — full-page sub-page wrapping the physics catalog editors.
  * Activated when `sceneStore.editorMode === "phy-editor"`.
  *
- * Layout: left rail (PHY domains) + right pane (selected sub-editor).
- * All editors mount in binding-dev mode so the catalog (Kinds /
- * Asset3D / Components) is always CRUD-capable. Default landing =
- * optical kinds catalog.
+ * Layout: left rail + right pane. The rail's TOP LEVEL is the catalog
+ * section (KIND / ASSET3D / COMPONENT) because that's the primary axis
+ * of the data model. PHY domain (Optical / RF / Mechanical) is a
+ * cross-cutting *filter* below it — a single part can belong to more
+ * than one domain (an AOM is optical + RF), so domain can't be the tree
+ * root without duplicating those parts. All editors mount in
+ * binding-dev mode so the catalog is always CRUD-capable. Default
+ * landing = Kinds, all domains.
  */
 
 import { useEffect } from "react";
 
-import { useSceneStore } from "../store/sceneStore";
+import { useSceneStore, type PhyEditorView } from "../store/sceneStore";
 import { Asset3DV3Editor } from "./Asset3DV3Editor";
 import { ComponentsV2Editor } from "./ComponentsV2Editor";
 import { KindsEditor } from "./KindsEditor";
+
+type Section = PhyEditorView["section"];
+type DomainFilter = PhyEditorView["domain"];
+
+const SECTIONS: { key: Section; label: string; hint: string }[] = [
+  { key: "kinds", label: "KIND", hint: "contract registry" },
+  { key: "asset3d", label: "ASSET3D", hint: "faces + transitions" },
+  { key: "components", label: "COMPONENT", hint: "compose Asset3D into a part" },
+];
+
+const DOMAIN_FILTERS: { key: DomainFilter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "optical", label: "Optical" },
+  { key: "rf", label: "RF" },
+  { key: "mechanical", label: "Mechanical" },
+];
+
+const SECTION_LABEL: Record<Section, string> = {
+  kinds: "KIND",
+  asset3d: "ASSET3D",
+  components: "COMPONENT",
+};
+const DOMAIN_LABEL: Record<DomainFilter, string> = {
+  all: "All domains",
+  optical: "Optical",
+  rf: "RF",
+  mechanical: "Mechanical",
+};
 
 export function PhyEditor() {
   const phyEditorView = useSceneStore((s) => s.phyEditorView);
@@ -34,6 +66,11 @@ export function PhyEditor() {
     }
   }, [loadScene, sceneComponents.length, sceneBindings]);
 
+  // null view = editor home; default the rail highlight + pane to the
+  // Kinds catalog across all domains so the page is never blank.
+  const activeSection: Section = phyEditorView?.section ?? "kinds";
+  const activeDomain: DomainFilter = phyEditorView?.domain ?? "all";
+
   const promptIfDirty = (action: string): boolean => {
     if (!phyEditorDirty) return true;
     return window.confirm(
@@ -46,44 +83,12 @@ export function PhyEditor() {
     closePhyEditor();
   };
 
-  const switchView = (
-    view:
-      | { domain: "optical" | "rf" | "mechanical"; section: "kinds" | "components" | "composer" }
-      | null,
-  ) => {
-    if (
-      phyEditorView &&
-      (!view ||
-        view.domain !== phyEditorView.domain ||
-        view.section !== phyEditorView.section) &&
-      !promptIfDirty("switch to a different editor")
-    ) {
-      return;
-    }
-    setPhyEditorView(view);
+  const switchView = (next: PhyEditorView) => {
+    const changed =
+      next.section !== activeSection || next.domain !== activeDomain;
+    if (changed && !promptIfDirty("switch to a different view")) return;
+    setPhyEditorView(next);
   };
-
-  const opticalActive = phyEditorView?.domain === "optical";
-  const opticalKinds = opticalActive && phyEditorView?.section === "kinds";
-  const opticalComponents =
-    opticalActive && phyEditorView?.section === "components";
-  const opticalComposer =
-    opticalActive && phyEditorView?.section === "composer";
-  const rfActive = phyEditorView?.domain === "rf";
-  const rfKinds = rfActive && phyEditorView?.section === "kinds";
-  const rfComponents = rfActive && phyEditorView?.section === "components";
-  const rfComposer = rfActive && phyEditorView?.section === "composer";
-  const mechanicalActive = phyEditorView?.domain === "mechanical";
-  const mechanicalKinds = mechanicalActive && phyEditorView?.section === "kinds";
-  const mechanicalAsset3D =
-    mechanicalActive && phyEditorView?.section === "components";
-  const mechanicalComposer =
-    mechanicalActive && phyEditorView?.section === "composer";
-
-  // Default landing (no rail item selected) shows the optical kinds
-  // catalog — same content as clicking the rail's Kinds entry, so the
-  // user sees what kinds exist without having to click anything first.
-  const showDefaultLanding = phyEditorView === null;
 
   return (
     <div className="phy-editor">
@@ -99,17 +104,7 @@ export function PhyEditor() {
           <strong>PHY Editor</strong>
           {phyEditorView && (
             <span style={{ opacity: 0.7, marginLeft: 8 }}>
-              · {phyEditorView.domain} → {
-                // Internal section names ("components" routes the Asset3D
-                // editor; "composer" routes the Components composer) are
-                // historical and confuse anyone reading the breadcrumb.
-                // Surface user-facing labels that match the rail.
-                phyEditorView.section === "components"
-                  ? "asset3d"
-                  : phyEditorView.section === "composer"
-                    ? "components"
-                    : phyEditorView.section
-              }
+              · {SECTION_LABEL[activeSection]} · {DOMAIN_LABEL[activeDomain]}
             </span>
           )}
         </div>
@@ -129,154 +124,54 @@ export function PhyEditor() {
         style={{ gridTemplateRows: "minmax(0, 1fr)" }}
       >
         <aside className="phy-editor-rail">
-          <div className="phy-editor-rail-header">PHY domains</div>
-
-          <div className="phy-editor-domain">
-            <div className="phy-editor-domain-title">▼ Optical</div>
-            <button
-              type="button"
-              className={
-                "phy-editor-rail-item" +
-                (opticalKinds ? " is-active" : "")
-              }
-              onClick={() =>
-                switchView({ domain: "optical", section: "kinds" })
-              }
-            >
-              optical_kinds
-              <span className="phy-editor-rail-hint">contract registry</span>
-            </button>
-            <button
-              type="button"
-              className={
-                "phy-editor-rail-item" +
-                (opticalComponents ? " is-active" : "")
-              }
-              onClick={() =>
-                switchView({ domain: "optical", section: "components" })
-              }
-            >
-              ASSET3D
-              <span className="phy-editor-rail-hint">faces + transitions</span>
-            </button>
-            <button
-              type="button"
-              className={
-                "phy-editor-rail-item" +
-                (opticalComposer ? " is-active" : "")
-              }
-              onClick={() =>
-                switchView({ domain: "optical", section: "composer" })
-              }
-            >
-              COMPONENTS
-              <span className="phy-editor-rail-hint">compose optical Asset3D</span>
-            </button>
+          <div className="phy-editor-rail-header">Catalog</div>
+          <div className="phy-editor-section-group">
+            {SECTIONS.map((s) => (
+              <button
+                key={s.key}
+                type="button"
+                className={
+                  "phy-editor-rail-item" +
+                  (activeSection === s.key ? " is-active" : "")
+                }
+                onClick={() =>
+                  switchView({ section: s.key, domain: activeDomain })
+                }
+              >
+                {s.label}
+                <span className="phy-editor-rail-hint">{s.hint}</span>
+              </button>
+            ))}
           </div>
 
-          <div className="phy-editor-domain">
-            <div className="phy-editor-domain-title">▼ RF</div>
-            <button
-              type="button"
-              className={
-                "phy-editor-rail-item" +
-                (rfKinds ? " is-active" : "")
-              }
-              onClick={() =>
-                switchView({ domain: "rf", section: "kinds" })
-              }
-            >
-              rf_kinds
-              <span className="phy-editor-rail-hint">contract registry</span>
-            </button>
-            <button
-              type="button"
-              className={
-                "phy-editor-rail-item" +
-                (rfComponents ? " is-active" : "")
-              }
-              onClick={() =>
-                switchView({ domain: "rf", section: "components" })
-              }
-            >
-              ASSET3D
-              <span className="phy-editor-rail-hint">faces + transitions</span>
-            </button>
-            <button
-              type="button"
-              className={
-                "phy-editor-rail-item" +
-                (rfComposer ? " is-active" : "")
-              }
-              onClick={() =>
-                switchView({ domain: "rf", section: "composer" })
-              }
-            >
-              COMPONENTS
-              <span className="phy-editor-rail-hint">compose RF Asset3D</span>
-            </button>
-          </div>
-
-          <div className="phy-editor-domain phy-editor-domain-disabled">
-            <div className="phy-editor-domain-title">▷ Electrical</div>
-            <div className="phy-editor-rail-soon">coming later</div>
-          </div>
-
-          <div className="phy-editor-domain">
-            <div className="phy-editor-domain-title">▼ Mechanical</div>
-            <button
-              type="button"
-              className={
-                "phy-editor-rail-item" +
-                (mechanicalKinds ? " is-active" : "")
-              }
-              onClick={() =>
-                switchView({ domain: "mechanical", section: "kinds" })
-              }
-            >
-              mechanical_kinds
-              <span className="phy-editor-rail-hint">contract registry</span>
-            </button>
-            <button
-              type="button"
-              className={
-                "phy-editor-rail-item" +
-                (mechanicalAsset3D ? " is-active" : "")
-              }
-              onClick={() =>
-                switchView({ domain: "mechanical", section: "components" })
-              }
-            >
-              ASSET3D
-              <span className="phy-editor-rail-hint">faces + transitions</span>
-            </button>
-            <button
-              type="button"
-              className={
-                "phy-editor-rail-item" +
-                (mechanicalComposer ? " is-active" : "")
-              }
-              onClick={() =>
-                switchView({ domain: "mechanical", section: "composer" })
-              }
-            >
-              COMPONENTS
-              <span className="phy-editor-rail-hint">compose Asset3D into a component</span>
-            </button>
+          <div className="phy-editor-rail-header">PHY domain</div>
+          <div className="phy-editor-chips">
+            {DOMAIN_FILTERS.map((d) => (
+              <button
+                key={d.key}
+                type="button"
+                className={
+                  "phy-editor-chip" +
+                  (activeDomain === d.key ? " is-active" : "")
+                }
+                onClick={() =>
+                  switchView({ section: activeSection, domain: d.key })
+                }
+              >
+                {d.label}
+              </button>
+            ))}
           </div>
         </aside>
 
         <div className="phy-editor-pane">
-          {showDefaultLanding && <KindsEditor domain="optical" />}
-          {opticalKinds && <KindsEditor domain="optical" />}
-          {opticalComponents && <Asset3DV3Editor domain="optical" mode="binding-dev" />}
-          {opticalComposer && <ComponentsV2Editor domain="optical" mode="binding-dev" />}
-          {rfKinds && <KindsEditor domain="rf" />}
-          {rfComponents && <Asset3DV3Editor domain="rf" mode="binding-dev" />}
-          {rfComposer && <ComponentsV2Editor domain="rf" mode="binding-dev" />}
-          {mechanicalKinds && <KindsEditor domain="mechanical" />}
-          {mechanicalAsset3D && <Asset3DV3Editor domain="mechanical" mode="binding-dev" />}
-          {mechanicalComposer && <ComponentsV2Editor domain="mechanical" mode="binding-dev" />}
+          {activeSection === "kinds" && <KindsEditor domain={activeDomain} />}
+          {activeSection === "asset3d" && (
+            <Asset3DV3Editor domain={activeDomain} mode="binding-dev" />
+          )}
+          {activeSection === "components" && (
+            <ComponentsV2Editor domain={activeDomain} mode="binding-dev" />
+          )}
         </div>
       </div>
     </div>

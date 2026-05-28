@@ -328,7 +328,7 @@ plugin grows a field.
 | `timing_programs` | Reusable interval schedule | `intervals: [{spinCoreStartNs, spinCoreEndNs}]` (slim, post-0051) |
 | `collection_templates` | Reusable subtree snapshot (post-0053) | `tree` (recursive collection + relative member poses) |
 | `app_settings` | Singleton lab-wide config | `key`, `value` (e.g. `room_dimensions`) |
-| `kinds` | **New (0086)** — Kind metadata registry | `name` (slug), `display_name`, `domain` (`optical`/`rf`/`mechanical`), `op_set_name` (string FK into the code-only PhysicsOp registry — multiple Kind rows can share one op set, e.g. `my_custom_lens` → `lens_biconvex`), `default_params` JSONB, `face_template` JSONB, `needs_aperture`, `wavelength_range_nm` REAL[], `description`. Backfilled from `backend/data/kinds.json` at upgrade time. Read at FastAPI startup into the in-process `_KIND_TO_OP_SET` cache in `app.optical.db_kinds` so the tracer's `get_op` can dispatch on user-created kind slugs without a DB roundtrip on every ray |
+| `kinds` | **New (0086)** — Kind metadata registry | `name` (slug), `display_name`, `domains` `text[]` (**multi-domain since 0092** — non-empty array, each element `optical`/`rf`/`mechanical`; two CHECK constraints `kind_domains_subset_check` + `kind_domains_nonempty_check`. Replaces the old scalar `domain` column so a part that spans domains — AOM / EOM are `["optical", "rf"]` — surfaces under *every* matching PHY Editor filter instead of being arbitrarily bucketed), `op_set_name` (string FK into the code-only PhysicsOp registry — multiple Kind rows can share one op set, e.g. `my_custom_lens` → `lens_biconvex`), `default_params` JSONB, `face_template` JSONB, `needs_aperture`, `wavelength_range_nm` REAL[], `description`. Backfilled from `backend/data/kinds.json` at upgrade time. Read at FastAPI startup into the in-process `_KIND_TO_OP_SET` cache in `app.optical.db_kinds` so the tracer's `get_op` can dispatch on user-created kind slugs without a DB roundtrip on every ray |
 | `agent_sessions` | One AI binding conversation (post-0057) | `instruction`, `status`, `last_heartbeat_at`, `heartbeat_timeout_sec`, `committed_at`/`cancelled_at`/`cancellation_reason`, `messages_json` (Anthropic SDK history persisted across turns, added in 0058) |
 | `session_mutations` | Append-only log of agent writes (post-0057) | `op`, `entity_type` (`asset_3d`/`component`), `entity_id`, `before`/`after` JSONB, `undone_at` |
 | `approval_events` | Audit log of approve/unlock/modify_blocked/rolled_back (post-0057) | `event_type`, `entity_type`/`entity_id`, `session_id`, `metadata` (column kept as `metadata`; ORM attr is `event_metadata` because `DeclarativeBase.metadata` is reserved) |
@@ -338,7 +338,7 @@ plugin grows a field.
 | Mount | File | Purpose |
 |---|---|---|
 | `/api/assets` | `assets.py` | Asset upload & CRUD; serves anchors editor. Uploads land under `assets/files/<ext>/<uuid>_<name>.<ext>` (viewer-ready: glb/gltf/obj/stl) or `assets/files/cad_sources/…` (step/stp/sldprt/dxf) after alembic 0063 unified the legacy `uploads/` bucket |
-| `/api/kinds` | `kinds.py` | **New (0086)**: CRUD for the Kind registry table. `GET /` lists rows (filter `?domain=optical|rf|mechanical`); `POST /` creates a new kind metadata row (must reference an `op_set_name` that exists in the code-only PhysicsOp registry — to add genuinely new physics behavior you still need to write and register a PhysicsOp in `app/optical/kinds/<kind>/physics.py`); `PATCH /{kind_id}` edits display name / default params / face template / wavelength range / needs_aperture / description (renaming `name` and `op_set_name` is blocked — the tracer-side cache invalidation would be racy); `DELETE /{kind_id}` is 409-blocked if any `assets_3d.kind_id` row still references the slug. Every mutation refreshes `_KIND_TO_OP_SET` via `set_kind_cache_entry` / `remove_kind_cache_entry` so the in-process tracer dispatch sees the change on the next ray |
+| `/api/kinds` | `kinds.py` | **New (0086)**: CRUD for the Kind registry table. `GET /` lists rows ordered by `name` (filter `?domain=optical\|rf\|mechanical` matches via `Kind.domains.any(domain)` so a multi-domain part shows up under each of its domains — 0092); `POST /` creates a new kind metadata row (`domains` is a non-empty list; must reference an `op_set_name` that exists in the code-only PhysicsOp registry — to add genuinely new physics behavior you still need to write and register a PhysicsOp in `app/optical/kinds/<kind>/physics.py`); `PATCH /{kind_id}` edits display name / **domains** / default params / face template / wavelength range / needs_aperture / description (`domains` *is* patchable as of 0092 — it's a pure classification facet, i.e. which PHY Editor filter the kind appears under, not tracer behavior; renaming `name` and `op_set_name` stays blocked — the tracer-side cache invalidation would be racy); `DELETE /{kind_id}` is 409-blocked if any `assets_3d.kind_id` row still references the slug. Every mutation refreshes `_KIND_TO_OP_SET` via `set_kind_cache_entry` / `remove_kind_cache_entry` so the in-process tracer dispatch sees the change on the next ray |
 | `/api/components` | `components.py` | Catalog CRUD; archive/restore; upload-from-file. Owns `auto_create_physics_element_for_object`, which on a fresh `fiber` spawn also creates paired `fiber_end_a` + `fiber_end_b` SceneObjects (3-object cluster, mirroring migration 0052 for new placements) and joins them to the body's collection |
 | `/api/components/{id}/bindings` · `/api/component-bindings/{id}` | `component_bindings.py` | **New (0062)**: ComponentBinding tree CRUD. Nested `GET` returns full binding list in `sort_order` ascending; structure is implied by `parent_binding_id` (multiple roots legal). Top-level routes operate on a single binding by id; the update path **cannot** change the binding's target — to retarget, delete + recreate (keeps cycle protection simple). Cycle protection: creating a `subcomponent`-kind binding walks the candidate sub-component's transitive sub-component closure and rejects with 400 if the container appears in it |
 | `/api/objects` | `objects.py` | Instance CRUD; **bulk batch update** so multi-select doesn't trigger N broadcasts. On fresh `fiber` creation also broadcasts the auto-spawned `fiber_end_a`/`fiber_end_b` SceneObjects + PhysicsElements so the 3-object cluster lands without a page reload |
@@ -447,7 +447,7 @@ plugin grows a field.
 
 ### Alembic migrations
 
-Currently at **revision 0090**. Recent milestones:
+Currently at **revision 0092**. Recent milestones:
 
 | Rev | Title | Purpose |
 |---|---|---|
@@ -493,7 +493,8 @@ Currently at **revision 0090**. Recent milestones:
 | 0088 | catalog_id_constraints | Phase 9.11. Adds CHECK (`^[a-z0-9_]+$` lower-snake-case slug when non-null) + UNIQUE (NULLS DISTINCT — multiple instance leaves with NULL slug are still allowed) constraints to `assets_3d.catalog_id` + `components.catalog_id`. Pre-audited free of bad shapes / duplicates so the constraints land without data churn. Catches accidental garbage (spaces, capitals, slashes) before it lands in the catalog |
 | 0089 | kind_id_column | Phase 9.13. Adds a unified `kind_id` TEXT column to BOTH `components` and `assets_3d`, indexed for filter queries. Backfills `kind_id = component_type` on Components and `kind_id = physics_kind` on Asset3D (verbatim copy — no alias canonicalization). Legacy columns kept; the actual drop is 0090 |
 | 0090 | drop_legacy_kind_columns | Phase 9.14. Drops `components.component_type` and `assets_3d.physics_kind` now that `kind_id` is the canonical classification field everywhere (ORM models, FastAPI schemas, every router, every frontend type). Downgrade re-adds the columns nullable and re-backfills from `kind_id` so a rollback can round-trip |
-| 0091 | body_frame_position_to_body_frame | Phase 9.11 (data-only). Walks every `assets_3d` row with a non-null `body_frame_rotation` + non-zero `bodyFramePositionMm` and rotates the stored offset by `R_body⁻¹`. **⚠ Read the docstring before changing this** — the rest of the codebase (`utils/assetFrame.ts`, `three/opticalBeams.ts`, `backend/app/optical/db_scene_loader.py::_apply_body_frame_to_anchor`, `frontend/src/utils/anchorAccess.ts`) treats `bodyFramePositionMm` as a CAD-axis vector applied AFTER the body→CAD rotation (Phase 9.10 semantics), so on rows with non-identity `R_body` this migration leaves the stored value rotated by `R_body⁻¹` relative to how readers interpret it. Migration is kept in place for alembic linearity; the canonical write-up is [`docs/frame-anchor-architecture.md §3`](docs/frame-anchor-architecture.md) and the audit/cleanup plan is §15.2 of the same doc. `main.py` runs a startup audit (`_audit_body_frame_consistency`) that warns on suspect rows |
+| 0091 | body_frame_position_to_body_frame | Phase 9.11 (data-only). Walks every `assets_3d` row with a non-null `body_frame_rotation` + non-zero `bodyFramePositionMm` and rotates the stored offset by `R_body⁻¹`. **⚠ Read the docstring before changing this** — the rest of the codebase (`utils/assetFrame.ts`, `three/opticalBeams.ts`, `backend/app/optical/db_scene_loader.py::_apply_body_frame_to_anchor`, `frontend/src/utils/anchorAccess.ts`) treats `bodyFramePositionMm` as a CAD-axis vector applied AFTER the body→CAD rotation (Phase 9.10 semantics), so on rows with non-identity `R_body` this migration leaves the stored value rotated by `R_body⁻¹` relative to how readers interpret it. Migration is kept in place for alembic linearity; the canonical write-up is [`docs/frame-anchor-architecture.md §3`](docs/frame-anchor-architecture.md) and the audit/cleanup plan is §15.2 of the same doc. `main.py` runs a startup audit (`_audit_body_frame_consistency`) that warns on suspect rows. **Revision id shortened** from `0091_body_frame_position_to_body_frame` (37 chars) to `0091_body_frame_position` (24) — Alembic's `alembic_version.version_num` is `VARCHAR(32)`, and the longer id silently failed to stamp, stranding the DB at 0090 (see [Data / migration hygiene](#data--migration-hygiene)). 0092's `down_revision` points at the shortened id |
+| 0092 | kind_multi_domain | Phase 2.1. Replaces the `kinds.domain` scalar (`CHECK domain IN (...)`) with a non-empty `domains text[]` so a part can belong to more than one PHY domain (AOM = optical beam path + RF drive port; EOM = optical + RF). Two-pass backfill: (1) lossless `domains = ARRAY[domain]` for every row (the only source for user-created kinds not in the manifest); (2) manifest-derived override for built-in physics kinds — union of `primary_domain` + `default_physics` + `port_domains`, filtered to the valid set and order-stable — which promotes `aom` / `eom` to `["optical", "rf"]` and is a no-op for genuinely single-domain kinds. Adds `kind_domains_subset_check` (`domains <@ ARRAY['optical','rf','mechanical']`) + `kind_domains_nonempty_check` (`cardinality(domains) >= 1`), drops the old `kind_domain_check`. Downgrade collapses back to `domains[1]` (lossy for multi-domain rows). `load_manifest` imported inside `upgrade()` so offline SQL generation doesn't touch the manifest (mirrors 0086) |
 
 Earlier highlights: `0027` V2 baseline (real `SimulationRun ↔ BeamSegment` FK),
 `0036` multiphysics dispatch, `0042` rename of `optical_elements` →
@@ -600,7 +601,7 @@ Keyboard shortcuts:
 | 3D viewport | `DigitalTwinViewer.tsx`, `DualViewerSplit.tsx` | Three.js canvas; dual viewport with draggable split |
 | Catalog & outliner | `AssetLibraryPanel.tsx` (exports `ComponentsCatalogPanel`, `OutlinerFloatingPanel`), `OutlinerPanel.tsx` | Drag-to-instantiate catalog; nested collections tree |
 | Object editor | `ComponentPanel.tsx`, `IntrinsicSpecPanel.tsx` | Pose / visibility / locks / per-instance physics |
-| PHY editor (full screen) | `PhyEditor.tsx`, `BindingDevPanel.tsx`, `KindsEditor.tsx`, `Asset3DV3Editor.tsx`, `ComponentsV2Editor.tsx`, `ComponentComposer.tsx` | Catalog metadata + anchor editor. The legacy `ComponentEditor.tsx` + `component_editor/AnchorFaceSections.tsx` + `componentAnchorContracts.ts` were retired with the v2 dispatch flip; the read-only legacy landing is gone. `BindingDevPanel.tsx` (mounted by the 🔧 Binding dev toggle in PHY Editor) is the unified CRUD shell — left rail groups items by PHY domain (Optical / RF / Electrical placeholder / Mechanical), right pane mounts exactly one editor at a time (`KindsEditor` / `Asset3DV3Editor` / `ComponentsV2Editor`) so the 3D context (THREE.WebGLRenderer) only lives for the active rail item — avoids two renderers fighting for the same canvas. `KindsEditor` does CRUD against `/api/kinds`. `Asset3DV3Editor` edits faces / transitions / anchors / wavelength range / body_frame_rotation against `/api/v3/assets3d`. `ComponentsV2Editor` composes Asset3Ds into a Component via flat asset bindings (`parentBindingId=null`, `targetKind="asset"`); subcomponent and empty-target bindings are out of MVP scope — see source-level note. `ComponentComposer.tsx` is the live binding-tree tweak page that replaced `kinds/isolator/IsolatorDevPage.tsx` in Phase 2 (per-row pose/rot Apply buttons, live 3D preview from in-progress edits before commit) |
+| PHY editor (full screen) | `PhyEditor.tsx`, `KindsEditor.tsx`, `Asset3DV3Editor.tsx`, `ComponentsV2Editor.tsx`, `ComponentComposer.tsx` | Catalog metadata + anchor editor. The legacy `ComponentEditor.tsx` + `component_editor/AnchorFaceSections.tsx` + `componentAnchorContracts.ts` were retired with the v2 dispatch flip; the read-only legacy landing is gone (and the old `BindingDevPanel.tsx` shell was deleted — `PhyEditor.tsx` is now the unified CRUD shell directly). **Rail restructure (2026-05-28):** the rail's TOP LEVEL is now the catalog *section* — `KIND` (contract registry) / `ASSET3D` (faces + transitions) / `COMPONENT` (compose Asset3D into a part) — because that's the primary axis of the data model. PHY *domain* (All / Optical / RF / Mechanical) dropped to a cross-cutting **filter chip row** below it, since a single part can belong to more than one domain (an AOM is optical + RF) and so domain can't be the tree root without duplicating those parts. The selection (`{section, domain}`) is the `PhyEditorView` type in `sceneStore`, persisted to localStorage; `normalizePhyEditorView` discards the pre-flip shape (`{domain, section: "kinds"\|"components"\|"composer"}`) on load. Right pane mounts exactly one editor at a time (`KindsEditor` / `Asset3DV3Editor` / `ComponentsV2Editor`) so the 3D context (THREE.WebGLRenderer) only lives for the active section — avoids two renderers fighting for the same canvas. All three editors accept `domain="all"` (show everything) plus the three concrete domains; `"all"` is a view filter only — creating a new kind/asset still picks a concrete domain (defaults to `optical`). `KindsEditor` does CRUD against `/api/kinds` (multi-domain checkboxes + per-row domain badges since 0092). `Asset3DV3Editor` edits faces / transitions / anchors / wavelength range / body_frame_rotation against `/api/v3/assets3d`. `ComponentsV2Editor` composes Asset3Ds into a Component via flat asset bindings (`parentBindingId=null`, `targetKind="asset"`); subcomponent and empty-target bindings are out of MVP scope — see source-level note. Its 3D preview auto-aims the probe beam along the component's exposed `optical_in → optical_out` axis on a component switch (`computeProbeOpticalAim`, gated by `autoAimedRef` so manual probe tweaks survive pose edits). `ComponentComposer.tsx` is the live binding-tree tweak page that replaced `kinds/isolator/IsolatorDevPage.tsx` in Phase 2 (per-row pose/rot Apply buttons, live 3D preview from in-progress edits before commit) |
 | Timing | `PulseTimingPanel.tsx` | Edit TimingProgram intervals |
 | RF | `RfLinkPanel.tsx`, `ScrubTimeRfReadout.tsx` | Per-port Vpp / dBm / freq readout; chain inspector |
 | Optical | `optical/OpticalLinkViewerPanel.tsx`, `optical/BeamScopePanel.tsx`, `optical/CursorMenu.tsx`, `optical/TargetLinksSection.tsx`, `optical/CapabilityPills.tsx` | Beam inspection, ray-scope viewer, cursor menu. **Phase 2 fix**: the panel's wireframe cache now tags every cached `THREE.Group` with a `digest` derived from the per-object `objectBindings` deltas (`componentBindingId|XYZRxRyRz delta|asset3dIdOverride`). When a user drags an isolator's per-side rotation slider, the digest changes, the cache lookup misses, and the wireframe rebuilds with the new pose — without the digest, the panel froze the wireframe at first render and ignored subsequent slider updates. The same digest is also folded into the panel-level `contentKey` so the parent rebuild gate fires too |
@@ -1279,12 +1280,13 @@ same op names, same numerical results to within 1 × 10⁻⁶ tolerance
 
 | Module | Role |
 |---|---|
-| `beam-ray.ts` | `BeamRay` struct + `Vec3` helpers + `makeBeamRay` |
-| `jones.ts` | s/p basis + reflection-basis flip math |
+| `beam-ray.ts` | `BeamRay` struct + `Vec3` helpers + `makeBeamRay`. Carries an optional `profile: BeamProfile` (`{kind:"ray"}` \| `{kind:"top_hat",radiusMm}` \| `{kind:"gaussian"}`; absent ⇒ treated as gaussian) so aperture clipping isn't hardcoded to a Gaussian envelope. The Gaussian envelope itself still lives in `qx`/`qy` (astigmatic) — `profile` only tags the cross-section shape |
+| `profileUtils.ts` | **New (2026-05-28).** Aperture-clipping math, one strategy per `BeamProfile`. `calculateProfileClipping(rCMm, apertureMm, profile, qx, qy, wavelengthNm) → 0..1` power-transmission fraction: **ray** is binary (centre in/out), **top_hat** is the circle∩circle overlap-area fraction, **gaussian** integrates the envelope through a circular aperture (`w_eff = sqrt(wx·wy)` from the astigmatic q's via `gaussianWidthMm`). The decentred-Gaussian case is an APPROXIMATION (no closed form) — exact on-axis, heuristic off-axis. Backed by `__tests__/profileUtils.test.ts` |
+| `jones.ts` | s/p basis + reflection-basis flip math. **s-frame re-anchor (2026-05-28):** `+s_beam = normalize(up × z_beam)` (was the projection of `up` onto the plane ⊥ `z`), so for a beam running across the table `s` is an in-table (horizontal) axis and a 0°-referenced polarization / element axis is HORIZONTAL, not vertical — this fixed the Optical Link panel's Pol-angle display. **⚠ The backend `jones.py` was NOT re-anchored**, so the two diverge by 90° in the absolute polarization reference (parity gap, see [Troubleshooting](#frontend)) |
 | `pose.ts` | Lab↔body transform; internal use of THREE but `Vec3`-only public API |
 | `registry.ts` | `OpticalKind` literal union (~22 kinds), `PhysicsOp` type, `registerKind` / `registerOps` (e.g. `kinds/glan-laser/` adds `glan_transmit_p` + `glan_reject_s` under the existing `polarizer` kind), `getOp` / `hasOp` / `listRegisteredKinds`. Throws on missing op so unit tests catch typos at registration time, not at trace time |
 | `geometry.ts` | Pure geometric helpers (Snell, reflection, intersection) shared by ops |
-| `ray-tracer-v3.ts` | `intersectFace` / `nearestFaceHit` / `traceRayThroughAsset` / `traceRayScene` / `findTransitionContexts`. Honors `excludeFaceKey` per-segment to avoid re-hits |
+| `ray-tracer-v3.ts` | `intersectFace` / `nearestFaceHit` / `traceRayThroughAsset` / `traceRayScene` / `findTransitionContexts`. Honors `excludeFaceKey` per-segment to avoid re-hits. **Aperture vignetting (2026-05-28):** `FaceHit` / `SceneHit` now carry `offsetFromCenterMm` (chief-ray distance from the face centre, in the face plane); at each hit `traceRayScene` propagates the Gaussian q to the face and multiplies `powerMw` by `calculateProfileClipping(...)` so a beam whose footprint overruns the clear aperture loses energy. ≈1 (no-op) for the usual small-beam-well-inside-aperture chief-ray setups |
 | `kinds/<kind>/physics.ts` | Per-kind ops — `lens` (`abcd_thin_lens` via `mThinLens`), `mirror` (`reflect_specular`), `polarizer` (`jones_polarizer` + Malus's law + Jones re-normalisation), `pbs` (transmit + reflect dual-port), `waveplate` (Jones rotation by retardance), `aom-v3` (multi-order diffraction with order-dependent power split), `dichroic-mirror` (wavelength-cutoff transmit vs reflect), `eom` (intensity / phase modulator), `faraday-rotator` (non-reciprocal Jones rotation), `glan-laser` (TIR + birefringent extinction), `laser-source` (emitter origin + Jones init), `tapered-amplifier` (gain + saturation), `fiber` (Bessel-mode coupling + bend loss + Fresnel + polarisation) |
 | `fiber/` | Self-contained fiber sub-package — `arc_length.ts`, `attenuation.ts`, `bend_loss.ts`, `bessel.ts`, `coupling.ts`, `fiber_mode.ts`, `fresnel.ts`, `gaussian.ts`, `polarization.ts`, `total_efficiency.ts`. Used by `kinds/fiber/physics.ts` to compute Gaussian-to-mode coupling efficiency for a fiber end snap |
 | `__tests__/` | 14-test single-asset suite + 13-test scene-level suite + per-kind physics tests + cross-language parity runner (loads golden JSON beam-trace traces and compares frontend output to within tolerance — golden files live in `__tests__/parity/golden/`, identical files are referenced by the backend parity suite via `backend/tests/optical/parity/`) |
@@ -1300,8 +1302,11 @@ same op names, same numerical results to within 1 × 10⁻⁶ tolerance
 - [`frontend/src/store/kindsStore.ts`](frontend/src/store/kindsStore.ts) —
   Zustand store backing the Kind registry (alembic 0086). Cached list
   from `/api/kinds`; `byDomain('optical'|'rf'|'mechanical')` selector
+  (matches via `k.domains.includes(domain)` since 0092, so a
+  multi-domain kind like an AOM appears under both `optical` and `rf`)
   feeds the `kind_id` `<select>` in `ComponentsV2Editor` and
-  `Asset3DV3Editor`. Status atom (`idle`/`loading`/`ready`/`error`);
+  `Asset3DV3Editor` — the `<select>` lists a kind under each of its
+  domains' optgroups. Status atom (`idle`/`loading`/`ready`/`error`);
   explicit `refresh()` after the user CRUDs a kind. Loaded once on
   first read.
 - [`frontend/src/store/v3FeatureFlags.ts`](frontend/src/store/v3FeatureFlags.ts) —
@@ -1512,6 +1517,50 @@ keeping in mind while extending the system.
   mounts; but if you later disable the panel for another reason (legal,
   cost), make sure to change both files plus the `TopBar` Window-menu
   gate, or one entry point will leak through.
+- **Jones s-frame: frontend and backend now disagree by 90° (open parity
+  gap, 2026-05-28).** `frontend/src/optical/jones.ts` re-anchored
+  `+s_beam` to `normalize(up × z_beam)` (in-table horizontal ⇒ 0° =
+  horizontal) to fix the Optical Link Pol-angle display.
+  `backend/app/optical/jones.py` still uses the vertical-anchored `s`, so
+  the two diverge by 90° in the *absolute* polarization-angle reference.
+  Backend parity is a deliberate follow-up, **not** a one-line copy:
+  `backend/tests/optical/test_solver_v3_isolator.py` already fails the
+  forward-pass at 0.5 power from a pre-existing frontend↔backend tracer
+  divergence in how element body-rotations compose with the s-frame —
+  matching the backend means fixing that compose order too. The backend
+  `jones.py` docstring carries the canonical note. Until then, do NOT
+  trust absolute Pol angles to agree across the two solvers.
+- **Aperture clipping off-axis is a heuristic.** `profileUtils.calculateProfileClipping`
+  is exact for ray (binary) and top-hat (circle∩circle overlap area), and
+  exact for an *on-axis* Gaussian, but the decentred-Gaussian-through-
+  circular-aperture integral has no closed form, so the off-axis Gaussian
+  branch is an approximation (`exp(-2u²)·(1-exp(-2v²))` with
+  `u = rC/w_eff`, `v = a/w_eff`). It's a no-op (≈1) for the usual
+  small-beam-well-inside-aperture chief-ray setups; only wide or heavily
+  decentred beams feel it. Don't read the off-axis number as a calibrated
+  power — it's a visualization-grade vignetting estimate.
+- **Component preview probe-beam auto-aim is component-switch-only.**
+  `ComponentsV2Editor`'s `ComponentPreview3D` re-aims the probe along the
+  exposed `optical_in → optical_out` axis only when `componentId` changes
+  (`autoAimedRef` gate), so manual probe tweaks survive pose edits within a
+  component. Two gotchas: (1) bindings load async, so the first effect run
+  can see an empty list — the ref is set only on a *successful* aim so the
+  later run retries rather than locking in a miss; (2) catalog rows whose
+  `exposedFaces` reference a face id absent on the bound asset (e.g.
+  IO-3-850-HP names `A`/`B` while the Glan prism asset only has `B1`) fall
+  back to the binding origin, so the axis is approximate but still runs
+  through the real elements.
+- **Outliner falls back orphaned SceneObjects to the Master collection.**
+  `OutlinerPanel.buildObjectsByCollection` puts any SceneObject with no
+  `CollectionMember` row under Master so it stays visible *and* removable.
+  The normal `create_object` API always assigns a collection home, but data
+  seeded outside that flow can skip it — `upsert_optical_table.py` was the
+  culprit (the locked optical table rendered in 3D yet vanished from the
+  tree, leaving no way to rename/lock/delete it). That script now creates
+  the `CollectionMember` itself (mirroring `create_object` / `seed.py`), so
+  the Outliner fallback is a safety net, not the primary fix — new
+  out-of-band seed scripts should still assign a Master membership
+  explicitly rather than relying on it.
 
 ### Data / migration hygiene
 
@@ -1520,6 +1569,17 @@ keeping in mind while extending the system.
   be reset; alembic history is dense and slow to apply on fresh DBs. Doubly
   true now that 0052 was reversed by 0056 — the round-trip ends up as net
   zero schema change but a forward upgrade still walks both migrations.
+- **Alembic revision ids must be ≤ 32 chars.** `alembic_version.version_num`
+  is `VARCHAR(32)` (Alembic's default, unenforced by our tooling). A
+  longer id silently fails to stamp on `upgrade head` — the migration's
+  DDL may even run, but the version row never advances, so the DB looks
+  "stuck" one revision back and the next `upgrade` either re-runs or
+  errors on already-applied objects. This bit 0091, whose original id
+  `0091_body_frame_position_to_body_frame` (37 chars) stranded the DB at
+  0090; it was shortened to `0091_body_frame_position` (24) and 0092's
+  `down_revision` updated to match. Keep the `XXXX_short_slug` convention
+  (≤ 32) for every new revision; the human title can be as long as you
+  like in the docstring.
 - **Anchor `connectorType` (0050) is nullable.** Migrations and routers treat
   null as "unknown"; the frontend treats it as "compatible with everything".
   Tighten one or the other so cable-misconnect warnings work end-to-end.
@@ -1769,8 +1829,35 @@ keeping in mind while extending the system.
 
 ---
 
-*Last regenerated: 2026-05-28 (Alembic revision **0091** — Phase 9.11
-data migration rotates `bodyFramePositionMm` by `R_body⁻¹`; the
+*Last regenerated: 2026-05-29 (Alembic revision **0092** — Phase 2.1
+kind multi-domain: `kinds.domain` scalar → non-empty `domains text[]`
+so a part can span PHY domains (AOM / EOM = `["optical", "rf"]`), with
+`kind_domains_subset_check` + `kind_domains_nonempty_check`. `domains`
+is now patchable through `PATCH /api/kinds/{id}`; `GET` filters with
+`Kind.domains.any(domain)`; `kindsStore.byDomain` matches via
+`.includes()`. KindsEditor gained multi-domain checkboxes + per-row
+domain badges. **PHY Editor rail flipped:** top level is now the
+catalog *section* (KIND / ASSET3D / COMPONENT) with PHY domain as a
+cross-cutting filter-chip row (All / Optical / RF / Mechanical) —
+`PhyEditorView = {section, domain}`, persisted + schema-validated by
+`normalizePhyEditorView` (pre-flip shapes reset to home); the old
+`BindingDevPanel.tsx` shell was deleted and `PhyEditor.tsx` mounts the
+editors directly. **Optical:** new `BeamProfile` (ray / top_hat /
+gaussian) on `BeamRay` + `profileUtils.calculateProfileClipping`, and
+`ray-tracer-v3.ts` now applies aperture vignetting to `powerMw` via the
+new `FaceHit.offsetFromCenterMm`. Frontend `jones.ts` re-anchored
+`+s_beam = up × z_beam` (0° = horizontal) to fix the Optical Link
+Pol-angle display — **backend `jones.py` is intentionally not yet
+re-anchored, leaving a documented 90° parity gap** + a known-failing
+`test_solver_v3_isolator.py` forward pass. **Outliner** now falls
+orphaned SceneObjects back to the Master collection, and
+`upsert_optical_table.py` assigns the locked table a `CollectionMember`
+so it stops vanishing from the tree. `ComponentsV2Editor` preview
+auto-aims the probe beam along the `optical_in → optical_out` axis on a
+component switch. Also: 0091's revision id was shortened to ≤ 32 chars
+(it had stranded the DB at 0090). Prior epoch: Alembic revision **0091**
+— Phase 9.11 data migration rotates `bodyFramePositionMm` by `R_body⁻¹`;
+the
 codebase still reads it as a CAD-axis offset, so `main.py` startup
 audits warn on suspect rows. See
 [`docs/frame-anchor-architecture.md §3`](docs/frame-anchor-architecture.md).

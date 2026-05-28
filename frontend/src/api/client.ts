@@ -180,7 +180,7 @@ export type KindRow = {
   id: string;
   name: string;
   displayName: string;
-  domain: KindDomain;
+  domains: KindDomain[];
   opSetName: string;
   defaultParams: Record<string, unknown>;
   faceTemplate: Record<string, unknown>;
@@ -194,7 +194,7 @@ export type KindRow = {
 export type KindCreatePayload = {
   name: string;
   displayName: string;
-  domain: KindDomain;
+  domains: KindDomain[];
   opSetName: string;
   defaultParams?: Record<string, unknown>;
   faceTemplate?: Record<string, unknown>;
@@ -205,6 +205,7 @@ export type KindCreatePayload = {
 
 export type KindPatchPayload = {
   displayName?: string;
+  domains?: KindDomain[];
   defaultParams?: Record<string, unknown>;
   faceTemplate?: Record<string, unknown>;
   needsAperture?: boolean;
