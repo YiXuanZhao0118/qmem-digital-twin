@@ -1331,12 +1331,12 @@ function FaceLocator3D({
     }
     const faceSize = faceBox.getSize(new THREE.Vector3());
     const sceneScale = Math.max(faceSize.x, faceSize.y, faceSize.z, 10);
-    // Anchor sphere + normal arrow sizing. Halved from the original
-    // (sceneScale * 0.08 / 2.2) so the markers don't dwarf the mesh on
-    // small assets (fiber + rf_cable in particular). Arrow LENGTH stays
-    // the same (normalLength); only THICKNESS shrinks via the
-    // headLength / headWidth args to ArrowHelper below.
-    const markerRadius = Math.max(sceneScale * 0.04, 1.2);
+    // Anchor sphere + normal arrow sizing. Shrunk another 5× from the
+    // earlier halving (original was sceneScale * 0.08, then 0.04, now
+    // 0.008) so the markers stay readable on thin fiber / rf_cable
+    // assets without dwarfing the geometry. Arrow LENGTH unchanged
+    // (normalLength); only sphere + arrowhead THICKNESS shrink.
+    const markerRadius = Math.max(sceneScale * 0.008, 0.5);
     const normalLength = Math.max(sceneScale * 0.6, 12);
 
     const grid = new THREE.GridHelper(sceneScale * 1.6, 12, "#d8ded8", "#ffffff");
@@ -1363,11 +1363,14 @@ function FaceLocator3D({
     for (const [dir, color] of bodyAxisColors) {
       // Shaft = thin cylinder along axis, depthTest false so it pokes through
       // the proxy cube; renderOrder ensures it draws after transparent CAD.
-      // Thickness halved (0.018 → 0.009 shaft, 0.05 → 0.025 head, 0.15 →
-      // 0.10 head length) per user feedback that the RGB body-axis triad
-      // dwarfed thin assets (fiber / rf_cable) in the preview.
+      // Thickness shrunk 5× from the earlier halving — current values:
+      //   shaft rad 0.018 → 0.009 → 0.0018
+      //   head  rad 0.05  → 0.025 → 0.005
+      //   head  len 0.15  → 0.10  → 0.02
+      // Length axis (shaftLen) unchanged so the triad still reaches as
+      // far as before; only the cylinder/cone thickness shrinks.
       const shaftLen = bodyArmLen * 0.85;
-      const shaftRad = bodyArmLen * 0.009;
+      const shaftRad = bodyArmLen * 0.0018;
       const shaft = new THREE.Mesh(
         new THREE.CylinderGeometry(shaftRad, shaftRad, shaftLen, 12),
         new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false }),
@@ -1378,8 +1381,8 @@ function FaceLocator3D({
       shaft.renderOrder = 50;
       bodyAxesGroup.add(shaft);
 
-      const headLen = bodyArmLen * 0.10;
-      const headRad = bodyArmLen * 0.025;
+      const headLen = bodyArmLen * 0.02;
+      const headRad = bodyArmLen * 0.005;
       const head = new THREE.Mesh(
         new THREE.ConeGeometry(headRad, headLen, 16),
         new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false }),
@@ -1483,16 +1486,17 @@ function FaceLocator3D({
         group.add(disk);
       }
 
-      // Anchor normal arrow. Head length / width halved (0.22 → 0.12,
-      // 0.10 → 0.05) so the arrowhead reads as a slim indicator rather
-      // than a fat cone obscuring the aperture ring next to it.
+      // Anchor normal arrow. Head length / width shrunk 5× from the
+      // earlier halving (0.22 → 0.12 → 0.024 head len; 0.10 → 0.05 →
+      // 0.01 head width) so the arrow reads as a slim line + tiny
+      // indicator tip, not a fat cone covering the aperture ring.
       const arrow = new THREE.ArrowHelper(
         normal,
         new THREE.Vector3(),
         normalLength,
         index === selectedAnchorIndex ? "#fbbf24" : "#a78bfa",
-        normalLength * 0.12,
-        normalLength * 0.05,
+        normalLength * 0.024,
+        normalLength * 0.01,
       );
       arrow.renderOrder = 30;
       arrow.traverse((child) => {
