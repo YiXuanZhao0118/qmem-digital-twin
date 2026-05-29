@@ -134,6 +134,12 @@ export async function loadAssetObject(
    *  per-instance render preferences can land here. */
   renderHints?: {
     translucentHousing?: boolean;
+    /** Set by the binding-tree renderer: the binding pose is the sole
+     *  transform, so the loader must NOT auto-offset geometry (aperture
+     *  shift / bbox-centering). Centering each piece on its own bbox
+     *  collapses multi-part assemblies (the IO-3-850-HP front/back
+     *  housing halves overlapped at the origin). */
+    skipAutoCenter?: boolean;
   } | null,
 ): Promise<THREE.Object3D> {
   if (component.kindId === "optical_table") {
@@ -333,23 +339,28 @@ export async function loadAssetObject(
     wrapper.name = component.name;
     wrapper.add(object);
 
-    // Phase 6: prefer the new frame-suffixed key
-    // (`apertureForwardMmBodyLocal`), fall back to legacy
-    // `apertureForwardLocalMm` for un-migrated rows.
-    const apertureProps = component.properties as
-      | { apertureForwardMmBodyLocal?: number[]; apertureForwardLocalMm?: number[] }
-      | undefined;
-    const apertureForward = apertureProps?.apertureForwardMmBodyLocal
-      ?? apertureProps?.apertureForwardLocalMm;
-    if (apertureForward && apertureForward.length === 3) {
-      const [bx, by, bz] = apertureForward;
-      const apertureShift = new THREE.Vector3(bx, bz, -by).divideScalar(100);
-      object.position.sub(apertureShift);
-    } else if (component.kindId !== "isolator") {
-      const bbox = new THREE.Box3().setFromObject(object);
-      if (!bbox.isEmpty()) {
-        const centerVec = bbox.getCenter(new THREE.Vector3());
-        object.position.sub(centerVec);
+    // Binding-tree renders position every piece via its binding pose in
+    // the shared CAD frame (matching the ComponentsV2Editor preview and
+    // the backend solver), so skip the legacy single-asset auto-offset.
+    if (!renderHints?.skipAutoCenter) {
+      // Phase 6: prefer the new frame-suffixed key
+      // (`apertureForwardMmBodyLocal`), fall back to legacy
+      // `apertureForwardLocalMm` for un-migrated rows.
+      const apertureProps = component.properties as
+        | { apertureForwardMmBodyLocal?: number[]; apertureForwardLocalMm?: number[] }
+        | undefined;
+      const apertureForward = apertureProps?.apertureForwardMmBodyLocal
+        ?? apertureProps?.apertureForwardLocalMm;
+      if (apertureForward && apertureForward.length === 3) {
+        const [bx, by, bz] = apertureForward;
+        const apertureShift = new THREE.Vector3(bx, bz, -by).divideScalar(100);
+        object.position.sub(apertureShift);
+      } else if (component.kindId !== "isolator") {
+        const bbox = new THREE.Box3().setFromObject(object);
+        if (!bbox.isEmpty()) {
+          const centerVec = bbox.getCenter(new THREE.Vector3());
+          object.position.sub(centerVec);
+        }
       }
     }
     return wrapper;

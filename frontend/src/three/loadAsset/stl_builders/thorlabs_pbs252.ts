@@ -104,6 +104,18 @@ export function buildPbs252BeamSplitterObject(
   frostedMesh.renderOrder = 1;
   group.add(frostedMesh);
 
+  // CAD→three Y-up basis swap for the whole cube. The STL is authored in the
+  // CAD Z-up frame, but the lab beam is converted by labMmToThree, whose axis
+  // map (x,y,z)→(x,z,-y) is exactly Rx(-90°). Without it the cube renders 90°
+  // off its own beam: the diagonal coating sits in the wrong plane so the
+  // reflected beam turns OUTSIDE the cube. Applied after the frosted/clear
+  // split (the engraved +Y face stays frosted, just reoriented) and only on
+  // the legacy single-asset path — the binding-tree renderer swaps once at the
+  // tree level (bindingRendererGate), so PBS252 must NOT also route through
+  // that path or it double-swaps. The editor traces its beam in the same raw
+  // CAD frame it renders the mesh in, so it needs no swap and never calls this.
+  group.rotateX(-Math.PI / 2);
+
   geometry.dispose();
   return group;
 }

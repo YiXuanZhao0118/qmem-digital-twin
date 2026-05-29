@@ -1826,11 +1826,86 @@ keeping in mind while extending the system.
   they are now sub-objects of its kindParams, not because of a
   store-side rigid-group expansion). Don't reintroduce the old call
   path; the resolver does the right thing already.
+- **Binding-tree CAD→three basis swap is applied ONCE at the assembled
+  group, never per-binding (2026-05-30).** The binding-tree renderer
+  (`three/bindingRendererGate.ts::buildSceneObjectFromBindings`)
+  assembles every sub-piece in the component's CAD frame (Z-up). The
+  backend beam (`labMmToThree`) and every legacy single-asset GLB
+  (Blender→glTF baked swap) live in three's Y-up frame, but the
+  STEP→STL sub-assets the tree consumes carry no such bake. The gate
+  applies one rigid `Rx(-90°)` to the assembled tree — composing
+  exactly with the wrapper's `sceneObjectToQuaternion = S·R_obj·S⁻¹`,
+  so body-local points land where the backend beam puts them for any
+  object pose. **Per-binding swap is forbidden** — see the ⚠ note in
+  `bindingTreeObject.ts`; the IO-3-850-HP glan pieces scattered when
+  the swap was applied per piece. Paired test:
+  `three/__tests__/bindingRendererGate.swap.test.ts`. The binding-tree
+  loader callback also passes `renderHints.skipAutoCenter: true`
+  (added 2026-05-30) so the legacy `loadAssetObject` aperture-shift /
+  bbox-center auto-offset doesn't fire on each piece — without the
+  gate, multi-part assemblies collapsed onto the origin (the IO-3-HP
+  front/back housing halves overlapped). Paired test:
+  `three/__tests__/loadAsset.skipAutoCenter.test.ts`.
+- **PBS252 STL needs its own `Rx(-90°)` on the legacy single-asset
+  path (2026-05-30).** `loadAsset/stl_builders/thorlabs_pbs252.ts::buildPbs252BeamSplitterObject`
+  applies the swap so the cube's diagonal coating lines up with its
+  own beam in the lab viewer. Without it the reflected beam's turning
+  point landed outside the cube (the user-reported symptom; the PHY
+  editor renders + traces in the same raw CAD frame and so doesn't
+  show the bug). **Do NOT route PBS252 through the binding-tree
+  renderer** — that path already swaps once at the tree level, so
+  PBS252 would double-swap and end up upside-down. Paired test:
+  `three/__tests__/pbs252.swap.test.ts` pins the sign as well as the
+  presence (the +90° version would send the reflected beam the
+  opposite way).
+- **PHY editor previews render the optical_table via the real Newport
+  breadboard (2026-05-30).** Both `Asset3DV3Editor.tsx` and
+  `ComponentsV2Editor.tsx` short-circuit `kindId === "optical_table"`
+  (or `primitive://table`) to `createNewportOpticalTable()` from
+  `three/photoRoom.ts` — the same builder the lab viewer uses — then
+  scale ×100 to land in the PHY editor's raw-mm frame (the builder
+  authors geometry in the main-viewer ÷100 units). Done BEFORE
+  `buildProceduralFaceLocatorModel`, which dereferences `catalogId`
+  (null for the primitive table) and would throw. Without this, the
+  optical-table catalog row rendered as a generic proxy cube in PHY
+  previews. Same units fix as the glan / fiber preview paths.
+- **PBS reflective-face overlay reads the explicit B1 face dims
+  (2026-05-30).** `ComponentsV2Editor.tsx::buildPhysicsFaceOverlay`
+  now reads `Asset3D.faces[id=B1].apertureWidthMm` / `apertureHeightMm`
+  for the PBS coating-plane overlay (mirroring
+  `OpticalLinkViewerPanel.buildPbsCoatingFaceGroup`), falling back to
+  the `intercept_face` anchor aperture, then to a 1-inch-cube
+  default. Previously it derived w/h from `sizeMm`/`lengthMm` with an
+  inflated diagonal heuristic that disagreed with the lab view.
 
 ---
 
-*Last regenerated: 2026-05-29 (Alembic revision **0092** — Phase 2.1
-kind multi-domain: `kinds.domain` scalar → non-empty `domains text[]`
+*Last regenerated: 2026-05-30 (Alembic revision **0092** — no schema
+change since 2026-05-29; this epoch is renderer-only. Five paired
+fixes for composite-binding-tree rendering: (1)
+`bindingRendererGate.ts` now wraps the assembled tree in ONE rigid
+`Rx(-90°)` CAD→three swap so STEP→STL sub-assets line up with the
+backend beam (`labMmToThree`) and with the wrapper's
+`sceneObjectToQuaternion` for any object pose — never per-binding,
+which scattered the glan pieces; (2) `loadAsset/index.ts` got a
+`renderHints.skipAutoCenter` gate so the binding-tree path suppresses
+the legacy aperture-shift / bbox-center auto-offset that was
+collapsing multi-part assemblies (IO-3-850-HP housing halves
+overlapped at the origin); (3) `thorlabs_pbs252.ts` gained its own
+`Rx(-90°)` swap on the legacy single-asset path so the diagonal
+coating lines up with its own beam in the lab viewer (PHY editor was
+already correct — both render + trace in raw CAD frame); (4)
+`ComponentsV2Editor.tsx::buildPhysicsFaceOverlay` reads the explicit
+`Asset3D.faces[id=B1]` width/height for the PBS reflective overlay,
+matching `OpticalLinkViewerPanel`; (5) PHY editor previews
+(`Asset3DV3Editor.tsx`, `ComponentsV2Editor.tsx`) short-circuit
+`kindId === "optical_table"` to `createNewportOpticalTable()` ×100 so
+the catalog table renders as the real Newport breadboard, not a
+placeholder cube. Three new regression tests pin the swap and the
+auto-center gate against silent refactor drops:
+`bindingRendererGate.swap.test.ts`, `loadAsset.skipAutoCenter.test.ts`,
+`pbs252.swap.test.ts`. Previous epoch: Alembic revision **0092** —
+Phase 2.1 kind multi-domain: `kinds.domain` scalar → non-empty `domains text[]`
 so a part can span PHY domains (AOM / EOM = `["optical", "rf"]`), with
 `kind_domains_subset_check` + `kind_domains_nonempty_check`. `domains`
 is now patchable through `PATCH /api/kinds/{id}`; `GET` filters with

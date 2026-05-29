@@ -54,6 +54,7 @@ import {
   buildGlanPolarizerPrismObject,
 } from "../three/loadAsset/procedural/glan_polarizer_prism";
 import { createSmaShortCable } from "../three/loadAsset/rf_cable";
+import { createNewportOpticalTable } from "../three/photoRoom";
 import { createFiberSplineObject } from "../three/loadAsset/fiber/spline";
 import type { FiberNode } from "../three/loadAsset/fiber";
 import { anchorObjectLocalAxisX, anchorObjectLocalPos } from "../utils/anchorAccess";
@@ -118,11 +119,16 @@ function buildPhysicsFaceOverlay(asset: Asset3D): THREE.Object3D | null {
     const anc = anchorById("intercept_face");
     const n = anc ? anchorObjectLocalAxisX(anc, asset) : null;
     if (!anc || !n) return null;
-    const params = { ...(asset.defaultParams ?? {}), ...(asset.properties ?? {}) };
-    const sizeMm = getNumericProperty(params, "sizeMm", 6.5);
-    const lengthMm = getNumericProperty(params, "lengthMm", 7.5);
-    const w = sizeMm * 1.1;
-    const h = Math.hypot(sizeMm, lengthMm) * 1.05; // span the diagonal cut
+    // Coating-plane extent: read the explicit B1 coating face (36 × 25.4 mm
+    // for the PBS252 cube — the 36 already encodes the cube diagonal), else
+    // the intercept_face anchor aperture, else a 1-inch-cube default. Mirrors
+    // OpticalLinkViewerPanel.buildPbsCoatingFaceGroup so the PHY preview and
+    // lab scene agree. Raw mm — the PHY editor renders the asset in CAD/body
+    // millimetres (no ÷100).
+    const faces = (asset.faces ?? []) as Array<Record<string, unknown>>;
+    const b1 = faces.find((f) => f.id === "B1");
+    const w = Number(b1?.apertureWidthMm) || anc.apertureMm || 25.4;
+    const h = Number(b1?.apertureHeightMm) || anc.apertureMm || 25.4;
     const group = new THREE.Group();
     group.name = "reflection-face";
     group.add(new THREE.Mesh(
@@ -2391,6 +2397,20 @@ function ComponentPreview3D({
         bodyMm.scale.setScalar(100);
         bodyMm.rotation.x = Math.PI / 2;
         pivot.add(bodyMm);
+        return pivot;
+      }
+
+      // Optical table — render the real Newport breadboard the lab viewer
+      // draws (createNewportOpticalTable, loadAsset/index.ts) instead of a
+      // placeholder cube. The builder authors geometry in the main-viewer
+      // ÷100 frame (1 unit = 100 mm); this preview is raw mm, so scale ×100
+      // to match — same units fix as the glan/fiber paths above. No
+      // rotation, so it sits Y-up exactly like the lab.
+      if (asset.kindId === "optical_table" || filePath === "primitive://table") {
+        const tableMm = new THREE.Group();
+        tableMm.add(createNewportOpticalTable());
+        tableMm.scale.setScalar(100);
+        pivot.add(tableMm);
         return pivot;
       }
 

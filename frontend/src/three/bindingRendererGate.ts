@@ -121,7 +121,7 @@ export async function buildSceneObjectFromBindings(
         translucentHousing: (sceneObject.properties as { translucentHousing?: unknown } | undefined)?.translucentHousing === true,
       }
     : null;
-  const group = await buildBindingTreeObject(tree, async (node) => {
+  const content = await buildBindingTreeObject(tree, async (node) => {
     if (node.target.kind === "missing") return null;
     if (node.target.kind === "subcomponent" || node.target.kind === "empty") {
       // subcomponent: logical container that recurses into the
@@ -143,12 +143,30 @@ export async function buildSceneObjectFromBindings(
     // for the legacy single-asset path and a composite Component
     // (isolator, mirror_mount, …) never has fiber-style per-instance
     // state on its root.
-    return loadAssetObject(component, node.target.asset, undefined, null, null, renderHints);
+    return loadAssetObject(component, node.target.asset, undefined, null, null, {
+      translucentHousing: renderHints?.translucentHousing,
+      skipAutoCenter: true,
+    });
   });
-  // The walker may produce a Group with one child (legacy single-root
-  // case) or many children (composite). Either way the outer Group is
-  // the renderable; callers will add it to their wrapper and apply
-  // the SceneObject's world pose via ``applyObjectGeometryOffset``.
+  // CAD→three basis swap for the whole assembled tree.
+  //
+  // bindingTreeObject assembles in the component's CAD frame (Z-up, raw
+  // mm/100 — see its "Frame contract"). Legacy single-asset meshes have
+  // the Blender→glTF Z-up→Y-up swap baked into their vertices, and the
+  // backend beam is converted with labMmToThree (which swaps); the
+  // binding tree's STEP→STL sub-assets carry no such bake. Without a
+  // swap here the assembly sits 90° (Z↔Y) off from its own beam and
+  // from every legacy asset — the IO-3-850-HP bore rendered
+  // perpendicular to its beam. Apply the swap (Rx(-90°), the rotational
+  // half of labMmToThree) ONCE to the rigid assembly — NEVER per-binding,
+  // which scatters the pieces (see bindingTreeObject.ts ⚠). It composes
+  // exactly with the wrapper's sceneObjectToQuaternion (= S·R_obj·S⁻¹):
+  // quat·S = S·R_obj, so a body-local point lands where the backend beam
+  // (labMmToThree) puts it, for any object pose. The caller still applies
+  // applyObjectGeometryOffset (origin nudge, three frame) to this Group.
+  const group = new THREE.Group();
+  group.quaternion.setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0, "XYZ"));
+  group.add(content);
   group.name = component.name;
   return group;
 }

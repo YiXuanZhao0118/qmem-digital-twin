@@ -42,6 +42,7 @@ import {
 import { createZhl12wPlusAmplifier } from "../kinds/rf_amplifier/renderer";
 import { createRfSwitch } from "../kinds/rf_switch/renderer";
 import { createSmaShortCable } from "../three/loadAsset/rf_cable";
+import { createNewportOpticalTable } from "../three/photoRoom";
 import { createFiberSplineObject } from "../three/loadAsset/fiber/spline";
 import type { FiberNode } from "../three/loadAsset/fiber";
 import { applyDeletionFilter, applyIncludeOnlyFilter, applyViewerHintsToGeometry, centroidKey, findCoplanarCluster } from "../three/loadAsset/viewerHints";
@@ -1603,6 +1604,26 @@ function FaceLocator3D({
       const path = asset.filePath;
       if (!path) {
         addProxyBox();
+        return;
+      }
+      // Optical table — render the real Newport breadboard the lab viewer
+      // draws instead of the generic proxy box. Handled BEFORE
+      // buildProceduralFaceLocatorModel because that helper dereferences
+      // asset.catalogId (null for the primitive_table asset) and would throw.
+      // createNewportOpticalTable authors geometry in the main-viewer ÷100
+      // frame; this editor renders body-local raw mm, so scale ×100. No
+      // rotation, so it sits Y-up like the lab.
+      if (asset.kindId === "optical_table" || path === "primitive://table") {
+        const tableMm = new THREE.Group();
+        tableMm.add(createNewportOpticalTable());
+        tableMm.scale.setScalar(100);
+        modelGroup.add(tableMm);
+        tableMm.updateMatrixWorld(true);
+        tableMm.traverse((child) => {
+          if (child instanceof THREE.Mesh) modelMeshes.push(child);
+        });
+        setModelStatus("loaded");
+        fitCameraToObject();
         return;
       }
       const proceduralModel = buildProceduralFaceLocatorModel(asset);
