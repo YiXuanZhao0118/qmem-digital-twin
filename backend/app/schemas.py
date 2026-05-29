@@ -258,7 +258,6 @@ class Asset3DBase(CamelModel):
     transitions: JsonList | None = None
     default_params: JsonDict | None = None
     wavelength_range_nm: list[float] | None = None
-    body_frame_rotation: JsonDict | None = None
 
 
 class Asset3DCreate(Asset3DBase):
@@ -281,7 +280,6 @@ class Asset3DUpdate(CamelModel):
     transitions: JsonList | None = None
     default_params: JsonDict | None = None
     wavelength_range_nm: list[float] | None = None
-    body_frame_rotation: JsonDict | None = None
 
 
 class LocalAssetImport(CamelModel):

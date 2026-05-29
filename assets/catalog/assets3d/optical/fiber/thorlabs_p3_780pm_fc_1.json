@@ -1,10 +1,9 @@
-{
+﻿{
   "id": "thorlabs_p3_780pm_fc_1",
   "vendorPart": "P3-780PM-FC-1",
   "displayName": "Thorlabs P3-780PM-FC-1 (PM, APC/APC, 1m, 780nm)",
   "geometryRef": null,
   "geometryRefGlb": null,
-  "bodyFrameRotation": null,
   "kind": "fiber",
   "wavelengthRangeNm": [770, 850],
   "physicalDimensionsMm": { "lengthMm": 1000, "claddingDiameterUm": 125, "coreDiameterUm": 4.5 },

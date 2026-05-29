@@ -1,12 +1,11 @@
 """Seed `assets/catalog/**/*.json` (Asset-Physics-Model v3) into Postgres.
 
-Idempotent — upserts by `catalog_id`. Run after `alembic upgrade head`
+Idempotent ??upserts by `catalog_id`. Run after `alembic upgrade head`
 on the v3 migration (0082+).
 
-  Asset3D JSON  → assets_3d row (v3 columns: kind_id, faces,
+  Asset3D JSON  ??assets_3d row (v3 columns: kind_id, faces,
                   transitions, default_params, wavelength_range_nm,
-                  body_frame_rotation)
-  Component JSON → components row + ComponentBinding rows resolved from
+  Component JSON ??components row + ComponentBinding rows resolved from
                    asset catalog_id refs to UUID FKs
 
 Mechanical-only assets (Asset3D.kind == null in JSON) seed with
@@ -54,10 +53,6 @@ async def upsert_asset3d(session, payload: Asset3DV3In) -> Asset3D:
     transitions_json = [
         t.model_dump(by_alias=True, exclude_none=True) for t in payload.transitions
     ]
-    body_rot = (
-        payload.body_frame_rotation.model_dump(by_alias=True)
-        if payload.body_frame_rotation else None
-    )
     mech_anchors_json = [
         a.model_dump(by_alias=True, exclude_none=True)
         for a in payload.mechanical_anchors
@@ -65,7 +60,7 @@ async def upsert_asset3d(session, payload: Asset3DV3In) -> Asset3D:
 
     # Asset-type taxonomy: optical assets have a physics kind; mechanical
     # use a coarse role label parsed from the JSON file's directory (see
-    # main() — passed in via `properties._role` upstream when known).
+    # main() ??passed in via `properties._role` upstream when known).
     asset_type = payload.kind or "mechanical"
     name = payload.display_name or payload.vendor_part or payload.id
 
@@ -81,7 +76,6 @@ async def upsert_asset3d(session, payload: Asset3DV3In) -> Asset3D:
             transitions=transitions_json,
             default_params=payload.default_params or {},
             wavelength_range_nm=payload.wavelength_range_nm,
-            body_frame_rotation=body_rot,
             properties={
                 "vendorPart": payload.vendor_part,
                 "displayName": payload.display_name,
@@ -101,9 +95,8 @@ async def upsert_asset3d(session, payload: Asset3DV3In) -> Asset3D:
         existing.transitions = transitions_json
         existing.default_params = payload.default_params or {}
         existing.wavelength_range_nm = payload.wavelength_range_nm
-        existing.body_frame_rotation = body_rot
         # Preserve viewerHints (centroid filters, etc.) baked by alembic
-        # migrations like 0074 — re-seeding shouldn't wipe them.
+        # migrations like 0074 ??re-seeding shouldn't wipe them.
         preserved_vh = (existing.properties or {}).get("viewerHints")
         new_properties = {
             "vendorPart": payload.vendor_part,
@@ -181,7 +174,7 @@ async def sync_component_bindings(
         asset = assets_by_catalog_id.get(b.asset_id)
         if asset is None:
             print(f"  ! binding '{b.binding_id}' references unknown asset "
-                  f"'{b.asset_id}' — skipping")
+                  f"'{b.asset_id}' ??skipping")
             continue
         binding = ComponentBinding(
             component_id=component.id,
@@ -238,26 +231,40 @@ def find_component_jsons(catalog_dir: Path) -> list[Path]:
 # Main
 # ---------------------------------------------------------------------------
 
-async def seed_v3(catalog_dir: Path) -> None:
+async def seed_v3(catalog_dir: Path, components_only: bool = False) -> None:
     asset_paths = find_asset_jsons(catalog_dir)
     component_paths = find_component_jsons(catalog_dir)
     print(f"Found {len(asset_paths)} Asset3D JSON files, "
           f"{len(component_paths)} Component JSON files in {catalog_dir}")
 
     async with AsyncSessionLocal() as session:
-        # Pass 1: upsert all Asset3D rows
+        # Pass 1: resolve catalog_id -> Asset3D map.
         assets_by_catalog_id: dict[str, Asset3D] = {}
-        for path in asset_paths:
-            try:
-                raw = _load_json(path)
-                payload = Asset3DV3In.model_validate(raw)
-            except Exception as exc:
-                print(f"  FAIL {path.relative_to(catalog_dir)}: {exc}")
-                continue
-            asset = await upsert_asset3d(session, payload)
-            await session.flush()
-            assets_by_catalog_id[payload.id] = asset
-            print(f"  OK asset  {payload.id:50s}  kind={payload.kind or '(mechanical)'}")
+        if components_only:
+            # Read existing assets WITHOUT upserting so editor-authored
+            # anchors[] survive — upsert_asset3d would overwrite anchors with
+            # the catalog's (empty for optical) mechanicalAnchors. Only the
+            # component + binding passes run, rebuilding bindings from catalog.
+            existing_assets = (
+                await session.execute(select(Asset3D))
+            ).scalars().all()
+            for asset in existing_assets:
+                if asset.catalog_id:
+                    assets_by_catalog_id[asset.catalog_id] = asset
+            print(f"  (components-only) loaded {len(assets_by_catalog_id)} "
+                  f"existing assets from DB; anchors preserved")
+        else:
+            for path in asset_paths:
+                try:
+                    raw = _load_json(path)
+                    payload = Asset3DV3In.model_validate(raw)
+                except Exception as exc:
+                    print(f"  FAIL {path.relative_to(catalog_dir)}: {exc}")
+                    continue
+                asset = await upsert_asset3d(session, payload)
+                await session.flush()
+                assets_by_catalog_id[payload.id] = asset
+                print(f"  OK asset  {payload.id:50s}  kind={payload.kind or '(mechanical)'}")
 
         # Pass 2: upsert Component rows
         components_by_catalog_id: dict[str, Component] = {}
@@ -292,8 +299,13 @@ def main() -> None:
         "--catalog-dir", type=Path, default=DEFAULT_CATALOG_DIR,
         help="Path to assets/catalog/ root (default: repo's assets/catalog/)",
     )
+    parser.add_argument(
+        "--components-only", action="store_true",
+        help="Rebuild Component rows + bindings from catalog without "
+             "re-upserting Asset3D rows (preserves editor-authored anchors).",
+    )
     args = parser.parse_args()
-    asyncio.run(seed_v3(args.catalog_dir))
+    asyncio.run(seed_v3(args.catalog_dir, components_only=args.components_only))
 
 
 if __name__ == "__main__":

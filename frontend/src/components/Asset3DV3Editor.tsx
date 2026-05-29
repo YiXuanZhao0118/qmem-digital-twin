@@ -53,14 +53,14 @@ const stlLoader = new STLLoader();
 const gltfLoader = new GLTFLoader();
 const objLoader = new OBJLoader();
 
-/** Draft row in the PHY Editor's Anchors table (Phase 9.8 — replaces
+/** Draft row in the PHY Editor's Anchors table (Phase 9.8 ??replaces
  *  the old Faces table). Each anchor has a position + two body-local
  *  axes the user edits directly:
  *    - axisX (nx/ny/nz): propagation / face normal
  *    - axisY (yx/yy/yz): transverse reference (slow axis for PM fiber,
  *                        fast axis for waveplate, transmission axis
  *                        for polarizer, acoustic axis for AOM, etc.)
- *  axisZ is derived as X × Y on save (after Gram-Schmidt orthogonalizing
+ *  axisZ is derived as X ? Y on save (after Gram-Schmidt orthogonalizing
  *  Y against X), so we don't store it in the draft. */
 type DraftAnchor = {
   id: string;
@@ -96,17 +96,6 @@ type AssetDraft = {
   kindId: string;
   wavelengthMinNm: string;
   wavelengthMaxNm: string;
-  // bodyFrameRotation is locked to null at Asset3D level (Phase 9.10) ??  // body frame +Z is the optical axis, X/Y are the polarization basis,
-  // and orientation is fixed. The field stays in the draft so existing
-  // rows round-trip cleanly to null on save.
-  bodyFrameRotation: { x: number; y: number; z: number; w: number } | null;
-  // Body frame origin in CAD-frame coordinates (mm). Empty strings ??  // no offset (CAD origin == body origin). Persisted via
-  // properties.bodyFramePositionMm so no DB schema change is required.
-  bodyFramePositionMmX: string;
-  bodyFramePositionMmY: string;
-  bodyFramePositionMmZ: string;
-  // Snapshot of asset.properties so we can merge our bodyFramePositionMm
-  // edit back without clobbering other keys.
   properties: Record<string, unknown>;
   anchors: DraftAnchor[];
   transitions: DraftTransition[];
@@ -223,11 +212,11 @@ const KIND_GUIDES: KindGuide[] = [
     params: ["focalLengthMm", "modeFieldDiameterUm", "workingDistanceMm", "na", "couplingEfficiency"],
     matrix: "Lens-like focusing plus mode overlap; q handling needs both ABCD and fiber mode overlap.",
   },
-  // ????????????????????????????????????????????????????????????????????????
-  // RF kinds (asset-physics-model.md §8.7-§8.12). Faces carry domain="rf"
-  // or domain="ttl"; the RF tracer (§7.5) walks a port-adjacency graph
+  // ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
+  // RF kinds (asset-physics-model.md 禮8.7-禮8.12). Faces carry domain="rf"
+  // or domain="ttl"; the RF tracer (禮7.5) walks a port-adjacency graph
   // instead of doing ray-plane intersection, so apertureMm is unused.
-  // ????????????????????????????????????????????????????????????????????????
+  // ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
   {
     kind: "rf_source",
     faces: "One rf_out per channel (AD9959: CH0..CH3). domain=\"rf\". normalBodyLocal = SMA connector outward direction. apertureMm = 0.",
@@ -302,17 +291,10 @@ function displayNameFromFilename(filename: string): string {
 
 function draftFromAsset(asset: V3Asset): AssetDraft {
   const props = (asset.properties ?? {}) as Record<string, unknown>;
-  const pos = (props.bodyFramePositionMm ?? null) as
-    | { x?: number; y?: number; z?: number }
-    | null;
   return {
     kindId: asset.kindId ?? "",
     wavelengthMinNm: n(asset.wavelengthRangeNm?.[0]),
     wavelengthMaxNm: n(asset.wavelengthRangeNm?.[1]),
-    bodyFrameRotation: asset.bodyFrameRotation ?? null,
-    bodyFramePositionMmX: n(pos?.x),
-    bodyFramePositionMmY: n(pos?.y),
-    bodyFramePositionMmZ: n(pos?.z),
     properties: props,
     anchors: (asset.anchors ?? []).map((rawAnchor) => {
       // The anchors[] JSONB column has historical schema drift: clean
@@ -734,7 +716,7 @@ function proceduralPreviewProperties(asset: V3Asset, kindId: string): Record<str
     // (`createFiberSplineObject`) instead reads a nested
     // `fiberKindParamsOverride` with the long enum names. Bridge the two
     // so each catalog fiber paints its true jacket colour (SM=yellow,
-    // PM=blue) and APC ends get the green boot — without this every
+    // PM=blue) and APC ends get the green boot ??without this every
     // fiber falls back to the PM-blue + PC default and they all look
     // identical. The Component preview already works because the fiber
     // *Component* row carries a proper fiberKindParamsOverride.
@@ -809,7 +791,7 @@ function proceduralPreviewModel(asset: V3Asset): string | null {
  *  `userData[roleKey] === "tube"`, and swaps its TubeGeometry for a
  *  CylinderGeometry of equivalent length + radius (Y-axis cylinder
  *  rotated to lie along X). TubeGeometry's Frenet-frame fallback
- *  twists the cross-section by 360° on a perfectly-straight curve —
+ *  twists the cross-section by 360簞 on a perfectly-straight curve ??
  *  invisible on smooth uniform-colour cylinders but it shows up on
  *  fibers as a spiral artefact. The replacement is rotationally
  *  symmetric so it can't twist regardless of view angle. */
@@ -877,7 +859,7 @@ function buildProceduralFaceLocatorModel(asset: V3Asset): THREE.Object3D | null 
     // Fiber preview = same Bezier spline + 2 FC ferrules the lab scene
     // viewer renders. Object Sense paints freshly-spawned fibers as a
     // straight line between two anchor nodes (no curve handles), so we
-    // pass an explicit 2-node straight spline here — overrides the
+    // pass an explicit 2-node straight spline here ??overrides the
     // builder's curved default and matches what the user sees in the
     // lab viewer. Centred at origin so it sits inside the body-axes
     // gizmo cluster instead of being offset 50 mm in +Z.
@@ -887,14 +869,14 @@ function buildProceduralFaceLocatorModel(asset: V3Asset): THREE.Object3D | null 
     ];
     model = createFiberSplineObject(component, straightNodes);
     // three.js TubeGeometry's Frenet-frame computation twists the
-    // cross-section vertices 360° around the curve when fed a
-    // perfectly-straight CubicBezier (a known artefact — see e.g.
+    // cross-section vertices 360簞 around the curve when fed a
+    // perfectly-straight CubicBezier (a known artefact ??see e.g.
     // mrdoob/three.js#16040). On the thin yellow / blue / orange
     // fiber jacket that twist shows up as a visible spiral pattern,
     // even though the surface is rotationally symmetric. The thicker
     // RF-cable jacket hides it, which is why the user sees "fiber
     // spirals, rf cable straight". Replace the spiraling tube with a
-    // plain CylinderGeometry (no Frenet frame → no twist).
+    // plain CylinderGeometry (no Frenet frame ??no twist).
     replaceSpiralTubeWithCylinder(model, "fiberRole");
   }
   if (!model) return null;
@@ -940,8 +922,8 @@ function makeFaceLabel(text: string, color: string): THREE.Sprite {
 /** Build an orthonormal body-local basis from user-provided axisX +
  *  axisY. axisX is normalized; axisY is Gram-Schmidt orthogonalized
  *  against axisX (any component along X is projected out) then
- *  normalized; axisZ = axisX × axisY. The user-facing axisY *direction*
- *  is preserved as much as possible — this is the semantic axis (slow
+ *  normalized; axisZ = axisX ? axisY. The user-facing axisY *direction*
+ *  is preserved as much as possible ??this is the semantic axis (slow
  *  / fast / transmission / acoustic). If axisY is parallel to axisX
  *  (degenerate), fall back to world +Y or +Z whichever is less
  *  parallel to X. */
@@ -964,7 +946,7 @@ function deriveOrthonormalBasis(
   if (Math.hypot(ay.x, ay.y, ay.z) < 1e-9) {
     Yseed = Math.abs(X.y) > 0.95 ? { x: 0, y: 0, z: 1 } : { x: 0, y: 1, z: 0 };
   }
-  // Gram-Schmidt: Y' = Yseed − (Yseed·X) X
+  // Gram-Schmidt: Y' = Yseed ??(Yseed繚X) X
   let dotYX = Yseed.x * X.x + Yseed.y * X.y + Yseed.z * X.z;
   let Yp = {
     x: Yseed.x - dotYX * X.x,
@@ -973,7 +955,7 @@ function deriveOrthonormalBasis(
   };
   let yLen = Math.hypot(Yp.x, Yp.y, Yp.z);
   if (yLen < 1e-9) {
-    // axisY collapsed onto axisX — Yseed was parallel to X. Pick a
+    // axisY collapsed onto axisX ??Yseed was parallel to X. Pick a
     // world fallback that's not parallel to X.
     Yseed = Math.abs(X.y) > 0.95 ? { x: 0, y: 0, z: 1 } : { x: 0, y: 1, z: 0 };
     dotYX = Yseed.x * X.x + Yseed.y * X.y + Yseed.z * X.z;
@@ -1037,34 +1019,13 @@ function draftToPatch(draft: AssetDraft): V3AssetUpdate {
       ? null
       : [wavelengthMin ?? 0, wavelengthMax ?? 0] as [number, number];
 
-  // Build properties patch: keep all other keys, overwrite (or remove)
-  // bodyFramePositionMm based on the draft inputs. All three components
-  // empty ??no offset, drop the key.
-  const posX = readOptionalNumber(draft.bodyFramePositionMmX, "bodyFramePosition.x");
-  const posY = readOptionalNumber(draft.bodyFramePositionMmY, "bodyFramePosition.y");
-  const posZ = readOptionalNumber(draft.bodyFramePositionMmZ, "bodyFramePosition.z");
-  const nextProps: Record<string, unknown> = { ...draft.properties };
-  if (posX === null && posY === null && posZ === null) {
-    delete nextProps.bodyFramePositionMm;
-  } else {
-    nextProps.bodyFramePositionMm = {
-      x: posX ?? 0,
-      y: posY ?? 0,
-      z: posZ ?? 0,
-    };
-  }
-
   const kindIdValue = draft.kindId.trim() || null;
   return {
     kindId: kindIdValue,
     wavelengthRangeNm,
-    // body_frame_rotation stores the CAD-to-body rotation (the
-    // body-frame origin's orientation relative to the CAD STL). User
-    // edits via Euler rx/ry/rz, persisted as a quaternion.
-    bodyFrameRotation: draft.bodyFrameRotation,
     anchors,
     defaultParams: readJsonObject(draft.defaultParamsText, "defaultParams"),
-    properties: nextProps,
+    properties: draft.properties,
   };
 }
 
@@ -1215,8 +1176,6 @@ function FaceLocator3D({
   onSelectFace,
   onMoveFace,
   onAutoPlaceFace,
-  bodyFramePositionMm,
-  bodyFrameRotation,
   readOnlyGeometry = false,
   onDeleteCluster,
   lockedCentroids,
@@ -1230,8 +1189,6 @@ function FaceLocator3D({
   onSelectFace: (index: number) => void;
   onMoveFace: (index: number, position: THREE.Vector3) => void;
   onAutoPlaceFace: (index: number, position: THREE.Vector3, normal: THREE.Vector3) => void;
-  bodyFramePositionMm: { x: number; y: number; z: number };
-  bodyFrameRotation: { x: number; y: number; z: number; w: number } | null;
   /** When true, face markers can be selected but not dragged or
    *  auto-placed; positions are owned by another editor (PHY Editor). */
   readOnlyGeometry?: boolean;
@@ -1269,18 +1226,6 @@ function FaceLocator3D({
   const [modelStatus, setModelStatus] = useState<"loading" | "loaded" | "proxy">("loading");
   const [autoPick, setAutoPick] = useState(false);
   const autoPickRef = useRef(autoPick);
-  // Body-frame position + rotation: the STL is wrapped in two nested
-  // groups so its CAD frame ends up displayed in body-frame orientation
-  // with the body origin at the scene origin. Outer group rotates by
-  // R_body; inner group translates by -body_origin. Refs let the
-  // long-lived scene useEffect read latest values; separate effects
-  // update the groups live as the user types.
-  const bodyFramePositionRef = useRef(bodyFramePositionMm);
-  const bodyFrameRotationRef = useRef(bodyFrameRotation);
-  const modelGroupRef = useRef<THREE.Group | null>(null);          // outer: translation (body-frame offset)
-  const modelInnerGroupRef = useRef<THREE.Group | null>(null);     // inner: rotation R_body⁻¹
-  bodyFramePositionRef.current = bodyFramePositionMm;
-  bodyFrameRotationRef.current = bodyFrameRotation;
   // Picked-face wireframe overlay survives useEffect remounts (which fire on
   // every draft.anchors edit, including the one auto-pick itself triggers).
   const pickedFaceWireframeRef = useRef<{
@@ -1362,7 +1307,7 @@ function FaceLocator3D({
     }
     const faceSize = faceBox.getSize(new THREE.Vector3());
     const sceneScale = Math.max(faceSize.x, faceSize.y, faceSize.z, 10);
-    // Anchor sphere + normal arrow sizing. Shrunk another 5× from the
+    // Anchor sphere + normal arrow sizing. Shrunk another 5? from the
     // earlier halving (original was sceneScale * 0.08, then 0.04, now
     // 0.008) so the markers stay readable on thin fiber / rf_cable
     // assets without dwarfing the geometry. Arrow LENGTH unchanged
@@ -1394,10 +1339,10 @@ function FaceLocator3D({
     for (const [dir, color] of bodyAxisColors) {
       // Shaft = thin cylinder along axis, depthTest false so it pokes through
       // the proxy cube; renderOrder ensures it draws after transparent CAD.
-      // Thickness shrunk 5× from the earlier halving — current values:
-      //   shaft rad 0.018 → 0.009 → 0.0018
-      //   head  rad 0.05  → 0.025 → 0.005
-      //   head  len 0.15  → 0.10  → 0.02
+      // Thickness shrunk 5? from the earlier halving ??current values:
+      //   shaft rad 0.018 ??0.009 ??0.0018
+      //   head  rad 0.05  ??0.025 ??0.005
+      //   head  len 0.15  ??0.10  ??0.02
       // Length axis (shaftLen) unchanged so the triad still reaches as
       // far as before; only the cylinder/cone thickness shrinks.
       const shaftLen = bodyArmLen * 0.85;
@@ -1425,27 +1370,9 @@ function FaceLocator3D({
     }
     root.add(bodyAxesGroup);
 
-    // Wrap the loaded STL/proxy in two nested groups so the user can
-    // adjust position + rotation live. INNER group rotates the STL into
-    // body-aligned orientation (R_body⁻¹). OUTER group then translates
-    // by −body_origin in BODY frame, sliding the body origin onto world
-    // zero AFTER the rotation has aligned the axes.
-    // Net transform: world_point = R_body⁻¹ × cad_point − body_origin
-    // (body-frame offset — see docs/asset-physics-model.md §3.1).
+    // Model geometry is shown in native Asset/CAD coordinates; anchors are edited in the same frame.
     const modelGroup = new THREE.Group();
-    const modelInnerGroup = new THREE.Group();
-    {
-      const p = bodyFramePositionRef.current;
-      const q = bodyFrameRotationRef.current;
-      const shift = new THREE.Vector3(p.x, p.y, p.z);
-      if (q) shift.applyQuaternion(new THREE.Quaternion(q.x, q.y, q.z, q.w).invert());
-      modelGroup.position.set(-shift.x, -shift.y, -shift.z);
-      if (q) modelInnerGroup.quaternion.set(q.x, q.y, q.z, q.w).invert();
-    }
-    modelGroup.add(modelInnerGroup);
     root.add(modelGroup);
-    modelGroupRef.current = modelGroup;
-    modelInnerGroupRef.current = modelInnerGroup;
 
     const selectable: THREE.Object3D[] = [];
     const modelMeshes: THREE.Mesh[] = [];
@@ -1474,7 +1401,7 @@ function FaceLocator3D({
 
       const aperture = readDraftNumber(anchor.apertureMm) ?? markerRadius * 3;
       // Per-anchor width/height: if user filled them, use them; otherwise
-      // default to aperture × 2 (square / circle inscribed in apertureMm
+      // default to aperture ? 2 (square / circle inscribed in apertureMm
       // half-extent). Clamped to markerRadius so tiny apertures stay
       // visible.
       const wMm = readDraftNumber(anchor.apertureWidthMm) ?? aperture * 2;
@@ -1517,8 +1444,8 @@ function FaceLocator3D({
         group.add(disk);
       }
 
-      // Anchor normal arrow. Head length / width shrunk 5× from the
-      // earlier halving (0.22 → 0.12 → 0.024 head len; 0.10 → 0.05 →
+      // Anchor normal arrow. Head length / width shrunk 5? from the
+      // earlier halving (0.22 ??0.12 ??0.024 head len; 0.10 ??0.05 ??
       // 0.01 head width) so the arrow reads as a slim line + tiny
       // indicator tip, not a fat cone covering the aperture ring.
       const arrow = new THREE.ArrowHelper(
@@ -1666,7 +1593,7 @@ function FaceLocator3D({
 
       if (mesh) {
         mesh.position.copy(center);
-        modelInnerGroup.add(mesh);
+        modelGroup.add(mesh);
       }
       setModelStatus("proxy");
       fitCameraToObject();
@@ -1680,7 +1607,7 @@ function FaceLocator3D({
       }
       const proceduralModel = buildProceduralFaceLocatorModel(asset);
       if (proceduralModel) {
-        modelInnerGroup.add(proceduralModel);
+        modelGroup.add(proceduralModel);
         proceduralModel.updateMatrixWorld(true);
         proceduralModel.traverse((child) => {
           if (child instanceof THREE.Mesh) modelMeshes.push(child);
@@ -1745,7 +1672,7 @@ function FaceLocator3D({
                 }),
               );
               lockMesh.renderOrder = 20;
-              modelInnerGroup.add(lockMesh);
+              modelGroup.add(lockMesh);
             }
           }
         } else if (extension === "obj") {
@@ -1778,7 +1705,7 @@ function FaceLocator3D({
         }
         if (cancelled) return;
         normalizeLoadedModelUnits(object, sceneScale);
-        modelInnerGroup.add(object);
+        modelGroup.add(object);
         object.updateMatrixWorld(true);
         object.traverse((child) => {
           if (child instanceof THREE.Mesh) modelMeshes.push(child);
@@ -2140,45 +2067,6 @@ function FaceLocator3D({
     };
   }, [asset.filePath, viewerHintsKey, lockedCentroidsKey, showLocks, draft.anchors, selectedAnchorIndex]);
 
-  // Reflect external body-frame origin position edits live into the
-  // outer translation group, and rotation edits into the inner rotation
-  // group, so the user sees the STL shift / spin as they type. Body-
-  // frame offset semantic: x/y/z mm are along body axes (post-rotation),
-  // so tweaking z mm moves the STL along scene Z regardless of R_body.
-  useEffect(() => {
-    const outer = modelGroupRef.current;
-    if (outer) {
-      const shift = new THREE.Vector3(
-        bodyFramePositionMm.x,
-        bodyFramePositionMm.y,
-        bodyFramePositionMm.z,
-      );
-      if (bodyFrameRotation) {
-        shift.applyQuaternion(
-          new THREE.Quaternion(
-            bodyFrameRotation.x,
-            bodyFrameRotation.y,
-            bodyFrameRotation.z,
-            bodyFrameRotation.w,
-          ).invert(),
-        );
-      }
-      outer.position.set(-shift.x, -shift.y, -shift.z);
-    }
-  }, [bodyFramePositionMm.x, bodyFramePositionMm.y, bodyFramePositionMm.z, bodyFrameRotation]);
-
-  useEffect(() => {
-    const inner = modelInnerGroupRef.current;
-    if (!inner) return;
-    if (bodyFrameRotation) {
-      inner.quaternion
-        .set(bodyFrameRotation.x, bodyFrameRotation.y, bodyFrameRotation.z, bodyFrameRotation.w)
-        .invert();
-    } else {
-      inner.quaternion.identity();
-    }
-  }, [bodyFrameRotation]);
-
   const selected = selectedAnchorIndex !== null ? draft.anchors[selectedAnchorIndex] : null;
   const canDeleteGeometry = Boolean(onDeleteCluster);
   const fileExtension = asset.filePath.split("?")[0].split(".").pop()?.toLowerCase() ?? "";
@@ -2260,7 +2148,7 @@ function FaceLocator3D({
           )}
           {canDeleteGeometry && (
             <span
-              title="Ctrl+middle = delete · Shift+middle = lock (keep). Click for one cluster; drag for a screen rectangle. Plain left/right buttons still orbit/pan the camera."
+              title="Ctrl+middle = delete 繚 Shift+middle = lock (keep). Click for one cluster; drag for a screen rectangle. Plain left/right buttons still orbit/pan the camera."
               style={{
                 padding: "3px 8px",
                 fontSize: 10,
@@ -2339,179 +2227,6 @@ function AssetReadOnly({ asset }: { asset: V3Asset }) {
   );
 }
 
-/**
- * Body frame origin editor (Phase 9.10). Defines where the body frame
- * sits inside the imported CAD STL, with two parts:
- *   - position offset (x/y/z mm) ??body origin in CAD-frame coordinates
- *   - rotation (rx/ry/rz deg, XYZ Euler) ??CAD axes relative to body axes
- *
- * Coordinate formula:
- *   world_face = lab_sense ??( body_frame_origin + R_body * face_position )
- * where face_position is stored in body frame. The face locator translates
- * + rotates the STL by the inverse so body axes display aligned with the
- * scene axes, and faces (in body frame) sit at their natural positions.
- *
- * Component-instance pose (placing devices in a scene) lives at the
- * Component 3D preview as binding.localXYZ + localRxRyRz, not here.
- */
-function _eulerDegFromQuat(
-  q: { x: number; y: number; z: number; w: number } | null,
-): [number, number, number] {
-  if (!q) return [0, 0, 0];
-  const e = new THREE.Euler().setFromQuaternion(
-    new THREE.Quaternion(q.x, q.y, q.z, q.w),
-    "XYZ",
-  );
-  const r2d = 180 / Math.PI;
-  return [e.x * r2d, e.y * r2d, e.z * r2d];
-}
-
-function _quatFromEulerDeg(
-  rx: number, ry: number, rz: number,
-): { x: number; y: number; z: number; w: number } | null {
-  if (rx === 0 && ry === 0 && rz === 0) return null;
-  const d2r = Math.PI / 180;
-  const q = new THREE.Quaternion().setFromEuler(
-    new THREE.Euler(rx * d2r, ry * d2r, rz * d2r, "XYZ"),
-  );
-  return { x: q.x, y: q.y, z: q.z, w: q.w };
-}
-
-function BodyFrameOriginEditor({
-  x, y, z, rotation,
-  onPositionChange,
-  onRotationChange,
-}: {
-  x: string;
-  y: string;
-  z: string;
-  rotation: { x: number; y: number; z: number; w: number } | null;
-  onPositionChange: (axis: "x" | "y" | "z", value: string) => void;
-  onRotationChange: (next: { x: number; y: number; z: number; w: number } | null) => void;
-}) {
-  const inputStyle = {
-    width: 78,
-    padding: "2px 4px",
-    fontSize: 11,
-    border: "1px solid #d8ded8",
-    borderRadius: 3,
-    fontFamily: "ui-monospace, monospace",
-  } as const;
-
-  const [rxDeg, ryDeg, rzDeg] = _eulerDegFromQuat(rotation);
-  const setEuler = (rx: number, ry: number, rz: number) => {
-    onRotationChange(_quatFromEulerDeg(rx, ry, rz));
-  };
-
-  return (
-    <>
-      <div style={{ ...SECTION_LABEL, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span>Body frame origin (Lab Sense offset, mm + rotation, deg)</span>
-        <span style={{ fontSize: 10, color: "#4b5563", textTransform: "none" }}>
-          body +Z = optical axis | +X/+Y = polarization basis
-        </span>
-      </div>
-
-      {/* §17.4 UX hint: x/y/z are CAD-axis offsets (i.e. the body origin's
-          position in the asset's native STL coordinate system), NOT the
-          PHY scene's visual x/y/z after the body-frame rotation. Setting
-          z=6.875 on an asset with a 90° Y rotation in body frame moves
-          the STL along PHY scene X (-R_body⁻¹ × ẑ), which surprises new
-          users. The hint just makes the convention explicit; the actual
-          math sits in docs/frame-anchor-architecture.md §3 + §11.2. */}
-      <div
-        style={{ fontSize: 10, color: "#6b7280", marginTop: 4 }}
-        title="Inputs are in the asset's CAD axes (STL native). The PHY preview shows R_body⁻¹ × (cad − bfp); with a non-identity body rotation, typing z=N moves the STL along R_body⁻¹·ẑ in PHY scene, which may not look like 'scene Z'. See docs/frame-anchor-architecture.md §3."
-      >
-        Inputs are CAD-axis offsets — visual direction in PHY scene depends on the body-rotation set below.
-      </div>
-
-      <div style={{ display: "flex", gap: 6, marginTop: 6, alignItems: "center" }}>
-        <label style={{ fontSize: 10, color: "#ef4444", fontWeight: 600 }}>
-          x mm
-          <input
-            type="number"
-            step={0.01}
-            value={x}
-            placeholder="0"
-            onChange={(e) => onPositionChange("x", e.target.value)}
-            style={{ ...inputStyle, marginLeft: 4 }}
-            title="CAD-frame X (STL native). Not visual PHY scene X unless body rotation is identity."
-          />
-        </label>
-        <label style={{ fontSize: 10, color: "#22c55e", fontWeight: 600 }}>
-          y mm
-          <input
-            type="number"
-            step={0.01}
-            value={y}
-            placeholder="0"
-            onChange={(e) => onPositionChange("y", e.target.value)}
-            style={{ ...inputStyle, marginLeft: 4 }}
-            title="CAD-frame Y."
-          />
-        </label>
-        <label style={{ fontSize: 10, color: "#3b82f6", fontWeight: 600 }}>
-          z mm
-          <input
-            type="number"
-            step={0.01}
-            value={z}
-            placeholder="0"
-            onChange={(e) => onPositionChange("z", e.target.value)}
-            style={{ ...inputStyle, marginLeft: 4 }}
-            title="CAD-frame Z."
-          />
-        </label>
-      </div>
-
-      <div style={{ display: "flex", gap: 6, marginTop: 6, alignItems: "center" }}>
-        <label style={{ fontSize: 10, color: "#ef4444", fontWeight: 600 }}>
-          rx°
-          <input
-            type="number"
-            step={1}
-            value={rxDeg.toFixed(2)}
-            onChange={(e) => setEuler(Number(e.target.value) || 0, ryDeg, rzDeg)}
-            style={{ ...inputStyle, marginLeft: 4 }}
-          />
-        </label>
-        <label style={{ fontSize: 10, color: "#22c55e", fontWeight: 600 }}>
-          ry°
-          <input
-            type="number"
-            step={1}
-            value={ryDeg.toFixed(2)}
-            onChange={(e) => setEuler(rxDeg, Number(e.target.value) || 0, rzDeg)}
-            style={{ ...inputStyle, marginLeft: 4 }}
-          />
-        </label>
-        <label style={{ fontSize: 10, color: "#3b82f6", fontWeight: 600 }}>
-          rz°
-          <input
-            type="number"
-            step={1}
-            value={rzDeg.toFixed(2)}
-            onChange={(e) => setEuler(rxDeg, ryDeg, Number(e.target.value) || 0)}
-            style={{ ...inputStyle, marginLeft: 4 }}
-          />
-        </label>
-      </div>
-
-      <div style={{ fontSize: 10, color: "#4b5563", marginTop: 6, lineHeight: 1.45 }}>
-        Defines the body frame inside the imported CAD STL: position
-        offset = where the body origin sits in CAD-frame coordinates,
-        rotation = how CAD axes are oriented relative to body axes (XYZ
-        Euler order). The face locator transforms the STL by the inverse
-        so body axes display aligned with the scene axes and faces
-        (stored in body frame) sit at their natural positions. Per-instance
-        lab pose (placing devices into a scene) lives in the Component
-        3D preview, not here.
-      </div>
-    </>
-  );
-}
-
 /** Drop-down picker for Asset3D's `kind_id`, scoped to the rail's
  *  domain so a mechanical asset doesn't accidentally get an optical
  *  kind. Legacy values that don't appear in the Kind registry (e.g.
@@ -2585,7 +2300,7 @@ function AssetEditForm({
   // face_id is a kind-level contract: kinds.face_template lists which
   // face ids are `required` + `optional` for this kind. Build a closed
   // set from the asset's kind so the face_id picker can offer only
-  // those — typing a freeform id would silently desync the asset from
+  // those ??typing a freeform id would silently desync the asset from
   // the kind contract and break tracer lookups.
   const faceIdTemplate = useMemo(() => {
     const template = kinds.find((k) => k.name === draft.kindId)?.faceTemplate as
@@ -2694,12 +2409,12 @@ function AssetEditForm({
     setDraft({ ...draft, anchors: next });
   };
 
-  // Enforce axisY ⟂ axisX on blur: project user's axisY onto the plane
+  // Enforce axisY ??axisX on blur: project user's axisY onto the plane
   // perpendicular to axisX (Gram-Schmidt), normalize, write back into
-  // the draft. Skips when axisX is degenerate (length ≈ 0) so the user
+  // the draft. Skips when axisX is degenerate (length ??0) so the user
   // can fix axisX without the helper fighting them. Falls back to the
   // current displayed value if the projection collapses (axisY parallel
-  // to axisX) — leaves the data alone, lets the user choose how to fix.
+  // to axisX) ??leaves the data alone, lets the user choose how to fix.
   const orthogonalizeAnchorY = (index: number) => {
     const a = draft.anchors[index];
     if (!a) return;
@@ -2839,12 +2554,6 @@ function AssetEditForm({
         onSelectFace={setSelectedAnchorIndex}
         onMoveFace={moveFace}
         onAutoPlaceFace={autoPlaceFace}
-        bodyFramePositionMm={{
-          x: Number(draft.bodyFramePositionMmX) || 0,
-          y: Number(draft.bodyFramePositionMmY) || 0,
-          z: Number(draft.bodyFramePositionMmZ) || 0,
-        }}
-        bodyFrameRotation={draft.bodyFrameRotation}
         readOnlyGeometry={false}
         onDeleteCluster={handleDeleteCluster}
         lockedCentroids={lockedCentroids}
@@ -2853,7 +2562,7 @@ function AssetEditForm({
         showLocks={showLocks}
       />
 
-      {/* Identity — physics_kind is catalog identity, wavelength range
+      {/* Identity ??physics_kind is catalog identity, wavelength range
           is physics tuning. Both editable here. */}
       <div style={SECTION_LABEL}>Identity</div>
       <div style={{ display: "grid", gridTemplateColumns: parentDomain === "rf" ? "minmax(0, 1fr)" : "minmax(0, 1fr) 120px 120px", gap: 8 }}>
@@ -2889,22 +2598,6 @@ function AssetEditForm({
           </>
         )}
       </div>
-
-      <BodyFrameOriginEditor
-        x={draft.bodyFramePositionMmX}
-        y={draft.bodyFramePositionMmY}
-        z={draft.bodyFramePositionMmZ}
-        rotation={draft.bodyFrameRotation}
-        onPositionChange={(axis, value) =>
-          setDraft({
-            ...draft,
-            ...(axis === "x" ? { bodyFramePositionMmX: value } : {}),
-            ...(axis === "y" ? { bodyFramePositionMmY: value } : {}),
-            ...(axis === "z" ? { bodyFramePositionMmZ: value } : {}),
-          })
-        }
-        onRotationChange={(next) => setDraft({ ...draft, bodyFrameRotation: next })}
-      />
 
       <div style={{ ...SECTION_LABEL, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <span>Anchors ({draft.anchors.length})</span>
@@ -2972,7 +2665,7 @@ function AssetEditForm({
               style={{ background: index === selectedAnchorIndex ? "#f3f4f1" : "transparent" }}
             >
               {/* anchor_id is fixed by the kind's anchor template
-                  (kinds.face_template) — Phase 9.8 enforces a 1:1
+                  (kinds.face_template) ??Phase 9.8 enforces a 1:1
                   match between asset.anchors[].id and the template's
                   required list, so the editor displays the id as a
                   read-only label. axisY / axisZ are derived from
@@ -3124,8 +2817,8 @@ export function Asset3DV3Editor({
   //                returns "optical" for unknown, so this matches only
   //                explicit RF_DOMAIN_KINDS members), OR any face.domain
   //                in {"rf","ttl"} (covers hybrids like AOM whose rf_in
-  //                face is an RF tracer sink -- §1 & §14). The TTL
-  //                pre-pass (§7.5) is part of the RF tracer.
+  //                face is an RF tracer sink -- 禮1 & 禮14). The TTL
+  //                pre-pass (禮7.5) is part of the RF tracer.
   //   - "optical": everything else with a non-empty physicsKind.
   //
   // AOM is the canonical hybrid: kind=aom (optical) so it appears under
@@ -3253,9 +2946,9 @@ export function Asset3DV3Editor({
       // close still exit edit mode normally.
       setDraft(draftFromAsset(updated));
       // The Asset3D editor writes to the V3 catalog store (useV3Catalog),
-      // but every OTHER consumer of asset data — the lab viewer, the
+      // but every OTHER consumer of asset data ??the lab viewer, the
       // Optical Link panel, and the PHY editor's Component preview
-      // (ComponentsV2Editor reads useSceneStore.scene.assets) — reads
+      // (ComponentsV2Editor reads useSceneStore.scene.assets) ??reads
       // from the scene store. Without this refresh those views keep
       // rendering the pre-edit asset (e.g. a Component that references
       // io_3_850_hp_back_piece won't pick up anchor / body-frame / mesh
@@ -3290,7 +2983,7 @@ export function Asset3DV3Editor({
       setSelectedAssetId(null);
       setDraft(null);
       // deleteAsset also drops ComponentBinding rows that referenced
-      // this asset — refresh the scene store so the Component preview /
+      // this asset ??refresh the scene store so the Component preview /
       // lab viewer stop rendering the now-deleted asset + its bindings.
       void useSceneStore.getState().loadScene();
     } catch (err) {
@@ -3648,7 +3341,7 @@ export function Asset3DV3Editor({
                         catalogId: newAssetModal.catalogId,
                         name: newAssetModal.name.trim(),
                         // A new asset needs a concrete domain; "all" is a
-                        // view filter, not a classification — default to
+                        // view filter, not a classification ??default to
                         // optical (the editor's historical default).
                         domain: domain === "all" ? "optical" : domain,
                         unit: newAssetModal.unit,

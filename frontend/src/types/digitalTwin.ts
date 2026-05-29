@@ -166,7 +166,6 @@ export type Asset3D = {
   transitions?: Array<Record<string, unknown>> | null;
   defaultParams?: Record<string, unknown> | null;
   wavelengthRangeNm?: number[] | null;
-  bodyFrameRotation?: Record<string, unknown> | null;
   /** Asset-level metadata bucket; ``viewerHints`` is the main consumer
    *  today (alembic 0064). Other per-asset fields can live here without
    *  schema migrations. */

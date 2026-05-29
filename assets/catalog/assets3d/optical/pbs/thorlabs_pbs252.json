@@ -1,10 +1,9 @@
-{
+﻿{
   "id": "thorlabs_pbs252",
   "vendorPart": "PBS252",
   "displayName": "Thorlabs PBS252 Polarizing Beamsplitter Cube (1 inch)",
   "geometryRef": "files/stl/thorlabs_pbs252.stl",
   "geometryRefGlb": null,
-  "bodyFrameRotation": null,
 
   "kind": "pbs",
   "wavelengthRangeNm": [620, 1000],
@@ -40,7 +39,7 @@
       "positionMmBodyLocal": { "x": 0, "y": 0, "z": 0 },
       "normalBodyLocal":     { "x": -0.7071067811865476, "y": 0, "z": 0.7071067811865476 },
       "apertureMm": 17.96, "apertureShape": "rectangle",
-      "_role": "INTERNAL Brewster plate at 45° diagonal (xz plane). Real surface normal (-0.7071, 0, 0.7071). Aperture = side·sqrt(2) ~ 17.96 mm. Used by pbs_reflect_s via mirror formula."
+      "_role": "INTERNAL Brewster plate at 45簞 diagonal (xz plane). Real surface normal (-0.7071, 0, 0.7071). Aperture = side繚sqrt(2) ~ 17.96 mm. Used by pbs_reflect_s via mirror formula."
     }
   ],
 

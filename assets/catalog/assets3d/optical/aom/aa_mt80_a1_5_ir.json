@@ -1,10 +1,9 @@
-{
+﻿{
   "id": "aa_mt80_a1_5_ir",
   "vendorPart": "MT80-A1.5-IR",
   "displayName": "AA Opto-Electronic MT80-A1.5-IR AOM (80 MHz, IR)",
   "geometryRef": "files/glb/aom_aa_mt80.glb",
   "geometryRefGlb": "files/glb/aom_aa_mt80.glb",
-  "bodyFrameRotation": null,
 
   "kind": "aom",
   "wavelengthRangeNm": [780, 1100],
@@ -32,8 +31,8 @@
       "normalBodyLocal":     { "x": 1, "y": 0, "z": 0 },
       "apertureMm": 0,
       "apertureShape": "circle",
-      "_role": "AOM piezo transducer RF input (SMA). Position = transducerOffsetFromCenterMmX × rfPropagationDirectionBodyLocal. RF sink: read by diffract_aom op from §7.5 tracer's signalAtPort, not a ray-tracer entry face — no transition listed.",
-      "_USER_TODO": "x=15mm is the migration 0083 default — refine to the actual SMA jack offset on the MT80-A1.5 housing."
+      "_role": "AOM piezo transducer RF input (SMA). Position = transducerOffsetFromCenterMmX ? rfPropagationDirectionBodyLocal. RF sink: read by diffract_aom op from 禮7.5 tracer's signalAtPort, not a ray-tracer entry face ??no transition listed.",
+      "_USER_TODO": "x=15mm is the migration 0083 default ??refine to the actual SMA jack offset on the MT80-A1.5 housing."
     }
   ],
 

@@ -1,10 +1,9 @@
-{
+﻿{
   "id": "toptica_boosta_pro",
   "vendorPart": "BoosTA pro",
   "displayName": "TOPTICA BoosTA pro Tapered Amplifier",
   "geometryRef": "files/glb/toptica_boosta_pro.glb",
   "geometryRefGlb": null,
-  "bodyFrameRotation": null,
 
   "kind": "tapered_amplifier",
   "wavelengthRangeNm": [750, 1080],
@@ -45,6 +44,6 @@
 
   "notes": {
     "stub": "Op is scalar gainLinear multiplier. Real log-saturation P_out = P_sat * log(1 + P_in/P_sat * (G_ss - 1)) + ASE noise floor is TODO.",
-    "spec": "TOPTICA BoosTA pro: typical 2 W output @ 780nm, seed power ~10-50 mW, broadband 750-1080 nm coverage with model variants. Spatial mode highly asymmetric at output (fast axis ~3 um, slow axis ~200 um) — beam shaping optics typically follow."
+    "spec": "TOPTICA BoosTA pro: typical 2 W output @ 780nm, seed power ~10-50 mW, broadband 750-1080 nm coverage with model variants. Spatial mode highly asymmetric at output (fast axis ~3 um, slow axis ~200 um) ??beam shaping optics typically follow."
   }
 }

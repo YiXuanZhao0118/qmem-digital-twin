@@ -2404,18 +2404,9 @@ function ComponentPreview3D({
       const url = resolveAssetUrl(filePath);
       // Mesh placement MUST match the lab viewer (Object Sense) so a
       // composite Component (isolator etc.) reads identically in both
-      // places. The lab viewer's loadAssetObject keeps body-frame
-      // assets at their NATIVE CAD frame — it does NOT shift by
-      // −bodyFramePositionMm or rotate by R_body⁻¹, because the
-      // body-frame offset only relocates *anchors* (computed as
-      // `R_body × anchor + bfo` in CAD axes), not the drawn mesh (see
-      // loadAsset/index.ts §"Anchor strategy" + docs/frame-anchor-
-      // architecture.md §3). The previous code here applied −bfo +
-      // R_body⁻¹, which pushed the IO-3-850-HP STL housing +47.05 mm in
-      // Z away from its (body-frame-less, procedural) Glan prisms while
-      // the lab viewer left them aligned. Keep the mesh at CAD frame;
-      // the binding pose (pivot) is the only transform, exactly as the
-      // lab viewer's buildBindingTreeObject stacks it.
+      // places. Asset meshes and anchors share the native CAD frame; the
+      // binding pose (pivot) is the only transform, exactly as the lab
+      // viewer's buildBindingTreeObject stacks it.
       const modelInnerGroup = new THREE.Group();
       pivot.add(modelInnerGroup);
       const hints = (asset.properties as { viewerHints?: AssetViewerHints } | undefined)?.viewerHints;

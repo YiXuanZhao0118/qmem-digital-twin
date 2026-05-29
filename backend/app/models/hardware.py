@@ -80,7 +80,6 @@ class Asset3D(Base):
     wavelength_range_nm: Mapped[list[float] | None] = mapped_column(
         sa.ARRAY(sa.Float())
     )
-    body_frame_rotation: Mapped[JsonDict | None] = mapped_column(JSONB)
     # Phase 9.1 anchor-centric schema (alembic 0087). Replaces faces[] +
     # transitions[] as the primary physics anchor structure. Each anchor
     # carries position + explicit local axes (X = propagation/normal,

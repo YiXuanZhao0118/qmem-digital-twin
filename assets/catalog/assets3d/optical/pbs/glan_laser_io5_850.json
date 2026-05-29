@@ -1,10 +1,9 @@
-{
+﻿{
   "id": "glan_laser_io5_850",
   "vendorPart": "Thorlabs IO-5-850-HP internal Glan-Laser",
   "displayName": "Glan-Laser Prism (IO-5-850-HP, L=7.5mm)",
   "geometryRef": null,
   "geometryRefGlb": null,
-  "bodyFrameRotation": null,
 
   "kind": "pbs",
   "wavelengthRangeNm": [350, 2300],
@@ -43,7 +42,7 @@
       "normalBodyLocal":     { "x": 0.6225, "y": 0, "z": -0.7826 },
       "apertureMm": 5.0,
       "apertureShape": "rectangle",
-      "_role": "INTERNAL gap interface (crystal-1 / air), 38.5° cut. Used by glan_reject_s mirror formula."
+      "_role": "INTERNAL gap interface (crystal-1 / air), 38.5簞 cut. Used by glan_reject_s mirror formula."
     },
     { "id": "B2",
       "positionMmBodyLocal": { "x": 0, "y": 0, "z": 0.15 },
@@ -65,12 +64,12 @@
         [0, 0,    0, 1,    0],
         [0, 0,    0, 0,    1]
       ],
-      "_note": "Forward p-pol transmission across gap. B_x = L/n_e + d_gap·(cos²θ_i/cos²θ_t − 1) = 5.07 + 0.15·3.052 = 5.53 mm. B_y = L/n_e = 5.07 mm."
+      "_note": "Forward p-pol transmission across gap. B_x = L/n_e + d_gap繚(cos簡庛_i/cos簡庛_t ??1) = 5.07 + 0.15繚3.052 = 5.53 mm. B_y = L/n_e = 5.07 mm."
     },
     {
       "in": "A1", "via": ["B1"], "out": "A3",
       "op": "glan_reject_s",
-      "_note": "Forward s-pol reject. TIR at B1 + Snell at A3 — output direction derived, not hard-coded."
+      "_note": "Forward s-pol reject. TIR at B1 + Snell at A3 ??output direction derived, not hard-coded."
     },
     {
       "in": "A2", "via": ["B2", "B1"], "out": "A1",
@@ -109,7 +108,7 @@
 
   "notes": {
     "topology": "PBS-like beam splitter. 5 faces (A1, A2, A3 external; B1, B2 internal gap). Power conservation T_p + T_s = 1. Same physics as IO-3, longer crystal.",
-    "rejectGeometry": "Same as IO-3: B1 normal at 38.5° from optical axis, mirror reflect + Snell at A3 gives reject in air ≈ (0.928, 0, -0.374). Real Glan-Laser TIR behavior (reject exits backward in z).",
+    "rejectGeometry": "Same as IO-3: B1 normal at 38.5簞 from optical axis, mirror reflect + Snell at A3 gives reject in air ??(0.928, 0, -0.374). Real Glan-Laser TIR behavior (reject exits backward in z).",
     "variant": "IO-5-850-HP has LARGER crystal (L=7.5mm, 5mm clear aperture) than IO-3 (L=5.0mm, 3mm clear)."
   }
 }

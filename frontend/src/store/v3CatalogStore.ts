@@ -82,7 +82,6 @@ export type V3Asset = {
   anchors: Record<string, unknown>[] | null;
   defaultParams: Record<string, unknown> | null;
   wavelengthRangeNm: [number, number] | null;
-  bodyFrameRotation: { x: number; y: number; z: number; w: number } | null;
   properties: Record<string, unknown>;
 };
 
@@ -93,7 +92,6 @@ export type V3AssetUpdate = Partial<{
   anchors: V3Anchor[] | null;
   defaultParams: Record<string, unknown> | null;
   wavelengthRangeNm: [number, number] | null;
-  bodyFrameRotation: { x: number; y: number; z: number; w: number } | null;
   properties: Record<string, unknown>;
 }>;
 

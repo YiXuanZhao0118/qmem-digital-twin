@@ -139,7 +139,7 @@ async def _hydrate_kind_cache() -> None:
     """Load ``kinds`` table into the in-process op_set_name cache so
     the tracer can resolve DB-only kinds (those created via the UI
     with ``op_set_name`` pointing at a code-registered op set). See
-    ``app.optical.db_kinds`` and docs/asset-physics-model.md §6."""
+    ``app.optical.db_kinds`` and docs/asset-physics-model.md 禮6."""
     from app.optical.db_kinds import hydrate_kind_cache
 
     async with AsyncSessionLocal() as session:
@@ -159,7 +159,7 @@ async def _audit_legacy_anchor_ids() -> None:
     and `beamPlacement.computeBeamStart` are kept only to handle
     user-uploaded assets authored before the rename. When this audit
     reports zero hits across all installs for a release cycle, the
-    fallbacks can be removed (§16.2 of docs/frame-anchor-architecture.md).
+    fallbacks can be removed (禮16.2 of docs/frame-anchor-architecture.md).
     """
     from sqlalchemy import select
 
@@ -179,7 +179,7 @@ async def _audit_legacy_anchor_ids() -> None:
                     hits.append((asset.catalog_id or str(asset.id), aid))
         if hits:
             _log.warning(
-                "anchor-id audit: %d legacy anchor id(s) found — "
+                "anchor-id audit: %d legacy anchor id(s) found ??"
                 "rename via PHY Editor to canonical (intercept_in/out/face). "
                 "Sample: %s",
                 len(hits),
@@ -188,58 +188,6 @@ async def _audit_legacy_anchor_ids() -> None:
                 ),
             )
 
-
-@app.on_event("startup")
-async def _audit_body_frame_consistency() -> None:
-    """Warn on assets where ``bodyFramePositionMm`` + ``body_frame_rotation``
-    might have been mis-rotated by alembic 0091. The migration was
-    intended to switch the value from CAD-axes (Phase 9.10) to body-axes
-    (Phase 9.11), but the rest of the codebase still treats it as CAD-
-    axes (see ``docs/frame-anchor-architecture.md §3``). Rows with a
-    non-identity ``body_frame_rotation`` AND a non-zero
-    ``bodyFramePositionMm`` need a human to compare PHY-Editor vs Lab
-    scene placement and confirm the value is what they intended.
-
-    This is a non-fatal warning. The audit runs once on startup and
-    prints a list of (catalog_id, bfp, R_body) tuples to the log."""
-    from sqlalchemy import select
-
-    from app.models import Asset3D
-
-    async with AsyncSessionLocal() as session:
-        rows = (await session.scalars(select(Asset3D))).all()
-        suspect: list[tuple[str, dict, dict]] = []
-        for asset in rows:
-            bfr = asset.body_frame_rotation
-            bfp = (asset.properties or {}).get("bodyFramePositionMm") if asset.properties else None
-            if not bfr or not bfp:
-                continue
-            # Identity quaternion = (0, 0, 0, ±1).
-            qx = float(bfr.get("x") or 0)
-            qy = float(bfr.get("y") or 0)
-            qz = float(bfr.get("z") or 0)
-            qw = float(bfr.get("w") or 0)
-            if abs(qx) < 1e-9 and abs(qy) < 1e-9 and abs(qz) < 1e-9 and abs(abs(qw) - 1) < 1e-9:
-                continue
-            # Zero offset is also fine — rotation has nothing to twist.
-            px = float(bfp.get("x") or 0)
-            py = float(bfp.get("y") or 0)
-            pz = float(bfp.get("z") or 0)
-            if abs(px) < 1e-9 and abs(py) < 1e-9 and abs(pz) < 1e-9:
-                continue
-            suspect.append((asset.catalog_id or str(asset.id), bfp, bfr))
-
-        if suspect:
-            _log.warning(
-                "body-frame audit: %d asset(s) have bfp != 0 AND R_body != I — "
-                "their stored value may have been rotated by alembic 0091 "
-                "(see docs/frame-anchor-architecture.md §3). Visually verify "
-                "PHY Editor body-origin alignment vs Lab scene placement for: %s",
-                len(suspect),
-                ", ".join(catalog for catalog, _, _ in suspect[:10]) + (
-                    f" (+{len(suspect) - 10} more)" if len(suspect) > 10 else ""
-                ),
-            )
 
 
 async def _sweep_abandoned_sessions_loop() -> None:

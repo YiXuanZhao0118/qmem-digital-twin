@@ -1,10 +1,9 @@
-{
+﻿{
   "id": "thorlabs_io_3_850_faraday_rod",
   "vendorPart": "IO-3-850-HP (Faraday rod core)",
   "displayName": "FaradayRod_IO3_850",
   "geometryRef": "files/stl/thorlabs_io_3_850_hp/faraday_rod.stl",
   "geometryRefGlb": null,
-  "bodyFrameRotation": null,
 
   "kind": "faraday_rotator",
   "wavelengthRangeNm": [840, 860],

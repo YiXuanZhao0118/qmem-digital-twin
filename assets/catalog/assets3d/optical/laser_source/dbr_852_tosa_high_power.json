@@ -1,10 +1,9 @@
-{
+﻿{
   "id": "dbr_852_tosa_high_power_laser_source",
   "vendorPart": "DBR-852-TOSA-HighPower",
   "displayName": "DBR852_TOSA_HighPower_Source",
   "geometryRef": "files/stl/dbr_852_tosa.stl",
   "geometryRefGlb": null,
-  "bodyFrameRotation": null,
 
   "kind": "laser_source",
   "wavelengthRangeNm": [840, 860],

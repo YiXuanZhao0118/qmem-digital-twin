@@ -9,12 +9,12 @@ import { createNewportOpticalTable } from "../photoRoom";
 
 // =============================================================================
 // Module load order matters here. There is an unavoidable circular import:
-//   index.ts → primitive.ts → kinds/_plugins.ts → _renderer_bindings.ts
-//     → ../three/loadAsset (= index.ts)
+//   index.ts ??primitive.ts ??kinds/_plugins.ts ??_renderer_bindings.ts
+//     ??../three/loadAsset (= index.ts)
 // _renderer_bindings.ts reads named bindings (createAom, createTaperedAmplifier,
-// …) from the barrel at module init to build its RENDERER_BY_COMPONENT_TYPE
+// ?? from the barrel at module init to build its RENDERER_BY_COMPONENT_TYPE
 // lookup. When the barrel is re-entered mid-load, ONLY the bindings declared
-// before the re-entry point have a value — the rest are still `undefined`.
+// before the re-entry point have a value ??the rest are still `undefined`.
 //
 // Pre-split, this worked because every renderer was a hoisted `function`
 // declaration in the same file. Now they live in sub-modules. We replicate the
@@ -84,7 +84,7 @@ import { createZhl12wPlusAmplifier } from "../../kinds/rf_amplifier/renderer";
 import { createRfSwitch } from "../../kinds/rf_switch/renderer";
 import { createDdsAd9959Pcb } from "../../kinds/rf_source/renderer";
 
-// Cycle trigger — by this line every binding _renderer_bindings.ts reads from
+// Cycle trigger ??by this line every binding _renderer_bindings.ts reads from
 // the barrel has been initialised, so it sees real values, not `undefined`.
 import { applyAssetScale, createPrimitive } from "./primitive";
 import {
@@ -109,7 +109,7 @@ export async function loadAssetObject(
   component: ComponentItem,
   asset: Asset3D | undefined,
   state: DeviceState | undefined,
-  /** Per-instance properties — V2: each scene object can have its own
+  /** Per-instance properties ??V2: each scene object can have its own
    *  fiberNodes / rfCableNodes / radiusMm overrides on top of the
    *  component's catalog defaults. Pass `sceneObject.properties` from
    *  the caller. */
@@ -167,7 +167,7 @@ export async function loadAssetObject(
   // procedural SMA-cable primitive. When the per-instance SceneObject
   // carries `rfCableNodes` we render the Bezier-spline version (jacket
   // follows the curve, connectors auto-orient to endpoint tangents).
-  // Without nodes we fall back to the straight-cylinder rendering — same
+  // Without nodes we fall back to the straight-cylinder rendering ??same
   // appearance as before the spline mode landed.
   if (
     component.kindId === "rf_cable" ||
@@ -179,7 +179,7 @@ export async function loadAssetObject(
     return wrapper;
   }
 
-  // Stage A''.6 — procedural asset dispatch. ``procedural://<key>``
+  // Stage A''.6 ??procedural asset dispatch. ``procedural://<key>``
   // file paths route to a builder by key, so a Component pointing at
   // ``procedural://isolator_body`` gets just the body geometry
   // (cylinder + ferrules) without the legacy renderIsolator's PBS
@@ -213,7 +213,7 @@ export async function loadAssetObject(
   } else if (extension === "stl") {
     const rawGeometry = await stlLoader.loadAsync(assetUrl);
     rawGeometry.computeVertexNormals();
-    // Stage A''.2 — every STL load gets asset.properties.viewerHints
+    // Stage A''.2 ??every STL load gets asset.properties.viewerHints
     // applied to its geometry (deletion-by-centroid + axis-radius
     // bulk filter). The per-asset hints are empty for now (alembic
     // 0064 added the column with default {}); A''.4 backfills the
@@ -254,7 +254,7 @@ export async function loadAssetObject(
         // apply scale, and return without the wrapping done below.
         const pieceGeom = applyIncludeOnlyFilter(rawGeometry, hints!.includeOnlyCentroids!);
         // Piece sub-meshes inherit the SAME housing material as the
-        // body — uniform metal-housing look. Default = opaque (matches
+        // body ??uniform metal-housing look. Default = opaque (matches
         // a real metal isolator); user can flip to translucent via
         // BindingTreeAdjustControls' "See through" toggle when they
         // want to inspect internal prisms.
@@ -279,7 +279,7 @@ export async function loadAssetObject(
         renderHints?.translucentHousing !== true,
       );
     } else {
-      // Material hint wins over the per-component material when set —
+      // Material hint wins over the per-component material when set ??
       // lets a housing asset declare "I'm translucent" without the
       // consuming component needing to know.
       const material = materialForHints(hints) ?? materialFor(component, state);
@@ -293,12 +293,12 @@ export async function loadAssetObject(
   applyAssetScale(object, asset);
 
   // Z-fighting on user-supplied GLBs (notably the BoosTA pro housing) where
-  // the original CAD has coplanar surfaces — top plate + edge trim sharing
+  // the original CAD has coplanar surfaces ??top plate + edge trim sharing
   // a face plane. Two compounding fixes:
   //   1. Force `side: FrontSide`. CAD exporters often default to
   //      DoubleSide which renders BOTH triangle faces; for two coplanar
   //      DoubleSide meshes the GPU has 4 faces (two front, two back) at
-  //      the same depth → polygon offset can't fully disambiguate.
+  //      the same depth ??polygon offset can't fully disambiguate.
   //      Solid bodies only need front-face rendering anyway.
   //   2. Per-mesh polygon offset stratification cycling [0, -3.5] on
   //      mesh index. Even after #1 collapses to 2 front faces, identical
@@ -325,75 +325,31 @@ export async function loadAssetObject(
       meshSeenIndex += 1;
     }
   });
-
-  // Anchor strategy: STL/GLB authors put the local origin wherever they
-  // want, so we shift the loaded object inside a wrapper Group so a
-  // semantically-meaningful point lands at the wrapper origin. Downstream
-  // code calls applyObjectTransform on the wrapper, which means user-set
-  // (xMm, yMm, zMm) lands the chosen anchor at exactly that lab position.
-  //
-  // Anchors, in priority order:
-  //   1. `asset.properties.bodyFramePositionMm` (CAD-frame mm, Phase 9.10
-  //      semantics): the body-origin offset in CAD axes. The lab viewer
-  //      keeps the mesh at its native CAD frame so a CAD point P appears
-  //      at wrapper-local P/100 (three units). beam / anchor code adds
-  //      bfo as a CAD-axis offset (`R_body × B + bfo`), so a body anchor
-  //      lands at the same lab position the mesh draws it. Anchors and
-  //      mesh therefore line up by construction without a separate
-  //      body-frame mesh shift.
-  //   2. Legacy `component.properties.apertureForwardLocalMm`: BoosTA-pro
-  //      style aperture anchor in Blender frame. Kept for un-migrated
-  //      laser/TA rows. Skipped when the asset declares a body frame.
-  //   3. Default: bbox center → wrapper origin. Sensible fallback when
-  //      no semantic anchor is declared. Also skipped when the asset
-  //      declares a body frame (otherwise the bbox shift would offset
-  //      the mesh away from the bfo-positioned beam anchor).
-  // Optical-table is excluded — it's already anchored at its top-surface
-  // centre by createNewportOpticalTable.
+  // Anchor strategy: anchors are authored directly in the native Asset/CAD
+  // frame. Legacy aperture-forward hints may still shift older meshes;
+  // otherwise the geometry stays in its CAD frame.
   if (component.kindId !== "optical_table") {
     const wrapper = new THREE.Group();
     wrapper.name = component.name;
     wrapper.add(object);
 
-    const bfo = (asset.properties as { bodyFramePositionMm?: { x: number; y: number; z: number } } | undefined)?.bodyFramePositionMm;
-    const bfr = (asset.bodyFrameRotation ?? null) as { x: number; y: number; z: number; w: number } | null;
-    const hasBodyFrame = (bfo && (bfo.x !== 0 || bfo.y !== 0 || bfo.z !== 0)) || bfr !== null;
-
-    if (hasBodyFrame) {
-      // Body-frame assets: leave the mesh at its native CAD frame.
-      // beam / anchor / snap code already adds bfo + R_body × anchor in
-      // CAD axes, so a body anchor at position B sits at lab
-      // `obj.xyz + rotateVecLab(R_body × B + bfo, obj.rxyz)` for both
-      // beam and mesh — no separate mesh shift needed.
-    } else {
-      // Phase 6: prefer the new frame-suffixed key
-      // (`apertureForwardMmBodyLocal`), fall back to legacy
-      // `apertureForwardLocalMm` for un-migrated rows.
-      const apertureProps = component.properties as
-        | { apertureForwardMmBodyLocal?: number[]; apertureForwardLocalMm?: number[] }
-        | undefined;
-      const apertureForward = apertureProps?.apertureForwardMmBodyLocal
-        ?? apertureProps?.apertureForwardLocalMm;
-      if (apertureForward && apertureForward.length === 3) {
-        // Blender (X, Y, Z) → glTF/three (X, Z, -Y); mm → three units (÷100).
-        // The shift is applied AS POSITION on `object` (which lives in
-        // wrapper-local space, no scale), so values are in three units.
-        const [bx, by, bz] = apertureForward;
-        const apertureShift = new THREE.Vector3(bx, bz, -by).divideScalar(100);
-        object.position.sub(apertureShift);
-      } else if (component.kindId !== "isolator") {
-        // Skip bbox auto-centering for isolators: the body asset and the
-        // piece sub-Assets are siblings in the binding tree but the body
-        // mesh's bbox center is far from the body's STL origin. Centering
-        // shifts the body but not the pieces (which have their own
-        // bindings and centroids), scattering pieces away from the
-        // housing. Keep the isolator at its native STL origin so the
-        // pieces align — matches the dev page's rendering.
-        const bbox = new THREE.Box3().setFromObject(object);
-        if (!bbox.isEmpty()) {
-          const centerVec = bbox.getCenter(new THREE.Vector3());
-          object.position.sub(centerVec);
-        }
+    // Phase 6: prefer the new frame-suffixed key
+    // (`apertureForwardMmBodyLocal`), fall back to legacy
+    // `apertureForwardLocalMm` for un-migrated rows.
+    const apertureProps = component.properties as
+      | { apertureForwardMmBodyLocal?: number[]; apertureForwardLocalMm?: number[] }
+      | undefined;
+    const apertureForward = apertureProps?.apertureForwardMmBodyLocal
+      ?? apertureProps?.apertureForwardLocalMm;
+    if (apertureForward && apertureForward.length === 3) {
+      const [bx, by, bz] = apertureForward;
+      const apertureShift = new THREE.Vector3(bx, bz, -by).divideScalar(100);
+      object.position.sub(apertureShift);
+    } else if (component.kindId !== "isolator") {
+      const bbox = new THREE.Box3().setFromObject(object);
+      if (!bbox.isEmpty()) {
+        const centerVec = bbox.getCenter(new THREE.Vector3());
+        object.position.sub(centerVec);
       }
     }
     return wrapper;

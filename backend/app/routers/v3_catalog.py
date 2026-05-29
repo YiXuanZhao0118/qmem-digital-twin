@@ -5,8 +5,6 @@ existing `/api/assets3d/`, `/api/components/` routes.
 Endpoints:
   GET  /v3/assets3d                          - list
   GET  /v3/assets3d/{catalog_id}             - fetch one
-  PUT  /v3/assets3d/{catalog_id}/body-frame-rotation
-                                             - set/clear CAD-frame quaternion
   GET  /v3/components                        - list
   GET  /v3/components/{catalog_id}           - fetch one
 """
@@ -27,7 +25,7 @@ from app.db import get_session
 from app.models import Asset3D, Component, ComponentBinding
 from app.schemas import CamelModel
 from app.schemas_v3 import (
-    Asset3DV3Create, Asset3DV3Out, Asset3DV3Update, ComponentV3Out, QuaternionV3,
+    Asset3DV3Create, Asset3DV3Out, Asset3DV3Update, ComponentV3Out,
 )
 from app.config import settings
 from app.routers.assets import safe_upload_name
@@ -100,7 +98,7 @@ async def create_asset3d_v3(
     Two modes:
       • blank: ``source_catalog_id`` omitted → empty asset shell.
       • fork: ``source_catalog_id`` supplied → copy file_path / faces /
-        anchors / default_params / body_frame_rotation / properties from
+        anchors / default_params / properties from
         the source so the user can tweak geometry and save as a new
         catalog entry.
 
@@ -135,7 +133,6 @@ async def create_asset3d_v3(
         transitions=list(source.transitions) if source and source.transitions else None,
         default_params=dict(source.default_params) if source and source.default_params else None,
         wavelength_range_nm=list(source.wavelength_range_nm) if source and source.wavelength_range_nm else None,
-        body_frame_rotation=dict(source.body_frame_rotation) if source and source.body_frame_rotation else None,
         properties=dict(source.properties) if source and source.properties else {},
     )
     session.add(row)
@@ -313,12 +310,6 @@ async def update_asset3d_by_catalog_id(
         row.default_params = payload.default_params
     if "wavelength_range_nm" in fields:
         row.wavelength_range_nm = payload.wavelength_range_nm
-    if "body_frame_rotation" in fields:
-        row.body_frame_rotation = (
-            payload.body_frame_rotation.model_dump(by_alias=True, exclude_none=True)
-            if payload.body_frame_rotation is not None
-            else None
-        )
     if "properties" in fields:
         # Whole-dict overwrite (caller is expected to send the merged
         # state). Keep None as "no-op" rather than blanking the column.

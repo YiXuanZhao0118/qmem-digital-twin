@@ -1,10 +1,9 @@
-{
+﻿{
   "id": "thorlabs_bb1_e03",
   "vendorPart": "BB1-E03",
   "displayName": "Thorlabs BB1-E03 Broadband Dielectric Mirror (750-1100 nm)",
   "geometryRef": "files/stl/thorlabs_bb1_e03.stl",
   "geometryRefGlb": null,
-  "bodyFrameRotation": null,
 
   "kind": "mirror",
   "wavelengthRangeNm": [750, 1100],
@@ -20,7 +19,7 @@
       "normalBodyLocal":     { "x": 0, "y": 0, "z": 1 },
       "apertureMm": 12.7,
       "apertureShape": "circle",
-      "_role": "front reflective surface — E03 broadband dielectric coating, R > 99% over 750-1100 nm at 0-45 deg AOI"
+      "_role": "front reflective surface ??E03 broadband dielectric coating, R > 99% over 750-1100 nm at 0-45 deg AOI"
     }
   ],
 

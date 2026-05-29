@@ -1,10 +1,9 @@
-{
+﻿{
   "id": "eospace_pm_0k1_nir",
   "vendorPart": "PM-0K1-NIR",
   "displayName": "EOSpace PM-0K1-NIR Phase Modulator (generic NIR)",
   "geometryRef": null,
   "geometryRefGlb": null,
-  "bodyFrameRotation": null,
 
   "kind": "eom",
   "wavelengthRangeNm": [780, 1550],

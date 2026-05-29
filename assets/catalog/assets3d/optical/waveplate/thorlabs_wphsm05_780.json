@@ -1,10 +1,9 @@
-{
+﻿{
   "id": "thorlabs_wphsm05_780",
   "vendorPart": "WPHSM05-780",
   "displayName": "Thorlabs WPHSM05-780 Half-Wave Plate @ 780nm",
   "geometryRef": "files/stl/thorlabs_wphsm05_850.stl",
   "geometryRefGlb": null,
-  "bodyFrameRotation": null,
 
   "kind": "waveplate",
   "wavelengthRangeNm": [770, 790],

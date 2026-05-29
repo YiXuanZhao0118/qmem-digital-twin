@@ -22,7 +22,7 @@ const PREVIEW_RAY_KINDS: ReadonlySet<ElementKind> = new Set<ElementKind>([
 ]);
 
 function rotateVecLab(v: THREE.Vector3, rxDeg: number, ryDeg: number, rzDeg: number): THREE.Vector3 {
-  // Mirror the lab-frame rotation R = Rz(rz) · Rx(rx) · Ry(ry) used by the
+  // Mirror the lab-frame rotation R = Rz(rz) 繚 Rx(rx) 繚 Ry(ry) used by the
   // backend solver and frontend relationAnchors. v is in lab coords.
   const rx = (rxDeg * Math.PI) / 180;
   const ry = (ryDeg * Math.PI) / 180;
@@ -107,18 +107,13 @@ function findEmitterAnchor(asset: Asset3D | undefined): Anchor | null {
 /** World-space emission origin and direction (lab coords) for a placement.
  * Reads the laser's emitter anchor (Phase 9.8 `intercept_out`, with
  * legacy fallbacks). Direction = anchor.axisXBodyLocal (propagation /
- * face normal, per spec §3.1) with fallback to legacy
+ * face normal, per spec 禮3.1) with fallback to legacy
  * directionBodyLocal.
  *
- * Frame convention (Lab Sense / PHY-Editor probe beam):
- *   - placement.xMm/yMm/zMm is the Lab Sense pose shown in ObjectPanel.
- *   - bodyFramePositionMm + bodyFrameRotation define the Asset3D body frame.
- *   - bodyFrameRotation (R_body) rotates anchor.position + direction
- *     from body frame into object-local coords. Object-local == lab when SceneObject rot
- *     is identity.
- *   - `bodyFramePositionMm` is part of the Lab Sense anchor transform
- *     and is applied here before the SceneObject pose.
- *   - SceneObject (rxDeg/ryDeg/rzDeg) finally maps CAD → lab.
+ * Frame convention:
+ *   - placement.xMm/yMm/zMm is the Lab pose shown in ObjectPanel.
+ *   - anchors are stored directly in Asset/CAD-local coordinates.
+ *   - SceneObject (rxDeg/ryDeg/rzDeg) maps Asset/CAD local to lab.
  * Falls back to placement origin + rotated +X axis when no anchor is
  * found at all. */
 export function emissionFromObject(
@@ -126,8 +121,7 @@ export function emissionFromObject(
   asset: Asset3D | undefined,
 ): { origin: THREE.Vector3; direction: THREE.Vector3 } {
   const anchor = findEmitterAnchor(asset);
-  // anchorAccess gives us body→object-local in one step (R_body × p + bfp
-  // for position; R_body × d for direction).
+  // anchorAccess returns Asset/CAD-local values directly.
   const cadPos = anchor
     ? anchorObjectLocalPos(anchor, asset)
     : { x: 0, y: 0, z: 0 };
@@ -193,7 +187,7 @@ function spectrumWavelengthNm(segment: BeamSegment): number {
 }
 
 function clampThreeRadius(waistUm: number): number {
-  // waistUm is in micrometres; convert to mm then to Three.js units (÷100),
+  // waistUm is in micrometres; convert to mm then to Three.js units (繩100),
   // then bound so very tight foci or very wide diverged beams stay visible.
   const radiusMm = Math.max(waistUm, 1) / 1000;
   const radiusThree = mmToThree(radiusMm) * 30; // exaggerate for visibility

@@ -1,10 +1,9 @@
-{
+﻿{
   "id": "thorlabs_p5_780y_fc_1",
   "vendorPart": "P5-780Y-FC-1",
   "displayName": "Thorlabs P5-780Y-FC-1 (SM, PC/APC hybrid, 1m, 780nm)",
   "geometryRef": null,
   "geometryRefGlb": null,
-  "bodyFrameRotation": null,
   "kind": "fiber",
   "wavelengthRangeNm": [700, 970],
   "physicalDimensionsMm": { "lengthMm": 1000, "claddingDiameterUm": 125, "coreDiameterUm": 4.4 },

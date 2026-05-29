@@ -1,8 +1,8 @@
-# Asset-Physics Model — 設計文件
+# Asset-Physics Model ??閮剛??辣
 
-> Status: **設計階段,尚未動程式碼。** 起草於 2026-05-21,作為「將物理收斂到 Asset3D 層」的提案。
+> Status: **閮剛??挾,撠??撘Ⅳ??* 韏瑁???2026-05-21,雿???拍??嗆???Asset3D 撅扎?????
 >
-> 相關文件:[`ARCHITECTURE_OVERVIEW.md`](ARCHITECTURE_OVERVIEW.md) §3, [`optical-schema-v2.md`](optical-schema-v2.md), [`vibe coding.md`](vibe%20coding.md) §4 frame conventions。
+> ?賊??辣:[`ARCHITECTURE_OVERVIEW.md`](ARCHITECTURE_OVERVIEW.md) 禮3, [`optical-schema-v2.md`](optical-schema-v2.md), [`vibe coding.md`](vibe%20coding.md) 禮4 frame conventions??
 
 Canonical face rule:
 - `faces[]` are physical optical surfaces only.
@@ -11,47 +11,44 @@ Canonical face rule:
 - Do not create duplicate faces such as `A1/B1/A2/B2` just to encode direction.
 - Direction, branch, non-reciprocity, diffraction order, and RF side belong on `transitions[]` (`op`, `params`, dynamic sources), not in face names.
 
-**Phase 9.13 Lab Sense frame rule**:
+**Canonical runtime frame rule (0093)**:
 
-- ObjectPanel `x/y/z mm` and `rx/ry/rz deg` are the Lab Sense pose. They are not the Asset3D body origin unless the body-frame origin is zero.
-- `bodyFramePositionMm` + `bodyFrameRotation` define the Asset3D body-frame origin under that Lab Sense pose.
-- `anchors[]` are defined under the Body frame origin. For identity SceneObject rotation, the anchor position seen by Lab Sense is:
-  `lab_sense + bodyFramePositionMm + R_body * anchor.positionMmBodyLocal`.
-- Anchor direction/tri-axis uses rotation only:
-  `lab_rotation * R_body * anchor.axisX/Y/ZBodyLocal`.
-- This is not visual-only. The same rule must be used by the Lab viewer beams, backend anchor tracer, placement snap targets, and PHY Editor probe-beam preview.
+- ObjectPanel `x/y/z mm` and `rx/ry/rz deg` are the Lab frame pose of a `SceneObject`.
+- `ComponentBinding` rows define each asset or subcomponent pose inside the Component frame.
+- `Asset3D.anchors[]` are authored directly in the Asset/CAD frame. The legacy `*BodyLocal` suffix is a field-name compatibility artifact, not a separate runtime frame.
+- Runtime transform chain: `anchor_asset_local -> ComponentBinding pose -> SceneObject Lab pose -> Lab frame`.
 
 ---
 
-## 1. 動機
+## 1. ??
 
-目前三層資料模型(Asset3D / Component / SceneObject)的職責邊界**不夠乾淨**:
+?桀?銝惜鞈?璅∪?(Asset3D / Component / SceneObject)?鞎祇???*銝?銋暹楊**:
 
-- 物理 `kind`(mirror、polarizer、aom...)掛在 **Component** 上,Asset3D 只承載 CAD 幾何
-- 同一語意(光學軸、鏡面法向、RF 軸)有 2~3 種讀取路徑(V2 binding → anchor `directionBodyLocal` → 預設值)
-- Ray tracer 要根據 `elementKind` 字串 dispatch 到不同 handler,每加一種元件就要動五個檔案
-- Per-instance 參數(laser power、AOM freq)散在 `properties` / `kindParams` / `objectBindings` 三處
+- ?拍? `kind`(mirror?olarizer?om...)? **Component** 銝?Asset3D ?芣頛?CAD 撟曆?
+- ??隤?(?飛頠詻?Ｘ??F 頠???2~3 蝔株??楝敺?V2 binding ??anchor `directionBodyLocal` ???身??
+- Ray tracer 閬??`elementKind` 摮葡 dispatch ?唬???handler,瘥?銝蝔桀?隞嗅停閬?鈭?獢?
+- Per-instance ?(laser power?OM freq)?? `properties` / `kindParams` / `objectBindings` 銝?
 
-**目標**:把「**這個元件做什麼物理**」收到 Asset3D,把「**這個元件在空間怎麼跟其他元件接起來**」收到 Component,把「**這顆實體現在的狀態**」收到 SceneObject。讓 ray tracer 不再認 kind 字串,只認 Face/Transition 幾何。
+**?格?**:??*??隞嗅?隞暻潛??*???Asset3D,??*??隞嗅蝛粹??獐頝隞?隞嗆韏瑚?**???Component,??*??撖阡??曉????*???SceneObject?? ray tracer 銝?隤?kind 摮葡,?芾? Face/Transition 撟曆???
 
-**同樣的三層結構同時適用 RF 元件**(`rf_source`、`rf_amplifier`、`rf_cable`、`rf_switch`、`programmable_pulse_generator`、`horn_antenna`):只是 face 帶 `domain: "rf" | "ttl"`,transition 走的是 §7.5 的 RF tracer(graph BFS)而非 §7 的 ray tracer。AOM 是兩者交接的 hybrid 元件(§14)。
+**?見??撅斤?瑽????RF ?辣**(`rf_source`?rf_amplifier`?rf_cable`?rf_switch`?programmable_pulse_generator`?horn_antenna`):?芣 face 撣?`domain: "rf" | "ttl"`,transition 韏啁???禮7.5 ??RF tracer(graph BFS)?? 禮7 ??ray tracer?OM ?臬?漱?亦? hybrid ?辣(禮14)??
 
 ---
 
-## 2. 三層職責劃分
+## 2. 銝惜?瑁痊??
 
-| 層級 | 擁有 | 不擁有 |
+| 撅斤? | ?? | 銝???|
 |------|------|--------|
-| **Kind Registry**(code,非 DB) | PhysicsOp 實作(`abcd_lens`、`jones_polarizer`、`diffract_aom`…)、kind 元資料(`needs_aperture`、`wavelengthRangeNm` 模板) | 任何幾何、任何 vendor 細節 |
-| **Asset3D** | CAD 幾何、**kind**、**faces**(光學端口幾何)、**transitions**(in face → out face + op)、**defaultParams**(該 kind 的預設係數) | 空間組合、lab pose、運行時參數 |
-| **Component** | binding tree(子 asset 相對 pose)、**exposedFaces**(對外暴露的端口) | 物理 kind、運行時參數 |
-| **SceneObject** | lab pose `(xMm,yMm,zMm,rxDeg,ryDeg,rzDeg)`、**paramOverrides**(per-binding 係數覆寫)、**dynamicSources**(laser power / AOM freq / beam profile)、ObjectBinding pose delta | 物理 op、CAD 幾何 |
+| **Kind Registry**(code,??DB) | PhysicsOp 撖虫?(`abcd_lens`?jones_polarizer`?diffract_aom`???ind ????`needs_aperture`?wavelengthRangeNm` 璅⊥) | 隞颱?撟曆??遙雿?vendor 蝝啁? |
+| **Asset3D** | CAD 撟曆???*kind**??*faces**(?飛蝡臬撟曆?)??*transitions**(in face ??out face + op)??*defaultParams**(閰?kind ??閮凋??? | 蝛粹?蝯??ab pose??銵?? |
+| **Component** | binding tree(摮?asset ?詨? pose)??*exposedFaces**(撠??湧?垢?? | ?拍? kind??銵?? |
+| **SceneObject** | lab pose `(xMm,yMm,zMm,rxDeg,ryDeg,rzDeg)`??*paramOverrides**(per-binding 靽閬神)??*dynamicSources**(laser power / AOM freq / beam profile)?bjectBinding pose delta | ?拍? op?AD 撟曆? |
 
-**金線約定**:
-1. Asset3D 的 BodyLocal **+z = 光學軸方向**,**+x = 物理橫向參考軸**(快軸 / 聲軸 / s 偏振)。RF-only asset(無 optical face)不適用此 +z 約定,body frame 對齊 CAD 即可
-2. Ray tracer / RF tracer 都不認 `kind` 字串,只認 Face 命中(ray)+ port adjacency 命中(rf)+ Transition 表
-3. SceneObject 三個欄位(paramOverrides / dynamicSources / objectBindings)職責 disjoint
-4. Face 的 `domain` 決定走哪個 tracer:`"optical"` → §7,`"rf"`/`"ttl"` → §7.5;同一 Asset3D 可同時有兩種(AOM 的 `A`/`B` optical + `rf_in` rf)
+**??蝝?**:
+1. Asset3D ??BodyLocal **+z = ?飛頠豢??*,**+x = ?拍?璈怠??遘**(敹怨遘 / ?脰遘 / s ?)?F-only asset(??optical face)銝?冽迨 +z 蝝?,body frame 撠? CAD ?喳
+2. Ray tracer / RF tracer ?賭?隤?`kind` 摮葡,?芾? Face ?賭葉(ray)+ port adjacency ?賭葉(rf)+ Transition 銵?
+3. SceneObject 銝?雿?paramOverrides / dynamicSources / objectBindings)?瑁痊 disjoint
+4. Face ??`domain` 瘙箏?韏啣??tracer:`"optical"` ??禮7,`"rf"`/`"ttl"` ??禮7.5;?? Asset3D ?臬????拍車(AOM ??`A`/`B` optical + `rf_in` rf)
 
 ---
 
@@ -60,234 +57,193 @@ Canonical face rule:
 ```typescript
 type Asset3D = {
   id: string                          // e.g. "thorlabs_lpvisa050-mp2"
-  vendorPart?: string                 // 貨號 metadata
-  geometryRef: string                 // CAD 檔路徑 (.glb / .stl)
-  bodyFrameRotation?: Quaternion      // CAD 軸不符合 +z 約定時的修正
+  vendorPart?: string                 // 鞎刻? metadata
+  geometryRef: string                 // CAD 瑼楝敺?(.glb / .stl)
 
-  kind: Kind                          // ★ 唯一 kind,固定(OpticalKind | RfKind,§6)
-  faces: Face[]                       // ★ 端口(optical / rf / ttl;取代舊 anchor 中的光學/RF 項)
-  transitions: Transition[]           // ★ in face → out face + op(optical:光學 PhysicsOp;rf:RfPhysicsOp)
+  kind: Kind                          // ???臭? kind,?箏?(OpticalKind | RfKind,禮6)
+  faces: Face[]                       // ??蝡臬(optical / rf / ttl;?誨??anchor 銝剔??飛/RF ??
+  transitions: Transition[]           // ??in face ??out face + op(optical:?飛 PhysicsOp;rf:RfPhysicsOp)
 
-  defaultParams: KindParams           // kind-specific 預設係數
+  defaultParams: KindParams           // kind-specific ?身靽
   wavelengthRangeNm: [number, number] // R2 (optical-schema-v2)
 
-  mechanicalAnchors?: MechAnchor[]    // 非光學 anchor (mount face, edge) 維持原結構
+  mechanicalAnchors?: MechAnchor[]    // ??摮?anchor (mount face, edge) 蝬剜???瑽?
 }
 
 type Face = {
   id: string                          // Physical face id: "A", "B", "R", "T", "rf_in", "rf_out", "ttl_in", ...
   positionMmBodyLocal: Vec3
-  normalBodyLocal?: Vec3              // 預設 +z(out 面)/ -z(in 面);mirror 可自訂
-  apertureMm: number                  // 半寬 / 半徑;RF/TTL face 未使用,設 0
-  apertureShape: "rectangle" | "ellipse" | "circle"   // circle 留 back-compat
-  domain?: "optical" | "rf" | "ttl"   // 預設 "optical";RF/TTL face 必填以阻止跨域對接
+  normalBodyLocal?: Vec3              // ?身 +z(out ??/ -z(in ??;mirror ?航閮?
+  apertureMm: number                  // ?祝 / ??;RF/TTL face ?芯蝙??閮?0
+  apertureShape: "rectangle" | "ellipse" | "circle"   // circle ??back-compat
+  domain?: "optical" | "rf" | "ttl"   // ?身 "optical";RF/TTL face 敹‵隞仿甇Ｚ楊????
 }
 
 type Transition = {
   in: string                          // face id
-  out: string | string[]              // 單一(transmit)/ 多個(diffraction orders)
-  op: PhysicsOpRef                    // 指向 Kind Registry 的 op
-  params?: Partial<KindParams>        // 對該 transition 的局部覆寫(罕用)
+  out: string | string[]              // ?桐?(transmit)/ 憭?diffraction orders)
+  op: PhysicsOpRef                    // ?? Kind Registry ??op
+  params?: Partial<KindParams>        // 撠府 transition ???刻?撖?蝵)
 
-  // 幾何傳輸矩陣(三選一,由 PhysicsOp 決定如何解讀)
-  abcd?: Matrix2x2                    // (a) 簡單對稱元件 — 同一矩陣作用在 (q_x, q_y)
-  abcdXY?: { x: Matrix2x2; y: Matrix2x2 }  // (b) 像散元件(cylindrical lens, Glan-Laser) — x/y 軸獨立
-  matrix5x5?: Matrix5x5               // (c) 增廣 5×5,作用在向量 V = [x, θ_x, y, θ_y, 1]^T
-                                      //     額外捕捉「元件本身造成的絕對橫向位移」(prism / wedge)
+  // 撟曆??唾撓?拚(銝銝,??PhysicsOp 瘙箏?憒?閫??)
+  abcd?: Matrix2x2                    // (a) 蝪∪撠迂?辣 ?????拚雿??(q_x, q_y)
+  abcdXY?: { x: Matrix2x2; y: Matrix2x2 }  // (b) ??辣(cylindrical lens, Glan-Laser) ??x/y 頠貊蝡?
+  matrix5x5?: Matrix5x5               // (c) 憓誨 5?5,雿?典???V = [x, 庛_x, y, 庛_y, 1]^T
+                                      //     憿?????隞嗆頨恍???撠帖??蝘颯?prism / wedge)
 }
 ```
 
-**5×5 增廣矩陣使用時機**:當元件存在**獨立於入射狀態的固定空間偏移**(prism wedge、Glan-Laser 內部 38.5° 斜面、decenter)時,需要 V 向量的第 5 分量「1」承接 `E_x` / `E_y` 偏移項。Lens、mirror、polarizer 等對稱元件用 2×2 ABCD 即可;Glan-Laser、Wollaston、wedge prism 用 5×5。
+**5?5 憓誨?拚雿輻??**:?嗅?隞嗅???*?函??澆撠????箏?蝛粹??宏**(prism wedge?lan-Laser ?折 38.5簞 ??ecenter)???閬?V ???洵 5 ???????`E_x` / `E_y` ?宏?ens?irror?olarizer 蝑?蝔勗?隞嗥 2?2 ABCD ?喳;Glan-Laser?ollaston?edge prism ??5?5??
 
-**Face `domain` 規約**:`"optical"` 走 ray tracer(§7);`"rf"` 走 RF tracer(§7.5);`"ttl"` 屬於 RF tracer 的 pre-pass(switch state 解析,§7.5)。`exposedFaces` / 連線編輯器在拖線時必須 enforce `domain` 一致才能建立 link(`optical_links` 只接 optical,`rf_links` 只接 rf,ttl 端只能接 ttl)。RF/TTL face 沒有 wavefront,`abcd` / `matrix5x5` 永遠為 null;其 `apertureMm` 也不參與 ray-hit 判定,僅作為 UI snap target 半徑。
+**Face `domain` 閬?**:`"optical"` 韏?ray tracer(禮7);`"rf"` 韏?RF tracer(禮7.5);`"ttl"` 撅祆 RF tracer ??pre-pass(switch state 閫??,禮7.5)?exposedFaces` / ???蝺刻摩?典??????enforce `domain` 銝?湔??賢遣蝡?link(`optical_links` ?芣 optical,`rf_links` ?芣 rf,ttl 蝡臬?賣 ttl)?F/TTL face 瘝? wavefront,`abcd` / `matrix5x5` 瘞賊???null;??`apertureMm` 銋??? ray-hit ?文?,????UI snap target ????
 
-**設計重點**:
-- `kind` 跟 Asset3D 是 **1:1**。同樣 CAD 件要當 polarizer 與 quarter waveplate,就是兩個 Asset3D(可共用 `geometryRef`)。換來「看 Asset 即知物理」。
-- `faces[]` 取代舊 `anchor[]` 中的「光學端口」項目;機械 anchor(mount face、edge)維持原樣放在 `mechanicalAnchors`。
-- `transitions[]` 明確列出「面 A 進入 → 面 B 出去」的所有路徑,**ray tracer 直接遵守,不做 kind dispatch**。
-- **幾何矩陣三層級(2×2 / 4×4 / 5×5)**:從低到高表達力遞增,各 PhysicsOp 宣告自己需要哪種。BeamRay 的 `origin` 已經承擔絕對位置,5×5 的第 5 分量只負責「**元件本身造成的固定偏移**」,不重複編碼 ray 的當前位置。
-
----
-
-### 3.1 Body frame convention(座標系約定)
-
-Asset3D 用一個 body frame 記錄 face 位置與法向。**Tracer 的物理計算只看 face 幾何**(位置 + 法向),不會去檢查「body +Z 是不是真的等於光線方向」。「body +Z = 光軸」是**矩陣編寫的約定**,不是 tracer 的硬性檢查。
-
-| 元件型態 | body +Z 的角色 | A / B / R / ... face 配置 | matrix5x5 寫在哪個 frame |
-|----------|--------------|---------------------------|-------------------------|
-| 2-port slab (lens / waveplate / AOM / Faraday rod / polarizer) | **嚴格** = A→B 光軸 | A 在 -z,法向 (0,0,-1);B 在 +z,法向 (0,0,+1) | body frame ≡ beam-local frame,直接寫 |
-| Mirror | **嚴格** = face A 法向(垂直入射時等於入射光方向) | A 唯一,法向 (0,0,+1) | beam-local(反射 op 內部處理方向翻轉) |
-| PBS / beam splitter / Glan-Laser / dichroic | **primary transmit 軸** (A→B) | A 在 -z、B 在 +z(穿透);R / L / U / D 等側面照物理角度擺 | A↔B transition 在 body frame;側面 transition (A→R 等) 在出射 beam frame |
-
-**為什麼仍然要保留「body +Z = 光軸」這個約定?**
-
-純粹是**寫矩陣的方便**:5×5 的 row/col 索引 `[x, θ_x, y, θ_y, 1]` 直接對應 body-x、body-y、body-z 的分量,看數字就知道在做什麼。如果允許 body frame 隨意定,每個 matrix 都要附註「此矩陣以 R-face 法向為 z,身體 +X 為 x...」,易出錯。
-
-**多 port 元件的處理原則**:
-
-- body +Z = **primary transmit (A→B)**,例如 Glan-Laser 的穿透路徑、cube PBS 的直通路徑。
-- 側面 face (R / L / U / D) 的位置 / 法向據實寫(例如 Glan-Laser reject face 法向 (0.9213, 0, 0.3888))。
-- A→R 這類 transition 通常 **`matrix5x5 = null`**,因為我們不模擬反射路徑的 wavefront aberration(只更新 power + 方向)。要模擬的話,matrix5x5 寫在「出射 beam frame」(z 沿著 R 法向),不是 body。
-- 如果未來需要強制檢查,可在 Phase 9 加 runtime assert(見 §10 Phase 9)。
-
-**`bodyFrameRotation` 的職責**:
-
-純粹**對齊 CAD STL 到 body frame**,跟物理無關。
-- 你先決定 body frame 的 face 座標 → 例如 face A 在 (0,0,-2.5)、face B 在 (0,0,+2.5) → body +Z = A→B
-- 如果 STL 是用 CAD +X 當建模軸,直接 import 會跟 face marker 差 90° → 設 `bodyFrameRotation` 把 CAD frame 旋到 body frame,讓 STL 顯示對齊
-- **設值會影響 tracer / Lab Sense beam**;tracer 看到的是套用 body frame origin 後的 anchor 幾何
-
-PhyEditor 的 "Body frame orientation" 下拉就是設這個 quaternion(`+Z (default)` / `±X` / `±Y` / `-Z` 6 種常見軸對齊)。
-
-**`bodyFramePositionMm` 的職責**(Phase 9.10 加, 9.11 改為 body-frame 語意):
-
-跟 `bodyFrameRotation` 配對使用,把 body **原點**從 CAD STL 的原點搬到正確位置。`bodyFrameRotation` 處理軸向、`bodyFramePositionMm` 處理位移,兩者合起來是 CAD ↔ body 的完整 rigid transform。
-
-座標系:**body frame**(Phase 9.11 起;9.10 時是 CAD frame,已 migrate)。意思是 `x/y/z mm` 是沿 body 軸的偏移,使用者在 PHY Editor 看到 body 軸對齊 scene 軸後,直接調整 z mm 就是沿 scene Z 方向走,不會受 `bodyFrameRotation` 影響。
-
-顯示時套用的 transform(`Asset3DV3Editor.tsx:1147`):
-```
-display_point = R_body⁻¹ × cad_point − body_origin_body
-```
-- 先把 STL 旋轉成 body 方位(`R_body⁻¹`)
-- 再用 body 軸偏移把 body 原點挪到 scene 原點
-
-**設值會影響 tracer / Lab Sense beam**;tracer 與 Lab viewer 都必須先把 anchor 從 Body frame origin 轉到 Lab Sense 下的位置。`bodyFramePositionMm` 不再只是 STL 視覺對齊欄位。
+**閮剛???**:
+- `kind` 頝?Asset3D ??**1:1**??璅?CAD 隞嗉???polarizer ??quarter waveplate,撠望?拙?Asset3D(?臬??`geometryRef`)??靘? Asset ?喟?拍???
+- `faces[]` ?誨??`anchor[]` 銝剔???摮貊垢?????璈１ anchor(mount face?dge)蝬剜??見?曉 `mechanicalAnchors`??
+- `transitions[]` ?Ⅱ?? A ?脣 ????B ?箏????楝敺?**ray tracer ?湔?萄?,銝? kind dispatch**??
+- **撟曆??拚銝惜蝝?2?2 / 4?4 / 5?5)**:敺??圈?銵券???憓???PhysicsOp 摰???芸楛?閬蝔柴eamRay ??`origin` 撌脩??踵?蝯?雿蔭,5?5 ?洵 5 ???芾?鞎研?*?辣?祈澈???摰?蝘?*??銝?銴楊蝣?ray ???蝵柴?
 
 ---
 
-### 3.2 Face normal 的意義(`normalBodyLocal`)
+### 3.1 Asset/CAD frame convention
 
-Face normal 同時擔任 **幾何 + 語意 + 物理** 三個角色。所有 catalog 必須遵守這裡列的 convention,否則 tracer 不會報錯但 Snell / Fresnel / 偏振結果會錯邊。
+Asset3D geometry, faces, and anchors are authored in the same Asset/CAD-local frame. The legacy field suffixes `BodyLocal` remain in JSON for compatibility, but their runtime meaning is Asset/CAD-local after alembic `0093_flatten_asset_frame_anchors`.
 
-**(1) 幾何角色 — 定義 face 平面**
+Rules:
+- If imported CAD axes or origin are inconvenient, fix the mesh/anchor data during import or catalog bake.
+- `ComponentBinding` owns asset placement inside a Component.
+- `SceneObject` owns Component placement inside the Lab frame.
+### 3.2 Face normal ??蝢?`normalBodyLocal`)
 
-Face 是一個平面圓盤(或矩形 / 橢圓):
-- `positionMmBodyLocal` = 圓盤中心
-- `normalBodyLocal` = 圓盤所在平面的單位法向
-- Aperture (`apertureMm` / `apertureShape`) 是這個平面上的 2D 形狀
+Face normal ???遙 **撟曆? + 隤? + ?拍?** 銝??脯???catalog 敹??萄??ㄐ?? convention,?血? tracer 銝??梢雿?Snell / Fresnel / ?蝯????
 
-Tracer 做 ray-plane intersection 時靠 `(position, normal)` 解 hit point,再用 aperture 形狀 clip。
+**(1) 撟曆?閫 ??摰儔 face 撟喲**
 
-**(2) 語意角色 — outward normal convention**
+Face ?臭??像?Ｗ????敶?/ 璈Ｗ?):
+- `positionMmBodyLocal` = ?銝剖?
+- `normalBodyLocal` = ???典像?Ｙ??桐?瘜?
+- Aperture (`apertureMm` / `apertureShape`) ?舫像?Ｖ???2D 敶Ｙ?
 
-法向**永遠指向元件本體之外**:
+Tracer ??ray-plane intersection ?? `(position, normal)` 閫?hit point,? aperture 敶Ｙ? clip??
 
-| Face | 角色 | 典型法向(body frame) |
+**(2) 隤?閫 ??outward normal convention**
+
+瘜?**瘞賊????辣?祇?銋?**:
+
+| Face | 閫 | ?詨?瘜?(body frame) |
 |------|------|---------------------|
-| A | 入射面(beam 從外面進來) | (0, 0, **−1**) — 從元件中心朝外指向 −z |
-| B | 出射面(beam 朝外離開) | (0, 0, **+1**) — 從元件中心朝外指向 +z |
-| R (Glan reject / PBS side) | 側面 reject 出口 | 例如 (0.9213, 0, 0.3888) — 從晶體中心朝 air gap 外 |
-| Mirror 唯一面 | 反射面 | (0, 0, +1) — 從鏡面背後指向被照亮的那側 |
+| A | ?亙???beam 敺??ａ脖?) | (0, 0, **??**) ??敺?隞嗡葉敹?憭???? |
+| B | ?箏???beam ???ａ?) | (0, 0, **+1**) ??敺?隞嗡葉敹?憭???+z |
+| R (Glan reject / PBS side) | ?湧 reject ?箏 | 靘? (0.9213, 0, 0.3888) ??敺擃葉敹? air gap 憭?|
+| Mirror ?臭???| ????| (0, 0, +1) ??敺?Ｚ?敺??◤?找漁???|
 
-**驗證**:`k̂_beam · n̂_face` 的符號
-- `< 0`:beam 朝 face 進入(打中入射面)
-- `> 0`:beam 從 face 離開(通過出射面)
+**撽?**:`k?_beam 繚 n?_face` ?泵??
+- `< 0`:beam ??face ?脣(?葉?亙???
+- `> 0`:beam 敺?face ?ａ?(???箏???
 
-**(3) 物理角色 — Snell / Fresnel / 偏振基底**
+**(3) ?拍?閫 ??Snell / Fresnel / ??箏?**
 
-法向直接進入物理公式:
-- 入射角 `cos θᵢ = −k̂·n̂`(負號因為 outward normal vs incoming beam)
-- Snell's law:用 n̂ 做 reference axis 解折射方向
-- 反射:`k̂_out = k̂_in − 2(k̂_in·n̂)n̂`
-- Fresnel reflectance R_s, R_p 用 θᵢ 算
-- **s/p 偏振基底**:`s = (k̂_in × n̂) / |…|`,`p = k̂_in × s` — Jones vector 的 lab basis,Faraday / PBS / 偏振相關 op 都依賴這個基底
+瘜??湔?脣?拍??砍?:
+- ?亙?閫?`cos 庛廘?= ??繚n?`(鞎?? outward normal vs incoming beam)
+- Snell's law:??n? ??reference axis 閫??撠??
+- ??:`k?_out = k?_in ??2(k?_in繚n?)n?`
+- Fresnel reflectance R_s, R_p ??庛廘?蝞?
+- **s/p ??箏?**:`s = (k?_in ? n?) / |?帆`,`p = k?_in ? s` ??Jones vector ??lab basis,Faraday / PBS / ??賊? op ?賭?鞈湧摨?
 
-例子:Glan-Laser R 面法向 (0.9213, 0, 0.3888) **同時**
-- 標出 R 圓盤躺在哪個傾斜平面上(幾何)
-- 指出 reject 光從元件中心朝這方向射出(語意)
-- 決定 reject 光出射方向 = 入射光經過 air-gap 界面後 Snell 折射的結果(物理)
+靘?:Glan-Laser R ?Ｘ???(0.9213, 0, 0.3888) **??**
+- 璅 R ?頨箏?芸?像?Ｖ?(撟曆?)
+- ? reject ???辣銝剖??????隤?)
+- 瘙箏? reject ?撠??= ?亙?????air-gap ?敺?Snell ???????拍?)
 
 **(4) Face normal vs body +Z**
 
 |  | body +Z | face normal |
 |---|---|---|
-| 屬於 | 整個 Asset3D 的座標系 | 個別 face |
-| 數量 | 1 個(全 asset 共用) | 每 face 1 個,各自獨立 |
-| 角色 | 矩陣 row/col 索引基準(convention) | 平面定義 + 物理輸入(ground truth) |
-| 修改方法 | `bodyFrameRotation` 旋整個 asset | 編輯個別 face 的 `normalBodyLocal` |
+| 撅祆 | ?游?Asset3D ?漣璅頂 | ? face |
+| ?賊? | 1 ????asset ?梁) | 瘥?face 1 ????函? |
+| 閫 | ?拚 row/col 蝝Ｗ??箸?(convention) | 撟喲摰儔 + ?拍?頛詨(ground truth) |
 
-兩者**獨立**。對 2-port slab 因為 face A 法向 = (0,0,-1) = 反向 body +Z,看起來像一回事,但對 PBS 的 R 面就明顯不同 — R 法向不是 ±Z 任何一個。
+?抵?*?函?**?? 2-port slab ? face A 瘜? = (0,0,-1) = ?? body +Z,?絲靘?銝??,雿? PBS ??R ?Ｗ停?＊銝? ??R 瘜?銝 簣Z 隞颱?銝??
 
-**(5) 實作規則**
+**(5) 撖虫?閬?**
 
-- 必須是**單位向量**(tracer 會 normalize,但 catalog 寫成單位長度看數字更直觀)
-- Schema 上 optional(`normalBodyLocal?`),省略時預設 A=(0,0,-1)、B=(0,0,+1),但實務上所有 catalog 都明寫避免歧義
-- 微小傾斜可模擬 wedge / decenter(例如 face B 法向 `(0.01, 0, 0.9999)` ≈ 0.6° wedge)
-- Tracer **用 face normal 算交點 + 入射角**;**不用它判斷「這是不是入射面」**— 那由 transition 的 `in` / `out` 欄位決定
+- 敹???*?桐???**(tracer ??normalize,雿?catalog 撖急??桐??瑕漲?摮?渲?)
+- Schema 銝?optional(`normalBodyLocal?`),???閮?A=(0,0,-1)?=(0,0,+1),雿祕?????catalog ?賣?撖恍?郁蝢?
+- 敺桀??暹??舀芋??wedge / decenter(靘? face B 瘜? `(0.01, 0, 0.9999)` ??0.6簞 wedge)
+- Tracer **??face normal 蝞漱暺?+ ?亙?閫?*;**銝摰?瑯銝?亙??Ｕ?*???? transition ??`in` / `out` 甈?瘙箏?
 
-**TL;DR**:Face normal = **出射方向的單位向量 + 定義 face 平面的法向**。約定指向元件外側,正負號錯了是讓 PBS / mirror / Glan-Laser 算錯結果的最常見單一錯誤。
+**TL;DR**:Face normal = **?箏??孵??雿???+ 摰儔 face 撟喲????*??摰???隞嗅???甇???鈭霈?PBS / mirror / Glan-Laser 蝞蝯???撣貉??桐??航炊??
 
 ---
 
 ### 3.3 Multi-hop reflective transition(A* / B* topology)
 
-針對 **PBS / BS / Glan-Laser / dichroic** 這類「內部有反射界面」的元件,使用統一的多面拓撲。所有反射一律走 mirror 公式 `k_out = k_in − 2(k·n̂)n̂`,**不再用「face normal = exit direction」的偷吃步**。
+?? **PBS / BS / Glan-Laser / dichroic** ????冽???????辣,雿輻蝯曹????Ｘ??脯???撠?敺粥 mirror ?砍? `k_out = k_in ??2(k繚n?)n?`,**銝??具ace normal = exit direction???瑕?甇?*??
 
-**Face 角色分類**
+**Face 閫??**
 
-| 命名 | 角色 | 法向意義 | 該 face 的物理 |
+| ?賢? | 閫 | 瘜??儔 | 閰?face ???|
 |------|------|---------|-------------|
-| **A1, A2, A3, A4** | 外部進出面(前 / 後 / 左 / 右) | 平面外向法向 | Snell 折射(若兩側介質不同) |
-| **B1, B2** | 內部反射界面(Brewster 鍍膜 / Glan air-gap) | 真實表面法向 | `k_out = k_in − 2(k·n̂_B)n̂_B`(mirror 公式) |
+| **A1, A2, A3, A4** | 憭?脣????/ 敺?/ 撌?/ ?? | 撟喲憭?瘜? | Snell ??(?亙?港?鞈芯??? |
+| **B1, B2** | ?折???(Brewster ?? / Glan air-gap) | ?祕銵券瘜? | `k_out = k_in ??2(k繚n?_B)n?_B`(mirror ?砍?) |
 
-A* 跟 B* 是**命名 convention 不是 schema 強制**;tracer 看 transition 的 `via` 欄位決定每 face 套哪個物理。建議 catalog 編輯者照這個命名以利閱讀。
+A* 頝?B* ??*?賢? convention 銝 schema 撘瑕**;tracer ??transition ??`via` 甈?瘙箏?瘥?face 憟??遣霅?catalog 蝺刻摩???誑?拚霈??
 
-**Transition 多段路徑(via chain)**
+**Transition 憭挾頝臬?(via chain)**
 
 ```typescript
 type Transition = {
-  in: string                       // 起始 face id
-  via?: string[]                   // 內部 / 中間 face id 序列(按通過順序)
-  out: string | string[]           // 終點 face id(多個 = 多 order)
+  in: string                       // 韏瑕? face id
+  via?: string[]                   // ?折 / 銝剝? face id 摨?(????)
+  out: string | string[]           // 蝯? face id(憭?= 憭?order)
   op: PhysicsOpRef
-  abcd?  | abcdXY? | matrix5x5?    // 整段路徑的等效幾何矩陣
+  abcd?  | abcdXY? | matrix5x5?    // ?湔挾頝臬????嗾雿??
 }
 ```
 
-Tracer 對 `[in, ...via, out]` 依序處理:
-- 落在 A*:Snell 折射(用該 face 法向 + 兩側折射率)
-- 落在 B*:Mirror 反射(用該 face 法向)
+Tracer 撠?`[in, ...via, out]` 靘???:
+- ?賢 A*:Snell ??(?刻府 face 瘜? + ?拙????
+- ?賢 B*:Mirror ??(?刻府 face 瘜?)
 
-Op 拿到的 `PhysicsOpContext` 包含完整 face chain(`face_in`, `face_via[]`, `face_out`),負責 polarization / power 演化;**幾何方向由 tracer 從 face 法向 + 公式自動算**,op 不再硬寫 exit direction。
+Op ?踹??`PhysicsOpContext` ?摰 face chain(`face_in`, `face_via[]`, `face_out`),鞎痊 polarization / power 瞍?;**撟曆??孵???tracer 敺?face 瘜? + ?砍??芸?蝞?*,op 銝?蝖砍神 exit direction??
 
-**路徑形態**
+**頝臬?敶Ｘ?**
 
-- **穿透**(transmit through interface):`A1 → [B1, B2] → A_opposite`
-  - 例:Glan-Laser p 穿透 `A1 → [B1, B2] → A2`(過 air gap 兩次 Snell)
-  - 例:Cube PBS p 穿透 `A1 → [B1, B2] → A2`(過 Brewster plate 兩次 Snell,薄板 lateral shift ≈ 0)
-- **反射**(reflect off interface):`A1 → [B1] → A_side`
-  - 例:Glan-Laser s reject `A1 → [B1] → A3`(s 在 gap mirror reflect,出側面)
-  - 例:Cube PBS s reflect `A1 → [B1] → A3` 或 `A4`(出射 A 由 B1 法向 + mirror 公式決定)
-- **單界面**(老的 2-port slab):`A1 → A2`(via = [])
-  - Lens / waveplate / AOM / Faraday rod 沿用,沒有 B 面
+- **蝛輸?*(transmit through interface):`A1 ??[B1, B2] ??A_opposite`
+  - 靘?Glan-Laser p 蝛輸?`A1 ??[B1, B2] ??A2`(??air gap ?拇活 Snell)
+  - 靘?Cube PBS p 蝛輸?`A1 ??[B1, B2] ??A2`(??Brewster plate ?拇活 Snell,? lateral shift ??0)
+- **??**(reflect off interface):`A1 ??[B1] ??A_side`
+  - 靘?Glan-Laser s reject `A1 ??[B1] ??A3`(s ??gap mirror reflect,?箏??
+  - 靘?Cube PBS s reflect `A1 ??[B1] ??A3` ??`A4`(?箏? A ??B1 瘜? + mirror ?砍?瘙箏?)
+- **?桃???*(?? 2-port slab):`A1 ??A2`(via = [])
+  - Lens / waveplate / AOM / Faraday rod 瘝輻,瘝? B ??
 
-**範例:Glan-Laser IO-3 ( L=5.0mm, gap angle 38.5° )**
+**蝭?:Glan-Laser IO-3 ( L=5.0mm, gap angle 38.5簞 )**
 
 ```
 faces:
   A1 (input)    pos (0, 0, -2.5)    normal (0, 0, -1)         outward
   A2 (transmit) pos (0, 0, +2.5)    normal (0, 0, +1)         outward
-  A3 (reject)   pos (2.3, 0, 0)     normal (1, 0, 0)          側面外向
-  B1 (gap front) pos (0, 0, 0)      normal (0.6225, 0, -0.7826)   真實 gap 表面
-  B2 (gap back)  pos (0.1, 0, 0)    normal (0.6225, 0, -0.7826)   平行於 B1
+  A3 (reject)   pos (2.3, 0, 0)     normal (1, 0, 0)          ?湧憭?
+  B1 (gap front) pos (0, 0, 0)      normal (0.6225, 0, -0.7826)   ?祕 gap 銵券
+  B2 (gap back)  pos (0.1, 0, 0)    normal (0.6225, 0, -0.7826)   撟唾???B1
 
 transitions:
-  A1 → A2 via [B1, B2]   op=glan_transmit_p   p 過兩次 Snell
-  A1 → A3 via [B1]       op=glan_reject_s     s mirror reflect at B1 → A3 Snell
-  A2 → A1 via [B2, B1]   op=glan_transmit_p   反向
-  A2 → A3 via [B2]       op=glan_reject_s     反向 reject(理論不該觸發)
+  A1 ??A2 via [B1, B2]   op=glan_transmit_p   p ?甈?Snell
+  A1 ??A3 via [B1]       op=glan_reject_s     s mirror reflect at B1 ??A3 Snell
+  A2 ??A1 via [B2, B1]   op=glan_transmit_p   ??
+  A2 ??A3 via [B2]       op=glan_reject_s     ?? reject(??銝府閫貊)
 ```
 
-驗證:beam=(0,0,1) 進 A1 走 reject 路徑
-1. B1 mirror:`k_out = (0,0,1) − 2·(0,0,1)·(0.6225, 0, -0.7826) · (0.6225, 0, -0.7826)`
-   - `(k·n̂) = -0.7826`,`2(k·n̂)n̂ = (-0.974, 0, 1.225)`
-   - `k_after_B1 = (0,0,1) − (-0.974, 0, 1.225) = (0.974, 0, -0.225)` (晶體內)
-2. A3 Snell(crystal n=1.48 → air n=1,面法向 (1,0,0)):
-   - 平面內分量保持,法向分量按 Snell 折射
-   - 折射後 `k_air ≈ (0.9213, 0, 0.3888)` ← 跟舊版 catalog 對得上
+撽?:beam=(0,0,1) ??A1 韏?reject 頝臬?
+1. B1 mirror:`k_out = (0,0,1) ??2繚(0,0,1)繚(0.6225, 0, -0.7826) 繚 (0.6225, 0, -0.7826)`
+   - `(k繚n?) = -0.7826`,`2(k繚n?)n? = (-0.974, 0, 1.225)`
+   - `k_after_B1 = (0,0,1) ??(-0.974, 0, 1.225) = (0.974, 0, -0.225)` (?園???
+2. A3 Snell(crystal n=1.48 ??air n=1,?Ｘ???(1,0,0)):
+   - 撟喲?批?????瘜?????Snell ??
+   - ??敺?`k_air ??(0.9213, 0, 0.3888)` ??頝???catalog 撠?銝?
 
-如果折射算完跟舊版不一致 ±0.001,就是 catalog 物理數值(gap 角度、晶體折射率)需要校正,不是 convention 錯。
+憒???蝞?頝???銝??簣0.001,撠望 catalog ?拍??詨?gap 閫漲?擃?撠?)?閬甇?銝 convention ?胯?
 
 ---
 
@@ -297,9 +253,9 @@ transitions:
 type Component = {
   id: string                          // "isolator_1064_io3"
   vendorPart?: string
-  bindings: ComponentBinding[]        // 子 Asset 的相對 pose
-  exposedFaces: ExposedFace[]         // 對外暴露的端口
-  // 沒有 kind, 沒有物理參數
+  bindings: ComponentBinding[]        // 摮?Asset ?撠?pose
+  exposedFaces: ExposedFace[]         // 撠??湧?垢??
+  // 瘝? kind, 瘝??拍??
 }
 
 type ComponentBinding = {
@@ -311,20 +267,20 @@ type ComponentBinding = {
   local_rx_deg: number
   local_ry_deg: number
   local_rz_deg: number
-  tunableAxes?: Axis[]                // 哪些軸允許 SceneObject 透過 ObjectBinding 覆寫
+  tunableAxes?: Axis[]                // ?芯?頠詨?閮?SceneObject ?? ObjectBinding 閬神
 }
 
 type ExposedFace = {
-  componentFaceId: string             // 對外名稱 "optical_in"
-  assetBindingId: string              // 指向 bindings[].bindingId
-  assetFaceId: string                 // 該 asset 的 face id
+  componentFaceId: string             // 撠??迂 "optical_in"
+  assetBindingId: string              // ?? bindings[].bindingId
+  assetFaceId: string                 // 閰?asset ??face id
 }
 ```
 
-**設計重點**:
-- Component **沒有 kind**,純粹空間組合 + 對外端口宣告
-- `exposedFaces` 是 ray tracer 在「component 邊界」與「内部 sub-asset」之間的橋樑 — 外部光只能從 exposed face 進入,內部 sub-asset 之間的傳播由 ray tracer 自己處理
-- 單一 Asset 也包成 Component(vendor part = single asset),這樣 SceneObject 永遠指向 Component,介面統一
+**閮剛???**:
+- Component **瘝? kind**,蝝硃蝛粹?蝯? + 撠?蝡臬摰??
+- `exposedFaces` ??ray tracer ?具omponent ????????sub-asset????璈? ??憭??賢? exposed face ?脣,?折 sub-asset 銋???剔 ray tracer ?芸楛??
+- ?桐? Asset 銋???Component(vendor part = single asset),?見 SceneObject 瘞賊??? Component,隞蝯曹?
 
 ---
 
@@ -335,30 +291,30 @@ type SceneObject = {
   id: string
   componentId: string
 
-  // Lab pose (現狀保留)
+  // Lab pose (?曄?靽?)
   xMm: number; yMm: number; zMm: number
   rxDeg: number; ryDeg: number; rzDeg: number
 
-  // ★ kind 係數覆寫(per-binding,僅覆寫 defaultParams 子集)
+  // ??kind 靽閬神(per-binding,??撖?defaultParams 摮?)
   paramOverrides?: {
     [bindingId: string]: Partial<KindParams>
   }
 
-  // ★ 動態源(只有 SceneObject 有,kind 預設為 undefined)
+  // ????皞??芣? SceneObject ??kind ?身??undefined)
   dynamicSources?: {
     laserPowerMw?: number             // laser_source
     centerWavelengthNm?: number       // laser tunable
     aomFreqMhz?: number               // aom
     aomRfPowerDbm?: number
     beamProfile?: {
-      w0Mm: number                    // 1/e² 半徑
+      w0Mm: number                    // 1/e簡 ??
       m2?: number                     // beam quality
-      z0Mm?: number                   // waist 位置(component-local +z)
+      z0Mm?: number                   // waist 雿蔭(component-local +z)
     }
-    // ... 各 kind 自己宣告自己的動態欄位
+    // ... ??kind ?芸楛摰???芸楛????雿?
   }
 
-  // Per-instance pose delta(現狀保留)
+  // Per-instance pose delta(?曄?靽?)
   objectBindings?: ObjectBinding[]
 
   properties?: {
@@ -367,30 +323,30 @@ type SceneObject = {
 }
 ```
 
-**三類欄位的邊界規則**:
+**銝?甈???????*:
 
-| 欄位 | 何時用 | 例子 |
+| 甈? | 雿???| 靘? |
 |------|--------|------|
-| `paramOverrides` | 同 kind 的「靜態 calibration 差異」 | 某顆 waveplate 實測 retardance = 88° 而非預設 90° |
-| `dynamicSources` | 「這顆實體當前的操作狀態」 | laser 開到 50 mW、AOM RF 設 80 MHz |
-| `objectBindings` | per-instance pose 微調(已存在) | 鏡子 yaw 微調 0.3° 對齊 |
+| `paramOverrides` | ??kind ????calibration 撌桃??| ?? waveplate 撖行葫 retardance = 88簞 ???身 90簞 |
+| `dynamicSources` | ??撖阡??嗅???雿???| laser ? 50 mW?OM RF 閮?80 MHz |
+| `objectBindings` | per-instance pose 敺株矽(撌脣??? | ?∪? yaw 敺株矽 0.3簞 撠? |
 
-**Solver 計算的 state**(beam jones、power flux、polarization)**不存任何地方**,每次 solve 重新算出。
+**Solver 閮???state**(beam jones?ower flux?olarization)**銝?隞颱??唳**,瘥活 solve ?蝞??
 
 ---
 
 ## 6. Kind Registry
 
-**Split between DB(metadata) 與 code(PhysicsOp)**(alembic 0086, 2026-05-25 起):
+**Split between DB(metadata) ??code(PhysicsOp)**(alembic 0086, 2026-05-25 韏?:
 
-- **DB `kinds` table** 存可序列化的 metadata:`name`、`display_name`、`domain`、`op_set_name`、`default_params`、`face_template`、`needs_aperture`、`wavelength_range_nm`、`description`。前後端透過 `/api/kinds` 做 CRUD。
-- **Code REGISTRY** 存 PhysicsOp 實作(`abcd_lens`、`jones_polarizer`、`diffract_aom`...)。函式不適合 ORM 序列化,所以留在 code 兩端鏡像(frontend `src/optical/registry.ts` ↔ backend `app/optical/registry.py`)。
-- **DB row 透過 `op_set_name` 引用 code 端的 op 集合**。建一個新 kind row(例如 `my_custom_lens`)→ 設 `op_set_name = "lens_biconvex"` → tracer 用 lens_biconvex 的 ops 跑這個 kind。要做**真正新的物理行為**仍要在 code 註冊新 op,才能讓 UI 的 `op_set_name` dropdown 出現新選項。
+- **DB `kinds` table** 摮摨??? metadata:`name`?display_name`?domain`?op_set_name`?default_params`?face_template`?needs_aperture`?wavelength_range_nm`?description`??敺垢?? `/api/kinds` ??CRUD??
+- **Code REGISTRY** 摮?PhysicsOp 撖虫?(`abcd_lens`?jones_polarizer`?diffract_aom`...)?撘??拙? ORM 摨????隞亦???code ?拍垢?∪?(frontend `src/optical/registry.ts` ??backend `app/optical/registry.py`)??
+- **DB row ?? `op_set_name` 撘 code 蝡舐? op ??**?遣銝? kind row(靘? `my_custom_lens`)??閮?`op_set_name = "lens_biconvex"` ??tracer ??lens_biconvex ??ops 頝?kind????*?迤?啁??拍?銵**隞???code 閮餃???op,?霈?UI ??`op_set_name` dropdown ?箇?圈??
 
 ```typescript
 // frontend/src/optical/registry.ts
-// backend/app/optical/registry.py — 鏡像
-// 只負責 PhysicsOp(callable 函式),沒有 metadata。
+// backend/app/optical/registry.py ???∪?
+// ?芾?鞎?PhysicsOp(callable ?賢?),瘝? metadata??
 
 type OpticalKind = 
   | "laser_source" | "tapered_amplifier"
@@ -400,33 +356,33 @@ type OpticalKind =
   | "aom" | "eom"
   | "faraday_rotator"
   | "fiber_coupler" | "fiber" | "fiber_end"
-  | "isolator"                            // 注意:仍可作為 single asset 用,
-                                          //   但 vendor "Thorlabs IO-3" 走 Component 路線
+  | "isolator"                            // 瘜冽?:隞雿 single asset ??
+                                          //   雿?vendor "Thorlabs IO-3" 韏?Component 頝舐?
   | "nonlinear_crystal" | "saturable_absorber"
   | "detector" | "camera" | "spectrometer" | "wavemeter"
   | "beam_dump"
 
-type RfKind =                             // ★ RF 圖節點(走 §7.5 RF tracer,不走 ray tracer)
-  | "rf_source"                           // emitter:AD9959 DDS、generic synth
-  | "rf_amplifier"                        // passthrough:ZHL-1-2W+ 等
-  | "rf_cable"                            // 雙向 passthrough:同軸 / SMA / BNC
-  | "rf_switch"                           // passthrough(N-throw,TTL 控):ZYSWA-2-50DR 等
-  | "programmable_pulse_generator"        // emitter(TTL/Trigger 域):綁 Pulse&Timing TimingProgram
-  | "horn_antenna"                        // sink:輻射出系統
+type RfKind =                             // ??RF ??暺?韏?禮7.5 RF tracer,銝粥 ray tracer)
+  | "rf_source"                           // emitter:AD9959 DDS?eneric synth
+  | "rf_amplifier"                        // passthrough:ZHL-1-2W+ 蝑?
+  | "rf_cable"                            // ?? passthrough:?遘 / SMA / BNC
+  | "rf_switch"                           // passthrough(N-throw,TTL ??:ZYSWA-2-50DR 蝑?
+  | "programmable_pulse_generator"        // emitter(TTL/Trigger ??:蝬?Pulse&Timing TimingProgram
+  | "horn_antenna"                        // sink:頛餃??箇頂蝯?
 
-type Kind = OpticalKind | RfKind          // Asset3D.kind 允許其中之一(且必須對應到 DB kinds.name)
+type Kind = OpticalKind | RfKind          // Asset3D.kind ?迂?嗡葉銋?(銝???? DB kinds.name)
 
 type PhysicsOp = (
-  rayIn: BeamRay,                       // (origin, dir, λ, jones, power) in face-local frame
+  rayIn: BeamRay,                       // (origin, dir, 弇, jones, power) in face-local frame
   faceIn: Face,
   faceOut: Face,
   params: KindParams,
-  dynamic?: DynamicSources              // 來自 SceneObject (laser power etc.)
-) => BeamRay[]                          // 多條輸出(diffraction orders / BS 雙臂)
+  dynamic?: DynamicSources              // 靘 SceneObject (laser power etc.)
+) => BeamRay[]                          // 憭?頛詨(diffraction orders / BS ??)
 
-// 每個 op set 註冊自己的 ops(僅函式,metadata 在 DB)
+// 瘥?op set 閮餃??芸楛??ops(?撘?metadata ??DB)
 const REGISTRY: Record<OpticalKind, {
-  ops: Record<string, PhysicsOp>        // op name → impl
+  ops: Record<string, PhysicsOp>        // op name ??impl
 }>
 ```
 
@@ -434,41 +390,41 @@ const REGISTRY: Record<OpticalKind, {
 -- DB schema (alembic 0086)
 CREATE TABLE kinds (
   id                UUID PRIMARY KEY,
-  name              TEXT UNIQUE NOT NULL,         -- 對應 Asset3D.physics_kind
+  name              TEXT UNIQUE NOT NULL,         -- 撠? Asset3D.physics_kind
   display_name      TEXT NOT NULL,
   domain            TEXT NOT NULL,                -- 'optical' | 'rf' | 'mechanical'
-  op_set_name       TEXT NOT NULL,                -- 指到 code REGISTRY 的 key
+  op_set_name       TEXT NOT NULL,                -- ? code REGISTRY ??key
   default_params    JSONB NOT NULL DEFAULT '{}',
-  face_template     JSONB NOT NULL DEFAULT '{}',  -- anchors 範本(required / optional / needs_direction / needs_aperture)
+  face_template     JSONB NOT NULL DEFAULT '{}',  -- anchors 蝭(required / optional / needs_direction / needs_aperture)
   needs_aperture    BOOL  NOT NULL DEFAULT false,
   wavelength_range_nm FLOAT[],
   description       TEXT,
-  created_at, updated_at …
+  created_at, updated_at ??
 );
 ```
 
-**Registry / Kind table 的角色分工**:
-- **Code REGISTRY**:提供 PhysicsOp 實作(`abcd_lens`、`jones_polarizer`、`diffract_aom`...);UI 不能新增,要 PR 改 code
-- **DB `kinds`**:提供 kind metadata(display name、defaultParams、faceTemplate);UI 在 PHY Editor → 🔧 Binding dev → Kinds tab 做 CRUD;新 row 要選一個 code 端註冊過的 `op_set_name`
-- **Asset3D 仍是固化的**:建好後它的 faces/transitions/default_params 都存自己一份,改 kinds row 不會回頭動已建好的 Asset3D(避免遠端追溯改 production scene)
-- **新增「真正新物理」的流程**:(1) 在 code 加 PhysicsOp + register;(2) UI 開 Kinds tab → 新增一個 row,opSetName 選新註冊的那個
+**Registry / Kind table ???脣?撌?*:
+- **Code REGISTRY**:?? PhysicsOp 撖虫?(`abcd_lens`?jones_polarizer`?diffract_aom`...);UI 銝?啣?,閬?PR ??code
+- **DB `kinds`**:?? kind metadata(display name?efaultParams?aceTemplate);UI ??PHY Editor ??? Binding dev ??Kinds tab ??CRUD;??row 閬銝??code 蝡航酉????`op_set_name`
+- **Asset3D 隞?箏???*:撱箏末敺???faces/transitions/default_params ?賢??芸楛銝隞???kinds row 銝???歇撱箏末??Asset3D(?踹??垢餈賣滲??production scene)
+- **?啣???甇??拍???瘚?**:(1) ??code ??PhysicsOp + register;(2) UI ??Kinds tab ???啣?銝??row,opSetName ?豢閮餃????
 
 ---
 
-## 6.5 RF Signal Model(RF tracer 的 ray 等價物)
+## 6.5 RF Signal Model(RF tracer ??ray 蝑??
 
-RF 元件不走 ray tracer(沒有 wavefront、沒有 Jones vector、沒有 q-parameter)。RF tracer 用一個更窄的 data type `RfSignalState` 在 graph 上傳遞:
+RF ?辣銝粥 ray tracer(瘝? wavefront????Jones vector????q-parameter)?F tracer ?其??蝒? data type `RfSignalState` ??graph 銝??
 
 ```typescript
 type RfSignalState = {
-  frequencyMhz: number                    // 載波頻率(單音;modulation 預留未來)
-  vpp: number                             // peak-to-peak voltage,假設 50 Ω 負載
-  cumulativeGainDb: number                // 從 source 累計到當前 port 的增益(可 < 0)
-  saturated: boolean                      // 是否在沿途任一 amp 撞到 outputPowerMaxDbm clamp
-  sourceObjectId: string                  // 起源 rf_source SceneObject id
-  sourceAnchorName: string                // 起源 anchor name(AD9959 的 "CH0"~"CH3")
-  passthroughObjectIds: string[]          // 沿途經過的 SceneObject id(用於 debug + 防 loop)
-  // phase / modulation envelope 是 Phase RF.6 開放欄位,目前不存
+  frequencyMhz: number                    // 頛郭?餌?(?桅;modulation ???芯?)
+  vpp: number                             // peak-to-peak voltage,?身 50 峏 鞎?
+  cumulativeGainDb: number                // 敺?source 蝝航??啁??port ??????< 0)
+  saturated: boolean                      // ?臬?冽窒?遙銝 amp ? outputPowerMaxDbm clamp
+  sourceObjectId: string                  // 韏瑟? rf_source SceneObject id
+  sourceAnchorName: string                // 韏瑟? anchor name(AD9959 ??"CH0"~"CH3")
+  passthroughObjectIds: string[]          // 瘝輸??? SceneObject id(?冽 debug + ??loop)
+  // phase / modulation envelope ??Phase RF.6 ?甈?,?桀?銝?
 }
 
 type RfPhysicsOp = (
@@ -476,91 +432,91 @@ type RfPhysicsOp = (
   faceIn: Face,
   faceOut: Face,
   params: KindParams,
-  ctx: RfTraceContext                     // switch_ttl_states / powered_off_object_ids 等 pre-pass 結果
+  ctx: RfTraceContext                     // switch_ttl_states / powered_off_object_ids 蝑?pre-pass 蝯?
 ) => Array<{ outAnchorName: string; outgoing: RfSignalState }> | null
-//   null  = signal terminated(power gate、unbound PPG)
-//   []    = ambiguous(SP4T+ 在 LOW state 無 active throw)
-//   [x..] = 一個或多個輸出 anchor(rf_switch 雖有 N throws,只 active 一個)
+//   null  = signal terminated(power gate?nbound PPG)
+//   []    = ambiguous(SP4T+ ??LOW state ??active throw)
+//   [x..] = 銝??憭撓??anchor(rf_switch ?? N throws,??active 銝??
 ```
 
-**單位約定(前/後端 parity 強制)**:
-- `AD9959_VPP_FULL_SCALE = 1.0 V`(AD9959 滿幅輸出進 50 Ω)
-- `RF_LOAD_Z_OHM = 50`(所有 dBm ↔ Vpp 轉換的硬性假設)
-- `P_w = Vpp² / (8 × Z)`、`Vpp = √(8 × Z × P_w)`、`P_w = 10^((dBm − 30) / 10)`
+**?桐?蝝?(??敺垢 parity 撘瑕)**:
+- `AD9959_VPP_FULL_SCALE = 1.0 V`(AD9959 皛踹?頛詨??50 峏)
+- `RF_LOAD_Z_OHM = 50`(???dBm ??Vpp 頧??′?批?閮?
+- `P_w = Vpp簡 / (8 ? Z)`?Vpp = ??8 ? Z ? P_w)`?P_w = 10^((dBm ??30) / 10)`
 
-**與光學 BeamRay 的對照**:
+**??摮?BeamRay ????*:
 
-| 概念 | 光學 | RF |
+| 璁艙 | ?飛 | RF |
 |------|------|----|
-| 載體 | BeamRay(origin, dir, λ, jones, q, power) | RfSignalState(freq, vpp, gain, ...) |
-| 命中判定 | rayPlaneIntersect(face) + aperture | port-adjacency map(cable endpoint 預先建好) |
-| Source | `emit_laser_source` 從 dynamicSources 讀 power | `emit_rf_source` 從 dynamicSources.channels[] 讀 freq + amp |
-| Sink | beam_dump、detector | horn_antenna、aom.rf_in |
-| 多輸出 | beamsplitter / AOM diffraction orders | rf_switch active throw(同時只一條) |
-| Power gate | (尚無對應機制) | `powered_off_object_ids` → op return null |
+| 頛? | BeamRay(origin, dir, 弇, jones, q, power) | RfSignalState(freq, vpp, gain, ...) |
+| ?賭葉?文? | rayPlaneIntersect(face) + aperture | port-adjacency map(cable endpoint ??撱箏末) |
+| Source | `emit_laser_source` 敺?dynamicSources 霈 power | `emit_rf_source` 敺?dynamicSources.channels[] 霈 freq + amp |
+| Sink | beam_dump?etector | horn_antenna?om.rf_in |
+| 憭撓??| beamsplitter / AOM diffraction orders | rf_switch active throw(???芯?璇? |
+| Power gate | (撠撠?璈) | `powered_off_object_ids` ??op return null |
 
-**State 不存任何地方**:跟光學一樣,每次 solve 重新走 BFS 算出每個 RF port 的 `RfSignalState`,不快取。
+**State 銝?隞颱??唳**:頝?摮訾?璅?瘥活 solve ?韏?BFS 蝞瘥?RF port ??`RfSignalState`,銝翰??
 
 ---
 
-## 7. Ray Tracer 運作流程
+## 7. Ray Tracer ??瘚?
 
-不再認 `elementKind` 字串。流程如下:
+銝?隤?`elementKind` 摮葡??蝔?銝?
 
 ```
 loop until ray escapes / absorbed / power < threshold:
 
-  1. ray = (origin_lab, dir_lab, λ, jones, power)
+  1. ray = (origin_lab, dir_lab, 弇, jones, power)
 
   2. For each SceneObject in scene:
-       pose = sceneObjectToQuaternion(sceneObject) ⊗ T(xMm,yMm,zMm)
-       ray_comp = pose⁻¹ · ray
+       pose = sceneObjectToQuaternion(sceneObject) ??T(xMm,yMm,zMm)
+       ray_comp = pose?鄞?繚 ray
 
        For each ComponentBinding in component.bindings:
-         sub_pose = local_pose(binding) ⊕ objectBinding_delta(binding)
-         ray_asset = sub_pose⁻¹ · ray_comp
+         sub_pose = local_pose(binding) ??objectBinding_delta(binding)
+         ray_asset = sub_pose?鄞?繚 ray_comp
 
          For each Face in asset.faces:
            hit = rayPlaneIntersect(ray_asset, face)
            if hit and within aperture:
              collect (sceneObject, binding, face, distance)
 
-  3. 取最近的命中 (so, bnd, faceIn, t)
+  3. ??餈??賭葉 (so, bnd, faceIn, t)
 
-  4. 查 asset.transitions 找 in = faceIn:
-       對每個匹配的 transition:
+  4. ??asset.transitions ??in = faceIn:
+       撠???? transition:
          params = asset.defaultParams
-                  ⊕ paramOverrides[binding.bindingId]
-                  ⊕ transition.params
+                  ??paramOverrides[binding.bindingId]
+                  ??transition.params
          dynamic = sceneObject.dynamicSources
          out_rays = transition.op(rayAtFace, faceIn, faceOut, params, dynamic)
 
-  5. 把 out_rays 轉回 lab frame, push 進 queue
+  5. ??out_rays 頧? lab frame, push ??queue
 ```
 
-**重點**:
-- 沒有 `switch (elementKind) { case "mirror": ... }`
-- Kind 字串只在 PhysicsOp 內部使用(該 op 知道自己是 jones 還是 abcd)
-- 多階輸出(AOM、beamsplitter)由 `out_rays[]` 自然支援
+**??**:
+- 瘝? `switch (elementKind) { case "mirror": ... }`
+- Kind 摮葡?芸 PhysicsOp ?折雿輻(閰?op ?仿??芸楛??jones ? abcd)
+- 憭?頛詨(AOM?eamsplitter)??`out_rays[]` ?芰?舀
 
 ---
 
-## 7.5 RF Tracer 運作流程(graph BFS,非 ray tracing)
+## 7.5 RF Tracer ??瘚?(graph BFS,??ray tracing)
 
-RF 元件不做 ray-plane intersection。RF tracer 在「port adjacency graph」上做 BFS,規則對應 §6.5 的 `RfSignalState`。
+RF ?辣銝? ray-plane intersection?F tracer ?具ort adjacency graph????BFS,閬?撠? 禮6.5 ??`RfSignalState`??
 
 ```
-pre-pass A — 建 port adjacency map:
+pre-pass A ??撱?port adjacency map:
   for each rf_cable SceneObject:
       endpoints = sceneObject.properties.rfCableEndpoints  // { A: {objectId, anchorName}, B: ... }
       adjacency[endpoints.A] += endpoints.B
       adjacency[endpoints.B] += endpoints.A
-  (cable 不走 rf_links 表 — 簡化編輯 UX;其他 RF 連線都走 rf_links 表)
+  (cable 銝粥 rf_links 銵???蝪∪?蝺刻摩 UX;?嗡? RF ????質粥 rf_links 銵?
   for each rf_link in rf_links:
       adjacency[(from_obj, from_port)] += (to_obj, to_port)
       adjacency[(to_obj, to_port)] += (from_obj, from_port)
 
-pre-pass B — 解析所有 rf_switch 的 TTL state:
+pre-pass B ??閫?????rf_switch ??TTL state:
   for each rf_switch SceneObject sw:
       peer = adjacency.lookupOneHop(sw, "ttl_in")
       if peer is programmable_pulse_generator with bound timingProgramId:
@@ -569,7 +525,7 @@ pre-pass B — 解析所有 rf_switch 的 TTL state:
       else:
           switch_ttl_states[sw.id] = sw.kindParams.ttlState  // manual fallback
 
-seed — 從每個 rf_source 注入:
+seed ??敺???rf_source 瘜典:
   for each rf_source SceneObject src:
       if src.id in powered_off_object_ids: continue
       for each out_anchor in src.asset.faces where domain == "rf":
@@ -577,7 +533,7 @@ seed — 從每個 rf_source 注入:
                   ?? defaults(80 MHz, amplitudeScale=1.0)
           signal = RfSignalState(
               frequencyMhz = channel.frequencyMhz,
-              vpp = channel.amplitudeScale × AD9959_VPP_FULL_SCALE,
+              vpp = channel.amplitudeScale ? AD9959_VPP_FULL_SCALE,
               cumulativeGainDb = 0,
               saturated = false,
               sourceObjectId = src.id,
@@ -586,39 +542,39 @@ seed — 從每個 rf_source 注入:
           )
           enqueue((src.id, out_anchor.name), signal)
 
-BFS — 走訪到 sink:
+BFS ??韏啗赤??sink:
   while queue:
       (portKey, signal) = dequeue()
       for peer in adjacency[portKey]:
-          if (peer.objectId, peer.anchorName) already visited: continue   // first-arrival 勝
+          if (peer.objectId, peer.anchorName) already visited: continue   // first-arrival ??
           signalAtPort[(peer.objectId, peer.anchorName)] = signal
           
           op = REGISTRY[peer.kind].rfOps[peer.transitionForIncoming(peer.anchorName)]
-          if op is None: continue   // sink — 不再往下傳(AOM rf_in、horn_antenna.aperture)
+          if op is None: continue   // sink ??銝?敺銝(AOM rf_in?orn_antenna.aperture)
           
           outputs = op(signal, faceIn, faceOut, peer.params, ctx)
-          if outputs is None: continue   // power gate / unbound PPG → 訊號終止
-          if outputs == []: continue     // SP4T+ LOW 無 active → 此分支空
+          if outputs is None: continue   // power gate / unbound PPG ??閮?蝯迫
+          if outputs == []: continue     // SP4T+ LOW ??active ??甇文??舐征
           for { outAnchorName, outgoing } in outputs:
               enqueue((peer.objectId, outAnchorName), outgoing)
 ```
 
-**Sink 們**:`aom.rf_in`、`horn_antenna.aperture`、任何 kind 沒在 RF registry 註冊 op 的 face。
+**Sink ??*:`aom.rf_in`?horn_antenna.aperture`?遙雿?kind 瘝 RF registry 閮餃? op ??face??
 
-**Power gate**(`powered_off_object_ids`,跟 `lab_power_panel.md` 規則一致):
-- `rf_source` 在 gate 中:不 emit
-- `rf_amplifier` 在 gate 中:op return null(無 DC bias → 訊號終止,不只是 unity gain)
-- `rf_switch` 在 gate 中:op return null(無偏壓 → 無 active throw)
-- 對應到 AOM 的下游影響:`signalAtPort[(aom.id, "rf_in")]` 變 undefined → AOM efficiency = 0 → beam 走 0th order
+**Power gate**(`powered_off_object_ids`,頝?`lab_power_panel.md` 閬?銝??:
+- `rf_source` ??gate 銝?銝?emit
+- `rf_amplifier` ??gate 銝?op return null(??DC bias ??閮?蝯迫,銝??unity gain)
+- `rf_switch` ??gate 銝?op return null(?∪?憯?????active throw)
+- 撠???AOM ??皜詨蔣??`signalAtPort[(aom.id, "rf_in")]` 霈?undefined ??AOM efficiency = 0 ??beam 韏?0th order
 
-**重點**:
-- 跟 ray tracer 一樣,**沒有 `switch (elementKind)` dispatch**;peer 的 kind 只用來去 registry 查 op
-- 跟 ray tracer 不同:**沒有 ray-plane intersection**,連線是 explicit graph edges(cable endpoints + rf_links)
-- AOM 是 hybrid:在 ray tracer 看是 optical 元件(face A → face B,diffract op),同時在 RF tracer 看是 sink(rf_in 拿到 RfSignalState 後注入 AOM physics op 的 `ctx.dynamic`)— 詳見 §14
+**??**:
+- 頝?ray tracer 銝璅?**瘝? `switch (elementKind)` dispatch**;peer ??kind ?芰靘 registry ??op
+- 頝?ray tracer 銝?:**瘝? ray-plane intersection**,?????explicit graph edges(cable endpoints + rf_links)
+- AOM ??hybrid:??ray tracer ? optical ?辣(face A ??face B,diffract op),????RF tracer ? sink(rf_in ?踹 RfSignalState 敺釣??AOM physics op ??`ctx.dynamic`)??閰唾? 禮14
 
 ---
 
-## 8. 範例:用新模型實作 13 種元件(7 optical + 6 RF)
+## 8. 蝭?:?冽璅∪?撖虫? 13 蝔桀?隞?7 optical + 6 RF)
 
 ### 8.0 Laser Source(scene emitter)
 
@@ -644,11 +600,11 @@ BFS — 走訪到 sink:
 }
 ```
 
-Laser source 是 **scene emitter**,不是等 beam 撞到才作用的 passive element。
-`out.normalBodyLocal` 定義出光方向。若 `/api/v3/solver/run` 沒有收到
-`initialRays`,solver 會從 scene 內的 `laser_source` object 自動產生 initial
-beam。`SceneObject.dynamicSources` 可覆寫 `centerWavelengthNm`,
-`laserPowerMw` / `powerMw`, `polarization`, `spatialModeX/Y`。
+Laser source ??**scene emitter**,銝蝑?beam ????函? passive element??
+`out.normalBodyLocal` 摰儔?箏??孵?? `/api/v3/solver/run` 瘝??嗅
+`initialRays`,solver ?? scene ?抒? `laser_source` object ?芸??Ｙ? initial
+beam?SceneObject.dynamicSources` ?航?撖?`centerWavelengthNm`,
+`laserPowerMw` / `powerMw`, `polarization`, `spatialModeX/Y`??
 
 Current scene object contract for `LASER_SOURCE0`:
 
@@ -664,7 +620,7 @@ Current scene object contract for `LASER_SOURCE0`:
   `SceneObject.properties.opticalSources[]` may remain as a compatibility
   mirror, but it is not the v3 source of truth.
 
-### 8.1 Lens(最簡單,1 個 transition)
+### 8.1 Lens(?蝪∪,1 ??transition)
 
 ```json
 {
@@ -683,9 +639,9 @@ Current scene object contract for `LASER_SOURCE0`:
 }
 ```
 
-PhysicsOp `abcd_thin_lens`:接 ray、套 [[1,0],[-1/f,1]],出射在 face B 中央。
+PhysicsOp `abcd_thin_lens`:??ray?? [[1,0],[-1/f,1]],?箏???face B 銝剖亢??
 
-### 8.2 Mirror(同面進出)
+### 8.2 Mirror(??脣)
 
 ```json
 {
@@ -703,7 +659,7 @@ PhysicsOp `abcd_thin_lens`:接 ray、套 [[1,0],[-1/f,1]],出射在 face B 中�
 }
 ```
 
-PhysicsOp `reflect_specular`:`d' = d - 2(d·n)n`,出射還是 face A。
+PhysicsOp `reflect_specular`:`d' = d - 2(d繚n)n`,?箏?? face A??
 
 ### 8.3 Polarizer(jones)
 
@@ -722,9 +678,9 @@ PhysicsOp `reflect_specular`:`d' = d - 2(d·n)n`,出射還是 face A。
 }
 ```
 
-注意:`transmissionAxisDegBodyLocal: 0` 表示透射軸沿 **+x**。要把 polarizer 安裝成 45°,**不改 asset**,改 ComponentBinding 的 `local_rz_deg = 45`(以下 Isolator 範例)。
+瘜冽?:`transmissionAxisDegBodyLocal: 0` 銵函內??頠豢窒 **+x**????polarizer 摰???45簞,**銝 asset**,??ComponentBinding ??`local_rz_deg = 45`(隞乩? Isolator 蝭?)??
 
-### 8.4 AOM(RF 驅動繞射)
+### 8.4 AOM(RF 撽?蝜?)
 
 ```json
 {
@@ -749,25 +705,25 @@ PhysicsOp `reflect_specular`:`d' = d - 2(d·n)n`,出射還是 face A。
 }
 ```
 
-幾何規則:
+撟曆?閬?:
 - `A` and `B` are the physical optical surfaces. Do not duplicate them as `A1/B1/A2/B2` just to encode direction.
 - RF is not an optical face; it is a body-local vector: `rfPropagationDirectionBodyLocal`.
 - `rfPropagationDirectionBodyLocal` must be perpendicular to the physical `A -> B` optical axis.
 
-PhysicsOp `diffract_aom` 接 ray + `dynamicSources` 中的 RF signal:
+PhysicsOp `diffract_aom` ??ray + `dynamicSources` 銝剔? RF signal:
 - `SceneObject.dynamicSources.aomFreqMhz` / `rfFrequencyMhz` drive the Bragg angle.
 - `SceneObject.dynamicSources.rfDrivePowerW` / `aomRfVpp` drive diffraction efficiency.
 - The selected diffraction branch is carried by transition `params.order`.
 - q propagation is slab-like: `q_out = q_in + L/n`.
 
-### 8.5 Isolator IO-3-850-HP(複合 Component,5 個子 Asset)
+### 8.5 Isolator IO-3-850-HP(銴? Component,5 ?? Asset)
 
 **Canonical A/B rule**: faces are physical surfaces. Direction and non-reciprocity live in directed transitions, not in duplicated face IDs.
 
-**5 個 Asset3D**(3 個光學 + 2 個機械):
+**5 ??Asset3D**(3 ??摮?+ 2 ??璇?:
 
 ```yaml
-# Glan-Laser polarizer(被引用 2 次)
+# Glan-Laser polarizer(鋡怠???2 甈?
 thorlabs_glan_laser_gl10:
   kind: polarizer
   faces:
@@ -777,7 +733,7 @@ thorlabs_glan_laser_gl10:
     - { in:"A", out:"B", op:"jones_polarize_p" }
     - { in:"B", out:"A", op:"jones_polarize_p" }
 
-# Faraday rotator 核心
+# Faraday rotator ?詨?
 thorlabs_io_3_850_faraday:
   kind: faraday_rotator
   faces: [A@(0,0,-15), B@(0,0,+15)]
@@ -786,13 +742,13 @@ thorlabs_io_3_850_faraday:
     - { in:"B", out:"A", op:"faraday_rotate", abcd:[[1,L/n],[0,1]] }
   defaultParams: { rotationDeg: 45, reciprocal: false }
 
-# 3 個機械殼(無 kind / faces / transitions)
+# 3 ??璇唳挺(??kind / faces / transitions)
 thorlabs_io_3_850_input_housing:   { mechanicalAnchors: [...] }
 thorlabs_io_3_850_faraday_housing: { mechanicalAnchors: [...] }
 thorlabs_io_3_850_output_housing:  { mechanicalAnchors: [...] }
 ```
 
-**Component**(綁 5 個 Asset3D + 2 個對外端口):
+**Component**(蝬?5 ??Asset3D + 2 ??憭垢??:
 
 ```json
 {
@@ -812,15 +768,15 @@ thorlabs_io_3_850_output_housing:  { mechanicalAnchors: [...] }
 }
 ```
 
-**Isolator 行為從 ray tracer 自然湧現**:
+**Isolator 銵敺?ray tracer ?芰皝抒**:
 - Forward: `input_pol.A -> faraday.A -> output_pol.A`. The output polarizer binding is rotated 45 deg, so it transmits the Faraday-rotated beam.
 - Reverse: `output_pol.B -> faraday.B -> input_pol.B`. The Faraday op adds another same-signed 45 deg, so the returning polarization is blocked by the input polarizer.
 
-**沒有任何 `isolator-specific` 程式碼**。
+**瘝?隞颱? `isolator-specific` 蝔?蝣?*??
 
 ### 8.6 PBS(4 port,8 transitions)
 
-PBS cube 有 4 個 outer face(back/front/left/right),每 face 同時是某些 transition 的入口、某些 transition 的出口。**斜面物理在 op 內部,不需要 first-class face**。
+PBS cube ??4 ??outer face(back/front/left/right),瘥?face ???舀?鈭?transition ????鈭?transition ????*??拍???op ?折,銝?閬?first-class face**??
 
 ```json
 {
@@ -847,11 +803,11 @@ PBS cube 有 4 個 outer face(back/front/left/right),每 face 同時是某些 tr
 }
 ```
 
-**Ray tracer 行為**:ray 從 back 入射,**同時**觸發 `back→front`(transmit_p)與 `back→right`(reflect_s)兩個 transition,共產生 2 條輸出 ray。各 op 內部做 Jones 投影(`J_p = diag(1,0)`、`J_s = diag(0,1)`)。
+**Ray tracer 銵**:ray 敺?back ?亙?,**??**閫貊 `back?ront`(transmit_p)??`back?ight`(reflect_s)?拙?transition,?梁??2 璇撓??ray?? op ?折??Jones ?蔣(`J_p = diag(1,0)`?J_s = diag(0,1)`)??
 
 ### 8.7 RF Source(AD9959 DDS,scene emitter)
 
-對應 `laser_source`,但發 RF 訊號而非 BeamRay。
+撠? `laser_source`,雿 RF 閮??? BeamRay??
 
 ```json
 {
@@ -891,15 +847,15 @@ PBS cube 有 4 個 outer face(back/front/left/right),每 face 同時是某些 tr
 }
 ```
 
-`emit_rf_source` 從 `SceneObject.dynamicSources.channels[]` 找 matching `anchorName`(CH0~CH3),讀其 `frequencyMhz` + `amplitudeScale`,輸出對應 `RfSignalState`。沒給 channels → fallback 到 `dynamicSources.frequencyMhz` + `powerDbm`(legacy 單音);還沒給 → 用 80 MHz / 1.0 V scale 預設。
+`emit_rf_source` 敺?`SceneObject.dynamicSources.channels[]` ??matching `anchorName`(CH0~CH3),霈??`frequencyMhz` + `amplitudeScale`,頛詨撠? `RfSignalState`??蝯?channels ??fallback ??`dynamicSources.frequencyMhz` + `powerDbm`(legacy ?桅);??蝯?????80 MHz / 1.0 V scale ?身??
 
-`SceneObject.dynamicSources` 可覆寫的欄位:
+`SceneObject.dynamicSources` ?航?撖怎?甈?:
 - `channels: { anchorName, frequencyMhz, amplitudeScale (0-1), phase, sweepParams }[]`
-- `frequencyMhz`(legacy 單音)、`powerDbm`(legacy)、`phaseDeg`、`modulation`("none" 暫時固定)
+- `frequencyMhz`(legacy ?桅)?powerDbm`(legacy)?phaseDeg`?modulation`("none" ?急??箏?)
 
-注意 4 個 face 共用 `id = "rf_out"`,用 `name` 區分 — 跟 §8.6 PBS 的多 face 是同套機制,只是 PBS 用不同 id(`back/front/...`)是因為各面物理角色不同;AD9959 四個通道物理對等,所以共用 id + 不同 name。
+瘜冽? 4 ??face ?梁 `id = "rf_out"`,??`name` ?????頝?禮8.6 PBS ?? face ?臬?憟????芣 PBS ?其???id(`back/front/...`)?臬??箏??Ｙ???脖???AD9959 ???拍?撠?,?隞亙??id + 銝? name??
 
-### 8.8 RF Amplifier(passthrough,單向)
+### 8.8 RF Amplifier(passthrough,?桀?)
 
 ```json
 {
@@ -937,9 +893,9 @@ PBS cube 有 4 個 outer face(back/front/left/right),每 face 同時是某些 tr
 
 **RfPhysicsOp `rf_amplify`**:
 ```
-if object.id in powered_off_object_ids: return null   // 無 DC bias → 訊號終止
-vpp_out  = vpp_in × 10^(gainDb / 20)
-vpp_max  = √(8 × 50 × 10^((outputPowerMaxDbm − 30) / 10))
+if object.id in powered_off_object_ids: return null   // ??DC bias ??閮?蝯迫
+vpp_out  = vpp_in ? 10^(gainDb / 20)
+vpp_max  = ??8 ? 50 ? 10^((outputPowerMaxDbm ??30) / 10))
 saturated = (vpp_out > vpp_max)
 vpp_out  = min(vpp_out, vpp_max)
 return [{
@@ -950,9 +906,9 @@ return [{
 }]
 ```
 
-**沒有 dynamic sources** — 所有參數都是 spec sheet,catalog 一次寫死。
+**瘝? dynamic sources** ??????賊??spec sheet,catalog 銝甈∪神甇颯?
 
-### 8.9 RF Cable(passthrough,**雙向**)
+### 8.9 RF Cable(passthrough,**??**)
 
 ```json
 {
@@ -990,17 +946,17 @@ return [{
 }
 ```
 
-**Op `rf_pass`** 目前為 identity(不套衰減);未來可改成 `vpp × 10^(-lossDbPerM × lengthMm / 1000 / 20)`。
+**Op `rf_pass`** ?桀???identity(銝?銵唳?);?芯??舀??`vpp ? 10^(-lossDbPerM ? lengthMm / 1000 / 20)`??
 
-**特殊性 — cable 的端點不存在 `rf_links` 表**:
-- 一般 RF 連線(amp ↔ switch ↔ AOM)走 `rf_links` 表(directed graph,from/to objectId + anchorName)
-- **Cable 端點**存在 `SceneObject.properties.rfCableEndpoints = { A: {objectId, anchorName}, B: {objectId, anchorName} }`
-- 理由:cable 編輯 UX(拖端點到不同連接器、改長度)只動 SceneObject,不用同步 link 表
-- §7.5 RF tracer 的 pre-pass A 把這兩種來源合成同一個 port adjacency map
+**?寞?????cable ?垢暺?摮 `rf_links` 銵?*:
+- 銝??RF ???(amp ??switch ??AOM)韏?`rf_links` 銵?directed graph,from/to objectId + anchorName)
+- **Cable 蝡舫?**摮 `SceneObject.properties.rfCableEndpoints = { A: {objectId, anchorName}, B: {objectId, anchorName} }`
+- ?:cable 蝺刻摩 UX(?垢暺銝????具?瑕漲)?芸? SceneObject,銝?郊 link 銵?
+- 禮7.5 RF tracer ??pre-pass A ?蝔桐?皞???銝??port adjacency map
 
-**異接頭轉接 cable**(SMA↔BNC 等)用 `endAConnector` ≠ `endBConnector` 表達;UI 渲染時各端點用對應 GLB primitive。
+**?唳?剛???cable**(SMA?NC 蝑???`endAConnector` ??`endBConnector` 銵券?;UI 皜脫???蝡舫??典???GLB primitive??
 
-### 8.10 RF Switch(SP2T,TTL 控制,**多 out face**)
+### 8.10 RF Switch(SP2T,TTL ?批,**憭?out face**)
 
 ```json
 {
@@ -1056,10 +1012,10 @@ if object.id in powered_off_object_ids: return null
 state = ctx.switch_ttl_states[object.id] ?? params.ttlState
 high  = params.ttlActiveHighThrow      // e.g. 2
 if state == "HIGH":      active = high
-elif params.throwCount == 2:  active = (3 - high)    // SPDT 的另一個
-else:                    return []                   // SP4T+ LOW 無法解 → 無 active path
+elif params.throwCount == 2:  active = (3 - high)    // SPDT ?銝??
+else:                    return []                   // SP4T+ LOW ?⊥?閫?????active path
 target_anchor_name = `RF${active}`                   // "RF1" or "RF2"
-vpp_out = vpp_in × 10^(-insertionLossDb / 20)
+vpp_out = vpp_in ? 10^(-insertionLossDb / 20)
 return [{
   outAnchorName: target_anchor_name,
   outgoing: { ...incoming, vpp: vpp_out,
@@ -1067,11 +1023,11 @@ return [{
 }]
 ```
 
-**注意 transition `out` 是 array** — 這個用法跟 §8.6 PBS(同一 in face 對應多個 transition row)不同。Switch 用 array 表達「**邏輯上**多個可能 out,但 op runtime 只 active 一個」;PBS 用多 row 表達「**同時** active 多個 out」。兩種寫法都被 Asset3D schema(§3 `out: string | string[]`)允許。
+**瘜冽? transition `out` ??array** ???瘜? 禮8.6 PBS(?? in face 撠?憭?transition row)銝??witch ??array 銵券???*?摩銝?*憭??out,雿?op runtime ??active 銝??PBS ?典? row 銵券???*??** active 憭?out?蝔桀神瘜鋡?Asset3D schema(禮3 `out: string | string[]`)?迂??
 
-`ttl_in` 的 `domain: "ttl"` 確保 UI 在拖線時只接受 PPG 的 `rf_out`(雖然命名是 `rf_out`,該 face 在 §8.11 標 `domain: "ttl"`)。
+`ttl_in` ??`domain: "ttl"` 蝣箔? UI ?冽?蝺??芣??PPG ??`rf_out`(??賢???`rf_out`,閰?face ??禮8.11 璅?`domain: "ttl"`)??
 
-### 8.11 Programmable Pulse Generator(TTL emitter,**綁 TimingProgram**)
+### 8.11 Programmable Pulse Generator(TTL emitter,**蝬?TimingProgram**)
 
 ```json
 {
@@ -1098,23 +1054,23 @@ return [{
 
 **RfPhysicsOp `emit_ttl_steady`**:
 ```
-if params.timingProgramId is null: return null    // unbound — 無輸出
+if params.timingProgramId is null: return null    // unbound ???∟撓??
 program = fetchTimingProgram(params.timingProgramId)
 level   = program.rest_state                       // "HIGH" | "LOW"
 return [{
   outAnchorName: "rf_out",
-  outgoing: { frequencyMhz: 0, vpp: (level == "HIGH" ? params.highVoltageV × 2 : 0),
+  outgoing: { frequencyMhz: 0, vpp: (level == "HIGH" ? params.highVoltageV ? 2 : 0),
               cumulativeGainDb: 0, saturated: false,
               sourceObjectId: object.id, sourceAnchorName: "rf_out",
               passthroughObjectIds: [] }
 }]
 ```
 
-**命名警告**:該 face `id = "rf_out"` 是為了跟 RF tracer 共用 port lookup,但 `domain = "ttl"`,**不是 RF**。連線編輯器以 `domain` enforce 相容性。
+**?賢?霅血?**:閰?face `id = "rf_out"` ?舐鈭? RF tracer ?梁 port lookup,雿?`domain = "ttl"`,**銝 RF**???蝺刻摩?其誑 `domain` enforce ?詨捆?扼?
 
-**為什麼動態 timeline 不影響 solver**:PPG 的 TimingProgram 在 scrub UI 上有完整 pulse train,但 solver 只看 `rest_state`(steady-state idle level)— 因為 solver 是 quasi-static,不模擬 ns 級時序。Time-domain 模擬留給 Phase RF.6(或外部 SPICE)。
+**?箔?暻澆???timeline 銝蔣??solver**:PPG ??TimingProgram ??scrub UI 銝?摰 pulse train,雿?solver ?芰? `rest_state`(steady-state idle level)??? solver ??quasi-static,銝芋??ns 蝝?摨ime-domain 璅⊥?策 Phase RF.6(????SPICE)??
 
-### 8.12 Horn Antenna(RF sink,對應 beam_dump)
+### 8.12 Horn Antenna(RF sink,撠? beam_dump)
 
 ```json
 {
@@ -1138,224 +1094,223 @@ return [{
 }
 ```
 
-**`transitions = []`** — 沒有任何 op,訊號到達 `aperture` 後 BFS 停下(等價於 `beam_dump` 在 ray tracer 的角色)。`signalAtPort[(horn.id, "aperture")]` 保留,UI 可顯示「horn 收到的 RF 功率」。Phase RF.7 會加 cos^n lobe 視覺化 + Palace farfield S-parameter import。
+**`transitions = []`** ??瘝?隞颱? op,閮??圈? `aperture` 敺?BFS ??(蝑??`beam_dump` ??ray tracer ?????signalAtPort[(horn.id, "aperture")]` 靽?,UI ?舫＊蝷箝orn ?嗅??RF ???hase RF.7 ?? cos^n lobe 閬死??+ Palace farfield S-parameter import??
 
 ---
 
-## 9. 與現狀對照表
+## 9. ??撠銵?
 
-| 現狀欄位 / 概念 | 新模型欄位 | 備註 |
+| ?曄?甈? / 璁艙 | ?唳芋??雿?| ?酉 |
 |---------------|----------|------|
-| `Component.kind` | `Asset3D.kind` | 物理下放(optical + RF 共用) |
-| Asset anchor `optical_anchor.directionBodyLocal` | Asset3D Face `normalBodyLocal` + 約定 +z | mirror 法向 |
-| Asset anchor `optical_in/out.positionMmBodyLocal` | `Asset3D.faces[*].positionMmBodyLocal` | 重命名收緊 |
-| `kindParams.rfPropagationDirectionBodyLocal`(AOM) | AOM `faces[id="rf_in"].normalBodyLocal` | §14.1 升級成 face 法向 |
-| `kindParams.acousticAxisBodyLocal` | 同上 | 廢除冗餘欄位 |
-| `Component.kindParams` | `Asset3D.defaultParams` | per-asset 預設 |
-| `Asset.anchor.fastAxisDegBodyLocal` | `Asset3D.defaultParams.fastAxisDeg` + 約定 +x base | 純角度 |
-| `SceneObject.properties.kindParamOverride` | `SceneObject.paramOverrides[bindingId]` | per-binding 範圍 |
-| `SceneObject.properties.{laserPowerMw,...}` | `SceneObject.dynamicSources` | 集中 |
-| Mechanical anchors(mount face, edge) | `Asset3D.mechanicalAnchors` | 不變 |
-| V2 `opticalSurface` binding | 移除,by face | V1/V2 雙路徑廢除 |
-| `derivedFromFiberEndpoint` | Face 上加 `derivedFrom: "fiber_node:A"` | 動態端點機制保留但移到 Face |
-| Anchor `rf_in/rf_out/ttl_in`(現有 RF kinds) | `Asset3D.faces[*]` with `domain ∈ {"rf","ttl"}` | §3 face schema 擴充 |
-| `rf_chain_nodes` 表(linear chain) | `rf_links` graph + RF tracer 算 cumulativeGainDb | §10 Phase RF.5 廢除 |
-| `SceneObject.properties.rfCableEndpoints` | 維持,或併入 `rf_links`(§10 Phase RF.4 二選一) | UX 取捨 |
-| `SceneObject.dynamicSources.{aomFreqMhz, aomRfVpp}`(手填) | RF tracer hydration(§14.3),手填變 override | §10 Phase RF.6 |
+| `Component.kind` | `Asset3D.kind` | ?拍?銝(optical + RF ?梁) |
+| Asset anchor `optical_anchor.directionBodyLocal` | Asset3D Face `normalBodyLocal` + 蝝? +z | mirror 瘜? |
+| Asset anchor `optical_in/out.positionMmBodyLocal` | `Asset3D.faces[*].positionMmBodyLocal` | ??蝺?|
+| `kindParams.rfPropagationDirectionBodyLocal`(AOM) | AOM `faces[id="rf_in"].normalBodyLocal` | 禮14.1 ????face 瘜? |
+| `kindParams.acousticAxisBodyLocal` | ?? | 撱ａ??甈? |
+| `Component.kindParams` | `Asset3D.defaultParams` | per-asset ?身 |
+| `Asset.anchor.fastAxisDegBodyLocal` | `Asset3D.defaultParams.fastAxisDeg` + 蝝? +x base | 蝝?摨?|
+| `SceneObject.properties.kindParamOverride` | `SceneObject.paramOverrides[bindingId]` | per-binding 蝭? |
+| `SceneObject.properties.{laserPowerMw,...}` | `SceneObject.dynamicSources` | ?葉 |
+| Mechanical anchors(mount face, edge) | `Asset3D.mechanicalAnchors` | 銝? |
+| V2 `opticalSurface` binding | 蝘駁,by face | V1/V2 ?楝敺誥??|
+| `derivedFromFiberEndpoint` | Face 銝? `derivedFrom: "fiber_node:A"` | ??蝡舫?璈靽?雿宏??Face |
+| Anchor `rf_in/rf_out/ttl_in`(?暹? RF kinds) | `Asset3D.faces[*]` with `domain ??{"rf","ttl"}` | 禮3 face schema ?游? |
+| `rf_chain_nodes` 銵?linear chain) | `rf_links` graph + RF tracer 蝞?cumulativeGainDb | 禮10 Phase RF.5 撱ａ |
+| `SceneObject.properties.rfCableEndpoints` | 蝬剜?,?蔥??`rf_links`(禮10 Phase RF.4 鈭銝) | UX ? |
+| `SceneObject.dynamicSources.{aomFreqMhz, aomRfVpp}`(?‵) | RF tracer hydration(禮14.3),?‵霈?override | 禮10 Phase RF.6 |
 
 ---
 
-## 10. 遷移路徑(分階段,每階段可獨立 ship)
+## 10. ?瑞宏頝臬?(??畾?瘥?畾萄?函? ship)
 
-### Phase 0:設計凍結
-- 本文件 review、open questions 收斂
-- 鎖定 schema 版本 v3(現行為 v2)
+### Phase 0:閮剛???
+- ?祆?隞?review?pen questions ?嗆?
+- ?? schema ? v3(?曇???v2)
 
-### Phase 1:Kind Registry 新增
-- 在 `frontend/src/optical/kinds/registry.ts` + `backend/app/optical/kinds/registry.py` 註冊 PhysicsOp 與 face 範本
-- 不動既有資料,只是平行存在的新模組
-- 寫 vitest 覆蓋每個 PhysicsOp 的單元行為
+### Phase 1:Kind Registry ?啣?
+- ??`frontend/src/optical/kinds/registry.ts` + `backend/app/optical/kinds/registry.py` 閮餃? PhysicsOp ??face 蝭
+- 銝??Ｘ?鞈?,?芣撟唾?摮?璅∠?
+- 撖?vitest 閬?瘥?PhysicsOp ?????
 
-### Phase 2:Asset3D schema 並存
-- DB 加 `faces JSON`、`transitions JSON`、`kind ENUM`、`defaultParams JSON` 欄位
-- 既有 `anchors` 欄位保留(不刪)
-- 寫 alembic migration:從現有資料 backfill 新欄位
-  - `Component.kind` → 對應 Asset3D 加 `kind`
-  - Asset anchor `optical_in/out` → `faces`
-  - kindParams → `defaultParams`
+### Phase 2:Asset3D schema 銝血?
+- DB ??`faces JSON`?transitions JSON`?kind ENUM`?defaultParams JSON` 甈?
+- ?Ｘ? `anchors` 甈?靽?(銝)
+- 撖?alembic migration:敺????backfill ?唳?雿?
+  - `Component.kind` ??撠? Asset3D ??`kind`
+  - Asset anchor `optical_in/out` ??`faces`
+  - kindParams ??`defaultParams`
 
-### Phase 3:Ray tracer 新後端
-- 新增 `frontend/src/utils/rayTrace_v3.ts`,完全用 face/transition
-- 加 feature flag `useV3RayTracer`
-- 跟舊 `rayTrace.ts` 跑 parity test(同場景 → 同 beam path,1e-6 容差)
-- 後端 `optical_solver.py` 同步加 v3 path
+### Phase 3:Ray tracer ?啣?蝡?
+- ?啣? `frontend/src/utils/rayTrace_v3.ts`,摰??face/transition
+- ??feature flag `useV3RayTracer`
+- 頝? `rayTrace.ts` 頝?parity test(???????beam path,1e-6 摰孵榆)
+- 敺垢 `optical_solver.py` ?郊??v3 path
 
-### Phase 4:逐 kind 切換
-- 從 lens 開始(最簡單,1 個 transition),依序:mirror → polarizer → waveplate → faraday → AOM → beamsplitter → fiber_*
-- 每個 kind 切完跑全套 vitest + parity test
-- 切完後該 kind 的舊 dispatch 程式碼可刪
+### Phase 4:??kind ??
+- 敺?lens ??(?蝪∪,1 ??transition),靘?:mirror ??polarizer ??waveplate ??faraday ??AOM ??beamsplitter ??fiber_*
+- 瘥?kind ??頝憟?vitest + parity test
+- ??敺府 kind ?? dispatch 蝔?蝣澆??
 
-### Phase 5:Rust spike(WASM 準備)
-- 開新 Rust crate `op-core/`,用最簡單的 op(`abcd_thin_lens`)寫 spike
-- 加 `wasm-pack` build,前端 import 試水溫
-- 不取代 TS+Python,平行存在驗證 toolchain
-- 評估 dev iteration 速度、debug 體驗、build 時間
+### Phase 5:Rust spike(WASM 皞?)
+- ? Rust crate `op-core/`,?冽?蝪∪??op(`abcd_thin_lens`)撖?spike
+- ??`wasm-pack` build,?垢 import 閰行偌皞?
+- 銝?隞?TS+Python,撟唾?摮撽? toolchain
+- 閰摯 dev iteration ?漲?ebug 擃??uild ??
 
-### Phase 6:Rust ops 全面遷移(若 Phase 5 評估通過)
-- 把所有 PhysicsOp 逐個翻成 Rust
-- 用 PyO3+maturin 生 Python wheel,後端 import
-- 砍 TS+Python 舊實作 — parity test 升級為「TS/Python wrapper 對 WASM 結果」一致性測試
+### Phase 6:Rust ops ?券?瑞宏(??Phase 5 閰摯??)
+- ????PhysicsOp ?蕃??Rust
+- ??PyO3+maturin ??Python wheel,敺垢 import
+- ??TS+Python ?祕雿???parity test ???箝S/Python wrapper 撠?WASM 蝯????湔扳葫閰?
 
-### Phase 7:Component 收緊
-- 移除 `Component.kind`、`Component.kindParams` 欄位(已遷移到 Asset3D)
-- 寫 alembic migration 清理欄位
+### Phase 7:Component ?嗥?
+- 蝘駁 `Component.kind`?Component.kindParams` 甈?(撌脤蝘餃 Asset3D)
+- 撖?alembic migration 皜?甈?
 
-### Phase 8:SceneObject 收緊
-- `properties` 內的 dynamic 欄位搬到 `dynamicSources`
-- `properties` 內的 kindParam override 搬到 `paramOverrides`
-- 寫 alembic migration
+### Phase 8:SceneObject ?嗥?
+- `properties` ?抒? dynamic 甈??砍 `dynamicSources`
+- `properties` ?抒? kindParam override ?砍 `paramOverrides`
+- 撖?alembic migration
 
-### Phase 9:Frame 約定強制
-- 啟動時 runtime assert:每個 optical Asset3D 的 +z 命中至少一個 face
-- 不符合 → 在 Asset Editor 顯示 warning + 提示加 `bodyFrameRotation`
+### Phase 9:Frame 蝝?撘瑕
+- ????runtime assert:瘥?optical Asset3D ??+z ?賭葉?喳?銝??face
 
-### Phase 10:清理
-- 刪舊 `anchors` 中的光學項(機械保留)
-- 刪 V2 binding 程式碼
-- 刪 `kindParams.{rfPropagationDirectionBodyLocal, acousticAxisBodyLocal}` 等舊欄位
+### Phase 10:皜?
+- ?芾? `anchors` 銝剔??飛??璈１靽?)
+- ??V2 binding 蝔?蝣?
+- ??`kindParams.{rfPropagationDirectionBodyLocal, acousticAxisBodyLocal}` 蝑?甈?
 
 ---
 
-### RF Migration Track(平行於 Phase 1~10,獨立 ship)
+### RF Migration Track(撟唾???Phase 1~10,?函? ship)
 
-RF tracer 跟 ray tracer 解耦,可以單獨推進。**前置依賴**:Phase 1 的 Kind Registry skeleton(共用 `defaultParams` / face 範本基礎設施)。
+RF tracer 頝?ray tracer 閫???臭誑?桃?券脯?*?蔭靘陷**:Phase 1 ??Kind Registry skeleton(?梁 `defaultParams` / face 蝭?箇?閮剜)??
 
 #### Phase RF.1:RF Kind Registry + RfSignalState type
-- 在 `frontend/src/kinds/_plugins.ts` + `backend/app/kinds_manifest.py` 註冊 6 個 RF kind 範本(face 模板 + defaultParams)
-- 定義 `RfSignalState` type(TS + Python),50Ω + `AD9959_VPP_FULL_SCALE` 常數放共用模組
-- vitest / pytest 覆蓋每個 op 的單元行為(`rf_amplify`、`rf_switch_route`、`emit_rf_source`、`emit_ttl_steady`、`rf_pass`)
-- **現狀**:5 個 kind 已經是這狀態(`rf_source`、`rf_amplifier`、`rf_cable`、`rf_switch`、`programmable_pulse_generator`、`horn_antenna`),只差形式化進 registry
+- ??`frontend/src/kinds/_plugins.ts` + `backend/app/kinds_manifest.py` 閮餃? 6 ??RF kind 蝭(face 璅⊥ + defaultParams)
+- 摰儔 `RfSignalState` type(TS + Python),50峏 + `AD9959_VPP_FULL_SCALE` 撣豢?曉?冽芋蝯?
+- vitest / pytest 閬?瘥?op ?????`rf_amplify`?rf_switch_route`?emit_rf_source`?emit_ttl_steady`?rf_pass`)
+- **?曄?**:5 ??kind 撌脩??舫???`rf_source`?rf_amplifier`?rf_cable`?rf_switch`?programmable_pulse_generator`?horn_antenna`),?芸榆敶Ｗ???registry
 
-#### Phase RF.2:RF Asset3D face/transition schema 並存
-- DB 加 `faces JSON`、`transitions JSON` 到 RF 類的 Asset3D(同 Phase 2 機制)
-- Backfill alembic:RF asset 現有 anchor 改寫成 face(domain="rf"/"ttl")+ transition
-- 舊 `anchors` 欄位保留
+#### Phase RF.2:RF Asset3D face/transition schema 銝血?
+- DB ??`faces JSON`?transitions JSON` ??RF 憿? Asset3D(??Phase 2 璈)
+- Backfill alembic:RF asset ?暹? anchor ?孵神??face(domain="rf"/"ttl")+ transition
+- ??`anchors` 甈?靽?
 
 #### Phase RF.3:RF tracer v3(graph BFS)
-- 新增 `frontend/src/utils/rfPropagation_v3.ts` + `backend/app/solvers/rf_propagation_v3.py`,完全用 face/transition + RfPhysicsOp
-- 跟現有 `rfPropagation.ts` / `rf_propagation.py` parity test(同場景 → 同 signalAtPort,vpp/freq 1e-9 容差)
+- ?啣? `frontend/src/utils/rfPropagation_v3.ts` + `backend/app/solvers/rf_propagation_v3.py`,摰??face/transition + RfPhysicsOp
+- 頝??`rfPropagation.ts` / `rf_propagation.py` parity test(???????signalAtPort,vpp/freq 1e-9 摰孵榆)
 - Feature flag `useV3RfTracer`
 
-#### Phase RF.4:cable endpoint 模型統一(option A 或 B)
-- Option A(保守):維持 `SceneObject.properties.rfCableEndpoints`,只把 §7.5 pre-pass A 形式化
-- Option B(激進):cable endpoint 也走 `rf_links` 表,廢除 `rfCableEndpoints` 欄位
-- 決定點:UX(端點拖移)能否在純 `rf_links` 模型下保持流暢
+#### Phase RF.4:cable endpoint 璅∪?蝯曹?(option A ??B)
+- Option A(靽?):蝬剜? `SceneObject.properties.rfCableEndpoints`,?芣? 禮7.5 pre-pass A 敶Ｗ???
+- Option B(瞈??:cable endpoint 銋粥 `rf_links` 銵?撱ａ `rfCableEndpoints` 甈?
+- 瘙箏?暺?UX(蝡舫??宏)?賢?函? `rf_links` 璅∪?銝?????
 
-#### Phase RF.5:rf_chain_nodes 廢除
-- 舊 `rf_chain_nodes` 表(linear chain)所有 reader 改成走 `rf_links` graph
-- Chain-summation UI 改用 `signalAtPort[(aom.id, "rf_in")].cumulativeGainDb` 顯示
-- alembic 刪表
+#### Phase RF.5:rf_chain_nodes 撱ａ
+- ??`rf_chain_nodes` 銵?linear chain)???reader ?寞?韏?`rf_links` graph
+- Chain-summation UI ?寧 `signalAtPort[(aom.id, "rf_in")].cumulativeGainDb` 憿舐內
+- alembic ?芾”
 
-#### Phase RF.6:AOM hydration(取代 dynamicSources 手填)
-- Solver 在執行 AOM `diffract_aom` op 前 hydrate `ctx.dynamic.{aomFreqMhz, aomRfVpp, rfDrivePowerW}` from `signalAtPort[(aom, "rf_in")]`(§14.3)
-- 加 override 優先順序 enforce(§14.4)
-- 廢除「使用者必須手填 dynamicSources」的 UX,改成 chain 自動算 + 可選 override
+#### Phase RF.6:AOM hydration(?誨 dynamicSources ?‵)
+- Solver ?典銵?AOM `diffract_aom` op ??hydrate `ctx.dynamic.{aomFreqMhz, aomRfVpp, rfDrivePowerW}` from `signalAtPort[(aom, "rf_in")]`(禮14.3)
+- ??override ?芸??? enforce(禮14.4)
+- 撱ａ?蝙?刻???憛?dynamicSources?? UX,?寞? chain ?芸?蝞?+ ?舫 override
 
 #### Phase RF.7:Horn farfield + cable spline
-- Horn antenna cos^n lobe 視覺化
-- (Option)Palace farfield S-parameter import 取代 cos^n
-- Cable spline 編輯(取代直線 cylinder 渲染),配 `lengthMm` 自動算路徑長
+- Horn antenna cos^n lobe 閬死??
+- (Option)Palace farfield S-parameter import ?誨 cos^n
+- Cable spline 蝺刻摩(?誨?渡? cylinder 皜脫?),??`lengthMm` ?芸?蝞楝敺
 
-#### Phase RF.8:RF frame 約定強制
-- Runtime assert:`rf_in.normalBodyLocal ⊥ A→B optical axis`(AOM 專屬)
-- Runtime assert:cable 兩端 face `domain` 一致(都是 "rf" 或都是 "ttl",不能跨域)
+#### Phase RF.8:RF frame 蝝?撘瑕
+- Runtime assert:`rf_in.normalBodyLocal ??A? optical axis`(AOM 撠惇)
+- Runtime assert:cable ?拍垢 face `domain` 銝???賣 "rf" ???"ttl",銝頝典?)
 
-每個 RF Phase 之間都有 working 系統,可獨立 ship。**RF.6 是 AOM 自動化的關鍵節點**,完成後 AOM 不再需要使用者手填 RF 參數。
-
----
-
-**每個 Phase 之間都有 working 系統**,任何階段卡住可以退回上一階段。**完整檔案地圖、DB schema、IO-3 遷移實例見 [`asset-physics-implementation.md`](asset-physics-implementation.md)**。
+瘥?RF Phase 銋??賣? working 蝟餌絞,?舐蝡?ship??*RF.6 ??AOM ?芸????蝭暺?*,摰?敺?AOM 銝??閬蝙?刻?憛?RF ???
 
 ---
 
-## 11. 開放問題
-
-1. **Aperture shape:circle 留還是砍?** 現行 [optical-schema-v2.md §3.3](optical-schema-v2.md) 決定保留 type、PHY Editor 不顯示。新模型沿用此政策。
-
-2. **`Component.kind = "isolator"` 還要不要存在?** 現有 vendor catalog 有 29 條 Thorlabs isolators 帶 `kind=isolator`。建議:**砍掉**,所有 isolator 都用 3-asset Component 表示。**Open question**:有沒有不能拆 3 個 asset 的 isolator 模型?(磁光晶體 + 雙折射 cube,內部多次反射)→ 若有,該 kind 保留但走 single-asset 路線。
-
-3. **fiber 模型:Asset 還是 Component?** 一根 fiber 物理上是「連續介質 + 兩個端點」。建議:**Component**(2 個 fiber_end Asset + 1 個動態 spline)。
-
-4. **PhysicsOp 寫前端還是後端?** 前端要做即時 ray tracing,後端要做權威 solver。兩邊都要實作。建議:**寫一份 spec(輸入輸出向量、容差),前後端各自實作,parity test 強制一致**(已是現狀做法)。
-
-5. **transition 是不是該支援 recursive op?**(例如 etalon 內部多次反射 → 一個 transition 內部跑 loop 然後吐出 transmitted + reflected)目前傾向 **是**,因為 PhysicsOp 已經回傳 `BeamRay[]`,recursive 在 op 內部處理即可,schema 不需要動。
-
-6. **Smart Placement 介面要不要改?** [PLACEMENT_DESIGN.md](PLACEMENT_DESIGN.md) 目前認 anchor。需要把 snap target 邏輯改成認 Face(光學)+ MechAnchor(機械)。建議:Phase 4 之後再處理,避免一次改太多。
-
-7. **Asset Editor UI 怎麼編輯 faces/transitions?** 預設:選了 kind → registry 給出 face/transition 範本 → 使用者只調 face 位置與 aperture。STL/GLB import 後使用者點 CAD 表面 → 浮現半透明黃色標記面 → 可調法向、形狀(矩形/橢圓/圓)、aperture。罕用 case(自訂 transition)需要 advanced mode。
-
-8. **RF cable endpoint:保留 `SceneObject.properties.rfCableEndpoints` 還是統一進 `rf_links` 表?** 現狀走 properties(編輯 UX 流暢);統一進 link 表會跟其他 RF 連線一致。Phase RF.4 決定。Open question:cable spline 編輯(Phase RF.7)會把端點當成 spline endpoint,可能反過來需要更獨立的儲存。
-
-9. **RF `combiner` / `mixer` / `circulator` 何時要加?** 目前 6 個 RF kind 涵蓋 single-tone single-path 場景;加 combiner/mixer 後 BFS 需要支援多 input 對單 output(combiner)、頻率轉換(mixer 產生 sum/diff)。建議:用到時再加,**第一個用例驅動 schema** — 不預先抽象。
-
-10. **AOM `rf_in` face 是強制還是可選?** 強制:若 AOM 沒有 `rf_in` face,RF tracer 無法 hydrate setpoint,使用者只能手填 dynamicSources。傾向**強制**(catalog 預設給,使用者離線情境下也可以不連線,signalAtPort 自動 fallback 到 dynamicSources / centerFreqMhz,§14.4)。
-
-11. **PPG 的 face `domain` 命名衝突**:現有 face id 叫 `rf_out` 但 `domain: "ttl"`。要不要改 id 為 `ttl_out` 更直觀?Trade-off:改名會破壞既有 catalog 的 anchor name lookup,Phase RF.2 backfill 需要 rename。傾向 Phase RF.2 一次做掉。
+**瘥?Phase 銋??賣? working 蝟餌絞**,隞颱??挾?∩??臭誑???銝?挾??*摰瑼??啣??B schema?O-3 ?瑞宏撖虫?閬?[`asset-physics-implementation.md`](asset-physics-implementation.md)**??
 
 ---
 
-## 11.5 Out of scope(Phase 1~10 不處理)
+## 11. ???
 
-明確標出避免審查時糾結為何沒處理。需要時加在 BeamRay struct 預留的欄位上,不需重構。
+1. **Aperture shape:circle ???舐??** ?曇? [optical-schema-v2.md 禮3.3](optical-schema-v2.md) 瘙箏?靽? type?HY Editor 銝＊蝷箝璅∪?瘝輻甇斗蝑?
 
-| 項目 | 為什麼 out-of-scope | 預留的擴展點 |
+2. **`Component.kind = "isolator"` ??銝?摮?** ?暹? vendor catalog ??29 璇?Thorlabs isolators 撣?`kind=isolator`?遣霅?**??**,???isolator ?賜 3-asset Component 銵函內??*Open question**:?????賣? 3 ??asset ??isolator 璅∪??(蝤??園? + ??撠?cube,?折憭活??)???交?,閰?kind 靽?雿粥 single-asset 頝舐???
+
+3. **fiber 璅∪?:Asset ? Component?** 銝??fiber ?拍?銝???隞釭 + ?拙垢暺遣霅?**Component**(2 ??fiber_end Asset + 1 ????spline)??
+
+4. **PhysicsOp 撖怠?蝡舫??臬?蝡?** ?垢閬??單? ray tracing,敺垢閬?甈? solver??閬祕雿遣霅?**撖思?隞?spec(頛詨頛詨???捆撌?,??蝡臬??芸祕雿?parity test 撘瑕銝??*(撌脫?曄???)??
+
+5. **transition ?臭??航府?舀 recursive op?**(靘? etalon ?折憭活?? ??銝??transition ?折頝?loop ?嗅?? transmitted + reflected)?桀??曉? **??*,? PhysicsOp 撌脩?? `BeamRay[]`,recursive ??op ?折???喳,schema 銝?閬???
+
+6. **Smart Placement 隞閬?閬?** [PLACEMENT_DESIGN.md](PLACEMENT_DESIGN.md) ?桀?隤?anchor??閬? snap target ?摩?寞?隤?Face(?飛)+ MechAnchor(璈１)?遣霅?Phase 4 銋??????踹?銝甈⊥憭芸???
+
+7. **Asset Editor UI ?獐蝺刻摩 faces/transitions?** ?身:?訾? kind ??registry 蝯血 face/transition 蝭 ??雿輻?隤?face 雿蔭??aperture?TL/GLB import 敺蝙?刻? CAD 銵券 ??瘚桃??暺璅??????航矽瘜??耦?(?拙耦/璈Ｗ?/???perture????case(?芾? transition)?閬?advanced mode??
+
+8. **RF cable endpoint:靽? `SceneObject.properties.rfCableEndpoints` ?蝯曹???`rf_links` 銵?** ?曄?韏?properties(蝺刻摩 UX 瘚);蝯曹???link 銵冽?頝隞?RF ???銝?氬hase RF.4 瘙箏??pen question:cable spline 蝺刻摩(Phase RF.7)??蝡舫??嗆? spline endpoint,?航??靘?閬?函??摮?
+
+9. **RF `combiner` / `mixer` / `circulator` 雿?閬??** ?桀? 6 ??RF kind 瘨菔? single-tone single-path ?湔;??combiner/mixer 敺?BFS ?閬?游? input 撠 output(combiner)?????mixer ?Ｙ? sum/diff)?遣霅??典????**蝚砌??靘???schema** ??銝??鞊～?
+
+10. **AOM `rf_in` face ?臬撥?園??臬??** 撘瑕:??AOM 瘝? `rf_in` face,RF tracer ?⊥? hydrate setpoint,雿輻??賣?憛?dynamicSources???*撘瑕**(catalog ?身蝯?雿輻?蝺?憓?銋隞乩????,signalAtPort ?芸? fallback ??dynamicSources / centerFreqMhz,禮14.4)??
+
+11. **PPG ??face `domain` ?賢?銵?**:?暹? face id ??`rf_out` 雿?`domain: "ttl"`??銝???id ??`ttl_out` ?渡閫?Trade-off:?孵??憯??catalog ??anchor name lookup,Phase RF.2 backfill ?閬?rename???Phase RF.2 銝甈∪???
+
+---
+
+## 11.5 Out of scope(Phase 1~10 銝???
+
+?Ⅱ璅?踹?撖拇?鳥蝯雿?????閬?? BeamRay struct ????雿?,銝?????
+
+| ? | ?箔?暻?out-of-scope | ???撅? |
 |------|--------------------|-------------|
-| Coherent recombination / MZI 拍頻 | Phase tracking 困難,需要 rendezvous 偵測 | BeamRay 帶 `phaseAccumRad` / `pathLengthMm` 資料,但不自動疊加 |
-| Mueller matrix(depolarizing) | 大部分元件用 Jones 足夠 | PhysicsOp interface 可擴展 |
-| 非線性過程(SHG/Raman/FWM) | 需要 χ⁽²⁾ / χ⁽³⁾ 模型 | 留 `nonlinear_crystal` kind |
-| Pulsed lasers / 時域整形 | 假設 CW | BeamRay 預留 `temporalEnvelope?` 欄位 |
-| Thermal lensing | 假設常溫 | — |
-| AR coating 多波長反射曲線 | 用單一 `arResidualR` 數值 | `arResidualR` 可改 `(λ) => R` 函式 |
-| RF time-domain(ns 級 pulse train、phase noise) | RF tracer 是 quasi-static,只看 steady-state | PPG TimingProgram `rest_state` / RfSignalState 預留 `phaseDeg` 欄位 |
-| RF magnetic / vacuum coupling | 留給其他 multiphysics 模組 | — |
-| RF combiner / mixer / circulator | 6 個現有 kind 未涵蓋 | 走同套 §7.5 BFS 機制,新增 kind + op 即可 |
-| RF S-parameter import(Palace farfield、SPICE) | Phase RF.7 才考慮 | rf_amplifier / horn_antenna 預留 `linkedEmProblemId` |
-| MOT / atom-light interaction | 留給 cell solver | — |
-| 高階 ghost ray 追蹤(> 1 次 back-reflection) | 預設 power threshold 截斷 | 可調 threshold |
+| Coherent recombination / MZI ? | Phase tracking ?圈,?閬?rendezvous ?菜葫 | BeamRay 撣?`phaseAccumRad` / `pathLengthMm` 鞈?,雿??芸??? |
+| Mueller matrix(depolarizing) | 憭折??隞嗥 Jones 頞喳? | PhysicsOp interface ?舀撅?|
+| ???折?蝔?SHG/Raman/FWM) | ?閬???蝓聆 / ??蝓喇 璅∪? | ??`nonlinear_crystal` kind |
+| Pulsed lasers / ???游耦 | ?身 CW | BeamRay ?? `temporalEnvelope?` 甈? |
+| Thermal lensing | ?身撣豢澈 | ??|
+| AR coating 憭郭?瑕?撠蝺?| ?典銝 `arResidualR` ?詨?| `arResidualR` ?舀 `(弇) => R` ?賢? |
+| RF time-domain(ns 蝝?pulse train?hase noise) | RF tracer ??quasi-static,?芰? steady-state | PPG TimingProgram `rest_state` / RfSignalState ?? `phaseDeg` 甈? |
+| RF magnetic / vacuum coupling | ?策?嗡? multiphysics 璅∠? | ??|
+| RF combiner / mixer / circulator | 6 ???kind ?芣項??| 韏啣?憟?禮7.5 BFS 璈,?啣? kind + op ?喳 |
+| RF S-parameter import(Palace farfield?PICE) | Phase RF.7 ? | rf_amplifier / horn_antenna ?? `linkedEmProblemId` |
+| MOT / atom-light interaction | ?策 cell solver | ??|
+| 擃? ghost ray 餈質馱(> 1 甈?back-reflection) | ?身 power threshold ?芣 | ?航矽 threshold |
 
 ---
 
-## 12. 預期收益
+## 12. ???嗥?
 
-| 項目 | 現狀 | 新模型 |
+| ? | ?曄? | ?唳芋??|
 |------|------|--------|
-| 新增一個元件需動的檔案 | 5+(kindParams、ray tracer dispatch、UI controls、anchor contracts、solver) | 2(註冊 PhysicsOp + 建 Asset3D) |
-| 同語意的讀取路徑數 | 2~3(V1 / V2 / 預設) | 1(face / transition) |
-| Ray tracer 內 kind 字串 dispatch | 多處 | 0 |
-| RF tracer 內 kind 字串 dispatch | 多處(switch / amp / cable 各自 handler) | 0(per-kind RfPhysicsOp 統一介面) |
-| 複合元件需要的物理代碼 | 自訂 handler | 0(自然湧現) |
-| Per-instance 參數的儲存位置 | 3 處(properties/kindParams/objectBindings) | 3 處,**但職責 disjoint** |
-| AOM RF setpoint 來源 | 使用者手填 dynamicSources(或仰賴 rf_chain_nodes legacy 拍合) | RF tracer 從 chain 自動算,使用者只在離線情境 override(§14.4) |
-| Optical / RF 元件抽象一致性 | 光 face/transition,RF 走 graph link + 特殊 endpoint storage | 同一套 face/transition 描述,只是 tracer 不同(ray vs BFS) |
+| ?啣?銝??隞園???瑼? | 5+(kindParams?ay tracer dispatch?I controls?nchor contracts?olver) | 2(閮餃? PhysicsOp + 撱?Asset3D) |
+| ????霈?楝敺 | 2~3(V1 / V2 / ?身) | 1(face / transition) |
+| Ray tracer ??kind 摮葡 dispatch | 憭? | 0 |
+| RF tracer ??kind 摮葡 dispatch | 憭?(switch / amp / cable ? handler) | 0(per-kind RfPhysicsOp 蝯曹?隞) |
+| 銴??辣?閬??拍?隞?Ⅳ | ?芾? handler | 0(?芰皝抒) |
+| Per-instance ??摮?蝵?| 3 ??properties/kindParams/objectBindings) | 3 ??**雿鞎?disjoint** |
+| AOM RF setpoint 靘? | 雿輻??憛?dynamicSources(?趕鞈?rf_chain_nodes legacy ??) | RF tracer 敺?chain ?芸?蝞?雿輻??券蝺?憓?override(禮14.4) |
+| Optical / RF ?辣?質情銝?湔?| ??face/transition,RF 韏?graph link + ?寞? endpoint storage | ??憟?face/transition ?膩,?芣 tracer 銝?(ray vs BFS) |
 
 ---
 
-## 13. 下一步
+## 13. 銝?甇?
 
-1. 本文件 review,收斂第 11 節的 open questions(尤其 Q2、Q3)
-2. 同意後進入 **Phase 1**:Kind Registry skeleton + 1 個 PhysicsOp(建議 `abcd_thin_lens`)+ 對應 vitest
-3. 用一個 lens Asset3D + 一個 SceneObject 驗證 ray 通過 face A → face B,ABCD 套用正確
-4. 通過後再展開 Phase 2(DB schema)
+1. ?祆?隞?review,?嗆?蝚?11 蝭??open questions(撠文 Q2?3)
+2. ??敺脣 **Phase 1**:Kind Registry skeleton + 1 ??PhysicsOp(撱箄降 `abcd_thin_lens`)+ 撠? vitest
+3. ?其???lens Asset3D + 銝??SceneObject 撽? ray ?? face A ??face B,ABCD 憟甇?Ⅱ
+4. ??敺?撅? Phase 2(DB schema)
 
 ---
 
 ## 14. AOM RF dynamic contract
 
-AOM 同時是 ray tracer 的 optical 元件,也是 RF tracer 的 sink。本節定義兩個 tracer 在 AOM 處的交接介面。
+AOM ????ray tracer ??optical ?辣,銋 RF tracer ??sink?蝭摰儔?拙?tracer ??AOM ??鈭斗隞??
 
-### 14.1 AOM Asset3D 上的 face 配置
+### 14.1 AOM Asset3D 銝? face ?蔭
 
-AOM 有 3 個 face — 2 optical + 1 RF sink:
+AOM ??3 ??face ??2 optical + 1 RF sink:
 
 ```json
 {
@@ -1382,60 +1337,60 @@ AOM 有 3 個 face — 2 optical + 1 RF sink:
 }
 ```
 
-`rf_in` face 沒有出現在 `transitions[]`(它是 RF sink,不是 optical → optical 的橋)。`rf_in.normalBodyLocal` **就是** `rfPropagationDirectionBodyLocal`(舊欄位名 deprecated):從 §8.4 的 `kindParams.rfPropagationDirectionBodyLocal` 升級成 face 法向,並由 §3.1 約定強制垂直 A→B 光軸。
+`rf_in` face 瘝??箇??`transitions[]`(摰 RF sink,銝 optical ??optical ??)?rf_in.normalBodyLocal` **撠望** `rfPropagationDirectionBodyLocal`(??雿? deprecated):敺?禮8.4 ??`kindParams.rfPropagationDirectionBodyLocal` ????face 瘜?,銝衣 禮3.1 蝝?撘瑕? A? ?遘??
 
-### 14.2 AOM Asset3D 只存的常數(vendor/model)
+### 14.2 AOM Asset3D ?芸??虜??vendor/model)
 
-不能存 live RF setpoint。
+銝摮?live RF setpoint??
 
-- `centerFreqMhz`:nominal fallback,**不是** live source of truth
-- `acousticVelocityMps`、`refractiveIndex`、`crystalLengthMm`
-- `acousticBeamWidthMm`、`figureOfMeritM2`、`rfPowerMaxW`
-- `requiresRfDrive`(boolean:是否強制 RF 訊號才能繞射;true 時無 RF → 0th order only)
+- `centerFreqMhz`:nominal fallback,**銝** live source of truth
+- `acousticVelocityMps`?refractiveIndex`?crystalLengthMm`
+- `acousticBeamWidthMm`?figureOfMeritM2`?rfPowerMaxW`
+- `requiresRfDrive`(boolean:?臬撘瑕 RF 閮??蝜?;true ? RF ??0th order only)
 
-### 14.3 Live RF setpoint 的來源(`rf_in` ← §7.5 RF tracer)
+### 14.3 Live RF setpoint ??皞?`rf_in` ??禮7.5 RF tracer)
 
-不再仰賴使用者手動寫 `SceneObject.dynamicSources.aomFreqMhz`。Live 值由 RF tracer 從圖上算出:
+銝?隞啗陷雿輻???神 `SceneObject.dynamicSources.aomFreqMhz`?ive ?潛 RF tracer 敺?銝???
 
 ```
-[rf_source] → [rf_cable] → [rf_amplifier] → [rf_switch active throw] → [rf_cable] → [aom.rf_in]
-              (§8.9)        (§8.8)            (§8.10)                                  (sink)
+[rf_source] ??[rf_cable] ??[rf_amplifier] ??[rf_switch active throw] ??[rf_cable] ??[aom.rf_in]
+              (禮8.9)        (禮8.8)            (禮8.10)                                  (sink)
 ```
 
-RF tracer(§7.5)走完 BFS 後,`signalAtPort[(aom.id, "rf_in")] = RfSignalState { frequencyMhz, vpp, cumulativeGainDb, saturated, ... }`。
+RF tracer(禮7.5)韏啣? BFS 敺?`signalAtPort[(aom.id, "rf_in")] = RfSignalState { frequencyMhz, vpp, cumulativeGainDb, saturated, ... }`??
 
-Solver 在執行 AOM ray transition 之前先做一個 hydration step:
+Solver ?典銵?AOM ray transition 銋???銝??hydration step:
 
 ```
 ctx.dynamic.aomFreqMhz    = signalAtPort[(aom.id, "rf_in")].frequencyMhz
 ctx.dynamic.aomRfVpp      = signalAtPort[(aom.id, "rf_in")].vpp
-ctx.dynamic.rfDrivePowerW = signalAtPort[(aom.id, "rf_in")].vpp² / (8 × 50)
+ctx.dynamic.rfDrivePowerW = signalAtPort[(aom.id, "rf_in")].vpp簡 / (8 ? 50)
 ```
 
-如果 `signalAtPort[(aom.id, "rf_in")]` 不存在(沒接 RF chain、PPG unbound、power gate 切了上游 amp、SP4T+ LOW state 無 active throw):
-- `requiresRfDrive = true` → diffraction efficiency = 0,beam 全走 0th order
-- `requiresRfDrive = false` → fallback 到 `Asset3D.defaultParams.centerFreqMhz`(nominal 值,主要給離線 design 用)
+憒? `signalAtPort[(aom.id, "rf_in")]` 銝???瘝 RF chain?PG unbound?ower gate ??銝虜 amp?P4T+ LOW state ??active throw):
+- `requiresRfDrive = true` ??diffraction efficiency = 0,beam ?刻粥 0th order
+- `requiresRfDrive = false` ??fallback ??`Asset3D.defaultParams.centerFreqMhz`(nominal ??銝餉?蝯阡蝺?design ??
 
-**RF amplifier gain 不複製進 AOM**:gain 已經反映在 `RfSignalState.vpp` 上(amp 在傳遞中乘了 `10^(gainDb/20)`)。AOM 只看 vpp,不看歷史。
+**RF amplifier gain 銝?鋆賡?AOM**:gain 撌脩?????`RfSignalState.vpp` 銝?amp ?典?葉銋? `10^(gainDb/20)`)?OM ?芰? vpp,銝?甇瑕??
 
-### 14.4 AOM ↔ SceneObject.dynamicSources 的關係
+### 14.4 AOM ??SceneObject.dynamicSources ??靽?
 
-`SceneObject.dynamicSources.aomFreqMhz` / `aomRfVpp` 仍可由使用者**手動覆寫**(離線 design / 不想接整條 chain 時):
+`SceneObject.dynamicSources.aomFreqMhz` / `aomRfVpp` 隞?曹蝙?刻?*??閬神**(?Ｙ? design / 銝?交璇?chain ??:
 
-| 情境 | `signalAtPort[(aom, "rf_in")]` 來源 |
+| ?? | `signalAtPort[(aom, "rf_in")]` 靘? |
 |------|-------------------------------------|
-| RF chain 連完整(AD9959 → amp → switch → cable → AOM) | RF tracer 算出 |
-| 使用者手動覆寫 dynamicSources | dynamicSources 值 **勝過** RF tracer(明確 override) |
-| 都沒有,但 `requiresRfDrive = false` | `defaultParams.centerFreqMhz` 帶值,vpp = 0 |
-| 都沒有,且 `requiresRfDrive = true` | undefined → efficiency = 0 |
+| RF chain ?????AD9959 ??amp ??switch ??cable ??AOM) | RF tracer 蝞 |
+| 雿輻????撖?dynamicSources | dynamicSources ??**??** RF tracer(?Ⅱ override) |
+| ?賣???雿?`requiresRfDrive = false` | `defaultParams.centerFreqMhz` 撣嗅?vpp = 0 |
+| ?賣???銝?`requiresRfDrive = true` | undefined ??efficiency = 0 |
 
-優先順序在 hydration step 內 enforce:`dynamicSources` > RF tracer > defaultParams。
+?芸?????hydration step ??enforce:`dynamicSources` > RF tracer > defaultParams??
 
-### 14.5 Bragg 公式(不變)
+### 14.5 Bragg ?砍?(銝?)
 
 ```text
 theta_B = asin(lambda * f_rf / (2 * v_acoustic))     # external-angle convention
 theta_deflect(order) = order * 2 * theta_B
 ```
 
-`refractiveIndex` 用於 ABCD q propagation(`q_out = q_in + L/n`);**不**用於 external deflection 角度的除算。`rf_in.normalBodyLocal` 提供繞射的橫向方向(deflection 平面內的單位向量)。
+`refractiveIndex` ?冽 ABCD q propagation(`q_out = q_in + L/n`);**銝?*?冽 external deflection 閫漲?蝞rf_in.normalBodyLocal` ??蝜??帖???deflection 撟喲?抒??桐???)??
