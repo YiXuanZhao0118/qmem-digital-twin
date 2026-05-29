@@ -84,8 +84,10 @@ ISOLATOR_COMPONENT = {
          "localPose": {"xMm": 0, "yMm": 0, "zMm": 0,
                        "rxDeg": 0, "ryDeg": 0, "rzDeg": 0}},
         {"bindingId": "output_pol", "asset": POLARIZER_ASSET,
+         # +45° roll about the optical Z axis (raw-XYZ binding rotation)
+         # aligns the output polarizer with the 45° Faraday rotation.
          "localPose": {"xMm": 0, "yMm": 0, "zMm": 5,
-                       "rxDeg": 0, "ryDeg": -45, "rzDeg": 0}},
+                       "rxDeg": 0, "ryDeg": 0, "rzDeg": 45}},
     ],
 }
 
