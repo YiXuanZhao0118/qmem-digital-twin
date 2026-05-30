@@ -55,28 +55,8 @@ import {
 import { LaserSourceControls } from "./LaserSourceControls";
 import { AomAdjustControls } from "./AomAdjustControls";
 import { TaperedAmplifierAdjustControls } from "./TaperedAmplifierAdjustControls";
-import { KindParamsEditor } from "./KindParamsEditor";
 import { BindingTreeAdjustControls } from "../BindingTreeAdjustControls";
 import { AlignToBeamSection } from "./_shared";
-
-/** Optical kinds that already have a dedicated *AdjustControls component
- *  rendering the same kindParams (laid out in semantic sections like
- *  "Plate type", "Throughput", "Dispersion"). For these, the generic
- *  KindParamsEditor would render the same fields a second time as a flat
- *  alphabetical list — hide it so each field shows up exactly once. */
-const KINDS_WITH_DEDICATED_UI: ReadonlySet<ElementKind> = new Set([
-  "laser_source",
-  "tapered_amplifier",
-  "aom",
-  "mirror",
-  "dichroic_mirror",
-  "waveplate",
-  "beam_splitter",
-  "lens_biconvex",
-  "lens_plano_convex",
-  "lens_cylindrical",
-  "fiber",
-]);
 
 type Props = {
   component: ComponentItem;
@@ -158,9 +138,10 @@ export function PhysicsElementPanel({ component, sceneObject }: Props) {
       {existing && sceneObject && (
         <AdjustErrorBoundary key={sceneObject.id}>
           <AlignToBeamSection sceneObject={sceneObject} elementKind={existing.elementKind as ElementKind} element={existing} />
-          {domain === "optical" && !KINDS_WITH_DEDICATED_UI.has(existing.elementKind as ElementKind) && (
-            <KindParamsEditor element={existing} sceneObject={sceneObject} />
-          )}
+          {/* Retirement Phase 5: the generic per-object KindParamsEditor was
+              removed. Catalog physics is edited on the Asset3D (PHY Editor);
+              per-instance tweaks use the dedicated *AdjustControls panels,
+              which write to SceneObject bindings / dynamic_sources. */}
           {domain === "optical" && (
             <BindingTreeAdjustControls component={component} />
           )}
