@@ -125,13 +125,17 @@ async def upsert_component(session, payload: ComponentV3In) -> Component:
 
     name = payload.display_name or payload.vendor_part or payload.id
     exposed_json = [e.model_dump(by_alias=True) for e in payload.exposed_faces]
+    # Physics lives on Asset3D.default_params; the Component carries only
+    # display + geometry/catalog metadata. wavelengthCenterNm and
+    # waveplateKindParamsOverride were physics duplicates and are no longer
+    # copied here (retirement Phase 2). clearApertureMm stays — it is geometry
+    # the frontend mesh sizing reads; sourceUrl is catalog metadata.
     next_properties = {
         "displayName": payload.display_name,
-        "wavelengthCenterNm": payload.wavelength_center_nm,
         "notes": payload.notes or {},
     }
     if isinstance(payload.notes, dict):
-        for key in ("sourceUrl", "clearApertureMm", "waveplateKindParamsOverride"):
+        for key in ("sourceUrl", "clearApertureMm"):
             if key in payload.notes:
                 next_properties[key] = payload.notes[key]
 

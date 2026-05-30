@@ -3,7 +3,6 @@
   "vendorPart": "WPHSM05-780",
   "displayName": "Thorlabs WPHSM05-780 Half-Wave Plate @ 780nm",
   "componentType": "waveplate",
-  "wavelengthCenterNm": 780,
   "bindings": [
     {
       "bindingId": "plate",
@@ -42,19 +41,7 @@
   "notes": {
     "sourceUrl": "https://www.thorlabs.com/thorproduct.cfm?partnumber=WPHSM05-780",
     "clearApertureMm": 10.0,
-    "waveplateKindParamsOverride": {
-      "designWavelengthNm": 780,
-      "wavelengthRangeNm": [770, 790],
-      "retardanceLambda": 0.5,
-      "retardanceDeg": 180,
-      "transmission": 0.99,
-      "lengthMm": 2.0,
-      "thicknessMm": 2.0,
-      "refractiveIndex": 1.55,
-      "clearApertureMm": 10.0,
-      "plateType": "zero_order_half_wave",
-      "material": "crystal_quartz"
-    },
+    "physics": "All optical/physics parameters live on Asset3D thorlabs_wphsm05_780 defaultParams (designWavelengthNm, retardance, refractiveIndex, transmission, ...). The Component carries none.",
     "legacyBridge": "Waveplate fast axis remains asset/anchor level; per-object rotation around beam axis remains SceneObject.properties.rotationAroundBeamAxisDeg."
   }
 }

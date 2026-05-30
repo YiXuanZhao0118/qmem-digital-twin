@@ -5,27 +5,10 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import Field
-from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
-from app.models import (
-    Asset3D,
-    BeamSegment,
-    Component,
-    DeviceState,
-    PhysicsElement,
-    OpticalLink,
-    SceneObject,
-    SimulationRun,
-)
 from app.schemas import CamelModel
-from app.solvers.optical_solver import solve_chain
-from app.solvers.optics_seq import (
-    hydrate_aom_rf_drive,
-    hydrate_laser_kind_params,
-    hydrate_waveplate_fast_axis,
-)
 from app.websocket import manager
 
 
@@ -152,86 +135,36 @@ async def run_optical_transient(
             ),
         )
 
-    elements = list((await session.scalars(select(PhysicsElement))).all())
-    links = list((await session.scalars(select(OpticalLink))).all())
-    objects_by_id = {
-        obj.id: obj for obj in (await session.scalars(select(SceneObject))).all()
-    }
-    components_by_id = {
-        c.id: c for c in (await session.scalars(select(Component))).all()
-    }
-    assets_by_id = {
-        a.id: a for a in (await session.scalars(select(Asset3D))).all()
-    }
-    device_states = list((await session.scalars(select(DeviceState))).all())
-    hydrate_laser_kind_params(elements, objects_by_id)
-    hydrate_aom_rf_drive(elements, objects_by_id, device_states=device_states)
-    hydrate_waveplate_fast_axis(
-        elements, objects_by_id, components_by_id=components_by_id, assets_by_id=assets_by_id,
-    )
+    # Phase 9.8 — transient now runs through the v3 anchor tracer. Time-domain
+    # gating (per-step TimingProgram factors) is not yet implemented in v3, so
+    # every step is identical to the steady-state solve; we solve once and
+    # report n_steps as the sample count. object_traces stay empty until v3
+    # grows per-step telemetry.
+    from app.optical import anchor_ops  # noqa: F401
+    from app.optical.anchor_tracer import AnchorTraceOptions
+    from app.optical.db_scene_loader import load_anchor_scene_from_db
+    from app.optical.solver_v3 import solve_anchor_scene
 
-    # alembic 0045: TimingProgram is no longer per-object. Per-object gating
-    # factors now come from each object's properties.rfSources[].signal.gateBinding
-    # (or laser equivalent), which resolves a TimingProgram by id. That binding
-    # resolver hasn't landed yet — until it does, the transient path runs
-    # ungated (factor = 1.0 everywhere) and emits empty object_traces.
-    run_id = uuid.uuid4()
-    all_segments: list[dict] = []
-    object_traces: dict[uuid.UUID, list[TransientTracePoint]] = {}
-    errors: set[str] = set()
-    warnings: set[str] = set()
+    scene = await load_anchor_scene_from_db(session)
+    result = solve_anchor_scene(scene, [], AnchorTraceOptions())
 
-    for step in range(n_steps):
-        t_ns = payload.t_start_ns + step * payload.dt_ns
-        t_ms = t_ns / 1.0e6
-
-        factors: dict[uuid.UUID, float] = {obj_id: 1.0 for obj_id in objects_by_id}
-
-        result = solve_chain(
-            elements,
-            links,
-            run_id=run_id,
-            program_factor_by_object=factors,
-            sequence_t_ms=t_ms,
+    warnings = list(result.warnings)
+    if payload.persist_segments:
+        warnings.append(
+            "persistSegments is a no-op on the v3 transient path; beam segments "
+            "are read from /api/v3/solver/run-from-db."
         )
-        all_segments.extend(result.segments)
-        errors.update(result.errors)
-        warnings.update(result.warnings)
-
-    if payload.persist_segments and not errors:
-        # Same SimulationRun bootstrap as run_optical — see comment there.
-        sim_run = SimulationRun(
-            id=run_id,
-            status="completed",
-            warnings=sorted(warnings),
-        )
-        session.add(sim_run)
-        # Wipe prior segments belonging to this run-id's links; we keep CW runs
-        # untouched so the user can compare. (CW run uses a different run_id.)
-        link_ids = [link.id for link in links]
-        if link_ids:
-            await session.execute(
-                delete(BeamSegment).where(BeamSegment.optical_link_id.in_(link_ids))
-            )
-        for segment in all_segments:
-            session.add(BeamSegment(**segment))
-        await session.commit()
 
     response = TransientRunResponse(
-        run_id=run_id,
+        run_id=result.run_id,
         sample_count=n_steps,
-        segment_count=len(all_segments),
-        object_traces=[
-            TransientObjectTrace(object_id=oid, points=points)
-            for oid, points in object_traces.items()
-        ],
-        errors=sorted(errors),
-        warnings=sorted(warnings),
+        segment_count=len(result.lab_segments),
+        object_traces=[],
+        errors=list(result.errors),
+        warnings=warnings,
     )
     await manager.broadcast(
         "optical_transient.completed",
         response.model_dump(mode="json", by_alias=True),
     )
-    if payload.persist_segments and not errors:
-        await manager.broadcast("scene.reload", {"reason": "optical_transient"})
     return response

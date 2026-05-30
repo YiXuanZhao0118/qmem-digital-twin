@@ -3,7 +3,6 @@
   "vendorPart": "DBR-852-TOSA-HighPower",
   "displayName": "DBR-852-TOSA-HighPower",
   "componentType": "laser_source",
-  "wavelengthCenterNm": 852.347,
   "bindings": [
     {
       "bindingId": "source",
