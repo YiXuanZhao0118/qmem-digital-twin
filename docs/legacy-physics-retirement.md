@@ -170,21 +170,31 @@ it carries non-physics data (PPG `timingProgramId`, ports, anchor bindings).
 fresh-DB bootstrap). Model updated. Verified: beam still 8 segs, 504 tests
 collect, only 3 pre-existing failures remain.
 
-### Phase 5 — Frontend editor migration — ⏸ NEEDS A PRODUCT DECISION
+### Phase 5 — Frontend editor — ✅ DONE (2026-05-31)
 
-The object-panel `KindParamsEditor` still edits per-object
-`physics_elements.kind_params`. Those values no longer feed the beam (v3 reads
-the asset), so editing them is now cosmetic. Migrating it is a UX choice, not a
-mechanical change — see the bottom of this doc. **The storage rule is already
-satisfied without this.**
+Removed the generic object-panel `KindParamsEditor` (and its file). It edited
+per-object `physics_elements.kind_params`, which no longer feeds the v3 beam
+(reads `Asset3D.default_params` + `SceneObject.dynamic_sources`). Catalog physics
+is now edited on the asset (PHY Editor / `Asset3DV3Editor`); per-instance tweaks
+use the dedicated `*AdjustControls` panels, whose writes the backend redirects to
+SceneObject bindings / dynamic_sources. `tsc --noEmit` clean; physics vitest green
+(one unrelated pre-existing AOM `braggAngleRad` failure).
 
-### seed.py / C2 (`physics_capabilities`) — ⏸ DEFERRED
+### seed.py — ✅ DEPRECATED (2026-05-31)
 
-`seed.py` is legacy and no longer seeds the live DB (the v3 catalog does), so
-its physics-in-properties blocks are dead and were left untouched (don't refactor
-unused legacy). `physics_capabilities` is a project-wide domain tag the frontend
-reads for rails — removing it is a separate cross-cutting task, not required by
-the rule.
+`seed.py` is the pre-v3 legacy seed, not imported anywhere and absent from the
+live DB (which is seeded from the v3 catalog). Its components carry inline
+physics on `Component.properties` and sit on the shared `primitive_box` asset, so
+a clean strip would orphan the data (no per-part asset to hold it). Rather than
+half-clean a dead 1500-line file, added a deprecation banner pointing to
+`seed_v3_assets.py` and this doc.
+
+### C2 (`physics_capabilities`) — OUT OF SCOPE OF THE RULE
+
+`Component.physics_capabilities` holds a **domain tag** (`["optical","rf"]`), not
+a physical parameter or coefficient, so it does not violate "Component stores no
+physical parameters". It is also read project-wide by the frontend for composer
+rails. Left in place; removing it would be a separate cross-cutting refactor.
 
 ---
 

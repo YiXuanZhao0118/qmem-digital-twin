@@ -1,3 +1,18 @@
+"""DEPRECATED legacy seed — pre-dates the asset-owned-physics model.
+
+This is the original v1/v2 seed. The live database is now seeded from the v3
+catalog (``backend/scripts/seed_v3_assets.py`` + ``assets/catalog/**``); none
+of this file's named components exist in the current DB. It is NOT imported
+anywhere and is kept only for historical reference.
+
+Do not use it to seed a new database: its Components carry physics inline on
+``Component.properties`` (gainDb, outputPowerMaxMw, acoustic constants, …) and
+sit on the shared ``primitive_box`` asset, which violates the current rule —
+physics belongs on ``Asset3D.default_params``, the Component carries none, and
+per-instance coefficients live on ``SceneObject``. See
+``docs/legacy-physics-retirement.md``. Prefer ``seed_v3_assets.py``.
+"""
+
 from __future__ import annotations
 
 import asyncio
