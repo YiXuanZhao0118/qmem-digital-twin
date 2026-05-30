@@ -147,7 +147,48 @@ PhysicsElement bootstrap, the frontend kind-params editor, and the
   asset `default_params`. Keep geometry/aperture (`clearApertureMm`, dims) where
   the frontend mesh code reads it (e.g. `aaoptoelectronic_mt80.ts:20`).
 
-### Phase 4 — Remove the bootstrap + strip remaining Component physics
+### Phase 4b — Remove dead bootstrap physics branches — ✅ DONE (2026-05-30)
+
+After Phase 2/3 stripped Component.properties physics, the
+`default_kind_params_for_component` override blocks for **isolator / waveplate /
+aom** became dead no-ops (they read keys that no longer exist). Removed them
+(clean-up of orphans my own changes created). Kept `beam_splitter` (sets the
+`polarizing` flag the binding bootstrap reads), `rf_cable` (live cable specs),
+`fiber` (end pose), `programmable_pulse_generator`. Removed the now-obsolete
+`test_waveplate_component_override_maps_plate_specs`.
+
+The bootstrap `auto_create_physics_element_for_object` itself stays — it sets
+ports, PPG `timingProgramId`, and anchor bindings (non-physics). `DEFAULT_KIND_
+PARAMS` stays (baseline for the per-object editor).
+
+### Phase 6 — Drop dead physics_elements columns — ✅ DONE (2026-05-30)
+
+Migration `0096_drop_pe_intrinsic_state` dropped `intrinsic_params` +
+`state_params` (the 0049 split that was never read). `kind_params` is **kept** —
+it carries non-physics data (PPG `timingProgramId`, ports, anchor bindings).
+`partition_kind_params` is **kept** (migrations 0049/0055 import it for
+fresh-DB bootstrap). Model updated. Verified: beam still 8 segs, 504 tests
+collect, only 3 pre-existing failures remain.
+
+### Phase 5 — Frontend editor migration — ⏸ NEEDS A PRODUCT DECISION
+
+The object-panel `KindParamsEditor` still edits per-object
+`physics_elements.kind_params`. Those values no longer feed the beam (v3 reads
+the asset), so editing them is now cosmetic. Migrating it is a UX choice, not a
+mechanical change — see the bottom of this doc. **The storage rule is already
+satisfied without this.**
+
+### seed.py / C2 (`physics_capabilities`) — ⏸ DEFERRED
+
+`seed.py` is legacy and no longer seeds the live DB (the v3 catalog does), so
+its physics-in-properties blocks are dead and were left untouched (don't refactor
+unused legacy). `physics_capabilities` is a project-wide domain tag the frontend
+reads for rails — removing it is a separate cross-cutting task, not required by
+the rule.
+
+---
+
+#### Original Phase 4 plan
 - Delete `DEFAULT_KIND_PARAMS`, `default_kind_params_for_component`,
   and the `kind_params` population in `auto_create_physics_element_for_object`
   (`components.py:144-822`).

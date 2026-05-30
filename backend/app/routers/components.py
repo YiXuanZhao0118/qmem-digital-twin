@@ -572,56 +572,11 @@ def default_kind_params_for_component(kind: str, component: Component) -> dict[s
             existing.setdefault("rotDeg", [0.0, 0.0, 0.0])
             existing.setdefault("tensionHandleMm", list(tension))
             existing.setdefault("posMm", list(pos))
-    if kind == "isolator":
-        # Per-template kindParams override: catalog isolators carry
-        # `properties.isolatorKindParamsOverride` with the spec-derived
-        # `forwardLossDb` and `isolationDb`. See seed.py:_build_isolator_meta
-        # for the Thorlabs spec → kindParams derivation.
-        props = component.properties or {}
-        override = props.get("isolatorKindParamsOverride")
-        if isinstance(override, dict):
-            _deep_merge_dict(kind_params, override)
-    if kind == "waveplate":
-        # Per-template kindParams override: vendor plate Components can carry
-        # spec-sheet optical constants while the fast-axis angle remains on
-        # the Asset3D anchor / per-object rotation contract.
-        props = component.properties or {}
-        override = props.get("waveplateKindParamsOverride")
-        if isinstance(override, dict):
-            _deep_merge_dict(kind_params, override)
-        for prop_key, param_key in (
-            ("designWavelengthNm", "designWavelengthNm"),
-            ("retardanceLambda", "retardanceLambda"),
-            ("retardanceDeg", "retardanceDeg"),
-            ("transmission", "transmission"),
-            ("lengthMm", "lengthMm"),
-            ("thicknessMm", "thicknessMm"),
-            ("refractiveIndex", "refractiveIndex"),
-            ("clearApertureMm", "clearApertureMm"),
-            ("plateAlphaXRad", "plateAlphaXRad"),
-            ("plateAlphaYRad", "plateAlphaYRad"),
-        ):
-            value = props.get(prop_key)
-            if isinstance(value, (int, float)):
-                kind_params[param_key] = float(value)
-        for prop_key, param_key in (
-            ("material", "material"),
-            ("plateType", "plateType"),
-        ):
-            value = props.get(prop_key)
-            if isinstance(value, str) and value:
-                kind_params[param_key] = value
-        value = props.get("wavelengthRangeNm")
-        if (
-            isinstance(value, list)
-            and len(value) == 2
-            and all(isinstance(item, (int, float)) for item in value)
-        ):
-            kind_params["wavelengthRangeNm"] = [float(value[0]), float(value[1])]
-        if "lengthMm" in kind_params and "thicknessMm" not in kind_params:
-            kind_params["thicknessMm"] = kind_params["lengthMm"]
-        if "thicknessMm" in kind_params and "lengthMm" not in kind_params:
-            kind_params["lengthMm"] = kind_params["thicknessMm"]
+    # Retirement Phase 4b: the isolator / waveplate kindParams-override blocks
+    # that read spec physics from component.properties were removed — that
+    # physics now lives on Asset3D.default_params and the keys were stripped
+    # from components.properties (migrations 0094/0095). DEFAULT_KIND_PARAMS
+    # supplies the baseline kindParams for the per-object editor.
     if kind == "beam_splitter" and _looks_like_pbs_component(component):
         kind_params.update(
             {
@@ -630,45 +585,11 @@ def default_kind_params_for_component(kind: str, component: Component) -> dict[s
                 "extinctionRatioDb": 30.0,
             }
         )
-    if kind == "aom":
-        props = component.properties or {}
-        mapped_fields = {
-            # Phase B: centerFrequencyMhz no longer mapped — the AOM's
-            # operating frequency is resolved live from the upstream
-            # rf_source CH at solve time (see hydrate_aom_rf_drive).
-            "diffractionEfficiencyTypical": "baseEfficiency",
-            "acousticVelocityMPerS": "acousticVelocityMPerS",
-            "modulationBandwidthMhz": "modulationBandwidthMhz",
-            "refractiveIndex": "refractiveIndex",
-            "figureOfMeritM2": "figureOfMeritM2",
-            "crystalLengthMm": "crystalLengthMm",
-            "acousticBeamWidthMm": "acousticBeamWidthMm",
-            "rfPowerMaxW": "rfPowerMaxW",
-            "braggAngularAcceptanceMrad": "braggAngularAcceptanceMrad",
-            "diffractionOrder": "diffractionOrder",
-        }
-        for prop_key, param_key in mapped_fields.items():
-            value = props.get(prop_key)
-            if isinstance(value, (int, float)):
-                kind_params[param_key] = value
-        # Phase 5 unification: AOM vector params now stored as
-        # *BodyLocal-suffixed keys. The component.properties metadata
-        # may still carry the legacy names from older assets — accept
-        # both on read so vendor imports authored before the rename
-        # still propagate their tuned acoustic / RF directions.
-        for legacy_key, new_key in (
-            ("acousticAxisBodyLocal", "acousticAxisBodyLocal"),
-            ("acousticAxisLocal", "acousticAxisBodyLocal"),
-            ("rfPropagationDirectionBodyLocal", "rfPropagationDirectionBodyLocal"),
-            ("rfPropagationDirectionLocal", "rfPropagationDirectionBodyLocal"),
-        ):
-            value = props.get(legacy_key)
-            if (
-                isinstance(value, list)
-                and len(value) >= 3
-                and all(isinstance(item, (int, float)) for item in value[:3])
-            ):
-                kind_params[new_key] = [float(item) for item in value[:3]]
+    # Retirement Phase 4b: the aom physics + acoustic/RF-direction mapping from
+    # component.properties was removed. AOM catalog physics lives on
+    # Asset3D.default_params; per-instance operating state (Bragg tilt,
+    # diffraction order, acoustic axis) lives on SceneObject.dynamic_sources
+    # (migration 0095).
     if kind == "rf_cable":
         # Phase RF.cable: catalog cables (Thorlabs CA29xx, QMEM jumpers) carry
         # their physical spec on `component.properties`. Map those scalars
