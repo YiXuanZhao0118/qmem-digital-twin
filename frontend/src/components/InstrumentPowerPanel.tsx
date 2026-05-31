@@ -20,7 +20,6 @@ import { POWER_KINDS } from "../types/digitalTwin";
 import type {
   ComponentItem,
   DeviceState,
-  SceneObject,
 } from "../types/digitalTwin";
 import { FloatingPanel } from "./workspace/FloatingPanel";
 
@@ -74,8 +73,8 @@ function deviceStatePower(state: DeviceState | undefined): boolean {
   return power !== false;
 }
 
-function isPowered(
-  object: SceneObject,
+function isPoweredKind(
+  kind: string | null | undefined,
   component: ComponentItem | undefined,
 ): boolean {
   if (!component) return false;
@@ -83,28 +82,37 @@ function isPowered(
   // toggle even when the kind defaults to powered.
   const props = (component.properties as { requiresPower?: unknown }) ?? {};
   if (props.requiresPower === false) return false;
-  return component.kindId != null && POWER_KINDS.has(component.kindId);
+  return kind != null && POWER_KINDS.has(kind);
 }
 
 export function InstrumentPowerPanel() {
   const objects = useSceneStore((s) => s.scene.objects);
   const components = useSceneStore((s) => s.scene.components);
   const deviceStates = useSceneStore((s) => s.scene.deviceStates);
+  const physicsElements = useSceneStore((s) => s.scene.physicsElements);
   const updateDeviceState = useSceneStore((s) => s.updateDeviceState);
 
   const rows: PoweredRow[] = useMemo(() => {
     const componentById = new Map(components.map((c) => [c.id, c]));
     const stateByObject = new Map(deviceStates.map((d) => [d.objectId, d]));
+    // Resolve each object's optical/RF kind from its PhysicsElement. This is
+    // reliable for v3 components, whose Component.kindId is "none" (the kind
+    // lives on the Asset3D) — keying off component.kindId alone would drop
+    // v3 lasers / TAs from the panel. Fall back to component.kindId.
+    const kindByObject = new Map(
+      physicsElements.map((pe) => [pe.objectId, pe.elementKind]),
+    );
     const out: PoweredRow[] = [];
     for (const obj of objects) {
       const comp = componentById.get(obj.componentId);
-      if (!isPowered(obj, comp)) continue;
+      const kind = kindByObject.get(obj.id) ?? comp?.kindId ?? null;
+      if (!isPoweredKind(kind, comp)) continue;
       const state = stateByObject.get(obj.id);
       out.push({
         objectId: obj.id,
         objectName: obj.name || "(unnamed)",
         componentName: comp?.name ?? "(unknown component)",
-        componentType: comp?.kindId ?? "",
+        componentType: kind ?? "",
         on: deviceStatePower(state),
       });
     }
@@ -115,7 +123,7 @@ export function InstrumentPowerPanel() {
       return a.objectName.localeCompare(b.objectName);
     });
     return out;
-  }, [objects, components, deviceStates]);
+  }, [objects, components, deviceStates, physicsElements]);
 
   const hasUnwired = rows.some((r) => !WIRED_KINDS.has(r.componentType));
 
