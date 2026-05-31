@@ -20,6 +20,12 @@
 // connector's 36.28 mm ferrule for fiber.
 
 import type { Anchor } from "../types/digitalTwin";
+import {
+  dirBodyToLab,
+  dirLabToBody,
+  pointBodyToLab,
+  pointLabToBody,
+} from "../optical/pose";
 
 export type RfCableNodePersistent = {
   posMm: [number, number, number];
@@ -129,6 +135,24 @@ type CablePose = {
 type Vec3T = [number, number, number];
 
 function makePoseTransforms(pose: CablePose) {
+  return {
+    bodyToLab: (v: Vec3T): Vec3T => {
+      const out = pointBodyToLab({ x: v[0], y: v[1], z: v[2] }, pose);
+      return [out.x, out.y, out.z];
+    },
+    bodyToLabDir: (v: Vec3T): Vec3T => {
+      const out = dirBodyToLab({ x: v[0], y: v[1], z: v[2] }, pose);
+      return [out.x, out.y, out.z];
+    },
+    labToBody: (v: Vec3T): Vec3T => {
+      const out = pointLabToBody({ x: v[0], y: v[1], z: v[2] }, pose);
+      return [out.x, out.y, out.z];
+    },
+    labToBodyDir: (v: Vec3T): Vec3T => {
+      const out = dirLabToBody({ x: v[0], y: v[1], z: v[2] }, pose);
+      return [out.x, out.y, out.z];
+    },
+  };
   const rxr = (pose.rxDeg * Math.PI) / 180;
   const ryr = (pose.ryDeg * Math.PI) / 180;
   const rzr = (pose.rzDeg * Math.PI) / 180;

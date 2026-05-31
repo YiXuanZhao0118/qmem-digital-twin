@@ -21,7 +21,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Asset3D, Component, ComponentBinding, DeviceState, SceneObject
+from app.models import Asset3D, Component, ComponentBinding, DeviceState, ObjectBinding, SceneObject
 from app.optical.anchor_tracer import (
     V3Anchor,
     V3AnchorBindingSlot,
@@ -96,10 +96,105 @@ def asset_to_snapshot(asset: Asset3D) -> V3AssetSnapshot | None:
 
 
 def _extract_dynamic(properties: dict | None) -> dict | None:
+    """Per-instance dynamic overrides the v3 ops read, from SceneObject.properties.
+
+    Merges two sources:
+      1. The laser beam the Object panel writes to ``opticalSources[0].beam``
+         (V2 BeamSource shape), converted to the legacy kindParams shape the
+         emit op reads (centerWavelengthNm / powerMw / spatialModeX/Y /
+         polarization) via ``legacy_laser_kind_params_from_beam`` — so panel
+         beam edits (waist, wavelength, polarization) actually reach the emit op.
+         Without this, only ``powerMw`` round-tripped and waist/wavelength/pol
+         silently fell back to the asset default_params.
+      2. The whitelist of explicit top-level keys (AOM RF freq, RF channels,
+         a manual ``spatialModeX`` override, …). These WIN over beam-derived.
+    """
+    # Local import avoids an import cycle with app.v2_bindings at module load.
+    from app.v2_bindings import legacy_laser_kind_params_from_beam
+
     if not properties:
         return None
-    out = {k: v for k, v in properties.items() if k in _DYNAMIC_KEYS}
+    out: dict = {}
+    # (1) Laser beam → legacy dynamic keys the emit op reads.
+    sources = properties.get("opticalSources")
+    if isinstance(sources, list) and sources and isinstance(sources[0], dict):
+        beam = sources[0].get("beam")
+        if isinstance(beam, dict):
+            legacy = legacy_laser_kind_params_from_beam(beam)
+            power = legacy.get("nominalPowerMw")
+            if isinstance(power, (int, float)):
+                out["powerMw"] = float(power)
+            for key in ("centerWavelengthNm", "spatialModeX", "spatialModeY", "polarization"):
+                if key in legacy:
+                    out[key] = legacy[key]
+    # (2) Explicit top-level whitelist overrides (win over beam-derived).
+    for key in _DYNAMIC_KEYS:
+        if key in properties:
+            out[key] = properties[key]
     return out or None
+
+
+def _num_delta(value: float | None) -> float:
+    return float(value) if value is not None else 0.0
+
+
+def _binding_pose_with_override(
+    binding: ComponentBinding,
+    override: ObjectBinding | None,
+) -> V3Pose:
+    """ComponentBinding pose plus the per-SceneObject ObjectBinding delta.
+
+    Mirrors frontend ``utils/componentBindings._effectiveTransform`` so
+    the ray solver flattens composite assets exactly like SenseObject /
+    PHY Editor rendering does.
+    """
+    return V3Pose(
+        x_mm=binding.local_x_mm + _num_delta(override.local_x_mm_delta if override else None),
+        y_mm=binding.local_y_mm + _num_delta(override.local_y_mm_delta if override else None),
+        z_mm=binding.local_z_mm + _num_delta(override.local_z_mm_delta if override else None),
+        rx_deg=binding.local_rx_deg + _num_delta(override.local_rx_deg_delta if override else None),
+        ry_deg=binding.local_ry_deg + _num_delta(override.local_ry_deg_delta if override else None),
+        rz_deg=binding.local_rz_deg + _num_delta(override.local_rz_deg_delta if override else None),
+    )
+
+
+def _binding_tree_transform(
+    binding: ComponentBinding,
+    binding_by_id: dict[object, ComponentBinding],
+    override_by_binding_id: dict[object, ObjectBinding],
+    memo: dict[object, object],
+    visiting: set[object],
+):
+    """Effective Component-frame transform for one binding.
+
+    ComponentBinding rows form a tree via ``parent_binding_id``. The
+    renderer composes ``parent * child``; the backend solver must do the
+    same or nested composite optics trace with the wrong coating normal.
+    """
+    binding_id = binding.id
+    if binding_id in memo:
+        return memo[binding_id]
+    if binding_id in visiting:
+        raise ValueError(f"cycle in ComponentBinding tree at {binding_id}")
+    visiting.add(binding_id)
+
+    local_transform = binding_pose_to_transform(
+        _binding_pose_with_override(binding, override_by_binding_id.get(binding_id))
+    )
+    effective = local_transform
+    if binding.parent_binding_id is not None:
+        parent = binding_by_id.get(binding.parent_binding_id)
+        if parent is not None:
+            effective = compose_transforms(
+                _binding_tree_transform(
+                    parent, binding_by_id, override_by_binding_id, memo, visiting
+                ),
+                local_transform,
+            )
+
+    visiting.remove(binding_id)
+    memo[binding_id] = effective
+    return effective
 
 
 async def load_scene_from_db(session: AsyncSession) -> V3Scene:
@@ -270,6 +365,14 @@ async def load_anchor_scene_from_db(session: AsyncSession) -> V3AnchorScene:
         binding_rows = (await session.scalars(
             select(ComponentBinding).where(ComponentBinding.component_id == comp.id)
         )).all()
+        binding_by_id = {b.id: b for b in binding_rows}
+        object_binding_rows = (await session.scalars(
+            select(ObjectBinding).where(ObjectBinding.object_id == so.id)
+        )).all()
+        override_by_binding_id = {
+            ob.component_binding_id: ob for ob in object_binding_rows
+        }
+        binding_transform_memo: dict[object, object] = {}
 
         so_transform = pose_to_transform(V3Pose(
             x_mm=so.x_mm, y_mm=so.y_mm, z_mm=so.z_mm,
@@ -277,27 +380,33 @@ async def load_anchor_scene_from_db(session: AsyncSession) -> V3AnchorScene:
         ))
 
         for b in binding_rows:
-            if b.target_kind != "asset" or not b.asset_3d_id:
+            override = override_by_binding_id.get(b.id)
+            asset_id = (
+                override.asset_3d_id_override
+                if override is not None and override.asset_3d_id_override is not None
+                else b.asset_3d_id
+            )
+            if b.target_kind != "asset" or not asset_id:
                 continue
-            asset_row = await session.get(Asset3D, b.asset_3d_id)
+            asset_row = await session.get(Asset3D, asset_id)
             if asset_row is None:
                 continue
             snap = anchor_asset_to_snapshot(asset_row)
             if snap is None:
                 continue
 
-            # Binding pose uses the RAW XYZ rotation (binding_pose_to_transform),
-            # NOT the object pose's YXZ lab->three remap. A binding positions a
-            # child within the parent CAD frame; the remap is only for placing
-            # the whole object into the Y-up scene. Matches the PHY editor's
-            # poseFromBinding so the solver's beam reflects off the same
-            # coating/rotation orientation the Component preview draws (the
-            # IO-3-850-HP glans, binding rz=180/225, were rotated about the
-            # wrong axis under the YXZ remap).
-            local_transform = binding_pose_to_transform(V3Pose(
-                x_mm=b.local_x_mm, y_mm=b.local_y_mm, z_mm=b.local_z_mm,
-                rx_deg=b.local_rx_deg, ry_deg=b.local_ry_deg, rz_deg=b.local_rz_deg,
-            ))
+            # Binding pose uses RAW XYZ and must include the whole parent
+            # binding chain (plus ObjectBinding deltas), matching the
+            # frontend binding-tree renderer. IO-3-850-HP's back Glan lives
+            # under a rotated parent; using only the leaf binding flips the
+            # reflected branch to the wrong quadrant.
+            local_transform = _binding_tree_transform(
+                b,
+                binding_by_id,
+                override_by_binding_id,
+                binding_transform_memo,
+                set(),
+            )
             effective = compose_transforms(so_transform, local_transform)
 
             slots.append(V3AnchorBindingSlot(

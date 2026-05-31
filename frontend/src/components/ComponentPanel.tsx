@@ -23,8 +23,9 @@ import { AlignPanel } from "./AlignPanel";
 import { NumberField } from "./NumberField";
 import { kindIdToElementKind } from "../utils/elementDefaults";
 import { capabilityProfile } from "../kinds/_capabilityProfile";
+import { sceneObjectEulerFromQuaternion, sceneObjectToQuaternion } from "../optical/frames";
 
-type DraftObject = Required<Omit<SceneObjectPatch, "name" | "properties" | "serialNumber">> & {
+type DraftObject = Required<Omit<SceneObjectPatch, "name" | "properties" | "serialNumber" | "dynamicSources">> & {
   name: string;
   serialNumber: string | null;
 };
@@ -996,13 +997,9 @@ function eulerDegToOutwardLab(
   ryDeg: number,
   rzDeg: number,
 ): [number, number, number] {
-  const euler = new THREE.Euler(
-    THREE.MathUtils.degToRad(rxDeg),
-    THREE.MathUtils.degToRad(rzDeg),
-    THREE.MathUtils.degToRad(-ryDeg),
-    "YXZ",
+  const v = new THREE.Vector3(0, 1, 0).applyQuaternion(
+    sceneObjectToQuaternion({ rxDeg, ryDeg, rzDeg } as SceneObject),
   );
-  const v = new THREE.Vector3(0, 1, 0).applyEuler(euler);
   return [v.x, v.y, v.z];
 }
 
@@ -1018,12 +1015,7 @@ function outwardLabToEulerDeg(
     new THREE.Vector3(0, 1, 0),
     v,
   );
-  const euler = new THREE.Euler().setFromQuaternion(quat, "YXZ");
-  return {
-    rxDeg: THREE.MathUtils.radToDeg(euler.x),
-    ryDeg: -THREE.MathUtils.radToDeg(euler.z),
-    rzDeg: THREE.MathUtils.radToDeg(euler.y),
-  };
+  return sceneObjectEulerFromQuaternion(quat);
 }
 
 /** Per-fiber-end optical-port pose editor. Displays the ferrule-tip lab

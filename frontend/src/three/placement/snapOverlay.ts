@@ -28,7 +28,7 @@ const SNAP_COLOURS: Record<SnapTargetKind, number> = {
 };
 
 function labToThree(p: LabPoint): THREE.Vector3 {
-  return new THREE.Vector3(p.x / 100, p.z / 100, -p.y / 100);
+  return new THREE.Vector3(p.x / 100, p.y / 100, p.z / 100);
 }
 
 function makeDotTexture(): THREE.Texture {

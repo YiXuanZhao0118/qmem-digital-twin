@@ -176,8 +176,32 @@ def test_parity_rxDeg90_swings_z_to_y():
     pose = V3Pose(rx_deg=90)
     body = Vec3(0, 0, 1)
     lab = dir_body_to_lab(body, pose)
-    assert lab.y == pytest.approx(-1, abs=1e-9)
+    assert lab.y == pytest.approx(1, abs=1e-9)
     assert lab.x == pytest.approx(0, abs=1e-9)
+    assert lab.z == pytest.approx(0, abs=1e-9)
+
+
+def test_parity_ryDeg90_swings_z_to_negative_x():
+    """ryDeg=90 follows the documented row-vector XYZ matrix.
+
+    The sign is important for 45-degree mirrors: body +Z at ry=45 becomes
+    lab [-sqrt(1/2), 0, sqrt(1/2)].
+    """
+    pose = V3Pose(ry_deg=90)
+    body = Vec3(0, 0, 1)
+    lab = dir_body_to_lab(body, pose)
+    assert lab.x == pytest.approx(-1, abs=1e-9)
+    assert lab.y == pytest.approx(0, abs=1e-9)
+    assert lab.z == pytest.approx(0, abs=1e-9)
+
+
+def test_parity_rzDeg90_swings_x_to_y():
+    """rzDeg=90 is a physical lab Z-axis rotation for Z-up anchors."""
+    pose = V3Pose(rz_deg=90)
+    body = Vec3(1, 0, 0)
+    lab = dir_body_to_lab(body, pose)
+    assert lab.x == pytest.approx(0, abs=1e-9)
+    assert lab.y == pytest.approx(-1, abs=1e-9)
     assert lab.z == pytest.approx(0, abs=1e-9)
 
 

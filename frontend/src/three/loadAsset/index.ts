@@ -100,6 +100,7 @@ import {
   GLAN_POLARIZER_PRISM_FILEPATH,
   buildGlanPolarizerPrismObject,
 } from "./procedural/glan_polarizer_prism";
+import { anchorObjectLocalAxisX } from "../../utils/anchorAccess";
 
 const gltfLoader = new GLTFLoader();
 const objLoader = new OBJLoader();
@@ -353,9 +354,21 @@ export async function loadAssetObject(
         ?? apertureProps?.apertureForwardLocalMm;
       if (apertureForward && apertureForward.length === 3) {
         const [bx, by, bz] = apertureForward;
-        const apertureShift = new THREE.Vector3(bx, bz, -by).divideScalar(100);
+        const apertureShift = new THREE.Vector3(bx, by, bz).divideScalar(100);
         object.position.sub(apertureShift);
-      } else if (component.kindId !== "isolator") {
+      } else if (
+        component.kindId !== "isolator" &&
+        // Canonical anchored optics are placed by their Asset/CAD-local
+        // anchors, which the backend solver and the PHY editor both
+        // consume RAW. bbox-centering shifts only the MESH to the
+        // SceneObject origin while the anchor (and therefore the backend
+        // beam) stays at its CAD position — so a beam_splitter whose STL
+        // origin sits at a cube corner (PBS252: centre (12.7,12.7,-12.7))
+        // reflects ~bboxCentre mm off the drawn coating. Skip the legacy
+        // centering for anchored assets so mesh, anchor, and backend
+        // trace share one frame.
+        !(Array.isArray(asset?.anchors) && asset!.anchors.some((a) => anchorObjectLocalAxisX(a, asset)))
+      ) {
         const bbox = new THREE.Box3().setFromObject(object);
         if (!bbox.isEmpty()) {
           const centerVec = bbox.getCenter(new THREE.Vector3());

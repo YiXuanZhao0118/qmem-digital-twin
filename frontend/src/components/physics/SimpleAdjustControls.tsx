@@ -21,7 +21,11 @@ import {
   findSnapToBeam,
   perpendicularBasis,
 } from "../../utils/beamPlacement";
-import { labDirToThree } from "../../optical/frames";
+import {
+  labDirToThreeLocal,
+  sceneObjectEulerFromQuaternion,
+  sceneObjectToQuaternion,
+} from "../../optical/frames";
 
 export function MirrorAdjustControls({ sceneObject }: { sceneObject: SceneObject }) {
   const scene = useSceneStore((state) => state.scene);
@@ -191,23 +195,20 @@ export function WaveplateAdjustControls({
     const transformPatch: Partial<SceneObject> = {};
     if (candidate?.axisDirection) {
       const dir = candidate.axisDirection;
-      const beamAxisThree = labDirToThree(dir).normalize();
+      // labRoot carries the world swap S; the wrapper quaternion is the plain
+      // Z-up pose M (render = S·M·b). To spin the body around the beam in the
+      // rendered world, the delta axis is the RAW Z-up beam direction (no
+      // swap): newQuat = R_δ(dir)·M reproduces a world rotation R_δ(S·dir)
+      // about the rendered beam. The old labDirToThree (S·dir) axis would
+      // conjugate the rotation and spin about the wrong line.
+      const beamAxisLocal = labDirToThreeLocal(dir).normalize();
       const deltaQuat = new THREE.Quaternion().setFromAxisAngle(
-        beamAxisThree,
+        beamAxisLocal,
         THREE.MathUtils.degToRad(delta),
       );
-      const currentEuler = new THREE.Euler(
-        THREE.MathUtils.degToRad(sceneObject.rxDeg),
-        THREE.MathUtils.degToRad(sceneObject.rzDeg),
-        THREE.MathUtils.degToRad(-sceneObject.ryDeg),
-        "YXZ",
-      );
-      const currentQuat = new THREE.Quaternion().setFromEuler(currentEuler);
+      const currentQuat = sceneObjectToQuaternion(sceneObject);
       const newQuat = deltaQuat.multiply(currentQuat);
-      const newEuler = new THREE.Euler().setFromQuaternion(newQuat, "YXZ");
-      transformPatch.rxDeg = THREE.MathUtils.radToDeg(newEuler.x);
-      transformPatch.rzDeg = THREE.MathUtils.radToDeg(newEuler.y);
-      transformPatch.ryDeg = -THREE.MathUtils.radToDeg(newEuler.z);
+      Object.assign(transformPatch, sceneObjectEulerFromQuaternion(newQuat));
     }
     const newProps = { ...sceneProps, rotationAroundBeamAxisDeg: next };
     await updateSceneObject(sceneObject.id, {

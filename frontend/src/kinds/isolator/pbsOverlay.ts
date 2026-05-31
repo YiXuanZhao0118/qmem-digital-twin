@@ -389,7 +389,7 @@ export function buildIsolatorPbsOverlay(
 
   // body Z-up (x, y, z) → three Y-up (x, z, -y). Same convention as the
   // anchor sphere renderer in ComponentEditor.tsx (line 1245).
-  const bodyToThree = (v: [number, number, number]): [number, number, number] => [v[0], v[2], -v[1]];
+  const bodyToThree = (v: [number, number, number]): [number, number, number] => [v[0], v[1], v[2]];
 
   for (const spec of defaults) {
     const anchor = findAnchorByName(asset, spec.name);
@@ -412,7 +412,7 @@ export function buildIsolatorPbsOverlay(
       // automatic alignment is wrong / not what they want.
       const [rxBody, ryBody, rzBody] = spec.rotationDegBody;
       const toRad = (d: number) => (d * Math.PI) / 180;
-      cube.rotation.set(toRad(rxBody), toRad(rzBody), toRad(-ryBody), "XYZ");
+      cube.rotation.set(toRad(rxBody), toRad(ryBody), toRad(rzBody), "XYZ");
     } else if (spec.prismType === "glan_laser" && !anchor?.directionBodyLocal) {
       // Glan-Laser default alignment (used when no `rotationDeg` override):
       //   1) Map physical Z (optical axis) → three Y (= body Z, the
@@ -422,8 +422,8 @@ export function buildIsolatorPbsOverlay(
       //      reflected; front_pbs and back_pbs typically differ by 90°
       //      because the Faraday rotator turns polarisation 45°).
       const yRad = ((spec.yRotationDeg ?? 0) * Math.PI) / 180;
-      const opticalAlign = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
-      const yRotAroundOptical = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yRad);
+      const opticalAlign = new THREE.Quaternion();
+      const yRotAroundOptical = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), yRad);
       cube.quaternion.copy(yRotAroundOptical).multiply(opticalAlign);
       const coRad = ((90 - GLAN_LASER_WEDGE_DEG) * Math.PI) / 180;
       const sw = Math.sin(coRad);
@@ -436,11 +436,11 @@ export function buildIsolatorPbsOverlay(
       // bodyToThree([1, 1, 0]) = [1, 0, -1], so canonical-in-three is the
       // normalised version of that. Body Y = three -Z (axis swap), so the
       // Y-rotation in three frame is around the (0, 0, -1) axis.
-      const canonicalRefThree = new THREE.Vector3(1, 0, -1).normalize();
+      const canonicalRefThree = new THREE.Vector3(1, 1, 0).normalize();
       const canonicalCementInCube = new THREE.Vector3(1, 0, 1).normalize();
       const baseQ = new THREE.Quaternion().setFromUnitVectors(canonicalCementInCube, canonicalRefThree);
       const yRad = (spec.yRotationDeg * Math.PI) / 180;
-      const yRotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, -1), yRad);
+      const yRotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yRad);
       cube.quaternion.copy(yRotation).multiply(baseQ);
       // Cement normal after Y rotation: body [cos(θ), 1, -sin(θ)]. Y stays
       // = 1, so the rotated normal remains a face-diagonal (PBS-valid)
@@ -669,10 +669,10 @@ export function buildThorlabsIsolatorObject(
   let opticalAxisBody: "x" | "y" | "z" = "x";
   let housingLengthMm = sizeMm.x;
   if (stlAxisIdx === 1) {
-    opticalAxisBody = "z";
+    opticalAxisBody = "y";
     housingLengthMm = sizeMm.y;
   } else if (stlAxisIdx === 2) {
-    opticalAxisBody = "y";
+    opticalAxisBody = "z";
     housingLengthMm = sizeMm.z;
   }
 

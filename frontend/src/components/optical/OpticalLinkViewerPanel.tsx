@@ -39,9 +39,9 @@ import {
   buildSceneObjectFromBindings,
   shouldRenderViaBindings,
 } from "../../three/bindingRendererGate";
-import { applyObjectTransform } from "../../three/transformUtils";
+import { applyObjectTransformWorld } from "../../three/transformUtils";
 import { anchorObjectLocalAxisX, anchorObjectLocalPos } from "../../utils/anchorAccess";
-import { mmToThree } from "../../optical/frames";
+import { mmToThree, labRootSwapInverseQuaternion, labRootSwapQuaternion } from "../../optical/frames";
 import { FloatingPanel } from "../workspace/FloatingPanel";
 import { usePanelLayout } from "../workspace/WorkspaceProvider";
 import { BeamScopeContents } from "./BeamScopePanel";
@@ -145,66 +145,135 @@ const PASSIVE_OPTICAL_KINDS: ReadonlySet<string> = new Set([
  *  Clipping warning is suppressed for these — the matching mode-overlap
  *  warning is the right physical signal. PHY Editor likewise hides
  *  apertureMm for these via `showAperture={false}`. */
-/** Build the PBS reflective-coating face overlay — a translucent pink
- *  quad + bright outline at the internal coating plane, oriented by the
- *  coating normal. Mirrors the Asset3D editor's internal-B*-face disk so
- *  the Optical Link panel shows WHERE the beam reflects off the cube
- *  diagonal. Geometry is authored in the asset's CAD/body frame scaled
- *  to three units (÷100) — the same frame as the wireframe edges it gets
- *  parented alongside — so the wrapper's applyObjectTransform places it
- *  correctly in lab. Returns null when the asset isn't a beam_splitter or
- *  carries no coating face / intercept_face anchor. */
-function buildPbsCoatingFaceGroup(asset: Asset3D): THREE.Group | null {
-  if (asset.kindId !== "beam_splitter") return null;
-  // The intercept_face anchor's axisX IS the coating normal. Read it +
-  // its position through anchorAccess so R_body / bfo are applied (the
-  // glan-laser beam splitters carry a body rotation) — these land the
-  // coating plane in the same CAD/object frame as the wireframe edges.
-  const anc = asset.anchors.find((a) => a.id === "intercept_face");
+/** Build ONE optic-surface marker in the asset's body/mm frame, then bake
+ *  `mw` (the owning mesh's matrixWorld — the SAME transform the wireframe
+ *  edges are baked with) so the marker tracks the wireframe exactly,
+ *  regardless of per-builder axis swaps or scale:
+ *   - beam_splitter (PBS cube, IO-3/IO-5 glan) → translucent PINK
+ *     reflective-coating quad at intercept_face (axisX = coating normal).
+ *   - faraday_rotator → translucent AMBER disk at optical_center,
+ *     perpendicular to the optical axis (the polarisation-rotation plane).
+ *  Returns null for non-optic assets or a missing anchor. */
+function buildOpticSurfaceMarker(asset: Asset3D, mw: THREE.Matrix4): THREE.Group | null {
+  const kind = asset.kindId;
+  const ancId =
+    kind === "beam_splitter" ? "intercept_face" :
+    kind === "faraday_rotator" ? "optical_center" : null;
+  if (!ancId) return null;
+  // axisX is the coating normal (beam_splitter) / optical axis
+  // (faraday); read through anchorAccess so any R_body is applied, landing
+  // the marker in the same body frame the geometry lives in.
+  const anc = (asset.anchors ?? []).find((a) => a.id === ancId);
   if (!anc) return null;
   const axisX = anchorObjectLocalAxisX(anc, asset);
   if (!axisX) return null;
   const normal = new THREE.Vector3(axisX.x, axisX.y, axisX.z);
   if (normal.lengthSq() < 1e-9) return null;
   normal.normalize();
-  const posObj = anchorObjectLocalPos(anc, asset);
-  const centerMm = new THREE.Vector3(posObj.x, posObj.y, posObj.z);
-  // Aperture EXTENT is a frame-invariant scalar (mm), so read it directly
-  // from the explicit B1 coating face when present (36 × 25.4 mm diagonal
-  // for the PBS252 cube), else fall back to the anchor's aperture, else a
-  // 1-inch-cube default.
-  const faces = (asset.faces ?? []) as Array<Record<string, unknown>>;
-  const b1 = faces.find((f) => f.id === "B1");
-  const wMm = Number(b1?.apertureWidthMm) || anc.apertureMm || 25.4;
-  const hMm = Number(b1?.apertureHeightMm) || anc.apertureMm || 25.4;
+  const p = anchorObjectLocalPos(anc, asset);
 
   const group = new THREE.Group();
-  group.name = "pbs-coating-face";
-  group.position.set(centerMm.x / 100, centerMm.y / 100, centerMm.z / 100);
-  // PlaneGeometry's face normal is +Z; rotate it onto the coating normal.
+  group.name = `optic-surface-${ancId}`;
+  group.position.set(p.x, p.y, p.z); // body-frame mm
+  // Plane/disk face normal is +Z; rotate it onto the surface normal.
   group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
 
-  const w = mmToThree(wMm);
-  const h = mmToThree(hMm);
-  const fill = new THREE.Mesh(
-    new THREE.PlaneGeometry(w, h),
-    new THREE.MeshBasicMaterial({
-      color: 0xf472b6, // pink — matches the PHY editor's internal-face disk
-      transparent: true,
-      opacity: 0.22,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    }),
-  );
-  fill.renderOrder = 20;
-  group.add(fill);
-  const outline = new THREE.LineSegments(
-    new THREE.EdgesGeometry(new THREE.PlaneGeometry(w, h)),
-    new THREE.LineBasicMaterial({ color: 0xf9a8d4, transparent: true, opacity: 0.9 }),
-  );
-  outline.renderOrder = 21;
-  group.add(outline);
+  if (kind === "beam_splitter") {
+    // Aperture extent is a frame-invariant scalar (mm): explicit B1 coating
+    // face (36 × 25.4 mm for the PBS252 cube) → anchor aperture → 1" default.
+    const faces = (asset.faces ?? []) as Array<Record<string, unknown>>;
+    const b1 = faces.find((f) => f.id === "B1");
+    const wMm = Number(b1?.apertureWidthMm) || anc.apertureMm || 25.4;
+    const hMm = Number(b1?.apertureHeightMm) || anc.apertureMm || 25.4;
+    const fill = new THREE.Mesh(
+      new THREE.PlaneGeometry(wMm, hMm),
+      new THREE.MeshBasicMaterial({
+        color: 0xf472b6, // pink — matches the PHY editor's internal-face disk
+        transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false,
+      }),
+    );
+    fill.renderOrder = 20;
+    group.add(fill);
+    const outline = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.PlaneGeometry(wMm, hMm)),
+      new THREE.LineBasicMaterial({ color: 0xf9a8d4, transparent: true, opacity: 0.9 }),
+    );
+    outline.renderOrder = 21;
+    group.add(outline);
+  } else {
+    // faraday_rotator — amber disk marking the polarisation-rotation plane.
+    const rMm = anc.apertureMm && anc.apertureMm > 0 ? anc.apertureMm : 5;
+    const fill = new THREE.Mesh(
+      new THREE.CircleGeometry(rMm, 40),
+      new THREE.MeshBasicMaterial({
+        color: 0xfbbf24, // amber — distinct from the pink reflective coatings
+        transparent: true, opacity: 0.2, side: THREE.DoubleSide, depthWrite: false,
+      }),
+    );
+    fill.renderOrder = 20;
+    group.add(fill);
+    const outline = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.CircleGeometry(rMm, 40)),
+      new THREE.LineBasicMaterial({ color: 0xfcd34d, transparent: true, opacity: 0.9 }),
+    );
+    outline.renderOrder = 21;
+    group.add(outline);
+  }
+
+  // Place via the owning mesh's WORLD translation + rotation, but force the
+  // body-mm → three scale to mmToThree (1/100). The wireframe bakes the RAW
+  // mesh.matrixWorld, whose scale differs by asset: STL geometry is authored
+  // in mm so its matrixWorld carries the 1/100 unit scale, but procedural
+  // prisms (IO-3 glans / Faraday rod) author geometry already in three units
+  // so their matrixWorld scale is 1. Reusing that raw scale on a mm-built
+  // marker blew the glan / faraday markers up ~100×; substituting the
+  // canonical mm→three scale sizes every marker correctly regardless of how
+  // its mesh was built.
+  // Use the asset/binding root transform. Descendant meshes can include
+  // renderer-internal correction rotations (for example the IO-3 Glan prism's
+  // visible diagonal is rotated onto its physics plane); applying those again
+  // would turn this body-local anchor marker 90deg away from the real surface.
+  const mPos = new THREE.Vector3();
+  const mQuat = new THREE.Quaternion();
+  const mScale = new THREE.Vector3();
+  mw.decompose(mPos, mQuat, mScale);
+  const unit = mmToThree(1);
+  group.applyMatrix4(new THREE.Matrix4().compose(mPos, mQuat, new THREE.Vector3(unit, unit, unit)));
   return group;
+}
+
+/** Walk a loaded wireframe-source tree and build optic-surface markers for
+ *  every beam_splitter / faraday_rotator asset unit inside it. Resolves each
+ *  mesh's owning asset — single-asset = `singleAsset`; binding tree =
+ *  nearest `__bindingId` ancestor → ComponentBinding → Asset3D — and bakes
+ *  the marker with that mesh's matrixWorld so composite optics (the IO-3
+ *  glan coatings + Faraday rod) get markers too, not just the root asset.
+ *  Returns null when no markers apply. */
+function buildOpticSurfaceMarkers(
+  loaded: THREE.Object3D,
+  singleAsset: Asset3D | undefined,
+  bindings: ReadonlyArray<{ id: string; asset3dId?: string | null }>,
+  assetById: Map<string, Asset3D>,
+): THREE.Group | null {
+  const bindingById = new Map(bindings.map((b) => [b.id, b]));
+  const units = new Map<string, { asset: Asset3D; mw: THREE.Matrix4 }>();
+  loaded.traverse((node) => {
+    const bid = (node.userData as { __bindingId?: string } | undefined)?.__bindingId;
+    if (typeof bid !== "string" || units.has(bid)) return;
+    const b = bindingById.get(bid);
+    const asset = b?.asset3dId ? assetById.get(b.asset3dId) : undefined;
+    if (asset) units.set(bid, { asset, mw: node.matrixWorld.clone() });
+  });
+  if (singleAsset && !units.has("__root__")) {
+    units.set("__root__", { asset: singleAsset, mw: loaded.matrixWorld.clone() });
+  }
+  const out = new THREE.Group();
+  out.name = "optic-surface-markers";
+  for (const { asset, mw } of units.values()) {
+    const marker = buildOpticSurfaceMarker(asset, mw);
+    if (marker) out.add(marker);
+  }
+  return out.children.length ? out : null;
 }
 
 const MODEMATCHED_KINDS: ReadonlySet<string> = new Set([
@@ -1238,6 +1307,15 @@ export function OpticalLinkViewerPanel() {
             }
             const group = new THREE.Group();
             group.name = `wireframe-${objectId}`;
+            // Frame airlock — mirror DigitalTwinViewer's loader normalization
+            // (premultiply S⁻¹). Every loader emits geometry in three's Y-up
+            // frame (g = S·b); de-swapping to the canonical Z-up body b here,
+            // then composing the pose as S·M at use (below), makes this panel
+            // render the SAME S·M·b orientation as Object Sense. Without it the
+            // baked wireframe stayed S·b and applyObjectTransformWorld produced
+            // the legacy M·S·b, which diverges from Object Sense whenever the
+            // object has ry≠0 / rz≠0 (e.g. the IO-3 isolator at rz=90°).
+            loaded.quaternion.premultiply(labRootSwapInverseQuaternion());
             loaded.updateMatrixWorld(true);
             const lineMat = new THREE.LineBasicMaterial({
               color: 0x94a3b8, // slate-400 — muted against dark bg, doesn't fight beam colours
@@ -1255,17 +1333,15 @@ export function OpticalLinkViewerPanel() {
               edges.applyMatrix4(mesh.matrixWorld);
               group.add(new THREE.LineSegments(edges, lineMat));
             });
-            // PBS reflective-coating face overlay (like the Asset3D
-            // editor's B*-face disk) so the user sees the surface the
-            // beam reflects off. Baked into the cached group in the same
-            // CAD/body÷100 frame as the wireframe edges; the wrapper's
-            // applyObjectTransform then carries it to the lab pose.
-            // Single-asset path only — composites (isolator) load the
-            // glan coatings through the binding tree, not this `asset`.
-            if (asset) {
-              const coatingFace = buildPbsCoatingFaceGroup(asset);
-              if (coatingFace) group.add(coatingFace);
-            }
+            // Optic-surface markers: pink reflective-coating quads on the
+            // PBS / IO-3 glan beam_splitters + an amber rotation-plane disk
+            // on the Faraday rod. Walk the loaded tree (so composites loaded
+            // through the binding tree get a marker per optic, not just the
+            // root asset) and bake each marker with the asset/binding root's
+            // matrixWorld — the SAME transform applied to the wireframe edges
+            // above — so the marker tracks the drawn cube/prism exactly.
+            const surfaceMarkers = buildOpticSurfaceMarkers(loaded, asset, bindings, assetById);
+            if (surfaceMarkers) group.add(surfaceMarkers);
             disposeTree(loaded);
             if (disposed) {
               disposeTree(group);
@@ -1284,7 +1360,15 @@ export function OpticalLinkViewerPanel() {
         const entry = wireframeCache.get(objectId)!;
         if (entry.group === "pending") continue;
         const wrapper = entry.group.clone(true);
-        applyObjectTransform(wrapper, obj);
+        applyObjectTransformWorld(wrapper, obj);
+        // Compose the world swap S OUTSIDE the pose M (→ S·M·b), matching
+        // labRoot's order in Object Sense. applyObjectTransformWorld set the
+        // quaternion to the bare pose M (the legacy leaf-swap order M·S·b); the
+        // airlock above already de-swapped the geometry to b, so pre-multiplying
+        // S here lands the model in the same orientation as the main viewer and
+        // the beam segments (placed at labMmToThree = S·seg). Position is
+        // unchanged (labMmToThree already bakes S).
+        wrapper.quaternion.premultiply(labRootSwapQuaternion());
         contentGroup.add(wrapper);
       }
 

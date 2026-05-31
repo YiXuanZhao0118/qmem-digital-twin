@@ -59,18 +59,176 @@ import {
   getRfSnapshotAt,
 } from "../utils/rfPropagationSchedule";
 import { computePpgMountedThreePose } from "../utils/ppgMounting";
+import { beamLocalSP } from "../optical/jones";
 import { PlacementGizmo } from "../three/placement/gizmo";
 import { SnapOverlay } from "../three/placement/snapOverlay";
 import {
-  bodyLocalDirToThree,
-  labDirToThree,
+  labDirToThreeLocal,
   labMmToThree,
+  labMmToThreeLocal,
+  labRootSwapQuaternion,
+  labRootSwapInverseQuaternion,
+  sceneObjectToQuaternion,
   threeDirToLab,
   threeToLabPointMm,
 } from "../optical/frames";
 import { ToolbarHint } from "./ToolbarHint";
 
 (window as unknown as { __testReflect?: typeof _testReflect }).__testReflect = _testReflect;
+THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
+
+type LabVector3 = { x: number; y: number; z: number };
+
+type LaserSource0PropagationAudit = {
+  index: number;
+  segmentIndex: number;
+  emitter: string;
+  from: string;
+  to: string;
+  hitObjectId: string | null;
+  bindingId: string | null;
+  faceInId: string | null;
+  op: string | null;
+  start: [number, number, number];
+  end: [number, number, number];
+  dir: [number, number, number];
+  beamLine: string;
+  polarization: [number, number, number];
+  polarizationLinearity: number;
+};
+
+function labVecLength(v: LabVector3): number {
+  return Math.hypot(v.x, v.y, v.z);
+}
+
+function normalizeLabVector(v: LabVector3): LabVector3 {
+  const len = labVecLength(v);
+  if (len <= 1e-12) return { x: 0, y: 0, z: 0 };
+  return { x: v.x / len, y: v.y / len, z: v.z / len };
+}
+
+function stableVectorSign(v: LabVector3): LabVector3 {
+  const values = [v.x, v.y, v.z];
+  const first = values.find((value) => Math.abs(value) > 1e-6);
+  return first !== undefined && first < 0 ? { x: -v.x, y: -v.y, z: -v.z } : v;
+}
+
+function cleanNumber(value: number, digits = 3): number {
+  const rounded = Number(value.toFixed(digits));
+  return Object.is(rounded, -0) ? 0 : rounded;
+}
+
+function tupleFromLabVector(v: LabVector3, digits = 3): [number, number, number] {
+  return [cleanNumber(v.x, digits), cleanNumber(v.y, digits), cleanNumber(v.z, digits)];
+}
+
+function formatLabVector(v: LabVector3 | [number, number, number], digits = 3): string {
+  const values = Array.isArray(v) ? v : tupleFromLabVector(v, digits);
+  return `[${values.map((value) => cleanNumber(value, digits).toFixed(digits)).join(", ")}]`;
+}
+
+function segmentDirectionLab(seg: V3LabSegment): LabVector3 {
+  return normalizeLabVector({
+    x: seg.end.x - seg.start.x,
+    y: seg.end.y - seg.start.y,
+    z: seg.end.z - seg.start.z,
+  });
+}
+
+function segmentBeamLine(seg: V3LabSegment, dir: LabVector3): string {
+  const ax = Math.abs(dir.x);
+  const ay = Math.abs(dir.y);
+  const az = Math.abs(dir.z);
+  if (ax >= ay && ax >= az && ax > 0.95) {
+    return `beam line: y=${cleanNumber(seg.start.y, 3).toFixed(3)}, z=${cleanNumber(seg.start.z, 3).toFixed(3)}`;
+  }
+  if (ay >= ax && ay >= az && ay > 0.95) {
+    return `beam line: x=${cleanNumber(seg.start.x, 3).toFixed(3)}, z=${cleanNumber(seg.start.z, 3).toFixed(3)}`;
+  }
+  if (az >= ax && az >= ay && az > 0.95) {
+    return `beam line: x=${cleanNumber(seg.start.x, 3).toFixed(3)}, y=${cleanNumber(seg.start.y, 3).toFixed(3)}`;
+  }
+  return `start=${formatLabVector([seg.start.x, seg.start.y, seg.start.z])} end=${formatLabVector([seg.end.x, seg.end.y, seg.end.z])}`;
+}
+
+function polarizationAxisLab(seg: V3LabSegment, dir: LabVector3): { vector: LabVector3; linearity: number } {
+  const [es, ep] = seg.jones ?? [{ re: 1, im: 0 }, { re: 0, im: 0 }];
+  const es2 = es.re * es.re + es.im * es.im;
+  const ep2 = ep.re * ep.re + ep.im * ep.im;
+  const s0 = es2 + ep2;
+  const basis = beamLocalSP(dir);
+  if (s0 <= 1e-12) {
+    return { vector: stableVectorSign(normalizeLabVector(basis.s)), linearity: 1 };
+  }
+
+  const s1 = es2 - ep2;
+  const s2 = 2 * (es.re * ep.re + es.im * ep.im);
+  const linearity = Math.min(1, Math.hypot(s1, s2) / s0);
+  const psi = 0.5 * Math.atan2(s2, s1);
+  const vector = normalizeLabVector({
+    x: basis.s.x * Math.cos(psi) + basis.p.x * Math.sin(psi),
+    y: basis.s.y * Math.cos(psi) + basis.p.y * Math.sin(psi),
+    z: basis.s.z * Math.cos(psi) + basis.p.z * Math.sin(psi),
+  });
+  return { vector: stableVectorSign(vector), linearity };
+}
+
+function isLaserSource0Name(value: string | null | undefined): boolean {
+  const compact = String(value ?? "").toLowerCase().replace(/[\s_-]/g, "");
+  return compact === "lasersource0";
+}
+
+function buildLaserSource0PropagationAudit(
+  labSegments: readonly V3LabSegment[],
+  objects: readonly SceneObject[],
+  components: readonly ComponentItem[],
+): LaserSource0PropagationAudit[] {
+  const objectById = new Map(objects.map((object) => [object.id, object]));
+  const componentById = new Map(components.map((component) => [component.id, component]));
+  const labelObject = (objectId: string | null | undefined, fallback: string): string => {
+    const object = objectById.get(objectId ?? "");
+    if (!object) return fallback;
+    const component = componentById.get(object.componentId);
+    if (component?.name && component.name !== object.name) return `${object.name} (${component.name})`;
+    return object.name;
+  };
+  const laserIds = new Set(
+    objects
+      .filter((object) => isLaserSource0Name(object.name) || isLaserSource0Name(object.id))
+      .map((object) => object.id),
+  );
+  if (laserIds.size === 0) return [];
+
+  let pathIndex = 0;
+  return labSegments.flatMap((seg, segmentIndex) => {
+    if (!laserIds.has(seg.emitterSceneObjectId ?? "") && !laserIds.has(seg.sourceSceneObjectId ?? "")) {
+      return [];
+    }
+    const index = pathIndex++;
+    const dir = segmentDirectionLab(seg);
+    const pol = polarizationAxisLab(seg, dir);
+    const emitter = labelObject(seg.emitterSceneObjectId, "LASER_SOURCE0");
+    const from = labelObject(seg.sourceSceneObjectId, emitter);
+    const to = labelObject(seg.sceneObjectId, seg.sceneObjectId ?? "free-space");
+    return [{
+      index,
+      segmentIndex,
+      emitter,
+      from,
+      to,
+      hitObjectId: seg.sceneObjectId,
+      bindingId: seg.bindingId,
+      faceInId: seg.faceInId,
+      op: seg.op,
+      start: [cleanNumber(seg.start.x, 3), cleanNumber(seg.start.y, 3), cleanNumber(seg.start.z, 3)],
+      end: [cleanNumber(seg.end.x, 3), cleanNumber(seg.end.y, 3), cleanNumber(seg.end.z, 3)],
+      dir: tupleFromLabVector(dir, 6),
+      beamLine: segmentBeamLine(seg, dir),
+      polarization: tupleFromLabVector(pol.vector, 6),
+      polarizationLinearity: cleanNumber(pol.linearity, 3),
+    }];
+  });
+}
 
 // Phase 8.6: `buildTraceLine(segment, maxPowerOnPath, colorOverrideHex)`
 // was deleted here when the v3 rendering swap removed its only call
@@ -108,8 +266,11 @@ type LabPoint = {
   z: number;
 };
 
-const HOME_CAMERA_POSITION = new THREE.Vector3(28, 16, 19);
-const HOME_CAMERA_TARGET = new THREE.Vector3(0, 5.2, 0);
+// Z-up framing. These were hand-tuned in the old Y-up world; converted to
+// Z-up via the inverse of the removed (x, z, -y) lab->three swap, i.e.
+// (x, y, z) -> (x, -z, y), so the default view reproduces the prior angle.
+const HOME_CAMERA_POSITION = new THREE.Vector3(28, -19, 16);
+const HOME_CAMERA_TARGET = new THREE.Vector3(0, 0, 5.2);
 const HOME_CAMERA_OFFSET = HOME_CAMERA_POSITION.clone().sub(HOME_CAMERA_TARGET);
 const AXIS_GIZMO_SIZE = 132;
 
@@ -145,42 +306,42 @@ const AXIS_VIEW_CONFIG: Record<
     label: "+X",
     title: "View from +X",
     direction: new THREE.Vector3(1, 0, 0),
-    up: new THREE.Vector3(0, 1, 0),
+    up: new THREE.Vector3(0, 0, 1),
     className: "axis-x",
   },
   xNeg: {
     label: "-X",
     title: "View from -X",
     direction: new THREE.Vector3(-1, 0, 0),
-    up: new THREE.Vector3(0, 1, 0),
+    up: new THREE.Vector3(0, 0, 1),
     className: "axis-x",
   },
   yPos: {
     label: "+Y",
     title: "View from +Y",
-    direction: new THREE.Vector3(0, 0, -1),
-    up: new THREE.Vector3(0, 1, 0),
+    direction: new THREE.Vector3(0, 1, 0),
+    up: new THREE.Vector3(0, 0, 1),
     className: "axis-y",
   },
   yNeg: {
     label: "-Y",
     title: "View from -Y",
-    direction: new THREE.Vector3(0, 0, 1),
-    up: new THREE.Vector3(0, 1, 0),
+    direction: new THREE.Vector3(0, -1, 0),
+    up: new THREE.Vector3(0, 0, 1),
     className: "axis-y",
   },
   zPos: {
     label: "+Z",
     title: "View from +Z",
-    direction: new THREE.Vector3(0, 1, 0),
-    up: new THREE.Vector3(0, 0, -1),
+    direction: new THREE.Vector3(0, 0, 1),
+    up: new THREE.Vector3(0, 1, 0),
     className: "axis-z",
   },
   zNeg: {
     label: "-Z",
     title: "View from -Z",
-    direction: new THREE.Vector3(0, -1, 0),
-    up: new THREE.Vector3(0, 0, 1),
+    direction: new THREE.Vector3(0, 0, -1),
+    up: new THREE.Vector3(0, 1, 0),
     className: "axis-z",
   },
 };
@@ -547,13 +708,13 @@ function addAomTiltAxisMarker(
   // /100 (mm → three units), directions are pure axis swap.
   const pivotThree = new THREE.Vector3(
     pivotBody.x / 100,
+    pivotBody.y / 100,
     pivotBody.z / 100,
-    -pivotBody.y / 100,
   );
   const tiltDirThree = new THREE.Vector3(
     tUnit.x,
+    tUnit.y,
     tUnit.z,
-    -tUnit.y,
   ).normalize();
 
   // Arrow length scales with the port separation so it stays visible
@@ -779,7 +940,15 @@ function addObjectAxesHelper(object: THREE.Object3D, isDriven = false): void {
 }
 
 function labToThree(point: LabPoint): THREE.Vector3 {
-  return new THREE.Vector3(point.x / 100, point.z / 100, -point.y / 100);
+  return new THREE.Vector3(point.x / 100, point.y / 100, point.z / 100);
+}
+
+// Raw Z-up labRoot-local variant (pure scale, no axis swap). Use for content
+// that renders UNDER labRoot (relations, beam, overlays) — labRoot carries
+// the single Z-up→Y-up swap S. `labToThree` (swapped, three-world) stays for
+// consumers that live at scene root (viewCenter, picking/highlight balls).
+function labToThreeLocal(point: LabPoint): THREE.Vector3 {
+  return new THREE.Vector3(point.x / 100, point.y / 100, point.z / 100);
 }
 
 function objectOrigin(object: SceneObject): LabPoint {
@@ -870,9 +1039,11 @@ function createViewCenterMarker(): THREE.Group {
   return group;
 }
 
+// Relations-only (addAnchorAxis) — renders under labRoot, so raw Z-up (no
+// swap); labRoot supplies S.
 function directionToThree(direction?: { x: number; y: number; z: number }): THREE.Vector3 | null {
   if (!direction) return null;
-  const vector = labDirToThree(direction);
+  const vector = labDirToThreeLocal(direction);
   return vector.lengthSq() > 0 ? vector.normalize() : null;
 }
 
@@ -1315,6 +1486,13 @@ export function DigitalTwinViewer({
       }
     >
   >(new Map());
+  // The single Z-up→three-Y-up world swap S lives here. Lab-native content
+  // (objects, beams, relations, fast-axis overlay) renders as a child of
+  // labRoot in the canonical Z-up frame; labRoot maps it to three's Y-up
+  // world exactly once. Three-WORLD consumers (camera, picking, scope
+  // probe, snap/face/hover highlights, view-center marker) stay direct
+  // children of `scene` and keep using the swap-baked converters.
+  const labRootRef = useRef<THREE.Group>(new THREE.Group());
   const beamGroupRef = useRef<THREE.Group>(new THREE.Group());
   const relationGroupRef = useRef<THREE.Group>(new THREE.Group());
   const viewCenterGroupRef = useRef<THREE.Group>(new THREE.Group());
@@ -1359,6 +1537,7 @@ export function DigitalTwinViewer({
    *  wrappers — without it, gizmo attaches to a wrapper that the next
    *  rebuild then disposes, leaving controls.object orphaned. */
   const [componentsBuildVersion, setComponentsBuildVersion] = useState(0);
+  const [laserSource0AuditRows, setLaserSource0AuditRows] = useState<LaserSource0PropagationAudit[]>([]);
 
   const sceneData = useSceneStore((state) => state.scene);
   const scopeProbe = useSceneStore((state) => state.scopeProbe);
@@ -1503,23 +1682,18 @@ export function DigitalTwinViewer({
     // beam axis = local +X). +Y at fastAxisDeg=0, rotates CCW about +X.
     const theta = (fastAxisDeg * Math.PI) / 180;
     const localAxis = new THREE.Vector3(0, Math.cos(theta), Math.sin(theta));
-    // Body-local Z-up → three Y-up axis swap.
-    const localThree = bodyLocalDirToThree(localAxis);
-    // Rotate by SceneObject's Euler (same convention as
-    // transformUtils.applyObjectTransform: YXZ with three's rotation set to
-    // (rxDeg, rzDeg, -ryDeg)).
-    const euler = new THREE.Euler(
-      THREE.MathUtils.degToRad(selectedObject.rxDeg),
-      THREE.MathUtils.degToRad(selectedObject.rzDeg),
-      THREE.MathUtils.degToRad(-selectedObject.ryDeg),
-      "YXZ",
-    );
-    const worldAxis = localThree.clone().applyEuler(euler).normalize();
-    // World position of the waveplate's mesh centre.
+    // Under labRoot the overlay content stays in raw Z-up; labRoot carries
+    // the single Z-up→Y-up swap S. Apply only the object pose M here (same
+    // convention as transformUtils.applyObjectTransform: YXZ with three's
+    // rotation set to (rxDeg, rzDeg, -ryDeg)).
+    const worldAxis = localAxis.clone()
+      .applyQuaternion(sceneObjectToQuaternion(selectedObject))
+      .normalize();
+    // Waveplate mesh centre in raw Z-up labRoot-local units (no swap).
     const center = new THREE.Vector3(
       mmToThree(selectedObject.xMm),
+      mmToThree(selectedObject.yMm),
       mmToThree(selectedObject.zMm),
-      mmToThree(-selectedObject.yMm),
     );
     const halfLengthThree = mmToThree(halfLengthMm);
     const a = center.clone().addScaledVector(worldAxis, +halfLengthThree);
@@ -1657,7 +1831,7 @@ export function DigitalTwinViewer({
       }
       controls.target.copy(target);
       camera.position.copy(target).add(HOME_CAMERA_OFFSET);
-      camera.up.set(0, 1, 0);
+      camera.up.set(0, 0, 1);
       camera.lookAt(controls.target);
       controls.update();
       return;
@@ -1820,7 +1994,8 @@ export function DigitalTwinViewer({
     sceneRef.current = scene;
 
     const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 220);
-    camera.position.set(28, 16, 19);
+    camera.position.set(28, -19, 16);
+    camera.up.set(0, 0, 1);
     cameraRef.current = camera;
 
     // logarithmicDepthBuffer is INCOMPATIBLE with polygon offset on most
@@ -1853,6 +2028,7 @@ export function DigitalTwinViewer({
     const orientationScene = new THREE.Scene();
     const orientationCamera = new THREE.PerspectiveCamera(42, 1, 0.1, 8);
     orientationCamera.position.set(0, 0, 3.6);
+    orientationCamera.up.set(0, 0, 1);
     const orientationRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     orientationRenderer.outputColorSpace = THREE.SRGBColorSpace;
     orientationRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -2150,7 +2326,9 @@ export function DigitalTwinViewer({
 
     const ambient = new THREE.AmbientLight("#ffffff", 1.08);
     const key = new THREE.DirectionalLight("#ffffff", 2.05);
-    key.position.set(16, 22, 14);
+    // Z-up: key light from above (+Z). Converted from the old Y-up (16,22,14)
+    // via (x, y, z) -> (x, -z, y), matching the camera framing conversion.
+    key.position.set(16, -14, 22);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
     key.shadow.camera.left = -24;
@@ -2158,6 +2336,11 @@ export function DigitalTwinViewer({
     key.shadow.camera.top = 18;
     key.shadow.camera.bottom = -18;
     const environmentGroup = createLabPhotoRoom(roomDimensions);
+    // photoRoom builds the room/furniture Y-up (height along +Y). The world is
+    // now Z-up (lab content under labRoot is pure-scale Z-up), so rotate the
+    // whole furniture group by Rx(+90°) — the inverse of the removed labRoot
+    // swap — to stand it up along +Z. Floor lands on the world XY-plane.
+    environmentGroup.rotation.x = Math.PI / 2;
     applyEnvironmentDisplayMode(environmentGroup, displayMode);
     environmentGroupRef.current = environmentGroup;
     scene.add(environmentGroup, ambient, key);
@@ -2174,12 +2357,19 @@ export function DigitalTwinViewer({
       scopeProbeOverlayRef.current = new THREE.Group();
       scopeProbeOverlayRef.current.name = "scope-probe-overlay";
     }
-    scene.add(
+    // labRoot carries the single world swap S = Rx(-90°). Lab-native,
+    // Z-up-authored content goes UNDER it; three-WORLD content stays on scene.
+    labRootRef.current.name = "lab-root";
+    labRootRef.current.quaternion.copy(labRootSwapQuaternion());
+    labRootRef.current.add(
       componentGroupRef.current,
       beamGroupRef.current,
       relationGroupRef.current,
-      viewCenterGroupRef.current,
       fastAxisOverlayRef.current,
+    );
+    scene.add(
+      labRootRef.current,
+      viewCenterGroupRef.current,
       scopeProbeOverlayRef.current,
     );
 
@@ -2395,7 +2585,7 @@ export function DigitalTwinViewer({
         return;
       }
       const labToThree = (mm: { x: number; y: number; z: number }) =>
-        new THREE.Vector3(mm.x / 100, mm.z / 100, -mm.y / 100);
+        new THREE.Vector3(mm.x / 100, mm.y / 100, mm.z / 100);
 
       const disc = grp.getObjectByName("hover-highlight-disc") as THREE.Mesh | null;
       const outline = grp.getObjectByName("hover-highlight-face-outline") as THREE.LineLoop | null;
@@ -2425,8 +2615,8 @@ export function DigitalTwinViewer({
           const posThree = labToThree(hit.pointMm);
           const normalThree = new THREE.Vector3(
             hit.normalMm.x,
+            hit.normalMm.y,
             hit.normalMm.z,
-            -hit.normalMm.y,
           ).normalize();
           disc.position.copy(posThree);
           const z = new THREE.Vector3(0, 0, 1);
@@ -2984,11 +3174,13 @@ export function DigitalTwinViewer({
             const material = wall instanceof THREE.Mesh ? wall.material : null;
             if (!(material instanceof THREE.MeshStandardMaterial) || !wall.userData.fadeWhenBlocking) continue;
             const side = wall.userData.roomSide;
+            // Room is rotated Rx(+90°) into Z-up: "back" wall faces +Y, the
+            // open camera side faces -Y, and the ceiling is at +Z.
             const isBlocking =
               (side === "left" && camera.position.x < -halfWidth) ||
               (side === "right" && camera.position.x > halfWidth) ||
-              (side === "back" && camera.position.z < -halfDepth) ||
-              (side === "ceiling" && camera.position.y > roomDimensions.heightMm / 100);
+              (side === "back" && camera.position.y > halfDepth) ||
+              (side === "ceiling" && camera.position.z > roomDimensions.heightMm / 100);
             material.opacity = isBlocking ? 0.22 : 0.9;
             material.transparent = true;
             material.depthWrite = !isBlocking;
@@ -3129,10 +3321,10 @@ export function DigitalTwinViewer({
         } else {
           box.getCenter(tmp);
         }
-        // Three → lab mm (three.X = sceneX, three.Y = sceneZ, three.Z = -sceneY).
+        // Three → lab mm. Z-up: pure scale, no axis swap (matches frames.ts).
         sumX += tmp.x * 100;
-        sumY += -tmp.z * 100;
-        sumZ += tmp.y * 100;
+        sumY += tmp.y * 100;
+        sumZ += tmp.z * 100;
       }
       return {
         x: sumX / wrappers.length,
@@ -3244,14 +3436,14 @@ export function DigitalTwinViewer({
     if (!faceTouchPending) return;
 
     const labToThree = (mm: { x: number; y: number; z: number }) =>
-      new THREE.Vector3(mm.x / 100, mm.z / 100, -mm.y / 100);
+      new THREE.Vector3(mm.x / 100, mm.y / 100, mm.z / 100);
 
     if (faceTouchPending.kind === "face" && disc) {
       const posThree = labToThree(faceTouchPending.pointMm);
       const normalThree = new THREE.Vector3(
         faceTouchPending.normal.x,
+        faceTouchPending.normal.y,
         faceTouchPending.normal.z,
-        -faceTouchPending.normal.y,
       ).normalize();
       disc.position.copy(posThree);
       const z = new THREE.Vector3(0, 0, 1);
@@ -3840,6 +4032,17 @@ export function DigitalTwinViewer({
           wrapper.name = assetObject.name;
           assetObject.userData.isLoadedAsset = true;
           wrapper.add(assetObject);
+          // Frame airlock: every loader emits its geometry in three's Y-up
+          // frame (g = S·b — generic STL, PBS rotateX, the binding-gate swap,
+          // and the fiber/rf_cable labMmToFiberThree spline coords all bake in
+          // S). Under labRoot (which carries the single world swap S) wrappers
+          // live in canonical Z-up, so left-multiplying the asset root by S⁻¹
+          // converts the WHOLE subtree's contribution back to Z-up body b
+          // (S⁻¹·g = b) uniformly — orientation and the internal aperture
+          // offset alike — making the render compose as S·M·b. This is the one
+          // place Y-up→Z-up normalization happens; the per-loader S stays an
+          // internal detail the boundary absorbs.
+          assetObject.quaternion.premultiply(labRootSwapInverseQuaternion());
           applyObjectGeometryOffset(assetObject, effectivePlacement);
           wrapper.userData.componentId = component.id;
           wrapper.userData.objectId = placement.id;
@@ -3979,8 +4182,8 @@ export function DigitalTwinViewer({
         const compB = componentById.get(objectB.componentId);
         const anchorA = worldAnchor(objectA, compA, targetA.anchorId, compA?.asset3dId ? assetById.get(compA.asset3dId) : null);
         const anchorB = worldAnchor(objectB, compB, targetB.anchorId, compB?.asset3dId ? assetById.get(compB.asset3dId) : null);
-        const pointA = labToThree(anchorA.position);
-        const pointB = labToThree(anchorB.position);
+        const pointA = labToThreeLocal(anchorA.position);
+        const pointB = labToThreeLocal(anchorB.position);
         const material = new THREE.LineBasicMaterial({
           color: relation.solved ? "#22c55e" : "#f97316",
           transparent: true,
@@ -4038,7 +4241,6 @@ export function DigitalTwinViewer({
     // source of truth for beam visualisation now.
 
     function renderRayTraces() {
-      if (!renderCtx.overlayFlags.beam_segments) return;
       clearGroup(beamGroup);
 
       // Phase 6.5 — draw beams from the v3 backend trace (lab segments
@@ -4051,7 +4253,9 @@ export function DigitalTwinViewer({
       // optic.
       //
       // Lab frame uses Z-up + mm; three.js uses Y-up + units = mm/100.
-      // Mapping: three.x = lab.x/100, three.y = lab.z/100, three.z = -lab.y/100.
+      // The beam line geometry renders UNDER labRoot, which carries the
+      // single Z-up→Y-up swap S, so segment endpoints stay in raw Z-up
+      // (pure scale /100, no swap): three.local = (lab.x, lab.y, lab.z)/100.
       //
       // Phase 7.3 — legacy in-browser `traceBeamsFromLasers` is no
       // longer invoked. `window.__rayTraceDebug` is now populated by
@@ -4067,6 +4271,16 @@ export function DigitalTwinViewer({
         : [];
 
       const labSegments = v3LabSegmentsRef.current;
+      const laserSource0PropagationAudit = buildLaserSource0PropagationAudit(
+        labSegments,
+        sceneData.objects,
+        sceneData.components,
+      );
+      setLaserSource0AuditRows((prev) =>
+        JSON.stringify(prev) === JSON.stringify(laserSource0PropagationAudit)
+          ? prev
+          : laserSource0PropagationAudit,
+      );
       // Single chokepoint for the cross-component debug bridge — see
       // three/debugBridge.ts for the type + consumer notes. Adapter
       // output is structurally compatible with TraceSegment for the
@@ -4076,17 +4290,19 @@ export function DigitalTwinViewer({
         v3LabSegments: labSegments as unknown as DebugLabSegment[],
         rayTraceDebug: adaptedTraces as unknown as DebugTraceSegment[],
         beamGroup,
+        laserSource0PropagationAudit,
       });
+      if (!renderCtx.overlayFlags.beam_segments) return;
       for (const seg of labSegments) {
         const startThree = new THREE.Vector3(
           mmToThree(seg.start.x),
+          mmToThree(seg.start.y),
           mmToThree(seg.start.z),
-          mmToThree(-seg.start.y),
         );
         const endThree = new THREE.Vector3(
           mmToThree(seg.end.x),
+          mmToThree(seg.end.y),
           mmToThree(seg.end.z),
-          mmToThree(-seg.end.y),
         );
         const colorHex = wavelengthToColor(seg.wavelengthNm);
         const geom = new THREE.BufferGeometry().setFromPoints([startThree, endThree]);
@@ -4359,19 +4575,20 @@ export function DigitalTwinViewer({
       typeof objProps.radiusMm === "number" ? objProps.radiusMm :
       typeof compProps.radiusMm === "number" ? compProps.radiusMm : 1.0;
 
+    // Z-up: lab/body-local mm ↔ labRoot-local three units is pure scale.
     const labMmToLocalThree = (xMm: number, yMm: number, zMm: number) =>
-      new THREE.Vector3(xMm / 100, zMm / 100, -yMm / 100);
+      new THREE.Vector3(xMm / 100, yMm / 100, zMm / 100);
     const offsetMmToLocalThree = (dxMm: number, dyMm: number, dzMm: number) =>
-      new THREE.Vector3(dxMm / 100, dzMm / 100, -dyMm / 100);
+      new THREE.Vector3(dxMm / 100, dyMm / 100, dzMm / 100);
     const localThreeToLabMm = (v: THREE.Vector3): [number, number, number] => [
       v.x * 100,
-      -v.z * 100,
       v.y * 100,
+      v.z * 100,
     ];
     const offsetLocalThreeToLabMm = (v: THREE.Vector3): [number, number, number] => [
       v.x * 100,
-      -v.z * 100,
       v.y * 100,
+      v.z * 100,
     ];
 
     // Dim every component except the fiber being edited.
@@ -4680,8 +4897,8 @@ export function DigitalTwinViewer({
             : (tag === "A" ? nodes[0].handleOutMm : nodes[nodes.length - 1].handleInMm) ?? [0, 30, 0];
           child.position.set(
             livePosMm[0] / 100,
+            livePosMm[1] / 100,
             livePosMm[2] / 100,
-            -livePosMm[1] / 100,
           );
           applyFiberFerruleOrientation(
             child,
@@ -5204,12 +5421,12 @@ export function DigitalTwinViewer({
     const radiusMm = 1.6;  // RG-316 jacket
 
     const labMmToLocalThree = (xMm: number, yMm: number, zMm: number) =>
-      new THREE.Vector3(xMm / 100, zMm / 100, -yMm / 100);
+      new THREE.Vector3(xMm / 100, yMm / 100, zMm / 100);
     const localThreeToLabMm = (v: THREE.Vector3): [number, number, number] => [
-      v.x * 100, -v.z * 100, v.y * 100,
+      v.x * 100, v.y * 100, v.z * 100,
     ];
     const offsetLocalThreeToLabMm = (v: THREE.Vector3): [number, number, number] => [
-      v.x * 100, -v.z * 100, v.y * 100,
+      v.x * 100, v.y * 100, v.z * 100,
     ];
 
     // Dim every component except the rf_cable being edited (same dimming
@@ -5606,7 +5823,7 @@ export function DigitalTwinViewer({
     if (ids.size === 0) return;
 
     const labMmToLocalThree = (xMm: number, yMm: number, zMm: number) =>
-      new THREE.Vector3(xMm / 100, zMm / 100, -yMm / 100);
+      new THREE.Vector3(xMm / 100, yMm / 100, zMm / 100);
 
     const markerGeometry = new THREE.SphereGeometry(0.00225, 16, 12); // 0.225 mm (20× shrunk from 4.5 mm)
     const markerMat = new THREE.MeshBasicMaterial({
@@ -5690,7 +5907,7 @@ export function DigitalTwinViewer({
     if (ids.size === 0) return;
 
     const labMmToLocalThree = (xMm: number, yMm: number, zMm: number) =>
-      new THREE.Vector3(xMm / 100, zMm / 100, -yMm / 100);
+      new THREE.Vector3(xMm / 100, yMm / 100, zMm / 100);
 
     const markerGeometry = new THREE.SphereGeometry(0.00225, 16, 12); // 0.225 mm (20× shrunk from 4.5 mm)
     const markerMat = new THREE.MeshBasicMaterial({
@@ -5805,6 +6022,21 @@ export function DigitalTwinViewer({
         )}
       </div>
       <ToolbarHint displayMode={displayMode} gizmoMode={gizmoMode} />
+      {laserSource0AuditRows.length > 0 && (
+        <div className="laser-source-audit-panel" aria-label="LASER_SOURCE0 propagation">
+          <div className="laser-source-audit-title">LASER_SOURCE0 propagation</div>
+          {laserSource0AuditRows.slice(0, 8).map((entry) => (
+            <div className="laser-source-audit-row" key={`${entry.segmentIndex}:${entry.hitObjectId ?? "free"}`}>
+              <div>{`emitter = ${entry.emitter}`}</div>
+              <div>{`${entry.index + 1}. ${entry.from} -> ${entry.to}`}</div>
+              <div>{`dir = ${formatLabVector(entry.dir, 6)}`}</div>
+              <div>{`pol = ${formatLabVector(entry.polarization, 6)}`}</div>
+              <div>{entry.beamLine}</div>
+              <div>{`hit = ${entry.bindingId ?? "-"} / ${entry.faceInId ?? "-"}`}</div>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="viewer-display-modes" role="group" aria-label="Display mode">
         {DISPLAY_MODE_OPTIONS.map(({ mode, title, Icon }) => (
           <button

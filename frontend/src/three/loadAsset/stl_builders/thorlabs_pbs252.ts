@@ -114,8 +114,6 @@ export function buildPbs252BeamSplitterObject(
   // tree level (bindingRendererGate), so PBS252 must NOT also route through
   // that path or it double-swaps. The editor traces its beam in the same raw
   // CAD frame it renders the mesh in, so it needs no swap and never calls this.
-  group.rotateX(-Math.PI / 2);
-
   geometry.dispose();
   return group;
 }

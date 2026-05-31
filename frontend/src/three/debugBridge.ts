@@ -62,6 +62,7 @@ export type QmemDebugGlobals = {
   __rayTraceDebug?: DebugTraceSegment[];
   __beamGroup?: THREE.Group;
   __v3LabSegments?: DebugLabSegment[];
+  __laserSource0PropagationAudit?: unknown[];
 };
 
 type DebugWindow = Window & QmemDebugGlobals;
@@ -73,12 +74,16 @@ export function publishQmemDebug(payload: {
   rayTraceDebug?: DebugTraceSegment[];
   beamGroup?: THREE.Group;
   v3LabSegments?: DebugLabSegment[];
+  laserSource0PropagationAudit?: unknown[];
 }): void {
   if (typeof window === "undefined") return;
   const w = window as DebugWindow;
   if (payload.rayTraceDebug !== undefined) w.__rayTraceDebug = payload.rayTraceDebug;
   if (payload.beamGroup !== undefined) w.__beamGroup = payload.beamGroup;
   if (payload.v3LabSegments !== undefined) w.__v3LabSegments = payload.v3LabSegments;
+  if (payload.laserSource0PropagationAudit !== undefined) {
+    w.__laserSource0PropagationAudit = payload.laserSource0PropagationAudit;
+  }
 }
 
 /** Typed read of the bridge. Prefer this over inline
@@ -95,5 +100,6 @@ export function readQmemDebug(): QmemDebugGlobals {
     __rayTraceDebug: w.__rayTraceDebug,
     __beamGroup: w.__beamGroup,
     __v3LabSegments: w.__v3LabSegments,
+    __laserSource0PropagationAudit: w.__laserSource0PropagationAudit,
   };
 }

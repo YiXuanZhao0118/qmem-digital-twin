@@ -24,6 +24,12 @@
 // (lab = pose + R_z · R_x · R_y · body). Kept inline rather than calling
 // `bodyLocalDirToLabDir` so this module stays self-contained / testable.
 
+import {
+  dirBodyToLab,
+  dirLabToBody,
+  pointBodyToLab,
+  pointLabToBody,
+} from "../optical/pose";
 import { FIBER_FERRULE_TIP_MM } from "./fiberAnchorResolver";
 
 export type Vec3Tuple = [number, number, number];
@@ -97,6 +103,24 @@ export interface FiberAlignmentCandidate extends FiberEndAlignmentResult {
 }
 
 function makePoseTransforms(pose: FiberAlignPose) {
+  return {
+    bodyToLab: (v: Vec3Tuple): Vec3Tuple => {
+      const out = pointBodyToLab({ x: v[0], y: v[1], z: v[2] }, pose);
+      return [out.x, out.y, out.z];
+    },
+    labToBody: (v: Vec3Tuple): Vec3Tuple => {
+      const out = pointLabToBody({ x: v[0], y: v[1], z: v[2] }, pose);
+      return [out.x, out.y, out.z];
+    },
+    rotateLabDirToBody: (v: Vec3Tuple): Vec3Tuple => {
+      const out = dirLabToBody({ x: v[0], y: v[1], z: v[2] }, pose);
+      return [out.x, out.y, out.z];
+    },
+    rotateBodyDirToLab: (v: Vec3Tuple): Vec3Tuple => {
+      const out = dirBodyToLab({ x: v[0], y: v[1], z: v[2] }, pose);
+      return [out.x, out.y, out.z];
+    },
+  };
   const rxr = (pose.rxDeg * Math.PI) / 180;
   const ryr = (pose.ryDeg * Math.PI) / 180;
   const rzr = (pose.rzDeg * Math.PI) / 180;

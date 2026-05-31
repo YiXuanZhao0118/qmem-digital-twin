@@ -315,7 +315,7 @@ export function collectMeshVertexSnaps(
 ): SnapTarget[] {
   componentGroup.updateMatrixWorld(true);
   const out: SnapTarget[] = [];
-  const candidateThree = new THREE.Vector3(candidate.x / 100, candidate.z / 100, -candidate.y / 100);
+  const candidateThree = new THREE.Vector3(candidate.x / 100, candidate.y / 100, candidate.z / 100);
 
   componentGroup.traverse((node) => {
     if (!(node as THREE.Mesh).isMesh) return;
@@ -364,7 +364,7 @@ export function collectMeshFaceCentroidSnaps(
 ): SnapTarget[] {
   componentGroup.updateMatrixWorld(true);
   const out: SnapTarget[] = [];
-  const candidateThree = new THREE.Vector3(candidate.x / 100, candidate.z / 100, -candidate.y / 100);
+  const candidateThree = new THREE.Vector3(candidate.x / 100, candidate.y / 100, candidate.z / 100);
 
   componentGroup.traverse((node) => {
     if (!(node as THREE.Mesh).isMesh) return;
@@ -406,7 +406,7 @@ export function collectMeshFaceCentroidSnaps(
       out.push({
         kind: "mesh_face_centroid",
         pointLab: lab,
-        directionLab: { x: bestFace.n.x, y: -bestFace.n.z, z: bestFace.n.y },
+        directionLab: { x: bestFace.n.x, y: bestFace.n.y, z: bestFace.n.z },
         ref: { objectId, componentId, anchorId: bestFace.label },
         label: `${bestFace.label} of ${mesh.name || componentId.slice(0, 6)}`,
         distanceMm: distance(candidate, lab),

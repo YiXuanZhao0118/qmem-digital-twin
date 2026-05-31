@@ -4,10 +4,10 @@ import type { FiberEndPlacement, FiberNode } from "./types";
 
 /** Lab (mm) → fiber-wrapper-local three units. Shared with rf_cable/. */
 export const labMmToFiberThree = (p: [number, number, number]) =>
-  new THREE.Vector3(p[0] / 100, p[2] / 100, -p[1] / 100);
+  new THREE.Vector3(p[0] / 100, p[1] / 100, p[2] / 100);
 
 export const offsetMmToFiberThree = (d: [number, number, number]) =>
-  new THREE.Vector3(d[0] / 100, d[2] / 100, -d[1] / 100);
+  new THREE.Vector3(d[0] / 100, d[1] / 100, d[2] / 100);
 
 export function buildFiberCurvePath(nodes: FiberNode[]): THREE.CurvePath<THREE.Vector3> {
   const path = new THREE.CurvePath<THREE.Vector3>();
@@ -104,7 +104,7 @@ export function applyFiberFerruleOrientation(
     -tensionHandleMm[2] / mag,
   );
   // Convert body-direction to three-frame: body (x,y,z) → three (x, z, -y).
-  const tipThree = new THREE.Vector3(tipBody.x, tipBody.z, -tipBody.y);
+  const tipThree = new THREE.Vector3(tipBody.x, tipBody.y, tipBody.z);
   // Rotate connector local +Y to the target direction.
   const alignQ = new THREE.Quaternion().setFromUnitVectors(
     new THREE.Vector3(0, 1, 0),

@@ -16,7 +16,11 @@ import type {
   LabRotation,
 } from "./engine";
 import { computePlacement } from "./engine";
-import { threeToLabPointMm } from "../../optical/frames";
+import {
+  labMmToThree,
+  sceneObjectEulerFromQuaternion,
+  threeToLabPointMm,
+} from "../../optical/frames";
 
 export type GizmoOrientation = "global" | "local" | "beam";
 
@@ -143,30 +147,22 @@ export class PlacementGizmo {
         // is now sent for ALL wrappers including followers — multi-rotate
         // would be silently broken otherwise.
         if (this.selectedRigid.length > 0 && this.attachedObject && this.lastResult) {
-          const followers = this.selectedRigid.slice(1).map((f) => {
-            const e = new THREE.Euler().setFromQuaternion(f.group.quaternion, "YXZ");
-            return {
-              objectId: f.id,
-              positionLab: threeToLabPointMm(f.group.position) as LabPoint,
-              rotationLab: {
-                rxDeg: (e.x * 180) / Math.PI,
-                ryDeg: -(e.z * 180) / Math.PI,
-                rzDeg: (e.y * 180) / Math.PI,
-              } as LabRotation,
-            };
-          });
+          const followers = this.selectedRigid.slice(1).map((f) => ({
+            objectId: f.id,
+            positionLab: threeToLabPointMm(f.group.getWorldPosition(new THREE.Vector3())) as LabPoint,
+            rotationLab: sceneObjectEulerFromQuaternion(
+              f.group.getWorldQuaternion(new THREE.Quaternion()),
+            ) as LabRotation,
+          }));
           // Primary's lastResult.rotationLab might be stale (engine path
           // doesn't always populate it). Read the wrapper directly so the
           // committed rotation matches what the user sees.
           const primaryGroup = this.selectedRigid[0].group;
-          const eP = new THREE.Euler().setFromQuaternion(primaryGroup.quaternion, "YXZ");
           const primaryResult: PlacementResult = {
             ...this.lastResult,
-            rotationLab: {
-              rxDeg: (eP.x * 180) / Math.PI,
-              ryDeg: -(eP.z * 180) / Math.PI,
-              rzDeg: (eP.y * 180) / Math.PI,
-            },
+            rotationLab: sceneObjectEulerFromQuaternion(
+              primaryGroup.getWorldQuaternion(new THREE.Quaternion()),
+            ),
           };
           this.callbacks.onDragEnd({
             primary: { objectId: this.attachedObject.id, result: primaryResult },
@@ -223,11 +219,11 @@ export class PlacementGizmo {
     const { primary, followers = [] } = args;
     // Position proxy at the requested pivot (lab mm → three units).
     if (args.pivotLabMm) {
-      this.proxy.position.set(
-        args.pivotLabMm.x / 100,
-        args.pivotLabMm.z / 100,
-        -args.pivotLabMm.y / 100,
-      );
+      this.proxy.position.copy(labMmToThree({
+        xMm: args.pivotLabMm.x,
+        yMm: args.pivotLabMm.y,
+        zMm: args.pivotLabMm.z,
+      }));
     } else {
       // Fallback: proxy at primary's wrapper world position.
       const w = new THREE.Vector3();
@@ -246,8 +242,11 @@ export class PlacementGizmo {
       id: s.id,
       componentId: s.componentId,
       group: s.group,
-      initialPosThree: s.group.position.clone(),
-      initialQuat: s.group.quaternion.clone(),
+      // Capture the wrapper's WORLD pose — the proxy + rigid-delta math runs
+      // in three-world. Under labRoot the wrapper's LOCAL transform is raw
+      // Z-up, so reading .position/.quaternion directly would mix frames.
+      initialPosThree: s.group.getWorldPosition(new THREE.Vector3()),
+      initialQuat: s.group.getWorldQuaternion(new THREE.Quaternion()),
     }));
 
     this.controls.attach(this.proxy);
@@ -261,12 +260,10 @@ export class PlacementGizmo {
     }
     // Keep the legacy attachedObject + followers fields populated so the
     // single-object snap-engine path (computePlacement) still works.
-    const labCurrent: LabPoint = threeToLabPointMm(primary.group.position);
-    const labRotation: LabRotation = {
-      rxDeg: (primary.group.rotation.x * 180) / Math.PI,
-      ryDeg: -(primary.group.rotation.z * 180) / Math.PI,
-      rzDeg: (primary.group.rotation.y * 180) / Math.PI,
-    };
+    const labCurrent: LabPoint = threeToLabPointMm(primary.group.getWorldPosition(new THREE.Vector3()));
+    const labRotation: LabRotation = sceneObjectEulerFromQuaternion(
+      primary.group.getWorldQuaternion(new THREE.Quaternion()),
+    );
     this.attachedObject = {
       id: primary.id,
       componentId: primary.componentId,
@@ -278,7 +275,7 @@ export class PlacementGizmo {
       id: f.id,
       componentId: f.componentId,
       group: f.group,
-      initialLab: threeToLabPointMm(f.group.position),
+      initialLab: threeToLabPointMm(f.group.getWorldPosition(new THREE.Vector3())),
     }));
     this.applyOrientation();
   }
@@ -332,15 +329,39 @@ export class PlacementGizmo {
     }
   }
 
+  /** Apply a three-WORLD pose to a wrapper that lives UNDER labRoot. The
+   *  proxy + rigid-delta math all runs in three-world; wrappers however store
+   *  RAW Z-up labRoot-local transforms (labRoot/componentGroup carry the
+   *  single swap S), so convert through the wrapper's parent on the way in.
+   *  Reading the parent's live world matrix/quaternion keeps this correct
+   *  even if componentGroup ever gains a non-identity transform. */
+  private applyWorldPoseToWrapper(
+    group: THREE.Object3D,
+    worldPos: THREE.Vector3,
+    worldQuat?: THREE.Quaternion,
+  ): void {
+    const parent = group.parent;
+    if (parent) {
+      parent.updateWorldMatrix(true, false);
+      group.position.copy(parent.worldToLocal(worldPos.clone()));
+      if (worldQuat) {
+        const parentQuat = parent.getWorldQuaternion(new THREE.Quaternion());
+        group.quaternion.copy(parentQuat.invert().multiply(worldQuat));
+      }
+    } else {
+      group.position.copy(worldPos);
+      if (worldQuat) group.quaternion.copy(worldQuat);
+    }
+    group.updateMatrixWorld(true);
+  }
+
   private applySnapToGizmo(snapLab: LabPoint): void {
     if (!this.attachedObject) return;
-    // Convert lab → THREE units and update the attached group's position.
-    this.attachedObject.group.position.set(
-      snapLab.x / 100,
-      snapLab.z / 100,
-      -snapLab.y / 100,
+    // snapLab → three-WORLD (S-swapped) → raw Z-up labRoot-local on the wrapper.
+    this.applyWorldPoseToWrapper(
+      this.attachedObject.group,
+      labMmToThree({ xMm: snapLab.x, yMm: snapLab.y, zMm: snapLab.z }),
     );
-    this.attachedObject.group.updateMatrixWorld(true);
   }
 
   private runEngineFromGizmoPose(): void {
@@ -360,11 +381,11 @@ export class PlacementGizmo {
     for (const sel of this.selectedRigid) {
       const relative = sel.initialPosThree.clone().sub(this.initialProxyPosThree);
       relative.applyQuaternion(deltaQuat);
-      const newPos = this.initialProxyPosThree.clone().add(deltaPos).add(relative);
-      sel.group.position.copy(newPos);
-      const newQuat = deltaQuat.clone().multiply(sel.initialQuat);
-      sel.group.quaternion.copy(newQuat);
-      sel.group.updateMatrixWorld(true);
+      // newWorldPos/newWorldQuat are three-WORLD (rigid transform about the
+      // proxy origin). Convert onto the wrapper's raw Z-up labRoot-local frame.
+      const newWorldPos = this.initialProxyPosThree.clone().add(deltaPos).add(relative);
+      const newWorldQuat = deltaQuat.clone().multiply(sel.initialQuat);
+      this.applyWorldPoseToWrapper(sel.group, newWorldPos, newWorldQuat);
     }
 
     // For SINGLE-object selection we still run the snap engine — it gives
@@ -375,7 +396,7 @@ export class PlacementGizmo {
     let result: PlacementResult;
     if (this.selectedRigid.length === 1) {
       const sel = this.selectedRigid[0];
-      const candidatePosLab: LabPoint = threeToLabPointMm(sel.group.position);
+      const candidatePosLab: LabPoint = threeToLabPointMm(sel.group.getWorldPosition(new THREE.Vector3()));
       const input: PlacementInput = {
         scene: this.config.scene(),
         cursorMm: this.config.cursorMm(),
@@ -402,16 +423,18 @@ export class PlacementGizmo {
       // the snapped position. Without this the gizmo would snap-jump and
       // then immediately un-snap on the next mouse move.
       if (result.snappedTo) {
-        const snapThree = new THREE.Vector3(
-          result.positionLab.x / 100,
-          result.positionLab.z / 100,
-          -result.positionLab.y / 100,
-        );
-        sel.group.position.copy(snapThree);
-        sel.group.updateMatrixWorld(true);
+        // Snapped position in three-WORLD (S-swapped). The proxy lives in
+        // world so its correction uses snapWorld directly; the wrapper gets
+        // the raw Z-up labRoot-local conversion.
+        const snapWorld = labMmToThree({
+          xMm: result.positionLab.x,
+          yMm: result.positionLab.y,
+          zMm: result.positionLab.z,
+        });
+        this.applyWorldPoseToWrapper(sel.group, snapWorld);
         // The proxy is at the same delta from the wrapper as before — just
         // shift it by the snap correction to keep them aligned.
-        const correction = snapThree.clone().sub(
+        const correction = snapWorld.clone().sub(
           this.initialProxyPosThree.clone().add(deltaPos),
         );
         this.proxy.position.add(correction);
@@ -421,7 +444,7 @@ export class PlacementGizmo {
       // Multi-select: synthesise a no-snap result for the primary so the
       // existing UI plumbing stays happy.
       const primary = this.selectedRigid[0];
-      const primaryLab: LabPoint = threeToLabPointMm(primary.group.position);
+      const primaryLab: LabPoint = threeToLabPointMm(primary.group.getWorldPosition(new THREE.Vector3()));
       result = {
         positionLab: primaryLab,
         snappedTo: null,

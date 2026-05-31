@@ -20,6 +20,7 @@ import type {
   SceneObject,
 } from "../types/digitalTwin";
 import { bodyLocalDirToLabDir, threeToLabPointMm } from "../optical/frames";
+import { dirLabToBody } from "../optical/pose";
 import { anchorObjectLocalLegacyDir, anchorObjectLocalPos } from "./anchorAccess";
 import { getEffectiveApertureMm, getMirrorNormalBodyLocal } from "./v2Bindings";
 import { FIBER_FERRULE_TIP_MM } from "./fiberAnchorResolver";
@@ -1523,11 +1524,21 @@ export function findFiberEndSnap(
   }
   if (!best) return null;
 
+  const fiberPose = {
+    xMm: fiberObj.xMm,
+    yMm: fiberObj.yMm,
+    zMm: fiberObj.zMm,
+    rxDeg: fiberObj.rxDeg,
+    ryDeg: fiberObj.ryDeg,
+    rzDeg: fiberObj.rzDeg,
+  };
+
   // Body inverse rotation (lab → body) for direction vectors.
   const labDirToBody = (v: Vec3): Vec3 => {
-    const rx = -((fiberObj.rxDeg) * Math.PI) / 180;
-    const ry = -((fiberObj.ryDeg) * Math.PI) / 180;
-    const rz = -((fiberObj.rzDeg) * Math.PI) / 180;
+    return dirLabToBody(v, fiberPose);
+    const rx = -((fiberPose.rxDeg) * Math.PI) / 180;
+    const ry = -((fiberPose.ryDeg) * Math.PI) / 180;
+    const rz = -((fiberPose.rzDeg) * Math.PI) / 180;
     const cx = Math.cos(rx), sxr = Math.sin(rx);
     const cy = Math.cos(ry), syr = Math.sin(ry);
     const cz = Math.cos(rz), szr = Math.sin(rz);

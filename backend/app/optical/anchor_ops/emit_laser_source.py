@@ -40,14 +40,19 @@ def _q_at_waist_mm(w0_um: float, wavelength_nm: float) -> complex:
     return complex(0.0, zR_mm)
 
 
-def _pick_polarization(default_params: dict) -> tuple[complex, complex]:
-    pol = default_params.get("polarization")
-    if isinstance(pol, dict):
-        ex_re = float(pol.get("exRe", 1.0))
-        ex_im = float(pol.get("exIm", 0.0))
-        ey_re = float(pol.get("eyRe", 0.0))
-        ey_im = float(pol.get("eyIm", 0.0))
-        return (complex(ex_re, ex_im), complex(ey_re, ey_im))
+def _pick_polarization(dynamic: dict, default_params: dict) -> tuple[complex, complex]:
+    # Per-instance polarization (SceneObject.dynamic_sources) wins over the
+    # asset default. Accept both the legacy flat shape (exRe/exIm/eyRe/eyIm)
+    # and the V2 beam shape (polarization.jones.{exRe,…}).
+    for src in (dynamic, default_params):
+        pol = (src or {}).get("polarization")
+        if isinstance(pol, dict):
+            j = pol.get("jones") if isinstance(pol.get("jones"), dict) else pol
+            if isinstance(j, dict) and any(k in j for k in ("exRe", "exIm", "eyRe", "eyIm")):
+                return (
+                    complex(float(j.get("exRe", 1.0)), float(j.get("exIm", 0.0))),
+                    complex(float(j.get("eyRe", 0.0)), float(j.get("eyIm", 0.0))),
+                )
     return (complex(1.0, 0.0), complex(0.0, 0.0))
 
 
@@ -70,7 +75,7 @@ def _ray_from_anchor(
         else default_params.get("nominalPowerMw", 1.0)
     )
 
-    jones_body = _pick_polarization(default_params)
+    jones_body = _pick_polarization(dynamic, default_params)
     jones_lab = jones_body_to_lab(
         jones_body, anchor.axis_x_body, dir_lab,
         lambda v: dir_body_to_lab_t(v, slot_transform),

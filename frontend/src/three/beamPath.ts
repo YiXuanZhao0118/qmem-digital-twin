@@ -1,14 +1,16 @@
 import * as THREE from "three";
 
 import type { BeamPath } from "../types/digitalTwin";
-import { labToThreeVector } from "./transformUtils";
+import { labToThreeVectorLocal } from "./transformUtils";
 
 export function createBeamPath(beamPath: BeamPath, active: boolean): THREE.Group {
   const group = new THREE.Group();
   group.name = `beam-${beamPath.id}`;
   group.userData.beamPathId = beamPath.id;
 
-  const points = beamPath.points.map(labToThreeVector);
+  // Rendered under labRoot (carries the Z-up→Y-up swap S), so points stay in
+  // raw Z-up labRoot-local units (pure scale, no swap).
+  const points = beamPath.points.map((p) => labToThreeVectorLocal(p));
   if (points.length < 2) return group;
 
   const geometry = new THREE.BufferGeometry().setFromPoints(points);

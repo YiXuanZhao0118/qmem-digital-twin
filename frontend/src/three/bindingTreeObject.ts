@@ -58,21 +58,25 @@ export async function buildBindingTreeObject(
 ): Promise<THREE.Group> {
   const parent = new THREE.Group();
   for (const node of nodes) {
-    const loaded = await loader(node);
-    if (loaded === null) continue;
+    const content = await loader(node);
+    if (content === null) continue;
 
-    applyBindingLocalTransform(loaded, node);
+    const pivot = new THREE.Group();
+    pivot.name = content.name || node.binding.id;
+    applyBindingLocalTransform(pivot, node);
+    pivot.add(content);
 
     // Recurse into children — each becomes a sub-group attached to
-    // ``loaded`` so their transforms stack on top of this node's pose.
+    // the binding pivot so asset-root corrections do not affect them.
     if (node.children.length > 0) {
       const childGroup = await buildBindingTreeObject(node.children, loader);
       childGroup.userData.__bindingChildrenOf = node.binding.id;
-      loaded.add(childGroup);
+      pivot.add(childGroup);
     }
 
-    loaded.userData.__bindingId = node.binding.id;
-    parent.add(loaded);
+    pivot.userData.__bindingId = node.binding.id;
+    content.userData.__bindingId = node.binding.id;
+    parent.add(pivot);
   }
   return parent;
 }

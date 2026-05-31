@@ -1079,6 +1079,42 @@ h3 {
   padding: 4px 6px;
 }
 
+.laser-source-audit-panel {
+  position: absolute;
+  top: 232px;
+  right: max(14px, calc(100% - 100vw + 14px));
+  z-index: 5;
+  width: min(460px, max(260px, calc(100vw - 360px)));
+  max-height: min(56vh, 520px);
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid rgba(125, 211, 252, 0.72);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.82);
+  color: #e0f2fe;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(10px);
+  font-family: Consolas, "Segoe UI Mono", monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  pointer-events: auto;
+}
+
+.laser-source-audit-title {
+  margin-bottom: 8px;
+  color: #7dd3fc;
+  font-family: "Inter", "Segoe UI", sans-serif;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.laser-source-audit-row {
+  padding: 7px 0;
+  border-top: 1px solid rgba(125, 211, 252, 0.18);
+  white-space: pre-wrap;
+}
+
 .viewer-display-modes {
   position: absolute;
   top: 14px;

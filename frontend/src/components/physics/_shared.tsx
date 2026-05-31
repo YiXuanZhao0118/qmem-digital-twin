@@ -10,6 +10,7 @@
  * Consumed by PhysicsElementPanel + the inspectors that need them.
  */
 import { useEffect, useMemo, useState } from "react";
+import * as THREE from "three";
 
 import { useSceneStore } from "../../store/sceneStore";
 import type {
@@ -23,6 +24,7 @@ import {
   findSnapToBeam,
   perpendicularBasis,
 } from "../../utils/beamPlacement";
+import { anchorObjectLocalAxisX } from "../../utils/anchorAccess";
 import {
   syncFiberNodesFromKindParams,
   type FiberEndKindParamsShape,
@@ -34,6 +36,7 @@ import {
   setEmissionVisualPatch,
 } from "../../utils/emissionVisuals";
 import { wavelengthToColor } from "../../three/opticalBeams";
+import { sceneObjectEulerFromQuaternion } from "../../optical/frames";
 // The kind-specific Controls live in sibling files; AlignToBeamSection
 // dispatches into them based on element.elementKind.
 import {
@@ -122,6 +125,59 @@ function findElementForObject(elements: PhysicsElement[], objectId: string): Phy
 }
 
 
+/** Euler (deg) for a SceneObject so its anchor optical-axis (body-local axisX)
+ *  points anti-parallel to the beam — i.e. the element faces the beam at normal
+ *  incidence. The v3 tracer only strikes an element when
+ *  `beamDir·anchorNormal ≠ 0` (anchor_tracer.intersect_anchor); a transmissive
+ *  element whose optic axis is perpendicular to the beam is grazed and skipped.
+ *
+ *  Works entirely in lab Z-up coords. The backend pose rotation
+ *  (`pose._rotation_of` = scipy YXZ [rz, rx, -ry]) equals THREE's
+ *  Euler(rx, rz, -ry, "YXZ") as a rotation acting on Z-up vectors. So we build
+ *  R from the raw Z-up axisX → -beamDir (NO Y-up swap — swapping first rotates
+ *  the wrong physical axis) and decompose with the same convention
+ *  rigidGroup.ts uses. The element is rotation-symmetric about its optic axis,
+ *  so the residual spin setFromUnitVectors picks is physically irrelevant. */
+function poseAligningAnchorAxisToDir(
+  anchorAxisXBody: { x: number; y: number; z: number },
+  targetDirLab: { x: number; y: number; z: number },
+): { rxDeg: number; ryDeg: number; rzDeg: number } {
+  const from = new THREE.Vector3(
+    anchorAxisXBody.x, anchorAxisXBody.y, anchorAxisXBody.z,
+  ).normalize();
+  const to = new THREE.Vector3(
+    targetDirLab.x, targetDirLab.y, targetDirLab.z,
+  ).normalize();
+  const q = new THREE.Quaternion().setFromUnitVectors(from, to);
+  return sceneObjectEulerFromQuaternion(q);
+}
+
+/** Transmissive optic: anchor optic-axis anti-parallel to the beam (normal
+ *  incidence) so the tracer strikes it (dir·normal ≠ 0). */
+function faceAnchorToBeamPose(
+  anchorAxisXBody: { x: number; y: number; z: number },
+  beamDirLab: { x: number; y: number; z: number },
+): { rxDeg: number; ryDeg: number; rzDeg: number } {
+  return poseAligningAnchorAxisToDir(anchorAxisXBody, {
+    x: -beamDirLab.x, y: -beamDirLab.y, z: -beamDirLab.z,
+  });
+}
+
+/** Fold mirror: set the intercept_face normal to the bisector
+ *  n̂ = normalize(d_out − d_in), so an incoming ray along d_in reflects to
+ *  d_out (reflection law d_out = d_in − 2(d_in·n̂)n̂). d_in/d_out are unit
+ *  propagation directions in lab. */
+function foldMirrorPose(
+  anchorAxisXBody: { x: number; y: number; z: number },
+  inDirLab: { x: number; y: number; z: number },
+  outDirLab: { x: number; y: number; z: number },
+): { rxDeg: number; ryDeg: number; rzDeg: number } {
+  const din = new THREE.Vector3(inDirLab.x, inDirLab.y, inDirLab.z).normalize();
+  const dout = new THREE.Vector3(outDirLab.x, outDirLab.y, outDirLab.z).normalize();
+  const n = dout.clone().sub(din).normalize(); // bisector normal
+  return poseAligningAnchorAxisToDir(anchorAxisXBody, { x: n.x, y: n.y, z: n.z });
+}
+
 export function AlignToBeamSection({
   sceneObject,
   elementKind,
@@ -158,14 +214,46 @@ export function AlignToBeamSection({
     setBusy(true);
     setFeedback(null);
     try {
-      await updateSceneObject(sceneObject.id, {
-        xMm: candidate.newBodyPos.x,
-        yMm: candidate.newBodyPos.y,
-        zMm: candidate.newBodyPos.z,
-      });
-      setFeedback(
-        `${candidate.anchorId} aligned to ${fromName} axis (was ${candidate.missMm.toFixed(1)} mm off, now 0).`,
-      );
+      // Transmissive elements (lens, waveplate, polarizer, eom, …) must FACE
+      // the beam (optic axis anti-parallel to it) or the tracer grazes their
+      // anchor plane and never strikes them. Reflective elements (mirror /
+      // dichroic / beam_splitter) keep their design-angle coating → translate
+      // only. Emitters early-return above and never reach here.
+      const facesBeam = !isMirror && !isBeamSplitter;
+      const comp = scene.components.find((c) => c.id === sceneObject.componentId);
+      const asset = comp?.asset3dId
+        ? scene.assets.find((a) => a.id === comp.asset3dId)
+        : undefined;
+      const matchedAnchor = asset?.anchors?.find((a) => a.id === candidate.anchorId);
+      const axisXBody = matchedAnchor ? anchorObjectLocalAxisX(matchedAnchor, asset) : null;
+
+      if (facesBeam && axisXBody) {
+        // 1) rotate to face the beam, then 2) re-snap translation at the new
+        // rotation (rotating moves the anchor, so candidate.newBodyPos is now
+        // stale). findSnapToBeam recomputes the anchor world pos.
+        const pose = faceAnchorToBeamPose(axisXBody, candidate.axisDirection);
+        await updateSceneObject(sceneObject.id, pose);
+        const fresh = findSnapToBeam(sceneObject.id, useSceneStore.getState().scene);
+        if (fresh) {
+          await updateSceneObject(sceneObject.id, {
+            xMm: fresh.newBodyPos.x,
+            yMm: fresh.newBodyPos.y,
+            zMm: fresh.newBodyPos.z,
+          });
+        }
+        setFeedback(
+          `${candidate.anchorId} faced + aligned to ${fromName} axis (was ${candidate.missMm.toFixed(1)} mm off).`,
+        );
+      } else {
+        await updateSceneObject(sceneObject.id, {
+          xMm: candidate.newBodyPos.x,
+          yMm: candidate.newBodyPos.y,
+          zMm: candidate.newBodyPos.z,
+        });
+        setFeedback(
+          `${candidate.anchorId} aligned to ${fromName} axis (was ${candidate.missMm.toFixed(1)} mm off, now 0).`,
+        );
+      }
     } catch (err) {
       setFeedback(`Align failed: ${(err as Error).message}`);
     } finally {

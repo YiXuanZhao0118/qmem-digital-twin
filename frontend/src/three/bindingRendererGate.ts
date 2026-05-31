@@ -37,6 +37,7 @@ import type {
 import { resolveBindingTree } from "../utils/componentBindings";
 import { loadAssetObject } from "./loadAsset";
 import { buildBindingTreeObject } from "./bindingTreeObject";
+import { GLAN_POLARIZER_PRISM_FILEPATH } from "./loadAsset/procedural/glan_polarizer_prism";
 
 
 // Per-componentType force-on (rarely needed once per-Component opt-in
@@ -143,7 +144,19 @@ export async function buildSceneObjectFromBindings(
     // for the legacy single-asset path and a composite Component
     // (isolator, mirror_mount, …) never has fiber-style per-instance
     // state on its root.
-    return loadAssetObject(component, node.target.asset, undefined, null, null, {
+    const loaderComponent = node.target.asset.filePath === GLAN_POLARIZER_PRISM_FILEPATH
+      ? ({
+          id: `binding-${node.target.asset.id}`,
+          name: node.target.asset.name ?? "glan",
+          kindId: node.target.asset.kindId ?? "glan_polarizer",
+          properties: {
+            ...(node.target.asset.defaultParams ?? {}),
+            ...(node.target.asset.properties ?? {}),
+          },
+          physicsCapabilities: ["optical"],
+        } as ComponentItem)
+      : component;
+    return loadAssetObject(loaderComponent, node.target.asset, undefined, null, null, {
       translucentHousing: renderHints?.translucentHousing,
       skipAutoCenter: true,
     });
@@ -165,7 +178,6 @@ export async function buildSceneObjectFromBindings(
   // (labMmToThree) puts it, for any object pose. The caller still applies
   // applyObjectGeometryOffset (origin nudge, three frame) to this Group.
   const group = new THREE.Group();
-  group.quaternion.setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0, "XYZ"));
   group.add(content);
   group.name = component.name;
   return group;

@@ -13,13 +13,23 @@
  * Frame conventions (see `optical/frames.ts`):
  *   - Body-local positions / directions on Asset3D anchors are Z-up mm.
  *   - Lab positions are Z-up mm.
- *   - Three.js render frame is Y-up; `labMmToThree` / `labToThreeVector`
- *     are the canonical mappings.
+ *   - The PPG wrapper renders UNDER `labRoot` (which carries the single
+ *     Z-up→Y-up swap S), so this whole computation stays in the canonical
+ *     Z-up lab frame: positions use `labMmToThreeLocal` (pure scale, no
+ *     swap), directions use `labDirToThreeLocal`, and the object rotation
+ *     M = `sceneObjectToQuaternion` is applied to Z-up offsets — matching
+ *     how the renderer composes world = S·M·b. The returned pose is
+ *     therefore labRoot-LOCAL (raw Z-up three units), ready to write to
+ *     `wrapper.position` / `wrapper.quaternion` under labRoot.
  */
 import * as THREE from "three";
 
 import type { Anchor, Asset3D, ComponentItem, SceneData, SceneObject } from "../types/digitalTwin";
-import { labMmToThree, labToThreeVector, sceneObjectToQuaternion } from "../optical/frames";
+import {
+  labDirToThreeLocal,
+  labMmToThreeLocal,
+  sceneObjectToQuaternion,
+} from "../optical/frames";
 import { anchorObjectLocalLegacyDir, anchorObjectLocalPos } from "./anchorAccess";
 
 type RfCableEndpoints = {
@@ -29,14 +39,15 @@ type RfCableEndpoints = {
 
 function anchorPosThree(anchor: Anchor, asset: Asset3D | null | undefined): THREE.Vector3 {
   // Asset anchors live in body frame — convert to object-local CAD frame
-  // before treating as an offset from the SceneObject's pose.
+  // before treating as an offset from the SceneObject's pose. Raw Z-up
+  // (labRoot supplies the swap), so M rotates it as a Z-up offset.
   const p = anchorObjectLocalPos(anchor, asset);
-  return labMmToThree({ xMm: p.x, yMm: p.y, zMm: p.z });
+  return labMmToThreeLocal({ xMm: p.x, yMm: p.y, zMm: p.z });
 }
 
 function anchorDirThree(anchor: Anchor, asset: Asset3D | null | undefined): THREE.Vector3 {
   const d = anchorObjectLocalLegacyDir(anchor, asset) ?? { x: 1, y: 0, z: 0 };
-  return labToThreeVector([d.x, d.y, d.z]).normalize();
+  return labDirToThreeLocal(d).normalize();
 }
 
 function findConnectingCable(scene: SceneData, ppgObjectId: string): {
@@ -69,7 +80,7 @@ function targetAnchorLabPose(
   anchor: Anchor,
   targetAsset: Asset3D | null | undefined,
 ): { posThree: THREE.Vector3; dirThree: THREE.Vector3 } {
-  const targetThreePos = labMmToThree({
+  const targetThreePos = labMmToThreeLocal({
     xMm: targetObj.xMm,
     yMm: targetObj.yMm,
     zMm: targetObj.zMm,

@@ -30,9 +30,9 @@ import { wavelengthToColor } from "../../three/opticalBeams";
 import { anchorObjectLocalPos } from "../../utils/anchorAccess";
 import * as THREE from "three";
 import {
-  bodyLocalDirToThree,
-  labDirToThree,
+  labDirToThreeLocal,
   rotateLabDir,
+  sceneObjectEulerFromQuaternion,
   threeToLabPointMm,
 } from "../../optical/frames";
 import { EmissionVisualRow } from "./_shared";
@@ -427,17 +427,22 @@ export function TaperedAmplifierAdjustControls({
     // DOWNSTREAM. setFromUnitVectors handles parallel/anti-parallel
     // degenerate cases (picks any 180° rotation about a perpendicular
     // axis).
+    // labRoot carries the world swap S and the wrapper quaternion is the
+    // plain Z-up pose M (render = S·M·b). The alignment is solved entirely in
+    // the RAW Z-up lab frame: finalQuat = R with R·axisBody = beam (both
+    // already Z-up). The old labDirToThree path swapped both into three-world
+    // and stored S·R·S⁻¹, which mis-rotates the chip under labRoot.
     const beamUnit = best.dir;
-    const axisBodyThree = bodyLocalDirToThree(axisBodyUnit).normalize();
-    const beamThree = labDirToThree(beamUnit).normalize();
-    const finalQuat = new THREE.Quaternion().setFromUnitVectors(axisBodyThree, beamThree);
+    const axisBodyLocal = labDirToThreeLocal(axisBodyUnit).normalize();
+    const beamLocal = labDirToThreeLocal(beamUnit).normalize();
+    const finalQuat = new THREE.Quaternion().setFromUnitVectors(axisBodyLocal, beamLocal);
 
-    // Translate so the rotated intercept_in lands on best.closest — the
-    // foot of the OLD intercept_in projection onto the beam. Picking
-    // this foot preserves the user's along-beam placement.
-    const inBodyThree = bodyLocalDirToThree(inBody);
-    inBodyThree.applyQuaternion(finalQuat);
-    const rotatedInOffsetLab = { x: inBodyThree.x, y: -inBodyThree.z, z: inBodyThree.y };
+    // Translate so the rotated intercept_in lands on best.closest — the foot
+    // of the OLD intercept_in projection onto the beam. R acts in raw Z-up, so
+    // the rotated body offset is a lab-mm vector directly (no swap/unswap).
+    const inBodyLocal = labDirToThreeLocal(inBody);
+    inBodyLocal.applyQuaternion(finalQuat);
+    const rotatedInOffsetLab = { x: inBodyLocal.x, y: inBodyLocal.y, z: inBodyLocal.z };
     const foot = best.closest;
     const nextXMm = foot.x - rotatedInOffsetLab.x;
     const nextYMm = foot.y - rotatedInOffsetLab.y;
@@ -447,10 +452,11 @@ export function TaperedAmplifierAdjustControls({
     // (three.x, three.y, -three.z) ↔ (rxDeg, rzDeg, ryDeg). See
     // sceneObjectToQuaternion in optical/frames.ts; wrong order silently
     // misplaces the chip.
-    const finalEuler = new THREE.Euler().setFromQuaternion(finalQuat, "YXZ");
-    const nextRxDeg = THREE.MathUtils.radToDeg(finalEuler.x);
-    const nextRzDeg = THREE.MathUtils.radToDeg(finalEuler.y);
-    const nextRyDeg = -THREE.MathUtils.radToDeg(finalEuler.z);
+    const {
+      rxDeg: nextRxDeg,
+      ryDeg: nextRyDeg,
+      rzDeg: nextRzDeg,
+    } = sceneObjectEulerFromQuaternion(finalQuat);
 
     await updateSceneObject(sceneObject.id, {
       xMm: nextXMm,

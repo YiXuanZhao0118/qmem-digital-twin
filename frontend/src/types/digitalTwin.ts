@@ -1269,6 +1269,7 @@ export type SceneObjectPatch = Partial<
     | "locked"
     | "serialNumber"
     | "properties"
+    | "dynamicSources"
   >
 >;
 

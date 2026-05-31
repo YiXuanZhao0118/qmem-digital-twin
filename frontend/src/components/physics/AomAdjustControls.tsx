@@ -12,7 +12,7 @@
  * Dependencies on AOM physics helpers (braggAngleRad,
  * diffractionEfficiency, sidebandIntensitiesOnBragg, etc.) live in
  * src/optical/kinds/aom/physics.ts. The frames helpers
- * (bodyLocalDirToThree, rotateLabDir) are in src/optical/frames.ts.
+ * (labDirToThreeLocal, rotateLabDir) are in src/optical/frames.ts.
  * Pulling these as direct imports here (instead of through the
  * parent) keeps the file self-contained.
  */
@@ -41,9 +41,9 @@ import {
   type Stage2SignConvention,
 } from "../../optical/kinds/aom/physics";
 import {
-  bodyLocalDirToThree,
-  labDirToThree,
+  labDirToThreeLocal,
   rotateLabDir,
+  sceneObjectEulerFromQuaternion,
   threeToLabPointMm,
 } from "../../optical/frames";
 import {
@@ -651,16 +651,18 @@ export function AomAdjustControls({
       const D2TargetLab = cross3(D3TargetLab, D1TargetLab);
 
       // Build R_new (basis change): body's {D1, D2, D3} → lab targets.
-      //   M_body   has body-local D1/D2/D3 as columns
-      //   M_target has world target D1/D2/D3 as columns
-      //   R_new = M_target · M_body^{-1}
-      const D1BodyThree = bodyLocalDirToThree(D1Body);
-      const D2BodyThree = bodyLocalDirToThree(D2Body);
-      const D3BodyThree = bodyLocalDirToThree(D3Body);
+      //   M_body   has body-local Z-up D1/D2/D3 as columns
+      //   M_target has lab Z-up target D1/D2/D3 as columns
+      //   R_new = M_target · M_body^{-1} — a plain Z-up rotation R with
+      //   R·D_body = D_targetLab. Under the labRoot S·M·b render the world
+      //   beam direction is S·R·D_body = S·D_targetLab, i.e. co-moving.
+      const D1BodyThree = labDirToThreeLocal(D1Body);
+      const D2BodyThree = labDirToThreeLocal(D2Body);
+      const D3BodyThree = labDirToThreeLocal(D3Body);
       const mBody = new THREE.Matrix4().makeBasis(D1BodyThree, D2BodyThree, D3BodyThree);
-      const D1TargetThree = labDirToThree(D1TargetLab).normalize();
-      const D2TargetThree = labDirToThree(D2TargetLab).normalize();
-      const D3TargetThree = labDirToThree(D3TargetLab).normalize();
+      const D1TargetThree = labDirToThreeLocal(D1TargetLab).normalize();
+      const D2TargetThree = labDirToThreeLocal(D2TargetLab).normalize();
+      const D3TargetThree = labDirToThreeLocal(D3TargetLab).normalize();
       const mTarget = new THREE.Matrix4().makeBasis(D1TargetThree, D2TargetThree, D3TargetThree);
       const mBodyInv = mBody.clone().invert();
       const mAlign = new THREE.Matrix4().multiplyMatrices(mTarget, mBodyInv);
@@ -697,9 +699,11 @@ export function AomAdjustControls({
         z: beamRef.z + tMid * beamUnit.z,
       };
       const rotatedBodyOffset = (bodyMm: { x: number; y: number; z: number }) => {
-        const v3 = bodyLocalDirToThree(bodyMm);
+        // finalQuat is a plain Z-up rotation R, so rotate the Z-up body
+        // offset directly — no S round-trip. Result is already lab Z-up mm.
+        const v3 = labDirToThreeLocal(bodyMm);
         v3.applyQuaternion(finalQuat);
-        return { x: v3.x, y: -v3.z, z: v3.y };
+        return { x: v3.x, y: v3.y, z: v3.z };
       };
       const rotatedMidpoint = rotatedBodyOffset(midpointBody);
       let nextXMm = midpointFoot.x - rotatedMidpoint.x;
@@ -713,9 +717,9 @@ export function AomAdjustControls({
       // AOM).
 
       // [11] Verify Bragg: compute residual = arcsin(beam · D2_new) − arcsin(expectedDotD2).
-      const D2NewThree = bodyLocalDirToThree(D2Body);
+      const D2NewThree = labDirToThreeLocal(D2Body);
       D2NewThree.applyQuaternion(finalQuat).normalize();
-      const D2NewLab = { x: D2NewThree.x, y: -D2NewThree.z, z: D2NewThree.y };
+      const D2NewLab = { x: D2NewThree.x, y: D2NewThree.y, z: D2NewThree.z };
       const beamDotD2New = beamUnit.x * D2NewLab.x + beamUnit.y * D2NewLab.y + beamUnit.z * D2NewLab.z;
       const residualMrad = (
         Math.asin(THREE.MathUtils.clamp(beamDotD2New, -1, 1)) -
@@ -723,10 +727,11 @@ export function AomAdjustControls({
       ) * 1e3;
 
       // [12] Decompose finalQuat back to SceneObject Euler.
-      const finalEuler = new THREE.Euler().setFromQuaternion(finalQuat, "YXZ");
-      const nextRxDeg = THREE.MathUtils.radToDeg(finalEuler.x);
-      const nextRzDeg = THREE.MathUtils.radToDeg(finalEuler.y);
-      const nextRyDeg = -THREE.MathUtils.radToDeg(finalEuler.z);
+      const {
+        rxDeg: nextRxDeg,
+        ryDeg: nextRyDeg,
+        rzDeg: nextRzDeg,
+      } = sceneObjectEulerFromQuaternion(finalQuat);
 
       // [13] Aperture clipping warning (best-effort; ray-tracer doesn't
       //      publish per-segment 1/e² waist, so use upstream seed waist

@@ -17,7 +17,7 @@
 
 import * as THREE from "three";
 
-import { labMmToThree, sceneObjectToQuaternion, threeToLabMm } from "../optical/frames";
+import { sceneObjectEulerFromQuaternion, sceneObjectToQuaternion } from "../optical/frames";
 import { capabilityProfile } from "../kinds/_capabilityProfile";
 import type {
   Collection,
@@ -195,22 +195,24 @@ export type RigidExpansionResult =
 /** Expand a pose patch on the leading SceneObject into per-member patches that
  *  preserve the rigid group's relative pose.
  *
- *  Math:
+ *  Math (all in the canonical lab Z-up frame):
  *    - leading old pose:  P_old = (pos_old, q_old)
  *    - leading new pose:  P_new = (pos_new, q_new)  [from patch ⊕ leading]
- *    - world-space rotation delta:  ΔR = q_new ⊗ q_old⁻¹
- *      (this rotates around the WORLD origin in three-space, but the math
- *       below pivots it around `pos_old` by subtracting first, rotating, then
- *       adding back — so it's effectively a pivot rotation around the leading)
- *    - world-space translation delta:  ΔT = pos_new − pos_old
+ *    - lab-frame rotation delta:  ΔR = q_new ⊗ q_old⁻¹
+ *      (pivoted around `pos_old`: subtract first, rotate, then add back)
+ *    - lab-frame translation delta:  ΔT = pos_new − pos_old
  *
  *  For each non-leading member M:
  *    new_pos_M = pos_old + ΔR.apply(pos_M − pos_old) + ΔT
  *    new_q_M   = ΔR ⊗ q_M
  *
- *  All vector / quaternion math runs in three-frame (Y-up); positions cross
- *  the lab↔three boundary via labMmToThree / threeToLabMm. The returned
- *  patches are in lab/scene units (mm + degrees), ready for updateObjectApi.
+ *  Under the single-root S·M·b render the world orientation is S·M, so the
+ *  stored quaternion M IS the lab-frame orientation and ΔR rotates raw lab
+ *  offsets directly — no S-swap into three-space. (The pre-labRoot expander
+ *  rotated offsets in labMmToThree scratch, baking S⁻¹·ΔR·S, which was rigid
+ *  only for the old M·S·b leaf-swap world; see rigidGroup.frame.test.ts.)
+ *  Positions and the returned patches are in lab/scene units (mm + degrees),
+ *  ready for updateObjectApi.
  *
  *  Locked-member policy: if any non-leading member is locked, the rigid
  *  invariant cannot be maintained without violating that member's lock. The
@@ -279,34 +281,37 @@ export function expandPoseToRigidGroup(
   const newQ = sceneObjectToQuaternion(newLeading);
   const deltaQ = newQ.clone().multiply(oldQ.clone().invert());
 
-  const leadOldThree = labMmToThree(oldPose);
-  const leadNewThree = labMmToThree(newPose);
-  const deltaTThree = leadNewThree.clone().sub(leadOldThree);
+  const leadOldLab = new THREE.Vector3(oldPose.xMm, oldPose.yMm, oldPose.zMm);
+  const deltaTLab = new THREE.Vector3(
+    newPose.xMm - oldPose.xMm,
+    newPose.yMm - oldPose.yMm,
+    newPose.zMm - oldPose.zMm,
+  );
 
   const entries: RigidExpansionEntry[] = [leadEntry];
 
   for (const id of otherIds) {
     const member = objsById.get(id);
     if (!member) continue;
-    const memberThree = labMmToThree({ xMm: member.xMm, yMm: member.yMm, zMm: member.zMm });
-    const rel = memberThree.clone().sub(leadOldThree).applyQuaternion(deltaQ);
-    const newMemberThree = leadOldThree.clone().add(rel).add(deltaTThree);
-    const newMemberLab = threeToLabMm(newMemberThree);
+    const rel = new THREE.Vector3(member.xMm, member.yMm, member.zMm)
+      .sub(leadOldLab)
+      .applyQuaternion(deltaQ);
+    const newMemberPos = leadOldLab.clone().add(rel).add(deltaTLab);
 
     const memberQ = sceneObjectToQuaternion(member);
     const newMemberQ = deltaQ.clone().multiply(memberQ);
-    // Inverse of sceneObjectToQuaternion's YXZ Euler(rxRad, rzRad, -ryRad):
-    const e = new THREE.Euler().setFromQuaternion(newMemberQ, "YXZ");
-    const newRxDeg = THREE.MathUtils.radToDeg(e.x);
-    const newRzDeg = THREE.MathUtils.radToDeg(e.y);
-    const newRyDeg = -THREE.MathUtils.radToDeg(e.z);
+    const {
+      rxDeg: newRxDeg,
+      ryDeg: newRyDeg,
+      rzDeg: newRzDeg,
+    } = sceneObjectEulerFromQuaternion(newMemberQ);
 
     entries.push({
       id: member.id,
       patch: {
-        xMm: newMemberLab.xMm,
-        yMm: newMemberLab.yMm,
-        zMm: newMemberLab.zMm,
+        xMm: newMemberPos.x,
+        yMm: newMemberPos.y,
+        zMm: newMemberPos.z,
         rxDeg: newRxDeg,
         ryDeg: newRyDeg,
         rzDeg: newRzDeg,

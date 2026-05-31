@@ -43,20 +43,34 @@ import {
   setEmissionVisualPatch,
 } from "../../utils/emissionVisuals";
 import { wavelengthToColor } from "../../three/opticalBeams";
-// Split-out adjust controls — 4 small panels moved into a sibling
-// file so the LaserSource / Aom / TaperedAmplifier behemoths can be
-// reviewed in isolation. No behavioural change, just file location.
-import {
-  MirrorAdjustControls,
-  WaveplateAdjustControls,
-  BeamSplitterControls,
-  LensControls,
-} from "./SimpleAdjustControls";
-import { LaserSourceControls } from "./LaserSourceControls";
-import { AomAdjustControls } from "./AomAdjustControls";
-import { TaperedAmplifierAdjustControls } from "./TaperedAmplifierAdjustControls";
+// Per-kind dedicated controls (LaserSource / Aom / TaperedAmplifier / Mirror /
+// Waveplate / BeamSplitter / Lens / fiber) are dispatched inside
+// AlignToBeamSection (_shared.tsx). The generic ObjectCoefficientOverrides
+// below covers the OTHER optical kinds, writing top-level overrides into
+// SceneObject.dynamicSources (the live v3 path).
+import { ObjectCoefficientOverrides } from "./ObjectCoefficientOverrides";
 import { BindingTreeAdjustControls } from "../BindingTreeAdjustControls";
 import { AlignToBeamSection } from "./_shared";
+
+/** Optical kinds whose dedicated *AdjustControls panel is already rendered by
+ *  AlignToBeamSection (_shared.tsx). The generic coefficient editor is shown
+ *  only for the OTHER optical kinds (polarizer, detector, eom, …) that would
+ *  otherwise have no per-instance editor — rendering it for these would double
+ *  up fields the dedicated panel already shows. Mirrors the set the Phase-5
+ *  retirement removed alongside the generic KindParamsEditor. */
+const KINDS_WITH_DEDICATED_UI: ReadonlySet<ElementKind> = new Set([
+  "laser_source",
+  "tapered_amplifier",
+  "aom",
+  "mirror",
+  "dichroic_mirror",
+  "waveplate",
+  "beam_splitter",
+  "lens_biconvex",
+  "lens_plano_convex",
+  "lens_cylindrical",
+  "fiber",
+]);
 
 type Props = {
   component: ComponentItem;
@@ -138,10 +152,20 @@ export function PhysicsElementPanel({ component, sceneObject }: Props) {
       {existing && sceneObject && (
         <AdjustErrorBoundary key={sceneObject.id}>
           <AlignToBeamSection sceneObject={sceneObject} elementKind={existing.elementKind as ElementKind} element={existing} />
-          {/* Retirement Phase 5: the generic per-object KindParamsEditor was
-              removed. Catalog physics is edited on the Asset3D (PHY Editor);
-              per-instance tweaks use the dedicated *AdjustControls panels,
-              which write to SceneObject bindings / dynamic_sources. */}
+          {/* Per-instance coefficients for optical kinds WITHOUT a dedicated
+              *AdjustControls panel (those are rendered by AlignToBeamSection
+              above — adding the generic editor for them would double the
+              fields). Writes top-level overrides into SceneObject.dynamicSources
+              — the path the v3 tracer reads (anchor_tracer.py merges
+              {...default_params, ...dynamic_sources}). RF/electronics kinds are
+              a separate pass (their tracer hydration path isn't verified here). */}
+          {domain === "optical" && !KINDS_WITH_DEDICATED_UI.has(existing.elementKind as ElementKind) && (
+            <ObjectCoefficientOverrides
+              component={component}
+              sceneObject={sceneObject}
+              elementKind={existing.elementKind as ElementKind}
+            />
+          )}
           {domain === "optical" && (
             <BindingTreeAdjustControls component={component} />
           )}

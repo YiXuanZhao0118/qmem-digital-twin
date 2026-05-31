@@ -1,4 +1,7 @@
+import * as THREE from "three";
+
 import type { Anchor, Asset3D, AssemblyRelation, ComponentItem, GeometrySelector, SceneObject } from "../types/digitalTwin";
+import { sceneObjectToQuaternion } from "../optical/frames";
 import { anchorObjectLocalLegacyDir, anchorObjectLocalPos } from "./anchorAccess";
 
 export type VecObject = { x: number; y: number; z: number };
@@ -175,26 +178,10 @@ function objectSize(object: SceneObject, component?: ComponentItem): VecObject {
 function rotateVec(v: VecObject, rxDeg: number, ryDeg: number, rzDeg: number): VecObject {
   // Lab-frame rotation: R = Rz(rz) · Rx(rx) · Ry(ry). Mirrors the YXZ-intrinsic
   // Euler order applied by the Three.js renderer (transformUtils.ts).
-  const rx = (rxDeg * Math.PI) / 180;
-  const ry = (ryDeg * Math.PI) / 180;
-  const rz = (rzDeg * Math.PI) / 180;
-
-  const cy = Math.cos(ry), sy = Math.sin(ry);
-  const x1 = v.x * cy + v.z * sy;
-  const y1 = v.y;
-  const z1 = -v.x * sy + v.z * cy;
-
-  const cx = Math.cos(rx), sx = Math.sin(rx);
-  const x2 = x1;
-  const y2 = y1 * cx - z1 * sx;
-  const z2 = y1 * sx + z1 * cx;
-
-  const cz = Math.cos(rz), sz = Math.sin(rz);
-  return {
-    x: x2 * cz - y2 * sz,
-    y: x2 * sz + y2 * cz,
-    z: z2,
-  };
+  const out = new THREE.Vector3(v.x, v.y, v.z).applyQuaternion(
+    sceneObjectToQuaternion({ rxDeg, ryDeg, rzDeg } as SceneObject),
+  );
+  return { x: out.x, y: out.y, z: out.z };
 }
 
 export function localAnchor(anchorId: string, size: VecObject): { position: VecObject; direction?: VecObject } {

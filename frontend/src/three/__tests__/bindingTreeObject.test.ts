@@ -172,7 +172,7 @@ describe("buildBindingTreeObject", () => {
     expect(result.children[0].name).toBe("kept");
   });
 
-  it("nests child binding groups under their parent's Object3D", async () => {
+  it("nests child binding groups under their parent's binding pivot", async () => {
     const child = makeNode("child", makeTransform({ xMm: 25 }));
     const root = makeNode("root", makeTransform(), [child]);
     const loader = async (node: ResolvedBindingNode) => {
@@ -185,12 +185,15 @@ describe("buildBindingTreeObject", () => {
     const rootObj = result.children[0];
     // Children become a nested Group attached to the parent's Object3D
     // (the inner Group itself contains the child loaded object).
-    expect(rootObj.children).toHaveLength(1);
-    const childGroup = rootObj.children[0];
+    expect(rootObj.children).toHaveLength(2);
+    const childGroup = rootObj.children.find((c) => c.userData.__bindingChildrenOf === "root");
+    expect(childGroup).toBeDefined();
+    if (!childGroup) throw new Error("missing child binding group");
     expect(childGroup.children).toHaveLength(1);
-    expect(childGroup.children[0].name).toBe("child");
+    const childPivot = childGroup.children[0];
+    expect(childPivot.name).toBe("child");
     // Local transform applied: x=25 mm → x=mmToThree(25) in three.
-    expect(childGroup.children[0].position.x).toBeCloseTo(mmToThree(25));
+    expect(childPivot.position.x).toBeCloseTo(mmToThree(25));
   });
 
   it("tags every loaded object with its binding id for selection round-trip", async () => {
@@ -198,5 +201,28 @@ describe("buildBindingTreeObject", () => {
     const loader = async () => new THREE.Group();
     const result = await buildBindingTreeObject(nodes, loader);
     expect(result.children[0].userData.__bindingId).toBe("the_root");
+    expect(result.children[0].children[0].userData.__bindingId).toBe("the_root");
+  });
+
+  it("preserves loader-authored root rotations inside the binding pivot", async () => {
+    const nodes: ResolvedBindingNode[] = [
+      makeNode("glan", makeTransform({ rzDeg: 225 })),
+    ];
+    const loader = async () => {
+      const g = new THREE.Group();
+      g.rotation.set(0, 0, Math.PI / 2, "XYZ");
+      return g;
+    };
+    const result = await buildBindingTreeObject(nodes, loader);
+    const pivot = result.children[0];
+    const content = pivot.children[0];
+
+    const pivotDir = new THREE.Vector3(1, 0, 0).applyQuaternion(pivot.quaternion);
+    const contentDir = new THREE.Vector3(1, 0, 0).applyQuaternion(content.quaternion);
+
+    expect(pivotDir.x).toBeCloseTo(-Math.SQRT1_2, 5);
+    expect(pivotDir.y).toBeCloseTo(-Math.SQRT1_2, 5);
+    expect(contentDir.x).toBeCloseTo(0, 5);
+    expect(contentDir.y).toBeCloseTo(1, 5);
   });
 });

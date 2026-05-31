@@ -16,7 +16,10 @@ import type { SceneObject } from "../types/digitalTwin";
 import {
   MM_PER_THREE_UNIT,
   labMmToThree,
+  labMmToThreeLocal,
+  labRootSwapInverseQuaternion,
   labToThreeVector,
+  labToThreeVectorLocal,
   mmToThree,
   sceneObjectToQuaternion,
   threeToMm,
@@ -25,11 +28,34 @@ import {
 export {
   MM_PER_THREE_UNIT,
   labMmToThree,
+  labMmToThreeLocal,
   labToThreeVector,
+  labToThreeVectorLocal,
   mmToThree,
   sceneObjectToQuaternion,
   threeToMm,
 };
+
+/**
+ * Normalize a builder output that was authored in three's Y-up frame so it
+ * can live under an object wrapper in the canonical Z-up lab world (labRoot).
+ *
+ * The single world swap lives on `labRoot` (S = Rx(-90°)); object wrappers
+ * carry the plain pose quaternion M and sit in Z-up. Most asset builders,
+ * however, emit geometry already in three's Y-up frame (g = S·b) — that is
+ * why they render upright today. Wrapping such output in one S⁻¹ group makes
+ * everything below it the canonical Z-up body frame (S⁻¹·g = b), without
+ * having to understand or rewrite the builder's internal construction. A
+ * builder that already authors Z-up (de-swapped PBS, the binding tree) must
+ * NOT be passed through here.
+ */
+export function normalizeYupAssetToLabZup(content: THREE.Object3D): THREE.Object3D {
+  const adapter = new THREE.Group();
+  adapter.name = "yupImportAdapter";
+  adapter.quaternion.copy(labRootSwapInverseQuaternion());
+  adapter.add(content);
+  return adapter;
+}
 
 function vecProperty(value: unknown): { x: number; y: number; z: number } {
   if (value && typeof value === "object") {
@@ -54,23 +80,52 @@ export function getObjectScale(sceneObject: SceneObject): number {
 
 export function applyObjectGeometryOffset(target: THREE.Object3D, sceneObject: SceneObject): void {
   const offset = getObjectOriginOffsetMm(sceneObject);
-  target.position.copy(labToThreeVector([offset.x, offset.y, offset.z]));
+  target.position.copy(labToThreeVectorLocal([offset.x, offset.y, offset.z]));
 }
 
 /**
  * Apply a SceneObject's pose (position + rotation + scale + visibility)
- * to a three.js Object3D. Position uses `labMmToThree`; rotation goes
- * through `sceneObjectToQuaternion` so the orientation derived here is
- * byte-for-byte identical to anywhere else that asks for the same
- * SceneObject's quaternion (single source of truth, per Phase 1).
+ * to a three.js Object3D that lives UNDER `labRoot`.
+ *
+ * Position uses `labMmToThreeLocal` (pure scale, NO axis swap) because
+ * labRoot carries the single Z-up→three-Y-up swap S; labRoot.S applied to
+ * `labMmToThreeLocal(pos)` reproduces the old `labMmToThree(pos)` world
+ * position exactly. Rotation is the plain pose quaternion M from
+ * `sceneObjectToQuaternion` (single source of truth) — with the swap moved
+ * out to labRoot the world orientation composes as S·M·b, the pose-correct
+ * order that co-moves with the backend beam for every pose (the old
+ * leaf-swap baked M·S·b, wrong whenever ry≠0 or rz≠0).
  */
 export function applyObjectTransform(target: THREE.Object3D, sceneObject: SceneObject): void {
-  const positionThree = labMmToThree({
+  const positionThree = labMmToThreeLocal({
     xMm: sceneObject.xMm,
     yMm: sceneObject.yMm,
     zMm: sceneObject.zMm,
   });
   target.position.copy(positionThree);
+  target.quaternion.copy(sceneObjectToQuaternion(sceneObject));
+  target.scale.setScalar(getObjectScale(sceneObject));
+  target.visible = sceneObject.visible;
+}
+
+/**
+ * Place a wrapper in three's Y-up WORLD frame — for render surfaces added
+ * straight to a Y-up scene with NO labRoot to supply the swap S.
+ *
+ * Position uses `labMmToThree` (the S axis-swap baked into the world
+ * position) and the plain pose quaternion M, i.e. the exact behaviour
+ * `applyObjectTransform` had before the labRoot unification moved S out to
+ * the root. The only current caller is `OpticalLinkViewerPanel`, whose beam
+ * tubes are placed at `labMmToThree(segment)` so their wireframe overlays
+ * must live in the same world frame. Anything parented UNDER labRoot must use
+ * `applyObjectTransform` (raw Z-up local) instead.
+ */
+export function applyObjectTransformWorld(target: THREE.Object3D, sceneObject: SceneObject): void {
+  target.position.copy(labMmToThree({
+    xMm: sceneObject.xMm,
+    yMm: sceneObject.yMm,
+    zMm: sceneObject.zMm,
+  }));
   target.quaternion.copy(sceneObjectToQuaternion(sceneObject));
   target.scale.setScalar(getObjectScale(sceneObject));
   target.visible = sceneObject.visible;

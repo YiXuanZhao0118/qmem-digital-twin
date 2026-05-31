@@ -97,15 +97,17 @@ def pbs_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
     t_s = mag_s / mag_in if mag_in > 1e-30 else 0.0
 
     # ── p branch (transmit) ─────────────────────────────────────────
-    # Direction preserved (straight through the cube). Origin shifts
-    # past the coating by cube_size along the incoming direction —
-    # paraxial approx; full beam-path is cube_size / cos(incidence) but
-    # for 45° cube and near-axial rays it's within a few %.
-    out_p_origin = Vec3(
-        ctx.hit.hit_point_body.x + cube_size * ray_in.direction.x,
-        ctx.hit.hit_point_body.y + cube_size * ray_in.direction.y,
-        ctx.hit.hit_point_body.z + cube_size * ray_in.direction.z,
-    )
+    # Direction preserved (straight through the cube). Origin = the coating
+    # hit point — the SAME start as the reflected branch — so the
+    # transmitted beam renders as ONE continuous line through the optic.
+    # (Previously the origin was shifted +cube_size past the coating, which
+    # left a cube-length gap in the drawn beam between the entry coating and
+    # the exit face — visible as the beam "disappearing" through the PBS /
+    # glan.) The glass slab is still modelled in the beam state below
+    # (qx/qy += L/n, path_length += cube_size); only the render origin moves.
+    # The tracer's t_min guard (intersect_anchor) drops the t≈0 self-hit, so
+    # starting on the coating plane does not re-trigger this anchor.
+    out_p_origin = ctx.hit.hit_point_body
     out_p = ray_in.replaced(
         origin=out_p_origin,
         direction=ray_in.direction,

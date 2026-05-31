@@ -4,7 +4,11 @@
  * Uses the **same Euler convention as `frames.ts`** — must stay in sync
  * (the convention is documented in `frames.sceneObjectToQuaternion`):
  *
- *   THREE.Euler(rxDeg, rzDeg, -ryDeg, "YXZ")
+ *   R_lab = transpose(Rx(rxDeg) * Ry(ryDeg) * Rz(rzDeg))
+ *
+ * The transpose is needed because the documented matrix is a row-vector
+ * transform, while THREE.Vector3 applies column-vector matrices. For example,
+ * ryDeg=45 maps body +Z to lab [-sqrt(1/2), 0, sqrt(1/2)].
  *
  * This module is plain Vec3-in / Vec3-out — no `THREE.Vector3` leaks to
  * callers. Internally uses THREE.Quaternion as a math primitive only;
@@ -25,17 +29,32 @@ export type V3Pose = {
 };
 
 // ---------------------------------------------------------------------------
-// Quaternion build (mirrors frames.sceneObjectToQuaternion)
+// Quaternion build (mirrors backend app.optical.pose._rotation_of)
 // ---------------------------------------------------------------------------
 
-function quaternionOf(pose: V3Pose): THREE.Quaternion {
-  const eulerThree = new THREE.Euler(
-    (pose.rxDeg * Math.PI) / 180,
-    (pose.rzDeg * Math.PI) / 180,
-    (-pose.ryDeg * Math.PI) / 180,
-    "YXZ",
+export function sceneObjectLabRotationMatrix(pose: V3Pose): THREE.Matrix4 {
+  const alpha = (pose.rxDeg * Math.PI) / 180;
+  const beta = (pose.ryDeg * Math.PI) / 180;
+  const gamma = (pose.rzDeg * Math.PI) / 180;
+  const ca = Math.cos(alpha);
+  const sa = Math.sin(alpha);
+  const cb = Math.cos(beta);
+  const sb = Math.sin(beta);
+  const cg = Math.cos(gamma);
+  const sg = Math.sin(gamma);
+
+  return new THREE.Matrix4().set(
+    cb * cg, sa * sb * cg + ca * sg, -ca * sb * cg + sa * sg, 0,
+    -cb * sg, -sa * sb * sg + ca * cg, ca * sb * sg + sa * cg, 0,
+    sb, -sa * cb, ca * cb, 0,
+    0, 0, 0, 1,
   );
-  return new THREE.Quaternion().setFromEuler(eulerThree);
+}
+
+function quaternionOf(pose: V3Pose): THREE.Quaternion {
+  return new THREE.Quaternion().setFromRotationMatrix(
+    sceneObjectLabRotationMatrix(pose),
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -1,12 +1,8 @@
 """V3Pose — lab↔body Vec3 transforms (Python mirror of frontend/src/optical/pose.ts).
 
-Uses the SAME Euler convention as frames.ts:
-
-    THREE.Euler(rxDeg, rzDeg, -ryDeg, "YXZ")
-
-In scipy.Rotation terms (uppercase = intrinsic):
-
-    Rotation.from_euler("YXZ", [rzDeg, rxDeg, -ryDeg], degrees=True)
+SceneObject rotations follow the user-facing XYZ 4x4 matrix convention. The
+matrix is written for row vectors, while backend math applies column vectors,
+so the runtime rotation is the transpose of that matrix.
 
 Frontend / backend numerical parity is enforced by Phase 3b tests.
 """
@@ -14,6 +10,8 @@ Frontend / backend numerical parity is enforced by Phase 3b tests.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+
+import math
 
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -32,12 +30,32 @@ class V3Pose:
 
 
 def _rotation_of(pose: V3Pose) -> Rotation:
-    """Build scipy.Rotation matching THREE.Euler(rx, rz, -ry, 'YXZ')."""
-    return Rotation.from_euler(
-        "YXZ",
-        [pose.rz_deg, pose.rx_deg, -pose.ry_deg],
-        degrees=True,
+    """Build the body-local Z-up -> lab Z-up SceneObject rotation.
+
+    The canonical UI matrix is written for row vectors:
+
+        M_row = Rx(alpha) * Ry(beta) * Rz(gamma)
+
+    scipy Rotation applies column vectors, so we use M_row.T. Pinned
+    behaviours: rx=+90 maps +Z -> +Y, ry=+90 maps +Z -> -X, and
+    rz=+90 maps +X -> -Y.
+    """
+    alpha = math.radians(pose.rx_deg)
+    beta = math.radians(pose.ry_deg)
+    gamma = math.radians(pose.rz_deg)
+    ca, sa = math.cos(alpha), math.sin(alpha)
+    cb, sb = math.cos(beta), math.sin(beta)
+    cg, sg = math.cos(gamma), math.sin(gamma)
+
+    m_col = np.array(
+        [
+            [cb * cg, sa * sb * cg + ca * sg, -ca * sb * cg + sa * sg],
+            [-cb * sg, -sa * sb * sg + ca * cg, ca * sb * sg + sa * cg],
+            [sb, -sa * cb, ca * cb],
+        ],
+        dtype=float,
     )
+    return Rotation.from_matrix(m_col)
 
 
 # ---------------------------------------------------------------------------

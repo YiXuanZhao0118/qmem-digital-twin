@@ -17,6 +17,7 @@ Canonical face rule:
 - `ComponentBinding` rows define each asset or subcomponent pose inside the Component frame.
 - `Asset3D.anchors[]` are authored directly in the Asset/CAD frame. The legacy `*BodyLocal` suffix is a field-name compatibility artifact, not a separate runtime frame.
 - Runtime transform chain: `anchor_asset_local -> ComponentBinding pose -> SceneObject Lab pose -> Lab frame`.
+- SceneObject rotation is lab Z-up rotation. Three.js is also treated as Z-up, so there is no lab/three axis swap in solver or renderer pose math. The UI's documented XYZ matrix is row-vector form: `M_row = Rx(rxDeg) * Ry(ryDeg) * Rz(rzDeg)`, and runtime column-vector math uses `R_scene_object_lab = transpose(M_row)`. Therefore `ryDeg=45` maps Asset/CAD `[0, 0, 1]` to Lab `[-0.707, 0, 0.707]`.
 
 ---
 

@@ -111,8 +111,8 @@ export function refreshFiberWrapperGeometry(
       // to -unit(tension). Visible tip ends up at posMm + outward * 36.
       conn.position.set(
         placement.posMm[0] / 100,
+        placement.posMm[1] / 100,
         placement.posMm[2] / 100,
-        -placement.posMm[1] / 100,
       );
       const mag = Math.hypot(
         placement.tensionHandleMm[0],
@@ -208,8 +208,8 @@ export function createFiberSplineObject(
   ) => {
     conn.position.set(
       placement.posMm[0] / 100,
+      placement.posMm[1] / 100,
       placement.posMm[2] / 100,
-      -placement.posMm[1] / 100,
     );
     const tau = placement.tensionHandleMm;
     const mag = Math.hypot(tau[0], tau[1], tau[2]);

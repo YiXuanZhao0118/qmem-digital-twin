@@ -31,6 +31,20 @@ P_lab = T_scene_object_lab * T_component_binding * P_anchor_asset
 D_lab = R_scene_object_lab * R_component_binding * D_anchor_asset
 ```
 
+`R_scene_object_lab` is the physical lab Z-up rotation. Three.js is configured
+as Z-up too, so runtime math must not apply an extra lab/three axis swap.
+SceneObject rotation follows the user-facing XYZ 4x4 matrix convention, written
+for row vectors:
+
+```text
+M_row = Rx(rxDeg) * Ry(ryDeg) * Rz(rzDeg)
+R_scene_object_lab = transpose(M_row)
+```
+
+This means a `SceneObject` with `ryDeg=90` maps an Asset/CAD-local direction
+`[0, 0, 1]` to Lab `[-1, 0, 0]`; `ryDeg=45` maps it to
+`[-0.707, 0, 0.707]`.
+
 For a single-asset legacy component with no binding tree, `T_component_binding` is identity.
 
 ## Removed Body-Frame Layer

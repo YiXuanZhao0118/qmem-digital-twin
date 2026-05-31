@@ -22,6 +22,7 @@ import {
   labDirToThree,
   labMmToThree,
   MM_PER_THREE_UNIT,
+  sceneObjectEulerFromQuaternion,
   sceneObjectToQuaternion,
   threeDirToLab,
   threeToLabMm,
@@ -45,13 +46,13 @@ function rotateBodyLocalViaRenderer(
   wrapper.quaternion.copy(sceneObjectToQuaternion(sceneObject));
   const child = new THREE.Object3D();
   // Body-local Z-up → three Y-up axis swap for the child position.
-  child.position.set(vBodyLocal.x, vBodyLocal.z, -vBodyLocal.y);
+  child.position.set(vBodyLocal.x, vBodyLocal.y, vBodyLocal.z);
   wrapper.add(child);
   wrapper.updateMatrixWorld(true);
   const cw = new THREE.Vector3();
   child.getWorldPosition(cw);
   // Three Y-up world → lab Z-up.
-  return { x: cw.x, y: -cw.z, z: cw.y };
+  return { x: cw.x, y: cw.y, z: cw.z };
 }
 
 describe("scalar mm ↔ three conversion", () => {
@@ -71,11 +72,11 @@ describe("scalar mm ↔ three conversion", () => {
 });
 
 describe("lab ↔ three position conversion", () => {
-  it("swaps axes consistent with the documented (x, z, -y) mapping", () => {
+  it("uses pure scale for the Z-up three mapping", () => {
     const v = labMmToThree({ xMm: 100, yMm: 200, zMm: 300 });
     expect(v.x).toBeCloseTo(1, 9);  // xMm/100
-    expect(v.y).toBeCloseTo(3, 9);  // zMm/100
-    expect(v.z).toBeCloseTo(-2, 9); // -yMm/100
+    expect(v.y).toBeCloseTo(2, 9);  // yMm/100
+    expect(v.z).toBeCloseTo(3, 9);  // zMm/100
   });
 
   it("round-trips through labMmToThree → threeToLabMm", () => {
@@ -203,20 +204,39 @@ describe("bodyLocalDirToLabDir = renderer-derived rotation", () => {
   });
 });
 
+describe("sceneObjectEulerFromQuaternion", () => {
+  it("round-trips the documented XYZ matrix convention", () => {
+    const cases = [
+      { rxDeg: 0, ryDeg: 45, rzDeg: 0 },
+      { rxDeg: 30, ryDeg: 0, rzDeg: 15 },
+      { rxDeg: -20, ryDeg: 35, rzDeg: 80 },
+      { rxDeg: 10, ryDeg: -30, rzDeg: -45 },
+    ];
+
+    for (const input of cases) {
+      const out = sceneObjectEulerFromQuaternion(
+        sceneObjectToQuaternion(fakeSceneObject(input.rxDeg, input.ryDeg, input.rzDeg)),
+      );
+      expect(out.rxDeg).toBeCloseTo(input.rxDeg, 9);
+      expect(out.ryDeg).toBeCloseTo(input.ryDeg, 9);
+      expect(out.rzDeg).toBeCloseTo(input.rzDeg, 9);
+    }
+  });
+});
+
 describe("bodyLocalDirToWorldThree returns correct three-frame vector", () => {
   it("axis-swaps then rotates (composition order matters)", () => {
-    // body-local +Z (Z-up) under identity rotation should map to
-    // three's +Y (Y-up). The dir helper (no rotation) gives us this:
+    // body-local +Z (Z-up) under identity rotation maps to three +Z.
     const labZ = { x: 0, y: 0, z: 1 };
     const direct = labDirToThree(labZ);
     expect(direct.x).toBeCloseTo(0, 9);
-    expect(direct.y).toBeCloseTo(1, 9);
-    expect(direct.z).toBeCloseTo(0, 9);
+    expect(direct.y).toBeCloseTo(0, 9);
+    expect(direct.z).toBeCloseTo(1, 9);
 
     // With identity rotation, bodyLocalDirToWorldThree should match.
     const t = bodyLocalDirToWorldThree(labZ, fakeSceneObject(0, 0, 0));
     expect(t.x).toBeCloseTo(0, 9);
-    expect(t.y).toBeCloseTo(1, 9);
-    expect(t.z).toBeCloseTo(0, 9);
+    expect(t.y).toBeCloseTo(0, 9);
+    expect(t.z).toBeCloseTo(1, 9);
   });
 });

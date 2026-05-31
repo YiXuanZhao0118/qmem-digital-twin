@@ -2203,7 +2203,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       ? (window as unknown as { __rayTraceDebug?: TraceSeg[] }).__rayTraceDebug
       : undefined) ?? []) as TraceSeg[];
     const threeToLab = (v: { x: number; y: number; z: number }): [number, number, number] =>
-      [v.x * 100, -v.z * 100, v.y * 100];
+      [v.x * 100, v.y * 100, v.z * 100];
     const objectNameById = (id: string | undefined | null): string => {
       if (!id) return "?";
       const o = state.scene.objects.find((x) => x.id === id);

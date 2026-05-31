@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-05-28T05:52:40.941Z",
+  "generated_at": "2026-05-31T17:01:10.199Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",

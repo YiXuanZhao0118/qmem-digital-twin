@@ -602,7 +602,7 @@ function meshAperturePoint(
   // converted coords; the user's reading from Blender's viewport is
   // therefore in Blender's pre-export frame.
   const [bx, by, bz] = apertureBlenderMm;
-  const apertureGlbMm = new THREE.Vector3(bx, bz, -by);
+  const apertureGlbMm = new THREE.Vector3(bx, by, bz);
   // mm → three units (matches mmToThree). The glbSceneRoot has
   // applyAssetScale(0.01) on it, so child positions are interpreted in mm
   // pre-scale; pushing the aperture through matrixWorld will apply the
@@ -1508,7 +1508,7 @@ function traceOneRay(
     // adding `(obj.xMm, obj.yMm, obj.zMm)` finishes the body→lab transform.
     // labMmToThreeAbs maps lab (x, y, z) mm → three (x, z, -y) / 100.
     const labMmToThreeAbs = (lab: { x: number; y: number; z: number }) =>
-      new THREE.Vector3(lab.x / 100, lab.z / 100, -lab.y / 100);
+      new THREE.Vector3(lab.x / 100, lab.y / 100, lab.z / 100);
     const bodyToLabPos = (b: { x: number; y: number; z: number }) => {
       const r = rotateLocalToLab(
         { x: b.x, y: b.y, z: b.z },
