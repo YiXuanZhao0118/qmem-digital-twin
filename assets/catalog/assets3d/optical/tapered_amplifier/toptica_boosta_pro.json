@@ -32,9 +32,14 @@
   ],
 
   "defaultParams": {
-    "gainLinear": 100.0,
+    "smallSignalGainDb": 20.0,
     "saturationPowerMw": 50.0,
-    "nominalOutputPowerW": 2.0,
+    "outputPowerMaxMw": 2000.0,
+    "aseForwardMw": 5.0,
+    "aseBackwardMw": 5.0,
+    "gainAxisDegBodyLocal": 0.0,
+    "polarizationExtinctionDb": 20.0,
+    "aseBandwidthNm": 5.0,
     "centerWavelengthNm": 780,
     "driveCurrentMaxA": 4.0,
     "requiresElectricalDrive": true

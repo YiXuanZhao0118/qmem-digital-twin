@@ -33,7 +33,7 @@
     "spectrum": {
       "centerWavelengthNm": 852.347,
       "wavelengthReference": "vacuum",
-      "linewidth": { "kind": "delta" }
+      "linewidth": { "kind": "gaussian", "fwhmHz": 1000000 }
     },
     "spatialModeX": {
       "waistUm": 500,
