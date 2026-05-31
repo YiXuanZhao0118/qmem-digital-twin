@@ -120,3 +120,53 @@ def emit_anchor_source_rays(
             )
             out.append((ray, slot.scene_object_id, slot.scene_object_id))
     return out
+
+
+def emit_ta_ase_rays(
+    scene: V3AnchorScene,
+    seeded_object_ids: set[str],
+) -> list[tuple[BeamRay, str, str]]:
+    """Decision 6b: a ``tapered_amplifier`` with NO upstream seed emits
+    broadband ASE out both facets (forward + backward), linearly polarized
+    along the gain axis (anchor axisY). A *seeded* TA — one whose
+    ``scene_object_id`` appears in ``seeded_object_ids`` — emits no ASE (the
+    seed extracts the inversion). Emitted from the ``intercept_in`` anchor along
+    ±axisX; powers from ``default_params.aseForwardMw`` / ``aseBackwardMw``.
+    """
+    out: list[tuple[BeamRay, str, str]] = []
+    for slot in scene.slots:
+        if slot.asset.kind != "tapered_amplifier":
+            continue
+        if slot.scene_object_id in seeded_object_ids:
+            continue
+        dp = slot.asset.default_params or {}
+        anchor = next((a for a in slot.asset.anchors if a.id == "intercept_in"), None)
+        if anchor is None:
+            continue
+        wl = float(dp.get("centerWavelengthNm", 780.0))
+        w0 = float((dp.get("spatialModeX") or {}).get("waistUm", 250.0))
+        origin_lab = point_body_to_lab_t(anchor.position_body, slot.effective_transform)
+        ax = anchor.axis_x_body
+        for power_key, axis_body in (
+            ("aseForwardMw", ax),
+            ("aseBackwardMw", Vec3(-ax.x, -ax.y, -ax.z)),
+        ):
+            power = float(dp.get(power_key, 0.0))
+            if power <= 0.0:
+                continue
+            dir_lab = dir_body_to_lab_t(axis_body, slot.effective_transform)
+            # ASE is linearly polarized along the gain axis (anchor axisY).
+            jones_lab = jones_body_to_lab(
+                (complex(1.0, 0.0), complex(0.0, 0.0)), axis_body, dir_lab,
+                lambda v: dir_body_to_lab_t(v, slot.effective_transform),
+            )
+            ray = make_beam_ray(
+                origin=origin_lab, direction=dir_lab,
+                wavelength_nm=wl, power_mw=power,
+            ).replaced(
+                jones=jones_lab,
+                qx=_q_at_waist_mm(w0, wl), qy=_q_at_waist_mm(w0, wl),
+                exclude_face_key=f"{slot.scene_object_id}/{slot.binding_id}/{anchor.id}",
+            )
+            out.append((ray, slot.scene_object_id, slot.scene_object_id))
+    return out

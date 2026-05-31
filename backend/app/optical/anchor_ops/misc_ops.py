@@ -88,19 +88,57 @@ register_anchor_op("eom", eom_anchor_op)
 
 # ── Tapered amplifier ──────────────────────────────────────────────────────
 
+def _jones_mag2(j: tuple[complex, complex]) -> float:
+    e0, e1 = j
+    return (e0.real * e0.real + e0.imag * e0.imag
+            + e1.real * e1.real + e1.imag * e1.imag)
+
+
+def ta_saturated_power_mw(p_coupled_mw: float, params: dict) -> float:
+    """Single-pass saturated gain (see docs/tapered-amplifier-model.md §5):
+        P_out = P_sat · ln(1 + (P_coupled / P_sat)·(G0 − 1)),  clamp outputPowerMaxMw.
+    Falls back to linear small-signal gain if P_sat is unset."""
+    p_sat = float(params.get("saturationPowerMw", 0.0))
+    g0 = 10.0 ** (float(params.get("smallSignalGainDb", 30.0)) / 10.0)
+    if p_sat > 0.0 and p_coupled_mw > 0.0:
+        p_out = p_sat * math.log1p((p_coupled_mw / p_sat) * (g0 - 1.0))
+    else:
+        p_out = p_coupled_mw * g0
+    p_max = float(params.get("outputPowerMaxMw", 0.0))
+    if p_max > 0.0:
+        p_out = min(p_out, p_max)
+    return max(0.0, p_out)
+
+
 def tapered_amplifier_anchor_op(
     ray_in: BeamRay, ctx: AnchorOpContext,
 ) -> list[BeamRay]:
+    """Seeded forward amplification (A→B). Polarization is gain-axis selective:
+    only the component along the gain axis (anchor axisY = jones[0]) is
+    amplified, and the output is linearly polarized along the gain axis with a
+    finite extinction leak. Saturated single-pass gain. A seeded TA emits no
+    ASE — unseeded ASE is injected by the emitter post-pass (decision 6b; see
+    docs/tapered-amplifier-model.md)."""
     if ctx.anchor.id != "intercept_in":
         return [ray_in]
+
     out_ray = _slab_passthrough(ray_in, ctx)
-    # Saturable gain: P_out = P_sat · ln(1 + (e^{G0/P_sat} - 1)·(P_in / P_sat))
-    # v1 simplification: linear gain clamped to saturation power.
-    p_sat = float(ctx.params.get("saturationPowerMw", 500.0))
-    g0_db = float(ctx.params.get("smallSignalGainDb", 30.0))
-    p_out_unclamped = ray_in.power_mw * (10.0 ** (g0_db / 10.0))
-    p_out = min(p_out_unclamped, p_sat)
-    return [out_ray.replaced(power_mw=p_out)]
+
+    # Couple only the gain-axis (axisY = jones[0]) component into the gain.
+    mag_in = _jones_mag2(ray_in.jones)
+    e_gain = ray_in.jones[0]
+    frac_coupled = (
+        (e_gain.real * e_gain.real + e_gain.imag * e_gain.imag) / mag_in
+        if mag_in > 1e-30 else 0.0
+    )
+    p_out = ta_saturated_power_mw(ray_in.power_mw * frac_coupled, ctx.params)
+
+    # Output is linearly polarized along the gain axis (axisY) with a small
+    # orthogonal (axisZ) leak set by the extinction ratio.
+    leak = math.sqrt(10.0 ** (-float(ctx.params.get("polarizationExtinctionDb", 20.0)) / 10.0))
+    out_jones = (complex(1.0, 0.0), complex(leak, 0.0))
+
+    return [out_ray.replaced(jones=out_jones, power_mw=p_out)]
 
 
 register_anchor_op("tapered_amplifier", tapered_amplifier_anchor_op)
