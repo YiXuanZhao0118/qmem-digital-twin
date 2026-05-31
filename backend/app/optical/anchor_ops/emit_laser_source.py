@@ -76,12 +76,17 @@ def _ray_from_anchor(
         lambda v: dir_body_to_lab_t(v, slot_transform),
     )
 
-    w0_x = float(
-        (default_params.get("spatialModeX") or {}).get("waistUm", 250.0)
-    )
-    w0_y = float(
-        (default_params.get("spatialModeY") or {}).get("waistUm", w0_x)
-    )
+    def _waist_um(axis_key: str, fallback: float) -> float:
+        # Per-instance spatial mode (SceneObject.dynamic_sources) wins over the
+        # asset default_params, so a per-object beam waist / divergence applies.
+        for src in (dynamic, default_params):
+            mode = (src or {}).get(axis_key)
+            if isinstance(mode, dict) and isinstance(mode.get("waistUm"), (int, float)) and mode["waistUm"] > 0:
+                return float(mode["waistUm"])
+        return fallback
+
+    w0_x = _waist_um("spatialModeX", 250.0)
+    w0_y = _waist_um("spatialModeY", w0_x)
     qx = _q_at_waist_mm(w0_x, wavelength_nm)
     qy = _q_at_waist_mm(w0_y, wavelength_nm)
 
@@ -106,6 +111,8 @@ def emit_anchor_source_rays(
     for slot in scene.slots:
         if slot.asset.kind != "laser_source":
             continue
+        if not slot.powered_on:
+            continue  # instrument power off → no emission
         for anchor in slot.asset.anchors:
             if anchor.id != "intercept_out":
                 continue
@@ -137,6 +144,8 @@ def emit_ta_ase_rays(
     for slot in scene.slots:
         if slot.asset.kind != "tapered_amplifier":
             continue
+        if not slot.powered_on:
+            continue  # instrument power off → no ASE
         if slot.scene_object_id in seeded_object_ids:
             continue
         dp = slot.asset.default_params or {}

@@ -64,6 +64,10 @@ class V3AnchorBindingSlot:
     asset: V3AssetAnchorSnapshot
     effective_transform: V3Transform
     dynamic_sources: Optional[dict] = None
+    # Instrument power panel: False when the owning SceneObject's
+    # device_states.state.power is False. Emitters (laser_source, TA ASE) skip
+    # powered-off slots so the beam disappears on power-off.
+    powered_on: bool = True
 
 
 @dataclass(frozen=True)

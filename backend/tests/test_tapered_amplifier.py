@@ -42,7 +42,7 @@ def test_zero_input_gives_zero():
 
 # --- Unseeded ASE emission (decision 6b) -----------------------------------
 
-def _ta_slot(obj_id: str, anchors=None):
+def _ta_slot(obj_id: str, anchors=None, powered_on: bool = True):
     return SimpleNamespace(
         asset=SimpleNamespace(
             kind="tapered_amplifier",
@@ -52,6 +52,7 @@ def _ta_slot(obj_id: str, anchors=None):
         scene_object_id=obj_id,
         binding_id="binding",
         effective_transform=None,
+        powered_on=powered_on,
     )
 
 
@@ -74,3 +75,24 @@ def test_ase_noop_when_ta_has_no_intercept_in_anchor():
     # Unseeded TA but missing the intercept_in anchor → nothing to emit from.
     scene = SimpleNamespace(slots=[_ta_slot("ta-2", anchors=[])])
     assert emit_ta_ase_rays(scene, set()) == []
+
+
+# --- Instrument power gating -----------------------------------------------
+
+def test_ase_suppressed_when_ta_powered_off():
+    # Unseeded TA but device power is OFF → no ASE (anchor present so the only
+    # thing stopping emission is the power gate).
+    anchor = SimpleNamespace(id="intercept_in")
+    scene = SimpleNamespace(slots=[_ta_slot("ta-3", anchors=[anchor], powered_on=False)])
+    assert emit_ta_ase_rays(scene, set()) == []
+
+
+def test_powered_off_laser_emits_nothing():
+    from app.optical.anchor_ops.emit_laser_source import emit_anchor_source_rays
+    laser = SimpleNamespace(
+        asset=SimpleNamespace(kind="laser_source", default_params={}, anchors=[]),
+        scene_object_id="laser-1", binding_id="src",
+        effective_transform=None, powered_on=False,
+    )
+    scene = SimpleNamespace(slots=[laser])
+    assert emit_anchor_source_rays(scene) == []

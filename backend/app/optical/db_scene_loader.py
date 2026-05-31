@@ -21,7 +21,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Asset3D, Component, ComponentBinding, SceneObject
+from app.models import Asset3D, Component, ComponentBinding, DeviceState, SceneObject
 from app.optical.anchor_tracer import (
     V3Anchor,
     V3AnchorBindingSlot,
@@ -250,12 +250,22 @@ async def load_anchor_scene_from_db(session: AsyncSession) -> V3AnchorScene:
     so_rows = (await session.scalars(select(SceneObject))).all()
     slots: list[V3AnchorBindingSlot] = []
 
+    # Instrument power panel: objects whose device_states.state.power is False
+    # are powered off. Emitters skip those slots (no beam / no ASE on power-off).
+    ds_rows = (await session.scalars(select(DeviceState))).all()
+    powered_off_ids = {
+        ds.object_id for ds in ds_rows
+        if isinstance(ds.state, dict) and ds.state.get("power") is False
+    }
+
     for so in so_rows:
         if not so.component_id:
             continue
         comp = await session.get(Component, so.component_id)
         if comp is None:
             continue
+
+        powered_on = so.id not in powered_off_ids
 
         binding_rows = (await session.scalars(
             select(ComponentBinding).where(ComponentBinding.component_id == comp.id)
@@ -296,6 +306,7 @@ async def load_anchor_scene_from_db(session: AsyncSession) -> V3AnchorScene:
                 asset=snap,
                 effective_transform=effective,
                 dynamic_sources=_extract_dynamic(so.properties),
+                powered_on=powered_on,
             ))
 
     return V3AnchorScene(slots=slots)
