@@ -125,3 +125,27 @@ def jones_body_to_lab(
     s_body_in_lab = dir_to_lab(s_body)
     phi = jones_rotation_angle(s_body_in_lab, s_lab, dir_lab)
     return rotate_jones(jones, phi)
+
+
+def jones_axis_to_lab(
+    jones: tuple[complex, complex],
+    s_body: Vec3,
+    dir_lab: Vec3,
+    dir_to_lab: Callable[[Vec3], Vec3],
+) -> tuple[complex, complex]:
+    """Map a body-frame Jones vector to the canonical lab ``beam_local_sp``
+    frame, where the body s-axis (``jones[0]``) is given EXPLICITLY as
+    ``s_body`` — the anchor's ``axisY`` transverse reference — rather than
+    derived from the propagation direction.
+
+    Use this for emitters whose polarization is defined relative to the
+    device's physical transverse axis (laser_source emission, tapered-
+    amplifier ASE): ``jones[0]`` = E along ``axisY``, ``jones[1]`` = E along
+    ``axisZ``. ``s_body`` must be (approximately) perpendicular to the
+    propagation direction; the anchor serializer Gram-Schmidt-orthogonalizes
+    axisY against axisX, so this holds for anchor axes.
+    """
+    s_lab, _ = beam_local_sp(dir_lab)
+    s_body_in_lab = dir_to_lab(s_body)
+    phi = jones_rotation_angle(s_body_in_lab, s_lab, dir_lab)
+    return rotate_jones(jones, phi)

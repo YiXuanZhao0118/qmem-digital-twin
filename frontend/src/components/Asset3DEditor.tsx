@@ -13,6 +13,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ICON_BUTTON,
   INPUT,
+  INPUT_DISABLED,
   PRIMARY_BUTTON,
   SECTION_LABEL,
   TABLE,
@@ -49,6 +50,8 @@ import { applyDeletionFilter, applyIncludeOnlyFilter, applyViewerHintsToGeometry
 import type { AssetViewerHints, ComponentItem } from "../types/digitalTwin";
 import { domainForElementKind } from "../utils/elementDefaults";
 import type { ElementKind } from "../types/digitalTwin";
+import { isPhysicsPlugin, resolvePortDomain } from "../kinds/_plugin";
+import { pluginForKind } from "../kinds/_plugins";
 
 const stlLoader = new STLLoader();
 const gltfLoader = new GLTFLoader();
@@ -78,6 +81,10 @@ type DraftAnchor = {
   apertureShape: "rectangle" | "ellipse" | "circle";
   apertureWidthMm: string;
   apertureHeightMm: string;
+  /** Coax connector on RF / TTL ports. Empty string = none (optical
+   *  anchors). Only edited when the anchor's domain is rf / ttl / trigger
+   *  (see the anchor table's per-row gating). */
+  connectorType: string;
 };
 
 type DraftTransition = {
@@ -324,6 +331,9 @@ function draftFromAsset(asset: V3Asset): AssetDraft {
       const apertureHeightMm = (a.apertureHeightMm ?? a.aperture_height_mm) as
         | number
         | undefined;
+      const connectorType = (a.connectorType ?? a.connector_type) as
+        | string
+        | undefined;
       // axisY default = world +Y when unset. The serializer will
       // Gram-Schmidt-orthogonalize it against axisX, so as long as Y
       // isn't parallel to X the result is well-defined.
@@ -342,6 +352,7 @@ function draftFromAsset(asset: V3Asset): AssetDraft {
         apertureShape: apertureShape ?? "circle",
         apertureWidthMm: n(apertureWidthMm),
         apertureHeightMm: n(apertureHeightMm),
+        connectorType: connectorType ?? "",
       };
     }),
     transitions: (asset.transitions ?? []).map((transition) => ({
@@ -1010,6 +1021,9 @@ function draftToPatch(draft: AssetDraft): V3AssetUpdate {
       apertureShape: a.apertureShape,
       ...(width !== null ? { apertureWidthMm: width } : {}),
       ...(height !== null ? { apertureHeightMm: height } : {}),
+      // Only RF / TTL anchors carry a connector; optical anchors leave
+      // it empty and the field is omitted (stays null in the JSONB).
+      ...(a.connectorType.trim() ? { connectorType: a.connectorType.trim() } : {}),
     };
   });
 
@@ -2332,6 +2346,34 @@ function AssetEditForm({
     return { required, optional, all: [...required, ...optional] };
   }, [kinds, draft.kindId]);
 
+  // Per-anchor field relevance, driven entirely by the kind plugin
+  // (kinds/<kind>/index.ts → physics.anchors + portDomains):
+  //   - domain      → portDomains (rf / ttl / trigger vs optical)
+  //   - axisY        → needsFastAxis (slow / fast / transmit transverse axis)
+  //   - aperture/... → needsAperture
+  //   - connector    → rf / ttl / trigger domain
+  // Anything an anchor doesn't use is rendered disabled + blank so the
+  // editor only shows the numbers that actually matter for that kind.
+  const anchorFieldsOf = useMemo(() => {
+    const plugin = pluginForKind(draft.kindId);
+    const phys = plugin && isPhysicsPlugin(plugin) ? plugin.physics : null;
+    const fastAxis = new Set<string>(phys?.anchors.needsFastAxis ?? []);
+    const aperture = new Set<string>(phys?.anchors.needsAperture ?? []);
+    return (anchorId: string) => {
+      const domain = phys ? resolvePortDomain(plugin!, anchorId) : null;
+      const isRf = domain === "rf" || domain === "ttl" || domain === "trigger";
+      return {
+        domain,
+        isRf,
+        // RF ports have no transverse/aperture geometry; optical ports
+        // gate axisY and aperture on the kind's declared needs.
+        showAxisY: !isRf && fastAxis.has(anchorId),
+        showAperture: !isRf && aperture.has(anchorId),
+        showConnector: isRf,
+      };
+    };
+  }, [draft.kindId]);
+
   // Geometry edits (mid-click cluster delete + "Revert geometry") stage
   // in draft.properties.viewerHints and only commit on Save Changes.
   // Previously they wrote through to the DB immediately, which created
@@ -2654,6 +2696,7 @@ function AssetEditForm({
                     apertureShape: "circle",
                     apertureWidthMm: "",
                     apertureHeightMm: "",
+                    connectorType: "",
                   },
                 ],
               });
@@ -2675,11 +2718,14 @@ function AssetEditForm({
             <th style={{ ...TH, width: 88 }}>aperture</th>
             <th style={{ ...TH, width: 105 }}>shape</th>
             <th style={TH}>width/height</th>
+            <th style={{ ...TH, width: 110 }}>connector_type</th>
             {isBindingDev && <th style={{ ...TH, width: 34 }} />}
           </tr>
         </thead>
         <tbody>
-          {draft.anchors.map((anchor, index) => (
+          {draft.anchors.map((anchor, index) => {
+            const ff = anchorFieldsOf(anchor.id);
+            return (
             <tr
               key={`${anchor.id}-${index}`}
               onClick={() => setSelectedAnchorIndex(index)}
@@ -2710,19 +2756,20 @@ function AssetEditForm({
               </td>
               <td style={TD}>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
-                  <input value={anchor.yx} onChange={(event) => updateAnchor(index, { yx: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={INPUT} type="number" step="0.01" />
-                  <input value={anchor.yy} onChange={(event) => updateAnchor(index, { yy: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={INPUT} type="number" step="0.01" />
-                  <input value={anchor.yz} onChange={(event) => updateAnchor(index, { yz: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={INPUT} type="number" step="0.01" />
+                  <input value={ff.showAxisY ? anchor.yx : ""} disabled={!ff.showAxisY} onChange={(event) => updateAnchor(index, { yx: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={ff.showAxisY ? INPUT : INPUT_DISABLED} type="number" step="0.01" />
+                  <input value={ff.showAxisY ? anchor.yy : ""} disabled={!ff.showAxisY} onChange={(event) => updateAnchor(index, { yy: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={ff.showAxisY ? INPUT : INPUT_DISABLED} type="number" step="0.01" />
+                  <input value={ff.showAxisY ? anchor.yz : ""} disabled={!ff.showAxisY} onChange={(event) => updateAnchor(index, { yz: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={ff.showAxisY ? INPUT : INPUT_DISABLED} type="number" step="0.01" />
                 </div>
               </td>
               <td style={TD}>
-                <input value={anchor.apertureMm} onChange={(event) => updateAnchor(index, { apertureMm: event.target.value })} style={INPUT} type="number" step="0.01" />
+                <input value={ff.showAperture ? anchor.apertureMm : ""} disabled={!ff.showAperture} onChange={(event) => updateAnchor(index, { apertureMm: event.target.value })} style={ff.showAperture ? INPUT : INPUT_DISABLED} type="number" step="0.01" />
               </td>
               <td style={TD}>
                 <select
                   value={anchor.apertureShape}
+                  disabled={!ff.showAperture}
                   onChange={(event) => updateAnchor(index, { apertureShape: event.target.value as V3Face["apertureShape"] })}
-                  style={INPUT}
+                  style={ff.showAperture ? INPUT : INPUT_DISABLED}
                 >
                   <option value="circle">circle</option>
                   <option value="ellipse">ellipse</option>
@@ -2731,9 +2778,23 @@ function AssetEditForm({
               </td>
               <td style={TD}>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
-                  <input value={anchor.apertureWidthMm} onChange={(event) => updateAnchor(index, { apertureWidthMm: event.target.value })} style={INPUT} type="number" step="0.01" placeholder="w" />
-                  <input value={anchor.apertureHeightMm} onChange={(event) => updateAnchor(index, { apertureHeightMm: event.target.value })} style={INPUT} type="number" step="0.01" placeholder="h" />
+                  <input value={ff.showAperture ? anchor.apertureWidthMm : ""} disabled={!ff.showAperture} onChange={(event) => updateAnchor(index, { apertureWidthMm: event.target.value })} style={ff.showAperture ? INPUT : INPUT_DISABLED} type="number" step="0.01" placeholder="w" />
+                  <input value={ff.showAperture ? anchor.apertureHeightMm : ""} disabled={!ff.showAperture} onChange={(event) => updateAnchor(index, { apertureHeightMm: event.target.value })} style={ff.showAperture ? INPUT : INPUT_DISABLED} type="number" step="0.01" placeholder="h" />
                 </div>
+              </td>
+              <td style={TD}>
+                <select
+                  value={ff.showConnector ? anchor.connectorType : ""}
+                  disabled={!ff.showConnector}
+                  onChange={(event) => updateAnchor(index, { connectorType: event.target.value })}
+                  style={ff.showConnector ? INPUT : INPUT_DISABLED}
+                >
+                  <option value="">—</option>
+                  <option value="sma_male">sma_male</option>
+                  <option value="sma_female">sma_female</option>
+                  <option value="bnc_male">bnc_male</option>
+                  <option value="bnc_female">bnc_female</option>
+                </select>
               </td>
               {isBindingDev && (
                 <td style={TD}>
@@ -2749,7 +2810,8 @@ function AssetEditForm({
                 </td>
               )}
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
 

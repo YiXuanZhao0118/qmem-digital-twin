@@ -101,6 +101,12 @@ class AnchorV3(CamelModel):
     aperture_shape: Optional[Literal["rectangle", "ellipse", "circle"]] = None
     aperture_width_mm: Optional[float] = None
     aperture_height_mm: Optional[float] = None
+    # Coax connector on RF / TTL ports (rf_in / rf_out / ttl_in / ...).
+    # Read by the RF Link panel to render the connector family and gate
+    # cable connections. Null on optical anchors. Kept as a free string
+    # (not a Literal) so legacy bare "sma" / "bnc" values round-trip
+    # alongside the editor's "sma_female" / "bnc_male" vocabulary.
+    connector_type: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

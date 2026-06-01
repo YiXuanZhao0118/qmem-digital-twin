@@ -14,8 +14,11 @@ with:
                     OR 780 (fallback)
     power_mw  = dynamic_sources.laserPowerMw / powerMw
                     OR default_params.nominalPowerMw / 1 mW fallback
-    jones     = anchor's axisY direction (E_s = 1, E_p = 0) by default,
-                overridden by default_params.polarization (exRe/exIm/...)
+    jones     = polarization Jones vector, defined in the anchor's
+                (axisY, axisZ) transverse basis — E_s along axisY,
+                E_p along axisZ. Default (E_s = 1, E_p = 0) = linear along
+                axisY; overridden by default_params.polarization
+                (exRe/exIm/...) or per-instance dynamic_sources.
     qx, qy    = at the waist (Im = zR, Re = 0) from default_params
                 .spatialModeX.waistUm
 """
@@ -27,7 +30,7 @@ from typing import Any
 
 from app.optical.anchor_tracer import V3Anchor, V3AnchorScene
 from app.optical.beam_ray import BeamRay, Vec3, make_beam_ray
-from app.optical.jones import jones_body_to_lab
+from app.optical.jones import jones_axis_to_lab
 from app.optical.pose import dir_body_to_lab_t, point_body_to_lab_t
 
 
@@ -76,8 +79,12 @@ def _ray_from_anchor(
     )
 
     jones_body = _pick_polarization(dynamic, default_params)
-    jones_lab = jones_body_to_lab(
-        jones_body, anchor.axis_x_body, dir_lab,
+    # The Jones vector is defined in the anchor's transverse basis: jones[0]
+    # = E along axisY, jones[1] = E along axisZ. Reference the s-axis to the
+    # anchor's axisY so rotating the emitter's mount rotates the emitted
+    # polarization with it (physical fast/pol axis, not world-up).
+    jones_lab = jones_axis_to_lab(
+        jones_body, anchor.axis_y_body, dir_lab,
         lambda v: dir_body_to_lab_t(v, slot_transform),
     )
 
@@ -169,9 +176,11 @@ def emit_ta_ase_rays(
             if power <= 0.0:
                 continue
             dir_lab = dir_body_to_lab_t(axis_body, slot.effective_transform)
-            # ASE is linearly polarized along the gain axis (anchor axisY).
-            jones_lab = jones_body_to_lab(
-                (complex(1.0, 0.0), complex(0.0, 0.0)), axis_body, dir_lab,
+            # ASE is linearly polarized along the gain axis = anchor axisY.
+            # jones[0] (E_s) is referenced to axisY, so E_s=1 ⇒ field along
+            # the physical gain axis regardless of beam direction / world-up.
+            jones_lab = jones_axis_to_lab(
+                (complex(1.0, 0.0), complex(0.0, 0.0)), anchor.axis_y_body, dir_lab,
                 lambda v: dir_body_to_lab_t(v, slot.effective_transform),
             )
             ray = make_beam_ray(

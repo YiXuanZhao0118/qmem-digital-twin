@@ -56,6 +56,10 @@ export const laserSourcePlugin = definePhysicsPlugin<LaserSourceParams>({
       required: [],
       optional: ["out", "intercept_out"],
       needsDirection: [],
+      // The emit anchor's axisY is the linear-polarization reference for
+      // the emitted beam (the Jones vector in defaultParams.polarization
+      // is defined in this axisY/axisZ basis). Editable in the PHY Editor.
+      needsFastAxis: ["out", "intercept_out"],
     },
     alignVariant: "none",
     alignToleranceMm: 0,

@@ -85,6 +85,8 @@ export const glanPolarizerPlugin = definePhysicsPlugin<GlanPolarizerParams>({
       optional: ["intercept_out"],
       needsDirection: ["intercept_in"],
       needsAperture: ["intercept_in"],
+      // Transmission (e-ray) axis — transverse reference edited as axisY.
+      needsFastAxis: ["intercept_in"],
     },
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,

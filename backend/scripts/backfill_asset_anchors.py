@@ -138,8 +138,9 @@ def _rotate_around_axis(v: Vec, axis: Vec, theta_rad: float) -> Vec:
 def _anchor(
     aid: str, pos: Vec, axis_x: Vec, axis_y: Vec, axis_z: Vec,
     aperture_mm: float, aperture_shape: str = "circle",
+    connector_type: Optional[str] = None,
 ) -> dict:
-    return {
+    anchor = {
         "id": aid,
         "positionMmBodyLocal": _vec_dict(pos),
         "axisXBodyLocal": _vec_dict(axis_x),
@@ -148,6 +149,12 @@ def _anchor(
         "apertureMm": float(aperture_mm),
         "apertureShape": aperture_shape,
     }
+    if connector_type is not None:
+        # The RF Link panel reads the connector family off the anchor; an
+        # RF port (rf_in / ttl_in / ...) with no connectorType renders
+        # "NO CONN" and can't be wired. See alembic 0098.
+        anchor["connectorType"] = connector_type
+    return anchor
 
 
 def _face_by_id(faces: list[dict], fid: str) -> Optional[dict]:
@@ -305,7 +312,9 @@ def build_aom_anchors(a: Asset3D) -> list[dict]:
         normal = _read_vec(rf_in.get("normalBodyLocal")) or (1, 0, 0)
         axis_x = _norm(normal)
         ay, az = _build_transverse_axes(axis_x, None)
-        slab.append(_anchor("rf_in", pos, axis_x, ay, az, 0.0, "circle"))
+        connector = (a.default_params or {}).get("connectorType") or "sma"
+        slab.append(_anchor("rf_in", pos, axis_x, ay, az, 0.0, "circle",
+                            connector_type=connector))
     return slab
 
 

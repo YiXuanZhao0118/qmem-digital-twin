@@ -62,6 +62,10 @@ export type V3Anchor = {
   apertureShape?: "rectangle" | "ellipse" | "circle" | null;
   apertureWidthMm?: number | null;
   apertureHeightMm?: number | null;
+  /** Coax connector on RF / TTL ports (rf_in, rf_out, ttl_in, ...). The
+   *  RF Link panel reads this to render the connector family and gate
+   *  cable connections. Null / absent on optical anchors. */
+  connectorType?: string | null;
 };
 
 export type V3Asset = {

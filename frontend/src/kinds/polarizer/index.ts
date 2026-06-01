@@ -22,6 +22,9 @@ export const polarizerPlugin = definePhysicsPlugin<PolarizerParams>({
       optional: [],
       needsDirection: [],
       needsAperture: ["intercept_in"],
+      // Transmission axis — the transverse reference the PHY Editor edits
+      // as axisY (slow/fast/transmit). See Asset3DEditor anchor table.
+      needsFastAxis: ["intercept_in"],
     },
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,

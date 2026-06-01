@@ -78,6 +78,17 @@ export const TEXTAREA: CSSProperties = {
   lineHeight: 1.35,
 };
 
+/** Muted, non-interactive variant of {@link INPUT}. Used in the PHY
+ *  Editor anchor table for fields a given anchor kind doesn't use
+ *  (e.g. axisY / aperture on an RF port, connector on an optical port)
+ *  so the cell reads as "not applicable" rather than empty-but-editable. */
+export const INPUT_DISABLED: CSSProperties = {
+  ...INPUT,
+  background: "#f1f2ef",
+  color: "#9aa0a6",
+  cursor: "not-allowed",
+};
+
 export const ICON_BUTTON: CSSProperties = {
   display: "inline-flex",
   alignItems: "center",

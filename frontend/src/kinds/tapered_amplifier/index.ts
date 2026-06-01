@@ -27,6 +27,15 @@ export interface TaperedAmplifierParams extends Record<string, unknown> {
   outputSpatialModeY: GaussianMode;
   outputTransverseMode: { kind: string };
   centerWavelengthNm: number;
+  /** Linear extinction of the orthogonal (TM) leak in the amplified output
+   *  (dB). Higher = cleaner TE polarization. */
+  polarizationExtinctionDb: number;
+  /** Steady-state current-driver quality ∈ [0,1]: an extraction-efficiency
+   *  multiplier on output power (1 = ideal driver). The dynamic driver
+   *  effects (α-parameter AM→PM noise, self-focusing / filamentation, M²
+   *  collapse) are time-/M²-domain phenomena handled by the time-domain
+   *  module, not this steady-state trace. */
+  driverQualityFactor: number;
 }
 
 export const taperedAmplifierPlugin = definePhysicsPlugin<TaperedAmplifierParams>({
@@ -43,6 +52,11 @@ export const taperedAmplifierPlugin = definePhysicsPlugin<TaperedAmplifierParams
       required: ["intercept_in", "intercept_out"],
       optional: ["seed"],
       needsDirection: ["intercept_in", "intercept_out"],
+      // Both facets carry a transverse polarization reference (axisY): the
+      // input gain axis (intercept_in) selects/amplifies one linear pol,
+      // and the amplified output (intercept_out) exits along that axis.
+      // Editable as axisY in the PHY Editor anchor table.
+      needsFastAxis: ["intercept_in", "intercept_out"],
     },
     alignVariant: "translate_anti_parallel",
     alignToleranceMm: 25,
@@ -62,6 +76,8 @@ export const taperedAmplifierPlugin = definePhysicsPlugin<TaperedAmplifierParams
       outputSpatialModeY: { waistUm: 50, waistZOffsetMm: 0, mSquared: 8.0 },
       outputTransverseMode: { kind: "TEM00" },
       centerWavelengthNm: 780,
+      polarizationExtinctionDb: 20.0,
+      driverQualityFactor: 1.0,
     },
   },
 });

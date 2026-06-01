@@ -23,6 +23,8 @@ export const eomPlugin = definePhysicsPlugin<EomParams>({
       optional: ["intercept_out"],
       needsDirection: [],
       needsAperture: ["intercept_in"],
+      // Modulation/index axis — transverse reference edited as axisY.
+      needsFastAxis: ["intercept_in"],
     },
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,

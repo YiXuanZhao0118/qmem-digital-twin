@@ -25,6 +25,9 @@ export const beamSplitterPlugin = definePhysicsPlugin<BeamSplitterParams>({
       optional: ["intercept_out"],
       needsDirection: ["intercept_in"],
       needsAperture: ["intercept_in"],
+      // s/p polarization basis at the coating — transverse reference
+      // edited as axisY. Relevant for PBS (beamSplitterType="pbs").
+      needsFastAxis: ["intercept_in"],
     },
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
