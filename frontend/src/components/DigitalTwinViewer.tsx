@@ -59,7 +59,6 @@ import {
   getRfSnapshotAt,
 } from "../utils/rfPropagationSchedule";
 import { computePpgMountedThreePose } from "../utils/ppgMounting";
-import { beamLocalSP } from "../optical/jones";
 import { PlacementGizmo } from "../three/placement/gizmo";
 import { SnapOverlay } from "../three/placement/snapOverlay";
 import {
@@ -76,159 +75,6 @@ import { ToolbarHint } from "./ToolbarHint";
 
 (window as unknown as { __testReflect?: typeof _testReflect }).__testReflect = _testReflect;
 THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
-
-type LabVector3 = { x: number; y: number; z: number };
-
-type LaserSource0PropagationAudit = {
-  index: number;
-  segmentIndex: number;
-  emitter: string;
-  from: string;
-  to: string;
-  hitObjectId: string | null;
-  bindingId: string | null;
-  faceInId: string | null;
-  op: string | null;
-  start: [number, number, number];
-  end: [number, number, number];
-  dir: [number, number, number];
-  beamLine: string;
-  polarization: [number, number, number];
-  polarizationLinearity: number;
-};
-
-function labVecLength(v: LabVector3): number {
-  return Math.hypot(v.x, v.y, v.z);
-}
-
-function normalizeLabVector(v: LabVector3): LabVector3 {
-  const len = labVecLength(v);
-  if (len <= 1e-12) return { x: 0, y: 0, z: 0 };
-  return { x: v.x / len, y: v.y / len, z: v.z / len };
-}
-
-function stableVectorSign(v: LabVector3): LabVector3 {
-  const values = [v.x, v.y, v.z];
-  const first = values.find((value) => Math.abs(value) > 1e-6);
-  return first !== undefined && first < 0 ? { x: -v.x, y: -v.y, z: -v.z } : v;
-}
-
-function cleanNumber(value: number, digits = 3): number {
-  const rounded = Number(value.toFixed(digits));
-  return Object.is(rounded, -0) ? 0 : rounded;
-}
-
-function tupleFromLabVector(v: LabVector3, digits = 3): [number, number, number] {
-  return [cleanNumber(v.x, digits), cleanNumber(v.y, digits), cleanNumber(v.z, digits)];
-}
-
-function formatLabVector(v: LabVector3 | [number, number, number], digits = 3): string {
-  const values = Array.isArray(v) ? v : tupleFromLabVector(v, digits);
-  return `[${values.map((value) => cleanNumber(value, digits).toFixed(digits)).join(", ")}]`;
-}
-
-function segmentDirectionLab(seg: V3LabSegment): LabVector3 {
-  return normalizeLabVector({
-    x: seg.end.x - seg.start.x,
-    y: seg.end.y - seg.start.y,
-    z: seg.end.z - seg.start.z,
-  });
-}
-
-function segmentBeamLine(seg: V3LabSegment, dir: LabVector3): string {
-  const ax = Math.abs(dir.x);
-  const ay = Math.abs(dir.y);
-  const az = Math.abs(dir.z);
-  if (ax >= ay && ax >= az && ax > 0.95) {
-    return `beam line: y=${cleanNumber(seg.start.y, 3).toFixed(3)}, z=${cleanNumber(seg.start.z, 3).toFixed(3)}`;
-  }
-  if (ay >= ax && ay >= az && ay > 0.95) {
-    return `beam line: x=${cleanNumber(seg.start.x, 3).toFixed(3)}, z=${cleanNumber(seg.start.z, 3).toFixed(3)}`;
-  }
-  if (az >= ax && az >= ay && az > 0.95) {
-    return `beam line: x=${cleanNumber(seg.start.x, 3).toFixed(3)}, y=${cleanNumber(seg.start.y, 3).toFixed(3)}`;
-  }
-  return `start=${formatLabVector([seg.start.x, seg.start.y, seg.start.z])} end=${formatLabVector([seg.end.x, seg.end.y, seg.end.z])}`;
-}
-
-function polarizationAxisLab(seg: V3LabSegment, dir: LabVector3): { vector: LabVector3; linearity: number } {
-  const [es, ep] = seg.jones ?? [{ re: 1, im: 0 }, { re: 0, im: 0 }];
-  const es2 = es.re * es.re + es.im * es.im;
-  const ep2 = ep.re * ep.re + ep.im * ep.im;
-  const s0 = es2 + ep2;
-  const basis = beamLocalSP(dir);
-  if (s0 <= 1e-12) {
-    return { vector: stableVectorSign(normalizeLabVector(basis.s)), linearity: 1 };
-  }
-
-  const s1 = es2 - ep2;
-  const s2 = 2 * (es.re * ep.re + es.im * ep.im);
-  const linearity = Math.min(1, Math.hypot(s1, s2) / s0);
-  const psi = 0.5 * Math.atan2(s2, s1);
-  const vector = normalizeLabVector({
-    x: basis.s.x * Math.cos(psi) + basis.p.x * Math.sin(psi),
-    y: basis.s.y * Math.cos(psi) + basis.p.y * Math.sin(psi),
-    z: basis.s.z * Math.cos(psi) + basis.p.z * Math.sin(psi),
-  });
-  return { vector: stableVectorSign(vector), linearity };
-}
-
-function isLaserSource0Name(value: string | null | undefined): boolean {
-  const compact = String(value ?? "").toLowerCase().replace(/[\s_-]/g, "");
-  return compact === "lasersource0";
-}
-
-function buildLaserSource0PropagationAudit(
-  labSegments: readonly V3LabSegment[],
-  objects: readonly SceneObject[],
-  components: readonly ComponentItem[],
-): LaserSource0PropagationAudit[] {
-  const objectById = new Map(objects.map((object) => [object.id, object]));
-  const componentById = new Map(components.map((component) => [component.id, component]));
-  const labelObject = (objectId: string | null | undefined, fallback: string): string => {
-    const object = objectById.get(objectId ?? "");
-    if (!object) return fallback;
-    const component = componentById.get(object.componentId);
-    if (component?.name && component.name !== object.name) return `${object.name} (${component.name})`;
-    return object.name;
-  };
-  const laserIds = new Set(
-    objects
-      .filter((object) => isLaserSource0Name(object.name) || isLaserSource0Name(object.id))
-      .map((object) => object.id),
-  );
-  if (laserIds.size === 0) return [];
-
-  let pathIndex = 0;
-  return labSegments.flatMap((seg, segmentIndex) => {
-    if (!laserIds.has(seg.emitterSceneObjectId ?? "") && !laserIds.has(seg.sourceSceneObjectId ?? "")) {
-      return [];
-    }
-    const index = pathIndex++;
-    const dir = segmentDirectionLab(seg);
-    const pol = polarizationAxisLab(seg, dir);
-    const emitter = labelObject(seg.emitterSceneObjectId, "LASER_SOURCE0");
-    const from = labelObject(seg.sourceSceneObjectId, emitter);
-    const to = labelObject(seg.sceneObjectId, seg.sceneObjectId ?? "free-space");
-    return [{
-      index,
-      segmentIndex,
-      emitter,
-      from,
-      to,
-      hitObjectId: seg.sceneObjectId,
-      bindingId: seg.bindingId,
-      faceInId: seg.faceInId,
-      op: seg.op,
-      start: [cleanNumber(seg.start.x, 3), cleanNumber(seg.start.y, 3), cleanNumber(seg.start.z, 3)],
-      end: [cleanNumber(seg.end.x, 3), cleanNumber(seg.end.y, 3), cleanNumber(seg.end.z, 3)],
-      dir: tupleFromLabVector(dir, 6),
-      beamLine: segmentBeamLine(seg, dir),
-      polarization: tupleFromLabVector(pol.vector, 6),
-      polarizationLinearity: cleanNumber(pol.linearity, 3),
-    }];
-  });
-}
 
 // Phase 8.6: `buildTraceLine(segment, maxPowerOnPath, colorOverrideHex)`
 // was deleted here when the v3 rendering swap removed its only call
@@ -1114,13 +960,23 @@ function createAxisHitTarget(position: THREE.Vector3, color: string, viewTarget:
 
 function createGlobalAxesGizmo(): THREE.Group {
   const group = new THREE.Group();
+  // User-facing axis DISPLAY frame for the small global-axis gizmo.
+  //
+  // This is a presentation frame: it labels the viewer as Z-up with +Y
+  // preserved. It must stay visually consistent with the Object Panel's
+  // Lab Sense rotation controls, which translate their labels back to stored
+  // SceneObject Euler fields in ComponentPanel.tsx.
+  //
+  // Runtime pose math does NOT read these directions. Solver, renderer,
+  // snapping, and anchor transforms continue to use stored
+  // SceneObject.rxDeg/ryDeg/rzDeg through sceneObjectToQuaternion().
   const axes = [
     { label: "X", color: "#ef4444", direction: new THREE.Vector3(1, 0, 0), viewTarget: "xPos" as const },
     { label: "-X", color: "#ef4444", direction: new THREE.Vector3(-1, 0, 0), viewTarget: "xNeg" as const },
-    { label: "Y", color: "#22c55e", direction: new THREE.Vector3(0, 0, -1), viewTarget: "yPos" as const },
-    { label: "-Y", color: "#22c55e", direction: new THREE.Vector3(0, 0, 1), viewTarget: "yNeg" as const },
-    { label: "Z", color: "#3b82f6", direction: new THREE.Vector3(0, 1, 0), viewTarget: "zPos" as const },
-    { label: "-Z", color: "#3b82f6", direction: new THREE.Vector3(0, -1, 0), viewTarget: "zNeg" as const },
+    { label: "Y", color: "#22c55e", direction: new THREE.Vector3(0, 1, 0), viewTarget: "yPos" as const },
+    { label: "-Y", color: "#22c55e", direction: new THREE.Vector3(0, -1, 0), viewTarget: "yNeg" as const },
+    { label: "Z", color: "#3b82f6", direction: new THREE.Vector3(0, 0, 1), viewTarget: "zPos" as const },
+    { label: "-Z", color: "#3b82f6", direction: new THREE.Vector3(0, 0, -1), viewTarget: "zNeg" as const },
   ];
 
   const home = new THREE.Mesh(
@@ -1537,8 +1393,6 @@ export function DigitalTwinViewer({
    *  wrappers — without it, gizmo attaches to a wrapper that the next
    *  rebuild then disposes, leaving controls.object orphaned. */
   const [componentsBuildVersion, setComponentsBuildVersion] = useState(0);
-  const [laserSource0AuditRows, setLaserSource0AuditRows] = useState<LaserSource0PropagationAudit[]>([]);
-
   const sceneData = useSceneStore((state) => state.scene);
   const scopeProbe = useSceneStore((state) => state.scopeProbe);
   const scrubTimeNs = useSceneStore((state) => state.scrubTimeNs);
@@ -3302,34 +3156,30 @@ export function DigitalTwinViewer({
         return { id: obj.id, componentId: obj.componentId, group: w };
       })
       .filter((x): x is { id: string; componentId: string; group: THREE.Group } => x !== null);
-    // Pivot point. Single-object: centre of the wrapper's WORLD bbox (so
-    // the gizmo arrows appear at the visual body centre regardless of
-    // where the local origin happens to sit — relevant for primitives
-    // whose origin is at a face rather than the centre).
-    // Multi-object: collective centroid = mean of every selected wrapper's
-    // bbox centre. Per the user spec, two objects at A=(0,0,0) and B=(2,2,2)
-    // pivot at (1,1,1).
+    // Pivot point. Use SceneObject pose origins, not mesh/bbox centres.
+    // The bbox centre is only the rendered body's visual centre; it is not
+    // guaranteed to be the physical/object rotation axis after asset
+    // recentering, binding-tree offsets, or CAD body-frame corrections. The
+    // Object Panel rotation and stored SceneObject pose both rotate around
+    // (xMm, yMm, zMm), so the transform gizmo must sit on that same axis.
+    // Multi-select uses the centroid of those pose origins.
     const pivotLabMm = (() => {
-      const wrappers = [primaryWrapper, ...followers.map((f) => f.group)];
+      const selectedPoseObjects = [
+        sceneObj,
+        ...followers
+          .map((f) => sceneData.objects.find((object) => object.id === f.id))
+          .filter((object): object is SceneObject => Boolean(object)),
+      ];
       let sumX = 0, sumY = 0, sumZ = 0;
-      const tmp = new THREE.Vector3();
-      for (const w of wrappers) {
-        const box = new THREE.Box3().setFromObject(w);
-        if (box.isEmpty()) {
-          // Fallback: wrapper world position.
-          w.getWorldPosition(tmp);
-        } else {
-          box.getCenter(tmp);
-        }
-        // Three → lab mm. Z-up: pure scale, no axis swap (matches frames.ts).
-        sumX += tmp.x * 100;
-        sumY += tmp.y * 100;
-        sumZ += tmp.z * 100;
+      for (const object of selectedPoseObjects) {
+        sumX += object.xMm;
+        sumY += object.yMm;
+        sumZ += object.zMm;
       }
       return {
-        x: sumX / wrappers.length,
-        y: sumY / wrappers.length,
-        z: sumZ / wrappers.length,
+        x: sumX / selectedPoseObjects.length,
+        y: sumY / selectedPoseObjects.length,
+        z: sumZ / selectedPoseObjects.length,
       };
     })();
     gizmo.attach({
@@ -4271,16 +4121,6 @@ export function DigitalTwinViewer({
         : [];
 
       const labSegments = v3LabSegmentsRef.current;
-      const laserSource0PropagationAudit = buildLaserSource0PropagationAudit(
-        labSegments,
-        sceneData.objects,
-        sceneData.components,
-      );
-      setLaserSource0AuditRows((prev) =>
-        JSON.stringify(prev) === JSON.stringify(laserSource0PropagationAudit)
-          ? prev
-          : laserSource0PropagationAudit,
-      );
       // Single chokepoint for the cross-component debug bridge — see
       // three/debugBridge.ts for the type + consumer notes. Adapter
       // output is structurally compatible with TraceSegment for the
@@ -4290,7 +4130,6 @@ export function DigitalTwinViewer({
         v3LabSegments: labSegments as unknown as DebugLabSegment[],
         rayTraceDebug: adaptedTraces as unknown as DebugTraceSegment[],
         beamGroup,
-        laserSource0PropagationAudit,
       });
       if (!renderCtx.overlayFlags.beam_segments) return;
       for (const seg of labSegments) {
@@ -6022,21 +5861,6 @@ export function DigitalTwinViewer({
         )}
       </div>
       <ToolbarHint displayMode={displayMode} gizmoMode={gizmoMode} />
-      {laserSource0AuditRows.length > 0 && (
-        <div className="laser-source-audit-panel" aria-label="LASER_SOURCE0 propagation">
-          <div className="laser-source-audit-title">LASER_SOURCE0 propagation</div>
-          {laserSource0AuditRows.slice(0, 8).map((entry) => (
-            <div className="laser-source-audit-row" key={`${entry.segmentIndex}:${entry.hitObjectId ?? "free"}`}>
-              <div>{`emitter = ${entry.emitter}`}</div>
-              <div>{`${entry.index + 1}. ${entry.from} -> ${entry.to}`}</div>
-              <div>{`dir = ${formatLabVector(entry.dir, 6)}`}</div>
-              <div>{`pol = ${formatLabVector(entry.polarization, 6)}`}</div>
-              <div>{entry.beamLine}</div>
-              <div>{`hit = ${entry.bindingId ?? "-"} / ${entry.faceInId ?? "-"}`}</div>
-            </div>
-          ))}
-        </div>
-      )}
       <div className="viewer-display-modes" role="group" aria-label="Display mode">
         {DISPLAY_MODE_OPTIONS.map(({ mode, title, Icon }) => (
           <button

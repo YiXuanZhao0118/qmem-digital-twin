@@ -28,6 +28,18 @@
  *   through this helper, so the runtime semantics today must match the
  *   pre-existing `applyObjectTransform`.
  *
+ * Display-frame exception:
+ *   The Object Panel's "Lab Sense rotation deg" row and the global-axis gizmo
+ *   use a user-facing display frame. That display frame is a UI relabeling,
+ *   not a physics convention. ComponentPanel.tsx maps display controls to
+ *   stored Euler fields as:
+ *     display RX =  stored rxDeg
+ *     display RY = -stored ryDeg
+ *     display RZ = -stored rzDeg
+ *   Do not copy that mapping into solver, renderer, snapping, anchor access,
+ *   or DB code; those paths must consume the stored SceneObject Euler fields
+ *   through this module.
+ *
  * NOTE: The legacy `transformUtils.ts` re-exports these helpers so old
  * imports keep working through Phase 2 migration. New code should import
  * from this module directly.

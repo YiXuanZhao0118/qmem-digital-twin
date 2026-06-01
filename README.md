@@ -973,16 +973,33 @@ sub-Component.
 
 ## Coordinates & units
 
-Lab frame (database): **millimeters**. Mapped into Three.js as:
+Lab frame (database): **millimeters**. The current runtime viewer is Z-up and
+maps Lab to Three.js by pure unit scaling:
 
-- lab X → Three.js X
-- lab Y → Three.js −Z
-- lab Z → Three.js Y
+- lab X -> Three.js X
+- lab Y -> Three.js Y
+- lab Z -> Three.js Z
 - 1 Three.js unit = 100 mm (historical scale; renderers and gizmos all assume
   this)
 
-Rotations in the DB are degrees, ZXZ intrinsic Euler (`rxDeg`, `ryDeg`,
-`rzDeg`). Conversion lives in `frontend/src/three/transformUtils.ts`.
+Stored `SceneObject` rotations in the DB/API are degrees in the internal
+`rxDeg`, `ryDeg`, `rzDeg` convention. Runtime code must convert them through
+`frontend/src/optical/frames.ts::sceneObjectToQuaternion()`; solver, renderer,
+anchor access, snapping/alignment, rigid-group expansion, and persistence all
+use those stored fields directly.
+
+UI display-frame note: the small `global-axis-gizmo` and Object Panel
+`Lab Sense rotation deg` controls present a rotated display frame for humans.
+That display frame is only a UI boundary mapping:
+
+- displayed `RX` = `rxDeg`
+- displayed `RY` = `-ryDeg`
+- displayed `RZ` = `-rzDeg`
+
+Only these Object Panel controls use the display-frame mapping: single-object
+Identity rotation, multi-select Group rotation, and multi-select per-object
+`rot` rows. Do not use this mapping in optical tracing, anchor transforms,
+renderer placement, snap/align math, or database migrations.
 
 ---
 

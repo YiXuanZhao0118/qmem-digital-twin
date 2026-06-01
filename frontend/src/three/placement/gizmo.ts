@@ -78,8 +78,9 @@ export class PlacementGizmo {
 
   /** Hidden proxy Object3D placed at the pivot point. TransformControls is
    *  always attached to THIS, never directly to a SceneObject's wrapper, so
-   *  the gizmo arrows appear at the requested pivot (single object: body
-   *  centre; multi-object: collective centroid). The proxy's drag delta is
+   *  the gizmo arrows appear at the requested pivot (single object:
+   *  SceneObject pose origin / rotation axis; multi-object: collective
+   *  centroid of pose origins). The proxy's drag delta is
    *  then applied to every selected wrapper — translation = same delta,
    *  rotation = around the proxy origin (rotates each wrapper's position
    *  AND its own orientation as a rigid group). */
@@ -210,7 +211,8 @@ export class PlacementGizmo {
     primary: { id: string; componentId: string; group: THREE.Group };
     followers?: Array<{ id: string; componentId: string; group: THREE.Group }>;
     /** Lab-mm coords of the pivot point. For a single object this is its
-     *  body centre; for multi-select the centroid of all selected bodies.
+     *  SceneObject pose origin / rotation axis; for multi-select the
+     *  centroid of all selected pose origins.
      *  When omitted the proxy lands on the primary's wrapper world
      *  position (legacy behaviour). */
     pivotLabMm?: LabPoint;
@@ -373,11 +375,10 @@ export class PlacementGizmo {
     const deltaQuat = this.proxy.quaternion.clone().multiply(inverseInitialQuat);
 
     // Apply (translate + rotate-around-proxy-origin) to every selected
-    // wrapper. This is the core "rigid group transform" semantics the user
-    // asked for: single object → pivot at body centre (proxy = body center
-    // → relative = 0 → only rotation around its own centre); multi → pivot
-    // at collective centroid → each object orbits the centroid AND
-    // rotates itself.
+    // wrapper. DigitalTwinViewer supplies the pivot source: SceneObject pose
+    // origin for single selection, pose-origin centroid for multi-select.
+    // The wrapper offset from the proxy is preserved while proxy rotation is
+    // applied, so a non-centered mesh still rotates around the real object axis.
     for (const sel of this.selectedRigid) {
       const relative = sel.initialPosThree.clone().sub(this.initialProxyPosThree);
       relative.applyQuaternion(deltaQuat);

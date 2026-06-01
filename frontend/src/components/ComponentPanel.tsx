@@ -43,6 +43,38 @@ const emptyDraft: DraftObject = {
   serialNumber: null,
 };
 
+// Lab Sense rotation controls use a DISPLAY frame, not the stored Euler field names.
+//
+// Why this exists:
+// - The 3D viewer/gizmo now presents the user-facing Lab Sense frame as Z-up
+//   with +Y preserved.
+// - Stored SceneObject pose still uses the existing rxDeg/ryDeg/rzDeg Euler
+//   fields because solver, renderer, snap/align, rigid-group, and DB updates
+//   already compose those fields through sceneObjectToQuaternion().
+// - Therefore the Object Panel must translate between "displayed Lab Sense
+//   axes" and "stored SceneObject Euler fields" at the UI boundary only.
+//
+// Mapping:
+//   displayed RX =  stored rxDeg
+//   displayed RY = -stored ryDeg
+//   displayed RZ = -stored rzDeg
+//
+// Uses of this display frame:
+// - Single-object Identity > Lab Sense rotation deg.
+// - Multi-select Group Lab Sense rotation deg.
+// - Multi-select per-object "rot" rows.
+//
+// Do NOT use this mapping in optical tracing, anchor transforms, renderer
+// placement, snap/align math, or persistence. Those paths consume the stored
+// SceneObject rxDeg/ryDeg/rzDeg convention directly.
+const LAB_SENSE_ROTATION_CONTROLS = [
+  { label: "RX", key: "rxDeg", sign: 1 },
+  { label: "RY", key: "ryDeg", sign: -1 },
+  { label: "RZ", key: "rzDeg", sign: -1 },
+] as const;
+
+type LabSenseRotationControl = typeof LAB_SENSE_ROTATION_CONTROLS[number];
+
 function pulseTimingCapabilityFor(
   component: ComponentItem | undefined,
 ): { allowed: boolean; mode: "ttl" | "trigger" | "none" } {
@@ -159,8 +191,10 @@ function MultiSelectTransformPanel({ objects }: { objects: SceneObject[] }) {
     );
   };
 
-  const setCenterRot = async (axis: "rxDeg" | "ryDeg" | "rzDeg", next: number) => {
-    const delta = next - center[axis];
+  const setCenterRot = async (control: LabSenseRotationControl, next: number) => {
+    const axis = control.key;
+    const nextStored = control.sign * next;
+    const delta = nextStored - center[axis];
     if (Math.abs(delta) < 1e-9) return;
     await updateSceneObjects(
       editable.map((o) => ({
@@ -216,12 +250,12 @@ function MultiSelectTransformPanel({ objects }: { objects: SceneObject[] }) {
             Group Lab Sense rotation deg
           </span>
           <div className="number-grid">
-            {(["rxDeg", "ryDeg", "rzDeg"] as const).map((key) => (
-              <label key={key}>
-                <span>{key.replace("Deg", "").toUpperCase()}</span>
+            {LAB_SENSE_ROTATION_CONTROLS.map((control) => (
+              <label key={control.label}>
+                <span>{control.label}</span>
                 <NumberField
-                  value={center[key]}
-                  onChange={(v) => void setCenterRot(key, v)}
+                  value={control.sign * center[control.key]}
+                  onChange={(v) => void setCenterRot(control, v)}
                   disabled={editable.length === 0}
                   title="Adds delta to each object's own rotation"
                 />
@@ -280,12 +314,12 @@ function PerObjectRow({
       </div>
       <div className="multiselect-row-fields">
         <span className="multiselect-row-axis-group">rot</span>
-        {(["rxDeg", "ryDeg", "rzDeg"] as const).map((key) => (
-          <label key={key}>
-            <span>{key.replace("Deg", "").toUpperCase()}</span>
+        {LAB_SENSE_ROTATION_CONTROLS.map((control) => (
+          <label key={control.label}>
+            <span>{control.label}</span>
             <NumberField
-              value={object[key]}
-              onChange={setField(key)}
+              value={control.sign * object[control.key]}
+              onChange={(next) => setField(control.key)(control.sign * next)}
               disabled={object.locked}
             />
           </label>
@@ -1812,6 +1846,15 @@ export function ComponentPanel() {
     }));
   };
 
+  const setLabSenseRotation = (control: LabSenseRotationControl, value: string) => {
+    dirtyRef.current = true;
+    const numeric = Number(value);
+    setDraft((current) => ({
+      ...current,
+      [control.key]: control.sign * (Number.isFinite(numeric) ? numeric : 0),
+    }));
+  };
+
   const setBoolean = (key: keyof DraftObject, value: boolean) => {
     dirtyRef.current = true;
     setDraft((current) => ({ ...current, [key]: value }));
@@ -2014,14 +2057,14 @@ export function ComponentPanel() {
                     Lab Sense rotation deg
                   </span>
                   <div className="number-grid">
-                    {(["rxDeg", "ryDeg", "rzDeg"] as const).map((key) => (
-                      <label key={key}>
-                        <span>{key.replace("Deg", "").toUpperCase()}</span>
+                    {LAB_SENSE_ROTATION_CONTROLS.map((control) => (
+                      <label key={control.label}>
+                        <span>{control.label}</span>
                         <input
                           type="number"
-                          value={draft[key]}
+                          value={control.sign * draft[control.key]}
                           disabled={positionLocked}
-                          onChange={(event) => setNumber(key, event.target.value)}
+                          onChange={(event) => setLabSenseRotation(control, event.target.value)}
                         />
                       </label>
                     ))}

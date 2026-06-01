@@ -36,8 +36,10 @@ export type ComponentCapabilityProfile = {
    *  internal kinds (PPG, future hidden fiber body) so the user doesn't
    *  see — or get to delete — them out of band. */
   outlinerVisible: boolean;
-  /** Object panel renders the "Object position mm" and "Object rotation
-   *  deg" sections (xMm/yMm/zMm + rxDeg/ryDeg/rzDeg numeric inputs). */
+  /** Object panel renders the position and rotation sections. Position
+   *  edits stored xMm/yMm/zMm directly. Rotation is displayed in the
+   *  Lab Sense display frame; ComponentPanel maps that UI frame back to
+   *  stored SceneObject rxDeg/ryDeg/rzDeg before persistence. */
   objectPanelShowPose: boolean;
   /** Object panel renders the Lock checkbox AND backend honours the
    *  `locked` flag's pose-mutation block. */
