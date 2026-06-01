@@ -13,14 +13,11 @@
 # After committing this file, run once to renormalise existing files:
 #   git add --renormalize .
 #   git commit -m "Renormalise line endings via .gitattributes"
-
 * text=auto eol=lf
-
 # Windows-only shell scripts
 *.ps1   text eol=crlf
 *.cmd   text eol=crlf
 *.bat   text eol=crlf
-
 # Source code (explicit LF — also lets Git diff treat them as text)
 *.ts        text eol=lf
 *.tsx       text eol=lf
@@ -39,7 +36,6 @@
 *.svg       text eol=lf
 *.sql       text eol=lf
 *.sh        text eol=lf
-
 # Binary — never touch line endings
 *.png       binary
 *.jpg       binary
@@ -67,6 +63,6 @@
 *.mp3       binary
 *.mp4       binary
 *.wav       binary
-
 # Generated / vendored — don't show in diffs by default
 package-lock.json   linguist-generated=true
+assets/files/stl/ad9959_pcbz.stl filter=lfs diff=lfs merge=lfs -text
