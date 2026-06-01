@@ -348,6 +348,7 @@ class LabSegment:
     qy_re_at_start: float = 0.0
     qy_im_at_start: float = 0.0
     path_length_mm_at_start: float = 0.0
+    freq_offset_hz_at_start: float = 0.0
 
 
 @dataclass
@@ -423,6 +424,7 @@ def trace_ray_anchor_scene(
                 qx_re_at_start=ray.qx.real, qx_im_at_start=ray.qx.imag,
                 qy_re_at_start=ray.qy.real, qy_im_at_start=ray.qy.imag,
                 path_length_mm_at_start=ray.path_length_mm,
+                freq_offset_hz_at_start=ray.freq_offset_hz,
             ))
             result.final_rays.append(ray)
             continue
@@ -448,6 +450,7 @@ def trace_ray_anchor_scene(
             qx_re_at_start=ray.qx.real, qx_im_at_start=ray.qx.imag,
             qy_re_at_start=ray.qy.real, qy_im_at_start=ray.qy.imag,
             path_length_mm_at_start=ray.path_length_mm,
+            freq_offset_hz_at_start=ray.freq_offset_hz,
         ))
 
         # Dispatch op

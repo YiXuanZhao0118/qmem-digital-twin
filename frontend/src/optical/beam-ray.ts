@@ -57,6 +57,11 @@ export type BeamRay = {
   // ---- Tracking (data only — no auto-recombination at rendezvous) ----
   pathLengthMm: number;
   phaseAccumRad: number;
+  // Accumulated optical-frequency offset (Hz) relative to the nominal carrier
+  // implied by wavelengthNm. AOMs add order·f_RF here instead of perturbing
+  // wavelengthNm, so a beat note between two rays is the exact difference of
+  // their freqOffsetHz (no catastrophic cancellation). Absent ⇒ 0.
+  freqOffsetHz?: number;
 
   // ---- Bookkeeping ----
   parentId?: string;          // for branching (BS, AOM, ghost rays)
@@ -96,6 +101,7 @@ export function makeBeamRay(opts: {
     profile: opts.profile ?? { kind: "gaussian" },
     pathLengthMm: 0,
     phaseAccumRad: 0,
+    freqOffsetHz: 0,
   };
 }
 

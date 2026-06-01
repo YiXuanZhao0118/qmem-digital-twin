@@ -6,8 +6,10 @@ import pytest
 
 from app.optical import kinds  # noqa: F401
 from app.optical.beam_ray import BeamRay, Vec3, make_beam_ray
-from app.optical.kinds.aom_v3.physics import (
+from app.optical.kinds.aom.physics import (
+    bragg_acceptance_mrad,
     bragg_angle_rad,
+    bragg_detuning_factor,
     order_efficiency,
     order_from_context,
     parse_order_from_face_id,
@@ -260,3 +262,96 @@ def test_jones_unchanged():
     r = make_forward_ray()
     [out] = op(r, ctx_for(1))
     assert out.jones == r.jones
+
+
+# ---------------------------------------------------------------------------
+# Doppler frequency shift (tracked as freq_offset_hz; wavelength_nm untouched)
+# ---------------------------------------------------------------------------
+
+def test_doppler_plus1_order():
+    op = get_op("aom", "diffract_aom")
+    [out] = op(make_forward_ray(), ctx_for(1))
+    assert out.freq_offset_hz == pytest.approx(80e6, abs=1.0)
+
+
+def test_doppler_zero_order():
+    op = get_op("aom", "diffract_aom")
+    [out] = op(make_forward_ray(), ctx_for(0))
+    assert out.freq_offset_hz == pytest.approx(0.0, abs=1e-6)
+
+
+def test_doppler_minus1_order():
+    op = get_op("aom", "diffract_aom")
+    [out] = op(make_reverse_ray(), ctx_for(-1))
+    assert out.freq_offset_hz == pytest.approx(-80e6, abs=1.0)
+
+
+def test_doppler_accumulates():
+    op = get_op("aom", "diffract_aom")
+    r = make_forward_ray().replaced(freq_offset_hz=80e6)
+    [out] = op(r, ctx_for(1))
+    assert out.freq_offset_hz == pytest.approx(160e6, abs=1.0)
+
+
+def test_doppler_uses_dynamic_freq():
+    op = get_op("aom", "diffract_aom")
+    base = ctx_for(1)
+    ctx = PhysicsOpContext(
+        face_in=base.face_in, face_out=base.face_out, params=base.params,
+        dynamic={"aomFreqMhz": 110},
+    )
+    [out] = op(make_forward_ray(), ctx)
+    assert out.freq_offset_hz == pytest.approx(110e6, abs=1.0)
+
+
+def test_wavelength_left_on_nominal_carrier():
+    op = get_op("aom", "diffract_aom")
+    r = make_forward_ray()
+    [out] = op(r, ctx_for(1))
+    assert out.wavelength_nm == r.wavelength_nm
+
+
+# ---------------------------------------------------------------------------
+# Bragg detuning sinc^2 (off-axis incidence reduces diffraction efficiency)
+# ---------------------------------------------------------------------------
+
+def tilted_ray(angle_rad: float) -> BeamRay:
+    """Forward ray tilted by angle_rad from the optical axis, in the RF (x-z)
+    plane."""
+    return make_beam_ray(
+        origin=Vec3(0, 0, -L / 2),
+        direction=Vec3(math.sin(angle_rad), 0, math.cos(angle_rad)),
+        wavelength_nm=780,
+        power_mw=1.0,
+    )
+
+
+def test_acceptance_matches_physics():
+    # External half-width to first null: n*v/(f*L) = 2.26*4200/(80e6*1.6e-3).
+    assert bragg_acceptance_mrad(80, 4200, 2.26, L) == pytest.approx(74.16, abs=0.1)
+
+
+def test_detuning_unity_on_axis():
+    f = bragg_detuning_factor(make_forward_ray(), ctx_for(1), 80, 4200, 2.26, L)
+    assert f == pytest.approx(1.0, abs=1e-12)
+
+
+def test_detuning_zero_at_first_null():
+    null_rad = bragg_acceptance_mrad(80, 4200, 2.26, L) * 1e-3
+    f = bragg_detuning_factor(tilted_ray(null_rad), ctx_for(1), 80, 4200, 2.26, L)
+    assert f == pytest.approx(0.0, abs=1e-9)
+
+
+def test_detuning_half_null_is_sinc_half():
+    null_rad = bragg_acceptance_mrad(80, 4200, 2.26, L) * 1e-3
+    f = bragg_detuning_factor(tilted_ray(null_rad / 2), ctx_for(1), 80, 4200, 2.26, L)
+    # ~sinc^2(pi/2); the cos(theta_B) factor shifts it by ~5e-6 from the ideal.
+    assert f == pytest.approx((2 / math.pi) ** 2, abs=1e-4)
+
+
+def test_detuning_reduces_first_order_power():
+    op = get_op("aom", "diffract_aom")
+    null_rad = bragg_acceptance_mrad(80, 4200, 2.26, L) * 1e-3
+    [out] = op(tilted_ray(null_rad / 2), ctx_for(1))
+    # base 0.85 first-order * sinc^2(pi/2) ~ 0.85 * 0.405.
+    assert out.power_mw == pytest.approx(0.85 * (2 / math.pi) ** 2, abs=1e-4)

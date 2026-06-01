@@ -56,6 +56,7 @@ def beam_ray_to_dict(r: BeamRay) -> dict:
         "qy":             _complex_to_dict(r.qy),
         "pathLengthMm":   float(r.path_length_mm),
         "phaseAccumRad":  float(r.phase_accum_rad),
+        "freqOffsetHz":   float(r.freq_offset_hz),
         "isGhost":        bool(r.is_ghost),
         "excludeFaceKey": r.exclude_face_key,
         "parentId":       r.parent_id,
@@ -111,6 +112,7 @@ class V3LabSegment:
     qy_re_at_start: float = 0.0
     qy_im_at_start: float = 0.0
     path_length_mm_at_start: float = 0.0
+    freq_offset_hz_at_start: float = 0.0
 
 
 @dataclass
@@ -156,6 +158,7 @@ class V3SolverResult:
                     "qxAtStart": {"re": s.qx_re_at_start, "im": s.qx_im_at_start},
                     "qyAtStart": {"re": s.qy_re_at_start, "im": s.qy_im_at_start},
                     "pathLengthMmAtStart": s.path_length_mm_at_start,
+                    "freqOffsetHz": s.freq_offset_hz_at_start,
                 }
                 for s in self.lab_segments
             ],
@@ -231,6 +234,7 @@ def solve_v3_scene(
                 qx_re_at_start=ls.qx_re_at_start, qx_im_at_start=ls.qx_im_at_start,
                 qy_re_at_start=ls.qy_re_at_start, qy_im_at_start=ls.qy_im_at_start,
                 path_length_mm_at_start=ls.path_length_mm_at_start,
+                freq_offset_hz_at_start=ls.freq_offset_hz_at_start,
             ))
         for r in trace.final_rays:
             result.final_rays.append(beam_ray_to_dict(r))
@@ -312,6 +316,7 @@ def solve_anchor_scene(
                     qx_re_at_start=ls.qx_re_at_start, qx_im_at_start=ls.qx_im_at_start,
                     qy_re_at_start=ls.qy_re_at_start, qy_im_at_start=ls.qy_im_at_start,
                     path_length_mm_at_start=ls.path_length_mm_at_start,
+                    freq_offset_hz_at_start=ls.freq_offset_hz_at_start,
                 ))
             for r in trace.final_rays:
                 result.final_rays.append(beam_ray_to_dict(r))

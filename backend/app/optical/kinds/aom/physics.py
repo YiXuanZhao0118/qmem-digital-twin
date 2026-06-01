@@ -221,6 +221,64 @@ def _deflect_along_rf_side(input_dir: Vec3, rf_dir: Vec3, deflect_rad: float) ->
     ))
 
 
+def _angle_to_axis_rad(direction: Vec3, axis: Vec3) -> float:
+    """Unsigned angle between a ray direction and the optical axis."""
+    d = _vec_norm(direction)
+    a = _vec_norm(axis)
+    return math.acos(max(-1.0, min(1.0, _vec_dot(d, a))))
+
+
+def bragg_detuning_factor(
+    ray_in: BeamRay,
+    ctx: PhysicsOpContext,
+    freq_mhz: float,
+    v_acoustic: float,
+    n: float,
+    l_mm: float,
+) -> float:
+    """sinc^2 Bragg phase-matching factor for off-axis incidence.
+
+    Thick-grating coupled-wave theory: efficiency scales as sinc^2(dk*L/2),
+    where dk is the longitudinal wave-vector mismatch produced by deviating
+    from the matched incidence angle. We treat the canonical on-axis input
+    (ray along the A->B optical axis) as perfectly matched, so a ray arriving
+    at external angle dtheta_ext to that axis sees:
+
+        K       = 2*pi*f / v                 (acoustic grating vector, 1/m)
+        theta_B = asin(lambda*f / (2*n*v))   (internal Bragg angle)
+        dk      = K * cos(theta_B) * (dtheta_ext / n)   (Snell to internal)
+        xi      = dk * L / 2
+        factor  = (sin xi / xi)^2            (-> 1 as xi -> 0)
+
+    On-axis input (dtheta_ext = 0) returns 1.0 exactly.
+    """
+    dtheta_ext = _angle_to_axis_rad(ray_in.direction, _transition_optical_axis(ctx))
+    if dtheta_ext == 0.0:
+        return 1.0
+    lambda_m = ray_in.wavelength_nm * 1e-9
+    f_hz = freq_mhz * 1e6
+    l_m = l_mm * 1e-3
+    k_acoustic = (2.0 * math.pi * f_hz) / v_acoustic
+    theta_b_int = math.asin(max(-1.0, min(1.0, (lambda_m * f_hz) / (2.0 * n * v_acoustic))))
+    dtheta_int = dtheta_ext / n
+    dk = k_acoustic * math.cos(theta_b_int) * dtheta_int
+    xi = dk * l_m / 2.0
+    if xi == 0.0:
+        return 1.0
+    return _clamp01((math.sin(xi) / xi) ** 2)
+
+
+def bragg_acceptance_mrad(freq_mhz: float, v_acoustic: float, n: float, l_mm: float) -> float:
+    """External half-width to the first sinc^2 null (xi = pi), in mrad.
+
+    Solving xi = dk*L/2 = pi with dk = K*(dtheta_ext/n) (cos(theta_B)~1):
+        dtheta_ext = n * v / (f * L)
+    """
+    f_hz = freq_mhz * 1e6
+    l_m = l_mm * 1e-3
+    return (n * v_acoustic / (f_hz * l_m)) * 1e3
+
+
 def order_efficiency(order: int, base_efficiency: float) -> float:
     eta = _clamp01(base_efficiency)
     if order == 1:
@@ -282,9 +340,14 @@ def diffract_aom_op(ray_in: BeamRay, ctx: PhysicsOpContext) -> list[BeamRay]:
         deflect_rad,
     )
 
-    first_order_eff = first_order_efficiency_from_context(ray_in, ctx, theta_b)
+    detune = bragg_detuning_factor(ray_in, ctx, freq_mhz, v_acoustic, n, L)
+    first_order_eff = first_order_efficiency_from_context(ray_in, ctx, theta_b) * detune
     eff = order_efficiency(order, first_order_eff)
     new_power = ray_in.power_mw * eff
+
+    # Doppler shift: order m diffracts off the f_RF acoustic wave, shifting the
+    # optical frequency by m*f_RF. Tracked as an offset on the nominal carrier.
+    new_freq_offset_hz = ray_in.freq_offset_hz + order * freq_mhz * 1e6
 
     b_slab = L / n
     qx_out = _apply_abcd_to_q(1, b_slab, 0, 1, ray_in.qx)
@@ -303,6 +366,7 @@ def diffract_aom_op(ray_in: BeamRay, ctx: PhysicsOpContext) -> list[BeamRay]:
         qy=qy_out,
         power_mw=new_power,
         path_length_mm=ray_in.path_length_mm + thickness,
+        freq_offset_hz=new_freq_offset_hz,
     )]
 
 

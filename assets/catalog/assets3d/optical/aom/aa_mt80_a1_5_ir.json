@@ -49,6 +49,7 @@
     "crystalLengthMm": 1.6,
     "acousticBeamWidthMm": 1.5,
     "figureOfMeritM2": 3.4e-14,
+    "braggAngularAcceptanceMrad": 74.2,
     "rfPowerMaxW": 2.0,
     "rfPropagationDirectionBodyLocal": [1, 0, 0],
     "baseEfficiency": 0.85,
@@ -62,6 +63,7 @@
     "geometry": "Body +z = optical axis from physical face A to physical face B. RF travels along +x via rfPropagationDirectionBodyLocal (perpendicular to optical axis). Aperture 1.5 mm (A1.5 = 1.5 mm clear aperture, vs A1 = 1.0 mm).",
     "variant": "MT80-A1.5-IR: 80 MHz center freq, 1.5 mm aperture, IR coating (780-1100 nm). RF bandwidth ~30 MHz around center (vs MT110-A1 with 110 MHz center / 50 MHz BW).",
     "bragg": "Bragg angle theta_B = lambda * f_rf / (2 * n * v_a). At 780nm, 80MHz: theta_B = 780e-9 * 80e6 / (2 * 2.26 * 4200) ~ 3.29 mrad ~ 0.19 deg.",
+    "braggAcceptance": "braggAngularAcceptanceMrad = external half-width to the first sinc^2 detuning null = n * v_a / (f_rf * L) = 2.26 * 4200 / (80e6 * 1.6e-3) ~ 74.2 mrad. Drives the off-axis diffraction-efficiency rolloff sinc^2(dk*L/2). Derived from physics (was a placeholder 2.0 mrad on the frontend).",
     "dynamicFreq": "SceneObject.dynamicSources.aomFreqMhz overrides centerFreqMhz at trace time.",
     "dynamicRfPower": "SceneObject.dynamicSources.rfDrivePowerW / aomRfVpp resolved from post-amplifier RF chain."
   }

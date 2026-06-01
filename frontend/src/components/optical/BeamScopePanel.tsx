@@ -644,14 +644,26 @@ export function BeamScopeContents() {
       };
     } | null)?.fiberCoupling;
     const C_M_PER_S = 299_792_458;
+    // AOM Doppler shift to display: prefer the legacy aomSideband (older
+    // traces) and fall back to the v3 tracer's per-segment freqOffsetHz —
+    // the accumulated optical-frequency offset (order·f_RF) on the nominal
+    // wavelengthNm carrier.
+    const freqOffsetHz = typeof (bestSeg as { freqOffsetHz?: unknown } | null)?.freqOffsetHz === "number"
+      ? (bestSeg as { freqOffsetHz: number }).freqOffsetHz
+      : 0;
+    const freqOffsetMhz =
+      typeof aomSideband?.frequencyOffsetMhz === "number"
+        ? aomSideband.frequencyOffsetMhz
+        : freqOffsetHz / 1e6;
+    const shiftedCarrierHz = C_M_PER_S / (wavelengthNm * 1e-9) + freqOffsetHz;
     const opticalCenterThz =
       typeof aomSideband?.centerFrequencyThz === "number"
         ? aomSideband.centerFrequencyThz
-        : C_M_PER_S / (wavelengthNm * 1e-9) / 1e12;
+        : shiftedCarrierHz / 1e12;
     const displayWavelengthNm =
       typeof aomSideband?.centerWavelengthNm === "number"
         ? aomSideband.centerWavelengthNm
-        : wavelengthNm;
+        : (shiftedCarrierHz > 0 ? (C_M_PER_S / shiftedCarrierHz) * 1e9 : wavelengthNm);
     return {
       emitterEl,
       params,
@@ -674,6 +686,7 @@ export function BeamScopeContents() {
       wavelengthNm,
       displayWavelengthNm,
       opticalCenterThz,
+      freqOffsetMhz,
       upstreamFactor,
       livePol,
       segmentLabel,
@@ -710,6 +723,7 @@ export function BeamScopeContents() {
     powerMw,
     displayWavelengthNm,
     opticalCenterThz,
+    freqOffsetMhz,
     upstreamFactor,
     livePol,
     segmentLabel,
@@ -979,10 +993,11 @@ export function BeamScopeContents() {
         )}
         <div><strong>lambda</strong>: {displayWavelengthNm.toFixed(6)} nm</div>
         <div><strong>nu</strong>: {opticalCenterThz.toFixed(6)} THz</div>
-        {aomSideband && (
+        {(aomSideband || Math.abs(freqOffsetMhz) > 1e-6) && (
           <div>
-            <strong>AOM</strong>: {aomSideband.order && aomSideband.order > 0 ? "+" : ""}{aomSideband.order ?? 0}
-            {" "}/ df {((aomSideband.frequencyOffsetMhz ?? 0) >= 0 ? "+" : "")}{(aomSideband.frequencyOffsetMhz ?? 0).toFixed(1)} MHz
+            <strong>AOM</strong>:
+            {aomSideband?.order != null ? ` ${aomSideband.order > 0 ? "+" : ""}${aomSideband.order} /` : ""}
+            {" "}df {freqOffsetMhz >= 0 ? "+" : ""}{freqOffsetMhz.toFixed(1)} MHz
           </div>
         )}
         {fiberCoupling && (
