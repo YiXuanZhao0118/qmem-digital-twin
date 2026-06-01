@@ -36,6 +36,7 @@ import {
   threeToLabPointMm,
 } from "../../optical/frames";
 import { EmissionVisualRow } from "./_shared";
+import { PolarizationEditor } from "./PolarizationEditor";
 
 function wavelengthHex(wavelengthNm: number): string {
   return `#${wavelengthToColor(wavelengthNm).getHexString()}`;
@@ -150,21 +151,6 @@ export function TaperedAmplifierAdjustControls({
   const inTm: TransverseMode = params.inputTransverseMode ?? { kind: "TEM00" };
   const outTm: TransverseMode = params.outputTransverseMode ?? { kind: "TEM00" };
 
-  // Polarization preset detection (mirrors LaserSourceControls).
-  const isClose = (a: number, b: number, tol = 1e-3) => Math.abs(a - b) < tol;
-  const detectPolPreset = (p: Jones): string => {
-    const inv2 = 1 / Math.SQRT2;
-    if (isClose(p.exRe ?? 0, 1) && isClose(p.exIm ?? 0, 0) && isClose(p.eyRe ?? 0, 0) && isClose(p.eyIm ?? 0, 0)) return "H";
-    if (isClose(p.exRe ?? 0, 0) && isClose(p.exIm ?? 0, 0) && isClose(p.eyRe ?? 0, 1) && isClose(p.eyIm ?? 0, 0)) return "V";
-    if (isClose(p.exRe ?? 0, inv2) && isClose(p.exIm ?? 0, 0) && isClose(p.eyRe ?? 0, inv2) && isClose(p.eyIm ?? 0, 0)) return "+45";
-    if (isClose(p.exRe ?? 0, inv2) && isClose(p.exIm ?? 0, 0) && isClose(p.eyRe ?? 0, -inv2) && isClose(p.eyIm ?? 0, 0)) return "-45";
-    if (isClose(p.exRe ?? 0, inv2) && isClose(p.exIm ?? 0, 0) && isClose(p.eyRe ?? 0, 0) && isClose(p.eyIm ?? 0, inv2)) return "RCP";
-    if (isClose(p.exRe ?? 0, inv2) && isClose(p.exIm ?? 0, 0) && isClose(p.eyRe ?? 0, 0) && isClose(p.eyIm ?? 0, -inv2)) return "LCP";
-    return "custom";
-  };
-  const inPolPreset = detectPolPreset(inPol);
-  const outPolPreset = detectPolPreset(outPol);
-
   // Live readout of forward / backward ASE power at the configured drive
   // current (no seed; gain_samples will replace this once a real upstream
   // beam is detected — that's a future 2-pass-trace feature).
@@ -192,30 +178,6 @@ export function TaperedAmplifierAdjustControls({
     void persist({ ase: { ...aseCont, ...patch } });
   };
 
-  const polPresetJones = (next: string): [number, number, number, number] | null => {
-    const inv2 = 1 / Math.SQRT2;
-    const presets: Record<string, [number, number, number, number]> = {
-      H: [1, 0, 0, 0],
-      V: [0, 0, 1, 0],
-      "+45": [inv2, 0, inv2, 0],
-      "-45": [inv2, 0, -inv2, 0],
-      RCP: [inv2, 0, 0, inv2],
-      LCP: [inv2, 0, 0, -inv2],
-    };
-    return presets[next] ?? null;
-  };
-  const setInPolPreset = (next: string) => {
-    if (next === "custom") return;
-    const j = polPresetJones(next);
-    if (!j) return;
-    void persist({ inputPolarization: { exRe: j[0], exIm: j[1], eyRe: j[2], eyIm: j[3] } });
-  };
-  const setOutPolPreset = (next: string) => {
-    if (next === "custom") return;
-    const j = polPresetJones(next);
-    if (!j) return;
-    void persist({ outputPolarization: { exRe: j[0], exIm: j[1], eyRe: j[2], eyIm: j[3] } });
-  };
 
   const buildTransverseMode = (next: TransverseKind, prev: TransverseMode): TransverseMode => {
     const out: TransverseMode = { kind: next };
@@ -634,28 +596,13 @@ export function TaperedAmplifierAdjustControls({
           <NumberCell label="M²" value={isy.mSquared ?? 1.5} step={0.05}
             onCommit={(v) => v > 0 && setSpatial("inputSpatialModeY", isy, { mSquared: v })} />
         </div>
-        <label className="component-editor-coord" style={{ marginTop: 6, marginBottom: 4 }}>
-          <span style={{ fontSize: 11 }}>Input polarization</span>
-          <select value={inPolPreset} onChange={(e) => setInPolPreset(e.target.value)}>
-            <option value="H">H — horizontal</option>
-            <option value="V">V — vertical</option>
-            <option value="+45">+45°</option>
-            <option value="-45">−45°</option>
-            <option value="RCP">RCP</option>
-            <option value="LCP">LCP</option>
-            <option value="custom">custom</option>
-          </select>
-        </label>
-        <div style={grid2}>
-          <NumberCell label="Eₓ_re" value={inPol.exRe ?? 0} step={0.05}
-            onCommit={(v) => void persist({ inputPolarization: { ...inPol, exRe: v } })} />
-          <NumberCell label="Eₓ_im" value={inPol.exIm ?? 0} step={0.05}
-            onCommit={(v) => void persist({ inputPolarization: { ...inPol, exIm: v } })} />
-          <NumberCell label="Eᵧ_re" value={inPol.eyRe ?? 1} step={0.05}
-            onCommit={(v) => void persist({ inputPolarization: { ...inPol, eyRe: v } })} />
-          <NumberCell label="Eᵧ_im" value={inPol.eyIm ?? 0} step={0.05}
-            onCommit={(v) => void persist({ inputPolarization: { ...inPol, eyIm: v } })} />
+        <div style={{ marginTop: 6, marginBottom: 4, fontSize: 11, opacity: 0.85 }}>
+          Input polarization
         </div>
+        <PolarizationEditor
+          value={inPol}
+          onChange={(j) => void persist({ inputPolarization: j })}
+        />
         <label className="component-editor-coord" style={{ marginTop: 6 }}>
           <span style={{ fontSize: 11 }}>Transverse mode</span>
           <select
@@ -737,28 +684,13 @@ export function TaperedAmplifierAdjustControls({
               onCommit={(v) => void persist({ outputTransverseMode: { ...outTm, kind: "LG_pl", indicesL: Math.round(v) } })} />
           </div>
         )}
-        <label className="component-editor-coord" style={{ marginTop: 6, marginBottom: 4 }}>
-          <span style={{ fontSize: 11 }}>Output polarization</span>
-          <select value={outPolPreset} onChange={(e) => setOutPolPreset(e.target.value)}>
-            <option value="H">H — horizontal</option>
-            <option value="V">V — vertical</option>
-            <option value="+45">+45°</option>
-            <option value="-45">−45°</option>
-            <option value="RCP">RCP</option>
-            <option value="LCP">LCP</option>
-            <option value="custom">custom</option>
-          </select>
-        </label>
-        <div style={grid2}>
-          <NumberCell label="Eₓ_re" value={outPol.exRe ?? 0} step={0.05}
-            onCommit={(v) => void persist({ outputPolarization: { ...outPol, exRe: v } })} />
-          <NumberCell label="Eₓ_im" value={outPol.exIm ?? 0} step={0.05}
-            onCommit={(v) => void persist({ outputPolarization: { ...outPol, exIm: v } })} />
-          <NumberCell label="Eᵧ_re" value={outPol.eyRe ?? 1} step={0.05}
-            onCommit={(v) => void persist({ outputPolarization: { ...outPol, eyRe: v } })} />
-          <NumberCell label="Eᵧ_im" value={outPol.eyIm ?? 0} step={0.05}
-            onCommit={(v) => void persist({ outputPolarization: { ...outPol, eyIm: v } })} />
+        <div style={{ marginTop: 6, marginBottom: 4, fontSize: 11, opacity: 0.85 }}>
+          Output polarization
         </div>
+        <PolarizationEditor
+          value={outPol}
+          onChange={(j) => void persist({ outputPolarization: j })}
+        />
       </div>
 
       {/* Backward beam profile editor removed by user request — when not

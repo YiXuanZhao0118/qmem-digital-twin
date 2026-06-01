@@ -27,6 +27,7 @@ import {
 } from "../../utils/emissionVisuals";
 import { wavelengthToColor } from "../../three/opticalBeams";
 import { EmissionVisualRow } from "./_shared";
+import { PolarizationEditor } from "./PolarizationEditor";
 
 function wavelengthHex(wavelengthNm: number): string {
   return `#${wavelengthToColor(wavelengthNm).getHexString()}`;
@@ -95,19 +96,6 @@ export function LaserSourceControls({
   const sy: AxisMode = params.spatialModeY ?? {};
   const tm = params.transverseMode ?? { kind: "TEM00" };
   const pol = params.polarization ?? { exRe: 1, exIm: 0, eyRe: 0, eyIm: 0 };
-
-  // Polarization preset detection
-  const isClose = (a: number, b: number, tol = 1e-3) => Math.abs(a - b) < tol;
-  const polPreset: string = (() => {
-    const inv2 = 1 / Math.SQRT2;
-    if (isClose(pol.exRe ?? 0, 1) && isClose(pol.exIm ?? 0, 0) && isClose(pol.eyRe ?? 0, 0) && isClose(pol.eyIm ?? 0, 0)) return "H";
-    if (isClose(pol.exRe ?? 0, 0) && isClose(pol.exIm ?? 0, 0) && isClose(pol.eyRe ?? 0, 1) && isClose(pol.eyIm ?? 0, 0)) return "V";
-    if (isClose(pol.exRe ?? 0, inv2) && isClose(pol.exIm ?? 0, 0) && isClose(pol.eyRe ?? 0, inv2) && isClose(pol.eyIm ?? 0, 0)) return "+45";
-    if (isClose(pol.exRe ?? 0, inv2) && isClose(pol.exIm ?? 0, 0) && isClose(pol.eyRe ?? 0, -inv2) && isClose(pol.eyIm ?? 0, 0)) return "-45";
-    if (isClose(pol.exRe ?? 0, inv2) && isClose(pol.exIm ?? 0, 0) && isClose(pol.eyRe ?? 0, 0) && isClose(pol.eyIm ?? 0, inv2)) return "RCP";
-    if (isClose(pol.exRe ?? 0, inv2) && isClose(pol.exIm ?? 0, 0) && isClose(pol.eyRe ?? 0, 0) && isClose(pol.eyIm ?? 0, -inv2)) return "LCP";
-    return "custom";
-  })();
 
   // ---- writer: shallow-merge a patch into kindParams + persist -------
   const persist = async (patch: Partial<LaserKindParams>) => {
@@ -192,21 +180,6 @@ export function LaserSourceControls({
     void persist({ transverseMode: out });
   };
 
-  const setPolPreset = (next: string) => {
-    if (next === "custom") return;
-    const inv2 = 1 / Math.SQRT2;
-    const presets: Record<string, [number, number, number, number]> = {
-      H: [1, 0, 0, 0],
-      V: [0, 0, 1, 0],
-      "+45": [inv2, 0, inv2, 0],
-      "-45": [inv2, 0, -inv2, 0],
-      RCP: [inv2, 0, 0, inv2],
-      LCP: [inv2, 0, 0, -inv2],
-    };
-    const j = presets[next];
-    if (!j) return;
-    void persist({ polarization: { exRe: j[0], exIm: j[1], eyRe: j[2], eyIm: j[3] } });
-  };
 
   // ---- shared section style -----------------------------------------
   const sectionStyle: React.CSSProperties = {
@@ -320,47 +293,10 @@ export function LaserSourceControls({
       {/* Polarization */}
       <div style={sectionStyle}>
         <div style={titleStyle}>Polarization</div>
-        <label className="component-editor-coord" style={{ marginBottom: 6 }}>
-          <span style={{ fontSize: 11 }}>Preset</span>
-          <select value={polPreset} onChange={(e) => setPolPreset(e.target.value)}>
-            <option value="H">H — horizontal</option>
-            <option value="V">V — vertical</option>
-            <option value="+45">+45°</option>
-            <option value="-45">−45°</option>
-            <option value="RCP">RCP</option>
-            <option value="LCP">LCP</option>
-            <option value="custom">custom</option>
-          </select>
-        </label>
-        <div style={grid2}>
-          <NumberCell
-            label="Eₓ_re"
-            value={pol.exRe ?? 0}
-            step={0.05}
-            onCommit={(v) => void persist({ polarization: { ...pol, exRe: v } })}
-          />
-          <NumberCell
-            label="Eₓ_im"
-            value={pol.exIm ?? 0}
-            step={0.05}
-            onCommit={(v) => void persist({ polarization: { ...pol, exIm: v } })}
-          />
-          <NumberCell
-            label="Eᵧ_re"
-            value={pol.eyRe ?? 0}
-            step={0.05}
-            onCommit={(v) => void persist({ polarization: { ...pol, eyRe: v } })}
-          />
-          <NumberCell
-            label="Eᵧ_im"
-            value={pol.eyIm ?? 0}
-            step={0.05}
-            onCommit={(v) => void persist({ polarization: { ...pol, eyIm: v } })}
-          />
-        </div>
-        <div style={{ opacity: 0.6, marginTop: 4, fontSize: 10 }}>
-          Jones is normalised at solver time; total power stays in Power (mW) above.
-        </div>
+        <PolarizationEditor
+          value={pol}
+          onChange={(j) => void persist({ polarization: j })}
+        />
       </div>
 
       {/* Spatial mode */}
