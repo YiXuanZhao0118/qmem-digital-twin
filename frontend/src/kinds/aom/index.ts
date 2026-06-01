@@ -68,6 +68,9 @@ export const aomPlugin = definePhysicsPlugin<AomParams>({
       acousticAxisBodyLocal: [-1, 0, 0],
       rfPropagationDirectionBodyLocal: [-1, 0, 0],
       diffractionOrder: 1,
+      // Generic placeholder; the physical value is the external half-width to
+      // the first sinc² detuning null = n·v/(f·L). Per-asset defaultParams
+      // override it (e.g. MT80-A1.5-IR ⇒ 74.2 mrad at f=80 MHz, L=1.6 mm).
       braggAngularAcceptanceMrad: 2.0,
       wavelengthRangeNm: [400, 1700],
     },

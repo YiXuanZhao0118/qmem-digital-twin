@@ -15,7 +15,9 @@ import "./physics";
 import { type BeamRay, makeBeamRay } from "../../beam-ray";
 import { type Face, type PhysicsOpContext, getOp } from "../../registry";
 import {
+  braggAcceptanceMrad,
   braggAngleRad,
+  braggDetuningFactor,
   orderEfficiency,
   orderFromContext,
   parseOrderFromFaceId,
@@ -261,5 +263,93 @@ describe("AOM / diffract_aom op", () => {
     const r = forwardRay();
     const [out] = op(r, ctxFor(1));
     expect(out.jones).toEqual(r.jones);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Doppler frequency shift (tracked as freqOffsetHz; wavelengthNm untouched)
+// ---------------------------------------------------------------------------
+
+describe("AOM / Doppler frequency shift", () => {
+  it("+1 order shifts by +f_RF", () => {
+    const op = getOp("aom", "diffract_aom");
+    const [out] = op(forwardRay(), ctxFor(1));
+    expect(out.freqOffsetHz).toBeCloseTo(80e6, 0);
+  });
+
+  it("0 order: no shift", () => {
+    const op = getOp("aom", "diffract_aom");
+    const [out] = op(forwardRay(), ctxFor(0));
+    expect(out.freqOffsetHz).toBeCloseTo(0, 6);
+  });
+
+  it("-1 order shifts by -f_RF", () => {
+    const op = getOp("aom", "diffract_aom");
+    const [out] = op(reverseRay(), ctxFor(-1));
+    expect(out.freqOffsetHz).toBeCloseTo(-80e6, 0);
+  });
+
+  it("accumulates onto an existing offset", () => {
+    const op = getOp("aom", "diffract_aom");
+    const r = { ...forwardRay(), freqOffsetHz: 80e6 };
+    const [out] = op(r, ctxFor(1));
+    expect(out.freqOffsetHz).toBeCloseTo(160e6, 0);
+  });
+
+  it("uses dynamic.aomFreqMhz", () => {
+    const op = getOp("aom", "diffract_aom");
+    const ctx: PhysicsOpContext = { ...ctxFor(1), dynamic: { aomFreqMhz: 110 } };
+    const [out] = op(forwardRay(), ctx);
+    expect(out.freqOffsetHz).toBeCloseTo(110e6, 0);
+  });
+
+  it("leaves wavelengthNm on the nominal carrier", () => {
+    const op = getOp("aom", "diffract_aom");
+    const r = forwardRay();
+    const [out] = op(r, ctxFor(1));
+    expect(out.wavelengthNm).toBe(r.wavelengthNm);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bragg detuning sinc^2 (off-axis incidence reduces diffraction efficiency)
+// ---------------------------------------------------------------------------
+
+function tiltedRay(angleRad: number): BeamRay {
+  return makeBeamRay({
+    origin: { x: 0, y: 0, z: -L / 2 },
+    direction: { x: Math.sin(angleRad), y: 0, z: Math.cos(angleRad) },
+    wavelengthNm: 780,
+    powerMw: 1.0,
+  });
+}
+
+describe("AOM / Bragg detuning", () => {
+  it("acceptance = n·v/(f·L), in mrad", () => {
+    expect(braggAcceptanceMrad(80, 4200, 2.26, L)).toBeCloseTo(74.16, 1);
+  });
+
+  it("on-axis input: detuning factor 1", () => {
+    const f = braggDetuningFactor(forwardRay(), ctxFor(1), 80, 4200, 2.26, L);
+    expect(f).toBeCloseTo(1, 12);
+  });
+
+  it("at the first null (Δθ = acceptance): factor → 0", () => {
+    const nullRad = braggAcceptanceMrad(80, 4200, 2.26, L) * 1e-3;
+    const f = braggDetuningFactor(tiltedRay(nullRad), ctxFor(1), 80, 4200, 2.26, L);
+    expect(f).toBeCloseTo(0, 6);
+  });
+
+  it("at half the null: factor ≈ sinc²(π/2)", () => {
+    const nullRad = braggAcceptanceMrad(80, 4200, 2.26, L) * 1e-3;
+    const f = braggDetuningFactor(tiltedRay(nullRad / 2), ctxFor(1), 80, 4200, 2.26, L);
+    expect(f).toBeCloseTo((2 / Math.PI) ** 2, 4);
+  });
+
+  it("off-axis input reduces first-order power", () => {
+    const op = getOp("aom", "diffract_aom");
+    const nullRad = braggAcceptanceMrad(80, 4200, 2.26, L) * 1e-3;
+    const [out] = op(tiltedRay(nullRad / 2), ctxFor(1));
+    expect(out.powerMw).toBeCloseTo(0.85 * (2 / Math.PI) ** 2, 4);
   });
 });

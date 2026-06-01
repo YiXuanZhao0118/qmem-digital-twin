@@ -77,7 +77,7 @@ class BeamRay:
     qy: complex
 
     # Spectrum & energy
-    wavelength_nm: float
+    wavelength_nm: float              # nominal optical carrier
     power_mw: float
 
     # Polarization (beam-local s/p frame)
@@ -86,6 +86,11 @@ class BeamRay:
     # Tracking
     path_length_mm: float = 0.0
     phase_accum_rad: float = 0.0
+    # Accumulated optical-frequency offset (Hz) relative to the nominal carrier
+    # implied by wavelength_nm. AOMs add order*f_RF here instead of perturbing
+    # wavelength_nm, so a beat note between two rays is the exact difference of
+    # their freq_offset_hz (no catastrophic cancellation).
+    freq_offset_hz: float = 0.0
 
     # Bookkeeping
     parent_id: Optional[str] = None

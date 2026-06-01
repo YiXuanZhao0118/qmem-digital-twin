@@ -256,6 +256,10 @@ export type V3LabSegment = {
   qxAtStart: { re: number; im: number };
   qyAtStart: { re: number; im: number };
   pathLengthMmAtStart: number;
+  // Accumulated optical-frequency offset (Hz) of the beam at segment start,
+  // relative to the nominal wavelengthNm carrier. Nonzero downstream of an AOM
+  // (order·f_RF). Absent on older payloads ⇒ 0.
+  freqOffsetHz?: number;
 };
 
 export type V3SolverResult = {
@@ -1019,16 +1023,29 @@ export async function compileTimingProgramsApi(): Promise<TimingProgramCompile> 
 }
 
 export function resolveAssetUrl(filePath: string): string {
+  const appendCacheBust = (url: string): string => {
+    const normalizedPath = filePath
+      .split("?")[0]
+      .replace(/^\/+assets\//, "")
+      .replace(/^\/+/, "");
+    const cacheBustByPath: Record<string, string> = {
+      "files/stl/ad9959_pcbz.stl": "ad9959-bodyframe-20260601",
+      "files/stl/ad9959_pcbz_lod1.stl": "ad9959-lod1-boardfix-20260601",
+    };
+    const version = cacheBustByPath[normalizedPath];
+    if (!version) return url;
+    return `${url}${url.includes("?") ? "&" : "?"}v=${version}`;
+  };
   if (filePath.startsWith("http://") || filePath.startsWith("https://")) {
-    return filePath;
+    return appendCacheBust(filePath);
   }
   if (filePath.startsWith("/assets/")) {
-    return `${API_BASE_URL}${filePath}`;
+    return appendCacheBust(`${API_BASE_URL}${filePath}`);
   }
   if (filePath.startsWith("assets/")) {
-    return `${API_BASE_URL}/${filePath}`;
+    return appendCacheBust(`${API_BASE_URL}/${filePath}`);
   }
-  return `${API_BASE_URL}/assets/${filePath.replace(/^\/+/, "")}`;
+  return appendCacheBust(`${API_BASE_URL}/assets/${filePath.replace(/^\/+/, "")}`);
 }
 
 // ---- Multiphysics simulation runs (Phase A) -------------------------------

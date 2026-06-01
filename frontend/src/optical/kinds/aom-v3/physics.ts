@@ -283,6 +283,64 @@ export function firstOrderEfficiencyFromContext(
   return clamp01(finiteNumber(ctx.params.baseEfficiency) ?? 0.85);
 }
 
+/** Unsigned angle between a ray direction and the optical axis. */
+function angleToAxisRad(direction: Vec3, axis: Vec3): number {
+  const d = vecNormalize(direction);
+  const a = vecNormalize(axis);
+  return Math.acos(Math.max(-1, Math.min(1, vecDot(d, a))));
+}
+
+/**
+ * sinc^2 Bragg phase-matching factor for off-axis incidence.
+ *
+ * Thick-grating coupled-wave theory: efficiency scales as sinc^2(dk·L/2),
+ * where dk is the longitudinal wave-vector mismatch produced by deviating
+ * from the matched incidence angle. The canonical on-axis input (ray along
+ * the A->B optical axis) is treated as perfectly matched, so a ray arriving
+ * at external angle dthetaExt sees:
+ *   K       = 2π·f / v               (acoustic grating vector, 1/m)
+ *   thetaB  = asin(λ·f / (2·n·v))    (internal Bragg angle)
+ *   dk      = K·cos(thetaB)·(dthetaExt / n)
+ *   xi      = dk·L / 2
+ *   factor  = (sin xi / xi)^2        (→ 1 as xi → 0)
+ */
+export function braggDetuningFactor(
+  rayIn: BeamRay,
+  ctx: PhysicsOpContext,
+  freqMhz: number,
+  vAcoustic: number,
+  n: number,
+  Lmm: number,
+): number {
+  const dthetaExt = angleToAxisRad(rayIn.direction, transitionOpticalAxis(ctx));
+  if (dthetaExt === 0) return 1;
+  const lambdaM = rayIn.wavelengthNm * 1e-9;
+  const fHz = freqMhz * 1e6;
+  const Lm = Lmm * 1e-3;
+  const kAcoustic = (2 * Math.PI * fHz) / vAcoustic;
+  const thetaBInt = Math.asin(
+    Math.max(-1, Math.min(1, (lambdaM * fHz) / (2 * n * vAcoustic))),
+  );
+  const dthetaInt = dthetaExt / n;
+  const dk = kAcoustic * Math.cos(thetaBInt) * dthetaInt;
+  const xi = (dk * Lm) / 2;
+  if (xi === 0) return 1;
+  return clamp01((Math.sin(xi) / xi) ** 2);
+}
+
+/** External half-width to the first sinc^2 null (xi = π), in mrad:
+ *  dthetaExt = n·v / (f·L). */
+export function braggAcceptanceMrad(
+  freqMhz: number,
+  vAcoustic: number,
+  n: number,
+  Lmm: number,
+): number {
+  const fHz = freqMhz * 1e6;
+  const Lm = Lmm * 1e-3;
+  return ((n * vAcoustic) / (fHz * Lm)) * 1e3;
+}
+
 // ---------------------------------------------------------------------------
 // diffract_aom op
 // ---------------------------------------------------------------------------
@@ -311,9 +369,14 @@ export const diffractAomOp: PhysicsOp = (
     deflectRad,
   );
 
-  const firstOrderEfficiency = firstOrderEfficiencyFromContext(rayIn, ctx, theta_B);
+  const detune = braggDetuningFactor(rayIn, ctx, freqMhz, vAcoustic, n, L);
+  const firstOrderEfficiency = firstOrderEfficiencyFromContext(rayIn, ctx, theta_B) * detune;
   const eff = orderEfficiency(order, firstOrderEfficiency);
   const newPower = rayIn.powerMw * eff;
+
+  // Doppler shift: order m diffracts off the f_RF acoustic wave, shifting the
+  // optical frequency by m·f_RF. Tracked as an offset on the nominal carrier.
+  const newFreqOffsetHz = (rayIn.freqOffsetHz ?? 0) + order * freqMhz * 1e6;
 
   // q-parameter slab propagation (B = L/n inside the crystal).
   const Bslab = L / n;
@@ -335,6 +398,7 @@ export const diffractAomOp: PhysicsOp = (
     qy: qyOut,
     powerMw: newPower,
     pathLengthMm: rayIn.pathLengthMm + thickness,
+    freqOffsetHz: newFreqOffsetHz,
     // jones unchanged (simple polarization-preserving model)
   }];
 };
