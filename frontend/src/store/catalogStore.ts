@@ -66,6 +66,10 @@ export type V3Anchor = {
    *  RF Link panel reads this to render the connector family and gate
    *  cable connections. Null / absent on optical anchors. */
   connectorType?: string | null;
+  /** Display name for anchors that share an id (rf_switch RF1/RF2, AD9959
+   *  CH0..CH3). The RF Link panel + solver key throws/channels by name.
+   *  Null / absent on single-port anchors, which fall back to id. */
+  name?: string | null;
 };
 
 export type V3Asset = {
@@ -194,6 +198,15 @@ export type V3Component = {
   bindings: V3ComponentBinding[];
 };
 
+/** Reference counts for an Asset3D (GET /api/v3/assets3d/{key}/usage).
+ *  `objectCount` > 0 means the asset is placed in a scene — the editor
+ *  locks connector_type editing + Delete so a catalog-level change can't
+ *  retroactively break those instances. */
+export type V3AssetUsage = {
+  componentCount: number;
+  objectCount: number;
+};
+
 // ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
@@ -214,6 +227,9 @@ type V3CatalogState = {
    *  either form against the same row. */
   updateAsset: (key: string, patch: V3AssetUpdate) => Promise<V3Asset>;
   deleteAsset: (key: string) => Promise<void>;
+  /** Fetch how many components / placed scene objects reference an asset.
+   *  Used to gate in-use editing; not cached in store state. */
+  fetchAssetUsage: (key: string) => Promise<V3AssetUsage>;
   createAsset: (payload: V3AssetCreate) => Promise<V3Asset>;
   uploadAsset: (payload: V3AssetUpload) => Promise<V3Asset>;
   getAssetByCatalogId: (catalogId: string) => V3Asset | undefined;
@@ -288,6 +304,13 @@ export const useV3Catalog = create<V3CatalogState>((set, get) => ({
       // the component view next time it's read by clearing loadedAt.
       loadedAt: null,
     }));
+  },
+
+  fetchAssetUsage: async (key) => {
+    const res = await client.get<V3AssetUsage>(
+      `/api/v3/assets3d/${encodeURIComponent(key)}/usage`,
+    );
+    return res.data;
   },
 
   createAsset: async (payload) => {

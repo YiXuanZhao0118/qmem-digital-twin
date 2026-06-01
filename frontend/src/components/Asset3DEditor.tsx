@@ -34,6 +34,7 @@ import { useSceneStore } from "../store/sceneStore";
 import {
   type V3Asset,
   type V3AssetUpdate,
+  type V3AssetUsage,
   type V3Face,
   type V3FaceDomain,
   type V3Transition,
@@ -85,6 +86,10 @@ type DraftAnchor = {
    *  anchors). Only edited when the anchor's domain is rf / ttl / trigger
    *  (see the anchor table's per-row gating). */
   connectorType: string;
+  /** Display name for anchors sharing an id (rf_switch RF1/RF2, AD9959
+   *  CH0..CH3). Empty string = no name (falls back to id on save). The
+   *  RF Link panel + solver key throws/channels by this. */
+  name: string;
 };
 
 type DraftTransition = {
@@ -334,6 +339,7 @@ function draftFromAsset(asset: V3Asset): AssetDraft {
       const connectorType = (a.connectorType ?? a.connector_type) as
         | string
         | undefined;
+      const anchorName = a.name as string | undefined;
       // axisY default = world +Y when unset. The serializer will
       // Gram-Schmidt-orthogonalize it against axisX, so as long as Y
       // isn't parallel to X the result is well-defined.
@@ -353,6 +359,7 @@ function draftFromAsset(asset: V3Asset): AssetDraft {
         apertureWidthMm: n(apertureWidthMm),
         apertureHeightMm: n(apertureHeightMm),
         connectorType: connectorType ?? "",
+        name: anchorName ?? "",
       };
     }),
     transitions: (asset.transitions ?? []).map((transition) => ({
@@ -1024,6 +1031,9 @@ function draftToPatch(draft: AssetDraft): V3AssetUpdate {
       // Only RF / TTL anchors carry a connector; optical anchors leave
       // it empty and the field is omitted (stays null in the JSONB).
       ...(a.connectorType.trim() ? { connectorType: a.connectorType.trim() } : {}),
+      // Preserve the per-anchor name (RF1/RF2/TTL, CH0..CH3). Omitted when
+      // empty so single-port anchors stay nameless and fall back to id.
+      ...(a.name.trim() ? { name: a.name.trim() } : {}),
     };
   });
 
@@ -2320,6 +2330,7 @@ function AssetEditForm({
   setSelectedAnchorIndex,
   parentDomain,
   mode,
+  inUse,
 }: {
   asset: V3Asset;
   draft: AssetDraft;
@@ -2328,6 +2339,9 @@ function AssetEditForm({
   setSelectedAnchorIndex: (index: number | null) => void;
   parentDomain: "all" | "optical" | "rf" | "mechanical";
   mode: Asset3DEditorMode;
+  /** Asset is placed in a scene — lock connector_type to avoid
+   *  retroactively breaking those instances. */
+  inUse: boolean;
 }) {
   const isBindingDev = mode === "binding-dev";
   const kinds = useKindsStore((s) => s.kinds);
@@ -2697,6 +2711,7 @@ function AssetEditForm({
                     apertureWidthMm: "",
                     apertureHeightMm: "",
                     connectorType: "",
+                    name: "",
                   },
                 ],
               });
@@ -2712,6 +2727,7 @@ function AssetEditForm({
         <thead>
           <tr>
             <th style={{ ...TH, width: 110 }}>anchor_id</th>
+            <th style={{ ...TH, width: 70 }}>name</th>
             <th style={TH}>position x/y/z</th>
             <th style={TH}>axisX (propagation) x/y/z</th>
             <th style={TH}>axisY (slow / fast / transmit) x/y/z</th>
@@ -2739,6 +2755,19 @@ function AssetEditForm({
                   axisX on save (deriveOrthonormalBasis). */}
               <td style={TD}>
                 <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 600 }}>{anchor.id}</span>
+              </td>
+              {/* Per-anchor name. Distinguishes anchors that share an id
+                  (rf_switch RF1/RF2, AD9959 CH0..CH3) — the RF Link panel +
+                  solver key throws/channels by this. Left blank on
+                  single-port anchors, which fall back to the id on save. */}
+              <td style={TD}>
+                <input
+                  value={anchor.name}
+                  onChange={(event) => updateAnchor(index, { name: event.target.value })}
+                  style={INPUT}
+                  type="text"
+                  placeholder={anchor.id}
+                />
               </td>
               <td style={TD}>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
@@ -2785,9 +2814,9 @@ function AssetEditForm({
               <td style={TD}>
                 <select
                   value={ff.showConnector ? anchor.connectorType : ""}
-                  disabled={!ff.showConnector}
+                  disabled={!ff.showConnector || inUse}
                   onChange={(event) => updateAnchor(index, { connectorType: event.target.value })}
-                  style={ff.showConnector ? INPUT : INPUT_DISABLED}
+                  style={ff.showConnector && !inUse ? INPUT : INPUT_DISABLED}
                 >
                   <option value="">—</option>
                   <option value="sma_male">sma_male</option>
@@ -2860,9 +2889,14 @@ export function Asset3DEditor({
   const refresh = useV3Catalog((state) => state.refresh);
   const updateAsset = useV3Catalog((state) => state.updateAsset);
   const deleteAsset = useV3Catalog((state) => state.deleteAsset);
+  const fetchAssetUsage = useV3Catalog((state) => state.fetchAssetUsage);
   const createAsset = useV3Catalog((state) => state.createAsset);
   const uploadAsset = useV3Catalog((state) => state.uploadAsset);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  // Reference counts for the selected asset. objectCount > 0 ⇒ placed in a
+  // scene, so connector_type editing + Delete are locked (a catalog-level
+  // change would retroactively break those instances). null = not loaded.
+  const [usage, setUsage] = useState<V3AssetUsage | null>(null);
 
   const [kindFilter, setKindFilter] = useState<string>("all");
   const [search, setSearch] = useState<string>("");
@@ -2982,6 +3016,23 @@ export function Asset3DEditor({
     () => assets.find((asset) => asset.id === selectedAssetId) ?? null,
     [assets, selectedAssetId],
   );
+
+  // Pull reference counts whenever the selected asset changes (keyed on the
+  // resolved slug/UUID so a save that only mutates fields doesn't refetch).
+  const selectedKey = selected?.catalogId ?? selected?.id ?? null;
+  useEffect(() => {
+    if (!selectedKey) {
+      setUsage(null);
+      return;
+    }
+    let cancelled = false;
+    setUsage(null);
+    void fetchAssetUsage(selectedKey)
+      .then((u) => { if (!cancelled) setUsage(u); })
+      .catch(() => { if (!cancelled) setUsage(null); });
+    return () => { cancelled = true; };
+  }, [selectedKey, fetchAssetUsage]);
+  const inUse = (usage?.objectCount ?? 0) > 0;
 
   const openNewAssetModal = (sourceCatalogId = selected?.catalogId ?? "") => {
     setNewAssetError(null);
@@ -3198,9 +3249,13 @@ export function Asset3DEditor({
                 </IconButton>
                 {isBindingDev && (
                   <IconButton
-                    title="Delete asset (removes DB row + bindings; catalog JSON untouched)"
+                    title={
+                      inUse
+                        ? `In use by ${usage?.objectCount} placed object(s) — remove them before deleting`
+                        : "Delete asset (removes DB row + bindings; catalog JSON untouched)"
+                    }
                     onClick={() => void deleteCurrent()}
-                    disabled={deleting}
+                    disabled={deleting || inUse}
                   >
                     <Trash2 size={14} />
                   </IconButton>
@@ -3216,6 +3271,14 @@ export function Asset3DEditor({
               Select an asset from the list to inspect or edit its v3 {domain} definition.
             </div>
           )}
+          {selected && inUse && (
+            <div style={{ marginBottom: 10, color: "#fde68a", background: "#78350f", padding: 8, fontSize: 12, borderRadius: 4 }}>
+              In use by {usage?.objectCount} placed scene object(s)
+              {usage?.componentCount ? ` (${usage.componentCount} component ref(s))` : ""}.
+              connector_type editing + Delete are locked — a catalog-level
+              change would retroactively break those instances.
+            </div>
+          )}
           {selected && draft && (
             <AssetEditForm
               asset={selected}
@@ -3225,6 +3288,7 @@ export function Asset3DEditor({
               setSelectedAnchorIndex={setSelectedAnchorIndex}
               parentDomain={domain}
               mode={mode}
+              inUse={inUse}
             />
           )}
           {saveError && (

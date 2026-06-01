@@ -107,6 +107,12 @@ class AnchorV3(CamelModel):
     # (not a Literal) so legacy bare "sma" / "bnc" values round-trip
     # alongside the editor's "sma_female" / "bnc_male" vocabulary.
     connector_type: Optional[str] = None
+    # Display name distinguishing multiple anchors that share the same id
+    # (rf_switch RF1/RF2, AD9959 CH0..CH3). The RF Link panel + solver key
+    # throws/channels by name; a save that dropped this field silently
+    # broke those multi-port assets. Null on single-port anchors, which
+    # fall back to id.
+    name: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +172,17 @@ class Asset3DV3Update(CamelModel):
     wavelength_range_nm: Optional[list[float]] = None
     # Callers should send the full merged dict; partial keys would`r`n    # clobber unrelated entries.
     properties: Optional[dict[str, Any]] = None
+
+
+class Asset3DUsageOut(CamelModel):
+    """Reference counts for an Asset3D. ``component_count`` is how many
+    catalog Components point at this asset (direct FK or via a binding);
+    ``object_count`` is how many placed scene objects resolve to it. The
+    PHY Editor reads this to lock connector_type editing + Delete on an
+    in-use asset, so a catalog-level change can't retroactively break
+    already-placed instances."""
+    component_count: int
+    object_count: int
 
 
 class Asset3DV3Create(CamelModel):

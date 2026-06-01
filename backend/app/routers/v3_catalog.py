@@ -18,14 +18,17 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
-from app.models import Asset3D, Component, ComponentBinding
+from app.models import (
+    Asset3D, Component, ComponentBinding, ObjectBinding, SceneObject,
+)
 from app.schemas import CamelModel
 from app.schemas_v3 import (
-    Asset3DV3Create, Asset3DV3Out, Asset3DV3Update, ComponentV3Out,
+    Asset3DUsageOut, Asset3DV3Create, Asset3DV3Out, Asset3DV3Update,
+    ComponentV3Out,
 )
 from app.config import settings
 from app.routers.assets import safe_upload_name
@@ -59,6 +62,41 @@ async def _fetch_asset_by_key(session: AsyncSession, key: str) -> Optional[Asset
     return (await session.execute(
         select(Asset3D).where(Asset3D.id == uid)
     )).scalar_one_or_none()
+
+
+async def _asset_usage(session: AsyncSession, row: Asset3D) -> tuple[int, int]:
+    """Count what depends on an Asset3D: (component_count, object_count).
+
+    A Component resolves to the asset via the legacy direct FK
+    (``Component.asset_3d_id``) or via a ``ComponentBinding`` row. A scene
+    object counts as in-use when its component resolves to the asset, or
+    when it carries an explicit per-object ``asset_3d_id_override``.
+    """
+    comp_ids = (
+        select(Component.id)
+        .where(Component.asset_3d_id == row.id, Component.archived_at.is_(None))
+        .union(
+            select(ComponentBinding.component_id)
+            .where(ComponentBinding.asset_3d_id == row.id)
+        )
+        .subquery()
+    )
+    component_count = await session.scalar(
+        select(func.count()).select_from(comp_ids)
+    )
+    object_count = await session.scalar(
+        select(func.count(func.distinct(SceneObject.id))).where(
+            or_(
+                SceneObject.component_id.in_(select(comp_ids.c.id)),
+                SceneObject.id.in_(
+                    select(ObjectBinding.object_id).where(
+                        ObjectBinding.asset_3d_id_override == row.id
+                    )
+                ),
+            )
+        )
+    )
+    return int(component_count or 0), int(object_count or 0)
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +359,24 @@ async def update_asset3d_by_catalog_id(
     return row
 
 
+@router.get("/assets3d/{catalog_id}/usage", response_model=Asset3DUsageOut)
+async def get_asset3d_usage(
+    catalog_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> Asset3DUsageOut:
+    """Reference counts for one Asset3D — how many catalog Components point
+    at it and how many placed scene objects resolve to it. The PHY Editor
+    reads this to lock connector_type editing + Delete on in-use assets."""
+    row = await _fetch_asset_by_key(session, catalog_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"asset3d key={catalog_id!r} not found",
+        )
+    component_count, object_count = await _asset_usage(session, row)
+    return Asset3DUsageOut(component_count=component_count, object_count=object_count)
+
+
 @router.delete("/assets3d/{catalog_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_asset3d_by_catalog_id(
     catalog_id: str,
@@ -329,13 +385,23 @@ async def delete_asset3d_by_catalog_id(
     """Delete one Asset3D row + any ComponentBinding rows that reference
     it. The path segment accepts either a catalog_id slug or a row UUID.
     Used by PhyEditor's per-asset delete button. Idempotent: 404 if no
-    such row, 204 on success.
+    such row, 204 on success. Refused with 409 if any placed scene object
+    still resolves to this asset — deleting it would orphan them.
     """
     row = await _fetch_asset_by_key(session, catalog_id)
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"asset3d key={catalog_id!r} not found",
+        )
+    _, object_count = await _asset_usage(session, row)
+    if object_count > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"asset3d key={catalog_id!r} is in use by {object_count} "
+                "placed scene object(s); remove them before deleting."
+            ),
         )
     # Cascade: drop bindings that reference this asset, then the asset itself.
     bindings = (await session.execute(
