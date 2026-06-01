@@ -13,7 +13,7 @@
 import type { PhysicsElement, Asset3D, ComponentItem, SceneObject } from "../types/digitalTwin";
 import { anchorObjectLocalLegacyDir, anchorObjectLocalPos } from "./anchorAccess";
 import { rotateLocalToLab, type Vec3 } from "./beamPlacement";
-import { getMirrorNormalBodyLocal } from "./v2Bindings";
+import { getMirrorNormalBodyLocal } from "./objectBindings";
 
 export const OPTICAL_ANCHOR_ID = "optical_anchor";
 

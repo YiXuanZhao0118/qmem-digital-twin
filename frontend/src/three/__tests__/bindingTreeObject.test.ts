@@ -114,7 +114,7 @@ describe("applyBindingLocalTransform", () => {
   });
 
   it("rz=90deg rotates +x to +y (90° about three Z, raw XYZ Euler)", () => {
-    // Raw CAD-frame composition (matches ComponentsV2Editor.poseFromBinding):
+    // Raw CAD-frame composition (matches ComponentsEditor.poseFromBinding):
     // binding rz → rotation about three Z, so +X (1,0,0) → +Y (0,1,0).
     const obj = new THREE.Object3D();
     applyBindingLocalTransform(obj, makeNode("n", makeTransform({ rzDeg: 90 })));

@@ -35,7 +35,7 @@ from app.optical.pose import (
     compose_transforms,
     pose_to_transform,
 )
-from app.optical.ray_tracer_v3 import (
+from app.optical.ray_tracer import (
     V3AssetSnapshot,
     V3ComponentBinding,
     V3ComponentSnapshot,
@@ -109,8 +109,8 @@ def _extract_dynamic(properties: dict | None) -> dict | None:
       2. The whitelist of explicit top-level keys (AOM RF freq, RF channels,
          a manual ``spatialModeX`` override, …). These WIN over beam-derived.
     """
-    # Local import avoids an import cycle with app.v2_bindings at module load.
-    from app.v2_bindings import legacy_laser_kind_params_from_beam
+    # Local import avoids an import cycle with app.bindings at module load.
+    from app.bindings import legacy_laser_kind_params_from_beam
 
     if not properties:
         return None

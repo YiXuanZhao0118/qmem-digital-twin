@@ -30,7 +30,7 @@
  * three's Y-up frame while the meshes they position stayed in CAD frame
  * → composite pieces scattered onto the wrong axis (IO-3-850-HP glans
  * flew off perpendicular to the housing). Raw composition matches
- * ComponentsV2Editor's ``poseFromBinding`` (the editor the user tunes
+ * ComponentsEditor's ``poseFromBinding`` (the editor the user tunes
  * against) AND the backend solver's raw binding composition.
  */
 import * as THREE from "three";
@@ -85,7 +85,7 @@ export async function buildBindingTreeObject(
 /** Apply a binding's effective local transform (post-override) to a
  *  THREE.Object3D, in the parent's CAD frame (no lab→three swap). Per-
  *  axis /100 scale matches the meshes (loadAssetObject's mm/100); the
- *  RAW XYZ Euler matches ComponentsV2Editor's poseFromBinding so the
+ *  RAW XYZ Euler matches ComponentsEditor's poseFromBinding so the
  *  Component editor preview and the lab viewer compose pieces
  *  identically. The SceneObject pose converts the assembled tree to
  *  lab/three afterwards. */

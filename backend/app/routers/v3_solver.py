@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_session
 from app.optical.beam_ray import BeamRay, Vec3, make_beam_ray
 from app.optical.db_scene_loader import load_scene_from_db
-from app.optical.ray_tracer_v3 import (
+from app.optical.ray_tracer import (
     TraceOptions,
     V3AssetSnapshot,
     V3ComponentBinding,
@@ -31,7 +31,7 @@ from app.optical.ray_tracer_v3 import (
 )
 from app.optical.pose import V3Pose
 from app.optical.registry import Face
-from app.optical.solver_v3 import solve_v3_scene
+from app.optical.solver import solve_v3_scene
 from app.schemas import CamelModel
 
 
@@ -303,7 +303,7 @@ async def run_v3_solver_from_db(
     from app.optical import anchor_ops  # noqa: F401
     from app.optical.anchor_tracer import AnchorTraceOptions
     from app.optical.db_scene_loader import load_anchor_scene_from_db
-    from app.optical.solver_v3 import solve_anchor_scene
+    from app.optical.solver import solve_anchor_scene
 
     scene = await load_anchor_scene_from_db(session)
     rays = [_to_beam_ray(r) for r in request.initial_rays]

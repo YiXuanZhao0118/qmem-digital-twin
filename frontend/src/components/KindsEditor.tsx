@@ -134,7 +134,7 @@ export function KindsEditor({
   const [deleteStatus, setDeleteStatus] = useState<Record<string, "idle" | "deleting" | "error">>({});
 
   // aside (list) state — which kind row the user is inspecting + free-text
-  // filter. Mirrors Asset3DV3Editor / ComponentsV2Editor's shell pattern.
+  // filter. Mirrors Asset3DEditor / ComponentsEditor's shell pattern.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filterText, setFilterText] = useState<string>("");
 
@@ -298,7 +298,7 @@ export function KindsEditor({
     [rows, selectedId],
   );
 
-  // Auto-select the first row once data lands — matches Asset3DV3Editor's
+  // Auto-select the first row once data lands — matches Asset3DEditor's
   // landing behavior so the main pane is never empty by accident.
   useEffect(() => {
     if (!selectedId && filtered.length > 0) {
@@ -353,7 +353,7 @@ export function KindsEditor({
 
   return (
     <div className="kinds-editor" style={SHELL_STYLE}>
-      {/* LEFT: kind list — mirrors Asset3DV3Editor / ComponentsV2Editor's
+      {/* LEFT: kind list — mirrors Asset3DEditor / ComponentsEditor's
           aside (filter input + scrollable list of name + slug). */}
       <aside style={ASIDE_STYLE}>
         {!readOnly && (
@@ -561,7 +561,7 @@ export function KindsEditor({
             </>
           )}
 
-          {/* Read view — selected kind detail (matches Asset3DV3Editor's
+          {/* Read view — selected kind detail (matches Asset3DEditor's
               AssetReadOnly two-column metadata table). */}
           {!createOpen && !isEditing && selectedRow && (
             <>

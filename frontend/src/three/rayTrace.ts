@@ -1,6 +1,6 @@
 // ⚠️ DEPRECATED — legacy in-browser geometry tracer (§16.1 of
 // docs/frame-anchor-architecture.md). The Phase 9.8 anchor-based
-// backend solver (backend/app/optical/solver_v3.py:solve_anchor_scene,
+// backend solver (backend/app/optical/solver.py:solve_anchor_scene,
 // invoked via /api/v3/solver/run-from-db) is the canonical production
 // path. DigitalTwinViewer.renderRayTraces() now feeds beams from the
 // backend's V3 lab segments, NOT this module.
@@ -26,7 +26,7 @@
 //     `backend/app/optical/anchor_ops/`.
 //
 // If you need a NEW physics behaviour: add it on the backend
-// (anchor_ops + solver_v3). If you need to change ray rendering:
+// (anchor_ops + solver). If you need to change ray rendering:
 // edit `DigitalTwinViewer.renderRayTraces()` which consumes the
 // backend's lab segments. Do NOT extend this file.
 //
@@ -94,7 +94,7 @@ import {
   expectedInputDotD2,
   phaseModulationDepth,
 } from "../optical/kinds/aom/physics";
-import { getRfDirectionBodyLocal } from "../utils/v2Bindings";
+import { getRfDirectionBodyLocal } from "../utils/objectBindings";
 import { resolveAomRfDriveFromScene } from "../utils/aomRfDrive";
 import { getEmissionVisual } from "../utils/emissionVisuals";
 import { computeWaveplateFastAxisDeg } from "../utils/waveplateAxis";

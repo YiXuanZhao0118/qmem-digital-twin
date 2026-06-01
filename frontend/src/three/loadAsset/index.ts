@@ -341,7 +341,7 @@ export async function loadAssetObject(
     wrapper.add(object);
 
     // Binding-tree renders position every piece via its binding pose in
-    // the shared CAD frame (matching the ComponentsV2Editor preview and
+    // the shared CAD frame (matching the ComponentsEditor preview and
     // the backend solver), so skip the legacy single-asset auto-offset.
     if (!renderHints?.skipAutoCenter) {
       // Phase 6: prefer the new frame-suffixed key

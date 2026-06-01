@@ -38,7 +38,7 @@ import {
   type V3Transition,
   type V3Vec3,
   useV3Catalog,
-} from "../store/v3CatalogStore";
+} from "../store/catalogStore";
 import { createZhl12wPlusAmplifier } from "../kinds/rf_amplifier/renderer";
 import { createRfSwitch } from "../kinds/rf_switch/renderer";
 import { createSmaShortCable } from "../three/loadAsset/rf_cable";
@@ -2313,7 +2313,7 @@ function AssetEditForm({
   selectedAnchorIndex: number | null;
   setSelectedAnchorIndex: (index: number | null) => void;
   parentDomain: "all" | "optical" | "rf" | "mechanical";
-  mode: Asset3DV3EditorMode;
+  mode: Asset3DEditorMode;
 }) {
   const isBindingDev = mode === "binding-dev";
   const kinds = useKindsStore((s) => s.kinds);
@@ -2784,12 +2784,12 @@ export type V3EditorDomain = "optical" | "rf" | "mechanical";
  *  is active only in phy-editor mode (binding-dev shows positions
  *  read-only).
  */
-export type Asset3DV3EditorMode = "binding-dev" | "phy-editor";
+export type Asset3DEditorMode = "binding-dev" | "phy-editor";
 
-export function Asset3DV3Editor({
+export function Asset3DEditor({
   domain = "all",
   mode = "binding-dev",
-}: { domain?: "all" | V3EditorDomain; mode?: Asset3DV3EditorMode } = {}) {
+}: { domain?: "all" | V3EditorDomain; mode?: Asset3DEditorMode } = {}) {
   const isBindingDev = mode === "binding-dev";
   const assets = useV3Catalog((state) => state.assets);
   const status = useV3Catalog((state) => state.status);
@@ -2821,7 +2821,7 @@ export function Asset3DV3Editor({
   }, [status, fetchAll]);
 
   // Bootstrap the Kind registry so the kind_id <select> below is
-  // populated. Shares state with ComponentsV2Editor via kindsStore.
+  // populated. Shares state with ComponentsEditor via kindsStore.
   const kinds = useKindsStore((s) => s.kinds);
   const kindsStatus = useKindsStore((s) => s.status);
   const fetchKinds = useKindsStore((s) => s.fetchAll);
@@ -2969,7 +2969,7 @@ export function Asset3DV3Editor({
       // The Asset3D editor writes to the V3 catalog store (useV3Catalog),
       // but every OTHER consumer of asset data ??the lab viewer, the
       // Optical Link panel, and the PHY editor's Component preview
-      // (ComponentsV2Editor reads useSceneStore.scene.assets) ??reads
+      // (ComponentsEditor reads useSceneStore.scene.assets) ??reads
       // from the scene store. Without this refresh those views keep
       // rendering the pre-edit asset (e.g. a Component that references
       // io_3_850_hp_back_piece won't pick up anchor / body-frame / mesh

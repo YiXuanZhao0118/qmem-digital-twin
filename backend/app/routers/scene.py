@@ -26,7 +26,7 @@ from app.models import (
     TimingProgram,
 )
 from app.routers.collections import canonical_collection_members, get_master_collection
-from app.v2_bindings import (
+from app.bindings import (
     get_laser_beam_for_kind_params,
     legacy_aom_kind_params_from_binding,
     legacy_beam_splitter_kind_params_from_bindings,

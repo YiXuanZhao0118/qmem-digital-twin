@@ -22,7 +22,7 @@ import type {
 import { bodyLocalDirToLabDir, threeToLabPointMm } from "../optical/frames";
 import { dirLabToBody } from "../optical/pose";
 import { anchorObjectLocalLegacyDir, anchorObjectLocalPos } from "./anchorAccess";
-import { getEffectiveApertureMm, getMirrorNormalBodyLocal } from "./v2Bindings";
+import { getEffectiveApertureMm, getMirrorNormalBodyLocal } from "./objectBindings";
 import { FIBER_FERRULE_TIP_MM } from "./fiberAnchorResolver";
 // FIBER_END_TIP_OFFSET_MM previously used by the fiber_end SceneObject
 // snap-to-beam branch; alembic 0056 removed fiber_end SceneObjects.

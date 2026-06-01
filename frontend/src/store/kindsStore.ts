@@ -1,7 +1,7 @@
 /**
  * Kinds store — cached list of Kind registry rows from /api/kinds.
  *
- * Used by ComponentsV2Editor + Asset3DV3Editor to populate the kind_id
+ * Used by ComponentsEditor + Asset3DEditor to populate the kind_id
  * <select>. Loaded once on first read, refreshed manually via
  * `refresh()` when the user edits the Kinds catalog.
  */

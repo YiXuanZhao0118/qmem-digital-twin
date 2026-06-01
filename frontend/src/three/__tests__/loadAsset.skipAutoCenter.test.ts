@@ -2,7 +2,7 @@
  * Regression test for the binding-tree render gate in `loadAssetObject`.
  *
  * The binding-tree renderer positions every sub-piece purely by its
- * ComponentBinding pose (matching the ComponentsV2Editor preview and the
+ * ComponentBinding pose (matching the ComponentsEditor preview and the
  * backend solver). The legacy single-asset path, however, auto-offsets the
  * mesh — apertureForward shift, else bbox-center. For a multi-part assembly
  * (the IO-3-850-HP isolator: faraday body + front/back housing halves) that

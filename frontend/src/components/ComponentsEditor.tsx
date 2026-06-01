@@ -1,5 +1,5 @@
 /**
- * ComponentsV2Editor — PHY Editor's "▼ Optical → COMPONENTS" pane.
+ * ComponentsEditor — PHY Editor's "▼ Optical → COMPONENTS" pane.
  *
  * Composes multiple Asset3D into a single Component by adding child
  * bindings, each with a relative local pose (x/y/z mm + rx/ry/rz deg).
@@ -210,7 +210,7 @@ function buildPhysicsFaceOverlay(asset: Asset3D): THREE.Object3D | null {
  *  as a spiral on fibers, which is what makes the PHY editor preview
  *  look curved when the underlying geometry is actually straight. The
  *  cylindrical replacement is rotationally symmetric so it can never
- *  twist regardless of camera angle. Duplicated in Asset3DV3Editor —
+ *  twist regardless of camera angle. Duplicated in Asset3DEditor —
  *  keep in sync. */
 function replaceSpiralTubeWithCylinder(
   root: THREE.Object3D,
@@ -265,7 +265,7 @@ function componentDomains(c: ComponentItem): ComposerDomain[] {
   return Array.from(out);
 }
 
-/** Mirrors the Asset3DV3Editor `domainAssets` bucketing, but returns the
+/** Mirrors the Asset3DEditor `domainAssets` bucketing, but returns the
  *  full list rather than a per-domain boolean — used to render badges on
  *  each component binding row so the user can see at a glance which rail
  *  to find the asset in. */
@@ -360,7 +360,7 @@ const tdStyle = TD;
  *    (localXYZ + localRxRyRz). Add/remove + name/type/brand/model are
  *    hidden; composition is fixed in binding-dev.
  *  Both modes share the 3D preview + probe-beam viz. */
-export type ComponentsV2EditorMode = "binding-dev" | "phy-editor";
+export type ComponentsEditorMode = "binding-dev" | "phy-editor";
 
 /** Derive a probe-beam origin + direction that runs along the component's
  *  exposed optical axis (the `optical_in` → `optical_out` faces from
@@ -421,12 +421,12 @@ function computeProbeOpticalAim(
   };
 }
 
-export function ComponentsV2Editor({
+export function ComponentsEditor({
   domain,
   mode = "binding-dev",
 }: {
   domain: "all" | ComposerDomain;
-  mode?: ComponentsV2EditorMode;
+  mode?: ComponentsEditorMode;
 }) {
   const isBindingDev = mode === "binding-dev";
   const allComponents = useSceneStore((s) => s.scene.components);
@@ -478,7 +478,7 @@ export function ComponentsV2Editor({
   }, [selectedId]);
 
   // Bootstrap the Kind registry once — populates the kind_id <select>
-  // and the same store is reused by Asset3DV3Editor.
+  // and the same store is reused by Asset3DEditor.
   const kinds = useKindsStore((s) => s.kinds);
   const kindsStatus = useKindsStore((s) => s.status);
   const fetchKinds = useKindsStore((s) => s.fetchAll);
@@ -627,7 +627,7 @@ export function ComponentsV2Editor({
   }, [assets, assetPickerFilter]);
 
   // Esc closes the picker; matches the rest of this codebase's modal
-  // conventions (Asset3DV3Editor's New Asset modal handles its own
+  // conventions (Asset3DEditor's New Asset modal handles its own
   // backdrop-click close the same way).
   useEffect(() => {
     if (!assetPickerOpen) return;
@@ -661,7 +661,7 @@ export function ComponentsV2Editor({
   };
 
   return (
-    // SHELL_STYLE (shared with Asset3DV3Editor + KindsEditor) uses CSS
+    // SHELL_STYLE (shared with Asset3DEditor + KindsEditor) uses CSS
     // grid with `minmax(0, 1fr)` for the main column so the aside and
     // main both stay bounded by the viewport — required for their own
     // overflow-y: auto to actually scroll when the catalog grows.
@@ -1205,7 +1205,7 @@ function BindingRow({
    *  populate the parent dropdown (filtering out self + descendants to
    *  prevent cycles). */
   siblingBindings: ComponentBinding[];
-  mode: ComponentsV2EditorMode;
+  mode: ComponentsEditorMode;
   isSelected: boolean;
   onSelect: () => void;
   onPatch: (patch: ComponentBindingUpdatePayload) => void;
@@ -2006,9 +2006,52 @@ function ComponentPreview3D({
         const GLOBAL_UP = new THREE.Vector3(0, 0, 1);
         const FALLBACK_UP = new THREE.Vector3(1, 0, 0);
         const up = Math.abs(d.dot(GLOBAL_UP)) > 0.999 ? FALLBACK_UP : GLOBAL_UP;
-        const s = up.clone().sub(d.clone().multiplyScalar(d.dot(up))).normalize();
-        const p = d.clone().cross(s).normalize();
+        const s = new THREE.Vector3().crossVectors(up, d).normalize();
+        const p = new THREE.Vector3().crossVectors(d, s).normalize();
         return { s, p };
+      };
+
+      const polDegToWorld = (beamDir: THREE.Vector3, polDeg: number): THREE.Vector3 => {
+        const { s, p } = beamLocalSP(beamDir);
+        const polRad = (polDeg * Math.PI) / 180;
+        return s.multiplyScalar(Math.cos(polRad))
+          .add(p.multiplyScalar(Math.sin(polRad)))
+          .normalize();
+      };
+
+      const worldPolToDeg = (beamDir: THREE.Vector3, polWorld: THREE.Vector3): number => {
+        const { s, p } = beamLocalSP(beamDir);
+        const projected = polWorld.clone()
+          .sub(beamDir.clone().normalize().multiplyScalar(polWorld.dot(beamDir.clone().normalize())));
+        if (projected.lengthSq() < 1e-12) return 0;
+        projected.normalize();
+        return Math.atan2(projected.dot(p), projected.dot(s)) * 180 / Math.PI;
+      };
+
+      const rotatePolAroundAxis = (
+        polWorld: THREE.Vector3,
+        axisWorld: THREE.Vector3,
+        rotationDeg: number,
+      ): THREE.Vector3 => {
+        const axis = axisWorld.clone();
+        if (axis.lengthSq() < 1e-12) return polWorld.clone().normalize();
+        axis.normalize();
+        const rad = (rotationDeg * Math.PI) / 180;
+        return polWorld.clone().applyAxisAngle(axis, rad).normalize();
+      };
+
+      const faradayAxisWorld = (
+        asset: Asset3D | undefined,
+        pivot: THREE.Object3D | undefined,
+        fallback: THREE.Vector3,
+      ): THREE.Vector3 => {
+        const opticalCenter = (asset?.anchors ?? []).find((a) => a.id === "optical_center");
+        const axisLocal = opticalCenter && asset ? anchorObjectLocalAxisX(opticalCenter, asset) : null;
+        if (!axisLocal || !pivot) return fallback.clone().normalize();
+        pivot.updateWorldMatrix(true, false);
+        return new THREE.Vector3(axisLocal.x, axisLocal.y, axisLocal.z)
+          .transformDirection(pivot.matrixWorld)
+          .normalize();
       };
 
       // Linear polarization mark — cyan double-headed arrow drawn
@@ -2206,7 +2249,11 @@ function ComponentPreview3D({
           const rotDeg = Number(
             (hitAsset?.defaultParams as { rotationDeg?: unknown } | undefined | null)?.rotationDeg ?? 45,
           );
-          currentPolDeg += rotDeg;
+          const axisWorld = faradayAxisWorld(hitAsset, bestFace.pivot, bestFace.normalWorld);
+          currentPolDeg = worldPolToDeg(
+            dir,
+            rotatePolAroundAxis(polDegToWorld(dir, currentPolDeg), axisWorld, rotDeg),
+          );
         }
 
         // 5×5 ABCD transition. Pick a transition whose `in` matches
@@ -2390,7 +2437,7 @@ function ComponentPreview3D({
         // Procedural builders author geometry in main-viewer three.js
         // frame (Y-up, 1 unit = 100 mm). The binding preview frame is
         // mm (matches STL vertices), so scale ×100. Rotate 90° about X
-        // to swap Y/Z up — same convention as Asset3DV3Editor's body
+        // to swap Y/Z up — same convention as Asset3DEditor's body
         // wrap.
         const bodyMm = new THREE.Group();
         bodyMm.add(obj);

@@ -472,7 +472,7 @@ def trace_ray_anchor_scene(
             # this the beam profile only ever accumulated each element's slab
             # L/n ("glass, never air"), so waist / focus were wrong. Each op
             # then adds its own slab on top of this incoming q. Mirrors the
-            # legacy face tracer (ray_tracer_v3.py).
+            # legacy face tracer (ray_tracer.py).
             qx=complex(ray.qx.real + hit.t_lab, ray.qx.imag),
             qy=complex(ray.qy.real + hit.t_lab, ray.qy.imag),
             path_length_mm=ray.path_length_mm + hit.t_lab,

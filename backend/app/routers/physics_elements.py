@@ -11,7 +11,7 @@ from app.db import get_session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models import PhysicsElement, SceneObject, TimingProgram
-from app.v2_bindings import (
+from app.bindings import (
     V2_TRACKED_AOM_KEYS,
     V2_TRACKED_BEAM_SPLITTER_KEYS,
     V2_TRACKED_ISOLATOR_KEYS,

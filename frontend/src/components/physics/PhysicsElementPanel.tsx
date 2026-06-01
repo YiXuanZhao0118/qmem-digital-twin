@@ -35,7 +35,7 @@ import {
   rotateLabDir,
   threeToLabPointMm,
 } from "../../optical/frames";
-import { getRfDirectionBodyLocal } from "../../utils/v2Bindings";
+import { getRfDirectionBodyLocal } from "../../utils/objectBindings";
 import { resolveAomRfDriveFromScene } from "../../utils/aomRfDrive";
 import {
   type EmissionKey,

@@ -966,7 +966,7 @@ class LaserSourceParams(CamelModel):
     ``objects.properties.opticalSources[].beam``. The remaining knobs are
     advanced (noise) parameters that the V2 source does not yet model.
 
-    Solver code reads beam state via ``v2_bindings.legacy_laser_kind_params_from_beam``
+    Solver code reads beam state via ``bindings.legacy_laser_kind_params_from_beam``
     instead of from this model; this class only validates the residual
     advanced fields and silently drops V1 inputs that still try to set
     centerWavelengthNm/nominalPowerMw/spectrum/spatialModeX/Y/transverseMode/polarization.

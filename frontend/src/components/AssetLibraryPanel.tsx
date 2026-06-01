@@ -52,7 +52,7 @@ const MECHANICAL_TYPES = TYPES_BY_CATEGORY.mechanical;
 const INFRASTRUCTURE_TYPES = TYPES_BY_CATEGORY.infrastructure;
 const MISC_TYPES = TYPES_BY_CATEGORY.misc;
 
-// Mirrors ComponentsV2Editor.classifyComponentDomain so the catalog
+// Mirrors ComponentsEditor.classifyComponentDomain so the catalog
 // groups components the same way PHY Editor does:
 //   1. physicsCapabilities wins (matches PHY Editor's domain rails)
 //   2. kindId-based plugin category as fallback

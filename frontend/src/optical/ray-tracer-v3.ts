@@ -14,7 +14,7 @@
  * Scope: SINGLE-ASSET tracing in asset body-local frame. This is the
  * face/transition engine exercised by the FE↔BE parity harness; scene-
  * level dispatch (object poses, lab↔body transforms) lives in the backend
- * solver (db_scene_loader + ray_tracer_v3), not here.
+ * solver (db_scene_loader + ray_tracer), not here.
  *
  * Frame assumption:
  *   - BeamRay.direction is in the asset's body-local frame

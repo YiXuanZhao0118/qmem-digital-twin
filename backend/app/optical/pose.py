@@ -123,7 +123,7 @@ def pose_to_transform(pose: V3Pose) -> V3Transform:
 
 def _binding_rotation_of(pose: V3Pose) -> Rotation:
     """Raw XYZ Euler for ComponentBinding local poses — matches the PHY
-    Editor's ComponentsV2Editor.poseFromBinding (THREE.Euler(rx, ry, rz,
+    Editor's ComponentsEditor.poseFromBinding (THREE.Euler(rx, ry, rz,
     "XYZ")) and the frontend bindingTreeObject.applyBindingLocalTransform.
 
     A binding positions a child asset within the PARENT's CAD frame, so it

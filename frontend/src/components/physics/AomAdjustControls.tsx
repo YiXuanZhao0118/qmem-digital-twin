@@ -49,7 +49,7 @@ import {
 import {
   getEffectiveApertureMm,
   getRfDirectionBodyLocal,
-} from "../../utils/v2Bindings";
+} from "../../utils/objectBindings";
 import { resolveAomRfDriveFromScene } from "../../utils/aomRfDrive";
 import { anchorObjectLocalPos } from "../../utils/anchorAccess";
 import { wavelengthToColor } from "../../three/opticalBeams";

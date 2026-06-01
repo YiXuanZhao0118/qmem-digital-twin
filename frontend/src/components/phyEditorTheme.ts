@@ -1,8 +1,8 @@
 /**
  * Shared design tokens for the three PHY Editor sub-editors
- * (KindsEditor / Asset3DV3Editor / ComponentsV2Editor). One source of
+ * (KindsEditor / Asset3DEditor / ComponentsEditor). One source of
  * truth so they look like one editor with three tabs, not three
- * editors. Baseline = Asset3DV3Editor.
+ * editors. Baseline = Asset3DEditor.
  */
 import type { CSSProperties } from "react";
 
@@ -161,7 +161,7 @@ export const MAIN_STYLE: CSSProperties = {
   minWidth: 0,
 };
 
-// Header bar above the main body — used by Asset3DV3Editor for the
+// Header bar above the main body — used by Asset3DEditor for the
 // selected asset's name + Edit/Save/Delete icons. Shared so KindsEditor
 // can adopt the same look.
 export const MAIN_HEADER_STYLE: CSSProperties = {

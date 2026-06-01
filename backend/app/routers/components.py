@@ -19,7 +19,7 @@ from app.models import (
     OpticalLink,
     SceneObject,
 )
-from app.v2_bindings import (
+from app.bindings import (
     bootstrap_aom_default_binding,
     bootstrap_beam_splitter_default_bindings,
     bootstrap_isolator_default_binding,
@@ -145,7 +145,7 @@ DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
     # V2 Phase 3 (alembic 0029): every beam-defining laser parameter moved
     # to objects.properties.opticalSources[].beam, populated by the
     # auto_create_physics_element_for_object bootstrap (see
-    # v2_bindings.bootstrap_laser_default_binding_and_source). Residual
+    # bindings.bootstrap_laser_default_binding_and_source). Residual
     # advanced fields (e.g. rinDbcPerHz) can still live here.
     "laser_source": {},
     "tapered_amplifier": {

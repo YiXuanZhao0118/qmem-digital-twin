@@ -15,8 +15,8 @@
 import { useEffect } from "react";
 
 import { useSceneStore, type PhyEditorView } from "../store/sceneStore";
-import { Asset3DV3Editor } from "./Asset3DV3Editor";
-import { ComponentsV2Editor } from "./ComponentsV2Editor";
+import { Asset3DEditor } from "./Asset3DEditor";
+import { ComponentsEditor } from "./ComponentsEditor";
 import { KindsEditor } from "./KindsEditor";
 
 type Section = PhyEditorView["section"];
@@ -119,7 +119,7 @@ export function PhyEditor() {
         // track to grow to fit content — that breaks the inner editors'
         // `flex: 1; overflow: auto` because the cell expands instead of
         // capping the editor's height. Force `minmax(0, 1fr)` so the
-        // editor (KindsEditor / Asset3DV3Editor / ComponentsV2Editor)
+        // editor (KindsEditor / Asset3DEditor / ComponentsEditor)
         // is bounded by the viewport and owns its own scrollbar.
         style={{ gridTemplateRows: "minmax(0, 1fr)" }}
       >
@@ -167,10 +167,10 @@ export function PhyEditor() {
         <div className="phy-editor-pane">
           {activeSection === "kinds" && <KindsEditor domain={activeDomain} />}
           {activeSection === "asset3d" && (
-            <Asset3DV3Editor domain={activeDomain} mode="binding-dev" />
+            <Asset3DEditor domain={activeDomain} mode="binding-dev" />
           )}
           {activeSection === "components" && (
-            <ComponentsV2Editor domain={activeDomain} mode="binding-dev" />
+            <ComponentsEditor domain={activeDomain} mode="binding-dev" />
           )}
         </div>
       </div>

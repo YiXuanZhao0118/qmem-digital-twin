@@ -49,7 +49,7 @@ async def run(
     from app.optical import anchor_ops  # noqa: F401 — registers anchor ops
     from app.optical.anchor_tracer import AnchorTraceOptions
     from app.optical.db_scene_loader import load_anchor_scene_from_db
-    from app.optical.solver_v3 import solve_anchor_scene
+    from app.optical.solver import solve_anchor_scene
 
     sim_run.status = "running"
     sim_run.progress = 0.0

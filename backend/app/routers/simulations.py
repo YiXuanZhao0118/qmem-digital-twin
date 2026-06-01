@@ -42,7 +42,7 @@ async def run_optical(session: AsyncSession = Depends(get_session)) -> OpticalRu
     from app.optical import anchor_ops  # noqa: F401
     from app.optical.anchor_tracer import AnchorTraceOptions
     from app.optical.db_scene_loader import load_anchor_scene_from_db
-    from app.optical.solver_v3 import solve_anchor_scene
+    from app.optical.solver import solve_anchor_scene
 
     scene = await load_anchor_scene_from_db(session)
     result = solve_anchor_scene(scene, [], AnchorTraceOptions())
@@ -143,7 +143,7 @@ async def run_optical_transient(
     from app.optical import anchor_ops  # noqa: F401
     from app.optical.anchor_tracer import AnchorTraceOptions
     from app.optical.db_scene_loader import load_anchor_scene_from_db
-    from app.optical.solver_v3 import solve_anchor_scene
+    from app.optical.solver import solve_anchor_scene
 
     scene = await load_anchor_scene_from_db(session)
     result = solve_anchor_scene(scene, [], AnchorTraceOptions())

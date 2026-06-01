@@ -24,7 +24,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Optional
 
 from app.optical.beam_ray import BeamRay, Vec3
-from app.optical.ray_tracer_v3 import (
+from app.optical.ray_tracer import (
     TraceOptions,
     V3Scene,
     emit_scene_source_rays_with_provenance,

@@ -1,4 +1,4 @@
-// V2 anchor-binding accessors (frontend mirror of backend/app/v2_bindings.py).
+// V2 anchor-binding accessors (frontend mirror of backend/app/bindings.py).
 //
 // Per docs/optical-schema-v2.md §3, per-instance geometry-only data lives on
 // objects.properties.anchorBindings[]. This file provides typed lookups so

@@ -10,7 +10,7 @@ from . import glan_laser  # noqa: F401  must come AFTER polarizer
 from . import faraday_rotator  # noqa: F401
 from . import pbs  # noqa: F401
 from . import waveplate  # noqa: F401
-from . import aom_v3  # noqa: F401
+from . import aom  # noqa: F401
 from . import dichroic_mirror  # noqa: F401
 from . import laser_source  # noqa: F401
 # Stub physics (passthrough) — real implementations TODO.
