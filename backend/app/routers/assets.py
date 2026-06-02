@@ -92,11 +92,26 @@ async def list_assets(session: AsyncSession = Depends(get_session)) -> list[Asse
     return list(result.all())
 
 
+def _anchors_camel(anchors: list[schemas.AssetAnchor]) -> list[dict]:
+    """Serialise typed anchors with their camelCase aliases.
+
+    ``model_dump()`` (no ``by_alias``) emits the snake_case field names, but
+    the anchor ray tracer's scene loader reads the raw ``anchors`` JSON column
+    and only recognises the camelCase aliases (``axisXBodyLocal`` /
+    ``positionMmBodyLocal`` / …) — a snake_case blob makes it return None and
+    the asset silently drops out of the trace. See
+    ``db_scene_loader.anchor_asset_to_snapshot``.
+    """
+    return [a.model_dump(by_alias=True) for a in anchors]
+
+
 @router.post("", response_model=schemas.Asset3DOut, status_code=status.HTTP_201_CREATED)
 async def create_asset(
     payload: schemas.Asset3DCreate, session: AsyncSession = Depends(get_session)
 ) -> Asset3D:
-    asset = Asset3D(**payload.model_dump())
+    data = payload.model_dump()
+    data["anchors"] = _anchors_camel(payload.anchors)
+    asset = Asset3D(**data)
     session.add(asset)
     await session.commit()
     await session.refresh(asset)
@@ -210,7 +225,10 @@ async def update_asset(
     session: AsyncSession = Depends(get_session),
 ) -> Asset3D:
     asset = await crud.get_or_404(session, Asset3D, asset_id)
-    crud.apply_updates(asset, payload.model_dump(exclude_unset=True))
+    updates = payload.model_dump(exclude_unset=True)
+    if "anchors" in updates and payload.anchors is not None:
+        updates["anchors"] = _anchors_camel(payload.anchors)
+    crud.apply_updates(asset, updates)
     await session.commit()
     await session.refresh(asset)
     return asset
