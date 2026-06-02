@@ -89,6 +89,7 @@ def aom_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
     out_rays: list[BeamRay] = []
     # Equal-split power across requested orders (v1 model).
     per_order_power = ray_in.power_mw * eta_base / max(1, len(orders))
+    freq_hz = float(freq_mhz) * 1e6
     for m in orders:
         kick = 2.0 * float(m) * theta_b
         y_out, ty_out, z_out, tz_out = apply_slab_state(
@@ -103,6 +104,9 @@ def aom_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
             qx=complex(ray_in.qx.real + L_over_n, ray_in.qx.imag),
             qy=complex(ray_in.qy.real + L_over_n, ray_in.qy.imag),
             path_length_mm=ray_in.path_length_mm + L,
+            # Doppler shift: order m diffracts off the f_RF acoustic wave,
+            # shifting the optical frequency by m·f_RF (sideband per order).
+            freq_offset_hz=ray_in.freq_offset_hz + float(m) * freq_hz,
         ))
     return out_rays
 

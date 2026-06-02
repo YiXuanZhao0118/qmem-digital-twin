@@ -436,6 +436,7 @@ type RawSegment = Record<string, unknown> & {
   emitterObjectId?: string;
   hitObjectId?: string;
   wavelengthNm?: number;
+  freqOffsetHz?: number;
   beamMode?: {
     x?: { waist0Um?: number; waistZUm?: number; mSquared?: number };
     y?: { waist0Um?: number; waistZUm?: number; mSquared?: number };
@@ -903,7 +904,16 @@ export function BeamScopeContents() {
                 typeof seg.wavelengthNm === "number"
                   ? `${seg.wavelengthNm.toFixed(0)}nm`
                   : "?";
-              const label = `${src?.name ?? "(emitter)"} → ${hit?.name ?? "(open)"}  ·  ${wl}`;
+              // AOM diffraction orders overlap spatially but differ in
+              // optical frequency — surface the Doppler offset so +1/-1
+              // sidebands are distinguishable in the beam list.
+              const dfMhz =
+                typeof seg.freqOffsetHz === "number" ? seg.freqOffsetHz / 1e6 : 0;
+              const dfLabel =
+                Math.abs(dfMhz) > 1e-6
+                  ? `  ·  ${dfMhz >= 0 ? "+" : ""}${dfMhz.toFixed(1)}MHz`
+                  : "";
+              const label = `${src?.name ?? "(emitter)"} → ${hit?.name ?? "(open)"}  ·  ${wl}${dfLabel}`;
               const active = i === safeBeamIndex;
               return (
                 <button
