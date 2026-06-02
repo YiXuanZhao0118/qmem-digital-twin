@@ -235,7 +235,7 @@ export async function loadAssetObject(
     } else if (isPbs252Asset(asset)) {
       object = buildPbs252BeamSplitterObject(geometry, component);
     } else if (isAd9959PcbAsset(asset)) {
-      object = buildAd9959PcbObject(geometry, component);
+      object = buildAd9959PcbObject(geometry, asset, component);
     } else if (isThorlabsIsolatorAsset(asset)) {
       // Isolator's WIP path still owns its own translucent housing +
       // PBS overlay assembly. A''.4 retires it in favour of the

@@ -43,6 +43,21 @@ export type RfCableNodePersistent = {
  *  changes. */
 export const RF_CONNECTOR_TIP_MM = 15.5;
 
+/** BNC-male equivalent of {@link RF_CONNECTOR_TIP_MM}. The BNC plug is a
+ *  longer stack than SMA — matches `buildBncMaleConnectorGroup`
+ *  (boot 4 + ferrule 5 + bayonet sleeve 12 + PTFE 3 + pin 3 = 27 mm).
+ *  Tweak together with that builder if it changes. */
+export const RF_BNC_CONNECTOR_TIP_MM = 27;
+
+/** Tip length for a connector family string ("sma" / "bnc" / "sma_male"
+ *  / "bnc_female" / …). Defaults to the SMA length for anything that
+ *  doesn't read as BNC. */
+export function connectorTipMmForFamily(family: string | null | undefined): number {
+  return typeof family === "string" && family.toLowerCase().startsWith("bnc")
+    ? RF_BNC_CONNECTOR_TIP_MM
+    : RF_CONNECTOR_TIP_MM;
+}
+
 function endpointIndex(end: "A" | "B", nodes: RfCableNodePersistent[]): number {
   return end === "A" ? 0 : nodes.length - 1;
 }
@@ -220,12 +235,30 @@ export function resolveLinkedRfCableEndpoint(args: {
    *  (preserves manual handle when caller passes the existing magnitude;
    *  defaults to 30 mm — same as the align helper). */
   handleMagnitudeMm?: number;
+  /** Connector tip length for THIS cable end (SMA 15.5 / BNC 27 mm). The
+   *  node sits this far back from the port so the male connector face
+   *  lands on it. Defaults to the SMA length — callers pass the BNC
+   *  length for bnc-ended cables (see {@link connectorTipMmForFamily}). */
+  connectorTipMm?: number;
+  /** Manual node nudge for THIS cable end, in the connector frame
+   *  (Z = outward / facing direction). depthMm = along the connector axis
+   *  (in/out of the port); sideXMm / sideYMm = perpendicular plane. The
+   *  caller keys these per cable + end so each connector can be tuned
+   *  independently (see the offset table in DigitalTwinViewer). */
+  nodeOffset?: { depthMm?: number; sideXMm?: number; sideYMm?: number };
+  /** Target anchor's body-local axisY. When supplied, the side (sideX /
+   *  sideY) basis is built from it (transformed to lab) so the perpendicular
+   *  plane co-moves with the target instrument — the same offset looks
+   *  identical at any orientation. Falls back to an arbitrary perpendicular
+   *  when absent. */
+  targetAnchorAxisYBody?: Vec3T;
 }): {
   posMmBody: Vec3T;
   /** Inward-pointing handle vector (handleOut for end A, handleIn for B). */
   handleMmBody: Vec3T;
 } | null {
   const { endpoint, cablePose, targetPose, targetAnchorPosBodyMm, targetAnchorDirBody } = args;
+  const tipMm = args.connectorTipMm ?? RF_CONNECTOR_TIP_MM;
   const targetT = makePoseTransforms(targetPose);
   const cableT = makePoseTransforms(cablePose);
   const targetAnchorLab = targetT.bodyToLab(targetAnchorPosBodyMm);
@@ -239,10 +272,52 @@ export function resolveLinkedRfCableEndpoint(args: {
   const newOutwardLab: Vec3T = [-targetOutwardUnit[0], -targetOutwardUnit[1], -targetOutwardUnit[2]];
   // Node lab so port = target: node = target - outward · TIP.
   const newNodeLab: Vec3T = [
-    targetAnchorLab[0] - newOutwardLab[0] * RF_CONNECTOR_TIP_MM,
-    targetAnchorLab[1] - newOutwardLab[1] * RF_CONNECTOR_TIP_MM,
-    targetAnchorLab[2] - newOutwardLab[2] * RF_CONNECTOR_TIP_MM,
+    targetAnchorLab[0] - newOutwardLab[0] * tipMm,
+    targetAnchorLab[1] - newOutwardLab[1] * tipMm,
+    targetAnchorLab[2] - newOutwardLab[2] * tipMm,
   ];
+
+  // Per-cable/per-end manual nudge (same idea as the PPG #3 nudge): build a
+  // connector frame with Z = outward (the cable's facing direction at this
+  // end) and shift the node within it. The caller keys the values per
+  // cable + end (see DigitalTwinViewer's offset table), so each connector
+  // tunes independently. Default = no offset.
+  const off = {
+    depthMm: args.nodeOffset?.depthMm ?? 0,
+    sideXMm: args.nodeOffset?.sideXMm ?? 0,
+    sideYMm: args.nodeOffset?.sideYMm ?? 0,
+  };
+  const zc = newOutwardLab; // 已是單位向量
+  const cross = (a: Vec3T, b: Vec3T): Vec3T => [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+  const norm = (v: Vec3T): Vec3T => {
+    const m = Math.hypot(v[0], v[1], v[2]) || 1;
+    return [v[0] / m, v[1] / m, v[2] / m];
+  };
+  // Side basis tied to the TARGET anchor's axisY (in lab) so the
+  // perpendicular plane co-moves with the instrument — same sideX/sideY
+  // looks identical at any orientation. Project axisY off the mating axis
+  // (zc) first; fall back to an arbitrary perpendicular if axisY is absent
+  // or parallel to zc.
+  let yc: Vec3T;
+  if (args.targetAnchorAxisYBody) {
+    const aYLab = targetT.bodyToLabDir(args.targetAnchorAxisYBody);
+    const d = aYLab[0] * zc[0] + aYLab[1] * zc[1] + aYLab[2] * zc[2];
+    const proj: Vec3T = [aYLab[0] - d * zc[0], aYLab[1] - d * zc[1], aYLab[2] - d * zc[2]];
+    yc = Math.hypot(proj[0], proj[1], proj[2]) > 1e-6
+      ? norm(proj)
+      : norm(cross(Math.abs(zc[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0], zc));
+  } else {
+    yc = norm(cross(Math.abs(zc[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0], zc));
+  }
+  const xc = norm(cross(yc, zc));
+  newNodeLab[0] += zc[0] * off.depthMm + xc[0] * off.sideXMm + yc[0] * off.sideYMm;
+  newNodeLab[1] += zc[1] * off.depthMm + xc[1] * off.sideXMm + yc[1] * off.sideYMm;
+  newNodeLab[2] += zc[2] * off.depthMm + xc[2] * off.sideXMm + yc[2] * off.sideYMm;
+
   const posMmBody = cableT.labToBody(newNodeLab);
   const newOutwardBody = cableT.labToBodyDir(newOutwardLab);
   const handleMag = args.handleMagnitudeMm ?? 30;

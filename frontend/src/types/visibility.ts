@@ -5,7 +5,7 @@ import type { PhysicsCapability } from "./digitalTwin";
 // =============================================================================
 
 // Only overlay flags that actually gate something in the 3D scene live
-// here. Old flags (anchors / bounding_boxes / coordinate_axes / field_map /
+// here. Old flags (bounding_boxes / coordinate_axes / field_map /
 // regions / warnings) were never wired to a renderer — removing them
 // matches what the user can actually toggle. Restore an entry the day a
 // renderer starts consulting it.
@@ -18,7 +18,9 @@ export type OverlayKind =
   | "optical_links"
   // Physics
   | "beam_segments"
-  | "beam_paths";
+  | "beam_paths"
+  // Debug — asset anchor markers (world pos + axisX)
+  | "anchors";
 
 export type OverlayFlags = Record<OverlayKind, boolean>;
 
@@ -29,6 +31,7 @@ export const OVERLAY_KINDS: OverlayKind[] = [
   "optical_links",
   "beam_segments",
   "beam_paths",
+  "anchors",
 ];
 
 export const DEFAULT_OVERLAY_FLAGS: OverlayFlags = {
@@ -38,12 +41,15 @@ export const DEFAULT_OVERLAY_FLAGS: OverlayFlags = {
   optical_links: true,
   beam_segments: true,
   beam_paths: true,
+  // Debug overlay — off by default.
+  anchors: false,
 };
 
 export const OVERLAY_GROUPS: { label: string; kinds: OverlayKind[] }[] = [
   { label: "Geometry", kinds: ["components"] },
   { label: "Relations", kinds: ["connections", "assembly_relations", "optical_links"] },
   { label: "Physics", kinds: ["beam_segments", "beam_paths"] },
+  { label: "Debug", kinds: ["anchors"] },
 ];
 
 export const OVERLAY_LABELS: Record<OverlayKind, string> = {
@@ -53,6 +59,7 @@ export const OVERLAY_LABELS: Record<OverlayKind, string> = {
   optical_links: "Optic.",
   beam_segments: "Beams",
   beam_paths: "Path",
+  anchors: "Anchors",
 };
 
 // =============================================================================

@@ -37,7 +37,9 @@ ASSETS: list[dict[str, object]] = [
         # any user-edited position/direction already in DB.
         "name": "primitive_dds_ad9959_pcb",
         "asset_type": "stl",
-        "file_path": "files/stl/ad9959_pcbz.stl",
+        # Main-scene LOD; the full-resolution body-frame mesh remains at
+        # files/stl/ad9959_pcbz.stl for close inspection / future LOD2.
+        "file_path": "files/stl/ad9959_pcbz_lod1.stl",
         "source": "Analog Devices AD9959/PCBZ STEP (gmsh STEP→STL, decimated)",
         "source_url": "https://www.digikey.tw/en/models/967016?tab=mfr",
         "unit": "mm",

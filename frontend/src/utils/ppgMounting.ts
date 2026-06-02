@@ -30,7 +30,7 @@ import {
   labMmToThreeLocal,
   sceneObjectToQuaternion,
 } from "../optical/frames";
-import { anchorObjectLocalLegacyDir, anchorObjectLocalPos } from "./anchorAccess";
+import { anchorObjectLocalAxisY, anchorObjectLocalPos, anchorObjectLocalPrimaryDir } from "./anchorAccess";
 
 type RfCableEndpoints = {
   A?: { targetObjectId: string; targetAnchorId: string; targetAnchorName: string };
@@ -46,7 +46,13 @@ function anchorPosThree(anchor: Anchor, asset: Asset3D | null | undefined): THRE
 }
 
 function anchorDirThree(anchor: Anchor, asset: Asset3D | null | undefined): THREE.Vector3 {
-  const d = anchorObjectLocalLegacyDir(anchor, asset) ?? { x: 1, y: 0, z: 0 };
+  // axisX (Phase 9.1 primary direction) first; fall back to the legacy
+  // directionBodyLocal only for pre-tri-axis anchors. Reading the legacy
+  // field alone returned null for modern anchors (rf_out / ttl_in carry
+  // axisXBodyLocal, not directionBodyLocal), silently defaulting both the
+  // PPG and target directions to (1,0,0) → wrong mating, and the mount
+  // flipping when the target's RZ changed.
+  const d = anchorObjectLocalPrimaryDir(anchor, asset) ?? { x: 1, y: 0, z: 0 };
   return labDirToThreeLocal(d).normalize();
 }
 
@@ -79,7 +85,7 @@ function targetAnchorLabPose(
   targetObj: SceneObject,
   anchor: Anchor,
   targetAsset: Asset3D | null | undefined,
-): { posThree: THREE.Vector3; dirThree: THREE.Vector3 } {
+): { posThree: THREE.Vector3; dirThree: THREE.Vector3; axisYThree: THREE.Vector3 | null } {
   const targetThreePos = labMmToThreeLocal({
     xMm: targetObj.xMm,
     yMm: targetObj.yMm,
@@ -90,7 +96,14 @@ function targetAnchorLabPose(
   const dirBodyThree = anchorDirThree(anchor, targetAsset);
   const posLabThree = posBodyThree.clone().applyQuaternion(targetQuat).add(targetThreePos);
   const dirLabThree = dirBodyThree.clone().applyQuaternion(targetQuat).normalize();
-  return { posThree: posLabThree, dirThree: dirLabThree };
+  // Target anchor's axisY in lab — used to build a stable side basis for
+  // any manual nudge so it co-moves with the instrument. Null when the
+  // anchor doesn't declare axisY.
+  const axisYBody = anchorObjectLocalAxisY(anchor, targetAsset);
+  const axisYThree = axisYBody
+    ? labDirToThreeLocal(axisYBody).applyQuaternion(targetQuat).normalize()
+    : null;
+  return { posThree: posLabThree, dirThree: dirLabThree, axisYThree };
 }
 
 /** Look up an anchor on the SceneObject's asset by id + display name (the
@@ -177,5 +190,37 @@ export function computePpgMountedThreePose(
   const rotatedAnchor = ppgAnchorBodyPos.clone().applyQuaternion(quaternion);
   const positionThree = target.posThree.clone().sub(rotatedAnchor);
 
+  // Connector side basis with Z = mating axis. Y comes from the TARGET
+  // anchor's axisY (projected off Z) so the perpendicular plane co-moves
+  // with the instrument — a manual nudge then means the same thing at any
+  // orientation. Falls back to an arbitrary perpendicular when axisY is
+  // absent or parallel to Z.
+  const zc = matingDir.clone().normalize();
+  let yc: THREE.Vector3;
+  if (target.axisYThree) {
+    const proj = target.axisYThree.clone().sub(
+      zc.clone().multiplyScalar(target.axisYThree.dot(zc)),
+    );
+    yc = proj.lengthSq() > 1e-12
+      ? proj.normalize()
+      : new THREE.Vector3().crossVectors(
+          Math.abs(zc.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0),
+          zc,
+        ).normalize();
+  } else {
+    yc = new THREE.Vector3().crossVectors(
+      Math.abs(zc.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0),
+      zc,
+    ).normalize();
+  }
+  const xc = new THREE.Vector3().crossVectors(yc, zc).normalize();
+
+  // Manual nudge in the connector frame (mm). Cleared to 0 — re-add only if
+  // a residual mesh offset remains after the stable-basis fix.
+  const depthMm = 0, sideXMm = 0, sideYMm = 0;
+  positionThree
+    .add(zc.clone().multiplyScalar(depthMm / 100))
+    .add(xc.multiplyScalar(sideXMm / 100))
+    .add(yc.multiplyScalar(sideYMm / 100));
   return { positionThree, quaternion };
 }

@@ -17,7 +17,7 @@ import { createSmaBulkheadJack } from "../../../three/loadAsset/passive/electron
  *  mounting holes. Used as the fallback render when no STL is available
  *  on disk for an AD9959 board; the STL path in `stl_builders/
  *  analog_devices_ad9959_pcbz.ts` takes over when the asset's filePath
- *  matches `*ad9959_pcbz.stl`. */
+ *  matches `*ad9959_pcbz.stl` or the lighter `*ad9959_pcbz_lod1.stl`. */
 export function createAnalogDevicesAd9959Pcbz(component: ComponentItem, _state?: DeviceState): THREE.Object3D {
   const group = new THREE.Group();
   const [lenMm, widMm] = getDimensionsMm(component.properties, [100, 80, 16]);

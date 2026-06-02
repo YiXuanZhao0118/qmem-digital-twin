@@ -16,7 +16,7 @@ import type { Asset3D, ComponentItem } from "../../../types/digitalTwin";
 // longer read as green.
 export function isAd9959PcbAsset(asset: Asset3D): boolean {
   return asset.name === "primitive_dds_ad9959_pcb"
-    || /ad9959_pcbz\.stl$/i.test(asset.filePath);
+    || /ad9959_pcbz(?:_lod1)?\.stl$/i.test(asset.filePath);
 }
 
 // PCB substrate top sits near z = 0 in the imported STL frame (gmsh kept
@@ -38,6 +38,7 @@ const AD9959_SMA_Z_MAX_MM = 12.0;
 
 export function buildAd9959PcbObject(
   geometry: THREE.BufferGeometry,
+  asset: Asset3D,
   component: ComponentItem,
 ): THREE.Object3D {
   const positionAttr = geometry.attributes.position as THREE.BufferAttribute;
@@ -45,6 +46,7 @@ export function buildAd9959PcbObject(
 
   geometry.computeBoundingBox();
   const bbox = geometry.boundingBox!;
+  const isLod1 = /ad9959_pcbz_lod1\.stl$/i.test(asset.filePath);
   // The mesh is symmetric in X around 0 (re-centred by `_finalize_ad9959_stl.py`);
   // pick the larger absolute edge as the half-width so the classifier is robust
   // even if a future export shifts the centroid by a fraction of a mm.
@@ -113,7 +115,23 @@ export function buildAd9959PcbObject(
   const group = new THREE.Group();
   group.name = component.name;
 
-  if (pcbTris.length > 0) {
+  if (isLod1) {
+    // The LOD mesh is aggressively simplified for scene performance. Flat,
+    // thin PCB faces are the first thing quadric decimation punches holes in,
+    // so render the substrate as a stable low-poly board and let the STL
+    // contribute the raised IC / connector detail.
+    const boardSize = bbox.getSize(new THREE.Vector3());
+    const board = new THREE.Mesh(
+      new THREE.BoxGeometry(boardSize.x, boardSize.y, 1.6),
+      pcbMat,
+    );
+    board.position.set(
+      (bbox.min.x + bbox.max.x) * 0.5,
+      (bbox.min.y + bbox.max.y) * 0.5,
+      -0.2,
+    );
+    group.add(board);
+  } else if (pcbTris.length > 0) {
     group.add(new THREE.Mesh(buildSubGeometry(pcbTris), pcbMat));
   }
   if (componentTris.length > 0) {

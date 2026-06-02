@@ -12,7 +12,7 @@ import {
   refreshRfCableWrapperGeometry,
   type FiberNode,
 } from "../three/loadAsset";
-import { resolveLinkedRfCableEndpoint } from "../utils/rfCableAnchorResolver";
+import { connectorTipMmForFamily, resolveLinkedRfCableEndpoint } from "../utils/rfCableAnchorResolver";
 import {
   bodyHandleToTensionHandle,
   FIBER_END_CONNECTOR_LENGTH_MM,
@@ -86,7 +86,7 @@ THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
 import { createLabPhotoRoom } from "../three/photoRoom";
 import { applyObjectGeometryOffset, applyObjectTransform, mmToThree } from "../three/transformUtils";
 import { relationTarget, worldAnchor } from "../utils/relationAnchors";
-import { anchorObjectLocalLegacyDir, anchorObjectLocalPos } from "../utils/anchorAccess";
+import { anchorObjectLocalAxisY, anchorObjectLocalPos, anchorObjectLocalPrimaryDir } from "../utils/anchorAccess";
 import { computeBraggTiltAxisFromRfDirectionBodyLocal } from "../optical/kinds/aom/physics";
 import type { Asset3D, ComponentItem, DeviceState, PhysicsElement, SceneObject } from "../types/digitalTwin";
 import {
@@ -1351,6 +1351,10 @@ export function DigitalTwinViewer({
   const labRootRef = useRef<THREE.Group>(new THREE.Group());
   const beamGroupRef = useRef<THREE.Group>(new THREE.Group());
   const relationGroupRef = useRef<THREE.Group>(new THREE.Group());
+  // DEBUG overlay: draws every asset anchor's world position (sphere) +
+  // axisX (arrow), so the true anchor location can be compared against the
+  // rendered mesh. Toggle with SHOW_ANCHOR_DEBUG below.
+  const anchorDebugGroupRef = useRef<THREE.Group>(new THREE.Group());
   const viewCenterGroupRef = useRef<THREE.Group>(new THREE.Group());
   const globalAxesGizmoRef = useRef<THREE.Group | null>(null);
   const resolvedViewCenterThreeRef = useRef<THREE.Vector3>(HOME_CAMERA_TARGET.clone());
@@ -2202,6 +2206,7 @@ export function DigitalTwinViewer({
     componentGroupRef.current.name = "components";
     beamGroupRef.current.name = "beam-paths";
     relationGroupRef.current.name = "relations";
+    anchorDebugGroupRef.current.name = "anchor-debug";
     viewCenterGroupRef.current.name = "view-center";
     if (!fastAxisOverlayRef.current) {
       fastAxisOverlayRef.current = new THREE.Group();
@@ -2219,6 +2224,7 @@ export function DigitalTwinViewer({
       componentGroupRef.current,
       beamGroupRef.current,
       relationGroupRef.current,
+      anchorDebugGroupRef.current,
       fastAxisOverlayRef.current,
     );
     scene.add(
@@ -3072,6 +3078,7 @@ export function DigitalTwinViewer({
       objectWrappersRef.current.clear();
       clearGroup(beamGroupRef.current);
       clearGroup(relationGroupRef.current);
+      clearGroup(anchorDebugGroupRef.current);
       clearGroup(viewCenterGroupRef.current);
       if (environmentGroupRef.current) {
         scene.remove(environmentGroupRef.current);
@@ -3489,7 +3496,39 @@ export function DigitalTwinViewer({
           // frame; resolveLinkedRfCableEndpoint expects object-local
           // coords (its bodyToLab is just object-pose without body-frame).
           const anchorPosLocal = anchorObjectLocalPos(targetAnchor, targetAsset);
-          const anchorDirLocal = anchorObjectLocalLegacyDir(targetAnchor, targetAsset);
+          // axisX (Phase 9.1) first; legacy directionBodyLocal is null on
+          // modern anchors (rf_out/rf_in/ttl_in carry axisXBodyLocal), which
+          // previously defaulted the target dir to [1,0,0] — fine for ports
+          // that happen to face +X (e.g. switch RF2) but flipped for −X ports
+          // (amp rf_in), throwing that cable end far off.
+          const anchorDirLocal = anchorObjectLocalPrimaryDir(targetAnchor, targetAsset);
+          // Connector tip length depends on THIS cable end's connector
+          // family (SMA 15.5 / BNC 27 mm), so a bnc-ended cable backs its
+          // node off the port by the longer BNC stack instead of the SMA
+          // default. endAConnector / endBConnector are "sma" / "bnc".
+          const cableConnProps = component.properties as {
+            endAConnector?: string; endBConnector?: string; connectorType?: string;
+          };
+          const endFamily = (end === "A" ? cableConnProps.endAConnector : cableConnProps.endBConnector)
+            ?? cableConnProps.connectorType;
+          // Per-cable / per-end manual connector nudge — tune EACH connector
+          // independently. Key = `${cableName}|${A|B}`. Connector frame:
+          // depthMm along the mating axis, sideX/sideY in the perpendicular
+          // plane. SMA ends usually need nothing; add BNC ends here by eye.
+          // NOTE: keyed by the auto-generated object name — if a cable is
+          // renamed its entry must be updated too.
+          const NODE_OFFSETS: Record<string, { depthMm?: number; sideXMm?: number; sideYMm?: number }> = {
+            // Cleared to 0 to test the stable-basis result. Re-add per-end
+            // nudges here only if a residual mesh offset remains.
+            // "RF_CABLE0|A": { sideXMm: 0, sideYMm: 0 },
+            // "RF_CABLE0|B": { sideXMm: 0, sideYMm: 0 },
+            // "RF_CABLE2|B": { sideXMm: 0, sideYMm: 0 },  // ← 自己加
+          };
+          const nodeOffset = NODE_OFFSETS[`${placement.name}|${end}`];
+          // Target anchor axisY → stable side basis (co-moves with the
+          // instrument), so nodeOffset's sideX/sideY mean the same thing at
+          // any target orientation.
+          const anchorAxisYLocal = anchorObjectLocalAxisY(targetAnchor, targetAsset);
           const resolved = resolveLinkedRfCableEndpoint({
             endpoint: end,
             cablePose,
@@ -3501,6 +3540,11 @@ export function DigitalTwinViewer({
             targetAnchorDirBody: anchorDirLocal
               ? [anchorDirLocal.x, anchorDirLocal.y, anchorDirLocal.z]
               : [1, 0, 0],
+            connectorTipMm: connectorTipMmForFamily(endFamily),
+            nodeOffset,
+            targetAnchorAxisYBody: anchorAxisYLocal
+              ? [anchorAxisYLocal.x, anchorAxisYLocal.y, anchorAxisYLocal.z]
+              : undefined,
           });
           if (!resolved) return;
           const idx = end === "A" ? 0 : stored.length - 1;
@@ -4069,6 +4113,53 @@ export function DigitalTwinViewer({
       relationGroup.add(line);
       addAnchorAxis(relationGroup, pointA, anchorA.direction, "#38bdf8");
       addAnchorAxis(relationGroup, pointB, anchorB.direction, "#f59e0b");
+    }
+
+    // DEBUG: anchor markers — sphere at each asset anchor's TRUE world
+    // position + arrow along axisX, computed with the same convention the
+    // mesh uses (sceneObjectToQuaternion + labMmToThreeLocal). Compare with
+    // the rendered connector mesh to tell anchor-vs-mesh offset from a
+    // transform bug. Toggle via SHOW_ANCHOR_DEBUG.
+    {
+      const anchorDebugGroup = anchorDebugGroupRef.current;
+      clearGroup(anchorDebugGroup);
+      if (renderCtx.overlayFlags.anchors) {
+        for (const obj of sceneData.objects) {
+          const comp = sceneData.components.find((c) => c.id === obj.componentId);
+          const asset = comp?.asset3dId
+            ? sceneData.assets.find((a) => a.id === comp.asset3dId)
+            : undefined;
+          const anchors = asset?.anchors as Array<{
+            positionMmBodyLocal?: { x: number; y: number; z: number };
+            axisXBodyLocal?: { x: number; y: number; z: number };
+            directionBodyLocal?: { x: number; y: number; z: number };
+          }> | undefined;
+          if (!Array.isArray(anchors)) continue;
+          // Cable asset anchors are NOT where the rendered connectors sit
+          // (those come from the spline nodes), so they'd be misleading.
+          if (comp?.kindId === "rf_cable" || comp?.kindId === "sma_cable") continue;
+          // Use the ACTUAL rendered pose: a PPG is mounted (its stored pose
+          // is overridden), so recompute its mount; everything else renders
+          // at its stored pose.
+          const mounted = comp?.kindId === "programmable_pulse_generator"
+            ? computePpgMountedThreePose(sceneData, obj, comp, asset)
+            : null;
+          const objThree = mounted
+            ? mounted.positionThree
+            : labMmToThreeLocal({ xMm: obj.xMm, yMm: obj.yMm, zMm: obj.zMm });
+          const q = mounted ? mounted.quaternion : sceneObjectToQuaternion(obj);
+          for (const a of anchors) {
+            const pb = a.positionMmBodyLocal;
+            if (!pb) continue;
+            const origin = labMmToThreeLocal({ xMm: pb.x, yMm: pb.y, zMm: pb.z })
+              .applyQuaternion(q)
+              .add(objThree);
+            const ax = a.axisXBodyLocal ?? a.directionBodyLocal ?? { x: 1, y: 0, z: 0 };
+            const dir = new THREE.Vector3(ax.x, ax.y, ax.z).applyQuaternion(q);
+            addAnchorAxis(anchorDebugGroup, origin, { x: dir.x, y: dir.y, z: dir.z }, "#ff00ff");
+          }
+        }
+      }
     }
 
     if (renderCtx.overlayFlags.beam_paths) {
