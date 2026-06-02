@@ -1,0 +1,77 @@
+{
+  "id": "thorlabs_la1509_b",
+  "vendorPart": "LA1509-B",
+  "displayName": "Plano-Convex Lens f=100mm AR(650-1050nm)",
+  "geometryRef": "files/stl/thorlabs_la1540_b.stl",
+  "geometryRefGlb": null,
+
+  "kind": "lens",
+  "wavelengthRangeNm": [650, 1050],
+
+  "physicalDimensionsMm": {
+    "L": 3.6,
+    "diameterMm": 25.4
+  },
+
+  "faces": [
+    { "id": "A",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": -1.8 },
+      "normalBodyLocal":     { "x": 0, "y": 0, "z": -1 },
+      "apertureMm": 12.7,
+      "apertureShape": "circle" },
+    { "id": "B",
+      "positionMmBodyLocal": { "x": 0, "y": 0, "z": 1.8 },
+      "normalBodyLocal":     { "x": 0, "y": 0, "z": 1 },
+      "apertureMm": 12.7,
+      "apertureShape": "circle" }
+  ],
+
+  "transitions": [
+    {
+      "in": "A", "out": "B", "op": "abcd_thin_lens",
+      "_note": "A=convex side. Beam enters convex first, exits flat. EFL = R/(n-1) = 99.65 mm, BFL = 97.28 mm (Thorlabs spec 97.3 mm). R=51.5, d=3.6, n=1.5168.",
+      "matrix5x5": [
+        [0.976183,   2.373419, 0,          0,        0],
+        [-0.010035,  1.0,      0,          0,        0],
+        [0,          0,        0.976183,   2.373419, 0],
+        [0,          0,        -0.010035,  1.0,      0],
+        [0,          0,        0,          0,        1]
+      ]
+    },
+    {
+      "in": "B", "out": "A", "op": "abcd_thin_lens",
+      "_note": "B=flat side. Beam enters flat first, exits convex. BFL = EFL = 99.65 mm (H' at convex vertex for plano-convex flat-first).",
+      "matrix5x5": [
+        [1.0,        2.373419, 0,          0,        0],
+        [-0.010035,  0.976183, 0,          0,        0],
+        [0,          0,        1.0,        2.373419, 0],
+        [0,          0,        -0.010035,  0.976183, 0],
+        [0,          0,        0,          0,        1]
+      ]
+    }
+  ],
+
+  "defaultParams": {
+    "focalLengthMm": 100,
+    "lensShape": "plano_convex",
+    "convexFace": "A",
+    "radiusOfCurvatureMm": 51.5,
+    "centerThicknessMm": 3.6,
+    "refractiveIndex": 1.5168,
+    "arResidualR": 0.005,
+    "material": "N-BK7"
+  },
+
+  "mechanicalAnchors": [
+    { "id": "edge_top",
+      "positionMmBodyLocal": { "x": 0, "y": 12.7, "z": 0 } }
+  ],
+
+  "notes": {
+    "calibrationStatus": "Paraxial thick-lens ABCD with consistent [y, theta] convention (geometric translation d=3.6mm). Same recipe as LA1540-B/LA1614-B; only R changes -> 51.5mm.",
+    "thickLensDerivation": "Convex-first M_cf = M_flat_out . M_translate . M_convex_in = [[1,0],[0,n]] . [[1,d],[0,1]] . [[1,0],[-(n-1)/(n*R),1/n]]. Flat-first M_fc = M_convex_out . M_translate . M_flat_in = [[1,0],[-(n-1)/R,n]] . [[1,d],[0,1]] . [[1,0],[0,1/n]]. n=1.5168, R=51.5mm, d=3.6mm.",
+    "principalPlanes": "EFL = R/(n-1) = 99.65 mm (nominal 100). BFL_convex_first = EFL*(1 - d(n-1)/(n*R)) = 97.28 mm (Thorlabs spec 97.3 mm). BFL_flat_first = EFL = 99.65 mm.",
+    "spec": "Thorlabs LA1509-B: f=100mm, 1-inch plano-convex, AR-B coating 650-1050nm, N-BK7 substrate, center thickness 3.6mm, edge thickness 2.0mm, R=51.5mm. https://www.thorlabs.com/item/LA1509-B",
+    "geometryRefNote": "Reusing thorlabs_la1540_b.stl as placeholder geometry. Swap for LA1509-B STL when imported."
+  }
+}
