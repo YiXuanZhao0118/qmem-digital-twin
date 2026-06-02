@@ -47,7 +47,7 @@ import {
 } from "../api/client";
 import { useKindsStore } from "../store/kindsStore";
 import { useSceneStore } from "../store/sceneStore";
-import { applyAssetScale } from "../three/loadAsset/primitive";
+import { applyAssetScale, createPrimitive } from "../three/loadAsset/primitive";
 import { applyViewerHintsToGeometry } from "../three/loadAsset/viewerHints";
 import {
   GLAN_POLARIZER_PRISM_FILEPATH,
@@ -2441,6 +2441,33 @@ function ComponentPreview3D({
         // wrap.
         const bodyMm = new THREE.Group();
         bodyMm.add(obj);
+        bodyMm.scale.setScalar(100);
+        bodyMm.rotation.x = Math.PI / 2;
+        pivot.add(bodyMm);
+        return pivot;
+      }
+
+      // Procedural RF devices (ZHL-1-2W+ amplifier, ZYSWA-2-50DR switch).
+      // These have no STL/GLB — the lab viewer builds them through
+      // createPrimitive -> the kind's plugin renderer. Without this case the
+      // primitive:// fallback below paints a placeholder cube (amplifier),
+      // and the switch's `procedural:rf_switch` filePath misses every branch
+      // and renders nothing. Dispatch by kindId so the malformed filePath is
+      // irrelevant, and reuse createPrimitive so the preview matches Object
+      // Sense exactly (incl. renderRfAmplifier's model-based dispatch).
+      if (asset.kindId === "rf_amplifier" || asset.kindId === "rf_switch") {
+        const fakeComp: ComponentItem = parentComponent ?? ({
+          id: `preview-${asset.id}`,
+          name: asset.name ?? "preview",
+          kindId: asset.kindId,
+          properties: { ...(asset.properties ?? {}), ...(asset.defaultParams ?? {}) },
+          physicsCapabilities: ["rf"],
+        } as ComponentItem);
+        // Same frame fix as the fiber / rf_cable path: procedural builders
+        // author in the main-viewer three.js frame (Y-up, 1 unit = 100 mm);
+        // this preview is raw mm Z-up, so scale ×100 and rotate 90° about X.
+        const bodyMm = new THREE.Group();
+        bodyMm.add(createPrimitive(fakeComp, undefined, asset));
         bodyMm.scale.setScalar(100);
         bodyMm.rotation.x = Math.PI / 2;
         pivot.add(bodyMm);

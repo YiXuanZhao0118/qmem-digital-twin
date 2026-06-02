@@ -104,12 +104,15 @@ export function createMinicircuitsZyswa250dr(component: ComponentItem, state?: D
   }
 
   // --- SMA bulkhead jacks (4× on the ±X faces) ---------------------------
+  // Canonical part layout (real ZYSWA-2-50DR): the two jacks-per-face are
+  // separated along Z (front/back), RFIN + TTL on +X, RF1 + RF2 on -X. The
+  // asset anchors are kept in sync with THIS layout (see assets_3d.anchors).
   const portZOffset = D * 0.22;
   const smaConfigs: { x: number; z: number; rotateY: number }[] = [
-    // -X face: RF1 (top), RF2 (bottom). Jack points in -X.
+    // -X face: RF1 (z+), RF2 (z-). Jack points in -X.
     { x: -W / 2, z: +portZOffset, rotateY: Math.PI },
     { x: -W / 2, z: -portZOffset, rotateY: Math.PI },
-    // +X face: RFIN (top, common), TTL/RF2 reuse pattern (bottom).
+    // +X face: RFIN (z+, common), TTL (z-). Jack points in +X.
     { x: +W / 2, z: +portZOffset, rotateY: 0 },
     { x: +W / 2, z: -portZOffset, rotateY: 0 },
   ];

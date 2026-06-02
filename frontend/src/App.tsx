@@ -60,6 +60,7 @@ const NUMBER_KEY_OVERLAYS: Record<string, OverlayKind> = {
   "4": "optical_links",
   "5": "beam_segments",
   "6": "beam_paths",
+  "7": "anchors",
 };
 
 function isTypingTarget(target: EventTarget | null): boolean {
