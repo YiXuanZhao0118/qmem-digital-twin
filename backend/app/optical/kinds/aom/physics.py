@@ -14,6 +14,7 @@ import math
 import re
 from typing import Optional
 
+from app.optical.aom_physics import bragg_detuning_sinc2, order_efficiency
 from app.optical.beam_ray import BeamRay, Vec3, vec3_distance
 from app.optical.registry import (
     KindEntry,
@@ -253,19 +254,9 @@ def bragg_detuning_factor(
     On-axis input (dtheta_ext = 0) returns 1.0 exactly.
     """
     dtheta_ext = _angle_to_axis_rad(ray_in.direction, _transition_optical_axis(ctx))
-    if dtheta_ext == 0.0:
-        return 1.0
-    lambda_m = ray_in.wavelength_nm * 1e-9
-    f_hz = freq_mhz * 1e6
-    l_m = l_mm * 1e-3
-    k_acoustic = (2.0 * math.pi * f_hz) / v_acoustic
-    theta_b_int = math.asin(max(-1.0, min(1.0, (lambda_m * f_hz) / (2.0 * n * v_acoustic))))
-    dtheta_int = dtheta_ext / n
-    dk = k_acoustic * math.cos(theta_b_int) * dtheta_int
-    xi = dk * l_m / 2.0
-    if xi == 0.0:
-        return 1.0
-    return _clamp01((math.sin(xi) / xi) ** 2)
+    return bragg_detuning_sinc2(
+        dtheta_ext, ray_in.wavelength_nm, freq_mhz, v_acoustic, n, l_mm,
+    )
 
 
 def bragg_acceptance_mrad(freq_mhz: float, v_acoustic: float, n: float, l_mm: float) -> float:
@@ -277,17 +268,6 @@ def bragg_acceptance_mrad(freq_mhz: float, v_acoustic: float, n: float, l_mm: fl
     f_hz = freq_mhz * 1e6
     l_m = l_mm * 1e-3
     return (n * v_acoustic / (f_hz * l_m)) * 1e3
-
-
-def order_efficiency(order: int, base_efficiency: float) -> float:
-    eta = _clamp01(base_efficiency)
-    if order == 1:
-        return eta
-    if order == 0:
-        return max(0.0, 1.0 - eta)
-    if order == -1:
-        return eta * 0.01
-    return 0.0
 
 
 def first_order_efficiency_from_context(

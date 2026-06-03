@@ -37,6 +37,7 @@ from app.optical.anchor_tracer import (
     out_ray_from_state,
     register_anchor_op,
 )
+from app.optical.aom_physics import bragg_detuning_sinc2, order_efficiency
 from app.optical.beam_ray import BeamRay, Vec3
 
 
@@ -129,12 +130,19 @@ def aom_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
         )]
 
     out_rays: list[BeamRay] = []
-    # Equal-split power across requested orders (v1 model).
-    per_order_power = ray_in.power_mw * eta_base / max(1, len(orders))
     freq_hz = float(freq_mhz) * 1e6
     # Diffraction orders fan out along the acoustic direction (projected onto
     # the anchor's transverse basis), NOT blindly along axisY.
     ky, kz = _acoustic_kick_components(ctx)
+    # Per-order efficiency depends on how far the incident beam is off the
+    # Bragg-matched (on-axis) angle, so tilting/rotating the AOM changes the
+    # split (sinc^2 detuning). RF-power-dependent peak efficiency + the
+    # requiresRfDrive gate are wired in once the RF chain feeds this op; for
+    # now baseEfficiency is the on-axis peak.
+    dtheta_ext = math.acos(max(-1.0, min(1.0, ctx.hit.cos_incidence)))
+    eta1 = eta_base * bragg_detuning_sinc2(
+        dtheta_ext, ray_in.wavelength_nm, float(freq_mhz), v_ac, n, L,
+    )
     for m in orders:
         kick = 2.0 * float(m) * theta_b
         y_out, ty_out, z_out, tz_out = apply_slab_state(
@@ -145,7 +153,7 @@ def aom_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
             flip_propagation=False,
         )
         out_rays.append(out_ray.replaced(
-            power_mw=per_order_power,
+            power_mw=ray_in.power_mw * order_efficiency(m, eta1),
             qx=complex(ray_in.qx.real + L_over_n, ray_in.qx.imag),
             qy=complex(ray_in.qy.real + L_over_n, ray_in.qy.imag),
             path_length_mm=ray_in.path_length_mm + L,

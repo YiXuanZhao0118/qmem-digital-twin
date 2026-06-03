@@ -6,7 +6,12 @@ diffraction order m carries freq_offset_hz = m * f_RF so the +1 / -1
 sidebands show distinct frequencies.
 """
 
+import math
+
+import pytest
+
 from app.optical import anchor_ops  # noqa: F401  (registers anchor ops)
+from app.optical.aom_physics import bragg_detuning_sinc2
 from app.optical.anchor_tracer import (
     AnchorHit,
     AnchorOpContext,
@@ -26,11 +31,11 @@ ANCHOR = V3Anchor(
 )
 
 
-def _ctx(orders, freq_mhz=80.0) -> AnchorOpContext:
+def _ctx(orders, freq_mhz=80.0, cos_incidence=1.0) -> AnchorOpContext:
     hit = AnchorHit(
         slot=None, anchor=ANCHOR, t_lab=1.0,
         hit_point_body=Vec3(0, 0, 0),
-        offset_y_body=0.0, offset_z_body=0.0, cos_incidence=1.0,
+        offset_y_body=0.0, offset_z_body=0.0, cos_incidence=cos_incidence,
     )
     asset = V3AssetAnchorSnapshot(
         catalog_id="aa_mt80_a1_5_ir", kind="aom", anchors=[ANCHOR],
@@ -135,3 +140,36 @@ def test_orders_fan_along_acoustic_not_axisY():
     # +1 → +x (toward acoustic propagation), -1 → -x.
     xs = sorted(o.direction.x for o in outs)
     assert xs[0] < 0 < xs[1]
+
+
+# ---------------------------------------------------------------------------
+# Per-order efficiency: on-axis = baseEfficiency; off-axis drops via sinc^2
+# Bragg detuning (so rotating the AOM changes the split).
+# ---------------------------------------------------------------------------
+
+def test_on_axis_plus1_power_is_base_efficiency():
+    op = get_anchor_op("aom")
+    [out] = op(_ray(), _ctx([1]))  # cos_incidence = 1.0 → detune 1
+    assert out.power_mw == pytest.approx(0.85, abs=1e-9)
+
+
+def test_minus1_order_is_suppressed():
+    op = get_anchor_op("aom")
+    [out] = op(_ray(), _ctx([-1]))
+    assert out.power_mw == pytest.approx(0.85 * 0.01, abs=1e-9)
+
+
+def test_zero_order_is_undiffracted_leftover():
+    op = get_anchor_op("aom")
+    [out] = op(_ray(), _ctx([0]))
+    assert out.power_mw == pytest.approx(1.0 - 0.85, abs=1e-9)
+
+
+def test_efficiency_drops_when_incidence_off_axis():
+    op = get_anchor_op("aom")
+    dtheta = 0.02  # 20 mrad off the optical axis
+    cos_i = math.cos(dtheta)
+    [out] = op(_ray(), _ctx([1], cos_incidence=cos_i))
+    detune = bragg_detuning_sinc2(dtheta, 780, 80, 4200, 2.26, 1.6)
+    assert out.power_mw == pytest.approx(0.85 * detune, abs=1e-9)
+    assert out.power_mw < 0.85  # off-axis → less efficient than on-axis
