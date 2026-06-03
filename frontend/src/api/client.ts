@@ -170,6 +170,35 @@ export async function deleteComponentApi(componentId: string): Promise<void> {
 }
 
 
+export type AomSidebandRow = {
+  order: number;
+  angleMrad: number;
+  frequencyOffsetMhz: number;
+  centerFrequencyThz: number;
+  intensity: number;
+  visible: boolean;
+};
+export type AomSidebandResult = {
+  thetaBMrad: number;
+  efficiency: number;
+  phaseModDepth: number;
+  sidebands: AomSidebandRow[];
+};
+
+/** Per-order AOM sideband table from the backend (single source of truth =
+ *  aom_sideband.py, same model the solver draws). The Object Panel renders
+ *  this instead of recomputing client-side. */
+export async function runAomSidebandsApi(
+  req: Record<string, unknown>,
+): Promise<AomSidebandResult> {
+  const response = await client.post<AomSidebandResult>(
+    "/api/v3/solver/aom-sidebands",
+    req,
+  );
+  return response.data;
+}
+
+
 // =============================================================================
 // Kind catalog (alembic 0086). See docs/asset-physics-model.md §6.
 // =============================================================================

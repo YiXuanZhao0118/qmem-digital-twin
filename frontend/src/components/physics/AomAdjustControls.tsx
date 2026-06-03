@@ -51,6 +51,7 @@ import {
   getRfDirectionBodyLocal,
 } from "../../utils/objectBindings";
 import { resolveAomRfDriveFromScene } from "../../utils/aomRfDrive";
+import { runAomSidebandsApi, type AomSidebandResult } from "../../api/client";
 import { anchorObjectLocalPos } from "../../utils/anchorAccess";
 import { wavelengthToColor } from "../../three/opticalBeams";
 
@@ -202,6 +203,43 @@ export function AomAdjustControls({
   const maxDiffractionOrder = Math.max(1, Math.min(10, Math.round(params.maxDiffractionOrder ?? 3)));
   const sidebandVisibilityThreshold = Math.max(0, Math.min(1, params.sidebandVisibilityThreshold ?? 0.01));
 
+  // Sideband table — single source of truth is the backend (aom_sideband.py),
+  // the SAME per-order model the solver draws, so the panel table and the
+  // rendered beams cannot disagree. We fetch it for the panel's effective
+  // params (RF resolved upstream). The client-side computation below is kept
+  // ONLY as a transient fallback while the request is in flight or unreachable.
+  const requiresRfDrive = (params as Record<string, unknown>).requiresRfDrive === true;
+  const [serverSidebands, setServerSidebands] = useState<AomSidebandResult | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      void runAomSidebandsApi({
+        wavelengthNm: wavelengthForAngleNm,
+        centerFreqMhz: effectiveCenterFreqMhz,
+        acousticVelocityMps: params.acousticVelocityMPerS ?? 4200,
+        refractiveIndex: params.refractiveIndex ?? 2.26,
+        baseEfficiency: typeof params.baseEfficiency === "number" ? params.baseEfficiency : undefined,
+        figureOfMeritM2: params.figureOfMeritM2,
+        rfDrivePowerW: effectiveRfDrivePowerW,
+        crystalLengthMm: params.crystalLengthMm,
+        acousticBeamWidthMm: params.acousticBeamWidthMm,
+        requiresRfDrive,
+        selectedOrder: currentOrder,
+        maxDiffractionOrder,
+        sidebandVisibilityThreshold,
+      })
+        .then((r) => { if (!cancelled) setServerSidebands(r); })
+        .catch(() => { if (!cancelled) setServerSidebands(null); });
+    }, 150);
+    return () => { cancelled = true; clearTimeout(handle); };
+  }, [
+    wavelengthForAngleNm, effectiveCenterFreqMhz, effectiveRfDrivePowerW,
+    params.acousticVelocityMPerS, params.refractiveIndex, params.baseEfficiency,
+    params.figureOfMeritM2, params.crystalLengthMm, params.acousticBeamWidthMm,
+    requiresRfDrive, currentOrder, maxDiffractionOrder,
+    sidebandVisibilityThreshold,
+  ]);
+
   const intensityByOrder = sidebandIntensitiesOnBragg(
     currentOrder, efficiencyEst, phaseModDepth, maxDiffractionOrder,
   );
@@ -211,7 +249,7 @@ export function AomAdjustControls({
   const orders: number[] = [];
   for (let nn = -maxDiffractionOrder; nn <= maxDiffractionOrder; nn++) orders.push(nn);
 
-  const sidebandRows: Array<{
+  const clientSidebandRows: Array<{
     order: number;
     angleMrad: number;
     frequencyOffsetMhz: number;
@@ -238,6 +276,26 @@ export function AomAdjustControls({
       visible: alwaysShow || intensity >= sidebandVisibilityThreshold,
     };
   });
+
+  // Prefer the backend table (single source of truth); fall back to the
+  // client-computed rows above only while the request is in flight / failed.
+  const sidebandRows = serverSidebands
+    ? serverSidebands.sidebands.map((s) => ({
+        order: s.order,
+        angleMrad: s.angleMrad,
+        frequencyOffsetMhz: s.frequencyOffsetMhz,
+        centerFrequencyThz: s.centerFrequencyThz,
+        intensity: s.intensity,
+        matched: s.order === currentOrder,
+        visible: s.visible,
+      }))
+    : clientSidebandRows;
+
+  // Headline readouts also prefer the backend values so the displayed η / θ_B
+  // can't contradict the table they sit above. (Same closed-form/fallback model
+  // as the rows.)
+  const displayEfficiency = serverSidebands?.efficiency ?? efficiencyEst;
+  const displayThetaBMrad = serverSidebands?.thetaBMrad ?? thetaBMrad;
 
   const persist = async (patch: Record<string, unknown>) => {
     await upsertOpticalElement({
@@ -1092,8 +1150,8 @@ export function AomAdjustControls({
           />
         </div>
         <div style={{ opacity: 0.6, marginTop: 4, fontSize: 10 }}>
-          External Bragg half-angle θ_B = arcsin(λ·f/(2·v)) = <strong>{thetaBMrad.toFixed(2)} mrad</strong> @ {wavelengthForAngleNm.toFixed(0)} nm.
-          {" "}Full 0→±1 separation 2θ_B = <strong>{(2 * thetaBMrad).toFixed(2)} mrad</strong>{" "}
+          External Bragg half-angle θ_B = arcsin(λ·f/(2·v)) = <strong>{displayThetaBMrad.toFixed(2)} mrad</strong> @ {wavelengthForAngleNm.toFixed(0)} nm.
+          {" "}Full 0→±1 separation 2θ_B = <strong>{(2 * displayThetaBMrad).toFixed(2)} mrad</strong>{" "}
           (matches datasheet's Δθ = λ·f/v).
         </div>
       </div>
@@ -1141,7 +1199,7 @@ export function AomAdjustControls({
               if (e.target.checked) {
                 // Set baseEfficiency to current closed-form result so the
                 // checkbox flip doesn't surprise the user with a jump.
-                void persist({ baseEfficiency: efficiencyEst });
+                void persist({ baseEfficiency: displayEfficiency });
               } else {
                 // Remove baseEfficiency so closed-form takes over.
                 const { baseEfficiency: _drop, ...rest } = params;
@@ -1181,7 +1239,7 @@ export function AomAdjustControls({
           {effectiveRfDrivePowerW != null
             ? <>, P_d = {effectiveRfDrivePowerW.toFixed(4)} W</>
             : <>, P_d undefined</>}:{" "}
-          <strong>{(efficiencyEst * 100).toFixed(1)}%</strong>.
+          <strong>{(displayEfficiency * 100).toFixed(1)}%</strong>.
           {useBaseEfficiencyOverride
             ? " (using override)"
             : " (closed-form sin²)"}
@@ -1192,8 +1250,8 @@ export function AomAdjustControls({
           Settings group at the top of this panel — 2026-05-13.) */}
       <p className="mirror-adjust-hint">
         Bragg angle θ_B at λ ≈ {wavelengthForAngleNm.toFixed(0)} nm:{" "}
-        <strong>{thetaBMrad.toFixed(2)} mrad</strong> ({(thetaBRad * 180 / Math.PI).toFixed(3)}°).
-        Estimated efficiency η = <strong>{(efficiencyEst * 100).toFixed(1)}%</strong>.
+        <strong>{displayThetaBMrad.toFixed(2)} mrad</strong> ({(displayThetaBMrad / 1000 * 180 / Math.PI).toFixed(3)}°).
+        Estimated efficiency η = <strong>{(displayEfficiency * 100).toFixed(1)}%</strong>.
         {" "}Angular acceptance = <strong>{braggAcceptanceMrad.toFixed(2)} mrad</strong>.
       </p>
       <div className="mirror-adjust-hint" style={{ opacity: 0.9 }}>
@@ -1241,8 +1299,8 @@ export function AomAdjustControls({
           <div style={{ marginTop: 6, padding: "4px 8px", background: "rgba(245, 158, 11, 0.12)", borderLeft: "2px solid rgb(245, 158, 11)", fontSize: 12 }}>
             <strong>Visible beams (0th ↔ {currentOrder > 0 ? "+1" : "−1"}):</strong>{" "}
             angular separation ={" "}
-            <strong>{(2 * thetaBMrad).toFixed(3)} mrad</strong>{" "}
-            ({(2 * thetaBRad * 180 / Math.PI).toFixed(4)}°).
+            <strong>{(2 * displayThetaBMrad).toFixed(3)} mrad</strong>{" "}
+            ({(2 * displayThetaBMrad / 1000 * 180 / Math.PI).toFixed(4)}°).
             <br />
             Intensity split — 0th: <strong>{(zerothIntensity * 100).toFixed(1)}%</strong>,{" "}
             {currentOrder > 0 ? "+1" : "−1"}: <strong>{(selectedFirstOrderIntensity * 100).toFixed(1)}%</strong>.
@@ -1303,7 +1361,7 @@ export function AomAdjustControls({
         {currentOrder === 0
           ? "0 = RF off — all power on the transmitted (zeroth) path."
           : `${currentOrder > 0 ? "+1" : "−1"} = diffracted by ${currentOrder > 0 ? "+" : "−"}2θ_B; ` +
-            `zeroth retains (1−η) ≈ ${((1 - efficiencyEst) * 100).toFixed(1)}%.`}
+            `zeroth retains (1−η) ≈ ${((1 - displayEfficiency) * 100).toFixed(1)}%.`}
       </p>
       {/* (Removed in Phase 7.1) Manual input for Bragg tilt axis r (°). The
           tilt axis is now automatically derived as b̂×â (PHY Editor's
