@@ -271,12 +271,21 @@ export type V3SolverResult = {
   warnings: string[];
 };
 
-/** Trace the current DB scene with the v3 ray tracer. Body-less POST —
- *  the server loads the scene from the live DB. */
-export async function runV3SolverFromDbApi(): Promise<V3SolverResult> {
+/** Trace the current DB scene with the v3 ray tracer. The server loads the
+ *  scene from the live DB; `dynamicOverrides` (objectId -> dynamic-key dict) is
+ *  merged on top of each object's dynamic_sources — used to inject the
+ *  effective AOM RF drive (aomFreqMhz / rfDrivePowerW) resolved from the RF
+ *  link without persisting derived values. */
+export async function runV3SolverFromDbApi(
+  dynamicOverrides?: Record<string, Record<string, unknown>>,
+): Promise<V3SolverResult> {
+  const body =
+    dynamicOverrides && Object.keys(dynamicOverrides).length > 0
+      ? { dynamicOverrides }
+      : {};
   const response = await client.post<V3SolverResult>(
     "/api/v3/solver/run-from-db",
-    {},
+    body,
   );
   return response.data;
 }

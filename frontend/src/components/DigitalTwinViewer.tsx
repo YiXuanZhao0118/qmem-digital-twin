@@ -49,6 +49,7 @@ import {
 // reading window.__rayTraceDebug (which the adapter populates).
 import { _testReflect, type TraceSegment } from "../three/rayTrace";
 import { runV3SolverFromDbApi, type V3LabSegment, type V3SolverResult } from "../api/client";
+import { resolveAomRfDriveFromScene } from "../utils/aomRfDrive";
 import { adaptV3LabSegmentsToTraceSegments } from "../three/v3TraceAdapter";
 import { disposeFarfieldLobe, makeFarfieldLobe } from "../three/hornFarfield";
 import { disposeRfBadgeSprite, makeRfBadgeSprite } from "../three/rfBadge";
@@ -1483,7 +1484,27 @@ export function DigitalTwinViewer({
   useEffect(() => {
     let cancelled = false;
     const timer = setTimeout(() => {
-      runV3SolverFromDbApi()
+      // AOM RF drive: inject each AOM's effective freq/power as a dynamic
+      // override. Link mode resolves it from the RF cable chain; manual-mode
+      // AOMs already carry aomFreqMhz / rfDrivePowerW in dynamic_sources (skip).
+      const aomOverrides: Record<string, Record<string, unknown>> = {};
+      const compById = new Map(sceneData.components.map((c) => [c.id, c]));
+      for (const obj of sceneData.objects) {
+        if (compById.get(obj.componentId)?.kindId !== "aom") continue;
+        const props = obj.properties as Record<string, unknown> | undefined;
+        if (props?.aomRfDriveMode === "manual") continue;
+        const drive = resolveAomRfDriveFromScene(
+          obj.id, sceneData.objects, sceneData.components,
+          sceneData.assets, sceneData.physicsElements,
+        );
+        if (drive) {
+          aomOverrides[obj.id] = {
+            aomFreqMhz: drive.frequencyMhz,
+            rfDrivePowerW: drive.drivePowerW,
+          };
+        }
+      }
+      runV3SolverFromDbApi(aomOverrides)
         .then((result) => {
           if (cancelled) return;
           v3LabSegmentsRef.current = result.labSegments ?? [];
