@@ -56,3 +56,6 @@ backend/uvicorn-*.err.log
 assets/files/cad_sources/[0-9a-f]*-[0-9a-f]*-[0-9a-f]*-[0-9a-f]*-[0-9a-f]*_*.st[pe]
 assets/files/cad_sources/[0-9a-f]*-[0-9a-f]*-[0-9a-f]*-[0-9a-f]*-[0-9a-f]*_*.stp
 assets/files/stl/[0-9a-f]*-[0-9a-f]*-[0-9a-f]*-[0-9a-f]*-[0-9a-f]*_*.stl
+
+# runtime logs (agent backend runs)
+.logs/
