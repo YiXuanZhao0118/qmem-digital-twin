@@ -49,32 +49,6 @@ const EMITTER_KINDS: ReadonlySet<string> = new Set([
   "tapered_amplifier",
 ]);
 
-/** Aperture diameter in mm — first checks the PhysicsElement's
- *  `clearApertureMm` / `apertureDiameterMm`, then falls back to the
- *  Asset3D's intercept anchor. Anchor `apertureMm` is a circle radius, so
- *  it is doubled here. Returns null only when nothing meaningful is
- *  configured. */
-function apertureDiameterMm(
-  el: PhysicsElement | undefined,
-  asset: Asset3D | undefined,
-): number | null {
-  if (el) {
-    const params = el.kindParams as Record<string, unknown>;
-    for (const key of ["clearApertureMm", "apertureDiameterMm"]) {
-      const v = params[key];
-      if (typeof v === "number" && v > 0) return v * 2;
-    }
-  }
-  if (asset?.anchors) {
-    for (const id of ["intercept_in", "intercept_out", "optical_anchor"]) {
-      const anchor = asset.anchors.find((a) => a.id === id);
-      const v = anchor?.apertureMm;
-      if (typeof v === "number" && v > 0) return v;
-    }
-  }
-  return null;
-}
-
 /** Effective clear-aperture radius (mm) of the asset anchor closest to the
  *  incoming beam (intercept_in / intercept_face / optical_anchor). Reads
  *  the V2 schema: `apertureMm` = radius (circle); `apertureWidthMm` /
@@ -542,6 +516,35 @@ type EmitterChoice = {
   name: string;
   kind: "laser" | "tapered_amplifier";
 };
+
+/** Beam-local s/p unit vectors (jones.ts beam_local_sp convention, lab Z up):
+ *  s = up × d, p = d × s. Matches the solver frame the Jones vector lives in. */
+function beamLocalSPThree(beamDir: THREE.Vector3): { s: THREE.Vector3; p: THREE.Vector3 } {
+  const d = beamDir.clone().normalize();
+  const GLOBAL_UP = new THREE.Vector3(0, 0, 1);
+  const FALLBACK_UP = new THREE.Vector3(1, 0, 0);
+  const up = Math.abs(d.dot(GLOBAL_UP)) > 0.999 ? FALLBACK_UP : GLOBAL_UP;
+  const s = new THREE.Vector3().crossVectors(up, d).normalize();
+  const p = new THREE.Vector3().crossVectors(d, s).normalize();
+  return { s, p };
+}
+
+/** Polarization-ellipse major-axis direction (world/three) from the Jones
+ *  vector [E_s.re, E_s.im, E_p.re, E_p.im] and the beam direction. For linear
+ *  light this is just the E-field axis; for elliptical, the major axis.
+ *      ψ = ½·atan2( 2·Re(E_s·conj(E_p)), |E_s|² − |E_p|² )
+ *      dir = cos ψ · ŝ + sin ψ · p̂                (ŝ, p̂ = beamLocalSP) */
+function polDir3DFromJones(
+  jones: [number, number, number, number],
+  beamDir: THREE.Vector3,
+): THREE.Vector3 {
+  const [sre, sim, pre, pim] = jones;
+  const reCross = sre * pre + sim * pim;                 // Re(E_s·conj(E_p))
+  const diff = (sre * sre + sim * sim) - (pre * pre + pim * pim);
+  const psi = 0.5 * Math.atan2(2 * reCross, diff);
+  const { s, p } = beamLocalSPThree(beamDir);
+  return s.multiplyScalar(Math.cos(psi)).add(p.multiplyScalar(Math.sin(psi))).normalize();
+}
 
 /** Camera state shared with the main viewer so the optical-link mode adopts
  *  the SAME view (position / orbit target / fov / up) instead of re-fitting to
@@ -1016,14 +1019,6 @@ export function OpticalLinkViewerContent({
       const assetById = new Map<string, Asset3D>(
         assetsRef.current.map((a) => [a.id, a]),
       );
-      const assetForObjectId = (objectId: string): Asset3D | undefined => {
-        const obj = objectById.get(objectId);
-        if (!obj) return undefined;
-        const comp = componentById.get(obj.componentId);
-        if (!comp?.asset3dId) return undefined;
-        return assetById.get(comp.asset3dId);
-      };
-
       // Pass 1: bbox + collect every distinct scene object the chain
       // touches (emitters + every hit). Used to size anchor markers and
       // to drive the camera-fit step at the end.
@@ -1040,7 +1035,6 @@ export function OpticalLinkViewerContent({
         : Math.max(bbox.getSize(new THREE.Vector3()).length(), 1e-3);
 
       const yAxis = new THREE.Vector3(0, 1, 0);
-      const apertureDrawn = new Set<string>();
 
       // Pass 2: build the beam tubes with Gaussian taper.
       for (const seg of segments) {
@@ -1092,40 +1086,41 @@ export function OpticalLinkViewerContent({
         tube.userData.segment = seg;
         beamGroup.add(tube);
 
-        // Aperture ring at the hit point.
-        if (seg.hitObjectId && !apertureDrawn.has(seg.hitObjectId)) {
-          const el = elementByObjectId.get(seg.hitObjectId);
-          const asset = assetForObjectId(seg.hitObjectId);
-          const diameterMm = apertureDiameterMm(el, asset);
-          if (diameterMm !== null && diameterMm > 0) {
-            // diameterMm is physical mm; convert to Three units (1 Three
-            // unit ≡ 100 mm via `MM_PER_THREE_UNIT`) and scale by the
-            // same `VISUAL_BOOST` we use for the beam tube so the
-            // physical beam-to-aperture clearance ratio stays accurate
-            // while both stay visible at scene scale.
-            const radius = mmToThree(diameterMm) / 2 * VISUAL_BOOST;
-            const ringThickness = Math.max(
-              radius * 0.08,
-              bboxSpan * 0.003,
+        // Polarization mark — a cyan double-headed arrow at the MIDPOINT of the
+        // segment (between the two components it runs between), drawn ⊥ to the
+        // beam along the polarization axis derived from the segment's Jones
+        // vector. Skipped on near-dark beams.
+        if (seg.powerFactorAtStart > 0.01) {
+          const polDir = polDir3DFromJones(seg.polarizationAtStart, direction);
+          const mid = start.clone().addScaledVector(direction, length / 2);
+          const markLen = bboxSpan * 0.05;
+          const markRad = Math.max(markLen * 0.05, bboxSpan * 0.0015);
+          const headLen = markLen * 0.3;
+          const headRad = markRad * 3.0;
+          const polMat = new THREE.MeshBasicMaterial({
+            color: 0x06b6d4, // cyan — matches the PHY editor's polarization mark
+            depthTest: false,
+            transparent: true,
+            opacity: 0.95,
+          });
+          const shaft = new THREE.Mesh(
+            new THREE.CylinderGeometry(markRad, markRad, markLen, 8),
+            polMat,
+          );
+          shaft.quaternion.setFromUnitVectors(yAxis, polDir);
+          shaft.position.copy(mid);
+          shaft.renderOrder = 2100; // above beam tubes
+          contentGroup.add(shaft);
+          for (const sign of [1, -1] as const) {
+            const headDir = polDir.clone().multiplyScalar(sign);
+            const head = new THREE.Mesh(
+              new THREE.ConeGeometry(headRad, headLen, 12),
+              polMat,
             );
-            const ringGeom = new THREE.RingGeometry(
-              Math.max(radius - ringThickness, radius * 0.5),
-              radius,
-              64,
-            );
-            const ringMat = new THREE.MeshBasicMaterial({
-              color: 0x60a5fa,
-              side: THREE.DoubleSide,
-              transparent: true,
-              opacity: 1.0,
-              depthTest: false,
-            });
-            const ring = new THREE.Mesh(ringGeom, ringMat);
-            ring.position.copy(end);
-            ring.lookAt(start);
-            ring.renderOrder = 2000; // above beam tubes
-            contentGroup.add(ring);
-            apertureDrawn.add(seg.hitObjectId);
+            head.quaternion.setFromUnitVectors(yAxis, headDir);
+            head.position.copy(mid).addScaledVector(polDir, sign * (markLen / 2 + headLen / 2));
+            head.renderOrder = 2100;
+            contentGroup.add(head);
           }
         }
       }
