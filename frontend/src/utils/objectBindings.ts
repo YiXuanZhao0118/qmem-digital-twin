@@ -106,11 +106,15 @@ export function getEffectiveApertureMm(
 // =============================================================================
 
 export const RF_DIRECTION_ANCHOR_ID = "rf_direction";
+// Single source of truth (2026-06-03): a dedicated `acoustic_axis` anchor whose
+// axisX is the acoustic propagation direction (⊥ optical axis). Supersedes the
+// legacy `rf_direction` anchor and the kindParams field.
+export const ACOUSTIC_AXIS_ANCHOR_ID = "acoustic_axis";
 
 /** Read the AOM's RF / acoustic propagation direction in body-local frame.
- *  Source of truth (per 2026-05-10 refactor) is an Asset3D anchor with
- *  `id = "rf_direction"`. Falls back to legacy kindParams field names so
- *  un-migrated rows keep working until the alembic migration drains them.
+ *  Source of truth is the `acoustic_axis` anchor's axisX. Falls back to the
+ *  legacy `rf_direction` anchor and then kindParams field names so un-migrated
+ *  rows keep working until the alembic migration drains them.
  *
  *  Returns null only when neither asset nor kindParams provide a direction
  *  — the caller (alignToLaser, ray-tracer) then warns the user. */
@@ -118,7 +122,15 @@ export function getRfDirectionBodyLocal(
   asset: Asset3D | null | undefined,
   kindParams: Record<string, unknown> | null | undefined,
 ): { x: number; y: number; z: number } | null {
-  // [1] new: asset anchor
+  // [0] new single source: acoustic_axis anchor (axisX = acoustic direction)
+  const acoustic = asset?.anchors?.find((a) => a.id === ACOUSTIC_AXIS_ANCHOR_ID);
+  const ax = (acoustic as { axisXBodyLocal?: { x: number; y: number; z: number } } | undefined)
+    ?.axisXBodyLocal;
+  if (ax && typeof ax.x === "number" && typeof ax.y === "number" && typeof ax.z === "number") {
+    const m = Math.hypot(ax.x, ax.y, ax.z);
+    if (m > 1e-9) return { x: ax.x / m, y: ax.y / m, z: ax.z / m };
+  }
+  // [1] legacy: rf_direction asset anchor
   const anchor = asset?.anchors?.find((a) => a.id === RF_DIRECTION_ANCHOR_ID);
   const dir = anchor?.directionBodyLocal;
   if (dir && typeof dir.x === "number" && typeof dir.y === "number" && typeof dir.z === "number") {

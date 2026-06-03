@@ -45,13 +45,14 @@ export const aomPlugin = definePhysicsPlugin<AomParams>({
     primaryDomain: "optical",
     defaultPhysics: ["optical", "rf", "thermal"],
     anchors: {
-      required: ["intercept_in", "intercept_out", "rf_in"],
-      // acoustic_axis: dedicated anchor whose axisX is the acoustic (RF
-      // traveling-wave) propagation direction — perpendicular to the
-      // intercept_in -> intercept_out optical axis. It is the single source of
-      // truth for which way the Bragg orders fan; NOT rf_in (the cable
-      // connector). Seeded from rfPropagationDirectionBodyLocal at backfill.
-      optional: ["acoustic_axis"],
+      // acoustic_axis is REQUIRED for the optical (Bragg) calculation: its
+      // axisX is the acoustic propagation direction (perpendicular to the
+      // intercept_in -> intercept_out optical axis) and is the single source
+      // of truth for which way the +-1 orders fan. The optical path does NOT
+      // use rf_in (that is only the RF cable connector). rf_in stays declared
+      // for RF-link wiring, but the beam trace consumes acoustic_axis.
+      required: ["intercept_in", "intercept_out", "acoustic_axis", "rf_in"],
+      optional: [],
       needsDirection: ["rf_in", "acoustic_axis"],
       needsAperture: ["intercept_in", "intercept_out"],
     },

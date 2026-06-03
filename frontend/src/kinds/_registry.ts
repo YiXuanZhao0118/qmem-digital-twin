@@ -36,6 +36,10 @@ export type AnchorId =
   // `id="rf_direction"` carries the body-local RF / acoustic propagation
   // direction; position is body origin; apertureMm unused.
   | "rf_direction"
+  // AOM acoustic propagation axis (axisX = acoustic / RF traveling-wave
+  // direction, perpendicular to the optical axis). Single source of truth for
+  // the Bragg diffraction fan direction; distinct from rf_in (cable connector).
+  | "acoustic_axis"
   // RF ports for hybrid / RF-emitting kinds. `rf_out` marks an output
   // SMA / coax port (e.g. each AD9959 channel, AOM driver feed-through);
   // `rf_in` marks the RF input port (e.g. AOM RF connector). Position +
