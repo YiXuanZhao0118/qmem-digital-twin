@@ -1093,8 +1093,8 @@ export function OpticalLinkViewerContent({
         if (seg.powerFactorAtStart > 0.01) {
           const polDir = polDir3DFromJones(seg.polarizationAtStart, direction);
           const mid = start.clone().addScaledVector(direction, length / 2);
-          const markLen = bboxSpan * 0.05;
-          const markRad = Math.max(markLen * 0.05, bboxSpan * 0.0015);
+          const markLen = bboxSpan * 0.005;
+          const markRad = Math.max(markLen * 0.05, bboxSpan * 0.00015);
           const headLen = markLen * 0.3;
           const headRad = markRad * 3.0;
           const polMat = new THREE.MeshBasicMaterial({
