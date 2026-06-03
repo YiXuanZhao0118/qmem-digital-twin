@@ -125,16 +125,35 @@ const PASSIVE_OPTICAL_KINDS: ReadonlySet<string> = new Set([
  *     reflective-coating quad at intercept_face (axisX = coating normal).
  *   - faraday_rotator → translucent AMBER disk at optical_center,
  *     perpendicular to the optical axis (the polarisation-rotation plane).
- *  Returns null for non-optic assets or a missing anchor. */
+ *   - any other optic → translucent SLATE disk/rect at its primary optical
+ *     anchor (optical_center / optical_anchor / intercept_face /
+ *     interaction_center / intercept_in / intercept_out), ⊥ to the optical axis.
+ *  Returns null only when the asset has no such optical anchor. */
 function buildOpticSurfaceMarker(asset: Asset3D, mw: THREE.Matrix4): THREE.Group | null {
   const kind = asset.kindId;
-  const ancId =
-    kind === "beam_splitter" ? "intercept_face" :
-    kind === "faraday_rotator" ? "optical_center" : null;
+  // beam_splitter / faraday_rotator keep their bespoke face; EVERY other optic
+  // gets a generic translucent face at its primary optical anchor. Non-optical
+  // kinds (no such anchor) fall through to null and draw nothing.
+  let ancId: string | null;
+  let style: "pbs" | "faraday" | "generic";
+  if (kind === "beam_splitter") {
+    ancId = "intercept_face";
+    style = "pbs";
+  } else if (kind === "faraday_rotator") {
+    ancId = "optical_center";
+    style = "faraday";
+  } else {
+    const order = [
+      "optical_center", "optical_anchor", "intercept_face",
+      "interaction_center", "intercept_in", "intercept_out",
+    ];
+    ancId = order.find((id) => (asset.anchors ?? []).some((a) => a.id === id)) ?? null;
+    style = "generic";
+  }
   if (!ancId) return null;
-  // axisX is the coating normal (beam_splitter) / optical axis
-  // (faraday); read through anchorAccess so any R_body is applied, landing
-  // the marker in the same body frame the geometry lives in.
+  // axisX is the coating normal (beam_splitter) / optical axis (faraday &
+  // generic); read through anchorAccess so any R_body is applied, landing the
+  // marker in the same body frame the geometry lives in.
   const anc = (asset.anchors ?? []).find((a) => a.id === ancId);
   if (!anc) return null;
   const axisX = anchorObjectLocalAxisX(anc, asset);
@@ -150,46 +169,44 @@ function buildOpticSurfaceMarker(asset: Asset3D, mw: THREE.Matrix4): THREE.Group
   // Plane/disk face normal is +Z; rotate it onto the surface normal.
   group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
 
-  if (kind === "beam_splitter") {
+  // Translucent fill + edge outline of a shared geometry (disk or rect).
+  const addFace = (geom: THREE.BufferGeometry, fillHex: number, lineHex: number, opacity: number) => {
+    const fill = new THREE.Mesh(
+      geom,
+      new THREE.MeshBasicMaterial({
+        color: fillHex, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false,
+      }),
+    );
+    fill.renderOrder = 20;
+    group.add(fill);
+    const outline = new THREE.LineSegments(
+      new THREE.EdgesGeometry(geom),
+      new THREE.LineBasicMaterial({ color: lineHex, transparent: true, opacity: 0.9 }),
+    );
+    outline.renderOrder = 21;
+    group.add(outline);
+  };
+
+  if (style === "pbs") {
     // Aperture extent is a frame-invariant scalar (mm): explicit B1 coating
     // face (36 × 25.4 mm for the PBS252 cube) → anchor aperture → 1" default.
     const faces = (asset.faces ?? []) as Array<Record<string, unknown>>;
     const b1 = faces.find((f) => f.id === "B1");
     const wMm = Number(b1?.apertureWidthMm) || anc.apertureMm || 25.4;
     const hMm = Number(b1?.apertureHeightMm) || anc.apertureMm || 25.4;
-    const fill = new THREE.Mesh(
-      new THREE.PlaneGeometry(wMm, hMm),
-      new THREE.MeshBasicMaterial({
-        color: 0xf472b6, // pink — matches the PHY editor's internal-face disk
-        transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false,
-      }),
-    );
-    fill.renderOrder = 20;
-    group.add(fill);
-    const outline = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.PlaneGeometry(wMm, hMm)),
-      new THREE.LineBasicMaterial({ color: 0xf9a8d4, transparent: true, opacity: 0.9 }),
-    );
-    outline.renderOrder = 21;
-    group.add(outline);
-  } else {
+    addFace(new THREE.PlaneGeometry(wMm, hMm), 0xf472b6, 0xf9a8d4, 0.22);
+  } else if (style === "faraday") {
     // faraday_rotator — amber disk marking the polarisation-rotation plane.
     const rMm = anc.apertureMm && anc.apertureMm > 0 ? anc.apertureMm : 5;
-    const fill = new THREE.Mesh(
-      new THREE.CircleGeometry(rMm, 40),
-      new THREE.MeshBasicMaterial({
-        color: 0xfbbf24, // amber — distinct from the pink reflective coatings
-        transparent: true, opacity: 0.2, side: THREE.DoubleSide, depthWrite: false,
-      }),
-    );
-    fill.renderOrder = 20;
-    group.add(fill);
-    const outline = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.CircleGeometry(rMm, 40)),
-      new THREE.LineBasicMaterial({ color: 0xfcd34d, transparent: true, opacity: 0.9 }),
-    );
-    outline.renderOrder = 21;
-    group.add(outline);
+    addFace(new THREE.CircleGeometry(rMm, 40), 0xfbbf24, 0xfcd34d, 0.2);
+  } else {
+    // Generic optic face — neutral slate disk (or rect) at the anchor aperture.
+    const wMm = anc.apertureWidthMm;
+    const hMm = anc.apertureHeightMm;
+    const geom = (typeof wMm === "number" && wMm > 0 && typeof hMm === "number" && hMm > 0)
+      ? new THREE.PlaneGeometry(wMm, hMm)
+      : new THREE.CircleGeometry(anc.apertureMm && anc.apertureMm > 0 ? anc.apertureMm : 6.35, 40);
+    addFace(geom, 0xcbd5e1, 0xe2e8f0, 0.16);
   }
 
   // Place via the owning mesh's WORLD translation + rotation, but force the
@@ -215,7 +232,7 @@ function buildOpticSurfaceMarker(asset: Asset3D, mw: THREE.Matrix4): THREE.Group
 }
 
 /** Walk a loaded wireframe-source tree and build optic-surface markers for
- *  every beam_splitter / faraday_rotator asset unit inside it. Resolves each
+ *  every optic asset unit inside it. Resolves each
  *  mesh's owning asset — single-asset = `singleAsset`; binding tree =
  *  nearest `__bindingId` ancestor → ComponentBinding → Asset3D — and bakes
  *  the marker with that mesh's matrixWorld so composite optics (the IO-3
