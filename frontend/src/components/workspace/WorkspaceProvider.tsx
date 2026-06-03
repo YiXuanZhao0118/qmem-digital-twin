@@ -33,7 +33,6 @@ export type PanelId =
   | "instrument-power"
   | "beam-scope"
   | "touch-coincidence"
-  | "optical-link-viewer"
   | "rf-link"
   | "solver-console"
   | "magnetics"
@@ -81,11 +80,6 @@ const PANEL_DEFS: { id: PanelId; title: string; defaultLayout: PanelLayout }[] =
     id: "touch-coincidence",
     title: "Touch coincidence",
     defaultLayout: { x: 332, y: 200, w: 380, h: 280, visible: false, collapsed: false, z: 3 },
-  },
-  {
-    id: "optical-link-viewer",
-    title: "Optical link viewer",
-    defaultLayout: { x: 360, y: 80, w: 640, h: 780, visible: false, collapsed: false, z: 2 },
   },
   {
     id: "rf-link",

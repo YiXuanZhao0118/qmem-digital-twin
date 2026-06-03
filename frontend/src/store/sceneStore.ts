@@ -750,12 +750,12 @@ type SceneStore = {
    *  (DigitalTwinViewer's ViewerDisplayMode); the toolbar exposes a
    *  third button alongside Wireframe/Rendered. */
   displayMode: {
-    left: "wireframe" | "rendered" | "node-edit";
-    right: "wireframe" | "rendered" | "node-edit";
+    left: "wireframe" | "rendered" | "node-edit" | "optical-link";
+    right: "wireframe" | "rendered" | "node-edit" | "optical-link";
   };
   setDisplayMode: (
     panel: "left" | "right",
-    mode: "wireframe" | "rendered" | "node-edit",
+    mode: "wireframe" | "rendered" | "node-edit" | "optical-link",
   ) => void;
   activeTool: "select" | "face-touch";
   /** Which of the 6 touch operations is active. Each op specifies what kind

@@ -17,7 +17,6 @@ import { PhyEditor } from "./components/PhyEditor";
 import { InstrumentPowerPanel } from "./components/InstrumentPowerPanel";
 import { PulseTimingPanel } from "./components/PulseTimingPanel";
 import { TouchCoincidencePanel } from "./components/TouchCoincidencePanel";
-import { OpticalLinkViewerPanel } from "./components/optical/OpticalLinkViewerPanel";
 import { RfLinkPanel } from "./components/RfLinkPanel";
 // BeamPlacementPanel + SuggestedLinksPanel removed — replaced with simpler
 // per-object "Snap to beam" action (in OE panel) plus aperture warnings.
@@ -315,7 +314,6 @@ export default function App() {
               <ComponentPanel />
               <PulseTimingPanel />
               <InstrumentPowerPanel />
-              <OpticalLinkViewerPanel />
               <RfLinkPanel />
               <TouchCoincidencePanel />
               <MagneticsPanel />

@@ -1010,6 +1010,18 @@ h3 {
   overflow: hidden;
 }
 
+/* "optical-link" display mode overlay: covers the (still-mounted) main canvas
+   with the beam-chain viewer. Sits above the canvas (z auto) but below the
+   toolbars (z-index 4) so the mode buttons stay clickable. Top padding clears
+   the top-left display-mode pill. */
+.viewer-optical-link-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  padding: 56px 14px 14px;
+  background: #0b1120;
+}
+
 /* Marquee box for canvas drag-select. Set inline by handlePointerMove
    (left/top/width/height + display=block); hidden when no marquee active. */
 .viewer-marquee {
@@ -1182,7 +1194,10 @@ h3 {
 .viewer-transform-modes {
   position: absolute;
   top: 14px;
-  left: 132px;
+  /* Sits just right of .viewer-display-modes (which spans 14px → ~180px with
+     its 4 mode buttons). 190px leaves a ~10px gap so the two pills never
+     overlap. */
+  left: 190px;
   z-index: 4;
   display: flex;
   align-items: center;

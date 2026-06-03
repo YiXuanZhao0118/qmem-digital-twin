@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeftRight, Bookmark, BookmarkX, Crosshair, Eye, EyeOff, Grid3x3, Move, RotateCw, Sparkles, Spline, Target } from "lucide-react";
+import { ArrowLeftRight, Bookmark, BookmarkX, Crosshair, Eye, EyeOff, Grid3x3, Move, RotateCw, Sparkles, Spline, Target, Waypoints } from "lucide-react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
@@ -26,6 +26,7 @@ import {
   type FiberNodePersistent,
 } from "../utils/fiberAnchorResolver";
 import { capabilityProfile } from "../kinds/_capabilityProfile";
+import { OpticalLinkViewerContent } from "./optical/OpticalLinkViewerPanel";
 import type { RfCableEndpointLink } from "../types/digitalTwin";
 
 import { useSceneStore, TOUCH_OPS, TOUCH_OP_BY_ID, type FeatureKind, type TouchOp } from "../store/sceneStore";
@@ -102,7 +103,7 @@ type RoomDimensions = {
   heightMm: number;
 };
 
-type ViewerDisplayMode = "wireframe" | "rendered" | "node-edit";
+type ViewerDisplayMode = "wireframe" | "rendered" | "node-edit" | "optical-link";
 type AxisView = "xPos" | "xNeg" | "yPos" | "yNeg" | "zPos" | "zNeg";
 type AxisViewTarget = AxisView | "home";
 
@@ -135,6 +136,11 @@ const DISPLAY_MODE_OPTIONS: Array<{
     mode: "node-edit",
     title: "Cable node edit (fiber + RF) — click a cable, drag anchors / tangent handles. Other ops blocked.",
     Icon: Spline,
+  },
+  {
+    mode: "optical-link",
+    title: "Optical link (beam view) — pick an emitter and inspect its beam chain, waists, polarisation.",
+    Icon: Waypoints,
   },
 ];
 
@@ -252,12 +258,13 @@ function applyViewerDisplayMode(object: THREE.Object3D, mode: ViewerDisplayMode)
       child.userData.__renderedReceiveShadow = child.receiveShadow;
       const side = materialSide(child.material);
       child.material = new THREE.MeshBasicMaterial({
-        // Dark blue wireframe lines on the light-cream background; the
-        // original solid material is stashed and restored on the way back.
-        color: "#1e3a8a",
+        // Slate wireframe lines on a dark background — matches the optical-link
+        // view's wireframe palette (#94a3b8 @ 0.55). The original solid
+        // material is stashed and restored on the way back.
+        color: "#94a3b8",
         wireframe: true,
         transparent: true,
-        opacity: 0.45,
+        opacity: 0.55,
         depthWrite: false,
         side,
       });
@@ -3205,14 +3212,14 @@ export function DigitalTwinViewer({
     if (environmentGroupRef.current) {
       applyEnvironmentDisplayMode(environmentGroupRef.current, displayMode);
     }
-    // Light background in wireframe mode so the dark-blue wireframe lines
-    // read clearly; restore the dark photo-studio palette otherwise. The
-    // photo-room walls hide the bg color most of the time; toggling their
-    // visibility off in wireframe mode lets the white bg show through.
+    // Dark background in wireframe mode (matching the optical-link view's
+    // #0b1120) so the slate wireframe lines read clearly; the photo-studio
+    // palette (#151715) otherwise. The photo-room walls are hidden in
+    // wireframe mode so the flat dark bg shows through.
     const scene = sceneRef.current;
     const envGroup = environmentGroupRef.current;
     if (scene) {
-      const bg = displayMode === "wireframe" ? "#ffffff" : "#151715";
+      const bg = displayMode === "wireframe" ? "#0b1120" : "#151715";
       scene.background = new THREE.Color(bg);
       if (scene.fog instanceof THREE.Fog) {
         scene.fog.color = new THREE.Color(bg);
@@ -3220,7 +3227,7 @@ export function DigitalTwinViewer({
     }
     if (envGroup) {
       // Hide the photo-studio walls + floor + ceiling in wireframe mode
-      // so the white bg is visible; show them again in rendered mode.
+      // so the flat dark bg is visible; show them again in rendered mode.
       // The optical table is added separately as a SceneObject, not part
       // of `environmentGroup`, so this only toggles the surrounding room.
       envGroup.visible = displayMode !== "wireframe";
@@ -5923,6 +5930,11 @@ export function DigitalTwinViewer({
   return (
     <div className="viewer-shell">
       <div ref={mountRef} className="viewer-canvas" />
+      {displayMode === "optical-link" && (
+        <div className="viewer-optical-link-overlay">
+          <OpticalLinkViewerContent active />
+        </div>
+      )}
       {/* Marquee selection rectangle. Positioned absolute over the canvas
           and toggled visible by the pointer drag handler in DOM (no React
           re-render churn during a drag). */}
@@ -5968,7 +5980,7 @@ export function DigitalTwinViewer({
           </button>
         ))}
       </div>
-      {displayMode !== "node-edit" && (
+      {displayMode !== "node-edit" && displayMode !== "optical-link" && (
         <div className="viewer-transform-modes" role="group" aria-label="Transform mode">
           <button
             type="button"

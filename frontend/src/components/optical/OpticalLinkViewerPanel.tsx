@@ -42,8 +42,6 @@ import {
 import { applyObjectTransformWorld } from "../../three/transformUtils";
 import { anchorObjectLocalAxisX, anchorObjectLocalPos } from "../../utils/anchorAccess";
 import { mmToThree, labRootSwapInverseQuaternion, labRootSwapQuaternion } from "../../optical/frames";
-import { FloatingPanel } from "../workspace/FloatingPanel";
-import { usePanelLayout } from "../workspace/WorkspaceProvider";
 import { BeamScopeContents } from "./BeamScopePanel";
 
 const EMITTER_KINDS: ReadonlySet<string> = new Set([
@@ -471,109 +469,6 @@ type LiveTraceSegment = {
   polarizationAtStart: [number, number, number, number];
 };
 
-type EmitterSourceSummary = {
-  name: string;
-  sourcePowerMw: number;
-  livePowerMw: number;
-  wavelengthNm: number;
-  linewidth: string;
-  mode: string;
-  waist: string;
-  mSquared: string;
-  sourceJones: string;
-  liveJones: string;
-};
-
-function finiteOr(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
-
-function formatCompact(value: number, digits = 3): string {
-  if (!Number.isFinite(value)) return "?";
-  return Number.isInteger(value) ? value.toFixed(0) : value.toFixed(digits);
-}
-
-function jonesTupleLabel(values: readonly number[]): string {
-  return `[${values.map((v) => formatCompact(v, 3)).join(", ")}]`;
-}
-
-function sourceJonesFromParams(params: Record<string, unknown>): [number, number, number, number] {
-  const pol = (params.polarization ?? {}) as Record<string, unknown>;
-  return [
-    finiteOr(pol.exRe, 1),
-    finiteOr(pol.exIm, 0),
-    finiteOr(pol.eyRe, 0),
-    finiteOr(pol.eyIm, 0),
-  ];
-}
-
-function modeLabelFromParams(params: Record<string, unknown>): string {
-  const tm = (params.transverseMode ?? {}) as Record<string, unknown>;
-  const kind = typeof tm.kind === "string" ? tm.kind : "TEM00";
-  if (kind === "TEM_mn") {
-    return `HG ${Math.max(0, Math.round(finiteOr(tm.indicesM, 0)))},${Math.max(0, Math.round(finiteOr(tm.indicesN, 0)))}`;
-  }
-  if (kind === "LG_pl") {
-    return `LG p=${Math.max(0, Math.round(finiteOr(tm.indicesP, 0)))}, l=${Math.round(finiteOr(tm.indicesL, 0))}`;
-  }
-  if (kind === "multimode") return "multimode";
-  return "TEM00";
-}
-
-function linewidthLabelFromParams(params: Record<string, unknown>): string {
-  const spectrum = (params.spectrum ?? {}) as Record<string, unknown>;
-  const components = Array.isArray(spectrum.components) ? spectrum.components : [];
-  const first = (components[0] ?? {}) as Record<string, unknown>;
-  const lineshape = typeof first.lineshape === "string" ? first.lineshape : "delta";
-  if (lineshape === "gaussian" || lineshape === "lorentzian") {
-    return `${lineshape} ${formatCompact(finiteOr(first.fwhmMhz, 0), 3)} MHz`;
-  }
-  if (lineshape === "voigt") {
-    return `voigt G ${formatCompact(finiteOr(first.voigtGaussianFwhmMhz, 0), 3)} / L ${formatCompact(finiteOr(first.voigtLorentzianFwhmMhz, 0), 3)} MHz`;
-  }
-  return "delta";
-}
-
-function sourceSummaryForEmitter(
-  emitterId: string | null,
-  objects: readonly SceneObject[],
-  physicsElements: readonly PhysicsElement[],
-): EmitterSourceSummary | null {
-  if (!emitterId) return null;
-  const element = physicsElements.find((el) => el.objectId === emitterId);
-  if (!element) return null;
-  const objectName = objects.find((obj) => obj.id === emitterId)?.name ?? emitterId.slice(0, 8);
-  const params = (element.kindParams ?? {}) as Record<string, unknown>;
-  const win = window as unknown as { __rayTraceDebug?: LiveTraceSegment[] };
-  const liveSegment =
-    (win.__rayTraceDebug ?? []).find((seg) => seg.emitterObjectId === emitterId && seg.sourceObjectId === emitterId)
-    ?? (win.__rayTraceDebug ?? []).find((seg) => seg.emitterObjectId === emitterId);
-
-  const sourcePowerMw = finiteOr(params.nominalPowerMw, finiteOr(liveSegment?.nominalPowerMwAtSource, 1));
-  const liveNominal = finiteOr(liveSegment?.nominalPowerMwAtSource, sourcePowerMw);
-  const liveFactor = finiteOr(liveSegment?.powerFactorAtStart, 1);
-  const wavelengthNm = finiteOr(liveSegment?.wavelengthNm, finiteOr(params.centerWavelengthNm, 780));
-  const sx = (params.spatialModeX ?? {}) as Record<string, unknown>;
-  const sy = (params.spatialModeY ?? {}) as Record<string, unknown>;
-  const sourceJones = sourceJonesFromParams(params);
-  const liveJones = Array.isArray(liveSegment?.polarizationAtStart)
-    ? liveSegment!.polarizationAtStart
-    : sourceJones;
-
-  return {
-    name: objectName,
-    sourcePowerMw,
-    livePowerMw: liveNominal * liveFactor,
-    wavelengthNm,
-    linewidth: linewidthLabelFromParams(params),
-    mode: modeLabelFromParams(params),
-    waist: `${formatCompact(finiteOr(sx.waistUm, 100), 1)} x ${formatCompact(finiteOr(sy.waistUm, 100), 1)} um`,
-    mSquared: `${formatCompact(finiteOr(sx.mSquared, 1), 2)} x ${formatCompact(finiteOr(sy.mSquared, 1), 2)}`,
-    sourceJones: jonesTupleLabel(sourceJones),
-    liveJones: jonesTupleLabel(liveJones),
-  };
-}
-
 /** Walk the OpticalLink graph forward from `rootObjectId`, returning every
  *  object on a downstream emitter chain (ie. follow links whose `toObject`
  *  is itself a TA so its emitted segments fold into the parent laser).
@@ -648,14 +543,13 @@ type EmitterChoice = {
   kind: "laser" | "tapered_amplifier";
 };
 
-export function OpticalLinkViewerPanel() {
-  // FloatingPanel returns null when invisible (see FloatingPanel.tsx#L139), so
-  // the mount DIV doesn't exist in the DOM until the user opens the panel.
-  // The Three.js setup useEffect below has `deps: []` and runs once at app
-  // mount — at which point mountRef.current is null and the effect bails. We
-  // re-fire it whenever the panel transitions from hidden → visible so the
-  // renderer gets created at the moment the mount DIV first appears.
-  const panelVisible = usePanelLayout("optical-link-viewer").visible;
+export function OpticalLinkViewerContent({ active = true }: { active?: boolean } = {}) {
+  // Rendered as the "optical-link" viewer display mode overlay
+  // (DigitalTwinViewer). The mount DIV exists as soon as this component
+  // mounts, so the Three.js setup effect creates the renderer immediately;
+  // `active` (true while the mode is selected) drives the same re-fire
+  // dependency the effect already had.
+  const panelVisible = active;
   const objects = useSceneStore((s) => s.scene.objects);
   const physicsElements = useSceneStore((s) => s.scene.physicsElements);
   const opticalLinks = useSceneStore((s) => s.scene.opticalLinks);
@@ -663,7 +557,6 @@ export function OpticalLinkViewerPanel() {
   const assets = useSceneStore((s) => s.scene.assets);
   const componentBindings = useSceneStore((s) => s.scene.componentBindings);
   const objectBindings = useSceneStore((s) => s.scene.objectBindings);
-  const selectedObjectId = useSceneStore((s) => s.selectedObjectId);
   const scopeProbe = useSceneStore((s) => s.scopeProbe);
   const setScopeProbe = useSceneStore((s) => s.setScopeProbe);
 
@@ -700,34 +593,9 @@ export function OpticalLinkViewerPanel() {
     return choices;
   }, [objects, physicsElements, tasFoldedIntoLaser]);
 
-  const [selectedEmitterId, setSelectedEmitterId] = useState<string | null>(null);
-
-  // Auto-pick:
-  //   1. If the user has selected an emitter object in the main scene, sync.
-  //   2. Else, if the current selection is invalid (no longer in choices),
-  //      fall back to the first emitter.
-  useEffect(() => {
-    if (
-      selectedObjectId &&
-      emitterChoices.some((c) => c.objectId === selectedObjectId)
-    ) {
-      setSelectedEmitterId(selectedObjectId);
-      return;
-    }
-    setSelectedEmitterId((cur) => {
-      if (cur && emitterChoices.some((c) => c.objectId === cur)) return cur;
-      return emitterChoices[0]?.objectId ?? null;
-    });
-  }, [selectedObjectId, emitterChoices]);
-
-  // `chainEmitterIds` is also tick-maintained — the segment filter
-  // depends on it, and so does the inline-scope visibility check, so we
-  // need it to reflect live trace data.
-  const selectedEmitterSummary = useMemo(
-    () => sourceSummaryForEmitter(selectedEmitterId, objects, physicsElements),
-    [selectedEmitterId, objects, physicsElements],
-  );
-
+  // `chainEmitterIds` is tick-maintained = the set of ALL emitters in the
+  // scene (no per-emitter selection). The segment filter and the inline-scope
+  // visibility check key off it, so it must reflect live trace data.
   const [chainEmitterIds, setChainEmitterIds] = useState<Set<string>>(new Set());
 
   // Aperture / wavelength-range warnings derived from the live ray-trace
@@ -753,7 +621,6 @@ export function OpticalLinkViewerPanel() {
   const assetsRef = useRef(assets);
   const componentBindingsRef = useRef(componentBindings);
   const objectBindingsRef = useRef(objectBindings);
-  const selectedEmitterIdRef = useRef<string | null>(null);
   const tasFoldedIntoLaserRef = useRef<Set<string>>(tasFoldedIntoLaser);
   const setScopeProbeRef = useRef(setScopeProbe);
   const setChainEmitterIdsRef = useRef(setChainEmitterIds);
@@ -767,7 +634,6 @@ export function OpticalLinkViewerPanel() {
   assetsRef.current = assets;
   componentBindingsRef.current = componentBindings;
   objectBindingsRef.current = objectBindings;
-  selectedEmitterIdRef.current = selectedEmitterId;
   tasFoldedIntoLaserRef.current = tasFoldedIntoLaser;
   setScopeProbeRef.current = setScopeProbe;
   setChainEmitterIdsRef.current = setChainEmitterIds;
@@ -1041,15 +907,8 @@ export function OpticalLinkViewerPanel() {
         setTasFoldedIntoLaserRef.current(foldedTAs);
       }
 
-      const selectedId = selectedEmitterIdRef.current;
-      const chainIds = selectedId
-        ? downstreamEmitterChain(
-            selectedId,
-            opticalLinksRef.current,
-            allSegments,
-            allEmitterIds,
-          )
-        : new Set<string>();
+      // No per-emitter selection: show every emitter's beam chain at once.
+      const chainIds = allEmitterIds;
       if (!sameSet(chainIds, chainEmitterIdsRef.current)) {
         chainEmitterIdsRef.current = chainIds;
         setChainEmitterIdsRef.current(chainIds);
@@ -1609,88 +1468,15 @@ export function OpticalLinkViewerPanel() {
   const noEmitters = emitterChoices.length === 0;
 
   return (
-    <FloatingPanel id="optical-link-viewer" title="Optical link viewer">
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          height: "100%",
-          minHeight: 0,
-          gap: 8,
-        }}
-      >
-        <label
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            fontSize: 12,
-          }}
-        >
-          <span style={{ color: "#9ca3af" }}>Emitter</span>
-          <select
-            value={selectedEmitterId ?? ""}
-            onChange={(e) => setSelectedEmitterId(e.target.value || null)}
-            style={{ flex: 1, minWidth: 0 }}
-            disabled={noEmitters}
-          >
-            {noEmitters ? (
-              <option value="">(no emitters)</option>
-            ) : (
-              emitterChoices.map((c) => (
-                <option key={c.objectId} value={c.objectId}>
-                  {c.name}
-                </option>
-              ))
-            )}
-          </select>
-        </label>
-        {selectedEmitterSummary && (
-          <div
-            style={{
-              flexShrink: 0,
-              display: "grid",
-              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-              gap: "4px 10px",
-              padding: "6px 8px",
-              borderLeft: "2px solid #38bdf8",
-              background: "rgba(56, 189, 248, 0.07)",
-              fontSize: 11,
-              lineHeight: 1.35,
-            }}
-          >
-            <div style={{ gridColumn: "1 / -1", color: "#38bdf8", fontWeight: 600 }}>
-              {selectedEmitterSummary.name} source state
-            </div>
-            <div>
-              <strong>P src</strong>: {selectedEmitterSummary.sourcePowerMw.toFixed(2)} mW
-            </div>
-            <div>
-              <strong>P live</strong>: {selectedEmitterSummary.livePowerMw.toFixed(2)} mW
-            </div>
-            <div>
-              <strong>lambda</strong>: {selectedEmitterSummary.wavelengthNm.toFixed(3)} nm
-            </div>
-            <div>
-              <strong>line</strong>: {selectedEmitterSummary.linewidth}
-            </div>
-            <div>
-              <strong>mode</strong>: {selectedEmitterSummary.mode}
-            </div>
-            <div>
-              <strong>waist</strong>: {selectedEmitterSummary.waist}
-            </div>
-            <div>
-              <strong>M2</strong>: {selectedEmitterSummary.mSquared}
-            </div>
-            <div title="Raw source Jones from Object panel">
-              <strong>Jones src</strong>: {selectedEmitterSummary.sourceJones}
-            </div>
-            <div style={{ gridColumn: "1 / -1" }} title="Normalized live Jones on the first traced segment">
-              <strong>Jones live</strong>: {selectedEmitterSummary.liveJones}
-            </div>
-          </div>
-        )}
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 0,
+        gap: 8,
+      }}
+    >
         <div
           style={{
             flex: probeBelongsToChain ? 1.2 : 1,
@@ -1757,14 +1543,17 @@ export function OpticalLinkViewerPanel() {
               flex: 1,
               minHeight: 0,
               overflow: "auto",
-              borderTop: "1px solid rgba(255,255,255,0.07)",
-              paddingTop: 6,
+              marginTop: 2,
+              padding: "8px 10px",
+              borderRadius: 6,
+              border: "1px solid rgba(56, 189, 248, 0.18)",
+              borderTop: "2px solid rgba(56, 189, 248, 0.85)",
+              background: "rgba(56, 189, 248, 0.06)",
             }}
           >
             <BeamScopeContents />
           </div>
         )}
-      </div>
-    </FloatingPanel>
+    </div>
   );
 }
