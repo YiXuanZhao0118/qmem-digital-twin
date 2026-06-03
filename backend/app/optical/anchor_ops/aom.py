@@ -41,6 +41,7 @@ from app.optical.aom_physics import (
     bragg_detuning_sinc2,
     first_order_efficiency,
     read_rf_drive_power_w,
+    read_rf_frequency_mhz,
 )
 from app.optical.aom_sideband import (
     phase_modulation_depth,
@@ -128,9 +129,12 @@ def aom_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
     n = float(ctx.params.get("refractiveIndex", 2.2))
     L_over_n = L / n
 
-    freq_mhz = ctx.dynamic.get("aomFreqMhz")
-    if not isinstance(freq_mhz, (int, float)):
-        freq_mhz = float(ctx.params.get("centerFreqMhz", 0.0))
+    # RF frequency via the shared reader (dynamic aomFreqMhz wins, then the
+    # asset's centerFreqMhz, then the 80 MHz rated default) so the anchor op,
+    # the v3 op, and the panel all agree on the operating point — the AOM shows
+    # its rated diffraction even before an RF link is wired up. "Off" is the
+    # requiresRfDrive gate, not a 0 Hz default.
+    freq_mhz = read_rf_frequency_mhz(ctx.params, ctx.dynamic)
     v_ac = float(ctx.params.get("acousticVelocityMps", 4200.0))
     # baseEfficiency, when present, is the user's measured override and wins over
     # the closed form (see first_order_efficiency); None lets the closed form run.

@@ -86,8 +86,10 @@ def test_minus1_hidden_below_visibility_threshold():
 
 
 def test_no_rf_drive_passthrough_single_zero_order():
+    # "Off" is the requiresRfDrive gate with no RF power (not a 0 Hz freq): the
+    # cell stops diffracting and the beam passes straight through as the 0 order.
     op = get_anchor_op("aom")
-    outs = op(_ray(), _ctx(freq_mhz=0.0))
+    outs = op(_ray(), _ctx(extra={"requiresRfDrive": True}))
     assert len(outs) == 1
     assert outs[0].freq_offset_hz == 0.0
 
