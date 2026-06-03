@@ -141,10 +141,24 @@ export function AomAdjustControls({
   // resolved live values so braggAngleRad / diffractionEfficiency /
   // phaseModulationDepth all see the upstream-derived values without any
   // signature changes. Falls through to defaults when orphan.
-  const effectiveCenterFreqMhz = upstreamDrive?.frequencyMhz ?? 80;
-  const effectiveRfDrivePowerW = upstreamDrive
-    ? Math.min(upstreamDrive.drivePowerW, params.rfPowerMaxW ?? Number.POSITIVE_INFINITY)
-    : undefined;
+  // RF drive mode: "link" (resolved from the rf_cable chain) or "manual"
+  // (freq + power set directly on this AOM, bypassing the RF link).
+  const objProps = (sceneObject.properties ?? {}) as Record<string, unknown>;
+  const rfDriveMode: "link" | "manual" =
+    objProps.aomRfDriveMode === "manual" ? "manual" : "link";
+  const manualFreqMhz = typeof objProps.aomFreqMhz === "number" ? objProps.aomFreqMhz : undefined;
+  const manualPowerW = typeof objProps.rfDrivePowerW === "number" ? objProps.rfDrivePowerW : undefined;
+
+  const effectiveCenterFreqMhz = rfDriveMode === "manual"
+    ? (manualFreqMhz && manualFreqMhz > 0 ? manualFreqMhz : 80)
+    : (upstreamDrive?.frequencyMhz ?? 80);
+  const effectiveRfDrivePowerW = rfDriveMode === "manual"
+    ? (manualPowerW != null && manualPowerW >= 0
+        ? Math.min(manualPowerW, params.rfPowerMaxW ?? Number.POSITIVE_INFINITY)
+        : undefined)
+    : (upstreamDrive
+        ? Math.min(upstreamDrive.drivePowerW, params.rfPowerMaxW ?? Number.POSITIVE_INFINITY)
+        : undefined);
   const physicsParams = {
     ...params,
     centerFreqMhz: effectiveCenterFreqMhz,
@@ -238,6 +252,31 @@ export function AomAdjustControls({
   const setOrder = (order: -1 | 0 | 1) => {
     if (order === currentOrder) return;
     void persist({ diffractionOrder: order });
+  };
+
+  // RF drive mode + manual freq/power live on SceneObject.properties (the
+  // dynamic_sources the backend solver reads), not on kindParams.
+  const persistProps = (patch: Record<string, unknown>) =>
+    void updateSceneObject(sceneObject.id, {
+      properties: { ...objProps, ...patch },
+    });
+  const setRfDriveMode = (mode: "link" | "manual") => {
+    if (mode === "manual") {
+      // Seed manual fields from the current effective values so toggling
+      // doesn't jump the beam.
+      persistProps({
+        aomRfDriveMode: "manual",
+        aomFreqMhz: effectiveCenterFreqMhz,
+        rfDrivePowerW: effectiveRfDrivePowerW ?? 0,
+      });
+    } else {
+      // Link mode: drop the manual keys so the resolved RF drive (injected as
+      // a dynamic override at trace time) takes over.
+      const { aomFreqMhz: _f, rfDrivePowerW: _p, ...rest } = objProps;
+      void updateSceneObject(sceneObject.id, {
+        properties: { ...rest, aomRfDriveMode: "link" },
+      });
+    }
   };
 
   // (Removed in Phase 7) The "Flip RF" control is intentionally absent.
@@ -864,7 +903,77 @@ export function AomAdjustControls({
       <div style={groupHeaderStyle}><span style={rfTitleStyle}>RF Settings</span></div>
       <div style={rfSectionStyle}>
         <div style={{ ...titleStyle, color: "#b45309" }}>RF carrier &amp; drive</div>
-        {upstreamRf ? (
+        <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+          {(["link", "manual"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              className="secondary-button"
+              onClick={() => setRfDriveMode(m)}
+              style={{
+                flex: 1,
+                fontSize: 11,
+                padding: "3px 6px",
+                background: rfDriveMode === m ? "rgba(180,83,9,0.25)" : "transparent",
+                borderColor: rfDriveMode === m ? "#b45309" : "rgba(255,255,255,0.15)",
+                color: rfDriveMode === m ? "#f3c98b" : "#9ca3af",
+              }}
+            >
+              {m === "link" ? "From RF link" : "Manual"}
+            </button>
+          ))}
+        </div>
+        {rfDriveMode === "manual" ? (
+          <div
+            style={{
+              padding: 8,
+              background: "#1c1c22",
+              borderRadius: 4,
+              border: "1px dashed #b45309",
+              fontSize: 11,
+              color: "#cfcfd8",
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+            }}
+          >
+            <div style={{ color: "#d49a3a", fontSize: 10 }}>
+              Manual RF drive — set freq + power directly, bypassing the RF link.
+            </div>
+            <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+              <span>
+                Carrier f:{" "}
+                <NumberCell
+                  label=""
+                  suffix="MHz"
+                  value={effectiveCenterFreqMhz}
+                  step={1}
+                  onCommit={(v) => v > 0 && persistProps({ aomFreqMhz: v })}
+                />
+              </span>
+              <span>
+                RF drive:{" "}
+                <NumberCell
+                  label=""
+                  suffix="W"
+                  value={effectiveRfDrivePowerW ?? 0}
+                  step={0.05}
+                  onCommit={(v) => v >= 0 && persistProps({ rfDrivePowerW: v })}
+                />
+              </span>
+              <span style={{ marginLeft: "auto" }}>
+                RF max:{" "}
+                <NumberCell
+                  label=""
+                  suffix="W"
+                  value={params.rfPowerMaxW ?? 2}
+                  step={0.1}
+                  onCommit={(v) => v > 0 && void persist({ rfPowerMaxW: v })}
+                />
+              </span>
+            </div>
+          </div>
+        ) : upstreamRf ? (
           <div
             style={{
               padding: 8,
