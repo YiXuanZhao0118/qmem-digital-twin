@@ -317,11 +317,11 @@ DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
         # baseEfficiency until a cable is wired up.
         "baseEfficiency": 0.85,
         "deflectionPerMhzUrad": 200.0,
-        "acousticVelocityMPerS": 4200.0,
+        "acousticVelocityMps": 4200.0,
         "modulationBandwidthMhz": 20.0,
         # Bragg-diffraction physics fields used by the ray-tracer:
         #   sin θ_B = λ·f / (2·n·v)
-        #   I₁/I₀  = sin²(π·L/(2λ·cosθ_B)·√(2·M₂·P_d/W))
+        #   I₁/I₀  = sin²((π/(λ·cosθ_B))·√(M₂·L·P_d/(2·W)))
         # Defaults match a TeO₂ Bragg cell similar to AA-Optoelectronic
         # MT80 (80 MHz, slow-shear ~4200 m/s).
         "refractiveIndex": 2.26,

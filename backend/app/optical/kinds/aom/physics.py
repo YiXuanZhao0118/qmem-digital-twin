@@ -298,7 +298,6 @@ def diffract_aom_op(ray_in: BeamRay, ctx: PhysicsOpContext) -> list[BeamRay]:
     freq_mhz = _read_rf_frequency_mhz(ctx)
     v_acoustic = (
         _positive_finite_number(ctx.params.get("acousticVelocityMps"))
-        or _positive_finite_number(ctx.params.get("acousticVelocityMPerS"))
         or 4200.0
     )
     n = _positive_finite_number(ctx.params.get("refractiveIndex")) or 2.26

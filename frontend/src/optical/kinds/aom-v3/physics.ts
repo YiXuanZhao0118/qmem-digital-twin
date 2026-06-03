@@ -275,8 +275,8 @@ export function firstOrderEfficiencyFromContext(
     const lambdaM = rayIn.wavelengthNm * 1e-9;
     const Lm = Lmm * 1e-3;
     const Wm = Wmm * 1e-3;
-    const inner = Math.sqrt((2 * m2 * rfPowerW) / Wm);
-    const arg = ((Math.PI * Lm) / (2 * lambdaM * Math.cos(thetaBRad))) * inner;
+    // L INSIDE the root (linear); outside-as-prefactor made it L² → ~600× small.
+    const arg = (Math.PI / (lambdaM * Math.cos(thetaBRad))) * Math.sqrt((m2 * Lm * rfPowerW) / (2 * Wm));
     return clamp01(Math.sin(arg) ** 2);
   }
 
@@ -354,7 +354,7 @@ export const diffractAomOp: PhysicsOp = (
   const freqMhz = readRfFrequencyMhz(ctx);
   const vAcoustic =
     positiveFiniteNumber(ctx.params.acousticVelocityMps)
-    ?? positiveFiniteNumber(ctx.params.acousticVelocityMPerS)
+    ?? positiveFiniteNumber(ctx.params.acousticVelocityMps)
     ?? 4200;
   const n = positiveFiniteNumber(ctx.params.refractiveIndex) ?? 2.26;
   const L = positiveFiniteNumber(ctx.params.crystalLengthMm)

@@ -753,7 +753,7 @@ export type AOMParams = {
   rfDriverComponentId?: string | null;
   baseEfficiency: number;
   deflectionPerMhzUrad: number;
-  acousticVelocityMPerS: number;
+  acousticVelocityMps: number;
   modulationBandwidthMhz: number;
   // Phase B (RF link single-source-of-truth): centerFreqMhz / rfDrivePowerW
   // are no longer stored on the AOM. They are resolved at solve time from

@@ -87,7 +87,7 @@ export function AomAdjustControls({
     // The panel resolves them live from the upstream rf_source via
     // `resolveAomRfDriveFromScene` and overlays them onto `physicsParams`
     // (constructed below) for the physics formulas.
-    acousticVelocityMPerS?: number;
+    acousticVelocityMps?: number;
     refractiveIndex?: number;
     baseEfficiency?: number;
     figureOfMeritM2?: number;
@@ -224,7 +224,7 @@ export function AomAdjustControls({
       void runAomSidebandsApi({
         wavelengthNm: wavelengthForAngleNm,
         centerFreqMhz: effectiveCenterFreqMhz,
-        acousticVelocityMps: params.acousticVelocityMPerS ?? 4200,
+        acousticVelocityMps: params.acousticVelocityMps ?? 4200,
         refractiveIndex: params.refractiveIndex ?? 2.26,
         baseEfficiency: typeof params.baseEfficiency === "number" ? params.baseEfficiency : undefined,
         figureOfMeritM2: params.figureOfMeritM2,
@@ -242,7 +242,7 @@ export function AomAdjustControls({
     return () => { cancelled = true; clearTimeout(handle); };
   }, [
     wavelengthForAngleNm, effectiveCenterFreqMhz, effectiveRfDrivePowerW,
-    params.acousticVelocityMPerS, params.refractiveIndex, params.baseEfficiency,
+    params.acousticVelocityMps, params.refractiveIndex, params.baseEfficiency,
     params.figureOfMeritM2, params.crystalLengthMm, params.acousticBeamWidthMm,
     requiresRfDrive, currentOrder, maxDiffractionOrder,
     sidebandVisibilityThreshold,
@@ -1157,9 +1157,9 @@ export function AomAdjustControls({
           <NumberCell
             label="Acoustic v"
             suffix="m/s"
-            value={params.acousticVelocityMPerS ?? 4200}
+            value={params.acousticVelocityMps ?? 4200}
             step={50}
-            onCommit={(v) => v > 0 && void persist({ acousticVelocityMPerS: v })}
+            onCommit={(v) => v > 0 && void persist({ acousticVelocityMps: v })}
           />
           <NumberCell
             label="Refractive n"

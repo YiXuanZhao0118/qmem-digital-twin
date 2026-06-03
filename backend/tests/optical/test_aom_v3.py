@@ -241,8 +241,8 @@ def test_uses_post_chain_rf_drive_power_for_closed_form_efficiency():
     l_m = L * 1e-3
     w_m = 1.5e-3
     expected = math.sin(
-        ((math.pi * l_m) / (2 * lambda_m * math.cos(theta)))
-        * math.sqrt((2 * 1e-10 * 0.01) / w_m)
+        (math.pi / (lambda_m * math.cos(theta)))
+        * math.sqrt((1e-10 * l_m * 0.01) / (2 * w_m))
     ) ** 2
     assert out.power_mw == pytest.approx(expected, abs=1e-12)
 

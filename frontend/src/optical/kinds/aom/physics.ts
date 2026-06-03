@@ -22,7 +22,7 @@
  *  fields drop-in here; legacy fields are handled at the caller. */
 export type AomPhysicsParams = {
   centerFreqMhz?: number;            // RF carrier
-  acousticVelocityMPerS?: number;    // 4200 default (TeO2 [110])
+  acousticVelocityMps?: number;    // 4200 default (TeO2 [110])
   refractiveIndex?: number;          // 2.26 default (TeO2)
   baseEfficiency?: number;           // fallback when M2/L/W/Pd not all set
   figureOfMeritM2?: number;          // m^2/W (closed-form sin² model)
@@ -94,7 +94,7 @@ export function braggAngleRad(
   wavelengthNm: number,
 ): number {
   const fHz = (params.centerFreqMhz ?? DEFAULT_CENTER_FREQ_MHZ) * 1e6;
-  const v = params.acousticVelocityMPerS ?? DEFAULT_ACOUSTIC_VELOCITY_M_PER_S;
+  const v = params.acousticVelocityMps ?? DEFAULT_ACOUSTIC_VELOCITY_M_PER_S;
   const lambdaM = wavelengthNm * 1e-9;
   const sinThetaB = (lambdaM * fHz) / (2 * v);
   return Math.asin(Math.max(-1, Math.min(1, sinThetaB)));
@@ -137,8 +137,9 @@ export function diffractionEfficiency(
   const W = (params.acousticBeamWidthMm as number) * 1e-3;
   const Pd = params.rfDrivePowerW as number;
   const M2 = params.figureOfMeritM2 as number;
-  const inner = Math.sqrt((2 * M2 * Pd) / W);
-  const arg = ((Math.PI * L) / (2 * lambdaM * Math.cos(thetaBRad))) * inner;
+  // η = sin²( (π/(λ·cos)) · √(M₂·L·P/(2·W)) )  (Saleh–Teich). L is INSIDE the
+  // root (linear); the old (π·L/2λ) prefactor made it L² → η ~600× too small.
+  const arg = (Math.PI / (lambdaM * Math.cos(thetaBRad))) * Math.sqrt((M2 * L * Pd) / (2 * W));
   return clamp01(Math.sin(arg) ** 2);
 }
 
@@ -169,8 +170,9 @@ export function phaseModulationDepth(
   const W = (params.acousticBeamWidthMm as number) * 1e-3;
   const Pd = params.rfDrivePowerW as number;
   const M2 = params.figureOfMeritM2 as number;
-  const inner = Math.sqrt((2 * M2 * Pd) / W);
-  return ((Math.PI * L) / (2 * lambdaM * Math.cos(thetaBRad))) * inner;
+  // Same arg as diffractionEfficiency: L INSIDE the root (linear), not an
+  // outside L prefactor (would be L² → ~600× too small).
+  return (Math.PI / (lambdaM * Math.cos(thetaBRad))) * Math.sqrt((M2 * L * Pd) / (2 * W));
 }
 
 export type DiffractionOrder = -1 | 0 | 1;
@@ -368,7 +370,9 @@ export function rfPowerForPeakEfficiencyW(
   const W = params.acousticBeamWidthMm * 1e-3;
   const M2 = params.figureOfMeritM2;
   const cos2 = Math.cos(thetaBRad) ** 2;
-  return (W * cos2 * lambdaM * lambdaM) / (2 * M2 * L * L);
+  // Solve arg = π/2 (peak η) for P with the corrected arg (L linear, not L²):
+  //   P = W·cos²·λ² / (2·M₂·L)
+  return (W * cos2 * lambdaM * lambdaM) / (2 * M2 * L);
 }
 
 // =============================================================================

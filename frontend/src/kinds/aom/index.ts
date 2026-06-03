@@ -15,7 +15,7 @@ import { definePhysicsPlugin } from "../_plugin";
 export interface AomParams extends Record<string, unknown> {
   baseEfficiency: number;
   deflectionPerMhzUrad: number;
-  acousticVelocityMPerS: number;
+  acousticVelocityMps: number;
   modulationBandwidthMhz: number;
   refractiveIndex: number;
   figureOfMeritM2: number;
@@ -64,7 +64,7 @@ export const aomPlugin = definePhysicsPlugin<AomParams>({
     defaultParams: {
       baseEfficiency: 0.85,
       deflectionPerMhzUrad: 200.0,
-      acousticVelocityMPerS: 4200.0,
+      acousticVelocityMps: 4200.0,
       modulationBandwidthMhz: 20.0,
       refractiveIndex: 2.26,
       figureOfMeritM2: 34e-15,
@@ -83,7 +83,7 @@ export const aomPlugin = definePhysicsPlugin<AomParams>({
     // Phase 2 / Phase 3a: spec sheet vs knobs.
     //
     // Intrinsic (the crystal itself — replace the AOM hardware to change):
-    //   baseEfficiency, acousticVelocityMPerS, modulationBandwidthMhz,
+    //   baseEfficiency, acousticVelocityMps, modulationBandwidthMhz,
     //   refractiveIndex, figureOfMeritM2, crystalLengthMm,
     //   acousticBeamWidthMm, rfPowerMaxW (safety cap is a hardware limit),
     //   acousticAxisBodyLocal, rfPropagationDirectionBodyLocal,
@@ -99,7 +99,7 @@ export const aomPlugin = definePhysicsPlugin<AomParams>({
     intrinsicParamKeys: [
       "baseEfficiency",
       "deflectionPerMhzUrad",
-      "acousticVelocityMPerS",
+      "acousticVelocityMps",
       "modulationBandwidthMhz",
       "refractiveIndex",
       "figureOfMeritM2",

@@ -1709,7 +1709,7 @@ function traceOneRay(
       hitObjectId, ctx.objects, ctx.components, ctx.assets, ctx.physicsElements,
     );
     const baseParams = (oe?.kindParams ?? {}) as {
-      acousticVelocityMPerS?: number;
+      acousticVelocityMps?: number;
       refractiveIndex?: number;
       baseEfficiency?: number;
       figureOfMeritM2?: number;       // m²/W

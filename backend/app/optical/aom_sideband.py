@@ -71,8 +71,11 @@ def phase_modulation_depth(
     lambda_m = wavelength_nm * 1e-9
     l_m = crystal_length_mm * 1e-3
     w_m = acoustic_beam_width_mm * 1e-3
-    inner = math.sqrt((2.0 * figure_of_merit_m2 * rf_drive_power_w) / w_m)
-    return ((math.pi * l_m) / (2.0 * lambda_m * math.cos(theta_b_rad))) * inner
+    # v = (pi/(lambda*cos)) * sqrt(M2*L*P/(2*W)) — same arg as the efficiency;
+    # L is INSIDE the root (linear), not an outside L prefactor (would be L^2).
+    return (math.pi / (lambda_m * math.cos(theta_b_rad))) * math.sqrt(
+        (figure_of_merit_m2 * l_m * rf_drive_power_w) / (2.0 * w_m)
+    )
 
 
 def sideband_intensities_on_bragg(

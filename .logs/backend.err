@@ -1,0 +1,22 @@
+INFO:     Will watch for changes in these directories: ['C:\\repos\\qmem-digital-twin\\backend']
+INFO:     Uvicorn running on http://0.0.0.0:8010 (Press CTRL+C to quit)
+INFO:     Started reloader process [7388] using WatchFiles
+INFO:     Started server process [2436]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  WatchFiles detected changes in 'app\schemas_v3.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [2436]
+INFO:     Started server process [32740]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:52059 - "WebSocket /ws/scene" [accepted]
+INFO:     127.0.0.1:57918 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     connection open
+INFO:     127.0.0.1:59625 - "WebSocket /ws/scene" [accepted]
+INFO:     127.0.0.1:58313 - "WebSocket /ws/scene" [accepted]
+INFO:     connection open
+INFO:     connection open

@@ -80,18 +80,19 @@ describe("besselJ", () => {
 describe("braggAngleRad", () => {
   const baseParams: AomPhysicsParams = {
     centerFreqMhz: 80,
-    acousticVelocityMPerS: 4200,
+    acousticVelocityMps: 4200,
     refractiveIndex: 2.26,
   };
 
-  it("returns expected θ_B for 780 nm / 80 MHz / TeO2", () => {
-    // λ·f / (2·n·v) = 780e-9 m · 80e6 Hz / (2 · 2.26 · 4200 m/s)
-    //              = 6.24e-2 m/s / 18984 m/s
-    //              ≈ 3.287e-3
-    // → θ_B ≈ 3.29 mrad (consistent with 2·θ_B ≈ 6.6 mrad full
-    //   deflection at TeO2 isotropic Bragg, 780 nm / 80 MHz).
+  it("returns expected external θ_B for 780 nm / 80 MHz / TeO2", () => {
+    // EXTERNAL (lab-frame) Bragg half-angle — n is NOT in the deflection
+    // (it only enters the internal slab propagation), matching the BE op:
+    // λ·f / (2·v) = 780e-9 m · 80e6 Hz / (2 · 4200 m/s)
+    //            = 6.24e-2 m/s / 8400 m/s
+    //            ≈ 7.4286e-3
+    // → θ_B ≈ 7.43 mrad (full 0→±1 deflection 2·θ_B ≈ 14.86 mrad = λ·f/v).
     const theta = braggAngleRad(baseParams, 780);
-    expect(theta).toBeCloseTo(3.287e-3, 6);
+    expect(theta).toBeCloseTo(7.4286e-3, 6);
   });
 
   it("scales linearly in λ at small angles", () => {
@@ -105,7 +106,7 @@ describe("braggAngleRad", () => {
     // Drive an absurd config that overflows the asin domain.
     const overdriven: AomPhysicsParams = {
       centerFreqMhz: 1e9,    // 1 PHz RF — physically impossible but should not NaN
-      acousticVelocityMPerS: 1,
+      acousticVelocityMps: 1,
       refractiveIndex: 1,
     };
     const theta = braggAngleRad(overdriven, 1e6);
@@ -184,7 +185,7 @@ describe("effectiveAomOrderForTraversal", () => {
 describe("diffractionEfficiency", () => {
   const closedFormParams: AomPhysicsParams = {
     centerFreqMhz: 80,
-    acousticVelocityMPerS: 4200,
+    acousticVelocityMps: 4200,
     refractiveIndex: 2.26,
     figureOfMeritM2: 1.5e-15,         // typical TeO2 figure of merit
     crystalLengthMm: 9,
@@ -245,10 +246,10 @@ describe("phaseModulationDepth", () => {
     };
     const v = phaseModulationDepth(params, 780, 0, 0);
     // arg should equal what diffractionEfficiency uses internally:
-    //   (π·L / (2·λ·cosθ)) · √(2·M2·Pd/W)
+    //   (π / (λ·cosθ)) · √(M2·L·Pd/(2·W))   — L inside the root (linear)
     const lambdaM = 780e-9;
     const expected =
-      (Math.PI * 9e-3 / (2 * lambdaM * 1)) * Math.sqrt((2 * 1.5e-15 * 1) / 1.5e-3);
+      (Math.PI / (lambdaM * 1)) * Math.sqrt((1.5e-15 * 9e-3 * 1) / (2 * 1.5e-3));
     expect(v).toBeCloseTo(expected, 8);
   });
 });

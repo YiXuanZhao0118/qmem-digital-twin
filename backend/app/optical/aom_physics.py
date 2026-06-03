@@ -182,7 +182,12 @@ def first_order_efficiency(
         lambda_m = wavelength_nm * 1e-9
         l_m = l_mm * 1e-3
         w_m = w_mm * 1e-3
-        inner = math.sqrt((2.0 * m2 * rf_power_w) / w_m)
-        arg = ((math.pi * l_m) / (2.0 * lambda_m * math.cos(theta_b_rad))) * inner
+        # eta = sin^2( (pi/(lambda*cos)) * sqrt(M2*L*P/(2*W)) )  (Saleh-Teich).
+        # L is INSIDE the root (linear). The old form pulled L outside as a
+        # (pi*L/2lambda) prefactor, which is sqrt(L^2) under the root -> an extra
+        # sqrt(L_metres) ~ 0.04 factor -> eta ~600x too small.
+        arg = (math.pi / (lambda_m * math.cos(theta_b_rad))) * math.sqrt(
+            (m2 * l_m * rf_power_w) / (2.0 * w_m)
+        )
         return clamp01(math.sin(arg) ** 2)
     return 0.85

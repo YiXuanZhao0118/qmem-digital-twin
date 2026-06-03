@@ -238,8 +238,8 @@ describe("AOM / diffract_aom op", () => {
     const Lm = L * 1e-3;
     const Wm = 1.5e-3;
     const expected = Math.sin(
-      ((Math.PI * Lm) / (2 * lambdaM * Math.cos(theta)))
-      * Math.sqrt((2 * 1e-10 * 0.01) / Wm),
+      (Math.PI / (lambdaM * Math.cos(theta)))
+      * Math.sqrt((1e-10 * Lm * 0.01) / (2 * Wm)),
     ) ** 2;
     expect(out.powerMw).toBeCloseTo(expected, 12);
   });
