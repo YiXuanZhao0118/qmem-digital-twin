@@ -14,7 +14,11 @@ import math
 import re
 from typing import Optional
 
-from app.optical.aom_physics import bragg_detuning_sinc2, order_efficiency
+from app.optical.aom_physics import (
+    bragg_detuning_sinc2,
+    first_order_efficiency,
+    order_efficiency,
+)
 from app.optical.beam_ray import BeamRay, Vec3, vec3_distance
 from app.optical.registry import (
     KindEntry,
@@ -275,22 +279,17 @@ def first_order_efficiency_from_context(
     ctx: PhysicsOpContext,
     theta_b_rad: float,
 ) -> float:
-    rf_power_w = _read_rf_drive_power_w(ctx)
-    if ctx.params.get("requiresRfDrive") is True and rf_power_w is None:
-        return 0.0
-
-    m2 = _positive_finite_number(ctx.params.get("figureOfMeritM2"))
-    l_mm = _positive_finite_number(ctx.params.get("crystalLengthMm"))
-    w_mm = _positive_finite_number(ctx.params.get("acousticBeamWidthMm"))
-    if rf_power_w is not None and m2 is not None and l_mm is not None and w_mm is not None:
-        lambda_m = ray_in.wavelength_nm * 1e-9
-        l_m = l_mm * 1e-3
-        w_m = w_mm * 1e-3
-        inner = math.sqrt((2.0 * m2 * rf_power_w) / w_m)
-        arg = ((math.pi * l_m) / (2.0 * lambda_m * math.cos(theta_b_rad))) * inner
-        return _clamp01(math.sin(arg) ** 2)
-
-    return _clamp01(_finite_number(ctx.params.get("baseEfficiency")) or 0.85)
+    # Delegate the closed-form to the shared module (single source of truth,
+    # also used by the production anchor op); read RF power with this op's ctx.
+    return first_order_efficiency(
+        ray_in.wavelength_nm, theta_b_rad,
+        rf_power_w=_read_rf_drive_power_w(ctx),
+        m2=_positive_finite_number(ctx.params.get("figureOfMeritM2")),
+        l_mm=_positive_finite_number(ctx.params.get("crystalLengthMm")),
+        w_mm=_positive_finite_number(ctx.params.get("acousticBeamWidthMm")),
+        base_efficiency=_finite_number(ctx.params.get("baseEfficiency")) or 0.85,
+        requires_rf_drive=ctx.params.get("requiresRfDrive") is True,
+    )
 
 
 def diffract_aom_op(ray_in: BeamRay, ctx: PhysicsOpContext) -> list[BeamRay]:

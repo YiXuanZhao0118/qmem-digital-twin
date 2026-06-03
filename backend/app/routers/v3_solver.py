@@ -281,9 +281,16 @@ async def run_v3_solver(request: SolverRunRequest) -> dict:
 
 
 class SolverRunFromDbRequest(CamelModel):
-    """Options-only request body — scene is loaded from DB."""
+    """Options-only request body — scene is loaded from DB.
+
+    ``dynamic_overrides`` (camelCase ``dynamicOverrides``) maps SceneObject id ->
+    dynamic-key dict, merged on top of each object's persisted dynamic_sources.
+    The frontend injects the effective AOM RF drive (aomFreqMhz / rfDrivePowerW)
+    resolved from the RF link or a manual override.
+    """
     options: Optional[TraceOptionsIn] = None
     initial_rays: list[RayIn] = Field(default_factory=list)
+    dynamic_overrides: dict[str, dict] = Field(default_factory=dict)
 
 
 @router.post("/run-from-db")
@@ -305,7 +312,7 @@ async def run_v3_solver_from_db(
     from app.optical.db_scene_loader import load_anchor_scene_from_db
     from app.optical.solver import solve_anchor_scene
 
-    scene = await load_anchor_scene_from_db(session)
+    scene = await load_anchor_scene_from_db(session, request.dynamic_overrides)
     rays = [_to_beam_ray(r) for r in request.initial_rays]
     opts = AnchorTraceOptions()
     if request.options:

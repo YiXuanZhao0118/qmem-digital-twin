@@ -73,3 +73,108 @@ def order_efficiency(order: int, first_order_efficiency: float) -> float:
     if order == -1:
         return eta * 0.01
     return 0.0
+
+
+# ---------------------------------------------------------------------------
+# RF drive readers (dict-based so both op-context types can call them) and the
+# RF-power-dependent first-order (peak) efficiency.
+# ---------------------------------------------------------------------------
+
+RF_LOAD_Z_OHM = 50.0
+
+
+def _finite(v) -> float | None:
+    return float(v) if isinstance(v, (int, float)) and math.isfinite(float(v)) else None
+
+
+def _pos_finite(v) -> float | None:
+    n = _finite(v)
+    return n if (n is not None and n > 0) else None
+
+
+def _first(*vs):
+    for v in vs:
+        if v is not None:
+            return v
+    return None
+
+
+def _vpp_to_w(vpp: float, z_ohm: float = RF_LOAD_Z_OHM) -> float:
+    return (vpp * vpp) / (8.0 * z_ohm)
+
+
+def _dbm_to_w(dbm: float) -> float:
+    return 10.0 ** ((dbm - 30.0) / 10.0)
+
+
+def read_rf_frequency_mhz(params: dict, dynamic: dict) -> float:
+    """RF drive frequency (MHz). dynamic overrides win over asset params."""
+    d, p = dynamic or {}, params or {}
+    return (
+        _pos_finite(d.get("aomFreqMhz"))
+        or _pos_finite(d.get("rfFrequencyMhz"))
+        or _pos_finite(d.get("aomRfFreqMhz"))
+        or _pos_finite(p.get("aomFreqMhz"))
+        or _pos_finite(p.get("centerFreqMhz"))
+        or 80.0
+    )
+
+
+def read_rf_drive_power_w(params: dict, dynamic: dict) -> float | None:
+    """RF drive power (W), resolved from W / Vpp / dBm in dynamic or params
+    (dynamic wins), clamped to rfPowerMaxW. None when no RF drive is given."""
+    d, p = dynamic or {}, params or {}
+    watts = _first(
+        _finite(d.get("rfDrivePowerW")), _finite(d.get("aomRfPowerW")),
+        _finite(p.get("rfDrivePowerW")), _finite(p.get("aomRfPowerW")),
+    )
+    if watts is None:
+        vpp = _first(
+            _pos_finite(d.get("aomRfVpp")), _pos_finite(d.get("rfVpp")),
+            _pos_finite(p.get("aomRfVpp")), _pos_finite(p.get("rfVpp")),
+        )
+        if vpp is not None:
+            watts = _vpp_to_w(vpp)
+    if watts is None:
+        dbm = _first(
+            _finite(d.get("aomRfPowerDbm")), _finite(d.get("rfPowerDbm")),
+            _finite(p.get("aomRfPowerDbm")), _finite(p.get("rfPowerDbm")),
+        )
+        if dbm is not None:
+            watts = _dbm_to_w(dbm)
+    if watts is None or not math.isfinite(watts) or watts < 0:
+        return None
+    max_w = _pos_finite(p.get("rfPowerMaxW"))
+    return min(watts, max_w) if max_w is not None else watts
+
+
+def first_order_efficiency(
+    wavelength_nm: float,
+    theta_b_rad: float,
+    *,
+    rf_power_w: float | None,
+    m2: float | None,
+    l_mm: float | None,
+    w_mm: float | None,
+    base_efficiency: float,
+    requires_rf_drive: bool,
+) -> float:
+    """Peak (on-Bragg) first-order diffraction efficiency.
+
+    With full params (RF power + M2 + crystal length L + acoustic width W) use
+    the closed form eta = sin^2( (pi*L)/(2*lambda*cos theta_B) * sqrt(2*M2*P/W) ).
+    Otherwise fall back to base_efficiency. If requires_rf_drive and no RF power
+    is present, the cell is off -> 0 (no diffraction).
+    """
+    if requires_rf_drive and rf_power_w is None:
+        return 0.0
+    if (rf_power_w is not None and m2 is not None and l_mm is not None
+            and w_mm is not None):
+        lambda_m = wavelength_nm * 1e-9
+        l_m = l_mm * 1e-3
+        w_m = w_mm * 1e-3
+        inner = math.sqrt((2.0 * m2 * rf_power_w) / w_m)
+        arg = ((math.pi * l_m) / (2.0 * lambda_m * math.cos(theta_b_rad))) * inner
+        return clamp01(math.sin(arg) ** 2)
+    return clamp01(base_efficiency if (isinstance(base_efficiency, (int, float))
+                                       and math.isfinite(base_efficiency)) else 0.85)

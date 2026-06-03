@@ -336,12 +336,21 @@ def anchor_asset_to_snapshot(asset: Asset3D) -> V3AssetAnchorSnapshot | None:
     )
 
 
-async def load_anchor_scene_from_db(session: AsyncSession) -> V3AnchorScene:
+async def load_anchor_scene_from_db(
+    session: AsyncSession,
+    dynamic_overrides: dict[str, dict] | None = None,
+) -> V3AnchorScene:
     """Walk SceneObjects and flatten to V3AnchorBindingSlot list (anchor-centric).
 
     Mirrors ``load_scene_from_db`` but emits the new anchor-based scene
     structure consumed by ``trace_ray_anchor_scene``.
+
+    ``dynamic_overrides`` maps SceneObject id -> dynamic-key dict, merged on top
+    of each object's persisted dynamic_sources. The frontend uses it to inject
+    the effective AOM RF drive (aomFreqMhz / rfDrivePowerW) resolved from the RF
+    link (or a manual override) without persisting derived values.
     """
+    dynamic_overrides = dynamic_overrides or {}
     so_rows = (await session.scalars(select(SceneObject))).all()
     slots: list[V3AnchorBindingSlot] = []
 
@@ -409,12 +418,16 @@ async def load_anchor_scene_from_db(session: AsyncSession) -> V3AnchorScene:
             )
             effective = compose_transforms(so_transform, local_transform)
 
+            dyn = _extract_dynamic(so.properties)
+            ov = dynamic_overrides.get(str(so.id))
+            if ov:
+                dyn = {**(dyn or {}), **ov}
             slots.append(V3AnchorBindingSlot(
                 scene_object_id=str(so.id),
                 binding_id=b.role or str(b.id),
                 asset=snap,
                 effective_transform=effective,
-                dynamic_sources=_extract_dynamic(so.properties),
+                dynamic_sources=dyn,
                 powered_on=powered_on,
             ))
 
