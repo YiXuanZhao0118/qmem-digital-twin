@@ -68,9 +68,21 @@ export function AomAdjustControls({
 }) {
   const upsertOpticalElement = useSceneStore((state) => state.upsertOpticalElement);
   const updateSceneObject = useSceneStore((state) => state.updateSceneObject);
+  const updateAssetDefaultParams = useSceneStore((state) => state.updateAssetDefaultParams);
   const scene = useSceneStore((state) => state.scene);
 
-  const params = (element.kindParams ?? {}) as {
+  // The solver / anchor-op read the AOM's physics params from the bound
+  // Asset3D's defaultParams (NOT the per-object physics_element). So the panel
+  // reads + writes the SAME source — otherwise panel edits never reach the
+  // traced beams and the asset's calibrated values (L, requiresRfDrive, …)
+  // disagree with what the panel shows. Falls back to the element kindParams
+  // only for an orphan object with no bound asset.
+  const boundAsset = (() => {
+    const c = scene.components.find((cc) => cc.id === sceneObject.componentId);
+    return c?.asset3dId ? scene.assets.find((a) => a.id === c.asset3dId) ?? null : null;
+  })();
+
+  const params = ((boundAsset?.defaultParams ?? element.kindParams) ?? {}) as {
     // Phase B: centerFreqMhz / rfDrivePowerW were removed from AOMParams.
     // The panel resolves them live from the upstream rf_source via
     // `resolveAomRfDriveFromScene` and overlays them onto `physicsParams`
@@ -192,11 +204,7 @@ export function AomAdjustControls({
   // 2026-05-10: RF direction now lives on the Asset3D as `rf_direction`
   // anchor; the helper falls back to legacy kindParams keys for
   // un-migrated rows.
-  const _assetForRf = (() => {
-    const c = scene.components.find((cc) => cc.id === sceneObject.componentId);
-    return c?.asset3dId ? scene.assets.find((aa) => aa.id === c.asset3dId) ?? null : null;
-  })();
-  const _rfDir = getRfDirectionBodyLocal(_assetForRf, params as Record<string, unknown>)
+  const _rfDir = getRfDirectionBodyLocal(boundAsset, params as Record<string, unknown>)
     ?? { x: -1, y: 0, z: 0 };
   const rfDirectionLocal = [_rfDir.x, _rfDir.y, _rfDir.z];
   const opticalCarrierThz = 299_792_458 / (wavelengthForAngleNm * 1e-9) / 1e12;
@@ -297,15 +305,26 @@ export function AomAdjustControls({
   const displayEfficiency = serverSidebands?.efficiency ?? efficiencyEst;
   const displayThetaBMrad = serverSidebands?.thetaBMrad ?? thetaBMrad;
 
-  const persist = async (patch: Record<string, unknown>) => {
+  // Write physics params to the bound Asset3D's defaultParams — the SAME
+  // source the solver/anchor-op reads — so panel edits reach the traced beams.
+  // `full` REPLACES defaultParams (the backend PUT overwrites), so callers pass
+  // the complete param set. Orphan objects with no bound asset fall back to the
+  // per-object physics_element.
+  const writeParams = async (full: Record<string, unknown>) => {
+    if (boundAsset) {
+      await updateAssetDefaultParams(boundAsset.id, full);
+      return;
+    }
     await upsertOpticalElement({
       objectId: sceneObject.id,
       elementKind: element.elementKind,
-      kindParams: { ...params, ...patch },
+      kindParams: full,
       inputPorts: element.inputPorts,
       outputPorts: element.outputPorts,
     });
   };
+  const persist = (patch: Record<string, unknown>) =>
+    writeParams({ ...(params as Record<string, unknown>), ...patch });
 
   const setOrder = (order: -1 | 0 | 1) => {
     if (order === currentOrder) return;
@@ -1203,13 +1222,7 @@ export function AomAdjustControls({
               } else {
                 // Remove baseEfficiency so closed-form takes over.
                 const { baseEfficiency: _drop, ...rest } = params;
-                void upsertOpticalElement({
-                  objectId: sceneObject.id,
-                  elementKind: element.elementKind,
-                  kindParams: rest,
-                  inputPorts: element.inputPorts,
-                  outputPorts: element.outputPorts,
-                });
+                void writeParams(rest as Record<string, unknown>);
               }
             }}
           />

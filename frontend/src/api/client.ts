@@ -459,6 +459,7 @@ export type AssetUpdatePayload = {
   unit?: "mm" | "m";
   scaleFactor?: number;
   anchors?: Anchor[];
+  defaultParams?: Record<string, unknown>;
 };
 
 export async function updateAssetApi(

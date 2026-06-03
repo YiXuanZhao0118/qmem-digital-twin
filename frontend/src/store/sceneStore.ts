@@ -393,6 +393,13 @@ type SceneStore = {
     assetId: string,
     anchors: Anchor[],
   ) => Promise<void>;
+  /** Persist Asset3D physics defaultParams (the source the solver/anchor-op
+   *  reads). Goes through PUT /api/assets/{id} so the trace and other clients
+   *  see the change. */
+  updateAssetDefaultParams: (
+    assetId: string,
+    defaultParams: Record<string, unknown>,
+  ) => Promise<void>;
   transformPivotMode: TransformPivotMode;
   /** Per-panel cursor pivot. View-level operations (orbit pivot, the X/Y/Z
    *  editor in each viewer's overlay) read their own panel's slot. Global
@@ -4055,6 +4062,18 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     // Backend Phase 4 schema: positionMmBodyLocal etc. The CamelModel
     // alias_generator converts to snake_case server-side.
     const updated = await updateAssetApi(assetId, { anchors });
+    set((state) => ({
+      scene: {
+        ...state.scene,
+        assets: state.scene.assets.map((a) =>
+          a.id === assetId ? (updated as Asset3D) : a,
+        ),
+      },
+    }));
+  },
+
+  async updateAssetDefaultParams(assetId, defaultParams) {
+    const updated = await updateAssetApi(assetId, { defaultParams });
     set((state) => ({
       scene: {
         ...state.scene,
