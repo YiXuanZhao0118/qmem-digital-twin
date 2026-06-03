@@ -82,3 +82,56 @@ def test_no_rf_drive_passthrough_has_no_shift():
     op = get_anchor_op("aom")
     outs = op(_ray(), _ctx([1, -1], freq_mhz=0.0))
     assert all(r.freq_offset_hz == 0.0 for r in outs)
+
+
+# ---------------------------------------------------------------------------
+# Deflection DIRECTION: orders fan along the acoustic direction
+# (rfPropagationDirectionBodyLocal), not along the anchor's axisY.
+# MT80-like frame: optical axis +z, axisY = +y (derived up), acoustic = +x.
+# ---------------------------------------------------------------------------
+
+MT80_ANCHOR = V3Anchor(
+    id="interaction_center",
+    position_body=Vec3(0, 0, 0),
+    axis_x_body=Vec3(0, 0, 1),    # optical axis +z
+    axis_y_body=Vec3(0, 1, 0),    # derived "up" — NOT acoustic
+    axis_z_body=Vec3(-1, 0, 0),   # = axisX × axisY
+    aperture_mm=1.0,
+)
+
+
+def _ctx_mt80(orders) -> AnchorOpContext:
+    hit = AnchorHit(
+        slot=None, anchor=MT80_ANCHOR, t_lab=1.0,
+        hit_point_body=Vec3(0, 0, 0),
+        offset_y_body=0.0, offset_z_body=0.0, cos_incidence=1.0,
+    )
+    asset = V3AssetAnchorSnapshot(
+        catalog_id="aa_mt80_a1_5_ir", kind="aom", anchors=[MT80_ANCHOR],
+    )
+    params = {
+        "centerFreqMhz": 80.0, "baseEfficiency": 0.85,
+        "crystalLengthMm": 1.6, "refractiveIndex": 2.26,
+        "acousticVelocityMps": 4200.0, "diffractionOrders": orders,
+        "rfPropagationDirectionBodyLocal": [1, 0, 0],   # acoustic = +x
+    }
+    return AnchorOpContext(asset=asset, anchor=MT80_ANCHOR, hit=hit, params=params, dynamic={})
+
+
+def _ray_along_z():
+    return make_beam_ray(
+        origin=Vec3(0, 0, -1), direction=Vec3(0, 0, 1),
+        wavelength_nm=780, power_mw=1.0,
+    )
+
+
+def test_orders_fan_along_acoustic_not_axisY():
+    op = get_anchor_op("aom")
+    outs = op(_ray_along_z(), _ctx_mt80([1, -1]))
+    for o in outs:
+        # Deflection is in the acoustic (x) direction, NOT axisY (y).
+        assert abs(o.direction.x) > 1e-4
+        assert abs(o.direction.y) < 1e-9
+    # +1 → +x (toward acoustic propagation), -1 → -x.
+    xs = sorted(o.direction.x for o in outs)
+    assert xs[0] < 0 < xs[1]

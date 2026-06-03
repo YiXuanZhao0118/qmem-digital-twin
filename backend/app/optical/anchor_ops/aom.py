@@ -37,17 +37,59 @@ from app.optical.anchor_tracer import (
     out_ray_from_state,
     register_anchor_op,
 )
-from app.optical.beam_ray import BeamRay
+from app.optical.beam_ray import BeamRay, Vec3
+
+
+def _acoustic_kick_components(ctx: AnchorOpContext) -> tuple[float, float]:
+    """Return (ky, kz): how a deflection of magnitude ``kick`` toward the
+    acoustic direction distributes onto the anchor's (axisY, axisZ) slopes.
+
+    The acoustic / RF propagation direction is the single source of truth for
+    which way the diffraction orders fan out — NOT the anchor's transverse
+    basis. axisY/axisZ are a derived up-reference (Gram-Schmidt), not the
+    acoustic axis, so for many assets axisY is perpendicular to the real
+    acoustic direction (e.g. MT80: axisY = +y, acoustic = +x). We therefore
+    deflect along ``rfPropagationDirectionBodyLocal`` projected transverse to
+    the optical axis (axisX) and decomposed onto (axisY, axisZ).
+
+    Falls back to (1, 0) — deflect along axisY, the legacy behaviour — when no
+    acoustic vector is given or it is parallel to the optical axis.
+    """
+    p = ctx.params
+    raw = p.get("rfPropagationDirectionBodyLocal") or p.get("acousticAxisBodyLocal")
+    if not (isinstance(raw, (list, tuple)) and len(raw) >= 3):
+        return 1.0, 0.0
+    try:
+        a = Vec3(float(raw[0]), float(raw[1]), float(raw[2]))
+    except (TypeError, ValueError):
+        return 1.0, 0.0
+    ax = ctx.anchor.axis_x_body
+    a_par = a.dot(ax)
+    a_perp = Vec3(a.x - ax.x * a_par, a.y - ax.y * a_par, a.z - ax.z * a_par)
+    length = a_perp.length()
+    if length < 1e-9:
+        return 1.0, 0.0
+    a_perp = Vec3(a_perp.x / length, a_perp.y / length, a_perp.z / length)
+    return a_perp.dot(ctx.anchor.axis_y_body), a_perp.dot(ctx.anchor.axis_z_body)
 
 
 def _bragg_angle_rad(
     wavelength_nm: float, freq_mhz: float, v_acoustic: float, n_crystal: float,
 ) -> float:
+    """External Bragg half-angle: asin(lambda * f / (2 * v)).
+
+    This is the LAB/geometric angle of the chief ray (in air), so the full
+    0->+1 deflection 2*theta_B = lambda*f/v matches an AO deflector's spec.
+    n is intentionally NOT here — it only enters the slab q-propagation (L/n)
+    and internal phase-matching, not the external ray deflection. (Matches the
+    v3 kind op.)
+    """
+    _ = n_crystal
     if freq_mhz <= 0 or v_acoustic <= 0:
         return 0.0
     lam_m = wavelength_nm * 1e-9
     freq_hz = freq_mhz * 1e6
-    arg = lam_m * freq_hz / (2.0 * v_acoustic * n_crystal)
+    arg = lam_m * freq_hz / (2.0 * v_acoustic)
     arg = max(-1.0, min(1.0, arg))
     return math.asin(arg)
 
@@ -90,10 +132,13 @@ def aom_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
     # Equal-split power across requested orders (v1 model).
     per_order_power = ray_in.power_mw * eta_base / max(1, len(orders))
     freq_hz = float(freq_mhz) * 1e6
+    # Diffraction orders fan out along the acoustic direction (projected onto
+    # the anchor's transverse basis), NOT blindly along axisY.
+    ky, kz = _acoustic_kick_components(ctx)
     for m in orders:
         kick = 2.0 * float(m) * theta_b
         y_out, ty_out, z_out, tz_out = apply_slab_state(
-            y, theta_y + kick, z, theta_z, L_over_n,
+            y, theta_y + kick * ky, z, theta_z + kick * kz, L_over_n,
         )
         out_ray = out_ray_from_state(
             ray_in, ctx.anchor, y_out, ty_out, z_out, tz_out,
