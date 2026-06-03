@@ -1022,6 +1022,22 @@ h3 {
   background: #0b1120;
 }
 
+/* Beam-scope is embedded here over a dark background but was styled for a light
+   floating panel. The wrapper sets a light base text colour (see JSX); these
+   override the few elements with explicit dark colours / dark-on-transparent
+   fills so the summary readout is readable. The .beam-scope-plot cards keep
+   their own white background + dark text. */
+.viewer-optical-link-overlay .beam-scope-summary {
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom-color: rgba(255, 255, 255, 0.12);
+}
+.viewer-optical-link-overlay .beam-scope-pol {
+  border-top-color: rgba(255, 255, 255, 0.12);
+}
+.viewer-optical-link-overlay .beam-scope-power-frac {
+  color: rgba(203, 213, 225, 0.7);
+}
+
 /* Marquee box for canvas drag-select. Set inline by handlePointerMove
    (left/top/width/height + display=block); hidden when no marquee active. */
 .viewer-marquee {

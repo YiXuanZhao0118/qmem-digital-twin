@@ -1549,6 +1549,11 @@ export function OpticalLinkViewerContent({ active = true }: { active?: boolean }
               border: "1px solid rgba(56, 189, 248, 0.18)",
               borderTop: "2px solid rgba(56, 189, 248, 0.85)",
               background: "rgba(56, 189, 248, 0.06)",
+              // BeamScopeContents was built for a light floating panel (dark
+              // text). On this dark overlay the inherited text is invisible —
+              // set a light base colour so the readout shows. White plot cards
+              // keep their own dark-on-white text.
+              color: "#e2e8f0",
             }}
           >
             <BeamScopeContents />
