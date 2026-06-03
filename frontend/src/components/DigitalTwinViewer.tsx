@@ -1296,6 +1296,28 @@ export function DigitalTwinViewer({
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const orientationRendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
+  // Shared with the optical-link overlay so it adopts THIS viewport's camera
+  // (no view jump on mode switch) and hands an orbited view back on exit.
+  const getMainView = useCallback(() => {
+    const cam = cameraRef.current;
+    const ctrl = controlsRef.current;
+    if (!cam || !ctrl) return null;
+    return {
+      position: cam.position.clone(),
+      target: ctrl.target.clone(),
+      fov: cam.fov,
+      up: cam.up.clone(),
+    };
+  }, []);
+  const setMainView = useCallback((position: THREE.Vector3, target: THREE.Vector3) => {
+    const cam = cameraRef.current;
+    const ctrl = controlsRef.current;
+    if (!cam || !ctrl) return;
+    cam.position.copy(position);
+    ctrl.target.copy(target);
+    cam.lookAt(target);
+    ctrl.update();
+  }, []);
   const environmentGroupRef = useRef<THREE.Group | null>(null);
   const componentGroupRef = useRef<THREE.Group>(new THREE.Group());
   // Per-objectId cache of loaded asset wrappers, used by the rebuild useEffect
@@ -5953,7 +5975,7 @@ export function DigitalTwinViewer({
       <div ref={mountRef} className="viewer-canvas" />
       {displayMode === "optical-link" && (
         <div className="viewer-optical-link-overlay">
-          <OpticalLinkViewerContent active />
+          <OpticalLinkViewerContent active getMainView={getMainView} setMainView={setMainView} />
         </div>
       )}
       {/* Marquee selection rectangle. Positioned absolute over the canvas

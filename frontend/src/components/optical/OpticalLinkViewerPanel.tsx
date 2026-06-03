@@ -543,13 +543,40 @@ type EmitterChoice = {
   kind: "laser" | "tapered_amplifier";
 };
 
-export function OpticalLinkViewerContent({ active = true }: { active?: boolean } = {}) {
+/** Camera state shared with the main viewer so the optical-link mode adopts
+ *  the SAME view (position / orbit target / fov / up) instead of re-fitting to
+ *  a default — switching into it no longer jerks the camera, and on the way out
+ *  the (possibly orbited) view is handed back so the other modes continue from
+ *  it. The optical-link scene draws beams in the same mmToThree(lab) world the
+ *  main viewer uses, so the camera transfers 1:1. */
+export type MainViewState = {
+  position: THREE.Vector3;
+  target: THREE.Vector3;
+  fov: number;
+  up: THREE.Vector3;
+};
+
+export function OpticalLinkViewerContent({
+  active = true,
+  getMainView,
+  setMainView,
+}: {
+  active?: boolean;
+  getMainView?: () => MainViewState | null;
+  setMainView?: (position: THREE.Vector3, target: THREE.Vector3) => void;
+} = {}) {
   // Rendered as the "optical-link" viewer display mode overlay
   // (DigitalTwinViewer). The mount DIV exists as soon as this component
   // mounts, so the Three.js setup effect creates the renderer immediately;
   // `active` (true while the mode is selected) drives the same re-fire
   // dependency the effect already had.
   const panelVisible = active;
+  // Latest get/set held in refs so the [panelVisible] setup effect reads them
+  // fresh without listing them as deps (which would re-create the renderer).
+  const getMainViewRef = useRef(getMainView);
+  getMainViewRef.current = getMainView;
+  const setMainViewRef = useRef(setMainView);
+  setMainViewRef.current = setMainView;
   const objects = useSceneStore((s) => s.scene.objects);
   const physicsElements = useSceneStore((s) => s.scene.physicsElements);
   const opticalLinks = useSceneStore((s) => s.scene.opticalLinks);
@@ -678,6 +705,23 @@ export function OpticalLinkViewerContent({ active = true }: { active?: boolean }
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
+
+    // Adopt the main viewer's camera so entering optical-link mode does NOT
+    // jump to a fitted/default view — it stays exactly where the wireframe /
+    // rendered modes left it (same world frame, so this transfers 1:1). When
+    // adopted, the auto-fit below is suppressed.
+    let cameraFromMain = false;
+    const adoptedView = getMainViewRef.current?.();
+    if (adoptedView) {
+      camera.fov = adoptedView.fov;
+      camera.up.copy(adoptedView.up);
+      camera.position.copy(adoptedView.position);
+      controls.target.copy(adoptedView.target);
+      camera.lookAt(controls.target);
+      camera.updateProjectionMatrix();
+      controls.update();
+      cameraFromMain = true;
+    }
 
     const contentGroup = new THREE.Group();
     contentGroup.name = "optical-link-content";
@@ -1233,8 +1277,9 @@ export function OpticalLinkViewerContent({ active = true }: { active?: boolean }
 
       lastBboxSpan = bboxSpan;
 
-      // Camera fit — only when the bbox actually changed.
-      if (!bbox.isEmpty()) {
+      // Camera fit — only when the bbox actually changed AND we didn't adopt
+      // the main viewer's camera (adopting means "keep the current view").
+      if (!cameraFromMain && !bbox.isEmpty()) {
         const min = bbox.min;
         const max = bbox.max;
         const fitKey = `${min.x.toFixed(2)},${min.y.toFixed(2)},${min.z.toFixed(2)}|${max.x.toFixed(2)},${max.y.toFixed(2)},${max.z.toFixed(2)}`;
@@ -1361,6 +1406,12 @@ export function OpticalLinkViewerContent({ active = true }: { active?: boolean }
 
     return () => {
       disposed = true;
+      // Hand the (possibly orbited) view back to the main viewer so switching
+      // out of optical-link continues from here — but only if we adopted it on
+      // the way in (don't clobber the main camera with our auto-fit).
+      if (cameraFromMain) {
+        setMainViewRef.current?.(camera.position.clone(), controls.target.clone());
+      }
       window.clearInterval(intervalId);
       ro.disconnect();
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
