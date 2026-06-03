@@ -41,28 +41,44 @@ from app.optical.aom_physics import bragg_detuning_sinc2, order_efficiency
 from app.optical.beam_ray import BeamRay, Vec3
 
 
+def _read_acoustic_dir(ctx: AnchorOpContext) -> Vec3 | None:
+    """Acoustic propagation direction (body frame), single source of truth for
+    the Bragg fan direction. Priority:
+
+      1. The dedicated ``acoustic_axis`` anchor's axisX (kind-level anchor,
+         authored perpendicular to the optical axis — NOT rf_in, the cable
+         connector).
+      2. Legacy ``rfPropagationDirectionBodyLocal`` / ``acousticAxisBodyLocal``
+         param.
+    """
+    for an in (ctx.asset.anchors or []):
+        if getattr(an, "id", None) == "acoustic_axis":
+            return an.axis_x_body
+    raw = ctx.params.get("rfPropagationDirectionBodyLocal") or ctx.params.get("acousticAxisBodyLocal")
+    if isinstance(raw, (list, tuple)) and len(raw) >= 3:
+        try:
+            return Vec3(float(raw[0]), float(raw[1]), float(raw[2]))
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
 def _acoustic_kick_components(ctx: AnchorOpContext) -> tuple[float, float]:
     """Return (ky, kz): how a deflection of magnitude ``kick`` toward the
     acoustic direction distributes onto the anchor's (axisY, axisZ) slopes.
 
-    The acoustic / RF propagation direction is the single source of truth for
-    which way the diffraction orders fan out — NOT the anchor's transverse
-    basis. axisY/axisZ are a derived up-reference (Gram-Schmidt), not the
-    acoustic axis, so for many assets axisY is perpendicular to the real
-    acoustic direction (e.g. MT80: axisY = +y, acoustic = +x). We therefore
-    deflect along ``rfPropagationDirectionBodyLocal`` projected transverse to
-    the optical axis (axisX) and decomposed onto (axisY, axisZ).
+    The acoustic direction comes from the ``acoustic_axis`` anchor (or the
+    legacy param) — NOT the anchor's transverse basis: axisY/axisZ are a
+    derived up-reference (Gram-Schmidt), not the acoustic axis, so for many
+    assets axisY is perpendicular to the real acoustic direction (e.g. MT80:
+    axisY = +y, acoustic = +x). We project the acoustic direction transverse to
+    the optical axis (axisX) and decompose onto (axisY, axisZ).
 
     Falls back to (1, 0) — deflect along axisY, the legacy behaviour — when no
     acoustic vector is given or it is parallel to the optical axis.
     """
-    p = ctx.params
-    raw = p.get("rfPropagationDirectionBodyLocal") or p.get("acousticAxisBodyLocal")
-    if not (isinstance(raw, (list, tuple)) and len(raw) >= 3):
-        return 1.0, 0.0
-    try:
-        a = Vec3(float(raw[0]), float(raw[1]), float(raw[2]))
-    except (TypeError, ValueError):
+    a = _read_acoustic_dir(ctx)
+    if a is None:
         return 1.0, 0.0
     ax = ctx.anchor.axis_x_body
     a_par = a.dot(ax)

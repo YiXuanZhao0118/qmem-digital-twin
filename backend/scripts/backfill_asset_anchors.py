@@ -293,6 +293,7 @@ def build_aom_anchors(a: Asset3D) -> list[dict]:
     # A/B as slab Rule 1, then attach an "rf_in" anchor if present in faces.
     slab = build_slab_anchors(a)
     # Override slab anchor id to interaction_center + use acoustic axis
+    acoustic_dir: Optional[Vec] = None
     if slab:
         # axisY = acoustic propagation direction from kindParams
         params = a.default_params or {}
@@ -304,6 +305,7 @@ def build_aom_anchors(a: Asset3D) -> list[dict]:
             ay, az = _build_transverse_axes(ax, ay_hint)
             ic["axisYBodyLocal"] = _vec_dict(ay)
             ic["axisZBodyLocal"] = _vec_dict(az)
+            acoustic_dir = ay  # rf_dir projected perpendicular to the optical axis
         slab[0]["id"] = "interaction_center"
 
     rf_in = _face_by_id(a.faces or [], "rf_in")
@@ -315,6 +317,16 @@ def build_aom_anchors(a: Asset3D) -> list[dict]:
         connector = (a.default_params or {}).get("connectorType") or "sma"
         slab.append(_anchor("rf_in", pos, axis_x, ay, az, 0.0, "circle",
                             connector_type=connector))
+
+    # acoustic_axis: dedicated anchor whose axisX IS the acoustic propagation
+    # direction (perpendicular to the optical axis), at the crystal centre. This
+    # is the single source of truth for the Bragg fan direction — distinct from
+    # rf_in (the cable connector). Seeded from rfPropagationDirectionBodyLocal.
+    if slab and acoustic_dir is not None:
+        ic_pos = _read_vec(slab[0]["positionMmBodyLocal"]) or (0.0, 0.0, 0.0)
+        a_ay, a_az = _build_transverse_axes(acoustic_dir, None)
+        slab.append(_anchor("acoustic_axis", ic_pos, acoustic_dir, a_ay, a_az,
+                            0.0, "circle"))
     return slab
 
 

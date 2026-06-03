@@ -173,3 +173,33 @@ def test_efficiency_drops_when_incidence_off_axis():
     detune = bragg_detuning_sinc2(dtheta, 780, 80, 4200, 2.26, 1.6)
     assert out.power_mw == pytest.approx(0.85 * detune, abs=1e-9)
     assert out.power_mw < 0.85  # off-axis → less efficient than on-axis
+
+
+def test_acoustic_axis_anchor_overrides_param():
+    """When a dedicated acoustic_axis anchor exists it is the source of truth
+    for the fan direction, overriding rfPropagationDirectionBodyLocal."""
+    op = get_anchor_op("aom")
+    ic = MT80_ANCHOR  # interaction_center: optical axis = +z
+    acoustic = V3Anchor(
+        id="acoustic_axis", position_body=Vec3(0, 0, 0),
+        axis_x_body=Vec3(0, 1, 0),    # acoustic = +y (NOT the param's +x)
+        axis_y_body=Vec3(0, 0, 1), axis_z_body=Vec3(1, 0, 0), aperture_mm=0.0,
+    )
+    hit = AnchorHit(
+        slot=None, anchor=ic, t_lab=1.0, hit_point_body=Vec3(0, 0, 0),
+        offset_y_body=0.0, offset_z_body=0.0, cos_incidence=1.0,
+    )
+    asset = V3AssetAnchorSnapshot(
+        catalog_id="aa_mt80_a1_5_ir", kind="aom", anchors=[ic, acoustic],
+    )
+    params = {
+        "centerFreqMhz": 80.0, "baseEfficiency": 0.85, "crystalLengthMm": 1.6,
+        "refractiveIndex": 2.26, "acousticVelocityMps": 4200.0,
+        "diffractionOrders": [1, -1],
+        "rfPropagationDirectionBodyLocal": [1, 0, 0],  # param says +x; anchor wins
+    }
+    ctx = AnchorOpContext(asset=asset, anchor=ic, hit=hit, params=params, dynamic={})
+    outs = op(_ray_along_z(), ctx)
+    for o in outs:
+        assert abs(o.direction.y) > 1e-4   # deflects along +y (acoustic_axis)
+        assert abs(o.direction.x) < 1e-9   # NOT +x (the param)

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-05-31T17:01:10.199Z",
+  "generated_at": "2026-06-03T04:25:53.875Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -270,7 +270,9 @@
           "outputTransverseMode": {
             "kind": "TEM00"
           },
-          "centerWavelengthNm": 780
+          "centerWavelengthNm": 780,
+          "polarizationExtinctionDb": 20,
+          "driverQualityFactor": 1
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
@@ -887,9 +889,12 @@
             "intercept_out",
             "rf_in"
           ],
-          "optional": [],
+          "optional": [
+            "acoustic_axis"
+          ],
           "needs_direction": [
-            "rf_in"
+            "rf_in",
+            "acoustic_axis"
           ],
           "needs_aperture": [
             "intercept_in",

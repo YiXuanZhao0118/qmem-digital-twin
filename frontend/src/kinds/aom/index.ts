@@ -46,8 +46,13 @@ export const aomPlugin = definePhysicsPlugin<AomParams>({
     defaultPhysics: ["optical", "rf", "thermal"],
     anchors: {
       required: ["intercept_in", "intercept_out", "rf_in"],
-      optional: [],
-      needsDirection: ["rf_in"],
+      // acoustic_axis: dedicated anchor whose axisX is the acoustic (RF
+      // traveling-wave) propagation direction — perpendicular to the
+      // intercept_in -> intercept_out optical axis. It is the single source of
+      // truth for which way the Bragg orders fan; NOT rf_in (the cable
+      // connector). Seeded from rfPropagationDirectionBodyLocal at backfill.
+      optional: ["acoustic_axis"],
+      needsDirection: ["rf_in", "acoustic_axis"],
       needsAperture: ["intercept_in", "intercept_out"],
     },
     alignVariant: "translate_and_bragg_rotate",
