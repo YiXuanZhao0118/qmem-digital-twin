@@ -81,6 +81,9 @@ def ctx_for_faces(
         "baseEfficiency": 0.85,
     }
     params.update(overrides)
+    # baseEfficiency=None means "override off" — drop it so the closed form runs.
+    if params.get("baseEfficiency") is None:
+        params.pop("baseEfficiency", None)
     return PhysicsOpContext(
         face_in=face_in,
         face_out=face_out,
@@ -221,6 +224,7 @@ def test_uses_post_chain_rf_drive_power_for_closed_form_efficiency():
     op = get_op("aom", "diffract_aom")
     base = ctx_for(
         1,
+        baseEfficiency=None,  # override off -> exercise the closed form
         figureOfMeritM2=1e-10,
         acousticBeamWidthMm=1.5,
         rfPowerMaxW=0.01,

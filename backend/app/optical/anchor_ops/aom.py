@@ -132,7 +132,10 @@ def aom_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
     if not isinstance(freq_mhz, (int, float)):
         freq_mhz = float(ctx.params.get("centerFreqMhz", 0.0))
     v_ac = float(ctx.params.get("acousticVelocityMps", 4200.0))
-    eta_base = float(ctx.params.get("baseEfficiency", 0.85))
+    # baseEfficiency, when present, is the user's measured override and wins over
+    # the closed form (see first_order_efficiency); None lets the closed form run.
+    eta_base_raw = ctx.params.get("baseEfficiency")
+    eta_base = float(eta_base_raw) if isinstance(eta_base_raw, (int, float)) else None
 
     def _int_param(key: str, default: int, lo: int, hi: int) -> int:
         v = ctx.params.get(key, default)

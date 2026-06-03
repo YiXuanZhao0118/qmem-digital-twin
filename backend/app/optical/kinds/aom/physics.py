@@ -287,7 +287,7 @@ def first_order_efficiency_from_context(
         m2=_positive_finite_number(ctx.params.get("figureOfMeritM2")),
         l_mm=_positive_finite_number(ctx.params.get("crystalLengthMm")),
         w_mm=_positive_finite_number(ctx.params.get("acousticBeamWidthMm")),
-        base_efficiency=_finite_number(ctx.params.get("baseEfficiency")) or 0.85,
+        base_efficiency=_finite_number(ctx.params.get("baseEfficiency")),
         requires_rf_drive=ctx.params.get("requiresRfDrive") is True,
     )
 

@@ -332,7 +332,7 @@ class AomSidebandRequest(CamelModel):
     center_freq_mhz: float = 80.0
     acoustic_velocity_mps: float = 4200.0
     refractive_index: float = 2.26
-    base_efficiency: Optional[float] = 0.85
+    base_efficiency: Optional[float] = None
     figure_of_merit_m2: Optional[float] = None
     rf_drive_power_w: Optional[float] = None
     crystal_length_mm: Optional[float] = None
@@ -367,7 +367,7 @@ async def aom_sidebands(req: AomSidebandRequest) -> dict:
         req.wavelength_nm, theta_b,
         rf_power_w=req.rf_drive_power_w,
         m2=m2, l_mm=req.crystal_length_mm, w_mm=w,
-        base_efficiency=req.base_efficiency if req.base_efficiency is not None else 0.85,
+        base_efficiency=req.base_efficiency,
         requires_rf_drive=req.requires_rf_drive,
     )
     max_order = max(1, min(10, int(req.max_diffraction_order)))

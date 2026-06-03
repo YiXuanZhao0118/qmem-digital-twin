@@ -156,18 +156,27 @@ def first_order_efficiency(
     m2: float | None,
     l_mm: float | None,
     w_mm: float | None,
-    base_efficiency: float,
+    base_efficiency: float | None,
     requires_rf_drive: bool,
 ) -> float:
     """Peak (on-Bragg) first-order diffraction efficiency.
 
-    With full params (RF power + M2 + crystal length L + acoustic width W) use
-    the closed form eta = sin^2( (pi*L)/(2*lambda*cos theta_B) * sqrt(2*M2*P/W) ).
-    Otherwise fall back to base_efficiency. If requires_rf_drive and no RF power
-    is present, the cell is off -> 0 (no diffraction).
+    Precedence MIRRORS the frontend ``diffractionEfficiency`` (physics.ts) so
+    the panel readout and the traced beams agree (single model):
+
+      1. requires_rf_drive and no RF power -> 0 (cell off, no diffraction).
+      2. An explicit ``base_efficiency`` is the user's measured/calibrated
+         override (the panel's "set η directly" checkbox) and WINS — the seeded
+         M2/L/W closed form is only a rough proxy, so a datasheet value pinned on
+         the asset takes priority.
+      3. Otherwise (no override) with full params (RF power + M2 + L + W) use the
+         closed form eta = sin^2( (pi*L)/(2*lambda*cos theta_B) * sqrt(2*M2*P/W) ).
+      4. Otherwise fall back to the default base efficiency.
     """
     if requires_rf_drive and rf_power_w is None:
         return 0.0
+    if base_efficiency is not None and math.isfinite(base_efficiency):
+        return clamp01(base_efficiency)
     if (rf_power_w is not None and m2 is not None and l_mm is not None
             and w_mm is not None):
         lambda_m = wavelength_nm * 1e-9
@@ -176,5 +185,4 @@ def first_order_efficiency(
         inner = math.sqrt((2.0 * m2 * rf_power_w) / w_m)
         arg = ((math.pi * l_m) / (2.0 * lambda_m * math.cos(theta_b_rad))) * inner
         return clamp01(math.sin(arg) ** 2)
-    return clamp01(base_efficiency if (isinstance(base_efficiency, (int, float))
-                                       and math.isfinite(base_efficiency)) else 0.85)
+    return 0.85
