@@ -382,21 +382,12 @@ export function AomAdjustControls({
   // -> absorber); to swap which side gets +1, change the order radio
   // instead.
 
-  // RF drive power slider — η depends on it via the closed-form sin².
+  // η depends on RF drive power via sin²((π/2)√(P/P_peak)) (see aom_physics).
   // RF drive power is committed via the NumberCell in the RF Settings
   // block (top of the AOM panel). The old text-input row with rfDraft/
   // commitRfPower local state was removed when RF settings were split
   // out — keeping the rfMax cap so the NumberCell onCommit can clamp.
   const rfMax = params.rfPowerMaxW ?? 2.0;
-
-  // Phase B: RF drive power is no longer stored on the AOM. "Max η"
-  // now simply pegs the baseEfficiency override at 0.99 — the user
-  // selects the actual drive level in the RF link panel (AD9959 CH Vpp).
-  // The closed-form rfPowerForPeakEfficiencyW remains available for
-  // panel readouts but the button no longer writes to a removed field.
-  const maximiseEfficiency = () => {
-    void persist({ baseEfficiency: 0.99 });
-  };
 
   // Align the AOM body to the upstream beam in two stages, sharing a
   // single Bragg sign convention with rayTrace.ts via the helpers in
@@ -984,8 +975,6 @@ export function AomAdjustControls({
   const grid2: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 };
   const grid3: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 };
 
-  const useBaseEfficiencyOverride = typeof params.baseEfficiency === "number";
-
   return (
     <div className="mirror-adjust">
       {/* RF Settings — drive carrier + power. Hybrid kinds (AOM/EOM) expose
@@ -1121,8 +1110,8 @@ export function AomAdjustControls({
             <div style={{ color: "#d49a3a", fontSize: 10 }}>
               ⚠ This AOM has no upstream rf_cable. Connect its rf_in anchor
               to an rf_source channel in the RF link panel to drive it.
-              Until then the closed-form efficiency falls back to
-              baseEfficiency and the sideband Δf = 80 MHz default.
+              Until then it shows the rated operating point (peak η at the
+              centre frequency).
             </div>
             <div style={{ display: "flex", gap: 16 }}>
               <span>
@@ -1142,22 +1131,12 @@ export function AomAdjustControls({
             </div>
           </div>
         )}
-        <div style={{ marginTop: 6 }}>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={maximiseEfficiency}
-            title="Peg baseEfficiency at 0.99 (closed-form η no longer writes back to AOMParams after Phase B — RF drive is owned by the upstream AD9959 channel in the RF link panel)."
-          >
-            Max η (override)
-          </button>
-        </div>
         <div style={{ opacity: 0.7, marginTop: 4, fontSize: 10 }}>
           Drives the acoustic wave that diffracts the beam (RF chain terminates here).
           {effectiveRfDrivePowerW != null ? (
-            <> Live P_d = <strong>{effectiveRfDrivePowerW.toFixed(4)} W</strong>, capped at {rfMax.toFixed(2)} W.</>
+            <> Live P_d = <strong>{effectiveRfDrivePowerW.toFixed(4)} W</strong>, capped at {rfMax.toFixed(2)} W. η peaks at "P for peak η".</>
           ) : (
-            <> No upstream — P_d undefined (closed-form η disabled).</>
+            <> No RF source — showing the rated operating point (peak η).</>
           )}
         </div>
       </div>
@@ -1189,70 +1168,76 @@ export function AomAdjustControls({
         </div>
       </div>
 
-      {/* Crystal geometry — feed the closed-form sin² formula. */}
+      {/* RF efficiency model — datasheet-calibrated η(P, f). Replaces the old
+          closed-form M₂/L/W inputs. */}
       <div style={sectionStyle}>
-        <div style={titleStyle}>Crystal geometry</div>
+        <div style={titleStyle}>RF efficiency model</div>
         <div style={grid3}>
           <NumberCell
-            label="Crystal length L"
-            suffix="mm"
-            value={params.crystalLengthMm ?? 25}
-            step={1}
-            onCommit={(v) => v > 0 && void persist({ crystalLengthMm: v })}
+            label="Peak η"
+            value={params.baseEfficiency ?? 0.85}
+            step={0.01}
+            onCommit={(v) => v >= 0 && v <= 1 && void persist({ baseEfficiency: v })}
           />
           <NumberCell
-            label="Acoustic beam W"
-            suffix="mm"
-            value={params.acousticBeamWidthMm ?? 1.5}
+            label="P for peak η"
+            suffix="W"
+            value={rfPowerForPeakW}
             step={0.1}
-            onCommit={(v) => v > 0 && void persist({ acousticBeamWidthMm: v })}
+            onCommit={(v) => v > 0 && void persist({ rfPowerForPeakW: v })}
           />
           <NumberCell
-            label="Figure of merit M₂"
-            suffix="m²/W"
-            value={params.figureOfMeritM2 ?? 3.4e-14}
-            step={1e-15}
-            onCommit={(v) => v > 0 && void persist({ figureOfMeritM2: v })}
+            label="Peak λ ref"
+            suffix="nm"
+            value={peakRefWavelengthNm}
+            step={10}
+            onCommit={(v) => v > 0 && void persist({ peakRefWavelengthNm: v })}
+          />
+          <NumberCell
+            label="Centre f"
+            suffix="MHz"
+            value={designCenterFreqMhz}
+            step={1}
+            onCommit={(v) => v > 0 && void persist({ centerFreqMhz: v })}
+          />
+          <NumberCell
+            label="Freq band ±"
+            suffix="MHz"
+            value={freqShiftBandwidthMhz}
+            step={1}
+            onCommit={(v) => v > 0 && void persist({ freqShiftBandwidthMhz: v })}
+          />
+          <NumberCell
+            label="Crystal L (detune)"
+            suffix="mm"
+            value={params.crystalLengthMm ?? 1.6}
+            step={0.1}
+            onCommit={(v) => v > 0 && void persist({ crystalLengthMm: v })}
           />
         </div>
         <div style={{ opacity: 0.6, marginTop: 4, fontSize: 10 }}>
-          Used by the closed-form η = sin²((π·L / 2λ·cosθ_B) · √(2·M₂·P_d/W)).{" "}
-          For TeO₂-L (longitudinal mode) at 850 nm, M₂ ≈ 3.4×10⁻¹⁴ m²/W.
+          η = peak·sin²((π/2)·√(P/P_peak(λ)))·G(f). P_peak ∝ λ² (peak at "P for
+          peak η" @ "Peak λ ref"). G(f) = RF carrier bandwidth (≈0.75 at ±band).
+          RF off (P=0) → η=0; no RF link → rated (peak). L only feeds the
+          off-Bragg detune geometry.
         </div>
       </div>
 
-      {/* Efficiency — closed-form vs override; angular acceptance. */}
+      {/* Efficiency readout + RF-gate + angular acceptance. */}
       <div style={sectionStyle}>
         <div style={titleStyle}>Efficiency</div>
         <label className="component-editor-coord" style={{ marginBottom: 6, display: "flex", flexDirection: "row", alignItems: "center", gap: 6 }}>
           <input
             type="checkbox"
-            checked={useBaseEfficiencyOverride}
-            onChange={(e) => {
-              if (e.target.checked) {
-                // Set baseEfficiency to current closed-form result so the
-                // checkbox flip doesn't surprise the user with a jump.
-                void persist({ baseEfficiency: displayEfficiency });
-              } else {
-                // Remove baseEfficiency so closed-form takes over.
-                const { baseEfficiency: _drop, ...rest } = params;
-                void writeParams(rest as Record<string, unknown>);
-              }
-            }}
+            checked={requiresRfDrive}
+            onChange={(e) => void persist({ requiresRfDrive: e.target.checked })}
           />
           <span style={{ fontSize: 11 }}>
-            Override closed-form (set η directly — useful when datasheet η doesn't match the M₂/L/W combo)
+            Require RF drive (no RF source → η = 0, beam passes straight through).
+            Off ⇒ no RF source shows the rated operating point.
           </span>
         </label>
         <div style={grid2}>
-          {useBaseEfficiencyOverride && (
-            <NumberCell
-              label="η (override)"
-              value={params.baseEfficiency ?? 0.85}
-              step={0.01}
-              onCommit={(v) => v >= 0 && v <= 1 && void persist({ baseEfficiency: v })}
-            />
-          )}
           <NumberCell
             label="Bragg angular acceptance"
             suffix="mrad"
@@ -1265,15 +1250,12 @@ export function AomAdjustControls({
           Live η at λ ≈ {wavelengthForAngleNm.toFixed(0)} nm
           {effectiveRfDrivePowerW != null
             ? <>, P_d = {effectiveRfDrivePowerW.toFixed(4)} W</>
-            : <>, P_d undefined</>}:{" "}
+            : <> (no RF source → rated)</>}:{" "}
           <strong>{(displayEfficiency * 100).toFixed(1)}%</strong>.
-          {useBaseEfficiencyOverride
-            ? " (using override)"
-            : " (closed-form sin²)"}
         </div>
       </div>
 
-      {/* (RF drive power, RF max and Max η button moved into the RF
+      {/* (RF drive power + RF max live in the RF
           Settings group at the top of this panel — 2026-05-13.) */}
       <p className="mirror-adjust-hint">
         Bragg angle θ_B at λ ≈ {wavelengthForAngleNm.toFixed(0)} nm:{" "}
