@@ -222,26 +222,18 @@ describe("AOM / diffract_aom op", () => {
     expect(zero.powerMw).toBeCloseTo(1, 12);
   });
 
-  it("uses post-chain RF drive power for closed-form efficiency", () => {
+  it("efficiency scales with RF drive power; 0 power → no diffraction", () => {
     const op = getOp("aom", "diffract_aom");
-    const ctx: PhysicsOpContext = {
-      ...ctxFor(1, {
-        figureOfMeritM2: 1e-10,
-        acousticBeamWidthMm: 1.5,
-        rfPowerMaxW: 0.01,
-      }),
-      dynamic: { rfDrivePowerW: 0.1 },
-    };
-    const [out] = op(forwardRay(), ctx);
-    const theta = braggAngleRad(780, 80, 4200, 2.26);
-    const lambdaM = 780e-9;
-    const Lm = L * 1e-3;
-    const Wm = 1.5e-3;
-    const expected = Math.sin(
-      (Math.PI / (lambdaM * Math.cos(theta)))
-      * Math.sqrt((1e-10 * Lm * 0.01) / (2 * Wm)),
-    ) ** 2;
-    expect(out.powerMw).toBeCloseTo(expected, 12);
+    // No RF source → rated operating point → peak (baseEfficiency) on +1.
+    const [rated] = op(forwardRay(), ctxFor(1));
+    expect(rated.powerMw).toBeCloseTo(0.85, 9);
+    // A small RF drive power sits below the rated peak.
+    const [low] = op(forwardRay(), { ...ctxFor(1), dynamic: { rfDrivePowerW: 0.05 } });
+    expect(low.powerMw).toBeGreaterThan(0);
+    expect(low.powerMw).toBeLessThan(0.85);
+    // RF explicitly OFF (power 0) → no diffraction.
+    const [off] = op(forwardRay(), { ...ctxFor(1), dynamic: { rfDrivePowerW: 0 } });
+    expect(off.powerMw).toBeCloseTo(0, 12);
   });
 
   it("q-parameter propagates by L/n", () => {

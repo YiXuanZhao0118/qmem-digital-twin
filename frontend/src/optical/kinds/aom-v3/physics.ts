@@ -262,25 +262,30 @@ export function orderEfficiency(order: number, baseEfficiency: number): number {
 export function firstOrderEfficiencyFromContext(
   rayIn: BeamRay,
   ctx: PhysicsOpContext,
-  thetaBRad: number,
+  _thetaBRad: number,
 ): number {
+  // Datasheet-calibrated model (mirrors backend aom_physics.first_order_efficiency):
+  //   eta = peak * sin²((π/2)√(P/P_peak(λ))) * G(f)
   const rfPowerW = readRfDrivePowerW(ctx);
   const requiresRfDrive = ctx.params.requiresRfDrive === true;
   if (requiresRfDrive && rfPowerW === undefined) return 0;
 
-  const m2 = positiveFiniteNumber(ctx.params.figureOfMeritM2);
-  const Lmm = positiveFiniteNumber(ctx.params.crystalLengthMm);
-  const Wmm = positiveFiniteNumber(ctx.params.acousticBeamWidthMm);
-  if (rfPowerW !== undefined && m2 !== undefined && Lmm !== undefined && Wmm !== undefined) {
-    const lambdaM = rayIn.wavelengthNm * 1e-9;
-    const Lm = Lmm * 1e-3;
-    const Wm = Wmm * 1e-3;
-    // L INSIDE the root (linear); outside-as-prefactor made it L² → ~600× small.
-    const arg = (Math.PI / (lambdaM * Math.cos(thetaBRad))) * Math.sqrt((m2 * Lm * rfPowerW) / (2 * Wm));
-    return clamp01(Math.sin(arg) ** 2);
-  }
+  const peak = finiteNumber(ctx.params.baseEfficiency) ?? 0.85;
+  const pPeakRef = positiveFiniteNumber(ctx.params.rfPowerForPeakW) ?? 2.2;
+  const peakRefNm = positiveFiniteNumber(ctx.params.peakRefWavelengthNm) ?? 1100;
+  const pPeak = peakRefNm > 0 ? pPeakRef * (rayIn.wavelengthNm / peakRefNm) ** 2 : pPeakRef;
+  if (pPeak <= 0) return 0;
+  const pEff = rfPowerW !== undefined ? rfPowerW : pPeak;
+  const nu = (Math.PI / 2) * Math.sqrt(Math.max(0, pEff) / pPeak);
+  const relAmp = Math.sin(nu) ** 2;
 
-  return clamp01(finiteNumber(ctx.params.baseEfficiency) ?? 0.85);
+  const driveFreq = readRfFrequencyMhz(ctx);
+  const designCentre = positiveFiniteNumber(ctx.params.centerFreqMhz) ?? 80;
+  const halfBw = positiveFiniteNumber(ctx.params.freqShiftBandwidthMhz) ?? 15;
+  const x = halfBw > 0 ? (driveFreq - designCentre) / halfBw : 0;
+  const g = halfBw > 0 ? Math.exp(-(-Math.log(0.75)) * x * x) : 1;
+
+  return clamp01(peak * relAmp * g);
 }
 
 /** Unsigned angle between a ray direction and the optical axis. */

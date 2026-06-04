@@ -237,20 +237,15 @@ describe("phaseModulationDepth", () => {
     expect(phaseModulationDepth({}, 780, 0, 1.5)).toBeCloseTo(2.0, 12);
   });
 
-  it("uses closed-form arg when M2/L/W/Pd are all set (no clamp)", () => {
+  it("is 2·√(eta) (drive-tied), independent of M2/L/W", () => {
     const params: AomPhysicsParams = {
       figureOfMeritM2: 1.5e-15,
       crystalLengthMm: 9,
       acousticBeamWidthMm: 1.5,
       rfDrivePowerW: 1.0,
     };
-    const v = phaseModulationDepth(params, 780, 0, 0);
-    // arg should equal what diffractionEfficiency uses internally:
-    //   (π / (λ·cosθ)) · √(M2·L·Pd/(2·W))   — L inside the root (linear)
-    const lambdaM = 780e-9;
-    const expected =
-      (Math.PI / (lambdaM * 1)) * Math.sqrt((1.5e-15 * 9e-3 * 1) / (2 * 1.5e-3));
-    expect(v).toBeCloseTo(expected, 8);
+    expect(phaseModulationDepth(params, 780, 0, 0.85)).toBeCloseTo(2 * Math.sqrt(0.85), 12);
+    expect(phaseModulationDepth(params, 780, 0, 0)).toBe(0);
   });
 });
 
@@ -590,27 +585,22 @@ describe("Bragg round-trip: align target → diffractedDirection → Bragg-mirro
 
 describe("rfPowerForPeakEfficiencyW", () => {
   const params: AomPhysicsParams = {
-    figureOfMeritM2: 1.5e-15,
-    crystalLengthMm: 9,
-    acousticBeamWidthMm: 1.5,
+    baseEfficiency: 0.85,
+    rfPowerForPeakW: 2.2,
+    peakRefWavelengthNm: 1100,
   };
 
-  it("returns null when any of M₂/L/W is missing", () => {
-    expect(rfPowerForPeakEfficiencyW({}, 780, 0)).toBeNull();
-    expect(
-      rfPowerForPeakEfficiencyW({ figureOfMeritM2: 1.5e-15 }, 780, 0),
-    ).toBeNull();
+  it("P_peak scales with λ² (P ∝ λ²)", () => {
+    // At the reference wavelength, P_peak == rfPowerForPeakW.
+    expect(rfPowerForPeakEfficiencyW(params, 1100)).toBeCloseTo(2.2, 9);
+    // At 780 nm: 2.2 · (780/1100)².
+    expect(rfPowerForPeakEfficiencyW(params, 780)).toBeCloseTo(2.2 * (780 / 1100) ** 2, 9);
   });
 
-  it("inverse property: feeding result back to η gives ≈ 1", () => {
-    const theta = braggAngleRad(params, 780);
-    const peakPd = rfPowerForPeakEfficiencyW(params, 780, theta);
+  it("inverse property: feeding P_peak back to η gives the peak (≈ baseEfficiency)", () => {
+    const peakPd = rfPowerForPeakEfficiencyW(params, 780);
     expect(peakPd).not.toBeNull();
-    const eta = diffractionEfficiency(
-      { ...params, rfDrivePowerW: peakPd as number },
-      780,
-      theta,
-    );
-    expect(eta).toBeCloseTo(1.0, 10);
+    const eta = diffractionEfficiency({ ...params, rfDrivePowerW: peakPd as number }, 780);
+    expect(eta).toBeCloseTo(0.85, 10);
   });
 });

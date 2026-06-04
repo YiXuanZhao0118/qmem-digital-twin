@@ -220,31 +220,34 @@ def test_requires_rf_drive_gates_first_order_off():
     assert zero.power_mw == pytest.approx(1.0, abs=1e-12)
 
 
-def test_uses_post_chain_rf_drive_power_for_closed_form_efficiency():
+def _ctx_with_dynamic(order, dynamic, **overrides):
+    base = ctx_for(order, **overrides)
+    return PhysicsOpContext(
+        face_in=base.face_in, face_out=base.face_out,
+        params=base.params, dynamic=dynamic,
+    )
+
+
+def test_efficiency_scales_with_rf_drive_power():
     op = get_op("aom", "diffract_aom")
-    base = ctx_for(
-        1,
-        baseEfficiency=None,  # override off -> exercise the closed form
-        figureOfMeritM2=1e-10,
-        acousticBeamWidthMm=1.5,
-        rfPowerMaxW=0.01,
-    )
-    ctx = PhysicsOpContext(
-        face_in=base.face_in,
-        face_out=base.face_out,
-        params=base.params,
-        dynamic={"rfDrivePowerW": 0.1},
-    )
-    [out] = op(make_forward_ray(), ctx)
-    theta = bragg_angle_rad(780, 80, 4200, 2.26)
-    lambda_m = 780e-9
-    l_m = L * 1e-3
-    w_m = 1.5e-3
-    expected = math.sin(
-        (math.pi / (lambda_m * math.cos(theta)))
-        * math.sqrt((1e-10 * l_m * 0.01) / (2 * w_m))
-    ) ** 2
-    assert out.power_mw == pytest.approx(expected, abs=1e-12)
+    # No RF source -> rated operating point -> peak (baseEfficiency) on +1.
+    [rated] = op(make_forward_ray(), ctx_for(1))
+    assert rated.power_mw == pytest.approx(0.85, abs=1e-9)
+    # A small RF drive power sits well below the rated peak.
+    [low] = op(make_forward_ray(), _ctx_with_dynamic(1, {"rfDrivePowerW": 0.05}))
+    assert 0.0 < low.power_mw < 0.85
+    # RF explicitly OFF (power 0) -> no diffraction.
+    [off] = op(make_forward_ray(), _ctx_with_dynamic(1, {"rfDrivePowerW": 0.0}))
+    assert off.power_mw == pytest.approx(0.0, abs=1e-12)
+
+
+def test_efficiency_drops_off_centre_frequency():
+    op = get_op("aom", "diffract_aom")
+    [centre] = op(make_forward_ray(), ctx_for(1))  # 80 MHz (design centre)
+    # Drive +15 MHz off centre -> RF bandwidth factor G ~= 0.75 -> lower eta.
+    [off] = op(make_forward_ray(), _ctx_with_dynamic(1, {"aomFreqMhz": 95}))
+    assert off.power_mw < centre.power_mw
+    assert off.power_mw == pytest.approx(0.85 * 0.75, abs=0.02)
 
 
 def test_q_propagates_by_L_over_n():

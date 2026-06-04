@@ -172,11 +172,20 @@ export function AomAdjustControls({
     : (upstreamDrive
         ? Math.min(upstreamDrive.drivePowerW, params.rfPowerMaxW ?? Number.POSITIVE_INFINITY)
         : undefined);
+  // The asset's centerFreqMhz is the DESIGN centre for the RF bandwidth G(f);
+  // effectiveCenterFreqMhz (overlaid below) is the actual DRIVE frequency.
+  const designCenterFreqMhz =
+    typeof (params as Record<string, unknown>).centerFreqMhz === "number"
+      ? ((params as Record<string, unknown>).centerFreqMhz as number)
+      : 80;
   const physicsParams = {
     ...params,
     centerFreqMhz: effectiveCenterFreqMhz,
+    designCenterFreqMhz,
     rfDrivePowerW: effectiveRfDrivePowerW,
-  } as typeof params & { centerFreqMhz: number; rfDrivePowerW?: number };
+  } as typeof params & {
+    centerFreqMhz: number; designCenterFreqMhz: number; rfDrivePowerW?: number;
+  };
   const wavelengthForAngleNm = (() => {
     const range = compProps.wavelengthRangeNm;
     if (Array.isArray(range) && range.length === 2) {
@@ -216,21 +225,26 @@ export function AomAdjustControls({
   // rendered beams cannot disagree. We fetch it for the panel's effective
   // params (RF resolved upstream). The client-side computation below is kept
   // ONLY as a transient fallback while the request is in flight or unreachable.
-  const requiresRfDrive = (params as Record<string, unknown>).requiresRfDrive === true;
+  const _p = params as Record<string, unknown>;
+  const requiresRfDrive = _p.requiresRfDrive === true;
+  const peakEfficiency = typeof params.baseEfficiency === "number" ? params.baseEfficiency : 0.85;
+  const rfPowerForPeakW = typeof _p.rfPowerForPeakW === "number" ? (_p.rfPowerForPeakW as number) : 2.2;
+  const peakRefWavelengthNm = typeof _p.peakRefWavelengthNm === "number" ? (_p.peakRefWavelengthNm as number) : 1100;
+  const freqShiftBandwidthMhz = typeof _p.freqShiftBandwidthMhz === "number" ? (_p.freqShiftBandwidthMhz as number) : 15;
   const [serverSidebands, setServerSidebands] = useState<AomSidebandResult | null>(null);
   useEffect(() => {
     let cancelled = false;
     const handle = setTimeout(() => {
       void runAomSidebandsApi({
         wavelengthNm: wavelengthForAngleNm,
-        centerFreqMhz: effectiveCenterFreqMhz,
+        freqMhz: effectiveCenterFreqMhz,          // actual RF drive frequency
         acousticVelocityMps: params.acousticVelocityMps ?? 4200,
-        refractiveIndex: params.refractiveIndex ?? 2.26,
-        baseEfficiency: typeof params.baseEfficiency === "number" ? params.baseEfficiency : undefined,
-        figureOfMeritM2: params.figureOfMeritM2,
-        rfDrivePowerW: effectiveRfDrivePowerW,
-        crystalLengthMm: params.crystalLengthMm,
-        acousticBeamWidthMm: params.acousticBeamWidthMm,
+        peakEfficiency,
+        rfPowerW: effectiveRfDrivePowerW,         // undefined ⇒ rated
+        rfPowerForPeakW,
+        peakRefWavelengthNm,
+        centerFreqMhz: designCenterFreqMhz,       // design centre for G(f)
+        freqShiftBandwidthMhz,
         requiresRfDrive,
         selectedOrder: currentOrder,
         maxDiffractionOrder,
@@ -242,8 +256,8 @@ export function AomAdjustControls({
     return () => { cancelled = true; clearTimeout(handle); };
   }, [
     wavelengthForAngleNm, effectiveCenterFreqMhz, effectiveRfDrivePowerW,
-    params.acousticVelocityMps, params.refractiveIndex, params.baseEfficiency,
-    params.figureOfMeritM2, params.crystalLengthMm, params.acousticBeamWidthMm,
+    params.acousticVelocityMps, peakEfficiency, rfPowerForPeakW,
+    peakRefWavelengthNm, designCenterFreqMhz, freqShiftBandwidthMhz,
     requiresRfDrive, currentOrder, maxDiffractionOrder,
     sidebandVisibilityThreshold,
   ]);

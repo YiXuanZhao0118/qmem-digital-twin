@@ -49,33 +49,14 @@ def bessel_j(n: int, x: float) -> float:
     return total
 
 
-def phase_modulation_depth(
-    *,
-    figure_of_merit_m2: float | None,
-    rf_drive_power_w: float | None,
-    crystal_length_mm: float | None,
-    acoustic_beam_width_mm: float | None,
-    wavelength_nm: float,
-    theta_b_rad: float,
-    fallback_efficiency: float,
-) -> float:
-    """Raman-Nath phase-modulation depth v. Full closed form when M2/P/L/W are
-    all present, else the proxy 2*sqrt(eta). Mirrors physics.ts."""
-    if not (
-        isinstance(figure_of_merit_m2, (int, float))
-        and isinstance(rf_drive_power_w, (int, float))
-        and isinstance(crystal_length_mm, (int, float))
-        and isinstance(acoustic_beam_width_mm, (int, float))
-    ):
-        return 2.0 * math.sqrt(_clamp01(fallback_efficiency))
-    lambda_m = wavelength_nm * 1e-9
-    l_m = crystal_length_mm * 1e-3
-    w_m = acoustic_beam_width_mm * 1e-3
-    # v = (pi/(lambda*cos)) * sqrt(M2*L*P/(2*W)) — same arg as the efficiency;
-    # L is INSIDE the root (linear), not an outside L prefactor (would be L^2).
-    return (math.pi / (lambda_m * math.cos(theta_b_rad))) * math.sqrt(
-        (figure_of_merit_m2 * l_m * rf_drive_power_w) / (2.0 * w_m)
-    )
+def phase_modulation_depth(*, first_order_efficiency: float) -> float:
+    """Raman-Nath phase-modulation depth v that drives the multi-order spread.
+
+    Tied to the drive: v = 2*sqrt(eta_first), where eta_first is the on-Bragg
+    first-order efficiency (already folding RF power + the carrier-frequency
+    factor). The spread grows with the RF drive and collapses to v = 0 (only the
+    0 order) as eta_first -> 0 — e.g. when the RF is turned off."""
+    return 2.0 * math.sqrt(_clamp01(first_order_efficiency))
 
 
 def sideband_intensities_on_bragg(

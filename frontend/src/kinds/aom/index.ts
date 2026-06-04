@@ -13,10 +13,15 @@
 import { definePhysicsPlugin } from "../_plugin";
 
 export interface AomParams extends Record<string, unknown> {
-  baseEfficiency: number;
+  baseEfficiency: number;            // datasheet PEAK efficiency (η at rated drive)
+  centerFreqMhz: number;             // design centre frequency (RF bandwidth peak)
+  rfPowerForPeakW: number;           // P_peak: RF power for peak η
+  peakRefWavelengthNm: number;       // λ_ref for P_peak ∝ λ²
+  freqShiftBandwidthMhz: number;     // RF carrier half-bandwidth (±MHz)
+  requiresRfDrive: boolean;          // no RF source → η=0 (else rated)
   deflectionPerMhzUrad: number;
   acousticVelocityMps: number;
-  modulationBandwidthMhz: number;
+  modulationBandwidthMhz: number;    // analog AMPLITUDE-mod bandwidth (≠ freq-shift BW)
   refractiveIndex: number;
   figureOfMeritM2: number;
   crystalLengthMm: number;
@@ -62,15 +67,20 @@ export const aomPlugin = definePhysicsPlugin<AomParams>({
       "Define intercept_in / intercept_out (both with apertureMm). Align picks whichever port the upstream beam reaches first as the entry, translates that anchor onto the beam line, then rotates the body 1-D around lab tilt axis (pivot = midpoint of the two anchors = Bragg interaction point). Forward traversal uses the selected +1/-1 order; reverse traversal swaps +1 and -1 for the same mechanical Bragg tilt. " +
       "rf_in marks the SMA / coax RF drive connector on the AOM driver housing (position = jack centre on the body, direction = outward face normal = the way a mating cable plug slides on). Used purely for cable-routing visualisation in 3D — not consumed by the Bragg solver.",
     defaultParams: {
-      baseEfficiency: 0.85,
+      baseEfficiency: 0.85,            // datasheet PEAK η (>85%, nom 90%)
+      centerFreqMhz: 80.0,             // design centre (RF bandwidth peak)
+      rfPowerForPeakW: 2.2,            // P_peak (MT80-A1.5-IR max RF)
+      peakRefWavelengthNm: 1100.0,     // λ_ref for P_peak ∝ λ²
+      freqShiftBandwidthMhz: 15.0,     // RF carrier half-bandwidth (±15 MHz)
+      requiresRfDrive: false,          // no RF source → show rated diffraction
       deflectionPerMhzUrad: 200.0,
       acousticVelocityMps: 4200.0,
-      modulationBandwidthMhz: 20.0,
+      modulationBandwidthMhz: 10.0,    // analog AMPLITUDE-mod BW (−3 dB), ≠ freq-shift BW
       refractiveIndex: 2.26,
-      figureOfMeritM2: 34e-15,
-      crystalLengthMm: 25.0,
+      figureOfMeritM2: 34.5e-15,
+      crystalLengthMm: 1.6,
       acousticBeamWidthMm: 1.5,
-      rfPowerMaxW: 2.0,
+      rfPowerMaxW: 2.2,
       acousticAxisBodyLocal: [-1, 0, 0],
       rfPropagationDirectionBodyLocal: [-1, 0, 0],
       diffractionOrder: 1,
@@ -98,6 +108,11 @@ export const aomPlugin = definePhysicsPlugin<AomParams>({
     //   separately.
     intrinsicParamKeys: [
       "baseEfficiency",
+      "centerFreqMhz",
+      "rfPowerForPeakW",
+      "peakRefWavelengthNm",
+      "freqShiftBandwidthMhz",
+      "requiresRfDrive",
       "deflectionPerMhzUrad",
       "acousticVelocityMps",
       "modulationBandwidthMhz",

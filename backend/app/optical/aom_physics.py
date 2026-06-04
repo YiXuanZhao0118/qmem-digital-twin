@@ -148,46 +148,78 @@ def read_rf_drive_power_w(params: dict, dynamic: dict) -> float | None:
     return min(watts, max_w) if max_w is not None else watts
 
 
+DEFAULT_PEAK_EFFICIENCY = 0.85
+DEFAULT_RF_POWER_FOR_PEAK_W = 2.2
+DEFAULT_PEAK_REF_WAVELENGTH_NM = 1100.0
+DEFAULT_CENTER_FREQ_MHZ = 80.0
+DEFAULT_FREQ_SHIFT_BANDWIDTH_MHZ = 15.0
+# exp(-_BW_K) = 0.75 at the band edge (AA MT80 variable-freq: >80% @F0,
+# >60% over the +/-band -> edge/centre ~= 0.75).
+_BW_K = -math.log(0.75)
+
+
+def rf_frequency_factor(
+    freq_mhz: float, center_mhz: float, half_bandwidth_mhz: float,
+) -> float:
+    """RF carrier-frequency efficiency factor G(f) in [0, 1]: a Gaussian peaked
+    at ``center_mhz``, dropping to ~0.75 at ``center +/- half_bandwidth_mhz``
+    (matches the MT80 frequency-shift bandwidth: >80% @F0, >60% over +/-15 MHz).
+    A non-positive bandwidth disables the rolloff (returns 1)."""
+    if half_bandwidth_mhz <= 0:
+        return 1.0
+    x = (freq_mhz - center_mhz) / half_bandwidth_mhz
+    return math.exp(-_BW_K * x * x)
+
+
+def rf_power_for_peak_w_at(
+    rf_power_for_peak_w: float, peak_ref_wavelength_nm: float, wavelength_nm: float,
+) -> float:
+    """RF power needed for peak efficiency at ``wavelength_nm``. AA: the power
+    for a given efficiency scales as lambda^2, so P_peak(lambda) =
+    P_peak_ref * (lambda / lambda_ref)^2."""
+    if peak_ref_wavelength_nm <= 0 or rf_power_for_peak_w <= 0:
+        return rf_power_for_peak_w
+    return rf_power_for_peak_w * (wavelength_nm / peak_ref_wavelength_nm) ** 2
+
+
 def first_order_efficiency(
-    wavelength_nm: float,
-    theta_b_rad: float,
     *,
+    wavelength_nm: float,
+    freq_mhz: float,
     rf_power_w: float | None,
-    m2: float | None,
-    l_mm: float | None,
-    w_mm: float | None,
-    base_efficiency: float | None,
+    peak_efficiency: float,
+    rf_power_for_peak_w: float,
+    peak_ref_wavelength_nm: float,
+    center_freq_mhz: float,
+    freq_shift_bandwidth_mhz: float,
     requires_rf_drive: bool,
 ) -> float:
-    """Peak (on-Bragg) first-order diffraction efficiency.
+    """On-Bragg first-order diffraction efficiency (before the off-Bragg angle
+    detune the caller applies).
 
-    Precedence MIRRORS the frontend ``diffractionEfficiency`` (physics.ts) so
-    the panel readout and the traced beams agree (single model):
-
-      1. requires_rf_drive and no RF power -> 0 (cell off, no diffraction).
-      2. An explicit ``base_efficiency`` is the user's measured/calibrated
-         override (the panel's "set η directly" checkbox) and WINS — the seeded
-         M2/L/W closed form is only a rough proxy, so a datasheet value pinned on
-         the asset takes priority.
-      3. Otherwise (no override) with full params (RF power + M2 + L + W) use the
-         closed form eta = sin^2( (pi*L)/(2*lambda*cos theta_B) * sqrt(2*M2*P/W) ).
-      4. Otherwise fall back to the default base efficiency.
+    Datasheet-calibrated model (AA MT80-A1.5-IR):
+        eta = peak_efficiency * sin^2( (pi/2) * sqrt(P / P_peak(lambda)) ) * G(f)
+      - P_peak(lambda) scales as lambda^2 (rf_power_for_peak_w_at).
+      - At P = P_peak the sin^2 reaches 1 -> eta = peak_efficiency (the >85%
+        nom-90% datasheet peak); P = 0 -> eta = 0; over-driving past P_peak rolls
+        back over (sin^2 past pi/2), as the relative-efficiency-vs-RF-power curve
+        shows.
+      - G(f) is the RF carrier-frequency bandwidth factor (rf_frequency_factor).
+      - requires_rf_drive and NO RF source -> 0 (cell off). With no RF source but
+        requires_rf_drive False, we assume the rated operating point (P = P_peak)
+        so the cell still shows its rated diffraction. An explicit P = 0 (RF
+        turned off) gives eta = 0.
     """
     if requires_rf_drive and rf_power_w is None:
         return 0.0
-    if base_efficiency is not None and math.isfinite(base_efficiency):
-        return clamp01(base_efficiency)
-    if (rf_power_w is not None and m2 is not None and l_mm is not None
-            and w_mm is not None):
-        lambda_m = wavelength_nm * 1e-9
-        l_m = l_mm * 1e-3
-        w_m = w_mm * 1e-3
-        # eta = sin^2( (pi/(lambda*cos)) * sqrt(M2*L*P/(2*W)) )  (Saleh-Teich).
-        # L is INSIDE the root (linear). The old form pulled L outside as a
-        # (pi*L/2lambda) prefactor, which is sqrt(L^2) under the root -> an extra
-        # sqrt(L_metres) ~ 0.04 factor -> eta ~600x too small.
-        arg = (math.pi / (lambda_m * math.cos(theta_b_rad))) * math.sqrt(
-            (m2 * l_m * rf_power_w) / (2.0 * w_m)
-        )
-        return clamp01(math.sin(arg) ** 2)
-    return 0.85
+    p_peak = rf_power_for_peak_w_at(
+        rf_power_for_peak_w, peak_ref_wavelength_nm, wavelength_nm,
+    )
+    if p_peak <= 0:
+        return 0.0
+    # No RF source -> rated operating point (drives to peak). Explicit 0 -> off.
+    p_eff = rf_power_w if rf_power_w is not None else p_peak
+    nu = (math.pi / 2.0) * math.sqrt(max(0.0, p_eff) / p_peak)
+    rel_amp = math.sin(nu) ** 2
+    g = rf_frequency_factor(freq_mhz, center_freq_mhz, freq_shift_bandwidth_mhz)
+    return clamp01(peak_efficiency * rel_amp * g)

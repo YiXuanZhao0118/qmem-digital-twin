@@ -22,22 +22,16 @@ def test_bessel_edge_cases():
     assert bessel_j(-3, 1.84) == pytest.approx(-bessel_j(3, 1.84), abs=1e-12)
 
 
-def test_fallback_phase_mod_depth():
-    v = phase_modulation_depth(
-        figure_of_merit_m2=None, rf_drive_power_w=None,
-        crystal_length_mm=None, acoustic_beam_width_mm=None,
-        wavelength_nm=780, theta_b_rad=0.00743, fallback_efficiency=0.85,
-    )
-    assert v == pytest.approx(2.0 * (0.85 ** 0.5), abs=1e-9)
+def test_phase_mod_depth_from_efficiency():
+    # v = 2*sqrt(eta_first); collapses to 0 when the drive (eta) is off.
+    assert phase_modulation_depth(first_order_efficiency=0.85) == pytest.approx(
+        2.0 * (0.85 ** 0.5), abs=1e-9)
+    assert phase_modulation_depth(first_order_efficiency=0.0) == 0.0
 
 
 def test_matches_panel_golden_values():
     eta = 0.85
-    v = phase_modulation_depth(
-        figure_of_merit_m2=None, rf_drive_power_w=None,
-        crystal_length_mm=None, acoustic_beam_width_mm=None,
-        wavelength_nm=780, theta_b_rad=0.00743, fallback_efficiency=eta,
-    )
+    v = phase_modulation_depth(first_order_efficiency=eta)
     s = sideband_intensities_on_bragg(1, eta, v, 3)
     assert s[1] == pytest.approx(0.792, abs=0.01)
     assert s[2] == pytest.approx(0.093, abs=0.006)

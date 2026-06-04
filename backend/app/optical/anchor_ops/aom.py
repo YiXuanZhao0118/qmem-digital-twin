@@ -136,15 +136,20 @@ def aom_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
     # requiresRfDrive gate, not a 0 Hz default.
     freq_mhz = read_rf_frequency_mhz(ctx.params, ctx.dynamic)
     v_ac = float(ctx.params.get("acousticVelocityMps", 4200.0))
-    # baseEfficiency, when present, is the user's measured override and wins over
-    # the closed form (see first_order_efficiency); None lets the closed form run.
-    eta_base_raw = ctx.params.get("baseEfficiency")
-    eta_base = float(eta_base_raw) if isinstance(eta_base_raw, (int, float)) else None
+    # baseEfficiency = the datasheet PEAK first-order efficiency (η at the rated
+    # drive); the model scales it by sin²((π/2)√(P/P_peak)) and the carrier-freq
+    # factor (see first_order_efficiency).
+    peak_eff_raw = ctx.params.get("baseEfficiency")
+    peak_efficiency = float(peak_eff_raw) if isinstance(peak_eff_raw, (int, float)) else 0.85
 
     def _int_param(key: str, default: int, lo: int, hi: int) -> int:
         v = ctx.params.get(key, default)
         v = int(v) if isinstance(v, (int, float)) else default
         return max(lo, min(hi, v))
+
+    def _float_param(key: str, default: float) -> float:
+        v = ctx.params.get(key, default)
+        return float(v) if isinstance(v, (int, float)) and v > 0 else default
 
     selected_order = _int_param("diffractionOrder", 1, -1, 1)
     max_order = _int_param("maxDiffractionOrder", 3, 1, 10)
@@ -154,18 +159,19 @@ def aom_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
 
     theta_b = _bragg_angle_rad(ray_in.wavelength_nm, float(freq_mhz), v_ac, n)
 
-    # On-Bragg first-order (peak) efficiency from the RF drive power, and the
-    # off-Bragg angle detune that scales the diffracted orders down (tilting
-    # the AOM weakens diffraction, more light passes straight through).
-    m2 = ctx.params.get("figureOfMeritM2")
-    w_mm = ctx.params.get("acousticBeamWidthMm")
-    m2v = m2 if isinstance(m2, (int, float)) and m2 > 0 else None
-    w_mmv = w_mm if isinstance(w_mm, (int, float)) and w_mm > 0 else None
+    # On-Bragg first-order efficiency from the RF drive (power + carrier freq),
+    # and the off-Bragg angle detune that scales the diffracted orders down
+    # (tilting the AOM weakens diffraction → more light passes straight through).
     rf_power_w = read_rf_drive_power_w(ctx.params, ctx.dynamic)
     eta_peak = first_order_efficiency(
-        ray_in.wavelength_nm, theta_b,
-        rf_power_w=rf_power_w, m2=m2v, l_mm=L, w_mm=w_mmv,
-        base_efficiency=eta_base,
+        wavelength_nm=ray_in.wavelength_nm,
+        freq_mhz=float(freq_mhz),
+        rf_power_w=rf_power_w,
+        peak_efficiency=peak_efficiency,
+        rf_power_for_peak_w=_float_param("rfPowerForPeakW", 2.2),
+        peak_ref_wavelength_nm=_float_param("peakRefWavelengthNm", 1100.0),
+        center_freq_mhz=_float_param("centerFreqMhz", 80.0),
+        freq_shift_bandwidth_mhz=_float_param("freqShiftBandwidthMhz", 15.0),
         requires_rf_drive=ctx.params.get("requiresRfDrive") is True,
     )
     dtheta_ext = math.acos(max(-1.0, min(1.0, ctx.hit.cos_incidence)))
@@ -192,12 +198,7 @@ def aom_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
     # Multi-order sideband intensities — the SHARED model that the Object Panel
     # table also uses (single source). On-Bragg fractions, then the angle detune
     # applied to the diffracted (non-zero) orders; the 0 order takes the rest.
-    v_depth = phase_modulation_depth(
-        figure_of_merit_m2=m2v, rf_drive_power_w=rf_power_w,
-        crystal_length_mm=L, acoustic_beam_width_mm=w_mmv,
-        wavelength_nm=ray_in.wavelength_nm, theta_b_rad=theta_b,
-        fallback_efficiency=eta_peak,
-    )
+    v_depth = phase_modulation_depth(first_order_efficiency=eta_peak)
     on_bragg = sideband_intensities_on_bragg(selected_order, eta_peak, v_depth, max_order)
     intensity: dict[int, float] = {}
     diffracted_sum = 0.0

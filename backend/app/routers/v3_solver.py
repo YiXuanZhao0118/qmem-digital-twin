@@ -327,16 +327,17 @@ async def run_v3_solver_from_db(
 class AomSidebandRequest(CamelModel):
     """Inputs for the AOM sideband table — the panel sends its effective params
     (RF resolved upstream) and renders exactly what this returns, so the table,
-    the drawn beams, and the trace all use one model (aom_sideband.py)."""
+    the drawn beams, and the trace all use one datasheet-calibrated model
+    (aom_physics + aom_sideband)."""
     wavelength_nm: float = 780.0
-    center_freq_mhz: float = 80.0
+    freq_mhz: float = 80.0                 # actual RF DRIVE frequency
     acoustic_velocity_mps: float = 4200.0
-    refractive_index: float = 2.26
-    base_efficiency: Optional[float] = None
-    figure_of_merit_m2: Optional[float] = None
-    rf_drive_power_w: Optional[float] = None
-    crystal_length_mm: Optional[float] = None
-    acoustic_beam_width_mm: Optional[float] = None
+    peak_efficiency: float = 0.85          # datasheet peak (η at rated drive)
+    rf_power_w: Optional[float] = None     # actual RF drive power (None = rated)
+    rf_power_for_peak_w: float = 2.2
+    peak_ref_wavelength_nm: float = 1100.0
+    center_freq_mhz: float = 80.0          # DESIGN centre for the bandwidth G(f)
+    freq_shift_bandwidth_mhz: float = 15.0
     requires_rf_drive: bool = False
     selected_order: int = 1
     max_diffraction_order: int = 3
@@ -345,7 +346,8 @@ class AomSidebandRequest(CamelModel):
 
 @router.post("/aom-sidebands")
 async def aom_sidebands(req: AomSidebandRequest) -> dict:
-    """Per-order AOM sideband table (single source of truth = aom_sideband.py)."""
+    """Per-order AOM sideband table (single source of truth = aom_physics +
+    aom_sideband). On-Bragg operating point (no incidence-angle detune)."""
     import math
 
     from app.optical.aom_physics import first_order_efficiency
@@ -355,37 +357,35 @@ async def aom_sidebands(req: AomSidebandRequest) -> dict:
     )
 
     lam = req.wavelength_nm * 1e-9
-    f_hz = req.center_freq_mhz * 1e6
+    f_hz = req.freq_mhz * 1e6
     v = req.acoustic_velocity_mps
     theta_b = (
         math.asin(max(-1.0, min(1.0, (lam * f_hz) / (2.0 * v))))
         if (v > 0 and f_hz > 0) else 0.0
     )
-    m2 = req.figure_of_merit_m2 if (req.figure_of_merit_m2 and req.figure_of_merit_m2 > 0) else None
-    w = req.acoustic_beam_width_mm if (req.acoustic_beam_width_mm and req.acoustic_beam_width_mm > 0) else None
     eta = first_order_efficiency(
-        req.wavelength_nm, theta_b,
-        rf_power_w=req.rf_drive_power_w,
-        m2=m2, l_mm=req.crystal_length_mm, w_mm=w,
-        base_efficiency=req.base_efficiency,
+        wavelength_nm=req.wavelength_nm,
+        freq_mhz=req.freq_mhz,
+        rf_power_w=req.rf_power_w,
+        peak_efficiency=req.peak_efficiency,
+        rf_power_for_peak_w=req.rf_power_for_peak_w,
+        peak_ref_wavelength_nm=req.peak_ref_wavelength_nm,
+        center_freq_mhz=req.center_freq_mhz,
+        freq_shift_bandwidth_mhz=req.freq_shift_bandwidth_mhz,
         requires_rf_drive=req.requires_rf_drive,
     )
     max_order = max(1, min(10, int(req.max_diffraction_order)))
     selected = max(-1, min(1, int(req.selected_order)))
     threshold = max(0.0, min(1.0, req.sideband_visibility_threshold))
-    v_depth = phase_modulation_depth(
-        figure_of_merit_m2=m2, rf_drive_power_w=req.rf_drive_power_w,
-        crystal_length_mm=req.crystal_length_mm, acoustic_beam_width_mm=w,
-        wavelength_nm=req.wavelength_nm, theta_b_rad=theta_b, fallback_efficiency=eta,
-    )
+    v_depth = phase_modulation_depth(first_order_efficiency=eta)
     intens = sideband_intensities_on_bragg(selected, eta, v_depth, max_order)
     carrier_thz = (299_792_458.0 / lam) / 1e12 if lam > 0 else 0.0
     sidebands = [
         {
             "order": m,
             "angleMrad": m * 2.0 * theta_b * 1e3,
-            "frequencyOffsetMhz": m * req.center_freq_mhz,
-            "centerFrequencyThz": carrier_thz + m * req.center_freq_mhz * 1e-6,
+            "frequencyOffsetMhz": m * req.freq_mhz,
+            "centerFrequencyThz": carrier_thz + m * req.freq_mhz * 1e-6,
             "intensity": intens.get(m, 0.0),
             "visible": (m == 0 or m == selected or intens.get(m, 0.0) >= threshold),
         }

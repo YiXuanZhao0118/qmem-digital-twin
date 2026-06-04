@@ -21,20 +21,45 @@
  *  import → easier to mirror to backend later). The Phase 5 frame-suffix
  *  fields drop-in here; legacy fields are handled at the caller. */
 export type AomPhysicsParams = {
-  centerFreqMhz?: number;            // RF carrier
+  centerFreqMhz?: number;            // RF DRIVE frequency (panel overlays effective)
   acousticVelocityMps?: number;    // 4200 default (TeO2 [110])
   refractiveIndex?: number;          // 2.26 default (TeO2)
-  baseEfficiency?: number;           // fallback when M2/L/W/Pd not all set
-  figureOfMeritM2?: number;          // m^2/W (closed-form sin² model)
-  crystalLengthMm?: number;          // L
-  acousticBeamWidthMm?: number;      // W
-  rfDrivePowerW?: number;            // P_d
+  baseEfficiency?: number;           // datasheet PEAK efficiency (η at rated drive)
+  rfDrivePowerW?: number;            // actual RF drive power P (undefined = rated)
+  // Datasheet-calibrated efficiency model (AA MT80):
+  rfPowerForPeakW?: number;          // P_peak: RF power for peak η (2.2 W)
+  peakRefWavelengthNm?: number;      // λ_ref for P_peak∝λ² scaling (1100 nm)
+  designCenterFreqMhz?: number;      // design centre for the bandwidth G(f) (80)
+  freqShiftBandwidthMhz?: number;    // half-bandwidth (±15 MHz)
+  requiresRfDrive?: boolean;         // no RF source → η=0 (else rated)
+  // Legacy (no longer used by η; kept for back-compat reads):
+  figureOfMeritM2?: number;
+  crystalLengthMm?: number;          // L (still used by braggDetuning geometry)
+  acousticBeamWidthMm?: number;
 };
 
 const DEFAULT_CENTER_FREQ_MHZ = 80;
 const DEFAULT_ACOUSTIC_VELOCITY_M_PER_S = 4200;
 const DEFAULT_REFRACTIVE_INDEX = 2.26;
 const DEFAULT_BASE_EFFICIENCY = 0.85;
+const DEFAULT_RF_POWER_FOR_PEAK_W = 2.2;
+const DEFAULT_PEAK_REF_WAVELENGTH_NM = 1100;
+const DEFAULT_FREQ_SHIFT_BANDWIDTH_MHZ = 15;
+// exp(-BW_K) = 0.75 at the band edge (MT80 variable-freq: >80%@F0, >60% over ±).
+const BW_K = -Math.log(0.75);
+
+/** RF carrier-frequency efficiency factor G(f) ∈ [0,1] (Gaussian, ~0.75 at ±BW). */
+function rfFrequencyFactor(freqMhz: number, centerMhz: number, halfBwMhz: number): number {
+  if (halfBwMhz <= 0) return 1;
+  const x = (freqMhz - centerMhz) / halfBwMhz;
+  return Math.exp(-BW_K * x * x);
+}
+
+/** RF power for peak η at λ (P_peak ∝ λ²). */
+function rfPowerForPeakWAt(rfPowerForPeakW: number, peakRefNm: number, wavelengthNm: number): number {
+  if (peakRefNm <= 0 || rfPowerForPeakW <= 0) return rfPowerForPeakW;
+  return rfPowerForPeakW * (wavelengthNm / peakRefNm) ** 2;
+}
 /** Suppression floor for the "wrong-sign" ±1 order when the user has
  *  selected the opposite ±1. Models the residual diffraction from
  *  imperfect Bragg matching. Used by panel display (rayTrace folds the
@@ -100,79 +125,56 @@ export function braggAngleRad(
   return Math.asin(Math.max(-1, Math.min(1, sinThetaB)));
 }
 
-/** First-order diffraction efficiency η.
+/** On-Bragg first-order diffraction efficiency η (datasheet-calibrated model,
+ *  mirrors backend `aom_physics.first_order_efficiency`):
  *
- *  Resolution order:
- *    1. If `params.baseEfficiency` is explicitly set, return it (clamped
- *       to [0, 1]). This is the user-facing override — useful when the
- *       closed-form constants don't match the datasheet (e.g., the
- *       AA Optoelectronic MT80 datasheet quotes η > 85% at P_max but
- *       our seeded M₂/L/W combo gives ~9% via the closed-form). Setting
- *       baseEfficiency = 0.85 directly delivers what the datasheet
- *       advertises.
- *    2. Otherwise, if all four closed-form inputs (M₂, P_d, L, W) are
- *       present, compute
- *          η = sin²( (π · L / (2 · λ · cosθ_B)) · √(2 · M₂ · P_d / W) ).
- *    3. Otherwise, fall back to DEFAULT_BASE_EFFICIENCY.
+ *      η = peak · sin²( (π/2)·√(P / P_peak(λ)) ) · G(f)
  *
- *  Output is clamped to [0, 1]. */
+ *  - peak = `baseEfficiency` (the datasheet peak, η at rated drive; default 0.85).
+ *  - P_peak(λ) = `rfPowerForPeakW` · (λ/`peakRefWavelengthNm`)²  (P ∝ λ²).
+ *  - P = `rfDrivePowerW`; undefined ⇒ rated (P = P_peak ⇒ peak). Explicit 0 ⇒ 0.
+ *  - G(f) = carrier-frequency bandwidth factor about `designCenterFreqMhz`.
+ *  - `requiresRfDrive` & no RF ⇒ 0.
+ *  3rd arg (thetaBRad) is unused now; kept for call-site compatibility. */
 export function diffractionEfficiency(
   params: AomPhysicsParams,
   wavelengthNm: number,
-  thetaBRad: number,
+  _thetaBRad?: number,
 ): number {
-  if (typeof params.baseEfficiency === "number") {
-    return clamp01(params.baseEfficiency);
-  }
-  const allClosedFormInputs =
-    typeof params.figureOfMeritM2 === "number" &&
-    typeof params.rfDrivePowerW === "number" &&
-    typeof params.crystalLengthMm === "number" &&
-    typeof params.acousticBeamWidthMm === "number";
-  if (!allClosedFormInputs) {
-    return clamp01(DEFAULT_BASE_EFFICIENCY);
-  }
-  const lambdaM = wavelengthNm * 1e-9;
-  const L = (params.crystalLengthMm as number) * 1e-3;
-  const W = (params.acousticBeamWidthMm as number) * 1e-3;
-  const Pd = params.rfDrivePowerW as number;
-  const M2 = params.figureOfMeritM2 as number;
-  // η = sin²( (π/(λ·cos)) · √(M₂·L·P/(2·W)) )  (Saleh–Teich). L is INSIDE the
-  // root (linear); the old (π·L/2λ) prefactor made it L² → η ~600× too small.
-  const arg = (Math.PI / (lambdaM * Math.cos(thetaBRad))) * Math.sqrt((M2 * L * Pd) / (2 * W));
-  return clamp01(Math.sin(arg) ** 2);
+  const peak = typeof params.baseEfficiency === "number"
+    ? params.baseEfficiency : DEFAULT_BASE_EFFICIENCY;
+  const rfPower = typeof params.rfDrivePowerW === "number" ? params.rfDrivePowerW : null;
+  if (params.requiresRfDrive === true && rfPower === null) return 0;
+  const pPeak = rfPowerForPeakWAt(
+    params.rfPowerForPeakW ?? DEFAULT_RF_POWER_FOR_PEAK_W,
+    params.peakRefWavelengthNm ?? DEFAULT_PEAK_REF_WAVELENGTH_NM,
+    wavelengthNm,
+  );
+  if (pPeak <= 0) return 0;
+  const pEff = rfPower !== null ? rfPower : pPeak;
+  const nu = (Math.PI / 2) * Math.sqrt(Math.max(0, pEff) / pPeak);
+  const relAmp = Math.sin(nu) ** 2;
+  const driveFreq = params.centerFreqMhz ?? DEFAULT_CENTER_FREQ_MHZ;
+  const designCentre = params.designCenterFreqMhz ?? params.centerFreqMhz ?? DEFAULT_CENTER_FREQ_MHZ;
+  const g = rfFrequencyFactor(
+    driveFreq, designCentre, params.freqShiftBandwidthMhz ?? DEFAULT_FREQ_SHIFT_BANDWIDTH_MHZ,
+  );
+  return clamp01(peak * relAmp * g);
 }
 
-/** Phase-modulation depth `v` used by the Raman-Nath multi-order
- *  approximation. When all four closed-form inputs are present, computes
- *
- *      v = (π · L / (2 · λ · cosθ_B)) · √(2 · M₂ · P_d / W)
- *
- *  (= the same `arg` as in `diffractionEfficiency`). Otherwise falls back
- *  to `2 · √η`, which gives v ≈ π/2·√η — a useful proxy for cells where
- *  M₂/L/W aren't all set. */
+/** Raman-Nath phase-modulation depth `v` that drives the multi-order spread.
+ *  Tied to the drive: `v = 2·√(η_first)` (η_first already folds RF power + the
+ *  carrier-frequency factor), so the spread grows with drive and → 0 when the
+ *  RF is off. `eta` (the precomputed first-order efficiency) is passed in;
+ *  the first three args are kept for call-site compatibility. */
 export function phaseModulationDepth(
   params: AomPhysicsParams,
   wavelengthNm: number,
-  thetaBRad: number,
-  fallbackEfficiency: number,
+  _thetaBRad: number,
+  eta: number,
 ): number {
-  const allClosedFormInputs =
-    typeof params.figureOfMeritM2 === "number" &&
-    typeof params.rfDrivePowerW === "number" &&
-    typeof params.crystalLengthMm === "number" &&
-    typeof params.acousticBeamWidthMm === "number";
-  if (!allClosedFormInputs) {
-    return 2 * Math.sqrt(clamp01(fallbackEfficiency));
-  }
-  const lambdaM = wavelengthNm * 1e-9;
-  const L = (params.crystalLengthMm as number) * 1e-3;
-  const W = (params.acousticBeamWidthMm as number) * 1e-3;
-  const Pd = params.rfDrivePowerW as number;
-  const M2 = params.figureOfMeritM2 as number;
-  // Same arg as diffractionEfficiency: L INSIDE the root (linear), not an
-  // outside L prefactor (would be L² → ~600× too small).
-  return (Math.PI / (lambdaM * Math.cos(thetaBRad))) * Math.sqrt((M2 * L * Pd) / (2 * W));
+  void params; void wavelengthNm;
+  return 2 * Math.sqrt(clamp01(eta));
 }
 
 export type DiffractionOrder = -1 | 0 | 1;
@@ -353,26 +355,18 @@ export function computeBraggTiltAxisFromRfDirectionBodyLocal(
   return { x: tau.x / tMag, y: tau.y / tMag, z: tau.z / tMag };
 }
 
+/** RF power that drives the AOM to peak efficiency at this wavelength:
+ *  P_peak(λ) = rfPowerForPeakW · (λ/peakRefWavelengthNm)²  (P ∝ λ²). */
 export function rfPowerForPeakEfficiencyW(
   params: AomPhysicsParams,
   wavelengthNm: number,
-  thetaBRad: number,
+  _thetaBRad?: number,
 ): number | null {
-  if (
-    typeof params.figureOfMeritM2 !== "number" ||
-    typeof params.crystalLengthMm !== "number" ||
-    typeof params.acousticBeamWidthMm !== "number"
-  ) {
-    return null;
-  }
-  const lambdaM = wavelengthNm * 1e-9;
-  const L = params.crystalLengthMm * 1e-3;
-  const W = params.acousticBeamWidthMm * 1e-3;
-  const M2 = params.figureOfMeritM2;
-  const cos2 = Math.cos(thetaBRad) ** 2;
-  // Solve arg = π/2 (peak η) for P with the corrected arg (L linear, not L²):
-  //   P = W·cos²·λ² / (2·M₂·L)
-  return (W * cos2 * lambdaM * lambdaM) / (2 * M2 * L);
+  const pPeakRef = params.rfPowerForPeakW ?? DEFAULT_RF_POWER_FOR_PEAK_W;
+  if (!(pPeakRef > 0)) return null;
+  return rfPowerForPeakWAt(
+    pPeakRef, params.peakRefWavelengthNm ?? DEFAULT_PEAK_REF_WAVELENGTH_NM, wavelengthNm,
+  );
 }
 
 // =============================================================================

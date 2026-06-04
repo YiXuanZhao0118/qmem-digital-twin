@@ -279,15 +279,24 @@ def first_order_efficiency_from_context(
     ctx: PhysicsOpContext,
     theta_b_rad: float,
 ) -> float:
-    # Delegate the closed-form to the shared module (single source of truth,
-    # also used by the production anchor op); read RF power with this op's ctx.
+    # Delegate to the shared datasheet-calibrated model (single source of truth,
+    # also used by the production anchor op). theta_b_rad is unused now (the
+    # model is normalized on P_peak, not M2/L/W).
+    _ = theta_b_rad
+
+    def _fp(key: str, default: float) -> float:
+        v = _positive_finite_number(ctx.params.get(key))
+        return v if v is not None else default
+
     return first_order_efficiency(
-        ray_in.wavelength_nm, theta_b_rad,
+        wavelength_nm=ray_in.wavelength_nm,
+        freq_mhz=_read_rf_frequency_mhz(ctx),
         rf_power_w=_read_rf_drive_power_w(ctx),
-        m2=_positive_finite_number(ctx.params.get("figureOfMeritM2")),
-        l_mm=_positive_finite_number(ctx.params.get("crystalLengthMm")),
-        w_mm=_positive_finite_number(ctx.params.get("acousticBeamWidthMm")),
-        base_efficiency=_finite_number(ctx.params.get("baseEfficiency")),
+        peak_efficiency=_finite_number(ctx.params.get("baseEfficiency")) or 0.85,
+        rf_power_for_peak_w=_fp("rfPowerForPeakW", 2.2),
+        peak_ref_wavelength_nm=_fp("peakRefWavelengthNm", 1100.0),
+        center_freq_mhz=_fp("centerFreqMhz", 80.0),
+        freq_shift_bandwidth_mhz=_fp("freqShiftBandwidthMhz", 15.0),
         requires_rf_drive=ctx.params.get("requiresRfDrive") is True,
     )
 
