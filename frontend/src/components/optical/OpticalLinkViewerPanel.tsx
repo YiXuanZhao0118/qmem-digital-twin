@@ -548,21 +548,33 @@ function beamLocalSPThree(beamDir: THREE.Vector3): { s: THREE.Vector3; p: THREE.
   return { s, p };
 }
 
-/** Polarization-ellipse major-axis direction (world/three) from the Jones
- *  vector [E_s.re, E_s.im, E_p.re, E_p.im] and the beam direction. For linear
- *  light this is just the E-field axis; for elliptical, the major axis.
- *      ψ = ½·atan2( 2·Re(E_s·conj(E_p)), |E_s|² − |E_p|² )
- *      dir = cos ψ · ŝ + sin ψ · p̂                (ŝ, p̂ = beamLocalSP) */
-function polDir3DFromJones(
+/** Full polarization ELLIPSE (world/three) from the Jones vector
+ *  [E_s.re, E_s.im, E_p.re, E_p.im] and the beam direction. Returns the major
+ *  (`u`) and minor (`v`) axis directions in the beam's transverse plane, the
+ *  minor/major ratio (`minorFrac` ∈ [0,1]: 0 = linear, 1 = circular), and the
+ *  rotation sense (`handed` ±1). Lets the viewer draw a line for linear light,
+ *  a circle for circular, and an ellipse in between.
+ *      ψ = ½·atan2( 2·Re(E_s·conj(E_p)), |E_s|²−|E_p|² )   (orientation)
+ *      χ = ½·asin( 2·Im(E_s·conj(E_p)) / I )               (ellipticity)
+ *      minorFrac = |tan χ|,  u = cosψ ŝ + sinψ p̂,  v = −sinψ ŝ + cosψ p̂ */
+function polEllipseFromJones(
   jones: [number, number, number, number],
   beamDir: THREE.Vector3,
-): THREE.Vector3 {
+): { u: THREE.Vector3; v: THREE.Vector3; minorFrac: number; handed: number } {
   const [sre, sim, pre, pim] = jones;
+  const intensity = sre * sre + sim * sim + pre * pre + pim * pim;
   const reCross = sre * pre + sim * pim;                 // Re(E_s·conj(E_p))
+  const imCross = sre * pim - sim * pre;                 // Im(E_s·conj(E_p))
   const diff = (sre * sre + sim * sim) - (pre * pre + pim * pim);
   const psi = 0.5 * Math.atan2(2 * reCross, diff);
+  const chi = 0.5 * Math.asin(
+    intensity > 1e-12 ? Math.max(-1, Math.min(1, (2 * imCross) / intensity)) : 0,
+  );
   const { s, p } = beamLocalSPThree(beamDir);
-  return s.multiplyScalar(Math.cos(psi)).add(p.multiplyScalar(Math.sin(psi))).normalize();
+  const cu = Math.cos(psi), su = Math.sin(psi);
+  const u = s.clone().multiplyScalar(cu).add(p.clone().multiplyScalar(su)).normalize();
+  const v = s.clone().multiplyScalar(-su).add(p.clone().multiplyScalar(cu)).normalize();
+  return { u, v, minorFrac: Math.tan(Math.abs(chi)), handed: imCross >= 0 ? 1 : -1 };
 }
 
 /** Camera state shared with the main viewer so the optical-link mode adopts
@@ -1130,39 +1142,65 @@ export function OpticalLinkViewerContent({
         tube.userData.segment = seg;
         beamGroup.add(tube);
 
-        // Polarization mark — a cyan double-headed arrow at the MIDPOINT of the
-        // segment (between the two components it runs between), drawn ⊥ to the
-        // beam along the polarization axis derived from the segment's Jones
-        // vector. Skipped on near-dark beams.
+        // Polarization mark at the segment MIDPOINT, ⊥ to the beam, from the
+        // segment's Jones vector: a cyan double-headed arrow for LINEAR light,
+        // the polarization ELLIPSE for elliptical, a CIRCLE for circular (plus
+        // a small arrowhead showing the rotation sense). Skipped on dark beams.
         if (seg.powerFactorAtStart > 0.01) {
-          const polDir = polDir3DFromJones(seg.polarizationAtStart, direction);
+          const { u, v, minorFrac, handed } = polEllipseFromJones(seg.polarizationAtStart, direction);
           const mid = start.clone().addScaledVector(direction, length / 2);
-          const markLen = bboxSpan * 0.005;
-          const markRad = Math.max(markLen * 0.05, bboxSpan * 0.00015);
-          const headLen = markLen * 0.3;
-          const headRad = markRad * 3.0;
+          const polColor = 0x06b6d4; // cyan — matches the PHY editor's pol mark
           const polMat = new THREE.MeshBasicMaterial({
-            color: 0x06b6d4, // cyan — matches the PHY editor's polarization mark
-            depthTest: false,
-            transparent: true,
-            opacity: 0.95,
+            color: polColor, depthTest: false, transparent: true, opacity: 0.95,
           });
-          const shaft = new THREE.Mesh(
-            new THREE.CylinderGeometry(markRad, markRad, markLen, 8),
-            polMat,
-          );
-          shaft.quaternion.setFromUnitVectors(yAxis, polDir);
-          shaft.position.copy(mid);
-          shaft.renderOrder = 2100; // above beam tubes
-          contentGroup.add(shaft);
-          for (const sign of [1, -1] as const) {
-            const headDir = polDir.clone().multiplyScalar(sign);
-            const head = new THREE.Mesh(
-              new THREE.ConeGeometry(headRad, headLen, 12),
-              polMat,
+          if (minorFrac < 0.08) {
+            // LINEAR → double-headed arrow along the E-field axis (= u).
+            const markLen = bboxSpan * 0.005;
+            const markRad = Math.max(markLen * 0.05, bboxSpan * 0.00015);
+            const headLen = markLen * 0.3;
+            const headRad = markRad * 3.0;
+            const shaft = new THREE.Mesh(
+              new THREE.CylinderGeometry(markRad, markRad, markLen, 8), polMat,
             );
-            head.quaternion.setFromUnitVectors(yAxis, headDir);
-            head.position.copy(mid).addScaledVector(polDir, sign * (markLen / 2 + headLen / 2));
+            shaft.quaternion.setFromUnitVectors(yAxis, u);
+            shaft.position.copy(mid);
+            shaft.renderOrder = 2100;
+            contentGroup.add(shaft);
+            for (const sign of [1, -1] as const) {
+              const head = new THREE.Mesh(new THREE.ConeGeometry(headRad, headLen, 12), polMat);
+              head.quaternion.setFromUnitVectors(yAxis, u.clone().multiplyScalar(sign));
+              head.position.copy(mid).addScaledVector(u, sign * (markLen / 2 + headLen / 2));
+              head.renderOrder = 2100;
+              contentGroup.add(head);
+            }
+          } else {
+            // ELLIPTICAL / CIRCULAR → draw the polarization ellipse loop
+            // (minorFrac=1 → a circle) + a rotation-sense arrowhead.
+            const semiMajor = bboxSpan * 0.0025;
+            const semiMinor = semiMajor * minorFrac;
+            const pts: THREE.Vector3[] = [];
+            const N = 48;
+            for (let i = 0; i <= N; i++) {
+              const t = (i / N) * Math.PI * 2;
+              pts.push(mid.clone()
+                .addScaledVector(u, Math.cos(t) * semiMajor)
+                .addScaledVector(v, Math.sin(t) * semiMinor * handed));
+            }
+            const loop = new THREE.Line(
+              new THREE.BufferGeometry().setFromPoints(pts),
+              new THREE.LineBasicMaterial({ color: polColor, transparent: true, opacity: 0.95, depthTest: false }),
+            );
+            loop.renderOrder = 2100;
+            contentGroup.add(loop);
+            const tA = Math.PI / 2;
+            const pos = mid.clone()
+              .addScaledVector(u, Math.cos(tA) * semiMajor)
+              .addScaledVector(v, Math.sin(tA) * semiMinor * handed);
+            const tangent = u.clone().multiplyScalar(-Math.sin(tA) * semiMajor)
+              .add(v.clone().multiplyScalar(Math.cos(tA) * semiMinor * handed)).normalize();
+            const head = new THREE.Mesh(new THREE.ConeGeometry(semiMajor * 0.16, semiMajor * 0.45, 10), polMat);
+            head.quaternion.setFromUnitVectors(yAxis, tangent);
+            head.position.copy(pos);
             head.renderOrder = 2100;
             contentGroup.add(head);
           }
