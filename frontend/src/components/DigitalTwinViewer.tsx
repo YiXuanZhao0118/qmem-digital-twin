@@ -50,6 +50,7 @@ import {
 import { _testReflect, type TraceSegment } from "../three/rayTrace";
 import { runV3SolverFromDbApi, type V3LabSegment, type V3SolverResult } from "../api/client";
 import { resolveAomRfDriveFromScene } from "../utils/aomRfDrive";
+import { portKey, vppToPowerW } from "../utils/rfPropagation";
 import { adaptV3LabSegmentsToTraceSegments } from "../three/v3TraceAdapter";
 import { disposeFarfieldLobe, makeFarfieldLobe } from "../three/hornFarfield";
 import { disposeRfBadgeSprite, makeRfBadgeSprite } from "../three/rfBadge";
@@ -1503,29 +1504,67 @@ export function DigitalTwinViewer({
   // 150 ms debounce so dragging an object doesn't fire one fetch per
   // frame. Backend reads from DB, so during an active drag the result
   // is one-step stale until the WS commit lands — acceptable for MVP.
+  const lastTraceSceneRef = useRef<unknown>(null);
+  const lastTraceDriveSigRef = useRef<string>("");
   useEffect(() => {
     let cancelled = false;
     const timer = setTimeout(() => {
       // AOM RF drive: inject each AOM's effective freq/power as a dynamic
-      // override. Link mode resolves it from the RF cable chain; manual-mode
-      // AOMs already carry aomFreqMhz / rfDrivePowerW in dynamic_sources (skip).
+      // override, TIME-RESOLVED from the Pulse & Timing program. We sample the
+      // RF propagation schedule at the current scrub time, so a PPG-TTL switch
+      // routed off (or a powered-off source) feeds the AOM 0 W → η=0 → no
+      // diffraction (beam passes straight through). Manual-mode AOMs carry
+      // their own aomFreqMhz / rfDrivePowerW in dynamic_sources (skip).
       const aomOverrides: Record<string, Record<string, unknown>> = {};
       const compById = new Map(sceneData.components.map((c) => [c.id, c]));
+      const assetById = new Map(sceneData.assets.map((a) => [a.id, a]));
+      const poweredOff = new Set<string>();
+      for (const ds of sceneData.deviceStates ?? []) {
+        if ((ds.state as { power?: unknown } | undefined)?.power === false) {
+          poweredOff.add(ds.objectId);
+        }
+      }
+      const snapshot = getRfSnapshotAt(
+        buildRfPropagationSchedule({
+          objects: sceneData.objects,
+          components: sceneData.components,
+          assets: sceneData.assets,
+          physicsElements: sceneData.physicsElements,
+          timingPrograms: sceneData.timingPrograms ?? [],
+          poweredOffObjectIds: poweredOff,
+        }),
+        scrubTimeNs,
+      );
       for (const obj of sceneData.objects) {
         if (compById.get(obj.componentId)?.kindId !== "aom") continue;
         const props = obj.properties as Record<string, unknown> | undefined;
         if (props?.aomRfDriveMode === "manual") continue;
-        const drive = resolveAomRfDriveFromScene(
+        // Only AOMs wired to an rf_cable chain are RF-link driven; one with no
+        // chain keeps the asset's rated operating point (no override).
+        const staticDrive = resolveAomRfDriveFromScene(
           obj.id, sceneData.objects, sceneData.components,
           sceneData.assets, sceneData.physicsElements,
         );
-        if (drive) {
-          aomOverrides[obj.id] = {
-            aomFreqMhz: drive.frequencyMhz,
-            rfDrivePowerW: drive.drivePowerW,
-          };
-        }
+        if (!staticDrive) continue;
+        const comp = compById.get(obj.componentId);
+        const asset = comp?.asset3dId ? assetById.get(comp.asset3dId) : undefined;
+        const rfIn = asset?.anchors?.find((a) => a.id === "rf_in");
+        const sig = rfIn
+          ? snapshot.signalAtPort.get(portKey(obj.id, rfIn.name ?? rfIn.id))
+          : undefined;
+        aomOverrides[obj.id] = sig && sig.vpp > 0
+          ? { aomFreqMhz: sig.frequencyMhz, rfDrivePowerW: vppToPowerW(sig.vpp) }
+          // Gated OFF (or no carrier) at this instant → no RF → no diffraction.
+          : { aomFreqMhz: staticDrive.frequencyMhz, rfDrivePowerW: 0 };
       }
+      // Skip the backend round-trip when neither the scene nor the resolved
+      // drive changed — scrubbing WITHIN one timing section is a no-op.
+      const driveSig = JSON.stringify(aomOverrides);
+      if (lastTraceSceneRef.current === sceneData && lastTraceDriveSigRef.current === driveSig) {
+        return;
+      }
+      lastTraceSceneRef.current = sceneData;
+      lastTraceDriveSigRef.current = driveSig;
       runV3SolverFromDbApi(aomOverrides)
         .then((result) => {
           if (cancelled) return;
@@ -1546,7 +1585,7 @@ export function DigitalTwinViewer({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [sceneData]);
+  }, [sceneData, scrubTimeNs]);
 
   // Fast-axis indicator on the selected waveplate. Drawn as a thin yellow
   // line lying in the waveplate's transverse plane (perpendicular to the
