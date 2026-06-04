@@ -360,7 +360,11 @@ class AnchorTraceResult:
 
 @dataclass(frozen=True)
 class AnchorTraceOptions:
-    max_steps: int = 32
+    # 96: enough for a forward + retro-reflected return pass through a full
+    # bench (isolator + lens + AOM multi-order + waveplate + mirror), so a
+    # mirror-returned beam reaches the isolator instead of being truncated
+    # mid-flight by the step cap.
+    max_steps: int = 96
     power_threshold_mw: float = 1e-9
     escape_distance_mm: float = 1000.0
 

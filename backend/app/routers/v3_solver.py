@@ -122,7 +122,7 @@ class RayIn(CamelModel):
 
 
 class TraceOptionsIn(CamelModel):
-    max_steps: int = 32
+    max_steps: int = 96
     power_threshold_mw: float = 1e-9
 
 
