@@ -55,9 +55,7 @@ import { adaptV3LabSegmentsToTraceSegments } from "../three/v3TraceAdapter";
 import { disposeFarfieldLobe, makeFarfieldLobe } from "../three/hornFarfield";
 import { disposeRfBadgeSprite, makeRfBadgeSprite } from "../three/rfBadge";
 import { computeWaveplateFastAxisDeg } from "../utils/waveplateAxis";
-import { buildSceneGateOverrides } from "../utils/timingEvaluation";
 import {
-  buildAomGateOverridesFromSnapshot,
   buildRfPropagationSchedule,
   getRfSnapshotAt,
 } from "../utils/rfPropagationSchedule";
@@ -1845,62 +1843,9 @@ export function DigitalTwinViewer({
   const poweredOffObjectIdsRef = useRef<Set<string>>(poweredOffObjectIds);
   poweredOffObjectIdsRef.current = poweredOffObjectIds;
 
-  // Scrub-time gate overrides — derived from a precomputed propagation
-  // schedule keyed by section boundary. The schedule itself only
-  // recomputes when [scene + programs] change; dragging the scrub
-  // cursor is then an O(log N) lookup + thin AOM-port walk to derive
-  // the gate map. The beam tracer treats `gateOverrides[aomId] === false`
-  // as "AOM passes the 0th order straight through, no diffraction",
-  // which is exactly the user-visible behaviour when an upstream switch
-  // routes the carrier to a different throw.
-  const rfPropagationSchedule = useMemo(
-    () =>
-      buildRfPropagationSchedule({
-        objects: sceneData.objects,
-        components: sceneData.components,
-        assets: sceneData.assets,
-        physicsElements: sceneData.physicsElements,
-        timingPrograms: sceneData.timingPrograms ?? [],
-        poweredOffObjectIds,
-      }),
-    [
-      sceneData.objects,
-      sceneData.components,
-      sceneData.assets,
-      sceneData.physicsElements,
-      sceneData.timingPrograms,
-      poweredOffObjectIds,
-    ],
-  );
-  const gateOverrides = useMemo(() => {
-    // scrubTimeNs === null is the "scrub stopped" idle state. We still
-    // gate AOMs from the snapshot — `getRfSnapshotAt(null)` returns the
-    // t=0 snapshot, and the PPG rest-state XOR inside `buildRfPropagation`
-    // means a channel with rest=HIGH and no interval at 0 reports HIGH at
-    // idle (so its downstream switch routes to ttlActiveHighThrow and the
-    // AOM stays driven). This makes the user-set "default state" visible
-    // in the 3D viewer the moment scrub is stopped, which is the whole
-    // point of the Pulse & Timing rest-state pill.
-    const snapshot = getRfSnapshotAt(rfPropagationSchedule, scrubTimeNs);
-    return buildAomGateOverridesFromSnapshot(snapshot, {
-      objects: sceneData.objects,
-      components: sceneData.components,
-      assets: sceneData.assets,
-      physicsElements: sceneData.physicsElements,
-    });
-  }, [
-    scrubTimeNs,
-    rfPropagationSchedule,
-    sceneData.objects,
-    sceneData.components,
-    sceneData.assets,
-    sceneData.physicsElements,
-  ]);
-  // Keep import alive for legacy callers; the helper is now a fallback
-  // (returns empty Map) — actual gating lives in the useMemo above.
-  void buildSceneGateOverrides;
-  const gateOverridesRef = useRef<Map<string, boolean>>(gateOverrides);
-  gateOverridesRef.current = gateOverrides;
+  // AOM RF gating over scrub time now lives in the beam-trace effect above
+  // (it samples the RF schedule at scrubTimeNs and feeds gated AOMs 0 W). The
+  // old precomputed gateOverrides map was never consumed — removed.
 
   const aomFreqOverrideMhz = useMemo(() => new Map<string, number>(), []);
   const aomFreqOverrideRef = useRef<Map<string, number>>(aomFreqOverrideMhz);
