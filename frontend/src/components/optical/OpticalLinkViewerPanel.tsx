@@ -42,7 +42,9 @@ import {
 import { applyObjectTransformWorld } from "../../three/transformUtils";
 import { anchorObjectLocalAxisX, anchorObjectLocalPos } from "../../utils/anchorAccess";
 import { mmToThree, labRootSwapInverseQuaternion, labRootSwapQuaternion } from "../../optical/frames";
+import { domainForElementKind, kindIdToElementKind } from "../../utils/elementDefaults";
 import { BeamScopeContents } from "./BeamScopePanel";
+import { PhysicsElementPanel } from "../physics/PhysicsElementPanel";
 
 const EMITTER_KINDS: ReadonlySet<string> = new Set([
   "laser_source",
@@ -606,6 +608,31 @@ export function OpticalLinkViewerContent({
   const objectBindings = useSceneStore((s) => s.scene.objectBindings);
   const scopeProbe = useSceneStore((s) => s.scopeProbe);
   const setScopeProbe = useSceneStore((s) => s.setScopeProbe);
+
+  // Right-sidebar object inspector: every OPTICAL scene object, selectable via
+  // a dropdown → renders its PhysicsElementPanel inline (so the object physics
+  // panel lives in the optical-link view, not just the component inspector).
+  const opticalObjects = useMemo(() => {
+    const compById = new Map(components.map((c) => [c.id, c]));
+    return objects
+      .filter((o) => {
+        const comp = compById.get(o.componentId);
+        if (!comp?.kindId) return false;
+        const ek = kindIdToElementKind(comp.kindId);
+        return ek != null && domainForElementKind(ek) === "optical";
+      })
+      .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+  }, [objects, components]);
+  const [inspectObjectId, setInspectObjectId] = useState<string | null>(null);
+  // Keep the selection valid as the scene changes (default to the first optic).
+  const effectiveInspectId =
+    inspectObjectId && opticalObjects.some((o) => o.id === inspectObjectId)
+      ? inspectObjectId
+      : (opticalObjects[0]?.id ?? null);
+  const inspectObject = opticalObjects.find((o) => o.id === effectiveInspectId) ?? null;
+  const inspectComponent = inspectObject
+    ? components.find((c) => c.id === inspectObject.componentId) ?? null
+    : null;
 
   // `tasFoldedIntoLaser` is the set of tapered-amplifier object IDs that
   // sit on some laser's downstream chain (either via authored
@@ -1531,15 +1558,17 @@ export function OpticalLinkViewerContent({
   const noEmitters = emitterChoices.length === 0;
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        minHeight: 0,
-        gap: 8,
-      }}
-    >
+    <div style={{ display: "flex", flexDirection: "row", height: "100%", minHeight: 0, gap: 8 }}>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          flex: 1,
+          minWidth: 0,
+          minHeight: 0,
+          gap: 8,
+        }}
+      >
         <div
           style={{
             flex: probeBelongsToChain ? 1.2 : 1,
@@ -1622,6 +1651,42 @@ export function OpticalLinkViewerContent({
             <BeamScopeContents />
           </div>
         )}
+      </div>
+
+      {/* Right sidebar: object selector + that object's physics panel. */}
+      <div
+        style={{
+          width: 360,
+          flexShrink: 0,
+          minHeight: 0,
+          overflow: "auto",
+          padding: "8px 10px",
+          borderRadius: 4,
+          background: "#0b1120",
+          borderLeft: "1px solid rgba(148, 163, 184, 0.2)",
+        }}
+      >
+        <label style={{ display: "block", color: "#e2e8f0", fontSize: 12, marginBottom: 6 }}>
+          <span style={{ display: "block", marginBottom: 4, opacity: 0.8 }}>Object</span>
+          <select
+            value={effectiveInspectId ?? ""}
+            onChange={(e) => setInspectObjectId(e.target.value || null)}
+            style={{ width: "100%", padding: "4px 6px", fontSize: 12 }}
+          >
+            {opticalObjects.length === 0 && <option value="">(no optical objects)</option>}
+            {opticalObjects.map((o) => (
+              <option key={o.id} value={o.id}>{o.name || o.id.slice(0, 8)}</option>
+            ))}
+          </select>
+        </label>
+        {inspectObject && inspectComponent ? (
+          <PhysicsElementPanel component={inspectComponent} sceneObject={inspectObject} />
+        ) : (
+          <p style={{ color: "#9ca3af", fontSize: 12 }}>
+            Select an optical object to edit its physics.
+          </p>
+        )}
+      </div>
     </div>
   );
 }
