@@ -49,7 +49,6 @@ import {
 // reading window.__rayTraceDebug (which the adapter populates).
 import { _testReflect, type TraceSegment } from "../three/rayTrace";
 import { runV3SolverFromDbApi, type V3LabSegment, type V3SolverResult } from "../api/client";
-import { resolveAomRfDriveFromScene } from "../utils/aomRfDrive";
 import { portKey, vppToPowerW } from "../utils/rfPropagation";
 import { adaptV3LabSegmentsToTraceSegments } from "../three/v3TraceAdapter";
 import { disposeFarfieldLobe, makeFarfieldLobe } from "../three/hornFarfield";
@@ -1522,38 +1521,37 @@ export function DigitalTwinViewer({
           poweredOff.add(ds.objectId);
         }
       }
-      const snapshot = getRfSnapshotAt(
-        buildRfPropagationSchedule({
-          objects: sceneData.objects,
-          components: sceneData.components,
-          assets: sceneData.assets,
-          physicsElements: sceneData.physicsElements,
-          timingPrograms: sceneData.timingPrograms ?? [],
-          poweredOffObjectIds: poweredOff,
-        }),
-        scrubTimeNs,
-      );
+      const schedule = buildRfPropagationSchedule({
+        objects: sceneData.objects,
+        components: sceneData.components,
+        assets: sceneData.assets,
+        physicsElements: sceneData.physicsElements,
+        timingPrograms: sceneData.timingPrograms ?? [],
+        poweredOffObjectIds: poweredOff,
+      });
+      const snapshot = getRfSnapshotAt(schedule, scrubTimeNs);
+      const allSnapshots = [...schedule.snapshots, schedule.restSnapshot];
       for (const obj of sceneData.objects) {
         if (compById.get(obj.componentId)?.kindId !== "aom") continue;
         const props = obj.properties as Record<string, unknown> | undefined;
         if (props?.aomRfDriveMode === "manual") continue;
-        // Only AOMs wired to an rf_cable chain are RF-link driven; one with no
-        // chain keeps the asset's rated operating point (no override).
-        const staticDrive = resolveAomRfDriveFromScene(
-          obj.id, sceneData.objects, sceneData.components,
-          sceneData.assets, sceneData.physicsElements,
-        );
-        if (!staticDrive) continue;
         const comp = compById.get(obj.componentId);
         const asset = comp?.asset3dId ? assetById.get(comp.asset3dId) : undefined;
         const rfIn = asset?.anchors?.find((a) => a.id === "rf_in");
-        const sig = rfIn
-          ? snapshot.signalAtPort.get(portKey(obj.id, rfIn.name ?? rfIn.id))
-          : undefined;
+        if (!rfIn) continue;
+        const key = portKey(obj.id, rfIn.name ?? rfIn.id);
+        // RF-link driven iff SOME timing section delivers a carrier to its
+        // rf_in. (A bare AOM with no rf_cable is never driven → leave it on the
+        // asset's rated operating point.) We can't use the idle/static signal
+        // for this: a switch routed off at rest would falsely look "unwired".
+        const linkDriven = allSnapshots.some((s) => (s.signalAtPort.get(key)?.vpp ?? 0) > 0);
+        if (!linkDriven) continue;
+        const sig = snapshot.signalAtPort.get(key);
         aomOverrides[obj.id] = sig && sig.vpp > 0
           ? { aomFreqMhz: sig.frequencyMhz, rfDrivePowerW: vppToPowerW(sig.vpp) }
-          // Gated OFF (or no carrier) at this instant → no RF → no diffraction.
-          : { aomFreqMhz: staticDrive.frequencyMhz, rfDrivePowerW: 0 };
+          // Gated OFF at this instant (switch routed away / source silent) →
+          // no RF → η=0 → no diffraction (beam passes straight through).
+          : { rfDrivePowerW: 0 };
       }
       // Skip the backend round-trip when neither the scene nor the resolved
       // drive changed — scrubbing WITHIN one timing section is a no-op.
