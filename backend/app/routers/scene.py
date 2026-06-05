@@ -9,7 +9,6 @@ from app.db import get_session
 from app.models import (
     Asset3D,
     AssemblyRelation,
-    BeamPath,
     BeamSegment,
     Collection,
     CollectionMember,
@@ -67,7 +66,6 @@ async def get_scene(session: AsyncSession = Depends(get_session)) -> schemas.Sce
     )
     connections = list((await session.scalars(select(Connection))).all())
     assembly_relations = list((await session.scalars(select(AssemblyRelation))).all())
-    beam_paths = list((await session.scalars(select(BeamPath))).all())
     device_states = list((await session.scalars(select(DeviceState))).all())
     physics_elements = list((await session.scalars(select(PhysicsElement))).all())
     optical_links = list((await session.scalars(select(OpticalLink))).all())
@@ -163,7 +161,6 @@ async def get_scene(session: AsyncSession = Depends(get_session)) -> schemas.Sce
         object_bindings=object_bindings,
         connections=connections,
         assembly_relations=assembly_relations,
-        beam_paths=beam_paths,
         device_states=device_states,
         physics_elements=physics_element_payloads,
         optical_links=optical_links,

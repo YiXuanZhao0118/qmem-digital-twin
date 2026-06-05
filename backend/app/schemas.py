@@ -675,38 +675,6 @@ class AssemblyRelationOut(AssemblyRelationBase):
     updated_at: datetime
 
 
-class BeamPathBase(CamelModel):
-    name: str
-    wavelength_nm: float | None = None
-    color: str = "#ff0000"
-    source_object_id: uuid.UUID | None = None
-    target_object_id: uuid.UUID | None = None
-    points: list[Vec3] = Field(default_factory=list)
-    properties: JsonDict = Field(default_factory=dict)
-    visible: bool = True
-
-
-class BeamPathCreate(BeamPathBase):
-    pass
-
-
-class BeamPathUpdate(CamelModel):
-    name: str | None = None
-    wavelength_nm: float | None = None
-    color: str | None = None
-    source_object_id: uuid.UUID | None = None
-    target_object_id: uuid.UUID | None = None
-    points: list[Vec3] | None = None
-    properties: JsonDict | None = None
-    visible: bool | None = None
-
-
-class BeamPathOut(BeamPathBase):
-    id: uuid.UUID
-    created_at: datetime
-    updated_at: datetime
-
-
 class DeviceStateUpdate(CamelModel):
     state: JsonDict = Field(default_factory=dict)
 
@@ -2439,7 +2407,6 @@ class SceneOut(CamelModel):
     object_bindings: list[ObjectBindingOut] = Field(default_factory=list)
     connections: list[ConnectionOut]
     assembly_relations: list[AssemblyRelationOut] = Field(default_factory=list)
-    beam_paths: list[BeamPathOut]
     device_states: list[DeviceStateOut]
     physics_elements: list[OpticalElementOut] = Field(default_factory=list)
     optical_links: list[OpticalLinkOut] = Field(default_factory=list)

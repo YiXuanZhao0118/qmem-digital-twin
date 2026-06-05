@@ -4,14 +4,13 @@ import copy
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import crud, schemas
 from app.db import get_session
 from app.models import (
     Asset3D,
-    BeamPath,
     Collection,
     CollectionMember,
     Component,
@@ -887,18 +886,6 @@ async def delete_component(
     if component.archived_at is not None:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-    # Drop BeamPath rows that reference any SceneObject of this component.
-    # Endpoints are nullable with ON DELETE SET NULL, but a BeamPath whose
-    # both endpoints reference this component is conceptually gone.
-    object_id_subq = select(SceneObject.id).where(SceneObject.component_id == component_id)
-    await session.execute(
-        delete(BeamPath).where(
-            or_(
-                BeamPath.source_object_id.in_(object_id_subq),
-                BeamPath.target_object_id.in_(object_id_subq),
-            )
-        )
-    )
     # All other per-instance state (Connection, OpticalLink, PhysicsElement,
     # DeviceState, TimingProgram) is keyed by SceneObject id with ON DELETE
     # CASCADE, so deleting the SceneObjects below propagates everything.

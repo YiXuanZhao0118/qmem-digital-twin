@@ -14,7 +14,6 @@ from app.routers import (
     app_settings,
     assembly_relations,
     assets,
-    beam_paths,
     circuits,
     collection_templates,
     collections,
@@ -94,7 +93,6 @@ app.include_router(
 )
 app.include_router(connections.router, prefix="/api/connections", tags=["connections"])
 app.include_router(assembly_relations.router, prefix="/api/assembly-relations", tags=["assembly_relations"])
-app.include_router(beam_paths.router, prefix="/api/beam-paths", tags=["beam_paths"])
 app.include_router(device_states.router, prefix="/api/device-states", tags=["device_states"])
 app.include_router(physics_elements.router, prefix="/api/physics-elements", tags=["physics_elements"])
 app.include_router(optical_links.router, prefix="/api/optical-links", tags=["optical_links"])

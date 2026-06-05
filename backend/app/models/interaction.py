@@ -90,41 +90,6 @@ class AssemblyRelation(Base):
     )
 
 
-class BeamPath(Base):
-    __tablename__ = "beam_paths"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-        server_default=text("gen_random_uuid()"),
-    )
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-    wavelength_nm: Mapped[float | None] = mapped_column(Float)
-    color: Mapped[str] = mapped_column(Text, nullable=False, default="#ff0000", server_default="#ff0000")
-    # Per-OBJECT endpoints (alembic 0015). Nullable: a beam path may be
-    # authored before either endpoint instance exists, and surviving an
-    # endpoint deletion is more useful than cascading a path away.
-    source_object_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("objects.id", ondelete="SET NULL")
-    )
-    target_object_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("objects.id", ondelete="SET NULL")
-    )
-    points: Mapped[JsonList] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
-    properties: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
-    visible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
-
-
 class OpticalLink(Base):
     __tablename__ = "optical_links"
     __table_args__ = (
