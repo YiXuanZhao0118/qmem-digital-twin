@@ -1269,6 +1269,44 @@ h3 {
   padding: 4px 6px;
 }
 
+/* Consolidated viewer HUD toolbar — one glass strip (top-left) holding the
+   display-mode pills, the transform pills and an overflow toggle (the cursor
+   editor is summoned from there). The pill groups inside drop their own
+   floating-bar chrome so they read as one bar. */
+.viewer-toolbar {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  border-radius: 999px;
+  background: rgba(251, 251, 248, 0.82);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.14);
+  backdrop-filter: blur(10px);
+}
+.viewer-toolbar .viewer-display-modes,
+.viewer-toolbar .viewer-transform-modes {
+  position: static;
+  top: auto;
+  left: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  border-radius: 0;
+}
+.viewer-toolbar-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 3px 1px;
+  background: rgba(15, 23, 42, 0.14);
+}
+
 .viewer-display-modes {
   position: absolute;
   top: 14px;

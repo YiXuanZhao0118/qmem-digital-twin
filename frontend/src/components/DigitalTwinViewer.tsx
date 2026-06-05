@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeftRight, Bookmark, BookmarkX, Crosshair, Eye, EyeOff, Grid3x3, Move, RotateCw, Sparkles, Spline, Target, Waypoints } from "lucide-react";
+import { ArrowLeftRight, Bookmark, BookmarkX, Crosshair, Eye, EyeOff, Grid3x3, MoreHorizontal, Move, RotateCw, Sparkles, Spline, Target, Waypoints } from "lucide-react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
@@ -1478,6 +1478,9 @@ export function DigitalTwinViewer({
 
   type CtxMenu = { x: number; y: number; objectId: string; componentId: string };
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
+  // Overflow toggle for the consolidated viewer toolbar — gates the less-used
+  // cursor (mm) editor so the corner stays uncluttered until needed.
+  const [showMoreTools, setShowMoreTools] = useState(false);
   // displayMode is now a controlled prop (so each panel in dual-view holds
   // its own). The parent calls onDisplayModeChange when the user clicks the
   // overlay buttons; the parent in turn writes to zustand under the right
@@ -5994,7 +5997,7 @@ export function DigitalTwinViewer({
           and toggled visible by the pointer drag handler in DOM (no React
           re-render churn during a drag). */}
       <div ref={marqueeRef} className="viewer-marquee" />
-      <ViewerCursorEditor panelKey={panelKey} />
+      {showMoreTools && <ViewerCursorEditor panelKey={panelKey} />}
       <div className="viewer-home-controls" role="group" aria-label="Custom Home view">
         <button
           type="button"
@@ -6019,44 +6022,62 @@ export function DigitalTwinViewer({
         )}
       </div>
       <ToolbarHint displayMode={displayMode} gizmoMode={gizmoMode} />
-      <div className="viewer-display-modes" role="group" aria-label="Display mode">
-        {DISPLAY_MODE_OPTIONS.map(({ mode, title, Icon }) => (
-          <button
-            key={mode}
-            type="button"
-            className={`viewer-mode-button${displayMode === mode ? " active" : ""}`}
-            data-mode={mode}
-            title={title}
-            aria-label={title}
-            aria-pressed={displayMode === mode}
-            onClick={() => onDisplayModeChange(mode)}
-          >
-            <Icon size={16} />
-          </button>
-        ))}
-      </div>
-      {displayMode !== "node-edit" && displayMode !== "optical-link" && (
-        <div className="viewer-transform-modes" role="group" aria-label="Transform mode">
-          <button
-            type="button"
-            className={`viewer-mode-button${gizmoMode === "translate" ? " active" : ""}`}
-            title="Translate (G)"
-            aria-pressed={gizmoMode === "translate"}
-            onClick={() => setGizmoMode("translate")}
-          >
-            <Move size={16} />
-          </button>
-          <button
-            type="button"
-            className={`viewer-mode-button${gizmoMode === "rotate" ? " active" : ""}`}
-            title="Rotate (R)"
-            aria-pressed={gizmoMode === "rotate"}
-            onClick={() => setGizmoMode("rotate")}
-          >
-            <RotateCw size={16} />
-          </button>
+      {/* Consolidated HUD toolbar: display-mode pills + transform pills + an
+          overflow toggle for the cursor editor, in one strip (top-left). */}
+      <div className="viewer-toolbar">
+        <div className="viewer-display-modes" role="group" aria-label="Display mode">
+          {DISPLAY_MODE_OPTIONS.map(({ mode, title, Icon }) => (
+            <button
+              key={mode}
+              type="button"
+              className={`viewer-mode-button${displayMode === mode ? " active" : ""}`}
+              data-mode={mode}
+              title={title}
+              aria-label={title}
+              aria-pressed={displayMode === mode}
+              onClick={() => onDisplayModeChange(mode)}
+            >
+              <Icon size={16} />
+            </button>
+          ))}
         </div>
-      )}
+        {displayMode !== "node-edit" && displayMode !== "optical-link" && (
+          <>
+            <span className="viewer-toolbar-divider" aria-hidden />
+            <div className="viewer-transform-modes" role="group" aria-label="Transform mode">
+              <button
+                type="button"
+                className={`viewer-mode-button${gizmoMode === "translate" ? " active" : ""}`}
+                title="Translate (G)"
+                aria-pressed={gizmoMode === "translate"}
+                onClick={() => setGizmoMode("translate")}
+              >
+                <Move size={16} />
+              </button>
+              <button
+                type="button"
+                className={`viewer-mode-button${gizmoMode === "rotate" ? " active" : ""}`}
+                title="Rotate (R)"
+                aria-pressed={gizmoMode === "rotate"}
+                onClick={() => setGizmoMode("rotate")}
+              >
+                <RotateCw size={16} />
+              </button>
+            </div>
+          </>
+        )}
+        <span className="viewer-toolbar-divider" aria-hidden />
+        <button
+          type="button"
+          className={`viewer-mode-button${showMoreTools ? " active" : ""}`}
+          title="Cursor (mm) editor & more"
+          aria-label="More tools"
+          aria-pressed={showMoreTools}
+          onClick={() => setShowMoreTools((v) => !v)}
+        >
+          <MoreHorizontal size={16} />
+        </button>
+      </div>
       {displayMode === "wireframe" && (
         <ToolsPie
           activeTool={activeTool}
