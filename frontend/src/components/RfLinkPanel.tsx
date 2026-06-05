@@ -258,7 +258,7 @@ function PortConnectorTag({ port }: { port: Port }) {
   return (
     <span
       style={{
-        color: port.connectorFamily ? "#8e8e9a" : "#d96666",
+        color: port.connectorFamily ? "#6c706b" : "#d96666",
         fontSize: 9,
         whiteSpace: "nowrap",
       }}
@@ -363,12 +363,12 @@ function EditableAd9959Row({ port, channel, onCommit }: EditableAd9959RowProps) 
         alignItems: "center",
         gap: 4,
         fontSize: 10,
-        color: "#cfcfd8",
+        color: "#242726",
         height: PORT_ROW_H,
         paddingRight: 12,
       }}
     >
-      <span style={{ minWidth: 28, color: "#e8e8ee", fontWeight: 500 }}>{port.displayName}</span>
+      <span style={{ minWidth: 28, color: "#242726", fontWeight: 500 }}>{port.displayName}</span>
       <PortConnectorTag port={port} />
       <input
         key={`freq-${currentFreq}`}
@@ -384,15 +384,15 @@ function EditableAd9959Row({ port, channel, onCommit }: EditableAd9959RowProps) 
         onClick={(e) => e.stopPropagation()}
         style={{
           width: 50,
-          background: "#1c1c22",
-          color: "#e8e8ee",
-          border: "1px solid #3e3e48",
+          background: "#ffffff",
+          color: "#242726",
+          border: "1px solid #d8ded8",
           borderRadius: 2,
           padding: "1px 3px",
           fontSize: 10,
         }}
       />
-      <span style={{ color: "#8e8e9a" }}>MHz</span>
+      <span style={{ color: "#6c706b" }}>MHz</span>
       <input
         key={`vpp-${currentVpp.toFixed(4)}`}
         type="number"
@@ -408,15 +408,15 @@ function EditableAd9959Row({ port, channel, onCommit }: EditableAd9959RowProps) 
         onClick={(e) => e.stopPropagation()}
         style={{
           width: 44,
-          background: "#1c1c22",
-          color: "#e8e8ee",
-          border: "1px solid #3e3e48",
+          background: "#ffffff",
+          color: "#242726",
+          border: "1px solid #d8ded8",
           borderRadius: 2,
           padding: "1px 3px",
           fontSize: 10,
         }}
       />
-      <span style={{ color: "#8e8e9a" }}>Vpp</span>
+      <span style={{ color: "#6c706b" }}>Vpp</span>
     </div>
   );
 }
@@ -478,7 +478,7 @@ function AomInRow({ port, requiredVpp, incomingSignal, sourceObjectName }: AomIn
         alignItems: "center",
         gap: 6,
         fontSize: 10,
-        color: "#cfcfd8",
+        color: "#242726",
         height: PORT_ROW_H,
         paddingLeft: 12, // leave room for blue port dot at left rect edge
         overflow: "hidden",
@@ -493,26 +493,26 @@ function AomInRow({ port, requiredVpp, incomingSignal, sourceObjectName }: AomIn
           : `${port.displayName} input: no upstream rf_source linked`
       }
     >
-      <span style={{ minWidth: 28, color: "#e8e8ee", fontWeight: 500 }}>{port.displayName}</span>
+      <span style={{ minWidth: 28, color: "#242726", fontWeight: 500 }}>{port.displayName}</span>
       <PortConnectorTag port={port} />
       {/* Primary readout: what's actually arriving at the AOM right now.
           Three columns, monospaced-style alignment so the freq / Vpp / W
           tuple lines up across multiple AOMs in the column. */}
       {incomingSignal ? (
-        <span style={{ color: "#e8e8ee" }}>
-          <strong style={{ color: "#e8e8ee" }}>{incomingFreqMhz!.toFixed(1)}</strong>
-          <span style={{ color: "#8e8e9a" }}> MHz · </span>
-          <strong style={{ color: "#e8e8ee" }}>{incomingVpp!.toFixed(2)}</strong>
-          <span style={{ color: "#8e8e9a" }}> V · </span>
-          <span style={{ color: "#cfcfd8" }}>{formatPowerW(incomingPowerW!)}</span>
+        <span style={{ color: "#242726" }}>
+          <strong style={{ color: "#242726" }}>{incomingFreqMhz!.toFixed(1)}</strong>
+          <span style={{ color: "#6c706b" }}> MHz · </span>
+          <strong style={{ color: "#242726" }}>{incomingVpp!.toFixed(2)}</strong>
+          <span style={{ color: "#6c706b" }}> V · </span>
+          <span style={{ color: "#242726" }}>{formatPowerW(incomingPowerW!)}</span>
         </span>
       ) : (
-        <span style={{ color: "#6e6e7a" }}>no upstream</span>
+        <span style={{ color: "#9aa0a6" }}>no upstream</span>
       )}
       {/* Required-Vpp hint shrinks to a small secondary label so the
           actual incoming reading stays dominant. */}
       {requiredVpp != null && (
-        <span style={{ color: "#6e6e7a", fontSize: 9 }}>
+        <span style={{ color: "#9aa0a6", fontSize: 9 }}>
           (≥ {requiredVpp.toFixed(2)} V)
         </span>
       )}
@@ -528,7 +528,7 @@ function AomInRow({ port, requiredVpp, incomingSignal, sourceObjectName }: AomIn
         <span
           style={{
             marginLeft: "auto",
-            color: "#8e8e9a",
+            color: "#6c706b",
             fontSize: 9,
             whiteSpace: "nowrap",
             overflow: "hidden",
@@ -562,19 +562,19 @@ function AmpInRow({ port, incomingVpp }: AmpInRowProps) {
         alignItems: "center",
         gap: 6,
         fontSize: 10,
-        color: "#cfcfd8",
+        color: "#242726",
         height: PORT_ROW_H,
         paddingLeft: 12,
       }}
     >
-      <span style={{ minWidth: 30, color: "#e8e8ee", fontWeight: 500 }}>{port.displayName}</span>
+      <span style={{ minWidth: 30, color: "#242726", fontWeight: 500 }}>{port.displayName}</span>
       <PortConnectorTag port={port} />
       {incomingVpp != null ? (
-        <span style={{ color: "#8e8e9a" }}>
-          in: <strong style={{ color: "#cfcfd8" }}>{incomingVpp.toFixed(2)}</strong> Vpp
+        <span style={{ color: "#6c706b" }}>
+          in: <strong style={{ color: "#242726" }}>{incomingVpp.toFixed(2)}</strong> Vpp
         </span>
       ) : (
-        <span style={{ color: "#6e6e7a" }}>no upstream</span>
+        <span style={{ color: "#9aa0a6" }}>no upstream</span>
       )}
     </div>
   );
@@ -596,22 +596,22 @@ function AmpOutRow({ port, outgoingVpp, gainDb, saturated }: AmpOutRowProps) {
         justifyContent: "flex-end",
         gap: 6,
         fontSize: 10,
-        color: "#cfcfd8",
+        color: "#242726",
         height: PORT_ROW_H,
         paddingRight: 12,
       }}
     >
-      <span style={{ color: "#8e8e9a" }}>+{gainDb.toFixed(1)} dB</span>
+      <span style={{ color: "#6c706b" }}>+{gainDb.toFixed(1)} dB</span>
       {outgoingVpp != null && (
-        <span style={{ color: "#8e8e9a" }}>
-          → <strong style={{ color: "#cfcfd8" }}>{outgoingVpp.toFixed(2)}</strong> Vpp
+        <span style={{ color: "#6c706b" }}>
+          → <strong style={{ color: "#242726" }}>{outgoingVpp.toFixed(2)}</strong> Vpp
         </span>
       )}
       {saturated && (
         <span style={{ color: "#d49a3a", fontSize: 9 }}>⚠ clamp</span>
       )}
       <PortConnectorTag port={port} />
-      <span style={{ minWidth: 30, color: "#e8e8ee", fontWeight: 500, textAlign: "right" }}>
+      <span style={{ minWidth: 30, color: "#242726", fontWeight: 500, textAlign: "right" }}>
         {port.displayName}
       </span>
     </div>
@@ -1230,8 +1230,8 @@ export function RfLinkPanel() {
           <div
             style={{
               padding: 6,
-              background: "#3a1f1f",
-              border: "1px solid #6a3a3a",
+              background: "#fdecec",
+              border: "1px solid #f3d6d6",
               borderRadius: 4,
               color: "#ff8f8f",
               fontSize: 11,
@@ -1244,11 +1244,11 @@ export function RfLinkPanel() {
           </div>
         )}
         {nodes.length === 0 ? (
-          <div style={{ padding: 16, color: "#9a9aa6", fontSize: 12 }}>
+          <div style={{ padding: 16, color: "#6c706b", fontSize: 12 }}>
             No RF components in scene yet.
           </div>
         ) : (
-          <div style={{ flex: 1, overflow: "auto", background: "#16161b", borderRadius: 4 }}>
+          <div style={{ flex: 1, overflow: "auto", background: "#f3f4f1", borderRadius: 4 }}>
             <svg
               ref={svgRef}
               width={svgWidth}
@@ -1366,7 +1366,7 @@ export function RfLinkPanel() {
                       id={pathId}
                       d={d}
                       fill="none"
-                      stroke={active ? "#fbbf24" : "#8e8e9a"}
+                      stroke={active ? "#fbbf24" : "#6c706b"}
                       strokeWidth={active ? 2.5 : 2}
                     />
                     {active && (
@@ -1381,7 +1381,7 @@ export function RfLinkPanel() {
                       y={labelY}
                       textAnchor="middle"
                       fontSize={10}
-                      fill="#bdbdc8"
+                      fill="#888d88"
                     >
                       {e.cableName}
                       {e.lengthMm != null ? ` · ${e.lengthMm.toFixed(0)} mm` : ""}
@@ -1410,8 +1410,8 @@ export function RfLinkPanel() {
                       height={pos.h}
                       rx={6}
                       ry={6}
-                      fill="#23232a"
-                      stroke={selected ? "#5fa8ff" : "#3e3e48"}
+                      fill="#ffffff"
+                      stroke={selected ? "#5fa8ff" : "#d8ded8"}
                       strokeWidth={selected ? 2 : 1}
                       // grab → grabbing cue. Port circles + foreignObject
                       // bodies sit on top of this rect in document order,
@@ -1491,8 +1491,8 @@ export function RfLinkPanel() {
                           onPointerDown={(e) => e.stopPropagation()}
                           style={{
                             width: "100%",
-                            background: "#1c1c22",
-                            color: "#e8e8ee",
+                            background: "#ffffff",
+                            color: "#242726",
                             border: "1px solid #62a3ff",
                             borderRadius: 2,
                             padding: "1px 4px",
@@ -1506,7 +1506,7 @@ export function RfLinkPanel() {
                         x={pos.x + 10}
                         y={pos.y + 18}
                         fontSize={12}
-                        fill="#e8e8ee"
+                        fill="#242726"
                         fontWeight={500}
                         style={{ cursor: "text" }}
                         onDoubleClick={(e) => {
@@ -1524,7 +1524,7 @@ export function RfLinkPanel() {
                         x={pos.x + pos.w - 8}
                         y={pos.y + 18}
                         fontSize={9}
-                        fill="#8e8e9a"
+                        fill="#6c706b"
                         textAnchor="end"
                         style={{ pointerEvents: "none" }}
                       >
@@ -1536,7 +1536,7 @@ export function RfLinkPanel() {
                       y1={pos.y + NODE_HEADER_H - 1}
                       x2={pos.x + pos.w}
                       y2={pos.y + NODE_HEADER_H - 1}
-                      stroke="#3e3e48"
+                      stroke="#d8ded8"
                       strokeWidth={1}
                     />
                     {n.ports.map((port, i) => {
@@ -1627,7 +1627,7 @@ export function RfLinkPanel() {
                           x={port.role === "in" ? cx + PORT_R + 6 : cx - PORT_R - 6}
                           y={cy + 3}
                           fontSize={10}
-                          fill="#cfcfd8"
+                          fill="#242726"
                           textAnchor={port.role === "in" ? "start" : "end"}
                         >
                           {`${port.displayName} · ${port.connectorFamily?.toUpperCase() ?? "NO CONN"}${channelSuffix}`}
@@ -1701,13 +1701,13 @@ export function RfLinkPanel() {
                             cx={cx}
                             cy={cy}
                             r={isValidDropTarget ? PORT_R + 2 : PORT_R}
-                            fill={isBlockedDropTarget ? "#3e3e48" : color}
+                            fill={isBlockedDropTarget ? "#d8ded8" : color}
                             stroke={
                               isBlockedDropTarget
                                 ? "#d96666"
                                 : isValidDropTarget
                                   ? "#ffffff"
-                                  : "#1c1c22"
+                                  : "#ffffff"
                             }
                             strokeWidth={isValidDropTarget || isBlockedDropTarget ? 2 : 1}
                             data-rf-port-key={`${n.objectId}|${port.anchorId}|${port.anchorName}|${port.role}|${port.domain}|${port.connectorFamily ?? "none"}`}
@@ -1795,7 +1795,7 @@ export function RfLinkPanel() {
                 // and then have the commit silently no-op.
                 let hint: { text: string; color: string } = {
                   text: "Drop on a port to connect",
-                  color: "#bdbdc8",
+                  color: "#888d88",
                 };
                 if (drag.hoverPortKey) {
                   const [hObjId, hAnchorId, hAnchorName, hRole, hDomain, hConnector] = drag.hoverPortKey.split("|");
@@ -1805,7 +1805,7 @@ export function RfLinkPanel() {
                   const sameRole = !hRole || hRole === drag.srcRole;
                   const busy = occupiedPortKeys.has(targetFullKey);
                   if (sameObject) {
-                    hint = { text: "Same object", color: "#8e8e9a" };
+                    hint = { text: "Same object", color: "#6c706b" };
                   } else if (sameRole) {
                     hint = { text: `Role mismatch (${hRole})`, color: "#d49a3a" };
                   } else if (hConnector === "none") {
@@ -1857,8 +1857,8 @@ export function RfLinkPanel() {
                       height={18}
                       rx={3}
                       ry={3}
-                      fill="#0f0f14"
-                      stroke="#3e3e48"
+                      fill="#f3f4f1"
+                      stroke="#d8ded8"
                       strokeWidth={1}
                       opacity={0.9}
                     />
@@ -1880,10 +1880,10 @@ export function RfLinkPanel() {
           <div
             style={{
               padding: 8,
-              background: "#1e1e24",
+              background: "#fbfbf8",
               borderRadius: 4,
               fontSize: 11,
-              color: "#cfcfd8",
+              color: "#242726",
               borderLeft: "3px solid #d49a3a",
             }}
           >
@@ -1897,14 +1897,14 @@ export function RfLinkPanel() {
                 onClick={() => selectObject(d.cableObjectId)}
               >
                 {d.cableName}{" "}
-                <span style={{ color: "#8e8e9a" }}>
+                <span style={{ color: "#6c706b" }}>
                   ({d.endsLinked === 1 ? "one end free" : "both ends free"})
                 </span>
               </div>
             ))}
           </div>
         )}
-        <div style={{ fontSize: 10, color: "#6e6e7a", display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ fontSize: 10, color: "#9aa0a6", display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
           <span><span style={{ color: "#7be08a" }}>●</span> rf_out (editable / amp out)</span>
           <span><span style={{ color: "#62a3ff" }}>●</span> rf_in (computed Vpp)</span>
           <span>Amplifier rows show Vpp_in → +gain dB → Vpp_out (clamped at P_max).</span>
@@ -1920,9 +1920,9 @@ export function RfLinkPanel() {
               title="Clear manual block positions and snap everything back to the column layout"
               style={{
                 marginLeft: "auto",
-                background: "#23232a",
-                color: "#cfcfd8",
-                border: "1px solid #3e3e48",
+                background: "#ffffff",
+                color: "#242726",
+                border: "1px solid #d8ded8",
                 borderRadius: 3,
                 padding: "2px 8px",
                 fontSize: 10,
@@ -1957,13 +1957,13 @@ export function RfLinkPanel() {
               top: portMenu.y,
               zIndex: 9999,
               minWidth: 220,
-              background: "#23232a",
-              border: "1px solid #3e3e48",
+              background: "#ffffff",
+              border: "1px solid #d8ded8",
               borderRadius: 4,
               boxShadow: "0 4px 14px rgba(0,0,0,0.45)",
               padding: 4,
               fontSize: 11,
-              color: "#cfcfd8",
+              color: "#242726",
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -1979,12 +1979,12 @@ export function RfLinkPanel() {
                     textAlign: "left",
                     padding: "6px 8px",
                     background: "transparent",
-                    color: "#e8e8ee",
+                    color: "#242726",
                     border: "none",
                     borderRadius: 3,
                     cursor: ppgBusy ? "wait" : "pointer",
                   }}
-                  onMouseOver={(e) => (e.currentTarget.style.background = "#2e2e36")}
+                  onMouseOver={(e) => (e.currentTarget.style.background = "#e9ebe9")}
                   onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
                 >
                   {ppgBusy
@@ -1994,9 +1994,9 @@ export function RfLinkPanel() {
                 <div
                   style={{
                     padding: "4px 8px",
-                    color: "#8e8e9a",
+                    color: "#6c706b",
                     fontSize: 10,
-                    borderTop: "1px solid #3e3e48",
+                    borderTop: "1px solid #d8ded8",
                     marginTop: 2,
                   }}
                 >
@@ -2020,7 +2020,7 @@ export function RfLinkPanel() {
                     borderRadius: 3,
                     cursor: ppgBusy ? "wait" : "pointer",
                   }}
-                  onMouseOver={(e) => (e.currentTarget.style.background = "#3a1f1f")}
+                  onMouseOver={(e) => (e.currentTarget.style.background = "#fdecec")}
                   onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
                 >
                   {ppgBusy ? "Removing..." : `Disconnect cable "${portMenu.cableName}"`}
@@ -2028,9 +2028,9 @@ export function RfLinkPanel() {
                 <div
                   style={{
                     padding: "4px 8px",
-                    color: "#8e8e9a",
+                    color: "#6c706b",
                     fontSize: 10,
-                    borderTop: "1px solid #3e3e48",
+                    borderTop: "1px solid #d8ded8",
                     marginTop: 2,
                   }}
                 >

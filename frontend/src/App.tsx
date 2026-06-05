@@ -22,6 +22,7 @@ import { RfLinkPanel } from "./components/RfLinkPanel";
 // per-object "Snap to beam" action (in OE panel) plus aperture warnings.
 import { CursorMenu } from "./components/optical/CursorMenu";
 import { SceneToolbar } from "./components/SceneToolbar";
+import { DockZones } from "./components/workspace/DockZones";
 import { ScrubTimeBar } from "./components/workspace/ScrubTimeBar";
 import { SolverConsole } from "./components/workspace/SolverConsole";
 import { TopBar } from "./components/workspace/TopBar";
@@ -52,14 +53,13 @@ const _viteEnv =
   ((import.meta as unknown) as { env?: Record<string, string> }).env ?? {};
 const AI_PANEL_ENABLED = _viteEnv.VITE_ENABLE_AI_PANEL === "true";
 
+// Only the four surfaced overlays (see OVERLAY_GROUPS) get number-key
+// shortcuts, numbered 1–4 to match their popover order.
 const NUMBER_KEY_OVERLAYS: Record<string, OverlayKind> = {
   "1": "components",
   "2": "connections",
-  "3": "assembly_relations",
-  "4": "optical_links",
-  "5": "beam_segments",
-  "6": "beam_paths",
-  "7": "anchors",
+  "3": "beam_segments",
+  "4": "anchors",
 };
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -303,12 +303,18 @@ export default function App() {
             />
           )}
         </TopBar>
-        <div className="workspace-canvas">
+        <div className={`workspace-canvas${isOptics ? " has-docks" : ""}`}>
           {isOptics && roomDimensions && (
             <>
-              <DualViewerSplit roomDimensions={roomDimensions} />
-              {loadStatus === "loading" && <div className="scene-overlay">Loading scene</div>}
-              {loadStatus === "error" && <div className="scene-overlay error">{error}</div>}
+              {/* Dock zones reserve space so the viewer is never covered.
+                  Panels portal into these (docked) or render as floats. */}
+              <DockZones />
+              <div className="workspace-center">
+                <DualViewerSplit roomDimensions={roomDimensions} />
+                {loadStatus === "loading" && <div className="scene-overlay">Loading scene</div>}
+                {loadStatus === "error" && <div className="scene-overlay error">{error}</div>}
+                <ScrubTimeBar />
+              </div>
               <ComponentsCatalogPanel />
               <OutlinerFloatingPanel />
               <ComponentPanel />
@@ -318,7 +324,6 @@ export default function App() {
               <TouchCoincidencePanel />
               <MagneticsPanel />
               {AI_PANEL_ENABLED && <AIBindingPanel />}
-              <ScrubTimeBar />
               <CursorMenu />
             </>
           )}

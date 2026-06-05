@@ -73,7 +73,6 @@ import type {
 import type {
   Anchor,
   Asset3D,
-  BeamPath,
   AssemblyRelation,
   Collection,
   CollectionMember,
@@ -440,7 +439,6 @@ type SceneStore = {
   forceShowObject: (objectId: string) => void;
   toggleSessionHiddenObject: (objectId: string) => void;
   setObjectsHiddenInSession: (objectIds: string[], hidden: boolean) => void;
-  toggleSessionHiddenBeamPath: (beamPathId: string) => void;
   toggleSessionHiddenLink: (linkId: string) => void;
   toggleSessionHiddenRelation: (relationId: string) => void;
   clearSessionHidden: () => void;
@@ -1456,15 +1454,6 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     });
   },
 
-  toggleSessionHiddenBeamPath(beamPathId) {
-    set((state) => {
-      const next = cloneSession(state.session);
-      if (next.hiddenBeamPathIds.has(beamPathId)) next.hiddenBeamPathIds.delete(beamPathId);
-      else next.hiddenBeamPathIds.add(beamPathId);
-      return { session: next };
-    });
-  },
-
   toggleSessionHiddenLink(linkId) {
     set((state) => {
       const next = cloneSession(state.session);
@@ -1487,7 +1476,6 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     set((state) => {
       const next = cloneSession(state.session);
       next.hiddenObjectIds.clear();
-      next.hiddenBeamPathIds.clear();
       next.hiddenLinkIds.clear();
       next.hiddenRelationIds.clear();
       return { session: next };
@@ -2153,11 +2141,10 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   },
 
   async findFiberAlignmentCandidates(componentId, end, toleranceMm = 25) {
-    // Two sources of candidate beam segments, both in LAB mm:
-    //   (1) Legacy manually-drawn beam_paths (back-compat).
-    //   (2) Live __rayTraceDebug — three.js world coords (units = 100 mm,
-    //       y-up). Inverse swap: lab_x = three.x*100, lab_y = -three.z*100,
-    //       lab_z = three.y*100. Skip segments emitted by this fiber.
+    // Candidate beam segments in LAB mm, from the live __rayTraceDebug —
+    // three.js world coords (units = 100 mm, y-up). Inverse swap:
+    // lab_x = three.x*100, lab_y = -three.z*100, lab_z = three.y*100.
+    // Skip segments emitted by this fiber.
     //
     // For trace segments we additionally:
     //   - Tag each with `aomSideband.order` so AOM ±1 orders that share
@@ -2181,18 +2168,6 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     if (!nodes || nodes.length < 2) return [];
 
     const beamSegmentsLab: BeamSegmentLab[] = [];
-    for (const beam of state.scene.beamPaths) {
-      if (!beam.visible) continue;
-      if (beam.points.length < 2) continue;
-      for (let i = 0; i < beam.points.length - 1; i += 1) {
-        beamSegmentsLab.push({
-          beamId: beam.id,
-          aMm: beam.points[i] as [number, number, number],
-          bMm: beam.points[i + 1] as [number, number, number],
-          displayLabel: `Beam ${beam.id.slice(0, 6)} · seg ${i}`,
-        });
-      }
-    }
 
     type TraceSeg = {
       sourceObjectId?: string;
@@ -2854,13 +2829,6 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
           ...state.scene,
           components: nextComponents,
           objects: nextObjects,
-          // Per-object endpoints (alembic 0015): drop anything that references
-          // an object we just removed.
-          beamPaths: state.scene.beamPaths.filter(
-            (beamPath) =>
-              !(beamPath.sourceObjectId && removedObjectIds.has(beamPath.sourceObjectId)) &&
-              !(beamPath.targetObjectId && removedObjectIds.has(beamPath.targetObjectId)),
-          ),
           connections: state.scene.connections.filter(
             (connection) =>
               !removedObjectIds.has(connection.fromObjectId) &&
@@ -4279,11 +4247,6 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
               objects: nextObjects,
               // Per-object endpoints (alembic 0015): drop refs that pointed
               // at any of the just-removed object instances.
-              beamPaths: scene.beamPaths.filter(
-                (item) =>
-                  !(item.sourceObjectId && removedObjectIds.has(item.sourceObjectId)) &&
-                  !(item.targetObjectId && removedObjectIds.has(item.targetObjectId)),
-              ),
               connections: scene.connections.filter(
                 (item) =>
                   !removedObjectIds.has(item.fromObjectId) &&
@@ -4345,15 +4308,6 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
               assemblyRelations: event.payload.deleted
                 ? scene.assemblyRelations.filter((item) => item.id !== event.payload.id)
                 : upsertById(scene.assemblyRelations, event.payload as AssemblyRelation),
-            },
-          };
-        case "beam_path.updated":
-          return {
-            scene: {
-              ...scene,
-              beamPaths: event.payload.deleted
-                ? scene.beamPaths.filter((item) => item.id !== event.payload.id)
-                : upsertById(scene.beamPaths, event.payload as BeamPath),
             },
           };
         case "connection.updated":

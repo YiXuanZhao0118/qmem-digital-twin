@@ -53,7 +53,6 @@ export const emptyScene: SceneData = {
   objects: [],
   connections: [],
   assemblyRelations: [],
-  beamPaths: [],
   deviceStates: [],
   physicsElements: [],
   opticalLinks: [],

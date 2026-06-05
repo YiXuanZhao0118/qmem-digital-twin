@@ -399,20 +399,6 @@ export type AssemblyRelation = {
   updatedAt?: string;
 };
 
-export type BeamPath = {
-  id: string;
-  name: string;
-  wavelengthNm?: number | null;
-  color: string;
-  sourceObjectId?: string | null;
-  targetObjectId?: string | null;
-  points: Vec3[];
-  properties: Record<string, unknown>;
-  visible: boolean;
-  createdAt?: string;
-  updatedAt?: string;
-};
-
 export type DeviceState = {
   objectId: string;
   state: Record<string, unknown>;
@@ -1212,7 +1198,6 @@ export type SceneData = {
   objects: SceneObject[];
   connections: ConnectionItem[];
   assemblyRelations: AssemblyRelation[];
-  beamPaths: BeamPath[];
   deviceStates: DeviceState[];
   physicsElements: PhysicsElement[];
   opticalLinks: OpticalLink[];
@@ -1239,7 +1224,6 @@ export type SceneEvent =
   | { type: "object.updated"; payload: SceneObject }
   | { type: "object.deleted"; payload: { id?: string; objectId?: string } }
   | { type: "assembly_relation.updated"; payload: AssemblyRelation & { deleted?: boolean } }
-  | { type: "beam_path.updated"; payload: BeamPath & { deleted?: boolean } }
   | { type: "connection.updated"; payload: ConnectionItem & { deleted?: boolean } }
   | { type: "device_state.updated"; payload: DeviceState }
   | { type: "physics_element.updated"; payload: (Partial<PhysicsElement> & { componentId?: string; deleted?: boolean }) | PhysicsElement }

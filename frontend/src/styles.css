@@ -78,7 +78,7 @@ button {
   width: 100%;
   height: 100%;
   min-height: 0;
-  background: #171817;
+  background: #eef1ef;
   overflow: hidden;
 }
 
@@ -100,6 +100,9 @@ button {
 .top-bar-toolbar {
   flex: 1 1 auto;
   min-width: 0;
+  /* Clip so the toolbar's content can never spill over the brand / module
+     switcher / window menu when the viewport is narrow (the old overlap). */
+  overflow: hidden;
 }
 
 .top-bar-toolbar > .scene-toolbar {
@@ -107,6 +110,23 @@ button {
   background: transparent;
   padding: 0;
   min-height: 0;
+  /* When the groups don't fit, scroll the strip instead of overlapping. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.top-bar-toolbar > .scene-toolbar::-webkit-scrollbar {
+  height: 6px;
+}
+.top-bar-toolbar > .scene-toolbar::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 3px;
+}
+
+.top-bar-brand,
+.module-switcher,
+.top-bar-menu {
+  flex-shrink: 0;
 }
 
 .top-bar-menu {
@@ -114,16 +134,170 @@ button {
   flex: 0 0 auto;
 }
 
+/* Top-bar progressive compaction so the toolbar keeps room before it scrolls.
+   Selectors are `.top-bar`-prefixed to out-specify the base rules (which are
+   defined later in the file). */
+@media (max-width: 1180px) {
+  .top-bar {
+    gap: 10px;
+    padding: 6px 10px;
+  }
+  .top-bar .project-logo-text {
+    display: none;
+  }
+}
+@media (max-width: 980px) {
+  .top-bar .module-tab {
+    padding: 4px 9px;
+    font-size: 12px;
+  }
+  .top-bar .setup-button {
+    padding: 0 9px;
+    font-size: 12px;
+  }
+}
+
 .workspace-canvas {
   position: relative;
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
-  background: #171817;
+  background: #eef1ef;
+}
+
+/* =============================================================================
+ * Dock shell (optics) — reserve-space zones around a center viewer. Docked
+ * panels stack in zones (never overlap); the viewer fills the center and is
+ * never covered. Empty zones collapse to 0 via the --dock-* vars (DockZones).
+ * ============================================================================= */
+.workspace-canvas.has-docks {
+  display: grid;
+  grid-template-columns: var(--dock-left, 0px) minmax(0, 1fr) var(--dock-right, 0px);
+  grid-template-rows: minmax(0, 1fr) var(--dock-bottom, 0px);
+  grid-template-areas:
+    "left center right"
+    "bottom bottom bottom";
+}
+.workspace-center {
+  grid-area: center;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.dock-zone {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--panel);
+}
+.dock-zone-left {
+  grid-area: left;
+  border-right: 1px solid var(--line);
+}
+.dock-zone-right {
+  grid-area: right;
+  border-left: 1px solid var(--line);
+}
+.dock-zone-bottom {
+  grid-area: bottom;
+  border-top: 1px solid var(--line);
+}
+
+/* Inner-edge resize handles, positioned at the gridline boundaries. */
+.dock-resize {
+  position: absolute;
+  z-index: 6;
+  touch-action: none;
+  transition: background 120ms ease;
+}
+.dock-resize:hover,
+.dock-resize:active {
+  background: var(--accent-soft-strong);
+}
+.dock-resize-left {
+  top: 0;
+  bottom: var(--dock-bottom, 0px);
+  left: calc(var(--dock-left, 0px) - 3px);
+  width: 6px;
+  cursor: col-resize;
+}
+.dock-resize-right {
+  top: 0;
+  bottom: var(--dock-bottom, 0px);
+  right: calc(var(--dock-right, 0px) - 3px);
+  width: 6px;
+  cursor: col-resize;
+}
+.dock-resize-bottom {
+  left: var(--dock-left, 0px);
+  right: var(--dock-right, 0px);
+  bottom: calc(var(--dock-bottom, 0px) - 3px);
+  height: 6px;
+  cursor: row-resize;
+}
+body.is-dock-resize {
+  user-select: none;
+}
+
+/* Docked panel chrome — accordion-style; mirrors the floating-panel header. */
+.docked-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 120px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.docked-panel.collapsed {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+.docked-panel-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 30px;
+  padding: 0 4px 0 10px;
+  background: linear-gradient(to bottom, rgba(15, 118, 110, 0.06), rgba(15, 118, 110, 0.02));
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  user-select: none;
+}
+.docked-panel.collapsed .docked-panel-header {
+  border-bottom: none;
+}
+.docked-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+}
+
+/* Narrow viewports: collapse the side docks so the viewer keeps room. Users
+   can still pop panels out to float. */
+@media (max-width: 1100px) {
+  .workspace-canvas.has-docks {
+    grid-template-columns: 0px minmax(0, 1fr) 0px;
+  }
+  .dock-zone-side {
+    display: none;
+  }
+  .dock-resize-left,
+  .dock-resize-right {
+    display: none;
+  }
 }
 
 /* Make viewer fill the workspace as the always-on canvas backdrop */
-.workspace-canvas > .viewer-shell {
+/* Single-view: the DigitalTwinViewer (.viewer-shell) renders directly in the
+   center cell (or, in non-dock modules, the canvas). Fill the parent. */
+.workspace-canvas > .viewer-shell,
+.workspace-center > .viewer-shell {
   position: absolute;
   inset: 0;
 }
@@ -132,7 +306,7 @@ button {
  * holding its own .viewer-shell, with a draggable splitter in between.
  * flex-basis is set inline by the wrapper at drag time (refs, not React
  * state) so the layout updates at pointer-move rate without re-rendering. */
-.workspace-canvas > .dual-viewer-split {
+.dual-viewer-split {
   position: absolute;
   inset: 0;
   display: flex;
@@ -608,7 +782,7 @@ h3 {
   min-height: 0;
   height: 100vh;
   overflow: hidden;
-  background: #171817;
+  background: #eef1ef;
 }
 
 .viewer-shell {
@@ -1019,24 +1193,12 @@ h3 {
   inset: 0;
   z-index: 2;
   padding: 56px 14px 14px;
-  background: #0b1120;
+  background: #eef1ef;
 }
 
-/* Beam-scope is embedded here over a dark background but was styled for a light
-   floating panel. The wrapper sets a light base text colour (see JSX); these
-   override the few elements with explicit dark colours / dark-on-transparent
-   fills so the summary readout is readable. The .beam-scope-plot cards keep
-   their own white background + dark text. */
-.viewer-optical-link-overlay .beam-scope-summary {
-  background: rgba(255, 255, 255, 0.04);
-  border-bottom-color: rgba(255, 255, 255, 0.12);
-}
-.viewer-optical-link-overlay .beam-scope-pol {
-  border-top-color: rgba(255, 255, 255, 0.12);
-}
-.viewer-optical-link-overlay .beam-scope-power-frac {
-  color: rgba(203, 213, 225, 0.7);
-}
+/* The optical-link overlay is light again, so the beam-scope renders with its
+   native light-floating-panel styling (dark-on-light) — no dark-overlay text
+   overrides needed here. */
 
 /* Marquee box for canvas drag-select. Set inline by handlePointerMove
    (left/top/width/height + display=block); hidden when no marquee active. */
@@ -1063,9 +1225,9 @@ h3 {
   width: 132px;
   height: 132px;
   z-index: 3;
-  border: 1px solid rgba(248, 250, 252, 0.18);
+  border: 1px solid rgba(15, 23, 42, 0.18);
   border-radius: var(--radius-md);
-  background: rgba(15, 23, 42, 0.48);
+  background: rgba(251, 251, 248, 0.72);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
   cursor: pointer;
   pointer-events: auto;
@@ -1089,9 +1251,9 @@ h3 {
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
-  border: 1px solid rgba(248, 250, 252, 0.18);
+  border: 1px solid rgba(15, 23, 42, 0.18);
   border-radius: 6px;
-  background: rgba(18, 24, 22, 0.78);
+  background: rgba(251, 251, 248, 0.78);
   color: var(--muted);
   font-size: var(--fs-xs);
   cursor: pointer;
@@ -1099,9 +1261,9 @@ h3 {
   backdrop-filter: blur(10px);
 }
 .viewer-home-button:hover {
-  background: rgba(248, 250, 252, 0.12);
-  color: #f8fafc;
-  border-color: rgba(248, 250, 252, 0.32);
+  background: rgba(15, 23, 42, 0.12);
+  color: #242726;
+  border-color: rgba(15, 23, 42, 0.32);
 }
 .viewer-home-clear {
   padding: 4px 6px;
@@ -1116,9 +1278,9 @@ h3 {
   align-items: center;
   gap: 6px;
   padding: 5px;
-  border: 1px solid rgba(248, 250, 252, 0.16);
+  border: 1px solid rgba(15, 23, 42, 0.16);
   border-radius: 999px;
-  background: rgba(18, 24, 22, 0.74);
+  background: rgba(251, 251, 248, 0.74);
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
   backdrop-filter: blur(10px);
 }
@@ -1136,9 +1298,9 @@ h3 {
   align-items: center;
   gap: 6px;
   padding: 5px 8px;
-  border: 1px solid rgba(248, 250, 252, 0.16);
+  border: 1px solid rgba(15, 23, 42, 0.16);
   border-radius: 8px;
-  background: rgba(18, 24, 22, 0.78);
+  background: rgba(251, 251, 248, 0.78);
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
   backdrop-filter: blur(10px);
   font-size: var(--fs-xs);
@@ -1167,17 +1329,17 @@ h3 {
   width: 22px;
   height: 22px;
   margin-left: 2px;
-  border: 1px solid rgba(248, 250, 252, 0.18);
+  border: 1px solid rgba(15, 23, 42, 0.18);
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.28);
+  background: rgba(255, 255, 255, 0.7);
   color: var(--muted);
   cursor: pointer;
   transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
 .viewer-cursor-toggle:hover {
-  background: rgba(248, 250, 252, 0.12);
-  color: #f8fafc;
-  border-color: rgba(248, 250, 252, 0.32);
+  background: rgba(15, 23, 42, 0.12);
+  color: #242726;
+  border-color: rgba(15, 23, 42, 0.32);
 }
 .viewer-cursor-toggle[aria-pressed="true"] {
   color: #f59e0b;
@@ -1188,17 +1350,17 @@ h3 {
   cursor: not-allowed;
 }
 .viewer-cursor-toggle:disabled:hover {
-  background: rgba(0, 0, 0, 0.28);
+  background: rgba(255, 255, 255, 0.7);
   color: var(--muted);
-  border-color: rgba(248, 250, 252, 0.18);
+  border-color: rgba(15, 23, 42, 0.18);
 }
 .viewer-cursor-field input {
   width: 56px;
   padding: 2px 4px;
-  border: 1px solid rgba(248, 250, 252, 0.18);
+  border: 1px solid rgba(15, 23, 42, 0.18);
   border-radius: 3px;
-  background: rgba(0, 0, 0, 0.32);
-  color: #f8fafc;
+  background: #ffffff;
+  color: #242726;
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
 }
@@ -1219,9 +1381,9 @@ h3 {
   align-items: center;
   gap: 6px;
   padding: 5px;
-  border: 1px solid rgba(248, 250, 252, 0.16);
+  border: 1px solid rgba(15, 23, 42, 0.16);
   border-radius: 999px;
-  background: rgba(18, 24, 22, 0.74);
+  background: rgba(251, 251, 248, 0.74);
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
   backdrop-filter: blur(10px);
 }
@@ -1238,11 +1400,11 @@ h3 {
 }
 .viewer-tools-pie .tools-pie-wedge {
   cursor: pointer;
-  color: rgba(241, 245, 249, 0.85);
+  color: rgba(36, 39, 38, 0.85);
 }
 .viewer-tools-pie .tools-pie-wedge path {
-  fill: rgba(18, 24, 22, 0.74);
-  stroke: rgba(248, 250, 252, 0.18);
+  fill: rgba(251, 251, 248, 0.74);
+  stroke: rgba(15, 23, 42, 0.18);
   stroke-width: 1;
   transition: fill 120ms ease;
 }
@@ -1257,7 +1419,7 @@ h3 {
   cursor: pointer;
 }
 .viewer-tools-pie .tools-pie-centre circle {
-  fill: rgba(18, 24, 22, 0.92);
+  fill: rgba(251, 251, 248, 0.92);
   stroke: rgba(94, 234, 212, 0.4);
   stroke-width: 1.2;
   transition: fill 120ms ease;
@@ -1266,7 +1428,7 @@ h3 {
   fill: rgba(15, 118, 110, 0.55);
 }
 .viewer-tools-pie .tools-pie-centre text {
-  fill: rgba(248, 250, 252, 0.92);
+  fill: rgba(15, 23, 42, 0.92);
   font-family: system-ui, sans-serif;
   pointer-events: none;
   user-select: none;
@@ -1282,13 +1444,13 @@ h3 {
   border: 1px solid transparent;
   border-radius: 50%;
   background: transparent;
-  color: rgba(241, 245, 249, 0.76);
+  color: rgba(36, 39, 38, 0.76);
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
 }
 
 .viewer-mode-button:hover {
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.08);
+  color: #242726;
+  background: rgba(15, 23, 42, 0.07);
 }
 
 .viewer-mode-button.active {
@@ -1326,10 +1488,10 @@ h3 {
   max-width: min(240px, calc(100vw - 150px));
   height: 30px;
   padding: 0 9px;
-  border: 1px solid rgba(248, 250, 252, 0.16);
+  border: 1px solid rgba(15, 23, 42, 0.16);
   border-radius: var(--radius-md);
-  background: rgba(18, 24, 22, 0.74);
-  color: rgba(241, 245, 249, 0.82);
+  background: rgba(251, 251, 248, 0.74);
+  color: rgba(36, 39, 38, 0.82);
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.2);
   backdrop-filter: blur(10px);
   font-size: var(--fs-sm);
@@ -1354,12 +1516,12 @@ h3 {
 .view-center-popover {
   width: min(330px, calc(100vw - 28px));
   padding: 8px;
-  border: 1px solid rgba(248, 250, 252, 0.16);
+  border: 1px solid rgba(15, 23, 42, 0.16);
   border-radius: var(--radius-md);
-  background: rgba(20, 24, 22, 0.9);
+  background: rgba(251, 251, 248, 0.96);
   box-shadow: 0 16px 34px rgba(0, 0, 0, 0.26);
   backdrop-filter: blur(12px);
-  color: #f8fafc;
+  color: #242726;
 }
 
 .view-center-tabs {
@@ -1375,10 +1537,10 @@ h3 {
   justify-content: center;
   min-width: 0;
   min-height: 28px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(15, 23, 42, 0.12);
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(241, 245, 249, 0.82);
+  background: rgba(15, 23, 42, 0.04);
+  color: rgba(36, 39, 38, 0.82);
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0;
@@ -1387,8 +1549,8 @@ h3 {
 
 .view-center-tab:hover,
 .view-center-small-button:hover:not(:disabled) {
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.14);
+  color: #242726;
+  background: rgba(15, 23, 42, 0.08);
 }
 
 .view-center-tab.active {
@@ -1399,8 +1561,8 @@ h3 {
 
 .view-center-small-button:disabled {
   cursor: not-allowed;
-  color: rgba(148, 163, 184, 0.52);
-  background: rgba(255, 255, 255, 0.035);
+  color: rgba(108, 112, 107, 0.6);
+  background: rgba(15, 23, 42, 0.03);
 }
 
 .view-center-section {
@@ -1412,7 +1574,7 @@ h3 {
 .view-center-section.compact {
   grid-template-columns: 1fr auto;
   align-items: center;
-  color: rgba(226, 232, 240, 0.82);
+  color: rgba(36, 39, 38, 0.82);
   font-size: var(--fs-sm);
   font-weight: 700;
 }
@@ -1426,9 +1588,9 @@ h3 {
 
 .view-center-row select {
   min-height: 30px;
-  border-color: rgba(248, 250, 252, 0.18);
-  background: rgba(15, 23, 42, 0.72);
-  color: #f8fafc;
+  border-color: rgba(15, 23, 42, 0.18);
+  background: rgba(255, 255, 255, 0.9);
+  color: #242726;
   font-size: var(--fs-sm);
 }
 
@@ -1441,7 +1603,7 @@ h3 {
 .view-center-number-grid label {
   display: grid;
   gap: 3px;
-  color: rgba(226, 232, 240, 0.78);
+  color: rgba(36, 39, 38, 0.78);
   font-size: 10px;
   font-weight: 800;
 }
@@ -1449,10 +1611,10 @@ h3 {
 .view-center-number-grid input {
   min-height: 30px;
   padding: 5px 6px;
-  border-color: rgba(248, 250, 252, 0.18);
+  border-color: rgba(15, 23, 42, 0.18);
   border-radius: var(--radius-sm);
-  background: rgba(15, 23, 42, 0.72);
-  color: #f8fafc;
+  background: rgba(255, 255, 255, 0.9);
+  color: #242726;
   font-size: var(--fs-sm);
 }
 
@@ -1463,8 +1625,8 @@ h3 {
   gap: 8px;
   margin-top: 8px;
   padding-top: 7px;
-  border-top: 1px solid rgba(248, 250, 252, 0.12);
-  color: rgba(226, 232, 240, 0.8);
+  border-top: 1px solid rgba(15, 23, 42, 0.12);
+  color: rgba(36, 39, 38, 0.8);
   font-size: 11px;
   font-weight: 800;
 }
@@ -1472,7 +1634,7 @@ h3 {
 .view-center-readout strong {
   min-width: 0;
   overflow: hidden;
-  color: #fde68a;
+  color: #b45309;
   font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2130,6 +2292,43 @@ input:disabled {
   padding: 8px;
 }
 
+/* Physics-inspector section card — replaces the duplicated inline
+   `sectionStyle` (cyan left-border + tint). The body is a query container so
+   the field grids reflow to one column in the narrow optical-link sidebar. */
+.collapsible-section.physics-section {
+  border-left: 2px solid #38bdf8;
+  background: rgba(56, 189, 248, 0.05);
+}
+.collapsible-section.physics-section.open {
+  background: rgba(56, 189, 248, 0.07);
+}
+.collapsible-section.physics-section .collapsible-title {
+  color: #0b6e94;
+  font-size: 11px;
+}
+.collapsible-section.physics-section .collapsible-body {
+  container-type: inline-size;
+  gap: 6px;
+  font-size: 11px;
+}
+.physics-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.physics-grid-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+}
+/* Narrow panel (e.g. the 360px optical-link sidebar) → single column. */
+@container (max-width: 300px) {
+  .physics-grid-2,
+  .physics-grid-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
 .model-link {
   text-decoration: none;
 }
@@ -2332,8 +2531,8 @@ input:disabled {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   padding: 6px 8px;
-  background: #252725;
-  color: #f4f6f3;
+  background: #f3f4f1;
+  color: #242726;
   font-size: 11px;
   line-height: 1.4;
 }
@@ -3215,8 +3414,9 @@ input:disabled {
   position: absolute;
   bottom: 12px;
   left: 12px;
-  background: rgba(0, 0, 0, 0.78);
-  color: #fff;
+  background: rgba(251, 251, 248, 0.92);
+  color: #242726;
+  border: 1px solid var(--line);
   font-size: 11.5px;
   padding: 6px 10px;
   border-radius: var(--radius-md);
@@ -3238,8 +3438,9 @@ input:disabled {
   left: 50%;
   transform: translateX(-50%);
   z-index: 900;
-  background: rgba(20, 22, 30, 0.82);
-  color: #e8eaef;
+  background: rgba(251, 251, 248, 0.94);
+  color: #242726;
+  border: 1px solid var(--line);
   padding: 5px 14px;
   font-size: 11.5px;
   border-radius: 999px;
@@ -3255,7 +3456,7 @@ input:disabled {
 }
 .toolbar-hint-extra {
   font-size: 10px;
-  color: #b0b3bd;
+  color: #6c706b;
   font-style: italic;
 }
 .toolbar-hint-tool {
@@ -5644,7 +5845,7 @@ body.is-timing-bar-drag * {
   align-items: center;
   justify-content: center;
   padding: 32px;
-  background: #171817;
+  background: #eef1ef;
 }
 
 .module-placeholder-card {

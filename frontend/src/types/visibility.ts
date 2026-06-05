@@ -15,10 +15,8 @@ export type OverlayKind =
   // Relations
   | "connections"
   | "assembly_relations"
-  | "optical_links"
   // Physics
   | "beam_segments"
-  | "beam_paths"
   // Debug — asset anchor markers (world pos + axisX)
   | "anchors";
 
@@ -28,9 +26,7 @@ export const OVERLAY_KINDS: OverlayKind[] = [
   "components",
   "connections",
   "assembly_relations",
-  "optical_links",
   "beam_segments",
-  "beam_paths",
   "anchors",
 ];
 
@@ -38,17 +34,21 @@ export const DEFAULT_OVERLAY_FLAGS: OverlayFlags = {
   components: true,
   connections: true,
   assembly_relations: true,
-  optical_links: true,
   beam_segments: true,
-  beam_paths: true,
   // Debug overlay — off by default.
   anchors: false,
 };
 
+// Only Models / Cables / Beams / Anchors are surfaced as toggles —
+// assembly_relations stays in the type and keeps its default flag so its live
+// renderer (relation lines) behaves unchanged; it was just clutter in the
+// popover. "Cables" (connections) gates the RF-cable / fiber-cable models in
+// the 3D scene (see DigitalTwinViewer renderComponents) plus the RF freq/power
+// badges.
 export const OVERLAY_GROUPS: { label: string; kinds: OverlayKind[] }[] = [
   { label: "Geometry", kinds: ["components"] },
-  { label: "Relations", kinds: ["connections", "assembly_relations", "optical_links"] },
-  { label: "Physics", kinds: ["beam_segments", "beam_paths"] },
+  { label: "Relations", kinds: ["connections"] },
+  { label: "Physics", kinds: ["beam_segments"] },
   { label: "Debug", kinds: ["anchors"] },
 ];
 
@@ -56,9 +56,7 @@ export const OVERLAY_LABELS: Record<OverlayKind, string> = {
   components: "Models",
   connections: "Cables",
   assembly_relations: "Asm.",
-  optical_links: "Optic.",
   beam_segments: "Beams",
-  beam_paths: "Path",
   anchors: "Anchors",
 };
 
@@ -72,7 +70,6 @@ export type SessionVisibilityState = {
   // Hiding "a component" in the catalog UI means hiding all of its
   // SceneObject instances — that translation lives in the panel, not here.
   hiddenObjectIds: Set<string>;
-  hiddenBeamPathIds: Set<string>;
   hiddenLinkIds: Set<string>;
   hiddenRelationIds: Set<string>;
   soloObjectIds: Set<string> | null;
@@ -93,7 +90,6 @@ export type SessionVisibilityState = {
 
 export const EMPTY_SESSION_VISIBILITY: SessionVisibilityState = {
   hiddenObjectIds: new Set(),
-  hiddenBeamPathIds: new Set(),
   hiddenLinkIds: new Set(),
   hiddenRelationIds: new Set(),
   soloObjectIds: null,

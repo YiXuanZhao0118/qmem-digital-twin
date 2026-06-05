@@ -9,9 +9,10 @@
  *
  * Consumed by PhysicsElementPanel + the inspectors that need them.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import * as THREE from "three";
 
+import { CollapsibleSection } from "../CollapsibleSection";
 import { useSceneStore } from "../../store/sceneStore";
 import type {
   ComponentItem,
@@ -37,6 +38,31 @@ import {
 } from "../../utils/emissionVisuals";
 import { wavelengthToColor } from "../../three/opticalBeams";
 import { sceneObjectEulerFromQuaternion } from "../../optical/frames";
+
+/**
+ * Collapsible "card" for a physics-inspector section. Replaces the duplicated
+ * inline `sectionStyle`/`titleStyle` blocks — same cyan-card look (via the
+ * `.physics-section` CSS), but the body collapses and the open state persists
+ * (CollapsibleSection's localStorage). `id` is namespaced per-kind by callers
+ * (`physics.<kind>.<slug>`) so every instance of a kind opens the same way.
+ */
+export function SectionCard({
+  id,
+  title,
+  defaultOpen = false,
+  children,
+}: {
+  id: string;
+  title: ReactNode;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <CollapsibleSection id={id} title={title} defaultOpen={defaultOpen} className="physics-section">
+      {children}
+    </CollapsibleSection>
+  );
+}
 // The kind-specific Controls live in sibling files; AlignToBeamSection
 // dispatches into them based on element.elementKind.
 import {
@@ -284,7 +310,7 @@ export function AlignToBeamSection({
     );
   }
   // RF kinds don't propagate as optical beams, so "Align intercept to beam"
-  // (which projects onto optical beam_paths / __rayTraceDebug) is meaningless
+  // (which projects onto the __rayTraceDebug trace segments) is meaningless
   // for rf_source / horn_antenna / rf_cable. Skip the snap-to-beam block
   // entirely for the RF domain — rf_cable has its own "Align RF" buttons
   // in ComponentPanel that snap to rf_in/rf_out anchors instead.

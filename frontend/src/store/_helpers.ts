@@ -102,7 +102,6 @@ export function normalizeSceneData(scene: SceneData): SceneData {
 export function cloneSession(state: SessionVisibilityState): SessionVisibilityState {
   return {
     hiddenObjectIds: new Set(state.hiddenObjectIds),
-    hiddenBeamPathIds: new Set(state.hiddenBeamPathIds),
     hiddenLinkIds: new Set(state.hiddenLinkIds),
     hiddenRelationIds: new Set(state.hiddenRelationIds),
     soloObjectIds: state.soloObjectIds ? new Set(state.soloObjectIds) : null,

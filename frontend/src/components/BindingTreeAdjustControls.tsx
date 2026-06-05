@@ -2,6 +2,7 @@ import { useMemo } from "react";
 
 import { useSceneStore } from "../store/sceneStore";
 import type { ComponentBinding, ComponentItem } from "../types/digitalTwin";
+import { cleanNumber } from "../utils/numberFormat";
 import {
   commonTunableAxes,
   groupBindingsByLink,
@@ -232,7 +233,7 @@ export function BindingTreeAdjustControls({ component }: { component: ComponentI
                     min={min}
                     max={max}
                     disabled={!hasInstance}
-                    value={value}
+                    value={cleanNumber(value)}
                     onChange={(e) => {
                       const v = Number(e.target.value);
                       if (!Number.isFinite(v)) return;
@@ -246,7 +247,7 @@ export function BindingTreeAdjustControls({ component }: { component: ComponentI
                     max={max}
                     step={step}
                     disabled={!hasInstance}
-                    value={value}
+                    value={cleanNumber(value)}
                     onChange={(e) => void writeOverride(bindings, axisField, Number(e.target.value))}
                     style={{ flex: 1 }}
                   />

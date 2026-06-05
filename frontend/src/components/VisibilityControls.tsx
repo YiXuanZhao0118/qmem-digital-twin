@@ -71,7 +71,6 @@ export function DisplayPopover({ open, onClose }: { open: boolean; onClose: () =
 
   const sessionHiddenCount =
     session.hiddenObjectIds.size +
-    session.hiddenBeamPathIds.size +
     session.hiddenLinkIds.size +
     session.hiddenRelationIds.size +
     session.forceVisibleObjectIds.size +
@@ -118,7 +117,7 @@ export function DisplayPopover({ open, onClose }: { open: boolean; onClose: () =
       </div>
 
       <div className="display-hint">
-        Shortcuts: <kbd>1</kbd>–<kbd>7</kbd> toggle overlays · <kbd>0</kbd> reset · <kbd>Esc</kbd> show all
+        Shortcuts: <kbd>1</kbd>–<kbd>4</kbd> toggle overlays · <kbd>0</kbd> reset · <kbd>Esc</kbd> show all
       </div>
     </div>
   );

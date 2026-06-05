@@ -35,7 +35,7 @@ import {
   sceneObjectEulerFromQuaternion,
   threeToLabPointMm,
 } from "../../optical/frames";
-import { EmissionVisualRow } from "./_shared";
+import { EmissionVisualRow, SectionCard } from "./_shared";
 import { PolarizationEditor } from "./PolarizationEditor";
 
 function wavelengthHex(wavelengthNm: number): string {
@@ -240,16 +240,6 @@ export function TaperedAmplifierAdjustControls({
     );
   };
 
-  const sectionStyle: React.CSSProperties = {
-    marginTop: 8,
-    padding: "6px 8px",
-    background: "rgba(56, 189, 248, 0.06)",
-    borderLeft: "2px solid #38bdf8",
-    fontSize: 11,
-  };
-  const titleStyle: React.CSSProperties = { color: "#38bdf8", fontWeight: 600, marginBottom: 6 };
-  const grid2: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 };
-  const grid3: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 };
 
   // 2-point align: rotates + translates the TA so the incoming beam
   // passes through BOTH intercept_in and intercept_out (read from the
@@ -436,18 +426,16 @@ export function TaperedAmplifierAdjustControls({
           to which physical anchor on the asset. Asset anchors are seeded
           in seed.py (intercept_in @ +X face = seed; intercept_out @ -X
           face = amplified output). */}
-      <div style={{ ...sectionStyle, background: "rgba(56, 189, 248, 0.03)" }}>
-        <div style={{ ...titleStyle, marginBottom: 4 }}>Anchor map</div>
+      <SectionCard id="physics.tapered_amplifier.anchor-map" title="Anchor map">
         <div style={{ fontSize: 10, opacity: 0.85, lineHeight: 1.5 }}>
           <div><code>intercept_in</code> &nbsp;=&nbsp; seed face (+X) &nbsp;←&nbsp; Input beam profile · backward ASE exits here</div>
           <div><code>intercept_out</code> &nbsp;=&nbsp; output face (−X) &nbsp;←&nbsp; Output beam profile · forward amplified emission</div>
         </div>
-      </div>
+      </SectionCard>
 
       {/* Operating point */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Operating point</div>
-        <div style={grid3}>
+      <SectionCard id="physics.tapered_amplifier.operating-point" title="Operating point" defaultOpen>
+        <div className="physics-grid-3">
           <NumberCell
             label="Wavelength"
             suffix="nm"
@@ -484,12 +472,11 @@ export function TaperedAmplifierAdjustControls({
             ? " (no aseSamples — solver falls back to the single-direction continuous ASE below)"
             : null}
         </div>
-      </div>
+      </SectionCard>
 
       {/* Steady-state gain (no lookup) */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Steady-state gain</div>
-        <div style={grid2}>
+      <SectionCard id="physics.tapered_amplifier.steady-gain" title="Steady-state gain">
+        <div className="physics-grid-2">
           <NumberCell
             label="Small-signal gain"
             suffix="dB"
@@ -529,7 +516,7 @@ export function TaperedAmplifierAdjustControls({
         <div style={{ opacity: 0.6, marginTop: 4, fontSize: 10 }}>
           Used when no aseSamples / gainSamples lookup tables are present.
         </div>
-      </div>
+      </SectionCard>
 
       {/* ASE (continuous fallback). The legacy `ase.power_mw` field is
           single-direction — the solver applies it as the FORWARD ASE at
@@ -538,11 +525,11 @@ export function TaperedAmplifierAdjustControls({
           the Operating-point readout above). When `aseSamples` is empty
           the solver falls back to the value below for forward only;
           backward ASE is implicitly zero in that fallback path. */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>
-          ASE fallback <span style={{ opacity: 0.7, fontWeight: 400 }}>(used when aseSamples is empty)</span>
-        </div>
-        <div style={grid3}>
+      <SectionCard
+        id="physics.tapered_amplifier.ase-fallback"
+        title={<>ASE fallback <span style={{ opacity: 0.7, fontWeight: 400 }}>(used when aseSamples is empty)</span></>}
+      >
+        <div className="physics-grid-3">
           <NumberCell
             label="Forward power @ intercept_out"
             suffix="mW"
@@ -571,15 +558,15 @@ export function TaperedAmplifierAdjustControls({
           <code>intercept_in</code>), populate <code>aseSamples</code>
           via the API.
         </div>
-      </div>
+      </SectionCard>
 
       {/* Input beam profile — applies at the intercept_in (+X / seed) anchor */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>
-          Input beam profile <span style={{ opacity: 0.7, fontWeight: 400 }}>@ <code>intercept_in</code></span>
-        </div>
+      <SectionCard
+        id="physics.tapered_amplifier.input-beam"
+        title={<>Input beam profile <span style={{ opacity: 0.7, fontWeight: 400 }}>@ <code>intercept_in</code></span></>}
+      >
         <div style={{ marginBottom: 4, fontSize: 10, opacity: 0.7 }}>X axis</div>
-        <div style={grid3}>
+        <div className="physics-grid-3">
           <NumberCell label="waist" suffix="μm" value={isx.waistUm ?? 600} step={10}
             onCommit={(v) => v > 0 && setSpatial("inputSpatialModeX", isx, { waistUm: v })} />
           <NumberCell label="z offset" suffix="mm" value={isx.waistZOffsetMm ?? 0} step={0.1}
@@ -588,7 +575,7 @@ export function TaperedAmplifierAdjustControls({
             onCommit={(v) => v > 0 && setSpatial("inputSpatialModeX", isx, { mSquared: v })} />
         </div>
         <div style={{ marginTop: 6, marginBottom: 4, fontSize: 10, opacity: 0.7 }}>Y axis</div>
-        <div style={grid3}>
+        <div className="physics-grid-3">
           <NumberCell label="waist" suffix="μm" value={isy.waistUm ?? 600} step={10}
             onCommit={(v) => v > 0 && setSpatial("inputSpatialModeY", isy, { waistUm: v })} />
           <NumberCell label="z offset" suffix="mm" value={isy.waistZOffsetMm ?? 0} step={0.1}
@@ -616,7 +603,7 @@ export function TaperedAmplifierAdjustControls({
           </select>
         </label>
         {inTm.kind === "TEM_mn" && (
-          <div style={grid2}>
+          <div className="physics-grid-2">
             <NumberCell label="m" value={inTm.indicesM ?? 0} step={1}
               onCommit={(v) => void persist({ inputTransverseMode: { ...inTm, kind: "TEM_mn", indicesM: Math.round(v) } })} />
             <NumberCell label="n" value={inTm.indicesN ?? 0} step={1}
@@ -624,22 +611,22 @@ export function TaperedAmplifierAdjustControls({
           </div>
         )}
         {inTm.kind === "LG_pl" && (
-          <div style={grid2}>
+          <div className="physics-grid-2">
             <NumberCell label="p" value={inTm.indicesP ?? 0} step={1}
               onCommit={(v) => void persist({ inputTransverseMode: { ...inTm, kind: "LG_pl", indicesP: Math.round(v) } })} />
             <NumberCell label="ℓ" value={inTm.indicesL ?? 0} step={1}
               onCommit={(v) => void persist({ inputTransverseMode: { ...inTm, kind: "LG_pl", indicesL: Math.round(v) } })} />
           </div>
         )}
-      </div>
+      </SectionCard>
 
       {/* Output beam profile — applies at the intercept_out (−X / amplified) anchor */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>
-          Output beam profile <span style={{ opacity: 0.7, fontWeight: 400 }}>@ <code>intercept_out</code></span>
-        </div>
+      <SectionCard
+        id="physics.tapered_amplifier.output-beam"
+        title={<>Output beam profile <span style={{ opacity: 0.7, fontWeight: 400 }}>@ <code>intercept_out</code></span></>}
+      >
         <div style={{ marginBottom: 4, fontSize: 10, opacity: 0.7 }}>X axis</div>
-        <div style={grid3}>
+        <div className="physics-grid-3">
           <NumberCell label="waist" suffix="μm" value={osx.waistUm ?? 500} step={10}
             onCommit={(v) => v > 0 && setSpatial("outputSpatialModeX", osx, { waistUm: v })} />
           <NumberCell label="z offset" suffix="mm" value={osx.waistZOffsetMm ?? 0} step={0.1}
@@ -648,7 +635,7 @@ export function TaperedAmplifierAdjustControls({
             onCommit={(v) => v > 0 && setSpatial("outputSpatialModeX", osx, { mSquared: v })} />
         </div>
         <div style={{ marginTop: 6, marginBottom: 4, fontSize: 10, opacity: 0.7 }}>Y axis</div>
-        <div style={grid3}>
+        <div className="physics-grid-3">
           <NumberCell label="waist" suffix="μm" value={osy.waistUm ?? 50} step={5}
             onCommit={(v) => v > 0 && setSpatial("outputSpatialModeY", osy, { waistUm: v })} />
           <NumberCell label="z offset" suffix="mm" value={osy.waistZOffsetMm ?? 0} step={0.1}
@@ -669,7 +656,7 @@ export function TaperedAmplifierAdjustControls({
           </select>
         </label>
         {outTm.kind === "TEM_mn" && (
-          <div style={grid2}>
+          <div className="physics-grid-2">
             <NumberCell label="m" value={outTm.indicesM ?? 0} step={1}
               onCommit={(v) => void persist({ outputTransverseMode: { ...outTm, kind: "TEM_mn", indicesM: Math.round(v) } })} />
             <NumberCell label="n" value={outTm.indicesN ?? 0} step={1}
@@ -677,7 +664,7 @@ export function TaperedAmplifierAdjustControls({
           </div>
         )}
         {outTm.kind === "LG_pl" && (
-          <div style={grid2}>
+          <div className="physics-grid-2">
             <NumberCell label="p" value={outTm.indicesP ?? 0} step={1}
               onCommit={(v) => void persist({ outputTransverseMode: { ...outTm, kind: "LG_pl", indicesP: Math.round(v) } })} />
             <NumberCell label="ℓ" value={outTm.indicesL ?? 0} step={1}
@@ -691,7 +678,7 @@ export function TaperedAmplifierAdjustControls({
           value={outPol}
           onChange={(j) => void persist({ outputPolarization: j })}
         />
-      </div>
+      </SectionCard>
 
       {/* Backward beam profile editor removed by user request — when not
           set in kindParams, the ray-tracer (rayTrace.ts:1689) and solver
@@ -703,8 +690,7 @@ export function TaperedAmplifierAdjustControls({
           Backward (input-port ASE) also has a Show toggle so the user can
           declutter the scene by hiding it; hiding skips the trace entirely
           so downstream optics also stop reflecting it. */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Visualization</div>
+      <SectionCard id="physics.tapered_amplifier.visualization" title="Visualization">
         <EmissionVisualRow
           sceneObject={sceneObject}
           emissionKey="forward"
@@ -719,11 +705,10 @@ export function TaperedAmplifierAdjustControls({
           fallbackColorHex={wavelengthHex(wavelengthNm)}
           showVisibilityToggle={true}
         />
-      </div>
+      </SectionCard>
 
       {/* Lookup-table summary (sampled tables — edit via API for now) */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Lookup tables</div>
+      <SectionCard id="physics.tapered_amplifier.lookup-tables" title="Lookup tables">
         <div style={{ opacity: 0.75, fontSize: 10 }}>
           aseSamples: <strong>{aseSamples.length}</strong> rows · gainSamples:{" "}
           <strong>{(params.gainSamples ?? []).length}</strong> rows.
@@ -731,7 +716,7 @@ export function TaperedAmplifierAdjustControls({
             ? " None present — solver uses the steady-state + ASE values above."
             : " Solver interpolates these in preference to the steady-state values."}
         </div>
-      </div>
+      </SectionCard>
 
       {/* Alignment */}
       <div style={{ marginTop: 8 }}>

@@ -55,6 +55,7 @@ import {
 } from "../three/loadAsset/procedural/glan_polarizer_prism";
 import { createSmaShortCable } from "../three/loadAsset/rf_cable";
 import { createNewportOpticalTable } from "../three/photoRoom";
+import { VIEWER_BG_LIGHT, VIEWER_GROUND_FILL } from "../three/viewerTheme";
 import { createFiberSplineObject } from "../three/loadAsset/fiber/spline";
 import type { FiberNode } from "../three/loadAsset/fiber";
 import { anchorObjectLocalAxisX, anchorObjectLocalPos } from "../utils/anchorAccess";
@@ -1539,7 +1540,7 @@ function ComponentPreview3D({
     const width = Math.max(420, mount.clientWidth || 760);
     const height = 360;
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color("#07111f");
+    scene.background = new THREE.Color(VIEWER_BG_LIGHT);
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 10000);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -1549,7 +1550,7 @@ function ComponentPreview3D({
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
 
-    scene.add(new THREE.HemisphereLight("#dbeafe", "#1a2435", 2.4));
+    scene.add(new THREE.HemisphereLight("#dbeafe", VIEWER_GROUND_FILL, 2.4));
     scene.add(new THREE.AmbientLight("#ffffff", 0.5));
     const key = new THREE.DirectionalLight("#ffffff", 2.4);
     key.position.set(30, 40, 60);
@@ -2755,7 +2756,7 @@ function ComponentPreview3D({
         style={{
           width: "100%",
           height: 360,
-          background: "#07111f",
+          background: VIEWER_BG_LIGHT,
           borderRadius: 4,
           overflow: "hidden",
         }}

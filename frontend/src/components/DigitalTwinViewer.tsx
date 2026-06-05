@@ -30,7 +30,6 @@ import { OpticalLinkViewerContent } from "./optical/OpticalLinkViewerPanel";
 import type { RfCableEndpointLink } from "../types/digitalTwin";
 
 import { useSceneStore, TOUCH_OPS, TOUCH_OP_BY_ID, type FeatureKind, type TouchOp } from "../store/sceneStore";
-import { createBeamPath } from "../three/beamPath";
 import { disposeObject, loadAssetObject } from "../three/loadAsset";
 import {
   buildSceneObjectFromBindings,
@@ -84,6 +83,7 @@ THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
 // sampling is needed again.
 
 import { createLabPhotoRoom } from "../three/photoRoom";
+import { VIEWER_BG_LIGHT, VIEWER_BG_WIRE } from "../three/viewerTheme";
 import { applyObjectGeometryOffset, applyObjectTransform, mmToThree } from "../three/transformUtils";
 import { relationTarget, worldAnchor } from "../utils/relationAnchors";
 import { anchorObjectLocalAxisY, anchorObjectLocalPos, anchorObjectLocalPrimaryDir } from "../utils/anchorAccess";
@@ -91,7 +91,6 @@ import { computeBraggTiltAxisFromRfDirectionBodyLocal } from "../optical/kinds/a
 import type { Asset3D, ComponentItem, DeviceState, PhysicsElement, SceneObject } from "../types/digitalTwin";
 import {
   isAssemblyRelationVisible,
-  isBeamPathVisible,
   isObjectVisible,
   makeRenderableContext,
 } from "../utils/visibility";
@@ -834,9 +833,11 @@ function parseMmInput(value: string): number {
 }
 
 function formatMm(value: number): string {
-  if (!Number.isFinite(value)) return "0";
-  const rounded = Math.round(value * 10) / 10;
-  return Number.isInteger(rounded) ? `${rounded}` : rounded.toFixed(1);
+  if (!Number.isFinite(value)) return "0.0";
+  // Snap sub-nm dust to 0, then always show one decimal so a row of
+  // coordinates lines up (e.g. "0.0 / 1.5 / 12.0" rather than "0 / 1.5 / 12").
+  const v = Math.abs(value) < 1e-9 ? 0 : value;
+  return (Math.round(v * 10) / 10).toFixed(1);
 }
 
 function formatLabPoint(point: LabPoint): string {
@@ -1317,6 +1318,9 @@ export function DigitalTwinViewer({
     ctrl.update();
   }, []);
   const environmentGroupRef = useRef<THREE.Group | null>(null);
+  // Reference grid shown only in wireframe mode (the photo-room floor is
+  // hidden there, so the bench would otherwise float in the dark void).
+  const wireframeGridRef = useRef<THREE.GridHelper | null>(null);
   const componentGroupRef = useRef<THREE.Group>(new THREE.Group());
   // Per-objectId cache of loaded asset wrappers, used by the rebuild useEffect
   // to avoid re-loading STL / GLB geometry on every dep change. Cache hit when
@@ -1876,11 +1880,11 @@ export function DigitalTwinViewer({
     if (!mount) return;
 
     const scene = new THREE.Scene();
-    // Initial colors; the displayMode effect below swaps these to a
-    // cream/white palette when the user enters wireframe mode so the
-    // dark-blue wireframe lines stay readable.
-    scene.background = new THREE.Color("#151715");
-    scene.fog = new THREE.Fog("#151715", 45, 90);
+    // Initial colors: light by default; the displayMode effect below swaps to
+    // the dark wireframe backdrop (VIEWER_BG_WIRE) only when the user enters
+    // wireframe mode, so the slate wireframe lines stay readable.
+    scene.background = new THREE.Color(VIEWER_BG_LIGHT);
+    scene.fog = new THREE.Fog(VIEWER_BG_LIGHT, 45, 90);
     sceneRef.current = scene;
 
     const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 220);
@@ -2234,6 +2238,20 @@ export function DigitalTwinViewer({
     applyEnvironmentDisplayMode(environmentGroup, displayMode);
     environmentGroupRef.current = environmentGroup;
     scene.add(environmentGroup, ambient, key);
+
+    // Wireframe reference grid: on the lab X-Y plane (rotated +90° about X like
+    // the floor, since the world is Z-up). Slate lines tuned for the dark
+    // wireframe backdrop; the fog (matched to the bg) fades distant lines so it
+    // reads as depth, not clutter. Shown only in wireframe — rendered mode has
+    // the photo-room floor instead.
+    const wireframeGrid = new THREE.GridHelper(60, 60, "#5b6675", "#39414f");
+    wireframeGrid.rotation.x = Math.PI / 2;
+    const wfGridMat = wireframeGrid.material as THREE.LineBasicMaterial;
+    wfGridMat.transparent = true;
+    wfGridMat.opacity = 0.6;
+    wireframeGrid.visible = displayMode === "wireframe";
+    wireframeGridRef.current = wireframeGrid;
+    scene.add(wireframeGrid);
 
     componentGroupRef.current.name = "components";
     beamGroupRef.current.name = "beam-paths";
@@ -3117,6 +3135,12 @@ export function DigitalTwinViewer({
         disposeObject(environmentGroupRef.current);
         environmentGroupRef.current = null;
       }
+      if (wireframeGridRef.current) {
+        scene.remove(wireframeGridRef.current);
+        wireframeGridRef.current.geometry.dispose();
+        (wireframeGridRef.current.material as THREE.Material).dispose();
+        wireframeGridRef.current = null;
+      }
       controls.dispose();
       renderer.dispose();
       orientationRenderer.dispose();
@@ -3237,14 +3261,16 @@ export function DigitalTwinViewer({
     if (environmentGroupRef.current) {
       applyEnvironmentDisplayMode(environmentGroupRef.current, displayMode);
     }
-    // Dark background in wireframe mode (matching the optical-link view's
-    // #0b1120) so the slate wireframe lines read clearly; the photo-studio
-    // palette (#151715) otherwise. The photo-room walls are hidden in
-    // wireframe mode so the flat dark bg shows through.
+    // Dark background ONLY in wireframe mode (VIEWER_BG_WIRE) so the slate
+    // wireframe lines read clearly; the light palette (VIEWER_BG_LIGHT)
+    // everywhere else. The photo-room walls are hidden in wireframe mode so
+    // the flat dark bg shows through; in the light modes the already-light
+    // photo-room (#dad8c8) is the visible backdrop and the bg/fog just fill
+    // the void around it.
     const scene = sceneRef.current;
     const envGroup = environmentGroupRef.current;
     if (scene) {
-      const bg = displayMode === "wireframe" ? "#0b1120" : "#151715";
+      const bg = displayMode === "wireframe" ? VIEWER_BG_WIRE : VIEWER_BG_LIGHT;
       scene.background = new THREE.Color(bg);
       if (scene.fog instanceof THREE.Fog) {
         scene.fog.color = new THREE.Color(bg);
@@ -3256,6 +3282,11 @@ export function DigitalTwinViewer({
       // The optical table is added separately as a SceneObject, not part
       // of `environmentGroup`, so this only toggles the surrounding room.
       envGroup.visible = displayMode !== "wireframe";
+    }
+    if (wireframeGridRef.current) {
+      // Inverse of the room: the reference grid grounds the bench only in
+      // wireframe, where the photo-room floor is hidden.
+      wireframeGridRef.current.visible = displayMode === "wireframe";
     }
   }, [displayMode]);
 
@@ -3688,7 +3719,18 @@ export function DigitalTwinViewer({
         // ray-tracer in `traceBeamsFromLasers` opts in to invisible
         // targets so optical effects (mirror reflection, lens, PBS split,
         // …) keep working through the hidden element.
-        const visibleInView = isObjectVisible(placement, renderCtx);
+        // The "Cables" overlay (connections flag) gates the RF-cable /
+        // fiber-cable models — the intermediate node geometry that links two
+        // devices. Off → the cable wrapper is hidden (still in the tree, so
+        // the ray-tracer / fiber routing is unaffected, just like any other
+        // hidden object above).
+        const isCableKind =
+          component.kindId === "rf_cable" ||
+          component.kindId === "sma_cable" ||
+          component.kindId === "fiber";
+        const visibleInView =
+          isObjectVisible(placement, renderCtx) &&
+          (!isCableKind || renderCtx.overlayFlags.connections);
         const asset = component.asset3dId ? assetById.get(component.asset3dId) : undefined;
         // Per-object device state — look up by the SceneObject's id, not
         // the component template id.
@@ -4191,18 +4233,6 @@ export function DigitalTwinViewer({
             addAnchorAxis(anchorDebugGroup, origin, { x: dir.x, y: dir.y, z: dir.z }, "#ff00ff");
           }
         }
-      }
-    }
-
-    if (renderCtx.overlayFlags.beam_paths) {
-      for (const beamPath of sceneData.beamPaths) {
-        if (!isBeamPathVisible(beamPath, renderCtx)) continue;
-        // BeamPath.sourceObjectId points at a SceneObject (alembic 0015).
-        const sourceState = beamPath.sourceObjectId
-          ? stateByObjectId.get(beamPath.sourceObjectId)
-          : undefined;
-        const active = sourceState?.state.enabled !== false;
-        beamGroup.add(createBeamPath(beamPath, active));
       }
     }
 

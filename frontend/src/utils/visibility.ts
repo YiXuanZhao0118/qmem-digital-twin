@@ -1,10 +1,7 @@
 import type {
   AssemblyRelation,
-  BeamPath,
   BeamSegment,
   Collection,
-  ConnectionItem,
-  OpticalLink,
   PhysicsCapability,
   SceneData,
   SceneObject,
@@ -334,7 +331,7 @@ export function isObjectVisible(object: SceneObject, ctx: RenderableContext): bo
 /** "Is at least one SceneObject of this component currently visible?"
  *
  *  Used only where the data model still references component templates
- *  (BeamPath, Connection) and we need a yes/no gate at that level.
+ *  (Connection) and we need a yes/no gate at that level.
  *  When the component has no instances, returns true so a brand-new
  *  catalog row never silently hides downstream cables.
  */
@@ -356,42 +353,6 @@ export function isBeamSegmentVisible(seg: BeamSegment, ctx: RenderableContext): 
   // component ids. Resolve to the SceneObject and gate via isObjectVisible.
   const fromObj = ctx.scene.objects.find((o) => o.id === link.fromObjectId);
   const toObj = ctx.scene.objects.find((o) => o.id === link.toObjectId);
-  if (!fromObj || !toObj) return false;
-  return isObjectVisible(fromObj, ctx) && isObjectVisible(toObj, ctx);
-}
-
-export function isBeamPathVisible(beam: BeamPath, ctx: RenderableContext): boolean {
-  if (!ctx.overlayFlags.beam_paths) return false;
-  if (!beam.visible) return false;
-  if (ctx.session.hiddenBeamPathIds.has(beam.id)) return false;
-  // BeamPath endpoints are per-OBJECT now (alembic 0015).
-  if (beam.sourceObjectId) {
-    const src = ctx.scene.objects.find((o) => o.id === beam.sourceObjectId);
-    if (!src || !isObjectVisible(src, ctx)) return false;
-  }
-  if (beam.targetObjectId) {
-    const tgt = ctx.scene.objects.find((o) => o.id === beam.targetObjectId);
-    if (!tgt || !isObjectVisible(tgt, ctx)) return false;
-  }
-  return true;
-}
-
-export function isOpticalLinkVisible(link: OpticalLink, ctx: RenderableContext): boolean {
-  if (!ctx.overlayFlags.optical_links) return false;
-  if (ctx.session.hiddenLinkIds.has(link.id)) return false;
-  // Same per-object lookup as isBeamSegmentVisible — endpoints are SceneObject ids.
-  const fromObj = ctx.scene.objects.find((o) => o.id === link.fromObjectId);
-  const toObj = ctx.scene.objects.find((o) => o.id === link.toObjectId);
-  if (!fromObj || !toObj) return false;
-  return isObjectVisible(fromObj, ctx) && isObjectVisible(toObj, ctx);
-}
-
-export function isConnectionVisible(conn: ConnectionItem, ctx: RenderableContext): boolean {
-  if (!ctx.overlayFlags.connections) return false;
-  if (ctx.session.hiddenLinkIds.has(conn.id)) return false;
-  // Connections are per-OBJECT now (alembic 0015).
-  const fromObj = ctx.scene.objects.find((o) => o.id === conn.fromObjectId);
-  const toObj = ctx.scene.objects.find((o) => o.id === conn.toObjectId);
   if (!fromObj || !toObj) return false;
   return isObjectVisible(fromObj, ctx) && isObjectVisible(toObj, ctx);
 }

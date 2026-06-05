@@ -18,6 +18,7 @@ import { RotateCcw } from "lucide-react";
 
 import { useSceneStore } from "../../store/sceneStore";
 import type { ComponentItem, ElementKind, SceneObject } from "../../types/digitalTwin";
+import { cleanNumber } from "../../utils/numberFormat";
 import { pluginForKind } from "../../kinds/_plugins";
 
 type EditableValue = number | boolean | string | number[];
@@ -172,7 +173,7 @@ function CoefficientField({
               // eslint-disable-next-line react/no-array-index-key
               key={i}
               type="number"
-              value={n}
+              value={cleanNumber(n)}
               onChange={(e) => {
                 const num = Number(e.target.value);
                 if (!Number.isFinite(num)) return;
@@ -229,7 +230,7 @@ function CoefficientField({
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <input
           type="number"
-          value={Number(value ?? 0)}
+          value={cleanNumber(Number(value ?? 0))}
           onChange={(e) => {
             const num = Number(e.target.value);
             if (Number.isFinite(num)) onChange(num);

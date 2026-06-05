@@ -996,7 +996,7 @@ export function AomAdjustControls({
                 padding: "3px 6px",
                 background: rfDriveMode === m ? "rgba(180,83,9,0.25)" : "transparent",
                 borderColor: rfDriveMode === m ? "#b45309" : "rgba(255,255,255,0.15)",
-                color: rfDriveMode === m ? "#f3c98b" : "#9ca3af",
+                color: rfDriveMode === m ? "#f3c98b" : "#6c706b",
               }}
             >
               {m === "link" ? "From RF link" : "Manual"}
@@ -1007,11 +1007,11 @@ export function AomAdjustControls({
           <div
             style={{
               padding: 8,
-              background: "#1c1c22",
+              background: "#fbfbf8",
               borderRadius: 4,
               border: "1px dashed #b45309",
               fontSize: 11,
-              color: "#cfcfd8",
+              color: "#242726",
               display: "flex",
               flexDirection: "column",
               gap: 6,
@@ -1057,20 +1057,20 @@ export function AomAdjustControls({
           <div
             style={{
               padding: 8,
-              background: "#1c1c22",
+              background: "#fbfbf8",
               borderRadius: 4,
-              border: "1px dashed #3e3e48",
+              border: "1px dashed #d8ded8",
               fontSize: 11,
-              color: "#cfcfd8",
+              color: "#242726",
               display: "flex",
               flexDirection: "column",
               gap: 4,
             }}
           >
-            <div style={{ color: "#8e8e9a", fontSize: 10 }}>
-              Synced from <strong style={{ color: "#cfcfd8" }}>{upstreamRf.sourceName}</strong>
+            <div style={{ color: "#6c706b", fontSize: 10 }}>
+              Synced from <strong style={{ color: "#242726" }}>{upstreamRf.sourceName}</strong>
               {" · "}
-              <strong style={{ color: "#cfcfd8" }}>{upstreamRf.channelName}</strong>
+              <strong style={{ color: "#242726" }}>{upstreamRf.channelName}</strong>
               {" "}via rf_cable — edit in the RF link panel.
             </div>
             <div style={{ display: "flex", gap: 16 }}>
@@ -1097,11 +1097,11 @@ export function AomAdjustControls({
           <div
             style={{
               padding: 8,
-              background: "#1c1c22",
+              background: "#fbfbf8",
               borderRadius: 4,
               border: "1px dashed #b45309",
               fontSize: 11,
-              color: "#cfcfd8",
+              color: "#242726",
               display: "flex",
               flexDirection: "column",
               gap: 4,
@@ -1116,7 +1116,7 @@ export function AomAdjustControls({
             <div style={{ display: "flex", gap: 16 }}>
               <span>
                 Carrier f: <strong>{effectiveCenterFreqMhz.toFixed(1)} MHz</strong>{" "}
-                <span style={{ color: "#8e8e9a" }}>(default)</span>
+                <span style={{ color: "#6c706b" }}>(default)</span>
               </span>
               <span style={{ marginLeft: "auto" }}>
                 RF max:{" "}

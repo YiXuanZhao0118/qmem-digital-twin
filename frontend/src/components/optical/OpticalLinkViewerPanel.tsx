@@ -42,6 +42,7 @@ import {
 import { applyObjectTransformWorld } from "../../three/transformUtils";
 import { anchorObjectLocalAxisX, anchorObjectLocalPos } from "../../utils/anchorAccess";
 import { mmToThree, labRootSwapInverseQuaternion, labRootSwapQuaternion } from "../../optical/frames";
+import { VIEWER_BG_LIGHT, VIEWER_GRID_LINE, VIEWER_GRID_CENTER } from "../../three/viewerTheme";
 import { domainForElementKind, kindIdToElementKind } from "../../utils/elementDefaults";
 import { BeamScopeContents } from "./BeamScopePanel";
 import { PhysicsElementPanel } from "../physics/PhysicsElementPanel";
@@ -731,13 +732,29 @@ export function OpticalLinkViewerContent({
     if (!mount) return;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color("#0b1120");
+    scene.background = new THREE.Color(VIEWER_BG_LIGHT);
+    // Gentle distance fog so the reference grid's far edges fade into the bg
+    // (starts well beyond the bench content, which sits within ~20 units).
+    scene.fog = new THREE.Fog(VIEWER_BG_LIGHT, 45, 150);
 
-    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+    const ambient = new THREE.AmbientLight(0xffffff, 0.75);
     scene.add(ambient);
-    const dir = new THREE.DirectionalLight(0xffffff, 0.6);
+    const dir = new THREE.DirectionalLight(0xffffff, 0.7);
     dir.position.set(5, 10, 7);
     scene.add(dir);
+
+    // Subtle reference grid on the lab X-Y plane (the optical-table surface).
+    // The scene is Z-up (lab content is pure-scale Z-up), so a default
+    // GridHelper — which lies in the X-Z plane — must be rotated +90° about X
+    // to lie flat on X-Y; without this it stands up as a vertical Z-X wall.
+    // 1 three-unit = 100 mm; an 80-unit grid with 80 divisions gives 100 mm
+    // cells. Muted lines + fog fade so it never fights the beam colours.
+    const grid = new THREE.GridHelper(80, 80, VIEWER_GRID_CENTER, VIEWER_GRID_LINE);
+    grid.rotation.x = Math.PI / 2;
+    const gridMat = grid.material as THREE.LineBasicMaterial;
+    gridMat.transparent = true;
+    gridMat.opacity = 0.5;
+    scene.add(grid);
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.001, 5000);
     camera.position.set(8, 6, 8);
@@ -1298,7 +1315,7 @@ export function OpticalLinkViewerContent({
             loaded.quaternion.premultiply(labRootSwapInverseQuaternion());
             loaded.updateMatrixWorld(true);
             const lineMat = new THREE.LineBasicMaterial({
-              color: 0x94a3b8, // slate-400 — muted against dark bg, doesn't fight beam colours
+              color: 0x64748b, // slate-500 — muted on the light bg, doesn't fight beam colours
               transparent: true,
               opacity: 0.55,
               depthTest: true,
@@ -1494,6 +1511,8 @@ export function OpticalLinkViewerContent({
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
       controls.dispose();
+      grid.geometry.dispose();
+      gridMat.dispose();
       // Wireframe prototypes live outside contentGroup (they get cloned
       // in on each rebuild) so the traverse below misses them.
       for (const entry of wireframeCache.values()) {
@@ -1614,7 +1633,7 @@ export function OpticalLinkViewerContent({
             position: "relative",
             borderRadius: 4,
             overflow: "hidden",
-            background: "#0b1120",
+            background: VIEWER_BG_LIGHT,
           }}
         >
           <div ref={mountRef} style={{ position: "absolute", inset: 0 }} />
@@ -1626,7 +1645,7 @@ export function OpticalLinkViewerContent({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: "#9ca3af",
+                color: "#6c706b",
                 fontSize: 12,
                 margin: 0,
                 pointerEvents: "none",
@@ -1643,12 +1662,13 @@ export function OpticalLinkViewerContent({
               maxHeight: "30%",
               overflow: "auto",
               padding: "6px 8px",
-              borderLeft: "2px solid #facc15",
-              background: "rgba(250, 204, 21, 0.08)",
+              borderLeft: "2px solid #f59e0b",
+              background: "rgba(250, 204, 21, 0.1)",
+              color: "#7c5310",
               fontSize: 11,
             }}
           >
-            <div style={{ color: "#facc15", fontWeight: 600, marginBottom: 4 }}>
+            <div style={{ color: "#b45309", fontWeight: 600, marginBottom: 4 }}>
               ⚠ {warnings.length} link warning{warnings.length === 1 ? "" : "s"}
             </div>
             {warnings.map((w) => {
@@ -1676,14 +1696,13 @@ export function OpticalLinkViewerContent({
               marginTop: 2,
               padding: "8px 10px",
               borderRadius: 6,
-              border: "1px solid rgba(56, 189, 248, 0.18)",
-              borderTop: "2px solid rgba(56, 189, 248, 0.85)",
-              background: "rgba(56, 189, 248, 0.06)",
+              border: "1px solid rgba(56, 189, 248, 0.28)",
+              borderTop: "2px solid rgba(14, 116, 110, 0.7)",
+              background: "rgba(56, 189, 248, 0.08)",
               // BeamScopeContents was built for a light floating panel (dark
-              // text). On this dark overlay the inherited text is invisible —
-              // set a light base colour so the readout shows. White plot cards
-              // keep their own dark-on-white text.
-              color: "#e2e8f0",
+              // text); the overlay is now light too, so let it use its native
+              // dark-on-light ink.
+              color: "#242726",
             }}
           >
             <BeamScopeContents />
@@ -1700,11 +1719,11 @@ export function OpticalLinkViewerContent({
           overflow: "auto",
           padding: "8px 10px",
           borderRadius: 4,
-          background: "#0b1120",
-          borderLeft: "1px solid rgba(148, 163, 184, 0.2)",
+          background: "#fbfbf8",
+          borderLeft: "1px solid #d8ded8",
         }}
       >
-        <label style={{ display: "block", color: "#e2e8f0", fontSize: 12, marginBottom: 6 }}>
+        <label style={{ display: "block", color: "#242726", fontSize: 12, marginBottom: 6 }}>
           <span style={{ display: "block", marginBottom: 4, opacity: 0.8 }}>Object</span>
           <select
             value={effectiveInspectId ?? ""}
@@ -1720,7 +1739,7 @@ export function OpticalLinkViewerContent({
         {inspectObject && inspectComponent ? (
           <PhysicsElementPanel component={inspectComponent} sceneObject={inspectObject} />
         ) : (
-          <p style={{ color: "#9ca3af", fontSize: 12 }}>
+          <p style={{ color: "#6c706b", fontSize: 12 }}>
             Select an optical object to edit its physics.
           </p>
         )}

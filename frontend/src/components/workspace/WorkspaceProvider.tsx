@@ -15,7 +15,13 @@ import {
   type ReactNode,
 } from "react";
 
+/** Dock zone a panel lives in. "float" = the legacy free-floating window
+ *  (absolute x/y/w/h). The three docks reserve space in the workspace grid so
+ *  the viewer is never covered; panels stacked in a dock can't overlap. */
+export type DockZone = "left" | "right" | "bottom" | "float";
+
 export type PanelLayout = {
+  // Float-mode geometry (also the restore target when a docked panel pops out).
   x: number;
   y: number;
   w: number;
@@ -23,6 +29,7 @@ export type PanelLayout = {
   visible: boolean;
   collapsed: boolean;
   z: number;
+  dock: DockZone;
 };
 
 export type PanelId =
@@ -45,13 +52,13 @@ const PANEL_DEFS: { id: PanelId; title: string; defaultLayout: PanelLayout }[] =
     // overlay pills (top:14 h:44 → end y=58) AND the Cursor (mm) X/Y/Z
     // editor (top:64 h:~36 → end y=100), plus 16 px breathing room.
     title: "Components",
-    defaultLayout: { x: 16, y: 116, w: 300, h: 420, visible: true, collapsed: false, z: 1 },
+    defaultLayout: { x: 16, y: 116, w: 300, h: 420, visible: true, collapsed: false, z: 1, dock: "left" },
   },
   {
     id: "outliner",
     // y=552 = components y(116) + components h(420) + 16 px gap.
     title: "Outliner",
-    defaultLayout: { x: 16, y: 552, w: 300, h: 320, visible: true, collapsed: false, z: 1 },
+    defaultLayout: { x: 16, y: 552, w: 300, h: 320, visible: true, collapsed: false, z: 1, dock: "left" },
   },
   {
     id: "object",
@@ -59,32 +66,32 @@ const PANEL_DEFS: { id: PanelId; title: string; defaultLayout: PanelLayout }[] =
     // Y starts at 296 so the panel sits below the right-side stack of XYZ
     // axis gizmo (top:14, h:132 → ends at 146) + Tools pie (top:162, h:120
     // → ends at 282) + 14 px breathing room.
-    defaultLayout: { x: -340, y: 296, w: 320, h: 520, visible: true, collapsed: false, z: 1 },
+    defaultLayout: { x: -340, y: 296, w: 320, h: 520, visible: true, collapsed: false, z: 1, dock: "right" },
   },
   {
     id: "pulse-timing",
     title: "Pulse & Timing",
-    defaultLayout: { x: 332, y: 480, w: 760, h: 380, visible: false, collapsed: false, z: 2 },
+    defaultLayout: { x: 332, y: 480, w: 760, h: 380, visible: false, collapsed: false, z: 2, dock: "bottom" },
   },
   {
     id: "instrument-power",
     title: "Instrument Power",
-    defaultLayout: { x: 332, y: 80, w: 380, h: 360, visible: false, collapsed: false, z: 2 },
+    defaultLayout: { x: 332, y: 80, w: 380, h: 360, visible: false, collapsed: false, z: 2, dock: "float" },
   },
   {
     id: "beam-scope",
     title: "Beam scope",
-    defaultLayout: { x: 332, y: 80, w: 560, h: 460, visible: false, collapsed: false, z: 2 },
+    defaultLayout: { x: 332, y: 80, w: 560, h: 460, visible: false, collapsed: false, z: 2, dock: "float" },
   },
   {
     id: "touch-coincidence",
     title: "Touch coincidence",
-    defaultLayout: { x: 332, y: 200, w: 380, h: 280, visible: false, collapsed: false, z: 3 },
+    defaultLayout: { x: 332, y: 200, w: 380, h: 280, visible: false, collapsed: false, z: 3, dock: "float" },
   },
   {
     id: "rf-link",
     title: "RF link",
-    defaultLayout: { x: 360, y: 80, w: 720, h: 520, visible: false, collapsed: false, z: 2 },
+    defaultLayout: { x: 360, y: 80, w: 720, h: 520, visible: false, collapsed: false, z: 2, dock: "float" },
   },
   {
     id: "solver-console",
@@ -94,14 +101,14 @@ const PANEL_DEFS: { id: PanelId; title: string; defaultLayout: PanelLayout }[] =
     // no negative-y handling. Default visible so Phase A users see the
     // multiphysics flow immediately (Run button + recent runs list +
     // WS-driven progress).
-    defaultLayout: { x: -340, y: 600, w: 320, h: 260, visible: true, collapsed: false, z: 2 },
+    defaultLayout: { x: -340, y: 600, w: 320, h: 260, visible: true, collapsed: false, z: 2, dock: "right" },
   },
   {
     id: "magnetics",
     title: "Magnetics overlay",
     // Hidden by default; user opens via Window menu when they want to
     // compute a B-field on top of the current Optics scene.
-    defaultLayout: { x: -340, y: 80, w: 320, h: 460, visible: false, collapsed: false, z: 2 },
+    defaultLayout: { x: -340, y: 80, w: 320, h: 460, visible: false, collapsed: false, z: 2, dock: "right" },
   },
   {
     id: "ai-binding",
@@ -111,7 +118,7 @@ const PANEL_DEFS: { id: PanelId; title: string; defaultLayout: PanelLayout }[] =
     // mount (App.tsx), this `visible: false` keeps the panel closed
     // even when someone flips only the env var on, and TopBar.tsx
     // hides it from the Window menu too.
-    defaultLayout: { x: -340, y: 80, w: 380, h: 520, visible: false, collapsed: false, z: 3 },
+    defaultLayout: { x: -340, y: 80, w: 380, h: 520, visible: false, collapsed: false, z: 3, dock: "right" },
   },
 ];
 
@@ -119,12 +126,21 @@ export const PANEL_TITLES: Record<PanelId, string> = Object.fromEntries(
   PANEL_DEFS.map((p) => [p.id, p.title]),
 ) as Record<PanelId, string>;
 
+/** The zone each panel returns to when re-docked from a floating state. */
+export const PANEL_DEFAULT_DOCKS: Record<PanelId, DockZone> = Object.fromEntries(
+  PANEL_DEFS.map((p) => [p.id, p.defaultLayout.dock]),
+) as Record<PanelId, DockZone>;
+
 type LayoutMap = Record<PanelId, PanelLayout>;
 
 // Bumped on every panel-default move so existing user layouts don't
 // stick at the OLD positions. v4: components y 70 → 116, outliner y
 // 506 → 552 (clear of the new Cursor (mm) X/Y/Z editor at top:64).
-const STORAGE_KEY = "qmem.workspaceLayout.v7";
+// v8: introduced the `dock` field + dock-zone layout. The bump drops stale
+// free-float coords so existing users adopt the new default docks.
+const STORAGE_KEY = "qmem.workspaceLayout.v8";
+
+const DOCK_ZONES: DockZone[] = ["left", "right", "bottom", "float"];
 
 function defaultLayoutFor(viewportWidth: number): LayoutMap {
   const out = {} as LayoutMap;
@@ -159,6 +175,7 @@ function loadLayout(viewportWidth: number): LayoutMap {
           visible: stored.visible !== false,
           collapsed: stored.collapsed === true,
           z: typeof stored.z === "number" ? stored.z : fallback[def.id].z,
+          dock: DOCK_ZONES.includes(stored.dock) ? stored.dock : fallback[def.id].dock,
         };
       } else {
         out[def.id] = fallback[def.id];
@@ -177,6 +194,7 @@ type WorkspaceContextValue = {
   movePanel: (id: PanelId, x: number, y: number) => void;
   resizePanel: (id: PanelId, w: number, h: number) => void;
   setPanelLayout: (id: PanelId, patch: Partial<PanelLayout>) => void;
+  setPanelDock: (id: PanelId, dock: DockZone) => void;
   focusPanel: (id: PanelId) => void;
   togglePanelVisible: (id: PanelId, visible?: boolean) => void;
   togglePanelCollapsed: (id: PanelId, collapsed?: boolean) => void;
@@ -204,6 +222,25 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const setPanelLayout = useCallback((id: PanelId, patch: Partial<PanelLayout>) => {
     setLayouts((current) => ({ ...current, [id]: { ...current[id], ...patch } }));
+  }, []);
+
+  const setPanelDock = useCallback((id: PanelId, dock: DockZone) => {
+    setLayouts((current) => {
+      const panel = current[id];
+      if (!panel || panel.dock === dock) return current;
+      // Popping out to float: raise above everything (incl. the viewer HUD at
+      // z 3–4) and nudge off the default pile so multiple pop-outs cascade.
+      if (dock === "float") {
+        const maxZ = Math.max(5, ...Object.values(current).map((l) => l.z));
+        zCounterRef.current = maxZ + 1;
+        const offset = (zCounterRef.current % 6) * 28;
+        return {
+          ...current,
+          [id]: { ...panel, dock, z: maxZ + 1, x: 120 + offset, y: 96 + offset },
+        };
+      }
+      return { ...current, [id]: { ...panel, dock } };
+    });
   }, []);
 
   const movePanel = useCallback((id: PanelId, x: number, y: number) => {
@@ -253,6 +290,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       movePanel,
       resizePanel,
       setPanelLayout,
+      setPanelDock,
       focusPanel,
       togglePanelVisible,
       togglePanelCollapsed,
@@ -263,6 +301,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       movePanel,
       resizePanel,
       setPanelLayout,
+      setPanelDock,
       focusPanel,
       togglePanelVisible,
       togglePanelCollapsed,

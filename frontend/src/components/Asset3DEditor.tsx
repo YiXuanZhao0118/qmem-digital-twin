@@ -45,6 +45,7 @@ import { createZhl12wPlusAmplifier } from "../kinds/rf_amplifier/renderer";
 import { createRfSwitch } from "../kinds/rf_switch/renderer";
 import { createSmaShortCable } from "../three/loadAsset/rf_cable";
 import { createNewportOpticalTable } from "../three/photoRoom";
+import { VIEWER_BG_LIGHT, VIEWER_GRID_LINE, VIEWER_GRID_CENTER, VIEWER_GROUND_FILL } from "../three/viewerTheme";
 import { createFiberSplineObject } from "../three/loadAsset/fiber/spline";
 import type { FiberNode } from "../three/loadAsset/fiber";
 import { applyDeletionFilter, applyIncludeOnlyFilter, applyViewerHintsToGeometry, centroidKey, findCoplanarCluster } from "../three/loadAsset/viewerHints";
@@ -1295,7 +1296,7 @@ function FaceLocator3D({
     const width = Math.max(420, mount.clientWidth || 760);
     const height = 420;
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color("#07111f");
+    scene.background = new THREE.Color(VIEWER_BG_LIGHT);
 
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 10000);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -1307,7 +1308,7 @@ function FaceLocator3D({
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
 
-    scene.add(new THREE.HemisphereLight("#dbeafe", "#1a2435", 2.4));
+    scene.add(new THREE.HemisphereLight("#dbeafe", VIEWER_GROUND_FILL, 2.4));
     scene.add(new THREE.AmbientLight("#ffffff", 0.5));
     const key = new THREE.DirectionalLight("#ffffff", 2.4);
     key.position.set(30, 40, 60);
@@ -1340,7 +1341,7 @@ function FaceLocator3D({
     const markerRadius = Math.max(sceneScale * 0.008, 0.5);
     const normalLength = Math.max(sceneScale * 0.6, 12);
 
-    const grid = new THREE.GridHelper(sceneScale * 1.6, 12, "#d8ded8", "#ffffff");
+    const grid = new THREE.GridHelper(sceneScale * 1.6, 12, VIEWER_GRID_CENTER, VIEWER_GRID_LINE);
     grid.rotation.x = Math.PI / 2;
     root.add(grid);
     // Faint lab/CAD axes (grey) for reference.
@@ -2127,7 +2128,7 @@ function FaceLocator3D({
   const autoPickDisabled = selectedAnchorIndex === null || modelStatus !== "loaded";
 
   return (
-    <div style={{ border: "1px solid #38bdf8", background: "#020617", marginBottom: 10 }}>
+    <div style={{ border: "1px solid #38bdf8", background: "#fbfbf8", marginBottom: 10 }}>
       <div
         style={{
           display: "flex",
