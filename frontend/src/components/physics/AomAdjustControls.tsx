@@ -20,6 +20,7 @@ import * as THREE from "three";
 import { useEffect, useMemo, useState } from "react";
 
 import { useSceneStore } from "../../store/sceneStore";
+import { SectionCard } from "./_shared";
 import type {
   ComponentItem,
   PhysicsElement,
@@ -949,14 +950,6 @@ export function AomAdjustControls({
     );
   };
 
-  const sectionStyle: React.CSSProperties = {
-    marginTop: 8,
-    padding: "6px 8px",
-    background: "rgba(56, 189, 248, 0.06)",
-    borderLeft: "2px solid #38bdf8",
-    fontSize: 11,
-  };
-  const titleStyle: React.CSSProperties = { color: "#38bdf8", fontWeight: 600, marginBottom: 6 };
   // RF subsection — amber accent matches the .physics-panel-rf chrome so the
   // user sees at a glance which knobs belong to the RF input vs the optical
   // crystal. AOM is a hybrid kind (optical body + RF drive), so the panel
@@ -972,8 +965,6 @@ export function AomAdjustControls({
   const rfTitleStyle: React.CSSProperties = { color: "#b45309", fontWeight: 700, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" };
   const opticalTitleStyle: React.CSSProperties = { color: "#0369a1", fontWeight: 700, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" };
   const groupHeaderStyle: React.CSSProperties = { marginTop: 12, marginBottom: 4, fontSize: 10 };
-  const grid2: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 };
-  const grid3: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 };
 
   return (
     <div className="mirror-adjust">
@@ -982,7 +973,7 @@ export function AomAdjustControls({
           the optical crystal / Bragg math. */}
       <div style={groupHeaderStyle}><span style={rfTitleStyle}>RF Settings</span></div>
       <div style={rfSectionStyle}>
-        <div style={{ ...titleStyle, color: "#b45309" }}>RF carrier &amp; drive</div>
+        <div style={{ color: "#b45309", fontWeight: 600, marginBottom: 6 }}>RF carrier &amp; drive</div>
         <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
           {(["link", "manual"] as const).map((m) => (
             <button
@@ -1144,9 +1135,8 @@ export function AomAdjustControls({
       {/* Optical Settings — crystal physics, Bragg geometry, efficiency, sideband. */}
       <div style={groupHeaderStyle}><span style={opticalTitleStyle}>Optical Settings</span></div>
       {/* Acoustic crystal — knobs that affect θ_B and Δθ on the optical side. */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Acoustic crystal</div>
-        <div style={grid2}>
+      <SectionCard id="physics.aom.acoustic-crystal" title="Acoustic crystal">
+        <div className="physics-grid-2">
           <NumberCell
             label="Acoustic v"
             suffix="m/s"
@@ -1166,13 +1156,12 @@ export function AomAdjustControls({
           {" "}Full 0→±1 separation 2θ_B = <strong>{(2 * displayThetaBMrad).toFixed(2)} mrad</strong>{" "}
           (matches datasheet's Δθ = λ·f/v).
         </div>
-      </div>
+      </SectionCard>
 
       {/* RF efficiency model — datasheet-calibrated η(P, f). Replaces the old
           closed-form M₂/L/W inputs. */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>RF efficiency model</div>
-        <div style={grid3}>
+      <SectionCard id="physics.aom.rf-efficiency" title="RF efficiency model" defaultOpen>
+        <div className="physics-grid-3">
           <NumberCell
             label="Peak η"
             value={params.baseEfficiency ?? 0.85}
@@ -1221,11 +1210,11 @@ export function AomAdjustControls({
           RF off (P=0) → η=0; no RF link → rated (peak). L only feeds the
           off-Bragg detune geometry.
         </div>
-      </div>
+      </SectionCard>
 
       {/* Efficiency readout + RF-gate + angular acceptance. */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Efficiency</div>
+      <SectionCard id="physics.aom.efficiency" title="Efficiency">
+
         <label className="component-editor-coord" style={{ marginBottom: 6, display: "flex", flexDirection: "row", alignItems: "center", gap: 6 }}>
           <input
             type="checkbox"
@@ -1237,7 +1226,7 @@ export function AomAdjustControls({
             Off ⇒ no RF source shows the rated operating point.
           </span>
         </label>
-        <div style={grid2}>
+        <div className="physics-grid-2">
           <NumberCell
             label="Bragg angular acceptance"
             suffix="mrad"
@@ -1253,7 +1242,7 @@ export function AomAdjustControls({
             : <> (no RF source → rated)</>}:{" "}
           <strong>{(displayEfficiency * 100).toFixed(1)}%</strong>.
         </div>
-      </div>
+      </SectionCard>
 
       {/* (RF drive power + RF max live in the RF
           Settings group at the top of this panel — 2026-05-13.) */}

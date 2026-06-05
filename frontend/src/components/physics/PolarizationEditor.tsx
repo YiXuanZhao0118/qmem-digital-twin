@@ -29,12 +29,6 @@ export function PolarizationEditor({
   const preset = detectPreset(value);
   const { thetaDeg, chiDeg } = ellipseFromJones(value);
 
-  const grid2: React.CSSProperties = {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: 6,
-  };
-
   return (
     <>
       <label className="component-editor-coord" style={{ marginBottom: 6 }}>
@@ -57,7 +51,7 @@ export function PolarizationEditor({
       </label>
 
       {/* Continuous ellipse knobs — the intuitive spatial control. */}
-      <div style={grid2}>
+      <div className="physics-grid-2">
         <PolNumber
           label="Orientation θ"
           suffix="° from axisY"
@@ -75,7 +69,7 @@ export function PolarizationEditor({
       </div>
 
       {/* Raw complex Jones — full manual control. */}
-      <div style={{ ...grid2, marginTop: 6 }}>
+      <div className="physics-grid-2" style={{ marginTop: 6 }}>
         <PolNumber label="Eₓ_re" value={value.exRe ?? 0} step={0.05} onCommit={(v) => onChange({ ...value, exRe: v })} />
         <PolNumber label="Eₓ_im" value={value.exIm ?? 0} step={0.05} onCommit={(v) => onChange({ ...value, exIm: v })} />
         <PolNumber label="Eᵧ_re" value={value.eyRe ?? 0} step={0.05} onCommit={(v) => onChange({ ...value, eyRe: v })} />

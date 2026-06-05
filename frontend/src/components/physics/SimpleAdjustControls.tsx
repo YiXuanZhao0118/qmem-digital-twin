@@ -16,6 +16,7 @@ import { useEffect, useMemo, useState } from "react";
 import * as THREE from "three";
 
 import { useSceneStore } from "../../store/sceneStore";
+import { SectionCard } from "./_shared";
 import type { PhysicsElement, SceneObject } from "../../types/digitalTwin";
 import {
   findSnapToBeam,
@@ -269,21 +270,11 @@ export function WaveplateAdjustControls({
   };
 
   // ---- shared section style (mirrors LaserSourceControls) -----------------
-  const sectionStyle: React.CSSProperties = {
-    marginTop: 8,
-    padding: "6px 8px",
-    background: "rgba(56, 189, 248, 0.06)",
-    borderLeft: "2px solid #38bdf8",
-    fontSize: 11,
-  };
-  const titleStyle: React.CSSProperties = { color: "#38bdf8", fontWeight: 600, marginBottom: 6 };
-  const grid2: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 };
 
   return (
     <div className="snap-to-beam">
       {/* Plate type */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Plate type</div>
+      <SectionCard id="physics.waveplate.plate-type" title="Plate type" defaultOpen>
         <label className="component-editor-coord" style={{ marginBottom: 6 }}>
           <span style={{ fontSize: 11 }}>Preset</span>
           <select
@@ -304,14 +295,13 @@ export function WaveplateAdjustControls({
             onCommit={(v) => v > 0 && void persist({ retardanceLambda: v })}
           />
         )}
-      </div>
+      </SectionCard>
 
       {/* Rotation around beam axis — per-instance knob.
           Asset-level fast-axis angle (fastAxisDegBodyLocal) lives on the
           intercept_in anchor and is edited in PHY Editor → Optical →
           Components. */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Rotation around beam axis</div>
+      <SectionCard id="physics.waveplate.rotation" title="Rotation around beam axis" defaultOpen>
         <NumberCell
           label="Rotation"
           suffix="° CW"
@@ -328,23 +318,21 @@ export function WaveplateAdjustControls({
             Asset fast-axis (PHY Editor) + this rotation = effective Jones-frame angle.
           </div>
         )}
-      </div>
+      </SectionCard>
 
       {/* Throughput */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Throughput</div>
+      <SectionCard id="physics.waveplate.throughput" title="Throughput">
         <NumberCell
           label="Transmission"
           value={transmission}
           step={0.01}
           onCommit={(v) => v >= 0 && v <= 1 && void persist({ transmission: v })}
         />
-      </div>
+      </SectionCard>
 
       {/* Plate / q propagation */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Plate / q propagation</div>
-        <div style={grid2}>
+      <SectionCard id="physics.waveplate.q-propagation" title="Plate / q propagation">
+        <div className="physics-grid-2">
           <NumberCell
             label="Design wavelength"
             suffix="nm"
@@ -387,12 +375,11 @@ export function WaveplateAdjustControls({
             onCommit={(v) => v > wavelengthRangeNm[0] && void persist({ wavelengthRangeNm: [wavelengthRangeNm[0], v] })}
           />
         </div>
-      </div>
+      </SectionCard>
 
       {/* Plate tilt */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Plate tilt</div>
-        <div style={grid2}>
+      <SectionCard id="physics.waveplate.plate-tilt" title="Plate tilt">
+        <div className="physics-grid-2">
           <NumberCell
             label="alpha x"
             suffix="rad"
@@ -408,12 +395,11 @@ export function WaveplateAdjustControls({
             onCommit={(v) => void persist({ plateAlphaYRad: v })}
           />
         </div>
-      </div>
+      </SectionCard>
 
       {/* Dispersion (advanced) */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Dispersion</div>
-        <div style={grid2}>
+      <SectionCard id="physics.waveplate.dispersion" title="Dispersion">
+        <div className="physics-grid-2">
           <NumberCell
             label="Group delay"
             suffix="ps"
@@ -429,7 +415,7 @@ export function WaveplateAdjustControls({
             onCommit={(v) => void persist({ gvdFs2: v })}
           />
         </div>
-      </div>
+      </SectionCard>
     </div>
   );
 }
@@ -516,23 +502,13 @@ export function BeamSplitterControls({
     );
   };
 
-  const sectionStyle: React.CSSProperties = {
-    marginTop: 8,
-    padding: "6px 8px",
-    background: "rgba(56, 189, 248, 0.06)",
-    borderLeft: "2px solid #38bdf8",
-    fontSize: 11,
-  };
-  const titleStyle: React.CSSProperties = { color: "#38bdf8", fontWeight: 600, marginBottom: 6 };
-  const grid2: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 };
 
   const reflected = Math.max(0, Math.min(1, 1 - splitT));
 
   return (
     <div className="snap-to-beam">
       {/* Splitter type */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Splitter type</div>
+      <SectionCard id="physics.beam_splitter.splitter-type" title="Splitter type" defaultOpen>
         <label className="component-editor-coord" style={{ marginBottom: 6 }}>
           <span style={{ fontSize: 11 }}>Mode</span>
           <select
@@ -548,15 +524,14 @@ export function BeamSplitterControls({
             ? "Transmits p, reflects s (per V2 polarizationReference binding)."
             : "Splits both polarisations by the ratio below."}
         </div>
-      </div>
+      </SectionCard>
 
       {/* Split ratio — non-polarising only. For PBS the split is dictated
           by the input polarisation (p transmits, s reflects), so the
           amplitude-ratio knob is hidden. */}
       {!polarizing && (
-        <div style={sectionStyle}>
-          <div style={titleStyle}>Split ratio</div>
-          <div style={grid2}>
+        <SectionCard id="physics.beam_splitter.split-ratio" title="Split ratio" defaultOpen>
+          <div className="physics-grid-2">
             <NumberCell
               label="Transmitted"
               value={splitT}
@@ -571,13 +546,12 @@ export function BeamSplitterControls({
           <div style={{ opacity: 0.6, marginTop: 4, fontSize: 10 }}>
             0 = full reflect · 0.5 = 50/50 · 1 = full transmit. Reflected is auto = 1 − T.
           </div>
-        </div>
+        </SectionCard>
       )}
 
       {/* Polarising-only: extinction ratio */}
       {polarizing && (
-        <div style={sectionStyle}>
-          <div style={titleStyle}>Polarising extinction</div>
+        <SectionCard id="physics.beam_splitter.extinction" title="Polarising extinction" defaultOpen>
           <NumberCell
             label="Extinction ratio"
             suffix="dB"
@@ -588,12 +562,11 @@ export function BeamSplitterControls({
           <div style={{ opacity: 0.6, marginTop: 4, fontSize: 10 }}>
             Power leakage of the rejected polarisation: 10^(−ER/10). 30 dB = 0.001.
           </div>
-        </div>
+        </SectionCard>
       )}
 
       {/* Throughput */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Throughput</div>
+      <SectionCard id="physics.beam_splitter.throughput" title="Throughput">
         <NumberCell
           label="Transmission"
           value={transmission}
@@ -603,7 +576,7 @@ export function BeamSplitterControls({
         <div style={{ opacity: 0.6, marginTop: 4, fontSize: 10 }}>
           Overall efficiency multiplier on top of the split ratio (coating losses, AR, etc.).
         </div>
-      </div>
+      </SectionCard>
     </div>
   );
 }
@@ -699,15 +672,6 @@ export function LensControls({
     );
   };
 
-  const sectionStyle: React.CSSProperties = {
-    marginTop: 8,
-    padding: "6px 8px",
-    background: "rgba(56, 189, 248, 0.06)",
-    borderLeft: "2px solid #38bdf8",
-    fontSize: 11,
-  };
-  const titleStyle: React.CSSProperties = { color: "#38bdf8", fontWeight: 600, marginBottom: 6 };
-  const grid2: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 };
 
   // Quick reference: f-number when both NA and focal length are known.
   const fNumber = na > 0 ? 1 / (2 * na) : null;
@@ -715,9 +679,8 @@ export function LensControls({
   return (
     <div className="snap-to-beam">
       {/* Optics */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Optics</div>
-        <div style={grid2}>
+      <SectionCard id="physics.lens.optics" title="Optics" defaultOpen>
+        <div className="physics-grid-2">
           <NumberCell
             label="Focal length"
             suffix="mm"
@@ -755,11 +718,10 @@ export function LensControls({
             ? ` · f/# ≈ ${fNumber.toFixed(2)}`
             : ""}
         </div>
-      </div>
+      </SectionCard>
 
       {/* Throughput / material */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Throughput</div>
+      <SectionCard id="physics.lens.throughput" title="Throughput">
         <NumberCell
           label="Transmission"
           value={transmission}
@@ -781,11 +743,10 @@ export function LensControls({
             <option value="custom">custom (set via JSON)</option>
           </select>
         </label>
-      </div>
+      </SectionCard>
 
       {/* Dispersion */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Dispersion</div>
+      <SectionCard id="physics.lens.dispersion" title="Dispersion">
         <NumberCell
           label="GVD"
           suffix="fs²"
@@ -793,7 +754,7 @@ export function LensControls({
           step={1}
           onCommit={(v) => void persist({ gvdFs2: v })}
         />
-      </div>
+      </SectionCard>
     </div>
   );
 }

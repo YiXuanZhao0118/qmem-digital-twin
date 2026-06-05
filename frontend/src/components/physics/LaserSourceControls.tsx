@@ -26,7 +26,7 @@ import {
   setEmissionVisualPatch,
 } from "../../utils/emissionVisuals";
 import { wavelengthToColor } from "../../three/opticalBeams";
-import { EmissionVisualRow } from "./_shared";
+import { EmissionVisualRow, SectionCard } from "./_shared";
 import { PolarizationEditor } from "./PolarizationEditor";
 
 function wavelengthHex(wavelengthNm: number): string {
@@ -182,23 +182,12 @@ export function LaserSourceControls({
 
 
   // ---- shared section style -----------------------------------------
-  const sectionStyle: React.CSSProperties = {
-    marginTop: 8,
-    padding: "6px 8px",
-    background: "rgba(56, 189, 248, 0.06)",
-    borderLeft: "2px solid #38bdf8",
-    fontSize: 11,
-  };
-  const titleStyle: React.CSSProperties = { color: "#38bdf8", fontWeight: 600, marginBottom: 6 };
-  const grid2: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 };
-  const grid3: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 };
 
   return (
     <div className="snap-to-beam">
       {/* Beam basics */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Beam</div>
-        <div style={grid2}>
+      <SectionCard id="physics.laser_source.beam" title="Beam" defaultOpen>
+        <div className="physics-grid-2">
           <NumberCell
             label="Power"
             suffix="mW"
@@ -214,11 +203,10 @@ export function LaserSourceControls({
             onCommit={(v) => v > 0 && void persist({ centerWavelengthNm: v })}
           />
         </div>
-      </div>
+      </SectionCard>
 
       {/* Spectrum / linewidth */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Spectrum</div>
+      <SectionCard id="physics.laser_source.spectrum" title="Spectrum">
         <label className="component-editor-coord" style={{ marginBottom: 6 }}>
           <span style={{ fontSize: 11 }}>Linewidth shape</span>
           <select
@@ -249,7 +237,7 @@ export function LaserSourceControls({
           />
         )}
         {lineshape === "voigt" && (
-          <div style={grid2}>
+          <div className="physics-grid-2">
             <NumberCell
               label="Gaussian FWHM"
               suffix="MHz"
@@ -288,22 +276,20 @@ export function LaserSourceControls({
             />
           </div>
         )}
-      </div>
+      </SectionCard>
 
       {/* Polarization */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Polarization</div>
+      <SectionCard id="physics.laser_source.polarization" title="Polarization">
         <PolarizationEditor
           value={pol}
           onChange={(j) => void persist({ polarization: j })}
         />
-      </div>
+      </SectionCard>
 
       {/* Spatial mode */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Spatial mode (Gaussian)</div>
+      <SectionCard id="physics.laser_source.spatial-mode" title="Spatial mode (Gaussian)">
         <div style={{ marginBottom: 4, fontSize: 10, opacity: 0.7 }}>X axis</div>
-        <div style={grid3}>
+        <div className="physics-grid-3">
           <NumberCell
             label="waist"
             suffix="μm"
@@ -325,7 +311,7 @@ export function LaserSourceControls({
           />
         </div>
         <div style={{ marginTop: 6, marginBottom: 4, fontSize: 10, opacity: 0.7 }}>Y axis</div>
-        <div style={grid3}>
+        <div className="physics-grid-3">
           <NumberCell
             label="waist"
             suffix="μm"
@@ -346,11 +332,10 @@ export function LaserSourceControls({
             onCommit={(v) => v >= 1 && setSpatial("Y", { mSquared: v })}
           />
         </div>
-      </div>
+      </SectionCard>
 
       {/* Transverse mode */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Transverse mode</div>
+      <SectionCard id="physics.laser_source.transverse-mode" title="Transverse mode">
         <label className="component-editor-coord" style={{ marginBottom: 6 }}>
           <span style={{ fontSize: 11 }}>Family</span>
           <select
@@ -365,7 +350,7 @@ export function LaserSourceControls({
         </label>
         {(tm.kind === "TEM_mn" || tm.kind === "TEM00") && (
           <>
-            <div style={grid2}>
+            <div className="physics-grid-2">
               <NumberCell
                 label="m"
                 value={tm.indicesM ?? 0}
@@ -447,7 +432,7 @@ export function LaserSourceControls({
         )}
         {tm.kind === "LG_pl" && (
           <>
-            <div style={grid2}>
+            <div className="physics-grid-2">
               <NumberCell
                 label="p (radial)"
                 value={tm.indicesP ?? 0}
@@ -511,11 +496,10 @@ export function LaserSourceControls({
             </div>
           </>
         )}
-      </div>
+      </SectionCard>
 
       {/* Visualization (scene-only — physics unaffected) */}
-      <div style={sectionStyle}>
-        <div style={titleStyle}>Visualization</div>
+      <SectionCard id="physics.laser_source.visualization" title="Visualization">
         <EmissionVisualRow
           sceneObject={sceneObject}
           emissionKey="main"
@@ -523,7 +507,7 @@ export function LaserSourceControls({
           fallbackColorHex={wavelengthHex(wavelengthNm)}
           showVisibilityToggle={false}
         />
-      </div>
+      </SectionCard>
 
       <p className="snap-to-beam-empty" style={{ marginTop: 8, fontSize: 10, opacity: 0.65 }}>
         Source fields are mirrored to <code>objects.dynamicSources</code> for v3
