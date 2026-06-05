@@ -1710,9 +1710,12 @@ export function OpticalLinkViewerContent({
         )}
       </div>
 
-      {/* Right sidebar: object selector + that object's physics panel. */}
+      {/* Object inspector — docked LEFT (order:-1) so it clears the top toolbar
+          via the overlay's 56px top padding, leaving the top-RIGHT free for the
+          orientation gizmo + Home HUD (which would otherwise sit on top of it). */}
       <div
         style={{
+          order: -1,
           width: 360,
           flexShrink: 0,
           minHeight: 0,
@@ -1720,7 +1723,7 @@ export function OpticalLinkViewerContent({
           padding: "8px 10px",
           borderRadius: 4,
           background: "#fbfbf8",
-          borderLeft: "1px solid #d8ded8",
+          borderRight: "1px solid #d8ded8",
         }}
       >
         <label style={{ display: "block", color: "#242726", fontSize: 12, marginBottom: 6 }}>
