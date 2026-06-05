@@ -6,8 +6,7 @@
  *   - top-bar tab strip lists Optics + Electronics + EM.
  *   - Optics + Electronics are available workspaces (post Phase B.4).
  *   - EM is still placeholder until Phase C.
- *   - Switching modules swaps the canvas content and SolverConsole
- *     stays mounted across optics_seq + spice.
+ *   - Switching modules swaps the canvas content.
  */
 import { expect, test } from "@playwright/test";
 
@@ -35,9 +34,7 @@ test.describe("Module switcher", () => {
     await expect(page.getByRole("tab", { name: /^EM$/ })).not.toHaveClass(/coming-soon/);
   });
 
-  test("Optics workspace shows SolverConsole + 3D viewer", async ({ page }) => {
-    await expect(page.locator(".solver-console")).toBeVisible();
-    await expect(page.locator(".solver-console-run")).toContainText(/Run/);
+  test("Optics workspace shows the 3D viewer", async ({ page }) => {
     // .workspace-canvas > .viewer-shell, .workspace-canvas > .dual-viewer-split is the 3D viewer wrapper — unique to Optics.
     await expect(page.locator(".workspace-canvas > .viewer-shell, .workspace-canvas > .dual-viewer-split")).toBeVisible();
     await expect(page.locator(".module-placeholder")).toHaveCount(0);
@@ -45,13 +42,12 @@ test.describe("Module switcher", () => {
   });
 
   test("Optics -> Electronics -> EM -> Optics round-trip", async ({ page }) => {
-    // To Electronics: workspace replaces 3D viewer; SolverConsole stays.
+    // To Electronics: workspace replaces 3D viewer.
     await page.getByRole("tab", { name: /^Electronics/ }).click();
     await expect(page.locator(".electronics-workspace")).toBeVisible();
     await expect(page.locator(".electronics-sidebar").first()).toBeVisible();
     await expect(page.locator(".electronics-editor")).toBeVisible();
     await expect(page.locator(".electronics-results")).toBeVisible();
-    await expect(page.locator(".solver-console")).toBeVisible(); // shared
     await expect(page.locator(".workspace-canvas > .viewer-shell, .workspace-canvas > .dual-viewer-split")).toHaveCount(0);
     await expect(page.locator(".module-placeholder")).toHaveCount(0);
 
@@ -64,13 +60,11 @@ test.describe("Module switcher", () => {
     await expect(
       page.locator(".electronics-sidebar .electronics-sidebar-title").first(),
     ).toContainText(/EM problems/i);
-    await expect(page.locator(".solver-console")).toBeVisible(); // shared across all 3
     await expect(page.locator(".module-placeholder")).toHaveCount(0);
 
-    // Back to Optics: viewer + SolverConsole reappear.
+    // Back to Optics: viewer reappears.
     await page.getByRole("tab", { name: /^Optics$/ }).click();
     await expect(page.locator(".workspace-canvas > .viewer-shell, .workspace-canvas > .dual-viewer-split")).toBeVisible();
-    await expect(page.locator(".solver-console")).toBeVisible();
     await expect(page.locator(".module-placeholder")).toHaveCount(0);
     await expect(page.locator(".electronics-workspace")).toHaveCount(0);
   });

@@ -307,7 +307,7 @@ type SceneStore = {
    *  canvas to ``<ModulePlaceholder />``. See docs/MULTIPHYSICS_PLAN.md. */
   currentModule: SimulationModule;
   /** Recent simulation runs (newest first). Populated lazily on demand
-   *  by the SolverConsole panel and kept in sync via the WS event
+   *  by the module workspaces and kept in sync via the WS event
    *  ``simulation_run.status_changed`` (see applyEvent). */
   recentSimulationRuns: SimulationRunV2[];
   /** Phase B Electronics: list of saved SPICE circuits. The
@@ -4367,7 +4367,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         case "simulation_run.status_changed": {
           // Multiphysics WS event. Only mutate rows we already track in
           // recentSimulationRuns; if the id is unknown we ignore — the
-          // SolverConsole will pick it up the next time it refetches.
+          // workspace will pick it up the next time it refetches.
           const payload = event.payload;
           const recentSimulationRuns = state.recentSimulationRuns.map((run) =>
             run.id === payload.id

@@ -60,11 +60,6 @@ test.describe("EM workspace", () => {
     // palace output yet.
     await expect(page.locator(".em-solver-note")).toContainText(/mock/i);
 
-    // SolverConsole's recent-runs list grows with an em_fem row.
-    await expect(
-      page.locator(".solver-console-run-row", { hasText: "em_fem" }).first(),
-    ).toBeVisible();
-
     // Phase C.8: vtk.js field viewer renders the mock |E|² volume.
     await expect(page.locator(".field-viewer-block")).toBeVisible({ timeout: 5_000 });
     await expect(page.locator(".field-viewer-title")).toContainText(/\|E\|/);

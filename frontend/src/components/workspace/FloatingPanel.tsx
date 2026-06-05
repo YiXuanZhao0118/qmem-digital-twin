@@ -43,8 +43,8 @@ export function FloatingPanel({ id, title, icon, children, badge }: Props) {
   const isDocked = layout.dock !== "float";
 
   // Resolve the dock-zone DOM node to portal into. Runs after every render
-  // (no deps) so a panel that mounted before its zone existed — e.g. the
-  // SolverConsole renders before roomDimensions loads the dock grid — picks the
+  // (no deps) so a panel that mounted before its zone existed — e.g. a panel
+  // renders before roomDimensions loads the dock grid — picks the
   // zone up once it appears. The prev-equality guard makes the no-dep effect
   // loop-safe (no state change when the resolved node is unchanged).
   const [dockNode, setDockNode] = useState<HTMLElement | null>(null);
@@ -231,8 +231,8 @@ export function FloatingPanel({ id, title, icon, children, badge }: Props) {
 
   // Docked: portal into the zone container, stacked + collapsible (accordion),
   // no drag/resize. Clicking the header toggles collapse. If the target zone
-  // isn't mounted (e.g. SolverConsole in a non-optics module that renders no
-  // dock grid), fall through to the float render so the panel never vanishes.
+  // isn't mounted (e.g. a docked panel mounts before its dock zone exists),
+  // fall through to the float render so the panel never vanishes.
   if (isDocked && dockNode) {
     return createPortal(
       <section

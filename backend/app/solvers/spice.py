@@ -8,7 +8,7 @@ SolverRunner contract. The solver:
   2. Spawns ngspice in batch mode (``-b -r raw -o log``) on a temp file.
   3. Parses ngspice's binary raw output into per-variable arrays.
   4. Stuffs the arrays into ``sim_run.result_summary['data']`` so the
-     frontend SolverConsole / waveform viewer can read them via
+     frontend waveform viewer can read them via
      ``GET /api/simulation-runs/{id}``.
 
 Phase B MVP keeps the parsed data inline in result_summary because

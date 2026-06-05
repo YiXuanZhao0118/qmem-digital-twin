@@ -5,8 +5,7 @@
  *   1. Workspace renders three panes (sidebar + monaco editor + results)
  *      with at least one seeded circuit.
  *   2. Clicking Run dispatches a spice solver run; the WaveformChart
- *      eventually shows in the results pane and the SolverConsole
- *      "Recent runs" list grows with a spice row.
+ *      eventually shows in the results pane.
  *
  * The second test depends on:
  *   - The local backend running on whatever PLAYWRIGHT_BASE_URL points to.
@@ -108,11 +107,6 @@ test.describe("Electronics workspace", () => {
     // status flip). Allow a generous timeout for the cascading effects.
     await expect(page.locator(".waveform-chart-block")).toBeVisible({ timeout: 10_000 });
     await expect(page.locator(".waveform-legend-item").first()).toBeVisible();
-
-    // SolverConsole's recent-runs list should now include a spice row.
-    await expect(
-      page.locator(".solver-console-run-row", { hasText: "spice" }).first(),
-    ).toBeVisible();
   });
 
   test("Touchstone upload renders Smith chart + magnitude plot", async ({ page }) => {

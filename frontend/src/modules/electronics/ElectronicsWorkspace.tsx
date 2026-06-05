@@ -8,8 +8,9 @@
  *             uPlot waveform chart lands in B.6)
  *
  * Run button: POST /api/simulation-runs {module:'spice', params:{circuitId}}.
- * Status updates flow through the SolverConsole panel (Phase A.6) — this
- * workspace just shows the most recent finished run for the active circuit.
+ * Status updates flow through the WS ``simulation_run.status_changed`` event
+ * into recentSimulationRuns — this workspace shows the most recent finished
+ * run for the active circuit.
  */
 import { ChevronDown, Play, Plus, Save, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";

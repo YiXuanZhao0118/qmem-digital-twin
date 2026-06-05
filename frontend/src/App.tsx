@@ -24,7 +24,6 @@ import { CursorMenu } from "./components/optical/CursorMenu";
 import { SceneToolbar } from "./components/SceneToolbar";
 import { DockZones } from "./components/workspace/DockZones";
 import { ScrubTimeBar } from "./components/workspace/ScrubTimeBar";
-import { SolverConsole } from "./components/workspace/SolverConsole";
 import { TopBar } from "./components/workspace/TopBar";
 import { WorkspaceProvider } from "./components/workspace/WorkspaceProvider";
 import { ElectronicsWorkspace } from "./modules/electronics/ElectronicsWorkspace";
@@ -279,13 +278,11 @@ export default function App() {
   //   spice      -> ElectronicsWorkspace netlist+results (Phase B).
   //   em_fem     -> EmWorkspace ports/freq/results (Phase C).
   //   optics_fdtd reserved -> placeholder.
-  // SolverConsole is mounted across all available modules.
   const moduleDef = getModule(currentModule);
   const isOptics = currentModule === "optics_seq";
   const isCavity = currentModule === "optics_cavity";
   const isElectronics = currentModule === "spice";
   const isEm = currentModule === "em_fem";
-  const showSolverConsole = isOptics || isCavity || isElectronics || isEm;
 
   return (
     <WorkspaceProvider>
@@ -336,7 +333,6 @@ export default function App() {
           {!isOptics && !isCavity && !isElectronics && !isEm && (
             <ModulePlaceholder module={moduleDef} />
           )}
-          {showSolverConsole && <SolverConsole />}
         </div>
       </main>
     </WorkspaceProvider>

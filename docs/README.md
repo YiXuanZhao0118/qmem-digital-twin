@@ -186,7 +186,7 @@ RF **不是** ray tracer——沒有波前/Jones/q。它在 port 鄰接圖上做
 
 ## 8. 多物理場模組系統
 
-UI 可切換的**模組**（前端 `modules/<name>/`，`modules/_registry.ts` 註冊、`ModuleSwitcher.tsx` 切換、`SolverConsole.tsx` 跑求解）：
+UI 可切換的**模組**（前端 `modules/<name>/`，`modules/_registry.ts` 註冊、`ModuleSwitcher.tsx` 切換，各模組 workspace 內的 Run 按鈕跑求解）：
 
 | 模組 | 內容 | 後端求解器 | 函式庫 |
 |---|---|---|---|

@@ -261,7 +261,7 @@ def compute(req: CavityRequest) -> CavityResult:
 # Dispatched by InProcessRunner when the user clicks "Run" on the Cavity
 # workspace. Reads sim_run.params (mirrors the /compute POST payload),
 # calls compute(req), writes the full bundle into result_summary, and
-# broadcasts simulation_run.status_changed so SolverConsole can refresh.
+# broadcasts simulation_run.status_changed so the frontend can refresh.
 
 
 async def run(session: AsyncSession, sim_run: SimulationRun) -> None:
@@ -293,7 +293,7 @@ async def run(session: AsyncSession, sim_run: SimulationRun) -> None:
         )
         result = compute(req)
         # Drop the spectrum arrays into a nested key — the rest are scalar
-        # metrics that surface as a flat table in SolverConsole.
+        # metrics that surface as a flat table in the frontend.
         sim_run.result_summary = {
             "fsrMhz": result.fsr_mhz,
             "roundTripLengthMm": result.round_trip_length_mm,

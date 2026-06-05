@@ -41,7 +41,6 @@ export type PanelId =
   | "beam-scope"
   | "touch-coincidence"
   | "rf-link"
-  | "solver-console"
   | "magnetics"
   | "ai-binding";
 
@@ -92,16 +91,6 @@ const PANEL_DEFS: { id: PanelId; title: string; defaultLayout: PanelLayout }[] =
     id: "rf-link",
     title: "RF link",
     defaultLayout: { x: 360, y: 80, w: 720, h: 520, visible: false, collapsed: false, z: 2, dock: "float" },
-  },
-  {
-    id: "solver-console",
-    title: "Solver console",
-    // Right column, below Object panel. Negative x resolves against
-    // viewport width in defaultLayoutFor; y is fixed because there's
-    // no negative-y handling. Default visible so Phase A users see the
-    // multiphysics flow immediately (Run button + recent runs list +
-    // WS-driven progress).
-    defaultLayout: { x: -340, y: 600, w: 320, h: 260, visible: true, collapsed: false, z: 2, dock: "right" },
   },
   {
     id: "magnetics",

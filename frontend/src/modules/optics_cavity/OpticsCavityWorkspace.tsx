@@ -148,7 +148,7 @@ export function OpticsCavityWorkspace() {
   };
 
   // Run button: keep the live inline result, but ALSO dispatch a real
-  // SimulationRun so the configuration shows up in SolverConsole and the
+  // SimulationRun so the configuration is saved to the run history and the
   // user can come back to it later (Phase Optics-Cavity).
   const runAndPersist = async () => {
     await runCompute(draft);
@@ -363,7 +363,7 @@ export function OpticsCavityWorkspace() {
             className="electronics-btn primary"
             onClick={() => void runAndPersist()}
             disabled={busy}
-            title="Run + save this configuration to SolverConsole"
+            title="Run + save this configuration"
             style={{ marginLeft: "auto" }}
           >
             <Play size={11} /> {busy ? "Computing…" : "Run"}

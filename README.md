@@ -517,7 +517,7 @@ The page is a single full-viewport `.workspace-shell` with three regions:
 │   currentModule = "optics_seq"  →  <DualViewerSplit>            │
 │       + floating panels: catalog, outliner, component editor,   │
 │         pulse timing, instrument power, RF link, optical link,  │
-│         touch coincidence, magnetics, solver console, …         │
+│         touch coincidence, magnetics, …                         │
 │                                                                 │  (center)
 │   currentModule = "optics_cavity" → <OpticsHost>                │
 │   currentModule = "spice"          → <ElectronicsWorkspace>     │
@@ -560,7 +560,6 @@ Defaults (from `PANEL_DEFS` in `workspace/WorkspaceProvider.tsx`):
 | `touch-coincidence` | Touch coincidence | 332, 200 | 380 × 280 | no | 3 |
 | `optical-link-viewer` | Optical link viewer | 360, 80 | 640 × 780 | no | 2 |
 | `rf-link` | RF link | 360, 80 | 720 × 520 | no | 2 |
-| `solver-console` | Solver console | −340, 600 (right column, below Object) | 320 × 260 | yes | 2 |
 | `magnetics` | Magnetics overlay | −340, 80 | 320 × 460 | no | 2 |
 | `ai-binding` | AI Binding | −340, 80 | 380 × 520 | no (open it from the Window menu after enabling `VITE_ENABLE_AI_PANEL=true`) | 3 |
 
@@ -597,7 +596,7 @@ Keyboard shortcuts:
 
 | Region | File(s) | Role |
 |---|---|---|
-| Workspace shell | `workspace/TopBar.tsx`, `WorkspaceProvider.tsx`, `FloatingPanel.tsx`, `ScrubTimeBar.tsx`, `SolverConsole.tsx`, `ModuleSwitcher.tsx` | Top bar, draggable floating panel kit, scrub timeline, unified solver log, module tabs |
+| Workspace shell | `workspace/TopBar.tsx`, `WorkspaceProvider.tsx`, `FloatingPanel.tsx`, `ScrubTimeBar.tsx`, `ModuleSwitcher.tsx` | Top bar, draggable floating panel kit, scrub timeline, module tabs |
 | 3D viewport | `DigitalTwinViewer.tsx`, `DualViewerSplit.tsx` | Three.js canvas; dual viewport with draggable split |
 | Catalog & outliner | `AssetLibraryPanel.tsx` (exports `ComponentsCatalogPanel`, `OutlinerFloatingPanel`), `OutlinerPanel.tsx` | Drag-to-instantiate catalog; nested collections tree |
 | Object editor | `ComponentPanel.tsx`, `IntrinsicSpecPanel.tsx` | Pose / visibility / locks / per-instance physics |

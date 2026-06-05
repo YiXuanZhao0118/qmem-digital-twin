@@ -194,7 +194,7 @@ export function CrystalWorkspace() {
   };
 
   // Run button: keep the live inline result, but ALSO dispatch a real
-  // SimulationRun so the configuration is saved in SolverConsole.
+  // SimulationRun so the configuration is saved to the run history.
   const runAndPersist = async () => {
     await runCompute();
     try {
@@ -388,7 +388,7 @@ export function CrystalWorkspace() {
             className="electronics-btn primary"
             onClick={() => void runAndPersist()}
             disabled={busy}
-            title="Run + save this configuration to SolverConsole"
+            title="Run + save this configuration"
             style={{ marginLeft: "auto" }}
           >
             <Play size={11} /> {busy ? "Computing…" : "Run"}
