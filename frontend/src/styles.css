@@ -2873,6 +2873,14 @@ input:disabled {
   border-color: rgba(0, 0, 0, 0.4);
 }
 
+/* Flattened physics inspector — the old `.physics-panel` section wrapper +
+   "Optical/RF" header were removed; the accordion sections stand alone now. */
+.physics-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .physics-panel {
   margin: 12px 0;
   padding: 14px;

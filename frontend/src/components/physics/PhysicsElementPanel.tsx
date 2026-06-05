@@ -5,7 +5,6 @@ import { Component, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useSceneStore } from "../../store/sceneStore";
 import type { ComponentItem, ElementKind, PhysicsElement, SceneObject } from "../../types/digitalTwin";
 import {
-  DOMAIN_TITLES,
   KIND_LABELS,
   kindIdToElementKind,
   domainForElementKind,
@@ -116,14 +115,9 @@ export function PhysicsElementPanel({ component, sceneObject }: Props) {
   // mapped kind for the not-yet-registered preview. Defaults to optical.
   const activeKind = (existing?.elementKind as ElementKind | undefined) ?? mappedKind ?? null;
   const domain = domainForElementKind(activeKind);
-  const panelTitle = DOMAIN_TITLES[domain];
 
   return (
-    <section className={`physics-panel physics-panel-${domain}`}>
-      <header className="physics-panel-header">
-        <h3>{panelTitle}</h3>
-      </header>
-
+    <div className="physics-inspector">
       {!existing && mappedKind && (
         <div className="physics-auto-register">
           <div className="physics-auto-register-text">
@@ -171,7 +165,7 @@ export function PhysicsElementPanel({ component, sceneObject }: Props) {
           )}
         </AdjustErrorBoundary>
       )}
-    </section>
+    </div>
   );
 }
 
