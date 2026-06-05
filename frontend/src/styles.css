@@ -1196,6 +1196,18 @@ h3 {
   background: #eef1ef;
 }
 
+/* In optical-link mode the overlay is a SEPARATE scene with its own camera, so
+   the main-viewer HUD that drives the main 3D camera (orientation gizmo, Home
+   framing, cursor editor) is irrelevant — hide it so it can't occlude the
+   optical-link sidebar (the gizmo sat over the Object dropdown). The display-
+   mode pills stay (top-left) so the user can switch back. */
+.viewer-shell.is-optical-link .global-axis-gizmo,
+.viewer-shell.is-optical-link .viewer-home-controls,
+.viewer-shell.is-optical-link .viewer-cursor-editor {
+  /* !important to beat the gizmo canvas's inline `display: block` (set in JS). */
+  display: none !important;
+}
+
 /* The optical-link overlay is light again, so the beam-scope renders with its
    native light-floating-panel styling (dark-on-light) — no dark-overlay text
    overrides needed here. */

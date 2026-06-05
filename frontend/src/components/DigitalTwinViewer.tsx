@@ -5986,7 +5986,7 @@ export function DigitalTwinViewer({
   const ctxObjectName = ctxObject?.name ?? "Object";
 
   return (
-    <div className="viewer-shell">
+    <div className={`viewer-shell${displayMode === "optical-link" ? " is-optical-link" : ""}`}>
       <div ref={mountRef} className="viewer-canvas" />
       {displayMode === "optical-link" && (
         <div className="viewer-optical-link-overlay">
