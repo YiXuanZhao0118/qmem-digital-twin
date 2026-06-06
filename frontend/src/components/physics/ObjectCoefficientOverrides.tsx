@@ -1,13 +1,14 @@
 /**
- * Generic per-instance coefficient editor.
+ * Generic per-instance coefficient editor (per binding slot).
  *
- * The v3 tracer merges params as `{**asset.default_params, **dynamic_sources}`
- * (backend/app/optical/anchor_tracer.py:469) — a SHALLOW merge applied to every
- * kind. So any top-level key written to `SceneObject.dynamicSources` overrides
- * that one instance's asset default at trace time, with no per-kind backend
- * code. This component surfaces exactly that: it lists the kind's top-level
- * scalar coefficients (baseline from the object's Asset3D.defaultParams, or the
- * kind registry as fallback) and writes per-field overrides into dynamicSources.
+ * The v3 anchor tracer merges params as `{**asset.default_params, **dynamic}`
+ * per slot. The slot `dynamic` is built in db_scene_loader.load_anchor_scene_
+ * from_db, which merges `SceneObject.param_overrides[binding_id]` on top of the
+ * asset defaults. So any top-level key written to
+ * `SceneObject.paramOverrides[bindingKey]` overrides that one slot's asset
+ * default at trace time, with no per-kind backend code. This component surfaces
+ * exactly that: it lists the slot asset's top-level scalar coefficients and
+ * writes per-field overrides into paramOverrides[bindingKey].
  *
  * Nested params (laser spectrum / spatialMode / polarization, fiber endA/endB)
  * are intentionally skipped — the shallow merge can't override a nested leaf
@@ -17,7 +18,7 @@ import { useMemo } from "react";
 import { RotateCcw } from "lucide-react";
 
 import { useSceneStore } from "../../store/sceneStore";
-import type { ComponentItem, ElementKind, SceneObject } from "../../types/digitalTwin";
+import type { Asset3D, ElementKind, SceneObject } from "../../types/digitalTwin";
 import { cleanNumber } from "../../utils/numberFormat";
 import { pluginForKind } from "../../kinds/_plugins";
 
@@ -39,37 +40,15 @@ function fmtDefault(v: unknown): string {
   return String(v);
 }
 
-export function ObjectCoefficientOverrides({
-  component,
-  sceneObject,
-  elementKind,
-}: {
-  component: ComponentItem;
-  sceneObject: SceneObject;
-  elementKind: ElementKind;
-}) {
-  const updateSceneObject = useSceneStore((s) => s.updateSceneObject);
-  const assets = useSceneStore((s) => s.scene.assets);
-
+/** Shared field derivation: the kind's top-level overridable params, ordered
+ *  with operating-state knobs first (tuned during an experiment), spec-sheet
+ *  keys after. `baseline` is the asset/registry default bag. */
+function useCoefficientFields(elementKind: ElementKind, baseline: Record<string, unknown>) {
   const plugin = pluginForKind(elementKind);
-
-  // Baseline = registry defaults overlaid by the object's actual Asset3D row
-  // (the asset is what the solver reads, so its defaults win the display).
-  const baseline = useMemo(() => {
-    const pluginDefaults = (plugin?.physics.defaultParams ?? {}) as Record<string, unknown>;
-    const asset = component.asset3dId
-      ? assets.find((a) => a.id === component.asset3dId)
-      : undefined;
-    return { ...pluginDefaults, ...((asset?.defaultParams ?? {}) as Record<string, unknown>) };
-  }, [plugin, component.asset3dId, assets]);
-
   const intrinsicKeys = useMemo(
     () => new Set<string>((plugin?.physics.intrinsicParamKeys ?? []) as string[]),
     [plugin],
   );
-
-  // Editable fields: top-level overridable params, ordered with operating-state
-  // knobs first (the ones tuned during an experiment), spec-sheet keys after.
   const fields = useMemo(() => {
     const keys = Object.keys(baseline).filter((k) => isEditableValue(baseline[k]));
     const stateKeys = (plugin?.physics.stateParamKeys ?? []) as string[];
@@ -77,12 +56,91 @@ export function ObjectCoefficientOverrides({
     const rest = keys.filter((k) => !stateFirst.includes(k));
     return [...stateFirst, ...rest];
   }, [baseline, plugin]);
+  return { fields, intrinsicKeys };
+}
 
-  const overrides = (sceneObject.dynamicSources ?? {}) as Record<string, unknown>;
+/** Presentational grid of CoefficientField cells. Read/write of the override
+ *  store is the caller's concern (object-level dynamicSources vs per-binding
+ *  paramOverrides) — this only renders the fields against a baseline + the
+ *  current override bag. */
+function CoefficientGrid({
+  fields,
+  intrinsicKeys,
+  baseline,
+  overrides,
+  onChange,
+  onReset,
+}: {
+  fields: string[];
+  intrinsicKeys: Set<string>;
+  baseline: Record<string, unknown>;
+  overrides: Record<string, unknown>;
+  onChange: (key: string, value: EditableValue) => void;
+  onReset: (key: string) => void;
+}) {
+  return (
+    <div className="physics-panel-kind-params-grid">
+      {fields.map((key) => (
+        <CoefficientField
+          key={key}
+          name={key}
+          base={baseline[key]}
+          value={key in overrides ? overrides[key] : baseline[key]}
+          overridden={key in overrides}
+          isSpec={intrinsicKeys.has(key)}
+          onChange={(v) => onChange(key, v)}
+          onReset={() => onReset(key)}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** Per-binding coefficient editor for ONE optical asset slot of a component —
+ *  a single optic's root asset OR one sub-asset of a composite (e.g. the
+ *  isolator's front / back Glan prisms). Reads/writes
+ *  `SceneObject.paramOverrides[bindingKey]` (alembic 0082); the backend anchor
+ *  loader merges that bag into the matching binding slot's dynamic_sources so
+ *  each asset's coefficients reach the trace independently
+ *  (db_scene_loader.load_anchor_scene_from_db). `bindingKey` MUST match the
+ *  slot's binding_id = ComponentBinding.role || id.
+ *
+ *  This is the single home for per-instance optical coefficients. It replaced
+ *  the old dynamicSources-column editor, which never reached the anchor trace:
+ *  the loader's _extract_dynamic only knows a fixed whitelist + the laser beam,
+ *  so generic column edits silently no-op'd (the documented lens-focal gap).
+ *  paramOverrides is the per-instance coefficient home per the data-ownership
+ *  model; dynamicSources stays reserved for laser/AOM runtime values. */
+export function BindingCoefficientOverrides({
+  sceneObject,
+  asset,
+  bindingKey,
+  elementKind,
+}: {
+  sceneObject: SceneObject;
+  asset: Asset3D;
+  bindingKey: string;
+  elementKind: ElementKind;
+}) {
+  const updateSceneObject = useSceneStore((s) => s.updateSceneObject);
+  const plugin = pluginForKind(elementKind);
+
+  const baseline = useMemo(() => {
+    const pluginDefaults = (plugin?.physics.defaultParams ?? {}) as Record<string, unknown>;
+    return { ...pluginDefaults, ...((asset.defaultParams ?? {}) as Record<string, unknown>) };
+  }, [plugin, asset]);
+
+  const { fields, intrinsicKeys } = useCoefficientFields(elementKind, baseline);
+
+  const allOverrides = (sceneObject.paramOverrides ?? {}) as Record<string, Record<string, unknown>>;
+  const overrides = (allOverrides[bindingKey] ?? {}) as Record<string, unknown>;
 
   const writeOverride = (key: string, value: EditableValue) => {
     void updateSceneObject(sceneObject.id, {
-      dynamicSources: { ...overrides, [key]: value },
+      paramOverrides: {
+        ...allOverrides,
+        [bindingKey]: { ...overrides, [key]: value },
+      },
     });
   };
 
@@ -90,35 +148,29 @@ export function ObjectCoefficientOverrides({
     if (!(key in overrides)) return;
     const next = { ...overrides };
     delete next[key];
+    const nextAll = { ...allOverrides };
+    if (Object.keys(next).length) nextAll[bindingKey] = next;
+    else delete nextAll[bindingKey];
     void updateSceneObject(sceneObject.id, {
-      dynamicSources: Object.keys(next).length ? next : null,
+      paramOverrides: Object.keys(nextAll).length ? nextAll : null,
     });
   };
 
-  if (fields.length === 0) return null;
+  if (fields.length === 0) {
+    return (
+      <p className="mirror-adjust-hint">No editable coefficients for this element.</p>
+    );
+  }
 
   return (
-    <div className="physics-panel-kind-params" style={{ marginTop: 6 }}>
-      <div className="physics-panel-kind-params-header">Per-instance coefficients</div>
-      <div className="physics-panel-kind-params-grid">
-        {fields.map((key) => (
-          <CoefficientField
-            key={key}
-            name={key}
-            base={baseline[key]}
-            value={key in overrides ? overrides[key] : baseline[key]}
-            overridden={key in overrides}
-            isSpec={intrinsicKeys.has(key)}
-            onChange={(v) => writeOverride(key, v)}
-            onReset={() => resetOverride(key)}
-          />
-        ))}
-      </div>
-      <p className="mirror-adjust-hint">
-        Overrides write to this object's <code>dynamicSources</code> — they apply
-        only to this instance and revert to the asset default on reset.
-      </p>
-    </div>
+    <CoefficientGrid
+      fields={fields}
+      intrinsicKeys={intrinsicKeys}
+      baseline={baseline}
+      overrides={overrides}
+      onChange={writeOverride}
+      onReset={resetOverride}
+    />
   );
 }
 

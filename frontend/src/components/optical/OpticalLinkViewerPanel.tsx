@@ -45,12 +45,37 @@ import { mmToThree, labRootSwapInverseQuaternion, labRootSwapQuaternion } from "
 import { VIEWER_BG_LIGHT, VIEWER_GRID_LINE, VIEWER_GRID_CENTER } from "../../three/viewerTheme";
 import { domainForElementKind, kindIdToElementKind } from "../../utils/elementDefaults";
 import { BeamScopeContents } from "./BeamScopePanel";
-import { PhysicsElementPanel } from "../physics/PhysicsElementPanel";
+import { OpticalSettingPanel } from "../physics/OpticalSettingPanel";
 
 const EMITTER_KINDS: ReadonlySet<string> = new Set([
   "laser_source",
   "tapered_amplifier",
 ]);
+
+// Inline beam-scope panel sizing. The panel is collapsible and its expanded
+// height is user-draggable (top grip); the chosen height persists per browser.
+// Min is 0 so the grip can be dragged all the way down to fully retract the
+// body (leaving just the grip + header), not only down to a fixed floor.
+const SCOPE_MIN_H = 0;
+const SCOPE_DEFAULT_H = 300;
+const SCOPE_H_KEY = "qmem-beam-scope-h";
+function loadScopeHeight(): number {
+  try {
+    const raw = window.localStorage.getItem(SCOPE_H_KEY);
+    const n = raw ? Number(raw) : NaN;
+    if (Number.isFinite(n) && n >= SCOPE_MIN_H) return n;
+  } catch {
+    // ignore
+  }
+  return SCOPE_DEFAULT_H;
+}
+function saveScopeHeight(h: number): void {
+  try {
+    window.localStorage.setItem(SCOPE_H_KEY, String(Math.round(h)));
+  } catch {
+    // ignore
+  }
+}
 
 /** Effective clear-aperture radius (mm) of the asset anchor closest to the
  *  incoming beam (intercept_in / intercept_face / optical_anchor). Reads
@@ -627,16 +652,61 @@ export function OpticalLinkViewerContent({
   // panel lives in the optical-link view, not just the component inspector).
   const opticalObjects = useMemo(() => {
     const compById = new Map(components.map((c) => [c.id, c]));
+    const ekByObjectId = new Map(physicsElements.map((e) => [e.objectId, e.elementKind]));
     return objects
       .filter((o) => {
+        // Element kind is authoritative on the PhysicsElement; fall back to the
+        // component's kindId only for objects with no physics row. Keying off
+        // the component alone dropped LASER_SOURCE0 — its component is typed
+        // `none`, so its real `laser_source` kind lives only on the PE.
         const comp = compById.get(o.componentId);
-        if (!comp?.kindId) return false;
-        const ek = kindIdToElementKind(comp.kindId);
-        return ek != null && domainForElementKind(ek) === "optical";
+        const ek = ekByObjectId.get(o.id) || kindIdToElementKind(comp?.kindId);
+        if (ek) return domainForElementKind(ek) === "optical";
+        // Composite optical components (e.g. the IO-3-850-HP isolator) carry
+        // kindId="none" and have NO PhysicsElement, so `ek` is null — but they
+        // declare optical capability and own a binding tree. Include them so
+        // their settings are reachable in the inspector drawer.
+        return (comp?.physicsCapabilities ?? []).includes("optical");
       })
       .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
-  }, [objects, components]);
+  }, [objects, components, physicsElements]);
   const [inspectObjectId, setInspectObjectId] = useState<string | null>(null);
+  // Inspector is a collapsible LEFT drawer — default collapsed so the 3D view
+  // is clear. Clicking an optic in the scene (or the edge tab) opens it.
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // Inline beam-scope panel: collapsible (header chevron) + vertically
+  // resizable (top grip). Height lives in a ref and is written straight to the
+  // body element during a drag so pointermove doesn't churn React at 60 fps —
+  // same idiom as useResizablePanes / DualViewerSplit. Persisted per browser.
+  const [scopeCollapsed, setScopeCollapsed] = useState(false);
+  const scopeBodyRef = useRef<HTMLDivElement | null>(null);
+  const scopeHeightRef = useRef<number>(loadScopeHeight());
+  const startScopeResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const handle = event.currentTarget;
+    handle.setPointerCapture(event.pointerId);
+    const startY = event.clientY;
+    const startH = scopeHeightRef.current;
+    const onMove = (move: PointerEvent) => {
+      // The grip rides the panel's TOP edge; dragging up grows it downward.
+      const next = Math.max(
+        SCOPE_MIN_H,
+        Math.min(startH + (startY - move.clientY), window.innerHeight * 0.8),
+      );
+      scopeHeightRef.current = next;
+      if (scopeBodyRef.current) scopeBodyRef.current.style.height = `${next}px`;
+    };
+    const onUp = () => {
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+      handle.removeEventListener("pointercancel", onUp);
+      saveScopeHeight(scopeHeightRef.current);
+    };
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+    handle.addEventListener("pointercancel", onUp);
+  };
   // Keep the selection valid as the scene changes (default to the first optic).
   const effectiveInspectId =
     inspectObjectId && opticalObjects.some((o) => o.id === inspectObjectId)
@@ -726,6 +796,12 @@ export function OpticalLinkViewerContent({
   setChainEmitterIdsRef.current = setChainEmitterIds;
   setTasFoldedIntoLaserRef.current = setTasFoldedIntoLaser;
   scopeProbeRef.current = scopeProbe;
+  // Click-in-scene object selection writes the inspected object + opens the
+  // drawer; held in refs so the [panelVisible] click handler reads them fresh.
+  const setInspectObjectIdRef = useRef(setInspectObjectId);
+  setInspectObjectIdRef.current = setInspectObjectId;
+  const setDrawerOpenRef = useRef(setDrawerOpen);
+  setDrawerOpenRef.current = setDrawerOpen;
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -808,6 +884,13 @@ export function OpticalLinkViewerContent({
     const beamGroup = new THREE.Group();
     beamGroup.name = "beam-tubes";
     contentGroup.add(beamGroup);
+    // Invisible per-object pick proxies (one box per beam-touched optic) live
+    // in their own group so the selection raycaster hits ONLY them — clicking
+    // an optic sets the inspected object without intercepting beam-segment
+    // probe clicks (those raycast beamGroup, checked first).
+    const pickGroup = new THREE.Group();
+    pickGroup.name = "object-pick-proxies";
+    contentGroup.add(pickGroup);
 
     sceneRef.current = scene;
     cameraRef.current = camera;
@@ -919,7 +1002,27 @@ export function OpticalLinkViewerContent({
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
       const hits = raycaster.intersectObjects(beamGroup.children, false);
-      if (hits.length === 0) return;
+      if (hits.length === 0) {
+        // No beam under the cursor — treat it as an object pick. Among all
+        // proxies under the ray, take the SMALLEST (most specific) so a small
+        // optic inside a larger neighbour's loose AABB still wins.
+        const picks = raycaster.intersectObjects(pickGroup.children, false);
+        let picked: string | undefined;
+        let bestVol = Infinity;
+        for (const h of picks) {
+          const ud = h.object.userData as { pickObjectId?: string; pickVolume?: number };
+          const vol = ud.pickVolume ?? Infinity;
+          if (ud.pickObjectId && vol < bestVol) {
+            bestVol = vol;
+            picked = ud.pickObjectId;
+          }
+        }
+        if (picked) {
+          setInspectObjectIdRef.current(picked);
+          setDrawerOpenRef.current(true);
+        }
+        return;
+      }
       const hit = hits[0];
       const segment = hit.object.userData.segment as LiveTraceSegment | undefined;
       if (!segment) return;
@@ -1073,11 +1176,13 @@ export function OpticalLinkViewerContent({
       // Wipe the previous content (beams + anchors + rings).
       while (contentGroup.children.length > 0) {
         const child = contentGroup.children.pop()!;
-        if (child === beamGroup) continue; // keep the beam group container alive
+        if (child === beamGroup || child === pickGroup) continue; // keep containers alive
         disposeTree(child);
       }
       clearGroup(beamGroup);
+      clearGroup(pickGroup);
       contentGroup.add(beamGroup);
+      contentGroup.add(pickGroup);
 
       if (segments.length === 0) return;
 
@@ -1367,6 +1472,33 @@ export function OpticalLinkViewerContent({
         // unchanged (labMmToThree already bakes S).
         wrapper.quaternion.premultiply(labRootSwapQuaternion());
         contentGroup.add(wrapper);
+
+        // Selection pick-proxy: an invisible (opacity 0) box covering the
+        // wireframe's world bounds, tagged with the objectId. The selection
+        // raycaster hits these so the user can click anywhere on/near an
+        // optic to inspect it. Each dimension is floored to a small fraction
+        // of the scene span so flat optics (a thin lens / waveplate) still
+        // present a clickable thickness.
+        wrapper.updateMatrixWorld(true);
+        const pbox = new THREE.Box3().setFromObject(wrapper);
+        if (!pbox.isEmpty()) {
+          const psize = pbox.getSize(new THREE.Vector3());
+          const pmin = bboxSpan * 0.01;
+          const dx = Math.max(psize.x, pmin);
+          const dy = Math.max(psize.y, pmin);
+          const dz = Math.max(psize.z, pmin);
+          const proxy = new THREE.Mesh(
+            new THREE.BoxGeometry(dx, dy, dz),
+            new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
+          );
+          proxy.position.copy(pbox.getCenter(new THREE.Vector3()));
+          proxy.userData.pickObjectId = objectId;
+          // Box volume — the click handler prefers the SMALLEST hit proxy so a
+          // small optic whose loose AABB overlaps a larger neighbour's (e.g. a
+          // lens sitting in front of the TA body, viewed end-on) still wins.
+          proxy.userData.pickVolume = dx * dy * dz;
+          pickGroup.add(proxy);
+        }
       }
 
       lastBboxSpan = bboxSpan;
@@ -1690,11 +1822,11 @@ export function OpticalLinkViewerContent({
         {probeBelongsToChain && (
           <div
             style={{
-              flex: 1,
+              flexShrink: 0,
+              display: "flex",
+              flexDirection: "column",
               minHeight: 0,
-              overflow: "auto",
               marginTop: 2,
-              padding: "8px 10px",
               borderRadius: 6,
               border: "1px solid rgba(56, 189, 248, 0.28)",
               borderTop: "2px solid rgba(14, 116, 110, 0.7)",
@@ -1705,47 +1837,130 @@ export function OpticalLinkViewerContent({
               color: "#242726",
             }}
           >
-            <BeamScopeContents />
+            {/* Top grip — drag up/down to resize (hidden while collapsed). */}
+            {!scopeCollapsed && (
+              <div
+                onPointerDown={startScopeResize}
+                title="Drag to resize"
+                style={{
+                  height: 9,
+                  flexShrink: 0,
+                  cursor: "ns-resize",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  touchAction: "none",
+                }}
+              >
+                <div
+                  style={{
+                    width: 38,
+                    height: 3,
+                    borderRadius: 2,
+                    background: "rgba(14, 116, 110, 0.55)",
+                  }}
+                />
+              </div>
+            )}
+            {/* Header — title + collapse/expand toggle. */}
+            <div
+              onClick={() => setScopeCollapsed((c) => !c)}
+              title={scopeCollapsed ? "Expand beam scope" : "Collapse beam scope"}
+              style={{
+                flexShrink: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "2px 10px 4px",
+                cursor: "pointer",
+                userSelect: "none",
+                fontSize: 11,
+                fontWeight: 600,
+                opacity: 0.85,
+              }}
+            >
+              <span>Beam scope</span>
+              <span style={{ fontSize: 12 }}>{scopeCollapsed ? "▸" : "▾"}</span>
+            </div>
+            {/* Body — drag-controlled height, scrolls internally. */}
+            {!scopeCollapsed && (
+              <div
+                ref={scopeBodyRef}
+                style={{
+                  height: scopeHeightRef.current,
+                  overflow: "auto",
+                  padding: "0 10px 8px",
+                }}
+              >
+                <BeamScopeContents />
+              </div>
+            )}
           </div>
         )}
       </div>
 
-      {/* Object inspector — docked LEFT (order:-1) so it clears the top toolbar
-          via the overlay's 56px top padding, leaving the top-RIGHT free for the
-          orientation gizmo + Home HUD (which would otherwise sit on top of it). */}
-      <div
-        style={{
-          order: -1,
-          width: 360,
-          flexShrink: 0,
-          minHeight: 0,
-          overflow: "auto",
-          padding: "8px 10px",
-          borderRadius: 4,
-          background: "#fbfbf8",
-          borderRight: "1px solid #d8ded8",
-        }}
-      >
-        <label style={{ display: "block", color: "#242726", fontSize: 12, marginBottom: 6 }}>
-          <span style={{ display: "block", marginBottom: 4, opacity: 0.8 }}>Object</span>
-          <select
-            value={effectiveInspectId ?? ""}
-            onChange={(e) => setInspectObjectId(e.target.value || null)}
-            style={{ width: "100%", padding: "4px 6px", fontSize: 12 }}
+      {/* Optical-setting inspector — collapsible LEFT drawer (order:-1). Default
+          collapsed so the 3D view is clear; click an optic in the scene (or the
+          edge tab) to open it. The tab rides the drawer's inner edge so it reads
+          as a pull-handle. The rail is nudged down (marginTop) so it clears the
+          floating .viewer-toolbar at the viewport's top-left rather than tucking
+          under it; the top-RIGHT stays free for the orientation gizmo. */}
+      <div style={{ order: -1, display: "flex", flexDirection: "row", minHeight: 0, flexShrink: 0, marginTop: 24 }}>
+        {drawerOpen && (
+          <div
+            style={{
+              width: 340,
+              minHeight: 0,
+              overflow: "auto",
+              padding: "8px 10px",
+              borderRadius: 4,
+              background: "#fbfbf8",
+              border: "1px solid #d8ded8",
+            }}
           >
-            {opticalObjects.length === 0 && <option value="">(no optical objects)</option>}
-            {opticalObjects.map((o) => (
-              <option key={o.id} value={o.id}>{o.name || o.id.slice(0, 8)}</option>
-            ))}
-          </select>
-        </label>
-        {inspectObject && inspectComponent ? (
-          <PhysicsElementPanel component={inspectComponent} sceneObject={inspectObject} />
-        ) : (
-          <p style={{ color: "#6c706b", fontSize: 12 }}>
-            Select an optical object to edit its physics.
-          </p>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 6 }}>
+              <span style={{ fontSize: 11, opacity: 0.7, color: "#242726" }}>Optical setting</span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: "#242726" }}>
+                {inspectObject?.name ?? "—"}
+              </span>
+            </div>
+            {inspectObject && inspectComponent ? (
+              <OpticalSettingPanel component={inspectComponent} sceneObject={inspectObject} />
+            ) : (
+              <p style={{ color: "#6c706b", fontSize: 12 }}>
+                Click an optical element in the scene to edit its physics.
+              </p>
+            )}
+          </div>
         )}
+        <button
+          type="button"
+          onClick={() => setDrawerOpen((o) => !o)}
+          title={drawerOpen ? "Collapse optical setting" : "Optical setting"}
+          style={{
+            width: 22,
+            flexShrink: 0,
+            alignSelf: "stretch",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+            border: "1px solid #d8ded8",
+            borderRadius: 4,
+            background: "#fbfbf8",
+            color: "#445",
+            cursor: "pointer",
+            padding: "8px 0",
+          }}
+        >
+          <span style={{ fontSize: 12 }}>{drawerOpen ? "‹" : "›"}</span>
+          {!drawerOpen && (
+            <span style={{ writingMode: "vertical-rl", fontSize: 10, opacity: 0.75, letterSpacing: 1 }}>
+              Optical setting
+            </span>
+          )}
+        </button>
       </div>
     </div>
   );

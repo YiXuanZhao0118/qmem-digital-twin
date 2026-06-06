@@ -2,7 +2,7 @@ import * as THREE from "three";
 
 import type { Anchor, Asset3D, AssemblyRelation, ComponentItem, GeometrySelector, SceneObject } from "../types/digitalTwin";
 import { sceneObjectToQuaternion } from "../optical/frames";
-import { anchorObjectLocalLegacyDir, anchorObjectLocalPos } from "./anchorAccess";
+import { anchorObjectLocalAxisX, anchorObjectLocalLegacyDir, anchorObjectLocalPos } from "./anchorAccess";
 
 export type VecObject = { x: number; y: number; z: number };
 
@@ -255,6 +255,42 @@ export function worldAnchor(
     localDirection = standard?.direction;
   }
 
+  const rotatedPosition = rotateVec(
+    scaleVec(addVec(objectOriginOffset(object), localPosition), objectScale(object)),
+    object.rxDeg,
+    object.ryDeg,
+    object.rzDeg,
+  );
+  const rotatedDirection = localDirection
+    ? rotateVec(localDirection, object.rxDeg, object.ryDeg, object.rzDeg)
+    : undefined;
+  return {
+    position: {
+      x: object.xMm + rotatedPosition.x,
+      y: object.yMm + rotatedPosition.y,
+      z: object.zMm + rotatedPosition.z,
+    },
+    direction: rotatedDirection,
+  };
+}
+
+/** World-frame pose of a SINGLE asset anchor object — resolved directly from
+ *  the anchor, not looked up by id, so duplicate-id anchors (e.g. the four
+ *  `rf_out` on a switch) each resolve independently. Uses the SAME object-pose
+ *  math as {@link worldAnchor} (origin offset + scale + rotation, anchor read
+ *  in body/CAD-local frame), so the anchor-debug overlay's markers land exactly
+ *  where the meshes render. Direction prefers axisX, then legacy
+ *  directionBodyLocal. */
+export function assetAnchorWorld(
+  object: SceneObject,
+  anchor: Anchor,
+  asset: Asset3D | null | undefined,
+): { position: VecObject; direction?: VecObject } {
+  const localPosition = anchorObjectLocalPos(anchor, asset ?? null);
+  const localDirection =
+    anchorObjectLocalAxisX(anchor, asset ?? null) ??
+    anchorObjectLocalLegacyDir(anchor, asset ?? null) ??
+    undefined;
   const rotatedPosition = rotateVec(
     scaleVec(addVec(objectOriginOffset(object), localPosition), objectScale(object)),
     object.rxDeg,

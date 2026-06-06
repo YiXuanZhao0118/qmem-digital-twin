@@ -53,11 +53,6 @@ import type {
   TransientRunRequest,
   TransientRunResponse,
 } from "../types/digitalTwin";
-import type {
-  SceneView,
-  SceneViewCreatePayload,
-  SceneViewUpdatePayload,
-} from "../types/visibility";
 
 // `import.meta.env` is defined by Vite at app runtime but is undefined when
 // this file is loaded under tsx / node CJS (e.g. by the export:kinds script
@@ -110,7 +105,6 @@ export async function fetchScene(): Promise<SceneData> {
     ...response.data,
     objects: response.data.objects ?? [],
     assemblyRelations: response.data.assemblyRelations ?? [],
-    sceneViews: response.data.sceneViews ?? [],
     collections: response.data.collections ?? [],
     collectionMembers: response.data.collectionMembers ?? [],
   };
@@ -738,66 +732,6 @@ export async function runOpticalTransientApi(
       "/api/simulations/optical/transient/run",
       payload,
     );
-    return response.data;
-  } catch (error) {
-    throw new Error(apiErrorMessage(error));
-  }
-}
-
-// =============================================================================
-// Scene Views (visibility L3)
-// =============================================================================
-
-export async function listSceneViewsApi(): Promise<SceneView[]> {
-  try {
-    const response = await client.get<SceneView[]>("/api/scene-views");
-    return response.data;
-  } catch (error) {
-    throw new Error(apiErrorMessage(error));
-  }
-}
-
-export async function createSceneViewApi(payload: SceneViewCreatePayload): Promise<SceneView> {
-  try {
-    const response = await client.post<SceneView>("/api/scene-views", payload);
-    return response.data;
-  } catch (error) {
-    throw new Error(apiErrorMessage(error));
-  }
-}
-
-export async function updateSceneViewApi(
-  viewId: string,
-  patch: SceneViewUpdatePayload,
-): Promise<SceneView> {
-  try {
-    const response = await client.put<SceneView>(`/api/scene-views/${viewId}`, patch);
-    return response.data;
-  } catch (error) {
-    throw new Error(apiErrorMessage(error));
-  }
-}
-
-export async function deleteSceneViewApi(viewId: string): Promise<void> {
-  try {
-    await client.delete(`/api/scene-views/${viewId}`);
-  } catch (error) {
-    throw new Error(apiErrorMessage(error));
-  }
-}
-
-export async function duplicateSceneViewApi(viewId: string): Promise<SceneView> {
-  try {
-    const response = await client.post<SceneView>(`/api/scene-views/${viewId}/duplicate`);
-    return response.data;
-  } catch (error) {
-    throw new Error(apiErrorMessage(error));
-  }
-}
-
-export async function moveSceneViewApi(viewId: string, sortOrder: number): Promise<SceneView> {
-  try {
-    const response = await client.put<SceneView>(`/api/scene-views/${viewId}/move`, { sortOrder });
     return response.data;
   } catch (error) {
     throw new Error(apiErrorMessage(error));

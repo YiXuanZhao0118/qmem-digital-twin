@@ -16,7 +16,7 @@ from app.models.modules.em import EmProblem, Mesh  # noqa: F401
 from app.models.modules.magnetics import Coil, MagneticsProblem  # noqa: F401
 from app.models.modules.rf import RfChainNode  # noqa: F401
 from app.models.physics import DeviceState, PhysicsElement  # noqa: F401
-from app.models.scene import Collection, CollectionMember, CollectionTemplate, ObjectBinding, SceneObject, SceneView, SceneViewCollectionOverride  # noqa: F401
+from app.models.scene import Collection, CollectionMember, CollectionTemplate, ObjectBinding, SceneObject  # noqa: F401
 from app.models.settings import AppSetting  # noqa: F401
 from app.models.simulation import BeamSegment, Revision, SimulationRun  # noqa: F401
 from app.models.timing import TimingProgram  # noqa: F401
@@ -51,8 +51,6 @@ __all__ = [
     "RfChainNode",
     "RfLink",
     "SceneObject",
-    "SceneView",
-    "SceneViewCollectionOverride",
     "SessionMutation",
     "SimulationRun",
     "TimingProgram",

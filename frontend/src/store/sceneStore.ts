@@ -16,7 +16,6 @@ import {
   createOpticalElementApi,
   createOpticalLinkApi,
   createComponentApi,
-  createSceneViewApi,
   createSimulationRunApi,
   deleteAssemblyRelationApi,
   deleteCollectionApi,
@@ -24,11 +23,9 @@ import {
   deleteObjectApi,
   deleteOpticalElementApi,
   deleteOpticalLinkApi,
-  deleteSceneViewApi,
   deleteCircuitApi,
   deleteEmProblemApi,
   deleteMeshApi,
-  duplicateSceneViewApi,
   fetchCircuitsApi,
   fetchEmProblemsApi,
   fetchMeshesApi,
@@ -38,7 +35,6 @@ import {
   fetchSimulationRunsApi,
   importLocalComponentAssetApi,
   moveObjectToCollectionApi,
-  listSceneViewsApi,
   moveCollectionApi,
   runOpticalSimulationApi,
   runOpticalTransientApi,
@@ -59,7 +55,6 @@ import {
   deleteObjectBindingApi,
   updateOpticalElementApi,
   updateOpticalLinkApi,
-  updateSceneViewApi,
   uploadComponentAssetApi,
   uploadMeshApi,
 } from "../api/client";
@@ -112,21 +107,14 @@ import {
   EMPTY_SESSION_VISIBILITY,
   type OverlayFlags,
   type OverlayKind,
-  type SceneView,
-  type SceneViewCreatePayload,
-  type SceneViewUpdatePayload,
   type SessionVisibilityState,
-  type ViewFilterExpr,
 } from "../types/visibility";
 import {
-  loadActiveViewId,
   loadOverlayFlagsFromStorage,
-  saveActiveViewId,
   saveOverlayFlagsToStorage,
 } from "../utils/visibilityStorage";
 // Visibility helpers are no longer used here directly — selection is decoupled
-// from visibility (see selectComponent/selectObject). Saved-view creation
-// computes its own per-instance visibility inline. EXCEPTION:
+// from visibility (see selectComponent/selectObject). EXCEPTION:
 // `toggleSessionHiddenObject` reads the live collection cascade so it can
 // distinguish "user toggling a normally-visible object off" from "user
 // force-showing an object whose collection is hidden".
@@ -426,7 +414,6 @@ type SceneStore = {
   // ─── Visibility (L1 / L2 / L3) ──────────────────────────────────────────────
   overlayFlags: OverlayFlags;
   session: SessionVisibilityState;
-  activeViewId: string | null;
   setOverlayFlag: (kind: OverlayKind, visible: boolean) => void;
   setOverlayFlags: (next: Partial<OverlayFlags>) => void;
   toggleOverlayFlag: (kind: OverlayKind) => void;
@@ -448,13 +435,6 @@ type SceneStore = {
   exitSolo: () => void;
   setSoloIncludeNeighbors: (value: boolean) => void;
   showAllHidden: () => void;
-  setActiveView: (viewId: string | null) => void;
-  reloadSceneViews: () => Promise<void>;
-  createSceneView: (payload: SceneViewCreatePayload) => Promise<SceneView>;
-  updateSceneView: (viewId: string, patch: SceneViewUpdatePayload) => Promise<SceneView>;
-  deleteSceneView: (viewId: string) => Promise<void>;
-  duplicateSceneView: (viewId: string) => Promise<SceneView>;
-  createViewFromCurrentVisibility: (name: string) => Promise<SceneView>;
   loadScene: () => Promise<void>;
   createComponent: (name: string | undefined, kindId: string) => Promise<ComponentItem>;
   uploadComponentAsset: (payload: {
@@ -1117,7 +1097,6 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   homeView: loadHomeView(),
   overlayFlags: loadOverlayFlagsFromStorage(),
   session: freshSession(),
-  activeViewId: loadActiveViewId(),
   activeCollectionId: loadActiveCollectionId(),
 
   setTransformPivotMode(mode) {
@@ -1540,95 +1519,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     set((state) => {
       const next = freshSession();
       next.soloIncludeNeighbors = state.session.soloIncludeNeighbors;
-      saveActiveViewId(null);
-      return { session: next, activeViewId: null };
-    });
-  },
-
-  setActiveView(viewId) {
-    saveActiveViewId(viewId);
-    set({ activeViewId: viewId });
-  },
-
-  async reloadSceneViews() {
-    try {
-      const views = await listSceneViewsApi();
-      set((state) => ({ scene: { ...state.scene, sceneViews: views } }));
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.warn("Failed to reload scene views", error);
-    }
-  },
-
-  async createSceneView(payload) {
-    const view = await createSceneViewApi(payload);
-    set((state) => ({
-      scene: {
-        ...state.scene,
-        sceneViews: upsertById(state.scene.sceneViews ?? [], view),
-      },
-    }));
-    return view;
-  },
-
-  async updateSceneView(viewId, patch) {
-    const view = await updateSceneViewApi(viewId, patch);
-    set((state) => ({
-      scene: {
-        ...state.scene,
-        sceneViews: upsertById(state.scene.sceneViews ?? [], view),
-      },
-    }));
-    return view;
-  },
-
-  async deleteSceneView(viewId) {
-    await deleteSceneViewApi(viewId);
-    set((state) => ({
-      activeViewId: state.activeViewId === viewId ? null : state.activeViewId,
-      scene: {
-        ...state.scene,
-        sceneViews: (state.scene.sceneViews ?? []).filter((v) => v.id !== viewId),
-      },
-    }));
-    if (get().activeViewId === null) saveActiveViewId(null);
-  },
-
-  async duplicateSceneView(viewId) {
-    const view = await duplicateSceneViewApi(viewId);
-    set((state) => ({
-      scene: {
-        ...state.scene,
-        sceneViews: upsertById(state.scene.sceneViews ?? [], view),
-      },
-    }));
-    return view;
-  },
-
-  async createViewFromCurrentVisibility(name) {
-    const state = get();
-    // A component is "currently visible" if at least one of its scene
-    // objects passes the per-instance visibility gates (visible flag +
-    // session hide). Saved views still target component templates, so we
-    // surface the parent componentId here.
-    const visibleComponentIds: string[] = [];
-    for (const component of state.scene.components) {
-      const objs = state.scene.objects.filter((o) => o.componentId === component.id);
-      if (objs.length === 0) continue;
-      const anyVisible = objs.some(
-        (o) => o.visible && !state.session.hiddenObjectIds.has(o.id),
-      );
-      if (anyVisible) visibleComponentIds.push(component.id);
-    }
-    const filterExpr: ViewFilterExpr = {
-      type: "component_ids",
-      values: visibleComponentIds,
-    };
-    return await get().createSceneView({
-      name,
-      filterKind: "leaf",
-      filterExpr,
-      color: "#0f766e",
+      return { session: next };
     });
   },
 
@@ -1669,17 +1560,6 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
             ? currentObjectId
             : nextSelectedObjectIds[0] ?? null;
 
-      const persistedViewId = get().activeViewId;
-      const sceneViews = scene.sceneViews ?? [];
-      let activeViewId = persistedViewId && sceneViews.some((v) => v.id === persistedViewId)
-        ? persistedViewId
-        : null;
-      if (activeViewId === null) {
-        const defaultView = sceneViews.find((v) => v.isDefault);
-        if (defaultView) activeViewId = defaultView.id;
-      }
-      saveActiveViewId(activeViewId);
-
       const persistedCollectionId = get().activeCollectionId;
       const sceneCollections = scene.collections ?? [];
       let activeCollectionId =
@@ -1694,7 +1574,6 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         selectedObjectId: nextSelectedObjectId,
         selectedObjectIds: nextSelectedObjectIds,
         selectedComponentId: selectedComponent?.id ?? null,
-        activeViewId,
         activeCollectionId,
       });
     } catch (error) {
@@ -4397,26 +4276,6 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
               });
           }
           return { recentSimulationRuns };
-        }
-        case "scene_view.updated": {
-          const payload = event.payload as Partial<SceneView> & { id?: string; deleted?: boolean };
-          const sceneViews = scene.sceneViews ?? [];
-          if (payload.deleted && payload.id) {
-            return {
-              activeViewId: state.activeViewId === payload.id ? null : state.activeViewId,
-              scene: {
-                ...scene,
-                sceneViews: sceneViews.filter((view) => view.id !== payload.id),
-              },
-            };
-          }
-          if (!payload.id) return state;
-          return {
-            scene: {
-              ...scene,
-              sceneViews: upsertById(sceneViews, payload as SceneView),
-            },
-          };
         }
         case "collection.updated": {
           const payload = event.payload as Partial<Collection> & { id?: string; deleted?: boolean };

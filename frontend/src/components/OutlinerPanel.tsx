@@ -145,7 +145,6 @@ export function OutlinerPanel() {
   const scene = useSceneStore((state) => state.scene);
   const overlayFlags = useSceneStore((state) => state.overlayFlags);
   const sessionState = useSceneStore((state) => state.session);
-  const activeViewId = useSceneStore((state) => state.activeViewId);
   const activeCollectionId = useSceneStore((state) => state.activeCollectionId);
   const setActiveCollection = useSceneStore((state) => state.setActiveCollection);
   const selectedObjectId = useSceneStore((state) => state.selectedObjectId);
@@ -310,16 +309,9 @@ export function OutlinerPanel() {
     [collectAllObjectIdsUnder, collectionLockState, updateSceneObject],
   );
 
-  const activeView = useMemo(
-    () =>
-      activeViewId
-        ? (scene.sceneViews ?? []).find((v) => v.id === activeViewId) ?? null
-        : null,
-    [activeViewId, scene.sceneViews],
-  );
   const visibilityCtx = useMemo(
-    () => makeRenderableContext(overlayFlags, sessionState, activeView, scene),
-    [overlayFlags, sessionState, activeView, scene],
+    () => makeRenderableContext(overlayFlags, sessionState, scene),
+    [overlayFlags, sessionState, scene],
   );
 
   const masterCollection = useMemo(

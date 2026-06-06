@@ -21,7 +21,6 @@ from app.models import (
     OpticalLink,
     RfLink,
     SceneObject,
-    SceneView,
     TimingProgram,
 )
 from app.routers.collections import canonical_collection_members, get_master_collection
@@ -119,13 +118,6 @@ async def get_scene(session: AsyncSession = Depends(get_session)) -> schemas.Sce
             if patch:
                 payload["kindParams"] = {**(payload.get("kindParams") or {}), **patch}
     beam_segments = list((await session.scalars(select(BeamSegment))).all())
-    scene_views = list(
-        (
-            await session.scalars(
-                select(SceneView).order_by(SceneView.sort_order.asc(), SceneView.created_at.asc())
-            )
-        ).all()
-    )
     await get_master_collection(session)
     collections_rows = list(
         (
@@ -166,7 +158,6 @@ async def get_scene(session: AsyncSession = Depends(get_session)) -> schemas.Sce
         optical_links=optical_links,
         rf_links=rf_links,
         beam_segments=beam_segments,
-        scene_views=scene_views,
         collections=collections_rows,
         collection_members=collection_members,
         timing_programs=timing_programs_rows,

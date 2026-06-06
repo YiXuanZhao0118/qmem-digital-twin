@@ -13,19 +13,18 @@ import { getFiberPortLabPose } from "../utils/fiberAlignment";
 import { Ad9959ObjectControls } from "./Ad9959ObjectControls";
 import { DdsChassisObjectControls } from "./DdsChassisObjectControls";
 import { CollapsibleSection } from "./CollapsibleSection";
-import { IntrinsicSpecPanel } from "./IntrinsicSpecPanel";
 import { ScrubTimeRfReadout } from "./ScrubTimeRfReadout";
 import { FloatingPanel } from "./workspace/FloatingPanel";
 import { useWorkspace } from "./workspace/WorkspaceProvider";
 import { CapabilityPills } from "./optical/CapabilityPills";
-import { PhysicsElementPanel } from "./physics/PhysicsElementPanel";
+import { AlignToBeamControls } from "./physics/AlignToBeamControls";
+import { OPTICAL_ALIGN_KINDS } from "../utils/isolatorAlign";
 import { AlignPanel } from "./AlignPanel";
 import { NumberField } from "./NumberField";
-import { kindIdToElementKind } from "../utils/elementDefaults";
 import { capabilityProfile } from "../kinds/_capabilityProfile";
 import { sceneObjectEulerFromQuaternion, sceneObjectToQuaternion } from "../optical/frames";
 
-type DraftObject = Required<Omit<SceneObjectPatch, "name" | "properties" | "serialNumber" | "dynamicSources">> & {
+type DraftObject = Required<Omit<SceneObjectPatch, "name" | "properties" | "serialNumber" | "dynamicSources" | "paramOverrides">> & {
   name: string;
   serialNumber: string | null;
 };
@@ -1759,6 +1758,23 @@ export function ComponentPanel() {
         : undefined,
     [selectedObject, scene.physicsElements],
   );
+  // Whether the Object-panel "Align to beam" section shows for this object.
+  // True for any optical element kind that aligns to a beam, OR an isolator
+  // composite. Isolators carry kindId "none" and have no PhysicsElement, so
+  // they're detected by the binding tree's front + back polariser roles.
+  const canAlignToBeam = useMemo(() => {
+    if (!component) return false;
+    if (physicsElement && OPTICAL_ALIGN_KINDS.has(physicsElement.elementKind)) return true;
+    if (component.kindId === "isolator") return true;
+    const roles = (scene.componentBindings ?? [])
+      .filter((b) => b.componentId === component.id)
+      .map((b) =>
+        String(
+          (b.properties as { role_label?: unknown } | null)?.role_label || b.role || "",
+        ).toLowerCase(),
+      );
+    return roles.some((r) => r.includes("front")) && roles.some((r) => r.includes("back"));
+  }, [component, physicsElement, scene.componentBindings]);
   // Per-kind capability profile drives which sections of the Object
   // panel render. Default profile = show everything; cable / PPG / future
   // hidden-body kinds turn off individual capabilities through
@@ -2096,6 +2112,20 @@ export function ComponentPanel() {
             </div>
           </section>
 
+          {/* === Align (isolator): snap the front + back polariser centres
+              onto the beam. Defined at the Component / binding-tree layer
+              (isolator has no ElementKind), surfaced here in the Object
+              panel next to pose since it sets the object's pose. === */}
+          {placement && canAlignToBeam && (
+            <section className="edit-section">
+              <h3>
+                <Move3D size={17} />
+                Align
+              </h3>
+              <AlignToBeamControls sceneObject={placement} />
+            </section>
+          )}
+
           {/* === Content (text_annotation only) === */}
           {component.kindId === "text_annotation" && (
             <TextAnnotationEditor component={component} />
@@ -2122,19 +2152,16 @@ export function ComponentPanel() {
             </section>
           )}
 
-          {/* === Spec (read-only) + Parameters (editable + align). The
-              intrinsic spec sits above the operating-state editor; both
-              hide when the kind hasn't been migrated to the Phase-2
-              plugin partition. */}
-          {(component?.physicsCapabilities?.includes("optical") ||
-            (component?.kindId != null && kindIdToElementKind(component.kindId) !== null)) && (
-            <>
-              <IntrinsicSpecPanel component={component} sceneObject={placement} />
-              <PhysicsElementPanel component={component} sceneObject={placement} />
-              {component.kindId === "dds_ad9959_pcb" && (
-                <Ad9959ObjectControls component={component} />
-              )}
-            </>
+          {/* === Optical physics (intrinsic spec + per-instance coefficients)
+              moved OUT of the Object panel into the standalone Optical setting
+              drawer (OpticalLinkViewerPanel → OpticalSettingPanel), reached by
+              clicking the optic in the 3D scene. Keeps the Object panel to
+              identity / pose / align / connections and removes the two-panel
+              "death loop" of duplicated physics editors. DDS/AD9959 controls
+              are RF electronics (not surfaced in the optical drawer), so they
+              stay here. */}
+          {component.kindId === "dds_ad9959_pcb" && (
+            <Ad9959ObjectControls component={component} />
           )}
 
           {/* dds_chassis is a passive carrier (no elementKind) — its

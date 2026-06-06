@@ -1,4 +1,4 @@
-"""Layer 1 + organisation: SceneObject instances, Collections, SceneViews."""
+"""Layer 1 + organisation: SceneObject instances, Collections."""
 
 from __future__ import annotations
 
@@ -168,37 +168,6 @@ class ObjectBinding(Base):
     asset_override: Mapped[Asset3D | None] = relationship(foreign_keys=[asset_3d_id_override])
 
 
-class SceneView(Base):
-    __tablename__ = "scene_views"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-        server_default=text("gen_random_uuid()"),
-    )
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
-    icon: Mapped[str | None] = mapped_column(Text)
-    color: Mapped[str] = mapped_column(Text, nullable=False, default="#0f766e", server_default="#0f766e")
-    filter_kind: Mapped[str] = mapped_column(Text, nullable=False, default="leaf", server_default="leaf")
-    filter_expr: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
-    overlay_overrides: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
-    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
-    is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
-    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
-    created_by: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
-
-
 class Collection(Base):
     """Recursive Outliner node — purely organizational, never affects geometry.
 
@@ -270,37 +239,6 @@ class CollectionMember(Base):
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     added_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-
-
-class SceneViewCollectionOverride(Base):
-    """Sparse per-view override for collection visibility.
-
-    Reserved for v2; v1 reads no rows from this table. ``visible=NULL`` means
-    "inherit from collection". Only collections that differ from their default
-    visible state in a given view need a row here. The exclude/holdout/
-    indirect_only override columns were dropped in alembic 0035 along with
-    their canonical counterparts on ``collections``.
-    """
-
-    __tablename__ = "scene_view_collection_overrides"
-
-    scene_view_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("scene_views.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    collection_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("collections.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    visible: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
     )
 
 

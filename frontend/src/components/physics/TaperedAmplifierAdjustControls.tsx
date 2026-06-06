@@ -13,11 +13,10 @@
  * AseSampleRow / GainSampleRow types + the interpolateAseUi helper
  * live alongside the component (they're TA-internal).
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useSceneStore } from "../../store/sceneStore";
 import type {
-  ComponentItem,
   PhysicsElement,
   SceneObject,
 } from "../../types/digitalTwin";
@@ -27,14 +26,6 @@ import {
   setEmissionVisualPatch,
 } from "../../utils/emissionVisuals";
 import { wavelengthToColor } from "../../three/opticalBeams";
-import { anchorObjectLocalPos } from "../../utils/anchorAccess";
-import * as THREE from "three";
-import {
-  labDirToThreeLocal,
-  rotateLabDir,
-  sceneObjectEulerFromQuaternion,
-  threeToLabPointMm,
-} from "../../optical/frames";
 import { EmissionVisualRow, SectionCard } from "./_shared";
 import { PolarizationEditor } from "./PolarizationEditor";
 
@@ -241,184 +232,6 @@ export function TaperedAmplifierAdjustControls({
   };
 
 
-  // 2-point align: rotates + translates the TA so the incoming beam
-  // passes through BOTH intercept_in and intercept_out (read from the
-  // Asset3D, so phy-edit changes drive the alignment). Predecessor read
-  // component.properties.apertureForwardMmBodyLocal / mesh bbox and only
-  // translated, which silently ignored phy-edit anchor edits.
-  const updateSceneObject = useSceneStore((state) => state.updateSceneObject);
-  const scene = useSceneStore((state) => state.scene);
-
-  const alignInputToLaser = async () => {
-    const componentRow = scene.components.find((c) => c.id === sceneObject.componentId);
-    const assetRow = componentRow?.asset3dId
-      ? scene.assets.find((a) => a.id === componentRow.asset3dId)
-      : undefined;
-    if (!componentRow) {
-      window.alert("TA Component row not found in scene store.");
-      return;
-    }
-    if (!assetRow) {
-      window.alert(
-        "TA has no Asset3D — open PHY Editor → Optical → optical_component to assign or define anchors.",
-      );
-      return;
-    }
-    const inAnchor = assetRow.anchors?.find((a) => a.id === "intercept_in");
-    const outAnchor = assetRow.anchors?.find((a) => a.id === "intercept_out");
-    const missing: string[] = [];
-    if (!inAnchor) missing.push("intercept_in");
-    if (!outAnchor) missing.push("intercept_out");
-    if (missing.length) {
-      window.alert(
-        `TA asset ${assetRow.name} is missing ${missing.join(" and ")}. ` +
-        "Open PHY Editor → Optical → optical_component and add the port anchor(s).",
-      );
-      return;
-    }
-
-    // Object-local CAD positions — `bodyToLab` only applies SceneObject
-    // pose (no body-frame), so we lift body-frame anchors → CAD frame
-    // first. Axis = (out - in) in CAD frame, which is the right axis to
-    // align against the beam (body axis rotated by R_body).
-    const inBody = anchorObjectLocalPos(inAnchor!, assetRow);
-    const outBody = anchorObjectLocalPos(outAnchor!, assetRow);
-    const axisBodyRaw = {
-      x: outBody.x - inBody.x,
-      y: outBody.y - inBody.y,
-      z: outBody.z - inBody.z,
-    };
-    const axisLen = Math.hypot(axisBodyRaw.x, axisBodyRaw.y, axisBodyRaw.z);
-    if (axisLen < 1e-3) {
-      window.alert(
-        "Cannot derive TA body axis — intercept_in and intercept_out coincide. " +
-        "Open PHY Editor and separate the two anchors.",
-      );
-      return;
-    }
-    const axisBodyUnit = {
-      x: axisBodyRaw.x / axisLen,
-      y: axisBodyRaw.y / axisLen,
-      z: axisBodyRaw.z / axisLen,
-    };
-
-    // Use CURRENT intercept_in lab position as the "which beam did the
-    // user mean" hint — closest beam wins. The pose tells us intent
-    // before we move the chip.
-    const bodyToLab = (bodyMm: { x: number; y: number; z: number }) => {
-      const rotated = rotateLabDir(bodyMm, sceneObject);
-      return {
-        x: sceneObject.xMm + rotated.x,
-        y: sceneObject.yMm + rotated.y,
-        z: sceneObject.zMm + rotated.z,
-      };
-    };
-    const inLabCurrent = bodyToLab(inBody);
-
-    type TraceSeg = {
-      sourceObjectId: string;
-      startThree: { x: number; y: number; z: number };
-      endThree: { x: number; y: number; z: number };
-    };
-    const traces: TraceSeg[] = (typeof window !== "undefined"
-      ? (window as unknown as { __rayTraceDebug?: TraceSeg[] }).__rayTraceDebug
-      : undefined) ?? [];
-    const ALIGN_TOLERANCE_MM = 25;
-    type Match = {
-      origin: { x: number; y: number; z: number };
-      dir: { x: number; y: number; z: number };
-      closest: { x: number; y: number; z: number };
-      miss: number;
-      tForward: number;
-      sourceId: string;
-    };
-    let best: Match | null = null;
-    let closestAny: Match | null = null;
-    for (const seg of traces) {
-      // Skip segments emitted by the TA itself — its own ASE would have
-      // the chip align to itself.
-      if (seg.sourceObjectId === sceneObject.id) continue;
-      const a = threeToLabPointMm(seg.startThree);
-      const b = threeToLabPointMm(seg.endThree);
-      const ab = { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
-      const lenSq = ab.x ** 2 + ab.y ** 2 + ab.z ** 2;
-      if (lenSq < 1e-6) continue;
-      const segLen = Math.sqrt(lenSq);
-      const dir = { x: ab.x / segLen, y: ab.y / segLen, z: ab.z / segLen };
-      const toAp = {
-        x: inLabCurrent.x - a.x,
-        y: inLabCurrent.y - a.y,
-        z: inLabCurrent.z - a.z,
-      };
-      const t = toAp.x * dir.x + toAp.y * dir.y + toAp.z * dir.z;
-      const closest = { x: a.x + dir.x * t, y: a.y + dir.y * t, z: a.z + dir.z * t };
-      const miss = Math.hypot(
-        inLabCurrent.x - closest.x,
-        inLabCurrent.y - closest.y,
-        inLabCurrent.z - closest.z,
-      );
-      const cand: Match = { origin: a, dir, closest, miss, tForward: t, sourceId: seg.sourceObjectId };
-      if (!closestAny || miss < closestAny.miss) closestAny = cand;
-      if (miss > ALIGN_TOLERANCE_MM || t < 0) continue;
-      if (!best || miss < best.miss) best = cand;
-    }
-    if (!closestAny) {
-      window.alert("No beam axis found in the current trace.");
-      return;
-    }
-    if (!best) {
-      window.alert(
-        `No incoming beam is within ${ALIGN_TOLERANCE_MM.toFixed(1)} mm of the INPUT face. ` +
-        `Closest beam is ${closestAny.miss.toFixed(2)} mm away — move the TA closer or check the upstream chain.`,
-      );
-      return;
-    }
-
-    // Map body's in→out axis to the beam direction (positive, not
-    // anti-parallel): intercept_in lands UPSTREAM, intercept_out
-    // DOWNSTREAM. setFromUnitVectors handles parallel/anti-parallel
-    // degenerate cases (picks any 180° rotation about a perpendicular
-    // axis).
-    // labRoot carries the world swap S and the wrapper quaternion is the
-    // plain Z-up pose M (render = S·M·b). The alignment is solved entirely in
-    // the RAW Z-up lab frame: finalQuat = R with R·axisBody = beam (both
-    // already Z-up). The old labDirToThree path swapped both into three-world
-    // and stored S·R·S⁻¹, which mis-rotates the chip under labRoot.
-    const beamUnit = best.dir;
-    const axisBodyLocal = labDirToThreeLocal(axisBodyUnit).normalize();
-    const beamLocal = labDirToThreeLocal(beamUnit).normalize();
-    const finalQuat = new THREE.Quaternion().setFromUnitVectors(axisBodyLocal, beamLocal);
-
-    // Translate so the rotated intercept_in lands on best.closest — the foot
-    // of the OLD intercept_in projection onto the beam. R acts in raw Z-up, so
-    // the rotated body offset is a lab-mm vector directly (no swap/unswap).
-    const inBodyLocal = labDirToThreeLocal(inBody);
-    inBodyLocal.applyQuaternion(finalQuat);
-    const rotatedInOffsetLab = { x: inBodyLocal.x, y: inBodyLocal.y, z: inBodyLocal.z };
-    const foot = best.closest;
-    const nextXMm = foot.x - rotatedInOffsetLab.x;
-    const nextYMm = foot.y - rotatedInOffsetLab.y;
-    const nextZMm = foot.z - rotatedInOffsetLab.z;
-
-    // Decompose quaternion into SceneObject Euler — order "YXZ" with
-    // (three.x, three.y, -three.z) ↔ (rxDeg, rzDeg, ryDeg). See
-    // sceneObjectToQuaternion in optical/frames.ts; wrong order silently
-    // misplaces the chip.
-    const {
-      rxDeg: nextRxDeg,
-      ryDeg: nextRyDeg,
-      rzDeg: nextRzDeg,
-    } = sceneObjectEulerFromQuaternion(finalQuat);
-
-    await updateSceneObject(sceneObject.id, {
-      xMm: nextXMm,
-      yMm: nextYMm,
-      zMm: nextZMm,
-      rxDeg: nextRxDeg,
-      ryDeg: nextRyDeg,
-      rzDeg: nextRzDeg,
-    });
-  };
 
   return (
     <div className="snap-to-beam">
@@ -718,24 +531,6 @@ export function TaperedAmplifierAdjustControls({
         </div>
       </SectionCard>
 
-      {/* Alignment */}
-      <div style={{ marginTop: 8 }}>
-        <button
-          type="button"
-          className="primary-button"
-          onClick={() => void alignInputToLaser()}
-          title="Rotate + translate the TA so the nearest beam (within 25 mm of intercept_in) passes through both intercept_in and intercept_out. Reads anchor positions from PHY Editor."
-        >
-          Align INPUT to laser beam
-        </button>
-        <p className="mirror-adjust-hint" style={{ opacity: 0.7, marginTop: 4 }}>
-          INPUT seed port is on the +X face for this TA model; output is on the
-          opposite face. Without a seed the chip leaks ASE in both directions
-          (see live readout above); once a seed beam reaches the input port,
-          the gain table will saturate the forward output and partly suppress
-          the backward emission.
-        </p>
-      </div>
     </div>
   );
 }

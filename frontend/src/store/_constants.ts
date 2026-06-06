@@ -57,7 +57,6 @@ export const emptyScene: SceneData = {
   physicsElements: [],
   opticalLinks: [],
   beamSegments: [],
-  sceneViews: [],
   collections: [],
   collectionMembers: [],
   timingPrograms: [],

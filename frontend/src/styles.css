@@ -4013,9 +4013,8 @@ input:disabled {
   display: inline-block;
 }
 .display-popover {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
+  /* Positioned in JS (fixed, viewport coords) via a body portal so the
+     top-bar's overflow clip can't cut it off. */
   z-index: 30;
   min-width: 280px;
   background: var(--panel-strong);
@@ -4077,117 +4076,6 @@ input:disabled {
   font-size: 10px;
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   margin: 0 1px;
-}
-
-/* =============================================================================
- * Visibility — Saved view picker (L3)
- * ===========================================================================*/
-.view-picker {
-  position: relative;
-  display: inline-block;
-}
-.view-picker-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: var(--btn-h-lg);
-  padding: 0 10px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--line);
-  background: var(--panel-strong);
-  color: var(--ink);
-  font-size: var(--fs-md);
-  max-width: 220px;
-}
-.view-picker-button:hover {
-  border-color: var(--accent);
-}
-.view-picker-label {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 140px;
-}
-.view-picker-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 30;
-  min-width: 280px;
-  background: var(--panel-strong);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
-  padding: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  max-height: 60vh;
-  overflow-y: auto;
-}
-.view-picker-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-md);
-  color: var(--ink);
-  background: transparent;
-  border: none;
-  text-align: left;
-  cursor: pointer;
-}
-.view-picker-item:hover {
-  background: rgba(15, 118, 110, 0.08);
-}
-.view-picker-item.active {
-  background: rgba(15, 118, 110, 0.16);
-  font-weight: 600;
-}
-.view-picker-item.action {
-  color: var(--accent);
-}
-.view-picker-row-label {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: transparent;
-  border: none;
-  text-align: left;
-  font: inherit;
-  color: inherit;
-  padding: 0;
-  cursor: pointer;
-}
-.view-picker-color {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  display: inline-block;
-}
-.view-picker-icon {
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  padding: 3px;
-  color: var(--muted);
-  cursor: pointer;
-}
-.view-picker-icon:hover {
-  background: var(--panel);
-  border-color: var(--line);
-  color: var(--ink);
-}
-.view-picker-icon.danger:hover {
-  color: var(--danger);
-  border-color: var(--danger);
-}
-.view-picker-divider {
-  height: 1px;
-  background: var(--line);
-  margin: 4px 0;
 }
 
 /* =============================================================================

@@ -1202,7 +1202,6 @@ export type SceneData = {
   physicsElements: PhysicsElement[];
   opticalLinks: OpticalLink[];
   beamSegments: BeamSegment[];
-  sceneViews?: import("./visibility").SceneView[];
   collections?: Collection[];
   collectionMembers?: CollectionMember[];
   timingPrograms?: TimingProgram[];
@@ -1230,7 +1229,6 @@ export type SceneEvent =
   | { type: "optical_link.updated"; payload: (Partial<OpticalLink> & { id?: string; deleted?: boolean }) | OpticalLink }
   | { type: "optical_simulation.completed"; payload: { runId: string; segmentCount: number; errors: string[]; warnings: string[] } }
   | { type: "simulation_run.status_changed"; payload: { id: string; module: SimulationModule; status: SimulationRunStatus; progress: number | null; errorMessage: string | null } }
-  | { type: "scene_view.updated"; payload: (Partial<import("./visibility").SceneView> & { id?: string; deleted?: boolean }) | import("./visibility").SceneView }
   | { type: "collection.updated"; payload: (Partial<Collection> & { id?: string; deleted?: boolean }) | Collection }
   | { type: "collection_member.updated"; payload: Partial<CollectionMember> & { collectionId?: string; objectId?: string; deleted?: boolean; resetToMaster?: boolean } }
   | { type: "timing_program.updated"; payload: TimingProgram }
@@ -1254,6 +1252,7 @@ export type SceneObjectPatch = Partial<
     | "serialNumber"
     | "properties"
     | "dynamicSources"
+    | "paramOverrides"
   >
 >;
 

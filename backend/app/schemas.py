@@ -2241,51 +2241,6 @@ class BeamSegmentOut(CamelModel):
 
 
 # =============================================================================
-# Scene view (visibility L3) schemas
-# =============================================================================
-
-
-SceneViewFilterKind = Literal["all", "any", "leaf"]
-
-
-class SceneViewBase(CamelModel):
-    name: str
-    description: str | None = None
-    icon: str | None = None
-    color: str = "#0f766e"
-    filter_kind: SceneViewFilterKind = "leaf"
-    filter_expr: JsonDict = Field(default_factory=dict)
-    overlay_overrides: JsonDict = Field(default_factory=dict)
-    is_default: bool = False
-    is_pinned: bool = False
-    sort_order: int = 0
-
-
-class SceneViewCreate(SceneViewBase):
-    created_by: str | None = None
-
-
-class SceneViewUpdate(CamelModel):
-    name: str | None = None
-    description: str | None = None
-    icon: str | None = None
-    color: str | None = None
-    filter_kind: SceneViewFilterKind | None = None
-    filter_expr: JsonDict | None = None
-    overlay_overrides: JsonDict | None = None
-    is_default: bool | None = None
-    is_pinned: bool | None = None
-    sort_order: int | None = None
-
-
-class SceneViewOut(SceneViewBase):
-    id: uuid.UUID
-    created_by: str | None = None
-    created_at: datetime
-    updated_at: datetime
-
-
-# =============================================================================
 # Collection (Outliner) schemas
 # =============================================================================
 
@@ -2412,7 +2367,6 @@ class SceneOut(CamelModel):
     optical_links: list[OpticalLinkOut] = Field(default_factory=list)
     rf_links: list[RfLinkOut] = Field(default_factory=list)
     beam_segments: list[BeamSegmentOut] = Field(default_factory=list)
-    scene_views: list[SceneViewOut] = Field(default_factory=list)
     collections: list[CollectionOut] = Field(default_factory=list)
     collection_members: list[CollectionMemberOut] = Field(default_factory=list)
     timing_programs: list["TimingProgramOut"] = Field(default_factory=list)

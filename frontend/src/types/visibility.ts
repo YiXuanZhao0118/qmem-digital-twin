@@ -1,5 +1,3 @@
-import type { PhysicsCapability } from "./digitalTwin";
-
 // =============================================================================
 // L1 — Global overlay flags
 // =============================================================================
@@ -97,62 +95,3 @@ export const EMPTY_SESSION_VISIBILITY: SessionVisibilityState = {
   forceVisibleObjectIds: new Set(),
   forceVisibleCollectionIds: new Set(),
 };
-
-// =============================================================================
-// L3 — Saved views / filter expressions
-// =============================================================================
-
-export type ViewFilterExpr =
-  | { type: "all" }
-  | { type: "and"; clauses: ViewFilterExpr[] }
-  | { type: "or"; clauses: ViewFilterExpr[] }
-  | { type: "not"; clause: ViewFilterExpr }
-  | { type: "component_type"; values: string[] }
-  | { type: "physics_capability"; values: PhysicsCapability[] }
-  | { type: "wavelength_range"; lowNm: number; highNm: number }
-  | { type: "tag"; values: string[] }
-  | {
-      type: "reachable_from";
-      sourceComponentId: string;
-      via: ("optical" | "connection" | "rf")[];
-      maxHops: number;
-    }
-  | { type: "in_region"; regionId: string }
-  | { type: "in_stage"; stageId: string }
-  | { type: "component_ids"; values: string[] };
-
-export type SceneViewFilterKind = "all" | "any" | "leaf";
-
-export type SceneView = {
-  id: string;
-  name: string;
-  description: string | null;
-  icon: string | null;
-  color: string;
-  filterKind: SceneViewFilterKind;
-  filterExpr: ViewFilterExpr;
-  overlayOverrides: Partial<OverlayFlags>;
-  isDefault: boolean;
-  isPinned: boolean;
-  sortOrder: number;
-  createdBy?: string | null;
-  createdAt?: string;
-  updatedAt?: string;
-};
-
-export type SceneViewCreatePayload = {
-  name: string;
-  description?: string | null;
-  icon?: string | null;
-  color?: string;
-  filterKind?: SceneViewFilterKind;
-  filterExpr?: ViewFilterExpr;
-  overlayOverrides?: Partial<OverlayFlags>;
-  isDefault?: boolean;
-  isPinned?: boolean;
-  sortOrder?: number;
-};
-
-export type SceneViewUpdatePayload = Partial<SceneViewCreatePayload>;
-
-export const DEFAULT_FILTER_EXPR: ViewFilterExpr = { type: "all" };

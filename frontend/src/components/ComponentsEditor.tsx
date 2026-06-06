@@ -59,6 +59,7 @@ import { VIEWER_BG_LIGHT, VIEWER_GROUND_FILL } from "../three/viewerTheme";
 import { createFiberSplineObject } from "../three/loadAsset/fiber/spline";
 import type { FiberNode } from "../three/loadAsset/fiber";
 import { anchorObjectLocalAxisX, anchorObjectLocalPos } from "../utils/anchorAccess";
+import { OPTICAL_ALIGN_KINDS } from "../utils/isolatorAlign";
 import { getNumericProperty } from "../three/transformUtils";
 import type {
   Anchor,
@@ -797,6 +798,11 @@ export function ComponentsEditor({
               </>
             )}
 
+            {((selected.physicsCapabilities ?? []).includes("optical")
+              || OPTICAL_ALIGN_KINDS.has(selected.kindId ?? "")) && (
+              <AlignSpecSection component={selected} onPatch={handlePatchComponent} />
+            )}
+
             <div style={SECTION_LABEL}>3D preview</div>
             <ComponentPreview3D
               bindings={bindings}
@@ -1429,6 +1435,59 @@ function NumberField({
   );
 }
 
+/** Component-level align spec editor: a single (point, direction) in the
+ *  Component's body/CAD frame, persisted to `properties.alignSpec`. The
+ *  per-object beam↔direction angle lives on the SceneObject (Object panel),
+ *  not here. Leaving the direction all-zero falls back to the binding-tree
+ *  front/back centres at align time. */
+function AlignSpecSection({
+  component,
+  onPatch,
+}: {
+  component: ComponentItem;
+  onPatch: (patch: Parameters<typeof updateComponentApi>[1]) => void;
+}) {
+  const spec =
+    (component.properties as { alignSpec?: { pointMm?: number[]; directionMm?: number[] } } | null)
+      ?.alignSpec ?? {};
+  const pt = spec.pointMm && spec.pointMm.length === 3 ? spec.pointMm : [0, 0, 0];
+  const dr = spec.directionMm && spec.directionMm.length === 3 ? spec.directionMm : [0, 0, 0];
+  const patch = (pointMm: number[], directionMm: number[]) =>
+    onPatch({
+      properties: { ...(component.properties ?? {}), alignSpec: { pointMm, directionMm } },
+    });
+  const setPt = (i: number, v: number) => {
+    const n = [...pt];
+    n[i] = v;
+    patch(n, dr);
+  };
+  const setDr = (i: number, v: number) => {
+    const n = [...dr];
+    n[i] = v;
+    patch(pt, n);
+  };
+  const row = (label: string, vals: number[], set: (i: number, v: number) => void) => (
+    <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4 }}>
+      <span style={{ width: 64, fontSize: 11 }}>{label}</span>
+      {[0, 1, 2].map((i) => (
+        <NumberField key={i} value={vals[i]} onCommit={(v) => set(i, v)} />
+      ))}
+    </div>
+  );
+  return (
+    <>
+      <div style={SECTION_LABEL}>Align (body mm)</div>
+      {row("point", pt, setPt)}
+      {row("direction", dr, setDr)}
+      <div style={{ fontSize: 10, opacity: 0.65, marginTop: 2 }}>
+        Align snaps this point onto the beam and rotates the direction to the beam. The per-object
+        beam angle is set in the Object panel. Direction all-zero → use the binding-tree front/back
+        centres.
+      </div>
+    </>
+  );
+}
+
 function TextField({
   value,
   onCommit,
@@ -1531,6 +1590,12 @@ function ComponentPreview3D({
     far: number;
     forComponentId: string | null;
   } | null>(null);
+
+  // Stable key so the scene effect (and its align marker) rebuilds when the
+  // Component's alignSpec changes, not only when bindings / id change.
+  const alignSpecDepKey = JSON.stringify(
+    (parentComponent?.properties as { alignSpec?: unknown } | null)?.alignSpec ?? null,
+  );
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -2583,6 +2648,98 @@ function ComponentPreview3D({
       }
       pivotByBindingIdRef.current = pivotById;
       root.updateMatrixWorld(true);
+
+      // ── Align marker ───────────────────────────────────────────────
+      // Draw the align (point + direction) so the user can SEE what
+      // "Align to beam" will put on the beam. Source: the Component's
+      // alignSpec (properties.alignSpec) when its direction is non-zero,
+      // else the binding-tree front/back polariser centres (the fallback
+      // the align uses). Body/CAD mm frame — same as the bindings.
+      (() => {
+        const roleOf = (b: ComponentBinding): string =>
+          String(
+            ((b.properties as { role_label?: unknown } | null)?.role_label) || b.role || "",
+          ).toLowerCase();
+        const pickBindingId = (side: "front" | "back"): string | null => {
+          const cands = bindings.filter((b) => roleOf(b).includes(side));
+          if (cands.length === 0) return null;
+          const isPiece = (b: ComponentBinding) => roleOf(b).includes("piece");
+          const chosen =
+            cands.find((b) => roleOf(b) === side)
+            ?? cands.find(
+              (b) => !isPiece(b) && (b.targetKind === "subcomponent" || /glan|pbs|polari/.test(roleOf(b))),
+            )
+            ?? cands.find((b) => !isPiece(b))
+            ?? cands[0];
+          return chosen.id;
+        };
+
+        const spec = (parentComponent?.properties as {
+          alignSpec?: { pointMm?: number[]; directionMm?: number[] };
+        } | null)?.alignSpec;
+        const toV3 = (a: number[] | undefined) =>
+          a && a.length === 3 ? new THREE.Vector3(a[0], a[1], a[2]) : null;
+        const specPt = toV3(spec?.pointMm);
+        const specDir = toV3(spec?.directionMm);
+
+        let pt: THREE.Vector3 | null = null;
+        let dir: THREE.Vector3 | null = null;
+        if (specPt && specDir && specDir.lengthSq() > 1e-12) {
+          pt = specPt;
+          dir = specDir;
+        } else {
+          const fp = (() => {
+            const id = pickBindingId("front");
+            return id ? pivotById.get(id) : undefined;
+          })();
+          const bp = (() => {
+            const id = pickBindingId("back");
+            return id ? pivotById.get(id) : undefined;
+          })();
+          if (fp && bp) {
+            pt = fp.getWorldPosition(new THREE.Vector3());
+            dir = bp.getWorldPosition(new THREE.Vector3()).sub(pt);
+          }
+        }
+        if (!pt || !dir || dir.lengthSq() < 1e-12) return;
+
+        const bbox = new THREE.Box3().setFromObject(root);
+        const diag = bbox.isEmpty() ? 60 : bbox.getSize(new THREE.Vector3()).length();
+        const arrowLen = Math.max(diag * 0.5, dir.length());
+        const sphereR = Math.max(diag * 0.02, 1);
+
+        const marker = new THREE.Group();
+        marker.name = "align-marker";
+        const dot = new THREE.Mesh(
+          new THREE.SphereGeometry(sphereR, 16, 12),
+          new THREE.MeshBasicMaterial({
+            color: "#f472b6",
+            depthTest: false,
+            transparent: true,
+            opacity: 0.95,
+          }),
+        );
+        dot.position.copy(pt);
+        dot.renderOrder = 4000;
+        marker.add(dot);
+
+        const arrow = new THREE.ArrowHelper(
+          dir.clone().normalize(),
+          pt,
+          arrowLen,
+          "#f472b6",
+          arrowLen * 0.18,
+          arrowLen * 0.09,
+        );
+        for (const m of [arrow.line.material, arrow.cone.material]) {
+          (m as THREE.Material).depthTest = false;
+        }
+        arrow.line.renderOrder = 4000;
+        arrow.cone.renderOrder = 4000;
+        marker.add(arrow);
+        root.add(marker);
+      })();
+
       // On a component switch, aim the probe beam along the exposed
       // optical axis (optical_in → optical_out) so it traverses the real
       // optical elements instead of the hardcoded component z-axis.
@@ -2720,7 +2877,7 @@ function ComponentPreview3D({
         mount.removeChild(renderer.domElement);
       }
     };
-  }, [bindings, assetById, parentComponent?.id]);
+  }, [bindings, assetById, parentComponent?.id, alignSpecDepKey]);
 
   // Rebuild gizmo and probe beam whenever the selection / bindings /
   // beam controls change. Gizmo follows the selected binding; the

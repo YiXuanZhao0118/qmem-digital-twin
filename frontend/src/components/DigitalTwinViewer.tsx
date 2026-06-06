@@ -63,7 +63,6 @@ import { SnapOverlay } from "../three/placement/snapOverlay";
 import {
   labDirToThreeLocal,
   labMmToThree,
-  labMmToThreeLocal,
   labRootSwapQuaternion,
   labRootSwapInverseQuaternion,
   sceneObjectToQuaternion,
@@ -85,7 +84,7 @@ THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
 import { createLabPhotoRoom } from "../three/photoRoom";
 import { VIEWER_BG_LIGHT, VIEWER_BG_WIRE } from "../three/viewerTheme";
 import { applyObjectGeometryOffset, applyObjectTransform, mmToThree } from "../three/transformUtils";
-import { relationTarget, worldAnchor } from "../utils/relationAnchors";
+import { assetAnchorWorld, relationTarget, worldAnchor } from "../utils/relationAnchors";
 import { anchorObjectLocalAxisY, anchorObjectLocalPos, anchorObjectLocalPrimaryDir } from "../utils/anchorAccess";
 import { computeBraggTiltAxisFromRfDirectionBodyLocal } from "../optical/kinds/aom/physics";
 import type { Asset3D, ComponentItem, DeviceState, PhysicsElement, SceneObject } from "../types/digitalTwin";
@@ -1454,7 +1453,6 @@ export function DigitalTwinViewer({
   const selectObject = useSceneStore((state) => state.selectObject);
   const overlayFlags = useSceneStore((state) => state.overlayFlags);
   const session = useSceneStore((state) => state.session);
-  const activeViewId = useSceneStore((state) => state.activeViewId);
   const toggleSessionHiddenObject = useSceneStore((state) => state.toggleSessionHiddenObject);
   const updateSceneObject = useSceneStore((state) => state.updateSceneObject);
   const toggleSoloObject = useSceneStore((state) => state.toggleSoloObject);
@@ -1818,16 +1816,9 @@ export function DigitalTwinViewer({
 
   const customHomeSaved = useSceneStore((state) => state.homeView[panelKey] !== null);
 
-  const activeView = useMemo(
-    () =>
-      activeViewId
-        ? (sceneData.sceneViews ?? []).find((view) => view.id === activeViewId) ?? null
-        : null,
-    [activeViewId, sceneData.sceneViews],
-  );
   const renderCtx = useMemo(
-    () => makeRenderableContext(overlayFlags, session, activeView, sceneData),
-    [overlayFlags, session, activeView, sceneData],
+    () => makeRenderableContext(overlayFlags, session, sceneData),
+    [overlayFlags, session, sceneData],
   );
 
   // Power off set — object ids whose device_states.state.power === false.
@@ -2869,13 +2860,12 @@ export function DigitalTwinViewer({
         const objects = stateNow.scene.objects;
         // Reuse the renderer's visibility context so the marquee enforces
         // the same gate that hides the mesh (overlay flags + per-object
-        // db visible + session hide + solo + collection cascade + active
-        // view filter). Keeps "viewBox false → can't select" consistent
-        // across click and marquee paths.
+        // db visible + session hide + solo + collection cascade). Keeps
+        // "viewBox false → can't select" consistent across click and
+        // marquee paths.
         const marqueeVisCtx = makeRenderableContext(
           stateNow.overlayFlags,
           stateNow.session,
-          stateNow.scene.sceneViews?.find((v) => v.id === stateNow.activeViewId) ?? null,
           stateNow.scene,
         );
         const selected: string[] = [];
@@ -4193,10 +4183,11 @@ export function DigitalTwinViewer({
     }
 
     // DEBUG: anchor markers — sphere at each asset anchor's TRUE world
-    // position + arrow along axisX, computed with the same convention the
-    // mesh uses (sceneObjectToQuaternion + labMmToThreeLocal). Compare with
-    // the rendered connector mesh to tell anchor-vs-mesh offset from a
-    // transform bug. Toggle via SHOW_ANCHOR_DEBUG.
+    // position + arrow along its primary axis (axisX, else legacy direction).
+    // Resolved through the SAME object-pose math the meshes and relation
+    // anchors use (assetAnchorWorld → labToThreeLocal), so markers land on the
+    // rendered geometry; a visible offset means a real anchor-vs-mesh transform
+    // bug, not an overlay artefact. Toggle via the "Anchors" overlay flag.
     {
       const anchorDebugGroup = anchorDebugGroupRef.current;
       clearGroup(anchorDebugGroup);
@@ -4206,34 +4197,15 @@ export function DigitalTwinViewer({
           const asset = comp?.asset3dId
             ? sceneData.assets.find((a) => a.id === comp.asset3dId)
             : undefined;
-          const anchors = asset?.anchors as Array<{
-            positionMmBodyLocal?: { x: number; y: number; z: number };
-            axisXBodyLocal?: { x: number; y: number; z: number };
-            directionBodyLocal?: { x: number; y: number; z: number };
-          }> | undefined;
+          const anchors = asset?.anchors;
           if (!Array.isArray(anchors)) continue;
           // Cable asset anchors are NOT where the rendered connectors sit
           // (those come from the spline nodes), so they'd be misleading.
           if (comp?.kindId === "rf_cable" || comp?.kindId === "sma_cable") continue;
-          // Use the ACTUAL rendered pose: a PPG is mounted (its stored pose
-          // is overridden), so recompute its mount; everything else renders
-          // at its stored pose.
-          const mounted = comp?.kindId === "programmable_pulse_generator"
-            ? computePpgMountedThreePose(sceneData, obj, comp, asset)
-            : null;
-          const objThree = mounted
-            ? mounted.positionThree
-            : labMmToThreeLocal({ xMm: obj.xMm, yMm: obj.yMm, zMm: obj.zMm });
-          const q = mounted ? mounted.quaternion : sceneObjectToQuaternion(obj);
-          for (const a of anchors) {
-            const pb = a.positionMmBodyLocal;
-            if (!pb) continue;
-            const origin = labMmToThreeLocal({ xMm: pb.x, yMm: pb.y, zMm: pb.z })
-              .applyQuaternion(q)
-              .add(objThree);
-            const ax = a.axisXBodyLocal ?? a.directionBodyLocal ?? { x: 1, y: 0, z: 0 };
-            const dir = new THREE.Vector3(ax.x, ax.y, ax.z).applyQuaternion(q);
-            addAnchorAxis(anchorDebugGroup, origin, { x: dir.x, y: dir.y, z: dir.z }, "#ff00ff");
+          for (const anchor of anchors) {
+            const world = assetAnchorWorld(obj, anchor, asset);
+            const origin = labToThreeLocal(world.position);
+            addAnchorAxis(anchorDebugGroup, origin, world.direction, "#ff00ff");
           }
         }
       }

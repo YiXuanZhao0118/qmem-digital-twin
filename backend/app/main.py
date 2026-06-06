@@ -35,7 +35,6 @@ from app.routers import (
     optics_crystal,
     revisions,
     scene,
-    scene_views,
     simulation_runs,
     simulations,
     timing_programs,
@@ -108,7 +107,6 @@ app.include_router(rf_chains.router, prefix="/api/rf-chains", tags=["rf_chains"]
 app.include_router(optics_cavity.router, prefix="/api/optics-cavity", tags=["optics_cavity"])
 app.include_router(optics_crystal.router, prefix="/api/optics-crystal", tags=["optics_crystal"])
 app.include_router(revisions.router, prefix="/api/revisions", tags=["revisions"])
-app.include_router(scene_views.router, prefix="/api/scene-views", tags=["scene_views"])
 app.include_router(collections.router, prefix="/api/collections", tags=["collections"])
 app.include_router(
     collection_templates.router,

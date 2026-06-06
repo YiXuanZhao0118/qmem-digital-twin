@@ -340,7 +340,12 @@ export function groupBindingsByLink(
       continue;
     }
     const roleLabel = (b.properties as { role_label?: unknown } | null | undefined)?.role_label;
-    const standaloneKey = (typeof roleLabel === "string" && roleLabel) || b.id;
+    // Prefer the human role_label; fall back to the binding's `role`
+    // (real composites like IO-3-850-HP leave role_label empty but carry a
+    // role such as "io_3_850_hp_front_piece"), and only then the opaque id —
+    // otherwise the adjustment sliders are labelled with a raw UUID.
+    const standaloneKey =
+      (typeof roleLabel === "string" && roleLabel) || b.role || b.id;
     out.set(standaloneKey, [b]);
   }
   return out;

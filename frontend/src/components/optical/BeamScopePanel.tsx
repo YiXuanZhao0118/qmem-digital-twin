@@ -2,8 +2,8 @@
 // path. The probe is set by clicking on a beam segment in the 3D viewer; the
 // click handler computes the cumulative path length z (mm from emission) and
 // stores it in `useSceneStore.scopeProbe`. This panel reads that probe and
-// renders four small SVG plots: spectrum, beam profile, wavefront phase, and
-// pulse-temporal envelope.
+// renders a text summary (spectrum / FWHM, spot size, power, …) plus two
+// plots: the beam-profile heatmap and the pulse-temporal envelope.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -12,8 +12,7 @@ import { FloatingPanel } from "../workspace/FloatingPanel";
 import { useWorkspace } from "../workspace/WorkspaceProvider";
 
 // ───────────────────────────────────────────────────────────────────────────
-// 2D canvas heatmap — used for Beam profile (linear intensity colourmap)
-// and Wavefront phase (cyclic colourmap).
+// 2D canvas heatmap — used for the Beam profile (linear intensity colourmap).
 // ───────────────────────────────────────────────────────────────────────────
 
 type ColourMap = (value: number) => [number, number, number];
@@ -25,32 +24,6 @@ const thermalColour: ColourMap = (v) => {
   const g = Math.round(255 * Math.max(0, t * 2 - 0.5) * 1.2);
   const b = Math.round(255 * Math.max(0, t * 2 - 1.4));
   return [r, Math.min(255, g), Math.min(255, b)];
-};
-
-/** HSL-cyclic colourmap for phase: input is in [0, 1] = angle / 2π. */
-const cyclicColour: ColourMap = (v) => {
-  const t = ((v % 1) + 1) % 1;
-  // Convert hue (0..1) → RGB via HSL with sat=0.85, light=0.55
-  const h = t;
-  const s = 0.85;
-  const l = 0.55;
-  const c = (1 - Math.abs(2 * l - 1)) * s;
-  const x = c * (1 - Math.abs(((h * 6) % 2) - 1));
-  const m = l - c / 2;
-  let r = 0;
-  let g = 0;
-  let b = 0;
-  if (h < 1 / 6) [r, g, b] = [c, x, 0];
-  else if (h < 2 / 6) [r, g, b] = [x, c, 0];
-  else if (h < 3 / 6) [r, g, b] = [0, c, x];
-  else if (h < 4 / 6) [r, g, b] = [0, x, c];
-  else if (h < 5 / 6) [r, g, b] = [x, 0, c];
-  else [r, g, b] = [c, 0, x];
-  return [
-    Math.round((r + m) * 255),
-    Math.round((g + m) * 255),
-    Math.round((b + m) * 255),
-  ];
 };
 
 type HeatmapProps = {
@@ -351,73 +324,25 @@ function factorial(n: number): number {
   return acc;
 }
 
-/** Render the polarisation state of the clicked segment as
- *    - an SVG ellipse showing the E-field tip locus (axis-orientation +
- *      ellipticity), and
- *    - a one-line summary (linear @ N°, RHC, LHC, elliptical, …).
- *  Reads the Jones vector from the trace segment that was passed into the
- *  probe — already accounts for upstream waveplate / polarizer / PBS so
- *  passing a HWP visibly rotates the ellipse here. */
-function PolarizationDisplay({ jones }: { jones: [number, number, number, number] }) {
-  const [exRe, exIm, eyRe, eyIm] = jones;
-  const intensity = exRe * exRe + exIm * exIm + eyRe * eyRe + eyIm * eyIm;
-  if (intensity < 1e-9) {
-    return (
-      <div className="beam-scope-pol">
-        <strong>Pol</strong>: (no light)
-      </div>
-    );
-  }
-  // Stokes parameters from the Jones vector. S0 = total intensity;
-  // S1 = |Ex|² − |Ey|²; S2 = 2·Re(Ex·Ey*); S3 = 2·Im(Ex·Ey*) where * is
-  // complex conjugate. Then azimuth ψ = ½·atan2(S2, S1) and ellipticity
-  // χ = ½·asin(S3 / S0). Linear when |S3| ≈ 0; circular when |S3| ≈ S0.
-  const S0 = intensity;
-  const S1 = exRe * exRe + exIm * exIm - eyRe * eyRe - eyIm * eyIm;
-  const exConjEy_Re = exRe * eyRe + exIm * eyIm;
-  const exConjEy_Im = exRe * eyIm - exIm * eyRe;
-  const S2 = 2 * exConjEy_Re;
-  const S3 = 2 * exConjEy_Im;
-  const psiRad = 0.5 * Math.atan2(S2, S1);
-  const chiRad = 0.5 * Math.asin(Math.max(-1, Math.min(1, S3 / S0)));
-  const psiDeg = (psiRad * 180) / Math.PI;
-  const chiDeg = (chiRad * 180) / Math.PI;
-
-  // Semi-axes of the ellipse from S0/χ. a = √S0·cos(χ), b = √S0·sin(χ).
-  const a = Math.sqrt(S0) * Math.cos(chiRad);
-  const b = Math.sqrt(S0) * Math.sin(chiRad);
-
-  let label: string;
-  if (Math.abs(chiDeg) < 1.5) {
-    label = `linear @ ${psiDeg.toFixed(1)}°`;
-  } else if (Math.abs(Math.abs(chiDeg) - 45) < 1.5) {
-    label = chiDeg > 0 ? "right-hand circular" : "left-hand circular";
-  } else {
-    label = `elliptical (χ=${chiDeg.toFixed(1)}°, ψ=${psiDeg.toFixed(1)}°)`;
-  }
-
-  // Render an ellipse in a 60×60 SVG. Scale so |a|=24 fits.
-  const scale = 24;
-  const ax = scale * Math.abs(a);
-  const ay = scale * Math.abs(b);
+/** Format a per-axis (x, y) pair for the summary: collapse to a single
+ *  number when the two axes are within 0.1% of each other (circular beam),
+ *  else show "x × y" with the axis-label caption. `fmt` renders each value
+ *  (and may return "∞" for a collimated R). */
+function axisPair(
+  x: number,
+  y: number,
+  unit: string,
+  fmt: (v: number) => string,
+  pairNote: string,
+): React.ReactNode {
+  const isotropic =
+    x === y || Math.abs(x - y) <= 1e-3 * Math.max(Math.abs(x), Math.abs(y));
+  if (isotropic) return `${fmt(x)} ${unit}`;
   return (
-    <div className="beam-scope-pol">
-      <strong>Pol</strong>: {label}
-      <svg width={62} height={62} viewBox="-31 -31 62 62" className="beam-scope-pol-svg">
-        <line x1={-28} y1={0} x2={28} y2={0} stroke="#475569" strokeDasharray="2 2" strokeWidth={0.6} />
-        <line x1={0} y1={-28} x2={0} y2={28} stroke="#475569" strokeDasharray="2 2" strokeWidth={0.6} />
-        <ellipse
-          cx={0}
-          cy={0}
-          rx={Math.max(ax, 1)}
-          ry={Math.max(ay, 1)}
-          transform={`rotate(${(-psiDeg).toFixed(2)})`}
-          fill="none"
-          stroke="#facc15"
-          strokeWidth={1.6}
-        />
-      </svg>
-    </div>
+    <>
+      {`${fmt(x)} × ${fmt(y)} ${unit}`}
+      <span className="beam-scope-power-frac"> ({pairNote})</span>
+    </>
   );
 }
 
@@ -582,18 +507,14 @@ export function BeamScopeContents() {
         : tm.kind === "multimode"
         ? "multimode (rendered as TEM₀₀)"
         : "TEM₀₀";
-    // probe.powerFactor / probe.polarization are the values AT CLICK TIME —
-    // stale once the user rotates the upstream HWP. The overlappingSegments
-    // useMemo already picked the live ray-trace segment for this tab (sorted
-    // by distance), so we just consume it. Keeping the same liveFactor / livePol
-    // fallback pattern preserves the pre-multi-beam behaviour for segments
-    // missing those fields.
+    // probe.powerFactor is the value AT CLICK TIME — stale once the user
+    // rotates an upstream optic. The overlappingSegments useMemo already
+    // picked the live ray-trace segment for this tab (sorted by distance),
+    // so we just consume it. The liveFactor fallback pattern preserves the
+    // pre-multi-beam behaviour for segments missing the field.
     const liveFactor = typeof bestSeg?.powerFactorAtStart === "number"
       ? (bestSeg.powerFactorAtStart as number)
       : (typeof probe.powerFactor === "number" ? probe.powerFactor : 1.0);
-    const livePol = Array.isArray(bestSeg?.polarizationAtStart) && (bestSeg!.polarizationAtStart as number[]).length === 4
-      ? (bestSeg!.polarizationAtStart as [number, number, number, number])
-      : (probe.polarization ?? [1, 0, 0, 0]);
     const aomSideband = (bestSeg as {
       aomSideband?: {
         order?: -1 | 0 | 1;
@@ -689,7 +610,6 @@ export function BeamScopeContents() {
       opticalCenterThz,
       freqOffsetMhz,
       upstreamFactor,
-      livePol,
       segmentLabel,
       branch,
       taSeedCoupling,
@@ -726,19 +646,15 @@ export function BeamScopeContents() {
     opticalCenterThz,
     freqOffsetMhz,
     upstreamFactor,
-    livePol,
     segmentLabel,
     branch,
     taSeedCoupling,
     aomSideband,
     fiberCoupling,
   } = snapshot;
-  const k = (2 * Math.PI) / (displayWavelengthNm * 1e-9); // wavenumber, 1/m
-
-  // ─ Spectrum (wavelength axis, ±10 · linewidth) ──────────────────────────
-  // Strategy: convert each component's FWHM (in MHz) to its FWHM in nm via
-  // Δλ ≈ λ²/c · Δν (small-bandwidth approx). The plot's half-span is
-  // 10 · max(FWHM_nm) so the user sees the line shape clearly with margin.
+  // ─ Spectrum line width (text readout) ───────────────────────────────────
+  // Convert each component's FWHM (in MHz) to its FWHM in nm via
+  // Δλ ≈ λ²/c · Δν (small-bandwidth approx).
   const C_M_PER_S = 299_792_458;
   const components = params.spectrum?.components ?? [
     { kind: "main", lineshape: "gaussian", fwhmMhz: 1.0, amplitude: 1.0, centerOffsetMhz: 0 },
@@ -750,39 +666,7 @@ export function BeamScopeContents() {
     return (lambdaM * lambdaM / C_M_PER_S) * fwhmHz * 1e9; // → nm
   });
   const maxFwhmNm = Math.max(1e-9, ...fwhmsNm);
-  const spectrumSpanNm = 20 * maxFwhmNm; // ±10 widths total
-  const spectrumPoints: PlotPoint[] = [];
   const N = 200;
-  for (let i = 0; i < N; i++) {
-    const lambdaPlotNm =
-      displayWavelengthNm - spectrumSpanNm / 2 + (i / (N - 1)) * spectrumSpanNm;
-    let amp = 0;
-    components.forEach((c, idx) => {
-      const offMhz = c.centerOffsetMhz ?? c.offsetMhz ?? 0;
-      // Convert this component's centre-offset MHz → nm offset
-      const offHz = offMhz * 1e6;
-      const offNm =
-        ((displayWavelengthNm * 1e-9) ** 2 / C_M_PER_S) * offHz * 1e9;
-      const cLambdaNm = displayWavelengthNm + offNm;
-      const fwhmNm = fwhmsNm[idx];
-      const a = c.amplitude ?? 1;
-      const dNm = lambdaPlotNm - cLambdaNm;
-      if (c.lineshape === "gaussian") {
-        const sigma = fwhmNm / 2.355;
-        amp += a * Math.exp(-(dNm * dNm) / (2 * sigma * sigma));
-      } else if (c.lineshape === "lorentzian") {
-        const gamma = fwhmNm / 2;
-        amp += (a * gamma * gamma) / (dNm * dNm + gamma * gamma);
-      } else {
-        // delta — visualise as a very narrow gaussian (1/N width)
-        const sigma = spectrumSpanNm / (4 * N);
-        amp += a * Math.exp(-(dNm * dNm) / (2 * sigma * sigma));
-      }
-    });
-    spectrumPoints.push({ x: lambdaPlotNm, y: amp });
-  }
-  const specMaxY = Math.max(...spectrumPoints.map((p) => p.y), 1e-9);
-  const lambdaLow = displayWavelengthNm - spectrumSpanNm / 2;
 
   // ─ Beam profile — dispatches by transverse-mode family ────────────────
   // HG (TEM_mn / TEM00): astigmatic |E_{m,n}|² ∝ H_m²(√2·x/w_x) · H_n²(√2·y/w_y)
@@ -837,35 +721,6 @@ export function BeamScopeContents() {
     const Hm = hermiteH(hgM, xiX);
     const Hn = hermiteH(hgN, xiY);
     return I0 * Hm * Hm * Hn * Hn * env;
-  };
-
-  // ─ Wavefront phase φ(x, y) — mode-aware ────────────────────────────────
-  // HG: φ = k·(x²/2R_x + y²/2R_y) − (m + n + 1)·½·(ψ_x + ψ_y)
-  // LG: φ = k·r²/(2R) + ℓ·atan2(y,x) − (2p + |ℓ| + 1)·ψ
-  //   (the e^{iℓφ} helical phase factor comes from the azimuthal angle).
-  // Half-extent matches the beam profile so the user sees both plots
-  // over the same window.
-  const phaseHalfUm = profileHalfUm * 0.8;
-  const gouyAvg = 0.5 * (gouyX + gouyY);
-  const gouyHg = (hgM + hgN + 1) * gouyAvg;
-  const gouyLg = (2 * lgP + lgL_abs + 1) * gouyAvg;
-  const rEffMm = 0.5 * ((isFinite(rxMm) ? rxMm : Infinity) + (isFinite(ryMm) ? ryMm : Infinity));
-  const samplePhase = (xUm: number, yUm: number) => {
-    if (tmKind === "LG_pl") {
-      const rM2 = (xUm * 1e-6) * (xUm * 1e-6) + (yUm * 1e-6) * (yUm * 1e-6);
-      const rM = rEffMm * 1e-3;
-      let phi = -gouyLg + lgL * Math.atan2(yUm, xUm);
-      if (isFinite(rM) && rM !== 0) phi += (k * rM2) / (2 * rM);
-      return phi;
-    }
-    const xM2 = (xUm * 1e-6) * (xUm * 1e-6);
-    const yM2 = (yUm * 1e-6) * (yUm * 1e-6);
-    const rxM = rxMm * 1e-3;
-    const ryM = ryMm * 1e-3;
-    let phi = -gouyHg;
-    if (isFinite(rxM) && rxM !== 0) phi += (k * xM2) / (2 * rxM);
-    if (isFinite(ryM) && ryM !== 0) phi += (k * yM2) / (2 * ryM);
-    return phi;
   };
 
   // ─ Pulse temporal (CW = constant, pulsed = envelope) ────────────────────
@@ -949,14 +804,11 @@ export function BeamScopeContents() {
       </div>
       <div className="beam-scope-summary">
         <div>
-          <strong>w(z)</strong>: {wxUm.toFixed(1)} × {wyUm.toFixed(1)} µm
-          <span className="beam-scope-power-frac"> (x × y)</span>
+          <strong>w(z)</strong>: {axisPair(wxUm, wyUm, "µm", (v) => v.toFixed(1), "x × y")}
         </div>
         <div>
           <strong>R(z)</strong>:{" "}
-          {isFinite(rxMm) ? rxMm.toFixed(1) : "∞"} ×{" "}
-          {isFinite(ryMm) ? ryMm.toFixed(1) : "∞"} mm
-          <span className="beam-scope-power-frac"> (R_x × R_y)</span>
+          {axisPair(rxMm, ryMm, "mm", (v) => (isFinite(v) ? v.toFixed(1) : "∞"), "R_x × R_y")}
         </div>
         <div>
           <strong>ψ<sub>Gouy</sub></strong>:{" "}
@@ -976,8 +828,8 @@ export function BeamScopeContents() {
           )}
         </div>
         <div>
-          <strong>z<sub>R</sub></strong>: {rayleighRangeMmAxis(modeX).toFixed(1)} ×{" "}
-          {rayleighRangeMmAxis(modeY).toFixed(1)} mm
+          <strong>z<sub>R</sub></strong>:{" "}
+          {axisPair(rayleighRangeMmAxis(modeX), rayleighRangeMmAxis(modeY), "mm", (v) => v.toFixed(1), "z_Rx × z_Ry")}
         </div>
         <div>
           <strong>P</strong>: {powerMw.toFixed(2)} mW
@@ -987,7 +839,6 @@ export function BeamScopeContents() {
             </span>
           )}
         </div>
-        <PolarizationDisplay jones={livePol} />
         {taSeedCoupling && (
           <>
             <div>
@@ -1003,6 +854,10 @@ export function BeamScopeContents() {
         )}
         <div><strong>lambda</strong>: {displayWavelengthNm.toFixed(6)} nm</div>
         <div><strong>nu</strong>: {opticalCenterThz.toFixed(6)} THz</div>
+        <div>
+          <strong>Spectrum</strong>: λ {displayWavelengthNm.toFixed(6)} nm,{" "}
+          FWHM {maxFwhmNm.toExponential(2)} nm
+        </div>
         {(aomSideband || Math.abs(freqOffsetMhz) > 1e-6) && (
           <div>
             <strong>AOM</strong>:
@@ -1030,22 +885,6 @@ export function BeamScopeContents() {
       </div>
 
       <div className="beam-scope-grid">
-        <PlotFrame
-          title={`Spectrum  (lambda ${displayWavelengthNm.toFixed(6)} nm, FWHM ${maxFwhmNm.toExponential(2)} nm)`}
-          xLabel="λ (nm)"
-          yLabel="amp"
-          xMax={spectrumSpanNm}
-          xOffset={lambdaLow}
-          yMax={specMaxY}
-        >
-          <path d={svgPoly(
-            spectrumPoints.map((p) => ({ x: p.x - lambdaLow, y: p.y })),
-            spectrumSpanNm,
-            specMaxY,
-            "rgba(220, 20, 60, 0.3)",
-          )} fill="rgba(220, 20, 60, 0.3)" stroke="#dc143c" />
-        </PlotFrame>
-
         <Heatmap
           size={140}
           halfExtentUm={profileHalfUm}
@@ -1061,17 +900,6 @@ export function BeamScopeContents() {
               : `Beam profile  ${modeLabel}  ·  w_x ${wxUm.toFixed(1)}, w_y ${wyUm.toFixed(1)} µm`
           }
           axisLabel="x, y (µm)"
-        />
-
-        <Heatmap
-          size={140}
-          halfExtentUm={phaseHalfUm}
-          sample={samplePhase}
-          colour={cyclicColour}
-          title="Wavefront phase  φ(x,y)  ·  cyclic colour"
-          axisLabel="x, y (µm)"
-          valueLabelMin="−π"
-          valueLabelMax="+π"
         />
 
         <PlotFrame title={isCw ? "Pulse |E(t)|² · CW" : "Pulse |E(t)|²"} xLabel="t (ps)" yLabel="‖E‖²"

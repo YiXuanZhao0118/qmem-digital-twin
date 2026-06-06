@@ -2,26 +2,20 @@ import type {
   AssemblyRelation,
   BeamSegment,
   Collection,
-  PhysicsCapability,
   SceneData,
   SceneObject,
 } from "../types/digitalTwin";
 import type {
   OverlayFlags,
-  SceneView,
   SessionVisibilityState,
-  ViewFilterExpr,
 } from "../types/visibility";
 
 export type RenderableContext = {
   overlayFlags: OverlayFlags;
   session: SessionVisibilityState;
-  activeView: SceneView | null;
   scene: SceneData;
   // Memoized helpers — recomputed when inputs change.
   soloAllowed?: Set<string> | null;
-  reachableCache?: Map<string, Set<string>>;
-  viewMatchCache?: Map<string, boolean>;
   // Set of collection IDs whose own visibility AND every ancestor's visibility
   // resolve to true. Computed once per context. An object passes the collection
   // gate iff at least one of its memberships is in this set.
@@ -111,29 +105,22 @@ export function resolveSolo(
 export function makeRenderableContext(
   overlayFlags: OverlayFlags,
   session: SessionVisibilityState,
-  activeView: SceneView | null,
   scene: SceneData,
 ): RenderableContext {
   const soloAllowed =
     session.soloObjectIds && session.soloObjectIds.size > 0
       ? resolveSolo(scene, session.soloObjectIds, session.soloIncludeNeighbors)
       : null;
-  const effectiveOverlays: OverlayFlags = activeView?.overlayOverrides
-    ? { ...overlayFlags, ...activeView.overlayOverrides }
-    : overlayFlags;
   const visibleCollectionIds = computeVisibleCollectionIds(
     scene.collections ?? [],
     session.forceVisibleCollectionIds ?? new Set(),
   );
   const objectMemberships = computeObjectMemberships(scene);
   return {
-    overlayFlags: effectiveOverlays,
+    overlayFlags,
     session,
-    activeView,
     scene,
     soloAllowed,
-    reachableCache: new Map(),
-    viewMatchCache: new Map(),
     visibleCollectionIds,
     objectMemberships,
   };
@@ -158,143 +145,11 @@ export function isCollectionVisible(collectionId: string, ctx: RenderableContext
   return visible.has(collectionId);
 }
 
-function reachableSet(
-  scene: SceneData,
-  sourceComponentId: string,
-  via: ("optical" | "connection" | "rf")[],
-  maxHops: number,
-  cache?: Map<string, Set<string>>,
-): Set<string> {
-  const cacheKey = `${sourceComponentId}|${[...via].sort().join(",")}|${maxHops}`;
-  if (cache?.has(cacheKey)) return cache.get(cacheKey)!;
-
-  const adjacency = new Map<string, Set<string>>();
-  const addEdge = (a: string, b: string) => {
-    if (!adjacency.has(a)) adjacency.set(a, new Set());
-    if (!adjacency.has(b)) adjacency.set(b, new Set());
-    adjacency.get(a)!.add(b);
-    adjacency.get(b)!.add(a);
-  };
-  // Project per-object edges (opticalLinks + connections post-0015) onto
-  // component-space so the view filter's "reachable_from" can keep
-  // operating on component templates.
-  const compOf = new Map(scene.objects.map((o) => [o.id, o.componentId]));
-  if (via.includes("optical")) {
-    for (const link of scene.opticalLinks ?? []) {
-      const f = compOf.get(link.fromObjectId);
-      const t = compOf.get(link.toObjectId);
-      if (f && t) addEdge(f, t);
-    }
-  }
-  if (via.includes("connection") || via.includes("rf")) {
-    for (const conn of scene.connections ?? []) {
-      if (via.includes("rf") && !via.includes("connection")) {
-        const t = (conn.connectionType ?? "").toLowerCase();
-        if (!t.includes("rf") && !t.includes("coax")) continue;
-      }
-      const f = compOf.get(conn.fromObjectId);
-      const t = compOf.get(conn.toObjectId);
-      if (f && t) addEdge(f, t);
-    }
-  }
-  const visited = new Set<string>([sourceComponentId]);
-  let frontier = new Set<string>([sourceComponentId]);
-  for (let hop = 0; hop < Math.max(0, maxHops); hop += 1) {
-    const next = new Set<string>();
-    for (const id of frontier) {
-      for (const nbr of adjacency.get(id) ?? []) {
-        if (!visited.has(nbr)) {
-          visited.add(nbr);
-          next.add(nbr);
-        }
-      }
-    }
-    if (next.size === 0) break;
-    frontier = next;
-  }
-  cache?.set(cacheKey, visited);
-  return visited;
-}
-
-function evalFilter(
-  componentId: string,
-  expr: ViewFilterExpr,
-  scene: SceneData,
-  cache?: Map<string, Set<string>>,
-): boolean {
-  switch (expr.type) {
-    case "all":
-      return true;
-    case "and":
-      return expr.clauses.every((c) => evalFilter(componentId, c, scene, cache));
-    case "or":
-      return expr.clauses.some((c) => evalFilter(componentId, c, scene, cache));
-    case "not":
-      return !evalFilter(componentId, expr.clause, scene, cache);
-    case "component_type": {
-      const c = scene.components.find((x) => x.id === componentId);
-      return c && c.kindId != null ? expr.values.includes(c.kindId) : false;
-    }
-    case "physics_capability": {
-      const c = scene.components.find((x) => x.id === componentId);
-      if (!c) return false;
-      return expr.values.some((v: PhysicsCapability) => c.physicsCapabilities.includes(v));
-    }
-    case "wavelength_range": {
-      // Per-object optical chain — find any OE whose object belongs to this component.
-      const objIds = new Set(scene.objects.filter((o) => o.componentId === componentId).map((o) => o.id));
-      const oe = scene.physicsElements.find((x) => objIds.has(x.objectId));
-      if (!oe) return false;
-      const [lo, hi] = oe.wavelengthRangeNm;
-      return !(hi < expr.lowNm || lo > expr.highNm);
-    }
-    case "tag": {
-      const c = scene.components.find((x) => x.id === componentId);
-      if (!c) return false;
-      const tags = (c.properties?.tags as string[] | undefined) ?? [];
-      return expr.values.some((v) => tags.includes(v));
-    }
-    case "reachable_from": {
-      const set = reachableSet(scene, expr.sourceComponentId, expr.via, expr.maxHops, cache);
-      return set.has(componentId);
-    }
-    case "component_ids":
-      return expr.values.includes(componentId);
-    case "in_region":
-    case "in_stage":
-      // Phase 2/3 placeholders — no-op (return false), do not throw.
-      // eslint-disable-next-line no-console
-      console.warn(`[visibility] view filter type '${expr.type}' not yet implemented`);
-      return false;
-    default: {
-      // eslint-disable-next-line no-console
-      console.warn(`[visibility] unknown view filter type`, expr);
-      return false;
-    }
-  }
-}
-
-export function matchesView(
-  componentId: string,
-  view: SceneView,
-  scene: SceneData,
-  cache?: Map<string, Set<string>>,
-  matchCache?: Map<string, boolean>,
-): boolean {
-  if (matchCache?.has(componentId)) return matchCache.get(componentId)!;
-  const result = evalFilter(componentId, view.filterExpr, scene, cache);
-  matchCache?.set(componentId, result);
-  return result;
-}
-
 /** Authoritative instance-level visibility check.
  *
- *  All gates apply to the SceneObject (instance), not the Component template:
- *  the only piece that's still per-component is the saved-view filter, which
- *  intentionally targets component templates (e.g. "show all mirrors").
- *  Objects of a matching component are then admitted; the per-object gates
- *  (db visible, session hide, solo allow-list, collection ancestry) decide
- *  the final answer for each instance.
+ *  All gates apply to the SceneObject (instance), not the Component template.
+ *  The per-object gates (db visible, session hide, solo allow-list, collection
+ *  ancestry) decide the final answer for each instance.
  */
 export function isObjectVisible(object: SceneObject, ctx: RenderableContext): boolean {
   if (!ctx.overlayFlags.components) return false;
@@ -310,21 +165,11 @@ export function isObjectVisible(object: SceneObject, ctx: RenderableContext): bo
   // cascade, not the user's other intentional hides.
   if (ctx.session.forceVisibleObjectIds?.has(object.id)) {
     // "Show object here" is an explicit per-object override — bypass the
-    // collection cascade AND the active-view filter so the object always
-    // surfaces when the user has explicitly requested it.
+    // collection cascade so the object always surfaces when the user has
+    // explicitly requested it.
     return true;
   }
   if (!objectPassesCollectionGate(object.id, ctx)) return false;
-  if (ctx.activeView) {
-    const ok = matchesView(
-      object.componentId,
-      ctx.activeView,
-      ctx.scene,
-      ctx.reachableCache,
-      ctx.viewMatchCache,
-    );
-    if (!ok) return false;
-  }
   return true;
 }
 

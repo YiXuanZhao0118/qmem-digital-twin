@@ -2,8 +2,7 @@ import { Columns2, Eye, Move, PenTool, Play, RotateCw, Settings2, Square, Type, 
 import { useEffect, useRef, useState } from "react";
 
 import { useSceneStore, TOUCH_OPS } from "../store/sceneStore";
-import type { SceneView } from "../types/visibility";
-import { DisplayPopover, SceneViewEditor, SceneViewPicker } from "./VisibilityControls";
+import { DisplayPopover } from "./VisibilityControls";
 
 type RoomDimensions = {
   widthMm: number;
@@ -66,7 +65,7 @@ export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneTo
   const [setupOpen, setSetupOpen] = useState(false);
   const [draftDimensions, setDraftDimensions] = useState(roomDimensions);
   const [displayOpen, setDisplayOpen] = useState(false);
-  const [editorView, setEditorView] = useState<SceneView | null | undefined>(undefined);
+  const displayAnchorRef = useRef<HTMLDivElement>(null);
   const loadScene = useSceneStore((state) => state.loadScene);
   const runOpticalSimulation = useSceneStore((state) => state.runOpticalSimulation);
   const openPhyEditor = useSceneStore((state) => state.openPhyEditor);
@@ -174,7 +173,7 @@ export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneTo
       <div className="toolbar-divider" aria-hidden="true" />
 
       <div className="toolbar-group" data-group-label="View">
-        <div className="display-anchor">
+        <div className="display-anchor" ref={displayAnchorRef}>
           <button
             className={`icon-button${displayOpen ? " active" : ""}`}
             title="Display overlays"
@@ -183,9 +182,12 @@ export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneTo
           >
             <Eye size={17} />
           </button>
-          <DisplayPopover open={displayOpen} onClose={() => setDisplayOpen(false)} />
+          <DisplayPopover
+            open={displayOpen}
+            onClose={() => setDisplayOpen(false)}
+            anchorRef={displayAnchorRef}
+          />
         </div>
-        <SceneViewPicker onOpenEditor={(view) => setEditorView(view)} />
         <button
           className={`icon-button${viewMode === "dual" ? " active" : ""}`}
           title={viewMode === "dual" ? "Switch to single viewport" : "Switch to dual viewport"}
@@ -215,10 +217,6 @@ export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneTo
           {socketStatus}
         </span>
       </div>
-
-      {editorView !== undefined && (
-        <SceneViewEditor initial={editorView} onClose={() => setEditorView(undefined)} />
-      )}
 
       {setupOpen && (
         <div className="initial-setup-panel">

@@ -418,13 +418,26 @@ async def load_anchor_scene_from_db(
             )
             effective = compose_transforms(so_transform, local_transform)
 
+            binding_id = b.role or str(b.id)
             dyn = _extract_dynamic(so.properties)
+            # Per-binding coefficient overrides (SceneObject.param_overrides,
+            # alembic 0082) let a composite component (e.g. the isolator's front
+            # / back Glan prisms) tune each sub-asset's optical coefficients
+            # independently. Keyed by the SAME binding_id this slot carries and
+            # merged on top of the object's dynamic_sources, so the anchor
+            # tracer's {**default_params, **dynamic_sources} merge picks them up
+            # with no per-kind backend code.
+            po = so.param_overrides if isinstance(so.param_overrides, dict) else None
+            if po:
+                binding_po = po.get(binding_id)
+                if isinstance(binding_po, dict) and binding_po:
+                    dyn = {**(dyn or {}), **binding_po}
             ov = dynamic_overrides.get(str(so.id))
             if ov:
                 dyn = {**(dyn or {}), **ov}
             slots.append(V3AnchorBindingSlot(
                 scene_object_id=str(so.id),
-                binding_id=b.role or str(b.id),
+                binding_id=binding_id,
                 asset=snap,
                 effective_transform=effective,
                 dynamic_sources=dyn,
