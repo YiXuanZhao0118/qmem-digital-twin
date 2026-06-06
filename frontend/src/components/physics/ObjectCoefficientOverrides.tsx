@@ -24,10 +24,10 @@ import { pluginForKind } from "../../kinds/_plugins";
 
 type EditableValue = number | boolean | string | number[];
 
-/** Top-level value the generic editor can override via a shallow dynamicSources
- *  merge: a scalar, or a short numeric tuple (e.g. wavelengthRangeNm). Nested
- *  objects / null are left to the dedicated controls. */
-function isEditableValue(v: unknown): v is EditableValue {
+/** Top-level value the generic editor can override via a shallow merge: a
+ *  scalar, or a short numeric tuple (e.g. wavelengthRangeNm). Nested objects /
+ *  null are left to the dedicated controls. */
+export function isEditableValue(v: unknown): v is EditableValue {
   if (typeof v === "number" || typeof v === "boolean" || typeof v === "string") return true;
   if (Array.isArray(v) && v.length > 0 && v.length <= 3 && v.every((x) => typeof x === "number")) {
     return true;
@@ -43,8 +43,8 @@ function fmtDefault(v: unknown): string {
 /** Shared field derivation: the kind's top-level overridable params, ordered
  *  with operating-state knobs first (tuned during an experiment), spec-sheet
  *  keys after. `baseline` is the asset/registry default bag. */
-function useCoefficientFields(elementKind: ElementKind, baseline: Record<string, unknown>) {
-  const plugin = pluginForKind(elementKind);
+function useCoefficientFields(elementKind: ElementKind | null, baseline: Record<string, unknown>) {
+  const plugin = elementKind ? pluginForKind(elementKind) : null;
   const intrinsicKeys = useMemo(
     () => new Set<string>((plugin?.physics.intrinsicParamKeys ?? []) as string[]),
     [plugin],
@@ -120,10 +120,13 @@ export function BindingCoefficientOverrides({
   sceneObject: SceneObject;
   asset: Asset3D;
   bindingKey: string;
-  elementKind: ElementKind;
+  /** Mapped optical ElementKind, or null for an optical asset whose kindId has
+   *  no registered plugin (e.g. faraday_rotator) — baseline then comes purely
+   *  from the asset's defaultParams. */
+  elementKind: ElementKind | null;
 }) {
   const updateSceneObject = useSceneStore((s) => s.updateSceneObject);
-  const plugin = pluginForKind(elementKind);
+  const plugin = elementKind ? pluginForKind(elementKind) : null;
 
   const baseline = useMemo(() => {
     const pluginDefaults = (plugin?.physics.defaultParams ?? {}) as Record<string, unknown>;

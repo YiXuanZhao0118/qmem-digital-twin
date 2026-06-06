@@ -18,7 +18,7 @@ import {
   resolveBindingTree,
   type ResolvedBindingNode,
 } from "../../utils/componentBindings";
-import { BindingCoefficientOverrides } from "./ObjectCoefficientOverrides";
+import { BindingCoefficientOverrides, isEditableValue } from "./ObjectCoefficientOverrides";
 import { BindingTreeAdjustControls } from "../BindingTreeAdjustControls";
 import { IntrinsicSpecPanel } from "../IntrinsicSpecPanel";
 import { AlignToBeamSection, SectionCard } from "./_shared";
@@ -41,7 +41,11 @@ type CompositeKind = {
   bindingKey: string;
   label: string;
   asset: Asset3D;
-  elementKind: ElementKind;
+  /** Mapped optical ElementKind, or null when the asset's kindId has no
+   *  registered plugin (e.g. faraday_rotator). */
+  elementKind: ElementKind | null;
+  /** Human label for the kind (KIND_LABELS entry, or humanised kindId). */
+  kindLabel: string;
 };
 
 /** Walk a component's resolved binding tree and collect every optical asset
@@ -60,7 +64,14 @@ function collectOpticalBindingKinds(
       if (node.target.kind === "asset") {
         const asset = node.target.asset;
         const ek = asset.kindId ? kindIdToElementKind(asset.kindId) : null;
-        if (ek && domainForElementKind(ek) === "optical") {
+        // Optical asset slot = optical domain AND (a mapped kind — its plugin
+        // supplies the param fields — OR an unmapped kind that carries its own
+        // editable defaultParams, e.g. faraday_rotator). Drops structural
+        // housing pieces that have no editable params.
+        const assetHasParams = Object.values(
+          (asset.defaultParams ?? {}) as Record<string, unknown>,
+        ).some(isEditableValue);
+        if (domainForElementKind(ek) === "optical" && (ek != null || assetHasParams)) {
           const bindingKey = node.binding.role || node.binding.id;
           if (!seen.has(bindingKey)) {
             seen.add(bindingKey);
@@ -71,7 +82,12 @@ function collectOpticalBindingKinds(
               node.binding.role ||
               asset.name ||
               "Element";
-            out.push({ bindingKey, label, asset, elementKind: ek });
+            const kindLabel = ek
+              ? KIND_LABELS[ek]
+              : (asset.kindId ?? "Element")
+                  .replace(/_/g, " ")
+                  .replace(/^\w/, (c) => c.toUpperCase());
+            out.push({ bindingKey, label, asset, elementKind: ek, kindLabel });
           }
         }
       }
@@ -119,7 +135,7 @@ export function OpticalSettingPanel({ component, sceneObject }: Props) {
   const coeffKinds = useMemo(() => {
     if (!sceneObject) return [] as CompositeKind[];
     return collectOpticalBindingKinds(component, sceneObject, scene).filter(
-      (k) => !KINDS_WITHOUT_GENERIC_COEFFICIENTS.has(k.elementKind),
+      (k) => !(k.elementKind && KINDS_WITHOUT_GENERIC_COEFFICIENTS.has(k.elementKind)),
     );
   }, [component, sceneObject, scene]);
 
@@ -212,7 +228,7 @@ export function OpticalSettingPanel({ component, sceneObject }: Props) {
             <SectionCard
               key={k.bindingKey}
               id={`optical.composite.${k.bindingKey}`}
-              title={`${k.label} — ${KIND_LABELS[k.elementKind]}`}
+              title={`${k.label} — ${k.kindLabel}`}
             >
               <BindingCoefficientOverrides
                 sceneObject={sceneObject}
