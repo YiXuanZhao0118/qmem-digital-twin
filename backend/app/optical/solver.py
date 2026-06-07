@@ -24,14 +24,6 @@ from dataclasses import asdict, dataclass, field
 from typing import Optional
 
 from app.optical.beam_ray import BeamRay, Vec3
-from app.optical.ray_tracer import (
-    TraceOptions,
-    V3Scene,
-    emit_scene_source_rays_with_provenance,
-    trace_ray_scene,
-)
-
-
 # ---------------------------------------------------------------------------
 # Serialization helpers (turn BeamRay / Vec3 into JSON-safe dicts)
 # ---------------------------------------------------------------------------
@@ -166,86 +158,6 @@ class V3SolverResult:
             "errors": self.errors,
             "warnings": self.warnings,
         }
-
-
-# ---------------------------------------------------------------------------
-# Orchestrator
-# ---------------------------------------------------------------------------
-
-def solve_v3_scene(
-    scene: V3Scene,
-    initial_rays: list[BeamRay],
-    options: Optional[TraceOptions] = None,
-) -> V3SolverResult:
-    """Legacy face-based v3 solver. Kept for tests / parity checks but
-    NO LONGER the production path — Phase 9.8 routed
-    `/api/v3/solver/run-from-db` to ``solve_anchor_scene_from_db``."""
-    options = options or TraceOptions()
-    result = V3SolverResult(run_id=uuid.uuid4())
-
-    if not scene.objects:
-        result.warnings.append("scene has no objects — initial rays will escape immediately")
-
-    if initial_rays:
-        rays_with_prov = [(r, None, None) for r in initial_rays]
-    else:
-        rays_with_prov = [
-            (r, emitter, source)
-            for (r, emitter, source) in emit_scene_source_rays_with_provenance(scene)
-        ]
-
-    if not rays_with_prov:
-        result.warnings.append("no initial rays or laser_source emitters supplied — solver runs no traces")
-        return result
-
-    for i, (ray, emitter_id, source_id) in enumerate(rays_with_prov):
-        try:
-            trace = trace_ray_scene(
-                ray, scene, options,
-                emitter_scene_object_id=emitter_id,
-                source_scene_object_id=source_id,
-            )
-        except Exception as exc:  # pragma: no cover - guard for op bugs
-            result.errors.append(f"ray[{i}] trace failed: {exc!r}")
-            continue
-
-        for step in trace.steps:
-            result.segments.append(V3BeamSegment(
-                asset_catalog_id=step.asset.catalog_id,
-                face_in_id=step.face_in.id,
-                op=step.op,
-                ray_in=beam_ray_to_dict(step.ray_in),
-                out_rays=[beam_ray_to_dict(r) for r in step.out_rays],
-            ))
-        for ls in trace.lab_segments:
-            result.lab_segments.append(V3LabSegment(
-                start=ls.start, end=ls.end,
-                wavelength_nm=ls.wavelength_nm, power_mw=ls.power_mw,
-                scene_object_id=ls.scene_object_id,
-                binding_id=ls.binding_id,
-                asset_catalog_id=ls.asset_catalog_id,
-                face_in_id=ls.face_in_id,
-                op=ls.op,
-                is_terminal=ls.is_terminal,
-                emitter_scene_object_id=ls.emitter_scene_object_id,
-                source_scene_object_id=ls.source_scene_object_id,
-                jones_re_x=ls.jones_re_x, jones_im_x=ls.jones_im_x,
-                jones_re_y=ls.jones_re_y, jones_im_y=ls.jones_im_y,
-                qx_re_at_start=ls.qx_re_at_start, qx_im_at_start=ls.qx_im_at_start,
-                qy_re_at_start=ls.qy_re_at_start, qy_im_at_start=ls.qy_im_at_start,
-                path_length_mm_at_start=ls.path_length_mm_at_start,
-                freq_offset_hz_at_start=ls.freq_offset_hz_at_start,
-            ))
-        for r in trace.final_rays:
-            result.final_rays.append(beam_ray_to_dict(r))
-
-        if trace.terminated == "max_steps":
-            result.warnings.append(f"ray[{i}] terminated by max_steps cap")
-        elif trace.terminated == "power_threshold":
-            # not an error — quiet termination is normal for absorbed rays
-            pass
-
-    return result
 
 
 # ---------------------------------------------------------------------------

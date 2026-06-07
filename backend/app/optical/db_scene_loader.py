@@ -35,15 +35,6 @@ from app.optical.pose import (
     compose_transforms,
     pose_to_transform,
 )
-from app.optical.ray_tracer import (
-    V3AssetSnapshot,
-    V3ComponentBinding,
-    V3ComponentSnapshot,
-    V3Scene,
-    V3SceneObject,
-    V3TransitionDescriptor,
-)
-from app.optical.registry import Face
 
 
 _DYNAMIC_KEYS = {
@@ -57,42 +48,6 @@ _DYNAMIC_KEYS = {
 
 def _vec3(d: dict) -> Vec3:
     return Vec3(float(d["x"]), float(d["y"]), float(d["z"]))
-
-
-def _face(d: dict) -> Face:
-    return Face(
-        id=d["id"],
-        position_mm_body_local=_vec3(d["positionMmBodyLocal"]),
-        normal_body_local=_vec3(d["normalBodyLocal"]) if d.get("normalBodyLocal") else None,
-        aperture_mm=float(d.get("apertureMm", 0)),
-        aperture_shape=d.get("apertureShape", "rectangle"),
-    )
-
-
-def _transition(d: dict) -> V3TransitionDescriptor:
-    return V3TransitionDescriptor(
-        in_face=d["in"],
-        out_face=d["out"],
-        op=d["op"],
-        params=d.get("params"),
-        matrix5x5=d.get("matrix5x5"),
-        abcd=d.get("abcd"),
-        via=tuple(d.get("via") or ()),
-    )
-
-
-def asset_to_snapshot(asset: Asset3D) -> V3AssetSnapshot | None:
-    """Build a V3AssetSnapshot from an Asset3D row, or return None if
-    the row lacks v3 fields (then it can't participate in v3 trace)."""
-    if not (asset.kind_id and asset.faces and asset.transitions):
-        return None
-    return V3AssetSnapshot(
-        catalog_id=asset.catalog_id or asset.name,
-        kind=asset.kind_id,
-        faces=[_face(f) for f in asset.faces],
-        transitions=[_transition(t) for t in asset.transitions],
-        default_params=asset.default_params or {},
-    )
 
 
 def _extract_dynamic(properties: dict | None) -> dict | None:
@@ -197,62 +152,6 @@ def _binding_tree_transform(
     return effective
 
 
-async def load_scene_from_db(session: AsyncSession) -> V3Scene:
-    """Walk all SceneObjects in the current scene and build a V3Scene.
-
-    SceneObjects whose Component's bindings don't resolve to v3 Asset3D
-    rows are skipped (those still on the v2 path). The remainder form a
-    valid V3Scene the v3 tracer can consume.
-    """
-    so_rows = (await session.scalars(select(SceneObject))).all()
-    objects: list[V3SceneObject] = []
-
-    for so in so_rows:
-        if not so.component_id:
-            continue
-        comp = await session.get(Component, so.component_id)
-        if comp is None:
-            continue
-
-        binding_rows = (await session.scalars(
-            select(ComponentBinding).where(ComponentBinding.component_id == comp.id)
-        )).all()
-        v3_bindings: list[V3ComponentBinding] = []
-        for b in binding_rows:
-            if b.target_kind != "asset" or not b.asset_3d_id:
-                continue
-            asset_row = await session.get(Asset3D, b.asset_3d_id)
-            if asset_row is None:
-                continue
-            snap = asset_to_snapshot(asset_row)
-            if snap is None:
-                continue
-            v3_bindings.append(V3ComponentBinding(
-                binding_id=b.role or str(b.id),
-                asset=snap,
-                local_pose=V3Pose(
-                    x_mm=b.local_x_mm, y_mm=b.local_y_mm, z_mm=b.local_z_mm,
-                    rx_deg=b.local_rx_deg, ry_deg=b.local_ry_deg, rz_deg=b.local_rz_deg,
-                ),
-            ))
-        if not v3_bindings:
-            continue
-
-        objects.append(V3SceneObject(
-            id=str(so.id),
-            pose=V3Pose(
-                x_mm=so.x_mm, y_mm=so.y_mm, z_mm=so.z_mm,
-                rx_deg=so.rx_deg, ry_deg=so.ry_deg, rz_deg=so.rz_deg,
-            ),
-            asset=None,
-            component=V3ComponentSnapshot(
-                catalog_id=comp.model or comp.name,
-                bindings=v3_bindings,
-            ),
-            dynamic_sources=_extract_dynamic(so.properties),
-        ))
-
-    return V3Scene(objects=objects)
 
 
 # ??? Phase 9.2 ??anchor-centric scene loader ???????????????????????????????
