@@ -40,7 +40,6 @@ class Asset3D(Base):
     source_url: Mapped[str | None] = mapped_column(Text)
     unit: Mapped[str] = mapped_column(Text, nullable=False, default="mm", server_default="mm")
     scale_factor: Mapped[float] = mapped_column(Float, nullable=False, default=1.0, server_default="1")
-    anchors: Mapped[JsonList] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
     # Asset-level metadata (alembic 0064). First consumer is
     # ``viewerHints`` — instructions the generic asset loader honours
     # regardless of consuming componentType:

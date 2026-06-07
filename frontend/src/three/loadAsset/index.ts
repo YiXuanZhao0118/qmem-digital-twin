@@ -86,7 +86,7 @@ import { createDdsAd9959Pcb } from "../../kinds/rf_source/renderer";
 
 // Cycle trigger ??by this line every binding _renderer_bindings.ts reads from
 // the barrel has been initialised, so it sees real values, not `undefined`.
-import { applyAssetScale, createPrimitive } from "./primitive";
+import { applyAssetScale, createPrimitive, createUnsupportedAssetPlaceholder } from "./primitive";
 import {
   applyIncludeOnlyFilter,
   applyViewerHintsToGeometry,
@@ -211,7 +211,23 @@ export async function loadAssetObject(
   const assetUrl = resolveAssetUrl(asset.filePath);
   const extension = asset.filePath.split("?")[0].split(".").pop()?.toLowerCase();
   if (!["glb", "gltf", "obj", "stl"].includes(extension ?? "")) {
-    return createPrimitive(component, state, asset);
+    // Non-viewer-ready file (CAD source on disk, or a STEP->STL conversion
+    // that failed). Don't silently fall back to a generic primitive — that
+    // hid the fact the real geometry never loaded. Show a recognisable
+    // placeholder, log loudly, and emit an event a toast can subscribe to.
+    console.warn(
+      `[loadAsset] "${component.name}" points at a non-viewer-ready file ` +
+        `(.${extension ?? "?"}); WebGL renders GLB/GLTF/OBJ/STL only. ` +
+        `Showing a placeholder.`,
+    );
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("asset-unsupported-format", {
+          detail: { name: component.name, filePath: asset.filePath, extension },
+        }),
+      );
+    }
+    return createUnsupportedAssetPlaceholder(component, extension ?? "");
   }
   let object: THREE.Object3D;
 

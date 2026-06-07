@@ -412,7 +412,7 @@ export function AIBindingPanel() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".glb,.gltf,.obj,.stl,.step,.stp,.sldprt,.dxf,.png,.jpg,.jpeg,.webp,.gif"
+                accept=".glb,.gltf,.obj,.stl,.step,.stp,.png,.jpg,.jpeg,.webp,.gif"
                 multiple
                 style={{ display: "none" }}
                 onChange={handleFilesChosen}

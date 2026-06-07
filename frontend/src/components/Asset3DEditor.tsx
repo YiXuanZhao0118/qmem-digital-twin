@@ -3321,14 +3321,15 @@ export function Asset3DEditor({
             <h3 style={{ margin: 0, fontSize: 14 }}>+ New Asset3D</h3>
             <p style={{ margin: 0, fontSize: 11, color: "#4b5563" }}>
               Three creation modes: pick an existing asset under "source"
-              to fork, pick blank to start empty, or upload GLB/GLTF/OBJ/STL/STEP/STP/SLDPRT/DXF.
-              CAD files are stored as source geometry until a CAD-to-GLB converter is configured.
+              to fork, pick blank to start empty, or upload GLB/GLTF/OBJ/STL/STEP/STP.
+              STEP/STP are tessellated to STL server-side (colour is lost); DXF and
+              SLDPRT aren't supported — export a STEP instead.
               catalog_id must match {" "}<code>^[a-z0-9_]+$</code> and be unique.
             </p>
             <input
               ref={uploadInputRef}
               type="file"
-              accept=".glb,.gltf,.obj,.stl,.step,.stp,.sldprt,.dxf"
+              accept=".glb,.gltf,.obj,.stl,.step,.stp"
               style={{ display: "none" }}
               onChange={(event) => {
                 const file = event.currentTarget.files?.[0] ?? null;

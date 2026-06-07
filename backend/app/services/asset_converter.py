@@ -14,6 +14,25 @@ VIEWER_ASSET_EXTENSIONS = {".glb", ".gltf", ".obj", ".stl"}
 CAD_SOURCE_EXTENSIONS = {".step", ".stp", ".sldprt", ".dxf"}
 AUTO_CONVERTIBLE_CAD_EXTENSIONS = {".step", ".stp"}
 
+# CAD formats accepted historically but never renderable in-app: DXF is a 2D
+# drawing (lines/arcs, no solids) and SLDPRT is a proprietary binary neither
+# WebGL nor FreeCAD can turn into usable geometry here. Reject these at upload
+# with format-specific guidance instead of storing a row that can only ever
+# show a placeholder. STEP/STP stay accepted (FreeCAD -> STL today; the
+# browser occt importer replaces that path in Asset-layer M2).
+UNRENDERABLE_UPLOAD_EXTENSIONS = {".dxf", ".sldprt"}
+
+_UPLOAD_REJECTION_MESSAGES = {
+    ".dxf": "DXF is a 2D drawing, not a 3D model. Upload the matching STEP file instead.",
+    ".sldprt": "SLDPRT can't be rendered in-browser. Export it as STEP (AP242, with appearances) and upload that.",
+}
+
+
+def upload_rejection_message(suffix: str) -> str | None:
+    """Reason ``suffix`` is refused at upload despite being a known CAD format,
+    or ``None`` if it is fine to accept. See ``UNRENDERABLE_UPLOAD_EXTENSIONS``."""
+    return _UPLOAD_REJECTION_MESSAGES.get(suffix.lower())
+
 DEFAULT_FREECADCMD_PATH = Path(r"C:\Users\admin\AppData\Local\Programs\FreeCAD 1.1\bin\freecadcmd.exe")
 
 # Prefixes allowed under ASSET_ROOT (alembic 0063). Anything else gets

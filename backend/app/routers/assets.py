@@ -17,6 +17,7 @@ from app.services.asset_converter import (
     VIEWER_ASSET_EXTENSIONS,
     convert_cad_source_to_stl,
     subdir_for_ext,
+    upload_rejection_message,
 )
 
 
@@ -130,10 +131,13 @@ async def upload_component_asset(
     session: AsyncSession = Depends(get_session),
 ) -> Component:
     suffix = Path(file.filename or "").suffix.lower()
+    rejection = upload_rejection_message(suffix)
+    if rejection:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=rejection)
     if suffix not in SUPPORTED_ASSET_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Upload a GLB, GLTF, OBJ, STL, STEP, STP, SLDPRT, or DXF file.",
+            detail="Upload a GLB, GLTF, OBJ, STL, STEP, or STP file.",
         )
     if unit not in {"mm", "m"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unit must be mm or m.")
@@ -184,10 +188,13 @@ async def import_local_component_asset(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Local file does not exist.")
 
     suffix = source_path.suffix.lower()
+    rejection = upload_rejection_message(suffix)
+    if rejection:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=rejection)
     if suffix not in SUPPORTED_ASSET_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Import a GLB, GLTF, OBJ, STL, STEP, STP, SLDPRT, or DXF file.",
+            detail="Import a GLB, GLTF, OBJ, STL, STEP, or STP file.",
         )
 
     subdir = subdir_for_ext(suffix)

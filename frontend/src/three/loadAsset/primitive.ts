@@ -32,6 +32,27 @@ export function createPrimitive(
   return group;
 }
 
+/** Recognisable stand-in for an asset whose file can't be rendered in WebGL
+ *  (CAD source on disk, unknown extension, or a STEP->STL conversion that
+ *  failed). Deliberately a magenta wireframe box so it's obvious the real
+ *  geometry is missing — unlike `createPrimitive`, which silently produced a
+ *  plausible-looking box that hid the failure. */
+export function createUnsupportedAssetPlaceholder(
+  component: ComponentItem,
+  extension: string,
+): THREE.Object3D {
+  const group = new THREE.Group();
+  group.name = component.name;
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(100, 100, 80),
+    new THREE.MeshBasicMaterial({ color: 0xff00ff, wireframe: true }),
+  );
+  mesh.position.y = 0.2;
+  mesh.userData.unsupportedAsset = { extension };
+  group.add(mesh);
+  return group;
+}
+
 export function applyAssetScale(object: THREE.Object3D, asset: Asset3D): void {
   const unitScale = asset.unit === "m" ? 10 : 1 / 100;
   object.scale.multiplyScalar(asset.scaleFactor * unitScale);

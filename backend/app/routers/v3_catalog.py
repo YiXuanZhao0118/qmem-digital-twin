@@ -38,6 +38,7 @@ from app.services.asset_converter import (
     VIEWER_ASSET_EXTENSIONS,
     convert_cad_source_to_stl,
     subdir_for_ext,
+    upload_rejection_message,
 )
 
 
@@ -201,18 +202,26 @@ async def upload_asset3d_v3(
     preserve_colors: bool = Form(True),
     session: AsyncSession = Depends(get_session),
 ) -> Asset3D:
-    """Upload a raw geometry file and create a v3 Asset3D row.
+    """Upload a viewer-ready or STEP geometry file and create a v3 Asset3D row.
 
-    Viewer-ready formats (GLB/GLTF/OBJ/STL) can render immediately. CAD
-    source formats (STEP/STP/SLDPRT/DXF) are stored as source-of-truth files
-    and marked for a later CAD -> GLB conversion pipeline; WebGL cannot render
-    native CAD files directly.
+    Viewer-ready formats (GLB/GLTF/OBJ/STL) render immediately. STEP/STP are
+    tessellated to STL server-side via FreeCAD (``convert_cad_source_to_stl``)
+    because WebGL can't render B-rep directly; colour is lost on that path.
+    DXF (2D drawing) and SLDPRT (proprietary) are rejected up front — see
+    ``upload_rejection_message``.
+
+    Asset-layer M2: once the browser occt-import-js pipeline lands, STEP will
+    arrive pre-converted to coloured GLB and this route will do no server-side
+    CAD conversion. Until then the FreeCAD path above is live.
     """
     suffix = Path(file.filename or "").suffix.lower()
+    rejection = upload_rejection_message(suffix)
+    if rejection:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=rejection)
     if suffix not in SUPPORTED_ASSET_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Upload a GLB, GLTF, OBJ, STL, STEP, STP, SLDPRT, or DXF file.",
+            detail="Upload a GLB, GLTF, OBJ, STL, STEP, or STP file.",
         )
     if unit not in {"mm", "m"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unit must be mm or m.")
