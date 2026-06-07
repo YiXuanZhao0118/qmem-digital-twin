@@ -31,16 +31,16 @@ test.describe("Geometry Builder", () => {
     await expect(page.getByRole("heading", { name: "Geometry Builder" })).toBeVisible();
   });
 
-  test("import STEP → parts, decimation, and split", async ({ page }) => {
+  test("import STEP → one source, decimate, merge + exclude", async ({ page }) => {
     await page.setInputFiles('input[type="file"]', FIXTURE);
 
-    // 18-mesh assembly → parts list with a kept count.
-    await expect(page.getByText(/Parts \(\d+\/\d+ kept\)/)).toBeVisible({ timeout: 20_000 });
+    // One file = one source unit (its meshes merged).
+    await expect(page.getByText(/Sources \(\d+\/\d+\)/)).toBeVisible({ timeout: 20_000 });
 
     const readout = page.getByText(/tris ·/);
     await expect(readout).toBeVisible();
-    const fullTris = parseTris(await readout.textContent());
-    expect(fullTris).toBeGreaterThan(0);
+    const oneTris = parseTris(await readout.textContent());
+    expect(oneTris).toBeGreaterThan(0);
 
     // §B-2: drag the slider down → triangle count drops. (Presets target
     // 30k–300k, above this small fixture's count, so use the slider.)
@@ -48,18 +48,25 @@ test.describe("Geometry Builder", () => {
     await slider.fill("1000");
     await expect
       .poll(async () => parseTris(await readout.textContent()), { timeout: 10_000 })
-      .toBeLessThan(fullTris);
+      .toBeLessThan(oneTris);
 
-    // Back to full res for a clean split comparison.
+    // Back to full res.
     await page.getByRole("button", { name: "Full" }).click();
     await expect
       .poll(async () => parseTris(await readout.textContent()), { timeout: 10_000 })
-      .toBe(fullTris);
+      .toBe(oneTris);
 
-    // §B-3: untick a part → fewer triangles (kept a subset).
+    // §B-4: add a second source (merge) → more triangles.
+    await page.setInputFiles('input[type="file"]', FIXTURE);
+    await expect
+      .poll(async () => parseTris(await readout.textContent()), { timeout: 20_000 })
+      .toBeGreaterThan(oneTris);
+    const twoTris = parseTris(await readout.textContent());
+
+    // §B-3: untick one source (exclude it) → triangle count drops back.
     await page.locator('input[type="checkbox"]').first().uncheck();
     await expect
       .poll(async () => parseTris(await readout.textContent()), { timeout: 10_000 })
-      .toBeLessThan(fullTris);
+      .toBeLessThan(twoTris);
   });
 });

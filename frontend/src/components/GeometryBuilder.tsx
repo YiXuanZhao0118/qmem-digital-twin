@@ -21,7 +21,7 @@ import occtWasmUrl from "occt-import-js/dist/occt-import-js.wasm?url";
 
 import {
   importStep,
-  occtMeshToGeometry,
+  occtResultToGeometry,
   type OcctLocateFile,
 } from "../three/occtImport";
 import {
@@ -306,12 +306,13 @@ export function GeometryBuilder() {
           const data = new Uint8Array(await file.arrayBuffer());
           const result = await importStep(data, { linearUnit: "millimeter" }, locateOcctWasm);
           const stem = file.name.replace(/\.[^.]+$/, "");
-          result.meshes.forEach((mesh, i) => {
-            const id = `part_${partIdRef.current++}`;
-            partGeomsRef.current.set(id, occtMeshToGeometry(mesh));
-            const meshLabel = mesh.name && mesh.name.trim() ? mesh.name : `mesh ${i + 1}`;
-            added.push(newPart(id, result.meshes.length > 1 ? `${stem} · ${meshLabel}` : stem));
-          });
+          // One source per FILE: merge all of the STEP's meshes into a single
+          // transformable unit (3 files → 3 transforms → save → 1 GLB). Mesh-
+          // level splitting is the separate remove-regions feature (follow-up).
+          const geom = mergeColoredGeometries(occtResultToGeometry(result));
+          const id = `part_${partIdRef.current++}`;
+          partGeomsRef.current.set(id, geom);
+          added.push(newPart(id, stem));
         }
         const next = [...parts, ...added];
         setParts(next);
@@ -477,9 +478,10 @@ export function GeometryBuilder() {
         <div>
           <h3 style={{ margin: "0 0 4px", fontSize: 14 }}>Geometry Builder</h3>
           <p style={{ margin: 0, fontSize: 11, opacity: 0.7, lineHeight: 1.4 }}>
-            Add sources (upload STEP or pick an existing asset), position/rotate
-            each, keep what you want (untick to split), decimate, then save as a
-            coloured GLB. Anchors are placed afterwards in the ASSET3D tab.
+            Add sources (each uploaded STEP / picked asset = one unit), position
+            & rotate each, then save them merged into one coloured GLB. Untick a
+            source to leave it out; decimate before saving. Anchors are placed
+            afterwards in the ASSET3D tab.
           </p>
         </div>
 
@@ -521,7 +523,7 @@ export function GeometryBuilder() {
         {parts.length > 0 && (
           <div style={{ display: "grid", gap: 4 }}>
             <div style={{ fontSize: 11, opacity: 0.8 }}>
-              Parts ({includedCount}/{parts.length} kept) — click to transform
+              Sources ({includedCount}/{parts.length}) — click to position / rotate
             </div>
             <div style={{ display: "grid", gap: 2, maxHeight: 150, overflow: "auto" }}>
               {parts.map((p) => (
