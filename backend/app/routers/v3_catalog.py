@@ -172,6 +172,7 @@ async def create_asset3d_v3(
         transitions=list(source.transitions) if source and source.transitions else None,
         default_params=dict(source.default_params) if source and source.default_params else None,
         wavelength_range_nm=list(source.wavelength_range_nm) if source and source.wavelength_range_nm else None,
+        frequency_range_mhz=list(source.frequency_range_mhz) if source and source.frequency_range_mhz else None,
         properties=dict(source.properties) if source and source.properties else {},
     )
     session.add(row)
@@ -357,6 +358,8 @@ async def update_asset3d_by_catalog_id(
         row.default_params = payload.default_params
     if "wavelength_range_nm" in fields:
         row.wavelength_range_nm = payload.wavelength_range_nm
+    if "frequency_range_mhz" in fields:
+        row.frequency_range_mhz = payload.frequency_range_mhz
     if "properties" in fields:
         # Whole-dict overwrite (caller is expected to send the merged
         # state). Keep None as "no-op" rather than blanking the column.

@@ -3167,6 +3167,7 @@ class KindBase(CamelModel):
     face_template: JsonDict = {}
     needs_aperture: bool = False
     wavelength_range_nm: list[float] | None = None
+    frequency_range_mhz: list[float] | None = None
     description: str | None = None
 
 
@@ -3193,6 +3194,7 @@ class KindUpdate(CamelModel):
     face_template: JsonDict | None = None
     needs_aperture: bool | None = None
     wavelength_range_nm: list[float] | None = None
+    frequency_range_mhz: list[float] | None = None
     description: str | None = None
 
 

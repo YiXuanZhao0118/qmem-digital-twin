@@ -79,6 +79,12 @@ class Asset3D(Base):
     wavelength_range_nm: Mapped[list[float] | None] = mapped_column(
         sa.ARRAY(sa.Float())
     )
+    # RF passband [min, max] in MHz (alembic 0105). Symmetric with
+    # wavelength_range_nm: optical kinds carry a wavelength range, RF kinds a
+    # frequency range, both meaning "the component's working band".
+    frequency_range_mhz: Mapped[list[float] | None] = mapped_column(
+        sa.ARRAY(sa.Float())
+    )
     # Phase 9.1 anchor-centric schema (alembic 0087). Replaces faces[] +
     # transitions[] as the primary physics anchor structure. Each anchor
     # carries position + explicit local axes (X = propagation/normal,
@@ -213,6 +219,11 @@ class Kind(Base):
         Boolean, nullable=False, default=False, server_default=sa.false()
     )
     wavelength_range_nm: Mapped[list[float] | None] = mapped_column(
+        sa.ARRAY(sa.Float())
+    )
+    # RF passband [min, max] in MHz (alembic 0105). Symmetric with
+    # wavelength_range_nm — the RF working band for rf-domain kinds.
+    frequency_range_mhz: Mapped[list[float] | None] = mapped_column(
         sa.ARRAY(sa.Float())
     )
     description: Mapped[str | None] = mapped_column(Text)

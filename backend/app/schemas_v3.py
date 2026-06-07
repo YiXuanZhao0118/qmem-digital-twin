@@ -131,6 +131,7 @@ class Asset3DV3In(CamelModel):
     geometry_ref_glb: Optional[str] = None
     kind: Optional[str] = None             # null for mechanical-only assets
     wavelength_range_nm: Optional[list[float]] = None
+    frequency_range_mhz: Optional[list[float]] = None
 
     physical_dimensions_mm: Optional[dict[str, Any]] = None
 
@@ -155,6 +156,7 @@ class Asset3DV3Out(CamelModel):
     anchors: Optional[list[dict[str, Any]]] = None
     default_params: Optional[dict[str, Any]] = None
     wavelength_range_nm: Optional[list[float]] = None
+    frequency_range_mhz: Optional[list[float]] = None
     properties: dict[str, Any]
 
 
@@ -170,6 +172,7 @@ class Asset3DV3Update(CamelModel):
     anchors: Optional[list[AnchorV3]] = None
     default_params: Optional[dict[str, Any]] = None
     wavelength_range_nm: Optional[list[float]] = None
+    frequency_range_mhz: Optional[list[float]] = None
     # Callers should send the full merged dict; partial keys would`r`n    # clobber unrelated entries.
     properties: Optional[dict[str, Any]] = None
 
