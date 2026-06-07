@@ -16,7 +16,7 @@ import pytest
 
 from app.optical import kinds  # noqa: F401  ensure ops registered
 from app.optical.beam_ray import BeamRay, Vec3, make_beam_ray
-from app.optical.ray_tracer_v3 import (
+from app.optical.ray_tracer import (
     V3AssetSnapshot,
     V3TransitionDescriptor,
     trace_ray_through_asset,
