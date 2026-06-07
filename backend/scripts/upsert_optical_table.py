@@ -19,7 +19,7 @@ KIND = {
     "domains": ["mechanical"],
     "op_set_name": "optical_table",
     "default_params": {},
-    "face_template": {},
+    "anchor_template": {},
     "needs_aperture": False,
     "wavelength_range_nm": None,
     "description": "Passive mechanical optical table primitive used as the lab reference surface.",

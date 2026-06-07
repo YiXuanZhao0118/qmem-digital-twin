@@ -45,7 +45,7 @@ type EditDraft = {
   displayName: string;
   domains: KindDomain[];
   defaultParams: string;
-  faceTemplate: string;
+  anchorTemplate: string;
   needsAperture: boolean;
   wavelengthRangeNm: string;
   description: string;
@@ -64,7 +64,7 @@ function rowToDraft(row: KindRow): EditDraft {
     displayName: row.displayName,
     domains: row.domains,
     defaultParams: JSON.stringify(row.defaultParams ?? {}, null, 2),
-    faceTemplate: JSON.stringify(row.faceTemplate ?? {}, null, 2),
+    anchorTemplate: JSON.stringify(row.anchorTemplate ?? {}, null, 2),
     needsAperture: row.needsAperture,
     wavelengthRangeNm: row.wavelengthRangeNm
       ? row.wavelengthRangeNm.join(", ")
@@ -117,14 +117,14 @@ export function KindsEditor({
     domains: domain === "all" ? ["optical"] : [domain],
     opSetName: "",
     defaultParams: {},
-    faceTemplate: {},
+    anchorTemplate: {},
     needsAperture: false,
     wavelengthRangeNm: null,
     description: "",
   });
   const [createJsonDrafts, setCreateJsonDrafts] = useState({
     defaultParams: "{}",
-    faceTemplate: "{}",
+    anchorTemplate: "{}",
     wavelengthRangeNm: "",
   });
   const [createStatus, setCreateStatus] = useState<"idle" | "saving" | "error">("idle");
@@ -192,7 +192,7 @@ export function KindsEditor({
         displayName: editDraft.displayName,
         domains: editDraft.domains,
         defaultParams: parseJsonObject(editDraft.defaultParams, "defaultParams"),
-        faceTemplate: parseJsonObject(editDraft.faceTemplate, "faceTemplate"),
+        anchorTemplate: parseJsonObject(editDraft.anchorTemplate, "anchorTemplate"),
         needsAperture: editDraft.needsAperture,
         wavelengthRangeNm: parseWavelengthRange(editDraft.wavelengthRangeNm),
         description: editDraft.description || null,
@@ -220,7 +220,7 @@ export function KindsEditor({
       payload = {
         ...createDraft,
         defaultParams: parseJsonObject(createJsonDrafts.defaultParams, "defaultParams"),
-        faceTemplate: parseJsonObject(createJsonDrafts.faceTemplate, "faceTemplate"),
+        anchorTemplate: parseJsonObject(createJsonDrafts.anchorTemplate, "anchorTemplate"),
         wavelengthRangeNm: parseWavelengthRange(createJsonDrafts.wavelengthRangeNm),
         description: createDraft.description || null,
       };
@@ -245,12 +245,12 @@ export function KindsEditor({
         domains: domain === "all" ? ["optical"] : [domain],
         opSetName: "",
         defaultParams: {},
-        faceTemplate: {},
+        anchorTemplate: {},
         needsAperture: false,
         wavelengthRangeNm: null,
         description: "",
       });
-      setCreateJsonDrafts({ defaultParams: "{}", faceTemplate: "{}", wavelengthRangeNm: "" });
+      setCreateJsonDrafts({ defaultParams: "{}", anchorTemplate: "{}", wavelengthRangeNm: "" });
       setCreateStatus("idle");
     } catch (e) {
       setCreateStatus("error");
@@ -539,10 +539,10 @@ export function KindsEditor({
                 style={{ ...INPUT, minHeight: 100, fontFamily: "ui-monospace, monospace", resize: "vertical" }}
               />
 
-              <div style={SECTION_LABEL}>faceTemplate (JSON)</div>
+              <div style={SECTION_LABEL}>anchorTemplate (JSON)</div>
               <textarea
-                value={editDraft.faceTemplate}
-                onChange={(e) => setEditDraft({ ...editDraft, faceTemplate: e.target.value })}
+                value={editDraft.anchorTemplate}
+                onChange={(e) => setEditDraft({ ...editDraft, anchorTemplate: e.target.value })}
                 style={{ ...INPUT, minHeight: 80, fontFamily: "ui-monospace, monospace", resize: "vertical" }}
               />
 
@@ -613,9 +613,9 @@ export function KindsEditor({
                 {JSON.stringify(selectedRow.defaultParams ?? {}, null, 2)}
               </pre>
 
-              <div style={SECTION_LABEL}>faceTemplate</div>
+              <div style={SECTION_LABEL}>anchorTemplate</div>
               <pre style={{ ...INPUT, fontFamily: "ui-monospace, monospace", whiteSpace: "pre-wrap", margin: 0, minHeight: 40 }}>
-                {JSON.stringify(selectedRow.faceTemplate ?? {}, null, 2)}
+                {JSON.stringify(selectedRow.anchorTemplate ?? {}, null, 2)}
               </pre>
             </>
           )}
@@ -686,10 +686,10 @@ export function KindsEditor({
                 style={{ ...INPUT, minHeight: 100, fontFamily: "ui-monospace, monospace", resize: "vertical" }}
               />
 
-              <div style={SECTION_LABEL}>faceTemplate (JSON — anchors block)</div>
+              <div style={SECTION_LABEL}>anchorTemplate (JSON — anchors block)</div>
               <textarea
-                value={createJsonDrafts.faceTemplate}
-                onChange={(e) => setCreateJsonDrafts({ ...createJsonDrafts, faceTemplate: e.target.value })}
+                value={createJsonDrafts.anchorTemplate}
+                onChange={(e) => setCreateJsonDrafts({ ...createJsonDrafts, anchorTemplate: e.target.value })}
                 style={{ ...INPUT, minHeight: 80, fontFamily: "ui-monospace, monospace", resize: "vertical" }}
               />
 

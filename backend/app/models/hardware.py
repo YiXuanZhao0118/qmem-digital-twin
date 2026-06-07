@@ -210,7 +210,7 @@ class Kind(Base):
     # Face template (anchors / required / optional). Same as
     # frontend physics-plugin "anchors" block. Pure metadata used by
     # the Asset3D editor's "create new asset" form.
-    face_template: Mapped[JsonDict] = mapped_column(
+    anchor_template: Mapped[JsonDict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default="{}"
     )
     needs_aperture: Mapped[bool] = mapped_column(

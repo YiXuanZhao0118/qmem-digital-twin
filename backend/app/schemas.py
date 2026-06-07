@@ -3160,7 +3160,7 @@ class KindBase(CamelModel):
     domains: list[Literal["optical", "rf", "mechanical"]] = Field(min_length=1)
     op_set_name: str
     default_params: JsonDict = {}
-    face_template: JsonDict = {}
+    anchor_template: JsonDict = {}
     needs_aperture: bool = False
     wavelength_range_nm: list[float] | None = None
     frequency_range_mhz: list[float] | None = None
@@ -3187,7 +3187,7 @@ class KindUpdate(CamelModel):
         default=None, min_length=1
     )
     default_params: JsonDict | None = None
-    face_template: JsonDict | None = None
+    anchor_template: JsonDict | None = None
     needs_aperture: bool | None = None
     wavelength_range_nm: list[float] | None = None
     frequency_range_mhz: list[float] | None = None

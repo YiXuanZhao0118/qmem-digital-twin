@@ -125,7 +125,7 @@ def intersect_anchor(
 
 # Primary anchor IDs that the tracer considers during ray-plane
 # intersection. After Phase 9.8 anchor naming cleanup, the canonical
-# names come straight from kind.face_template — every optical asset
+# names come straight from kind.anchor_template — every optical asset
 # carries one or more of `intercept_in / intercept_out / intercept_face`
 # (plus rf_in/out/ttl_in for RF). Two derived/special anchors stay:
 #   - interaction_center: synthesized at load time for AOM from the

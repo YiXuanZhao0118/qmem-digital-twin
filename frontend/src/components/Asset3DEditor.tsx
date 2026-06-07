@@ -2353,7 +2353,7 @@ function AssetEditForm({
   // those ??typing a freeform id would silently desync the asset from
   // the kind contract and break tracer lookups.
   const faceIdTemplate = useMemo(() => {
-    const template = kinds.find((k) => k.name === draft.kindId)?.faceTemplate as
+    const template = kinds.find((k) => k.name === draft.kindId)?.anchorTemplate as
       | { required?: string[]; optional?: string[] }
       | undefined;
     const required = Array.isArray(template?.required) ? template!.required! : [];

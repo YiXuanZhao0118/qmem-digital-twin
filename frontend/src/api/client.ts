@@ -206,7 +206,7 @@ export type KindRow = {
   domains: KindDomain[];
   opSetName: string;
   defaultParams: Record<string, unknown>;
-  faceTemplate: Record<string, unknown>;
+  anchorTemplate: Record<string, unknown>;
   needsAperture: boolean;
   wavelengthRangeNm: number[] | null;
   description: string | null;
@@ -220,7 +220,7 @@ export type KindCreatePayload = {
   domains: KindDomain[];
   opSetName: string;
   defaultParams?: Record<string, unknown>;
-  faceTemplate?: Record<string, unknown>;
+  anchorTemplate?: Record<string, unknown>;
   needsAperture?: boolean;
   wavelengthRangeNm?: number[] | null;
   description?: string | null;
@@ -230,7 +230,7 @@ export type KindPatchPayload = {
   displayName?: string;
   domains?: KindDomain[];
   defaultParams?: Record<string, unknown>;
-  faceTemplate?: Record<string, unknown>;
+  anchorTemplate?: Record<string, unknown>;
   needsAperture?: boolean;
   wavelengthRangeNm?: number[] | null;
   description?: string | null;
