@@ -86,20 +86,28 @@ function mergeOrSingle(geoms: THREE.BufferGeometry[]): THREE.BufferGeometry {
 export async function loadAssetGeometry(
   url: string,
   ext: string,
+  opts?: { unit?: string; scaleFactor?: number },
 ): Promise<THREE.BufferGeometry> {
   const e = ext.toLowerCase();
+  let geometry: THREE.BufferGeometry;
   if (e === "glb" || e === "gltf") {
     const gltf = await new GLTFLoader().loadAsync(url);
-    return mergeOrSingle(collectColoredFromObject(gltf.scene));
-  }
-  if (e === "obj") {
+    geometry = mergeOrSingle(collectColoredFromObject(gltf.scene));
+  } else if (e === "obj") {
     const obj = await new OBJLoader().loadAsync(url);
-    return mergeOrSingle(collectColoredFromObject(obj));
+    geometry = mergeOrSingle(collectColoredFromObject(obj));
+  } else if (e === "stl") {
+    const stl = await new STLLoader().loadAsync(url);
+    stl.computeVertexNormals();
+    geometry = toMergeableColored(stl, DEFAULT_COLOR.clone());
+  } else {
+    throw new Error(`Cannot load .${ext} in the builder (need GLB/GLTF/OBJ/STL).`);
   }
-  if (e === "stl") {
-    const geometry = await new STLLoader().loadAsync(url);
-    geometry.computeVertexNormals();
-    return toMergeableColored(geometry, DEFAULT_COLOR.clone());
+  // Normalise to millimetres — occt STEP parts are mm, but assets stored in
+  // metres would otherwise load 1000x too small and vanish next to mm parts.
+  const factor = (opts?.scaleFactor ?? 1) * (opts?.unit === "m" ? 1000 : 1);
+  if (factor !== 1) {
+    geometry.applyMatrix4(new THREE.Matrix4().makeScale(factor, factor, factor));
   }
-  throw new Error(`Cannot load .${ext} in the builder (need GLB/GLTF/OBJ/STL).`);
+  return geometry;
 }

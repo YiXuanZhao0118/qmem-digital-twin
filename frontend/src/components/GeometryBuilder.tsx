@@ -344,7 +344,10 @@ export function GeometryBuilder() {
     setInfo(null);
     setStatus("parsing");
     try {
-      const geom = await loadAssetGeometry(resolveAssetUrl(asset.filePath), ext);
+      const geom = await loadAssetGeometry(resolveAssetUrl(asset.filePath), ext, {
+        unit: asset.unit,
+        scaleFactor: asset.scaleFactor,
+      });
       const id = `part_${partIdRef.current++}`;
       partGeomsRef.current.set(id, geom);
       const next = [...parts, newPart(id, asset.name || asset.catalogId)];

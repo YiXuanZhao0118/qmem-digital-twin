@@ -148,6 +148,8 @@ class Asset3DV3Out(CamelModel):
     name: str
     asset_type: str
     file_path: str
+    unit: str = "mm"
+    scale_factor: float = 1.0
     kind_id: Optional[str] = None
     anchors: Optional[list[dict[str, Any]]] = None
     default_params: Optional[dict[str, Any]] = None

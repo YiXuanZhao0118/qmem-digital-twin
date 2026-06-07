@@ -78,6 +78,8 @@ export type V3Asset = {
   name: string;
   assetType: string;
   filePath: string;
+  unit: string;
+  scaleFactor: number;
   /** Classification slug (alembic 0090). Pointer into the Kind registry. */
   kindId: string | null;
   /** v3-era schema, being retired (Phase 9.8). Anchors[] is the new
