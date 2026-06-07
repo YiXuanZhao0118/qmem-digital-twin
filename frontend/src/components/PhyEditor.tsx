@@ -17,6 +17,7 @@ import { useEffect } from "react";
 import { useSceneStore, type PhyEditorView } from "../store/sceneStore";
 import { Asset3DEditor } from "./Asset3DEditor";
 import { ComponentsEditor } from "./ComponentsEditor";
+import { GeometryBuilder } from "./GeometryBuilder";
 import { KindsEditor } from "./KindsEditor";
 
 type Section = PhyEditorView["section"];
@@ -26,6 +27,7 @@ const SECTIONS: { key: Section; label: string; hint: string }[] = [
   { key: "kinds", label: "KIND", hint: "contract registry" },
   { key: "asset3d", label: "ASSET3D", hint: "faces + transitions" },
   { key: "components", label: "COMPONENT", hint: "compose Asset3D into a part" },
+  { key: "builder", label: "BUILD", hint: "import CAD → coloured GLB" },
 ];
 
 const DOMAIN_FILTERS: { key: DomainFilter; label: string }[] = [
@@ -39,6 +41,7 @@ const SECTION_LABEL: Record<Section, string> = {
   kinds: "KIND",
   asset3d: "ASSET3D",
   components: "COMPONENT",
+  builder: "BUILD",
 };
 const DOMAIN_LABEL: Record<DomainFilter, string> = {
   all: "All domains",
@@ -172,6 +175,7 @@ export function PhyEditor() {
           {activeSection === "components" && (
             <ComponentsEditor domain={activeDomain} mode="binding-dev" />
           )}
+          {activeSection === "builder" && <GeometryBuilder />}
         </div>
       </div>
     </div>

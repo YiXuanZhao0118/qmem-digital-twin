@@ -228,7 +228,7 @@ const PERSIST_KEY = "qmem.editorState";
  *  part can belong to more than one domain (e.g. an AOM is optical+rf),
  *  so domain can no longer be the primary axis of the tree. */
 export type PhyEditorView = {
-  section: "kinds" | "asset3d" | "components";
+  section: "kinds" | "asset3d" | "components" | "builder";
   domain: "all" | "optical" | "rf" | "mechanical";
 };
 
@@ -240,7 +240,10 @@ function normalizePhyEditorView(v: unknown): PhyEditorView | null {
   if (!v || typeof v !== "object") return null;
   const { section, domain } = v as Record<string, unknown>;
   const sectionOk =
-    section === "kinds" || section === "asset3d" || section === "components";
+    section === "kinds" ||
+    section === "asset3d" ||
+    section === "components" ||
+    section === "builder";
   const domainOk =
     domain === "all" ||
     domain === "optical" ||

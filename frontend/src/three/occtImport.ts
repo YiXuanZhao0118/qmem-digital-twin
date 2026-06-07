@@ -56,13 +56,19 @@ interface OcctModule {
   ReadStepFile(content: Uint8Array, params: OcctReadParams | null): OcctImportResult;
 }
 
+/** Maps an emscripten asset path (e.g. `occt-import-js.wasm`) to a real URL.
+ *  The browser build passes one pointing at the Vite-served wasm; node (tests)
+ *  resolves the wasm via the filesystem and needs none. */
+export type OcctLocateFile = (path: string) => string;
+
 let occtPromise: Promise<OcctModule> | null = null;
 
 /** Lazily instantiate (and cache) the OpenCASCADE WASM module. */
-export async function loadOcct(): Promise<OcctModule> {
+export async function loadOcct(locateFile?: OcctLocateFile): Promise<OcctModule> {
   if (!occtPromise) {
     occtPromise = import("occt-import-js").then(
-      (mod) => mod.default() as Promise<OcctModule>,
+      (mod) =>
+        mod.default(locateFile ? { locateFile } : undefined) as Promise<OcctModule>,
     );
   }
   return occtPromise;
@@ -75,8 +81,9 @@ export async function loadOcct(): Promise<OcctModule> {
 export async function importStep(
   data: Uint8Array,
   params: OcctReadParams | null = null,
+  locateFile?: OcctLocateFile,
 ): Promise<OcctImportResult> {
-  const occt = await loadOcct();
+  const occt = await loadOcct(locateFile);
   const result = occt.ReadStepFile(data, params);
   if (!result.success) {
     throw new Error("occt-import-js failed to parse the STEP file.");
