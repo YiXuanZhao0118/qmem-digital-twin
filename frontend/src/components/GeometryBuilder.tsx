@@ -1,8 +1,9 @@
 /**
- * Geometry construction page (Asset-layer M2 §B-1). A PhyEditor tab, independent
- * of the anchor editor: import a STEP file, preview it (colour preserved) in the
- * browser via occt-import-js, then bake + save it as a viewer-ready coloured GLB
- * Asset3D through the existing upload route — no server-side CAD conversion.
+ * Geometry construction page (Asset-layer M2 §B-1 + §B-2). A PhyEditor tab,
+ * independent of the anchor editor: import a STEP file, preview it (colour
+ * preserved) in the browser via occt-import-js, decimate it live with
+ * meshoptimizer, then bake + save it as a viewer-ready coloured GLB Asset3D
+ * through the existing upload route — no server-side CAD conversion.
  *
  * Anchors are NOT placed here. Pipeline is build -> save (freeze) -> place
  * anchors in the ASSET3D tab, so anchors only ever live on a frozen mesh.
@@ -27,10 +28,23 @@ import {
   glbToFile,
   mergeColoredGeometries,
 } from "../three/glbExport";
+import {
+  decimateWelded,
+  estimateGlbBytes,
+  triangleCount,
+  weldForSimplify,
+} from "../three/decimate";
 import { useV3Catalog, type V3AssetUpload } from "../store/catalogStore";
 
 const locateOcctWasm: OcctLocateFile = (path) =>
   path.endsWith(".wasm") ? occtWasmUrl : path;
+
+// Triangle budgets per the Asset-layer III-3 table (Detail / Balanced / Light).
+const PRESETS: { label: string; tris: number }[] = [
+  { label: "Detail", tris: 300_000 },
+  { label: "Balanced", tris: 100_000 },
+  { label: "Light", tris: 30_000 },
+];
 
 function slugify(value: string): string {
   return value
@@ -46,8 +60,14 @@ export function GeometryBuilder() {
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const modelGroupRef = useRef<THREE.Group | null>(null);
-  const geometryRef = useRef<THREE.BufferGeometry | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Full-resolution merged import (source for every re-decimation), its welded
+  // form (cached so the slider doesn't re-weld each tick), and the geometry
+  // currently shown + exported (full or a decimated copy).
+  const fullGeometryRef = useRef<THREE.BufferGeometry | null>(null);
+  const weldedFullRef = useRef<THREE.BufferGeometry | null>(null);
+  const displayGeometryRef = useRef<THREE.BufferGeometry | null>(null);
 
   const uploadAsset = useV3Catalog((s) => s.uploadAsset);
 
@@ -58,7 +78,11 @@ export function GeometryBuilder() {
   const [catalogId, setCatalogId] = useState("");
   const [name, setName] = useState("");
   const [domain, setDomain] = useState<"optical" | "rf" | "mechanical">("mechanical");
-  const [triCount, setTriCount] = useState(0);
+  const [sourceTris, setSourceTris] = useState(0);
+  const [displayTris, setDisplayTris] = useState(0);
+  const [estMB, setEstMB] = useState(0);
+  const [targetTris, setTargetTris] = useState(0);
+  const [decimating, setDecimating] = useState(false);
 
   // One-time three.js viewport.
   useEffect(() => {
@@ -118,10 +142,15 @@ export function GeometryBuilder() {
       controls.dispose();
       for (const child of [...group.children]) {
         if (child instanceof THREE.Mesh) {
-          child.geometry.dispose();
           (child.material as THREE.Material).dispose();
         }
       }
+      // Geometries are owned by refs, not the group; dispose them here.
+      displayGeometryRef.current?.dispose();
+      if (fullGeometryRef.current !== displayGeometryRef.current) {
+        fullGeometryRef.current?.dispose();
+      }
+      weldedFullRef.current?.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode === mount) {
         mount.removeChild(renderer.domElement);
@@ -132,6 +161,8 @@ export function GeometryBuilder() {
     };
   }, []);
 
+  // Show a geometry in the viewport. Disposes only the previous mesh's material;
+  // geometry lifetimes are owned by the refs above.
   const showGeometry = useCallback((geometry: THREE.BufferGeometry) => {
     const group = modelGroupRef.current;
     const camera = cameraRef.current;
@@ -141,7 +172,6 @@ export function GeometryBuilder() {
     for (const child of [...group.children]) {
       group.remove(child);
       if (child instanceof THREE.Mesh) {
-        child.geometry.dispose();
         (child.material as THREE.Material).dispose();
       }
     }
@@ -175,10 +205,25 @@ export function GeometryBuilder() {
         const data = new Uint8Array(await file.arrayBuffer());
         const result = await importStep(data, { linearUnit: "millimeter" }, locateOcctWasm);
         const merged = mergeColoredGeometries(occtResultToGeometry(result));
-        geometryRef.current = merged;
-        const posAttr = merged.getAttribute("position");
-        setTriCount(posAttr ? Math.floor(posAttr.count / 3) : 0);
+
+        // Drop any previous import's geometries.
+        if (displayGeometryRef.current && displayGeometryRef.current !== fullGeometryRef.current) {
+          displayGeometryRef.current.dispose();
+        }
+        fullGeometryRef.current?.dispose();
+        weldedFullRef.current?.dispose();
+
+        fullGeometryRef.current = merged;
+        weldedFullRef.current = weldForSimplify(merged);
+        displayGeometryRef.current = merged;
+
+        const tris = triangleCount(merged);
+        setSourceTris(tris);
+        setTargetTris(tris); // full res by default; the effect renders it
+        setDisplayTris(tris);
+        setEstMB(estimateGlbBytes(merged) / 1e6);
         showGeometry(merged);
+
         setSourceName(file.name);
         const stem = file.name.replace(/\.[^.]+$/, "");
         setCatalogId((current) => current || slugify(stem));
@@ -193,8 +238,36 @@ export function GeometryBuilder() {
     [showGeometry],
   );
 
+  // Live decimation: debounce slider/preset changes, re-decimate from the cached
+  // welded full-res mesh, swap the preview, and refresh the tri/size readout.
+  useEffect(() => {
+    const welded = weldedFullRef.current;
+    const full = fullGeometryRef.current;
+    if (!welded || !full || sourceTris === 0) return;
+
+    const id = setTimeout(async () => {
+      setDecimating(true);
+      setError(null);
+      try {
+        const next =
+          targetTris >= sourceTris ? full : await decimateWelded(welded, targetTris);
+        const prev = displayGeometryRef.current;
+        displayGeometryRef.current = next;
+        showGeometry(next);
+        setDisplayTris(triangleCount(next));
+        setEstMB(estimateGlbBytes(next) / 1e6);
+        if (prev && prev !== full && prev !== next) prev.dispose();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setDecimating(false);
+      }
+    }, 150);
+    return () => clearTimeout(id);
+  }, [targetTris, sourceTris, showGeometry]);
+
   const handleSave = useCallback(async () => {
-    const geometry = geometryRef.current;
+    const geometry = displayGeometryRef.current;
     if (!geometry) {
       setError("Import a STEP file first.");
       return;
@@ -220,7 +293,7 @@ export function GeometryBuilder() {
         preserveColors: true,
       };
       await uploadAsset(payload);
-      setInfo(`Saved “${catalogId}” as a coloured GLB. Place anchors in the ASSET3D tab.`);
+      setInfo(`Saved “${catalogId}” (${(glb.byteLength / 1e6).toFixed(1)} MB). Place anchors in the ASSET3D tab.`);
       setStatus("ready");
     } catch (e) {
       setStatus("ready");
@@ -228,6 +301,7 @@ export function GeometryBuilder() {
     }
   }, [catalogId, name, domain, uploadAsset]);
 
+  const hasModel = sourceTris > 0;
   const busy = status === "parsing" || status === "saving";
 
   return (
@@ -248,8 +322,8 @@ export function GeometryBuilder() {
         <div>
           <h3 style={{ margin: "0 0 4px", fontSize: 14 }}>Geometry Builder</h3>
           <p style={{ margin: 0, fontSize: 11, opacity: 0.7, lineHeight: 1.4 }}>
-            Import a STEP file → preview with colour → save as a viewer-ready GLB
-            asset. Anchors are placed afterwards in the ASSET3D tab.
+            Import a STEP file → preview with colour → decimate → save as a
+            viewer-ready GLB asset. Anchors are placed afterwards in the ASSET3D tab.
           </p>
         </div>
 
@@ -268,77 +342,95 @@ export function GeometryBuilder() {
           type="button"
           disabled={busy}
           onClick={() => fileInputRef.current?.click()}
-          style={{
-            padding: "8px 12px",
-            fontSize: 12,
-            fontWeight: 600,
-            border: "1px solid #2563eb",
-            background: busy ? "#26262c" : "#1e3a8a",
-            color: "#dbeafe",
-            cursor: busy ? "not-allowed" : "pointer",
-            borderRadius: 4,
-          }}
+          style={primaryButton(busy)}
         >
           {status === "parsing" ? "Parsing STEP…" : "Import STEP…"}
         </button>
 
-        {sourceName && (
-          <div style={{ fontSize: 11, opacity: 0.85 }}>
-            <div>
-              source: <code>{sourceName}</code>
+        {hasModel && (
+          <>
+            {sourceName && (
+              <div style={{ fontSize: 11, opacity: 0.85 }}>
+                source: <code>{sourceName}</code>
+              </div>
+            )}
+
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 11, opacity: 0.8 }}>Decimation</div>
+              <div style={{ display: "flex", gap: 6 }}>
+                {PRESETS.map((p) => (
+                  <button
+                    key={p.label}
+                    type="button"
+                    onClick={() => setTargetTris(Math.min(sourceTris, p.tris))}
+                    style={chipButton(targetTris === Math.min(sourceTris, p.tris))}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setTargetTris(sourceTris)}
+                  style={chipButton(targetTris >= sourceTris)}
+                >
+                  Full
+                </button>
+              </div>
+              <input
+                type="range"
+                min={Math.min(1000, sourceTris)}
+                max={sourceTris}
+                step={1000}
+                value={Math.min(targetTris, sourceTris)}
+                onChange={(e) => setTargetTris(Number(e.target.value))}
+              />
+              <div style={{ fontSize: 11, opacity: 0.85 }}>
+                {displayTris.toLocaleString()} tris · ~{estMB.toFixed(1)} MB
+                {decimating && <span style={{ opacity: 0.6 }}> · simplifying…</span>}
+              </div>
             </div>
-            <div>triangles: {triCount.toLocaleString()}</div>
-          </div>
+
+            <label style={{ fontSize: 11, display: "grid", gap: 4 }}>
+              catalog_id
+              <input
+                value={catalogId}
+                onChange={(e) => setCatalogId(e.target.value)}
+                placeholder="lower_snake_case"
+                style={inputStyle}
+              />
+            </label>
+            <label style={{ fontSize: 11, display: "grid", gap: 4 }}>
+              name
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Display name"
+                style={inputStyle}
+              />
+            </label>
+            <label style={{ fontSize: 11, display: "grid", gap: 4 }}>
+              domain
+              <select
+                value={domain}
+                onChange={(e) => setDomain(e.target.value as typeof domain)}
+                style={inputStyle}
+              >
+                <option value="mechanical">mechanical</option>
+                <option value="optical">optical</option>
+                <option value="rf">rf</option>
+              </select>
+            </label>
+
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void handleSave()}
+              style={saveButton(busy)}
+            >
+              {status === "saving" ? "Saving…" : "Save as GLB asset"}
+            </button>
+          </>
         )}
-
-        <label style={{ fontSize: 11, display: "grid", gap: 4 }}>
-          catalog_id
-          <input
-            value={catalogId}
-            onChange={(e) => setCatalogId(e.target.value)}
-            placeholder="lower_snake_case"
-            style={inputStyle}
-          />
-        </label>
-        <label style={{ fontSize: 11, display: "grid", gap: 4 }}>
-          name
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Display name"
-            style={inputStyle}
-          />
-        </label>
-        <label style={{ fontSize: 11, display: "grid", gap: 4 }}>
-          domain
-          <select
-            value={domain}
-            onChange={(e) => setDomain(e.target.value as typeof domain)}
-            style={inputStyle}
-          >
-            <option value="mechanical">mechanical</option>
-            <option value="optical">optical</option>
-            <option value="rf">rf</option>
-          </select>
-        </label>
-
-        <button
-          type="button"
-          disabled={busy || status === "idle"}
-          onClick={() => void handleSave()}
-          style={{
-            padding: "8px 12px",
-            fontSize: 12,
-            fontWeight: 600,
-            border: "1px solid #ca8a04",
-            background: busy || status === "idle" ? "#26262c" : "#a16207",
-            color: "#fef3c7",
-            cursor: busy || status === "idle" ? "not-allowed" : "pointer",
-            borderRadius: 4,
-          }}
-        >
-          {status === "saving" ? "Saving…" : "Save as GLB asset"}
-        </button>
 
         {error && (
           <div style={{ fontSize: 11, color: "#fca5a5", whiteSpace: "pre-wrap" }}>{error}</div>
@@ -361,3 +453,42 @@ const inputStyle: React.CSSProperties = {
   borderRadius: 3,
   color: "#e6e6e6",
 };
+
+function primaryButton(disabled: boolean): React.CSSProperties {
+  return {
+    padding: "8px 12px",
+    fontSize: 12,
+    fontWeight: 600,
+    border: "1px solid #2563eb",
+    background: disabled ? "#26262c" : "#1e3a8a",
+    color: "#dbeafe",
+    cursor: disabled ? "not-allowed" : "pointer",
+    borderRadius: 4,
+  };
+}
+
+function saveButton(disabled: boolean): React.CSSProperties {
+  return {
+    padding: "8px 12px",
+    fontSize: 12,
+    fontWeight: 600,
+    border: "1px solid #ca8a04",
+    background: disabled ? "#26262c" : "#a16207",
+    color: "#fef3c7",
+    cursor: disabled ? "not-allowed" : "pointer",
+    borderRadius: 4,
+  };
+}
+
+function chipButton(active: boolean): React.CSSProperties {
+  return {
+    flex: 1,
+    padding: "4px 6px",
+    fontSize: 11,
+    border: "1px solid " + (active ? "#2563eb" : "#303039"),
+    background: active ? "#1e3a8a" : "#15151a",
+    color: active ? "#dbeafe" : "#cbd5e1",
+    cursor: "pointer",
+    borderRadius: 3,
+  };
+}
