@@ -291,7 +291,18 @@ def trace_ray_through_asset(
 
 
 # ---------------------------------------------------------------------------
-# Scene-level trace (Phase 3b)
+# DEAD CODE — legacy v2 face-based scene trace (Phase 3b).
+#
+# No callers remain: §D retired the v2 solver path (run_v3_solver /
+# solve_v3_scene / load_scene_from_db / asset_to_snapshot were deleted), so
+# nothing imports V3Scene / flatten_scene / emit_scene_source_rays* /
+# trace_ray_scene any more. The production path is the anchor tracer
+# (anchor_tracer.trace_ray_anchor_scene via solve_anchor_scene). This whole
+# block (down to EOF) is safe to delete wholesale in a focused follow-up; it is
+# left here only to avoid a large risky deletion at the tail of the §D work.
+# NOTE: the per-asset runtime ABOVE this line (trace_ray_through_asset,
+# V3AssetSnapshot, intersect_face, …) is LIVE — parity goldens + the anchor ops
+# build on it. Do not remove that.
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
