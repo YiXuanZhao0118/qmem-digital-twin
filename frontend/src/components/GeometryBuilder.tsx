@@ -1,19 +1,14 @@
 /**
  * Geometry construction page (Asset-layer M2 §B-1..§B-4). A PhyEditor tab,
- * independent of the anchor editor. Import STEP file(s) in-browser (occt-import-js
- * WASM), preview with colour, decimate live (meshoptimizer), then bake + save as
- * a viewer-ready coloured GLB Asset3D via the existing upload route — no
- * server-side CAD conversion.
+ * independent of the anchor editor. Sources: upload a STEP (occt-import-js WASM)
+ * OR pull in an existing Asset3D (GLB/GLTF/OBJ/STL) to edit/combine. Each source
+ * mesh is a "part" with its own position/rotation; preview/export is the merge of
+ * the included, transformed parts — coloured — saved as a viewer-ready GLB via
+ * the existing upload route (no server-side CAD conversion). Decimate live
+ * (meshoptimizer). Anchors are placed afterwards in the ASSET3D tab.
  *
- * One unified model covers split + merge (decisions #8/#9): every imported occt
- * mesh becomes a "part". Importing more files APPENDS parts. The preview/export
- * is the merge of the *included* parts. So:
- *   - split  = import one STEP, untick the parts you don't want, save one asset,
- *              re-tick differently, save again (keep-a-subset-and-save, repeat).
- *   - merge  = import several files, keep them all ticked, save one asset.
- * Anchors are NOT placed here (pipeline: build -> save/freeze -> anchor in the
- * ASSET3D tab). File imports carry no kind, so the saved asset is kindless
- * geometry (domain-selected); merging *existing kinded assets* is out of scope.
+ * Split = untick parts; merge = add more sources; edit-existing = add an existing
+ * asset as a source, transform, save. File imports are kindless geometry.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -41,27 +36,45 @@ import {
   triangleCount,
   weldForSimplify,
 } from "../three/decimate";
+import { loadAssetGeometry } from "../three/loadAssetGeometry";
+import { resolveAssetUrl } from "../api/client";
 import { useV3Catalog, type V3AssetUpload } from "../store/catalogStore";
 
 const locateOcctWasm: OcctLocateFile = (path) =>
   path.endsWith(".wasm") ? occtWasmUrl : path;
 
-// Triangle budgets per the Asset-layer III-3 table (Detail / Balanced / Light).
 const PRESETS: { label: string; tris: number }[] = [
   { label: "Detail", tris: 300_000 },
   { label: "Balanced", tris: 100_000 },
   { label: "Light", tris: 30_000 },
 ];
 
+const VIEWER_EXTS = new Set(["glb", "gltf", "obj", "stl"]);
+
 function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9_]+/g, "_")
-    .replace(/^_+|_+$/g, "");
+  return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function extOf(pathOrType: string): string {
+  return (pathOrType.split("?")[0].split(".").pop() ?? pathOrType).toLowerCase();
 }
 
 type Status = "idle" | "parsing" | "ready" | "saving";
-type Part = { id: string; label: string; included: boolean };
+type Part = {
+  id: string;
+  label: string;
+  included: boolean;
+  tx: number; ty: number; tz: number; // position mm
+  rx: number; ry: number; rz: number; // rotation deg
+};
+
+function newPart(id: string, label: string): Part {
+  return { id, label, included: true, tx: 0, ty: 0, tz: 0, rx: 0, ry: 0, rz: 0 };
+}
+
+function hasTransform(p: Part): boolean {
+  return p.tx || p.ty || p.tz || p.rx || p.ry || p.rz ? true : false;
+}
 
 export function GeometryBuilder() {
   const mountRef = useRef<HTMLDivElement | null>(null);
@@ -70,21 +83,23 @@ export function GeometryBuilder() {
   const modelGroupRef = useRef<THREE.Group | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Per-part source geometry, keyed by part id (kept out of React state).
   const partGeomsRef = useRef<Map<string, THREE.BufferGeometry>>(new Map());
   const partIdRef = useRef(0);
-  // Merge of the currently-included parts (full res), its cached weld, and the
-  // current decimated copy (null while showing full res).
   const composedFullRef = useRef<THREE.BufferGeometry | null>(null);
   const weldedFullRef = useRef<THREE.BufferGeometry | null>(null);
   const decimatedRef = useRef<THREE.BufferGeometry | null>(null);
+  const recomposeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const uploadAsset = useV3Catalog((s) => s.uploadAsset);
+  const assets = useV3Catalog((s) => s.assets);
+  const refreshCatalog = useV3Catalog((s) => s.refresh);
 
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [parts, setParts] = useState<Part[]>([]);
+  const [selectedPartId, setSelectedPartId] = useState<string | null>(null);
+  const [existingPick, setExistingPick] = useState("");
   const [catalogId, setCatalogId] = useState("");
   const [name, setName] = useState("");
   const [domain, setDomain] = useState<"optical" | "rf" | "mechanical">("mechanical");
@@ -98,7 +113,6 @@ export function GeometryBuilder() {
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount) return;
-
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x16161a);
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100000);
@@ -108,7 +122,6 @@ export function GeometryBuilder() {
     mount.appendChild(renderer.domElement);
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-
     const group = new THREE.Group();
     scene.add(group);
     scene.add(new THREE.AmbientLight(0xffffff, 0.65));
@@ -163,8 +176,12 @@ export function GeometryBuilder() {
     };
   }, []);
 
-  // Replace the previewed mesh. Disposes only the previous material; geometry
-  // lifetimes are owned by the refs above.
+  // Populate the existing-asset picker (the catalog may be unfetched in this tab).
+  useEffect(() => {
+    if (assets.length === 0) void refreshCatalog();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshCatalog]);
+
   const showGeometry = useCallback((geometry: THREE.BufferGeometry) => {
     const group = modelGroupRef.current;
     const camera = cameraRef.current;
@@ -198,20 +215,38 @@ export function GeometryBuilder() {
     }
   }, []);
 
-  // Rebuild the full-res merge from the included parts and (re)start decimation.
+  // Rebuild the merge from the included parts (each baked at its transform).
   const recompose = useCallback(
     (nextParts: Part[]) => {
-      const geoms = nextParts
-        .filter((p) => p.included)
-        .map((p) => partGeomsRef.current.get(p.id))
-        .filter((g): g is THREE.BufferGeometry => Boolean(g));
+      const clones: THREE.BufferGeometry[] = [];
+      for (const p of nextParts) {
+        if (!p.included) continue;
+        const base = partGeomsRef.current.get(p.id);
+        if (!base) continue;
+        const g = base.clone();
+        if (hasTransform(p)) {
+          const m = new THREE.Matrix4().compose(
+            new THREE.Vector3(p.tx, p.ty, p.tz),
+            new THREE.Quaternion().setFromEuler(
+              new THREE.Euler(
+                THREE.MathUtils.degToRad(p.rx),
+                THREE.MathUtils.degToRad(p.ry),
+                THREE.MathUtils.degToRad(p.rz),
+              ),
+            ),
+            new THREE.Vector3(1, 1, 1),
+          );
+          g.applyMatrix4(m);
+        }
+        clones.push(g);
+      }
 
       decimatedRef.current?.dispose();
       decimatedRef.current = null;
       composedFullRef.current?.dispose();
       weldedFullRef.current?.dispose();
 
-      if (geoms.length === 0) {
+      if (clones.length === 0) {
         composedFullRef.current = null;
         weldedFullRef.current = null;
         clearPreview();
@@ -222,30 +257,44 @@ export function GeometryBuilder() {
         return;
       }
 
-      // Always a fresh geometry (clone the single-part case) so disposing the
-      // composed mesh never corrupts a part's source geometry.
-      const composed =
-        geoms.length === 1 ? geoms[0].clone() : mergeColoredGeometries(geoms);
+      const composed = mergeColoredGeometries(clones);
+      // mergeColoredGeometries returns clones[0] for a single part; dispose the
+      // rest. (composed is always a clone, never a part's source geometry.)
+      for (const g of clones) {
+        if (g !== composed) g.dispose();
+      }
       composedFullRef.current = composed;
       weldedFullRef.current = weldForSimplify(composed);
       const tris = triangleCount(composed);
       showGeometry(composed);
       setSourceTris(tris);
-      setTargetTris(tris); // full res; the decimation effect honours the slider
+      setTargetTris(tris);
       setDisplayTris(tris);
       setEstMB(estimateGlbBytes(composed) / 1e6);
     },
     [clearPreview, showGeometry],
   );
 
+  // Debounced recompose for rapid edits (slider-like transform typing).
+  const recomposeSoon = useCallback(
+    (nextParts: Part[]) => {
+      setParts(nextParts);
+      if (recomposeTimer.current) clearTimeout(recomposeTimer.current);
+      recomposeTimer.current = setTimeout(() => recompose(nextParts), 120);
+    },
+    [recompose],
+  );
+
+  const seedNaming = useCallback((stem: string) => {
+    setCatalogId((c) => c || slugify(stem));
+    setName((n) => n || stem);
+  }, []);
+
   const handleFiles = useCallback(
     async (files: File[]) => {
       setError(null);
       setInfo(null);
-      const steps = files.filter((f) => {
-        const ext = f.name.split(".").pop()?.toLowerCase() ?? "";
-        return ext === "step" || ext === "stp";
-      });
+      const steps = files.filter((f) => ["step", "stp"].includes(extOf(f.name)));
       if (steps.length === 0) {
         setError("Pick STEP file(s) (.step / .stp).");
         return;
@@ -261,22 +310,13 @@ export function GeometryBuilder() {
             const id = `part_${partIdRef.current++}`;
             partGeomsRef.current.set(id, occtMeshToGeometry(mesh));
             const meshLabel = mesh.name && mesh.name.trim() ? mesh.name : `mesh ${i + 1}`;
-            added.push({
-              id,
-              label: result.meshes.length > 1 ? `${stem} · ${meshLabel}` : stem,
-              included: true,
-            });
+            added.push(newPart(id, result.meshes.length > 1 ? `${stem} · ${meshLabel}` : stem));
           });
         }
         const next = [...parts, ...added];
         setParts(next);
         recompose(next);
-        // Seed catalog_id / name from the first import only.
-        if (parts.length === 0 && added.length > 0) {
-          const firstStem = steps[0].name.replace(/\.[^.]+$/, "");
-          setCatalogId((c) => c || slugify(firstStem));
-          setName((n) => n || firstStem);
-        }
+        if (parts.length === 0 && steps[0]) seedNaming(steps[0].name.replace(/\.[^.]+$/, ""));
         setInfo(`Added ${added.length} part(s). ${next.length} total.`);
         setStatus("ready");
       } catch (e) {
@@ -284,8 +324,38 @@ export function GeometryBuilder() {
         setError(e instanceof Error ? e.message : String(e));
       }
     },
-    [parts, recompose],
+    [parts, recompose, seedNaming],
   );
+
+  const handleAddExisting = useCallback(async () => {
+    const asset = assets.find((a) => a.catalogId === existingPick);
+    if (!asset) {
+      setError("Pick an existing asset to add.");
+      return;
+    }
+    const ext = extOf(asset.assetType || asset.filePath);
+    if (!VIEWER_EXTS.has(ext)) {
+      setError(`"${asset.catalogId}" is .${ext} — only GLB/GLTF/OBJ/STL assets can be loaded as a source.`);
+      return;
+    }
+    setError(null);
+    setInfo(null);
+    setStatus("parsing");
+    try {
+      const geom = await loadAssetGeometry(resolveAssetUrl(asset.filePath), ext);
+      const id = `part_${partIdRef.current++}`;
+      partGeomsRef.current.set(id, geom);
+      const next = [...parts, newPart(id, asset.name || asset.catalogId)];
+      setParts(next);
+      recompose(next);
+      if (parts.length === 0) seedNaming(`${asset.catalogId}_edit`);
+      setInfo(`Added existing asset "${asset.catalogId}".`);
+      setStatus("ready");
+    } catch (e) {
+      setStatus("ready");
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [assets, existingPick, parts, recompose, seedNaming]);
 
   const togglePart = useCallback(
     (id: string) => {
@@ -301,14 +371,22 @@ export function GeometryBuilder() {
       partGeomsRef.current.get(id)?.dispose();
       partGeomsRef.current.delete(id);
       const next = parts.filter((p) => p.id !== id);
+      if (selectedPartId === id) setSelectedPartId(null);
       setParts(next);
       recompose(next);
     },
-    [parts, recompose],
+    [parts, recompose, selectedPartId],
   );
 
-  // Live decimation: debounce slider/preset changes, re-decimate from the cached
-  // welded merge, swap the preview, and refresh the tri/size readout.
+  const setPartField = useCallback(
+    (id: string, field: "tx" | "ty" | "tz" | "rx" | "ry" | "rz", value: number) => {
+      const next = parts.map((p) => (p.id === id ? { ...p, [field]: value } : p));
+      recomposeSoon(next);
+    },
+    [parts, recomposeSoon],
+  );
+
+  // Live decimation (debounced).
   useEffect(() => {
     const welded = weldedFullRef.current;
     const full = composedFullRef.current;
@@ -343,7 +421,7 @@ export function GeometryBuilder() {
   const handleSave = useCallback(async () => {
     const geometry = decimatedRef.current ?? composedFullRef.current;
     if (!geometry) {
-      setError("Import at least one STEP part first.");
+      setError("Add at least one source part first.");
       return;
     }
     if (!/^[a-z0-9_]+$/.test(catalogId)) {
@@ -367,9 +445,7 @@ export function GeometryBuilder() {
         preserveColors: true,
       };
       await uploadAsset(payload);
-      setInfo(
-        `Saved “${catalogId}” (${(glb.byteLength / 1e6).toFixed(1)} MB). Place anchors in the ASSET3D tab.`,
-      );
+      setInfo(`Saved “${catalogId}” (${(glb.byteLength / 1e6).toFixed(1)} MB). Place anchors in the ASSET3D tab.`);
       setStatus("ready");
     } catch (e) {
       setStatus("ready");
@@ -380,6 +456,8 @@ export function GeometryBuilder() {
   const hasModel = sourceTris > 0;
   const busy = status === "parsing" || status === "saving";
   const includedCount = parts.filter((p) => p.included).length;
+  const selectedPart = parts.find((p) => p.id === selectedPartId) ?? null;
+  const importableAssets = assets.filter((a) => VIEWER_EXTS.has(extOf(a.assetType || a.filePath)));
 
   return (
     <div style={{ display: "flex", height: "100%", minHeight: 0, color: "#e6e6e6" }}>
@@ -399,9 +477,9 @@ export function GeometryBuilder() {
         <div>
           <h3 style={{ margin: "0 0 4px", fontSize: 14 }}>Geometry Builder</h3>
           <p style={{ margin: 0, fontSize: 11, opacity: 0.7, lineHeight: 1.4 }}>
-            Import STEP file(s) → keep the parts you want (untick to split, import
-            more to merge) → decimate → save as a coloured GLB asset. Anchors are
-            placed afterwards in the ASSET3D tab.
+            Add sources (upload STEP or pick an existing asset), position/rotate
+            each, keep what you want (untick to split), decimate, then save as a
+            coloured GLB. Anchors are placed afterwards in the ASSET3D tab.
           </p>
         </div>
 
@@ -417,41 +495,57 @@ export function GeometryBuilder() {
             if (files.length) void handleFiles(files);
           }}
         />
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => fileInputRef.current?.click()}
-          style={primaryButton(busy)}
-        >
-          {status === "parsing"
-            ? "Parsing STEP…"
-            : parts.length === 0
-              ? "Import STEP…"
-              : "Import more STEP…"}
+        <button type="button" disabled={busy} onClick={() => fileInputRef.current?.click()} style={primaryButton(busy)}>
+          {status === "parsing" ? "Working…" : parts.length === 0 ? "Import STEP…" : "Import more STEP…"}
         </button>
+
+        <div style={{ display: "flex", gap: 6 }}>
+          <select
+            value={existingPick}
+            onChange={(e) => setExistingPick(e.target.value)}
+            disabled={busy}
+            style={{ ...inputStyle, flex: 1 }}
+          >
+            <option value="">add existing asset…</option>
+            {importableAssets.map((a) => (
+              <option key={a.catalogId} value={a.catalogId}>
+                {a.name || a.catalogId} (.{extOf(a.assetType || a.filePath)})
+              </option>
+            ))}
+          </select>
+          <button type="button" disabled={busy || !existingPick} onClick={() => void handleAddExisting()} style={chipButton(false)}>
+            Add
+          </button>
+        </div>
 
         {parts.length > 0 && (
           <div style={{ display: "grid", gap: 4 }}>
             <div style={{ fontSize: 11, opacity: 0.8 }}>
-              Parts ({includedCount}/{parts.length} kept)
+              Parts ({includedCount}/{parts.length} kept) — click to transform
             </div>
-            <div style={{ display: "grid", gap: 2, maxHeight: 160, overflow: "auto" }}>
+            <div style={{ display: "grid", gap: 2, maxHeight: 150, overflow: "auto" }}>
               {parts.map((p) => (
                 <div
                   key={p.id}
-                  style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}
+                  onClick={() => setSelectedPartId(p.id)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: 11,
+                    padding: "1px 3px",
+                    borderRadius: 3,
+                    cursor: "pointer",
+                    background: selectedPartId === p.id ? "#26334d" : "transparent",
+                  }}
                 >
-                  <input
-                    type="checkbox"
-                    checked={p.included}
-                    onChange={() => togglePart(p.id)}
-                  />
+                  <input type="checkbox" checked={p.included} onChange={() => togglePart(p.id)} onClick={(e) => e.stopPropagation()} />
                   <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.label}>
-                    {p.label}
+                    {hasTransform(p) ? "◆ " : ""}{p.label}
                   </span>
                   <button
                     type="button"
-                    onClick={() => removePart(p.id)}
+                    onClick={(e) => { e.stopPropagation(); removePart(p.id); }}
                     title="Remove part"
                     style={{ background: "none", border: "none", color: "#fca5a5", cursor: "pointer", fontSize: 13, lineHeight: 1 }}
                   >
@@ -463,37 +557,43 @@ export function GeometryBuilder() {
           </div>
         )}
 
+        {selectedPart && (
+          <div style={{ display: "grid", gap: 4, padding: 8, background: "#15151a", border: "1px solid #303039", borderRadius: 4 }}>
+            <div style={{ fontSize: 11, opacity: 0.85 }}>Transform: {selectedPart.label}</div>
+            <div style={{ fontSize: 10, opacity: 0.6 }}>position (mm)</div>
+            <div style={{ display: "flex", gap: 4 }}>
+              {(["tx", "ty", "tz"] as const).map((f) => (
+                <input key={f} type="number" step={1} value={selectedPart[f]}
+                  onChange={(e) => setPartField(selectedPart.id, f, Number(e.target.value) || 0)}
+                  style={{ ...inputStyle, width: "33%" }} />
+              ))}
+            </div>
+            <div style={{ fontSize: 10, opacity: 0.6 }}>rotation (deg)</div>
+            <div style={{ display: "flex", gap: 4 }}>
+              {(["rx", "ry", "rz"] as const).map((f) => (
+                <input key={f} type="number" step={5} value={selectedPart[f]}
+                  onChange={(e) => setPartField(selectedPart.id, f, Number(e.target.value) || 0)}
+                  style={{ ...inputStyle, width: "33%" }} />
+              ))}
+            </div>
+          </div>
+        )}
+
         {hasModel && (
           <>
             <div style={{ display: "grid", gap: 6 }}>
               <div style={{ fontSize: 11, opacity: 0.8 }}>Decimation</div>
               <div style={{ display: "flex", gap: 6 }}>
                 {PRESETS.map((p) => (
-                  <button
-                    key={p.label}
-                    type="button"
-                    onClick={() => setTargetTris(Math.min(sourceTris, p.tris))}
-                    style={chipButton(targetTris === Math.min(sourceTris, p.tris))}
-                  >
+                  <button key={p.label} type="button" onClick={() => setTargetTris(Math.min(sourceTris, p.tris))} style={chipButton(targetTris === Math.min(sourceTris, p.tris))}>
                     {p.label}
                   </button>
                 ))}
-                <button
-                  type="button"
-                  onClick={() => setTargetTris(sourceTris)}
-                  style={chipButton(targetTris >= sourceTris)}
-                >
+                <button type="button" onClick={() => setTargetTris(sourceTris)} style={chipButton(targetTris >= sourceTris)}>
                   Full
                 </button>
               </div>
-              <input
-                type="range"
-                min={Math.min(1000, sourceTris)}
-                max={sourceTris}
-                step={1000}
-                value={Math.min(targetTris, sourceTris)}
-                onChange={(e) => setTargetTris(Number(e.target.value))}
-              />
+              <input type="range" min={Math.min(1000, sourceTris)} max={sourceTris} step={1000} value={Math.min(targetTris, sourceTris)} onChange={(e) => setTargetTris(Number(e.target.value))} />
               <div style={{ fontSize: 11, opacity: 0.85 }}>
                 {displayTris.toLocaleString()} tris · ~{estMB.toFixed(1)} MB
                 {decimating && <span style={{ opacity: 0.6 }}> · simplifying…</span>}
@@ -502,52 +602,29 @@ export function GeometryBuilder() {
 
             <label style={{ fontSize: 11, display: "grid", gap: 4 }}>
               catalog_id
-              <input
-                value={catalogId}
-                onChange={(e) => setCatalogId(e.target.value)}
-                placeholder="lower_snake_case"
-                style={inputStyle}
-              />
+              <input value={catalogId} onChange={(e) => setCatalogId(e.target.value)} placeholder="lower_snake_case" style={inputStyle} />
             </label>
             <label style={{ fontSize: 11, display: "grid", gap: 4 }}>
               name
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Display name"
-                style={inputStyle}
-              />
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Display name" style={inputStyle} />
             </label>
             <label style={{ fontSize: 11, display: "grid", gap: 4 }}>
               domain
-              <select
-                value={domain}
-                onChange={(e) => setDomain(e.target.value as typeof domain)}
-                style={inputStyle}
-              >
+              <select value={domain} onChange={(e) => setDomain(e.target.value as typeof domain)} style={inputStyle}>
                 <option value="mechanical">mechanical</option>
                 <option value="optical">optical</option>
                 <option value="rf">rf</option>
               </select>
             </label>
 
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void handleSave()}
-              style={saveButton(busy)}
-            >
+            <button type="button" disabled={busy} onClick={() => void handleSave()} style={saveButton(busy)}>
               {status === "saving" ? "Saving…" : "Save as GLB asset"}
             </button>
           </>
         )}
 
-        {error && (
-          <div style={{ fontSize: 11, color: "#fca5a5", whiteSpace: "pre-wrap" }}>{error}</div>
-        )}
-        {info && !error && (
-          <div style={{ fontSize: 11, color: "#86efac", whiteSpace: "pre-wrap" }}>{info}</div>
-        )}
+        {error && <div style={{ fontSize: 11, color: "#fca5a5", whiteSpace: "pre-wrap" }}>{error}</div>}
+        {info && !error && <div style={{ fontSize: 11, color: "#86efac", whiteSpace: "pre-wrap" }}>{info}</div>}
       </aside>
 
       <div ref={mountRef} style={{ flex: 1, minWidth: 0, position: "relative" }} />
