@@ -254,8 +254,6 @@ class Asset3DBase(CamelModel):
     properties: JsonDict = Field(default_factory=dict)
     catalog_id: str | None = None
     kind_id: str | None = None
-    faces: JsonList | None = None
-    transitions: JsonList | None = None
     default_params: JsonDict | None = None
     wavelength_range_nm: list[float] | None = None
 
@@ -276,8 +274,6 @@ class Asset3DUpdate(CamelModel):
     properties: JsonDict | None = None
     catalog_id: str | None = None
     kind_id: str | None = None
-    faces: JsonList | None = None
-    transitions: JsonList | None = None
     default_params: JsonDict | None = None
     wavelength_range_nm: list[float] | None = None
 

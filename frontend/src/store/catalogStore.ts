@@ -369,8 +369,6 @@ export const useV3Catalog = create<V3CatalogState>((set, get) => ({
         catalogId: payload.catalogId,
         kindId: payload.kindId ?? (payload.domain === "mechanical" ? "none" : null),
         properties: uploadMetadata(payload),
-        faces: [],
-        transitions: [],
         defaultParams: {},
       });
       await get().refresh();

@@ -168,8 +168,6 @@ async def create_asset3d_v3(
         # v3 physics fields — copy from source when forking so the new
         # asset starts as an editable mirror of the original.
         kind_id=payload.kind_id or (source.kind_id if source else None),
-        faces=list(source.faces) if source and source.faces else None,
-        transitions=list(source.transitions) if source and source.transitions else None,
         default_params=dict(source.default_params) if source and source.default_params else None,
         wavelength_range_nm=list(source.wavelength_range_nm) if source and source.wavelength_range_nm else None,
         frequency_range_mhz=list(source.frequency_range_mhz) if source and source.frequency_range_mhz else None,
@@ -282,8 +280,6 @@ async def upload_asset3d_v3(
         scale_factor=scale_factor,
         anchors=[],
         kind_id=kind_id or ("none" if domain == "mechanical" else None),
-        faces=[],
-        transitions=[],
         default_params={},
         properties=properties,
     )
@@ -333,18 +329,6 @@ async def update_asset3d_by_catalog_id(
     fields = payload.model_fields_set
     if "kind_id" in fields:
         row.kind_id = payload.kind_id
-    if "faces" in fields:
-        row.faces = (
-            [f.model_dump(by_alias=True, exclude_none=True) for f in payload.faces]
-            if payload.faces is not None
-            else None
-        )
-    if "transitions" in fields:
-        row.transitions = (
-            [t.model_dump(by_alias=True, exclude_none=True) for t in payload.transitions]
-            if payload.transitions is not None
-            else None
-        )
     if "anchors" in fields:
         # Phase 9.8: editor's primary write path. Replaces faces[]/
         # transitions[] over time. Pass-through-store as camelCase dicts

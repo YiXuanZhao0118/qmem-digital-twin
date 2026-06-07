@@ -73,8 +73,6 @@ class Asset3D(Base):
     catalog_id: Mapped[str | None] = mapped_column(Text, unique=False)
     # Classification slug (alembic 0089/0090). Pointer into the Kind registry.
     kind_id: Mapped[str | None] = mapped_column(Text)
-    faces: Mapped[JsonList | None] = mapped_column(JSONB)
-    transitions: Mapped[JsonList | None] = mapped_column(JSONB)
     default_params: Mapped[JsonDict | None] = mapped_column(JSONB)
     wavelength_range_nm: Mapped[list[float] | None] = mapped_column(
         sa.ARRAY(sa.Float())

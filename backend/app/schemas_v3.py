@@ -135,8 +135,6 @@ class Asset3DV3In(CamelModel):
 
     physical_dimensions_mm: Optional[dict[str, Any]] = None
 
-    faces: list[FaceV3] = Field(default_factory=list)
-    transitions: list[TransitionV3] = Field(default_factory=list)
     default_params: dict[str, Any] = Field(default_factory=dict)
     mechanical_anchors: list[MechanicalAnchorV3] = Field(default_factory=list)
 
@@ -151,8 +149,6 @@ class Asset3DV3Out(CamelModel):
     asset_type: str
     file_path: str
     kind_id: Optional[str] = None
-    faces: Optional[list[FaceV3]] = None
-    transitions: Optional[list[TransitionV3]] = None
     anchors: Optional[list[dict[str, Any]]] = None
     default_params: Optional[dict[str, Any]] = None
     wavelength_range_nm: Optional[list[float]] = None
@@ -163,8 +159,6 @@ class Asset3DV3Out(CamelModel):
 class Asset3DV3Update(CamelModel):
     """Editable v3 fields for the Asset3D catalog editor."""
     kind_id: Optional[str] = None
-    faces: Optional[list[FaceV3]] = None
-    transitions: Optional[list[TransitionV3]] = None
     # Phase 9.8: PHY Editor's primary write target ??replaces faces[] +
     # transitions[] over time. Anchors use the Phase 9.1 tri-axis schema
     # (axisX/Y/Z) consumed by the anchor tracer. Editor sends the full
