@@ -1,12 +1,19 @@
 /**
- * Geometry construction page (Asset-layer M2 §B-1 + §B-2). A PhyEditor tab,
- * independent of the anchor editor: import a STEP file, preview it (colour
- * preserved) in the browser via occt-import-js, decimate it live with
- * meshoptimizer, then bake + save it as a viewer-ready coloured GLB Asset3D
- * through the existing upload route — no server-side CAD conversion.
+ * Geometry construction page (Asset-layer M2 §B-1..§B-4). A PhyEditor tab,
+ * independent of the anchor editor. Import STEP file(s) in-browser (occt-import-js
+ * WASM), preview with colour, decimate live (meshoptimizer), then bake + save as
+ * a viewer-ready coloured GLB Asset3D via the existing upload route — no
+ * server-side CAD conversion.
  *
- * Anchors are NOT placed here. Pipeline is build -> save (freeze) -> place
- * anchors in the ASSET3D tab, so anchors only ever live on a frozen mesh.
+ * One unified model covers split + merge (decisions #8/#9): every imported occt
+ * mesh becomes a "part". Importing more files APPENDS parts. The preview/export
+ * is the merge of the *included* parts. So:
+ *   - split  = import one STEP, untick the parts you don't want, save one asset,
+ *              re-tick differently, save again (keep-a-subset-and-save, repeat).
+ *   - merge  = import several files, keep them all ticked, save one asset.
+ * Anchors are NOT placed here (pipeline: build -> save/freeze -> anchor in the
+ * ASSET3D tab). File imports carry no kind, so the saved asset is kindless
+ * geometry (domain-selected); merging *existing kinded assets* is out of scope.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -19,7 +26,7 @@ import occtWasmUrl from "occt-import-js/dist/occt-import-js.wasm?url";
 
 import {
   importStep,
-  occtResultToGeometry,
+  occtMeshToGeometry,
   type OcctLocateFile,
 } from "../three/occtImport";
 import {
@@ -54,6 +61,7 @@ function slugify(value: string): string {
 }
 
 type Status = "idle" | "parsing" | "ready" | "saving";
+type Part = { id: string; label: string; included: boolean };
 
 export function GeometryBuilder() {
   const mountRef = useRef<HTMLDivElement | null>(null);
@@ -62,19 +70,21 @@ export function GeometryBuilder() {
   const modelGroupRef = useRef<THREE.Group | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Full-resolution merged import (source for every re-decimation), its welded
-  // form (cached so the slider doesn't re-weld each tick), and the geometry
-  // currently shown + exported (full or a decimated copy).
-  const fullGeometryRef = useRef<THREE.BufferGeometry | null>(null);
+  // Per-part source geometry, keyed by part id (kept out of React state).
+  const partGeomsRef = useRef<Map<string, THREE.BufferGeometry>>(new Map());
+  const partIdRef = useRef(0);
+  // Merge of the currently-included parts (full res), its cached weld, and the
+  // current decimated copy (null while showing full res).
+  const composedFullRef = useRef<THREE.BufferGeometry | null>(null);
   const weldedFullRef = useRef<THREE.BufferGeometry | null>(null);
-  const displayGeometryRef = useRef<THREE.BufferGeometry | null>(null);
+  const decimatedRef = useRef<THREE.BufferGeometry | null>(null);
 
   const uploadAsset = useV3Catalog((s) => s.uploadAsset);
 
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
-  const [sourceName, setSourceName] = useState("");
+  const [parts, setParts] = useState<Part[]>([]);
   const [catalogId, setCatalogId] = useState("");
   const [name, setName] = useState("");
   const [domain, setDomain] = useState<"optical" | "rf" | "mechanical">("mechanical");
@@ -91,14 +101,11 @@ export function GeometryBuilder() {
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x16161a);
-
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100000);
     camera.position.set(120, 120, 120);
-
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     mount.appendChild(renderer.domElement);
-
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
 
@@ -141,42 +148,33 @@ export function GeometryBuilder() {
       ro.disconnect();
       controls.dispose();
       for (const child of [...group.children]) {
-        if (child instanceof THREE.Mesh) {
-          (child.material as THREE.Material).dispose();
-        }
+        if (child instanceof THREE.Mesh) (child.material as THREE.Material).dispose();
       }
-      // Geometries are owned by refs, not the group; dispose them here.
-      displayGeometryRef.current?.dispose();
-      if (fullGeometryRef.current !== displayGeometryRef.current) {
-        fullGeometryRef.current?.dispose();
-      }
+      decimatedRef.current?.dispose();
+      composedFullRef.current?.dispose();
       weldedFullRef.current?.dispose();
+      for (const geom of partGeomsRef.current.values()) geom.dispose();
+      partGeomsRef.current.clear();
       renderer.dispose();
-      if (renderer.domElement.parentNode === mount) {
-        mount.removeChild(renderer.domElement);
-      }
+      if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
       cameraRef.current = null;
       controlsRef.current = null;
       modelGroupRef.current = null;
     };
   }, []);
 
-  // Show a geometry in the viewport. Disposes only the previous mesh's material;
-  // geometry lifetimes are owned by the refs above.
+  // Replace the previewed mesh. Disposes only the previous material; geometry
+  // lifetimes are owned by the refs above.
   const showGeometry = useCallback((geometry: THREE.BufferGeometry) => {
     const group = modelGroupRef.current;
     const camera = cameraRef.current;
     const controls = controlsRef.current;
     if (!group || !camera || !controls) return;
-
     for (const child of [...group.children]) {
       group.remove(child);
-      if (child instanceof THREE.Mesh) {
-        (child.material as THREE.Material).dispose();
-      }
+      if (child instanceof THREE.Mesh) (child.material as THREE.Material).dispose();
     }
     group.add(geometryToColoredMesh(geometry));
-
     geometry.computeBoundingSphere();
     const sphere = geometry.boundingSphere;
     const radius = sphere && sphere.radius > 0 ? sphere.radius : 50;
@@ -191,72 +189,148 @@ export function GeometryBuilder() {
     controls.update();
   }, []);
 
-  const handleFile = useCallback(
-    async (file: File) => {
+  const clearPreview = useCallback(() => {
+    const group = modelGroupRef.current;
+    if (!group) return;
+    for (const child of [...group.children]) {
+      group.remove(child);
+      if (child instanceof THREE.Mesh) (child.material as THREE.Material).dispose();
+    }
+  }, []);
+
+  // Rebuild the full-res merge from the included parts and (re)start decimation.
+  const recompose = useCallback(
+    (nextParts: Part[]) => {
+      const geoms = nextParts
+        .filter((p) => p.included)
+        .map((p) => partGeomsRef.current.get(p.id))
+        .filter((g): g is THREE.BufferGeometry => Boolean(g));
+
+      decimatedRef.current?.dispose();
+      decimatedRef.current = null;
+      composedFullRef.current?.dispose();
+      weldedFullRef.current?.dispose();
+
+      if (geoms.length === 0) {
+        composedFullRef.current = null;
+        weldedFullRef.current = null;
+        clearPreview();
+        setSourceTris(0);
+        setTargetTris(0);
+        setDisplayTris(0);
+        setEstMB(0);
+        return;
+      }
+
+      // Always a fresh geometry (clone the single-part case) so disposing the
+      // composed mesh never corrupts a part's source geometry.
+      const composed =
+        geoms.length === 1 ? geoms[0].clone() : mergeColoredGeometries(geoms);
+      composedFullRef.current = composed;
+      weldedFullRef.current = weldForSimplify(composed);
+      const tris = triangleCount(composed);
+      showGeometry(composed);
+      setSourceTris(tris);
+      setTargetTris(tris); // full res; the decimation effect honours the slider
+      setDisplayTris(tris);
+      setEstMB(estimateGlbBytes(composed) / 1e6);
+    },
+    [clearPreview, showGeometry],
+  );
+
+  const handleFiles = useCallback(
+    async (files: File[]) => {
       setError(null);
       setInfo(null);
-      const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-      if (ext !== "step" && ext !== "stp") {
-        setError("Pick a STEP file (.step / .stp).");
+      const steps = files.filter((f) => {
+        const ext = f.name.split(".").pop()?.toLowerCase() ?? "";
+        return ext === "step" || ext === "stp";
+      });
+      if (steps.length === 0) {
+        setError("Pick STEP file(s) (.step / .stp).");
         return;
       }
       setStatus("parsing");
       try {
-        const data = new Uint8Array(await file.arrayBuffer());
-        const result = await importStep(data, { linearUnit: "millimeter" }, locateOcctWasm);
-        const merged = mergeColoredGeometries(occtResultToGeometry(result));
-
-        // Drop any previous import's geometries.
-        if (displayGeometryRef.current && displayGeometryRef.current !== fullGeometryRef.current) {
-          displayGeometryRef.current.dispose();
+        const added: Part[] = [];
+        for (const file of steps) {
+          const data = new Uint8Array(await file.arrayBuffer());
+          const result = await importStep(data, { linearUnit: "millimeter" }, locateOcctWasm);
+          const stem = file.name.replace(/\.[^.]+$/, "");
+          result.meshes.forEach((mesh, i) => {
+            const id = `part_${partIdRef.current++}`;
+            partGeomsRef.current.set(id, occtMeshToGeometry(mesh));
+            const meshLabel = mesh.name && mesh.name.trim() ? mesh.name : `mesh ${i + 1}`;
+            added.push({
+              id,
+              label: result.meshes.length > 1 ? `${stem} · ${meshLabel}` : stem,
+              included: true,
+            });
+          });
         }
-        fullGeometryRef.current?.dispose();
-        weldedFullRef.current?.dispose();
-
-        fullGeometryRef.current = merged;
-        weldedFullRef.current = weldForSimplify(merged);
-        displayGeometryRef.current = merged;
-
-        const tris = triangleCount(merged);
-        setSourceTris(tris);
-        setTargetTris(tris); // full res by default; the effect renders it
-        setDisplayTris(tris);
-        setEstMB(estimateGlbBytes(merged) / 1e6);
-        showGeometry(merged);
-
-        setSourceName(file.name);
-        const stem = file.name.replace(/\.[^.]+$/, "");
-        setCatalogId((current) => current || slugify(stem));
-        setName((current) => current || stem);
-        setInfo(`Imported ${result.meshes.length} mesh(es).`);
+        const next = [...parts, ...added];
+        setParts(next);
+        recompose(next);
+        // Seed catalog_id / name from the first import only.
+        if (parts.length === 0 && added.length > 0) {
+          const firstStem = steps[0].name.replace(/\.[^.]+$/, "");
+          setCatalogId((c) => c || slugify(firstStem));
+          setName((n) => n || firstStem);
+        }
+        setInfo(`Added ${added.length} part(s). ${next.length} total.`);
         setStatus("ready");
       } catch (e) {
-        setStatus("idle");
+        setStatus("ready");
         setError(e instanceof Error ? e.message : String(e));
       }
     },
-    [showGeometry],
+    [parts, recompose],
+  );
+
+  const togglePart = useCallback(
+    (id: string) => {
+      const next = parts.map((p) => (p.id === id ? { ...p, included: !p.included } : p));
+      setParts(next);
+      recompose(next);
+    },
+    [parts, recompose],
+  );
+
+  const removePart = useCallback(
+    (id: string) => {
+      partGeomsRef.current.get(id)?.dispose();
+      partGeomsRef.current.delete(id);
+      const next = parts.filter((p) => p.id !== id);
+      setParts(next);
+      recompose(next);
+    },
+    [parts, recompose],
   );
 
   // Live decimation: debounce slider/preset changes, re-decimate from the cached
-  // welded full-res mesh, swap the preview, and refresh the tri/size readout.
+  // welded merge, swap the preview, and refresh the tri/size readout.
   useEffect(() => {
     const welded = weldedFullRef.current;
-    const full = fullGeometryRef.current;
+    const full = composedFullRef.current;
     if (!welded || !full || sourceTris === 0) return;
-
     const id = setTimeout(async () => {
       setDecimating(true);
       setError(null);
       try {
-        const next =
-          targetTris >= sourceTris ? full : await decimateWelded(welded, targetTris);
-        const prev = displayGeometryRef.current;
-        displayGeometryRef.current = next;
-        showGeometry(next);
-        setDisplayTris(triangleCount(next));
-        setEstMB(estimateGlbBytes(next) / 1e6);
-        if (prev && prev !== full && prev !== next) prev.dispose();
+        if (targetTris >= sourceTris) {
+          decimatedRef.current?.dispose();
+          decimatedRef.current = null;
+          showGeometry(full);
+          setDisplayTris(triangleCount(full));
+          setEstMB(estimateGlbBytes(full) / 1e6);
+        } else {
+          const next = await decimateWelded(welded, targetTris);
+          decimatedRef.current?.dispose();
+          decimatedRef.current = next;
+          showGeometry(next);
+          setDisplayTris(triangleCount(next));
+          setEstMB(estimateGlbBytes(next) / 1e6);
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -267,9 +341,9 @@ export function GeometryBuilder() {
   }, [targetTris, sourceTris, showGeometry]);
 
   const handleSave = useCallback(async () => {
-    const geometry = displayGeometryRef.current;
+    const geometry = decimatedRef.current ?? composedFullRef.current;
     if (!geometry) {
-      setError("Import a STEP file first.");
+      setError("Import at least one STEP part first.");
       return;
     }
     if (!/^[a-z0-9_]+$/.test(catalogId)) {
@@ -293,7 +367,9 @@ export function GeometryBuilder() {
         preserveColors: true,
       };
       await uploadAsset(payload);
-      setInfo(`Saved “${catalogId}” (${(glb.byteLength / 1e6).toFixed(1)} MB). Place anchors in the ASSET3D tab.`);
+      setInfo(
+        `Saved “${catalogId}” (${(glb.byteLength / 1e6).toFixed(1)} MB). Place anchors in the ASSET3D tab.`,
+      );
       setStatus("ready");
     } catch (e) {
       setStatus("ready");
@@ -303,13 +379,14 @@ export function GeometryBuilder() {
 
   const hasModel = sourceTris > 0;
   const busy = status === "parsing" || status === "saving";
+  const includedCount = parts.filter((p) => p.included).length;
 
   return (
     <div style={{ display: "flex", height: "100%", minHeight: 0, color: "#e6e6e6" }}>
       <aside
         style={{
-          width: 320,
-          flex: "0 0 320px",
+          width: 340,
+          flex: "0 0 340px",
           padding: 14,
           display: "flex",
           flexDirection: "column",
@@ -322,8 +399,9 @@ export function GeometryBuilder() {
         <div>
           <h3 style={{ margin: "0 0 4px", fontSize: 14 }}>Geometry Builder</h3>
           <p style={{ margin: 0, fontSize: 11, opacity: 0.7, lineHeight: 1.4 }}>
-            Import a STEP file → preview with colour → decimate → save as a
-            viewer-ready GLB asset. Anchors are placed afterwards in the ASSET3D tab.
+            Import STEP file(s) → keep the parts you want (untick to split, import
+            more to merge) → decimate → save as a coloured GLB asset. Anchors are
+            placed afterwards in the ASSET3D tab.
           </p>
         </div>
 
@@ -331,11 +409,12 @@ export function GeometryBuilder() {
           ref={fileInputRef}
           type="file"
           accept=".step,.stp"
+          multiple
           style={{ display: "none" }}
           onChange={(e) => {
-            const file = e.currentTarget.files?.[0] ?? null;
+            const files = Array.from(e.currentTarget.files ?? []);
             e.currentTarget.value = "";
-            if (file) void handleFile(file);
+            if (files.length) void handleFiles(files);
           }}
         />
         <button
@@ -344,17 +423,48 @@ export function GeometryBuilder() {
           onClick={() => fileInputRef.current?.click()}
           style={primaryButton(busy)}
         >
-          {status === "parsing" ? "Parsing STEP…" : "Import STEP…"}
+          {status === "parsing"
+            ? "Parsing STEP…"
+            : parts.length === 0
+              ? "Import STEP…"
+              : "Import more STEP…"}
         </button>
+
+        {parts.length > 0 && (
+          <div style={{ display: "grid", gap: 4 }}>
+            <div style={{ fontSize: 11, opacity: 0.8 }}>
+              Parts ({includedCount}/{parts.length} kept)
+            </div>
+            <div style={{ display: "grid", gap: 2, maxHeight: 160, overflow: "auto" }}>
+              {parts.map((p) => (
+                <div
+                  key={p.id}
+                  style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={p.included}
+                    onChange={() => togglePart(p.id)}
+                  />
+                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.label}>
+                    {p.label}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => removePart(p.id)}
+                    title="Remove part"
+                    style={{ background: "none", border: "none", color: "#fca5a5", cursor: "pointer", fontSize: 13, lineHeight: 1 }}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {hasModel && (
           <>
-            {sourceName && (
-              <div style={{ fontSize: 11, opacity: 0.85 }}>
-                source: <code>{sourceName}</code>
-              </div>
-            )}
-
             <div style={{ display: "grid", gap: 6 }}>
               <div style={{ fontSize: 11, opacity: 0.8 }}>Decimation</div>
               <div style={{ display: "flex", gap: 6 }}>
