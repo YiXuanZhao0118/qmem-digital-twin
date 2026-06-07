@@ -317,6 +317,7 @@ export function GeometryBuilder() {
         const next = [...parts, ...added];
         setParts(next);
         recompose(next);
+        if (added[0]) setSelectedPartId(added[0].id); // show its transform panel
         if (parts.length === 0 && steps[0]) seedNaming(steps[0].name.replace(/\.[^.]+$/, ""));
         setInfo(`Added ${added.length} part(s). ${next.length} total.`);
         setStatus("ready");
@@ -349,6 +350,7 @@ export function GeometryBuilder() {
       const next = [...parts, newPart(id, asset.name || asset.catalogId)];
       setParts(next);
       recompose(next);
+      setSelectedPartId(id); // show its transform panel
       if (parts.length === 0) seedNaming(`${asset.catalogId}_edit`);
       setInfo(`Added existing asset "${asset.catalogId}".`);
       setStatus("ready");
