@@ -1,14 +1,17 @@
 /**
  * Geometry construction page (Asset-layer M2 §B). A PhyEditor tab, independent of
  * the anchor editor. Each source (uploaded STEP / picked asset) is ONE unit with
- * its own position + rotation; preview/export is the merge of the included,
- * transformed sources, coloured, saved as a viewer-ready GLB via the existing
- * upload route (no server-side CAD conversion). Each source keeps its sub-meshes
- * so unwanted regions can be removed within it. Decimate live (meshoptimizer).
- * Anchors are placed afterwards in the ASSET3D tab.
+ * its own position + rotation + removable sub-meshes; preview/export is the merge
+ * of the included, transformed sources, coloured, saved as a viewer-ready GLB via
+ * the existing upload route (no server-side CAD conversion). Decimate live
+ * (meshoptimizer). Anchors are placed afterwards in the ASSET3D tab.
  *
- * - merge: add more sources.   - split: untick a source, or untick its sub-meshes.
- * - edit existing: add an existing asset as a source, transform/trim, save.
+ * Region editing (§B-3 / III-4, mirrors the Asset3DEditor cluster tooling, but
+ * here deletions are BAKED into the exported GLB rather than stored as a runtime
+ * viewerHint): Ctrl+mid-click deletes a coplanar cluster, Ctrl+mid-drag box-
+ * deletes; Shift+mid locks ("keep") clusters so a box-delete skips them. Locks
+ * are UI-only; Save only commits deletions. Cluster picks raycast a full-res
+ * (un-decimated) hidden mesh so centroid keys stay stable while decimating.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -17,29 +20,15 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 import occtWasmUrl from "occt-import-js/dist/occt-import-js.wasm?url";
 
-import {
-  importStep,
-  occtMeshToGeometry,
-  type OcctLocateFile,
-} from "../three/occtImport";
-import {
-  exportGlb,
-  geometryToColoredMesh,
-  glbToFile,
-  mergeColoredGeometries,
-} from "../three/glbExport";
-import {
-  decimateWelded,
-  estimateGlbBytes,
-  triangleCount,
-  weldForSimplify,
-} from "../three/decimate";
+import { importStep, occtMeshToGeometry, type OcctLocateFile } from "../three/occtImport";
+import { exportGlb, geometryToColoredMesh, glbToFile, mergeColoredGeometries } from "../three/glbExport";
+import { decimateWelded, estimateGlbBytes, triangleCount, weldForSimplify } from "../three/decimate";
 import { loadAssetGeometry, type LoadedSubMesh } from "../three/loadAssetGeometry";
+import { centroidKey, findCoplanarCluster } from "../three/loadAsset/viewerHints";
 import { resolveAssetUrl } from "../api/client";
 import { useV3Catalog, type V3AssetUpload } from "../store/catalogStore";
 
-const locateOcctWasm: OcctLocateFile = (path) =>
-  path.endsWith(".wasm") ? occtWasmUrl : path;
+const locateOcctWasm: OcctLocateFile = (path) => (path.endsWith(".wasm") ? occtWasmUrl : path);
 
 const PRESETS: { label: string; tris: number }[] = [
   { label: "Detail", tris: 300_000 },
@@ -48,6 +37,7 @@ const PRESETS: { label: string; tris: number }[] = [
 ];
 
 const VIEWER_EXTS = new Set(["glb", "gltf", "obj", "stl"]);
+const DRAG_THRESHOLD_PX = 5;
 
 function slugify(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
@@ -81,19 +71,57 @@ function mergeAndDispose(geoms: THREE.BufferGeometry[]): THREE.BufferGeometry {
   return merged;
 }
 
+/** Colour-preserving triangle filter keyed on the 0.5 mm centroid grid
+ *  (same key as findCoplanarCluster / box-select). mode "drop" removes
+ *  triangles whose centroid is in `keys`; "only" keeps only those. */
+function filterColored(
+  geom: THREE.BufferGeometry,
+  keys: ReadonlySet<string>,
+  mode: "drop" | "only",
+): THREE.BufferGeometry {
+  const pos = geom.attributes.position.array as Float32Array;
+  const col = geom.attributes.color?.array as Float32Array | undefined;
+  const triCount = Math.floor(pos.length / 9);
+  const oPos: number[] = [];
+  const oCol: number[] = [];
+  for (let t = 0; t < triCount; t += 1) {
+    const o = t * 9;
+    const cx = (pos[o] + pos[o + 3] + pos[o + 6]) / 3;
+    const cy = (pos[o + 1] + pos[o + 4] + pos[o + 7]) / 3;
+    const cz = (pos[o + 2] + pos[o + 5] + pos[o + 8]) / 3;
+    const inSet = keys.has(centroidKey(cx, cy, cz));
+    if (mode === "drop" ? inSet : !inSet) continue;
+    for (let k = 0; k < 9; k += 1) {
+      oPos.push(pos[o + k]);
+      if (col) oCol.push(col[o + k]);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(oPos, 3));
+  if (col && oCol.length) g.setAttribute("color", new THREE.Float32BufferAttribute(oCol, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
 export function GeometryBuilder() {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const modelGroupRef = useRef<THREE.Group | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const subGeomsRef = useRef<Map<string, THREE.BufferGeometry>>(new Map()); // subMeshId -> geom
   const idRef = useRef(0);
-  const composedFullRef = useRef<THREE.BufferGeometry | null>(null);
-  const weldedFullRef = useRef<THREE.BufferGeometry | null>(null);
-  const decimatedRef = useRef<THREE.BufferGeometry | null>(null);
-  const recomposeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const composedFullRef = useRef<THREE.BufferGeometry | null>(null); // merged, transformed, coloured (no deletions)
+  const editGeomRef = useRef<THREE.BufferGeometry | null>(null);     // composedFull minus deletions (full-res, pick mesh)
+  const weldedEditRef = useRef<THREE.BufferGeometry | null>(null);   // weld of editGeom for decimation
+  const decimatedRef = useRef<THREE.BufferGeometry | null>(null);    // decimated display geom (or null = full-res)
+  const displayGeomRef = useRef<THREE.BufferGeometry | null>(null);  // geom currently shown (editGeom or decimated)
+  const lockGeomRef = useRef<THREE.BufferGeometry | null>(null);     // green overlay (locked subset)
+  const pickMeshRef = useRef<THREE.Mesh | null>(null);
+  const sourceTrisRef = useRef(0);
+  const [editNonce, setEditNonce] = useState(0);
 
   const uploadAsset = useV3Catalog((s) => s.uploadAsset);
   const assets = useV3Catalog((s) => s.assets);
@@ -113,113 +141,116 @@ export function GeometryBuilder() {
   const [targetTris, setTargetTris] = useState(0);
   const [decimating, setDecimating] = useState(false);
 
+  // Region-edit state (mirror into refs for the one-time viewer effect).
+  const [deletedKeys, setDeletedKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const [lockedKeys, setLockedKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const [showLocks, setShowLocks] = useState(true);
+  const deletedRef = useRef(deletedKeys); deletedRef.current = deletedKeys;
+  const lockedRef = useRef(lockedKeys); lockedRef.current = lockedKeys;
+  const showLocksRef = useRef(showLocks); showLocksRef.current = showLocks;
+
   useEffect(() => {
     if (assets.length === 0) void refreshCatalog();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshCatalog]);
 
-  // One-time three.js viewport.
-  useEffect(() => {
-    const mount = mountRef.current;
-    if (!mount) return;
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x16161a);
-    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100000);
-    camera.position.set(120, 120, 120);
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(window.devicePixelRatio);
-    mount.appendChild(renderer.domElement);
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    const group = new THREE.Group();
-    scene.add(group);
-    scene.add(new THREE.AmbientLight(0xffffff, 0.65));
-    const key = new THREE.DirectionalLight(0xffffff, 0.85);
-    key.position.set(1, 1.5, 1);
-    scene.add(key);
-    const fill = new THREE.DirectionalLight(0xffffff, 0.35);
-    fill.position.set(-1, -0.5, -1);
-    scene.add(fill);
-    scene.add(new THREE.GridHelper(500, 20, 0x3a3a44, 0x26262c));
-
-    cameraRef.current = camera;
-    controlsRef.current = controls;
-    modelGroupRef.current = group;
-
-    let raf = 0;
-    const animate = () => {
-      controls.update();
-      renderer.render(scene, camera);
-      raf = requestAnimationFrame(animate);
-    };
-    const resize = () => {
-      const w = mount.clientWidth;
-      const h = mount.clientHeight;
-      if (w === 0 || h === 0) return;
-      renderer.setSize(w, h, false);
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-    };
-    resize();
-    const ro = new ResizeObserver(resize);
-    ro.observe(mount);
-    animate();
-
-    return () => {
-      cancelAnimationFrame(raf);
-      ro.disconnect();
-      controls.dispose();
-      for (const child of [...group.children]) {
-        if (child instanceof THREE.Mesh) (child.material as THREE.Material).dispose();
-      }
-      decimatedRef.current?.dispose();
-      composedFullRef.current?.dispose();
-      weldedFullRef.current?.dispose();
-      for (const geom of subGeomsRef.current.values()) geom.dispose();
-      subGeomsRef.current.clear();
-      renderer.dispose();
-      if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
-      cameraRef.current = null;
-      controlsRef.current = null;
-      modelGroupRef.current = null;
-    };
-  }, []);
-
-  const showGeometry = useCallback((geometry: THREE.BufferGeometry) => {
-    const group = modelGroupRef.current;
-    const camera = cameraRef.current;
-    const controls = controlsRef.current;
-    if (!group || !camera || !controls) return;
-    for (const child of [...group.children]) {
-      group.remove(child);
-      if (child instanceof THREE.Mesh) (child.material as THREE.Material).dispose();
-    }
-    group.add(geometryToColoredMesh(geometry));
-    geometry.computeBoundingSphere();
-    const sphere = geometry.boundingSphere;
-    const radius = sphere && sphere.radius > 0 ? sphere.radius : 50;
-    const center = sphere ? sphere.center : new THREE.Vector3();
-    controls.target.copy(center);
-    camera.position
-      .copy(center)
-      .add(new THREE.Vector3(1, 0.8, 1).normalize().multiplyScalar(radius * 3));
-    camera.near = radius / 100;
-    camera.far = radius * 100;
-    camera.updateProjectionMatrix();
-    controls.update();
-  }, []);
-
-  const clearPreview = useCallback(() => {
+  // Rebuild the group meshes from the current display / pick / lock geometries.
+  const mountMeshes = useCallback(() => {
     const group = modelGroupRef.current;
     if (!group) return;
     for (const child of [...group.children]) {
       group.remove(child);
       if (child instanceof THREE.Mesh) (child.material as THREE.Material).dispose();
     }
+    pickMeshRef.current = null;
+    const display = displayGeomRef.current;
+    if (display) group.add(geometryToColoredMesh(display));
+    const edit = editGeomRef.current;
+    if (edit) {
+      // Invisible full-res mesh: cluster picks + box-select raycast THIS so
+      // centroid keys stay stable even when the visible mesh is decimated.
+      const pick = geometryToColoredMesh(edit);
+      pick.visible = false;
+      pickMeshRef.current = pick;
+      group.add(pick);
+    }
+    const lock = lockGeomRef.current;
+    if (showLocksRef.current && lock && (lock.attributes.position?.count ?? 0) > 0) {
+      const lockMesh = new THREE.Mesh(
+        lock,
+        new THREE.MeshStandardMaterial({ color: "#22c55e", transparent: true, opacity: 0.55, depthWrite: false }),
+      );
+      lockMesh.renderOrder = 20;
+      group.add(lockMesh);
+    }
   }, []);
 
+  const fitCamera = useCallback((geometry: THREE.BufferGeometry) => {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (!camera || !controls) return;
+    geometry.computeBoundingSphere();
+    const sphere = geometry.boundingSphere;
+    const radius = sphere && sphere.radius > 0 ? sphere.radius : 50;
+    const center = sphere ? sphere.center : new THREE.Vector3();
+    controls.target.copy(center);
+    camera.position.copy(center).add(new THREE.Vector3(1, 0.8, 1).normalize().multiplyScalar(radius * 3));
+    camera.near = radius / 100;
+    camera.far = radius * 100;
+    camera.updateProjectionMatrix();
+    controls.update();
+  }, []);
+
+  // Apply deletions (+ hidden locks) to composedFull → editGeom, rebuild the
+  // lock overlay + welded copy, and trigger a redisplay (decimation effect).
+  const applyEdits = useCallback(() => {
+    const composed = composedFullRef.current;
+    editGeomRef.current?.dispose();
+    weldedEditRef.current?.dispose();
+    lockGeomRef.current?.dispose();
+    lockGeomRef.current = null;
+    decimatedRef.current?.dispose();
+    decimatedRef.current = null;
+
+    if (!composed) {
+      editGeomRef.current = null;
+      weldedEditRef.current = null;
+      displayGeomRef.current = null;
+      sourceTrisRef.current = 0;
+      mountMeshes();
+      setSourceTris(0);
+      setDisplayTris(0);
+      setEstMB(0);
+      setEditNonce((n) => n + 1);
+      return;
+    }
+
+    const hide = new Set(deletedRef.current);
+    if (!showLocksRef.current) for (const k of lockedRef.current) hide.add(k);
+    const editGeom = hide.size > 0 ? filterColored(composed, hide, "drop") : composed.clone();
+    editGeomRef.current = editGeom;
+    weldedEditRef.current = weldForSimplify(editGeom);
+
+    if (showLocksRef.current && lockedRef.current.size > 0) {
+      lockGeomRef.current = filterColored(composed, lockedRef.current, "only");
+    }
+
+    const tris = triangleCount(editGeom);
+    sourceTrisRef.current = tris;
+    // Show full-res immediately (single synchronous swap → no flicker or
+    // render of a just-disposed geometry); the decimation effect refines
+    // to the current budget if it is below full.
+    displayGeomRef.current = editGeom;
+    mountMeshes();
+    setSourceTris(tris);
+    setDisplayTris(tris);
+    setEstMB(estimateGlbBytes(editGeom) / 1e6);
+    setEditNonce((n) => n + 1);
+  }, [mountMeshes]);
+
   // Rebuild the merge: per source, merge its included sub-meshes, bake the
-  // source transform, then merge across sources.
+  // source transform, then merge across sources. Re-fits the camera + re-applies
+  // region edits.
   const recompose = useCallback(
     (nextSources: Source[]) => {
       const sourceGeoms: THREE.BufferGeometry[] = [];
@@ -250,35 +281,24 @@ export function GeometryBuilder() {
         sourceGeoms.push(srcGeom);
       }
 
-      decimatedRef.current?.dispose();
-      decimatedRef.current = null;
       composedFullRef.current?.dispose();
-      weldedFullRef.current?.dispose();
 
       if (sourceGeoms.length === 0) {
         composedFullRef.current = null;
-        weldedFullRef.current = null;
-        clearPreview();
-        setSourceTris(0);
+        applyEdits(); // clears edit/display geometry + readouts
         setTargetTris(0);
-        setDisplayTris(0);
-        setEstMB(0);
         return;
       }
 
       const composed = mergeAndDispose(sourceGeoms);
       composedFullRef.current = composed;
-      weldedFullRef.current = weldForSimplify(composed);
-      const tris = triangleCount(composed);
-      showGeometry(composed);
-      setSourceTris(tris);
-      setTargetTris(tris);
-      setDisplayTris(tris);
-      setEstMB(estimateGlbBytes(composed) / 1e6);
+      applyEdits();
+      fitCamera(composed);
     },
-    [clearPreview, showGeometry],
+    [applyEdits, fitCamera],
   );
 
+  const recomposeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const recomposeSoon = useCallback(
     (next: Source[]) => {
       setSources(next);
@@ -287,6 +307,316 @@ export function GeometryBuilder() {
     },
     [recompose],
   );
+
+  // Region-edit callbacks. Declared before the viewer effect so the gesture
+  // handlers can read them through refs (kept current below).
+  // These only mutate the key sets; a useEffect on [deletedKeys, lockedKeys,
+  // showLocks] re-runs applyEdits AFTER the render that refreshes the *Ref
+  // mirrors, so applyEdits always reads the up-to-date sets.
+  const deleteClusters = useCallback((keys: string[]) => {
+    setDeletedKeys((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      for (const k of keys) if (!next.has(k)) { next.add(k); changed = true; }
+      return changed ? next : prev;
+    });
+  }, []);
+
+  const toggleLock = useCallback((keys: string[]) => {
+    setLockedKeys((prev) => {
+      const next = new Set(prev);
+      const allIn = keys.every((k) => next.has(k));
+      if (allIn) for (const k of keys) next.delete(k);
+      else for (const k of keys) next.add(k);
+      return next;
+    });
+  }, []);
+
+  const addLock = useCallback((keys: string[]) => {
+    if (keys.length === 0) return;
+    setLockedKeys((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      for (const k of keys) if (!next.has(k)) { next.add(k); changed = true; }
+      return changed ? next : prev;
+    });
+  }, []);
+
+  const deleteClustersRef = useRef(deleteClusters); deleteClustersRef.current = deleteClusters;
+  const toggleLockRef = useRef(toggleLock); toggleLockRef.current = toggleLock;
+  const addLockRef = useRef(addLock); addLockRef.current = addLock;
+
+  // One-time three.js viewport + region-edit pointer gestures.
+  useEffect(() => {
+    const mount = mountRef.current;
+    if (!mount) return;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x16161a);
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100000);
+    camera.position.set(120, 120, 120);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    mount.appendChild(renderer.domElement);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    const group = new THREE.Group();
+    scene.add(group);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+    const key = new THREE.DirectionalLight(0xffffff, 0.85);
+    key.position.set(1, 1.5, 1);
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.35);
+    fill.position.set(-1, -0.5, -1);
+    scene.add(fill);
+    scene.add(new THREE.GridHelper(500, 20, 0x3a3a44, 0x26262c));
+
+    cameraRef.current = camera;
+    controlsRef.current = controls;
+    rendererRef.current = renderer;
+    modelGroupRef.current = group;
+
+    // --- region-edit gestures (Ctrl/Shift + middle button) ---
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    const middleAction = {
+      active: false,
+      mode: null as null | "delete" | "lock",
+      startX: 0, startY: 0, currentX: 0, currentY: 0,
+      dragged: false,
+      overlay: null as HTMLDivElement | null,
+    };
+
+    function pickMeshes(): THREE.Mesh[] {
+      return pickMeshRef.current ? [pickMeshRef.current] : [];
+    }
+    function setPointer(event: PointerEvent) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+    }
+    function ensureOverlay() {
+      if (middleAction.overlay) return;
+      const overlay = document.createElement("div");
+      overlay.style.position = "absolute";
+      const isLock = middleAction.mode === "lock";
+      overlay.style.border = `1px solid ${isLock ? "#22c55e" : "#fbbf24"}`;
+      overlay.style.background = isLock ? "rgba(34,197,94,0.16)" : "rgba(251,191,36,0.16)";
+      overlay.style.pointerEvents = "none";
+      overlay.style.zIndex = "2";
+      middleAction.overlay = overlay;
+      mount!.appendChild(overlay);
+    }
+    function updateOverlay() {
+      if (!middleAction.overlay) return;
+      const rect = renderer.domElement.getBoundingClientRect();
+      middleAction.overlay.style.left = `${Math.min(middleAction.startX, middleAction.currentX) - rect.left}px`;
+      middleAction.overlay.style.top = `${Math.min(middleAction.startY, middleAction.currentY) - rect.top}px`;
+      middleAction.overlay.style.width = `${Math.abs(middleAction.currentX - middleAction.startX)}px`;
+      middleAction.overlay.style.height = `${Math.abs(middleAction.currentY - middleAction.startY)}px`;
+    }
+    function keysInsideBox(): string[] {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const minX = Math.min(middleAction.startX, middleAction.currentX);
+      const maxX = Math.max(middleAction.startX, middleAction.currentX);
+      const minY = Math.min(middleAction.startY, middleAction.currentY);
+      const maxY = Math.max(middleAction.startY, middleAction.currentY);
+      const keys = new Set<string>();
+      const c = new THREE.Vector3();
+      const w = new THREE.Vector3();
+      for (const mesh of pickMeshes()) {
+        const positions = mesh.geometry.attributes.position?.array as Float32Array | undefined;
+        if (!positions) continue;
+        mesh.updateMatrixWorld(true);
+        const triCount = Math.floor(positions.length / 9);
+        for (let t = 0; t < triCount; t += 1) {
+          const o = t * 9;
+          c.set(
+            (positions[o] + positions[o + 3] + positions[o + 6]) / 3,
+            (positions[o + 1] + positions[o + 4] + positions[o + 7]) / 3,
+            (positions[o + 2] + positions[o + 5] + positions[o + 8]) / 3,
+          );
+          w.copy(c).applyMatrix4(mesh.matrixWorld).project(camera);
+          if (w.z < -1 || w.z > 1) continue;
+          const sx = rect.left + ((w.x + 1) / 2) * rect.width;
+          const sy = rect.top + ((-w.y + 1) / 2) * rect.height;
+          if (sx < minX || sx > maxX || sy < minY || sy > maxY) continue;
+          keys.add(centroidKey(c.x, c.y, c.z));
+        }
+      }
+      return [...keys];
+    }
+    function clusterKeysAtPointer(): string[] | null {
+      const hit = raycaster.intersectObjects(pickMeshes(), false)[0];
+      if (!hit || typeof hit.faceIndex !== "number") return null;
+      const positions = (hit.object as THREE.Mesh).geometry.attributes.position.array as Float32Array;
+      const cluster = findCoplanarCluster(positions, hit.faceIndex);
+      if (cluster.size === 0) return null;
+      const keys: string[] = [];
+      for (const t of cluster) {
+        const o = t * 9;
+        keys.push(centroidKey(
+          (positions[o] + positions[o + 3] + positions[o + 6]) / 3,
+          (positions[o + 1] + positions[o + 4] + positions[o + 7]) / 3,
+          (positions[o + 2] + positions[o + 5] + positions[o + 8]) / 3,
+        ));
+      }
+      return keys;
+    }
+
+    function onPointerDown(event: PointerEvent) {
+      if (event.button === 1 && (event.ctrlKey || event.shiftKey) && pickMeshRef.current) {
+        event.preventDefault();
+        middleAction.active = true;
+        middleAction.mode = event.ctrlKey ? "delete" : "lock";
+        middleAction.startX = middleAction.currentX = event.clientX;
+        middleAction.startY = middleAction.currentY = event.clientY;
+        middleAction.dragged = false;
+        controls.enabled = false;
+        try { renderer.domElement.setPointerCapture(event.pointerId); } catch { /* no active pointer */ }
+      }
+    }
+    function onPointerMove(event: PointerEvent) {
+      if (!middleAction.active) return;
+      middleAction.currentX = event.clientX;
+      middleAction.currentY = event.clientY;
+      if (Math.hypot(middleAction.currentX - middleAction.startX, middleAction.currentY - middleAction.startY) >= DRAG_THRESHOLD_PX) {
+        if (!middleAction.dragged) { middleAction.dragged = true; ensureOverlay(); }
+        updateOverlay();
+      }
+    }
+    function onPointerUp(event: PointerEvent) {
+      if (!middleAction.active) return;
+      middleAction.currentX = event.clientX;
+      middleAction.currentY = event.clientY;
+      const mode = middleAction.mode;
+      const wasDrag = middleAction.dragged;
+      middleAction.overlay?.remove();
+      middleAction.overlay = null;
+      middleAction.active = false;
+      middleAction.mode = null;
+      middleAction.dragged = false;
+      controls.enabled = true;
+      try { renderer.domElement.releasePointerCapture(event.pointerId); } catch { /* already released */ }
+      if (!mode) return;
+      if (wasDrag) {
+        const allKeys = keysInsideBox();
+        if (allKeys.length === 0) return;
+        if (mode === "delete") {
+          const locked = lockedRef.current;
+          const target = locked.size > 0 ? allKeys.filter((k) => !locked.has(k)) : allKeys;
+          if (target.length > 0) deleteClustersRef.current(target);
+        } else {
+          addLockRef.current(allKeys);
+        }
+      } else {
+        setPointer(event);
+        const keys = clusterKeysAtPointer();
+        if (!keys || keys.length === 0) return;
+        if (mode === "delete") deleteClustersRef.current(keys);
+        else toggleLockRef.current(keys);
+      }
+    }
+    const onMouseDownNoMid = (e: MouseEvent) => { if (e.button === 1) e.preventDefault(); };
+
+    renderer.domElement.addEventListener("pointerdown", onPointerDown);
+    renderer.domElement.addEventListener("pointermove", onPointerMove);
+    renderer.domElement.addEventListener("pointerup", onPointerUp);
+    renderer.domElement.addEventListener("pointerleave", onPointerUp);
+    renderer.domElement.addEventListener("mousedown", onMouseDownNoMid);
+
+    let raf = 0;
+    const animate = () => {
+      controls.update();
+      renderer.render(scene, camera);
+      raf = requestAnimationFrame(animate);
+    };
+    const resize = () => {
+      const w = mount.clientWidth;
+      const h = mount.clientHeight;
+      if (w === 0 || h === 0) return;
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    };
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(mount);
+    animate();
+
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+      renderer.domElement.removeEventListener("pointermove", onPointerMove);
+      renderer.domElement.removeEventListener("pointerup", onPointerUp);
+      renderer.domElement.removeEventListener("pointerleave", onPointerUp);
+      renderer.domElement.removeEventListener("mousedown", onMouseDownNoMid);
+      middleAction.overlay?.remove();
+      controls.dispose();
+      for (const child of [...group.children]) {
+        if (child instanceof THREE.Mesh) (child.material as THREE.Material).dispose();
+      }
+      decimatedRef.current?.dispose();
+      editGeomRef.current?.dispose();
+      weldedEditRef.current?.dispose();
+      lockGeomRef.current?.dispose();
+      composedFullRef.current?.dispose();
+      for (const geom of subGeomsRef.current.values()) geom.dispose();
+      subGeomsRef.current.clear();
+      renderer.dispose();
+      if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
+      cameraRef.current = null;
+      controlsRef.current = null;
+      rendererRef.current = null;
+      modelGroupRef.current = null;
+    };
+  }, []);
+
+  // Decimation + display: re-runs whenever the edit geometry changes (editNonce)
+  // or the target triangle budget moves.
+  useEffect(() => {
+    const editGeom = editGeomRef.current;
+    const welded = weldedEditRef.current;
+    if (!editGeom) {
+      displayGeomRef.current = null;
+      mountMeshes();
+      setDisplayTris(0);
+      setEstMB(0);
+      return;
+    }
+    const id = setTimeout(async () => {
+      setDecimating(true);
+      setError(null);
+      try {
+        let display: THREE.BufferGeometry;
+        if (targetTris >= sourceTrisRef.current || !welded) {
+          decimatedRef.current?.dispose();
+          decimatedRef.current = null;
+          display = editGeom;
+        } else {
+          const next = await decimateWelded(welded, targetTris);
+          decimatedRef.current?.dispose();
+          decimatedRef.current = next;
+          display = next;
+        }
+        displayGeomRef.current = display;
+        mountMeshes();
+        setDisplayTris(triangleCount(display));
+        setEstMB(estimateGlbBytes(display) / 1e6);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setDecimating(false);
+      }
+    }, 150);
+    return () => clearTimeout(id);
+  }, [targetTris, editNonce, mountMeshes]);
+
+  // When sourceTris first becomes known (new compose), default the budget to Full.
+  useEffect(() => {
+    setTargetTris((prev) => (prev === 0 && sourceTris > 0 ? sourceTris : prev));
+  }, [sourceTris]);
 
   const seedNaming = useCallback((stem: string) => {
     setCatalogId((c) => c || slugify(stem));
@@ -300,10 +630,7 @@ export function GeometryBuilder() {
       subGeomsRef.current.set(subId, s.geometry);
       return { id: subId, label: s.label, included: true };
     });
-    return {
-      id: sourceId, label, included: true, expanded: false,
-      tx: 0, ty: 0, tz: 0, rx: 0, ry: 0, rz: 0, subMeshes,
-    };
+    return { id: sourceId, label, included: true, expanded: false, tx: 0, ty: 0, tz: 0, rx: 0, ry: 0, rz: 0, subMeshes };
   }, []);
 
   const handleFiles = useCallback(
@@ -419,40 +746,25 @@ export function GeometryBuilder() {
     [sources, recomposeSoon],
   );
 
-  // Live decimation (debounced).
+  const revertGeometry = useCallback(() => {
+    if (deletedKeys.size === 0) return;
+    if (!window.confirm(`Revert ${deletedKeys.size} deleted cluster${deletedKeys.size === 1 ? "" : "s"}? (only affects this unsaved build)`)) return;
+    setDeletedKeys(new Set());
+  }, [deletedKeys]);
+
+  const clearLocks = useCallback(() => setLockedKeys(new Set()), []);
+  const toggleShowLocks = useCallback(() => setShowLocks((v) => !v), []);
+
+  // Re-bake the geometry whenever the edit sets change. Runs after render, so
+  // deletedRef / lockedRef / showLocksRef are already current. (recompose calls
+  // applyEdits directly for source changes; those leave these sets untouched so
+  // this effect doesn't double-fire.)
   useEffect(() => {
-    const welded = weldedFullRef.current;
-    const full = composedFullRef.current;
-    if (!welded || !full || sourceTris === 0) return;
-    const id = setTimeout(async () => {
-      setDecimating(true);
-      setError(null);
-      try {
-        if (targetTris >= sourceTris) {
-          decimatedRef.current?.dispose();
-          decimatedRef.current = null;
-          showGeometry(full);
-          setDisplayTris(triangleCount(full));
-          setEstMB(estimateGlbBytes(full) / 1e6);
-        } else {
-          const next = await decimateWelded(welded, targetTris);
-          decimatedRef.current?.dispose();
-          decimatedRef.current = next;
-          showGeometry(next);
-          setDisplayTris(triangleCount(next));
-          setEstMB(estimateGlbBytes(next) / 1e6);
-        }
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setDecimating(false);
-      }
-    }, 150);
-    return () => clearTimeout(id);
-  }, [targetTris, sourceTris, showGeometry]);
+    applyEdits();
+  }, [deletedKeys, lockedKeys, showLocks, applyEdits]);
 
   const handleSave = useCallback(async () => {
-    const geometry = decimatedRef.current ?? composedFullRef.current;
+    const geometry = decimatedRef.current ?? editGeomRef.current;
     if (!geometry) {
       setError("Add at least one source first.");
       return;
@@ -495,23 +807,16 @@ export function GeometryBuilder() {
     <div style={{ display: "flex", height: "100%", minHeight: 0, color: "#e6e6e6" }}>
       <aside
         style={{
-          width: 340,
-          flex: "0 0 340px",
-          padding: 14,
-          display: "flex",
-          flexDirection: "column",
-          gap: 12,
-          background: "#1f1f25",
-          borderRight: "1px solid #303039",
-          overflow: "auto",
+          width: 340, flex: "0 0 340px", padding: 14, display: "flex", flexDirection: "column",
+          gap: 12, background: "#1f1f25", borderRight: "1px solid #303039", overflow: "auto",
         }}
       >
         <div>
           <h3 style={{ margin: "0 0 4px", fontSize: 14 }}>Geometry Builder</h3>
           <p style={{ margin: 0, fontSize: 11, opacity: 0.7, lineHeight: 1.4 }}>
             Add sources (each uploaded STEP / picked asset = one unit), position &
-            rotate each, remove unwanted sub-meshes, then save them merged into one
-            coloured GLB. Anchors are placed afterwards in the ASSET3D tab.
+            rotate each, remove unwanted sub-meshes or regions, then save merged into
+            one coloured GLB. Anchors are placed afterwards in the ASSET3D tab.
           </p>
         </div>
 
@@ -550,20 +855,15 @@ export function GeometryBuilder() {
             <div style={{ fontSize: 11, opacity: 0.8 }}>
               Sources ({includedCount}/{sources.length}) — position / rotate / trim each
             </div>
-            <div style={{ display: "grid", gap: 8, maxHeight: 360, overflow: "auto" }}>
+            <div style={{ display: "grid", gap: 8, maxHeight: 300, overflow: "auto" }}>
               {sources.map((s) => {
                 const keptSub = s.subMeshes.filter((m) => m.included).length;
                 return (
                   <div
                     key={s.id}
                     style={{
-                      display: "grid",
-                      gap: 4,
-                      padding: 6,
-                      background: "#15151a",
-                      border: "1px solid #303039",
-                      borderRadius: 4,
-                      opacity: s.included ? 1 : 0.5,
+                      display: "grid", gap: 4, padding: 6, background: "#15151a",
+                      border: "1px solid #303039", borderRadius: 4, opacity: s.included ? 1 : 0.5,
                     }}
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
@@ -621,6 +921,24 @@ export function GeometryBuilder() {
 
         {hasModel && (
           <>
+            <div style={{ display: "grid", gap: 4, padding: 8, background: "#15151a", border: "1px solid #303039", borderRadius: 4 }}>
+              <div style={{ fontSize: 11, opacity: 0.8 }}>Region edit</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <button type="button" onClick={revertGeometry} disabled={deletedKeys.size === 0} style={editChip(deletedKeys.size > 0, "#fbbf24")}>
+                  Revert geometry{deletedKeys.size > 0 ? ` (${deletedKeys.size} deleted)` : ""}
+                </button>
+                <button type="button" onClick={clearLocks} disabled={lockedKeys.size === 0} style={editChip(lockedKeys.size > 0, "#22c55e")}>
+                  Clear locks{lockedKeys.size > 0 ? ` (${lockedKeys.size} locked)` : ""}
+                </button>
+                <button type="button" onClick={toggleShowLocks} disabled={lockedKeys.size === 0} style={editChip(lockedKeys.size > 0, "#22c55e")}>
+                  {showLocks ? "Hide locks" : "Show locks"}
+                </button>
+              </div>
+              <div style={{ fontSize: 9, opacity: 0.55, lineHeight: 1.4 }}>
+                Ctrl+mid-click = delete cluster | Ctrl+mid-drag = box delete | Shift+mid-click = lock (keep) | Shift+mid-drag = box lock. Locks aren't saved; Save only commits deletions.
+              </div>
+            </div>
+
             <div style={{ display: "grid", gap: 6 }}>
               <div style={{ fontSize: 11, opacity: 0.8 }}>Decimation</div>
               <div style={{ display: "flex", gap: 6 }}>
@@ -673,12 +991,8 @@ export function GeometryBuilder() {
 }
 
 const inputStyle: React.CSSProperties = {
-  padding: "5px 7px",
-  fontSize: 12,
-  background: "#15151a",
-  border: "1px solid #303039",
-  borderRadius: 3,
-  color: "#e6e6e6",
+  padding: "5px 7px", fontSize: 12, background: "#15151a",
+  border: "1px solid #303039", borderRadius: 3, color: "#e6e6e6",
 };
 
 function primaryButton(disabled: boolean): React.CSSProperties {
@@ -703,5 +1017,14 @@ function chipButton(active: boolean): React.CSSProperties {
     border: "1px solid " + (active ? "#2563eb" : "#303039"),
     background: active ? "#1e3a8a" : "#15151a",
     color: active ? "#dbeafe" : "#cbd5e1", cursor: "pointer", borderRadius: 3,
+  };
+}
+
+function editChip(enabled: boolean, accent: string): React.CSSProperties {
+  return {
+    padding: "4px 8px", fontSize: 10,
+    border: "1px solid " + (enabled ? accent : "#303039"),
+    background: "#15151a", color: enabled ? "#e6e6e6" : "#6b7280",
+    cursor: enabled ? "pointer" : "not-allowed", opacity: enabled ? 1 : 0.6, borderRadius: 3,
   };
 }
