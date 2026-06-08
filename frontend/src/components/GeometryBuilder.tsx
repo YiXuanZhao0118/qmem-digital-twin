@@ -1,27 +1,25 @@
 /**
- * Geometry construction page (Asset-layer M2 §B-1..§B-4). A PhyEditor tab,
- * independent of the anchor editor. Sources: upload a STEP (occt-import-js WASM)
- * OR pull in an existing Asset3D (GLB/GLTF/OBJ/STL) to edit/combine. Each source
- * mesh is a "part" with its own position/rotation; preview/export is the merge of
- * the included, transformed parts — coloured — saved as a viewer-ready GLB via
- * the existing upload route (no server-side CAD conversion). Decimate live
- * (meshoptimizer). Anchors are placed afterwards in the ASSET3D tab.
+ * Geometry construction page (Asset-layer M2 §B). A PhyEditor tab, independent of
+ * the anchor editor. Each source (uploaded STEP / picked asset) is ONE unit with
+ * its own position + rotation; preview/export is the merge of the included,
+ * transformed sources, coloured, saved as a viewer-ready GLB via the existing
+ * upload route (no server-side CAD conversion). Each source keeps its sub-meshes
+ * so unwanted regions can be removed within it. Decimate live (meshoptimizer).
+ * Anchors are placed afterwards in the ASSET3D tab.
  *
- * Split = untick parts; merge = add more sources; edit-existing = add an existing
- * asset as a source, transform, save. File imports are kindless geometry.
+ * - merge: add more sources.   - split: untick a source, or untick its sub-meshes.
+ * - edit existing: add an existing asset as a source, transform/trim, save.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
-// Vite serves the WASM as a static asset and hands us its URL; occt's emscripten
-// loader is pointed at it via locateFile. (Node tests resolve it via fs instead.)
 import occtWasmUrl from "occt-import-js/dist/occt-import-js.wasm?url";
 
 import {
   importStep,
-  occtResultToGeometry,
+  occtMeshToGeometry,
   type OcctLocateFile,
 } from "../three/occtImport";
 import {
@@ -36,7 +34,7 @@ import {
   triangleCount,
   weldForSimplify,
 } from "../three/decimate";
-import { loadAssetGeometry } from "../three/loadAssetGeometry";
+import { loadAssetGeometry, type LoadedSubMesh } from "../three/loadAssetGeometry";
 import { resolveAssetUrl } from "../api/client";
 import { useV3Catalog, type V3AssetUpload } from "../store/catalogStore";
 
@@ -60,20 +58,27 @@ function extOf(pathOrType: string): string {
 }
 
 type Status = "idle" | "parsing" | "ready" | "saving";
-type Part = {
+type SubMesh = { id: string; label: string; included: boolean };
+type Source = {
   id: string;
   label: string;
   included: boolean;
-  tx: number; ty: number; tz: number; // position mm
-  rx: number; ry: number; rz: number; // rotation deg
+  expanded: boolean;
+  tx: number; ty: number; tz: number;
+  rx: number; ry: number; rz: number;
+  subMeshes: SubMesh[];
 };
 
-function newPart(id: string, label: string): Part {
-  return { id, label, included: true, tx: 0, ty: 0, tz: 0, rx: 0, ry: 0, rz: 0 };
+function hasTransform(s: Source): boolean {
+  return s.tx || s.ty || s.tz || s.rx || s.ry || s.rz ? true : false;
 }
 
-function hasTransform(p: Part): boolean {
-  return p.tx || p.ty || p.tz || p.rx || p.ry || p.rz ? true : false;
+/** Merge a list of geometries into one, disposing the inputs (single → as-is). */
+function mergeAndDispose(geoms: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  if (geoms.length === 1) return geoms[0];
+  const merged = mergeColoredGeometries(geoms);
+  for (const g of geoms) if (g !== merged) g.dispose();
+  return merged;
 }
 
 export function GeometryBuilder() {
@@ -83,8 +88,8 @@ export function GeometryBuilder() {
   const modelGroupRef = useRef<THREE.Group | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const partGeomsRef = useRef<Map<string, THREE.BufferGeometry>>(new Map());
-  const partIdRef = useRef(0);
+  const subGeomsRef = useRef<Map<string, THREE.BufferGeometry>>(new Map()); // subMeshId -> geom
+  const idRef = useRef(0);
   const composedFullRef = useRef<THREE.BufferGeometry | null>(null);
   const weldedFullRef = useRef<THREE.BufferGeometry | null>(null);
   const decimatedRef = useRef<THREE.BufferGeometry | null>(null);
@@ -97,7 +102,7 @@ export function GeometryBuilder() {
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
-  const [parts, setParts] = useState<Part[]>([]);
+  const [sources, setSources] = useState<Source[]>([]);
   const [existingPick, setExistingPick] = useState("");
   const [catalogId, setCatalogId] = useState("");
   const [name, setName] = useState("");
@@ -107,6 +112,11 @@ export function GeometryBuilder() {
   const [estMB, setEstMB] = useState(0);
   const [targetTris, setTargetTris] = useState(0);
   const [decimating, setDecimating] = useState(false);
+
+  useEffect(() => {
+    if (assets.length === 0) void refreshCatalog();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshCatalog]);
 
   // One-time three.js viewport.
   useEffect(() => {
@@ -165,8 +175,8 @@ export function GeometryBuilder() {
       decimatedRef.current?.dispose();
       composedFullRef.current?.dispose();
       weldedFullRef.current?.dispose();
-      for (const geom of partGeomsRef.current.values()) geom.dispose();
-      partGeomsRef.current.clear();
+      for (const geom of subGeomsRef.current.values()) geom.dispose();
+      subGeomsRef.current.clear();
       renderer.dispose();
       if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
       cameraRef.current = null;
@@ -174,12 +184,6 @@ export function GeometryBuilder() {
       modelGroupRef.current = null;
     };
   }, []);
-
-  // Populate the existing-asset picker (the catalog may be unfetched in this tab).
-  useEffect(() => {
-    if (assets.length === 0) void refreshCatalog();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshCatalog]);
 
   const showGeometry = useCallback((geometry: THREE.BufferGeometry) => {
     const group = modelGroupRef.current;
@@ -214,30 +218,36 @@ export function GeometryBuilder() {
     }
   }, []);
 
-  // Rebuild the merge from the included parts (each baked at its transform).
+  // Rebuild the merge: per source, merge its included sub-meshes, bake the
+  // source transform, then merge across sources.
   const recompose = useCallback(
-    (nextParts: Part[]) => {
-      const clones: THREE.BufferGeometry[] = [];
-      for (const p of nextParts) {
-        if (!p.included) continue;
-        const base = partGeomsRef.current.get(p.id);
-        if (!base) continue;
-        const g = base.clone();
-        if (hasTransform(p)) {
-          const m = new THREE.Matrix4().compose(
-            new THREE.Vector3(p.tx, p.ty, p.tz),
-            new THREE.Quaternion().setFromEuler(
-              new THREE.Euler(
-                THREE.MathUtils.degToRad(p.rx),
-                THREE.MathUtils.degToRad(p.ry),
-                THREE.MathUtils.degToRad(p.rz),
+    (nextSources: Source[]) => {
+      const sourceGeoms: THREE.BufferGeometry[] = [];
+      for (const s of nextSources) {
+        if (!s.included) continue;
+        const subClones = s.subMeshes
+          .filter((m) => m.included)
+          .map((m) => subGeomsRef.current.get(m.id))
+          .filter((g): g is THREE.BufferGeometry => Boolean(g))
+          .map((g) => g.clone());
+        if (subClones.length === 0) continue;
+        const srcGeom = mergeAndDispose(subClones);
+        if (hasTransform(s)) {
+          srcGeom.applyMatrix4(
+            new THREE.Matrix4().compose(
+              new THREE.Vector3(s.tx, s.ty, s.tz),
+              new THREE.Quaternion().setFromEuler(
+                new THREE.Euler(
+                  THREE.MathUtils.degToRad(s.rx),
+                  THREE.MathUtils.degToRad(s.ry),
+                  THREE.MathUtils.degToRad(s.rz),
+                ),
               ),
+              new THREE.Vector3(1, 1, 1),
             ),
-            new THREE.Vector3(1, 1, 1),
           );
-          g.applyMatrix4(m);
         }
-        clones.push(g);
+        sourceGeoms.push(srcGeom);
       }
 
       decimatedRef.current?.dispose();
@@ -245,7 +255,7 @@ export function GeometryBuilder() {
       composedFullRef.current?.dispose();
       weldedFullRef.current?.dispose();
 
-      if (clones.length === 0) {
+      if (sourceGeoms.length === 0) {
         composedFullRef.current = null;
         weldedFullRef.current = null;
         clearPreview();
@@ -256,12 +266,7 @@ export function GeometryBuilder() {
         return;
       }
 
-      const composed = mergeColoredGeometries(clones);
-      // mergeColoredGeometries returns clones[0] for a single part; dispose the
-      // rest. (composed is always a clone, never a part's source geometry.)
-      for (const g of clones) {
-        if (g !== composed) g.dispose();
-      }
+      const composed = mergeAndDispose(sourceGeoms);
       composedFullRef.current = composed;
       weldedFullRef.current = weldForSimplify(composed);
       const tris = triangleCount(composed);
@@ -274,12 +279,11 @@ export function GeometryBuilder() {
     [clearPreview, showGeometry],
   );
 
-  // Debounced recompose for rapid edits (slider-like transform typing).
   const recomposeSoon = useCallback(
-    (nextParts: Part[]) => {
-      setParts(nextParts);
+    (next: Source[]) => {
+      setSources(next);
       if (recomposeTimer.current) clearTimeout(recomposeTimer.current);
-      recomposeTimer.current = setTimeout(() => recompose(nextParts), 120);
+      recomposeTimer.current = setTimeout(() => recompose(next), 120);
     },
     [recompose],
   );
@@ -287,6 +291,19 @@ export function GeometryBuilder() {
   const seedNaming = useCallback((stem: string) => {
     setCatalogId((c) => c || slugify(stem));
     setName((n) => n || stem);
+  }, []);
+
+  const makeSource = useCallback((label: string, loaded: LoadedSubMesh[]): Source => {
+    const sourceId = `src_${idRef.current++}`;
+    const subMeshes: SubMesh[] = loaded.map((s, i) => {
+      const subId = `${sourceId}_m${i}`;
+      subGeomsRef.current.set(subId, s.geometry);
+      return { id: subId, label: s.label, included: true };
+    });
+    return {
+      id: sourceId, label, included: true, expanded: false,
+      tx: 0, ty: 0, tz: 0, rx: 0, ry: 0, rz: 0, subMeshes,
+    };
   }, []);
 
   const handleFiles = useCallback(
@@ -300,31 +317,28 @@ export function GeometryBuilder() {
       }
       setStatus("parsing");
       try {
-        const added: Part[] = [];
+        const added: Source[] = [];
         for (const file of steps) {
           const data = new Uint8Array(await file.arrayBuffer());
           const result = await importStep(data, { linearUnit: "millimeter" }, locateOcctWasm);
-          const stem = file.name.replace(/\.[^.]+$/, "");
-          // One source per FILE: merge all of the STEP's meshes into a single
-          // transformable unit (3 files → 3 transforms → save → 1 GLB). Mesh-
-          // level splitting is the separate remove-regions feature (follow-up).
-          const geom = mergeColoredGeometries(occtResultToGeometry(result));
-          const id = `part_${partIdRef.current++}`;
-          partGeomsRef.current.set(id, geom);
-          added.push(newPart(id, stem));
+          const loaded: LoadedSubMesh[] = result.meshes.map((mesh, i) => ({
+            geometry: occtMeshToGeometry(mesh),
+            label: mesh.name && mesh.name.trim() ? mesh.name : `mesh ${i + 1}`,
+          }));
+          added.push(makeSource(file.name.replace(/\.[^.]+$/, ""), loaded));
         }
-        const next = [...parts, ...added];
-        setParts(next);
+        const next = [...sources, ...added];
+        setSources(next);
         recompose(next);
-        if (parts.length === 0 && steps[0]) seedNaming(steps[0].name.replace(/\.[^.]+$/, ""));
-        setInfo(`Added ${added.length} part(s). ${next.length} total.`);
+        if (sources.length === 0 && steps[0]) seedNaming(steps[0].name.replace(/\.[^.]+$/, ""));
+        setInfo(`Added ${added.length} source(s). ${next.length} total.`);
         setStatus("ready");
       } catch (e) {
         setStatus("ready");
         setError(e instanceof Error ? e.message : String(e));
       }
     },
-    [parts, recompose, seedNaming],
+    [sources, recompose, seedNaming, makeSource],
   );
 
   const handleAddExisting = useCallback(async () => {
@@ -342,50 +356,67 @@ export function GeometryBuilder() {
     setInfo(null);
     setStatus("parsing");
     try {
-      const geom = await loadAssetGeometry(resolveAssetUrl(asset.filePath), ext, {
+      const loaded = await loadAssetGeometry(resolveAssetUrl(asset.filePath), ext, {
         unit: asset.unit,
         scaleFactor: asset.scaleFactor,
       });
-      const id = `part_${partIdRef.current++}`;
-      partGeomsRef.current.set(id, geom);
-      const next = [...parts, newPart(id, asset.name || asset.catalogId)];
-      setParts(next);
+      const next = [...sources, makeSource(asset.name || asset.catalogId, loaded)];
+      setSources(next);
       recompose(next);
-      if (parts.length === 0) seedNaming(`${asset.catalogId}_edit`);
-      setInfo(`Added existing asset "${asset.catalogId}".`);
+      if (sources.length === 0) seedNaming(`${asset.catalogId}_edit`);
+      setInfo(`Added existing asset "${asset.catalogId}" (${loaded.length} mesh(es)).`);
       setStatus("ready");
     } catch (e) {
       setStatus("ready");
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [assets, existingPick, parts, recompose, seedNaming]);
+  }, [assets, existingPick, sources, recompose, seedNaming, makeSource]);
 
-  const togglePart = useCallback(
+  const toggleSource = useCallback(
     (id: string) => {
-      const next = parts.map((p) => (p.id === id ? { ...p, included: !p.included } : p));
-      setParts(next);
+      const next = sources.map((s) => (s.id === id ? { ...s, included: !s.included } : s));
+      setSources(next);
       recompose(next);
     },
-    [parts, recompose],
+    [sources, recompose],
   );
 
-  const removePart = useCallback(
-    (id: string) => {
-      partGeomsRef.current.get(id)?.dispose();
-      partGeomsRef.current.delete(id);
-      const next = parts.filter((p) => p.id !== id);
-      setParts(next);
+  const toggleSubMesh = useCallback(
+    (sourceId: string, subId: string) => {
+      const next = sources.map((s) =>
+        s.id === sourceId
+          ? { ...s, subMeshes: s.subMeshes.map((m) => (m.id === subId ? { ...m, included: !m.included } : m)) }
+          : s,
+      );
+      setSources(next);
       recompose(next);
     },
-    [parts, recompose],
+    [sources, recompose],
   );
 
-  const setPartField = useCallback(
+  const toggleExpand = useCallback((id: string) => {
+    setSources((prev) => prev.map((s) => (s.id === id ? { ...s, expanded: !s.expanded } : s)));
+  }, []);
+
+  const removeSource = useCallback(
+    (id: string) => {
+      const src = sources.find((s) => s.id === id);
+      src?.subMeshes.forEach((m) => {
+        subGeomsRef.current.get(m.id)?.dispose();
+        subGeomsRef.current.delete(m.id);
+      });
+      const next = sources.filter((s) => s.id !== id);
+      setSources(next);
+      recompose(next);
+    },
+    [sources, recompose],
+  );
+
+  const setTransform = useCallback(
     (id: string, field: "tx" | "ty" | "tz" | "rx" | "ry" | "rz", value: number) => {
-      const next = parts.map((p) => (p.id === id ? { ...p, [field]: value } : p));
-      recomposeSoon(next);
+      recomposeSoon(sources.map((s) => (s.id === id ? { ...s, [field]: value } : s)));
     },
-    [parts, recomposeSoon],
+    [sources, recomposeSoon],
   );
 
   // Live decimation (debounced).
@@ -423,7 +454,7 @@ export function GeometryBuilder() {
   const handleSave = useCallback(async () => {
     const geometry = decimatedRef.current ?? composedFullRef.current;
     if (!geometry) {
-      setError("Add at least one source part first.");
+      setError("Add at least one source first.");
       return;
     }
     if (!/^[a-z0-9_]+$/.test(catalogId)) {
@@ -457,7 +488,7 @@ export function GeometryBuilder() {
 
   const hasModel = sourceTris > 0;
   const busy = status === "parsing" || status === "saving";
-  const includedCount = parts.filter((p) => p.included).length;
+  const includedCount = sources.filter((s) => s.included).length;
   const importableAssets = assets.filter((a) => VIEWER_EXTS.has(extOf(a.assetType || a.filePath)));
 
   return (
@@ -478,10 +509,9 @@ export function GeometryBuilder() {
         <div>
           <h3 style={{ margin: "0 0 4px", fontSize: 14 }}>Geometry Builder</h3>
           <p style={{ margin: 0, fontSize: 11, opacity: 0.7, lineHeight: 1.4 }}>
-            Add sources (each uploaded STEP / picked asset = one unit), position
-            & rotate each, then save them merged into one coloured GLB. Untick a
-            source to leave it out; decimate before saving. Anchors are placed
-            afterwards in the ASSET3D tab.
+            Add sources (each uploaded STEP / picked asset = one unit), position &
+            rotate each, remove unwanted sub-meshes, then save them merged into one
+            coloured GLB. Anchors are placed afterwards in the ASSET3D tab.
           </p>
         </div>
 
@@ -498,16 +528,11 @@ export function GeometryBuilder() {
           }}
         />
         <button type="button" disabled={busy} onClick={() => fileInputRef.current?.click()} style={primaryButton(busy)}>
-          {status === "parsing" ? "Working…" : parts.length === 0 ? "Import STEP…" : "Import more STEP…"}
+          {status === "parsing" ? "Working…" : sources.length === 0 ? "Import STEP…" : "Import more STEP…"}
         </button>
 
         <div style={{ display: "flex", gap: 6 }}>
-          <select
-            value={existingPick}
-            onChange={(e) => setExistingPick(e.target.value)}
-            disabled={busy}
-            style={{ ...inputStyle, flex: 1 }}
-          >
+          <select value={existingPick} onChange={(e) => setExistingPick(e.target.value)} disabled={busy} style={{ ...inputStyle, flex: 1 }}>
             <option value="">add existing asset…</option>
             {importableAssets.map((a) => (
               <option key={a.catalogId} value={a.catalogId}>
@@ -520,57 +545,76 @@ export function GeometryBuilder() {
           </button>
         </div>
 
-        {parts.length > 0 && (
+        {sources.length > 0 && (
           <div style={{ display: "grid", gap: 6 }}>
             <div style={{ fontSize: 11, opacity: 0.8 }}>
-              Sources ({includedCount}/{parts.length}) — each has its own position / rotation
+              Sources ({includedCount}/{sources.length}) — position / rotate / trim each
             </div>
-            <div style={{ display: "grid", gap: 8, maxHeight: 340, overflow: "auto" }}>
-              {parts.map((p) => (
-                <div
-                  key={p.id}
-                  style={{
-                    display: "grid",
-                    gap: 4,
-                    padding: 6,
-                    background: "#15151a",
-                    border: "1px solid #303039",
-                    borderRadius: 4,
-                    opacity: p.included ? 1 : 0.5,
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
-                    <input type="checkbox" checked={p.included} onChange={() => togglePart(p.id)} />
-                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.label}>
-                      {p.label}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => removePart(p.id)}
-                      title="Remove this source"
-                      style={{ background: "none", border: "none", color: "#fca5a5", cursor: "pointer", fontSize: 13, lineHeight: 1 }}
-                    >
-                      ×
-                    </button>
+            <div style={{ display: "grid", gap: 8, maxHeight: 360, overflow: "auto" }}>
+              {sources.map((s) => {
+                const keptSub = s.subMeshes.filter((m) => m.included).length;
+                return (
+                  <div
+                    key={s.id}
+                    style={{
+                      display: "grid",
+                      gap: 4,
+                      padding: 6,
+                      background: "#15151a",
+                      border: "1px solid #303039",
+                      borderRadius: 4,
+                      opacity: s.included ? 1 : 0.5,
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+                      <input type="checkbox" checked={s.included} onChange={() => toggleSource(s.id)} title="include this source" />
+                      <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.label}>
+                        {s.label}
+                      </span>
+                      <button type="button" onClick={() => removeSource(s.id)} title="Remove this source"
+                        style={{ background: "none", border: "none", color: "#fca5a5", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>
+                        ×
+                      </button>
+                    </div>
+
+                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                      <span style={{ fontSize: 9, opacity: 0.5, width: 22 }}>pos</span>
+                      {(["tx", "ty", "tz"] as const).map((f) => (
+                        <input key={f} type="number" step={1} value={s[f]} title={`${f} (mm)`}
+                          onChange={(e) => setTransform(s.id, f, Number(e.target.value) || 0)}
+                          style={{ ...inputStyle, flex: 1, minWidth: 0, padding: "3px 5px" }} />
+                      ))}
+                    </div>
+                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                      <span style={{ fontSize: 9, opacity: 0.5, width: 22 }}>rot</span>
+                      {(["rx", "ry", "rz"] as const).map((f) => (
+                        <input key={f} type="number" step={5} value={s[f]} title={`${f} (deg)`}
+                          onChange={(e) => setTransform(s.id, f, Number(e.target.value) || 0)}
+                          style={{ ...inputStyle, flex: 1, minWidth: 0, padding: "3px 5px" }} />
+                      ))}
+                    </div>
+
+                    {s.subMeshes.length > 1 && (
+                      <div style={{ display: "grid", gap: 2 }}>
+                        <button type="button" onClick={() => toggleExpand(s.id)}
+                          style={{ background: "none", border: "none", color: "#93c5fd", cursor: "pointer", fontSize: 10, textAlign: "left", padding: 0 }}>
+                          {s.expanded ? "▾" : "▸"} sub-meshes ({keptSub}/{s.subMeshes.length} kept)
+                        </button>
+                        {s.expanded && (
+                          <div style={{ display: "grid", gap: 1, maxHeight: 120, overflow: "auto", paddingLeft: 8 }}>
+                            {s.subMeshes.map((m) => (
+                              <label key={m.id} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, opacity: m.included ? 0.9 : 0.45 }}>
+                                <input type="checkbox" checked={m.included} onChange={() => toggleSubMesh(s.id, m.id)} />
+                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={m.label}>{m.label}</span>
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                    <span style={{ fontSize: 9, opacity: 0.5, width: 22 }}>pos</span>
-                    {(["tx", "ty", "tz"] as const).map((f) => (
-                      <input key={f} type="number" step={1} value={p[f]} title={`${f} (mm)`}
-                        onChange={(e) => setPartField(p.id, f, Number(e.target.value) || 0)}
-                        style={{ ...inputStyle, flex: 1, minWidth: 0, padding: "3px 5px" }} />
-                    ))}
-                  </div>
-                  <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                    <span style={{ fontSize: 9, opacity: 0.5, width: 22 }}>rot</span>
-                    {(["rx", "ry", "rz"] as const).map((f) => (
-                      <input key={f} type="number" step={5} value={p[f]} title={`${f} (deg)`}
-                        onChange={(e) => setPartField(p.id, f, Number(e.target.value) || 0)}
-                        style={{ ...inputStyle, flex: 1, minWidth: 0, padding: "3px 5px" }} />
-                    ))}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -639,39 +683,25 @@ const inputStyle: React.CSSProperties = {
 
 function primaryButton(disabled: boolean): React.CSSProperties {
   return {
-    padding: "8px 12px",
-    fontSize: 12,
-    fontWeight: 600,
-    border: "1px solid #2563eb",
-    background: disabled ? "#26262c" : "#1e3a8a",
-    color: "#dbeafe",
-    cursor: disabled ? "not-allowed" : "pointer",
-    borderRadius: 4,
+    padding: "8px 12px", fontSize: 12, fontWeight: 600,
+    border: "1px solid #2563eb", background: disabled ? "#26262c" : "#1e3a8a",
+    color: "#dbeafe", cursor: disabled ? "not-allowed" : "pointer", borderRadius: 4,
   };
 }
 
 function saveButton(disabled: boolean): React.CSSProperties {
   return {
-    padding: "8px 12px",
-    fontSize: 12,
-    fontWeight: 600,
-    border: "1px solid #ca8a04",
-    background: disabled ? "#26262c" : "#a16207",
-    color: "#fef3c7",
-    cursor: disabled ? "not-allowed" : "pointer",
-    borderRadius: 4,
+    padding: "8px 12px", fontSize: 12, fontWeight: 600,
+    border: "1px solid #ca8a04", background: disabled ? "#26262c" : "#a16207",
+    color: "#fef3c7", cursor: disabled ? "not-allowed" : "pointer", borderRadius: 4,
   };
 }
 
 function chipButton(active: boolean): React.CSSProperties {
   return {
-    flex: 1,
-    padding: "4px 6px",
-    fontSize: 11,
+    flex: 1, padding: "4px 6px", fontSize: 11,
     border: "1px solid " + (active ? "#2563eb" : "#303039"),
     background: active ? "#1e3a8a" : "#15151a",
-    color: active ? "#dbeafe" : "#cbd5e1",
-    cursor: "pointer",
-    borderRadius: 3,
+    color: active ? "#dbeafe" : "#cbd5e1", cursor: "pointer", borderRadius: 3,
   };
 }

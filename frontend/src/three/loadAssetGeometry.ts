@@ -1,18 +1,19 @@
 /**
- * Load an existing viewer-ready asset (GLB/GLTF/OBJ/STL) into a single coloured
- * BufferGeometry the Geometry Builder can treat as a "part" — mergeable with
- * occt-imported parts (same position/normal/colour, de-indexed). Lets the
- * builder use existing Asset3D rows as sources (Asset-layer §B-4 / the
- * "edit existing asset geometry" flow), not just freshly uploaded STEP files.
+ * Load an existing viewer-ready asset (GLB/GLTF/OBJ/STL) into its individual
+ * sub-meshes — each a coloured BufferGeometry mergeable with occt-imported
+ * parts. Returning the sub-meshes (rather than one merged blob) lets the
+ * Geometry Builder remove unwanted regions of an existing asset, the same way a
+ * multi-body STEP can be trimmed (Asset-layer §B-3 / III-4 remove-regions).
  */
 
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
-import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 
 const DEFAULT_COLOR = new THREE.Color(0.8, 0.8, 0.8);
+
+export type LoadedSubMesh = { geometry: THREE.BufferGeometry; label: string };
 
 /** Normalise any geometry to a de-indexed mesh carrying exactly
  *  position + normal + colour, so it merges with occt/other parts. */
@@ -32,23 +33,21 @@ function toMergeableColored(
   out.setAttribute("position", new THREE.BufferAttribute(Float32Array.from(position.array), 3));
   out.setAttribute("normal", new THREE.BufferAttribute(Float32Array.from(normal.array), 3));
 
+  const colors = new Float32Array(count * 3);
   if (existingColor && existingColor.count === count) {
-    const c = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
-      c[i * 3] = existingColor.getX(i);
-      c[i * 3 + 1] = existingColor.getY(i);
-      c[i * 3 + 2] = existingColor.getZ(i);
+      colors[i * 3] = existingColor.getX(i);
+      colors[i * 3 + 1] = existingColor.getY(i);
+      colors[i * 3 + 2] = existingColor.getZ(i);
     }
-    out.setAttribute("color", new THREE.BufferAttribute(c, 3));
   } else {
-    const c = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
-      c[i * 3] = fallback.r;
-      c[i * 3 + 1] = fallback.g;
-      c[i * 3 + 2] = fallback.b;
+      colors[i * 3] = fallback.r;
+      colors[i * 3 + 1] = fallback.g;
+      colors[i * 3 + 2] = fallback.b;
     }
-    out.setAttribute("color", new THREE.BufferAttribute(c, 3));
   }
+  out.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   return out;
 }
 
@@ -58,56 +57,52 @@ function meshColor(mesh: THREE.Mesh): THREE.Color {
   return c ? c.clone() : DEFAULT_COLOR.clone();
 }
 
-function collectColoredFromObject(root: THREE.Object3D): THREE.BufferGeometry[] {
+function collectSubMeshes(root: THREE.Object3D): LoadedSubMesh[] {
   root.updateMatrixWorld(true);
-  const geoms: THREE.BufferGeometry[] = [];
+  const out: LoadedSubMesh[] = [];
   root.traverse((o) => {
     const mesh = o as THREE.Mesh;
     if (!mesh.isMesh || !mesh.geometry) return;
     const g = mesh.geometry.clone();
     g.applyMatrix4(mesh.matrixWorld);
-    geoms.push(toMergeableColored(g, meshColor(mesh)));
+    out.push({
+      geometry: toMergeableColored(g, meshColor(mesh)),
+      label: mesh.name && mesh.name.trim() ? mesh.name : `mesh ${out.length + 1}`,
+    });
     g.dispose();
   });
-  return geoms;
+  return out;
 }
 
-function mergeOrSingle(geoms: THREE.BufferGeometry[]): THREE.BufferGeometry {
-  if (geoms.length === 0) {
-    throw new Error("Asset contained no renderable meshes.");
-  }
-  if (geoms.length === 1) return geoms[0];
-  const merged = mergeGeometries(geoms, false);
-  if (!merged) throw new Error("Failed to merge the asset's meshes.");
-  return merged;
-}
-
-/** Load a viewer-ready asset file into one coloured, mergeable geometry. */
+/** Load a viewer-ready asset file into its sub-meshes (each coloured + in mm). */
 export async function loadAssetGeometry(
   url: string,
   ext: string,
   opts?: { unit?: string; scaleFactor?: number },
-): Promise<THREE.BufferGeometry> {
+): Promise<LoadedSubMesh[]> {
   const e = ext.toLowerCase();
-  let geometry: THREE.BufferGeometry;
+  let subs: LoadedSubMesh[];
   if (e === "glb" || e === "gltf") {
     const gltf = await new GLTFLoader().loadAsync(url);
-    geometry = mergeOrSingle(collectColoredFromObject(gltf.scene));
+    subs = collectSubMeshes(gltf.scene);
   } else if (e === "obj") {
     const obj = await new OBJLoader().loadAsync(url);
-    geometry = mergeOrSingle(collectColoredFromObject(obj));
+    subs = collectSubMeshes(obj);
   } else if (e === "stl") {
     const stl = await new STLLoader().loadAsync(url);
     stl.computeVertexNormals();
-    geometry = toMergeableColored(stl, DEFAULT_COLOR.clone());
+    subs = [{ geometry: toMergeableColored(stl, DEFAULT_COLOR.clone()), label: "mesh" }];
   } else {
     throw new Error(`Cannot load .${ext} in the builder (need GLB/GLTF/OBJ/STL).`);
   }
+  if (subs.length === 0) throw new Error("Asset contained no renderable meshes.");
+
   // Normalise to millimetres — occt STEP parts are mm, but assets stored in
   // metres would otherwise load 1000x too small and vanish next to mm parts.
   const factor = (opts?.scaleFactor ?? 1) * (opts?.unit === "m" ? 1000 : 1);
   if (factor !== 1) {
-    geometry.applyMatrix4(new THREE.Matrix4().makeScale(factor, factor, factor));
+    const m = new THREE.Matrix4().makeScale(factor, factor, factor);
+    for (const s of subs) s.geometry.applyMatrix4(m);
   }
-  return geometry;
+  return subs;
 }
