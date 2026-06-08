@@ -98,7 +98,6 @@ export function GeometryBuilder() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [parts, setParts] = useState<Part[]>([]);
-  const [selectedPartId, setSelectedPartId] = useState<string | null>(null);
   const [existingPick, setExistingPick] = useState("");
   const [catalogId, setCatalogId] = useState("");
   const [name, setName] = useState("");
@@ -317,7 +316,6 @@ export function GeometryBuilder() {
         const next = [...parts, ...added];
         setParts(next);
         recompose(next);
-        if (added[0]) setSelectedPartId(added[0].id); // show its transform panel
         if (parts.length === 0 && steps[0]) seedNaming(steps[0].name.replace(/\.[^.]+$/, ""));
         setInfo(`Added ${added.length} part(s). ${next.length} total.`);
         setStatus("ready");
@@ -353,7 +351,6 @@ export function GeometryBuilder() {
       const next = [...parts, newPart(id, asset.name || asset.catalogId)];
       setParts(next);
       recompose(next);
-      setSelectedPartId(id); // show its transform panel
       if (parts.length === 0) seedNaming(`${asset.catalogId}_edit`);
       setInfo(`Added existing asset "${asset.catalogId}".`);
       setStatus("ready");
@@ -377,11 +374,10 @@ export function GeometryBuilder() {
       partGeomsRef.current.get(id)?.dispose();
       partGeomsRef.current.delete(id);
       const next = parts.filter((p) => p.id !== id);
-      if (selectedPartId === id) setSelectedPartId(null);
       setParts(next);
       recompose(next);
     },
-    [parts, recompose, selectedPartId],
+    [parts, recompose],
   );
 
   const setPartField = useCallback(
@@ -462,7 +458,6 @@ export function GeometryBuilder() {
   const hasModel = sourceTris > 0;
   const busy = status === "parsing" || status === "saving";
   const includedCount = parts.filter((p) => p.included).length;
-  const selectedPart = parts.find((p) => p.id === selectedPartId) ?? null;
   const importableAssets = assets.filter((a) => VIEWER_EXTS.has(extOf(a.assetType || a.filePath)));
 
   return (
@@ -526,61 +521,55 @@ export function GeometryBuilder() {
         </div>
 
         {parts.length > 0 && (
-          <div style={{ display: "grid", gap: 4 }}>
+          <div style={{ display: "grid", gap: 6 }}>
             <div style={{ fontSize: 11, opacity: 0.8 }}>
-              Sources ({includedCount}/{parts.length}) — click to position / rotate
+              Sources ({includedCount}/{parts.length}) — each has its own position / rotation
             </div>
-            <div style={{ display: "grid", gap: 2, maxHeight: 150, overflow: "auto" }}>
+            <div style={{ display: "grid", gap: 8, maxHeight: 340, overflow: "auto" }}>
               {parts.map((p) => (
                 <div
                   key={p.id}
-                  onClick={() => setSelectedPartId(p.id)}
                   style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    fontSize: 11,
-                    padding: "1px 3px",
-                    borderRadius: 3,
-                    cursor: "pointer",
-                    background: selectedPartId === p.id ? "#26334d" : "transparent",
+                    display: "grid",
+                    gap: 4,
+                    padding: 6,
+                    background: "#15151a",
+                    border: "1px solid #303039",
+                    borderRadius: 4,
+                    opacity: p.included ? 1 : 0.5,
                   }}
                 >
-                  <input type="checkbox" checked={p.included} onChange={() => togglePart(p.id)} onClick={(e) => e.stopPropagation()} />
-                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.label}>
-                    {hasTransform(p) ? "◆ " : ""}{p.label}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); removePart(p.id); }}
-                    title="Remove part"
-                    style={{ background: "none", border: "none", color: "#fca5a5", cursor: "pointer", fontSize: 13, lineHeight: 1 }}
-                  >
-                    ×
-                  </button>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+                    <input type="checkbox" checked={p.included} onChange={() => togglePart(p.id)} />
+                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.label}>
+                      {p.label}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removePart(p.id)}
+                      title="Remove this source"
+                      style={{ background: "none", border: "none", color: "#fca5a5", cursor: "pointer", fontSize: 13, lineHeight: 1 }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                    <span style={{ fontSize: 9, opacity: 0.5, width: 22 }}>pos</span>
+                    {(["tx", "ty", "tz"] as const).map((f) => (
+                      <input key={f} type="number" step={1} value={p[f]} title={`${f} (mm)`}
+                        onChange={(e) => setPartField(p.id, f, Number(e.target.value) || 0)}
+                        style={{ ...inputStyle, flex: 1, minWidth: 0, padding: "3px 5px" }} />
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                    <span style={{ fontSize: 9, opacity: 0.5, width: 22 }}>rot</span>
+                    {(["rx", "ry", "rz"] as const).map((f) => (
+                      <input key={f} type="number" step={5} value={p[f]} title={`${f} (deg)`}
+                        onChange={(e) => setPartField(p.id, f, Number(e.target.value) || 0)}
+                        style={{ ...inputStyle, flex: 1, minWidth: 0, padding: "3px 5px" }} />
+                    ))}
+                  </div>
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {selectedPart && (
-          <div style={{ display: "grid", gap: 4, padding: 8, background: "#15151a", border: "1px solid #303039", borderRadius: 4 }}>
-            <div style={{ fontSize: 11, opacity: 0.85 }}>Transform: {selectedPart.label}</div>
-            <div style={{ fontSize: 10, opacity: 0.6 }}>position (mm)</div>
-            <div style={{ display: "flex", gap: 4 }}>
-              {(["tx", "ty", "tz"] as const).map((f) => (
-                <input key={f} type="number" step={1} value={selectedPart[f]}
-                  onChange={(e) => setPartField(selectedPart.id, f, Number(e.target.value) || 0)}
-                  style={{ ...inputStyle, width: "33%" }} />
-              ))}
-            </div>
-            <div style={{ fontSize: 10, opacity: 0.6 }}>rotation (deg)</div>
-            <div style={{ display: "flex", gap: 4 }}>
-              {(["rx", "ry", "rz"] as const).map((f) => (
-                <input key={f} type="number" step={5} value={selectedPart[f]}
-                  onChange={(e) => setPartField(selectedPart.id, f, Number(e.target.value) || 0)}
-                  style={{ ...inputStyle, width: "33%" }} />
               ))}
             </div>
           </div>
