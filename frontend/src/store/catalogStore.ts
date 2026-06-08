@@ -234,6 +234,7 @@ type V3CatalogState = {
   fetchAssetUsage: (key: string) => Promise<V3AssetUsage>;
   createAsset: (payload: V3AssetCreate) => Promise<V3Asset>;
   uploadAsset: (payload: V3AssetUpload) => Promise<V3Asset>;
+  updateAssetGeometry: (catalogId: string, payload: V3AssetUpload) => Promise<V3Asset>;
   getAssetByCatalogId: (catalogId: string) => V3Asset | undefined;
   getAssetByDbId: (dbId: string) => V3Asset | undefined;
   getAssetsByKind: (kind: string) => V3Asset[];
@@ -376,6 +377,26 @@ export const useV3Catalog = create<V3CatalogState>((set, get) => ({
       await get().refresh();
       return get().assets.find((asset) => asset.id === updated.data.id) ?? updated.data;
     }
+  },
+
+  updateAssetGeometry: async (catalogId, payload) => {
+    const form = new FormData();
+    form.append("file", payload.file);
+    if (payload.name) form.append("name", payload.name);
+    form.append("unit", payload.unit ?? "mm");
+    form.append("scale_factor", String(payload.scaleFactor ?? 1));
+    form.append("precision_preset", payload.precisionPreset ?? "standard");
+    form.append("preserve_colors", String(payload.preserveColors ?? true));
+    const res = await client.put<V3Asset>(
+      `/api/v3/assets3d/${encodeURIComponent(catalogId)}/geometry`,
+      form,
+      { timeout: 600000 },
+    );
+    const updated = res.data;
+    set((state) => ({
+      assets: state.assets.map((a) => (a.catalogId === catalogId ? updated : a)),
+    }));
+    return updated;
   },
 
   getAssetByCatalogId: (catalogId) =>

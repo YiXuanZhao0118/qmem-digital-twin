@@ -26,7 +26,7 @@ import { decimateWelded, estimateGlbBytes, triangleCount, weldForSimplify } from
 import { loadAssetGeometry, type LoadedSubMesh } from "../three/loadAssetGeometry";
 import { centroidKey, findCoplanarCluster } from "../three/loadAsset/viewerHints";
 import { resolveAssetUrl } from "../api/client";
-import { useV3Catalog, type V3AssetUpload } from "../store/catalogStore";
+import { useV3Catalog, type V3AssetUsage } from "../store/catalogStore";
 
 const locateOcctWasm: OcctLocateFile = (path) => (path.endsWith(".wasm") ? occtWasmUrl : path);
 
@@ -124,6 +124,8 @@ export function GeometryBuilder() {
   const [editNonce, setEditNonce] = useState(0);
 
   const uploadAsset = useV3Catalog((s) => s.uploadAsset);
+  const updateAssetGeometry = useV3Catalog((s) => s.updateAssetGeometry);
+  const fetchAssetUsage = useV3Catalog((s) => s.fetchAssetUsage);
   const assets = useV3Catalog((s) => s.assets);
   const refreshCatalog = useV3Catalog((s) => s.refresh);
 
@@ -132,6 +134,8 @@ export function GeometryBuilder() {
   const [info, setInfo] = useState<string | null>(null);
   const [sources, setSources] = useState<Source[]>([]);
   const [existingPick, setExistingPick] = useState("");
+  const [editingCatalogId, setEditingCatalogId] = useState<string | null>(null);
+  const [editUsage, setEditUsage] = useState<V3AssetUsage | null>(null);
   const [catalogId, setCatalogId] = useState("");
   const [name, setName] = useState("");
   const [domain, setDomain] = useState<"optical" | "rf" | "mechanical">("mechanical");
@@ -699,6 +703,61 @@ export function GeometryBuilder() {
     }
   }, [assets, existingPick, sources, recompose, seedNaming, makeSource]);
 
+  // Edit-in-place: load an asset as the sole source, lock its catalog_id, and
+  // overwrite it on Save (transforms baked into the geometry). You can still add
+  // more sources / trim / delete regions before saving.
+  const enterEditMode = useCallback(
+    async (catId: string) => {
+      const asset = assets.find((a) => a.catalogId === catId);
+      if (!asset) return;
+      const ext = extOf(asset.assetType || asset.filePath);
+      if (!VIEWER_EXTS.has(ext)) {
+        setError(`"${catId}" is .${ext} — only GLB/GLTF/OBJ/STL assets can be edited here.`);
+        return;
+      }
+      if (sources.length > 0 && !window.confirm(`Replace the current build with "${catId}" for editing?`)) return;
+      setError(null);
+      setInfo(null);
+      setStatus("parsing");
+      try {
+        const loaded = await loadAssetGeometry(resolveAssetUrl(asset.filePath), ext, {
+          unit: asset.unit,
+          scaleFactor: asset.scaleFactor,
+        });
+        for (const s of sources) {
+          for (const m of s.subMeshes) {
+            subGeomsRef.current.get(m.id)?.dispose();
+            subGeomsRef.current.delete(m.id);
+          }
+        }
+        setDeletedKeys(new Set());
+        setLockedKeys(new Set());
+        const src = makeSource(asset.name || catId, loaded);
+        setSources([src]);
+        recompose([src]);
+        setEditingCatalogId(catId);
+        setCatalogId(catId);
+        setName(asset.name || catId);
+        const domains = (asset.properties as { domains?: string[] } | undefined)?.domains;
+        const d = Array.isArray(domains) ? domains[0] : undefined;
+        if (d === "optical" || d === "rf" || d === "mechanical") setDomain(d);
+        setInfo(`Editing "${catId}" (${loaded.length} mesh(es)) — Save overwrites it.`);
+        setStatus("ready");
+        try { setEditUsage(await fetchAssetUsage(catId)); } catch { setEditUsage(null); }
+      } catch (e) {
+        setStatus("ready");
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [assets, sources, recompose, makeSource, fetchAssetUsage],
+  );
+
+  const exitEditMode = useCallback(() => {
+    setEditingCatalogId(null);
+    setEditUsage(null);
+    setInfo("Edit mode off — Save now creates a new asset (set a catalog_id).");
+  }, []);
+
   const toggleSource = useCallback(
     (id: string) => {
       const next = sources.map((s) => (s.id === id ? { ...s, included: !s.included } : s));
@@ -769,7 +828,7 @@ export function GeometryBuilder() {
       setError("Add at least one source first.");
       return;
     }
-    if (!/^[a-z0-9_]+$/.test(catalogId)) {
+    if (!editingCatalogId && !/^[a-z0-9_]+$/.test(catalogId)) {
       setError("catalog_id must be lower-snake-case ([a-z0-9_]+).");
       return;
     }
@@ -782,21 +841,36 @@ export function GeometryBuilder() {
     setStatus("saving");
     try {
       const glb = await exportGlb(geometry);
-      const payload: V3AssetUpload = {
-        file: glbToFile(glb, catalogId),
-        catalogId,
-        name: name.trim(),
-        domain,
-        preserveColors: true,
-      };
-      await uploadAsset(payload);
-      setInfo(`Saved “${catalogId}” (${(glb.byteLength / 1e6).toFixed(1)} MB). Place anchors in the ASSET3D tab.`);
+      const mb = (glb.byteLength / 1e6).toFixed(1);
+      if (editingCatalogId) {
+        // Baked merge is mm — force unit=mm scale=1 so the row's old scale
+        // (e.g. a metre asset's 1000) can't re-scale the new geometry.
+        await updateAssetGeometry(editingCatalogId, {
+          file: glbToFile(glb, editingCatalogId),
+          catalogId: editingCatalogId,
+          name: name.trim(),
+          domain,
+          unit: "mm",
+          scaleFactor: 1,
+          preserveColors: true,
+        });
+        setInfo(`Updated “${editingCatalogId}” (${mb} MB). Re-check anchors in the ASSET3D tab.`);
+      } else {
+        await uploadAsset({
+          file: glbToFile(glb, catalogId),
+          catalogId,
+          name: name.trim(),
+          domain,
+          preserveColors: true,
+        });
+        setInfo(`Saved “${catalogId}” (${mb} MB). Place anchors in the ASSET3D tab.`);
+      }
       setStatus("ready");
     } catch (e) {
       setStatus("ready");
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [catalogId, name, domain, uploadAsset]);
+  }, [catalogId, name, domain, uploadAsset, updateAssetGeometry, editingCatalogId]);
 
   const hasModel = sourceTris > 0;
   const busy = status === "parsing" || status === "saving";
@@ -849,6 +923,34 @@ export function GeometryBuilder() {
             Add
           </button>
         </div>
+
+        <select
+          value={editingCatalogId ?? ""}
+          onChange={(e) => { const v = e.target.value; if (v) void enterEditMode(v); else exitEditMode(); }}
+          disabled={busy}
+          style={{ ...inputStyle, width: "100%" }}
+          title="Load an asset to edit; Save overwrites it in place."
+        >
+          <option value="">edit existing asset… (overwrite on save)</option>
+          {importableAssets.map((a) => (
+            <option key={a.catalogId} value={a.catalogId}>
+              {a.name || a.catalogId} (.{extOf(a.assetType || a.filePath)})
+            </option>
+          ))}
+        </select>
+
+        {editingCatalogId && (
+          <div style={{ fontSize: 11, padding: 8, background: "#13233f", border: "1px solid #2563eb", borderRadius: 4, display: "grid", gap: 6 }}>
+            <div>✎ Editing <b>{editingCatalogId}</b> — Save overwrites this asset.</div>
+            {editUsage && editUsage.objectCount > 0 && (
+              <div style={{ color: "#fbbf24" }}>
+                ⚠ Used by {editUsage.objectCount} placed object(s)
+                {editUsage.componentCount ? ` + ${editUsage.componentCount} component ref(s)` : ""} — overwriting changes them; re-check anchors after.
+              </div>
+            )}
+            <button type="button" onClick={exitEditMode} style={chipButton(false)}>Exit edit (save as new instead)</button>
+          </div>
+        )}
 
         {sources.length > 0 && (
           <div style={{ display: "grid", gap: 6 }}>
@@ -959,8 +1061,8 @@ export function GeometryBuilder() {
             </div>
 
             <label style={{ fontSize: 11, display: "grid", gap: 4 }}>
-              catalog_id
-              <input value={catalogId} onChange={(e) => setCatalogId(e.target.value)} placeholder="lower_snake_case" style={inputStyle} />
+              catalog_id{editingCatalogId ? " (locked while editing)" : ""}
+              <input value={catalogId} onChange={(e) => setCatalogId(e.target.value)} readOnly={!!editingCatalogId} placeholder="lower_snake_case" style={{ ...inputStyle, opacity: editingCatalogId ? 0.6 : 1 }} />
             </label>
             <label style={{ fontSize: 11, display: "grid", gap: 4 }}>
               name
@@ -976,7 +1078,7 @@ export function GeometryBuilder() {
             </label>
 
             <button type="button" disabled={busy} onClick={() => void handleSave()} style={saveButton(busy)}>
-              {status === "saving" ? "Saving…" : "Save as GLB asset"}
+              {status === "saving" ? "Saving…" : editingCatalogId ? `Save changes to ${editingCatalogId}` : "Save as GLB asset"}
             </button>
           </>
         )}

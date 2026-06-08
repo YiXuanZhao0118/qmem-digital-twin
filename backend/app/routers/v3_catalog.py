@@ -296,6 +296,111 @@ async def upload_asset3d_v3(
     return row
 
 
+@router.put("/assets3d/{catalog_id}/geometry", response_model=Asset3DV3Out)
+async def replace_asset3d_geometry(
+    catalog_id: str,
+    file: UploadFile = File(...),
+    name: str | None = Form(None),
+    unit: str | None = Form(None),
+    scale_factor: float | None = Form(None),
+    precision_preset: str = Form("standard"),
+    preserve_colors: bool = Form(True),
+    session: AsyncSession = Depends(get_session),
+) -> Asset3D:
+    """Replace an EXISTING Asset3D's geometry file in place (Geometry Builder
+    "edit existing asset").
+
+    Keeps the row's anchors / kind_id / default_params / wavelength|frequency
+    ranges; only swaps file_path + asset_type + unit/scale_factor and refreshes
+    the geometry-related ``properties`` (cadImport, viewerReady, …). The builder
+    bakes the placed/merged model into a coloured GLB in millimetres, so callers
+    send unit=mm scale_factor=1 — that is why those are applied here rather than
+    preserved. Allowed even when the asset is placed in scenes; the UI surfaces a
+    usage warning first (anchors may need re-checking in the ASSET3D tab).
+    """
+    row = await _fetch_asset_by_key(session, catalog_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"asset3d key={catalog_id!r} not found",
+        )
+
+    suffix = Path(file.filename or "").suffix.lower()
+    rejection = upload_rejection_message(suffix)
+    if rejection:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=rejection)
+    if suffix not in SUPPORTED_ASSET_EXTENSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Upload a GLB, GLTF, OBJ, STL, STEP, or STP file.",
+        )
+    if unit is not None and unit not in {"mm", "m"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unit must be mm or m.")
+    if precision_preset not in {"preview", "standard", "high"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Precision must be preview, standard, or high.")
+
+    subdir = subdir_for_ext(suffix)
+    upload_dir = settings.asset_root / "files" / subdir
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    stem = row.catalog_id or catalog_id
+    filename = safe_upload_name(file.filename or f"{stem}{suffix}")
+    target = upload_dir / filename
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty.")
+    target.write_bytes(content)
+
+    relative_path = f"files/{subdir}/{filename}"
+    asset_type = suffix.lstrip(".")
+    conversion = convert_cad_source_to_stl(
+        relative_path,
+        output_stem=stem,
+        precision_preset=precision_preset,
+    ) if suffix in {".step", ".stp"} else None
+    viewer_path = conversion.viewer_relative_path if conversion and conversion.ok else relative_path
+    viewer_asset_type = conversion.viewer_asset_type if conversion and conversion.ok else asset_type
+    viewer_ready = suffix in VIEWER_ASSET_EXTENSIONS or bool(conversion and conversion.ok)
+    cad_source = suffix in CAD_SOURCE_EXTENSIONS
+
+    properties = dict(row.properties or {})
+    properties.update({
+        "sourceFilename": file.filename,
+        "uploadedAssetType": asset_type,
+        "viewerReady": viewer_ready,
+        "conversionStatus": "ready" if viewer_ready else "cad_source_only",
+        "conversionMessage": conversion.message if conversion else None,
+        "colorImportStatus": "from_file" if suffix in {".glb", ".gltf"} else ("pending_conversion" if cad_source else "not_available"),
+        "cadImport": {
+            "sourcePath": relative_path,
+            "sourceFormat": asset_type,
+            "viewerPath": viewer_path if viewer_ready else None,
+            "targetFormat": "stl" if conversion and conversion.ok else "glb",
+            "precisionPreset": precision_preset,
+            "preserveColors": preserve_colors,
+        },
+    })
+
+    row.file_path = viewer_path
+    row.asset_type = viewer_asset_type
+    if name:
+        row.name = name
+    if unit is not None:
+        row.unit = unit
+    if scale_factor is not None:
+        row.scale_factor = scale_factor
+    row.properties = properties
+    try:
+        await session.commit()
+    except Exception as e:
+        await session.rollback()
+        target.unlink(missing_ok=True)
+        if conversion and conversion.ok and conversion.viewer_relative_path:
+            (settings.asset_root / conversion.viewer_relative_path).unlink(missing_ok=True)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    await session.refresh(row)
+    return row
+
+
 @router.get("/assets3d/{catalog_id}", response_model=Asset3DV3Out)
 async def get_asset3d_by_catalog_id(
     catalog_id: str,
