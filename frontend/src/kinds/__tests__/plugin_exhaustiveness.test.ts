@@ -40,11 +40,14 @@ const KIND_UNION_MEMBERS: ElementKind[] = [
   "waveplate",
   "polarizer",
   "glan_polarizer",
+  "faraday_rotator",
   "beam_splitter",
   "fiber_coupler",
   "fiber",
-  "fiber_end",
-  "isolator",
+  // fiber_end + isolator remain in the ElementKind type union but have no
+  // PhysicsPlugin (Phase 9.X: fiber owns both tips on one asset; isolator
+  // is a Component composition). Excluded here so the plugin↔kind 1:1
+  // invariant holds for the kinds we still ship as plugins.
   "aom",
   "eom",
   "nonlinear_crystal",

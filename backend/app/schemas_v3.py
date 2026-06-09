@@ -160,6 +160,7 @@ class Asset3DV3Out(CamelModel):
 
 class Asset3DV3Update(CamelModel):
     """Editable v3 fields for the Asset3D catalog editor."""
+    name: Optional[str] = None
     kind_id: Optional[str] = None
     # Phase 9.8: PHY Editor's primary write target ??replaces faces[] +
     # transitions[] over time. Anchors use the Phase 9.1 tri-axis schema

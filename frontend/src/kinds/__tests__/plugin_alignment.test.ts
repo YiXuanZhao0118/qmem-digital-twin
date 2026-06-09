@@ -42,17 +42,13 @@ describe("ComponentPlugin alignment with legacy tables", () => {
   });
 
   it("PLUGINS array covers every ElementKind + every catalog componentType", () => {
-    // 27 physics plugins (one per ElementKind) + 23 passive (mechanical /
-    // infrastructure / misc / passive-electronics / passive-optical) +
-    // mirror_mount which started in M1 as a sample = 51 total. Snapshot
-    // value so a regression (someone deletes a plugin) shows up
-    // immediately.
-    // 30 physics (incl. programmable_pulse_generator + fiber_end +
-    // glan_polarizer) + mirror_mount (physics-flagged passive) +
-    // 23 PASSIVE_PLUGINS = 54. Was 51 pre-PPG, 52 after PPG, 53 after
-    // fiber_end, 54 after Stage A''.3 added glan_polarizer (the
-    // Glan-Laser calcite polariser used by high-power isolators).
-    expect(PLUGINS.length).toBe(54);
+    // 29 physics plugins + mirror_mount (physics-flagged passive) +
+    // 23 PASSIVE_PLUGINS = 53. Snapshot value so a regression (someone
+    // deletes a plugin) shows up immediately. fiber_end + isolator were
+    // dropped as plugins in Phase 9.X (fiber owns both tips on one asset;
+    // isolator is a Component composition); faraday_rotator was added back
+    // as a first-class plugin so the PHY Editor can edit its rod aperture.
+    expect(PLUGINS.length).toBe(53);
 
     // Every legacy ElementKind has a physics plugin claiming it.
     const physicsIds = new Set(
@@ -61,10 +57,10 @@ describe("ComponentPlugin alignment with legacy tables", () => {
     const expectedKinds = [
       "laser_source", "tapered_amplifier", "mirror", "dichroic_mirror",
       "lens_biconvex", "lens_plano_convex", "lens_cylindrical",
-      "waveplate", "polarizer", "glan_polarizer", "beam_splitter", "fiber_coupler",
-      "fiber", "fiber_end", "isolator", "aom", "eom", "nonlinear_crystal",
-      "saturable_absorber", "detector", "camera", "spectrometer",
-      "wavemeter", "beam_dump", "rf_source", "rf_amplifier",
+      "waveplate", "polarizer", "glan_polarizer", "faraday_rotator",
+      "beam_splitter", "fiber_coupler", "fiber", "aom", "eom",
+      "nonlinear_crystal", "saturable_absorber", "detector", "camera",
+      "spectrometer", "wavemeter", "beam_dump", "rf_source", "rf_amplifier",
       "horn_antenna", "programmable_pulse_generator",
       "rf_cable", "rf_switch",
     ];

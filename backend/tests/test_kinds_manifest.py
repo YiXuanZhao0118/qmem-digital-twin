@@ -43,7 +43,10 @@ class TestComponentTypeToKind:
     def test_covers_canonical_optical_kinds(self) -> None:
         mapping = component_type_to_kind()
         # Anchored to the kinds users actually place in the catalog.
-        for ct in ("mirror", "aom", "lens_biconvex", "waveplate", "isolator"):
+        # NB: `isolator` is intentionally absent — Phase 9.X made it a
+        # Component composition (Glan + Faraday + Glan), not an ElementKind
+        # with a physics plugin, so it never appears in this mapping.
+        for ct in ("mirror", "aom", "lens_biconvex", "waveplate", "faraday_rotator"):
             assert ct in mapping, f"{ct} missing from manifest mapping"
 
     def test_horn_antenna_present(self) -> None:
@@ -67,12 +70,14 @@ class TestComponentTypeToKind:
 
 
 class TestElementKinds:
-    def test_returns_30_kinds(self) -> None:
-        # Bumped 29 → 30 in Stage A''.3 with the new ``glan_polarizer``
-        # plugin (Glan-Laser calcite polariser, the high-power isolator
-        # variant of PBS cube).
+    def test_returns_29_kinds(self) -> None:
+        # Count = number of physics plugins in the frontend registry.
+        # Stage A''.3 added glan_polarizer; Phase 9.X dropped fiber_end +
+        # isolator as plugins (fiber owns both tips; isolator is a Component
+        # composition); faraday_rotator was added back as a first-class
+        # plugin so the PHY Editor can edit the faraday rod's aperture.
         kinds = element_kinds()
-        assert len(kinds) == 30, f"expected 30 ElementKinds, got {len(kinds)}: {kinds}"
+        assert len(kinds) == 29, f"expected 29 ElementKinds, got {len(kinds)}: {kinds}"
 
     def test_covers_full_spectrum(self) -> None:
         kinds = set(element_kinds())

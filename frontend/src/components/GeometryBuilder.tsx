@@ -25,9 +25,11 @@ import { importStep, occtMeshToGeometry, type OcctLocateFile } from "../three/oc
 import { exportGlb, geometryToColoredMesh, glbToFile, mergeColoredGeometries } from "../three/glbExport";
 import { decimateWelded, estimateGlbBytes, triangleCount, weldForSimplify } from "../three/decimate";
 import { loadAssetGeometry, type LoadedSubMesh } from "../three/loadAssetGeometry";
+import { VIEWER_BG_LIGHT, VIEWER_GRID_BLACK, VIEWER_GROUND_FILL } from "../three/viewerTheme";
 import { centroidKey, findCoplanarCluster } from "../three/loadAsset/viewerHints";
 import { resolveAssetUrl } from "../api/client";
 import { useV3Catalog, type V3AssetUsage } from "../store/catalogStore";
+import { useKindsStore } from "../store/kindsStore";
 import {
   ASIDE_STYLE,
   ASIDE_WIDTH,
@@ -157,6 +159,8 @@ export function GeometryBuilder() {
   const fetchAssetUsage = useV3Catalog((s) => s.fetchAssetUsage);
   const assets = useV3Catalog((s) => s.assets);
   const refreshCatalog = useV3Catalog((s) => s.refresh);
+  const kinds = useKindsStore((s) => s.kinds);
+  const fetchKinds = useKindsStore((s) => s.fetchAll);
 
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -167,7 +171,9 @@ export function GeometryBuilder() {
   const [editUsage, setEditUsage] = useState<V3AssetUsage | null>(null);
   const [catalogId, setCatalogId] = useState("");
   const [name, setName] = useState("");
-  const [domain, setDomain] = useState<"optical" | "rf" | "mechanical">("mechanical");
+  // Kind drives the asset's domain (kind.domains is authoritative); empty =
+  // no kind = mechanical / no-physics, matching the old "mechanical" default.
+  const [kindId, setKindId] = useState<string>("");
   const [sourceTris, setSourceTris] = useState(0);
   const [displayTris, setDisplayTris] = useState(0);
   const [estMB, setEstMB] = useState(0);
@@ -186,6 +192,9 @@ export function GeometryBuilder() {
     if (assets.length === 0) void refreshCatalog();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshCatalog]);
+
+  // Load the Kind registry so the kind <select> below is populated.
+  useEffect(() => { void fetchKinds(); }, [fetchKinds]);
 
   // Rebuild the group meshes from the current display / pick / lock geometries.
   const mountMeshes = useCallback(() => {
@@ -388,13 +397,9 @@ export function GeometryBuilder() {
     const mount = mountRef.current;
     if (!mount) return;
     const scene = new THREE.Scene();
-    // Builder viewport stays dark: it bakes raw STEP/STL into generic
-    // vertex-coloured geometry whose effective base is a near-white grey.
-    // On a dark backdrop + bright key/fill the model reads as a bright,
-    // well-shaded solid (high contrast); the light VIEWER_BG the other
-    // previews use washes that same grey out. The editor chrome around it
-    // is still the shared light PHY-Editor theme.
-    scene.background = new THREE.Color(0x16161a);
+    // Light PHY-Editor template, unified with the Component / Asset3D previews:
+    // same light backdrop + lighting so all three editor viewports match.
+    scene.background = new THREE.Color(VIEWER_BG_LIGHT);
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100000);
     camera.position.set(120, 120, 120);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -411,21 +416,23 @@ export function GeometryBuilder() {
     controls.enableDamping = true;
     const group = new THREE.Group();
     scene.add(group);
-    // Bright key + low ambient: lit faces read ~200 while shadowed faces stay
-    // dark so the form is legible (not a flat blown-out blob) on the dark bg.
-    scene.add(new THREE.HemisphereLight(0xbcc8ff, 0x2a2d36, 0.8));
-    scene.add(new THREE.AmbientLight(0xffffff, 0.35));
-    const key = new THREE.DirectionalLight(0xffffff, 2.2);
-    key.position.set(30, 45, 60);
+    // Shared light-template lighting (matches the Component / Asset3D previews).
+    scene.add(new THREE.HemisphereLight("#dbeafe", VIEWER_GROUND_FILL, 2.4));
+    scene.add(new THREE.AmbientLight("#ffffff", 0.5));
+    const key = new THREE.DirectionalLight("#ffffff", 2.4);
+    key.position.set(30, 40, 60);
     scene.add(key);
-    const fill = new THREE.DirectionalLight(0xfff0e0, 0.7);
+    const fill = new THREE.DirectionalLight("#ffe7c4", 1.2);
     fill.position.set(-40, 20, -30);
     scene.add(fill);
-    const rim = new THREE.DirectionalLight(0xbfd4ff, 0.6);
-    rim.position.set(0, -45, 30);
+    const rim = new THREE.DirectionalLight("#bfdbfe", 0.9);
+    rim.position.set(0, -50, 30);
     scene.add(rim);
-    // Grid lines bright enough to read clearly against the dark backdrop.
-    scene.add(new THREE.GridHelper(500, 20, 0x6b7280, 0x3b414e));
+    // Black reference grid on the light backdrop (unified PHY-Editor template),
+    // laid in the X–Y plane to match the Asset3D preview.
+    const grid = new THREE.GridHelper(500, 20, VIEWER_GRID_BLACK, VIEWER_GRID_BLACK);
+    grid.rotation.x = Math.PI / 2;
+    scene.add(grid);
 
     // Origin marker: RGB axes (X=red, Y=green, Z=blue) meeting at (0,0,0).
     // depthTest off so it stays visible through the model; scaled to the part
@@ -901,9 +908,7 @@ export function GeometryBuilder() {
         setEditingCatalogId(catId);
         setCatalogId(catId);
         setName(asset.name || catId);
-        const domains = (asset.properties as { domains?: string[] } | undefined)?.domains;
-        const d = Array.isArray(domains) ? domains[0] : undefined;
-        if (d === "optical" || d === "rf" || d === "mechanical") setDomain(d);
+        setKindId(asset.kindId ?? "");
         setInfo(`Editing "${catId}" (${loaded.length} mesh(es)) — Save overwrites it.`);
         setStatus("ready");
         try { setEditUsage(await fetchAssetUsage(catId)); } catch { setEditUsage(null); }
@@ -1008,11 +1013,12 @@ export function GeometryBuilder() {
       if (editingCatalogId) {
         // Baked merge is mm — force unit=mm scale=1 so the row's old scale
         // (e.g. a metre asset's 1000) can't re-scale the new geometry.
+        // kind_id is preserved by the geometry-replace endpoint — kind is
+        // (re)assigned in the ASSET3D tab, not here.
         await updateAssetGeometry(editingCatalogId, {
           file: glbToFile(glb, editingCatalogId),
           catalogId: editingCatalogId,
           name: name.trim(),
-          domain,
           unit: "mm",
           scaleFactor: 1,
           preserveColors: true,
@@ -1023,7 +1029,7 @@ export function GeometryBuilder() {
           file: glbToFile(glb, catalogId),
           catalogId,
           name: name.trim(),
-          domain,
+          kindId: kindId || undefined,
           preserveColors: true,
         });
         setInfo(`Saved “${catalogId}” (${mb} MB). Place anchors in the ASSET3D tab.`);
@@ -1033,7 +1039,7 @@ export function GeometryBuilder() {
       setStatus("ready");
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [catalogId, name, domain, uploadAsset, updateAssetGeometry, editingCatalogId]);
+  }, [catalogId, name, kindId, uploadAsset, updateAssetGeometry, editingCatalogId]);
 
   const hasModel = sourceTris > 0;
   const busy = status === "parsing" || status === "saving";
@@ -1239,11 +1245,28 @@ export function GeometryBuilder() {
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Display name" style={INPUT} />
             </label>
             <label style={{ fontSize: 11, display: "grid", gap: 4 }}>
-              domain
-              <select value={domain} onChange={(e) => setDomain(e.target.value as typeof domain)} style={INPUT}>
-                <option value="mechanical">mechanical</option>
-                <option value="optical">optical</option>
-                <option value="rf">rf</option>
+              kind{editingCatalogId ? " (set in the ASSET3D tab)" : ""}
+              <select
+                value={kindId}
+                onChange={(e) => setKindId(e.target.value)}
+                disabled={!!editingCatalogId}
+                title={editingCatalogId
+                  ? "Kind is preserved on geometry save — (re)assign it in the ASSET3D tab."
+                  : "Domain is derived from the chosen kind (kind.domains)."}
+                style={{ ...INPUT, opacity: editingCatalogId ? 0.6 : 1 }}
+              >
+                <option value="">— none (mechanical / no physics) —</option>
+                {kindId && !kinds.some((k) => k.name === kindId) && (
+                  <option value={kindId}>{kindId} (legacy)</option>
+                )}
+                {kinds
+                  .slice()
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map((k) => (
+                    <option key={k.name} value={k.name}>
+                      {k.name}
+                    </option>
+                  ))}
               </select>
             </label>
           </>

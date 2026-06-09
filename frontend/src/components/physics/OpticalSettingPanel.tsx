@@ -155,7 +155,22 @@ export function OpticalSettingPanel({ component, sceneObject }: Props) {
     }
   };
 
-  const isOptical = component.physicsCapabilities.includes("optical");
+  // Optical-ness derives from the KIND, not the stored physicsCapabilities —
+  // parts created via the modal "+ New Component" flow have empty
+  // physicsCapabilities (the domain is kind-derived). True when: caps already
+  // say optical, OR the component's own kind is optical (single optic like a
+  // mirror), OR any bound asset is optical (composite like the isolator,
+  // kindId="none").
+  const isOptical = useMemo(() => {
+    if (component.physicsCapabilities.includes("optical")) return true;
+    if (mappedKind != null && domainForElementKind(mappedKind) === "optical") return true;
+    return (scene.componentBindings ?? []).some((b) => {
+      if (b.componentId !== component.id || b.targetKind !== "asset" || !b.asset3dId) return false;
+      const a = scene.assets.find((x) => x.id === b.asset3dId);
+      const ek = a?.kindId ? kindIdToElementKind(a.kindId) : null;
+      return ek != null && domainForElementKind(ek) === "optical";
+    });
+  }, [component, mappedKind, scene.componentBindings, scene.assets]);
 
   return (
     <div className="physics-inspector">

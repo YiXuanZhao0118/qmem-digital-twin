@@ -20,7 +20,7 @@ import {
   TEXTAREA,
   TH,
 } from "./phyEditorTheme";
-import { Eye, EyeOff, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
+import { Eye, EyeOff, RefreshCw, Save, Trash2, X } from "lucide-react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
@@ -44,7 +44,7 @@ import { createZhl12wPlusAmplifier } from "../kinds/rf_amplifier/renderer";
 import { createRfSwitch } from "../kinds/rf_switch/renderer";
 import { createSmaShortCable } from "../three/loadAsset/rf_cable";
 import { createNewportOpticalTable } from "../three/photoRoom";
-import { VIEWER_BG_LIGHT, VIEWER_GRID_LINE, VIEWER_GRID_CENTER, VIEWER_GROUND_FILL } from "../three/viewerTheme";
+import { VIEWER_BG_LIGHT, VIEWER_GRID_BLACK, VIEWER_GROUND_FILL } from "../three/viewerTheme";
 import { createFiberSplineObject } from "../three/loadAsset/fiber/spline";
 import type { FiberNode } from "../three/loadAsset/fiber";
 import { applyDeletionFilter, applyIncludeOnlyFilter, applyViewerHintsToGeometry, centroidKey, findCoplanarCluster } from "../three/loadAsset/viewerHints";
@@ -106,6 +106,7 @@ type DraftTransition = {
 };
 
 type AssetDraft = {
+  name: string;
   kindId: string;
   wavelengthMinNm: string;
   wavelengthMaxNm: string;
@@ -279,6 +280,7 @@ function jsonText(value: unknown): string {
 function draftFromAsset(asset: V3Asset): AssetDraft {
   const props = (asset.properties ?? {}) as Record<string, unknown>;
   return {
+    name: asset.name ?? "",
     kindId: asset.kindId ?? "",
     wavelengthMinNm: n(asset.wavelengthRangeNm?.[0]),
     wavelengthMaxNm: n(asset.wavelengthRangeNm?.[1]),
@@ -1018,8 +1020,12 @@ function draftToPatch(draft: AssetDraft): V3AssetUpdate {
       ? null
       : [wavelengthMin ?? 0, wavelengthMax ?? 0] as [number, number];
 
+  const nameValue = draft.name.trim();
+  if (!nameValue) throw new Error("name is required");
+
   const kindIdValue = draft.kindId.trim() || null;
   return {
+    name: nameValue,
     kindId: kindIdValue,
     wavelengthRangeNm,
     anchors,
@@ -1314,7 +1320,7 @@ function FaceLocator3D({
     const markerRadius = Math.max(sceneScale * 0.008, 0.5);
     const normalLength = Math.max(sceneScale * 0.6, 12);
 
-    const grid = new THREE.GridHelper(sceneScale * 1.6, 12, VIEWER_GRID_CENTER, VIEWER_GRID_LINE);
+    const grid = new THREE.GridHelper(sceneScale * 1.6, 12, VIEWER_GRID_BLACK, VIEWER_GRID_BLACK);
     grid.rotation.x = Math.PI / 2;
     root.add(grid);
     // Faint lab/CAD axes (grey) for reference.
@@ -2362,6 +2368,56 @@ function AssetEditForm({
     };
   }, [draft.kindId]);
 
+  // Anchors are a kind-level contract: the editable anchor list is
+  // derived from the selected kind's anchorTemplate, not hand-authored.
+  // When a kind is chosen, auto-seed a blank row for every template
+  // anchor id (required + optional) the asset is missing, so a freshly
+  // imported asset — the backend creates STEP/GLB builds with
+  // anchors=[] (v3_catalog.create_asset3d) — shows the kind's anchors
+  // instead of an empty table; the user then positions them.
+  //
+  // Additive only: never drops anchors. Synthesized ids that live
+  // outside the template (interaction_center for aom, optical_center for
+  // faraday/slab) must survive, and an already-seeded asset
+  // (thorlabs_bb1_e03) is left untouched once its template ids exist —
+  // so this converges in one pass and never fights the user.
+  useEffect(() => {
+    const kind = kinds.find((k) => k.name === draft.kindId);
+    if (!kind) return;
+    const present = new Set(draft.anchors.map((a) => a.id));
+    const missing = faceIdTemplate.all.filter((id) => !present.has(id));
+    if (missing.length === 0) return;
+
+    // Seed the kind's defaultParams alongside the anchors, but only while
+    // the asset still has none. Gating on `missing` means we touch
+    // defaultParams exactly once (this first seed pass), so the user can
+    // clear them afterwards without the effect re-seeding.
+    const kindParams = kind.defaultParams ?? {};
+    const seedParams =
+      (draft.defaultParamsText.trim() === "" || draft.defaultParamsText.trim() === "{}")
+      && Object.keys(kindParams).length > 0;
+
+    setDraft({
+      ...draft,
+      anchors: [
+        ...draft.anchors,
+        ...missing.map((id): DraftAnchor => ({
+          id,
+          px: "0", py: "0", pz: "0",
+          nx: "0", ny: "0", nz: "1",
+          yx: "0", yy: "1", yz: "0",
+          apertureMm: "1",
+          apertureShape: "circle",
+          apertureWidthMm: "",
+          apertureHeightMm: "",
+          connectorType: "",
+          name: "",
+        })),
+      ],
+      ...(seedParams ? { defaultParamsText: jsonText(kindParams) } : {}),
+    });
+  }, [draft, kinds, faceIdTemplate]);
+
   // Geometry edits (mid-click cluster delete + "Revert geometry") stage
   // in draft.properties.viewerHints and only commit on Save Changes.
   // Previously they wrote through to the DB immediately, which created
@@ -2616,6 +2672,15 @@ function AssetEditForm({
       {/* Identity ??physics_kind is catalog identity, wavelength range
           is physics tuning. Both editable here. */}
       <div style={SECTION_LABEL}>Identity</div>
+      <label style={{ display: "block", fontSize: 11, color: "#6b7280", marginBottom: 8 }}>
+        name
+        <input
+          value={draft.name}
+          onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+          style={INPUT}
+          type="text"
+        />
+      </label>
       <div style={{ display: "grid", gridTemplateColumns: parentDomain === "rf" ? "minmax(0, 1fr)" : "minmax(0, 1fr) 120px 120px", gap: 8 }}>
         <label style={{ fontSize: 11, color: "#6b7280" }}>
           kind_id
@@ -2650,58 +2715,15 @@ function AssetEditForm({
         )}
       </div>
 
-      <div style={{ ...SECTION_LABEL, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span>Anchors ({draft.anchors.length})</span>
-        {isBindingDev && (
-          <IconButton
-            title="Add anchor"
-            onClick={() => {
-              const nextIndex = draft.anchors.length;
-              // Auto-pick the first unused required id from the kind's
-              // template so the new anchor is born compliant. Falls
-              // back to a placeholder if every required slot is taken
-              // or the kind has no template.
-              const used = new Set(draft.anchors.map((a) => a.id));
-              const nextRequired = faceIdTemplate.required.find((id) => !used.has(id));
-              const nextOptional = faceIdTemplate.optional.find((id) => !used.has(id));
-              const newId = nextRequired ?? nextOptional ?? `anchor_${nextIndex + 1}`;
-              setDraft({
-                ...draft,
-                anchors: [
-                  ...draft.anchors,
-                  {
-                    id: newId,
-                    px: "0",
-                    py: "0",
-                    pz: "0",
-                    nx: "0",
-                    ny: "0",
-                    nz: "1",
-                    yx: "0",
-                    yy: "1",
-                    yz: "0",
-                    apertureMm: "1",
-                    apertureShape: "circle",
-                    apertureWidthMm: "",
-                    apertureHeightMm: "",
-                    connectorType: "",
-                    name: "",
-                  },
-                ],
-              });
-              setSelectedAnchorIndex(nextIndex);
-            }}
-          >
-            <Plus size={15} />
-          </IconButton>
-        )}
-      </div>
+      {/* Anchors are defined by the kind's anchorTemplate and auto-seeded
+          above — no manual add/remove. To change which anchors a kind
+          has, edit the kind in the Kinds editor. */}
+      <div style={SECTION_LABEL}>Anchors ({draft.anchors.length})</div>
 
       <table style={TABLE}>
         <thead>
           <tr>
             <th style={{ ...TH, width: 110 }}>anchor_id</th>
-            <th style={{ ...TH, width: 70 }}>name</th>
             <th style={TH}>position x/y/z</th>
             <th style={TH}>axisX (propagation) x/y/z</th>
             <th style={TH}>axisY (slow / fast / transmit) x/y/z</th>
@@ -2709,7 +2731,6 @@ function AssetEditForm({
             <th style={{ ...TH, width: 105 }}>shape</th>
             <th style={TH}>width/height</th>
             <th style={{ ...TH, width: 110 }}>connector_type</th>
-            {isBindingDev && <th style={{ ...TH, width: 34 }} />}
           </tr>
         </thead>
         <tbody>
@@ -2730,19 +2751,12 @@ function AssetEditForm({
               <td style={TD}>
                 <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 600 }}>{anchor.id}</span>
               </td>
-              {/* Per-anchor name. Distinguishes anchors that share an id
-                  (rf_switch RF1/RF2, AD9959 CH0..CH3) — the RF Link panel +
-                  solver key throws/channels by this. Left blank on
-                  single-port anchors, which fall back to the id on save. */}
-              <td style={TD}>
-                <input
-                  value={anchor.name}
-                  onChange={(event) => updateAnchor(index, { name: event.target.value })}
-                  style={INPUT}
-                  type="text"
-                  placeholder={anchor.id}
-                />
-              </td>
+              {/* Per-anchor `name` (rf_switch RF1/RF2, AD9959 CH0..CH3) is
+                  no longer editable here — it's a kind-level RF detail, not
+                  a per-asset field. The value still round-trips untouched
+                  via draftFromAsset → draftToPatch, so saving an RF asset
+                  preserves its channel/throw names; the column is just
+                  hidden (optical anchors never use it). */}
               <td style={TD}>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
                   <input value={anchor.px} onChange={(event) => updateAnchor(index, { px: event.target.value })} style={INPUT} type="number" step="0.01" />
@@ -2799,19 +2813,6 @@ function AssetEditForm({
                   <option value="bnc_female">bnc_female</option>
                 </select>
               </td>
-              {isBindingDev && (
-                <td style={TD}>
-                  <IconButton
-                    title="Remove anchor"
-                    onClick={() => {
-                      setDraft({ ...draft, anchors: draft.anchors.filter((_, i) => i !== index) });
-                      setSelectedAnchorIndex(null);
-                    }}
-                  >
-                    <Trash2 size={14} />
-                  </IconButton>
-                </td>
-              )}
             </tr>
             );
           })}
@@ -2912,27 +2913,37 @@ export function Asset3DEditor({
     return assets.filter((asset) => {
       // "all" filter: every asset, regardless of domain.
       if (domain === "all") return true;
-      // Multi-domain support: properties.domains[] is a user-set list of
-      // composer rails this asset belongs to. When any entry matches the
-      // current rail, include the asset ??same semantics as Component's
-      // physicsCapabilities. Falls back to kind-derived bucketing when
-      // properties.domains is absent.
-      const domains = (asset.properties as { domains?: string[] } | undefined)?.domains;
-      if (Array.isArray(domains) && domains.length > 0) {
-        if (domains.includes(domain)) return true;
-        // explicit list set and current rail not in it ??exclude
-        return false;
-      }
       const rawKind = asset.kindId;
+      const override = (asset.properties as { domains?: string[] } | undefined)?.domains;
+      // Domain follows the kind: an asset with a registry kind appears
+      // under that kind's domains. properties.domains may NARROW within
+      // the kind's domains (e.g. an EOM pinned to the optical rail only),
+      // but a stale / disjoint override is ignored — BUILD imports stamp
+      // ["mechanical"] before any kind is assigned, and that must not keep
+      // a mirror out of the Optical rail once kind=mirror is set.
+      if (rawKind && rawKind !== "none") {
+        const registryKind = kinds.find((k) => k.name === rawKind);
+        if (registryKind) {
+          const narrowed = Array.isArray(override) && override.length > 0
+            ? registryKind.domains.filter((d) => override.includes(d))
+            : registryKind.domains;
+          // Disjoint override (intersection empty) ⇒ fall back to the
+          // kind's full domains rather than hiding the asset everywhere.
+          const effective = narrowed.length > 0 ? narrowed : registryKind.domains;
+          return effective.includes(domain);
+        }
+      }
+      // No registry kind below — non-registry / legacy / mechanical
+      // geometry. Keep the prior properties.domains override + heuristic.
+      if (Array.isArray(override) && override.length > 0) {
+        return override.includes(domain);
+      }
       // Phase 9.12: all rows now have a physics_kind ("none" for the
       // passive mechanical bucket), so the old "null ??mechanical"
       // fallback collapses into the regular kind-domain check below.
       if (!rawKind) return domain === "mechanical";
       // "none" is the mechanical placeholder kind.
       if (rawKind === "none") return domain === "mechanical";
-      const registryKind = kinds.find((k) => k.name === rawKind);
-      if (registryKind?.domains.includes(domain)) return true;
-      if (registryKind && !registryKind.domains.includes(domain)) return false;
       const kind = rawKind as ElementKind;
       const kindDomain = domainForElementKind(kind);
       if (kindDomain === domain) return true;
@@ -3020,6 +3031,28 @@ export function Asset3DEditor({
 
   const save = async () => {
     if (!selected || !draft) return;
+    // Guardrail: an optical/RF physics asset whose primary anchor is still
+    // at the body origin (the auto-seed default) won't interact with beams
+    // until it's positioned on the real surface — exactly the trap behind a
+    // "mirror that doesn't reflect". Warn (non-blocking) before saving.
+    const savedKind = kinds.find((k) => k.name === draft.kindId);
+    const isPhysicsKind =
+      !!savedKind && savedKind.domains.some((d) => d === "optical" || d === "rf");
+    if (isPhysicsKind) {
+      const atOrigin = draft.anchors.find(
+        (a) => Number(a.px) === 0 && Number(a.py) === 0 && Number(a.pz) === 0,
+      );
+      if (
+        atOrigin &&
+        !window.confirm(
+          `Anchor "${atOrigin.id}" is at the body origin (0,0,0). If the optical ` +
+            `surface isn't there, position it (3D face locator → "auto-pick face ` +
+            `center") so beams interact with it. Save anyway?`,
+        )
+      ) {
+        return;
+      }
+    }
     setSaving(true);
     setSaveError(null);
     try {

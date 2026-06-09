@@ -31,6 +31,10 @@ export type AnchorId =
   | "seed"
   | "out"
   | "optical_anchor"
+  // Faraday-rod optical axis pivot — the single anchor on a standalone
+  // faraday_rotator asset (TGG rod). Beam passes straight through here;
+  // position + axisX (propagation) + apertureMm all matter.
+  | "optical_center"
   | "center"
   // AOM-specific direction anchor (Phase 8 refactor 2026-05-10).
   // `id="rf_direction"` carries the body-local RF / acoustic propagation

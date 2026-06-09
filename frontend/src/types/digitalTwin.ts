@@ -473,6 +473,7 @@ export type ElementKind =
   | "waveplate"
   | "polarizer"
   | "glan_polarizer"
+  | "faraday_rotator"
   | "beam_splitter"
   | "dichroic_mirror"
   | "fiber_coupler"

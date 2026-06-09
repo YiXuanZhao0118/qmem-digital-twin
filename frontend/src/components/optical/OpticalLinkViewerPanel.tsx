@@ -162,20 +162,24 @@ function buildOpticSurfaceMarker(asset: Asset3D, mw: THREE.Matrix4): THREE.Group
   // beam_splitter / faraday_rotator keep their bespoke face; EVERY other optic
   // gets a generic translucent face at its primary optical anchor. Non-optical
   // kinds (no such anchor) fall through to null and draw nothing.
-  let ancId: string | null;
-  let style: "pbs" | "faraday" | "generic";
-  if (kind === "beam_splitter") {
+  const hasAnc = (id: string) => (asset.anchors ?? []).some((a) => a.id === id);
+  let ancId: string | null = null;
+  let style: "pbs" | "faraday" | "generic" = "generic";
+  if (kind === "beam_splitter" && hasAnc("intercept_face")) {
     ancId = "intercept_face";
     style = "pbs";
-  } else if (kind === "faraday_rotator") {
+  } else if (kind === "faraday_rotator" && hasAnc("optical_center")) {
     ancId = "optical_center";
     style = "faraday";
   } else {
+    // Prefer a known primary anchor id; otherwise fall back to the asset's
+    // FIRST anchor so ANY anchor-bearing asset still gets a surface marker.
+    // Requirement: a defined anchor must always be shown in the overlay.
     const order = [
       "optical_center", "optical_anchor", "intercept_face",
       "interaction_center", "intercept_in", "intercept_out",
     ];
-    ancId = order.find((id) => (asset.anchors ?? []).some((a) => a.id === id)) ?? null;
+    ancId = order.find(hasAnc) ?? (asset.anchors ?? [])[0]?.id ?? null;
     style = "generic";
   }
   if (!ancId) return null;
@@ -283,6 +287,18 @@ function buildOpticSurfaceMarkers(
   });
   if (singleAsset && !units.has("__root__")) {
     units.set("__root__", { asset: singleAsset, mw: loaded.matrixWorld.clone() });
+  }
+  // Binding-based components (created via "+ New Component": asset3dId is
+  // null so singleAsset is undefined, and a flat single binding isn't
+  // __bindingId-tagged) still need their anchor shown. Resolve the bound
+  // assets straight from the bindings and bake at the loaded root so the
+  // marker appears regardless of how the mesh was loaded.
+  if (units.size === 0) {
+    for (const b of bindings) {
+      if (!b.asset3dId || units.has(b.id)) continue;
+      const a = assetById.get(b.asset3dId);
+      if (a) units.set(b.id, { asset: a, mw: loaded.matrixWorld.clone() });
+    }
   }
   const out = new THREE.Group();
   out.name = "optic-surface-markers";

@@ -24,6 +24,7 @@ import { cameraPlugin } from "./camera";
 import { detectorPlugin } from "./detector";
 import { dichroicMirrorPlugin } from "./dichroic_mirror";
 import { eomPlugin } from "./eom";
+import { faradayRotatorPlugin } from "./faraday_rotator";
 import { fiberPlugin } from "./fiber";
 import { fiberCouplerPlugin } from "./fiber_coupler";
 // Phase 9.X — fiberEndPlugin removed. fiber Asset3D now owns both tip
@@ -87,6 +88,7 @@ export const PHYSICS_PLUGINS: readonly PhysicsPlugin[] = [
   waveplatePlugin,
   polarizerPlugin,
   glanPolarizerPlugin,
+  faradayRotatorPlugin,
   beamSplitterPlugin,
   fiberCouplerPlugin,
   fiberPlugin,

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-03T04:42:51.925Z",
+  "generated_at": "2026-06-09T12:19:41.100Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -15,6 +15,7 @@
     "waveplate": "waveplate",
     "polarizer": "polarizer",
     "glan_polarizer": "glan_polarizer",
+    "faraday_rotator": "faraday_rotator",
     "beam_splitter": "beam_splitter",
     "fiber_coupler": "fiber_coupler",
     "fiber": "fiber",
@@ -48,6 +49,7 @@
     "waveplate",
     "polarizer",
     "glan_polarizer",
+    "faraday_rotator",
     "beam_splitter",
     "fiber_coupler",
     "fiber",
@@ -544,18 +546,8 @@
         },
         "intrinsic_param_keys": [
           "retardanceLambda",
-          "retardanceDeg",
           "transmission",
-          "designWavelengthNm",
-          "wavelengthRangeNm",
-          "lengthMm",
-          "thicknessMm",
-          "refractiveIndex",
-          "clearApertureMm",
-          "plateAlphaXRad",
-          "plateAlphaYRad",
-          "material",
-          "plateType"
+          "wavelengthRangeNm"
         ],
         "state_param_keys": [],
         "port_domains": {
@@ -675,6 +667,56 @@
         "port_domains": {
           "intercept_in": "optical",
           "intercept_out": "optical"
+        }
+      }
+    },
+    {
+      "id": "faraday_rotator",
+      "display_name": "Faraday Rotator",
+      "component_types": [
+        "faraday_rotator"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Passive",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "faraday_rotator",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical"
+        ],
+        "anchors": {
+          "required": [
+            "optical_center"
+          ],
+          "optional": [],
+          "needs_direction": [
+            "optical_center"
+          ],
+          "needs_aperture": [
+            "optical_center"
+          ]
+        },
+        "align_variant": "translate_anchor_to_beam",
+        "align_tolerance_mm": 25,
+        "align_summary": "optical_center translates to beam axis. Translation only.",
+        "default_params": {
+          "rotationDeg": 45,
+          "reciprocal": false,
+          "lengthMm": 18,
+          "refractiveIndex": 1.95,
+          "VerdetConstantRadPerTeslaMm": 0.0427,
+          "material": "TGG",
+          "arResidualR": 0.005,
+          "wavelengthRangeNm": [
+            400,
+            1100
+          ]
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {
+          "optical_center": "optical"
         }
       }
     },
@@ -905,14 +947,19 @@
         "align_summary": "Define intercept_in / intercept_out (both with apertureMm). Align picks whichever port the upstream beam reaches first as the entry, translates that anchor onto the beam line, then rotates the body 1-D around lab tilt axis (pivot = midpoint of the two anchors = Bragg interaction point). Forward traversal uses the selected +1/-1 order; reverse traversal swaps +1 and -1 for the same mechanical Bragg tilt. rf_in marks the SMA / coax RF drive connector on the AOM driver housing (position = jack centre on the body, direction = outward face normal = the way a mating cable plug slides on). Used purely for cable-routing visualisation in 3D — not consumed by the Bragg solver.",
         "default_params": {
           "baseEfficiency": 0.85,
+          "centerFreqMhz": 80,
+          "rfPowerForPeakW": 2.2,
+          "peakRefWavelengthNm": 1100,
+          "freqShiftBandwidthMhz": 15,
+          "requiresRfDrive": false,
           "deflectionPerMhzUrad": 200,
-          "acousticVelocityMPerS": 4200,
-          "modulationBandwidthMhz": 20,
+          "acousticVelocityMps": 4200,
+          "modulationBandwidthMhz": 10,
           "refractiveIndex": 2.26,
-          "figureOfMeritM2": 3.4e-14,
-          "crystalLengthMm": 25,
+          "figureOfMeritM2": 3.45e-14,
+          "crystalLengthMm": 1.6,
           "acousticBeamWidthMm": 1.5,
-          "rfPowerMaxW": 2,
+          "rfPowerMaxW": 2.2,
           "acousticAxisBodyLocal": [
             -1,
             0,
@@ -932,8 +979,13 @@
         },
         "intrinsic_param_keys": [
           "baseEfficiency",
+          "centerFreqMhz",
+          "rfPowerForPeakW",
+          "peakRefWavelengthNm",
+          "freqShiftBandwidthMhz",
+          "requiresRfDrive",
           "deflectionPerMhzUrad",
-          "acousticVelocityMPerS",
+          "acousticVelocityMps",
           "modulationBandwidthMhz",
           "refractiveIndex",
           "figureOfMeritM2",

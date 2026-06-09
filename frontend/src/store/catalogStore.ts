@@ -96,6 +96,7 @@ export type V3Asset = {
 };
 
 export type V3AssetUpdate = Partial<{
+  name: string;
   kindId: string | null;
   faces: V3Face[] | null;
   transitions: V3Transition[] | null;
@@ -151,7 +152,10 @@ function uploadMetadata(payload: V3AssetUpload): Record<string, unknown> {
       preserveColors: payload.preserveColors ?? true,
       recommendedSolidWorksExport: "STEP AP242 with Export appearance enabled",
     },
-    ...(payload.domain ? { domains: [payload.domain] } : {}),
+    // NOTE: domain is NOT stamped into properties — it derives from the
+    // asset's kind (kind.domains). A stored properties.domains is a
+    // redundant copy that drifts (BUILD imports used to stamp ["mechanical"]
+    // before a kind was assigned, then never updated).
   };
 }
 

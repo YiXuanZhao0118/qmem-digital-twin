@@ -2,12 +2,12 @@
  * PhyEditor — full-page sub-page wrapping the physics catalog editors.
  * Activated when `sceneStore.editorMode === "phy-editor"`.
  *
- * Layout: left rail + right pane. The rail's TOP LEVEL is the catalog
- * section (KIND / ASSET3D / COMPONENT) because that's the primary axis
- * of the data model. PHY domain (Optical / RF / Mechanical) is a
- * cross-cutting *filter* below it — a single part can belong to more
- * than one domain (an AOM is optical + RF), so domain can't be the tree
- * root without duplicating those parts. All editors mount in
+ * Layout: left rail + right pane. The rail shows the PHY domain filter
+ * (Optical / RF / Mechanical) on top, then the catalog sections
+ * (KIND / BUILD / ASSET3D / COMPONENT). Catalog is the primary axis of
+ * the data model; domain is a cross-cutting *filter* — a single part can
+ * belong to more than one domain (an AOM is optical + RF), so domain
+ * can't be the tree root without duplicating those parts. All editors mount in
  * binding-dev mode so the catalog is always CRUD-capable. Default
  * landing = Kinds, all domains.
  */
@@ -25,9 +25,9 @@ type DomainFilter = PhyEditorView["domain"];
 
 const SECTIONS: { key: Section; label: string; hint: string }[] = [
   { key: "kinds", label: "KIND", hint: "contract registry" },
+  { key: "builder", label: "BUILD", hint: "import CAD → coloured GLB" },
   { key: "asset3d", label: "ASSET3D", hint: "faces + transitions" },
   { key: "components", label: "COMPONENT", hint: "compose Asset3D into a part" },
-  { key: "builder", label: "BUILD", hint: "import CAD → coloured GLB" },
 ];
 
 const DOMAIN_FILTERS: { key: DomainFilter; label: string }[] = [
@@ -127,6 +127,25 @@ export function PhyEditor() {
         style={{ gridTemplateRows: "minmax(0, 1fr)" }}
       >
         <aside className="phy-editor-rail">
+          <div className="phy-editor-rail-header">PHY domain</div>
+          <div className="phy-editor-chips">
+            {DOMAIN_FILTERS.map((d) => (
+              <button
+                key={d.key}
+                type="button"
+                className={
+                  "phy-editor-chip" +
+                  (activeDomain === d.key ? " is-active" : "")
+                }
+                onClick={() =>
+                  switchView({ section: activeSection, domain: d.key })
+                }
+              >
+                {d.label}
+              </button>
+            ))}
+          </div>
+
           <div className="phy-editor-rail-header">Catalog</div>
           <div className="phy-editor-section-group">
             {SECTIONS.map((s) => (
@@ -143,25 +162,6 @@ export function PhyEditor() {
               >
                 {s.label}
                 <span className="phy-editor-rail-hint">{s.hint}</span>
-              </button>
-            ))}
-          </div>
-
-          <div className="phy-editor-rail-header">PHY domain</div>
-          <div className="phy-editor-chips">
-            {DOMAIN_FILTERS.map((d) => (
-              <button
-                key={d.key}
-                type="button"
-                className={
-                  "phy-editor-chip" +
-                  (activeDomain === d.key ? " is-active" : "")
-                }
-                onClick={() =>
-                  switchView({ section: activeSection, domain: d.key })
-                }
-              >
-                {d.label}
               </button>
             ))}
           </div>

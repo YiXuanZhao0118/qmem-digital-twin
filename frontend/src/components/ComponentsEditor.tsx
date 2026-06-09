@@ -68,7 +68,6 @@ import type {
   ComponentBinding,
   ComponentItem,
   ElementKind,
-  PhysicsCapability,
 } from "../types/digitalTwin";
 import {
   kindIdToElementKind,
@@ -242,52 +241,40 @@ function replaceSpiralTubeWithCylinder(
   });
 }
 
-/**
- * The set of composer domains a Component belongs to. A part can span
- * more than one (e.g. an AOM is optical + RF), so this returns every
- * matching domain rather than a single primary.
- *
- * Priority:
- *   1. `physicsCapabilities` — explicit declaration (may list several)
- *   2. `componentType` → ElementKind → ElementDomain (optical/rf via kinds
- *      registry; covers most components that have a physics kind)
- *   3. Fallback "mechanical" — posts, mounts, annotations, chassis, etc.
- *      that don't map to any kind.
- */
-function componentDomains(c: ComponentItem): ComposerDomain[] {
-  const caps = c.physicsCapabilities as readonly string[];
-  const out = new Set<ComposerDomain>();
-  if (caps.includes("optical")) out.add("optical");
-  if (caps.includes("rf")) out.add("rf");
-  if (caps.includes("mechanical")) out.add("mechanical");
-  if (out.size === 0) {
-    const kind = c.kindId != null ? kindIdToElementKind(c.kindId) : null;
-    out.add(kind ? domainForElementKind(kind) : "mechanical");
-  }
-  return Array.from(out);
-}
-
 /** Mirrors the Asset3DEditor `domainAssets` bucketing, but returns the
  *  full list rather than a per-domain boolean — used to render badges on
  *  each component binding row so the user can see at a glance which rail
  *  to find the asset in. */
 function assetDomains(asset: Asset3D): ComposerDomain[] {
-  const explicit = (asset.properties as { domains?: string[] } | undefined)?.domains;
-  if (Array.isArray(explicit) && explicit.length > 0) {
-    return explicit.filter(
+  const rawKind = asset.kindId;
+  const override = (asset.properties as { domains?: string[] } | undefined)?.domains;
+  if (rawKind && rawKind !== "none") {
+    // Kind is authoritative (same rule as the Asset3D rail bucketing): the
+    // domains come from the kind (+ any rf/ttl faces). A stale / disjoint
+    // properties.domains — e.g. a mirror asset still carrying BUILD's
+    // ["mechanical"] — is IGNORED, so it isn't mislabelled mechanical; a
+    // legitimate override may only NARROW within the kind's domains.
+    const out = new Set<ComposerDomain>();
+    out.add(domainForElementKind(rawKind as ElementKind));
+    for (const f of (asset.faces ?? []) as Array<{ domain?: string }>) {
+      const fd = f.domain ?? "optical";
+      if (fd === "optical" || fd === "rf") out.add(fd);
+      if (fd === "ttl") out.add("rf");
+    }
+    const kindDomains = [...out];
+    if (Array.isArray(override) && override.length > 0) {
+      const narrowed = kindDomains.filter((d) => override.includes(d));
+      if (narrowed.length > 0) return narrowed;
+    }
+    return kindDomains;
+  }
+  // No kind → honour the override, else mechanical.
+  if (Array.isArray(override) && override.length > 0) {
+    return override.filter(
       (d): d is ComposerDomain => d === "optical" || d === "rf" || d === "mechanical",
     );
   }
-  const rawKind = asset.kindId;
-  if (!rawKind || rawKind === "none") return ["mechanical"];
-  const out = new Set<ComposerDomain>();
-  out.add(domainForElementKind(rawKind as ElementKind));
-  for (const f of (asset.faces ?? []) as Array<{ domain?: string }>) {
-    const fd = f.domain ?? "optical";
-    if (fd === "optical" || fd === "rf") out.add(fd);
-    if (fd === "ttl") out.add("rf");
-  }
-  return Array.from(out);
+  return ["mechanical"];
 }
 
 const DOMAIN_BADGE_COLORS: Record<ComposerDomain, { bg: string; fg: string }> = {
@@ -434,6 +421,71 @@ export function ComponentsEditor({
   const allComponents = useSceneStore((s) => s.scene.components);
   const assets = useSceneStore((s) => s.scene.assets);
   const loadScene = useSceneStore((s) => s.loadScene);
+  // Select the raw reference (stable) — applying `?? []` inside the selector
+  // would return a fresh array each call and trip useSyncExternalStore's
+  // "getSnapshot should be cached" infinite loop. Default inside the memo.
+  const allBindings = useSceneStore((s) => s.scene.componentBindings);
+  const kinds = useKindsStore((s) => s.kinds);
+
+  // Domain by kinds: a component's composer domains = the union of its bound
+  // assets' kinds' registry domains — kinds are the single source of truth,
+  // same as Asset3D bucketing. (The component's own kind_id is "none" for
+  // composites like the isolator, so the bound-asset kinds are what classify
+  // it.) physicsCapabilities may only NARROW within that set (e.g. an EOM
+  // pinned optical-only); a component with no bound physics assets falls back
+  // to its own kind_id's domain.
+  const componentDomainById = useMemo(() => {
+    const assetKindById = new Map(assets.map((a) => [a.id, a.kindId] as const));
+    const kindDomains = new Map(kinds.map((k) => [k.name, k.domains] as const));
+    const byComp = new Map<string, Set<ComposerDomain>>();
+    for (const b of allBindings ?? []) {
+      if (b.targetKind !== "asset" || !b.asset3dId) continue;
+      const k = assetKindById.get(b.asset3dId);
+      if (!k || k === "none") continue;
+      const doms = kindDomains.get(k) ?? [domainForElementKind(k as ElementKind)];
+      const set = byComp.get(b.componentId) ?? new Set<ComposerDomain>();
+      for (const d of doms) {
+        if (d === "optical" || d === "rf" || d === "mechanical") set.add(d);
+      }
+      byComp.set(b.componentId, set);
+    }
+    return byComp;
+  }, [allBindings, assets, kinds]);
+
+  // Per-component distinct asset kinds (for the list row label) — same
+  // "kind comes from the bound assets" rule as the editor's "asset kinds"
+  // chips, so the list shows the real kinds instead of a stored "none".
+  const componentKindsById = useMemo(() => {
+    const assetKindById = new Map(assets.map((a) => [a.id, a.kindId] as const));
+    const byComp = new Map<string, string[]>();
+    for (const b of allBindings ?? []) {
+      if (b.targetKind !== "asset" || !b.asset3dId) continue;
+      const k = assetKindById.get(b.asset3dId);
+      if (!k || k === "none") continue;
+      const arr = byComp.get(b.componentId) ?? [];
+      if (!arr.includes(k)) arr.push(k);
+      byComp.set(b.componentId, arr);
+    }
+    return byComp;
+  }, [allBindings, assets]);
+
+  const domainsOf = (c: ComponentItem): ComposerDomain[] => {
+    const fromAssets = componentDomainById.get(c.id);
+    const caps = (c.physicsCapabilities ?? []) as readonly string[];
+    if (fromAssets && fromAssets.size > 0) {
+      // physicsCapabilities narrows within the kind-derived universe.
+      const narrowed = [...fromAssets].filter((d) => caps.includes(d));
+      return narrowed.length > 0 ? narrowed : [...fromAssets];
+    }
+    // No bound physics assets (procedural-only) → fall back to the component's
+    // own kind_id domain, then caps, then mechanical.
+    const ownKind = c.kindId != null ? kindIdToElementKind(c.kindId) : null;
+    if (ownKind) return [domainForElementKind(ownKind)];
+    const capDoms = caps.filter(
+      (d): d is ComposerDomain => d === "optical" || d === "rf" || d === "mechanical",
+    );
+    return capDoms.length > 0 ? capDoms : ["mechanical"];
+  };
 
   // Filter the shared `scene.components` list by the active domain chip.
   // "all" shows everything; a specific domain shows every component that
@@ -443,8 +495,9 @@ export function ComponentsEditor({
     () =>
       domain === "all"
         ? allComponents
-        : allComponents.filter((c) => componentDomains(c).includes(domain)),
-    [allComponents, domain],
+        : allComponents.filter((c) => domainsOf(c).includes(domain)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allComponents, domain, componentDomainById],
   );
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -461,6 +514,17 @@ export function ComponentsEditor({
   // asset, not just the alphabetically-first one.
   const [assetPickerOpen, setAssetPickerOpen] = useState(false);
   const [assetPickerFilter, setAssetPickerFilter] = useState("");
+
+  // "+ New Component" modal: identity (name/brand/model) + the assets to
+  // attach as bindings. kind & domain are NOT entered — they're derived
+  // from the bound assets' kinds (single shared kind → that kind, else
+  // "none" composite; domain follows via componentDomainById).
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createName, setCreateName] = useState("");
+  const [createBrand, setCreateBrand] = useState("");
+  const [createModel, setCreateModel] = useState("");
+  const [createAssetIds, setCreateAssetIds] = useState<string[]>([]);
+  const [createFilter, setCreateFilter] = useState("");
 
   const reloadBindings = async (componentId: string): Promise<void> => {
     setBindingsLoading(true);
@@ -480,8 +544,8 @@ export function ComponentsEditor({
   }, [selectedId]);
 
   // Bootstrap the Kind registry once — populates the kind_id <select>
-  // and the same store is reused by Asset3DEditor.
-  const kinds = useKindsStore((s) => s.kinds);
+  // and the same store is reused by Asset3DEditor. (`kinds` is selected
+  // near the top of the component for the domain-by-kinds classifier.)
   const kindsStatus = useKindsStore((s) => s.status);
   const fetchKinds = useKindsStore((s) => s.fetchAll);
   useEffect(() => {
@@ -518,6 +582,23 @@ export function ComponentsEditor({
     [bindings],
   );
 
+  // Composite kind set: a component's "kinds" are the distinct physics kinds
+  // of its bound Asset3Ds, read straight off the bindings so they stay
+  // aligned with the assets and can't drift. (The single `kind_id` is kept
+  // separately — it drives naming / renderer dispatch / align and can't be a
+  // list.) A simple part yields one entry (mirror → ["mirror"]); a composite
+  // like the IO-3-850-HP isolator yields several (beam_splitter,
+  // faraday_rotator, isolator).
+  const compositeKinds = useMemo(() => {
+    const set = new Set<string>();
+    for (const b of childBindings) {
+      if (!b.asset3dId) continue;
+      const k = (assetById.get(b.asset3dId) as { kindId?: string | null } | undefined)?.kindId;
+      if (k && k !== "none") set.add(k);
+    }
+    return [...set].sort();
+  }, [childBindings, assetById]);
+
   // Default-select the first asset binding for the gizmo when bindings
   // change; clear if the currently selected one disappeared.
   useEffect(() => {
@@ -530,17 +611,58 @@ export function ComponentsEditor({
     }
   }, [childBindings, selectedBindingId]);
 
+  const openCreate = (): void => {
+    setCreateName("");
+    setCreateBrand("");
+    setCreateModel("");
+    setCreateAssetIds([]);
+    setCreateFilter("");
+    setCreateOpen(true);
+  };
+
   const handleCreateComponent = async (): Promise<void> => {
-    const name = window.prompt("Component name:")?.trim();
-    if (!name) return;
-    const kindId = window
-      .prompt("Kind id (e.g. lens, mirror, isolator):")
-      ?.trim();
-    if (!kindId) return;
+    const name = createName.trim();
+    if (!name) {
+      setError("Component name is required");
+      return;
+    }
+    // Kind is determined by the bound assets: one shared physics kind → that
+    // kind; multiple distinct kinds or none → "none" (composite, e.g. the
+    // isolator). domain then follows via componentDomainById.
+    const distinct = new Set<string>();
+    for (const id of createAssetIds) {
+      const k = (assetById.get(id) as { kindId?: string | null } | undefined)?.kindId;
+      if (k && k !== "none") distinct.add(k);
+    }
+    const kindId = distinct.size === 1 ? [...distinct][0] : "none";
     try {
-      const created = await createComponentApi({ name, kindId });
+      const created = await createComponentApi({
+        name,
+        kindId,
+        brand: createBrand.trim() || undefined,
+        model: createModel.trim() || undefined,
+      });
+      // Attach each selected asset as a root binding (zero pose).
+      for (let i = 0; i < createAssetIds.length; i++) {
+        const asset = assets.find((a) => a.id === createAssetIds[i]);
+        if (!asset) continue;
+        await createComponentBindingApi(created.id, {
+          targetKind: "asset",
+          parentBindingId: null,
+          asset3dId: asset.id,
+          role: asset.name,
+          localXMm: 0,
+          localYMm: 0,
+          localZMm: 0,
+          localRxDeg: 0,
+          localRyDeg: 0,
+          localRzDeg: 0,
+          sortOrder: i,
+        });
+      }
       await loadScene();
       setSelectedId(created.id);
+      setCreateOpen(false);
     } catch (e) {
       setError(`Create failed: ${String(e)}`);
     }
@@ -628,17 +750,31 @@ export function ComponentsEditor({
     return [...base].sort((a, b) => a.name.localeCompare(b.name));
   }, [assets, assetPickerFilter]);
 
+  // Asset list for the "+ New Component" modal's binding multi-select.
+  const createAssetsFiltered = useMemo(() => {
+    const q = createFilter.trim().toLowerCase();
+    const base = q
+      ? assets.filter((a) =>
+          `${a.name} ${a.catalogId ?? ""} ${a.kindId ?? ""}`.toLowerCase().includes(q),
+        )
+      : assets;
+    return [...base].sort((a, b) => a.name.localeCompare(b.name));
+  }, [assets, createFilter]);
+
   // Esc closes the picker; matches the rest of this codebase's modal
   // conventions (Asset3DEditor's New Asset modal handles its own
   // backdrop-click close the same way).
   useEffect(() => {
-    if (!assetPickerOpen) return;
+    if (!assetPickerOpen && !createOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setAssetPickerOpen(false);
+      if (e.key === "Escape") {
+        setAssetPickerOpen(false);
+        setCreateOpen(false);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [assetPickerOpen]);
+  }, [assetPickerOpen, createOpen]);
 
   const handleRemoveBinding = async (bindingId: string): Promise<void> => {
     if (!window.confirm("Remove this binding?")) return;
@@ -673,7 +809,7 @@ export function ComponentsEditor({
         {isBindingDev && (
           <button
             type="button"
-            onClick={handleCreateComponent}
+            onClick={openCreate}
             style={{ ...PRIMARY_BUTTON, width: "100%", marginBottom: 6 }}
           >
             + New Component
@@ -698,7 +834,13 @@ export function ComponentsEditor({
           >
             <div style={{ fontWeight: 700 }}>{c.name}</div>
             <div style={{ fontSize: 10, color: "#6b7280" }}>
-              kind: {c.kindId ?? ""}
+              {(() => {
+                const ks = componentKindsById.get(c.id);
+                if (ks && ks.length > 0) return `kind: ${ks.join(", ")}`;
+                // No bound physics assets — fall back to the stored kind_id
+                // (skip the meaningless "none" placeholder).
+                return c.kindId && c.kindId !== "none" ? `kind: ${c.kindId}` : "kind: —";
+              })()}
             </div>
           </button>
         ))}
@@ -765,16 +907,30 @@ export function ComponentsEditor({
               value={selected.name}
               onCommit={(v) => handlePatchComponent({ name: v })}
             />
-            {/* kind_id / brand / model are catalog-classification fields
-                edited only in Binding dev; PHY Editor only sees them. */}
+            {/* Composite kinds derived from the bound assets — read-only,
+                always aligned with the assets (single optics show one kind,
+                composites like the isolator show several). */}
+            {compositeKinds.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: "60px 1fr", gap: 8, alignItems: "center", marginBottom: 4, fontSize: 12 }}>
+                <span style={{ color: "#4b5563", fontFamily: "ui-monospace, monospace" }}>asset kinds</span>
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  {compositeKinds.map((k) => (
+                    <span
+                      key={k}
+                      style={{ fontSize: 11, padding: "1px 6px", borderRadius: 3, background: "#eef2ff", color: "#3730a3", fontFamily: "ui-monospace, monospace" }}
+                    >
+                      {k}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {/* brand / model are catalog metadata. kind_id and domain are
+                NOT edited here — kind is derived from the bound assets (see
+                "asset kinds" above) and domain follows the kinds
+                (componentDomainById). */}
             {isBindingDev && (
               <>
-                <KindSelectField
-                  label="kind_id"
-                  value={selected.kindId ?? ""}
-                  kinds={kinds}
-                  onCommit={(v) => handlePatchComponent({ kindId: v })}
-                />
                 <IdentityField
                   label="brand"
                   value={selected.brand ?? ""}
@@ -787,12 +943,6 @@ export function ComponentsEditor({
                   value={selected.model ?? ""}
                   onCommit={(v) =>
                     handlePatchComponent({ model: v ? v : null })
-                  }
-                />
-                <DomainToggleField
-                  capabilities={selected.physicsCapabilities ?? []}
-                  onCommit={(next) =>
-                    handlePatchComponent({ physicsCapabilities: next })
                   }
                 />
               </>
@@ -886,6 +1036,105 @@ export function ComponentsEditor({
           </>
         )}
       </main>
+
+      {createOpen && (
+        <div
+          onClick={() => setCreateOpen(false)}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
+            display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "#ffffff", color: "#1f2937", minWidth: 480, maxWidth: 640,
+              width: "60vw", maxHeight: "85vh", border: "1px solid #d8ded8", borderRadius: 4,
+              padding: 16, display: "flex", flexDirection: "column", gap: 8, minHeight: 0,
+            }}
+          >
+            <h3 style={{ margin: 0, fontSize: 14 }}>New Component</h3>
+            <label style={{ fontSize: 11, color: "#6b7280" }}>
+              name
+              <input
+                autoFocus
+                value={createName}
+                onChange={(e) => setCreateName(e.target.value)}
+                placeholder="e.g. My Isolator"
+                style={{ ...inputStyle, width: "100%" }}
+              />
+            </label>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <label style={{ fontSize: 11, color: "#6b7280" }}>
+                brand
+                <input value={createBrand} onChange={(e) => setCreateBrand(e.target.value)} placeholder="optional" style={{ ...inputStyle, width: "100%" }} />
+              </label>
+              <label style={{ fontSize: 11, color: "#6b7280" }}>
+                model
+                <input value={createModel} onChange={(e) => setCreateModel(e.target.value)} placeholder="optional" style={{ ...inputStyle, width: "100%" }} />
+              </label>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+              <span style={{ fontSize: 11, color: "#374151", fontWeight: 600 }}>
+                Bindings — assets to attach ({createAssetIds.length})
+              </span>
+              <span style={{ fontSize: 10, color: "#9ca3af" }}>kind &amp; domain derived from these</span>
+            </div>
+            <input
+              placeholder="filter assets by name / catalog_id / kind"
+              value={createFilter}
+              onChange={(e) => setCreateFilter(e.target.value)}
+              style={{ ...inputStyle, width: "100%" }}
+            />
+            <div style={{ overflowY: "auto", border: "1px solid #e9ece9", borderRadius: 2, minHeight: 80, maxHeight: "40vh", flex: 1 }}>
+              {createAssetsFiltered.length === 0 && (
+                <div style={{ padding: 16, color: "#6b7280", fontSize: 11 }}>No assets match the filter.</div>
+              )}
+              {createAssetsFiltered.map((asset) => {
+                const checked = createAssetIds.includes(asset.id);
+                return (
+                  <label
+                    key={asset.id}
+                    style={{ display: "flex", gap: 8, alignItems: "center", padding: "6px 10px", borderBottom: "1px solid #f3f4f1", cursor: "pointer" }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() =>
+                        setCreateAssetIds((prev) =>
+                          prev.includes(asset.id) ? prev.filter((x) => x !== asset.id) : [...prev, asset.id],
+                        )
+                      }
+                    />
+                    <span style={{ fontWeight: 600, fontSize: 12 }}>{asset.name}</span>
+                    {asset.catalogId && <code style={{ fontSize: 10, color: "#6b7280" }}>{asset.catalogId}</code>}
+                    {asset.kindId && asset.kindId !== "none" && (
+                      <span style={{ fontSize: 10, color: "#4ec9b0", fontFamily: "ui-monospace, monospace" }}>{asset.kindId}</span>
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+              <button
+                type="button"
+                onClick={() => setCreateOpen(false)}
+                style={{ ...btnDanger, background: "#ffffff", color: "#374151", borderColor: "#d8ded8" }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleCreateComponent()}
+                disabled={!createName.trim()}
+                style={{ ...btnPrimary, opacity: createName.trim() ? 1 : 0.5, cursor: createName.trim() ? "pointer" : "not-allowed" }}
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {assetPickerOpen && (
         <div
@@ -1059,138 +1308,6 @@ function IdentityField({
  *  match any registered kind — needed for legacy values like
  *  ``optical_component`` / ``optical_table`` that pre-date the
  *  registry. */
-function KindSelectField({
-  label,
-  value,
-  kinds,
-  onCommit,
-}: {
-  label: string;
-  value: string;
-  kinds: Array<{ name: string; displayName: string; domains: string[] }>;
-  onCommit: (v: string) => void;
-}) {
-  const byDomain = useMemo(() => {
-    const out: Record<string, typeof kinds> = { optical: [], rf: [], mechanical: [] };
-    // A multi-domain kind appears under each of its domains' optgroups.
-    for (const k of kinds) {
-      for (const d of k.domains) {
-        (out[d] ?? (out[d] = [])).push(k);
-      }
-    }
-    for (const arr of Object.values(out)) arr.sort((a, b) => a.name.localeCompare(b.name));
-    return out;
-  }, [kinds]);
-  const valueInRegistry = kinds.some((k) => k.name === value);
-  return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "60px 1fr",
-        gap: 8,
-        alignItems: "center",
-        marginBottom: 4,
-        fontSize: 12,
-      }}
-    >
-      <span style={{ color: "#4b5563", fontFamily: "ui-monospace, monospace" }}>
-        {label}
-      </span>
-      <select
-        value={value}
-        onChange={(e) => onCommit(e.target.value)}
-        style={{ ...inputStyle, width: "100%" }}
-      >
-        {!valueInRegistry && value && (
-          <option value={value}>{value} (legacy)</option>
-        )}
-        {!value && <option value="">(unset)</option>}
-        {(["optical", "rf", "mechanical"] as const).map((domain) =>
-          (byDomain[domain] ?? []).length > 0 ? (
-            <optgroup key={domain} label={domain}>
-              {byDomain[domain].map((k) => (
-                <option key={k.name} value={k.name}>
-                  {k.name}
-                </option>
-              ))}
-            </optgroup>
-          ) : null,
-        )}
-      </select>
-    </div>
-  );
-}
-
-/** Multi-select domain chips for Component.physicsCapabilities. The
- *  composer-domain classifier reads this list first, so checking
- *  "optical" forces a Component into the Optical rail even if its
- *  componentType doesn't map to a known optical kind. */
-type DomainCapability = Extract<PhysicsCapability, "optical" | "rf" | "mechanical">;
-
-function DomainToggleField({
-  capabilities,
-  onCommit,
-}: {
-  capabilities: ReadonlyArray<PhysicsCapability>;
-  onCommit: (next: PhysicsCapability[]) => void;
-}) {
-  const set = new Set<PhysicsCapability>(capabilities);
-  const toggle = (cap: DomainCapability) => {
-    const next = new Set<PhysicsCapability>(set);
-    if (next.has(cap)) next.delete(cap);
-    else next.add(cap);
-    onCommit([...next]);
-  };
-  return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "60px 1fr",
-        gap: 8,
-        alignItems: "center",
-        marginBottom: 4,
-        fontSize: 12,
-      }}
-    >
-      <span
-        style={{ color: "#4b5563", fontFamily: "ui-monospace, monospace" }}
-        title="physicsCapabilities — drives which composer rail (Optical / RF / Mechanical) this component appears under. Multi-select: a component can belong to several."
-      >
-        domain
-      </span>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {(["optical", "rf", "mechanical"] as const).map((cap) => {
-          const on = set.has(cap);
-          return (
-            <button
-              key={cap}
-              type="button"
-              onClick={() => toggle(cap)}
-              style={{
-                fontSize: 11,
-                padding: "3px 10px",
-                background: on ? "#0f766e" : "transparent",
-                color: on ? "#ffffff" : "#242726",
-                border: `1px solid ${on ? "#115e59" : "#d8ded8"}`,
-                borderRadius: 4,
-                cursor: "pointer",
-                fontFamily: "'Menlo', 'Consolas', monospace",
-              }}
-            >
-              {cap}
-            </button>
-          );
-        })}
-        {capabilities.length === 0 && (
-          <span style={{ fontSize: 10, color: "#9ca3af" }}>
-            (none — falls back to componentType inference)
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
 /**
  * One row per child binding. Six pose fields commit on blur; the asset
  * label is read-only (target is immutable per backend contract — to swap
@@ -1882,13 +1999,36 @@ function ComponentPreview3D({
         const binding = bindingsRef.current.find((b) => b.id === bId);
         if (!binding || binding.targetKind !== "asset" || !binding.asset3dId) continue;
         const asset = assetById.get(binding.asset3dId);
-        if (!asset || !asset.faces) continue;
+        if (!asset) continue;
+        // Modern assets carry anchors[] (Phase 9.8), not faces[]. Synthesize
+        // RawFaces from anchors so the probe beam actually traces them: an
+        // anchor's axisX IS the surface normal (mirror) / propagation axis,
+        // exactly what plane-intersection + the kind-aware reflect below
+        // need. Legacy faces[] still win when present.
+        const rawFaces: RawFace[] =
+          asset.faces && asset.faces.length > 0
+            ? (asset.faces as unknown as RawFace[])
+            : ((asset.anchors ?? []) as ReadonlyArray<Record<string, unknown>>).map((a) => {
+                const ax = (a.axisXBodyLocal ?? a.directionBodyLocal) as
+                  | { x: number; y: number; z: number }
+                  | undefined;
+                return {
+                  id: String(a.id ?? ""),
+                  positionMmBodyLocal: a.positionMmBodyLocal as RawFace["positionMmBodyLocal"],
+                  normalBodyLocal: ax ?? null,
+                  apertureMm: a.apertureMm as number | undefined,
+                  apertureShape: a.apertureShape as RawFace["apertureShape"],
+                  apertureWidthMm: a.apertureWidthMm as number | null | undefined,
+                  apertureHeightMm: a.apertureHeightMm as number | null | undefined,
+                };
+              });
+        if (rawFaces.length === 0) continue;
         transitionsByBinding.set(
           bId,
           (asset.transitions ?? []) as unknown as Transition[],
         );
         const bindingFaces: FaceHit[] = [];
-        for (const rawFace of asset.faces as unknown as RawFace[]) {
+        for (const rawFace of rawFaces) {
           const p = rawFace.positionMmBodyLocal;
           const posWorld = new THREE.Vector3(p.x, p.y, p.z).applyMatrix4(pivot.matrixWorld);
           const n = rawFace.normalBodyLocal;

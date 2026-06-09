@@ -35,6 +35,7 @@ import {
   buildSceneObjectFromBindings,
   shouldRenderViaBindings,
 } from "../three/bindingRendererGate";
+import { resolveBindingTree, type ResolvedBindingNode } from "../utils/componentBindings";
 import { wavelengthToColor } from "../three/opticalBeams";
 import {
   type DebugLabSegment,
@@ -4192,21 +4193,83 @@ export function DigitalTwinViewer({
       const anchorDebugGroup = anchorDebugGroupRef.current;
       clearGroup(anchorDebugGroup);
       if (renderCtx.overlayFlags.anchors) {
+        // Walk each placed object's Component binding tree — the SAME
+        // resolution the renderer uses (resolveBindingTree → the drawn
+        // meshes). The old asset3dId-only path skipped binding-based
+        // components (asset3dId=null: "+ New Component" outputs and the
+        // IO-3 isolator), so their anchors never showed. Walking the tree
+        // fixes that, composes nested binding transforms, AND only marks
+        // geometry that actually draws — an orphan binding (missing parent,
+        // e.g. the IO-3 front/back glan pieces) is never reached by the
+        // resolver, so we don't float a marker where no mesh sits.
+        const markAssetAnchors = (
+          obj: SceneObject,
+          asset: typeof sceneData.assets[number],
+          mat: THREE.Matrix4,
+        ): void => {
+          if (!Array.isArray(asset.anchors)) return;
+          const rot = new THREE.Quaternion();
+          mat.decompose(new THREE.Vector3(), rot, new THREE.Vector3());
+          for (const anchor of asset.anchors) {
+            const p0 = anchorObjectLocalPos(anchor, asset);
+            const d0 = anchorObjectLocalPrimaryDir(anchor, asset);
+            const pv = new THREE.Vector3(p0.x, p0.y, p0.z).applyMatrix4(mat);
+            let dir: { x: number; y: number; z: number } | undefined;
+            if (d0) {
+              const dv = new THREE.Vector3(d0.x, d0.y, d0.z).applyQuaternion(rot);
+              dir = { x: dv.x, y: dv.y, z: dv.z };
+            }
+            // pos/dir are now in the component-root CAD frame; assetAnchorWorld
+            // applies the SceneObject pose (asset=null → no extra R_body).
+            const synthetic = {
+              positionMmBodyLocal: { x: pv.x, y: pv.y, z: pv.z },
+              axisXBodyLocal: dir,
+            } as unknown as Parameters<typeof assetAnchorWorld>[1];
+            const world = assetAnchorWorld(obj, synthetic, null);
+            addAnchorAxis(anchorDebugGroup, labToThreeLocal(world.position), world.direction, "#ff00ff");
+          }
+        };
+        // Compose each binding's local pose (Euler-XYZ + mm offset — the SAME
+        // applyBindingLocalTransform uses) down the tree and mark every asset.
+        const walk = (
+          obj: SceneObject,
+          nodes: ResolvedBindingNode[],
+          parentMat: THREE.Matrix4,
+        ): void => {
+          for (const node of nodes) {
+            const t = node.localTransform;
+            const local = new THREE.Matrix4().compose(
+              new THREE.Vector3(t.xMm, t.yMm, t.zMm),
+              new THREE.Quaternion().setFromEuler(
+                new THREE.Euler(
+                  THREE.MathUtils.degToRad(t.rxDeg),
+                  THREE.MathUtils.degToRad(t.ryDeg),
+                  THREE.MathUtils.degToRad(t.rzDeg),
+                  "XYZ",
+                ),
+              ),
+              new THREE.Vector3(1, 1, 1),
+            );
+            const mat = new THREE.Matrix4().multiplyMatrices(parentMat, local);
+            if (node.target.kind === "asset") markAssetAnchors(obj, node.target.asset, mat);
+            if (node.children.length > 0) walk(obj, node.children, mat);
+          }
+        };
         for (const obj of sceneData.objects) {
           const comp = sceneData.components.find((c) => c.id === obj.componentId);
-          const asset = comp?.asset3dId
-            ? sceneData.assets.find((a) => a.id === comp.asset3dId)
-            : undefined;
-          const anchors = asset?.anchors;
-          if (!Array.isArray(anchors)) continue;
+          if (!comp) continue;
           // Cable asset anchors are NOT where the rendered connectors sit
           // (those come from the spline nodes), so they'd be misleading.
-          if (comp?.kindId === "rf_cable" || comp?.kindId === "sma_cable") continue;
-          for (const anchor of anchors) {
-            const world = assetAnchorWorld(obj, anchor, asset);
-            const origin = labToThreeLocal(world.position);
-            addAnchorAxis(anchorDebugGroup, origin, world.direction, "#ff00ff");
+          if (comp.kindId === "rf_cable" || comp.kindId === "sma_cable") continue;
+          const tree = resolveBindingTree(comp, obj, sceneData);
+          if (tree.length === 0 && comp.asset3dId) {
+            // Pre-binding legacy component (no binding rows at all): mark its
+            // single asset directly at the component origin.
+            const a = sceneData.assets.find((x) => x.id === comp.asset3dId);
+            if (a) markAssetAnchors(obj, a, new THREE.Matrix4());
+            continue;
           }
+          walk(obj, tree, new THREE.Matrix4());
         }
       }
     }

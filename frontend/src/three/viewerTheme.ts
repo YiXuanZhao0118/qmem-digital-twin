@@ -24,6 +24,12 @@ export const VIEWER_GRID_LINE = "#cdd2cd";
 /** Reference-grid centre / axis lines — a touch darker than the minor lines. */
 export const VIEWER_GRID_CENTER = "#b9beb9";
 
+/** PHY-Editor template grid — black lines for the Geometry Builder + Asset3D
+ *  previews, where a crisp reference grid is wanted on the light backdrop.
+ *  Kept separate from VIEWER_GRID_* (muted grey) so the optical-link viewer's
+ *  grid stays subordinate to its wavelength-coloured beams. */
+export const VIEWER_GRID_BLACK = "#000000";
+
 /** Hemisphere-light "ground" term for the embedded model previews — light so
  *  the under-fill doesn't tint the model dark on the new light background. */
 export const VIEWER_GROUND_FILL = "#c8ccc8";

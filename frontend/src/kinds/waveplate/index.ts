@@ -42,21 +42,11 @@ export const waveplatePlugin = definePhysicsPlugin<WaveplateParams>({
       transmission: 0.99,
       wavelengthRangeNm: [400, 1100],
     },
-    intrinsicParamKeys: [
-      "retardanceLambda",
-      "retardanceDeg",
-      "transmission",
-      "designWavelengthNm",
-      "wavelengthRangeNm",
-      "lengthMm",
-      "thicknessMm",
-      "refractiveIndex",
-      "clearApertureMm",
-      "plateAlphaXRad",
-      "plateAlphaYRad",
-      "material",
-      "plateType",
-    ],
+    // intrinsicParamKeys must be a subset of defaultParams keys (the
+    // partition is over the kindParams namespace that actually exists).
+    // The optional WaveplateParams fields (retardanceDeg, lengthMm, …) are
+    // not seeded into defaults, so they don't belong here.
+    intrinsicParamKeys: ["retardanceLambda", "transmission", "wavelengthRangeNm"],
     stateParamKeys: [],
     portDomains: { intercept_in: "optical" },
   },

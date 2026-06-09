@@ -189,7 +189,14 @@ export function BindingTreeAdjustControls({ component }: { component: ComponentI
     delete props.opaqueHousing;
     await updateSceneObject(sceneObject.id, { properties: props });
   };
-  const showTranslucentToggle = component.kindId === "isolator";
+  // Isolators carry kindId "none", so detect the composite by its binding
+  // tree (a front + back polariser role) — same gate as ComponentPanel's
+  // "Align to beam". The renderer honours `translucentHousing` for these.
+  const isolatorRoles = componentBindings.map((b) =>
+    String((b.properties as { role_label?: unknown } | null)?.role_label || b.role || "").toLowerCase(),
+  );
+  const showTranslucentToggle =
+    isolatorRoles.some((r) => r.includes("front")) && isolatorRoles.some((r) => r.includes("back"));
 
   return (
     <div className="physics-panel-kind-params" style={{ marginTop: 6 }}>

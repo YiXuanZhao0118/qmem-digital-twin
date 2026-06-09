@@ -18,6 +18,7 @@
 import * as THREE from "three";
 
 import type { Asset3D, ComponentItem, DeviceState } from "../types/digitalTwin";
+import { isAd9959PcbAsset } from "../three/loadAsset/stl_builders";
 import {
   buildIsolatorPbsOverlay,
   createAom,
@@ -176,8 +177,12 @@ const renderOpticalTable: Renderer = () => {
 // rf_source has 3 componentTypes (rf_source / dds_ad9959_pcb / rf_generator)
 // with different physical models. Dispatch on componentType inside the
 // renderer keeps the binding flat.
-const renderRfSource: Renderer = (component, state) => {
-  if (component.kindId === "dds_ad9959_pcb") {
+const renderRfSource: Renderer = (component, state, asset) => {
+  // Detect the AD9959 by its bound asset (procedural primitive:// fallback;
+  // the STL asset path renders it via loadAsset's isAd9959PcbAsset). The old
+  // `kindId === "dds_ad9959_pcb"` check never matched — the component is
+  // kind "rf_source".
+  if (asset != null && isAd9959PcbAsset(asset)) {
     return createDdsAd9959Pcb(component, state);
   }
   // Default rf_generator / rf_source: 280 x 220 x 100 mm chassis box.

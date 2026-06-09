@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
 import { resolveAssetUrl } from "../api/client";
+import { isAd9959PcbAsset } from "../three/loadAsset/stl_builders";
 import { useSceneStore, type LabPoint, type TransformAxis } from "../store/sceneStore";
 import type { ComponentItem, SceneObject, SceneObjectPatch } from "../types/digitalTwin";
 import { TRIGGER_KINDS, TTL_GATE_KINDS } from "../types/digitalTwin";
@@ -1765,7 +1766,7 @@ export function ComponentPanel() {
   const canAlignToBeam = useMemo(() => {
     if (!component) return false;
     if (physicsElement && OPTICAL_ALIGN_KINDS.has(physicsElement.elementKind)) return true;
-    if (component.kindId === "isolator") return true;
+    // (Isolators carry kindId "none" — handled by the front/back role check below.)
     const roles = (scene.componentBindings ?? [])
       .filter((b) => b.componentId === component.id)
       .map((b) =>
@@ -2160,7 +2161,7 @@ export function ComponentPanel() {
               "death loop" of duplicated physics editors. DDS/AD9959 controls
               are RF electronics (not surfaced in the optical drawer), so they
               stay here. */}
-          {component.kindId === "dds_ad9959_pcb" && (
+          {asset != null && isAd9959PcbAsset(asset) && (
             <Ad9959ObjectControls component={component} />
           )}
 

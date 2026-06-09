@@ -206,8 +206,12 @@ async def upload_asset3d_v3(
             "recommendedSolidWorksExport": "STEP AP242 with Export appearance enabled",
         },
     }
-    if domain:
-        properties["domains"] = [domain]
+    # Domain is NOT stamped into properties — it derives from the asset's
+    # kind (kind.domains). A stored properties.domains is a redundant copy
+    # that drifts: a BUILD import has no kind yet (kind_id="none" below), so
+    # stamping ["mechanical"] here would stick even after the user assigns
+    # kind=mirror. Kindless assets bucket as mechanical via the kind-derived
+    # fallback, so nothing is lost by omitting it.
 
     row = Asset3D(
         catalog_id=catalog_id,
@@ -371,6 +375,8 @@ async def update_asset3d_by_catalog_id(
         )
 
     fields = payload.model_fields_set
+    if "name" in fields and payload.name is not None:
+        row.name = payload.name
     if "kind_id" in fields:
         row.kind_id = payload.kind_id
     if "anchors" in fields:

@@ -398,7 +398,9 @@ export function KindsEditor({
             style={asideItemStyle(row.id === selectedId)}
           >
             <div style={{ fontWeight: 700 }}>{row.displayName}</div>
-            <div style={{ fontSize: 10, color: "#6b7280" }}>{row.name}</div>
+            <div style={{ fontSize: 10, color: "#6b7280" }}>
+              <span style={{ color: "#9ca3af" }}>id:</span> {row.name}
+            </div>
             <div style={{ marginTop: 3 }}>
               <DomainBadges domains={row.domains} />
             </div>
