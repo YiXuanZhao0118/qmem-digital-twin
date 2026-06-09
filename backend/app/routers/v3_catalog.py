@@ -27,7 +27,7 @@ from app.models import (
 )
 from app.schemas import CamelModel
 from app.schemas_v3 import (
-    Asset3DUsageOut, Asset3DV3Create, Asset3DV3Out, Asset3DV3Update,
+    Asset3DUsageOut, Asset3DV3Out, Asset3DV3Update,
     ComponentV3Out,
 )
 from app.config import settings
@@ -121,67 +121,6 @@ async def list_assets3d(
     stmt = stmt.order_by(Asset3D.catalog_id)
     rows = (await session.execute(stmt)).scalars().all()
     return list(rows)
-
-
-@router.post(
-    "/assets3d",
-    response_model=Asset3DV3Out,
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_asset3d_v3(
-    payload: Asset3DV3Create,
-    session: AsyncSession = Depends(get_session),
-) -> Asset3D:
-    """Create a new Asset3D row.
-
-    Two modes:
-      • blank: ``source_catalog_id`` omitted → empty asset shell.
-      • fork: ``source_catalog_id`` supplied → copy file_path / faces /
-        anchors / default_params / properties from
-        the source so the user can tweak geometry and save as a new
-        catalog entry.
-
-    ``catalog_id`` slug shape + uniqueness are enforced by the DB
-    constraints added in alembic 0088, so bad input bounces at commit
-    time.
-    """
-    # If forking, fetch source first so we can copy fields verbatim.
-    source: Asset3D | None = None
-    if payload.source_catalog_id:
-        source = (await session.execute(
-            select(Asset3D).where(Asset3D.catalog_id == payload.source_catalog_id)
-        )).scalar_one_or_none()
-        if source is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"source asset catalog_id={payload.source_catalog_id!r} not found",
-            )
-
-    row = Asset3D(
-        catalog_id=payload.catalog_id,
-        name=payload.name,
-        asset_type=payload.asset_type or (source.asset_type if source else "primitive"),
-        file_path=payload.file_path if payload.file_path is not None else (source.file_path if source else ""),
-        unit=source.unit if source else "mm",
-        scale_factor=source.scale_factor if source else 1.0,
-        anchors=list(source.anchors) if source and source.anchors else [],
-        # v3 physics fields — copy from source when forking so the new
-        # asset starts as an editable mirror of the original.
-        kind_id=payload.kind_id or (source.kind_id if source else None),
-        default_params=dict(source.default_params) if source and source.default_params else None,
-        wavelength_range_nm=list(source.wavelength_range_nm) if source and source.wavelength_range_nm else None,
-        frequency_range_mhz=list(source.frequency_range_mhz) if source and source.frequency_range_mhz else None,
-        properties=dict(source.properties) if source and source.properties else {},
-    )
-    session.add(row)
-    try:
-        await session.commit()
-    except Exception as e:
-        await session.rollback()
-        # Surface DB constraint errors (slug shape, uniqueness) as 400.
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    await session.refresh(row)
-    return row
 
 
 @router.post(

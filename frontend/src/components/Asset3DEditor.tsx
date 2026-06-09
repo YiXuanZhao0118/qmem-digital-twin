@@ -14,14 +14,13 @@ import {
   ICON_BUTTON,
   INPUT,
   INPUT_DISABLED,
-  PRIMARY_BUTTON,
   SECTION_LABEL,
   TABLE,
   TD,
   TEXTAREA,
   TH,
 } from "./phyEditorTheme";
-import { Eye, EyeOff, Plus, RefreshCw, Save, Trash2, Upload, X } from "lucide-react";
+import { Eye, EyeOff, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
@@ -114,18 +113,6 @@ type AssetDraft = {
   anchors: DraftAnchor[];
   transitions: DraftTransition[];
   defaultParamsText: string;
-};
-
-type NewAssetModalState = {
-  open: boolean;
-  sourceCatalogId: string;
-  catalogId: string;
-  name: string;
-  file: File | null;
-  precisionPreset: "preview" | "standard" | "high";
-  preserveColors: boolean;
-  unit: "mm" | "m";
-  scaleFactor: string;
 };
 
 type KindGuide = {
@@ -287,20 +274,6 @@ function vec3Str(v?: V3Vec3 | null): string {
 function jsonText(value: unknown): string {
   if (value === null || value === undefined) return "";
   return JSON.stringify(value, null, 2);
-}
-
-function slugFromFilename(filename: string): string {
-  const stem = filename.replace(/\.[^.]+$/, "");
-  const slug = stem
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-  return slug || "uploaded_asset";
-}
-
-function displayNameFromFilename(filename: string): string {
-  return filename.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim() || "Uploaded Asset3D";
 }
 
 function draftFromAsset(asset: V3Asset): AssetDraft {
@@ -2865,9 +2838,10 @@ export type V3EditorDomain = "optical" | "rf" | "mechanical";
 
 /** Editor mode ??controls which fields are editable.
  *  - "binding-dev": catalog editor. Picks kind, edits asset name +
- *    defaultParams (catalog-level params used by the ABCD formula),
- *    creates new assets via STL upload, live-tweak fork. Face geometry
- *    inputs are HIDDEN; faces table only shows id + domain.
+ *    defaultParams (catalog-level params used by the ABCD formula).
+ *    New assets are created in the BUILD tab (import CAD -> coloured
+ *    GLB); this editor only edits existing rows. Face geometry inputs
+ *    are HIDDEN; faces table only shows id + domain.
  *  - "phy-editor": physics-tuning editor. Adjusts body frame origin
  *    (offset + rotation), per-face position/normal/aperture/shape/
  *    width-height, wavelength min/max, display name. Kind picker and
@@ -2891,9 +2865,6 @@ export function Asset3DEditor({
   const updateAsset = useV3Catalog((state) => state.updateAsset);
   const deleteAsset = useV3Catalog((state) => state.deleteAsset);
   const fetchAssetUsage = useV3Catalog((state) => state.fetchAssetUsage);
-  const createAsset = useV3Catalog((state) => state.createAsset);
-  const uploadAsset = useV3Catalog((state) => state.uploadAsset);
-  const uploadInputRef = useRef<HTMLInputElement | null>(null);
   // Reference counts for the selected asset. objectCount > 0 ⇒ placed in a
   // scene, so connector_type editing + Delete are locked (a catalog-level
   // change would retroactively break those instances). null = not loaded.
@@ -2907,11 +2878,6 @@ export function Asset3DEditor({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  // "+ New Asset3D" modal ??Binding dev only. Lets the user fork an
-  // existing asset (or start blank) into a new catalog row.
-  const [newAssetModal, setNewAssetModal] = useState<NewAssetModalState | null>(null);
-  const [newAssetError, setNewAssetError] = useState<string | null>(null);
-  const [uploadingNewAsset, setUploadingNewAsset] = useState(false);
 
   useEffect(() => {
     if (status === "idle") void fetchAll();
@@ -3035,21 +3001,6 @@ export function Asset3DEditor({
   }, [selectedKey, fetchAssetUsage]);
   const inUse = (usage?.objectCount ?? 0) > 0;
 
-  const openNewAssetModal = (sourceCatalogId = selected?.catalogId ?? "") => {
-    setNewAssetError(null);
-    setNewAssetModal({
-      open: true,
-      sourceCatalogId,
-      catalogId: "",
-      name: "",
-      file: null,
-      precisionPreset: "standard",
-      preserveColors: true,
-      unit: "mm",
-      scaleFactor: "1",
-    });
-  };
-
   useEffect(() => {
     if (!selectedAssetId && filtered.length > 0) {
       setSelectedAssetId(filtered[0].id);
@@ -3147,16 +3098,6 @@ export function Asset3DEditor({
       }}
     >
       <aside style={{ borderRight: "1px solid #e9ece9", padding: 8, overflowY: "auto" }}>
-        {isBindingDev && (
-          <button
-            type="button"
-            onClick={() => openNewAssetModal()}
-            style={{ ...PRIMARY_BUTTON, width: "100%", marginBottom: 6 }}
-            title="Create a new Asset3D row, optionally forked from an existing one."
-          >
-            + New Asset3D
-          </button>
-        )}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 30px", gap: 6, marginBottom: 8 }}>
           <select value={kindFilter} onChange={(event) => setKindFilter(event.target.value)} style={INPUT}>
             {kindOptions.map((kind) => (
@@ -3300,228 +3241,6 @@ export function Asset3DEditor({
           <KindGuidePanel selectedKind={draft?.kindId || selected?.kindId || null} />
         </div>
       </main>
-      {isBindingDev && newAssetModal?.open && (
-        <div
-          style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            zIndex: 100,
-          }}
-          onClick={() => setNewAssetModal(null)}
-        >
-          <div
-            style={{
-              background: "#fff", color: "#1f2937",
-              minWidth: 420, maxWidth: 520,
-              border: "1px solid #d8ded8", borderRadius: 6,
-              padding: 16, display: "grid", gap: 8,
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 style={{ margin: 0, fontSize: 14 }}>+ New Asset3D</h3>
-            <p style={{ margin: 0, fontSize: 11, color: "#4b5563" }}>
-              Three creation modes: pick an existing asset under "source"
-              to fork, pick blank to start empty, or upload GLB/GLTF/OBJ/STL/STEP/STP.
-              STEP/STP are tessellated to STL server-side (colour is lost); DXF and
-              SLDPRT aren't supported — export a STEP instead.
-              catalog_id must match {" "}<code>^[a-z0-9_]+$</code> and be unique.
-            </p>
-            <input
-              ref={uploadInputRef}
-              type="file"
-              accept=".glb,.gltf,.obj,.stl,.step,.stp"
-              style={{ display: "none" }}
-              onChange={(event) => {
-                const file = event.currentTarget.files?.[0] ?? null;
-                if (!file || !newAssetModal) return;
-                setNewAssetModal({
-                  ...newAssetModal,
-                  file,
-                  sourceCatalogId: "",
-                  catalogId: newAssetModal.catalogId || slugFromFilename(file.name),
-                  name: newAssetModal.name || displayNameFromFilename(file.name),
-                });
-                setNewAssetError(null);
-                event.currentTarget.value = "";
-              }}
-            />
-            <button
-              type="button"
-              onClick={() => uploadInputRef.current?.click()}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "6px 12px",
-                fontSize: 12,
-                fontWeight: 600,
-                border: "1px solid #2563eb",
-                background: "#dbeafe",
-                color: "#1e3a8a",
-                cursor: "pointer",
-                borderRadius: 4,
-                width: "fit-content",
-              }}
-            >
-              <Upload size={14} />
-              Upload 3D file...
-            </button>
-            {newAssetModal.file && (
-              <>
-                <div style={{ fontSize: 11, color: "#1f2937" }}>
-                  Selected: <code>{newAssetModal.file.name}</code>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                  <label style={{ fontSize: 11, color: "#6b7280" }}>
-                    CAD precision
-                    <select
-                      value={newAssetModal.precisionPreset}
-                      onChange={(e) => setNewAssetModal({
-                        ...newAssetModal,
-                        precisionPreset: e.target.value as NewAssetModalState["precisionPreset"],
-                      })}
-                      style={INPUT}
-                    >
-                      <option value="preview">preview</option>
-                      <option value="standard">standard</option>
-                      <option value="high">high</option>
-                    </select>
-                  </label>
-                  <label style={{ fontSize: 11, color: "#6b7280" }}>
-                    unit
-                    <select
-                      value={newAssetModal.unit}
-                      onChange={(e) => setNewAssetModal({
-                        ...newAssetModal,
-                        unit: e.target.value as NewAssetModalState["unit"],
-                      })}
-                      style={INPUT}
-                    >
-                      <option value="mm">mm</option>
-                      <option value="m">m</option>
-                    </select>
-                  </label>
-                </div>
-                <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 11, color: "#6b7280" }}>
-                  <input
-                    type="checkbox"
-                    checked={newAssetModal.preserveColors}
-                    onChange={(e) => setNewAssetModal({ ...newAssetModal, preserveColors: e.target.checked })}
-                  />
-                  preserve CAD colors when converted to GLB
-                </label>
-              </>
-            )}
-            <div style={{ fontSize: 10, color: "#9ca3af", marginTop: -2 }}>
-              or
-            </div>
-            <label style={{ fontSize: 11, color: "#6b7280" }}>
-              source (fork from)
-              <select
-                value={newAssetModal.sourceCatalogId}
-                onChange={(e) => setNewAssetModal({ ...newAssetModal, sourceCatalogId: e.target.value })}
-                style={INPUT}
-                disabled={!!newAssetModal.file}
-              >
-                <option value="">(blank, no source)</option>
-                {assets
-                  .filter((a) => !!a.catalogId)
-                  .map((a) => (
-                    <option key={a.catalogId} value={a.catalogId!}>
-                      {a.catalogId} - {a.name}
-                    </option>
-                  ))}
-              </select>
-            </label>
-            <label style={{ fontSize: 11, color: "#6b7280" }}>
-              catalog_id (slug, snake_case)
-              <input
-                value={newAssetModal.catalogId}
-                onChange={(e) => setNewAssetModal({ ...newAssetModal, catalogId: e.target.value })}
-                placeholder={newAssetModal.sourceCatalogId
-                  ? `${newAssetModal.sourceCatalogId}_v2`
-                  : "my_new_asset"}
-                style={INPUT}
-              />
-            </label>
-            <label style={{ fontSize: 11, color: "#6b7280" }}>
-              name (display)
-              <input
-                value={newAssetModal.name}
-                onChange={(e) => setNewAssetModal({ ...newAssetModal, name: e.target.value })}
-                placeholder="Free-form display label"
-                style={INPUT}
-              />
-            </label>
-            {newAssetError && (
-              <div style={{ color: "#dc2626", fontSize: 11 }}>{newAssetError}</div>
-            )}
-            <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 4 }}>
-              <button
-                type="button"
-                onClick={() => setNewAssetModal(null)}
-                style={{ padding: "4px 10px", fontSize: 11, border: "1px solid #d8ded8", background: "#fbfbf8", cursor: "pointer" }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  if (!newAssetModal) return;
-                  const slugRe = /^[a-z0-9_]+$/;
-                  if (!slugRe.test(newAssetModal.catalogId)) {
-                    setNewAssetError("catalog_id must be lower-snake-case ([a-z0-9_]+)");
-                    return;
-                  }
-                  if (!newAssetModal.name.trim()) {
-                    setNewAssetError("name is required");
-                    return;
-                  }
-                  const scaleFactor = Number(newAssetModal.scaleFactor);
-                  if (!Number.isFinite(scaleFactor) || scaleFactor <= 0) {
-                    setNewAssetError("scale factor must be a positive number");
-                    return;
-                  }
-                  setUploadingNewAsset(true);
-                  try {
-                    const created = newAssetModal.file
-                      ? await uploadAsset({
-                        file: newAssetModal.file,
-                        catalogId: newAssetModal.catalogId,
-                        name: newAssetModal.name.trim(),
-                        // A new asset needs a concrete domain; "all" is a
-                        // view filter, not a classification ??default to
-                        // optical (the editor's historical default).
-                        domain: domain === "all" ? "optical" : domain,
-                        unit: newAssetModal.unit,
-                        scaleFactor,
-                        precisionPreset: newAssetModal.precisionPreset,
-                        preserveColors: newAssetModal.preserveColors,
-                      })
-                      : await createAsset({
-                        catalogId: newAssetModal.catalogId,
-                        name: newAssetModal.name.trim(),
-                        sourceCatalogId: newAssetModal.sourceCatalogId || undefined,
-                        kindId: domain === "mechanical" ? "none" : undefined,
-                      });
-                    setNewAssetModal(null);
-                    setNewAssetError(null);
-                    setSelectedAssetId(created.id);
-                  } catch (err) {
-                    setNewAssetError(err instanceof Error ? err.message : String(err));
-                  } finally {
-                    setUploadingNewAsset(false);
-                  }
-                }}
-                disabled={uploadingNewAsset}
-                style={{ padding: "4px 10px", fontSize: 11, border: "1px solid #ca8a04", background: uploadingNewAsset ? "#f3f4f1" : "#fde68a", cursor: uploadingNewAsset ? "not-allowed" : "pointer", fontWeight: 600 }}
-              >
-                {uploadingNewAsset ? "Creating..." : "Create"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

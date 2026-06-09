@@ -184,25 +184,6 @@ class Asset3DUsageOut(CamelModel):
     object_count: int
 
 
-class Asset3DV3Create(CamelModel):
-    """Payload for ``POST /api/v3/assets3d`` ??creates a new Asset3D row.
-
-    Two creation modes:
-      ??Blank: caller supplies ``catalog_id`` + ``name`` (+ optional
-        ``file_path`` / ``asset_type``). All other fields default empty.
-      ??Fork: caller supplies ``source_catalog_id`` to copy file_path,
-        faces, default_params, anchors, and the properties bag from an`r`n        existing asset. Editor's
-        "+ New Asset3D" workflow uses this to spawn an editable variant
-        of an existing catalog entry without touching the original.
-    """
-    catalog_id: str
-    name: str
-    source_catalog_id: Optional[str] = None
-    asset_type: Optional[str] = None
-    file_path: Optional[str] = None
-    kind_id: Optional[str] = None
-
-
 # ---------------------------------------------------------------------------
 # Component v3
 # ---------------------------------------------------------------------------

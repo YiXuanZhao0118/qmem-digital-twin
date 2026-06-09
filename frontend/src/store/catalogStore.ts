@@ -105,20 +105,6 @@ export type V3AssetUpdate = Partial<{
   properties: Record<string, unknown>;
 }>;
 
-/** Payload for ``POST /api/v3/assets3d`` — creates a new Asset3D row.
- *  When ``sourceCatalogId`` is supplied the backend copies geometry +
- *  physics fields from that asset (fork). Otherwise the new asset is
- *  a blank shell. ``catalogId`` slug shape + uniqueness are enforced
- *  in the DB (alembic 0088); bad slugs return 400. */
-export type V3AssetCreate = {
-  catalogId: string;
-  name: string;
-  sourceCatalogId?: string;
-  assetType?: string;
-  filePath?: string;
-  kindId?: string;
-};
-
 export type V3AssetUpload = {
   file: File;
   catalogId: string;
@@ -232,7 +218,6 @@ type V3CatalogState = {
   /** Fetch how many components / placed scene objects reference an asset.
    *  Used to gate in-use editing; not cached in store state. */
   fetchAssetUsage: (key: string) => Promise<V3AssetUsage>;
-  createAsset: (payload: V3AssetCreate) => Promise<V3Asset>;
   uploadAsset: (payload: V3AssetUpload) => Promise<V3Asset>;
   updateAssetGeometry: (catalogId: string, payload: V3AssetUpload) => Promise<V3Asset>;
   getAssetByCatalogId: (catalogId: string) => V3Asset | undefined;
@@ -314,13 +299,6 @@ export const useV3Catalog = create<V3CatalogState>((set, get) => ({
       `/api/v3/assets3d/${encodeURIComponent(key)}/usage`,
     );
     return res.data;
-  },
-
-  createAsset: async (payload) => {
-    const res = await client.post<V3Asset>("/api/v3/assets3d", payload);
-    const created = res.data;
-    set((state) => ({ assets: [...state.assets, created] }));
-    return created;
   },
 
   uploadAsset: async (payload) => {
