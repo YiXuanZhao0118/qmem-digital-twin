@@ -9,7 +9,14 @@ from sqlalchemy import select
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.db import AsyncSessionLocal  # noqa: E402
-from app.models import Asset3D, CollectionMember, Component, Kind, SceneObject  # noqa: E402
+from app.models import (  # noqa: E402
+    Asset3D,
+    CollectionMember,
+    Component,
+    ComponentBinding,
+    Kind,
+    SceneObject,
+)
 from app.routers.collections import get_master_collection  # noqa: E402
 
 
@@ -93,6 +100,26 @@ async def main() -> None:
             for key, value in COMPONENT.items():
                 setattr(component, key, value)
             component.asset_3d_id = asset.id
+            await session.flush()
+
+        # Every component with an asset_3d_id must have a root ComponentBinding
+        # (the invariant alembic 0062 backfills and
+        # test_component_bindings::test_migration_backfilled_root_binding_per_component
+        # enforces). The single-FK upsert above doesn't create one, so ensure
+        # it here — idempotent.
+        root_binding = await session.scalar(
+            select(ComponentBinding).where(ComponentBinding.component_id == component.id)
+        )
+        if root_binding is None:
+            session.add(
+                ComponentBinding(
+                    component_id=component.id,
+                    parent_binding_id=None,
+                    target_kind="asset",
+                    asset_3d_id=asset.id,
+                    role="body",
+                )
+            )
             await session.flush()
 
         scene_objects = (

@@ -44,7 +44,10 @@ describe("modules/_registry", () => {
   });
 
   it("getModule returns the matching def for known ids", () => {
-    expect(getModule("optics_seq").displayName).toBe("Optics");
+    // optics_seq is the integrated 3D lab workspace ("Lab"); the pure
+    // cavity calculator is the separate optics_cavity module ("Optics").
+    expect(getModule("optics_seq").displayName).toBe("Lab");
+    expect(getModule("optics_cavity").displayName).toBe("Optics");
     expect(getModule("spice").displayName).toBe("Electronics");
     expect(getModule("em_fem").displayName).toBe("EM");
   });

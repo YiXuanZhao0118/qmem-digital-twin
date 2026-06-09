@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-09T13:23:55.775Z",
+  "generated_at": "2026-06-09T13:53:11.906Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -538,11 +538,21 @@
         "align_summary": "Pick the flat face on the wireframe (sets intercept_in position). Asset-level fast-axis angle is set in PHY Editor → Optical → Components on the intercept_in anchor (fastAxisDegBodyLocal). Per-instance rotation around the beam axis is set in the Object panel.",
         "default_params": {
           "retardanceLambda": 0.5,
+          "retardanceDeg": 180,
           "transmission": 0.99,
+          "designWavelengthNm": 850,
           "wavelengthRangeNm": [
             400,
             1100
-          ]
+          ],
+          "lengthMm": 2,
+          "thicknessMm": 2,
+          "refractiveIndex": 1.54,
+          "clearApertureMm": 10,
+          "plateAlphaXRad": 0,
+          "plateAlphaYRad": 0,
+          "material": "crystalline_quartz",
+          "plateType": "zero_order"
         },
         "intrinsic_param_keys": [
           "retardanceLambda",
@@ -957,7 +967,6 @@
         "align_summary": "Define intercept_in / intercept_out (both with apertureMm). Align picks whichever port the upstream beam reaches first as the entry, translates that anchor onto the beam line, then rotates the body 1-D around lab tilt axis (pivot = midpoint of the two anchors = Bragg interaction point). Forward traversal uses the selected +1/-1 order; reverse traversal swaps +1 and -1 for the same mechanical Bragg tilt. rf_in marks the SMA / coax RF drive connector on the AOM driver housing (position = jack centre on the body, direction = outward face normal = the way a mating cable plug slides on). Used purely for cable-routing visualisation in 3D — not consumed by the Bragg solver.",
         "default_params": {
           "baseEfficiency": 0.85,
-          "centerFreqMhz": 80,
           "rfPowerForPeakW": 2.2,
           "peakRefWavelengthNm": 1100,
           "freqShiftBandwidthMhz": 15,
@@ -989,7 +998,6 @@
         },
         "intrinsic_param_keys": [
           "baseEfficiency",
-          "centerFreqMhz",
           "rfPowerForPeakW",
           "peakRefWavelengthNm",
           "freqShiftBandwidthMhz",

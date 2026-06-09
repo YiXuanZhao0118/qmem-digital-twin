@@ -39,8 +39,18 @@ export const waveplatePlugin = definePhysicsPlugin<WaveplateParams>({
       "Pick the flat face on the wireframe (sets intercept_in position). Asset-level fast-axis angle is set in PHY Editor → Optical → Components on the intercept_in anchor (fastAxisDegBodyLocal). Per-instance rotation around the beam axis is set in the Object panel.",
     defaultParams: {
       retardanceLambda: 0.5,
+      retardanceDeg: 180,            // HWP (= 0.5λ); op reads degrees
       transmission: 0.99,
+      designWavelengthNm: 850,
       wavelengthRangeNm: [400, 1100],
+      lengthMm: 2,
+      thicknessMm: 2,
+      refractiveIndex: 1.54,         // crystalline quartz n_o
+      clearApertureMm: 10,
+      plateAlphaXRad: 0,
+      plateAlphaYRad: 0,
+      material: "crystalline_quartz",
+      plateType: "zero_order",
     },
     intrinsicParamKeys: [
       "retardanceLambda",

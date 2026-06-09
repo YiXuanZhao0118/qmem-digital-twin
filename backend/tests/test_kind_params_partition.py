@@ -28,7 +28,7 @@ def test_aom_partition_matches_plugin_declarations():
     intrinsic = intrinsic_keys_by_kind().get("aom") or []
     state = state_keys_by_kind().get("aom") or []
     # Spec-sheet keys
-    assert "acousticVelocityMPerS" in intrinsic
+    assert "acousticVelocityMps" in intrinsic
     assert "refractiveIndex" in intrinsic
     assert "crystalLengthMm" in intrinsic
     assert "rfPowerMaxW" in intrinsic
@@ -103,7 +103,7 @@ def test_partition_kind_params_for_aom_splits_intrinsic_from_state():
     """Functional spot-check — a representative AOM kindParams blob must
     end up partitioned into the two halves the Phase-4 migration writes."""
     blob = {
-        "acousticVelocityMPerS": 4200.0,
+        "acousticVelocityMps": 4200.0,
         "refractiveIndex": 2.26,
         "crystalLengthMm": 25.0,
         "diffractionOrder": 1,
@@ -112,7 +112,7 @@ def test_partition_kind_params_for_aom_splits_intrinsic_from_state():
     }
     intrinsic, state = partition_kind_params("aom", blob)
     assert intrinsic == {
-        "acousticVelocityMPerS": 4200.0,
+        "acousticVelocityMps": 4200.0,
         "refractiveIndex": 2.26,
         "crystalLengthMm": 25.0,
     }

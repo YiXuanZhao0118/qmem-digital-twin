@@ -14,7 +14,9 @@ import { definePhysicsPlugin } from "../_plugin";
 
 export interface AomParams extends Record<string, unknown> {
   baseEfficiency: number;            // datasheet PEAK efficiency (η at rated drive)
-  centerFreqMhz: number;             // design centre frequency (RF bandwidth peak)
+  // Phase B: resolved live from the upstream rf_source — NOT stored in
+  // defaultParams. rayTrace injects the resolved value at trace time.
+  centerFreqMhz?: number;            // design centre frequency (RF bandwidth peak)
   rfPowerForPeakW: number;           // P_peak: RF power for peak η
   peakRefWavelengthNm: number;       // λ_ref for P_peak ∝ λ²
   freqShiftBandwidthMhz: number;     // RF carrier half-bandwidth (±MHz)
@@ -68,7 +70,7 @@ export const aomPlugin = definePhysicsPlugin<AomParams>({
       "rf_in marks the SMA / coax RF drive connector on the AOM driver housing (position = jack centre on the body, direction = outward face normal = the way a mating cable plug slides on). Used purely for cable-routing visualisation in 3D — not consumed by the Bragg solver.",
     defaultParams: {
       baseEfficiency: 0.85,            // datasheet PEAK η (>85%, nom 90%)
-      centerFreqMhz: 80.0,             // design centre (RF bandwidth peak)
+      // centerFreqMhz is NOT stored — resolved live from the rf_source.
       rfPowerForPeakW: 2.2,            // P_peak (MT80-A1.5-IR max RF)
       peakRefWavelengthNm: 1100.0,     // λ_ref for P_peak ∝ λ²
       freqShiftBandwidthMhz: 15.0,     // RF carrier half-bandwidth (±15 MHz)
@@ -108,7 +110,6 @@ export const aomPlugin = definePhysicsPlugin<AomParams>({
     //   separately.
     intrinsicParamKeys: [
       "baseEfficiency",
-      "centerFreqMhz",
       "rfPowerForPeakW",
       "peakRefWavelengthNm",
       "freqShiftBandwidthMhz",
