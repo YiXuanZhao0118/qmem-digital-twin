@@ -1,6 +1,6 @@
 [← 文件索引](README.md)
 
-# 座標系與 Anchor 架構（現行：alembic 0093）
+# 座標系與 Anchor 架構（frames flatten: 0093；faces/transitions → anchors: 0106）
 
 > 相關：[asset.md](asset.md)（anchor 存在 Asset3D 上）、[object.md](object.md)（Lab pose）、[optics.md](optics.md)（anchor 方向如何被 tracer 使用）。
 
@@ -23,10 +23,10 @@ D_lab = R_sceneObject_lab · R_componentBinding · D_anchor_asset
 
 **Anchors（光學介面）：** `anchors[]` **取代了舊的 `faces[]` / `transitions[]`**——每個 anchor 本身就是一個有向的光學介面，直接帶**方向**與 **aperture**，因此**不再有「雙埠資產用物理面 `A`/`B`」、也不再有有向的 `transitions[]`（A→B、B→A）那套命名**。方向 / 互易性 / 繞射階 / RF-side 等行為改由各 kind 的 PhysicsOp 依 anchor 的方向就地決定（見 [optics.md](optics.md)、[kinds.md](kinds.md)）。
 
-每個 anchor（後端 `V3Anchor`，body-local）存：
+每個 anchor（API `AnchorV3` / runtime `V3Anchor`，body-local）存（括號為 runtime dataclass 名）：
 - `id`
-- `position`（介面平面通過點）
-- 三軸：`axisX` = 傳播 / 法向方向、`axisY` = 橫向 1（fast axis / s-pol…）、`axisZ` = 橫向 2（= axisX × axisY）
+- `positionMmBodyLocal`（`position_body`，介面平面通過點）
+- 三軸 `axisXBodyLocal` / `axisYBodyLocal` / `axisZBodyLocal`（`axis_x/y/z_body`）：axisX = 傳播 / 法向方向、axisY = 橫向 1（fast axis / s-pol…）、axisZ = 橫向 2（= axisX × axisY）
 - `apertureMm` + `apertureShape`（`circle`…）
 
 tracer 對「過 `position`、垂直 `axisX` 的平面」做 ray-plane 命中，並用 aperture 裁切（落在 `apertureMm` 外視為 miss）。Component 透過 binding / `exposedFaces` 把對外語意埠（如 `optical_in`）映到 `assetBindingId + anchorId`。

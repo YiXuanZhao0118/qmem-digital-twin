@@ -10,8 +10,8 @@
 
 ## ComponentBinding
 
-**ComponentBinding** — 綁定樹節點，把資產（或子元件）掛在父節點下，帶 local transform（localX/Y/Z mm、localR deg）、`tunable_axes`、`role_label`、`sort_order`。讓複合元件成立（如 isolator = faraday rod + 前後 Glan 稜鏡 + 外殼）。表 `component_bindings`：`parent_binding_id`、`target_kind`(asset/empty/subcomponent)、`asset_3d_id`…
+**ComponentBinding** — 綁定樹節點，把資產（或子元件）掛在父節點下，帶 local transform（`local_x_mm`/`local_y_mm`/`local_z_mm` + `local_rx_deg`/`local_ry_deg`/`local_rz_deg`，三軸旋轉）、`tunable_axes`、`role`、`sort_order`。讓複合元件成立（如 isolator = faraday rod + 前後 Glan 稜鏡 + 外殼）。表 `component_bindings`：`parent_binding_id`、`target_kind`(asset/empty/subcomponent)、`asset_3d_id`…
 
 ## exposedFaces
 
-Component 透過 `exposedFaces` 把 `componentFaceId`（如 `optical_in`）映到 `assetBindingId + assetFaceId`，使複合元件對外只露出語意化的光學埠。face 的物理語意見 [anchors.md](anchors.md)。
+Component 透過 `exposedFaces` 把對外語意埠（如 `optical_in`）映到 `assetBindingId + anchorId`，使複合元件對外只露出語意化的光學埠（faces 已退役 → anchors，見 [anchors.md](anchors.md)）。

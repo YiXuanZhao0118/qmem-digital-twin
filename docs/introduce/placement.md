@@ -20,7 +20,7 @@
 
 `PlacementResult` 一律帶非空 `intentMetadata`（至少 `absolute`），寫進 `SceneObject.properties.placedRelativeTo`。
 
-## SnapTarget 種類（13 種，歸 5 類）
+## SnapTarget 種類（型別定義 13 種，**實際收集 12 種**，歸 5 類）
 
 | kind | 類別 | 預設門檻 mm | 說明 |
 |---|---|---|---|
@@ -29,7 +29,7 @@
 | `beam_intersection` | beam | 15 | 兩光束交點 |
 | `beam_endpoint` | beam | 15 | 光束端點（源 / 命中） |
 | `mesh_vertex` | geometry | 10 | mesh 頂點 |
-| `mesh_edge_midpoint` | geometry | 10 | 邊中點 |
+| `mesh_edge_midpoint` | geometry | 10 | 邊中點（⚠️ 型別與 tier 有定義，但 `collectMeshEdgeMidpointSnaps` **未被 `computePlacement` 呼叫 → 目前 dead、不收集**） |
 | `mesh_face_centroid` | geometry | 15 | 面形心 |
 | `mesh_bbox_center` | geometry | 20 | 包圍盒中心 |
 | `anchor` | anchor | 5 | 元件 anchor（最具體，門檻最緊） |
