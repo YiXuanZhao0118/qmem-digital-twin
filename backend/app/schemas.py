@@ -1105,25 +1105,14 @@ class LensCylindricalParams(CamelModel):
 
 
 class WaveplateParams(CamelModel):
-    retardance_lambda: float = Field(default=0.5, gt=0)  # 0.5 = HWP, 0.25 = QWP
-    retardance_deg: float | None = Field(default=None, gt=0)
     # V2 Phase 4 (alembic 0030): the fast-axis angle moved from
     # `fast_axis_deg_beam_local` here to a polarizationReference binding
     # (role="fast") on the SceneObject. The route layer synthesises the
     # legacy field on read and translates back on write so the existing
     # WaveplateAdjustControls keeps working.
-    transmission: float = Field(default=0.99, ge=0.0, le=1.0)
-    design_wavelength_nm: float | None = Field(default=None, gt=0)
+    retardance_deg: float | None = Field(default=None, gt=0)
     length_mm: float | None = Field(default=None, gt=0)
-    thickness_mm: float | None = Field(default=None, gt=0)
     refractive_index: float | None = Field(default=None, gt=0)
-    clear_aperture_mm: float | None = Field(default=None, gt=0)
-    group_delay_ps: float = 0.0
-    gvd_fs2: float = 0.0
-    plate_alpha_x_rad: float = 0.0
-    plate_alpha_y_rad: float = 0.0
-    material: str | None = None
-    plate_type: str | None = None
     wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
     @model_validator(mode="before")

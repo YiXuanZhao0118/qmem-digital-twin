@@ -51,19 +51,10 @@ def test_waveplate_partition_has_no_per_instance_kind_params():
     intrinsic = set(intrinsic_keys_by_kind().get("waveplate") or [])
     state = set(state_keys_by_kind().get("waveplate") or [])
     assert intrinsic == {
-        "retardanceLambda",
         "retardanceDeg",
-        "transmission",
-        "designWavelengthNm",
-        "wavelengthRangeNm",
         "lengthMm",
-        "thicknessMm",
         "refractiveIndex",
-        "clearApertureMm",
-        "plateAlphaXRad",
-        "plateAlphaYRad",
-        "material",
-        "plateType",
+        "wavelengthRangeNm",
     }
     assert state == set()
 

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-10T01:46:38.890Z",
+  "generated_at": "2026-06-10T01:48:57.648Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -534,37 +534,19 @@
         "align_tolerance_mm": 25,
         "align_summary": "Pick the flat face on the wireframe (sets intercept_in position). Asset-level fast-axis angle is set in PHY Editor → Optical → Components on the intercept_in anchor (fastAxisDegBodyLocal). Per-instance rotation around the beam axis is set in the Object panel.",
         "default_params": {
-          "retardanceLambda": 0.5,
           "retardanceDeg": 180,
-          "transmission": 0.99,
-          "designWavelengthNm": 850,
+          "lengthMm": 2,
+          "refractiveIndex": 1.54,
           "wavelengthRangeNm": [
             400,
             1100
-          ],
-          "lengthMm": 2,
-          "thicknessMm": 2,
-          "refractiveIndex": 1.54,
-          "clearApertureMm": 10,
-          "plateAlphaXRad": 0,
-          "plateAlphaYRad": 0,
-          "material": "crystalline_quartz",
-          "plateType": "zero_order"
+          ]
         },
         "intrinsic_param_keys": [
-          "retardanceLambda",
           "retardanceDeg",
-          "transmission",
-          "designWavelengthNm",
-          "wavelengthRangeNm",
           "lengthMm",
-          "thicknessMm",
           "refractiveIndex",
-          "clearApertureMm",
-          "plateAlphaXRad",
-          "plateAlphaYRad",
-          "material",
-          "plateType"
+          "wavelengthRangeNm"
         ],
         "state_param_keys": [],
         "port_domains": {
