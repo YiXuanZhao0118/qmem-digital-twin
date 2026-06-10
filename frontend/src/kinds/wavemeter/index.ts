@@ -1,7 +1,6 @@
 import { definePhysicsPlugin } from "../_plugin";
 
 export interface WavemeterParams extends Record<string, unknown> {
-  precisionMhz: number;
   wavelengthRangeNm: [number, number];
 }
 
@@ -24,6 +23,6 @@ export const wavemeterPlugin = definePhysicsPlugin<WavemeterParams>({
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
     alignSummary: "Input port (intercept_in) translates to beam.",
-    defaultParams: { precisionMhz: 1.0, wavelengthRangeNm: [400, 1100] },
+    defaultParams: { wavelengthRangeNm: [400, 1100] },
   },
 });

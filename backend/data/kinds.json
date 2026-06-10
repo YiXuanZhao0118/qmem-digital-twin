@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-10T01:48:57.648Z",
+  "generated_at": "2026-06-10T01:51:35.358Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -1140,10 +1140,6 @@
         "align_tolerance_mm": 25,
         "align_summary": "Active area centre (intercept_in) translates to beam. Beam absorbed.",
         "default_params": {
-          "responsivityAPerW": 0.5,
-          "quantumEfficiency": 0.8,
-          "bandwidthMhz": 1000,
-          "saturationPowerMw": 10,
           "wavelengthRangeNm": [
             400,
             1100
@@ -1183,13 +1179,6 @@
         "align_tolerance_mm": 25,
         "align_summary": "Sensor centre (intercept_in) translates to beam. Beam absorbed.",
         "default_params": {
-          "resolutionPx": [
-            1024,
-            1024
-          ],
-          "pixelSizeUm": 5.5,
-          "quantumEfficiency": 0.5,
-          "wellDepthE": 20000,
           "wavelengthRangeNm": [
             400,
             1100
@@ -1229,7 +1218,6 @@
         "align_tolerance_mm": 25,
         "align_summary": "Slit/fiber input (intercept_in) translates to beam.",
         "default_params": {
-          "resolutionPm": 10,
           "wavelengthRangeNm": [
             400,
             1100
@@ -1269,7 +1257,6 @@
         "align_tolerance_mm": 25,
         "align_summary": "Input port (intercept_in) translates to beam.",
         "default_params": {
-          "precisionMhz": 1,
           "wavelengthRangeNm": [
             400,
             1100
@@ -1310,7 +1297,6 @@
         "align_tolerance_mm": 25,
         "align_summary": "Absorbing face (intercept_in) translates to beam. Beam terminates.",
         "default_params": {
-          "absorption": 0.999,
           "wavelengthRangeNm": [
             400,
             1100

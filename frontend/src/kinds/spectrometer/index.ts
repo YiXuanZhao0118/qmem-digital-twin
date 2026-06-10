@@ -1,7 +1,6 @@
 import { definePhysicsPlugin } from "../_plugin";
 
 export interface SpectrometerParams extends Record<string, unknown> {
-  resolutionPm: number;
   wavelengthRangeNm: [number, number];
 }
 
@@ -24,9 +23,6 @@ export const spectrometerPlugin = definePhysicsPlugin<SpectrometerParams>({
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
     alignSummary: "Slit/fiber input (intercept_in) translates to beam.",
-    defaultParams: {
-      resolutionPm: 10.0,
-      wavelengthRangeNm: [400, 1100],
-    },
+    defaultParams: { wavelengthRangeNm: [400, 1100] },
   },
 });

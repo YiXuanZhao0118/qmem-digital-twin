@@ -1,10 +1,6 @@
 import { definePhysicsPlugin } from "../_plugin";
 
 export interface DetectorParams extends Record<string, unknown> {
-  responsivityAPerW: number;
-  quantumEfficiency: number;
-  bandwidthMhz: number;
-  saturationPowerMw: number;
   wavelengthRangeNm: [number, number];
 }
 
@@ -27,12 +23,6 @@ export const detectorPlugin = definePhysicsPlugin<DetectorParams>({
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
     alignSummary: "Active area centre (intercept_in) translates to beam. Beam absorbed.",
-    defaultParams: {
-      responsivityAPerW: 0.5,
-      quantumEfficiency: 0.8,
-      bandwidthMhz: 1000.0,
-      saturationPowerMw: 10.0,
-      wavelengthRangeNm: [400, 1100],
-    },
+    defaultParams: { wavelengthRangeNm: [400, 1100] },
   },
 });

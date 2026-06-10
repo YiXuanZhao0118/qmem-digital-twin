@@ -1569,33 +1569,22 @@ class SaturableAbsorberParams(CamelModel):
 
 
 class DetectorParams(CamelModel):
-    responsivity_a_per_w: float = Field(gt=0)
-    quantum_efficiency: float = Field(default=0.8, ge=0.0, le=1.0)
-    bandwidth_mhz: float = Field(gt=0)
-    saturation_power_mw: float = Field(gt=0)
     wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
 
 class CameraParams(CamelModel):
-    resolution_px: tuple[int, int] = (1024, 1024)
-    pixel_size_um: float = Field(gt=0)
-    quantum_efficiency: float = Field(default=0.5, ge=0.0, le=1.0)
-    well_depth_e: int = Field(default=20000, gt=0)
     wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
 
 class SpectrometerParams(CamelModel):
-    resolution_pm: float = Field(gt=0)
     wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
 
 class WavemeterParams(CamelModel):
-    precision_mhz: float = Field(gt=0)
     wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
 
 class BeamDumpParams(CamelModel):
-    absorption: float = Field(default=0.999, ge=0.0, le=1.0)
     wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
 
