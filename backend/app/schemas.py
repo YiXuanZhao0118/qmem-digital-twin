@@ -1084,11 +1084,6 @@ class MirrorParams(CamelModel):
 
 class LensSphericalParams(CamelModel):
     focal_length_mm: float
-    numerical_aperture: float | None = None
-    transmission: float = Field(default=0.99, ge=0.0, le=1.0)
-    clear_aperture_mm: float | None = Field(default=None, gt=0)
-    gvd_fs2: float = 0.0
-    material: str | None = None  # "BK7", "fused_silica", "ZnSe", ...
     wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
     @model_validator(mode="before")
@@ -1101,10 +1096,6 @@ class LensSphericalParams(CamelModel):
 class LensCylindricalParams(CamelModel):
     focal_length_mm: float
     cylindrical_axis: Literal["x", "y"] = "x"
-    transmission: float = Field(default=0.99, ge=0.0, le=1.0)
-    clear_aperture_mm: float | None = Field(default=None, gt=0)
-    gvd_fs2: float = 0.0
-    material: str | None = None
     wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
     @model_validator(mode="before")
@@ -1155,7 +1146,6 @@ class PolarizerParams(CamelModel):
     # polarizationReference binding (role="transmission"); see WaveplateParams
     # for the same pattern.
     extinction_ratio_db: float = Field(default=30.0, ge=0.0)
-    transmission: float = Field(default=0.95, ge=0.0, le=1.0)
     wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
     @model_validator(mode="before")

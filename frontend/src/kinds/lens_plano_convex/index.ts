@@ -2,7 +2,6 @@ import { definePhysicsPlugin } from "../_plugin";
 
 export interface LensPlanoConvexParams extends Record<string, unknown> {
   focalLengthMm: number;
-  transmission: number;
   wavelengthRangeNm: [number, number];
 }
 
@@ -26,6 +25,6 @@ export const lensPlanoConvexPlugin = definePhysicsPlugin<LensPlanoConvexParams>(
     alignToleranceMm: 25,
     alignSummary:
       "intercept_in is the plane-side surface center; direction points from plane toward convex side.",
-    defaultParams: { focalLengthMm: 100.0, transmission: 0.99, wavelengthRangeNm: [400, 1100] },
+    defaultParams: { focalLengthMm: 100.0, wavelengthRangeNm: [400, 1100] },
   },
 });

@@ -3,7 +3,6 @@ import { definePhysicsPlugin } from "../_plugin";
 export interface LensCylindricalParams extends Record<string, unknown> {
   focalLengthMm: number;
   cylindricalAxis: "x" | "y" | "z";
-  transmission: number;
   wavelengthRangeNm: [number, number];
 }
 
@@ -27,6 +26,6 @@ export const lensCylindricalPlugin = definePhysicsPlugin<LensCylindricalParams>(
     alignToleranceMm: 25,
     alignSummary:
       "intercept_in translates to beam axis. Direction = optical axis (light propagation direction through lens body).",
-    defaultParams: { focalLengthMm: 100.0, cylindricalAxis: "x", transmission: 0.99, wavelengthRangeNm: [400, 1100] },
+    defaultParams: { focalLengthMm: 100.0, cylindricalAxis: "x", wavelengthRangeNm: [400, 1100] },
   },
 });

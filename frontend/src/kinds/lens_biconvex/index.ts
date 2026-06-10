@@ -2,7 +2,6 @@ import { definePhysicsPlugin } from "../_plugin";
 
 export interface LensBiconvexParams extends Record<string, unknown> {
   focalLengthMm: number;
-  transmission: number;
   wavelengthRangeNm: [number, number];
 }
 
@@ -26,6 +25,6 @@ export const lensBiconvexPlugin = definePhysicsPlugin<LensBiconvexParams>({
     alignToleranceMm: 25,
     alignSummary:
       "intercept_in translates to beam axis. Direction = optical axis (light propagation direction through lens body).",
-    defaultParams: { focalLengthMm: 100.0, transmission: 0.99, wavelengthRangeNm: [400, 1100] },
+    defaultParams: { focalLengthMm: 100.0, wavelengthRangeNm: [400, 1100] },
   },
 });

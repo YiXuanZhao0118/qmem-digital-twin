@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-10T01:41:42.319Z",
+  "generated_at": "2026-06-10T01:46:38.890Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -404,7 +404,6 @@
         "align_summary": "intercept_in translates to beam axis. Direction = optical axis (light propagation direction through lens body).",
         "default_params": {
           "focalLengthMm": 100,
-          "transmission": 0.99,
           "wavelengthRangeNm": [
             400,
             1100
@@ -449,7 +448,6 @@
         "align_summary": "intercept_in is the plane-side surface center; direction points from plane toward convex side.",
         "default_params": {
           "focalLengthMm": 100,
-          "transmission": 0.99,
           "wavelengthRangeNm": [
             400,
             1100
@@ -495,7 +493,6 @@
         "default_params": {
           "focalLengthMm": 100,
           "cylindricalAxis": "x",
-          "transmission": 0.99,
           "wavelengthRangeNm": [
             400,
             1100
@@ -606,7 +603,6 @@
         "default_params": {
           "transmissionAxisDegBeamLocal": 0,
           "extinctionRatioDb": 30,
-          "transmission": 0.95,
           "wavelengthRangeNm": [
             400,
             1100
@@ -652,13 +648,8 @@
         "default_params": {
           "transmissionAxisDegBeamLocal": 0,
           "extinctionRatioDb": 55,
-          "transmission": 0.92,
-          "wedgeAngleDeg": 38.5,
-          "airGapMm": 0.05,
           "lengthMm": 7.5,
           "refractiveIndex": 1.48,
-          "airGapAstigmatismMm": 0.05,
-          "augmentedOffsetXMm": 0,
           "coatingNormalBodyLocal": [
             0,
             0.7826081692851781,
@@ -670,13 +661,8 @@
           ]
         },
         "intrinsic_param_keys": [
-          "wedgeAngleDeg",
-          "airGapMm",
           "lengthMm",
           "refractiveIndex",
-          "airGapAstigmatismMm",
-          "augmentedOffsetXMm",
-          "transmission",
           "extinctionRatioDb",
           "coatingNormalBodyLocal",
           "wavelengthRangeNm"

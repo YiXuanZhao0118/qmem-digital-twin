@@ -3,7 +3,6 @@ import { definePhysicsPlugin } from "../_plugin";
 export interface PolarizerParams extends Record<string, unknown> {
   transmissionAxisDegBeamLocal: number;
   extinctionRatioDb: number;
-  transmission: number;
   wavelengthRangeNm: [number, number];
 }
 
@@ -32,7 +31,6 @@ export const polarizerPlugin = definePhysicsPlugin<PolarizerParams>({
     defaultParams: {
       transmissionAxisDegBeamLocal: 0.0,
       extinctionRatioDb: 30.0,
-      transmission: 0.95,
       wavelengthRangeNm: [400, 1100],
     },
   },
