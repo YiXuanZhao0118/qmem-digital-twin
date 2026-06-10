@@ -3,8 +3,6 @@ import { definePhysicsPlugin } from "../_plugin";
 export interface EomParams extends Record<string, unknown> {
   vPiV: number;
   modulationKind: "phase" | "amplitude";
-  modulationBandwidthMhz: number;
-  insertionLossDb: number;
   wavelengthRangeNm: [number, number];
 }
 
@@ -32,8 +30,6 @@ export const eomPlugin = definePhysicsPlugin<EomParams>({
     defaultParams: {
       vPiV: 5.0,
       modulationKind: "phase",
-      modulationBandwidthMhz: 100.0,
-      insertionLossDb: 3.0,
       wavelengthRangeNm: [400, 1700],
     },
   },

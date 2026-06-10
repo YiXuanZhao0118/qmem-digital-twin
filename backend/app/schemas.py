@@ -1187,10 +1187,7 @@ class BeamSplitterParams(CamelModel):
     physics (split ratio, polarising bit, extinction, transmission).
     """
 
-    split_ratio_transmitted: float = Field(default=0.5, ge=0.0, le=1.0)
     polarizing: bool = False
-    extinction_ratio_db: float = Field(default=30.0, ge=0.0)
-    transmission: float = Field(default=0.99, ge=0.0, le=1.0)
     wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
     @model_validator(mode="before")
@@ -1561,8 +1558,6 @@ class EOMParams(CamelModel):
     rf_driver_component_id: uuid.UUID | None = None
     v_pi_v: float = Field(gt=0)
     modulation_kind: Literal["phase", "amplitude"] = "phase"
-    modulation_bandwidth_mhz: float = Field(default=100.0, gt=0)
-    insertion_loss_db: float = Field(default=3.0, ge=0.0)
     rise_time_ns: float = Field(default=1.0, ge=0.0)
     gvd_fs2: float = 0.0
     wavelength_range_nm: tuple[float, float] = (400.0, 1700.0)
