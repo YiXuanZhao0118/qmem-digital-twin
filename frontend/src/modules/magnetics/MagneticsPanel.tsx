@@ -33,7 +33,7 @@ import type {
   MagneticsEvalRegion,
   MagneticsProblem,
 } from "../../types/digitalTwin";
-import { FieldViewer } from "../em/FieldViewer";
+import { FieldViewer } from "./FieldViewer";
 import { FloatingPanel } from "../../components/workspace/FloatingPanel";
 
 const DEFAULT_REGION: MagneticsEvalRegion = {

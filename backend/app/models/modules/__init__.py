@@ -1,13 +1,12 @@
 """Per-physics-module problem-definition tables.
 
-Each submodule maps to one workspace tab on the frontend
-(``frontend/src/modules/<id>/``). Importing this package as a
-whole pulls every submodule into the SQLAlchemy registry so
-Base.metadata sees them before Alembic autogenerate runs.
+Importing this package as a whole pulls every submodule into the
+SQLAlchemy registry so Base.metadata sees them before Alembic
+autogenerate runs. (The ``electronics`` submodule — the SPICE
+``circuits`` table — was removed on 2026-06-10 with the Electronics tab.)
 """
 
 from app.models.modules import (  # noqa: F401
-    electronics,
     em,
     magnetics,
     rf,

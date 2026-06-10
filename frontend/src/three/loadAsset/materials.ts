@@ -24,13 +24,51 @@ function colorForComponent(component: ComponentItem, state?: DeviceState): THREE
     case "vacuum_chamber":
       return "#8dd3c7";
     case "laser":
+    case "laser_source":
       return "#0f766e";
+    case "tapered_amplifier":
+      return "#b45309";
     case "laser_diode_mount":
       return "#6b7280";
     case "mirror":
       return "#c4b5fd";
+    case "dichroic_mirror":
+      return "#a5b4fc";
     case "lens":
+    case "lens_biconvex":
+    case "lens_plano_convex":
+    case "lens_cylindrical":
       return "#93c5fd";
+    case "waveplate":
+      return "#5eead4";
+    case "polarizer":
+      return "#818cf8";
+    case "glan_polarizer":
+      return "#bae6fd";
+    case "faraday_rotator":
+      return "#9333ea";
+    case "beam_splitter":
+      return "#bfdbfe";
+    case "nonlinear_crystal":
+      return "#fb7185";
+    case "saturable_absorber":
+      return "#7e22ce";
+    case "fiber_coupler":
+      return "#facc15";
+    case "detector":
+    case "camera":
+      return "#1f2937";
+    case "spectrometer":
+    case "wavemeter":
+      return "#334155";
+    case "beam_dump":
+      return "#0a0a0a";
+    case "rf_source":
+      return "#0f3f2a";
+    case "programmable_pulse_generator":
+      return "#1e293b";
+    case "horn_antenna":
+      return "#9ca3af";
     case "aom":
       return "#f59e0b";
     case "eom":
@@ -87,7 +125,9 @@ export function materialFor(
   component: ComponentItem,
   state?: DeviceState,
 ): THREE.MeshStandardMaterial {
-  const transparent = component.kindId === "vacuum_chamber" || component.kindId === "lens";
+  const isLens = component.kindId != null
+    && ["lens", "lens_biconvex", "lens_plano_convex", "lens_cylindrical"].includes(component.kindId);
+  const transparent = component.kindId === "vacuum_chamber" || isLens;
   const isPolished = component.kindId != null
     && ["mirror", "optical_post", "pedestal_post", "post_spacer", "clamping_fork", "laser_diode_mount", "sma_jack", "usb_b_jack"].includes(component.kindId);
   const isAnodized = component.kindId === "mirror_mount" || component.kindId === "isolator" || component.kindId === "instrument_chassis" || component.kindId === "power_supply_ac_dc";
@@ -96,7 +136,7 @@ export function materialFor(
     metalness: isPolished ? 0.75 : isAnodized ? 0.55 : 0.12,
     roughness: isPolished ? 0.2 : isAnodized ? 0.5 : 0.42,
     transparent,
-    opacity: component.kindId === "vacuum_chamber" ? 0.72 : component.kindId === "lens" ? 0.82 : 1,
+    opacity: component.kindId === "vacuum_chamber" ? 0.72 : isLens ? 0.82 : 1,
   });
 }
 

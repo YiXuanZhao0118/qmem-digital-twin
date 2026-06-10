@@ -125,8 +125,9 @@ On top of those three tiers the scene graph adds:
   `anthropic` SDK (optional — drives the AI binding agent)
 - **Database:** PostgreSQL (Docker or local, port 55432 in dev)
 - **3D assets:** glTF / GLB / STL / STEP, with primitive geometry fallback
-- **Solvers:** in-process Python for Phase A; ngspice (Phase B), Palace
-  (Phase C, via SSH/Docker), magpylib (DC magnetostatics) for later phases
+- **Solvers:** in-process Python — `optics_seq` ray tracer + `magnetics_dc`
+  (magpylib DC magnetostatics). `SshWorkstationRunner` infra remains dormant
+  for a future remote solver
 - **CAD source:** Onshape metadata sync reserved for Phase 2
 
 ---
@@ -314,7 +315,6 @@ plugin grows a field.
 | `device_states` | 1:1 with object | `state` JSONB (`enabled`, `temperatureC`, …) |
 | `revisions` | Scene snapshots | `snapshot` (full denormalized scene), `scene_hash` |
 | `simulation_runs` | Multiphysics run records | `module`, `status`, `params`, `result_summary`, `progress` |
-| `circuits` | SPICE netlists (Phase B) | `netlist`, optional `schematic` |
 | `meshes` | Gmsh uploads (Phase C) | `file_path`, `element_count` |
 | `em_problems` | FEM problem definition | `mesh_id`, `ports`, `boundary_conditions`, `freq_range_ghz` |
 | `coils` / `magnetics_problems` | DC magnetostatics | `shape`, `current_a`, `params` / `coil_ids`, `eval_region` |
@@ -351,13 +351,11 @@ plugin grows a field.
 | `/api/optical-links` | `optical_links.py` | Optical edges; rejects self-loops + bad ports |
 | `/api/rf-chains` | `rf_chains.py` | Per-terminal RF chain nodes; bulk replace |
 | `/api/simulations` | `simulations.py` | Legacy Phase A optical run endpoint |
-| `/api/simulation-runs` | `simulation_runs.py` | V2 multiphysics dispatch (`optics_seq`, `em_fem`, `magnetics_dc`, `spice`, `optics_cavity`, `optics_crystal`) |
-| `/api/circuits` | `circuits.py` | SPICE netlist + schematic CRUD |
+| `/api/simulation-runs` | `simulation_runs.py` | V2 multiphysics dispatch (`optics_seq`, `magnetics_dc`, `optics_fdtd`) |
 | `/api/touchstone` | `touchstone.py` | `.sNp` upload & parse |
 | `/api/meshes` | `meshes.py` | Mesh upload (100 MB cap) |
 | `/api/em-problems` | `em_problems.py` | FEM problem CRUD |
 | `/api/coils` / `/api/magnetics-problems` | `coils.py`, `magnetics_problems.py` | Magnetics inputs |
-| `/api/optics-cavity` / `/api/optics-crystal` | placeholder solvers |
 | `/api/scene-views` | `scene_views.py` | Saved view snapshots |
 | `/api/revisions` | `revisions.py` | Whole-scene snapshots |
 | `/api/collections` | `collections.py` | Outliner CRUD + member reorder; bootstraps master |
@@ -376,14 +374,10 @@ plugin grows a field.
 | `generalized_abcd.py` | **New (Phase 2, 2026-05).** 5×5 augmented-matrix ABCD propagation for misaligned optical systems. State vector `(x, θ_x, y, θ_y, 1)` in `(mm, rad)`; q-parameter (Gaussian beam) propagates via per-axis 2×2 sub-blocks while chief-ray (centre + tilt) goes through the FULL 5×5 multiply so rotated cylindrical optics couple x↔y correctly. Operator constructors: `m_free_space`, `m_thin_lens` (with decenter Δ and tilt α — `M[1,4] = Δ/f + α·(1-1/f)`), `m_cylindrical_standard` / `m_cylindrical_rotated` (focusing in one axis + glass-plate Snell shift in the other), `m_rotation`, `m_flat_mirror` (tilt α doubles into chief ray, no decenter term), `m_curved_mirror` (`f = R/2`), `m_glass_plate` (`B = d/n` + plate-shift `(1-1/n)·d·α`), `m_glan_slab` (ASTIGMATIC — `B_x ≠ B_y` from the wedged air-gap cut + augmented `E_x` lateral offset; `wedge_angle_deg` documented for downstream Jones builders, not in the matrix), `m_faraday_slab` (SYMMETRIC `B_x = B_y = L/n` + θ_F-rotated tilt coupling block + `E_x`/`E_y` augmented offsets — the geometric counterpart of the non-reciprocal Jones rotation), `m_pbs_reflected` / `m_pbs_transmitted`. `BeamMisaligned` dataclass carries `q_x`, `q_y`, chief-ray (x_c, y_c, θ_xc, θ_yc), wavelength. `apply_operator` does both updates in parallel. `q_from_waist`, `waist_um_from_q`, `spot_radius_um`, `radius_of_curvature_mm` helpers. Cross-axis coupling on the q-parameter (off-diagonal A_x, B_x, …) is NOT modelled — per-axis scalar-q split is exact for x/y-decoupled operators and approximate for rotated cyl unless the input beam is rotationally symmetric |
 | `optical_solver.py` | Core CW Gaussian-beam propagator (q-parameter, Jones polarization, spectrum lineshapes). Astigmatic X/Y. Post Phase 2 hosts new dispatchers for the isolator's 3-stage architecture: `jones_glan_laser_matrix` (extinction degrades quadratically with chief-ray tilt: `ε(θ) = ε₀ + α·θ²`), `jones_faraday_matrix` (non-reciprocal — same rotation forward and backward in lab frame), `apply_glan_laser` (TWO output ports: `out` = transmitted E-ray, `out_r` = TIR-rejected O-ray exiting the side at ~67-68° — same dispatch shape as a polarising PBS; both carry the opposite polarisation's extinction leak), `apply_faraday_rotator` (Jones rotation + 5×5 `m_faraday_slab` geometric propagation; not a port dispatcher — returns a single Beam), `apply_isolator` (the user-facing chain: `front Glan → Faraday → back Glan` with **three** output ports — `out` = main forward transmission, `out_r_front` = front Glan's rejected O-ray, `out_r_back` = back Glan's rejected O-ray; back-compat falls through to the legacy `forwardLossDb` single-knob multiplier when `frontGlan`/`backGlan`/`faraday` nested dicts are absent). `_dispatch_element` routes the `glan_polarizer` kind to `apply_glan_laser` |
 | `optics_seq.py` | Sequential ray-trace adapter wrapping `optical_solver.solve_chain`; persists `BeamSegment` rows per link. |
-| `optics_cavity.py` / `optics_crystal.py` | Phase D placeholders (linewidth/finesse; harmonic generation / OPO). |
 | `rf_propagation.py` | Forward BFS over RF chain (DDS → amp → AOM), accumulates gain/loss; mirrors frontend `rfPropagation.ts` exactly. |
 | `spinapi_compile.py` | Compile `TimingProgram` intervals → SpinCore opcode stream (CONTINUE / WAIT / STOP). |
-| `em_fem.py` | Phase C.5 mock or real Palace dispatch over SSH/Docker; returns S-parameters. |
 | `magnetics_dc.py` | magpylib DC magnetostatics; B-field volume in vtk.js format. |
-| `palace_io.py` | Palace JSON input builder + S-parameter parser. |
 | `runner.py` | Dispatch abstraction (`InProcessRunner`, future `ContainerRunner`, `SshWorkstationRunner`). |
-| `spice.py` | ngspice batch wrapper; parses `.raw` waveforms into `result_summary['data']`. |
 
 ### Supporting modules
 
@@ -519,9 +513,7 @@ The page is a single full-viewport `.workspace-shell` with three regions:
 │         pulse timing, instrument power, RF link, optical link,  │
 │         touch coincidence, magnetics, …                         │
 │                                                                 │  (center)
-│   currentModule = "optics_cavity" → <OpticsHost>                │
-│   currentModule = "spice"          → <ElectronicsWorkspace>     │
-│   currentModule = "em_fem"         → <EmWorkspace>              │
+│   (Optics / Electronics / EM tabs removed 2026-06-10)          │
 │                                                                 │
 ├─────────────────────────────────────────────────────────────────┤
 │  <ScrubTimeBar>            timeline playhead (gate override)    │  (bottom)
@@ -620,7 +612,7 @@ multi-select, component, relation) · `visibility` (overlay flags + per-session
 hidden/solo + active scene view) · `editing` (PHY editor mode, fiber/rf-cable
 node editor, anchor editor, transform cursor & pivot mode) · `timing` (scrub
 playhead, user timeline total) · `simulation` (currentModule, recent runs,
-circuits, EM problems, meshes, RF chains, timing programs) · `network`
+EM problems, meshes, RF chains, timing programs) · `network`
 (loadStatus, socketStatus, error).
 
 Public action groups: `loadScene/applyEvent` (I/O & WS) ·
@@ -901,7 +893,6 @@ A thin axios layer over `VITE_API_BASE_URL`. Method groups:
   `updateSceneViewApi`, `duplicateSceneViewApi`, `deleteSceneViewApi`
 - **Simulation runs (V2)**: `fetchSimulationRunsApi`, `fetchSimulationRunApi`,
   `createSimulationRunApi`
-- **Electronics (Phase B)**: `createCircuitApi`, …
 - **EM (Phase C)**: `createEmProblemApi`, `uploadMeshApi`, `fetchMeshesApi`, …
 - **AI binding agent (alpha, post-0057)**: `createAgentSessionApi`,
   `getAgentSessionApi`, `heartbeatAgentSessionApi`,
@@ -1417,11 +1408,10 @@ collisions surface as DB errors rather than silent duplication.
 - **Onshape sync** — placeholder client at
   `backend/app/services/onshape_client.py`. Plan: add metadata-link table +
   `/api/onshape/*` routes once the scene/placement/assets/WS loop is stable.
-- **Optics cavity & nonlinear crystal solvers** — module stubs exist
-  (`routers/optics_cavity.py`, `routers/optics_crystal.py`, matching solver
-  files); fill in Phase D.
-- **Palace via SSH** — config exists in `settings`; current EM solver is the
-  Phase C.5 mock. See `docs/PHASE_C_WORKSTATION_SETUP.md`.
+- **Optics cavity / nonlinear-crystal / SPICE / EM-FEM modules** — removed on
+  2026-06-10 (tabs, solvers, routers, `SimulationModule` enum values, and the
+  `circuits` table; migration 0109). The `SshWorkstationRunner` + `WORKSTATION_*`
+  settings remain dormant for a future remote solver.
 - **Fiber editor full UX** — single-object model (post-0056) is in place
   and Align-A/Align-B works; node-edit UX for interior spline points is
   still rough, especially when both ends are simultaneously selected.

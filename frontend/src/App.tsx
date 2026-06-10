@@ -26,12 +26,7 @@ import { DockZones } from "./components/workspace/DockZones";
 import { ScrubTimeBar } from "./components/workspace/ScrubTimeBar";
 import { TopBar } from "./components/workspace/TopBar";
 import { WorkspaceProvider } from "./components/workspace/WorkspaceProvider";
-import { ElectronicsWorkspace } from "./modules/electronics/ElectronicsWorkspace";
-import { EmWorkspace } from "./modules/em/EmWorkspace";
 import { MagneticsPanel } from "./modules/magnetics/MagneticsPanel";
-import { OpticsHost } from "./modules/optics_cavity/OpticsHost";
-import { getModule } from "./modules/_registry";
-import { ModulePlaceholder } from "./modules/ModulePlaceholder";
 import { useSceneStore } from "./store/sceneStore";
 import type { SceneEvent } from "./types/digitalTwin";
 import type { OverlayKind } from "./types/visibility";
@@ -273,16 +268,10 @@ export default function App() {
     );
   }
 
-  // Multiphysics: top-level module switcher.
-  //   optics_seq -> existing 3D scene + optics panels (Phase A).
-  //   spice      -> ElectronicsWorkspace netlist+results (Phase B).
-  //   em_fem     -> EmWorkspace ports/freq/results (Phase C).
-  //   optics_fdtd reserved -> placeholder.
-  const moduleDef = getModule(currentModule);
+  // Multiphysics: top-level module switcher. Only the integrated Lab
+  // (optics_seq) is the only tab; the Optics / Electronics / EM tabs and
+  // their backend solvers/enum/DB tables were removed on 2026-06-10.
   const isOptics = currentModule === "optics_seq";
-  const isCavity = currentModule === "optics_cavity";
-  const isElectronics = currentModule === "spice";
-  const isEm = currentModule === "em_fem";
 
   return (
     <WorkspaceProvider>
@@ -290,9 +279,7 @@ export default function App() {
         <TopBar>
           {/* SceneToolbar is Lab-only — its buttons (Initial Setup,
               Display overlays, Scene-view picker, dual viewport) only
-              act on the 3D scene. Other tabs (Optics calculator,
-              Electronics, EM) get module-specific Run controls inside
-              their own workspaces. */}
+              act on the 3D scene. */}
           {isOptics && roomDimensions && (
             <SceneToolbar
               roomDimensions={roomDimensions}
@@ -326,12 +313,6 @@ export default function App() {
           )}
           {isOptics && !roomDimensions && (
             <div className="scene-overlay">Loading lab configuration…</div>
-          )}
-          {isCavity && <OpticsHost />}
-          {isElectronics && <ElectronicsWorkspace />}
-          {isEm && <EmWorkspace />}
-          {!isOptics && !isCavity && !isElectronics && !isEm && (
-            <ModulePlaceholder module={moduleDef} />
           )}
         </div>
       </main>

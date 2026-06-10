@@ -25,11 +25,13 @@ import { importStep, occtMeshToGeometry, type OcctLocateFile } from "../three/oc
 import { exportGlb, geometryToColoredMesh, glbToFile, mergeColoredGeometries } from "../three/glbExport";
 import { decimateWelded, estimateGlbBytes, triangleCount, weldForSimplify } from "../three/decimate";
 import { loadAssetGeometry, type LoadedSubMesh } from "../three/loadAssetGeometry";
+import { loadProceduralAssetGeometry } from "../three/proceduralAssetGeometry";
 import { VIEWER_BG_LIGHT, VIEWER_GRID_BLACK, VIEWER_GROUND_FILL } from "../three/viewerTheme";
 import { centroidKey, findCoplanarCluster } from "../three/loadAsset/viewerHints";
 import { resolveAssetUrl } from "../api/client";
-import { useV3Catalog, type V3AssetUsage } from "../store/catalogStore";
+import { useV3Catalog, type V3Asset, type V3AssetUsage } from "../store/catalogStore";
 import { useKindsStore } from "../store/kindsStore";
+import type { Asset3D } from "../types/digitalTwin";
 import {
   ASIDE_STYLE,
   ASIDE_WIDTH,
@@ -63,6 +65,27 @@ function slugify(value: string): string {
 
 function extOf(pathOrType: string): string {
   return (pathOrType.split("?")[0].split(".").pop() ?? pathOrType).toLowerCase();
+}
+
+/** Procedural / primitive assets have no mesh file — their geometry is built in
+ *  code (e.g. the ZYSWA RF switch at `primitive://rf_switch`). The builder bakes
+ *  them to an editable mesh instead of loading a file. */
+function isProceduralPath(filePath: string): boolean {
+  return filePath.startsWith("procedural:") || filePath.startsWith("primitive:");
+}
+
+/** Load any editable asset into builder sub-meshes (mm): real mesh files via the
+ *  file loaders, procedural/primitive assets baked from their code builders.
+ *  `V3Asset` is the API-shaped catalog type — its `unit` is widened to `string`,
+ *  but the value always conforms to `Asset3D`'s "mm" | "m", and the procedural
+ *  builder only reads filePath / kindId / defaultParams, so the bridge is sound. */
+async function loadEditableAsset(asset: V3Asset): Promise<LoadedSubMesh[]> {
+  if (isProceduralPath(asset.filePath)) return loadProceduralAssetGeometry(asset as Asset3D);
+  const ext = extOf(asset.assetType || asset.filePath);
+  if (!VIEWER_EXTS.has(ext)) {
+    throw new Error(`"${asset.catalogId}" is .${ext} — only GLB/GLTF/OBJ/STL or procedural assets can be loaded.`);
+  }
+  return loadAssetGeometry(resolveAssetUrl(asset.filePath), ext, { unit: asset.unit, scaleFactor: asset.scaleFactor });
 }
 
 type Status = "idle" | "parsing" | "ready" | "saving";
@@ -848,19 +871,11 @@ export function GeometryBuilder() {
       setError("Pick an existing asset to add.");
       return;
     }
-    const ext = extOf(asset.assetType || asset.filePath);
-    if (!VIEWER_EXTS.has(ext)) {
-      setError(`"${asset.catalogId}" is .${ext} — only GLB/GLTF/OBJ/STL assets can be loaded as a source.`);
-      return;
-    }
     setError(null);
     setInfo(null);
     setStatus("parsing");
     try {
-      const loaded = await loadAssetGeometry(resolveAssetUrl(asset.filePath), ext, {
-        unit: asset.unit,
-        scaleFactor: asset.scaleFactor,
-      });
+      const loaded = await loadEditableAsset(asset);
       const next = [...sources, makeSource(asset.name || asset.catalogId, loaded)];
       setSources(next);
       recompose(next);
@@ -880,20 +895,14 @@ export function GeometryBuilder() {
     async (catId: string) => {
       const asset = assets.find((a) => a.catalogId === catId);
       if (!asset) return;
-      const ext = extOf(asset.assetType || asset.filePath);
-      if (!VIEWER_EXTS.has(ext)) {
-        setError(`"${catId}" is .${ext} — only GLB/GLTF/OBJ/STL assets can be edited here.`);
-        return;
-      }
+      const procedural = isProceduralPath(asset.filePath);
+      if (procedural && !window.confirm(`"${catId}" is procedural — editing bakes it into a static GLB on Save (its parameters will no longer drive geometry). Continue?`)) return;
       if (sources.length > 0 && !window.confirm(`Replace the current build with "${catId}" for editing?`)) return;
       setError(null);
       setInfo(null);
       setStatus("parsing");
       try {
-        const loaded = await loadAssetGeometry(resolveAssetUrl(asset.filePath), ext, {
-          unit: asset.unit,
-          scaleFactor: asset.scaleFactor,
-        });
+        const loaded = await loadEditableAsset(asset);
         for (const s of sources) {
           for (const m of s.subMeshes) {
             subGeomsRef.current.get(m.id)?.dispose();
@@ -909,7 +918,11 @@ export function GeometryBuilder() {
         setCatalogId(catId);
         setName(asset.name || catId);
         setKindId(asset.kindId ?? "");
-        setInfo(`Editing "${catId}" (${loaded.length} mesh(es)) — Save overwrites it.`);
+        setInfo(
+          procedural
+            ? `Editing "${catId}" (${loaded.length} mesh(es)) — Save bakes procedural → static GLB (parameters stop driving geometry).`
+            : `Editing "${catId}" (${loaded.length} mesh(es)) — Save overwrites it.`,
+        );
         setStatus("ready");
         try { setEditUsage(await fetchAssetUsage(catId)); } catch { setEditUsage(null); }
       } catch (e) {
@@ -1044,7 +1057,11 @@ export function GeometryBuilder() {
   const hasModel = sourceTris > 0;
   const busy = status === "parsing" || status === "saving";
   const includedCount = sources.filter((s) => s.included).length;
-  const importableAssets = assets.filter((a) => VIEWER_EXTS.has(extOf(a.assetType || a.filePath)));
+  const importableAssets = assets.filter(
+    (a) =>
+      Boolean(a.catalogId) && // edit/save keys on catalog_id — skip catalog-less rows
+      (VIEWER_EXTS.has(extOf(a.assetType || a.filePath)) || isProceduralPath(a.filePath)),
+  );
   const saveTitle =
     status === "saving"
       ? "Saving…"
@@ -1087,7 +1104,7 @@ export function GeometryBuilder() {
             <option value="">add existing asset…</option>
             {importableAssets.map((a) => (
               <option key={a.catalogId} value={a.catalogId}>
-                {a.name || a.catalogId} (.{extOf(a.assetType || a.filePath)})
+                {a.name || a.catalogId} ({isProceduralPath(a.filePath) ? "procedural" : `.${extOf(a.assetType || a.filePath)}`})
               </option>
             ))}
           </select>

@@ -56,7 +56,6 @@ async def create_node(
         label=payload.label,
         gain_db=payload.gain_db,
         kind_params=payload.kind_params,
-        linked_circuit_id=payload.linked_circuit_id,
         linked_em_problem_id=payload.linked_em_problem_id,
     )
     session.add(row)
@@ -127,7 +126,6 @@ async def replace_chain(
             label=node.label,
             gain_db=node.gain_db,
             kind_params=node.kind_params,
-            linked_circuit_id=node.linked_circuit_id,
             linked_em_problem_id=node.linked_em_problem_id,
         )
         for node in payload.nodes

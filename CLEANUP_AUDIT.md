@@ -116,7 +116,7 @@
 
 ### E2. backend 測試（`backend/tests/`，pytest）
 - 設定：`pytest.ini`、`tests/conftest.py`
-- 核心：test_assembly_solver、test_collins_fft、test_component_bindings、test_generalized_abcd、test_hg_modes、test_kind_params_partition、test_kinds_manifest、test_optical_schemas、test_optics_cavity、test_optics_crystal、test_palace_io、test_relation_solver、test_spice_parser、test_spinapi_compile、test_tapered_amplifier、test_timing_program、test_touchstone、test_agent_session_lifecycle、test_aom_anchor_migration
+- 核心：test_assembly_solver、test_collins_fft、test_component_bindings、test_generalized_abcd、test_hg_modes、test_kind_params_partition、test_kinds_manifest、test_optical_schemas、test_relation_solver、test_spinapi_compile、test_tapered_amplifier、test_timing_program、test_touchstone、test_agent_session_lifecycle、test_aom_anchor_migration（test_optics_cavity／test_optics_crystal／test_palace_io／test_spice_parser 已於 2026-06-10 隨模組移除）
 - v2 階段：test_v2_phase{1..8}（mirror/laser/polarization/beam_splitter/aom/isolator）
 - optical：test_aom_v3、test_db_scene_loader_binding_tree、test_dichroic_mirror、test_faraday_rotator、test_glan_laser、test_lens、test_mirror、test_pbs、test_polarizer、test_ray_tracer_v3、test_solver_v3、test_solver_v3_isolator、test_waveplate、parity/test_parity
 

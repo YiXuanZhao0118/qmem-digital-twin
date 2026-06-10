@@ -36,12 +36,8 @@ from app.models import SimulationRun
 from app.schemas import SimulationModule
 from app.config import settings
 from app.solvers import (
-    em_fem,
     magnetics_dc,
-    optics_cavity,
-    optics_crystal,
     optics_seq,
-    spice,
 )
 
 
@@ -53,32 +49,19 @@ logger = logging.getLogger(__name__)
 SolverCallable = Callable[[AsyncSession, SimulationRun], Awaitable[None]]
 
 
-# Per-module solver coroutine. Phase A: optics_seq. Phase B: spice.
-# Phase C.5: em_fem (mock palace until C.4 workstation comes online).
+# Per-module solver coroutine. The optics_cavity / optics_crystal / spice /
+# em_fem solvers were removed on 2026-06-10 along with their UI tabs.
 MODULE_DISPATCH: dict[SimulationModule, SolverCallable] = {
     "optics_seq": optics_seq.run,
-    "optics_cavity": optics_cavity.run,
-    "optics_crystal": optics_crystal.run,
-    "spice": spice.run,
-    "em_fem": em_fem.run,
     "magnetics_dc": magnetics_dc.run,
 }
 
 
 # Default runner kind per module. Used when POST /api/simulation-runs comes
-# in without an explicit runner_kind.
-#
-# Phase A: everything inproc. Future phases override:
-#   Phase B: spice → 'container' (after ContainerRunner ships)
-#   Phase C: em_fem → 'ssh_workstation'
-#   Phase D: optics_fdtd → 'ssh_workstation'
+# in without an explicit runner_kind. Everything currently runs inproc.
 MODULE_DEFAULT_RUNNER: dict[SimulationModule, str] = {
     "optics_seq": "inproc",
-    "optics_cavity": "inproc",
-    "optics_crystal": "inproc",
     "optics_fdtd": "inproc",
-    "spice": "inproc",
-    "em_fem": "inproc",
     "magnetics_dc": "inproc",
 }
 
@@ -104,8 +87,9 @@ class SshWorkstationRunner:
     ``run_command`` / ``transfer`` helpers via attributes on
     ``sim_run.runner`` for the solver to use.
 
-    For Phase C.4 the only consumer is ``solvers.em_fem.run`` which
-    detects the runner kind and uses these helpers when configured.
+    No module currently defaults to this runner — its only consumer
+    (``solvers.em_fem.run``) was removed on 2026-06-10. Kept as generic
+    SSH-dispatch infrastructure for a future remote solver.
     """
 
     def __init__(

@@ -57,7 +57,7 @@ function meshColor(mesh: THREE.Mesh): THREE.Color {
   return c ? c.clone() : DEFAULT_COLOR.clone();
 }
 
-function collectSubMeshes(root: THREE.Object3D): LoadedSubMesh[] {
+export function collectSubMeshes(root: THREE.Object3D): LoadedSubMesh[] {
   root.updateMatrixWorld(true);
   const out: LoadedSubMesh[] = [];
   root.traverse((o) => {

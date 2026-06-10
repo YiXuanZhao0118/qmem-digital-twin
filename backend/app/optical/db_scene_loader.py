@@ -35,6 +35,7 @@ from app.optical.pose import (
     compose_transforms,
     pose_to_transform,
 )
+from app.optical.rf_resolve import hydrate_aom_rf_drive
 
 
 _DYNAMIC_KEYS = {
@@ -238,20 +239,27 @@ def anchor_asset_to_snapshot(asset: Asset3D) -> V3AssetAnchorSnapshot | None:
 async def load_anchor_scene_from_db(
     session: AsyncSession,
     dynamic_overrides: dict[str, dict] | None = None,
+    scrub_time_ns: float | None = None,
 ) -> V3AnchorScene:
     """Walk SceneObjects and flatten to V3AnchorBindingSlot list (anchor-centric).
 
     Mirrors ``load_scene_from_db`` but emits the new anchor-based scene
     structure consumed by ``trace_ray_anchor_scene``.
 
-    ``dynamic_overrides`` maps SceneObject id -> dynamic-key dict, merged on top
-    of each object's persisted dynamic_sources. The frontend uses it to inject
-    the effective AOM RF drive (aomFreqMhz / rfDrivePowerW) resolved from the RF
-    link (or a manual override) without persisting derived values.
+    Each AOM's effective RF drive (aomFreqMhz / rfDrivePowerW) is resolved
+    server-side from the RF cable graph via ``hydrate_aom_rf_drive`` — sampled at
+    ``scrub_time_ns`` (None = the "scrub stopped" rest snapshot). ``dynamic_overrides``
+    maps SceneObject id -> dynamic-key dict and is merged LAST (after the resolved
+    RF drive) so a manual / test override still wins.
     """
     dynamic_overrides = dynamic_overrides or {}
     so_rows = (await session.scalars(select(SceneObject))).all()
     slots: list[V3AnchorBindingSlot] = []
+
+    # Resolve each AOM's RF drive from the cable graph (rf_source -> amp ->
+    # switch -> aom rf_in), time-sampled at scrub_time_ns. Keyed by AOM
+    # SceneObject id; merged onto the AOM slot's dynamic below.
+    rf_drive = await hydrate_aom_rf_drive(session, scrub_time_ns)
 
     # Instrument power panel: objects whose device_states.state.power is False
     # are powered off. Emitters skip those slots (no beam / no ASE on power-off).
@@ -331,6 +339,12 @@ async def load_anchor_scene_from_db(
                 binding_po = po.get(binding_id)
                 if isinstance(binding_po, dict) and binding_po:
                     dyn = {**(dyn or {}), **binding_po}
+            # Server-resolved AOM RF drive (RF cable graph) wins over asset
+            # defaults / param_overrides; a request dynamic_override still wins
+            # over it (manual / test escape hatch).
+            rf = rf_drive.get(str(so.id))
+            if rf:
+                dyn = {**(dyn or {}), **rf}
             ov = dynamic_overrides.get(str(so.id))
             if ov:
                 dyn = {**(dyn or {}), **ov}

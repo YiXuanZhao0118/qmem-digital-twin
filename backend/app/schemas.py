@@ -2603,17 +2603,14 @@ SimulationRunStatus = Literal["queued", "running", "completed", "failed", "cance
 # module's results in-context. Stays under the "optics_seq" id for
 # backwards compatibility with existing simulation_runs rows.
 #
-# optics_cavity: pure optical-cavity simulator (FSR / Finesse / Airy
-# transmission / stability) — separate workspace, no 3D scene.
-# Phase B: spice. Phase C: em_fem. Phase F+: magnetics_dc.
+# magnetics_dc: DC magnetics solver feeding the Lab magnetics overlay.
 # optics_fdtd reserved for future Phase D.
+#
+# The optics_cavity / optics_crystal / spice / em_fem modules — and their
+# solvers, routers, and DB tables — were removed on 2026-06-10.
 SimulationModule = Literal[
     "optics_seq",
-    "optics_cavity",
-    "optics_crystal",
     "optics_fdtd",
-    "spice",
-    "em_fem",
     "magnetics_dc",
 ]
 
@@ -2660,33 +2657,6 @@ class MultiphysicsSimulationRunCreate(CamelModel):
     module: SimulationModule
     runner_kind: SolverRunnerKind | None = None  # None = use module default
     params: JsonDict = Field(default_factory=dict)
-
-
-# ---- Circuits (Phase B.1, alembic 0037) -----------------------------------
-
-
-class CircuitBase(CamelModel):
-    name: str
-    netlist: str = ""
-    schematic: JsonDict = Field(default_factory=dict)
-    scene_object_id: uuid.UUID | None = None
-
-
-class CircuitCreate(CircuitBase):
-    pass
-
-
-class CircuitUpdate(CamelModel):
-    name: str | None = None
-    netlist: str | None = None
-    schematic: JsonDict | None = None
-    scene_object_id: uuid.UUID | None = None
-
-
-class CircuitOut(CircuitBase):
-    id: uuid.UUID
-    created_at: datetime
-    updated_at: datetime
 
 
 # ---- Meshes + EM problems (Phase C.1, alembic 0038) -----------------------
@@ -2854,7 +2824,6 @@ class RfChainNodeBase(CamelModel):
     label: str = ""
     gain_db: float = 0.0
     kind_params: JsonDict = Field(default_factory=dict)
-    linked_circuit_id: uuid.UUID | None = None
     linked_em_problem_id: uuid.UUID | None = None
 
 
@@ -2868,7 +2837,6 @@ class RfChainNodeUpdate(CamelModel):
     label: str | None = None
     gain_db: float | None = None
     kind_params: JsonDict | None = None
-    linked_circuit_id: uuid.UUID | None = None
     linked_em_problem_id: uuid.UUID | None = None
 
 

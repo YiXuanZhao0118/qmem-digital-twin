@@ -1,15 +1,13 @@
 /**
- * Volumetric |E|² field viewer — Phase C.8.
+ * Volumetric scalar-field viewer (vtk.js GPU volume ray casting).
  *
- * Reads the ``EmFieldPayload`` from a completed em_fem run and feeds
- * it to vtk.js's volume renderer (volume ray casting on the GPU). The
- * mock palace solver in Phase C.5 produces a 16³ Gaussian blob so the
- * viewer exercises end-to-end without needing real palace output.
+ * Renders an ``EmFieldPayload`` — used by the Magnetics panel to show the
+ * |B| volume from a completed ``magnetics_dc`` run. Originally the EM
+ * module's |E|² viewer; the EM tab was removed on 2026-06-10 and the
+ * Magnetics panel is now the sole consumer, so it lives here.
  *
- * When real palace runs (Phase C.4 over SSH), the payload changes to
- * ``available: false`` with a remote .pvtu path — the viewer will then
- * show a "field pull-down not yet implemented" placeholder. Phase C.8+
- * adds a backend streaming endpoint that swaps to a vtkXMLPolyDataReader.
+ * When ``available: false`` the payload carries a remote path instead of
+ * inline samples and the viewer shows a placeholder.
  */
 import "@kitware/vtk.js/Rendering/Profiles/Volume";
 

@@ -11,6 +11,7 @@ import {
 } from "../fiber";
 import { buildBncMaleConnectorGroup } from "./bnc_male_connector";
 import { buildSmaMaleConnectorGroup } from "./sma_male_connector";
+import { buildRfConnectorGroup } from "./connectorModels";
 
 type RfCableEndConnector = "sma" | "bnc";
 
@@ -34,7 +35,11 @@ function rfCableEndConnectors(
 }
 
 function buildRfCableConnector(kind: RfCableEndConnector): THREE.Group {
-  return kind === "bnc" ? buildBncMaleConnectorGroup() : buildSmaMaleConnectorGroup();
+  // Prefer the real catalog model (data-driven, cached); fall back to the
+  // procedural connector while the model loads or if no asset is mapped.
+  return buildRfConnectorGroup(kind, () =>
+    kind === "bnc" ? buildBncMaleConnectorGroup() : buildSmaMaleConnectorGroup(),
+  );
 }
 
 /** Bezier-spline RF cable renderer — used when the SceneObject carries

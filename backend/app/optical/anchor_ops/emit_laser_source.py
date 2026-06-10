@@ -150,7 +150,9 @@ def emit_ta_ase_rays(
     along the gain axis (anchor axisY). A *seeded* TA — one whose
     ``scene_object_id`` appears in ``seeded_object_ids`` — emits no ASE (the
     seed extracts the inversion). Emitted from the ``intercept_in`` anchor along
-    ±axisX; powers from ``default_params.aseForwardMw`` / ``aseBackwardMw``.
+    ±axisX (BOTH facets); per-facet power defaults to ``default_params.ase.powerMw``
+    (the catalog shape), overridable per direction by the flat
+    ``aseForwardMw`` / ``aseBackwardMw`` keys.
     """
     out: list[tuple[BeamRay, str, str]] = []
     for slot in scene.slots:
@@ -168,11 +170,18 @@ def emit_ta_ase_rays(
         w0 = float((dp.get("spatialModeX") or {}).get("waistUm", 250.0))
         origin_lab = point_body_to_lab_t(anchor.position_body, slot.effective_transform)
         ax = anchor.axis_x_body
+        # ASE power per facet. The catalog stores it as nested ``ase.powerMw``
+        # (kinds.json), so use that as the per-facet default; the flat
+        # ``aseForwardMw`` / ``aseBackwardMw`` keys (when present) override it
+        # per direction. Without the nested fallback a catalog TA emitted ZERO
+        # ASE because the flat keys are never seeded.
+        ase = dp.get("ase") if isinstance(dp.get("ase"), dict) else {}
+        ase_default_mw = float(ase.get("powerMw", 0.0) or 0.0)
         for power_key, axis_body in (
             ("aseForwardMw", ax),
             ("aseBackwardMw", Vec3(-ax.x, -ax.y, -ax.z)),
         ):
-            power = float(dp.get(power_key, 0.0))
+            power = float(dp.get(power_key, ase_default_mw))
             if power <= 0.0:
                 continue
             dir_lab = dir_body_to_lab_t(axis_body, slot.effective_transform)

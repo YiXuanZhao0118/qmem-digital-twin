@@ -14,7 +14,6 @@ from app.routers import (
     app_settings,
     assembly_relations,
     assets,
-    circuits,
     collection_templates,
     collections,
     component_bindings,
@@ -31,8 +30,6 @@ from app.routers import (
     objects,
     physics_elements,
     optical_links,
-    optics_cavity,
-    optics_crystal,
     revisions,
     scene,
     simulation_runs,
@@ -97,15 +94,12 @@ app.include_router(physics_elements.router, prefix="/api/physics-elements", tags
 app.include_router(optical_links.router, prefix="/api/optical-links", tags=["optical_links"])
 app.include_router(simulations.router, prefix="/api/simulations", tags=["simulations"])
 app.include_router(simulation_runs.router, prefix="/api/simulation-runs", tags=["simulation_runs"])
-app.include_router(circuits.router, prefix="/api/circuits", tags=["circuits"])
 app.include_router(touchstone.router, prefix="/api/touchstone", tags=["touchstone"])
 app.include_router(meshes.router, prefix="/api/meshes", tags=["meshes"])
 app.include_router(em_problems.router, prefix="/api/em-problems", tags=["em_problems"])
 app.include_router(coils.router, prefix="/api/coils", tags=["coils"])
 app.include_router(magnetics_problems.router, prefix="/api/magnetics-problems", tags=["magnetics_problems"])
 app.include_router(rf_chains.router, prefix="/api/rf-chains", tags=["rf_chains"])
-app.include_router(optics_cavity.router, prefix="/api/optics-cavity", tags=["optics_cavity"])
-app.include_router(optics_crystal.router, prefix="/api/optics-crystal", tags=["optics_crystal"])
 app.include_router(revisions.router, prefix="/api/revisions", tags=["revisions"])
 app.include_router(collections.router, prefix="/api/collections", tags=["collections"])
 app.include_router(

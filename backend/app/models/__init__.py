@@ -11,7 +11,6 @@ from app.models.base import Base, JsonDict, JsonList  # noqa: F401
 from app.models.agent import AgentSession, ApprovalEvent, SessionMutation  # noqa: F401
 from app.models.hardware import Asset3D, Component, ComponentBinding, Kind  # noqa: F401
 from app.models.interaction import AssemblyRelation, Connection, OpticalLink, RfLink  # noqa: F401
-from app.models.modules.electronics import Circuit  # noqa: F401
 from app.models.modules.em import EmProblem, Mesh  # noqa: F401
 from app.models.modules.magnetics import Coil, MagneticsProblem  # noqa: F401
 from app.models.modules.rf import RfChainNode  # noqa: F401
@@ -31,7 +30,6 @@ __all__ = [
     "AssemblyRelation",
     "Asset3D",
     "BeamSegment",
-    "Circuit",
     "Coil",
     "Collection",
     "CollectionMember",

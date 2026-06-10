@@ -1,12 +1,10 @@
 /**
- * Phase A.7 + B.8 e2e: ModuleSwitcher round-trip + workspace
- * conditional render.
+ * Module switcher e2e.
  *
- * Phase A.7 baseline:
- *   - top-bar tab strip lists Optics + Electronics + EM.
- *   - Optics + Electronics are available workspaces (post Phase B.4).
- *   - EM is still placeholder until Phase C.
- *   - Switching modules swaps the canvas content.
+ * As of 2026-06-10 the only top-level tab is the integrated Lab
+ * (optics_seq); the Optics / Electronics / EM tabs — and their backend
+ * solvers / DB tables — were removed. This pins that the switcher shows
+ * exactly one tab and renders the 3D viewer (not a placeholder).
  */
 import { expect, test } from "@playwright/test";
 
@@ -16,55 +14,19 @@ test.describe("Module switcher", () => {
     await expect(page.getByRole("tablist", { name: "Simulation module" })).toBeVisible();
   });
 
-  test("top bar lists Optics + Electronics + EM", async ({ page }) => {
+  test("shows only the Lab tab", async ({ page }) => {
     const tabs = page.getByRole("tab");
-    await expect(tabs).toHaveCount(3);
-    await expect(tabs.nth(0)).toContainText("Optics");
-    await expect(tabs.nth(1)).toContainText("Electronics");
-    await expect(tabs.nth(2)).toContainText("EM");
+    await expect(tabs).toHaveCount(1);
+    await expect(tabs.nth(0)).toContainText("Lab");
+    await expect(tabs.nth(0)).toHaveAttribute("aria-selected", "true");
   });
 
-  test("Optics + Electronics + EM are all available (Phase A+B+C done)", async ({ page }) => {
-    await expect(page.getByRole("tab", { name: /^Optics$/ })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    await expect(page.getByRole("tab", { name: /^Optics$/ })).not.toHaveClass(/coming-soon/);
-    await expect(page.getByRole("tab", { name: /^Electronics/ })).not.toHaveClass(/coming-soon/);
-    await expect(page.getByRole("tab", { name: /^EM$/ })).not.toHaveClass(/coming-soon/);
-  });
-
-  test("Optics workspace shows the 3D viewer", async ({ page }) => {
-    // .workspace-canvas > .viewer-shell, .workspace-canvas > .dual-viewer-split is the 3D viewer wrapper — unique to Optics.
-    await expect(page.locator(".workspace-canvas > .viewer-shell, .workspace-canvas > .dual-viewer-split")).toBeVisible();
-    await expect(page.locator(".module-placeholder")).toHaveCount(0);
-    await expect(page.locator(".electronics-workspace")).toHaveCount(0);
-  });
-
-  test("Optics -> Electronics -> EM -> Optics round-trip", async ({ page }) => {
-    // To Electronics: workspace replaces 3D viewer.
-    await page.getByRole("tab", { name: /^Electronics/ }).click();
-    await expect(page.locator(".electronics-workspace")).toBeVisible();
-    await expect(page.locator(".electronics-sidebar").first()).toBeVisible();
-    await expect(page.locator(".electronics-editor")).toBeVisible();
-    await expect(page.locator(".electronics-results")).toBeVisible();
-    await expect(page.locator(".workspace-canvas > .viewer-shell, .workspace-canvas > .dual-viewer-split")).toHaveCount(0);
-    await expect(page.locator(".module-placeholder")).toHaveCount(0);
-
-    // To EM: EmWorkspace mounts (also reuses .electronics-workspace shell).
-    // Distinguish from Electronics by the EM-specific port table presence
-    // (only EM editor renders that) — but to keep this test cheap we
-    // check the EM problems sidebar header text.
-    await page.getByRole("tab", { name: /^EM$/ }).click();
-    await expect(page.locator(".electronics-workspace")).toBeVisible();
+  test("Lab tab shows the 3D viewer", async ({ page }) => {
+    // DualViewerSplit renders under .workspace-canvas > .workspace-center,
+    // so match the viewer as a descendant (not a direct child).
     await expect(
-      page.locator(".electronics-sidebar .electronics-sidebar-title").first(),
-    ).toContainText(/EM problems/i);
-    await expect(page.locator(".module-placeholder")).toHaveCount(0);
-
-    // Back to Optics: viewer reappears.
-    await page.getByRole("tab", { name: /^Optics$/ }).click();
-    await expect(page.locator(".workspace-canvas > .viewer-shell, .workspace-canvas > .dual-viewer-split")).toBeVisible();
+      page.locator(".workspace-canvas .viewer-shell, .workspace-canvas .dual-viewer-split").first(),
+    ).toBeVisible();
     await expect(page.locator(".module-placeholder")).toHaveCount(0);
     await expect(page.locator(".electronics-workspace")).toHaveCount(0);
   });

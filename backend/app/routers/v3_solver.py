@@ -95,6 +95,10 @@ class SolverRunFromDbRequest(CamelModel):
     options: Optional[TraceOptionsIn] = None
     initial_rays: list[RayIn] = Field(default_factory=list)
     dynamic_overrides: dict[str, dict] = Field(default_factory=dict)
+    # Scrub-bar time in ns. The server resolves each AOM's effective RF drive
+    # from the cable graph at this instant (None = "scrub stopped" rest snapshot,
+    # i.e. PPG restState drives switch routing). dynamic_overrides still wins.
+    scrub_time_ns: Optional[float] = None
 
 
 @router.post("/run-from-db")
@@ -116,7 +120,9 @@ async def run_v3_solver_from_db(
     from app.optical.db_scene_loader import load_anchor_scene_from_db
     from app.optical.solver import solve_anchor_scene
 
-    scene = await load_anchor_scene_from_db(session, request.dynamic_overrides)
+    scene = await load_anchor_scene_from_db(
+        session, request.dynamic_overrides, scrub_time_ns=request.scrub_time_ns,
+    )
     rays = [_to_beam_ray(r) for r in request.initial_rays]
     opts = AnchorTraceOptions()
     if request.options:

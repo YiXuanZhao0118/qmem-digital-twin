@@ -10,7 +10,6 @@ import {
   instantiateCollectionTemplateApi,
   listCollectionTemplatesApi,
   saveCollectionAsTemplateApi,
-  createCircuitApi,
   createEmProblemApi,
   createObjectApi,
   createOpticalElementApi,
@@ -23,10 +22,8 @@ import {
   deleteObjectApi,
   deleteOpticalElementApi,
   deleteOpticalLinkApi,
-  deleteCircuitApi,
   deleteEmProblemApi,
   deleteMeshApi,
-  fetchCircuitsApi,
   fetchEmProblemsApi,
   fetchMeshesApi,
   fetchAllRfChainsApi,
@@ -46,7 +43,6 @@ import {
   updateDeviceStateApi,
   updateAssemblyRelationApi,
   updateAssetApi,
-  updateCircuitApi,
   updateCollectionApi,
   updateComponentApi,
   updateEmProblemApi,
@@ -85,9 +81,6 @@ import type {
   SceneEvent,
   SceneObject,
   SceneObjectPatch,
-  Circuit,
-  CircuitCreatePayload,
-  CircuitUpdatePayload,
   EmProblem,
   EmProblemCreatePayload,
   EmProblemUpdatePayload,
@@ -301,12 +294,6 @@ type SceneStore = {
    *  by the module workspaces and kept in sync via the WS event
    *  ``simulation_run.status_changed`` (see applyEvent). */
   recentSimulationRuns: SimulationRunV2[];
-  /** Phase B Electronics: list of saved SPICE circuits. The
-   *  ElectronicsWorkspace populates this on mount via loadCircuits(). */
-  circuits: Circuit[];
-  /** Currently selected circuit in the Electronics workspace (drives
-   *  netlist editor, drives Run button payload). */
-  selectedCircuitId: string | null;
   /** Phase C EM: list of saved EM problems + uploaded meshes. */
   emProblems: EmProblem[];
   selectedEmProblemId: string | null;
@@ -354,11 +341,6 @@ type SceneStore = {
   setCurrentModule: (module: SimulationModule) => void;
   loadRecentSimulationRuns: (module?: SimulationModule, limit?: number) => Promise<void>;
   dispatchSimulationRun: (payload: SimulationRunCreatePayload) => Promise<SimulationRunV2>;
-  loadCircuits: () => Promise<void>;
-  createCircuit: (payload: CircuitCreatePayload) => Promise<Circuit>;
-  updateCircuit: (id: string, patch: CircuitUpdatePayload) => Promise<Circuit>;
-  deleteCircuit: (id: string) => Promise<void>;
-  setSelectedCircuit: (id: string | null) => void;
   loadEmProblems: () => Promise<void>;
   createEmProblem: (payload: EmProblemCreatePayload) => Promise<EmProblem>;
   updateEmProblem: (id: string, patch: EmProblemUpdatePayload) => Promise<EmProblem>;
@@ -1078,8 +1060,6 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   editorMode: readPersistedEditorState().editorMode ?? "scene",
   currentModule: "optics_seq",
   recentSimulationRuns: [],
-  circuits: [],
-  selectedCircuitId: null,
   emProblems: [],
   selectedEmProblemId: null,
   meshes: [],
@@ -3712,46 +3692,6 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       ].slice(0, 20),
     }));
     return run;
-  },
-
-  async loadCircuits() {
-    const circuits = await fetchCircuitsApi(100);
-    set((state) => {
-      // Auto-select the most recent circuit if none selected.
-      const next = state.selectedCircuitId ?? circuits[0]?.id ?? null;
-      return { circuits, selectedCircuitId: next };
-    });
-  },
-
-  async createCircuit(payload) {
-    const circuit = await createCircuitApi(payload);
-    set((state) => ({
-      circuits: [circuit, ...state.circuits.filter((c) => c.id !== circuit.id)],
-      selectedCircuitId: circuit.id,
-    }));
-    return circuit;
-  },
-
-  async updateCircuit(id, patch) {
-    const updated = await updateCircuitApi(id, patch);
-    set((state) => ({
-      circuits: state.circuits.map((c) => (c.id === id ? updated : c)),
-    }));
-    return updated;
-  },
-
-  async deleteCircuit(id) {
-    await deleteCircuitApi(id);
-    set((state) => {
-      const remaining = state.circuits.filter((c) => c.id !== id);
-      const next =
-        state.selectedCircuitId === id ? remaining[0]?.id ?? null : state.selectedCircuitId;
-      return { circuits: remaining, selectedCircuitId: next };
-    });
-  },
-
-  setSelectedCircuit(id) {
-    set({ selectedCircuitId: id });
   },
 
   async loadEmProblems() {

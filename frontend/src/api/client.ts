@@ -12,9 +12,6 @@ import type {
   CancelResult,
   CommitResult,
   SessionMutation,
-  Circuit,
-  CircuitCreatePayload,
-  CircuitUpdatePayload,
   Coil,
   CoilCreatePayload,
   CoilUpdatePayload,
@@ -295,17 +292,22 @@ export type V3SolverResult = {
 };
 
 /** Trace the current DB scene with the v3 ray tracer. The server loads the
- *  scene from the live DB; `dynamicOverrides` (objectId -> dynamic-key dict) is
- *  merged on top of each object's dynamic_sources — used to inject the
- *  effective AOM RF drive (aomFreqMhz / rfDrivePowerW) resolved from the RF
- *  link without persisting derived values. */
+ *  scene from the live DB and resolves each AOM's effective RF drive itself
+ *  (rf_source → amp → switch → aom rf_in) at `scrubTimeNs` — see the backend
+ *  `hydrate_aom_rf_drive`. `null`/omitted scrub time samples the "scrub stopped"
+ *  rest snapshot. `dynamicOverrides` (objectId -> dynamic-key dict) is still
+ *  merged LAST as a manual / test escape hatch (wins over the resolved drive). */
 export async function runV3SolverFromDbApi(
-  dynamicOverrides?: Record<string, Record<string, unknown>>,
+  opts?: {
+    scrubTimeNs?: number | null;
+    dynamicOverrides?: Record<string, Record<string, unknown>>;
+  },
 ): Promise<V3SolverResult> {
-  const body =
-    dynamicOverrides && Object.keys(dynamicOverrides).length > 0
-      ? { dynamicOverrides }
-      : {};
+  const body: Record<string, unknown> = {};
+  if (opts?.scrubTimeNs !== undefined) body.scrubTimeNs = opts.scrubTimeNs;
+  if (opts?.dynamicOverrides && Object.keys(opts.dynamicOverrides).length > 0) {
+    body.dynamicOverrides = opts.dynamicOverrides;
+  }
   const response = await client.post<V3SolverResult>(
     "/api/v3/solver/run-from-db",
     body,
@@ -1047,40 +1049,6 @@ export async function createSimulationRunApi(
   return response.data;
 }
 
-// ---- Circuits (Phase B.1, alembic 0037) -----------------------------------
-
-export async function fetchCircuitsApi(
-  limit = 100,
-  sceneObjectId?: string,
-): Promise<Circuit[]> {
-  const params: Record<string, string | number> = { limit };
-  if (sceneObjectId) params.scene_object_id = sceneObjectId;
-  const response = await client.get<Circuit[]>("/api/circuits", { params });
-  return response.data;
-}
-
-export async function fetchCircuitApi(id: string): Promise<Circuit> {
-  const response = await client.get<Circuit>(`/api/circuits/${id}`);
-  return response.data;
-}
-
-export async function createCircuitApi(payload: CircuitCreatePayload): Promise<Circuit> {
-  const response = await client.post<Circuit>("/api/circuits", payload);
-  return response.data;
-}
-
-export async function updateCircuitApi(
-  id: string,
-  patch: CircuitUpdatePayload,
-): Promise<Circuit> {
-  const response = await client.patch<Circuit>(`/api/circuits/${id}`, patch);
-  return response.data;
-}
-
-export async function deleteCircuitApi(id: string): Promise<void> {
-  await client.delete(`/api/circuits/${id}`);
-}
-
 // ---- Touchstone (Phase B.7) -------------------------------------------------
 
 // ---- EM (Phase C) -----------------------------------------------------------
@@ -1223,204 +1191,6 @@ export async function replaceRfChainApi(
   const response = await client.put<RfChainNode[]>(
     `/api/rf-chains/chains/${terminalSceneObjectId}`,
     { terminalSceneObjectId, nodes },
-  );
-  return response.data;
-}
-
-// ---- Optics cavity calculator --------------------------------------------
-
-export type CavityKind = "linear" | "ring_tri" | "ring_bow";
-
-export type CavityMirrorIn = {
-  reflectivity: number;
-  radiusCurvatureMm?: number | null;
-};
-
-export type CavityComputeRequest = {
-  kind: CavityKind;
-  lengthMm: number;
-  wavelengthNm: number;
-  mirrors: CavityMirrorIn[];
-  intracavityLoss?: number;
-  refractiveIndex?: number;
-  spectrumSpanFsr?: number;
-  spectrumPoints?: number;
-};
-
-export type CavityComputeResult = {
-  fsrHz: number;
-  fsrMhz: number;
-  roundTripLengthMm: number;
-  finesse: number;
-  linewidthHz: number;
-  linewidthMhz: number;
-  linewidthPm: number;
-  qualityFactor: number;
-  photonLifetimeNs: number;
-  resonanceWavelengthNm: number;
-  resonanceFrequencyThz: number;
-  rtReflectivity: number;
-  /** Two-mirror linear cavity only. null otherwise. */
-  g1g2: number | null;
-  stable: boolean | null;
-  waistUm: number | null;
-  spectrumFreqOffsetMhz: number[];
-  spectrumTransmission: number[];
-  spectrumReflection: number[];
-  warnings: string[];
-};
-
-export async function computeCavityApi(
-  payload: CavityComputeRequest,
-): Promise<CavityComputeResult> {
-  const response = await client.post<CavityComputeResult>(
-    "/api/optics-cavity/compute",
-    payload,
-  );
-  return response.data;
-}
-
-// ---- Optics nonlinear-crystal calculator ---------------------------------
-
-export type NLKind = "type0_eee" | "type1_ooe" | "type2_oeo" | "type2_eoe";
-export type PrincipalAxis = "x" | "y" | "z" | "o" | "e";
-
-export type CrystalSummary = {
-  id: string;
-  fullName: string;
-  isBiaxial: boolean;
-  isQpm: boolean;
-  axes: string[];
-  kinds: string[];
-  description: string;
-};
-
-export type CrystalCatalogResult = { crystals: CrystalSummary[] };
-
-export type CrystalDispersionRequest = {
-  crystalId: string;
-  axis?: PrincipalAxis;
-  tC?: number;
-  wavelengthMinNm?: number;
-  wavelengthMaxNm?: number;
-  points?: number;
-};
-
-export type CrystalDispersionResult = {
-  wavelengthNm: number[];
-  n: number[];
-  tC: number;
-  axis: string;
-};
-
-export type CrystalPhaseMatchRequest = {
-  crystalId: string;
-  kind?: NLKind;
-  pumpNm: number;
-  signalNm: number;
-  tC?: number;
-};
-
-export type CrystalPhaseMatchResult = {
-  polingPeriodUm: number | null;
-  idlerNm: number;
-  deltaKBulkPerMm: number;
-  nPump: number;
-  nSignal: number;
-  nIdler: number;
-  method: string;
-  warnings: string[];
-};
-
-export type CrystalSpdcTuningRequest = {
-  crystalId: string;
-  kind?: NLKind;
-  pumpNm: number;
-  polingUm?: number | null;
-  tMinC?: number;
-  tMaxC?: number;
-  tPoints?: number;
-};
-
-export type CrystalSpdcTuningRow = {
-  tC: number;
-  signalNm: number | null;
-  idlerNm: number | null;
-  deltaKBulkPerMm: number | null;
-};
-
-export type CrystalSpdcTuningResult = {
-  rows: CrystalSpdcTuningRow[];
-  autoPolingUm: number | null;
-};
-
-export type CrystalShgRequest = {
-  crystalId: string;
-  kind?: NLKind;
-  fundamentalNm: number;
-  pPumpW: number;
-  crystalLengthMm: number;
-  beamWaistUm?: number;
-  tC?: number;
-  polingUm?: number | null;
-};
-
-export type CrystalShgResult = {
-  fundamentalNm: number;
-  secondHarmonicNm: number;
-  nFundamental: number;
-  nSecondHarmonic: number;
-  dEffPmPerV: number;
-  polingUm: number | null;
-  deltaKBulkPerMm: number;
-  deltaKEffectivePerMm: number;
-  intensityWPerM2: number;
-  eta: number;
-  pShW: number;
-  sincFactor: number;
-};
-
-export async function fetchCrystalCatalogApi(): Promise<CrystalCatalogResult> {
-  const response = await client.get<CrystalCatalogResult>("/api/optics-crystal/catalog");
-  return response.data;
-}
-
-export async function computeCrystalDispersionApi(
-  payload: CrystalDispersionRequest,
-): Promise<CrystalDispersionResult> {
-  const response = await client.post<CrystalDispersionResult>(
-    "/api/optics-crystal/dispersion",
-    payload,
-  );
-  return response.data;
-}
-
-export async function computeCrystalPhaseMatchApi(
-  payload: CrystalPhaseMatchRequest,
-): Promise<CrystalPhaseMatchResult> {
-  const response = await client.post<CrystalPhaseMatchResult>(
-    "/api/optics-crystal/phase-match",
-    payload,
-  );
-  return response.data;
-}
-
-export async function computeCrystalSpdcTuningApi(
-  payload: CrystalSpdcTuningRequest,
-): Promise<CrystalSpdcTuningResult> {
-  const response = await client.post<CrystalSpdcTuningResult>(
-    "/api/optics-crystal/spdc-tuning",
-    payload,
-  );
-  return response.data;
-}
-
-export async function computeCrystalShgApi(
-  payload: CrystalShgRequest,
-): Promise<CrystalShgResult> {
-  const response = await client.post<CrystalShgResult>(
-    "/api/optics-crystal/shg",
-    payload,
   );
   return response.data;
 }

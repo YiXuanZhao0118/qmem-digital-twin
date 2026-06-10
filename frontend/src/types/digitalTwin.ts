@@ -1494,16 +1494,13 @@ export type SimulationRunStatus =
   | "cancelled";
 
 // Module discriminator (mirrors backend app.schemas.SimulationModule).
-// "optics_seq" is the integrated Lab workspace (kept under the legacy
-// id so existing simulation_runs rows round-trip). "optics_cavity" is
-// the pure cavity calculator; optics_fdtd is reserved.
+// "optics_seq" is the integrated Lab workspace (kept under the legacy id
+// so existing simulation_runs rows round-trip). optics_fdtd is reserved;
+// magnetics_dc is the Lab magnetics overlay solver. The optics_cavity /
+// optics_crystal / spice / em_fem modules were removed on 2026-06-10.
 export type SimulationModule =
   | "optics_seq"
-  | "optics_cavity"
-  | "optics_crystal"
   | "optics_fdtd"
-  | "spice"
-  | "em_fem"
   | "magnetics_dc";
 
 // Where a SolverRunner dispatched this row (mirrors backend
@@ -1535,32 +1532,6 @@ export type SimulationRunCreatePayload = {
   module: SimulationModule;
   runnerKind?: SolverRunnerKind;
   params?: Record<string, unknown>;
-};
-
-// ---- Circuits (Phase B.1, alembic 0037) -----------------------------------
-
-export type Circuit = {
-  id: string;
-  name: string;
-  netlist: string;
-  schematic: Record<string, unknown>;
-  sceneObjectId: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type CircuitCreatePayload = {
-  name: string;
-  netlist?: string;
-  schematic?: Record<string, unknown>;
-  sceneObjectId?: string | null;
-};
-
-export type CircuitUpdatePayload = {
-  name?: string;
-  netlist?: string;
-  schematic?: Record<string, unknown>;
-  sceneObjectId?: string | null;
 };
 
 // ---- EM (Phase C, alembic 0038) --------------------------------------------
@@ -1722,7 +1693,6 @@ export type RfChainNode = {
   label: string;
   gainDb: number;
   kindParams: Record<string, unknown>;
-  linkedCircuitId: string | null;
   linkedEmProblemId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -1735,7 +1705,6 @@ export type RfChainNodeCreatePayload = {
   label?: string;
   gainDb?: number;
   kindParams?: Record<string, unknown>;
-  linkedCircuitId?: string | null;
   linkedEmProblemId?: string | null;
 };
 

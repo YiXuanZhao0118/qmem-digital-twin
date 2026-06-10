@@ -30,8 +30,8 @@ class RfChainNode(Base):
     `terminal_scene_object_id` — the lab device (AOM/EOM/rf_source) whose
     RF input this chain feeds. `gain_db` is the static knob used for the
     chain-summation UI (final dBm = source_dbm + Σ gain_db). Each node
-    may optionally link to a SPICE Circuit or an EmProblem for detailed
-    modelling — that's the same Linked schematics pattern as Phase F.1.
+    may optionally link to an EmProblem for detailed modelling — that's
+    the same Linked schematics pattern as Phase F.1.
     """
 
     __tablename__ = "rf_chain_nodes"
@@ -53,11 +53,6 @@ class RfChainNode(Base):
     gain_db: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0")
     kind_params: Mapped[JsonDict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default="{}"
-    )
-    linked_circuit_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("circuits.id", ondelete="SET NULL"),
-        nullable=True,
     )
     linked_em_problem_id: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),

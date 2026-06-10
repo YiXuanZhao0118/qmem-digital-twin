@@ -48,7 +48,9 @@ import {
 // below; `TraceSegment` type is still consumed by click/snap handlers
 // reading window.__rayTraceDebug (which the adapter populates).
 import { _testReflect, type TraceSegment } from "../three/rayTrace";
-import { runV3SolverFromDbApi, type V3LabSegment, type V3SolverResult } from "../api/client";
+import { resolveAssetUrl, runV3SolverFromDbApi, type V3LabSegment, type V3SolverResult } from "../api/client";
+import { useV3Catalog } from "../store/catalogStore";
+import { setRfConnectorAssetResolver } from "../three/loadAsset/rf_cable/connectorModels";
 import { portKey, vppToPowerW } from "../utils/rfPropagation";
 import { adaptV3LabSegmentsToTraceSegments } from "../three/v3TraceAdapter";
 import { disposeFarfieldLobe, makeFarfieldLobe } from "../three/hornFarfield";
@@ -1371,6 +1373,14 @@ export function DigitalTwinViewer({
         // SceneObject.properties). Same idea as objectBindingsRefKey but
         // for SceneObject.properties-based render preferences.
         renderHintsKey?: string;
+        // Catalog-level ComponentBinding-tree key: hashes the assembly
+        // structure of THIS placement's Component (parent links, target
+        // asset/sub-component, per-binding pose). shouldRenderViaBindings
+        // + resolveBindingTree both read these rows, but editing a binding
+        // in the PHY editor doesn't change the Component row's identity, so
+        // componentRef stays equal and the wrapper would otherwise reuse a
+        // stale mesh (e.g. the pre-tree primitive box). Rebuild on change.
+        componentBindingsRefKey?: string;
       }
     >
   >(new Map());
@@ -1512,12 +1522,14 @@ export function DigitalTwinViewer({
   useEffect(() => {
     let cancelled = false;
     const timer = setTimeout(() => {
-      // AOM RF drive: inject each AOM's effective freq/power as a dynamic
-      // override, TIME-RESOLVED from the Pulse & Timing program. We sample the
-      // RF propagation schedule at the current scrub time, so a PPG-TTL switch
-      // routed off (or a powered-off source) feeds the AOM 0 W → η=0 → no
-      // diffraction (beam passes straight through). Manual-mode AOMs carry
-      // their own aomFreqMhz / rfDrivePowerW in dynamic_sources (skip).
+      // AOM RF drive is now resolved SERVER-SIDE: the backend `hydrate_aom_rf_drive`
+      // walks the same rf_source→amp→switch→aom cable graph at `scrubTimeNs` and
+      // injects each AOM's effective freq/power before the trace. We still build
+      // the propagation schedule locally — but only as a cheap dedup signature
+      // (`driveSig`): scrubbing WITHIN one timing section leaves every AOM's
+      // resolved drive unchanged, so we can skip the backend round-trip. Crossing
+      // a section boundary (PPG-TTL flips a switch, source goes silent) changes
+      // the signature and triggers a refetch. This map is NOT sent to the server.
       const aomOverrides: Record<string, Record<string, unknown>> = {};
       const compById = new Map(sceneData.components.map((c) => [c.id, c]));
       const assetById = new Map(sceneData.assets.map((a) => [a.id, a]));
@@ -1567,7 +1579,7 @@ export function DigitalTwinViewer({
       }
       lastTraceSceneRef.current = sceneData;
       lastTraceDriveSigRef.current = driveSig;
-      runV3SolverFromDbApi(aomOverrides)
+      runV3SolverFromDbApi({ scrubTimeNs })
         .then((result) => {
           if (cancelled) return;
           v3LabSegmentsRef.current = result.labSegments ?? [];
@@ -1869,6 +1881,29 @@ export function DigitalTwinViewer({
   useEffect(() => {
     viewCenterGroupRef.current.visible = !cursorHidden;
   }, [cursorHidden]);
+
+  // Data-driven RF-cable connector models: map each connector kind to a catalog
+  // asset so cable_spline can load → bake → place a real mesh at each end. These
+  // are PLACEHOLDER catalog ids to validate the pipeline before real SMA/BNC
+  // models exist — swap them (or read from connector properties) once authored.
+  // The resolver reads the catalog live, so it's robust to load timing.
+  useEffect(() => {
+    const PLACEHOLDER_CONNECTOR_CATALOG_IDS: Record<"sma" | "bnc", string> = {
+      sma: "thorlabs_pbs252",
+      bnc: "thorlabs_la1540_b",
+    };
+    setRfConnectorAssetResolver((kind) => {
+      const asset = useV3Catalog.getState().getAssetByCatalogId(PLACEHOLDER_CONNECTOR_CATALOG_IDS[kind]);
+      if (!asset) return null;
+      return {
+        url: resolveAssetUrl(asset.filePath),
+        ext: asset.filePath.split("?")[0].split(".").pop()?.toLowerCase() ?? "",
+        unit: asset.unit,
+        scaleFactor: asset.scaleFactor,
+      };
+    });
+    return () => setRfConnectorAssetResolver(null);
+  }, []);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -3749,6 +3784,22 @@ export function DigitalTwinViewer({
           )
           .sort()
           .join("|");
+        // Hash this Component's ComponentBinding tree (parent links +
+        // target + per-binding pose) so the wrapper rebuilds when the user
+        // edits the assembly in the PHY editor while the scene is open.
+        // shouldRenderViaBindings + resolveBindingTree read these rows, but
+        // a binding edit doesn't change the Component row's identity, so
+        // componentRef stays equal — without this key the cache keeps
+        // serving the old mesh (notably the primitive box rendered before
+        // the tree had any non-root binding). Empty for legacy single-asset
+        // components (no binding rows) → no behaviour change for them.
+        const componentBindingsRefKeyNow = (sceneData.componentBindings ?? [])
+          .filter((b) => b.componentId === component.id)
+          .map((b) =>
+            `${b.id}:${b.parentBindingId ?? ""}:${b.targetKind}:${b.asset3dId ?? ""}:${b.subComponentId ?? ""}:${b.localXMm},${b.localYMm},${b.localZMm},${b.localRxDeg},${b.localRyDeg},${b.localRzDeg}:${b.sortOrder}`,
+          )
+          .sort()
+          .join("|");
         // Per-instance rendering hint key (e.g. translucentHousing
         // toggle). Stored under SceneObject.properties; canReuse
         // otherwise wouldn't see a placement.properties flip since
@@ -3766,6 +3817,7 @@ export function DigitalTwinViewer({
           (component.kindId !== "fiber" ||
             cached.fiberEndsRefKey === fiberEndsRefKeyNow) &&
           cached.objectBindingsRefKey === objectBindingsRefKeyNow &&
+          cached.componentBindingsRefKey === componentBindingsRefKeyNow &&
           cached.renderHintsKey === renderHintsKeyNow;
 
         let wrapper: THREE.Group;
@@ -4052,6 +4104,7 @@ export function DigitalTwinViewer({
             rfCableLinkWatchKey: rfCableSeed?.linkWatchKey,
             fiberEndsRefKey: fiberEndsRefKeyNow,
             objectBindingsRefKey: objectBindingsRefKeyNow,
+            componentBindingsRefKey: componentBindingsRefKeyNow,
             renderHintsKey: renderHintsKeyNow,
           });
         }
