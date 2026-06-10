@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-09T13:53:11.906Z",
+  "generated_at": "2026-06-10T00:21:24.961Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -403,7 +403,7 @@
         "align_tolerance_mm": 25,
         "align_summary": "intercept_in translates to beam axis. Direction = optical axis (light propagation direction through lens body).",
         "default_params": {
-          "focalMm": 100,
+          "focalLengthMm": 100,
           "transmission": 0.99,
           "wavelengthRangeNm": [
             400,
@@ -448,7 +448,7 @@
         "align_tolerance_mm": 25,
         "align_summary": "intercept_in is the plane-side surface center; direction points from plane toward convex side.",
         "default_params": {
-          "focalMm": 100,
+          "focalLengthMm": 100,
           "transmission": 0.99,
           "wavelengthRangeNm": [
             400,
@@ -493,7 +493,7 @@
         "align_tolerance_mm": 25,
         "align_summary": "intercept_in translates to beam axis. Direction = optical axis (light propagation direction through lens body).",
         "default_params": {
-          "focalMm": 100,
+          "focalLengthMm": 100,
           "cylindricalAxis": "x",
           "transmission": 0.99,
           "wavelengthRangeNm": [

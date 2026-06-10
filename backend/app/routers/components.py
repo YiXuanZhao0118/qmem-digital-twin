@@ -203,9 +203,9 @@ DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
     # binding. Not a kindParam any more.
     "mirror": {"reflectivity": 0.99},
     # V2 Phase 5 (alembic 0031).
-    "lens_biconvex": {"focalMm": 100.0, "transmission": 0.99},
-    "lens_plano_convex": {"focalMm": 100.0, "transmission": 0.99},
-    "lens_cylindrical": {"focalMm": 100.0, "cylindricalAxis": "x", "transmission": 0.99},
+    "lens_biconvex": {"focalLengthMm": 100.0, "transmission": 0.99},
+    "lens_plano_convex": {"focalLengthMm": 100.0, "transmission": 0.99},
+    "lens_cylindrical": {"focalLengthMm": 100.0, "cylindricalAxis": "x", "transmission": 0.99},
     # V2 Phase 4 (alembic 0030): axis angles moved to
     # objects.properties.anchorBindings[polarizationReference].payload.axisDegBeamLocal.
     "waveplate": {

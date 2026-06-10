@@ -556,13 +556,13 @@ export type MirrorParams = {
 };
 
 export type LensSphericalParams = {
-  focalMm: number;
+  focalLengthMm: number;
   numericalAperture?: number | null;
   transmission: number;
 };
 
 export type LensCylindricalParams = {
-  focalMm: number;
+  focalLengthMm: number;
   cylindricalAxis: "x" | "y";
   transmission: number;
 };

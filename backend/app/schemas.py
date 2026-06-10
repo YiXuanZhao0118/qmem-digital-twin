@@ -1083,7 +1083,7 @@ class MirrorParams(CamelModel):
 
 
 class LensSphericalParams(CamelModel):
-    focal_mm: float
+    focal_length_mm: float
     numerical_aperture: float | None = None
     transmission: float = Field(default=0.99, ge=0.0, le=1.0)
     clear_aperture_mm: float | None = Field(default=None, gt=0)
@@ -1091,15 +1091,26 @@ class LensSphericalParams(CamelModel):
     material: str | None = None  # "BK7", "fused_silica", "ZnSe", ...
     wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_focal(cls, data: Any) -> Any:
+        # focalMm → focalLengthMm: the live anchor solver reads focalLengthMm.
+        return _accept_legacy_keys(data, (("focalMm", "focalLengthMm"),))
+
 
 class LensCylindricalParams(CamelModel):
-    focal_mm: float
+    focal_length_mm: float
     cylindrical_axis: Literal["x", "y"] = "x"
     transmission: float = Field(default=0.99, ge=0.0, le=1.0)
     clear_aperture_mm: float | None = Field(default=None, gt=0)
     gvd_fs2: float = 0.0
     material: str | None = None
     wavelength_range_nm: tuple[float, float] = (400.0, 1100.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_focal(cls, data: Any) -> Any:
+        return _accept_legacy_keys(data, (("focalMm", "focalLengthMm"),))
 
 
 class WaveplateParams(CamelModel):
@@ -1895,7 +1906,7 @@ KIND_PARAMS_MODELS: dict[str, type[CamelModel]] = {
     "mirror": MirrorParams,
     # V2 Phase 5 (alembic 0031): lens_spherical renamed to lens_biconvex; the
     # Pydantic class stays LensSphericalParams as an alias since the field
-    # shape is identical (focalMm, transmission, …). lens_plano_convex
+    # shape is identical (focalLengthMm, transmission, …). lens_plano_convex
     # shares the same shape today; thick-lens templates with surface
     # radius / curvature land in a later phase.
     "lens_biconvex": LensSphericalParams,

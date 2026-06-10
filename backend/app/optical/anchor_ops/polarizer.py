@@ -8,7 +8,7 @@ Phase 9.1 backfill).
 
 Physics:
   Jones project onto axisY direction; the orthogonal component is
-  attenuated by extinction ratio (default_params.extinctionDb).
+  attenuated by extinction ratio (default_params.extinctionRatioDb).
 
   Power scales by |E_transmit|² / |E_in|² (Malus' law in Jones picture).
 
@@ -47,7 +47,7 @@ def polarizer_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
 
     # In anchor local basis: jones[0] = E along axisY (transmit),
     # jones[1] = E along axisZ (blocked).
-    ext_db = float(ctx.params.get("extinctionDb", 30.0))
+    ext_db = float(ctx.params.get("extinctionRatioDb", 30.0))
     attenuation = 10.0 ** (-ext_db / 10.0)
     e_pass, e_block = ray_in.jones
     new_jones = (e_pass, complex(e_block.real * math.sqrt(attenuation),
