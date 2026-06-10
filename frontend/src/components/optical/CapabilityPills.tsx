@@ -1,52 +1,65 @@
 import { useSceneStore } from "../../store/sceneStore";
-import type { ComponentItem, PhysicsCapability } from "../../types/digitalTwin";
+import type { ComponentItem } from "../../types/digitalTwin";
+import {
+  DOMAIN_TITLES,
+  domainForElementKind,
+  kindIdToElementKind,
+  type ElementDomain,
+} from "../../utils/elementDefaults";
 
-const CAPABILITY_OPTIONS: { value: PhysicsCapability; label: string; color: string }[] = [
-  { value: "stress", label: "Stress", color: "#a78bfa" },
-  { value: "optical", label: "Optical", color: "#fbbf24" },
-  { value: "rf", label: "RF", color: "#34d399" },
-  { value: "em", label: "EM", color: "#60a5fa" },
-  { value: "thermal", label: "Thermal", color: "#f87171" },
-  { value: "fluid", label: "Fluid", color: "#22d3ee" },
-  { value: "quantum", label: "Quantum", color: "#f472b6" },
-];
+const DOMAIN_COLOR: Record<ElementDomain, string> = {
+  optical: "#fbbf24",
+  rf: "#34d399",
+};
 
 type Props = {
   component: ComponentItem;
 };
 
+/**
+ * Read-only **domain** readout for a component.
+ *
+ * Was the editable `physicsCapabilities` picker before 2026-06-10. Domain is
+ * now asset-kind-authoritative — it is derived from the component's bound
+ * assets' kinds (`Asset3D.kind_id` → `domainForElementKind`), matching the
+ * domain rails elsewhere. `physicsCapabilities` no longer determines domain,
+ * so this is display-only. Empty (no optical/rf bound asset) ⇒ mechanical.
+ */
 export function CapabilityPills({ component }: Props) {
-  const setComponentCapabilities = useSceneStore((state) => state.setComponentCapabilities);
-  const current = new Set<PhysicsCapability>(component.physicsCapabilities ?? []);
+  const componentBindings = useSceneStore((s) => s.scene.componentBindings);
+  const assets = useSceneStore((s) => s.scene.assets);
 
-  const toggle = async (capability: PhysicsCapability) => {
-    const next = new Set(current);
-    if (next.has(capability)) next.delete(capability);
-    else next.add(capability);
-    try {
-      await setComponentCapabilities(component.id, Array.from(next));
-    } catch (error) {
-      console.error("Failed to set capabilities", error);
-    }
-  };
+  const domains = new Set<ElementDomain>();
+  for (const b of componentBindings ?? []) {
+    if (b.componentId !== component.id || b.targetKind !== "asset" || !b.asset3dId) continue;
+    const a = assets.find((x) => x.id === b.asset3dId);
+    const ek = a?.kindId && a.kindId !== "none" ? kindIdToElementKind(a.kindId) : null;
+    if (ek) domains.add(domainForElementKind(ek));
+  }
+  if (domains.size === 0) {
+    const ownEk =
+      component.kindId && component.kindId !== "none" ? kindIdToElementKind(component.kindId) : null;
+    if (ownEk) domains.add(domainForElementKind(ownEk));
+  }
+  const list = [...domains];
 
   return (
     <div className="capability-pills">
-      <span className="capability-label">Physics:</span>
-      {CAPABILITY_OPTIONS.map((option) => {
-        const enabled = current.has(option.value);
-        return (
-          <button
-            key={option.value}
-            type="button"
-            className={`capability-pill ${enabled ? "enabled" : "disabled"}`}
-            onClick={() => toggle(option.value)}
-            style={enabled ? { borderColor: option.color, color: option.color } : undefined}
+      <span className="capability-label">Domain:</span>
+      {list.length === 0 ? (
+        <span className="capability-pill disabled">mechanical</span>
+      ) : (
+        list.map((d) => (
+          <span
+            key={d}
+            className="capability-pill enabled"
+            style={{ borderColor: DOMAIN_COLOR[d], color: DOMAIN_COLOR[d] }}
+            title={DOMAIN_TITLES[d]}
           >
-            {option.label}
-          </button>
-        );
-      })}
+            {d === "rf" ? "RF" : "Optical"}
+          </span>
+        ))
+      )}
     </div>
   );
 }

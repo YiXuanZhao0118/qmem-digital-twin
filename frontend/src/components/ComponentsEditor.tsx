@@ -470,21 +470,19 @@ export function ComponentsEditor({
   }, [allBindings, assets]);
 
   const domainsOf = (c: ComponentItem): ComposerDomain[] => {
+    // Domain is asset-kind-authoritative (2026-06-10): a component's domains =
+    // union of its bound assets' kind-domains. physicsCapabilities no longer
+    // narrows/determines domain — domain and the catalog category are now
+    // separate axes (category ← component kind, domain ← asset kind).
     const fromAssets = componentDomainById.get(c.id);
-    const caps = (c.physicsCapabilities ?? []) as readonly string[];
     if (fromAssets && fromAssets.size > 0) {
-      // physicsCapabilities narrows within the kind-derived universe.
-      const narrowed = [...fromAssets].filter((d) => caps.includes(d));
-      return narrowed.length > 0 ? narrowed : [...fromAssets];
+      return [...fromAssets];
     }
-    // No bound physics assets (procedural-only) → fall back to the component's
-    // own kind_id domain, then caps, then mechanical.
+    // No bound physics assets (procedural-only) → the component's own kind_id
+    // domain, else mechanical.
     const ownKind = c.kindId != null ? kindIdToElementKind(c.kindId) : null;
     if (ownKind) return [domainForElementKind(ownKind)];
-    const capDoms = caps.filter(
-      (d): d is ComposerDomain => d === "optical" || d === "rf" || d === "mechanical",
-    );
-    return capDoms.length > 0 ? capDoms : ["mechanical"];
+    return ["mechanical"];
   };
 
   // Filter the shared `scene.components` list by the active domain chip.
@@ -948,7 +946,7 @@ export function ComponentsEditor({
               </>
             )}
 
-            {((selected.physicsCapabilities ?? []).includes("optical")
+            {(domainsOf(selected).includes("optical")
               || OPTICAL_ALIGN_KINDS.has(selected.kindId ?? "")) && (
               <AlignSpecSection component={selected} onPatch={handlePatchComponent} />
             )}

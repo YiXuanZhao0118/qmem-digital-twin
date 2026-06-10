@@ -40,43 +40,23 @@ import { buildBindingTreeObject } from "./bindingTreeObject";
 import { GLAN_POLARIZER_PRISM_FILEPATH } from "./loadAsset/procedural/glan_polarizer_prism";
 
 
-// Per-componentType force-on (rarely needed once per-Component opt-in
-// works). Empty today; keep around so a kind whose data hasn't been
-// fully migrated can be temporarily routed through the binding tree
-// for testing.
-export const RENDER_VIA_BINDINGS: ReadonlySet<string> = new Set<string>([
-  // "isolator",  // not flipped here — per-Component opt-in below covers it
-  // "mirror_mount",
-]);
-
-
-/** Returns true when this specific Component's render path should walk
- *  the ComponentBinding tree (via ``buildBindingTreeObject``) instead
- *  of the legacy ``loadAssetObject`` single-asset path.
+/** Unified render path (2026-06-10): EVERY Component now renders via the
+ *  ComponentBinding tree (``buildSceneObjectFromBindings``). The legacy
+ *  single-asset ``loadAssetObject`` dispatch is retired, so this gate is a
+ *  constant ``true`` — kept (rather than deleted) so the call sites compile
+ *  unchanged while the legacy branch is removed in a follow-up.
  *
- *  Decision (in order):
- *    1. componentType is in the force-on allowlist → true.
- *    2. Component has any non-root binding in the scene → true. This
- *       is the per-Component opt-in: the alembic data migration that
- *       gives a Component a sub-Component or empty-Mount child binding
- *       (e.g. Stage A''.7's TORNOS-850-4 5-part tree) flips it onto
- *       the binding-tree path automatically. Components whose only
- *       binding is the 0062-backfilled root (single asset) stay on
- *       the legacy path → visual no-op for 500+ catalog rows.
+ *  Deferred: per-instance fiber / rf_cable / isolator state
+ *  (fiberNodes / rfCableNodes / radiusMm / ferrule poses / translucentHousing)
+ *  is NOT yet forwarded through the binding-tree walk, so those kinds may
+ *  render with catalog-default spline/pose until that forwarding lands.
  */
 export function shouldRenderViaBindings(
-  componentType: string,
-  componentId: string,
-  scene: Pick<SceneData, "componentBindings">,
+  _componentType: string,
+  _componentId: string,
+  _scene: Pick<SceneData, "componentBindings">,
 ): boolean {
-  if (RENDER_VIA_BINDINGS.has(componentType)) return true;
-  const bindings = scene.componentBindings ?? [];
-  for (const b of bindings) {
-    if (b.componentId === componentId && b.parentBindingId !== null) {
-      return true;
-    }
-  }
-  return false;
+  return true;
 }
 
 

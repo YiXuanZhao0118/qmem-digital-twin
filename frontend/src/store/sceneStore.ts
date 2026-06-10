@@ -75,7 +75,6 @@ import type {
   ElementKind,
   PhysicsElement,
   OpticalLink,
-  PhysicsCapability,
   RelationType,
   SceneData,
   SceneEvent,
@@ -650,10 +649,6 @@ type SceneStore = {
   /** Delete an ObjectBinding row. The renderer reverts to the
    *  ComponentBinding's baseline pose / asset on the next rebuild. */
   deleteObjectBinding: (bindingId: string) => Promise<void>;
-  setComponentCapabilities: (
-    componentId: string,
-    capabilities: PhysicsCapability[],
-  ) => Promise<void>;
   upsertOpticalElement: (payload: OpticalElementApiPayload) => Promise<PhysicsElement>;
   deleteOpticalElement: (objectId: string) => Promise<void>;
   autoRegisterOptical: (componentId: string) => Promise<PhysicsElement[]>;
@@ -3072,13 +3067,6 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         ...state.scene,
         objectBindings: (state.scene.objectBindings ?? []).filter((b) => b.id !== bindingId),
       },
-    }));
-  },
-
-  async setComponentCapabilities(componentId, capabilities) {
-    const updated = await updateComponentApi(componentId, { physicsCapabilities: capabilities } as Partial<ComponentItem>);
-    set((state) => ({
-      scene: { ...state.scene, components: upsertById(state.scene.components, updated) },
     }));
   },
 

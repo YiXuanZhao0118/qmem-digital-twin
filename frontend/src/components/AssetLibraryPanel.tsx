@@ -52,16 +52,13 @@ const MECHANICAL_TYPES = TYPES_BY_CATEGORY.mechanical;
 const INFRASTRUCTURE_TYPES = TYPES_BY_CATEGORY.infrastructure;
 const MISC_TYPES = TYPES_BY_CATEGORY.misc;
 
-// Mirrors ComponentsEditor.classifyComponentDomain so the catalog
-// groups components the same way PHY Editor does:
-//   1. physicsCapabilities wins (matches PHY Editor's domain rails)
-//   2. kindId-based plugin category as fallback
-// This keeps capability-pill toggles (Object panel) and PHY Editor's
-// DomainToggleField in lockstep with where a component appears here.
+// Category is a pure **Component-layer** classification (2026-06-10): it is
+// derived solely from the component's kind plugin (`assetCategory`, via
+// `derivedCategoryToComponentTypes`). Domain (physicsCapabilities /
+// Asset3D.kind) is a SEPARATE axis and no longer overrides category — the two
+// are deliberately decoupled (category = which catalog section a part lives
+// in; domain = which physics it runs, handled by the asset's kind).
 function categoryForComponent(component: ComponentItem): CategoryDef {
-  const caps = (component.physicsCapabilities ?? []) as readonly string[];
-  if (caps.includes("optical")) return CATEGORY_DEFS.optical;
-  if (caps.includes("rf")) return CATEGORY_DEFS.electronics;
   const componentType = component.kindId?.trim() || "uncategorized";
   if (OPTICAL_TYPES.has(componentType)) return CATEGORY_DEFS.optical;
   if (ELECTRONICS_TYPES.has(componentType)) return CATEGORY_DEFS.electronics;

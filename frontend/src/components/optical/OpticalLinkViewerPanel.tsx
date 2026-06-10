@@ -679,13 +679,19 @@ export function OpticalLinkViewerContent({
         const ek = ekByObjectId.get(o.id) || kindIdToElementKind(comp?.kindId);
         if (ek) return domainForElementKind(ek) === "optical";
         // Composite optical components (e.g. the IO-3-850-HP isolator) carry
-        // kindId="none" and have NO PhysicsElement, so `ek` is null — but they
-        // declare optical capability and own a binding tree. Include them so
-        // their settings are reachable in the inspector drawer.
-        return (comp?.physicsCapabilities ?? []).includes("optical");
+        // kindId="none" and have NO PhysicsElement, so `ek` is null — derive
+        // optical-ness from their bound assets' kinds (domain is asset-kind-
+        // authoritative, 2026-06-10; physicsCapabilities no longer decides
+        // domain). Include them so their settings are reachable in the drawer.
+        return (componentBindings ?? []).some((b) => {
+          if (b.componentId !== o.componentId || b.targetKind !== "asset" || !b.asset3dId) return false;
+          const a = assets.find((x) => x.id === b.asset3dId);
+          const aek = a?.kindId ? kindIdToElementKind(a.kindId) : null;
+          return aek != null && domainForElementKind(aek) === "optical";
+        });
       })
       .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
-  }, [objects, components, physicsElements]);
+  }, [objects, components, physicsElements, componentBindings, assets]);
   const [inspectObjectId, setInspectObjectId] = useState<string | null>(null);
   // Inspector is a collapsible LEFT drawer — default collapsed so the 3D view
   // is clear. Clicking an optic in the scene (or the edge tab) opens it.
