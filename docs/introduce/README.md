@@ -20,12 +20,14 @@
 
 ### 渲染與光學
 - [渲染管線 · rendering.md](rendering.md) — 前端場景建構
-- [Kind 分類 · kinds.md](kinds.md) — 28 kinds + 每 kind 契約
+- [Kind 分類 · kinds.md](kinds.md) — 29 kinds + domain/category + 每 kind 契約
 - [光學物理模型 · optics.md](optics.md) — 偏振、求解器、RF tracer、TA
+- [Fiber · fiber.md](fiber.md) — 光纖：單物件 + spline、端點對準、耦合物理
 
 ### 多物理與時間
 - [多物理場模組 · multiphysics.md](multiphysics.md) — 現只剩 Lab tab + Magnetics overlay（Optics/Electronics/EM 已移除）
 - [時間域模擬 · timing.md](timing.md) — Sequence、Scrub time、AD9959、RF 鏈
+- [RF Cable · cable.md](cable.md) — 同軸線：單物件 + spline、端點連結、RF 圖傳播
 - [擺放與吸附 · placement.md](placement.md) — Placement & Snapping 引擎
 
 ### 運維與參考

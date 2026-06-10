@@ -51,11 +51,11 @@ qmem-digital-twin/
 │   │   ├── main.py       # FastAPI 進入點，~40 routers 註冊於 /api/<resource>
 │   │   ├── routers/      # 每資源 REST router
 │   │   ├── models/       # SQLAlchemy ORM（scene、hardware、timing…）
-│   │   ├── optical/      # ★權威光學引擎：ray_tracer_v3、solver_v3、kinds/<kind>/physics、anchor_ops/、db_scene_loader、jones、abcd
+│   │   ├── optical/      # ★權威光學引擎：anchor_tracer（live, anchor-based）+ solver（solve_anchor_scene）+ anchor_ops/<kind>；rf_resolve（RF 圖傳播）；ray_tracer/solver_v3 face-based 為 legacy（0106 後退役）；db_scene_loader、jones、abcd
 │   │   ├── solvers/      # 多物理：optics_seq、magnetics_dc、runner（Optics/Electronics/EM solvers 已於 2026-06-10 移除）
 │   │   ├── services/     # touchstone…（onshape_client / instrument_polling 為死碼）
 │   │   └── schemas*.py   # Pydantic（CamelModel：DB snake_case ↔ API camelCase）
-│   ├── alembic/versions/ # migration 0001..0097（線性鏈）
+│   ├── alembic/versions/ # migration 0001..0109（線性鏈，head 0109）
 │   └── data/             # kinds.json（★kind 物理參數權威來源）、thorlabs_cad_manifest.json
 ├── assets/
 │   ├── catalog/          # 元件/資產/kinds JSON 定義（seed 來源；DB 才是 runtime 真值）

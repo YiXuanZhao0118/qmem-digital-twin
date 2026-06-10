@@ -8,8 +8,8 @@
 - **Sequence Timeline**：一個 Sequence = 一串 Event `(t, channel, action, params)`（channel 為點分路徑如 `AOM_001.rf_amplitude`；action：set/ramp/pulse_gate/trigger/wait/barrier）。模組在 event 之間各自向前演化，於 event 邊界交換跨物理狀態。**穩態 = 空 Sequence 的特例**（無 Sequence → 既有 CW evaluator 跑，不破相容）。
 - **per-module 時間網格**：optical envelope（ps–100ns 取樣）、RF phasor、量子 ρ(t) 密度矩陣、thermal T(t,x)、vacuum P(t)——因單一全域 dt 不可行。採 RWA/SVEA 近似。
 - **Schema**：`PulseEnvelope`/`RFSignal`/`QuantumTrace`/`ScalarTrace` + `Sequence`/`SequenceEvent` 表；各 kind 加選用色散參數（gvdFs2、groupDelayPs、riseTimeNs…）。
-- **PhysicsModule Protocol**：`steady_state(scene)` + `evolve(scene, t0, t1, controls, state_in)`。光學 primitive：`propagate_envelope`（split-step Fourier 處理 GVD/TOD，已實作於 optical_solver、textbook 驗證 <0.5%）、`angular_spectrum_propagate`、`fiber_overlap`。
-- **已落實**：trace schemas + 選用色散參數 + `propagate_envelope`；CW 路徑為 no-op，無回歸。後續 Phase（量子 Lindblad、thermal ODE、timeline UI）未完。
+- **PhysicsModule Protocol**：`steady_state(scene)` + `evolve(scene, t0, t1, controls, state_in)`。光學 primitive 設計：`propagate_envelope`（split-step Fourier 處理 GVD/TOD）、`angular_spectrum_propagate`、`fiber_overlap`。`propagate_envelope` 曾實作於 `optical_solver`（textbook 驗證 <0.5%），但**該檔已隨 legacy 退役刪除、色散時域數學一併移除（可從 git 復原）**。
+- **現況**：trace schemas + 選用色散參數仍在；CW 路徑為 no-op，無回歸。`propagate_envelope` 等時域 primitive **待重新接上**（見 [known-issues.md](known-issues.md)）。後續 Phase（量子 Lindblad、thermal ODE、timeline UI）未完。
 
 ## Scrub time / Timing programs / AD9959
 

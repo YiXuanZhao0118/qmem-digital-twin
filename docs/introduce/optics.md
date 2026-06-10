@@ -2,23 +2,24 @@
 
 # 光學物理模型
 
-> Kind 清單見 [kinds.md](kinds.md)；座標/face 法向見 [anchors.md](anchors.md)；AOM 對準幾何另見 [aom-model.md](../aom-model.md) + `../aom_align_*.png`。
+> Kind 清單見 [kinds.md](kinds.md)；座標 / anchor 法向見 [anchors.md](anchors.md)；AOM 對準幾何另見 [aom-model.md](../aom-model.md) + `../aom_align_*.png`。
 
 ## 偏振
 
 以 **Jones calculus** 追蹤（`optical/jones.ts`）。各 kind 套自己的 Jones：waveplate retardance、polarizer 投影、PBS 分光（face 慣例 `face_1..6` = ±X/±Y/±Z，`H_transmit_V_reflect`）。
 
-## 求解器：Kind Registry + PhysicsOp（現行）
+## 求解器：anchor-centric ray tracer（現行）
 
-- **Kind Registry**（alembic 0086）：DB `kinds` 表存 metadata（name、domain、`op_set_name`、default_params、needs_aperture、wavelength_range_nm）；**code 端 REGISTRY 存 PhysicsOp callable**，由 `op_set_name` 連結。新 kind 可在 UI 用既有 op 建立。
-- **Ray tracer**（`ray_tracer_v3.py`）：單一迴圈，**沒有 `switch(kind)`**——靠 PhysicsOp 查表分派。`PhysicsOp = (rayIn, faceIn, faceOut, params, dynamic?) => BeamRay[]`，回傳陣列以支援分支（AOM 階數、PBS 穿透+反射、ghost）。`BeamRay` 帶 chief ray + 獨立 qx/qy（像散）+ Jones s/p + excludeFaceKey。
+- **Kind Registry**（alembic 0086）：DB `kinds` 表存 metadata（name、domain、`op_set_name`、default_params、needs_aperture、wavelength_range_nm）；**code 端 REGISTRY 存 op callable**，由 `op_set_name` 連結。新 kind 可在 UI 用既有 op 建立。
+- **Live：anchor tracer**（`anchor_tracer.py`，Phase 9.2）：單一迴圈，**沒有 `switch(kind)`**——靠每 kind 的 **anchor op** 查表分派（`anchor_ops/<kind>.py`，以 `register_anchor_op(kind, op)` 註冊）。op ≈ `(rayIn, in_anchor, out_anchor, params, dynamic?) => BeamRay[]`，回傳陣列以支援分支（AOM 階數、PBS 穿透+反射、ghost）。`BeamRay` 帶 chief ray + 獨立 qx/qy（像散）+ Jones s/p。命中用 ray-plane（過 `anchor.position`、垂直 `axisX`）+ aperture 裁切（見 [anchors.md](anchors.md)）。
+- **Legacy（已退役）**：舊的 **face-based** dispatch（`ray_tracer.py` 的 `PhysicsOp(rayIn, faceIn, faceOut)`）在 **0106 drop faces/transitions** 後被 anchor-based 取代。
 - **AOM Bragg**：`theta_B = asin(λ·f_rf / (2·v_acoustic))`、`theta_deflect(order) = order·2·theta_B`（外角慣例）。
 
 ## 求解器現況（重要）
 
-- **後端 v3 anchor 求解器**（`ray_tracer_v3.py`、`solver_v3.py`，端點 `/api/v3/solver`）是**唯一權威光學引擎**。實驗室看到的光束 = 後端 v3 trace。
-- 舊的 legacy chain solver（`optical_solver.py` + `rf_propagation.py` + `optics_seq` 的 solve_chain）已於 Phase 1（migration ~0094 期）**刪除**；Lab「Run」按鈕現在也走 v3。
-- 前端 `optical/` 的 TypeScript 光追引擎（`ray-tracer-v3.ts` 等 19 檔）是**平行、尚未上線**的實作，目前只被 vitest 引用、main.tsx 到不了，但有完整 parity 測試 + golden fixtures，疑似進行中的重構——**勿當廢案刪**。
+- **後端 anchor 求解器**（`anchor_tracer.py` + `solver.py` 的 `solve_anchor_scene`，端點 `/api/v3/solver`、DB 載入 `db_scene_loader.load_anchor_scene_from_db`）是**唯一權威光學引擎**。實驗室看到的光束 = 後端 anchor trace。
+- 舊的 legacy chain solver（`optical_solver.py` + `rf_propagation.py` + `optics_seq` 的 solve_chain）已於 Phase 1（migration ~0094 期）**刪除**；Lab「Run」按鈕現在也走此引擎。RF 的圖傳播現由 `rf_resolve.py` 負責（見 [cable.md](cable.md)）。
+- 前端 `optical/` 的 TypeScript 光追引擎（`ray-tracer-v3.ts` 等，**face-based**）是**平行、尚未上線**的實作，目前只被 vitest 引用、main.tsx 到不了，但有完整 parity 測試 + golden fixtures——**勿當廢案刪**。
 
 ## RF tracer
 

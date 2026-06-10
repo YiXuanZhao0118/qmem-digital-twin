@@ -7,7 +7,7 @@
 四層模型，**參數歸屬（param ownership）是整個系統的脊椎規則**——這條規則已在資料層由 migration 0094/0095/0096 強制落實：
 
 ```
-Asset3D    （幾何 + faces + transitions + defaultParams = 物理真值）
+Asset3D    （幾何 + anchors[] + defaultParams = 物理真值）
    ▲  透過 ComponentBinding 樹綁定（local transform、tunable axes、role_label）
 Component  （vendorPart + 綁定樹 + exposedFaces；★不存 kind、不存物理）
    ▲  實例化為
@@ -21,9 +21,9 @@ SceneObject（Lab pose + paramOverrides[bindingId] + dynamicSources）
 
 ---
 
-## 參數合併順序（`ray_tracer_v3.py`）
+## 參數合併順序（`anchor_tracer.py`）
 
-`effective = asset.defaultParams ⊕ paramOverrides[bindingId] ⊕ transition.params`；`dynamic = sceneObject.dynamicSources`。
+`effective = asset.defaultParams ⊕ paramOverrides[bindingId] ⊕ dynamicSources`（後者覆蓋前者）。實作上 `db_scene_loader` 先把 per-binding `param_overrides` 摺進 dynamic，tracer 再做 `{**default_params, **dynamic}`（`anchor_tracer.py`）。**transitions 已於 migration 0106 移除**，不再有 `transition.params`（faces/transitions → anchors，見 [anchors.md](anchors.md)）。
 
 - **paramOverrides** = per-binding 靜態校正（任何 defaultParams key，如某片波片實測 retardance 88°）。
 - **dynamicSources** = 整個 instance 的執行期值，把光學耦合到電子/RF/雷射狀態：
