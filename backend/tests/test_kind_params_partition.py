@@ -67,15 +67,15 @@ def test_rf_amplifier_is_fully_intrinsic_no_state_knobs():
     assert state == set()
 
 
-def test_rf_source_separates_pll_strap_from_channel_state():
+def test_rf_source_keeps_only_channels():
+    """After the metadata trim, rf_source carries only `channels` (the
+    per-channel freq/amp seed). The AD9959 PLL/clock straps + the legacy
+    single-tone frequency/power/phase fields were dropped."""
     intrinsic = set(intrinsic_keys_by_kind().get("rf_source") or [])
     state = set(state_keys_by_kind().get("rf_source") or [])
-    # PLL and reference-clock straps are fixed on the AD9959 PCB.
-    assert "pllMultiplier" in intrinsic
-    assert "referenceClockMhz" in intrinsic
-    # The user-facing knobs flow through `channels[]` (per-channel freq /
-    # amp / phase / mode).
     assert "channels" in state
+    assert "pllMultiplier" not in intrinsic
+    assert "referenceClockMhz" not in intrinsic
     assert intrinsic.isdisjoint(state)
 
 

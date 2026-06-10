@@ -1673,29 +1673,9 @@ class RfSourceParams(CamelModel):
     for backward compatibility.
     """
 
-    frequency_mhz: float = Field(default=80.0, ge=0.0)
-    power_dbm: float = Field(default=0.0)
-    phase_deg: float = Field(default=0.0)
-    modulation: Literal["none", "am", "fm", "iq"] = "none"
+    # Per-channel freq/amp seed the RF propagation walk. The legacy
+    # single-tone fields + AD9959 PLL/clock straps were unused metadata.
     channels: list[DdsChannel] | None = None
-    reference_clock_mhz: float | None = Field(default=None, ge=0.0)
-    sys_clock_mhz: float | None = Field(default=None, ge=0.0)
-    pll_multiplier: int = Field(default=25, ge=1, le=20 * 4)
-    pll_bypass: bool = False
-    serial_interface: Literal["spi", "parallel", "none"] | None = None
-    # Multichip phase-sync role (AD9959 SYNC_IN / SYNC_OUT). `master`
-    # drives the chain output; `slave` consumes the master's pulse;
-    # `standalone` ignores SYNC entirely. The chassis-level topology
-    # registry (SceneObject.properties.ddsChassis.syncTopology) describes
-    # how the chips are wired together; this field is the chip's role
-    # within that topology.
-    sync_role: Literal["master", "slave", "standalone"] = "standalone"
-    # AD9959 serial port mode. 4-wire is the default eval-board layout
-    # (CS + SCLK + SDIO_IN + SDIO_OUT); 2-wire collapses SDIO_IN/OUT to
-    # a single bidirectional SDIO_0 (saves an MCU pin); 1-wire is the
-    # vendor-specific I²C-like mode. Affects MCU wiring + bandwidth, not
-    # the DDS cores.
-    serial_port_mode: Literal["1wire", "2wire", "4wire"] = "4wire"
 
 
 class RfCableParams(CamelModel):
@@ -1709,20 +1689,6 @@ class RfCableParams(CamelModel):
     """
 
     length_mm: float = Field(default=152.0, gt=0.0)
-    impedance_ohm: float = Field(default=50.0, gt=0.0)
-    max_frequency_ghz: float = Field(default=3.0, gt=0.0)
-    connector_type: Literal["sma", "bnc", "n", "smp"] = "sma"
-    # Manufacturer cable type label, e.g. RG-316, RG-174, LMR-200.
-    cable_type: str | None = "RG-316"
-    # Cable jacket OD (mm) — drives the spline tube radius in 3D.
-    jacket_outer_diameter_mm: float = Field(default=3.2, gt=0.0)
-    # CSS hex colour for the jacket in the 3D viewport.
-    jacket_color: str = "#c4a884"
-    # Voltage ratings (informational only — not used in physics yet).
-    working_voltage_v_rms: float | None = Field(default=None, ge=0.0)
-    dielectric_voltage_v_rms: float | None = Field(default=None, ge=0.0)
-    # Mechanical bend limit (mm).
-    min_bend_radius_mm: float | None = Field(default=15.0, ge=0.0)
 
 
 class RfAmplifierParams(CamelModel):
@@ -1739,16 +1705,7 @@ class RfAmplifierParams(CamelModel):
     """
 
     gain_db: float = Field(default=29.0)
-    frequency_range_mhz: tuple[float, float] = (5.0, 500.0)
-    output_power_p1db_dbm: float = Field(default=29.0)
     output_power_max_dbm: float = Field(default=30.0)
-    input_power_max_dbm: float = Field(default=0.0)
-    noise_figure_db: float = Field(default=9.0, ge=0.0)
-    supply_voltage_v: float = Field(default=24.0)
-    supply_current_a: float = Field(default=0.6, ge=0.0)
-    input_return_loss_db: float = Field(default=14.0, ge=0.0)
-    output_return_loss_db: float = Field(default=14.0, ge=0.0)
-    connector_type: Literal["sma", "bnc", "n", "smp"] = "sma"
 
 
 class RfSwitchParams(CamelModel):
@@ -1770,42 +1727,14 @@ class RfSwitchParams(CamelModel):
     when the user adds a switch to the scene.
     """
 
-    switch_type: Literal["SPST", "SP2T", "SP3T", "SP4T"] = "SP2T"
     throw_count: int = Field(default=2, ge=1, le=16)
-    frequency_min_ghz: float = Field(default=0.0, ge=0.0)
-    frequency_max_ghz: float = Field(default=5.0, gt=0.0)
-    # Insertion loss on the active path, dB ("typ" at the band's high
-    # corner per Mini-Circuits convention).
+    # Insertion loss on the active path, dB.
     insertion_loss_db: float = Field(default=1.0, ge=0.0)
-    # Isolation between RFIN and the unselected throw port, dB.
-    isolation_db: float = Field(default=35.0, ge=0.0)
-    # Time from TTL edge to RF settled at 50 % of final amplitude, ns.
-    switching_time_ns: float = Field(default=250.0, gt=0.0)
-    absorption_type: Literal["absorptive", "reflective"] = "absorptive"
-    control_logic: Literal["TTL", "CMOS_3V3", "CMOS_5V", "OPEN_COLLECTOR"] = "TTL"
-    control_voltage_high_v: float = Field(default=5.0)
-    supply_positive_v: float = Field(default=5.0)
-    # null = single-supply switch (no negative bias rail).
-    supply_negative_v: float | None = Field(default=-5.0)
-    supply_current_ma: float = Field(default=25.0, ge=0.0)
-    max_input_power_dbm: float = Field(default=27.0)
-    connector_type: Literal["sma", "bnc", "n", "smp"] = "sma"
-    # Per-model TTL polarity. When TTL is HIGH (> threshold), the switch
-    # routes RFIN to RF{ttl_active_high_throw}; LOW routes to the other
-    # SPDT throw. Default 2 matches the user's lab convention
-    # (HIGH → RF2, LOW → RF1). For SP4T/SP6T this still picks "the HIGH
-    # throw" and falls back to manual ttl_state otherwise (one TTL line
-    # only resolves SPDT cleanly).
+    # Per-model TTL polarity. HIGH routes RFIN to RF{ttl_active_high_throw};
+    # LOW routes to the other SPDT throw.
     ttl_active_high_throw: Literal[1, 2, 3, 4, 5, 6] = 2
-    # Manual TTL state override used when there is no upstream PPG cable
-    # on ttl_in. The RF Link object panel exposes a HIGH/LOW toggle that
-    # writes this field. When a PPG is connected the toggle is greyed
-    # out and the TTL state is derived from the bound TimingProgram at
-    # t = 0 (HIGH if t=0 is inside any HIGH interval, else LOW).
+    # Manual TTL state used when no upstream PPG cable is on ttl_in.
     ttl_state: Literal["HIGH", "LOW"] = "LOW"
-    manufacturer: str | None = "Mini-Circuits"
-    model: str | None = "ZYSWA-2-50DR"
-    datasheet_url: str | None = "https://www.minicircuits.com/pdfs/ZYSWA-2-50DR+.pdf"
 
 
 class HornAntennaParams(CamelModel):
@@ -1819,9 +1748,6 @@ class HornAntennaParams(CamelModel):
     later (sampled over θ/φ).
     """
 
-    frequency_ghz: float = Field(default=9.2, gt=0.0)
-    gain_dbi: float = Field(default=12.0)
-    beamwidth_3db_deg: float = Field(default=30.0, gt=0.0, le=180.0)
     polar_axis_body_local: list[float] | None = Field(default_factory=lambda: [0.0, 0.0, 1.0])
     cosine_exponent: float = Field(default=8.0, ge=0.0)
 
@@ -1839,15 +1765,7 @@ class ProgrammablePulseGeneratorParams(CamelModel):
     function is defined.
     """
 
-    connector_type: Literal["sma", "bnc"] = "sma"
     timing_program_id: uuid.UUID | None = None
-    # PPG emits a single "RFout" HIGH/LOW gate at high_voltage_v. Previously
-    # split into ttl / trigger sub-domains driven by TimingProgram.kind, but
-    # alembic 0051 collapses that into a single signal type — the consumer
-    # side (switch.ttl_in / AOM.trigger_in) carries any semantic difference.
-    # Field kept as a literal for forward compatibility / schema stability.
-    output_domain: Literal["rfout"] = "rfout"
-    high_voltage_v: float = Field(default=3.2, gt=0.0)
     # Resting / default level of the channel — the value the output sits at
     # OUTSIDE any HIGH interval. Symmetric semantics: when rest_state="HIGH"
     # the program's intervals describe LOW pulses (negative logic); the gate

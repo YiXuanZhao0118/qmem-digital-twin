@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-10T01:51:35.358Z",
+  "generated_at": "2026-06-10T01:57:34.295Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -1336,33 +1336,10 @@
         "align_tolerance_mm": 0,
         "align_summary": "RF emitter — DDS / synth / arbitrary-waveform generator. Drives downstream RF chain (amp / filter / AOM-EOM driver). Not aligned optically.",
         "default_params": {
-          "frequencyMhz": 80,
-          "powerDbm": 0,
-          "phaseDeg": 0,
-          "modulation": "none",
-          "channels": null,
-          "referenceClockMhz": null,
-          "sysClockMhz": null,
-          "pllMultiplier": 25,
-          "pllBypass": false,
-          "serialInterface": null,
-          "syncRole": "standalone",
-          "serialPortMode": "4wire"
+          "channels": null
         },
-        "intrinsic_param_keys": [
-          "referenceClockMhz",
-          "sysClockMhz",
-          "pllMultiplier",
-          "pllBypass",
-          "serialInterface",
-          "syncRole",
-          "serialPortMode"
-        ],
+        "intrinsic_param_keys": null,
         "state_param_keys": [
-          "frequencyMhz",
-          "powerDbm",
-          "phaseDeg",
-          "modulation",
           "channels"
         ],
         "port_domains": {
@@ -1403,32 +1380,11 @@
         "align_summary": "Coaxial RF amplifier (e.g. Mini-Circuits ZHL-1-2W+, ZHL-42W+). rf_in marks the input SMA / coax connector; rf_out marks the output SMA / coax connector. Both directions are OUTWARD face normals (pointing away from the body the way a mating plug slides on). Gain, frequency range, P_1dB, NF, and supply spec live in kindParams. Not aligned optically — RF signal flows through cables, not free space.",
         "default_params": {
           "gainDb": 29,
-          "frequencyRangeMhz": [
-            5,
-            500
-          ],
-          "outputPowerP1dbDbm": 29,
-          "outputPowerMaxDbm": 30,
-          "inputPowerMaxDbm": 0,
-          "noiseFigureDb": 9,
-          "supplyVoltageV": 24,
-          "supplyCurrentA": 0.6,
-          "inputReturnLossDb": 14,
-          "outputReturnLossDb": 14,
-          "connectorType": "sma"
+          "outputPowerMaxDbm": 30
         },
         "intrinsic_param_keys": [
           "gainDb",
-          "frequencyRangeMhz",
-          "outputPowerP1dbDbm",
-          "outputPowerMaxDbm",
-          "inputPowerMaxDbm",
-          "noiseFigureDb",
-          "supplyVoltageV",
-          "supplyCurrentA",
-          "inputReturnLossDb",
-          "outputReturnLossDb",
-          "connectorType"
+          "outputPowerMaxDbm"
         ],
         "state_param_keys": [],
         "port_domains": {
@@ -1467,9 +1423,6 @@
         "align_tolerance_mm": 0,
         "align_summary": "Microwave horn / antenna — radiates the chain output along its polar axis (+Z body-local by default). Phase RF.7 renders a parametric cos^n radiation lobe; palace farfield can populate a real pattern later.",
         "default_params": {
-          "frequencyGhz": 9.2,
-          "gainDbi": 12,
-          "beamwidth3dbDeg": 30,
           "polarAxisBodyLocal": [
             0,
             0,
@@ -1511,10 +1464,7 @@
         "align_tolerance_mm": 0,
         "align_summary": "Programmable Pulse Generator (PPG) is the physical one-to-one output for a Pulse & Timing TimingProgram. One coax rf_out anchor emits TTL or Trigger according to the bound program kind. SMA and BNC variants differ only by connector.",
         "default_params": {
-          "connectorType": "sma",
-          "timingProgramId": null,
-          "outputDomain": "ttl",
-          "highVoltageV": 3.2
+          "timingProgramId": null
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
@@ -1553,16 +1503,7 @@
         "align_tolerance_mm": 25,
         "align_summary": "Bidirectional coaxial RF cable. rf_in (End A) and rf_out (End B) mark the two SMA / BNC / N connector tips; both directions are OUTWARD face normals (pointing away from the cable body, the way a mating plug would slide on). Cable physics (impedance, max frequency, connector type, jacket OD) lives in RfCableParams. Spline editing UX (analogous to fiber's Edit fiber path) is a follow-up — current visual is parametric straight cable.",
         "default_params": {
-          "lengthMm": 152,
-          "impedanceOhm": 50,
-          "maxFrequencyGhz": 3,
-          "connectorType": "sma",
-          "cableType": "RG-316",
-          "jacketOuterDiameterMm": 3.2,
-          "jacketColor": "#c4a884",
-          "workingVoltageVRms": null,
-          "dielectricVoltageVRms": null,
-          "minBendRadiusMm": 15
+          "lengthMm": 152
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
@@ -1602,26 +1543,10 @@
         "align_tolerance_mm": 25,
         "align_summary": "Coaxial RF switch (SP2T by default). Four physical SMA-F connectors on the case: rf_in marks the common port (RFIN); the N throw ports are anchors all keyed `rf_out` and distinguished by `name` (RF1, RF2, …); ttl_in marks the TTL control port (a 4th SMA on the ZYSWA-2-50DR). All four directions are OUTWARD face normals — same convention as rf_cable — so a mating cable's End A / End B anchors line up. The switch is reciprocal at small signal (1-in/2-out SPDT == 2-in/1-out multiplexer); the active throw is decided at solve time from the TTL state on ttl_in, or from the kind-level TTL_GATE_KINDS picker when no cable is hooked up — both write to DeviceState.state.activeThrow. ±5 V supply lives at the kind level (POWER_KINDS) so the Instrument Power toggle attaches automatically. Per-model insertion loss / isolation / max input power live in RfSwitchParams.",
         "default_params": {
-          "switchType": "SP2T",
           "throwCount": 2,
-          "frequencyMinGhz": 0,
-          "frequencyMaxGhz": 5,
           "insertionLossDb": 1,
-          "isolationDb": 35,
-          "switchingTimeNs": 250,
-          "absorptionType": "absorptive",
-          "controlLogic": "TTL",
-          "controlVoltageHighV": 5,
-          "supplyPositiveV": 5,
-          "supplyNegativeV": -5,
-          "supplyCurrentMa": 25,
-          "maxInputPowerDbm": 27,
-          "connectorType": "sma",
           "ttlActiveHighThrow": 2,
-          "ttlState": "LOW",
-          "manufacturer": "Mini-Circuits",
-          "model": "ZYSWA-2-50DR",
-          "datasheetUrl": "https://www.minicircuits.com/pdfs/ZYSWA-2-50DR+.pdf"
+          "ttlState": "LOW"
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
