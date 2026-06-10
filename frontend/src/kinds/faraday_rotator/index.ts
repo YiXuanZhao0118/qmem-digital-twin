@@ -21,12 +21,8 @@ import { definePhysicsPlugin } from "../_plugin";
 
 export interface FaradayRotatorParams extends Record<string, unknown> {
   rotationDeg: number;
-  reciprocal: boolean;
   lengthMm: number;
   refractiveIndex: number;
-  VerdetConstantRadPerTeslaMm: number;
-  material: string;
-  arResidualR: number;
   wavelengthRangeNm: [number, number];
 }
 
@@ -51,12 +47,8 @@ export const faradayRotatorPlugin = definePhysicsPlugin<FaradayRotatorParams>({
     alignSummary: "optical_center translates to beam axis. Translation only.",
     defaultParams: {
       rotationDeg: 45,
-      reciprocal: false,
       lengthMm: 18,
       refractiveIndex: 1.95,
-      VerdetConstantRadPerTeslaMm: 0.0427,
-      material: "TGG",
-      arResidualR: 0.005,
       wavelengthRangeNm: [400, 1100],
     },
     portDomains: { optical_center: "optical" },

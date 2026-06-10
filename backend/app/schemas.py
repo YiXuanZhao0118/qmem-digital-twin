@@ -1450,9 +1450,7 @@ class IsolatorParams(CamelModel):
 class AOMParams(CamelModel):
     rf_driver_component_id: uuid.UUID | None = None
     base_efficiency: float = Field(default=0.85, ge=0.0, le=1.0)
-    deflection_per_mhz_urad: float = Field(default=200.0, ge=0.0)
     acoustic_velocity_m_per_s: float = Field(default=4200.0, gt=0)
-    modulation_bandwidth_mhz: float = Field(default=20.0, gt=0)
     # Phase B (RF link single-source-of-truth): the AOM's RF drive carrier
     # frequency and power are NOT stored on the AOM anymore. They are
     # resolved at solve time from the upstream rf_source channel via the
@@ -1471,9 +1469,7 @@ class AOMParams(CamelModel):
     #   I₁/I₀  = sin²(π·L/(2λ·cosθ_B)·√(2·M₂·P_d/W))
     # (f and P_d are no longer kindParams — see comment above.)
     refractive_index: float | None = Field(default=None, gt=0)
-    figure_of_merit_m2: float | None = Field(default=None, ge=0)
     crystal_length_mm: float | None = Field(default=None, ge=0)
-    acoustic_beam_width_mm: float | None = Field(default=None, ge=0)
     # Safety upper limit on RF drive power — clamps the resolved upstream
     # value, NOT a setpoint. Kept here because it's a property of the AOM
     # device (datasheet max), not of the driver.

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-10T00:21:24.961Z",
+  "generated_at": "2026-06-10T01:38:00.012Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -722,12 +722,8 @@
         "align_summary": "optical_center translates to beam axis. Translation only.",
         "default_params": {
           "rotationDeg": 45,
-          "reciprocal": false,
           "lengthMm": 18,
           "refractiveIndex": 1.95,
-          "VerdetConstantRadPerTeslaMm": 0.0427,
-          "material": "TGG",
-          "arResidualR": 0.005,
           "wavelengthRangeNm": [
             400,
             1100
@@ -971,13 +967,9 @@
           "peakRefWavelengthNm": 1100,
           "freqShiftBandwidthMhz": 15,
           "requiresRfDrive": false,
-          "deflectionPerMhzUrad": 200,
           "acousticVelocityMps": 4200,
-          "modulationBandwidthMhz": 10,
           "refractiveIndex": 2.26,
-          "figureOfMeritM2": 3.45e-14,
           "crystalLengthMm": 1.6,
-          "acousticBeamWidthMm": 1.5,
           "rfPowerMaxW": 2.2,
           "acousticAxisBodyLocal": [
             -1,
@@ -1002,13 +994,9 @@
           "peakRefWavelengthNm",
           "freqShiftBandwidthMhz",
           "requiresRfDrive",
-          "deflectionPerMhzUrad",
           "acousticVelocityMps",
-          "modulationBandwidthMhz",
           "refractiveIndex",
-          "figureOfMeritM2",
           "crystalLengthMm",
-          "acousticBeamWidthMm",
           "rfPowerMaxW",
           "acousticAxisBodyLocal",
           "rfPropagationDirectionBodyLocal",

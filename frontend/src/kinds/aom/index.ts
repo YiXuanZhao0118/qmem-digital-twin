@@ -21,13 +21,9 @@ export interface AomParams extends Record<string, unknown> {
   peakRefWavelengthNm: number;       // λ_ref for P_peak ∝ λ²
   freqShiftBandwidthMhz: number;     // RF carrier half-bandwidth (±MHz)
   requiresRfDrive: boolean;          // no RF source → η=0 (else rated)
-  deflectionPerMhzUrad: number;
   acousticVelocityMps: number;
-  modulationBandwidthMhz: number;    // analog AMPLITUDE-mod bandwidth (≠ freq-shift BW)
   refractiveIndex: number;
-  figureOfMeritM2: number;
   crystalLengthMm: number;
-  acousticBeamWidthMm: number;
   rfPowerMaxW: number;
   acousticAxisBodyLocal: [number, number, number];
   rfPropagationDirectionBodyLocal: [number, number, number];
@@ -75,13 +71,9 @@ export const aomPlugin = definePhysicsPlugin<AomParams>({
       peakRefWavelengthNm: 1100.0,     // λ_ref for P_peak ∝ λ²
       freqShiftBandwidthMhz: 15.0,     // RF carrier half-bandwidth (±15 MHz)
       requiresRfDrive: false,          // no RF source → show rated diffraction
-      deflectionPerMhzUrad: 200.0,
       acousticVelocityMps: 4200.0,
-      modulationBandwidthMhz: 10.0,    // analog AMPLITUDE-mod BW (−3 dB), ≠ freq-shift BW
       refractiveIndex: 2.26,
-      figureOfMeritM2: 34.5e-15,
       crystalLengthMm: 1.6,
-      acousticBeamWidthMm: 1.5,
       rfPowerMaxW: 2.2,
       acousticAxisBodyLocal: [-1, 0, 0],
       rfPropagationDirectionBodyLocal: [-1, 0, 0],
@@ -95,11 +87,10 @@ export const aomPlugin = definePhysicsPlugin<AomParams>({
     // Phase 2 / Phase 3a: spec sheet vs knobs.
     //
     // Intrinsic (the crystal itself — replace the AOM hardware to change):
-    //   baseEfficiency, acousticVelocityMps, modulationBandwidthMhz,
-    //   refractiveIndex, figureOfMeritM2, crystalLengthMm,
-    //   acousticBeamWidthMm, rfPowerMaxW (safety cap is a hardware limit),
+    //   baseEfficiency, acousticVelocityMps, refractiveIndex,
+    //   crystalLengthMm, rfPowerMaxW (safety cap is a hardware limit),
     //   acousticAxisBodyLocal, rfPropagationDirectionBodyLocal,
-    //   braggAngularAcceptanceMrad, deflectionPerMhzUrad.
+    //   braggAngularAcceptanceMrad.
     //
     // Operating state (knobs the user dials at experiment time):
     //   diffractionOrder. NOTE: centerFreqMhz / rfDrivePowerW are NOT
@@ -114,13 +105,9 @@ export const aomPlugin = definePhysicsPlugin<AomParams>({
       "peakRefWavelengthNm",
       "freqShiftBandwidthMhz",
       "requiresRfDrive",
-      "deflectionPerMhzUrad",
       "acousticVelocityMps",
-      "modulationBandwidthMhz",
       "refractiveIndex",
-      "figureOfMeritM2",
       "crystalLengthMm",
-      "acousticBeamWidthMm",
       "rfPowerMaxW",
       "acousticAxisBodyLocal",
       "rfPropagationDirectionBodyLocal",
