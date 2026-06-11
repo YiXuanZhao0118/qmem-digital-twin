@@ -62,6 +62,45 @@ def q_at_waist(waist_radius_mm: float, lambda_mm: float) -> complex:
     return complex(0.0, z_r)
 
 
+# Non-paraxial divergence -----------------------------------------------------
+# The q-parameter ABCD propagation is paraxial (z_R = π w₀²/λ), which makes the
+# far-field half-angle θ = M²λ/(π w₀) — fine for w₀ ≫ λ, but it over-/mis-states
+# divergence as w₀ → λ (high-NA fiber tips, tight focuses). We KEEP q paraxial
+# (so chief-ray geometry + lens focusing stay correct) and apply the
+# non-paraxial correction ONLY to the reported/rendered beam WIDTH:
+#   s     = M²λ/(π w₀)            (paraxial divergence param = sin θ, rigorous)
+#   floor : s ≤ 1  ⇔  w₀ ≥ M²λ/π (NA=1 diffraction limit; s>1 is evanescent)
+#   z_R_eff = z_R·√(1−s²)         (far-field slope → tan(arcsin s) = s/√(1−s²))
+# Low NA (s≪1): z_R_eff ≈ z_R, recovers the paraxial hyperbola exactly.
+# Shared by the laser emitter, the optical-link cone, TA mode-match, and (next)
+# fiber mode-match so every high-NA waist is treated identically.
+_NONPARAXIAL_S_FLOOR = 0.999  # cap below 1 so z_R_eff never hits 0 (90° cone)
+
+
+def nonparaxial_fundamental_waist_mm(
+    q_re_mm: float, q_im_mm: float, m2: float, wavelength_nm: float,
+) -> tuple[float, bool]:
+    """Non-paraxial FUNDAMENTAL (mode-factor-excluded) real beam radius at the
+    point described by paraxial ``q`` (``q_im`` = z_R, ``q_re`` = signed
+    distance from the waist). Returns ``(w_real_mm, past_diffraction_limit)``;
+    multiply by the transverse-mode width factor afterwards."""
+    z_r = abs(q_im_mm)
+    lam_mm = wavelength_nm * 1e-6
+    if z_r <= 0.0 or lam_mm <= 0.0:
+        return 0.0, False
+    m2_eff = m2 if (m2 and m2 > 0) else 1.0
+    w0_embedded_mm = math.sqrt(lam_mm * z_r / math.pi)
+    w0_real_mm = w0_embedded_mm * math.sqrt(m2_eff)
+    s = m2_eff * lam_mm / (math.pi * w0_real_mm) if w0_real_mm > 0 else 1.0
+    past_limit = s >= 1.0
+    s_eff = min(s, _NONPARAXIAL_S_FLOOR)
+    z_r_eff = z_r * math.sqrt(1.0 - s_eff * s_eff)
+    if z_r_eff <= 0.0:
+        return w0_real_mm, past_limit
+    w_real_mm = w0_real_mm * math.sqrt(1.0 + (q_re_mm / z_r_eff) ** 2)
+    return w_real_mm, past_limit
+
+
 # ---------------------------------------------------------------------------
 # BeamRay
 # ---------------------------------------------------------------------------
@@ -101,6 +140,11 @@ class BeamRay:
     # propagation, so it rides unchanged through every ABCD op via replaced().
     width_mult_x: float = 1.0
     width_mult_y: float = 1.0
+    # Per-axis M² (beam quality), carried separately from width_mult so the
+    # non-paraxial width correction can recover the divergence param s =
+    # M²λ/(πw₀) at readout. mode_factor = width_mult / √M². Default 1.0 = M²=1.
+    m2x: float = 1.0
+    m2y: float = 1.0
 
     # Bookkeeping
     parent_id: Optional[str] = None

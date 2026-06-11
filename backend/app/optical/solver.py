@@ -107,6 +107,8 @@ class V3LabSegment:
     freq_offset_hz_at_start: float = 0.0
     width_mult_x_at_start: float = 1.0
     width_mult_y_at_start: float = 1.0
+    m2_x_at_start: float = 1.0
+    m2_y_at_start: float = 1.0
 
 
 @dataclass
@@ -154,6 +156,7 @@ class V3SolverResult:
                     "widthMultAtStart": {
                         "x": s.width_mult_x_at_start, "y": s.width_mult_y_at_start,
                     },
+                    "m2AtStart": {"x": s.m2_x_at_start, "y": s.m2_y_at_start},
                     "pathLengthMmAtStart": s.path_length_mm_at_start,
                     "freqOffsetHz": s.freq_offset_hz_at_start,
                 }
@@ -236,6 +239,7 @@ def solve_anchor_scene(
                     freq_offset_hz_at_start=ls.freq_offset_hz_at_start,
                     width_mult_x_at_start=ls.width_mult_x_at_start,
                     width_mult_y_at_start=ls.width_mult_y_at_start,
+                    m2_x_at_start=ls.m2_x_at_start, m2_y_at_start=ls.m2_y_at_start,
                 ))
             for r in trace.final_rays:
                 result.final_rays.append(beam_ray_to_dict(r))

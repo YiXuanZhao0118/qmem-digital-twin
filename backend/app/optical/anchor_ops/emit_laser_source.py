@@ -158,6 +158,7 @@ def _ray_from_anchor(
     ).replaced(
         jones=jones_lab, qx=qx, qy=qy,
         width_mult_x=width_mult_x, width_mult_y=width_mult_y,
+        m2x=m2_x, m2y=m2_y,
     )
 
 

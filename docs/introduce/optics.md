@@ -34,6 +34,12 @@ emitter 不等入射光，主動種出初始 `BeamRay`（`emit_anchor_source_ray
 - **真實橫向寬度 = (q 推導的 embedded 寬度) × `BeamRay.width_mult`**，其中 `width_mult = √(M²) × 模態因子`（LG：兩軸 `√(2p+|l|+1)`；HG：x=`√(2m+1)`、y=`√(2n+1)`）。`width_mult_x/y` 隨 ray 沿 `.replaced()` 傳播，經 `LabSegment.width_mult_*_at_start` → solver `to_dict` 的 `widthMultAtStart` → 前端 `v3TraceAdapter.waistAtZFromQ × widthMultX` 還原真實錐管寬度；TA mode-match（`misc_ops._mode_match_eta`）也乘此倍率。
 - **限制**：高階模態在此幾何錐管裡**只放大等效寬度，不畫 donut/lobe 形狀**（真正環形需 2D 複振幅波動場，本引擎不含）。`waistZOffsetMm` 透過 `Re(q)` 自然流到前端，無需前端改動。
 
+**非近軸發散修正（高 NA / 次波長束腰）**：q-ABCD 是近軸（`z_R=πw₀²/(M²λ)`），當 `w₀→λ`（光纖端面、緊聚焦）發散會失準。做法：**q 維持近軸**（chief ray + 透鏡聚焦不變），只在**寬度 readout** 套修正——
+- `s = M²λ/(πw₀)`（近軸發散參數 = sinθ，rigorous）；**繞射硬下限 `s≤1` ⇔ `w₀≥M²λ/π`（NA=1）**，`s>1` 為倏逝、clamp 並標 past-limit。
+- 遠場用 `z_R_eff = z_R·√(1−s²)`（遠場斜率→`tan(arcsin s)`）；低 NA（s≪1）→ `z_R_eff≈z_R` 完全回到近軸。
+- helper：`beam_ray.nonparaxial_fundamental_waist_mm`（後端）/ `v3TraceAdapter.nonparaxialFundamentalWaistUm`（前端，同公式）。**M² 需在 readout 取得**，故 `m2x/m2y` 與 `width_mult` 一起沿 ray→`LabSegment`→`to_dict`(`m2AtStart`)→前端傳遞；`mode_factor=width_mult/√M²`。套用點：optical-link 錐管寬度、TA mode-match（`misc_ops._mode_match_eta`）。
+- **fiber mode-match** 之後接同一個 helper（同樣的高 NA 問題、同樣的解）。
+
 ## RF tracer
 
 RF **不是** ray tracer——沒有波前/Jones/q。它在 port 鄰接圖上做 **graph BFS**，攜帶 `RfSignalState{frequencyMhz, vpp, cumulativeGainDb, saturated, …}`。常數 `AD9959_VPP_FULL_SCALE=1.0V`、`RF_LOAD_Z=50Ω`、`P=Vpp²/(8Z)`。AOM 是**hybrid**——同時是 ray tracer 的光學元件與 RF tracer 的 RF sink；RF 經 BFS 灌到 `signalAtPort[(aom,"rf_in")]`，AOM RF 設定值優先序：**dynamicSources（手動）> RF tracer > defaultParams.centerFreqMhz**。RF 鏈的時序面（AD9959 通道、PPG）見 [timing.md](timing.md)。

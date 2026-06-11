@@ -73,6 +73,27 @@ function waistAtZFromQ(
   return w0 * Math.sqrt(1 + (dzUm / zRum) ** 2);
 }
 
+/** Non-paraxial FUNDAMENTAL (mode-factor-excluded) real beam radius (µm) at
+ *  the q point. Mirror of backend `nonparaxial_fundamental_waist_mm`: keep q
+ *  paraxial (propagation), correct only the far-field WIDTH so a high-NA waist
+ *  (w₀→λ) diverges with the bounded non-paraxial angle instead of overshooting.
+ *    s = M²λ/(πw₀);  z_R_eff = z_R·√(1−min(s,1)²).  Low NA → paraxial. */
+function nonparaxialFundamentalWaistUm(
+  qReMm: number, qImMm: number, m2: number, wavelengthNm: number,
+): number {
+  const zRum = Math.abs(qImMm) * 1000;
+  if (zRum < 1e-9) return 0;
+  const m2eff = m2 > 0 ? m2 : 1;
+  const w0RealUm = waistFromQ(qImMm, wavelengthNm) * Math.sqrt(m2eff);
+  const lamUm = wavelengthNm * 1e-3;
+  const s = w0RealUm > 0 ? (m2eff * lamUm) / (Math.PI * w0RealUm) : 1;
+  const sEff = Math.min(s, 0.999);
+  const zReffUm = zRum * Math.sqrt(1 - sEff * sEff);
+  if (zReffUm <= 0) return w0RealUm;
+  const dzUm = qReMm * 1000;
+  return w0RealUm * Math.sqrt(1 + (dzUm / zReffUm) ** 2);
+}
+
 /** Convert one V3 lab segment to a TraceSegment-compatible object. */
 function adaptOne(seg: V3LabSegment, sourceComponentId: string): V3TraceSegment {
   const startThree = labMmToThree({
@@ -95,9 +116,14 @@ function adaptOne(seg: V3LabSegment, sourceComponentId: string): V3TraceSegment 
   // transverse-mode factor. Absent (legacy payload) → 1.0. The cone uses the
   // x-axis multiplier (the taper is built from qx).
   const widthMultX = seg.widthMultAtStart?.x ?? 1;
-  const waistAtStartUm = waistAtZFromQ(qxStart.re, qxStart.im, seg.wavelengthNm) * widthMultX;
-  const waistAtEndUm = waistAtZFromQ(qxEnd.re, qxEnd.im, seg.wavelengthNm) * widthMultX;
+  const m2x = seg.m2AtStart?.x ?? 1;
+  // Transverse-mode width factor only (M² lives in the non-paraxial helper).
+  const modeFacX = m2x > 0 ? widthMultX / Math.sqrt(m2x) : widthMultX;
+  const waistAtStartUm = nonparaxialFundamentalWaistUm(qxStart.re, qxStart.im, m2x, seg.wavelengthNm) * modeFacX;
+  const waistAtEndUm = nonparaxialFundamentalWaistUm(qxEnd.re, qxEnd.im, m2x, seg.wavelengthNm) * modeFacX;
 
+  // Minimum waist (z=0): non-paraxiality doesn't change the waist itself,
+  // only the far-field, so the simple paraxial readout × width_mult holds.
   const w0Um = waistFromQ(qxStart.im, seg.wavelengthNm) * widthMultX;
   // Cumulative path-length at the waist (µm) relative to emitter.
   // q.re = (z − z_waist) → z_waist_um = (path_at_start − qx_re) × 1000.

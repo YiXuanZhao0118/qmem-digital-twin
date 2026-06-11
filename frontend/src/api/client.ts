@@ -279,6 +279,10 @@ export type V3LabSegment = {
   // transverse width = (q-derived embedded width) × widthMult. Optional for
   // back-compat with cached/legacy payloads (treated as 1.0 when absent).
   widthMultAtStart?: { x: number; y: number };
+  // Per-axis M² at segment start, carried separately so the non-paraxial
+  // width correction can recover the divergence param s = M²λ/(πw₀). Optional
+  // (legacy payload → 1.0).
+  m2AtStart?: { x: number; y: number };
   pathLengthMmAtStart: number;
   // Accumulated optical-frequency offset (Hz) of the beam at segment start,
   // relative to the nominal wavelengthNm carrier. Nonzero downstream of an AOM

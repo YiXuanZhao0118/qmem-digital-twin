@@ -26,7 +26,7 @@ from app.optical.anchor_tracer import (
     out_ray_from_state,
     register_anchor_op,
 )
-from app.optical.beam_ray import BeamRay, Vec3
+from app.optical.beam_ray import BeamRay, Vec3, nonparaxial_fundamental_waist_mm
 from app.optical.jones import beam_local_sp, jones_rotation_angle, rotate_jones
 
 
@@ -151,9 +151,13 @@ def _mode_match_eta(ray_in: BeamRay, ctx: AnchorOpContext) -> float:
     if wm_x <= 0.0 or wm_y <= 0.0:
         return 1.0  # mode unspecified — skip the penalty rather than zero out
 
-    # Real seed waist = embedded (q-derived) waist × width_mult (M² + mode).
-    w_seed_x = _gaussian_waist_mm(ray_in.qx, wl) * ray_in.width_mult_x
-    w_seed_y = _gaussian_waist_mm(ray_in.qy, wl) * ray_in.width_mult_y
+    # Real seed waist = non-paraxial fundamental width × transverse-mode
+    # factor (mode_factor = width_mult / √M²). Non-paraxial so a high-NA seed
+    # (tight TA facet / fiber-fed) couples with the correct, bounded spot.
+    mode_fac_x = ray_in.width_mult_x / math.sqrt(ray_in.m2x) if ray_in.m2x > 0 else ray_in.width_mult_x
+    mode_fac_y = ray_in.width_mult_y / math.sqrt(ray_in.m2y) if ray_in.m2y > 0 else ray_in.width_mult_y
+    w_seed_x = nonparaxial_fundamental_waist_mm(ray_in.qx.real, ray_in.qx.imag, ray_in.m2x, wl)[0] * mode_fac_x
+    w_seed_y = nonparaxial_fundamental_waist_mm(ray_in.qy.real, ray_in.qy.imag, ray_in.m2y, wl)[0] * mode_fac_y
     _, off_y, _, off_z = beam_state_from_anchor_hit(ray_in, ctx.hit)
     eta = _overlap_1d(w_seed_x, wm_x, off_y) * _overlap_1d(w_seed_y, wm_y, off_z)
     return max(0.0, min(1.0, eta))

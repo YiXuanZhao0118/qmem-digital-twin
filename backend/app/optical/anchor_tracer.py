@@ -353,6 +353,9 @@ class LabSegment:
     # mode). Real width = (q-derived embedded width) × this. See BeamRay.
     width_mult_x_at_start: float = 1.0
     width_mult_y_at_start: float = 1.0
+    # Per-axis M² at segment start (for the non-paraxial width correction).
+    m2_x_at_start: float = 1.0
+    m2_y_at_start: float = 1.0
 
 
 @dataclass
@@ -435,6 +438,7 @@ def trace_ray_anchor_scene(
                 freq_offset_hz_at_start=ray.freq_offset_hz,
                 width_mult_x_at_start=ray.width_mult_x,
                 width_mult_y_at_start=ray.width_mult_y,
+                m2_x_at_start=ray.m2x, m2_y_at_start=ray.m2y,
             ))
             result.final_rays.append(ray)
             continue
@@ -463,6 +467,7 @@ def trace_ray_anchor_scene(
             freq_offset_hz_at_start=ray.freq_offset_hz,
             width_mult_x_at_start=ray.width_mult_x,
             width_mult_y_at_start=ray.width_mult_y,
+            m2_x_at_start=ray.m2x, m2_y_at_start=ray.m2y,
         ))
 
         # Dispatch op
