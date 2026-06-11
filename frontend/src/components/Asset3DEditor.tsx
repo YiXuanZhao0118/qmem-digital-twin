@@ -2895,66 +2895,26 @@ export function Asset3DEditor({
     if (kindsStatus === "idle") void fetchKinds();
   }, [kindsStatus, fetchKinds]);
 
-  // Domain-scoped asset pool. Three categories:
-  //   - "mechanical": asset.physicsKind is null/empty (raw mounts, posts,
-  //                chassis, annotations). No face-domain expansion --
-  //                mechanical assets have no rf/ttl faces by definition.
-  //   - "rf": asset.physicsKind maps to rf via domainForElementKind
-  //                (includes coarse kinds not in KIND_LABELS -- fallback
-  //                returns "optical" for unknown, so this matches only
-  //                explicit RF_DOMAIN_KINDS members), OR any face.domain
-  //                in {"rf","ttl"} (covers hybrids like AOM whose rf_in
-  //                face is an RF tracer sink -- 禮1 & 禮14). The TTL
-  //                pre-pass (禮7.5) is part of the RF tracer.
-  //   - "optical": everything else with a non-empty physicsKind.
-  //
-  // AOM is the canonical hybrid: kind=aom (optical) so it appears under
-  // Optical AND under RF (via its rf_in face). It does NOT appear under
-  // Mechanical because its kind is non-empty.
+  // Domain-scoped asset pool. Domain is KIND-AUTHORITATIVE ONLY: an asset
+  // appears under exactly its kind's registry domains (`kind.domains`).
+  // There is no per-asset properties.domains override and no faces[].domain
+  // expansion — to change an asset's domain, edit its kind. (Category is a
+  // separate axis that lives on the Component.) Hybrids need no special
+  // case: kind=aom already carries domains=["optical","rf"], so it lands in
+  // both rails straight from the kind.
   const domainAssets = useMemo(() => {
     return assets.filter((asset) => {
       // "all" filter: every asset, regardless of domain.
       if (domain === "all") return true;
       const rawKind = asset.kindId;
-      const override = (asset.properties as { domains?: string[] } | undefined)?.domains;
-      // Domain follows the kind: an asset with a registry kind appears
-      // under that kind's domains. properties.domains may NARROW within
-      // the kind's domains (e.g. an EOM pinned to the optical rail only),
-      // but a stale / disjoint override is ignored — BUILD imports stamp
-      // ["mechanical"] before any kind is assigned, and that must not keep
-      // a mirror out of the Optical rail once kind=mirror is set.
       if (rawKind && rawKind !== "none") {
         const registryKind = kinds.find((k) => k.name === rawKind);
-        if (registryKind) {
-          const narrowed = Array.isArray(override) && override.length > 0
-            ? registryKind.domains.filter((d) => override.includes(d))
-            : registryKind.domains;
-          // Disjoint override (intersection empty) ⇒ fall back to the
-          // kind's full domains rather than hiding the asset everywhere.
-          const effective = narrowed.length > 0 ? narrowed : registryKind.domains;
-          return effective.includes(domain);
-        }
+        if (registryKind) return registryKind.domains.includes(domain);
+        // Legacy kind not in the DB registry: fall back to the static map.
+        return domainForElementKind(rawKind as ElementKind) === domain;
       }
-      // No registry kind below — non-registry / legacy / mechanical
-      // geometry. Keep the prior properties.domains override + heuristic.
-      if (Array.isArray(override) && override.length > 0) {
-        return override.includes(domain);
-      }
-      // Phase 9.12: all rows now have a physics_kind ("none" for the
-      // passive mechanical bucket), so the old "null ??mechanical"
-      // fallback collapses into the regular kind-domain check below.
-      if (!rawKind) return domain === "mechanical";
-      // "none" is the mechanical placeholder kind.
-      if (rawKind === "none") return domain === "mechanical";
-      const kind = rawKind as ElementKind;
-      const kindDomain = domainForElementKind(kind);
-      if (kindDomain === domain) return true;
-      const faceDomains = (asset.faces ?? []).map(
-        (f) => (f.domain ?? "optical"),
-      );
-      if (domain !== "mechanical" && faceDomains.includes(domain)) return true;
-      if (domain === "rf" && faceDomains.includes("ttl")) return true;
-      return false;
+      // No kind / "none" placeholder ⇒ mechanical bucket.
+      return domain === "mechanical";
     });
   }, [assets, domain, kinds]);
 

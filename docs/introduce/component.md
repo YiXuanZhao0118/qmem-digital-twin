@@ -6,7 +6,7 @@
 
 ## Component
 
-**Component** — 目錄「模板」。有 `vendorPart`、一棵 **ComponentBinding 樹**、與對外的 `exposedFaces`。**本身沒有 kind、沒有物理參數**（migration 0094/0095 已把 physics keys 從 components 清空）。
+**Component** — 目錄「模板」。有 `vendorPart`、一棵 **ComponentBinding 樹**、與對外的 `exposedFaces`。**本身沒有物理 kind、沒有物理參數**（migration 0094/0095 已把 physics keys 從 components 清空；物理由綁定的 asset 之 kind 決定）。`Component.kind_id` 仍存在但只是**目錄分類 slug**（非物理）：決定零件庫內層 group 標籤（`typeKey = kindId || "uncategorized"`）與 auto category，composite 預設為 sentinel `"none"`。可在 **PHY Editor COMPONENT tab** 的 `kind_id` 自由文字欄直接編輯（空＝null）；category 另有 `properties.category` override（見 [kinds.md](kinds.md)）。
 
 ## ComponentBinding
 

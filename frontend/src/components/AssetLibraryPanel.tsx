@@ -24,11 +24,11 @@ import { FloatingPanel } from "./workspace/FloatingPanel";
 const EXPANDED_GROUPS_STORAGE_KEY = "qmem.componentGroups.expanded";
 const EXPANDED_CATEGORIES_STORAGE_KEY = "qmem.componentCategories.expanded";
 
-type CategoryKey = "optical" | "electronics" | "mechanical" | "infrastructure" | "misc" | "other";
+export type CategoryKey = "optical" | "electronics" | "mechanical" | "infrastructure" | "misc" | "other";
 
 type CategoryDef = { key: CategoryKey; label: string; order: number };
 
-const CATEGORY_DEFS: Record<CategoryKey, CategoryDef> = {
+export const CATEGORY_DEFS: Record<CategoryKey, CategoryDef> = {
   optical: { key: "optical", label: "Optical", order: 1 },
   electronics: { key: "electronics", label: "Electronics & RF", order: 2 },
   mechanical: { key: "mechanical", label: "Mounts & Mechanics", order: 3 },
@@ -59,6 +59,11 @@ const MISC_TYPES = TYPES_BY_CATEGORY.misc;
 // are deliberately decoupled (category = which catalog section a part lives
 // in; domain = which physics it runs, handled by the asset's kind).
 function categoryForComponent(component: ComponentItem): CategoryDef {
+  // Explicit per-component override (set in the PHY Editor COMPONENT tab)
+  // wins — lets a composite (kindId="none", otherwise "Uncategorized") be
+  // filed under a real category. Falls back to the kind-derived bucket.
+  const override = (component.properties as { category?: string } | undefined)?.category;
+  if (override && override in CATEGORY_DEFS) return CATEGORY_DEFS[override as CategoryKey];
   const componentType = component.kindId?.trim() || "uncategorized";
   if (OPTICAL_TYPES.has(componentType)) return CATEGORY_DEFS.optical;
   if (ELECTRONICS_TYPES.has(componentType)) return CATEGORY_DEFS.electronics;

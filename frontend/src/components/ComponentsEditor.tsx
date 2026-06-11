@@ -44,7 +44,9 @@ import {
   deleteComponentBindingApi,
   resolveAssetUrl,
   type ComponentBindingUpdatePayload,
+  type KindRow,
 } from "../api/client";
+import { CATEGORY_DEFS } from "./AssetLibraryPanel";
 import { useKindsStore } from "../store/kindsStore";
 import { useSceneStore } from "../store/sceneStore";
 import { applyAssetScale, createPrimitive } from "../three/loadAsset/primitive";
@@ -245,35 +247,23 @@ function replaceSpiralTubeWithCylinder(
  *  full list rather than a per-domain boolean — used to render badges on
  *  each component binding row so the user can see at a glance which rail
  *  to find the asset in. */
-function assetDomains(asset: Asset3D): ComposerDomain[] {
+function assetDomains(asset: Asset3D, kinds: KindRow[]): ComposerDomain[] {
+  // Domain is KIND-AUTHORITATIVE ONLY: an asset's domains are exactly its
+  // kind's live registry domains (`kind.domains`). No per-asset
+  // properties.domains override and no faces[].domain expansion — edit the
+  // kind to change the domain. Hybrids need no special case (kind=aom
+  // already carries ["optical","rf"]). Category is a separate axis on the
+  // Component.
   const rawKind = asset.kindId;
-  const override = (asset.properties as { domains?: string[] } | undefined)?.domains;
   if (rawKind && rawKind !== "none") {
-    // Kind is authoritative (same rule as the Asset3D rail bucketing): the
-    // domains come from the kind (+ any rf/ttl faces). A stale / disjoint
-    // properties.domains — e.g. a mirror asset still carrying BUILD's
-    // ["mechanical"] — is IGNORED, so it isn't mislabelled mechanical; a
-    // legitimate override may only NARROW within the kind's domains.
-    const out = new Set<ComposerDomain>();
-    out.add(domainForElementKind(rawKind as ElementKind));
-    for (const f of (asset.faces ?? []) as Array<{ domain?: string }>) {
-      const fd = f.domain ?? "optical";
-      if (fd === "optical" || fd === "rf") out.add(fd);
-      if (fd === "ttl") out.add("rf");
-    }
-    const kindDomains = [...out];
-    if (Array.isArray(override) && override.length > 0) {
-      const narrowed = kindDomains.filter((d) => override.includes(d));
-      if (narrowed.length > 0) return narrowed;
-    }
-    return kindDomains;
-  }
-  // No kind → honour the override, else mechanical.
-  if (Array.isArray(override) && override.length > 0) {
-    return override.filter(
+    const registry = kinds.find((k) => k.name === rawKind);
+    const domains = registry?.domains ?? [domainForElementKind(rawKind as ElementKind)];
+    const out = domains.filter(
       (d): d is ComposerDomain => d === "optical" || d === "rf" || d === "mechanical",
     );
+    return out.length > 0 ? out : ["mechanical"];
   }
+  // No kind / "none" placeholder ⇒ mechanical.
   return ["mechanical"];
 }
 
@@ -923,10 +913,46 @@ export function ComponentsEditor({
                 </div>
               </div>
             )}
-            {/* brand / model are catalog metadata. kind_id and domain are
-                NOT edited here — kind is derived from the bound assets (see
-                "asset kinds" above) and domain follows the kinds
-                (componentDomainById). */}
+            {/* Category override. Empty = auto (derived from the component's
+                kind via categoryForComponent); a value pins the catalog
+                section — lets a composite (kind="none", else "Uncategorized")
+                be filed under a real category. Domain is a separate axis and
+                stays asset-kind-authoritative. */}
+            <div style={{ display: "grid", gridTemplateColumns: "60px 1fr", gap: 8, alignItems: "center", marginBottom: 4, fontSize: 12 }}>
+              <span style={{ color: "#4b5563", fontFamily: "ui-monospace, monospace" }}>category</span>
+              <select
+                value={(selected.properties as { category?: string } | undefined)?.category ?? ""}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  const props = { ...(selected.properties ?? {}) } as Record<string, unknown>;
+                  if (v) props.category = v;
+                  else delete props.category;
+                  void handlePatchComponent({ properties: props });
+                }}
+                style={{ ...inputStyle, width: "100%" }}
+              >
+                <option value="">— auto (from kind) —</option>
+                {Object.values(CATEGORY_DEFS)
+                  .sort((a, b) => a.order - b.order)
+                  .map((c) => (
+                    <option key={c.key} value={c.key}>{c.label}</option>
+                  ))}
+              </select>
+            </div>
+            {/* Free-text Component.kind_id. Drives the catalog's inner group
+                label (typeKey = kindId || "uncategorized") and the auto
+                category. Empty = null (a composite whose kind is derived from
+                its bound assets, shown as "asset kinds" above). Domain is a
+                separate axis on the asset kinds, unaffected by this. */}
+            <IdentityField
+              label="kind_id"
+              value={selected.kindId ?? ""}
+              onCommit={(v) =>
+                handlePatchComponent({ kindId: v.trim() ? v.trim() : null })
+              }
+            />
+            {/* brand / model are catalog metadata. Domain is NOT edited here
+                — it follows the bound assets' kinds (componentDomainById). */}
             {isBindingDev && (
               <>
                 <IdentityField
@@ -1235,7 +1261,7 @@ export function ComponentsEditor({
                         {asset.kindId}
                       </span>
                     )}
-                    {assetDomains(asset).map((d) => (
+                    {assetDomains(asset, kinds).map((d) => (
                       <DomainBadge key={d} domain={d} />
                     ))}
                   </div>
@@ -1334,6 +1360,7 @@ function BindingRow({
   onRemove: () => void;
 }) {
   const isBindingDev = mode === "binding-dev";
+  const kinds = useKindsStore((s) => s.kinds);
   const asset = assets.find((a) => a.id === binding.asset3dId);
   // Candidate parents = every other binding except this one's own
   // descendants. Picking a descendant would create a cycle the backend
@@ -1452,7 +1479,7 @@ function BindingRow({
               </code>
             )}
             <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
-              {assetDomains(asset).map((d) => (
+              {assetDomains(asset, kinds).map((d) => (
                 <DomainBadge key={d} domain={d} />
               ))}
             </div>

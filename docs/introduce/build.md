@@ -20,7 +20,7 @@ BUILD tab 讓你**全程在瀏覽器**把 CAD 變成 catalog 裡的 Asset3D，**
 
 ## kind 與 domain
 
-BUILD 上選的 **kind 決定資產的 domain**（`kind.domains` 為權威）。新匯入的資產**預設 kind = `unclassified`**（migration `0110`）：op_set/params/anchor 全空、`domains=['optical','rf','mechanical']` 全選，所以未分類前會同時出現在三個 domain rail。下拉可改選任一真實 kind。**「無 kind」不是合法狀態**：`assets_3d.kind_id` **NOT NULL**（migration `0111`），下拉已無 `— none —` 空選項，每個 asset 至少是 `unclassified`。前後端多層都保證非 None：前端 `GeometryBuilder` 下拉初值 + ASSET3D 編輯器 save fallback、後端 `v3_catalog.upload_asset3d_v3` 與 PUT 的 `... or "unclassified"`、model/DB 的 `server_default='unclassified'`。domain rail 分桶 kind-authoritative，BUILD 早期殘留的 `properties.domains=["mechanical"]` 不再把已 kinded 的資產困在機械軌。
+BUILD 上選的 **kind 決定資產的 domain**（`kind.domains` 為權威）。新匯入的資產**預設 kind = `unclassified`**（migration `0110`）：op_set/params/anchor 全空、`domains=['optical','rf','mechanical']` 全選，所以未分類前會同時出現在三個 domain rail。下拉可改選任一真實 kind。**「無 kind」不是合法狀態**：`assets_3d.kind_id` **NOT NULL**（migration `0111`），下拉已無 `— none —` 空選項，每個 asset 至少是 `unclassified`。前後端多層都保證非 None：前端 `GeometryBuilder` 下拉初值 + ASSET3D 編輯器 save fallback、後端 `v3_catalog.upload_asset3d_v3` 與 PUT 的 `... or "unclassified"`、model/DB 的 `server_default='unclassified'`。domain rail 分桶**完全 kind-authoritative**：asset 的 domain 只由 `kind.domains` 決定，**不再讀** `properties.domains`（per-asset 覆寫已於 2026-06-11 連同 code 與 DB 資料一併移除）。BUILD 也不再寫入 `properties.domains`。
 
 > **Anchor 不在 BUILD 標**：BUILD 只負責幾何 + 顏色 + kind。anchor（方向 + aperture）在 **ASSET3D tab** 事後標（見 [anchors.md](anchors.md)）。
 
