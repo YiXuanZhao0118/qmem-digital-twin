@@ -47,6 +47,7 @@ backend/uvicorn.out.log
 backend/uvicorn.err.log
 backend/uvicorn-*.log
 backend/uvicorn-*.err.log
+backend/.uvicorn*.log
 
 # Per-user CAD source / STL bakes — UUID-prefixed uploads from
 # Asset3DV3Editor and the AI agent path. Some run hundreds of MB and
