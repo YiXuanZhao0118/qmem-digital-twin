@@ -565,6 +565,19 @@ export function BeamScopeContents() {
         mfdExitUm: number;
       };
     } | null)?.fiberCoupling;
+    // Clear-aperture clipping at the optic THIS segment ends on (lens kinds).
+    // This segment's power is pre-truncation; the loss shows on downstream
+    // segments' absolute power. Surfaced here so the user sees where + how
+    // much the beam is vignetted by the lens aperture.
+    const apertureTruncation = (bestSeg as {
+      apertureTruncation?: {
+        apertureMm: number;
+        wEffMm: number;
+        transmittedFraction: number;
+        transmittance: number;
+        combinedFraction: number;
+      } | null;
+    } | null)?.apertureTruncation ?? null;
     const C_M_PER_S = 299_792_458;
     // AOM Doppler shift to display: prefer the legacy aomSideband (older
     // traces) and fall back to the v3 tracer's per-segment freqOffsetHz —
@@ -615,6 +628,7 @@ export function BeamScopeContents() {
       taSeedCoupling,
       aomSideband,
       fiberCoupling,
+      apertureTruncation,
     };
   }, [probe, physicsElements, overlappingSegments, safeBeamIndex]);
 
@@ -651,6 +665,7 @@ export function BeamScopeContents() {
     taSeedCoupling,
     aomSideband,
     fiberCoupling,
+    apertureTruncation,
   } = snapshot;
   // ─ Spectrum line width (text readout) ───────────────────────────────────
   // Convert each component's FWHM (in MHz) to its FWHM in nm via
@@ -881,6 +896,17 @@ export function BeamScopeContents() {
               {" / "}exit {fiberCoupling.mfdExitUm.toFixed(2)} µm
             </div>
           </>
+        )}
+        {apertureTruncation && (
+          <div>
+            <strong>Aperture</strong>: {(apertureTruncation.combinedFraction * 100).toFixed(1)}% through
+            <span className="beam-scope-power-frac">
+              {" "}(clip {(apertureTruncation.transmittedFraction * 100).toFixed(1)}%
+              {" × "}T {(apertureTruncation.transmittance * 100).toFixed(1)}% · w_eff{" "}
+              {(apertureTruncation.wEffMm * 1000).toFixed(1)} µm / a{" "}
+              {apertureTruncation.apertureMm.toFixed(2)} mm)
+            </span>
+          </div>
         )}
       </div>
 

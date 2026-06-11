@@ -53,6 +53,10 @@ export type V3TraceSegment = {
   /** Optical-frequency offset (Hz) at segment start, relative to the nominal
    *  wavelengthNm carrier. Nonzero downstream of an AOM (order·f_RF). */
   freqOffsetHz: number;
+  /** Clear-aperture clipping at this segment's END optic (lens kinds). Null
+   *  when the end optic doesn't clip. This segment's power is PRE-truncation;
+   *  downstream segments carry the reduced power. */
+  apertureTruncation: V3LabSegment["apertureTruncation"];
 };
 
 function waistFromQ(qImMm: number, wavelengthNm: number): number {
@@ -159,6 +163,7 @@ function adaptOne(seg: V3LabSegment, sourceComponentId: string): V3TraceSegment 
     emissionKey: "main",
     emitterObjectId: seg.emitterSceneObjectId ?? "",
     freqOffsetHz: seg.freqOffsetHz ?? 0,
+    apertureTruncation: seg.apertureTruncation ?? null,
   };
 }
 

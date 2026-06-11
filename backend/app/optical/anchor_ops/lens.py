@@ -17,8 +17,12 @@ Physics — thin-lens approximation per axis:
 
 q-parameter: 1/q' = 1/q − 1/f (applied to both qx and qy for spherical).
 
-Power: preserved (lossless thin lens; AR-coating absorption could be
-added via default_params.transmittance later).
+Power: the chief ray is on-axis at ``optical_center`` by construction, so a
+beam wider than the clear aperture loses the wings — the on-axis Gaussian
+fraction ``1 − exp(−2a²/w²)`` (a = ``anchor.aperture_mm``, w = √(wx·wy)).
+AR-coating / Fresnel loss is the separate ``default_params.transmittance``
+factor. Both are applied to ``power_mw`` (energy half of the aperture story;
+the diffraction *pattern* lives in the POP field channel).
 """
 
 from __future__ import annotations
@@ -30,6 +34,10 @@ from app.optical.anchor_tracer import (
     out_ray_from_state,
     register_anchor_op,
 )
+from app.optical.aperture import (
+    gaussian_circular_aperture_fraction,
+    gaussian_width_mm,
+)
 from app.optical.beam_ray import BeamRay
 
 
@@ -39,6 +47,20 @@ def _q_after_lens(q: complex, f_mm: float) -> complex:
     if abs(denom) < 1e-20:
         return q
     return q / denom
+
+
+def _lens_power_factor(ray_in: BeamRay, ctx: AnchorOpContext) -> float:
+    """Combined power transmission of the lens: clear-aperture clipping ×
+    coating transmittance. ``ray_in`` is already propagated to the hit, so
+    its qx/qy give the spot at the lens. Returns 1.0 when no aperture is
+    defined (``anchor.aperture_mm`` ≤ 0)."""
+    wl = ray_in.wavelength_nm
+    wx = gaussian_width_mm(ray_in.qx, wl)
+    wy = gaussian_width_mm(ray_in.qy, wl)
+    w_eff = (wx * wy) ** 0.5
+    t_ap = gaussian_circular_aperture_fraction(w_eff, ctx.anchor.aperture_mm)
+    transmittance = float(ctx.params.get("transmittance", 1.0))
+    return t_ap * transmittance
 
 
 def lens_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
@@ -60,6 +82,7 @@ def lens_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
     return [out_ray.replaced(
         qx=_q_after_lens(ray_in.qx, f_mm),
         qy=_q_after_lens(ray_in.qy, f_mm),
+        power_mw=ray_in.power_mw * _lens_power_factor(ray_in, ctx),
     )]
 
 
@@ -76,7 +99,10 @@ def lens_cylindrical_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
         z=z, theta_z=theta_z,
         flip_propagation=False,
     )
-    return [out_ray.replaced(qx=_q_after_lens(ray_in.qx, fy_mm))]
+    return [out_ray.replaced(
+        qx=_q_after_lens(ray_in.qx, fy_mm),
+        power_mw=ray_in.power_mw * _lens_power_factor(ray_in, ctx),
+    )]
 
 
 register_anchor_op("lens", lens_anchor_op)

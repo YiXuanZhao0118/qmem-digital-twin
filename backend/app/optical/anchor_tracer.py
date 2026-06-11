@@ -23,6 +23,11 @@ import math
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+from app.optical.aperture import (
+    LENS_KINDS,
+    gaussian_circular_aperture_fraction,
+    gaussian_width_mm,
+)
 from app.optical.beam_ray import BeamRay, Vec3, vec3_distance
 from app.optical.jones import jones_body_to_lab, jones_lab_to_body
 from app.optical.pose import (
@@ -356,6 +361,10 @@ class LabSegment:
     # Per-axis M² at segment start (for the non-paraxial width correction).
     m2_x_at_start: float = 1.0
     m2_y_at_start: float = 1.0
+    # Clear-aperture clipping at this segment's END optic (lens kinds only).
+    # None when the end optic has no finite aperture / isn't a lens. Keys:
+    # apertureMm, wEffMm, transmittedFraction, transmittance, combinedFraction.
+    aperture_truncation: Optional[dict] = None
 
 
 @dataclass
@@ -448,7 +457,7 @@ def trace_ray_anchor_scene(
         hit_lab = point_body_to_lab_t(hit.hit_point_body, slot.effective_transform)
 
         # Lab-frame segment from ray start → this hit
-        result.lab_segments.append(LabSegment(
+        entry_seg = LabSegment(
             start=ray.origin, end=hit_lab,
             wavelength_nm=ray.wavelength_nm, power_mw=ray.power_mw,
             scene_object_id=slot.scene_object_id,
@@ -468,7 +477,8 @@ def trace_ray_anchor_scene(
             width_mult_x_at_start=ray.width_mult_x,
             width_mult_y_at_start=ray.width_mult_y,
             m2_x_at_start=ray.m2x, m2_y_at_start=ray.m2y,
-        ))
+        )
+        result.lab_segments.append(entry_seg)
 
         # Dispatch op
         op = get_anchor_op(slot.asset.kind)
@@ -504,6 +514,26 @@ def trace_ray_anchor_scene(
             asset=slot.asset, anchor=anchor, hit=hit,
             params=merged_params, dynamic=merged_dynamic,
         )
+
+        # Record the clear-aperture clipping the lens op is about to apply, so
+        # the frontend can show "beam clipped X%" / render diffraction rings
+        # (Stage 1 energy half). Uses ray_at_anchor's propagated q = spot at
+        # the lens; the op recomputes the same factor to attenuate power.
+        if slot.asset.kind in LENS_KINDS and anchor.aperture_mm > 0:
+            wl = ray_at_anchor.wavelength_nm
+            w_eff = (
+                gaussian_width_mm(ray_at_anchor.qx, wl)
+                * gaussian_width_mm(ray_at_anchor.qy, wl)
+            ) ** 0.5
+            t_ap = gaussian_circular_aperture_fraction(w_eff, anchor.aperture_mm)
+            transmittance = float(merged_params.get("transmittance", 1.0))
+            entry_seg.aperture_truncation = {
+                "apertureMm": anchor.aperture_mm,
+                "wEffMm": w_eff,
+                "transmittedFraction": t_ap,
+                "transmittance": transmittance,
+                "combinedFraction": t_ap * transmittance,
+            }
 
         out_rays_body = op(ray_at_anchor, ctx)
 

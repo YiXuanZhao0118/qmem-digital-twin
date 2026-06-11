@@ -30,6 +30,7 @@ from app.routers import (
     objects,
     physics_elements,
     optical_links,
+    pop,
     revisions,
     scene,
     simulation_runs,
@@ -66,6 +67,7 @@ app.include_router(components.router, prefix="/api/components", tags=["component
 app.include_router(kinds.router, prefix="/api/kinds", tags=["kinds"])
 app.include_router(v3_catalog.router, prefix="/api")
 app.include_router(v3_solver.router, prefix="/api")
+app.include_router(pop.router, prefix="/api")
 app.include_router(
     component_bindings.component_scoped,
     prefix="/api/components",

@@ -6,6 +6,7 @@
 
 - `GET /api/health` → `{"ok": true}`；`GET /api/scene` — 場景快照
 - `POST /api/v3/solver/run-from-db` — 對持久化場景跑光學 trace（產生光束段：dir、pol、命中面）
+- `POST /api/v3/pop` — **on-demand** 物理光學繞射：給透鏡處光束半徑+孔徑+焦距，回傳焦平面 Airy 強度網格（繞射環）。絕不進 live trace。見 [optics.md](optics.md) POP 場通道
 - `GET /api/v3/catalog/...`、`/api/v3/assets3d`、`/api/v3/components`
 - `/api/timing-programs`、`/api/rf-chains/nodes`、`/api/coils`、`/api/magnetics-problems`、`/api/simulation-runs`、`/api/touchstone/parse`、`/api/app-settings/{key}`
 - 靜態：`/assets/files/...`；Swagger：`/docs`；WebSocket：`/ws/scene`

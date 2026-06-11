@@ -40,6 +40,30 @@ emitter 不等入射光，主動種出初始 `BeamRay`（`emit_anchor_source_ray
 - helper：`beam_ray.nonparaxial_fundamental_waist_mm`（後端）/ `v3TraceAdapter.nonparaxialFundamentalWaistUm`（前端，同公式）。**M² 需在 readout 取得**，故 `m2x/m2y` 與 `width_mult` 一起沿 ray→`LabSegment`→`to_dict`(`m2AtStart`)→前端傳遞；`mode_factor=width_mult/√M²`。套用點：optical-link 錐管寬度、TA mode-match（`misc_ops._mode_match_eta`）。
 - **fiber mode-match** 之後接同一個 helper（同樣的高 NA 問題、同樣的解）。
 
+## 透鏡與通光孔徑能量截斷（POP Stage 1，2026-06-11）
+
+透鏡 op `anchor_ops/lens.py`（`lens`/`lens_biconvex`/`lens_plano_convex`/`lens_cylindrical`）除了 `1/q'=1/q−1/f` 的 ABCD，現在還對 `power_mw` 套兩個衰減因子（`_lens_power_factor`，`lens.py:44`）：
+
+- **通光孔徑裁切**：chief ray 在 `optical_center` 必過光軸，故光斑比 `anchor.aperture_mm`（半徑）寬時邊緣被擋。能量穿透率用 on-axis 高斯封閉解 **`T_ap = 1 − exp(−2a²/w²)`**，`w = √(wx·wy)`、`a = anchor.aperture_mm`。
+- **鍍膜穿透率**：`default_params.transmittance`（缺省 1.0），AR/Fresnel 損耗。
+- `power_out = P_in · T_ap · transmittance`。**唯一真值來源** `optical/aperture.py`（`gaussian_circular_aperture_fraction` + `gaussian_width_mm`），前端 `profileUtils.ts` 同公式；tracer 與 op 都呼叫它，永不分歧。
+- **向後相容**：無 aperture（`apertureMm=0`）或無 transmittance 的舊透鏡資產 → 因子 1.0，功率不變；一般細光束（w≪a）→ `T_ap≈1`。
+
+**顯示**：tracer 在「進入透鏡」那段 `LabSegment.aperture_truncation`（`anchor_tracer.py`，僅 `LENS_KINDS` + `aperture_mm>0`）記 `{apertureMm, wEffMm, transmittedFraction, transmittance, combinedFraction}` → `solver.to_dict` 的 `apertureTruncation` → `v3TraceAdapter` → BeamScopePanel 顯示「Aperture: X% through」。**注意**：descriptor 在「進入」段（功率為截斷前）；實際功率下降反映在透鏡**下游**段的 `power_mw`（自動經 `nominalPowerMwAtSource` 流到 scope 的 `P` 讀數）。
+
+- **這是能量半**：同一個截斷產生的**繞射環（Airy）圖樣**屬波動場，q-引擎不畫（見上「限制」）；繞射 *pattern* 由獨立的 **POP 場通道**處理（見下），3D 場景光束仍為高斯錐。偏振/RF/AOM/fiber 一律留在 q 通道。
+- **A230TM-B**（Thorlabs 非球面，`kind=lens_plano_convex`）：`default_params.focalLengthMm=4.51`（op 讀此 key，**非** Object 面板的 `focalMm`）、`clearApertureMm=4.95`、`transmittance=0.995`；intercept anchor 的 `apertureMm=2.475`（=clearAperture/2，半徑）。
+
+## POP 場通道：透鏡焦平面繞射（Stage 2，2026-06-11）
+
+**標量 2D 複數場引擎**，與 q-tracer **平行並存、不取代**。把被有限通光孔徑截斷的光束 → 焦平面 **Airy 繞射環**（q 通道畫不出的東西）。
+
+- **引擎** `optical/pop_field.py`：`PopField`（N×N complex numpy 場 + pitch + λ）。運算子 `seed_gaussian`/`seed_plane_wave`、`apply_circular_aperture`（硬截斷→種繞射）、`apply_thin_lens`（`exp(−i k r²/2f)`）、`propagate_asm`（**角譜法**自由空間傳播，近/遠場皆精確、evanescent 歸零）、`focal_plane`（透鏡 = 前焦面到後焦面的精確傅立葉變換，輸出 pitch=`λf/(N·pitch_in)`，均勻圓孔→Airy 首零 `1.22λf/D`）、`radial_profile`、`downsample_intensity`（**中心裁切**到 k·out_n 再 block-average → 軸心留在輸出中央；角落裁切會把 Airy peak 移位，這是實作過的 bug）。
+- **橋接** `optical/pop_pass.py`：`lens_focal_airy_pattern(w_at_lens_mm, aperture_mm, f_mm, wavelength_nm)`。幾何（透鏡處光束半徑 w、孔徑半徑 a、焦距 f）**由 q 通道供給、不在此重算**（前端 `gaussianWidthMm(q)` 已知 w）。流程：在透鏡處種 w 寬高斯 → 孔徑硬截斷 → `focal_plane(f)` → 裁到 ±6 Airy 零點 → 降採樣。回傳 `{size, halfExtentUm, pitchUm, firstNullUm, clipFraction, intensity[peak-normalized], diffractionLimited}`。v1 限制：入射平相位（忽略入射波前曲率，環主要由截斷產生）、單透鏡焦平面視圖。
+- **端點** `POST /api/v3/pop`（`routers/pop.py`，**on-demand 專用**，絕不進 `/api/v3/solver` live trace）：body `{wAtLensUm, apertureMm, focalLengthMm, wavelengthNm, gridN?, outN?}` → 上述 payload。前端在 beam-scope 探測截斷透鏡下游時呼叫。
+- **物理驗證**（`tests/optical/test_pop_field.py` + `test_pop_pass.py`）：圓孔焦面 = Airy（首零在 `1.22λf/D` 8% 內 + 確認有環）、自由空間高斯 `w(zR)=w0√2`（6% 內）、高斯過孔徑能量比 = Stage 1 `1−exp(−2a²/w²)`（3% 內）。Live A230TM-B 端點徑向切面確認中央亮斑→暗環→次環。
+- **尚未做**：Stage 3（把 payload grid 餵進 BeamScopePanel `sampleIntensity` 畫出環）、偵測器影像面、astigmatic 場（v1 方格、可種橢圓高斯）、入射曲率、任意下游平面（非焦面）。
+
 ## RF tracer
 
 RF **不是** ray tracer——沒有波前/Jones/q。它在 port 鄰接圖上做 **graph BFS**，攜帶 `RfSignalState{frequencyMhz, vpp, cumulativeGainDb, saturated, …}`。常數 `AD9959_VPP_FULL_SCALE=1.0V`、`RF_LOAD_Z=50Ω`、`P=Vpp²/(8Z)`。AOM 是**hybrid**——同時是 ray tracer 的光學元件與 RF tracer 的 RF sink；RF 經 BFS 灌到 `signalAtPort[(aom,"rf_in")]`，AOM RF 設定值優先序：**dynamicSources（手動）> RF tracer > defaultParams.centerFreqMhz**。RF 鏈的時序面（AD9959 通道、PPG）見 [timing.md](timing.md)。

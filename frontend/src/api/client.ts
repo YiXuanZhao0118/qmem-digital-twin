@@ -288,6 +288,17 @@ export type V3LabSegment = {
   // relative to the nominal wavelengthNm carrier. Nonzero downstream of an AOM
   // (order·f_RF). Absent on older payloads ⇒ 0.
   freqOffsetHz?: number;
+  // Clear-aperture clipping at this segment's END optic (lens kinds with a
+  // finite aperture). Null/absent when the end optic doesn't clip. The
+  // segment's own powerMw is PRE-truncation; downstream segments carry the
+  // already-reduced power. See backend anchor_tracer.py.
+  apertureTruncation?: {
+    apertureMm: number;
+    wEffMm: number;
+    transmittedFraction: number;
+    transmittance: number;
+    combinedFraction: number;
+  } | null;
 };
 
 export type V3SolverResult = {
