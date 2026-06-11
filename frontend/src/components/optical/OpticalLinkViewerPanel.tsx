@@ -499,6 +499,10 @@ type LiveTraceSegment = {
   lengthMm: number;
   waistAtStartUm: number;
   waistAtEndUm: number;
+  // Y-axis (qy) widths for the astigmatic elliptical tube; equal to X for a
+  // circular beam.
+  waistAtStartUmY: number;
+  waistAtEndUmY: number;
   powerFactorAtStart: number;
   nominalPowerMwAtSource?: number;
   polarizationAtStart: [number, number, number, number];
@@ -1189,6 +1193,7 @@ export function OpticalLinkViewerContent({
                 `${s.endThree.x},${s.endThree.y},${s.endThree.z}|` +
                 `${s.hitObjectId ?? ""}|${s.wavelengthNm}|` +
                 `${s.waistAtStartUm.toFixed(3)}|${s.waistAtEndUm.toFixed(3)}|` +
+                `${(s.waistAtStartUmY ?? 0).toFixed(3)}|${(s.waistAtEndUmY ?? 0).toFixed(3)}|` +
                 `${(s.nominalPowerMwAtSource ?? 0).toFixed(6)}|` +
                 `${s.powerFactorAtStart.toFixed(6)}|` +
                 `${s.polarizationAtStart.map((v) => v.toFixed(6)).join(",")}`,
@@ -1249,25 +1254,44 @@ export function OpticalLinkViewerContent({
 
         const colour = wavelengthToColor(seg.wavelengthNm);
 
-        // CylinderGeometry supports independent top/bottom radii — perfect
-        // for a Gaussian taper between waistAtStartUm and waistAtEndUm.
-        // The geometry runs along +Y from -length/2 to +length/2 with the
-        // BOTTOM at -Y (start) and TOP at +Y (end), so radiusTop ↔ end.
-        const wStartUm = Math.max(seg.waistAtStartUm, VISUAL_FLOOR_UM);
-        const wEndUm = Math.max(seg.waistAtEndUm, VISUAL_FLOOR_UM);
-        // µm → mm → Three units (1 Three unit = 100 mm), with the same
-        // VISUAL_BOOST multiplier the main scene uses so the panel's
-        // beams match the main viewer's apparent thickness.
-        const radiusStartScene = mmToThree(wStartUm / 1000) * VISUAL_BOOST;
-        const radiusEndScene = mmToThree(wEndUm / 1000) * VISUAL_BOOST;
-        const tubeGeom = new THREE.CylinderGeometry(
-          radiusEndScene, // radiusTop
-          radiusStartScene, // radiusBottom
-          length,
-          16,
-          1,
-          true,
-        );
+        // Elliptical Gaussian taper: independent X (qx) and Y (qy) widths at
+        // each end so an astigmatic beam renders an ELLIPTICAL tube (a
+        // circular beam degenerates to the old round cylinder). Each axis is
+        // floored independently so a micron waist stays visible.
+        // µm → mm → Three units (1 unit = 100 mm) × the same VISUAL_BOOST the
+        // main scene uses.
+        const toScene = (um: number) =>
+          mmToThree(Math.max(um, VISUAL_FLOOR_UM) / 1000) * VISUAL_BOOST;
+        const rxStart = toScene(seg.waistAtStartUm);    // X half-width @ start
+        const rxEnd = toScene(seg.waistAtEndUm);        // X half-width @ end
+        const ryStart = toScene(seg.waistAtStartUmY);   // Y half-width @ start
+        const ryEnd = toScene(seg.waistAtEndUmY);       // Y half-width @ end
+        // Local frame: +Y = beam axis, +X = beam-local s, +Z = beam-local p,
+        // so the ellipse axes track the astigmatism axes (spatialModeX ∥ s).
+        // (Convention; flip s/p if the major axis points the wrong way.)
+        const sHat = new THREE.Vector3().crossVectors(direction, yAxis);
+        if (sHat.lengthSq() < 1e-9) {
+          sHat.crossVectors(direction, new THREE.Vector3(1, 0, 0));
+        }
+        sHat.normalize();
+        const pHat = new THREE.Vector3().crossVectors(sHat, direction).normalize();
+        const RING = 24;
+        const pos: number[] = [];
+        const idx: number[] = [];
+        for (let i = 0; i <= RING; i++) {
+          const a = (i / RING) * Math.PI * 2;
+          const cx = Math.cos(a), cz = Math.sin(a);
+          pos.push(rxStart * cx, -length / 2, ryStart * cz); // start ring (2i)
+          pos.push(rxEnd * cx, length / 2, ryEnd * cz);      // end ring   (2i+1)
+        }
+        for (let i = 0; i < RING; i++) {
+          const s0 = i * 2, e0 = i * 2 + 1, s1 = (i + 1) * 2, e1 = (i + 1) * 2 + 1;
+          idx.push(s0, e0, s1, s1, e0, e1);
+        }
+        const tubeGeom = new THREE.BufferGeometry();
+        tubeGeom.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+        tubeGeom.setIndex(idx);
+        tubeGeom.computeVertexNormals();
         const tubeMat = new THREE.MeshBasicMaterial({
           color: colour,
           side: THREE.DoubleSide,
@@ -1276,7 +1300,11 @@ export function OpticalLinkViewerContent({
         });
         const tube = new THREE.Mesh(tubeGeom, tubeMat);
         tube.position.copy(start).addScaledVector(direction, length / 2);
-        tube.quaternion.setFromUnitVectors(yAxis, direction);
+        // Orient local (X,Y,Z) → (sHat, direction, pHat) so the ellipse axes
+        // align with the astigmatism axes (not an arbitrary roll).
+        tube.quaternion.setFromRotationMatrix(
+          new THREE.Matrix4().makeBasis(sHat, direction, pHat),
+        );
         // Skinny centreline so a near-focus pinch is still visible.
         const lineGeom = new THREE.BufferGeometry().setFromPoints([
           new THREE.Vector3(0, -length / 2, 0),

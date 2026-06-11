@@ -42,6 +42,10 @@ export type V3TraceSegment = {
   wavelengthNm: number;
   waistAtStartUm: number;
   waistAtEndUm: number;
+  // Y-axis (qy) widths for the astigmatic 3D tube. Equal to the X widths for
+  // a circular beam; differ for an astigmatic one.
+  waistAtStartUmY: number;
+  waistAtEndUmY: number;
   sourceComponentId: string;
   pathLengthFromSourceMmAtStart: number;
   powerFactorAtStart: number;
@@ -117,19 +121,24 @@ function adaptOne(seg: V3LabSegment, sourceComponentId: string): V3TraceSegment 
   // for legacy/circular payloads that don't carry it.
   const qyStart = seg.qyAtStart ?? qxStart;
   const qxEnd = { re: qxStart.re + lengthMm, im: qxStart.im };
+  const qyEnd = { re: qyStart.re + lengthMm, im: qyStart.im };
   // q carries the EMBEDDED fundamental Gaussian (M²-reduced z_R → correct
   // divergence; Re(q) → waist offset). The REAL transverse width is the
   // embedded width × widthMult, which folds √(M²) and the high-order
-  // transverse-mode factor. Absent (legacy payload) → 1.0. The 3D taper cone
-  // is axisymmetric so it uses the x-axis only; the 2D beam-scope profile
-  // reads beamMode.x/.y, so those are kept per-axis (astigmatism shows there).
+  // transverse-mode factor. Absent (legacy payload) → 1.0. Per-axis from
+  // qx/qy so an astigmatic beam renders an elliptical 3D tube + 2D profile.
   const widthMultX = seg.widthMultAtStart?.x ?? 1;
   const widthMultY = seg.widthMultAtStart?.y ?? widthMultX;
   const m2x = seg.m2AtStart?.x ?? 1;
+  const m2y = seg.m2AtStart?.y ?? m2x;
   // Transverse-mode width factor only (M² lives in the non-paraxial helper).
   const modeFacX = m2x > 0 ? widthMultX / Math.sqrt(m2x) : widthMultX;
+  const modeFacY = m2y > 0 ? widthMultY / Math.sqrt(m2y) : widthMultY;
   const waistAtStartUm = nonparaxialFundamentalWaistUm(qxStart.re, qxStart.im, m2x, seg.wavelengthNm) * modeFacX;
   const waistAtEndUm = nonparaxialFundamentalWaistUm(qxEnd.re, qxEnd.im, m2x, seg.wavelengthNm) * modeFacX;
+  // Y-axis (qy) widths — drive the 3D tube's minor/major ellipse axis.
+  const waistAtStartUmY = nonparaxialFundamentalWaistUm(qyStart.re, qyStart.im, m2y, seg.wavelengthNm) * modeFacY;
+  const waistAtEndUmY = nonparaxialFundamentalWaistUm(qyEnd.re, qyEnd.im, m2y, seg.wavelengthNm) * modeFacY;
 
   // Minimum waist (z=0): non-paraxiality doesn't change the waist itself,
   // only the far-field, so the simple paraxial readout × width_mult holds.
@@ -159,6 +168,8 @@ function adaptOne(seg: V3LabSegment, sourceComponentId: string): V3TraceSegment 
     wavelengthNm: seg.wavelengthNm,
     waistAtStartUm,
     waistAtEndUm,
+    waistAtStartUmY,
+    waistAtEndUmY,
     sourceComponentId,
     pathLengthFromSourceMmAtStart: seg.pathLengthMmAtStart,
     powerFactorAtStart: 1.0,
