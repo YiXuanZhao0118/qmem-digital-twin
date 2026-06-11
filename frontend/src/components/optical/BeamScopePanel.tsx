@@ -840,12 +840,14 @@ export function BeamScopeContents() {
       : null;
   const usePop = popPattern != null && popSampler != null;
 
-  // ─ World-axis orientation (profile in object-sense x/y/z) ──────────────
-  // The profile heatmap shows the plane TRANSVERSE to propagation. Derive the
-  // two world axes ⊥ to the beam from its lab direction (object-sense
-  // X = (1,0,0)) and label the heatmap with them; rotate the content 90° so
-  // the orientation matches the scene. (Verify direction/labels in the UI —
-  // flip the sign in `rot` or swap `transverse[0]/[1]` if mirrored.)
+  // ─ World-axis orientation (ANALYTIC profile only) ──────────────────────
+  // The analytic beam profile shows the plane TRANSVERSE to propagation, so
+  // label it with the two world axes ⊥ to the beam (from its lab direction,
+  // object-sense X = (1,0,0)) and rotate the content 90° to match the scene.
+  // The POP focal-plane diffraction (Airy) view is EXCLUDED — it lives in the
+  // lens focal-plane's own coordinates, so it stays unrotated and labeled
+  // "x, y · focal plane". (Verify the analytic orientation in the UI — flip
+  // `sampleIntensity(y,-x)`→`(-y,x)` or swap `transverse[0]/[1]` if mirrored.)
   const activeSeg = overlappingSegments[safeBeamIndex] as
     (RawSegment & { dirLab?: { x: number; y: number; z: number } }) | undefined;
   const dirLab = activeSeg?.dirLab ?? { x: 1, y: 0, z: 0 };
@@ -853,17 +855,19 @@ export function BeamScopeContents() {
   const propIdx = absC.indexOf(Math.max(absC[0], absC[1], absC[2]));
   const transverse = ["x", "y", "z"].filter((_, i) => i !== propIdx);
 
-  const baseSample = usePop ? popSampler! : sampleIntensity;
-  // 90° rotation of the displayed content (request #2).
-  const profileSample = (x: number, y: number) => baseSample(y, -x);
+  const profileSample = usePop
+    ? popSampler!
+    : (x: number, y: number) => sampleIntensity(y, -x); // 90° (analytic only)
   const profileHalf = usePop ? popPattern!.halfExtentUm : profileHalfUm;
   const profileTitle = usePop
     ? `Beam profile  diffraction (POP) · focal plane · 1st null ${popPattern!.firstNullUm.toFixed(2)} µm`
     : tmKind === "LG_pl"
     ? `Beam profile  ${modeLabel}  ·  w_eff ${wEffUm.toFixed(1)} µm`
     : `Beam profile  ${modeLabel}  ·  w ${wxUm.toFixed(1)} × ${wyUm.toFixed(1)} µm`;
-  const profileAxisLabel = `${transverse[0]} (µm)${usePop ? " · focal plane" : ""}`;
-  const profileAxisLabelY = transverse[1];
+  const profileAxisLabel = usePop
+    ? "x, y (µm) · focal plane"
+    : `${transverse[0]} (µm)`;
+  const profileAxisLabelY = usePop ? undefined : transverse[1];
 
   // ─ Pulse temporal (CW = constant, pulsed = envelope) ────────────────────
   const isCw = true;
