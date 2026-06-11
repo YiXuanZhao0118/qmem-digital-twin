@@ -113,13 +113,18 @@ function adaptOne(seg: V3LabSegment, sourceComponentId: string): V3TraceSegment 
   );
 
   const qxStart = seg.qxAtStart ?? { re: 0, im: 0 };
+  // qy is tracked independently by the backend (astigmatism). Fall back to qx
+  // for legacy/circular payloads that don't carry it.
+  const qyStart = seg.qyAtStart ?? qxStart;
   const qxEnd = { re: qxStart.re + lengthMm, im: qxStart.im };
   // q carries the EMBEDDED fundamental Gaussian (M²-reduced z_R → correct
   // divergence; Re(q) → waist offset). The REAL transverse width is the
   // embedded width × widthMult, which folds √(M²) and the high-order
-  // transverse-mode factor. Absent (legacy payload) → 1.0. The cone uses the
-  // x-axis multiplier (the taper is built from qx).
+  // transverse-mode factor. Absent (legacy payload) → 1.0. The 3D taper cone
+  // is axisymmetric so it uses the x-axis only; the 2D beam-scope profile
+  // reads beamMode.x/.y, so those are kept per-axis (astigmatism shows there).
   const widthMultX = seg.widthMultAtStart?.x ?? 1;
+  const widthMultY = seg.widthMultAtStart?.y ?? widthMultX;
   const m2x = seg.m2AtStart?.x ?? 1;
   // Transverse-mode width factor only (M² lives in the non-paraxial helper).
   const modeFacX = m2x > 0 ? widthMultX / Math.sqrt(m2x) : widthMultX;
@@ -128,13 +133,16 @@ function adaptOne(seg: V3LabSegment, sourceComponentId: string): V3TraceSegment 
 
   // Minimum waist (z=0): non-paraxiality doesn't change the waist itself,
   // only the far-field, so the simple paraxial readout × width_mult holds.
-  const w0Um = waistFromQ(qxStart.im, seg.wavelengthNm) * widthMultX;
-  // Cumulative path-length at the waist (µm) relative to emitter.
-  // q.re = (z − z_waist) → z_waist_um = (path_at_start − qx_re) × 1000.
-  const waistZUm = (seg.pathLengthMmAtStart - qxStart.re) * 1000;
+  // Per-axis from qx/qy so an astigmatic beam renders an elliptical profile.
+  const w0xUm = waistFromQ(qxStart.im, seg.wavelengthNm) * widthMultX;
+  const w0yUm = waistFromQ(qyStart.im, seg.wavelengthNm) * widthMultY;
+  // Cumulative path-length at the waist (µm) relative to emitter, per axis.
+  // q.re = (z − z_waist) → z_waist_um = (path_at_start − q_re) × 1000.
+  const waistZxUm = (seg.pathLengthMmAtStart - qxStart.re) * 1000;
+  const waistZyUm = (seg.pathLengthMmAtStart - qyStart.re) * 1000;
   const beamMode: BeamState = {
-    x: { waist0Um: w0Um, waistZUm, mSquared: 1 },
-    y: { waist0Um: w0Um, waistZUm, mSquared: 1 },
+    x: { waist0Um: w0xUm, waistZUm: waistZxUm, mSquared: 1 },
+    y: { waist0Um: w0yUm, waistZUm: waistZyUm, mSquared: 1 },
     wavelengthNm: seg.wavelengthNm,
   };
 
