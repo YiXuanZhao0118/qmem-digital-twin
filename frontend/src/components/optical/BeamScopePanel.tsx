@@ -37,6 +37,8 @@ type HeatmapProps = {
   colour: ColourMap;
   title: string;
   axisLabel: string;
+  /** Optional vertical-axis label (world axis letter). */
+  axisLabelY?: string;
   valueLabelMin?: string;
   valueLabelMax?: string;
 };
@@ -50,6 +52,7 @@ function Heatmap({
   colour,
   title,
   axisLabel,
+  axisLabelY,
   valueLabelMin,
   valueLabelMax,
 }: HeatmapProps) {
@@ -106,6 +109,7 @@ function Heatmap({
         </div>
         <div className="beam-scope-heatmap-axis-y">
           <span>+{halfExtentUm.toFixed(0)}</span>
+          {axisLabelY && <span>{axisLabelY}</span>}
           <span>−{halfExtentUm.toFixed(0)}</span>
         </div>
       </div>
@@ -835,14 +839,31 @@ export function BeamScopeContents() {
         }
       : null;
   const usePop = popPattern != null && popSampler != null;
-  const profileSample = usePop ? popSampler! : sampleIntensity;
+
+  // ─ World-axis orientation (profile in object-sense x/y/z) ──────────────
+  // The profile heatmap shows the plane TRANSVERSE to propagation. Derive the
+  // two world axes ⊥ to the beam from its lab direction (object-sense
+  // X = (1,0,0)) and label the heatmap with them; rotate the content 90° so
+  // the orientation matches the scene. (Verify direction/labels in the UI —
+  // flip the sign in `rot` or swap `transverse[0]/[1]` if mirrored.)
+  const activeSeg = overlappingSegments[safeBeamIndex] as
+    (RawSegment & { dirLab?: { x: number; y: number; z: number } }) | undefined;
+  const dirLab = activeSeg?.dirLab ?? { x: 1, y: 0, z: 0 };
+  const absC = [Math.abs(dirLab.x), Math.abs(dirLab.y), Math.abs(dirLab.z)];
+  const propIdx = absC.indexOf(Math.max(absC[0], absC[1], absC[2]));
+  const transverse = ["x", "y", "z"].filter((_, i) => i !== propIdx);
+
+  const baseSample = usePop ? popSampler! : sampleIntensity;
+  // 90° rotation of the displayed content (request #2).
+  const profileSample = (x: number, y: number) => baseSample(y, -x);
   const profileHalf = usePop ? popPattern!.halfExtentUm : profileHalfUm;
   const profileTitle = usePop
     ? `Beam profile  diffraction (POP) · focal plane · 1st null ${popPattern!.firstNullUm.toFixed(2)} µm`
     : tmKind === "LG_pl"
     ? `Beam profile  ${modeLabel}  ·  w_eff ${wEffUm.toFixed(1)} µm`
-    : `Beam profile  ${modeLabel}  ·  w_x ${wxUm.toFixed(1)}, w_y ${wyUm.toFixed(1)} µm`;
-  const profileAxisLabel = usePop ? "x, y (µm) · focal plane" : "x, y (µm)";
+    : `Beam profile  ${modeLabel}  ·  w ${wxUm.toFixed(1)} × ${wyUm.toFixed(1)} µm`;
+  const profileAxisLabel = `${transverse[0]} (µm)${usePop ? " · focal plane" : ""}`;
+  const profileAxisLabelY = transverse[1];
 
   // ─ Pulse temporal (CW = constant, pulsed = envelope) ────────────────────
   const isCw = true;
@@ -1028,6 +1049,7 @@ export function BeamScopeContents() {
           colour={thermalColour}
           title={profileTitle}
           axisLabel={profileAxisLabel}
+          axisLabelY={profileAxisLabelY}
         />
 
         <PlotFrame title={isCw ? "Pulse |E(t)|² · CW" : "Pulse |E(t)|²"} xLabel="t (ps)" yLabel="‖E‖²"

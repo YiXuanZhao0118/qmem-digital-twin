@@ -57,6 +57,10 @@ export type V3TraceSegment = {
   /** Optical-frequency offset (Hz) at segment start, relative to the nominal
    *  wavelengthNm carrier. Nonzero downstream of an AOM (order·f_RF). */
   freqOffsetHz: number;
+  /** Unit propagation direction in LAB / object-sense mm coords (object-sense
+   *  X = (1,0,0)). Used to label the beam-profile heatmap with the two world
+   *  axes transverse to the beam. */
+  dirLab: { x: number; y: number; z: number };
   /** Clear-aperture clipping at this segment's END optic (lens kinds). Null
    *  when the end optic doesn't clip. This segment's power is PRE-truncation;
    *  downstream segments carry the reduced power. */
@@ -183,6 +187,13 @@ function adaptOne(seg: V3LabSegment, sourceComponentId: string): V3TraceSegment 
     emitterObjectId: seg.emitterSceneObjectId ?? "",
     freqOffsetHz: seg.freqOffsetHz ?? 0,
     apertureTruncation: seg.apertureTruncation ?? null,
+    dirLab: (() => {
+      const dx = seg.end.x - seg.start.x;
+      const dy = seg.end.y - seg.start.y;
+      const dz = seg.end.z - seg.start.z;
+      const m = Math.hypot(dx, dy, dz) || 1;
+      return { x: dx / m, y: dy / m, z: dz / m };
+    })(),
   };
 }
 
