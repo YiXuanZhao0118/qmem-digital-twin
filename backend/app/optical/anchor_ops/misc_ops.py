@@ -151,8 +151,9 @@ def _mode_match_eta(ray_in: BeamRay, ctx: AnchorOpContext) -> float:
     if wm_x <= 0.0 or wm_y <= 0.0:
         return 1.0  # mode unspecified — skip the penalty rather than zero out
 
-    w_seed_x = _gaussian_waist_mm(ray_in.qx, wl)
-    w_seed_y = _gaussian_waist_mm(ray_in.qy, wl)
+    # Real seed waist = embedded (q-derived) waist × width_mult (M² + mode).
+    w_seed_x = _gaussian_waist_mm(ray_in.qx, wl) * ray_in.width_mult_x
+    w_seed_y = _gaussian_waist_mm(ray_in.qy, wl) * ray_in.width_mult_y
     _, off_y, _, off_z = beam_state_from_anchor_hit(ray_in, ctx.hit)
     eta = _overlap_1d(w_seed_x, wm_x, off_y) * _overlap_1d(w_seed_y, wm_y, off_z)
     return max(0.0, min(1.0, eta))

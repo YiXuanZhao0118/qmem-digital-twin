@@ -275,6 +275,10 @@ export type V3LabSegment = {
   jones: [{ re: number; im: number }, { re: number; im: number }];
   qxAtStart: { re: number; im: number };
   qyAtStart: { re: number; im: number };
+  // Per-axis embedded-Gaussian width multiplier (M² + transverse mode). Real
+  // transverse width = (q-derived embedded width) × widthMult. Optional for
+  // back-compat with cached/legacy payloads (treated as 1.0 when absent).
+  widthMultAtStart?: { x: number; y: number };
   pathLengthMmAtStart: number;
   // Accumulated optical-frequency offset (Hz) of the beam at segment start,
   // relative to the nominal wavelengthNm carrier. Nonzero downstream of an AOM

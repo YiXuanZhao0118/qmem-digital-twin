@@ -89,10 +89,16 @@ function adaptOne(seg: V3LabSegment, sourceComponentId: string): V3TraceSegment 
 
   const qxStart = seg.qxAtStart ?? { re: 0, im: 0 };
   const qxEnd = { re: qxStart.re + lengthMm, im: qxStart.im };
-  const waistAtStartUm = waistAtZFromQ(qxStart.re, qxStart.im, seg.wavelengthNm);
-  const waistAtEndUm = waistAtZFromQ(qxEnd.re, qxEnd.im, seg.wavelengthNm);
+  // q carries the EMBEDDED fundamental Gaussian (M²-reduced z_R → correct
+  // divergence; Re(q) → waist offset). The REAL transverse width is the
+  // embedded width × widthMult, which folds √(M²) and the high-order
+  // transverse-mode factor. Absent (legacy payload) → 1.0. The cone uses the
+  // x-axis multiplier (the taper is built from qx).
+  const widthMultX = seg.widthMultAtStart?.x ?? 1;
+  const waistAtStartUm = waistAtZFromQ(qxStart.re, qxStart.im, seg.wavelengthNm) * widthMultX;
+  const waistAtEndUm = waistAtZFromQ(qxEnd.re, qxEnd.im, seg.wavelengthNm) * widthMultX;
 
-  const w0Um = waistFromQ(qxStart.im, seg.wavelengthNm);
+  const w0Um = waistFromQ(qxStart.im, seg.wavelengthNm) * widthMultX;
   // Cumulative path-length at the waist (µm) relative to emitter.
   // q.re = (z − z_waist) → z_waist_um = (path_at_start − qx_re) × 1000.
   const waistZUm = (seg.pathLengthMmAtStart - qxStart.re) * 1000;

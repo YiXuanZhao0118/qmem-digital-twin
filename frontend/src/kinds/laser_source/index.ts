@@ -38,6 +38,12 @@ export interface LaserSourceParams extends Record<string, unknown> {
   spatialModeX: GaussianMode;
   spatialModeY: GaussianMode;
   transverseMode: { kind: string };
+  // Transverse-mode control (decoupled from the decorative `transverseMode`
+  // label). The emitter folds these into the per-axis beam-width multiplier
+  // (LG: √(2p+|l|+1) both axes; HG: x=√(2m+1), y=√(2n+1)). 0/0 = TEM00.
+  transverseModeType: "HG" | "LG";
+  mode_index_1: number; // HG m (X order) / LG p (radial)
+  mode_index_2: number; // HG n (Y order) / LG l (azimuthal topological charge)
   polarization: JonesVector;
   nominalPowerMw: number;
 }
@@ -75,6 +81,9 @@ export const laserSourcePlugin = definePhysicsPlugin<LaserSourceParams>({
       spatialModeX: { waistUm: 250, waistZOffsetMm: 0, mSquared: 1.05 },
       spatialModeY: { waistUm: 80, waistZOffsetMm: 1.2, mSquared: 1.30 },
       transverseMode: { kind: "TEM00" },
+      transverseModeType: "HG",
+      mode_index_1: 0,
+      mode_index_2: 0,
       polarization: { exRe: 1, exIm: 0, eyRe: 0, eyIm: 0 },
       nominalPowerMw: 50.0,
     },

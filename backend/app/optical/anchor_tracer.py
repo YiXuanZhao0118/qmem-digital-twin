@@ -349,6 +349,10 @@ class LabSegment:
     qy_im_at_start: float = 0.0
     path_length_mm_at_start: float = 0.0
     freq_offset_hz_at_start: float = 0.0
+    # Embedded-Gaussian width multiplier at segment start (M² + transverse
+    # mode). Real width = (q-derived embedded width) × this. See BeamRay.
+    width_mult_x_at_start: float = 1.0
+    width_mult_y_at_start: float = 1.0
 
 
 @dataclass
@@ -429,6 +433,8 @@ def trace_ray_anchor_scene(
                 qy_re_at_start=ray.qy.real, qy_im_at_start=ray.qy.imag,
                 path_length_mm_at_start=ray.path_length_mm,
                 freq_offset_hz_at_start=ray.freq_offset_hz,
+                width_mult_x_at_start=ray.width_mult_x,
+                width_mult_y_at_start=ray.width_mult_y,
             ))
             result.final_rays.append(ray)
             continue
@@ -455,6 +461,8 @@ def trace_ray_anchor_scene(
             qy_re_at_start=ray.qy.real, qy_im_at_start=ray.qy.imag,
             path_length_mm_at_start=ray.path_length_mm,
             freq_offset_hz_at_start=ray.freq_offset_hz,
+            width_mult_x_at_start=ray.width_mult_x,
+            width_mult_y_at_start=ray.width_mult_y,
         ))
 
         # Dispatch op

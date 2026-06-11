@@ -21,6 +21,19 @@
 - 舊的 legacy chain solver（`optical_solver.py` + `rf_propagation.py` + `optics_seq` 的 solve_chain）已於 Phase 1（migration ~0094 期）**刪除**；Lab「Run」按鈕現在也走此引擎。RF 的圖傳播現由 `rf_resolve.py` 負責（見 [cable.md](cable.md)）。
 - 前端 `optical/` 的 TypeScript 光追引擎（`ray-tracer-v3.ts` 等，**face-based**）是**平行、尚未上線**的實作，目前只被 vitest 引用、main.tsx 到不了，但有完整 parity 測試 + golden fixtures——**勿當廢案刪**。
 
+## 雷射源發射與高斯傳播（emit_laser_source.py）
+
+emitter 不等入射光，主動種出初始 `BeamRay`（`emit_anchor_source_rays`）。beam propagation 由 **複數 q 參數**（per-axis `qx`/`qy`，支援像散）+ **embedded-Gaussian** 法控制。`laser_source` defaultParams（可被 `SceneObject.dynamic_sources` per-instance 覆寫）：
+
+- `centerWavelengthNm`（λ）、`nominalPowerMw`（P）、`polarization`（Jones，在 anchor axisY/axisZ 基底）。
+- `spatialModeX/Y.waistUm`（束腰 w₀）、`.mSquared`（M²）、`.waistZOffsetMm`（束腰沿 +axisX 的位置偏移）。
+- `transverseModeType`(`"HG"`/`"LG"`) + `mode_index_1`/`mode_index_2`（HG=m/n；LG=p/l）。
+
+**理論（embedded-Gaussian，`emit_laser_source._q_at_waist_mm`）**：
+- 種光 `q₀ = -z_offset + i·z_R`，**`z_R = π·w₀²/(M²·λ)`** —— q 帶的是「embedded 基模」，其發散已被 M² 放大（遠場半角 `θ = M²λ/(πw₀)`），自動沿每個 ABCD op 正確傳播（lens `1/q'=1/q−1/f`、自由空間 `q+z`）。
+- **真實橫向寬度 = (q 推導的 embedded 寬度) × `BeamRay.width_mult`**，其中 `width_mult = √(M²) × 模態因子`（LG：兩軸 `√(2p+|l|+1)`；HG：x=`√(2m+1)`、y=`√(2n+1)`）。`width_mult_x/y` 隨 ray 沿 `.replaced()` 傳播，經 `LabSegment.width_mult_*_at_start` → solver `to_dict` 的 `widthMultAtStart` → 前端 `v3TraceAdapter.waistAtZFromQ × widthMultX` 還原真實錐管寬度；TA mode-match（`misc_ops._mode_match_eta`）也乘此倍率。
+- **限制**：高階模態在此幾何錐管裡**只放大等效寬度，不畫 donut/lobe 形狀**（真正環形需 2D 複振幅波動場，本引擎不含）。`waistZOffsetMm` 透過 `Re(q)` 自然流到前端，無需前端改動。
+
 ## RF tracer
 
 RF **不是** ray tracer——沒有波前/Jones/q。它在 port 鄰接圖上做 **graph BFS**，攜帶 `RfSignalState{frequencyMhz, vpp, cumulativeGainDb, saturated, …}`。常數 `AD9959_VPP_FULL_SCALE=1.0V`、`RF_LOAD_Z=50Ω`、`P=Vpp²/(8Z)`。AOM 是**hybrid**——同時是 ray tracer 的光學元件與 RF tracer 的 RF sink；RF 經 BFS 灌到 `signalAtPort[(aom,"rf_in")]`，AOM RF 設定值優先序：**dynamicSources（手動）> RF tracer > defaultParams.centerFreqMhz**。RF 鏈的時序面（AD9959 通道、PPG）見 [timing.md](timing.md)。

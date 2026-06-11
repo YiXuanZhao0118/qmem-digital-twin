@@ -92,6 +92,16 @@ class BeamRay:
     # their freq_offset_hz (no catastrophic cancellation).
     freq_offset_hz: float = 0.0
 
+    # Embedded-Gaussian per-axis width multiplier (M²/mode upgrade). qx/qy
+    # carry the EMBEDDED fundamental Gaussian (its z_R already reduced by M²
+    # so divergence is correct); the REAL transverse width = (q-derived
+    # embedded width) × width_mult. width_mult folds √(M²) and the high-order
+    # transverse-mode factor (LG: √(2p+|l|+1) both axes; HG: x=√(2m+1),
+    # y=√(2n+1)). 1.0 = TEM00, M²=1. Pure readout scale — does NOT affect
+    # propagation, so it rides unchanged through every ABCD op via replaced().
+    width_mult_x: float = 1.0
+    width_mult_y: float = 1.0
+
     # Bookkeeping
     parent_id: Optional[str] = None
     exclude_face_key: Optional[str] = None

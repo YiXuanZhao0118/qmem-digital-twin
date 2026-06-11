@@ -34,13 +34,50 @@ from app.optical.jones import jones_axis_to_lab
 from app.optical.pose import dir_body_to_lab_t, point_body_to_lab_t
 
 
-def _q_at_waist_mm(w0_um: float, wavelength_nm: float) -> complex:
+def _q_at_waist_mm(
+    w0_um: float, wavelength_nm: float, m2: float = 1.0, z_offset_mm: float = 0.0,
+) -> complex:
+    """Embedded-Gaussian q at the emit point.
+
+    z_R is reduced by M² (``zR = π·w₀²/(M²·λ)``) so the EMBEDDED fundamental
+    Gaussian carried in q diverges at the real, M²-enhanced rate. ``Re(q) =
+    -z_offset`` places the beam waist ``z_offset`` mm downstream (+axisX) of
+    the emit anchor — the emit point sits ``z_offset`` before the waist.
+    The real transverse width is recovered downstream by multiplying the
+    q-derived embedded width by ``√(M²)`` (folded into BeamRay.width_mult).
+    """
     if w0_um <= 0 or wavelength_nm <= 0:
         return complex(0.0, 0.0)
     w0_mm = w0_um / 1000.0
     lam_mm = wavelength_nm * 1e-6
-    zR_mm = math.pi * w0_mm * w0_mm / lam_mm
-    return complex(0.0, zR_mm)
+    m2_eff = m2 if (m2 and m2 > 0) else 1.0
+    zR_mm = math.pi * w0_mm * w0_mm / (m2_eff * lam_mm)
+    return complex(-z_offset_mm, zR_mm)
+
+
+def _mode_factors(default_params: dict, dynamic: dict) -> tuple[float, float]:
+    """Per-axis effective-WIDTH multiplier from the transverse mode.
+
+    ``transverseModeType`` + ``mode_index_1`` / ``mode_index_2`` (per-instance
+    dynamic_sources win over asset default_params):
+      - HG: x × √(2m+1), y × √(2n+1)  (m=index_1, n=index_2)
+      - LG: both axes × √(2p+|l|+1)   (p=index_1, l=index_2)
+    Absent / TEM00 → (1.0, 1.0). This scales only the displayed width, not
+    propagation (the donut/lobe SHAPE is not modelled by the q-tracer).
+    """
+    for src in (dynamic, default_params):
+        mt = (src or {}).get("transverseModeType")
+        if isinstance(mt, str) and mt.strip():
+            i1 = int((src or {}).get("mode_index_1", 0) or 0)
+            i2 = int((src or {}).get("mode_index_2", 0) or 0)
+            kind = mt.strip().upper()
+            if kind == "HG":
+                return (math.sqrt(2 * abs(i1) + 1), math.sqrt(2 * abs(i2) + 1))
+            if kind == "LG":
+                f = math.sqrt(2 * abs(i1) + abs(i2) + 1)
+                return (f, f)
+            break
+    return (1.0, 1.0)
 
 
 def _pick_polarization(dynamic: dict, default_params: dict) -> tuple[complex, complex]:
@@ -88,26 +125,40 @@ def _ray_from_anchor(
         lambda v: dir_body_to_lab_t(v, slot_transform),
     )
 
-    def _waist_um(axis_key: str, fallback: float) -> float:
+    def _mode_field(axis_key: str, field: str, fallback: float, positive: bool) -> float:
         # Per-instance spatial mode (SceneObject.dynamic_sources) wins over the
-        # asset default_params, so a per-object beam waist / divergence applies.
+        # asset default_params, so per-object beam waist / M² / waist offset apply.
         for src in (dynamic, default_params):
             mode = (src or {}).get(axis_key)
-            if isinstance(mode, dict) and isinstance(mode.get("waistUm"), (int, float)) and mode["waistUm"] > 0:
-                return float(mode["waistUm"])
+            if isinstance(mode, dict) and isinstance(mode.get(field), (int, float)):
+                v = float(mode[field])
+                if not positive or v > 0:
+                    return v
         return fallback
 
-    w0_x = _waist_um("spatialModeX", 250.0)
-    w0_y = _waist_um("spatialModeY", w0_x)
-    qx = _q_at_waist_mm(w0_x, wavelength_nm)
-    qy = _q_at_waist_mm(w0_y, wavelength_nm)
+    w0_x = _mode_field("spatialModeX", "waistUm", 250.0, positive=True)
+    w0_y = _mode_field("spatialModeY", "waistUm", w0_x, positive=True)
+    m2_x = _mode_field("spatialModeX", "mSquared", 1.0, positive=True)
+    m2_y = _mode_field("spatialModeY", "mSquared", 1.0, positive=True)
+    zoff_x = _mode_field("spatialModeX", "waistZOffsetMm", 0.0, positive=False)
+    zoff_y = _mode_field("spatialModeY", "waistZOffsetMm", 0.0, positive=False)
+    qx = _q_at_waist_mm(w0_x, wavelength_nm, m2_x, zoff_x)
+    qy = _q_at_waist_mm(w0_y, wavelength_nm, m2_y, zoff_y)
+
+    # Real width = embedded (q-derived) width × √(M²) × transverse-mode factor.
+    fac_x, fac_y = _mode_factors(default_params, dynamic)
+    width_mult_x = math.sqrt(m2_x) * fac_x
+    width_mult_y = math.sqrt(m2_y) * fac_y
 
     return make_beam_ray(
         origin=origin_lab,
         direction=dir_lab,
         wavelength_nm=wavelength_nm,
         power_mw=power_mw,
-    ).replaced(jones=jones_lab, qx=qx, qy=qy)
+    ).replaced(
+        jones=jones_lab, qx=qx, qy=qy,
+        width_mult_x=width_mult_x, width_mult_y=width_mult_y,
+    )
 
 
 def emit_anchor_source_rays(
