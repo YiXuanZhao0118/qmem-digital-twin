@@ -533,6 +533,9 @@ def trace_ray_anchor_scene(
                 "transmittedFraction": t_ap,
                 "transmittance": transmittance,
                 "combinedFraction": t_ap * transmittance,
+                # Focal length so the frontend can request the focal-plane Airy
+                # pattern (POP) for this lens via /api/v3/pop.
+                "focalLengthMm": float(merged_params.get("focalLengthMm", 0.0)),
             }
 
         out_rays_body = op(ray_at_anchor, ctx)

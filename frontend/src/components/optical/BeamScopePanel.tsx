@@ -7,6 +7,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { fetchPopLensFocalApi, type PopLensFocalResult } from "../../api/client";
 import { useSceneStore } from "../../store/sceneStore";
 import { FloatingPanel } from "../workspace/FloatingPanel";
 import { useWorkspace } from "../workspace/WorkspaceProvider";
@@ -632,6 +633,79 @@ export function BeamScopeContents() {
     };
   }, [probe, physicsElements, overlappingSegments, safeBeamIndex]);
 
+  // ─ POP focal-plane diffraction (Stage 3) ───────────────────────────────
+  // If the active beam's chain contains a lens whose clear aperture truncates
+  // it, the focal-plane intensity is a real Airy pattern — not the analytic
+  // Gaussian. Find that lens (nearest to the probe) and request its pattern
+  // from /api/v3/pop. The geometry (beam width at lens, aperture, focal) is
+  // sourced from the q-channel trace's apertureTruncation descriptor.
+  const truncLens = useMemo(() => {
+    const seg = overlappingSegments[safeBeamIndex] as
+      | (RawSegment & { emitterObjectId?: string })
+      | undefined;
+    const emitter = seg?.emitterObjectId ?? seg?.sourceObjectId;
+    if (!emitter) return null;
+    type TruncSeg = {
+      emitterObjectId?: string;
+      wavelengthNm?: number;
+      pathLengthFromSourceMmAtStart?: number;
+      lengthMm?: number;
+      apertureTruncation?: {
+        apertureMm: number;
+        wEffMm: number;
+        focalLengthMm: number;
+        combinedFraction: number;
+      } | null;
+    };
+    const all = ((window as unknown as { __rayTraceDebug?: TruncSeg[] }).__rayTraceDebug) ?? [];
+    const pz = probe?.zMm ?? 0;
+    const cands = all
+      .filter((s) =>
+        s.emitterObjectId === emitter &&
+        s.apertureTruncation != null &&
+        s.apertureTruncation.combinedFraction < 0.999 &&
+        s.apertureTruncation.focalLengthMm > 0)
+      .map((s) => ({
+        at: s.apertureTruncation!,
+        wl: s.wavelengthNm ?? 780,
+        lensZ: (s.pathLengthFromSourceMmAtStart ?? 0) + (s.lengthMm ?? 0),
+      }));
+    if (cands.length === 0) return null;
+    cands.sort((a, b) => Math.abs(a.lensZ - pz) - Math.abs(b.lensZ - pz));
+    const c = cands[0];
+    return {
+      apertureMm: c.at.apertureMm,
+      wEffUm: c.at.wEffMm * 1000,
+      focalLengthMm: c.at.focalLengthMm,
+      wavelengthNm: c.wl,
+      clip: c.at.combinedFraction,
+    };
+  }, [overlappingSegments, safeBeamIndex, probe]);
+
+  const [popPattern, setPopPattern] = useState<PopLensFocalResult | null>(null);
+  useEffect(() => {
+    if (!truncLens) {
+      setPopPattern(null);
+      return;
+    }
+    let cancelled = false;
+    fetchPopLensFocalApi({
+      wAtLensUm: truncLens.wEffUm,
+      apertureMm: truncLens.apertureMm,
+      focalLengthMm: truncLens.focalLengthMm,
+      wavelengthNm: truncLens.wavelengthNm,
+      outN: 128,
+    })
+      .then((r) => { if (!cancelled) setPopPattern(r); })
+      .catch(() => { if (!cancelled) setPopPattern(null); });
+    return () => { cancelled = true; };
+  }, [
+    truncLens?.wEffUm,
+    truncLens?.apertureMm,
+    truncLens?.focalLengthMm,
+    truncLens?.wavelengthNm,
+  ]);
+
   if (!probe || !snapshot) {
     return (
       <p className="empty-state">Click on a beam segment to probe.</p>
@@ -737,6 +811,38 @@ export function BeamScopeContents() {
     const Hn = hermiteH(hgN, xiY);
     return I0 * Hm * Hm * Hn * Hn * env;
   };
+
+  // ─ POP focal-plane sampler (Stage 3) ──────────────────────────────────
+  // When a POP pattern is available, the beam-profile heatmap shows the lens
+  // FOCAL-PLANE Airy diffraction (peak-normalized grid from /api/v3/pop)
+  // instead of the analytic Gaussian. Bilinear-sample the grid; image +y is
+  // up (row 0 = top = +halfExtent).
+  const popSampler =
+    popPattern
+      ? (xUm: number, yUm: number) => {
+          const n = popPattern.size;
+          const half = popPattern.halfExtentUm;
+          const u = ((xUm + half) / (2 * half)) * (n - 1);
+          const v = ((half - yUm) / (2 * half)) * (n - 1);
+          if (u < 0 || u > n - 1 || v < 0 || v > n - 1) return 0;
+          const x0 = Math.floor(u), y0 = Math.floor(v);
+          const x1 = Math.min(x0 + 1, n - 1), y1 = Math.min(y0 + 1, n - 1);
+          const fx = u - x0, fy = v - y0;
+          const d = popPattern.intensity;
+          const top = d[y0 * n + x0] * (1 - fx) + d[y0 * n + x1] * fx;
+          const bot = d[y1 * n + x0] * (1 - fx) + d[y1 * n + x1] * fx;
+          return top * (1 - fy) + bot * fy;
+        }
+      : null;
+  const usePop = popPattern != null && popSampler != null;
+  const profileSample = usePop ? popSampler! : sampleIntensity;
+  const profileHalf = usePop ? popPattern!.halfExtentUm : profileHalfUm;
+  const profileTitle = usePop
+    ? `Beam profile  diffraction (POP) · focal plane · 1st null ${popPattern!.firstNullUm.toFixed(2)} µm`
+    : tmKind === "LG_pl"
+    ? `Beam profile  ${modeLabel}  ·  w_eff ${wEffUm.toFixed(1)} µm`
+    : `Beam profile  ${modeLabel}  ·  w_x ${wxUm.toFixed(1)}, w_y ${wyUm.toFixed(1)} µm`;
+  const profileAxisLabel = usePop ? "x, y (µm) · focal plane" : "x, y (µm)";
 
   // ─ Pulse temporal (CW = constant, pulsed = envelope) ────────────────────
   const isCw = true;
@@ -913,19 +1019,15 @@ export function BeamScopeContents() {
       <div className="beam-scope-grid">
         <Heatmap
           size={140}
-          halfExtentUm={profileHalfUm}
-          sample={sampleIntensity}
+          halfExtentUm={profileHalf}
+          sample={profileSample}
           vmin={0}
-          /* HG (m,n>0) and LG modes have peaks that shift off-axis or
-             exceed I₀ (TEM₀₀'s peak), so let the heatmap auto-range. */
-          vmax={tmKind === "LG_pl" || hgM > 0 || hgN > 0 ? undefined : I0}
+          /* POP grid is peak-normalized (auto-range). HG (m,n>0) / LG peaks
+             shift off-axis or exceed I₀, so those also auto-range. */
+          vmax={usePop || tmKind === "LG_pl" || hgM > 0 || hgN > 0 ? undefined : I0}
           colour={thermalColour}
-          title={
-            tmKind === "LG_pl"
-              ? `Beam profile  ${modeLabel}  ·  w_eff ${wEffUm.toFixed(1)} µm`
-              : `Beam profile  ${modeLabel}  ·  w_x ${wxUm.toFixed(1)}, w_y ${wyUm.toFixed(1)} µm`
-          }
-          axisLabel="x, y (µm)"
+          title={profileTitle}
+          axisLabel={profileAxisLabel}
         />
 
         <PlotFrame title={isCw ? "Pulse |E(t)|² · CW" : "Pulse |E(t)|²"} xLabel="t (ps)" yLabel="‖E‖²"

@@ -189,6 +189,35 @@ export async function runAomSidebandsApi(
   return response.data;
 }
 
+// ── POP: lens focal-plane diffraction (Airy) pattern ───────────────────────
+export type PopLensFocalRequest = {
+  wAtLensUm: number;
+  apertureMm: number;
+  focalLengthMm: number;
+  wavelengthNm: number;
+  outN?: number;
+};
+export type PopLensFocalResult = {
+  size: number;
+  halfExtentUm: number;
+  pitchUm: number;
+  firstNullUm: number;
+  clipFraction: number;
+  intensity: number[]; // row-major size*size, peak-normalized 0..1
+  diffractionLimited: boolean;
+};
+
+/** On-demand physical-optics focal-plane diffraction pattern for a lens whose
+ *  clear aperture truncates the beam. The geometry (beam width at the lens,
+ *  aperture, focal) comes from the q-channel trace. Backend: POST /api/v3/pop
+ *  (app/optical/pop_pass.py). NEVER part of the live solver. */
+export async function fetchPopLensFocalApi(
+  req: PopLensFocalRequest,
+): Promise<PopLensFocalResult> {
+  const response = await client.post<PopLensFocalResult>("/api/v3/pop", req);
+  return response.data;
+}
+
 
 // =============================================================================
 // Kind catalog (alembic 0086). See docs/asset-physics-model.md §6.
@@ -298,6 +327,7 @@ export type V3LabSegment = {
     transmittedFraction: number;
     transmittance: number;
     combinedFraction: number;
+    focalLengthMm: number;
   } | null;
 };
 
