@@ -1159,9 +1159,11 @@ export function OpticalLinkViewerContent({
         setChainEmitterIdsRef.current(chainIds);
       }
 
-      const segments = chainIds.size === 0
-        ? []
-        : allSegments.filter((s) => chainIds.has(s.emitterObjectId));
+      // Beams: take EVERY v3 trace segment, exactly like the main viewer's
+      // renderRayTraces (no per-emitter / chain filtering). chainIds is still
+      // computed above for the folded-TA state + the warnings poll, but it no
+      // longer gates what the panel draws.
+      const segments = allSegments;
 
       // Per-instance objectBinding deltas feed into the wireframe
       // pose (Pass 3). Fold a digest of them into the content key so
@@ -1178,7 +1180,7 @@ export function OpticalLinkViewerContent({
             `${ob.asset3dIdOverride ?? ""}`,
         )
         .join(";");
-      const key = chainIds.size === 0
+      const key = segments.length === 0
         ? `(none)|${obDigest}`
         : segments
             .map(
