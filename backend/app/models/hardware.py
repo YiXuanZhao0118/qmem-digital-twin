@@ -71,8 +71,13 @@ class Asset3D(Base):
     # Asset-Physics-Model v3 (alembic 0082). Nullable while v2 anchors-based
     # data coexists. See docs/asset-physics-model.md for schema.
     catalog_id: Mapped[str | None] = mapped_column(Text, unique=False)
-    # Classification slug (alembic 0089/0090). Pointer into the Kind registry.
-    kind_id: Mapped[str | None] = mapped_column(Text)
+    # Classification slug (alembic 0089/0090). Pointer into the Kind
+    # registry. NOT NULL since 0111 — every asset has at least the
+    # all-domain, no-physics "unclassified" placeholder (0110). A kindless
+    # Asset3D is no longer a representable state.
+    kind_id: Mapped[str] = mapped_column(
+        Text, nullable=False, default="unclassified", server_default="unclassified"
+    )
     default_params: Mapped[JsonDict | None] = mapped_column(JSONB)
     wavelength_range_nm: Mapped[list[float] | None] = mapped_column(
         sa.ARRAY(sa.Float())

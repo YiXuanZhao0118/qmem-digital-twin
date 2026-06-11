@@ -253,7 +253,10 @@ class Asset3DBase(CamelModel):
     # locked into the bespoke pbsOverlay path.
     properties: JsonDict = Field(default_factory=dict)
     catalog_id: str | None = None
-    kind_id: str | None = None
+    # NOT NULL since alembic 0111 — defaults to the all-domain "unclassified"
+    # placeholder. A null kind is rejected at validation; an omitted one
+    # defaults here. (Asset3DUpdate keeps it optional for partial PATCH.)
+    kind_id: str = "unclassified"
     default_params: JsonDict | None = None
     wavelength_range_nm: list[float] | None = None
 

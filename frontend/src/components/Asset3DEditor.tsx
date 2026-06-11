@@ -281,7 +281,7 @@ function draftFromAsset(asset: V3Asset): AssetDraft {
   const props = (asset.properties ?? {}) as Record<string, unknown>;
   return {
     name: asset.name ?? "",
-    kindId: asset.kindId ?? "",
+    kindId: asset.kindId ?? "unclassified",
     wavelengthMinNm: n(asset.wavelengthRangeNm?.[0]),
     wavelengthMaxNm: n(asset.wavelengthRangeNm?.[1]),
     properties: props,
@@ -1023,7 +1023,9 @@ function draftToPatch(draft: AssetDraft): V3AssetUpdate {
   const nameValue = draft.name.trim();
   if (!nameValue) throw new Error("name is required");
 
-  const kindIdValue = draft.kindId.trim() || null;
+  // kind_id is NOT NULL (alembic 0111) — an empty draft falls back to the
+  // "unclassified" placeholder rather than clearing the asset's kind.
+  const kindIdValue = draft.kindId.trim() || "unclassified";
   return {
     name: nameValue,
     kindId: kindIdValue,

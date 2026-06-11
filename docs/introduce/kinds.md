@@ -31,3 +31,6 @@
 ## 每 kind 契約
 
 每 kind 契約：前端註冊渲染器（`kinds/<kind>/`）+ 後端物理（**live：`optical/anchor_ops/<kind>.py` 的 anchor op**；face-based `optical/kinds/<kind>/physics.py` 已退役）+ `kinds.json` 參數。代表性 defaultParams：laser 780.241nm/50mW；AOM v=4200 m/s、n=2.26、baseEfficiency 0.85；glan_polarizer wedge 38.5°、ER 55dB；TA gain 30dB、sat 500mW。
+
+- **`op_set_name`（kind → code op 的間接層）**：kind metadata 在 DB，但物理 op 實作永遠在 code（`optical/registry.py`）。每筆 kind 用 `op_set_name` 指向一組已註冊的 code op set。內建 kind `op_set_name == name`；UI 自建變體可指向現有 op set 來**複用**物理（如 `my_custom_lens` → `op_set_name='lens_biconvex'`），不必改 code。dispatch：`get_op(kind, op)` 先查 registry，查不到才用 `op_set_name` fallback（`optical/db_kinds.py`）。
+- **被動 / placeholder kind**：`op_set_name='none'` ＝ 無物理 op、tracer 不對它跑任何 op（如 `isolator` 外殼）。`unclassified`（migration `0110`）即此類：`domains=['optical','rf','mechanical']` 全選、params/anchor 全空，作為 **BUILD 新匯入的預設 kind**（見 [build.md](build.md)），未分類前同時現身三個 domain rail。**invariant：`assets_3d.kind_id` NOT NULL（migration `0111`）**——asset 不存在「無 kind」狀態，至少是 `unclassified`；`components.kind_id` 則仍可 NULL（composite component）。

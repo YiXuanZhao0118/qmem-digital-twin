@@ -194,9 +194,12 @@ export function GeometryBuilder() {
   const [editUsage, setEditUsage] = useState<V3AssetUsage | null>(null);
   const [catalogId, setCatalogId] = useState("");
   const [name, setName] = useState("");
-  // Kind drives the asset's domain (kind.domains is authoritative); empty =
-  // no kind = mechanical / no-physics, matching the old "mechanical" default.
-  const [kindId, setKindId] = useState<string>("");
+  // Kind drives the asset's domain (kind.domains is authoritative). New
+  // imports default to "unclassified" (migration 0110): all-domain +
+  // no-physics, so a fresh model surfaces under every rail until classified.
+  // A kindless asset is not allowed (kind_id NOT NULL, 0111) — there is no
+  // "none" option; pick a real kind in the dropdown to (re)classify.
+  const [kindId, setKindId] = useState<string>("unclassified");
   const [sourceTris, setSourceTris] = useState(0);
   const [displayTris, setDisplayTris] = useState(0);
   const [estMB, setEstMB] = useState(0);
@@ -917,7 +920,7 @@ export function GeometryBuilder() {
         setEditingCatalogId(catId);
         setCatalogId(catId);
         setName(asset.name || catId);
-        setKindId(asset.kindId ?? "");
+        setKindId(asset.kindId ?? "unclassified");
         setInfo(
           procedural
             ? `Editing "${catId}" (${loaded.length} mesh(es)) — Save bakes procedural → static GLB (parameters stop driving geometry).`
@@ -1042,7 +1045,7 @@ export function GeometryBuilder() {
           file: glbToFile(glb, catalogId),
           catalogId,
           name: name.trim(),
-          kindId: kindId || undefined,
+          kindId: kindId || "unclassified",
           preserveColors: true,
         });
         setInfo(`Saved “${catalogId}” (${mb} MB). Place anchors in the ASSET3D tab.`);
@@ -1272,7 +1275,6 @@ export function GeometryBuilder() {
                   : "Domain is derived from the chosen kind (kind.domains)."}
                 style={{ ...INPUT, opacity: editingCatalogId ? 0.6 : 1 }}
               >
-                <option value="">— none (mechanical / no physics) —</option>
                 {kindId && !kinds.some((k) => k.name === kindId) && (
                   <option value={kindId}>{kindId} (legacy)</option>
                 )}

@@ -150,7 +150,8 @@ class Asset3DV3Out(CamelModel):
     file_path: str
     unit: str = "mm"
     scale_factor: float = 1.0
-    kind_id: Optional[str] = None
+    # NOT NULL since alembic 0111 — always carries at least "unclassified".
+    kind_id: str
     anchors: Optional[list[dict[str, Any]]] = None
     default_params: Optional[dict[str, Any]] = None
     wavelength_range_nm: Optional[list[float]] = None

@@ -208,10 +208,10 @@ async def upload_asset3d_v3(
     }
     # Domain is NOT stamped into properties — it derives from the asset's
     # kind (kind.domains). A stored properties.domains is a redundant copy
-    # that drifts: a BUILD import has no kind yet (kind_id="none" below), so
-    # stamping ["mechanical"] here would stick even after the user assigns
-    # kind=mirror. Kindless assets bucket as mechanical via the kind-derived
-    # fallback, so nothing is lost by omitting it.
+    # that drifts: a BUILD import defaults to kind="unclassified" (below), so
+    # stamping a domain here would stick even after the user assigns
+    # kind=mirror. The "unclassified" placeholder kind (migration 0110) is
+    # all-domain + no-physics, so a kindless import surfaces under every rail.
 
     row = Asset3D(
         catalog_id=catalog_id,
@@ -222,7 +222,7 @@ async def upload_asset3d_v3(
         unit=unit,
         scale_factor=scale_factor,
         anchors=[],
-        kind_id=kind_id or ("none" if domain == "mechanical" else None),
+        kind_id=kind_id or "unclassified",
         default_params={},
         properties=properties,
     )
@@ -378,7 +378,9 @@ async def update_asset3d_by_catalog_id(
     if "name" in fields and payload.name is not None:
         row.name = payload.name
     if "kind_id" in fields:
-        row.kind_id = payload.kind_id
+        # kind_id is NOT NULL (0111); a null/empty edit falls back to the
+        # "unclassified" placeholder rather than blanking the column.
+        row.kind_id = payload.kind_id or "unclassified"
     if "anchors" in fields:
         # Phase 9.8: editor's primary write path. Replaces faces[]/
         # transitions[] over time. Pass-through-store as camelCase dicts
