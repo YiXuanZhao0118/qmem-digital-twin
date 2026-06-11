@@ -44,7 +44,7 @@ import { anchorObjectLocalAxisX, anchorObjectLocalPos } from "../../utils/anchor
 import { mmToThree, labRootSwapInverseQuaternion, labRootSwapQuaternion } from "../../optical/frames";
 import { VIEWER_BG_LIGHT, VIEWER_GRID_LINE, VIEWER_GRID_CENTER } from "../../three/viewerTheme";
 import { domainForElementKind, kindIdToElementKind } from "../../utils/elementDefaults";
-import { BeamScopeContents } from "./BeamScopePanel";
+import { BeamScopeContents, beamWidthsUmAtPathMm, type SegmentBeamMode } from "./BeamScopePanel";
 import { OpticalSettingPanel } from "../physics/OpticalSettingPanel";
 
 const EMITTER_KINDS: ReadonlySet<string> = new Set([
@@ -503,6 +503,10 @@ type LiveTraceSegment = {
   // circular beam.
   waistAtStartUmY: number;
   waistAtEndUmY: number;
+  // Per-axis q-parameter Gaussian snapshot. Lets the 3D tube sample the true
+  // analytic width along the segment (intra-segment focus) — same math as the
+  // scope plot. Optional: legacy payloads without it fall back to endpoint lerp.
+  beamMode?: SegmentBeamMode;
   powerFactorAtStart: number;
   nominalPowerMwAtSource?: number;
   polarizationAtStart: [number, number, number, number];
@@ -1262,10 +1266,25 @@ export function OpticalLinkViewerContent({
         // main scene uses.
         const toScene = (um: number) =>
           mmToThree(Math.max(um, VISUAL_FLOOR_UM) / 1000) * VISUAL_BOOST;
-        const rxStart = toScene(seg.waistAtStartUm);    // X half-width @ start
-        const rxEnd = toScene(seg.waistAtEndUm);        // X half-width @ end
-        const ryStart = toScene(seg.waistAtStartUmY);   // Y half-width @ start
-        const ryEnd = toScene(seg.waistAtEndUmY);       // Y half-width @ end
+        // Half-widths at axial fraction t ∈ [0,1] along the segment. With a
+        // beamMode we sample the TRUE analytic Gaussian (same q-parameter math
+        // as the scope plot) so a focus INSIDE the segment — e.g. just past a
+        // lens — renders as a real pinch instead of the straight start→end cone
+        // a 2-ring linear taper draws. Legacy payloads (no beamMode) fall back
+        // to endpoint interpolation.
+        const mode = seg.beamMode;
+        const widthsAt = (t: number): { rx: number; ry: number } => {
+          if (mode) {
+            const pathMm = seg.pathLengthFromSourceMmAtStart + seg.lengthMm * t;
+            const { wxUm, wyUm } = beamWidthsUmAtPathMm(mode, pathMm);
+            return { rx: toScene(wxUm), ry: toScene(wyUm) };
+          }
+          const lerp = (a: number, b: number) => a + (b - a) * t;
+          return {
+            rx: toScene(lerp(seg.waistAtStartUm, seg.waistAtEndUm)),
+            ry: toScene(lerp(seg.waistAtStartUmY, seg.waistAtEndUmY)),
+          };
+        };
         // Local frame: +Y = beam axis, +X = beam-local s, +Z = beam-local p,
         // so the ellipse axes track the astigmatism axes (spatialModeX ∥ s).
         // (Convention; flip s/p if the major axis points the wrong way.)
@@ -1276,17 +1295,27 @@ export function OpticalLinkViewerContent({
         sHat.normalize();
         const pHat = new THREE.Vector3().crossVectors(sHat, direction).normalize();
         const RING = 24;
+        // Axial slices: one ring per slice so the hyperbolic taper / focus pinch
+        // is resolved smoothly. 24 is cheap (beam tubes are few) yet smooth.
+        const SLICES = 24;
+        const ringStride = RING + 1;
         const pos: number[] = [];
         const idx: number[] = [];
-        for (let i = 0; i <= RING; i++) {
-          const a = (i / RING) * Math.PI * 2;
-          const cx = Math.cos(a), cz = Math.sin(a);
-          pos.push(rxStart * cx, -length / 2, ryStart * cz); // start ring (2i)
-          pos.push(rxEnd * cx, length / 2, ryEnd * cz);      // end ring   (2i+1)
+        for (let j = 0; j <= SLICES; j++) {
+          const t = j / SLICES;
+          const { rx, ry } = widthsAt(t);
+          const y = -length / 2 + t * length;
+          for (let i = 0; i <= RING; i++) {
+            const a = (i / RING) * Math.PI * 2;
+            pos.push(rx * Math.cos(a), y, ry * Math.sin(a));
+          }
         }
-        for (let i = 0; i < RING; i++) {
-          const s0 = i * 2, e0 = i * 2 + 1, s1 = (i + 1) * 2, e1 = (i + 1) * 2 + 1;
-          idx.push(s0, e0, s1, s1, e0, e1);
+        for (let j = 0; j < SLICES; j++) {
+          for (let i = 0; i < RING; i++) {
+            const a0 = j * ringStride + i, a1 = a0 + 1;
+            const b0 = (j + 1) * ringStride + i, b1 = b0 + 1;
+            idx.push(a0, b0, a1, a1, b0, b1);
+          }
         }
         const tubeGeom = new THREE.BufferGeometry();
         tubeGeom.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));

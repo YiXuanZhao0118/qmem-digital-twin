@@ -271,6 +271,35 @@ function waistAtZUmAxis(zMm: number, mode: AxisMode): number {
   return mode.waist0Um * Math.sqrt(1 + (dz / zR) ** 2);
 }
 
+/** Per-axis Gaussian beam-mode snapshot carried on a trace segment (the
+ *  q-parameter form the v3 adapter publishes: waist size, axial waist
+ *  position relative to the emitter, M²). */
+export type SegmentBeamMode = {
+  x: { waist0Um: number; waistZUm: number; mSquared: number };
+  y: { waist0Um: number; waistZUm: number; mSquared: number };
+  wavelengthNm: number;
+};
+
+/** True analytic Gaussian half-widths (µm) at a path-length `pathMm` (mm from
+ *  the emitter), per axis. This is the EXACT same math the scope-plot snapshot
+ *  uses (`waistAtZUmAxis` on the segment's `beamMode`), exposed so the 3D beam
+ *  tube can sample the real Gaussian along its length — including an
+ *  intra-segment focus — instead of linearly interpolating its endpoints. */
+export function beamWidthsUmAtPathMm(
+  mode: SegmentBeamMode, pathMm: number,
+): { wxUm: number; wyUm: number } {
+  const toAxis = (a: { waist0Um: number; waistZUm: number; mSquared: number }): AxisMode => ({
+    waist0Um: a.waist0Um,
+    mSquared: a.mSquared > 0 ? a.mSquared : 1,
+    waistZOffsetMm: a.waistZUm / 1000,
+    wavelengthNm: mode.wavelengthNm,
+  });
+  return {
+    wxUm: waistAtZUmAxis(pathMm, toAxis(mode.x)),
+    wyUm: waistAtZUmAxis(pathMm, toAxis(mode.y)),
+  };
+}
+
 function radiusOfCurvatureMmAxis(zMm: number, mode: AxisMode): number {
   const zR = rayleighRangeMmAxis(mode);
   const dz = zMm - mode.waistZOffsetMm;
