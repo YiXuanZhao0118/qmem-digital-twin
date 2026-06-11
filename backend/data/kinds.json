@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-10T01:57:34.295Z",
+  "generated_at": "2026-06-11T05:05:34.400Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -160,9 +160,9 @@
         "align_tolerance_mm": 0,
         "align_summary": "Emitter — beam originates here. Not aligned to anything.",
         "default_params": {
-          "centerWavelengthNm": 780.241,
+          "centerWavelengthNm": 852.347,
           "spectrum": {
-            "centerThz": 384.2305877286633,
+            "centerThz": 351.7258323194661,
             "components": [
               {
                 "kind": "main",
@@ -174,18 +174,18 @@
             ]
           },
           "spatialModeX": {
-            "waistUm": 250,
+            "waistUm": 2.2,
             "waistZOffsetMm": 0,
-            "mSquared": 1.05
+            "mSquared": 1.15
           },
           "spatialModeY": {
-            "waistUm": 80,
-            "waistZOffsetMm": 1.2,
-            "mSquared": 1.3
+            "waistUm": 0.52,
+            "waistZOffsetMm": 0.006,
+            "mSquared": 1.08
           },
-          "transverseMode": {
-            "kind": "TEM00"
-          },
+          "transverseModeType": "HG",
+          "mode_index_1": 0,
+          "mode_index_2": 0,
           "polarization": {
             "exRe": 1,
             "exIm": 0,

@@ -37,7 +37,9 @@ export interface LaserSourceParams extends Record<string, unknown> {
   spectrum: Spectrum;
   spatialModeX: GaussianMode;
   spatialModeY: GaussianMode;
-  transverseMode: { kind: string };
+  // Legacy decorative label — optional, no longer in the kind default
+  // (superseded by transverseModeType below). Readers fall back to TEM00.
+  transverseMode?: { kind: string };
   // Transverse-mode control (decoupled from the decorative `transverseMode`
   // label). The emitter folds these into the per-axis beam-width multiplier
   // (LG: √(2p+|l|+1) both axes; HG: x=√(2m+1), y=√(2n+1)). 0/0 = TEM00.
@@ -71,20 +73,19 @@ export const laserSourcePlugin = definePhysicsPlugin<LaserSourceParams>({
     alignToleranceMm: 0,
     alignSummary: "Emitter — beam originates here. Not aligned to anything.",
     defaultParams: {
-      centerWavelengthNm: 780.241,
+      centerWavelengthNm: 852.347,
       spectrum: {
-        centerThz: nmToThz(780.241),
+        centerThz: nmToThz(852.347),
         components: [
           { kind: "main", lineshape: "lorentzian", offsetMhz: 0, fwhmMhz: 0.1, amplitude: 1.0 },
         ],
       },
-      spatialModeX: { waistUm: 250, waistZOffsetMm: 0, mSquared: 1.05 },
-      spatialModeY: { waistUm: 80, waistZOffsetMm: 1.2, mSquared: 1.30 },
-      transverseMode: { kind: "TEM00" },
+      spatialModeX: { waistUm: 2.2, waistZOffsetMm: 0.0, mSquared: 1.15 },
+      spatialModeY: { waistUm: 0.52, waistZOffsetMm: 0.006, mSquared: 1.08 },
       transverseModeType: "HG",
       mode_index_1: 0,
       mode_index_2: 0,
-      polarization: { exRe: 1, exIm: 0, eyRe: 0, eyIm: 0 },
+      polarization: { exRe: 1.0, exIm: 0.0, eyRe: 0.0, eyIm: 0.0 },
       nominalPowerMw: 50.0,
     },
   },
