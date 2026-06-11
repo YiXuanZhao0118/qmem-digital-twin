@@ -6,7 +6,7 @@ Project-specific guidance. Merge with the global guidelines.
 
 - For **architecture / concept questions**, read [`docs/introduce/README.md`](docs/introduce/README.md) (the index) first, then the relevant per-concept file. As of 2026-06-11 every file under `docs/introduce/` has been line-verified against the code — treat them as the **authoritative, current map** of the system.
 - **Trust the docs for orientation.** Do NOT re-read source just to confirm what a doc already states — *unless you are about to change that area's code* (see "Read vs verify").
-- `MEMORY.md` (auto-memory, loads at session start) holds project state/decisions/gotchas — check it before assuming.
+- **Auto-memory** (`MEMORY.md` + topic files) holds project state/decisions/gotchas — check it before assuming. Note: it is **machine-local and keyed to the launch cwd** (`~/.claude/projects/<cwd-hash>/memory/`), so it does **NOT** live in or travel with this repo, and it differs per cwd — launch Claude from a consistent directory or the memory won't load. Keep it updated as state changes.
 
 ## Read vs verify (balance context cost against correctness)
 
