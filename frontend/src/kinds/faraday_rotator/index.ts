@@ -24,6 +24,15 @@ export interface FaradayRotatorParams extends Record<string, unknown> {
   lengthMm: number;
   refractiveIndex: number;
   wavelengthRangeNm: [number, number];
+  // Spec-sheet physics the op doesn't read directly (rotation is taken from
+  // rotationDeg) but a real rod carries — declared optional so assets that
+  // record them (e.g. the TGG rod) correspond to the kind. Verdet constant
+  // (rad/(T·mm)), AR residual reflectivity, substrate material, and the
+  // non-reciprocity flag (faraday rotation is non-reciprocal: reciprocal=false).
+  VerdetConstantRadPerTeslaMm?: number;
+  arResidualR?: number;
+  material?: string;
+  reciprocal?: boolean;
 }
 
 export const faradayRotatorPlugin = definePhysicsPlugin<FaradayRotatorParams>({
@@ -50,6 +59,13 @@ export const faradayRotatorPlugin = definePhysicsPlugin<FaradayRotatorParams>({
       lengthMm: 18,
       refractiveIndex: 1.95,
       wavelengthRangeNm: [400, 1100],
+    },
+    // Opt-in spec-sheet params (suggested = the TGG rod in the IO isolators).
+    optionalParams: {
+      VerdetConstantRadPerTeslaMm: 0.0427,
+      arResidualR: 0.005,
+      material: "TGG",
+      reciprocal: false,
     },
     portDomains: { optical_center: "optical" },
   },

@@ -310,6 +310,18 @@ export interface PhysicsPlugin<TParams extends Record<string, unknown> = Record<
     /** Default kindParams written into new Components of this kind. */
     readonly defaultParams: TParams;
 
+    /** Opt-in params that are deliberately NOT in `defaultParams`: the
+     *  structured Asset3D editor renders a BLANK field for each, and the
+     *  param's *absence* is meaningful. plano-convex thick-lens geometry is
+     *  the canonical case — leave R/n/d blank for the generic thin-lens
+     *  approximation, fill them per part to switch to the accurate thick-lens
+     *  ABCD (lens.py `_is_thick`). Kept out of `defaultParams` so they never
+     *  auto-seed onto assets, never force the thick-lens path by default, and
+     *  don't pollute the per-instance coefficient baseline. The value here is
+     *  the *suggested* default shown as the field placeholder. Frontend-only
+     *  (the editor reads it via the live plugin); not exported to the manifest. */
+    readonly optionalParams?: Readonly<Record<string, number | boolean | string | number[]>>;
+
     // -------------------------------------------------------------------
     // Phase 2 additions — all optional and backwards-compatible.
     // -------------------------------------------------------------------

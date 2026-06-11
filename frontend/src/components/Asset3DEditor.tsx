@@ -53,6 +53,8 @@ import { domainForElementKind } from "../utils/elementDefaults";
 import type { ElementKind } from "../types/digitalTwin";
 import { isPhysicsPlugin, resolvePortDomain } from "../kinds/_plugin";
 import { pluginForKind } from "../kinds/_plugins";
+import { isEditableValue } from "./physics/ObjectCoefficientOverrides";
+import { cleanNumber } from "../utils/numberFormat";
 
 const stlLoader = new STLLoader();
 const gltfLoader = new GLTFLoader();
@@ -116,153 +118,6 @@ type AssetDraft = {
   defaultParamsText: string;
 };
 
-type KindGuide = {
-  kind: string;
-  faces: string;
-  transitions: string;
-  params: string[];
-  matrix: string;
-};
-
-const KIND_GUIDES: KindGuide[] = [
-  {
-    kind: "laser_source",
-    faces: "Use one output face named out. Its normalBodyLocal is the emitted beam direction; body +z is the default optical axis.",
-    transitions: "out -> out, op=emit_laser_source. This marks the asset as a scene emitter rather than a passive surface.",
-    params: ["centerWavelengthNm", "spectrum.centerWavelengthNm", "nominalPowerMw", "spatialModeX/Y.waistUm", "spatialModeX/Y.waistZOffsetMm", "polarization"],
-    matrix: "Creates the initial BeamRay: origin=out face, direction=out normal, q from waist params, Jones from polarization.",
-  },
-  {
-    kind: "lens",
-    faces: "A/B on the two optical surfaces. Move z to match half thickness; apertureMm is the clear radius/half-width used by hit checks.",
-    transitions: "A -> B and B -> A, op=abcd_thin_lens.",
-    params: ["focalLengthMm", "refractiveIndex", "arResidualR"],
-    matrix: "Thin lens: q_out = q/(1 - q/f); chief ray uses the 5x5 lens matrix when decenter/tilt is present.",
-  },
-  {
-    kind: "mirror",
-    faces: "Usually one front face A. normalBodyLocal is the reflective surface normal.",
-    transitions: "A -> A, op=reflect_specular.",
-    params: ["reflectivity", "coating", "radiusMm or focalLengthMm for curved mirrors when used"],
-    matrix: "Flat mirror leaves q unchanged in unfolded frame; curved mirror uses f=R/2.",
-  },
-  {
-    kind: "pbs",
-    faces: "Cube faces: back/front/left/right. Face normals point outward from the cube.",
-    transitions: "Each input face normally has two transitions: p-transmit and s-reflect.",
-    params: ["cubeSizeMm", "refractiveIndex", "extinctionRatioPpDb", "extinctionRatioSpDb", "plateAlphaXRad/YRad", "coatingAlphaXRad/YRad", "reflectionFraction"],
-    matrix: "Reflect arm uses advanced splitter mode: glass pre-path -> coating mirror -> glass post-path; q_out=q+L/n.",
-  },
-  {
-    kind: "dichroic_mirror",
-    faces: "A input, Bt transmitted output, Br reflected output. For real mounts, split Br onto the reflected physical face.",
-    transitions: "A -> Bt op=dichroic_transmit and A -> Br op=dichroic_reflect.",
-    params: ["cutoffWavelengthNm", "isShortPass", "transitionWidthNm", "substrateThicknessMm", "refractiveIndex", "plateAlphaXRad/YRad", "coatingAlphaXRad/YRad"],
-    matrix: "Transmit is slab; reflect should use the same advanced splitter convention as PBS reflect.",
-  },
-  {
-    kind: "aom",
-    faces: "Use physical optical faces A/B. RF is not a face; it is rfPropagationDirectionBodyLocal.",
-    transitions: "A -> B and B -> A, op=diffract_aom. Put order/side/frequency behavior in transition params and dynamic RF sources.",
-    params: ["centerFreqMhz", "acousticVelocityMps", "refractiveIndex", "crystalLengthMm", "baseEfficiency", "modulationBandwidthMhz", "rfPropagationDirectionBodyLocal", "requiresRfDrive"],
-    matrix: "Slab q propagation plus RF-direction Bragg angle kick. rfPropagationDirectionBodyLocal must be perpendicular to A->B.",
-  },
-  {
-    kind: "waveplate",
-    faces: "Use physical optical faces A/B.",
-    transitions: "A -> B and B -> A, op=jones_waveplate. The Jones matrix is reciprocal, so both directions use the same op.",
-    params: [
-      "designWavelengthNm",
-      "wavelengthRangeNm",
-      "retardanceLambda",
-      "retardanceDeg",
-      "fastAxisDegBeamLocal",
-      "lengthMm",
-      "thicknessMm",
-      "refractiveIndex",
-      "clearApertureMm",
-      "transmission",
-      "material",
-    ],
-    matrix: "Spatially a slab: q_out=q+L/n. Jones retardance is separate from ABCD.",
-  },
-  {
-    kind: "polarizer",
-    faces: "Use physical optical faces A/B for two-port polarizers; add extra physical faces only for real rejected-beam ports.",
-    transitions: "A -> B and B -> A with jones_polarizer or jones_glan_laser_calcite. Extra branches are explicit transitions to extra physical faces.",
-    params: ["transmissionAxisDegBodyLocal", "extinctionRatioPpDb", "extinctionRatioSpDb", "lengthMm", "B_x_mm", "B_y_mm"],
-    matrix: "Film polarizer can be Jones-only; thick prism polarizers should carry slab or astigmatic 5x5 Bx/By.",
-  },
-  {
-    kind: "faraday_rotator",
-    faces: "Use physical optical faces A/B.",
-    transitions: "A -> B and B -> A both use op=faraday_rotate; reverse does not undo rotation because the op is non-reciprocal.",
-    params: ["rotationDeg", "reciprocal", "lengthMm", "refractiveIndex", "VerdetConstantRadPerTeslaMm", "material"],
-    matrix: "Spatially a slab: q_out=q+L/n. Jones rotation stays non-reciprocal.",
-  },
-  {
-    kind: "fiber",
-    faces: "Not seeded in v3 yet. Define input/output connector faces at the ferrules or fiber endpoints.",
-    transitions: "Use a future fiber coupling/propagation op; for now keep it explicit in transitions when added.",
-    params: ["modeFieldDiameterUm", "na", "lengthMm", "coreIndex", "claddingIndex", "couplingEfficiency"],
-    matrix: "Gaussian mode matching is not just ABCD; keep mode/coupling params in defaultParams.",
-  },
-  {
-    kind: "fiber_coupler",
-    faces: "Define free-space input face plus fiber output face; normal directions should match launch/exit directions.",
-    transitions: "Use coupling transitions once registered; keep A -> fiber_out naming stable.",
-    params: ["focalLengthMm", "modeFieldDiameterUm", "workingDistanceMm", "na", "couplingEfficiency"],
-    matrix: "Lens-like focusing plus mode overlap; q handling needs both ABCD and fiber mode overlap.",
-  },
-  // ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
-  // RF kinds (asset-physics-model.md 禮8.7-禮8.12). Faces carry domain="rf"
-  // or domain="ttl"; the RF tracer (禮7.5) walks a port-adjacency graph
-  // instead of doing ray-plane intersection, so apertureMm is unused.
-  // ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
-  {
-    kind: "rf_source",
-    faces: "One rf_out per channel (AD9959: CH0..CH3). domain=\"rf\". normalBodyLocal = SMA connector outward direction. apertureMm = 0.",
-    transitions: "rf_out -> rf_out, op=emit_rf_source. Reads dynamicSources.channels[anchorName] for per-channel frequency + amplitudeScale.",
-    params: ["referenceClockMhz", "sysClockMhz", "pllMultiplier", "pllBypass", "serialInterface", "syncRole", "serialPortMode"],
-    matrix: "Emitter ??no ABCD. RfSignalState seeded from dynamicSources (Vpp = amplitudeScale ? AD9959_VPP_FULL_SCALE).",
-  },
-  {
-    kind: "rf_amplifier",
-    faces: "rf_in (inward SMA) and rf_out (outward SMA), both domain=\"rf\". apertureMm = 0.",
-    transitions: "rf_in -> rf_out, op=rf_amplify. Single-direction passthrough.",
-    params: ["gainDb", "frequencyRangeMhz", "outputPowerP1dbDbm", "outputPowerMaxDbm", "inputPowerMaxDbm", "noiseFigureDb", "supplyVoltageV", "connectorType"],
-    matrix: "RF op: vpp_out = vpp_in ? 10^(gainDb/20), clamped at outputPowerMaxDbm (sets saturated flag). Power gate -> null (signal terminates).",
-  },
-  {
-    kind: "rf_cable",
-    faces: "rf_in (end A) and rf_out (end B), both domain=\"rf\". endAConnector / endBConnector may differ (adapter cables).",
-    transitions: "rf_in -> rf_out AND rf_out -> rf_in, both op=rf_pass. Bidirectional; current op is identity.",
-    params: ["lengthMm", "impedanceOhm", "maxFrequencyGhz", "connectorType", "endAConnector", "endBConnector", "cableType", "jacketColor"],
-    matrix: "No matrix. Future: vpp ? 10^(-lossDbPerM ? lengthMm / 1000 / 20). Endpoints stored in SceneObject.properties.rfCableEndpoints, NOT in rf_links.",
-  },
-  {
-    kind: "rf_switch",
-    faces: "rf_in (RFIN common, domain=\"rf\"), N x rf_out throws (RF1, RF2, ... ??share id, different anchor.name), ttl_in (domain=\"ttl\").",
-    transitions: "rf_in -> [rf_out:RF1, rf_out:RF2, ...], op=rf_switch_route. Only one throw active per call; TTL state pre-resolved from PPG peer.",
-    params: ["switchType", "throwCount", "frequencyMinGhz", "frequencyMaxGhz", "insertionLossDb", "isolationDb", "ttlActiveHighThrow", "ttlState"],
-    matrix: "Active path: vpp ? 10^(-insertionLossDb/20). LOW state on SP4T+ returns [] (no active path). Power gate -> null.",
-  },
-  {
-    kind: "programmable_pulse_generator",
-    faces: "One rf_out face with domain=\"ttl\" (NOT \"rf\" ??face id is historical; the line carries TTL/Trigger digital).",
-    transitions: "rf_out -> rf_out, op=emit_ttl_steady. Reads TimingProgram.rest_state for steady-state HIGH/LOW level.",
-    params: ["connectorType", "timingProgramId", "outputDomain", "highVoltageV"],
-    matrix: "Emitter ??no ABCD. Solver only sees steady-state idle level; pulse train timeline is scrub-UI only.",
-  },
-  {
-    kind: "horn_antenna",
-    faces: "Optional aperture face with domain=\"rf\". Position = lobe origin, normalBodyLocal = main-beam axis.",
-    transitions: "No transitions ??horn is an RF sink. signalAtPort[(horn, aperture)] is the terminating signal (UI can display received power).",
-    params: ["frequencyGhz", "gainDbi", "beamwidth3dbDeg", "polarAxisBodyLocal", "cosineExponent"],
-    matrix: "No matrix. Phase RF.7 will add cos^n lobe visualization and optional Palace farfield S-parameter import.",
-  },
-];
-
 function n(value: number | null | undefined): string {
   return value === null || value === undefined ? "" : String(value);
 }
@@ -279,11 +134,24 @@ function jsonText(value: unknown): string {
 
 function draftFromAsset(asset: V3Asset): AssetDraft {
   const props = (asset.properties ?? {}) as Record<string, unknown>;
+  // wavelengthRangeNm belongs in the top-level column (edited via the
+  // lambda min/max fields), never in the defaultParams JSON. Legacy/seeded
+  // assets stranded a copy in defaultParams (older seeding dumped the whole
+  // kind template, including wavelengthRangeNm, into the JSON). Hoist it
+  // into the lambda fields when the column is empty, and strip it from the
+  // JSON so the two views stay in sync and Save doesn't drop it.
+  const { wavelengthRangeNm: strayWavelength, ...defaultParamsRest } =
+    (asset.defaultParams ?? {}) as Record<string, unknown>;
+  const columnRange = asset.wavelengthRangeNm;
+  const fallbackRange =
+    !columnRange && Array.isArray(strayWavelength) ? strayWavelength : null;
+  const minNm = columnRange?.[0] ?? (fallbackRange?.[0] as number | undefined);
+  const maxNm = columnRange?.[1] ?? (fallbackRange?.[1] as number | undefined);
   return {
     name: asset.name ?? "",
     kindId: asset.kindId ?? "unclassified",
-    wavelengthMinNm: n(asset.wavelengthRangeNm?.[0]),
-    wavelengthMaxNm: n(asset.wavelengthRangeNm?.[1]),
+    wavelengthMinNm: n(minNm),
+    wavelengthMaxNm: n(maxNm),
     properties: props,
     anchors: (asset.anchors ?? []).map((rawAnchor) => {
       // The anchors[] JSONB column has historical schema drift: clean
@@ -347,7 +215,7 @@ function draftFromAsset(asset: V3Asset): AssetDraft {
       matrix5x5Text: jsonText(transition.matrix5x5),
       abcdText: jsonText(transition.abcd),
     })),
-    defaultParamsText: jsonText(asset.defaultParams ?? {}),
+    defaultParamsText: jsonText(defaultParamsRest),
   };
 }
 
@@ -1026,12 +894,20 @@ function draftToPatch(draft: AssetDraft): V3AssetUpdate {
   // kind_id is NOT NULL (alembic 0111) — an empty draft falls back to the
   // "unclassified" placeholder rather than clearing the asset's kind.
   const kindIdValue = draft.kindId.trim() || "unclassified";
+  // Strict: an asset may only carry defaultParams the kind declares. For
+  // kinds with a scalar schema (lens, mirror, …) keys the kind never defined
+  // are dropped here so the free-form textarea / legacy rows can't smuggle in
+  // typo'd or stale keys (the focalMm / transmission / wavelengthRangeNm drift).
+  const defaultParams = strictDefaultParamsForKind(
+    kindIdValue,
+    readJsonObject(draft.defaultParamsText, "defaultParams"),
+  );
   return {
     name: nameValue,
     kindId: kindIdValue,
     wavelengthRangeNm,
     anchors,
-    defaultParams: readJsonObject(draft.defaultParamsText, "defaultParams"),
+    defaultParams,
     properties: draft.properties,
   };
 }
@@ -1111,6 +987,377 @@ function FacesReadOnly({ faces }: { faces: V3Face[] | null }) {
   );
 }
 
+type AssetParamValue = number | boolean | string | number[];
+
+/** The kind's opt-in params (NOT in defaultParams), keyed to their suggested
+ *  default. Rendered as BLANK fields whose absence is meaningful — e.g.
+ *  plano-convex thick-lens R/n/d: blank → thin-lens, filled → thick-lens. */
+function kindOptionalParams(kindId: string): Record<string, AssetParamValue> {
+  return (pluginForKind(kindId)?.physics.optionalParams ?? {}) as Record<string, AssetParamValue>;
+}
+
+/** The kind's editable scalar/tuple param keys — required `defaultParams` plus
+ *  opt-in `optionalParams` — minus the column-owned `wavelengthRangeNm` (edited
+ *  via the lambda min/max fields). Empty when the kind has no plugin or only
+ *  nested/no params — the caller then keeps the free-form JSON textarea (we
+ *  can't constrain a schema we don't have). */
+function kindScalarParamKeys(kindId: string): string[] {
+  const defaults = (pluginForKind(kindId)?.physics.defaultParams ?? {}) as Record<string, unknown>;
+  const required = Object.keys(defaults).filter(
+    (k) => k !== "wavelengthRangeNm" && isEditableValue(defaults[k]),
+  );
+  const optional = Object.keys(kindOptionalParams(kindId)).filter((k) => k !== "wavelengthRangeNm");
+  return [...required, ...optional];
+}
+
+/** Every param key the kind declares (defaultParams scalar + nested, plus
+ *  optional), minus the column-owned `wavelengthRangeNm`. The strict save
+ *  filter keeps only these keys on the asset — nested kind keys (e.g. fiber
+ *  endA/endB, edited via their dedicated panels) and opt-in keys the user
+ *  actually filled survive; keys the kind never declared are dropped. */
+function kindAllParamKeys(kindId: string): string[] {
+  const defaults = (pluginForKind(kindId)?.physics.defaultParams ?? {}) as Record<string, unknown>;
+  return [
+    ...Object.keys(defaults).filter((k) => k !== "wavelengthRangeNm"),
+    ...Object.keys(kindOptionalParams(kindId)).filter((k) => k !== "wavelengthRangeNm"),
+  ];
+}
+
+/** Strict filter: drop any defaultParams key the kind doesn't declare. Only
+ *  applied when the kind exposes an editable scalar schema (lens, mirror,
+ *  polarizer …); kinds with no/empty or nested-only schema (laser_source,
+ *  fiber, isolator) are left untouched so nothing is silently wiped. */
+function strictDefaultParamsForKind(
+  kindId: string,
+  params: Record<string, unknown>,
+): Record<string, unknown> {
+  if (kindScalarParamKeys(kindId).length === 0) return params;
+  const keep = new Set(kindAllParamKeys(kindId));
+  return Object.fromEntries(Object.entries(params).filter(([k]) => keep.has(k)));
+}
+
+/** One kind-param input, styled like the editor's other fields. Mirrors the
+ *  Object panel's CoefficientField (跟 object 一樣) minus the override/reset
+ *  chrome — the asset editor sets absolute defaults, not per-instance deltas.
+ *
+ *  `optional` fields render BLANK when unset and emit `undefined` when cleared
+ *  (the caller then omits the key). `suggested` is shown as the placeholder so
+ *  the user knows the recommended value without it being seeded. */
+function AssetParamField({
+  name,
+  base,
+  value,
+  optional = false,
+  suggested,
+  onChange,
+}: {
+  name: string;
+  base: unknown;
+  value: unknown;
+  optional?: boolean;
+  suggested?: AssetParamValue;
+  onChange: (v: AssetParamValue | undefined) => void;
+}) {
+  const labelStyle = { fontSize: 11, color: "#6b7280" } as const;
+
+  // Optional scalar: blank when unset, placeholder = suggested, clear → omit.
+  if (optional) {
+    const isEmpty = value === undefined || value === null || value === "";
+    return (
+      <label style={labelStyle}>
+        {name}
+        <input
+          type="number"
+          value={isEmpty ? "" : cleanNumber(Number(value))}
+          placeholder={suggested !== undefined ? String(suggested) : undefined}
+          onChange={(e) => {
+            const raw = e.target.value;
+            if (raw === "") {
+              onChange(undefined);
+              return;
+            }
+            const next = Number(raw);
+            if (Number.isFinite(next)) onChange(next);
+          }}
+          style={INPUT}
+        />
+      </label>
+    );
+  }
+
+  if (Array.isArray(base)) {
+    const arr = (Array.isArray(value) ? value : base) as number[];
+    return (
+      <label style={labelStyle}>
+        {name}
+        <div style={{ display: "flex", gap: 4 }}>
+          {arr.map((num, i) => (
+            <input
+              // eslint-disable-next-line react/no-array-index-key
+              key={i}
+              type="number"
+              value={cleanNumber(num)}
+              onChange={(e) => {
+                const next = Number(e.target.value);
+                if (!Number.isFinite(next)) return;
+                const out = [...arr];
+                out[i] = next;
+                onChange(out);
+              }}
+              style={INPUT}
+            />
+          ))}
+        </div>
+      </label>
+    );
+  }
+
+  if (typeof base === "boolean") {
+    return (
+      <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 6 }}>
+        <input
+          type="checkbox"
+          checked={Boolean(value)}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        {name}
+      </label>
+    );
+  }
+
+  if (typeof base === "string") {
+    return (
+      <label style={labelStyle}>
+        {name}
+        <input
+          type="text"
+          value={String(value ?? "")}
+          onChange={(e) => onChange(e.target.value)}
+          style={INPUT}
+        />
+      </label>
+    );
+  }
+
+  return (
+    <label style={labelStyle}>
+      {name}
+      <input
+        type="number"
+        value={cleanNumber(Number(value ?? 0))}
+        onChange={(e) => {
+          const next = Number(e.target.value);
+          if (Number.isFinite(next)) onChange(next);
+        }}
+        style={INPUT}
+      />
+    </label>
+  );
+}
+
+/** Deep-set a leaf value at `path` in a strict, kind-keys-only clone of the
+ *  current params (missing required keys seeded from the kind default so one
+ *  edit also completes the asset), then return the new bag. Non-kind top-level
+ *  keys are dropped; nested structure within a kind key is preserved. */
+function setLeafInParams(
+  current: Record<string, unknown>,
+  kindKeys: string[],
+  requiredKeys: string[],
+  kindDefaults: Record<string, unknown>,
+  path: (string | number)[],
+  value: AssetParamValue,
+): Record<string, unknown> {
+  const clone = (v: unknown) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
+  const next: Record<string, unknown> = {};
+  for (const k of kindKeys) if (k in current) next[k] = clone(current[k]);
+  for (const k of requiredKeys) if (!(k in next) && k in kindDefaults) next[k] = clone(kindDefaults[k]);
+  let node = next as Record<string | number, unknown>;
+  for (let i = 0; i < path.length - 1; i += 1) {
+    const seg = path[i];
+    if (node[seg] == null || typeof node[seg] !== "object") {
+      node[seg] = typeof path[i + 1] === "number" ? [] : {};
+    }
+    node = node[seg] as Record<string | number, unknown>;
+  }
+  node[path[path.length - 1]] = value;
+  return next;
+}
+
+/** Recursive editor for one kind param: scalars render an input; objects and
+ *  arrays recurse so EVERY leaf (number/string/bool) is shown and editable,
+ *  labelled by its dotted path (spatialModeX.waistUm, spectrum.components.0.
+ *  fwhmMhz). Numeric tuples ([x,y,z]) render as one compact row. No structural
+ *  add/remove — leaf values only. */
+function ParamTree({
+  label,
+  value,
+  path,
+  onLeaf,
+}: {
+  label: string;
+  value: unknown;
+  path: (string | number)[];
+  onLeaf: (path: (string | number)[], v: AssetParamValue) => void;
+}) {
+  const labelStyle = { fontSize: 11, color: "#6b7280" } as const;
+
+  if (Array.isArray(value) && value.length > 0 && value.every((x) => typeof x === "number")) {
+    const arr = value as number[];
+    return (
+      <label style={labelStyle}>
+        {label}
+        <div style={{ display: "flex", gap: 4 }}>
+          {arr.map((num, i) => (
+            <input
+              // eslint-disable-next-line react/no-array-index-key
+              key={i}
+              type="number"
+              value={cleanNumber(num)}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                if (Number.isFinite(n)) onLeaf([...path, i], n);
+              }}
+              style={INPUT}
+            />
+          ))}
+        </div>
+      </label>
+    );
+  }
+  if (Array.isArray(value)) {
+    return (
+      <>
+        {value.map((v, i) => (
+          // eslint-disable-next-line react/no-array-index-key
+          <ParamTree key={i} label={`${label}.${i}`} value={v} path={[...path, i]} onLeaf={onLeaf} />
+        ))}
+      </>
+    );
+  }
+  if (value && typeof value === "object") {
+    return (
+      <>
+        {Object.entries(value as Record<string, unknown>).map(([k, v]) => (
+          <ParamTree key={k} label={`${label}.${k}`} value={v} path={[...path, k]} onLeaf={onLeaf} />
+        ))}
+      </>
+    );
+  }
+  if (typeof value === "boolean") {
+    return (
+      <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 6 }}>
+        <input type="checkbox" checked={value} onChange={(e) => onLeaf(path, e.target.checked)} />
+        {label}
+      </label>
+    );
+  }
+  if (typeof value === "string") {
+    return (
+      <label style={labelStyle}>
+        {label}
+        <input type="text" value={value} onChange={(e) => onLeaf(path, e.target.value)} style={INPUT} />
+      </label>
+    );
+  }
+  return (
+    <label style={labelStyle}>
+      {label}
+      <input
+        type="number"
+        value={cleanNumber(Number(value ?? 0))}
+        onChange={(e) => {
+          const n = Number(e.target.value);
+          if (Number.isFinite(n)) onLeaf(path, n);
+        }}
+        style={INPUT}
+      />
+    </label>
+  );
+}
+
+/** Structured, kind-constrained defaultParams editor. Renders EVERY required
+ *  kind param — scalars and nested objects/arrays alike (recursing to each
+ *  leaf, 跟 object 一樣) — so the asset shows the kind's full param set, plus
+ *  any opt-in optionalParams as blank scalar fields. Every write rebuilds the
+ *  bag from the kind's keys alone (unknown top-level keys dropped, nested
+ *  structure preserved). Shown only when the kind exposes a scalar schema;
+ *  otherwise the caller falls back to the raw JSON textarea. */
+function DefaultParamsKindFields({
+  kindId,
+  defaultParamsText,
+  onChangeText,
+}: {
+  kindId: string;
+  defaultParamsText: string;
+  onChangeText: (text: string) => void;
+}) {
+  const kindDefaults = (pluginForKind(kindId)?.physics.defaultParams ?? {}) as Record<string, unknown>;
+  const optionalParams = kindOptionalParams(kindId);
+  const kindKeys = kindAllParamKeys(kindId);
+
+  // Required = ALL defaultParams keys (scalar + nested); rendered recursively.
+  // Optional = opt-in scalar keys rendered blank (omitted unless filled).
+  const requiredKeys = Object.keys(kindDefaults).filter((k) => k !== "wavelengthRangeNm");
+  const optionalKeys = Object.keys(optionalParams).filter((k) => k !== "wavelengthRangeNm");
+
+  let current: Record<string, unknown> = {};
+  try {
+    current = readJsonObject(defaultParamsText, "defaultParams");
+  } catch {
+    current = {};
+  }
+
+  const onLeaf = (path: (string | number)[], value: AssetParamValue) => {
+    onChangeText(jsonText(setLeafInParams(current, kindKeys, requiredKeys, kindDefaults, path, value)));
+  };
+
+  // Optional scalar write: keep current kind keys, set/omit the one optional key.
+  const writeOptional = (key: string, value: AssetParamValue | undefined) => {
+    const next: Record<string, unknown> = {};
+    for (const k of kindKeys) {
+      if (k === key) continue;
+      const v = k in current ? current[k] : kindDefaults[k];
+      if (v !== undefined) next[k] = v;
+    }
+    if (value !== undefined) next[key] = value;
+    onChangeText(jsonText(next));
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 8 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8 }}>
+        {requiredKeys.map((key) => (
+          <ParamTree
+            key={key}
+            label={key}
+            value={key in current ? current[key] : kindDefaults[key]}
+            path={[key]}
+            onLeaf={onLeaf}
+          />
+        ))}
+      </div>
+      {optionalKeys.length > 0 && (
+        <>
+          <div style={{ fontSize: 10, color: "#9ca3af" }}>optional — leave blank to omit</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8 }}>
+            {optionalKeys.map((key) => (
+              <AssetParamField
+                key={key}
+                name={key}
+                base={optionalParams[key]}
+                value={current[key]}
+                optional
+                suggested={optionalParams[key]}
+                onChange={(v) => writeOptional(key, v)}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function DefaultParamsReadOnly({ params }: { params: Record<string, unknown> | null }) {
   if (!params || Object.keys(params).length === 0) {
     return <em style={{ color: "#4b5563" }}>(none)</em>;
@@ -1126,53 +1373,6 @@ function DefaultParamsReadOnly({ params }: { params: Record<string, unknown> | n
         ))}
       </tbody>
     </table>
-  );
-}
-
-function KindGuidePanel({ selectedKind }: { selectedKind: string | null }) {
-  // When an asset is selected, only show that asset's kind ??listing
-  // every kind below an unrelated asset is noise. With nothing
-  // selected (idle state), still show the full registry so the user can
-  // browse what's available.
-  const sorted = useMemo(() => {
-    if (!selectedKind) return KIND_GUIDES;
-    return KIND_GUIDES.filter((guide) => guide.kind === selectedKind);
-  }, [selectedKind]);
-
-  if (selectedKind && sorted.length === 0) {
-    // Asset references a kind not in KIND_GUIDES (custom variant / new
-    // kind without a guide entry yet). Suppress the panel rather than
-    // showing the full unrelated list.
-    return null;
-  }
-
-  return (
-    <div>
-      <div style={SECTION_LABEL}>Kind definitions</div>
-      <div style={{ display: "grid", gap: 8 }}>
-        {sorted.map((guide) => (
-          <details
-            key={guide.kind}
-            open={guide.kind === selectedKind}
-            style={{
-              border: "1px solid #e9ece9",
-              background: "#ffffff",
-              padding: 8,
-            }}
-          >
-            <summary style={{ cursor: "pointer", color: "#7dd3fc", fontWeight: 700 }}>
-              {guide.kind}
-            </summary>
-            <div style={{ marginTop: 6, display: "grid", gap: 5, fontSize: 11, color: "#374151" }}>
-              <div><strong style={{ color: "#6b7280" }}>faces:</strong> {guide.faces}</div>
-              <div><strong style={{ color: "#6b7280" }}>transitions:</strong> {guide.transitions}</div>
-              <div><strong style={{ color: "#6b7280" }}>defaultParams:</strong> {guide.params.join(", ")}</div>
-              <div><strong style={{ color: "#6b7280" }}>ABCD/q:</strong> {guide.matrix}</div>
-            </div>
-          </details>
-        ))}
-      </div>
-    </div>
   );
 }
 
@@ -2394,10 +2594,23 @@ function AssetEditForm({
     // the asset still has none. Gating on `missing` means we touch
     // defaultParams exactly once (this first seed pass), so the user can
     // clear them afterwards without the effect re-seeding.
-    const kindParams = kind.defaultParams ?? {};
+    //
+    // wavelengthRangeNm is special: it has a dedicated top-level Asset
+    // column (V3Asset.wavelengthRangeNm) edited via the lambda min/max
+    // fields below, and on Save the column — not the defaultParams JSON —
+    // is authoritative (see toAssetUpdate). So strip it out of the JSON
+    // seed and route it to the lambda fields instead; otherwise it lands
+    // in defaultParams as a duplicate the lambda fields never reflect and
+    // the save silently drops.
+    const { wavelengthRangeNm: seedWavelength, ...kindParams } =
+      (kind.defaultParams ?? {}) as Record<string, unknown>;
     const seedParams =
       (draft.defaultParamsText.trim() === "" || draft.defaultParamsText.trim() === "{}")
       && Object.keys(kindParams).length > 0;
+    const seedWavelengthFields =
+      Array.isArray(seedWavelength)
+      && draft.wavelengthMinNm.trim() === ""
+      && draft.wavelengthMaxNm.trim() === "";
 
     setDraft({
       ...draft,
@@ -2417,6 +2630,12 @@ function AssetEditForm({
         })),
       ],
       ...(seedParams ? { defaultParamsText: jsonText(kindParams) } : {}),
+      ...(seedWavelengthFields
+        ? {
+            wavelengthMinNm: n(seedWavelength[0] as number),
+            wavelengthMaxNm: n(seedWavelength[1] as number),
+          }
+        : {}),
     });
   }, [draft, kinds, faceIdTemplate]);
 
@@ -2822,15 +3041,26 @@ function AssetEditForm({
       </table>
 
       {/* defaultParams are catalog-level (used by the kind's ABCD formula)
-          ??Binding dev only. */}
+          ??Binding dev only. Kinds with a scalar param schema get a
+          structured, kind-constrained editor (跟 object 一樣 — you can only
+          set params the kind defines); schema-less / nested-only kinds fall
+          back to the raw JSON textarea. */}
       {isBindingDev && (
         <>
           <div style={SECTION_LABEL}>defaultParams</div>
-          <textarea
-            value={draft.defaultParamsText}
-            onChange={(event) => setDraft({ ...draft, defaultParamsText: event.target.value })}
-            style={{ ...TEXTAREA, minHeight: 180 }}
-          />
+          {kindScalarParamKeys(draft.kindId).length > 0 ? (
+            <DefaultParamsKindFields
+              kindId={draft.kindId}
+              defaultParamsText={draft.defaultParamsText}
+              onChangeText={(text) => setDraft({ ...draft, defaultParamsText: text })}
+            />
+          ) : (
+            <textarea
+              value={draft.defaultParamsText}
+              onChange={(event) => setDraft({ ...draft, defaultParamsText: event.target.value })}
+              style={{ ...TEXTAREA, minHeight: 180 }}
+            />
+          )}
         </>
       )}
     </>
@@ -3233,7 +3463,6 @@ export function Asset3DEditor({
               {saveError}
             </div>
           )}
-          <KindGuidePanel selectedKind={draft?.kindId || selected?.kindId || null} />
         </div>
       </main>
     </div>

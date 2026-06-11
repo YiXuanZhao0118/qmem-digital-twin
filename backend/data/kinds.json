@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-11T05:05:34.400Z",
+  "generated_at": "2026-06-11T10:00:46.751Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -448,6 +448,7 @@
         "align_summary": "intercept_in is the plane-side surface center; direction points from plane toward convex side.",
         "default_params": {
           "focalLengthMm": 100,
+          "transmittance": 0.99,
           "wavelengthRangeNm": [
             400,
             1100
