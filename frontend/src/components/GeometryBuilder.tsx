@@ -833,31 +833,50 @@ export function GeometryBuilder() {
     return { id: sourceId, label, included: true, expanded: false, tx: 0, ty: 0, tz: 0, rx: 0, ry: 0, rz: 0, subMeshes };
   }, []);
 
+  // Load one uploaded file into coloured sub-meshes: STEP via occt (per-face
+  // colour), mesh formats (STL / OBJ / GLB / GLTF) via the shared viewer loader
+  // off a temporary blob URL. Uploads carry no unit, so both are treated as mm.
+  const loadSourceFile = useCallback(async (file: File): Promise<LoadedSubMesh[]> => {
+    const ext = extOf(file.name);
+    if (ext === "step" || ext === "stp") {
+      const data = new Uint8Array(await file.arrayBuffer());
+      const result = await importStep(data, { linearUnit: "millimeter" }, locateOcctWasm);
+      return result.meshes.map((mesh, i) => ({
+        geometry: occtMeshToGeometry(mesh),
+        label: mesh.name && mesh.name.trim() ? mesh.name : `mesh ${i + 1}`,
+      }));
+    }
+    const url = URL.createObjectURL(file);
+    try {
+      return await loadAssetGeometry(url, ext);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }, []);
+
   const handleFiles = useCallback(
     async (files: File[]) => {
       setError(null);
       setInfo(null);
-      const steps = files.filter((f) => ["step", "stp"].includes(extOf(f.name)));
-      if (steps.length === 0) {
-        setError("Pick STEP file(s) (.step / .stp).");
+      const usable = files.filter((f) => {
+        const e = extOf(f.name);
+        return e === "step" || e === "stp" || VIEWER_EXTS.has(e);
+      });
+      if (usable.length === 0) {
+        setError("Pick STEP (.step / .stp) or mesh (.stl / .obj / .glb / .gltf) file(s).");
         return;
       }
       setStatus("parsing");
       try {
         const added: Source[] = [];
-        for (const file of steps) {
-          const data = new Uint8Array(await file.arrayBuffer());
-          const result = await importStep(data, { linearUnit: "millimeter" }, locateOcctWasm);
-          const loaded: LoadedSubMesh[] = result.meshes.map((mesh, i) => ({
-            geometry: occtMeshToGeometry(mesh),
-            label: mesh.name && mesh.name.trim() ? mesh.name : `mesh ${i + 1}`,
-          }));
+        for (const file of usable) {
+          const loaded = await loadSourceFile(file);
           added.push(makeSource(file.name.replace(/\.[^.]+$/, ""), loaded));
         }
         const next = [...sources, ...added];
         setSources(next);
         recompose(next);
-        if (sources.length === 0 && steps[0]) seedNaming(steps[0].name.replace(/\.[^.]+$/, ""));
+        if (sources.length === 0 && usable[0]) seedNaming(usable[0].name.replace(/\.[^.]+$/, ""));
         setInfo(`Added ${added.length} source(s). ${next.length} total.`);
         setStatus("ready");
       } catch (e) {
@@ -865,7 +884,7 @@ export function GeometryBuilder() {
         setError(e instanceof Error ? e.message : String(e));
       }
     },
-    [sources, recompose, seedNaming, makeSource],
+    [sources, recompose, seedNaming, makeSource, loadSourceFile],
   );
 
   const handleAddExisting = useCallback(async () => {
@@ -1081,7 +1100,8 @@ export function GeometryBuilder() {
     <div style={{ display: "flex", height: "100%", minHeight: 0, background: SHELL_BG, color: SHELL_COLOR }}>
       <aside style={{ ...ASIDE_STYLE, flex: `0 0 ${ASIDE_WIDTH}px`, display: "flex", flexDirection: "column", gap: 10 }}>
         <p style={{ margin: 0, fontSize: 11, color: MUTED, lineHeight: 1.4 }}>
-          Add sources (each uploaded STEP / picked asset = one unit), position &
+          Add sources (each uploaded model — STEP / STL / OBJ / GLB — or picked
+          asset = one unit), position &
           rotate each, remove unwanted sub-meshes or regions, then save merged into
           one coloured GLB. Anchors are placed afterwards in the ASSET3D tab.
         </p>
@@ -1089,7 +1109,7 @@ export function GeometryBuilder() {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".step,.stp"
+          accept=".step,.stp,.stl,.obj,.glb,.gltf"
           multiple
           style={{ display: "none" }}
           onChange={(e) => {
@@ -1099,7 +1119,7 @@ export function GeometryBuilder() {
           }}
         />
         <button type="button" disabled={busy} onClick={() => fileInputRef.current?.click()} style={importButton(busy)}>
-          {status === "parsing" ? "Working…" : sources.length === 0 ? "Import STEP…" : "Import more STEP…"}
+          {status === "parsing" ? "Working…" : sources.length === 0 ? "Import 3D…" : "Import more…"}
         </button>
 
         <div style={{ display: "flex", gap: 6 }}>

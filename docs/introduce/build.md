@@ -13,6 +13,7 @@ BUILD tab 讓你**全程在瀏覽器**把 CAD 變成 catalog 裡的 Asset3D，**
 
 1. **載入來源**
    - 上傳 **STEP**（`.step` / `.stp`）→ 用 `occt-import-js`（OpenCASCADE 編成的 WASM；`occtImport.ts` 的 `importStep` + `occtMeshToGeometry`）在前端解析成 three geometry，**保留每面顏色**。
+   - 或上傳 **mesh 檔**（`.stl` / `.obj` / `.glb` / `.gltf`）→ 走共用的 `loadAssetGeometry`（從暫時 blob URL 載入；`GeometryBuilder.handleFiles` → `loadSourceFile`）。上傳檔不帶單位，與 STEP 一樣**視為 mm**；STL 無內嵌顏色 → 套 default 灰。
    - 或從 catalog **挑既有資產**（GLB / GLTF / OBJ / STL 或 `procedural://`）當來源。
 2. **減面（decimate）**：用 **meshoptimizer** 即時簡化可見 mesh；同時保留一份**未減面的隱藏 mesh**，讓 centroid key 在減面後仍穩定。
 3. **顏色 / 幾何過濾**：以 **0.5 mm centroid 格點**為 key（`centroidKey`、`findCoplanarCluster`）做 include / delete，對應 Asset3D 的 `viewerHints`（`includeOnlyCentroids` / `deletedCentroids`，見 [rendering.md](rendering.md)）；篩選時連 per-triangle 顏色一起帶，保色。
