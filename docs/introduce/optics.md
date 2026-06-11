@@ -74,7 +74,8 @@ emitter 不等入射光，主動種出初始 `BeamRay`（`emit_anchor_source_ray
 - **橋接** `optical/pop_pass.py`：`lens_focal_airy_pattern(w_at_lens_mm, aperture_mm, f_mm, wavelength_nm)`。幾何（透鏡處光束半徑 w、孔徑半徑 a、焦距 f）**由 q 通道供給、不在此重算**（前端 `gaussianWidthMm(q)` 已知 w）。流程：在透鏡處種 w 寬高斯 → 孔徑硬截斷 → `focal_plane(f)` → 裁到 ±6 Airy 零點 → 降採樣。回傳 `{size, halfExtentUm, pitchUm, firstNullUm, clipFraction, intensity[peak-normalized], diffractionLimited}`。v1 限制：入射平相位（忽略入射波前曲率，環主要由截斷產生）、單透鏡焦平面視圖。
 - **端點** `POST /api/v3/pop`（`routers/pop.py`，**on-demand 專用**，絕不進 `/api/v3/solver` live trace）：body `{wAtLensUm, apertureMm, focalLengthMm, wavelengthNm, gridN?, outN?}` → 上述 payload。前端在 beam-scope 探測截斷透鏡下游時呼叫。
 - **物理驗證**（`tests/optical/test_pop_field.py` + `test_pop_pass.py`）：圓孔焦面 = Airy（首零在 `1.22λf/D` 8% 內 + 確認有環）、自由空間高斯 `w(zR)=w0√2`（6% 內）、高斯過孔徑能量比 = Stage 1 `1−exp(−2a²/w²)`（3% 內）。Live A230TM-B 端點徑向切面確認中央亮斑→暗環→次環。
-- **Stage 3 — DONE 2026-06-11**：`BeamScopePanel` 在探測截斷透鏡下游時,找出該透鏡的 `apertureTruncation`(含 `focalLengthMm`)→ 呼叫 `POST /api/v3/pop` → 雙線性取樣回傳的強度網格餵進現有 `Heatmap`（取代解析 `sampleIntensity`），標題標「diffraction (POP) · focal plane」。幾何（透鏡處光束半徑 w、孔徑、焦距、λ）全來自 q 通道的 segment descriptor。
+- **Stage 3 — DONE 2026-06-11**：`BeamScopePanel` 找出該透鏡的 `apertureTruncation`(含 `focalLengthMm`)→ 呼叫 `POST /api/v3/pop` → 雙線性取樣回傳的強度網格餵進現有 `Heatmap`（取代解析 `sampleIntensity`），標題標「diffraction (POP) · focal plane」。幾何（透鏡處光束半徑 w、孔徑、焦距、λ）全來自 q 通道的 segment descriptor。
+  - **只在焦面附近顯示（2026-06-11 修）**：POP 是**焦平面** Airy,只在焦點附近有意義。`truncLens` 取焦面(`lensZ+EFL`)離 probe 最近的透鏡,且**僅當 `|probe.z − focalZ| ≤ EFL`** 才回傳 → 否則 `popPattern=null`、退回**隨 z 變化的解析 profile**(否則遠下游探測會一直顯示同一張定位焦面圖,與 probe z 無關 → 使用者回報的 bug)。POP 焦面視圖也**不套**解析 profile 的 90° 旋轉/世界軸標籤(見 [rendering.md](rendering.md))。
 - **尚未做**：偵測器影像面、astigmatic POP 場（v1 種圓形 `w_eff`，焦面 Airy 由圓孔主導本就近圓）、入射波前曲率、**任意下游平面**（option B：會聚透鏡的環只在焦點 ±景深~3µm 內存在,離焦處是平滑光斑;且 mm 尺度近場 + 孔徑/焦斑~3000× 比例是硬取樣問題 → 暫不做）。
 
 ## RF tracer

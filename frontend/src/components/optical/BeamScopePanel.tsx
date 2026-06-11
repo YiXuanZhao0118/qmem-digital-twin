@@ -669,14 +669,20 @@ export function BeamScopeContents() {
         s.apertureTruncation != null &&
         s.apertureTruncation.combinedFraction < 0.999 &&
         s.apertureTruncation.focalLengthMm > 0)
-      .map((s) => ({
-        at: s.apertureTruncation!,
-        wl: s.wavelengthNm ?? 780,
-        lensZ: (s.pathLengthFromSourceMmAtStart ?? 0) + (s.lengthMm ?? 0),
-      }));
+      .map((s) => {
+        const at = s.apertureTruncation!;
+        const lensZ = (s.pathLengthFromSourceMmAtStart ?? 0) + (s.lengthMm ?? 0);
+        return { at, wl: s.wavelengthNm ?? 780, lensZ, focalZ: lensZ + at.focalLengthMm };
+      });
     if (cands.length === 0) return null;
-    cands.sort((a, b) => Math.abs(a.lensZ - pz) - Math.abs(b.lensZ - pz));
+    // The POP view is the lens FOCAL-PLANE Airy — only meaningful NEAR the
+    // focus. Pick the lens whose focal plane is closest to the probe and show
+    // it only when the probe is within ±EFL of that plane; farther downstream
+    // the beam is a wide spot, so we fall back to the z-dependent analytic
+    // profile (returning null here ⇒ popPattern cleared ⇒ usePop false).
+    cands.sort((a, b) => Math.abs(a.focalZ - pz) - Math.abs(b.focalZ - pz));
     const c = cands[0];
+    if (Math.abs(c.focalZ - pz) > c.at.focalLengthMm) return null;
     return {
       apertureMm: c.at.apertureMm,
       wEffUm: c.at.wEffMm * 1000,
