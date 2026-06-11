@@ -913,11 +913,10 @@ export function ComponentsEditor({
                 </div>
               </div>
             )}
-            {/* Category override. Empty = auto (derived from the component's
-                kind via categoryForComponent); a value pins the catalog
-                section — lets a composite (kind="none", else "Uncategorized")
-                be filed under a real category. Domain is a separate axis and
-                stays asset-kind-authoritative. */}
+            {/* Category is read straight from this field — no auto-derivation
+                from kind. Empty = Uncategorized; a value pins the catalog
+                section. Domain is a separate axis and stays
+                asset-kind-authoritative. */}
             <div style={{ display: "grid", gridTemplateColumns: "60px 1fr", gap: 8, alignItems: "center", marginBottom: 4, fontSize: 12 }}>
               <span style={{ color: "#4b5563", fontFamily: "ui-monospace, monospace" }}>category</span>
               <select
@@ -931,7 +930,7 @@ export function ComponentsEditor({
                 }}
                 style={{ ...inputStyle, width: "100%" }}
               >
-                <option value="">— auto (from kind) —</option>
+                <option value="">— Uncategorized —</option>
                 {Object.values(CATEGORY_DEFS)
                   .sort((a, b) => a.order - b.order)
                   .map((c) => (
@@ -940,10 +939,10 @@ export function ComponentsEditor({
               </select>
             </div>
             {/* Free-text Component.kind_id. Drives the catalog's inner group
-                label (typeKey = kindId || "uncategorized") and the auto
-                category. Empty = null (a composite whose kind is derived from
-                its bound assets, shown as "asset kinds" above). Domain is a
-                separate axis on the asset kinds, unaffected by this. */}
+                label (typeKey = kindId || "uncategorized"). Empty = null (a
+                composite whose kind is derived from its bound assets, shown as
+                "asset kinds" above). Domain is a separate axis on the asset
+                kinds, unaffected by this. */}
             <IdentityField
               label="kind_id"
               value={selected.kindId ?? ""}

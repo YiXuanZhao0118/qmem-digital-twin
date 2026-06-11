@@ -21,12 +21,12 @@
 | 軸 | 屬於 | 來源 | 用途 |
 |---|---|---|---|
 | **Domain**（物理行為） | **Asset3D** 層 | `Asset3D.kind_id` → `kind.domains` | 跑什麼物理、PHY Editor domain rail、kind 篩選 |
-| **Category**（目錄分類） | **Component** 層 | `Component.kind_id` → plugin `assetCategory` | 在零件庫的哪個區段 |
+| **Category**（目錄分類） | **Component** 層 | `Component.properties.category`（直接欄位，未設＝Uncategorized） | 在零件庫的哪個區段 |
 
 - **Domain**：正規值只有 `optical` / `rf` / `mechanical`（DB `kinds.domains`，CHECK `<@ {optical,rf,mechanical}` + cardinality≥1，`models/hardware.py`）。**完全 kind-authoritative**：asset 的 domain ＝ 其 `kind.domains`（多 domain 直接由陣列表達，如 `aom=['optical','rf']`），**沒有** per-asset 覆寫——`properties.domains` 已不再被讀取（2026-06-11 移除 `domainAssets`/`assetDomains` 的 override + `faces[].domain` 分支，DB 既有的 `properties.domains` 也清空）。要改 domain 就改 kind。另有 `primary_domain`（單一主 domain）、`default_physics`（會跑哪些求解，可含 thermal 等）、`port_domains`（per-port，給 AOM 這類 hybrid）。
-- **Category**：kind plugin 的 `assetCategory`（粗區：Optical / Electronics & RF / Mounts & Mechanics / Workspace / Annotations / Uncategorized）+ `catalogGroup`（細組：Emitters / Passive / Active·Nonlinear / Sinks / RF…）。零件庫面板 `categoryForComponent`（`AssetLibraryPanel.tsx`）預設由 **component 的 kind** 衍生；**2026-06-10 起與 domain 解耦**——不再讓 `physicsCapabilities` 蓋過 category。**可手動覆寫**（2026-06-11）：PHY Editor COMPONENT tab 的 `category` 下拉寫入 `component.properties.category`（6 個 CategoryKey 之一），`categoryForComponent` 優先採用；空＝auto 衍生。主要用途：把 composite（`kind="none"`，否則落在 Uncategorized）歸到真實 category。
+- **Category**：6 個 CategoryKey（Optical / Electronics & RF / Mounts & Mechanics / Workspace / Annotations / Uncategorized）。零件庫面板 `categoryForComponent`（`AssetLibraryPanel.tsx`）**直接讀 `component.properties.category`，不再由 kind 衍生**（2026-06-11；先前是 plugin `assetCategory` 自動衍生）：未設＝Uncategorized。由 PHY Editor COMPONENT tab 的 `category` 下拉寫入（空＝Uncategorized）。零件庫第二層分組仍用 `Component.kind_id`（`catalogGroup` 細組僅供 kinds 清單用）。**與 domain 解耦**——`physicsCapabilities` 不再參與 category。
 
-→ 一句話：**Category 由 component 的 kind 決定、Domain 由 asset 的 kind 決定**，兩者本就不同步（見 [component.md](component.md)、[asset.md](asset.md)），也互不覆蓋。
+→ 一句話：**Category 由 component 自身的 `category` 欄位決定（零件庫再依 `Component.kind_id` 分二層）、Domain 由 asset 的 kind 決定**，兩者本就不同步（見 [component.md](component.md)、[asset.md](asset.md)），也互不覆蓋。
 
 ## 每 kind 契約
 

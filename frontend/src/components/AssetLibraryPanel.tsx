@@ -15,7 +15,6 @@ import {
 import { useEffect, useMemo, useState } from "react";
 
 import { OutlinerPanel } from "./OutlinerPanel";
-import { derivedCategoryToComponentTypes } from "../kinds/_plugins";
 import { useSceneStore } from "../store/sceneStore";
 import type { ComponentItem } from "../types/digitalTwin";
 import { getComponentDisplayLabel, getComponentName } from "../utils/components";
@@ -37,39 +36,14 @@ export const CATEGORY_DEFS: Record<CategoryKey, CategoryDef> = {
   other: { key: "other", label: "Uncategorized", order: 99 },
 };
 
-// Pre-P2 these were 5 hand-maintained `new Set<string>([...])` literals
-// that had to stay in sync with the legacy componentType lists in
-// elementDefaults.ts. M3 swaps them to derive from the PhysicsPlugin
-// registry, so adding a new componentType to a plugin's `componentTypes`
-// array is the only edit needed — categories appear here automatically.
-// `vacuum_chamber` and `optical_table` plus a few others that today have
-// no plugin still need a fallback bucket; tracked in `other` until each
-// of them gets a plugin in M2-followup.
-const TYPES_BY_CATEGORY = derivedCategoryToComponentTypes();
-const OPTICAL_TYPES = TYPES_BY_CATEGORY.optical;
-const ELECTRONICS_TYPES = TYPES_BY_CATEGORY.electronics;
-const MECHANICAL_TYPES = TYPES_BY_CATEGORY.mechanical;
-const INFRASTRUCTURE_TYPES = TYPES_BY_CATEGORY.infrastructure;
-const MISC_TYPES = TYPES_BY_CATEGORY.misc;
-
-// Category is a pure **Component-layer** classification (2026-06-10): it is
-// derived solely from the component's kind plugin (`assetCategory`, via
-// `derivedCategoryToComponentTypes`). Domain (physicsCapabilities /
-// Asset3D.kind) is a SEPARATE axis and no longer overrides category — the two
-// are deliberately decoupled (category = which catalog section a part lives
-// in; domain = which physics it runs, handled by the asset's kind).
+// Category is a pure **Component-layer** classification read straight from
+// the component's own `properties.category` field (set in the PHY Editor
+// COMPONENT tab) — NOT auto-derived from kind_id. Unset ⇒ Uncategorized.
+// Domain (Asset3D.kind) is a SEPARATE axis: category = which catalog section
+// a part lives in; domain = which physics it runs, handled by the asset's kind.
 function categoryForComponent(component: ComponentItem): CategoryDef {
-  // Explicit per-component override (set in the PHY Editor COMPONENT tab)
-  // wins — lets a composite (kindId="none", otherwise "Uncategorized") be
-  // filed under a real category. Falls back to the kind-derived bucket.
-  const override = (component.properties as { category?: string } | undefined)?.category;
-  if (override && override in CATEGORY_DEFS) return CATEGORY_DEFS[override as CategoryKey];
-  const componentType = component.kindId?.trim() || "uncategorized";
-  if (OPTICAL_TYPES.has(componentType)) return CATEGORY_DEFS.optical;
-  if (ELECTRONICS_TYPES.has(componentType)) return CATEGORY_DEFS.electronics;
-  if (MECHANICAL_TYPES.has(componentType)) return CATEGORY_DEFS.mechanical;
-  if (INFRASTRUCTURE_TYPES.has(componentType)) return CATEGORY_DEFS.infrastructure;
-  if (MISC_TYPES.has(componentType)) return CATEGORY_DEFS.misc;
+  const explicit = (component.properties as { category?: string } | undefined)?.category;
+  if (explicit && explicit in CATEGORY_DEFS) return CATEGORY_DEFS[explicit as CategoryKey];
   return CATEGORY_DEFS.other;
 }
 
