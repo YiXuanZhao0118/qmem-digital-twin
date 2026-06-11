@@ -54,6 +54,18 @@ emitter 不等入射光，主動種出初始 `BeamRay`（`emit_anchor_source_ray
 - **這是能量半**：同一個截斷產生的**繞射環（Airy）圖樣**屬波動場，q-引擎不畫（見上「限制」）；繞射 *pattern* 由獨立的 **POP 場通道**處理（見下），3D 場景光束仍為高斯錐。偏振/RF/AOM/fiber 一律留在 q 通道。
 - **A230TM-B**（Thorlabs 非球面，`kind=lens_plano_convex`）：`default_params.focalLengthMm=4.51`（op 讀此 key，**非** Object 面板的 `focalMm`）、`clearApertureMm=4.95`、`transmittance=0.995`；intercept anchor 的 `apertureMm=2.475`（=clearAperture/2，半徑）。
 
+## 厚透鏡模型（短焦 / 非球面，2026-06-11）
+
+薄透鏡把前後主平面 H/H' 併成一點;A230TM-B 這種 **T/f≈0.6**(中心厚 2.75、EFL 4.51)的短焦鏡,H–H' 間距~mm,是焦距一大部分 → 薄透鏡會把焦點放錯~mm。`lens_anchor_op` 因此**依參數分派**(`_is_thick`,`lens.py`):asset `default_params` 有 `radiusFrontMm`+`refractiveIndex`+`centerThicknessMm` → 走**全 air→air 厚透鏡 ABCD**;否則退回薄透鏡 `focalLengthMm`(向後相容,不開新 kind)。
+
+- **為何單 anchor 不用雙面**:tracer 在 anchor 間用**空氣**傳 q(`q+=t_lab`),真的兩面+中間玻璃會被當空氣傳 → 錯。單 anchor 套**整顆 air→air ABCD**(折射率只活在矩陣係數裡,q 套用邊界是空氣)避開這問題。
+- **ABCD**(`_thick_lens_abcd`):`P1=(n−1)/R1`、`P2=(1−n)/R2`(平面 R=∞→P=0)、`τ=d/n`;`M=[[1−P1τ, τ],[−(P1+P2−P1P2τ), 1−P2τ]]`、`EFL=−1/C`。符號慣例對齊退役的 `thorlabs_la1509_b.json` `matrix5x5`(golden 測試 R=51.5/∞、n=1.5168、d=3.6)。`q'=(Aq+B)/(Cq+D)` 套 qx/qy;`apply_abcd_state`(`anchor_tracer.py`)套幾何 (y,θ)。
+- **幾何**:anchor `intercept_in` 放**前頂點**;op 把出光 ray origin 移到**後頂點**(anchor + d·axisX,signed) → 焦點落在 `後頂點 + BFL`(物理正確),而非薄透鏡的 `anchor + f`。玻璃內 d 段不畫(cosmetic)。
+- **非球面**:近軸只看**頂點曲率半徑**;conic/非球面係數只影響像差(q-tracer 不模)。
+- **A230TM-B 參數來源 = datasheet 等效擬合**:半徑未公開、由 EFL 推 R1 無法重現 WD(非簡單平凸)。改用 **EFL=4.51 + BFL=WD=2.53**(n、d 已知)解出等效 (R1,R2):`P1=(1−BFL/EFL)/τ` → `R1=(n−1)/P1`,再由 `1/EFL` 解 P2 → R2。**EFL/BFL 與 n 無關**(擬合吸收 n),故 n 只決定等效半徑、不影響焦點。A230TM-B asset 存 `radiusFrontMm=2.3244`、`radiusBackMm=10.308`、`refractiveIndex=1.59`、`centerThicknessMm=2.75`。
+- **anchor 位置校準**:焦點正確的前提是 anchor 落在**物理前頂點**;若 GLB 原點使 anchor 不在前頂點,焦點會整體平移 → 視覺驗證後調 anchor z。
+- **POP 不受影響**:`/api/v3/pop` 只算焦面 Airy 圖樣(用 EFL 定首零/尺度),不放 z,所以厚透鏡不破壞 POP。
+
 ## POP 場通道：透鏡焦平面繞射（Stage 2，2026-06-11）
 
 **標量 2D 複數場引擎**，與 q-tracer **平行並存、不取代**。把被有限通光孔徑截斷的光束 → 焦平面 **Airy 繞射環**（q 通道畫不出的東西）。

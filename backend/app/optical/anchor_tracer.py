@@ -315,6 +315,19 @@ def apply_thin_lens_state(
     return y, theta_y - y / f_mm, z, theta_z - z / f_mm
 
 
+def apply_abcd_state(
+    y: float, theta_y: float, z: float, theta_z: float,
+    a: float, b: float, c: float, d: float,
+) -> tuple[float, float, float, float]:
+    """General per-axis ABCD: (y', θ') = [[a,b],[c,d]]·(y, θ) on both
+    transverse axes. Generalises ``apply_thin_lens_state`` (a=d=1, b=0,
+    c=-1/f) for thick-lens / multi-surface elements."""
+    return (
+        a * y + b * theta_y, c * y + d * theta_y,
+        a * z + b * theta_z, c * z + d * theta_z,
+    )
+
+
 def apply_slab_state(
     y: float, theta_y: float, z: float, theta_z: float, L_over_n_mm: float,
 ) -> tuple[float, float, float, float]:
