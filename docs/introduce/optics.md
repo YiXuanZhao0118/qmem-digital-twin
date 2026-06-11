@@ -31,7 +31,7 @@ emitter 不等入射光，主動種出初始 `BeamRay`（`emit_anchor_source_ray
 
 **理論（embedded-Gaussian，`emit_laser_source._q_at_waist_mm`）**：
 - 種光 `q₀ = -z_offset + i·z_R`，**`z_R = π·w₀²/(M²·λ)`** —— q 帶的是「embedded 基模」，其發散已被 M² 放大（遠場半角 `θ = M²λ/(πw₀)`），自動沿每個 ABCD op 正確傳播（lens `1/q'=1/q−1/f`、自由空間 `q+z`）。
-- **真實橫向寬度 = (q 推導的 embedded 寬度) × `BeamRay.width_mult`**，其中 `width_mult = √(M²) × 模態因子`（LG：兩軸 `√(2p+|l|+1)`；HG：x=`√(2m+1)`、y=`√(2n+1)`）。`width_mult_x/y` 隨 ray 沿 `.replaced()` 傳播，經 `LabSegment.width_mult_*_at_start` → solver `to_dict` 的 `widthMultAtStart` → 前端 `v3TraceAdapter.waistAtZFromQ × widthMultX` 還原真實錐管寬度；TA mode-match（`misc_ops._mode_match_eta`）也乘此倍率。
+- **真實橫向寬度 = (q 推導的 embedded 寬度) × `BeamRay.width_mult`**，其中 `width_mult = √(M²) × 模態因子`（LG：兩軸 `√(2p+|l|+1)`；HG：x=`√(2m+1)`、y=`√(2n+1)`）。`width_mult_x/y` 隨 ray 沿 `.replaced()` 傳播，經 `LabSegment.width_mult_*_at_start` → solver `to_dict` 的 `widthMultAtStart` → 前端 `v3TraceAdapter` **各軸獨立**還原寬度（X←qx、Y←qy；2026-06-11 起 `beamMode.x/.y` + `waistAtStart/EndUm{,Y}` 皆 per-axis，先前 y 誤用 qx → 永遠圓）；TA mode-match（`misc_ops._mode_match_eta`）也乘此倍率。**像散渲染**：2D beam-scope profile + 3D optical-link **橢圓錐管**都吃這對 per-axis 寬度（見 [rendering.md](rendering.md)）。
 - **限制**：高階模態在此幾何錐管裡**只放大等效寬度，不畫 donut/lobe 形狀**（真正環形需 2D 複振幅波動場，本引擎不含）。`waistZOffsetMm` 透過 `Re(q)` 自然流到前端，無需前端改動。
 
 **非近軸發散修正（高 NA / 次波長束腰）**：q-ABCD 是近軸（`z_R=πw₀²/(M²λ)`），當 `w₀→λ`（光纖端面、緊聚焦）發散會失準。做法：**q 維持近軸**（chief ray + 透鏡聚焦不變），只在**寬度 readout** 套修正——
@@ -62,7 +62,8 @@ emitter 不等入射光，主動種出初始 `BeamRay`（`emit_anchor_source_ray
 - **橋接** `optical/pop_pass.py`：`lens_focal_airy_pattern(w_at_lens_mm, aperture_mm, f_mm, wavelength_nm)`。幾何（透鏡處光束半徑 w、孔徑半徑 a、焦距 f）**由 q 通道供給、不在此重算**（前端 `gaussianWidthMm(q)` 已知 w）。流程：在透鏡處種 w 寬高斯 → 孔徑硬截斷 → `focal_plane(f)` → 裁到 ±6 Airy 零點 → 降採樣。回傳 `{size, halfExtentUm, pitchUm, firstNullUm, clipFraction, intensity[peak-normalized], diffractionLimited}`。v1 限制：入射平相位（忽略入射波前曲率，環主要由截斷產生）、單透鏡焦平面視圖。
 - **端點** `POST /api/v3/pop`（`routers/pop.py`，**on-demand 專用**，絕不進 `/api/v3/solver` live trace）：body `{wAtLensUm, apertureMm, focalLengthMm, wavelengthNm, gridN?, outN?}` → 上述 payload。前端在 beam-scope 探測截斷透鏡下游時呼叫。
 - **物理驗證**（`tests/optical/test_pop_field.py` + `test_pop_pass.py`）：圓孔焦面 = Airy（首零在 `1.22λf/D` 8% 內 + 確認有環）、自由空間高斯 `w(zR)=w0√2`（6% 內）、高斯過孔徑能量比 = Stage 1 `1−exp(−2a²/w²)`（3% 內）。Live A230TM-B 端點徑向切面確認中央亮斑→暗環→次環。
-- **尚未做**：Stage 3（把 payload grid 餵進 BeamScopePanel `sampleIntensity` 畫出環）、偵測器影像面、astigmatic 場（v1 方格、可種橢圓高斯）、入射曲率、任意下游平面（非焦面）。
+- **Stage 3 — DONE 2026-06-11**：`BeamScopePanel` 在探測截斷透鏡下游時,找出該透鏡的 `apertureTruncation`(含 `focalLengthMm`)→ 呼叫 `POST /api/v3/pop` → 雙線性取樣回傳的強度網格餵進現有 `Heatmap`（取代解析 `sampleIntensity`），標題標「diffraction (POP) · focal plane」。幾何（透鏡處光束半徑 w、孔徑、焦距、λ）全來自 q 通道的 segment descriptor。
+- **尚未做**：偵測器影像面、astigmatic POP 場（v1 種圓形 `w_eff`，焦面 Airy 由圓孔主導本就近圓）、入射波前曲率、**任意下游平面**（option B：會聚透鏡的環只在焦點 ±景深~3µm 內存在,離焦處是平滑光斑;且 mm 尺度近場 + 孔徑/焦斑~3000× 比例是硬取樣問題 → 暫不做）。
 
 ## RF tracer
 

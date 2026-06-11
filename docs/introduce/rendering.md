@@ -11,4 +11,5 @@
 - 材質：`materialFor()` → `colorForComponent()`（kindId 色表 + `colorHex` 覆寫 + 裝置狀態著色）。
 - **viewerHints** 驅動幾何過濾：`includeOnlyCentroids`、`deletedCentroids`、`recenterOrigin`。
 - 光束渲染：`three/rayTrace.ts` → `v3TraceAdapter.ts` 消費後端 `/api/v3/solver` 輸出，發佈到 `window.__rayTraceDebug`（供 OpticalLinkViewer、BeamScope、snap-to-beam 讀取）。
+  - **像散（per-axis qx/qy）**：adapter 的 `beamMode.x/.y` + `waistAtStart/EndUm`（X，qx）與 `waistAtStart/EndUmY`（Y，qy）**各軸獨立**（2026-06-11 修；先前 y 軸誤抄 qx → 永遠圓）。`OpticalLinkViewerPanel` 因此把 3D 光束畫成**橢圓錐管**（自建 BufferGeometry，X 半寬←qx、Y 半寬←qy，每軸各套 `VISUAL_FLOOR_UM`），方向用 `makeBasis` 對到 beam-local **s/p**（local X→s、Z→p；約定 `spatialModeX∥s`，長軸反了就對調 s/p）。圓形光束退化回舊的圓錐。BeamScope 的 2D profile 熱圖同樣讀 `beamMode.x/.y` → 像散顯示為橢圓光斑。**近束腰**兩軸都被 `VISUAL_FLOOR_UM`(30µm) 夾平 → 仍圓；橢圓在下游才明顯。
 - 效能：on-demand rendering（閒置 0 renders/sec）、增量重建場景 + `objectWrappersRef` 以 (component, asset, deviceState) 參考相等做 wrapper 快取。
