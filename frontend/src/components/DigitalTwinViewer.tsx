@@ -1895,14 +1895,22 @@ export function DigitalTwinViewer({
     // real STL/GLB is authored on that asset row, this resolver loads it
     // automatically with no code change.
     setRfConnectorAssetResolver((kind) => {
-      const asset = useV3Catalog.getState().getAssetByCatalogId(`rf_connector_${kind}`);
-      if (!asset || asset.filePath.startsWith("primitive://")) return null;
-      return {
-        url: resolveAssetUrl(asset.filePath),
-        ext: asset.filePath.split("?")[0].split(".").pop()?.toLowerCase() ?? "",
-        unit: asset.unit,
-        scaleFactor: asset.scaleFactor,
-      };
+      // Try the real-asset slug first ("sma_male" / "bnc_male", the user's
+      // GLB uploads), then the placeholder slug ("rf_connector_<kind>").
+      // A primitive:// row has no loadable mesh → fall through to null so
+      // the procedural builder draws (the female ends, today).
+      for (const cid of [kind, `rf_connector_${kind}`]) {
+        const asset = useV3Catalog.getState().getAssetByCatalogId(cid);
+        if (asset && !asset.filePath.startsWith("primitive://")) {
+          return {
+            url: resolveAssetUrl(asset.filePath),
+            ext: asset.filePath.split("?")[0].split(".").pop()?.toLowerCase() ?? "",
+            unit: asset.unit,
+            scaleFactor: asset.scaleFactor,
+          };
+        }
+      }
+      return null;
     });
     return () => setRfConnectorAssetResolver(null);
   }, []);
