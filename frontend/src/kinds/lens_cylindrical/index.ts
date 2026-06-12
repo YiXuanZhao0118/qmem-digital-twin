@@ -2,7 +2,7 @@ import { definePhysicsPlugin } from "../_plugin";
 
 export interface LensCylindricalParams extends Record<string, unknown> {
   focalLengthMm: number;
-  cylindricalAxis: "x" | "y" | "z";
+  transmittance: number;
   wavelengthRangeNm: [number, number];
 }
 
@@ -26,6 +26,15 @@ export const lensCylindricalPlugin = definePhysicsPlugin<LensCylindricalParams>(
     alignToleranceMm: 25,
     alignSummary:
       "intercept_in translates to beam axis. Direction = optical axis (light propagation direction through lens body).",
-    defaultParams: { focalLengthMm: 100.0, cylindricalAxis: "x", wavelengthRangeNm: [400, 1100] },
+    // Cylinder orientation is geometric, not a param: intercept_in's axisY is
+    // the power (curved) axis, axisZ the cylinder line — both ⊥ axisX (optical
+    // axis) by construction. Re-orient by rotating the anchor frame, not a
+    // "cylindricalAxis" string (retired 2026-06-12; the live anchor tracer
+    // always focuses axisY — see lens_cylindrical_op).
+    //
+    // transmittance: AR/Fresnel power factor read by the SHARED
+    // _lens_power_factor (lens.py); declared here (mirroring lens_plano_convex)
+    // so an asset's coating value survives the Asset3DEditor strict filter.
+    defaultParams: { focalLengthMm: 100.0, transmittance: 0.99, wavelengthRangeNm: [400, 1100] },
   },
 });

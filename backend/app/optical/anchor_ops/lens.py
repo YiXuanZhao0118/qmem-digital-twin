@@ -237,6 +237,14 @@ def lens_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
 
 
 def lens_cylindrical_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
+    """Cylindrical lens — focuses one transverse axis, passes the other.
+
+    Orientation is GEOMETRIC, carried by the intercept_in anchor frame, NOT a
+    param: axisY = power (curved) axis, axisZ = cylinder line (no power) — both
+    ⊥ axisX (optical axis) by construction. Re-orient by rotating the anchor's
+    axisY/axisZ about axisX. The old ``cylindricalAxis`` string was retired
+    (2026-06-12) as a redundant second source of truth; this op never read it.
+    """
     if ctx.anchor.id != "intercept_in":
         return [ray_in]
 

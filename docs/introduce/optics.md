@@ -55,6 +55,14 @@ emitter 不等入射光，主動種出初始 `BeamRay`（`emit_anchor_source_ray
 - **這是能量半**：同一個截斷產生的**繞射環（Airy）圖樣**屬波動場，q-引擎不畫（見上「限制」）；繞射 *pattern* 由獨立的 **POP 場通道**處理（見下），3D 場景光束仍為高斯錐。偏振/RF/AOM/fiber 一律留在 q 通道。
 - **A230TM-B**（Thorlabs 非球面，`kind=lens_plano_convex`）：`default_params.focalLengthMm=4.51`（op 讀此 key，**非** Object 面板的 `focalMm`）、`clearApertureMm=4.95`、`transmittance=0.995`；intercept anchor 的 `apertureMm=2.475`（=clearAperture/2，半徑）。
 
+### 柱面透鏡的軸是幾何、不是參數（`cylindricalAxis` 已退役，2026-06-12）
+
+`lens_cylindrical_op`（`lens.py`）只讀 `focalLengthMm`＋`transmittance`，並**只對 `intercept_in` 的 axisY 套薄透鏡 kick**（`y`/`θ_y`/`qx`），axisZ（`z`/`θ_z`/`qy`）原樣穿透。所以柱面的指向**已由 anchor 幾何承載**：
+
+- **axisY＝聚焦（曲面）軸**；**axisZ＝柱軸（無屈光力、平的那條）**；兩者依正交基底**必然 ⊥ axisX（光軸＝intercept_in 方向）**。
+- 要轉柱面方向 → 在 PHY Editor **旋轉 intercept_in 的 axisY/axisZ**（繞 axisX），不需要第二個 anchor，也不需要參數。
+- 舊的 `cylindricalAxis: "x"/"y"` 字串**已從 kind seed 移除**：live anchor tracer 從不讀它（恆用 axisY），它與 anchor frame 是重複且可能不一致的真值來源。僅退役的 `kindParams` 路徑（`schemas.py` 的 `OpticalElementCreate`、`rayTrace.ts`）仍留有它，屬 dead path。
+
 ## 斜入射像散（beam 與透鏡不對準，2026-06-11）
 
 beam 軸與透鏡光軸（anchor `axisX`）不平行時，薄透鏡是**像散**的。`_tilt_astig_focals`（`lens.py`）把焦距依入射角 α 拆成 tangential `f·cosα`（入射面內）與 sagittal `f/cosα`（垂直），再依入射面方位角 φ=atan2(θ_z,θ_y) 把聚焦功率張量 `diag(1/f_t,1/f_s)` 投影回 (axisY, axisZ)，取**對角項** → `f_y` 套 `qx`（axisY 平面）、`f_z` 套 `qy`（axisZ 平面）+ 對應的幾何 kick。

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-11T20:40:33.828Z",
+  "generated_at": "2026-06-12T05:40:11.723Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -496,7 +496,7 @@
         "align_summary": "intercept_in translates to beam axis. Direction = optical axis (light propagation direction through lens body).",
         "default_params": {
           "focalLengthMm": 100,
-          "cylindricalAxis": "x",
+          "transmittance": 0.99,
           "wavelengthRangeNm": [
             400,
             1100
