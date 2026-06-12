@@ -1888,13 +1888,15 @@ export function DigitalTwinViewer({
   // models exist — swap them (or read from connector properties) once authored.
   // The resolver reads the catalog live, so it's robust to load timing.
   useEffect(() => {
-    const PLACEHOLDER_CONNECTOR_CATALOG_IDS: Record<"sma" | "bnc", string> = {
-      sma: "thorlabs_pbs252",
-      bnc: "thorlabs_la1540_b",
-    };
+    // Map a gendered connector kind to its real Asset3D (alembic 0115,
+    // catalog_id `rf_connector_{family}_{gender}`). Those rows are procedural
+    // (`primitive://…`) for now, which have no loadable mesh file — return
+    // null so buildRfConnectorGroup draws the procedural connector. When a
+    // real STL/GLB is authored on that asset row, this resolver loads it
+    // automatically with no code change.
     setRfConnectorAssetResolver((kind) => {
-      const asset = useV3Catalog.getState().getAssetByCatalogId(PLACEHOLDER_CONNECTOR_CATALOG_IDS[kind]);
-      if (!asset) return null;
+      const asset = useV3Catalog.getState().getAssetByCatalogId(`rf_connector_${kind}`);
+      if (!asset || asset.filePath.startsWith("primitive://")) return null;
       return {
         url: resolveAssetUrl(asset.filePath),
         ext: asset.filePath.split("?")[0].split(".").pop()?.toLowerCase() ?? "",

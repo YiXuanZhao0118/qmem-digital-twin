@@ -9,37 +9,39 @@ import {
   labMmToFiberThree,
   type FiberNode,
 } from "../fiber";
-import { buildBncMaleConnectorGroup } from "./bnc_male_connector";
-import { buildSmaMaleConnectorGroup } from "./sma_male_connector";
-import { buildRfConnectorGroup } from "./connectorModels";
-
-type RfCableEndConnector = "sma" | "bnc";
+import {
+  buildRfConnectorGroup,
+  normalizeRfConnectorKind,
+  type RfConnectorKind,
+} from "./connectorModels";
 
 /** Resolve which connector to draw at each cable end. Reads
  *  `properties.endAConnector` / `properties.endBConnector` (preferred), then
  *  falls back to `properties.connectorType` for the legacy single-typed
- *  catalog rows (e.g. the original Thorlabs CA2906 SMA-SMA jumper). */
+ *  catalog rows (e.g. the original Thorlabs CA2906 SMA-SMA jumper). The
+ *  stored tokens are still family-only ("sma" / "bnc"); they normalise to
+ *  the male plug until per-end gender lands with the connector-asset binding
+ *  refactor (0116). */
 function rfCableEndConnectors(
   component: ComponentItem,
-): { a: RfCableEndConnector; b: RfCableEndConnector } {
+): { a: RfConnectorKind; b: RfConnectorKind } {
   const props = (component.properties ?? {}) as Record<string, unknown>;
-  const read = (key: string): RfCableEndConnector | null => {
+  const read = (key: string): RfConnectorKind | null => {
     const v = props[key];
-    return v === "bnc" ? "bnc" : v === "sma" ? "sma" : null;
+    return typeof v === "string" ? normalizeRfConnectorKind(v) : null;
   };
-  const fallback = read("connectorType") ?? "sma";
+  const fallback = read("connectorType") ?? "sma_male";
   return {
     a: read("endAConnector") ?? fallback,
     b: read("endBConnector") ?? fallback,
   };
 }
 
-function buildRfCableConnector(kind: RfCableEndConnector): THREE.Group {
+function buildRfCableConnector(kind: RfConnectorKind): THREE.Group {
   // Prefer the real catalog model (data-driven, cached); fall back to the
-  // procedural connector while the model loads or if no asset is mapped.
-  return buildRfConnectorGroup(kind, () =>
-    kind === "bnc" ? buildBncMaleConnectorGroup() : buildSmaMaleConnectorGroup(),
-  );
+  // procedural connector (gender-aware) while the model loads or if no asset
+  // is mapped.
+  return buildRfConnectorGroup(kind);
 }
 
 /** Bezier-spline RF cable renderer — used when the SceneObject carries

@@ -6,6 +6,11 @@ import { buildBncFemaleConnectorGroup } from "../bnc_female_connector";
 import { buildBncMaleConnectorGroup } from "../bnc_male_connector";
 import { buildSmaFemaleConnectorGroup } from "../sma_female_connector";
 import { buildSmaMaleConnectorGroup } from "../sma_male_connector";
+import {
+  normalizeRfConnectorKind,
+  proceduralRfConnector,
+  type RfConnectorKind,
+} from "../connectorModels";
 
 const builders = {
   sma_male: buildSmaMaleConnectorGroup,
@@ -27,4 +32,23 @@ describe("RF connector procedural builders", () => {
       expect(box.max.x).toBeGreaterThan(0);
     });
   }
+});
+
+describe("connector dispatch", () => {
+  it("normalizeRfConnectorKind maps legacy family tokens to the male plug", () => {
+    expect(normalizeRfConnectorKind("sma")).toBe("sma_male");
+    expect(normalizeRfConnectorKind("bnc")).toBe("bnc_male");
+    expect(normalizeRfConnectorKind("sma_female")).toBe("sma_female");
+    expect(normalizeRfConnectorKind("bnc_female")).toBe("bnc_female");
+    expect(normalizeRfConnectorKind("nonsense")).toBeNull();
+  });
+
+  it("proceduralRfConnector returns a non-empty group for every gendered kind", () => {
+    const kinds: RfConnectorKind[] = ["sma_male", "sma_female", "bnc_male", "bnc_female"];
+    for (const k of kinds) {
+      const g = proceduralRfConnector(k);
+      expect(g).toBeInstanceOf(THREE.Group);
+      expect(g.children.length).toBeGreaterThan(0);
+    }
+  });
 });

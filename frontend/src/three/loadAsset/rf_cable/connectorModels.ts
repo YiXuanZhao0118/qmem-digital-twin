@@ -17,8 +17,40 @@ import * as THREE from "three";
 import { loadAssetGeometry } from "../../loadAssetGeometry";
 import { mergeColoredGeometries, geometryToColoredMesh } from "../../glbExport";
 import { mmToThree } from "../../transformUtils";
+import { buildBncFemaleConnectorGroup } from "./bnc_female_connector";
+import { buildBncMaleConnectorGroup } from "./bnc_male_connector";
+import { buildSmaFemaleConnectorGroup } from "./sma_female_connector";
+import { buildSmaMaleConnectorGroup } from "./sma_male_connector";
 
-export type RfConnectorKind = "sma" | "bnc";
+/** Family + gender. Matches the `rf_connector_{family}_{gender}` Asset3D
+ *  slugs (alembic 0115). The legacy family-only "sma" / "bnc" values that
+ *  still live in `properties.endAConnector` map to the male plug (the only
+ *  gender the procedural renderer drew before) via `normalizeRfConnectorKind`. */
+export type RfConnectorKind = "sma_male" | "sma_female" | "bnc_male" | "bnc_female";
+
+const PROCEDURAL: Record<RfConnectorKind, () => THREE.Group> = {
+  sma_male: buildSmaMaleConnectorGroup,
+  sma_female: buildSmaFemaleConnectorGroup,
+  bnc_male: buildBncMaleConnectorGroup,
+  bnc_female: buildBncFemaleConnectorGroup,
+};
+
+/** Procedural fallback geometry for a connector kind. */
+export function proceduralRfConnector(kind: RfConnectorKind): THREE.Group {
+  return PROCEDURAL[kind]();
+}
+
+/** Map a legacy family-only token ("sma" / "bnc") to a gendered kind,
+ *  defaulting to the male plug (back-compat: that's all the cable renderer
+ *  drew before gender existed in the data model). Gendered tokens pass
+ *  through. Returns null for anything unrecognised. */
+export function normalizeRfConnectorKind(token: string): RfConnectorKind | null {
+  if (token === "sma" || token === "sma_male") return "sma_male";
+  if (token === "sma_female") return "sma_female";
+  if (token === "bnc" || token === "bnc_male") return "bnc_male";
+  if (token === "bnc_female") return "bnc_female";
+  return null;
+}
 
 /** What the store-aware caller resolves a connector kind to. `url` is already
  *  run through `resolveAssetUrl`; `ext` is the lowercased file extension. */
@@ -87,7 +119,7 @@ async function loadConnector(kind: RfConnectorKind): Promise<void> {
  *  procedural fallback so the connector is never invisible. */
 export function buildRfConnectorGroup(
   kind: RfConnectorKind,
-  fallback: () => THREE.Group,
+  fallback: () => THREE.Group = () => proceduralRfConnector(kind),
 ): THREE.Group {
   const cached = geomCache.get(kind);
   if (cached) {
