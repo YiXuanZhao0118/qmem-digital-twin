@@ -60,10 +60,14 @@ def faraday_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
     # keeps ŝ but flips p̂ on reversal, so a direction-independent matrix
     # reads as R(−θ) on the return pass and CANCELS the forward rotation —
     # a reciprocal optical-activity rotator that defeats the isolator.
-    # Flip θ by the sign of travel along axisX so both passes are R(+θ) in
-    # lab and a round trip accumulates 2θ (non-reciprocal).
+    # Flip θ by the sign of travel along axisX so both passes have the same
+    # handedness in lab and a round trip accumulates 2θ (non-reciprocal).
+    # Handedness REVERSED 2026-06-12 (per request): forward pass now rotates
+    # −rotationDeg about axisX (was +rotationDeg), so both passes are R(−θ)
+    # in lab and a round trip accumulates −2θ. Non-reciprocity is unchanged;
+    # only the rotation sense is flipped.
     fwd = 1.0 if ray_in.direction.dot(ctx.anchor.axis_x_body) >= 0.0 else -1.0
-    theta = math.radians(rot_deg) * fwd
+    theta = -math.radians(rot_deg) * fwd
     c, s = math.cos(theta), math.sin(theta)
     #   E_s' = c·E_s + s·E_p
     #   E_p' = −s·E_s + c·E_p

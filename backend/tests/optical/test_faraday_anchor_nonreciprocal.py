@@ -46,13 +46,14 @@ def _ray(jones, direction):
 S = (complex(1, 0), complex(0, 0))   # pure s
 
 
-def test_forward_rotates_plus_45_in_sp():
-    """Forward (travelling +axisX): E_s'=cosθ·E_s+sinθ·E_p, E_p'=−sinθ·E_s+cosθ·E_p."""
+def test_forward_rotates_minus_45_in_sp():
+    """Forward (travelling +axisX): handedness reversed 2026-06-12, so θ=−45°.
+    E_s'=cosθ·E_s+sinθ·E_p, E_p'=−sinθ·E_s+cosθ·E_p with θ=−45° → +p."""
     op = get_anchor_op("faraday_rotator")
     [out] = op(_ray(S, Vec3(1, 0, 0)), _ctx(Vec3(1, 0, 0)))
     a = math.sqrt(0.5)
     assert out.jones[0].real == pytest.approx(a, abs=1e-12)
-    assert out.jones[1].real == pytest.approx(-a, abs=1e-12)
+    assert out.jones[1].real == pytest.approx(a, abs=1e-12)
 
 
 def test_reverse_flips_rotation_sign():
@@ -64,7 +65,7 @@ def test_reverse_flips_rotation_sign():
     [rev] = op(_ray(S, Vec3(-1, 0, 0)), _ctx(Vec3(-1, 0, 0)))
     a = math.sqrt(0.5)
     assert rev.jones[0].real == pytest.approx(a, abs=1e-12)
-    assert rev.jones[1].real == pytest.approx(a, abs=1e-12)        # sign flipped vs forward
+    assert rev.jones[1].real == pytest.approx(-a, abs=1e-12)       # sign flipped vs forward
     assert rev.jones[1].real == pytest.approx(-fwd.jones[1].real, abs=1e-12)
 
 

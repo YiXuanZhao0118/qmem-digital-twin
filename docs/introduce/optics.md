@@ -111,7 +111,8 @@ isolator 內的 Glan-Laser 稜鏡 asset **掛 `beam_splitter` kind 走此雙 bra
 
 Live op = `anchor_ops/misc_ops.py` 的 `faraday_anchor_op`（單 anchor `optical_center`）。**`kinds/faraday_rotator/physics.py` 是退役的 face-based legacy，live 不跑到**（但其 registry 測試 `test_faraday_rotator.py` 仍綠）。op 做兩件事：slab 直穿（`B=L/n`，q 前進、不聚焦、功率不變）＋ Jones 旋轉 `rotationDeg`（預設 45°）。
 
-- **非互易性靠 anchor axisX 定號（`misc_ops.py:53`）**：旋轉固定在 lab B-field 軸（= rod 光軸 anchor `axisX`），**不是** beam-local 框。`beam_local_sp` 反向時保留 ŝ、翻 p̂，所以「方向無關的固定矩陣」在回程會被讀成 `R(−θ)` 而**抵銷**去程 → 退化成互易旋光體、isolator 失效（2026-06-12 前的 bug，使用者實測「來回相互抵銷」）。修法：`fwd = sign(direction·axisX)`，`θ ← rotationDeg·fwd`，去/回程在 lab 都是 `R(+θ)` → 往返累積 **2θ**（45°+45°=90°，配交叉偏振器擋反射）。
+- **非互易性靠 anchor axisX 定號（`misc_ops.py:53`）**：旋轉固定在 lab B-field 軸（= rod 光軸 anchor `axisX`），**不是** beam-local 框。`beam_local_sp` 反向時保留 ŝ、翻 p̂，所以「方向無關的固定矩陣」在回程會被讀成 `R(−θ)` 而**抵銷**去程 → 退化成互易旋光體、isolator 失效（2026-06-12 前的 bug，使用者實測「來回相互抵銷」）。修法：`fwd = sign(direction·axisX)`，去/回程在 lab 同手性 → 往返累積 **2θ**（45°+45°=90°，配交叉偏振器擋反射）。
+- **旋轉手性 2026-06-12 反轉（依需求）**：`θ ← −rotationDeg·fwd`（原為 `+rotationDeg·fwd`），forward 改成繞 axisX 轉 −rotationDeg、去/回程都是 `R(−θ)`、往返 **−2θ**。**非互易性不變，只反轉旋向**；op 層契約測試的號已同步更新。
 - **矩陣**（`rotate_jones(+θ)` 慣例）：`E_s' = cosθ·E_s + sinθ·E_p`、`E_p' = −sinθ·E_s + cosθ·E_p`。
 - **op 層 vs 整鏈**：單 op 呼叫只看到 `±θ`（forward/reverse 號相反）；完整 2θ 非互易要靠 tracer 在反射處 re-base jones 才浮現。op 層契約測試見 `tests/optical/test_faraday_anchor_nonreciprocal.py`。
 
