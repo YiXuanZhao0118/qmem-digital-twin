@@ -84,6 +84,13 @@ export type AnchorId =
   // the rotation axis pivot between the two PBS halves. Position only;
   // direction inferred from front_pbs → back_pbs vector.
   | "faraday_centre"
+  // Cable-connector geometry anchors (plan 2026-06-12, §3.2). A connector
+  // asset owns two: `connect_out` (origin, −X, the wire/spline junction)
+  // and `connect_in` (at tipMm, +X, the mating / ferrule end face). The
+  // cable-level intercept_in/out (optical) and rf_in/out (RF) port anchors
+  // derive from the end connectors' `connect_in`.
+  | "connect_in"
+  | "connect_out"
   | "+x" | "-x" | "+y" | "-y" | "+z" | "-z";
 
 /** Anchor IDs the Editor inspector exposes in its dropdown. We
@@ -104,6 +111,8 @@ export const EDITABLE_ANCHOR_IDS: AnchorId[] = [
   "ttl_in",
   "trigger_in",
   "aperture",
+  "connect_in",
+  "connect_out",
 ];
 
 export type KindAlignVariant =

@@ -4,15 +4,17 @@
 
 > 相關：[optics.md](optics.md)（求解器如何分派 PhysicsOp）、[asset.md](asset.md)（defaultParams 存放處）、[object-sense-kinds.md](../object-sense-kinds.md)。
 
-## Kind 分類（live `kinds.json` `element_kinds`：29）
+## Kind 分類（live `kinds.json` `element_kinds`：31）
 
 - **Emitter**：`laser_source`、`tapered_amplifier`。
-- **Passive 光學**：`mirror`、`dichroic_mirror`、`lens_biconvex`/`lens_plano_convex`/`lens_cylindrical`、`waveplate`、`polarizer`、`glan_polarizer`、`beam_splitter`(含 PBS)、`fiber`/`fiber_coupler`、`isolator`(複合)、`faraday_rotator`、`aom`、`eom`、`nonlinear_crystal`、`saturable_absorber`。
+- **Passive 光學**：`mirror`、`dichroic_mirror`、`lens_biconvex`/`lens_plano_convex`/`lens_cylindrical`、`waveplate`、`polarizer`、`glan_polarizer`、`beam_splitter`(含 PBS)、`fiber`/`fiber_coupler`、`isolator`(複合)、`faraday_rotator`、`aom`、`eom`、`nonlinear_crystal`、`saturable_absorber`、`fiber_connector`(纜線接頭)。
 - **Sink**：`detector`、`camera`、`spectrometer`、`wavemeter`、`beam_dump`。
-- **RF kinds**：`rf_source`(AD9959 DDS)、`rf_amplifier`、`rf_cable`、`rf_switch`、`programmable_pulse_generator`(TTL)、`horn_antenna`(sink)。
+- **RF kinds**：`rf_source`(AD9959 DDS)、`rf_amplifier`、`rf_cable`、`rf_cable_connector`(纜線接頭)、`rf_switch`、`programmable_pulse_generator`(TTL)、`horn_antenna`(sink)。
 - 另有 24 個純機械 `passive_plugins`（mount/post/chassis/optical_table…），無物理。
 
-> 注意：`backend/data/kinds.json` 是 kind 物理參數的權威來源；v3 設計文件曾把三種 lens 簡化成單一 `lens`、把 Glan 併入 polarizer，但實際 live `element_kinds` 為 29。`test_kinds_manifest` 與實際數可能有差異（已知）。
+> 注意：`backend/data/kinds.json` 是 kind 物理參數的權威來源；v3 設計文件曾把三種 lens 簡化成單一 `lens`、把 Glan 併入 polarizer，但實際 live `element_kinds` 為 31。`test_kinds_manifest::TestElementKinds` 強制此數（現為 31）。
+
+**纜線接頭 kind（`fiber_connector` / `rf_cable_connector`，2026-06-12, alembic `0114`）**：纜線端接頭（FC ferrule / SMA·BNC coax）的一級 catalog kind；9 個實體接頭在 `0115` 成為其下的 Asset3D 列。各持兩個幾何 anchor——`connect_out`（原點、−X、纜線/spline junction）與 `connect_in`（在 `tipMm`、+X、配對 / ferrule 端面）；纜線層級的 `intercept_in/out`(光) 與 `rf_in/out`(RF) 埠 anchor 由端接頭的 `connect_in` 推導（取代寫死的 36.28 / 15.5 / 27mm tip 常數，P2/P3 落地）。**物理是 passthrough**：接頭本身不獨立參與 trace——`connect_in/out` 不在 `PRIMARY_ANCHOR_IDS`，tracer 的 `nearest_anchor_hit` 根本不會命中它們；`optical/anchor_ops/connector.py` 仍**防禦性**註冊一個直通 op（`return [ray_in]`，鍵以 kind 名，因 tracer 以 kind 名分派、缺 op 的 primary-anchor 命中會被當 sink 吸光），確保未來接頭即便被賦予 primary anchor 也直通而非吸光。真正的耦合物理由纜線本體 op 從兩端接頭 params 讀。詳見接頭重構規劃（plan 2026-06-12）。
 
 ## Domain 與 Category（兩條獨立的軸）
 

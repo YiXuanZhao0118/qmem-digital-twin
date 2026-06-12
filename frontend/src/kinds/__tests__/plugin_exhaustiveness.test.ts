@@ -63,6 +63,9 @@ const KIND_UNION_MEMBERS: ElementKind[] = [
   "programmable_pulse_generator",
   "rf_cable",
   "rf_switch",
+  // Connector kinds added 2026-06-12 (connector refactor plan).
+  "fiber_connector",
+  "rf_cable_connector",
 ];
 
 const VALID_ASSET_CATEGORIES = new Set([

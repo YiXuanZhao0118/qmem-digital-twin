@@ -12,5 +12,6 @@ from . import polarizer  # noqa: F401
 from . import pbs  # noqa: F401
 from . import aom  # noqa: F401
 from . import fiber  # noqa: F401
+from . import connector  # noqa: F401 (fiber/RF cable connector passthrough)
 from . import misc_ops  # noqa: F401 (Faraday, EOM, TA, sinks, nonlinear, saturable)
 from . import emit_laser_source  # noqa: F401 (not an op — emitter helper)

@@ -20,7 +20,7 @@
 
 ### 渲染與光學
 - [渲染管線 · rendering.md](rendering.md) — 前端場景建構
-- [Kind 分類 · kinds.md](kinds.md) — 29 kinds + domain/category + 每 kind 契約
+- [Kind 分類 · kinds.md](kinds.md) — 31 kinds + domain/category + 每 kind 契約
 - [光學物理模型 · optics.md](optics.md) — 偏振、求解器、RF tracer、TA
 - [Fiber · fiber.md](fiber.md) — 光纖：單物件 + spline、端點對準、耦合物理
 

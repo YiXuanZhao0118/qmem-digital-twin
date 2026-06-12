@@ -70,14 +70,16 @@ class TestComponentTypeToKind:
 
 
 class TestElementKinds:
-    def test_returns_29_kinds(self) -> None:
+    def test_returns_31_kinds(self) -> None:
         # Count = number of physics plugins in the frontend registry.
         # Stage A''.3 added glan_polarizer; Phase 9.X dropped fiber_end +
         # isolator as plugins (fiber owns both tips; isolator is a Component
         # composition); faraday_rotator was added back as a first-class
-        # plugin so the PHY Editor can edit the faraday rod's aperture.
+        # plugin so the PHY Editor can edit the faraday rod's aperture;
+        # fiber_connector + rf_cable_connector added 2026-06-12 (connector
+        # refactor plan) → 31.
         kinds = element_kinds()
-        assert len(kinds) == 29, f"expected 29 ElementKinds, got {len(kinds)}: {kinds}"
+        assert len(kinds) == 31, f"expected 31 ElementKinds, got {len(kinds)}: {kinds}"
 
     def test_covers_full_spectrum(self) -> None:
         kinds = set(element_kinds())

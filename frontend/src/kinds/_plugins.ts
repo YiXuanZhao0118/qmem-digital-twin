@@ -26,6 +26,7 @@ import { dichroicMirrorPlugin } from "./dichroic_mirror";
 import { eomPlugin } from "./eom";
 import { faradayRotatorPlugin } from "./faraday_rotator";
 import { fiberPlugin } from "./fiber";
+import { fiberConnectorPlugin } from "./fiber_connector";
 import { fiberCouplerPlugin } from "./fiber_coupler";
 // Phase 9.X — fiberEndPlugin removed. fiber Asset3D now owns both tip
 // anchors (tip_a + tip_b) directly; the separate fiber_end kind +
@@ -46,6 +47,7 @@ import { polarizerPlugin } from "./polarizer";
 import { programmablePulseGeneratorPlugin } from "./programmable_pulse_generator";
 import { rfAmplifierPlugin } from "./rf_amplifier";
 import { rfCablePlugin } from "./rf_cable";
+import { rfCableConnectorPlugin } from "./rf_cable_connector";
 import { rfSourcePlugin } from "./rf_source";
 import { rfSwitchPlugin } from "./rf_switch";
 import { saturableAbsorberPlugin } from "./saturable_absorber";
@@ -92,6 +94,9 @@ export const PHYSICS_PLUGINS: readonly PhysicsPlugin[] = [
   beamSplitterPlugin,
   fiberCouplerPlugin,
   fiberPlugin,
+  // Cable connectors (plan 2026-06-12). Passthrough physics; the cable
+  // body op reads their params at the spline endpoints.
+  fiberConnectorPlugin,
   // fiberEndPlugin + isolatorPlugin removed (Phase 9.X):
   //   - fiber now owns both tips on a single Asset3D
   //   - isolator is a Component composition, not a kind
@@ -112,6 +117,7 @@ export const PHYSICS_PLUGINS: readonly PhysicsPlugin[] = [
   hornAntennaPlugin,
   programmablePulseGeneratorPlugin,
   rfCablePlugin,
+  rfCableConnectorPlugin,
   rfSwitchPlugin,
 ] as unknown as readonly PhysicsPlugin[];
 
@@ -297,6 +303,17 @@ export function verifyAlignment(
     if (p.id !== k) {
       errors.push(`[${p.id}] plugin id !== physics.elementKind (${p.id} vs ${k})`);
     }
+
+    // Kinds with no counterpart in any of the frozen legacy tables are
+    // post-migration additions (e.g. the connector kinds added 2026-06-12).
+    // The legacy tables are deprecated and slated for deletion, so there's
+    // nothing to align against — skip. Exhaustiveness + partition tests
+    // still cover these kinds.
+    const inLegacy =
+      oldKindRegistry[k] !== undefined ||
+      oldKindLabels[k] !== undefined ||
+      oldDefaultKindParams[k] !== undefined;
+    if (!inLegacy) continue;
 
     const oldEntry = oldKindRegistry[k];
     if (!oldEntry) {

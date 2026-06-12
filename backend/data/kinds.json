@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-12T05:40:11.723Z",
+  "generated_at": "2026-06-12T12:32:49.895Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -19,6 +19,7 @@
     "beam_splitter": "beam_splitter",
     "fiber_coupler": "fiber_coupler",
     "fiber": "fiber",
+    "fiber_connector": "fiber_connector",
     "aom": "aom",
     "eom": "eom",
     "nonlinear_crystal": "nonlinear_crystal",
@@ -36,6 +37,7 @@
     "programmable_pulse_generator": "programmable_pulse_generator",
     "rf_cable": "rf_cable",
     "sma_cable": "rf_cable",
+    "rf_cable_connector": "rf_cable_connector",
     "rf_switch": "rf_switch"
   },
   "element_kinds": [
@@ -53,6 +55,7 @@
     "beam_splitter",
     "fiber_coupler",
     "fiber",
+    "fiber_connector",
     "aom",
     "eom",
     "nonlinear_crystal",
@@ -67,6 +70,7 @@
     "horn_antenna",
     "programmable_pulse_generator",
     "rf_cable",
+    "rf_cable_connector",
     "rf_switch"
   ],
   "component_anchor_contracts": {
@@ -725,21 +729,21 @@
         ],
         "anchors": {
           "required": [
-            "intercept_in"
+            "intercept_face"
           ],
           "optional": [
             "intercept_out"
           ],
           "needs_direction": [
-            "intercept_in"
+            "intercept_face"
           ],
           "needs_aperture": [
-            "intercept_in"
+            "intercept_face"
           ]
         },
         "align_variant": "translate_anchor_to_beam",
         "align_tolerance_mm": 25,
-        "align_summary": "Cube of two right-angle prisms cemented along the diagonal. intercept_in marks that diagonal interface: position = cube centre, direction = coating normal (along ±(X±Y) / ±(X±Z) / ±(Y±Z) for face-aligned cubes), aperture = half the active interface size. PBS vs BS distinguished by Component.properties.beamSplitterType (Phase 2 schema).",
+        "align_summary": "Cube of two right-angle prisms cemented along the diagonal. intercept_face marks that diagonal interface: position = cube centre, direction = coating normal (along ±(X±Y) / ±(X±Z) / ±(Y±Z) for face-aligned cubes), aperture = half the active interface size. PBS vs BS distinguished by Component.properties.beamSplitterType (Phase 2 schema).",
         "default_params": {
           "polarizing": true,
           "transmissionAxisDegBeamLocal": 0,
@@ -892,6 +896,62 @@
           "polarizationExtinctionRatioDb": 25,
           "bandwidthMhzKm": null,
           "randomJonesSeed": null
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
+      }
+    },
+    {
+      "id": "fiber_connector",
+      "display_name": "Fiber Connector",
+      "component_types": [
+        "fiber_connector"
+      ],
+      "asset_category": "optical",
+      "catalog_group": "Passive",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "fiber_connector",
+        "primary_domain": "optical",
+        "default_physics": [
+          "optical"
+        ],
+        "anchors": {
+          "required": [
+            "connect_in",
+            "connect_out"
+          ],
+          "optional": [],
+          "needs_direction": [
+            "connect_in",
+            "connect_out"
+          ],
+          "needs_aperture": [
+            "connect_in"
+          ]
+        },
+        "align_variant": "none",
+        "align_tolerance_mm": 25,
+        "align_summary": "Fibre patch-cable connector (FC ferrule). connect_out (−X, origin) pins to the spline endpoint; connect_in (+X, at tipMm) is the ferrule end face where light enters/exits free space and the cable-level intercept port derives from. PM connectors key the slow axis via connect_in.axisY. Not aligned standalone.",
+        "default_params": {
+          "housing": "FC",
+          "polish": "PC",
+          "polishAngleDeg": 0,
+          "fiberType": "single_mode",
+          "mfdUm": 5.3,
+          "na": 0.13,
+          "coreUm": 4.4,
+          "claddingUm": 125,
+          "tipMm": 36.28,
+          "apertureDiameterMm": 0.125,
+          "glassIndexAtDesignLambda": 1.4506,
+          "slowAxisKeyed": false,
+          "returnLossDb": 40,
+          "wavelengthRangeNm": [
+            770,
+            790
+          ]
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
@@ -1513,6 +1573,49 @@
         "align_summary": "Bidirectional coaxial RF cable. rf_in (End A) and rf_out (End B) mark the two SMA / BNC / N connector tips; both directions are OUTWARD face normals (pointing away from the cable body, the way a mating plug would slide on). Cable physics (impedance, max frequency, connector type, jacket OD) lives in RfCableParams. Spline editing UX (analogous to fiber's Edit fiber path) is a follow-up — current visual is parametric straight cable.",
         "default_params": {
           "lengthMm": 152
+        },
+        "intrinsic_param_keys": null,
+        "state_param_keys": null,
+        "port_domains": {}
+      }
+    },
+    {
+      "id": "rf_cable_connector",
+      "display_name": "RF Cable Connector",
+      "component_types": [
+        "rf_cable_connector"
+      ],
+      "asset_category": "electronics",
+      "catalog_group": "RF",
+      "asset_name_pattern": null,
+      "physics": {
+        "element_kind": "rf_cable_connector",
+        "primary_domain": "rf",
+        "default_physics": [
+          "rf"
+        ],
+        "anchors": {
+          "required": [
+            "connect_in",
+            "connect_out"
+          ],
+          "optional": [],
+          "needs_direction": [
+            "connect_in",
+            "connect_out"
+          ],
+          "needs_aperture": []
+        },
+        "align_variant": "none",
+        "align_tolerance_mm": 25,
+        "align_summary": "Coax cable connector (SMA / BNC, male / female). connect_out (−X, origin) pins to the cable spline endpoint; connect_in (+X, at tipMm) is the mating face. Mating requires same family + opposite gender (plan §4.3). Not aligned standalone.",
+        "default_params": {
+          "family": "sma",
+          "gender": "male",
+          "tipMm": 15.5,
+          "impedanceOhm": 50,
+          "maxFreqGhz": 18,
+          "couplingType": "thread"
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,

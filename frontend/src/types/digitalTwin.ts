@@ -503,7 +503,12 @@ export type ElementKind =
   | "horn_antenna"
   | "programmable_pulse_generator"
   | "rf_cable"
-  | "rf_switch";
+  | "rf_switch"
+  // Fibre / RF cable connectors (plan 2026-06-12). First-class catalog
+  // kinds; the 9 real connectors are Asset3D rows under these. They carry
+  // connect_in / connect_out geometry anchors and pass the beam through.
+  | "fiber_connector"
+  | "rf_cable_connector";
 
 // --- Per-kind params (discriminated by element_kind) ------------------------
 

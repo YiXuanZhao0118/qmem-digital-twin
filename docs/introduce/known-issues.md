@@ -12,7 +12,7 @@
 - isolator 的 front/back piece 與 body housing 顏色都寫死 `#1a1a1c`（不走 colorForComponent）；要換色須同改 subset-piece 分支與 `buildThorlabsIsolatorObject`。
 - TA 資產 `gainLinear` vs op `smallSignalGainDb` 單位不一致，待統一。見 [optics.md](optics.md)。
 - pulse-envelope/色散時域數學在 legacy 退役時被刪（可從 git 復原）。見 [timing.md](timing.md)。
-- `test_kinds_manifest` 期待 30 kinds 但實際 `element_kinds` 為 29。見 [kinds.md](kinds.md)。
+- ~~`test_kinds_manifest` 期待 30 kinds 但實際 `element_kinds` 為 29。~~（已解決：測試與 live 數同步，2026-06-12 加入 `fiber_connector` + `rf_cable_connector` 後為 **31**。）見 [kinds.md](kinds.md)。
 - `objects.parent_component_id` model/schema 與 DB 欄位可能不一致；非 emitter 的 chain root（無入射 link 的 mirror）會報「chain root cannot emit」。
 - **雷射光束舊資料存在兩處（properties.opticalSources[0].beam + dynamic_sources column）**：兩處都殘留整束光（`spectrum`/`spatialEnvelope`/...）。**migration 0113 後已大幅緩解**：v3 trace 經 `db_scene_loader` 讀這兩處後，會**丟掉「是 defaultParams key 但非 Asset tunable」的 key**（tunable 契約，見 [data-model.md](data-model.md)），所以 non-tunable 的 beam 參數（spectrum/spatialEnvelope/polarization/waist）**永遠跟著 Asset**，不再因殘留資料而 desync；只有 tunable 的 `nominalPowerMw`/`centerWavelengthNm` 是逐實例值。顯示用的 `physics_elements.kindParams`（不落 DB，即時衍生）經 `bindings.get_laser_beam_for_kind_params` 仍優先讀 `dynamic_sources` column，故「顯示」與「trace」對 non-tunable 參數理論上仍可能不一致——但 trace 端已以 Asset 為準。見 [optics.md](optics.md)、auto-memory `laser_beam_dual_source_astigmatism`。
 - 死碼/孤兒檔/正名建議：見根目錄 `CLEANUP_AUDIT.md`。
