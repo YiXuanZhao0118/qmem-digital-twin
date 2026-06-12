@@ -18,6 +18,8 @@
 
 **9 個接頭 Asset3D（alembic `0115`）**：`fiber_connector` 下 5 列（`fiber_connector_{apc,pc}_{pm,sm}` + `fiber_connector_pc_mm`，共用 FC STL、依 0061「always clone, never share」每列獨立 row，`default_params` 帶 polish/polishAngleDeg/fiberType/mfd/na/core/cladding/slowAxisKeyed/returnLossDb，`wavelengthRangeNm` 走 column）；`rf_cable_connector` 下 4 列（`rf_connector_{sma,bnc}_{male,female}`，`file_path = primitive://{family}_{gender}_connector`，`default_params` 帶 family/gender/tipMm/impedanceOhm/maxFreqGhz/couplingType）。各列 `anchors` 為完整 tri-axis frame：`connect_out`(原點,axisX −X)、`connect_in`(在 tipMm, axisX +X；fiber 帶 apertureMm 0.125)。`tunable_params=[]`、`locked=false`。**標準渲染尚未接線**（接頭非獨立擺放，RF female 程序模型與 binding-tree 渲染為後續 phase）；遷移是唯一 seed 路徑（`seed_v3_assets.py` 是手動且已過時的 script，非 fresh-install 路徑）。
 
+**配對相容矩陣（plan §4.3）**：`backend/app/optical/connector_compat.py` ＋ `frontend/src/utils/connectorCompat.ts` 一式兩份，共用測資 `frontend/src/utils/__tests__/connector_compat_cases.json`（parity，與 `rf_resolve.py↔rfPropagation.ts` 同模式）。`evaluateConnectorMating(out, in, {keyAngleDeg?})` 回 `{status: allow|warn|reject, codes[]}`：RF＝family 須同、gender 須反（否則 reject `rf_family_mismatch`/`rf_gender_same`）；Fiber＝polish 須同（APC↔APC、PC↔PC，否則 reject `fiber_polish_mismatch`）、MM(out)→SM(in) warn `fiber_mm_to_sm_loss`（SM→MM 允許）、PM↔PM 且 key 夾角>`PM_KEY_TOLERANCE_DEG`(5°) warn `fiber_pm_key_misaligned`。**只 gate（link 驗證 + Align picker 過濾），不算物理數字**——PM PER 懲罰、MM→SM 模場失配損耗留在耦合 op（`anchor_ops/fiber.py`，P4）。Align picker 整合點 = `utils/rfCableAlignment.ts`（policy wrap，尚未接）。
+
 ## Domain 與 Category（兩條獨立的軸）
 
 兩者都「只是分類」，但分屬不同層、來源不同 kind，**互不覆蓋**：

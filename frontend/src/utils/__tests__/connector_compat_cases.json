@@ -1,0 +1,91 @@
+{
+  "_doc": "Shared parity fixture for the connector-mating compatibility matrix (plan 2026-06-12 §4.3). Read by BOTH frontend connectorCompat.test.ts and backend tests/optical/test_connector_compat.py so the two implementations can never drift. `out` = the feeding (source) connector, `in` = the receiving connector. Pure enum/string logic — no float tolerance. expected.codes is order-independent (tests sort).",
+  "cases": [
+    {
+      "name": "rf_sma_male_to_female_ok",
+      "out": { "domain": "rf", "family": "sma", "gender": "male" },
+      "in": { "domain": "rf", "family": "sma", "gender": "female" },
+      "expected": { "status": "allow", "codes": [] }
+    },
+    {
+      "name": "rf_sma_female_to_male_ok",
+      "out": { "domain": "rf", "family": "sma", "gender": "female" },
+      "in": { "domain": "rf", "family": "sma", "gender": "male" },
+      "expected": { "status": "allow", "codes": [] }
+    },
+    {
+      "name": "rf_sma_male_to_male_reject_gender",
+      "out": { "domain": "rf", "family": "sma", "gender": "male" },
+      "in": { "domain": "rf", "family": "sma", "gender": "male" },
+      "expected": { "status": "reject", "codes": ["rf_gender_same"] }
+    },
+    {
+      "name": "rf_bnc_female_to_female_reject_gender",
+      "out": { "domain": "rf", "family": "bnc", "gender": "female" },
+      "in": { "domain": "rf", "family": "bnc", "gender": "female" },
+      "expected": { "status": "reject", "codes": ["rf_gender_same"] }
+    },
+    {
+      "name": "rf_sma_to_bnc_reject_family",
+      "out": { "domain": "rf", "family": "sma", "gender": "male" },
+      "in": { "domain": "rf", "family": "bnc", "gender": "female" },
+      "expected": { "status": "reject", "codes": ["rf_family_mismatch"] }
+    },
+    {
+      "name": "rf_sma_male_to_bnc_male_reject_both",
+      "out": { "domain": "rf", "family": "sma", "gender": "male" },
+      "in": { "domain": "rf", "family": "bnc", "gender": "male" },
+      "expected": { "status": "reject", "codes": ["rf_family_mismatch", "rf_gender_same"] }
+    },
+    {
+      "name": "fiber_apc_pm_to_apc_pm_ok",
+      "out": { "domain": "optical", "polish": "APC", "fiberType": "polarization_maintaining", "slowAxisKeyed": true },
+      "in": { "domain": "optical", "polish": "APC", "fiberType": "polarization_maintaining", "slowAxisKeyed": true },
+      "expected": { "status": "allow", "codes": [] }
+    },
+    {
+      "name": "fiber_apc_to_pc_reject_polish",
+      "out": { "domain": "optical", "polish": "APC", "fiberType": "single_mode", "slowAxisKeyed": false },
+      "in": { "domain": "optical", "polish": "PC", "fiberType": "single_mode", "slowAxisKeyed": false },
+      "expected": { "status": "reject", "codes": ["fiber_polish_mismatch"] }
+    },
+    {
+      "name": "fiber_pc_sm_to_pc_sm_ok",
+      "out": { "domain": "optical", "polish": "PC", "fiberType": "single_mode", "slowAxisKeyed": false },
+      "in": { "domain": "optical", "polish": "PC", "fiberType": "single_mode", "slowAxisKeyed": false },
+      "expected": { "status": "allow", "codes": [] }
+    },
+    {
+      "name": "fiber_mm_out_to_sm_in_warn_loss",
+      "out": { "domain": "optical", "polish": "PC", "fiberType": "multi_mode", "slowAxisKeyed": false },
+      "in": { "domain": "optical", "polish": "PC", "fiberType": "single_mode", "slowAxisKeyed": false },
+      "expected": { "status": "warn", "codes": ["fiber_mm_to_sm_loss"] }
+    },
+    {
+      "name": "fiber_sm_out_to_mm_in_ok",
+      "out": { "domain": "optical", "polish": "PC", "fiberType": "single_mode", "slowAxisKeyed": false },
+      "in": { "domain": "optical", "polish": "PC", "fiberType": "multi_mode", "slowAxisKeyed": false },
+      "expected": { "status": "allow", "codes": [] }
+    },
+    {
+      "name": "fiber_pm_key_aligned_within_tol_ok",
+      "out": { "domain": "optical", "polish": "APC", "fiberType": "polarization_maintaining", "slowAxisKeyed": true },
+      "in": { "domain": "optical", "polish": "APC", "fiberType": "polarization_maintaining", "slowAxisKeyed": true },
+      "opts": { "keyAngleDeg": 3.0 },
+      "expected": { "status": "allow", "codes": [] }
+    },
+    {
+      "name": "fiber_pm_key_misaligned_warn",
+      "out": { "domain": "optical", "polish": "APC", "fiberType": "polarization_maintaining", "slowAxisKeyed": true },
+      "in": { "domain": "optical", "polish": "APC", "fiberType": "polarization_maintaining", "slowAxisKeyed": true },
+      "opts": { "keyAngleDeg": 30.0 },
+      "expected": { "status": "warn", "codes": ["fiber_pm_key_misaligned"] }
+    },
+    {
+      "name": "cross_domain_fiber_to_rf_reject",
+      "out": { "domain": "optical", "polish": "PC", "fiberType": "single_mode", "slowAxisKeyed": false },
+      "in": { "domain": "rf", "family": "sma", "gender": "female" },
+      "expected": { "status": "reject", "codes": ["domain_mismatch"] }
+    }
+  ]
+}
