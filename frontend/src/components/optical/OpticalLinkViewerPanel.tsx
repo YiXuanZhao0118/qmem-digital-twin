@@ -32,7 +32,7 @@ import type {
   OpticalLink,
   SceneObject,
 } from "../../types/digitalTwin";
-import { wavelengthToColor } from "../../three/opticalBeams";
+import { beamColorForSource } from "../../three/opticalBeams";
 import { gaussianWaistAtZ, type BeamState } from "../../three/rayTrace";
 import { loadAssetObject } from "../../three/loadAsset";
 import {
@@ -737,6 +737,18 @@ export function OpticalLinkViewerContent({
     handle.addEventListener("pointerup", onUp);
     handle.addEventListener("pointercancel", onUp);
   };
+  // Follow the global scene selection: selecting a different optic anywhere
+  // (3D viewer, object list, …) re-points the Optical-setting inspector at it,
+  // so its intrinsic spec + tunable coefficients refresh for that object. Only
+  // syncs when the selected object IS an optic (non-optical selections leave the
+  // last inspected optic in place rather than blanking the drawer).
+  const selectedObjectId = useSceneStore((s) => s.selectedObjectId);
+  useEffect(() => {
+    if (selectedObjectId && opticalObjects.some((o) => o.id === selectedObjectId)) {
+      setInspectObjectId(selectedObjectId);
+    }
+  }, [selectedObjectId, opticalObjects]);
+
   // Keep the selection valid as the scene changes (default to the first optic).
   const effectiveInspectId =
     inspectObjectId && opticalObjects.some((o) => o.id === inspectObjectId)
@@ -1188,8 +1200,24 @@ export function OpticalLinkViewerContent({
             `${ob.asset3dIdOverride ?? ""}`,
         )
         .join(";");
+      // Per-source beam-colour overrides (SceneObject.properties.emissionVisuals)
+      // are PURELY visual — they don't move/bend the beam, so the segment fields
+      // above never change when the user recolours. Fold a colour digest into
+      // the key so a recolour invalidates prevContentKey and the tube repaints
+      // (else beamColorForSource's new colour would only show after the next
+      // geometry-changing edit). Objects without an override contribute "".
+      const colDigest = (objectsRef.current ?? [])
+        .map((o) => {
+          const ev = (o.properties?.emissionVisuals ?? null) as
+            | Record<string, { colorHex?: string | null } | undefined>
+            | null;
+          if (!ev) return "";
+          return `${o.id}:${ev.main?.colorHex ?? ""}/${ev.forward?.colorHex ?? ""}`;
+        })
+        .filter(Boolean)
+        .join(";");
       const key = segments.length === 0
-        ? `(none)|${obDigest}`
+        ? `(none)|${obDigest}|col:${colDigest}`
         : segments
             .map(
               (s) =>
@@ -1202,7 +1230,7 @@ export function OpticalLinkViewerContent({
                 `${s.powerFactorAtStart.toFixed(6)}|` +
                 `${s.polarizationAtStart.map((v) => v.toFixed(6)).join(",")}`,
             )
-            .join(";") + `|ob:${obDigest}`;
+            .join(";") + `|ob:${obDigest}|col:${colDigest}`;
       if (key === prevContentKey) return;
       prevContentKey = key;
 
@@ -1256,7 +1284,13 @@ export function OpticalLinkViewerContent({
         if (length < 1e-9) continue;
         direction.normalize();
 
-        const colour = wavelengthToColor(seg.wavelengthNm);
+        // Key on the EMITTER (laser/TA that originated the beam), stable down
+        // the whole chain — see DigitalTwinViewer note. sourceObjectId is the
+        // per-segment source optic and would only colour the first hop.
+        const colour = beamColorForSource(
+          objectById.get(seg.emitterObjectId),
+          seg.wavelengthNm,
+        );
 
         // Elliptical Gaussian taper: independent X (qx) and Y (qy) widths at
         // each end so an astigmatic beam renders an ELLIPTICAL tube (a

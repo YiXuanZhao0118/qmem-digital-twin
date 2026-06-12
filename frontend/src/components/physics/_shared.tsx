@@ -53,7 +53,6 @@ export function SectionCard({
 // AlignToBeamSection dispatches into them based on element.elementKind.
 // (Snap-to-beam align moved to the Object panel — ComponentPanel →
 // AlignToBeamControls; this section is the per-kind PARAMETER editors only.)
-import { LaserSourceControls } from "./LaserSourceControls";
 import { TaperedAmplifierAdjustControls } from "./TaperedAmplifierAdjustControls";
 import { MirrorAdjustControls } from "./SimpleAdjustControls";
 
@@ -132,18 +131,36 @@ export function AlignToBeamSection({
   if (elementKind === "tapered_amplifier") {
     return <TaperedAmplifierAdjustControls sceneObject={sceneObject} element={element} />;
   }
+
+  // laser_source has NO param editor here (removed 2026-06-11): its per-instance
+  // knobs (power / wavelength) are the asset's tunable params, edited by
+  // InstanceDynamicSourcesEditor in OpticalSettingPanel and stored in
+  // SceneObject.dynamicSources. It DOES get a beam-colour picker (key "main"),
+  // mirroring the TA's Visualization card — the override is read by
+  // beamColorForSource in every live 3D beam renderer.
   if (elementKind === "laser_source") {
-    return <LaserSourceControls sceneObject={sceneObject} element={element} />;
+    const wavelengthNm =
+      (element.kindParams as { centerWavelengthNm?: number }).centerWavelengthNm ?? 780;
+    return (
+      <SectionCard id="physics.laser_source.visualization" title="Visualization" defaultOpen>
+        <EmissionVisualRow
+          sceneObject={sceneObject}
+          emissionKey="main"
+          label="Beam"
+          fallbackColorHex={wavelengthHex(wavelengthNm)}
+          showVisibilityToggle={false}
+        />
+      </SectionCard>
+    );
   }
 
   // Mirrors keep a dedicated control: it nudges the SceneObject POSE (transverse
   // shift on the face + rotation), which reaches the trace. The former
   // Waveplate / BeamSplitter / Lens dedicated editors were retired — they wrote
   // PhysicsElement.kindParams, which the v3 anchor tracer does NOT read (it
-  // merges asset.default_params ⊕ dynamic_sources), so their edits never reached
-  // the beam. Those kinds now use the generic per-instance coefficient editor
-  // (BindingCoefficientOverrides → paramOverrides[bindingId]) like every other
-  // passive optic.
+  // merges asset.default_params ⊕ dynamic_sources). Those kinds' intrinsic
+  // coefficients are now asset-only; only asset-blessed tunable params are
+  // per-instance editable (InstanceDynamicSourcesEditor → dynamicSources).
   if (elementKind === "mirror" || elementKind === "dichroic_mirror") {
     return (
       <div className="snap-to-beam">

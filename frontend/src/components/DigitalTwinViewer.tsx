@@ -36,7 +36,7 @@ import {
   shouldRenderViaBindings,
 } from "../three/bindingRendererGate";
 import { resolveBindingTree, type ResolvedBindingNode } from "../utils/componentBindings";
-import { wavelengthToColor } from "../three/opticalBeams";
+import { beamColorForSource } from "../three/opticalBeams";
 import {
   type DebugLabSegment,
   type DebugTraceSegment,
@@ -4387,7 +4387,16 @@ export function DigitalTwinViewer({
           mmToThree(seg.end.y),
           mmToThree(seg.end.z),
         );
-        const colorHex = wavelengthToColor(seg.wavelengthNm);
+        // Colour keys on the EMITTER (the laser/TA that originated this beam),
+        // not the per-segment source optic: emitterSceneObjectId is stable down
+        // the whole chain (anchor_tracer passes it through unchanged), so the
+        // user's per-source colour paints every segment from that source, not
+        // just the first hop. sourceSceneObjectId would only colour laser→first
+        // optic and leave downstream segments (src = the optic) uncoloured.
+        const emitterObj = seg.emitterSceneObjectId
+          ? sceneData.objects.find((o) => o.id === seg.emitterSceneObjectId)
+          : undefined;
+        const colorHex = beamColorForSource(emitterObj, seg.wavelengthNm);
         const geom = new THREE.BufferGeometry().setFromPoints([startThree, endThree]);
         const mat = new THREE.LineBasicMaterial({
           color: colorHex,
