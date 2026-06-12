@@ -76,6 +76,31 @@ def test_fraction_unity_when_no_aperture():
     assert gaussian_circular_aperture_fraction(2.0, 0.0) == 1.0
 
 
+# ── decentred beam still inside a large aperture ──────────────────────────
+# Regression: a 1 mm beam sitting 8.76 mm off-axis in a 12.7 mm-radius lens is
+# fully contained (8.76 + a few w < 12.7) ⇒ ~100% passes. The old pinhole-at-
+# offset factor exp(−2·r_c²/w²) wrongly collapsed this to ~1e-71, blocking the
+# beam at LENS_PLANO_CONVEX1.
+
+def test_decentred_but_contained_beam_passes():
+    # w_eff≈0.972, aperture 12.7, decenter 8.759 → true integral ≈ 1.0.
+    assert gaussian_circular_aperture_fraction(0.972, 12.7, 8.759) == pytest.approx(
+        1.0, abs=1e-6
+    )
+
+
+def test_decentred_at_the_rim_is_half():
+    # Beam centre exactly on the aperture edge ⇒ knife-edge gives ½.
+    assert gaussian_circular_aperture_fraction(0.5, 5.0, 5.0) == pytest.approx(
+        0.5, abs=1e-9
+    )
+
+
+def test_decentred_well_outside_is_zero():
+    # Centre several w beyond the rim ⇒ fully clipped.
+    assert gaussian_circular_aperture_fraction(0.5, 2.0, 20.0) == 0.0
+
+
 # ── lens op power attenuation ─────────────────────────────────────────────
 
 def test_op_attenuates_power_by_aperture_and_transmittance():

@@ -41,8 +41,9 @@ def gaussian_circular_aperture_fraction(
     """Fraction (0..1) of a Gaussian's power passing a circular aperture of
     radius ``aperture_mm`` whose centre is offset ``r_c_mm`` from the beam
     centre. On-axis (``r_c=0``) is the exact closed form
-    ``1 − exp(−2a²/w²)``; the decentred case is an approximation (no closed
-    form) matching the frontend ``calculateProfileClipping`` gaussian branch.
+    ``1 − exp(−2a²/w²)``; the decentred case clips by the NEAREST aperture
+    edge modelled as a straight knife-edge (see below) — exact has no closed
+    form. Mirror of the frontend ``calculateProfileClipping`` gaussian branch.
 
     Returns 1.0 when the aperture or width is unusable (no clipping info).
     """
@@ -53,11 +54,18 @@ def gaussian_circular_aperture_fraction(
     r_c = max(r_c_mm, 0.0)
     if r_c <= 1e-12:
         return _clamp01(1.0 - math.exp(-2.0 * a * a / (w * w)))
-    u = r_c / w
-    v = a / w
-    if u > v + 3.0:
-        return 0.0  # beam centre far outside the aperture
-    return _clamp01(math.exp(-2.0 * u * u) * (1.0 - math.exp(-2.0 * v * v)))
+    # Decentred beam: clip by the NEAREST aperture edge, modelled as a
+    # straight knife-edge at signed distance ``s = a − r_c`` from the beam
+    # centre. T = ½·(1 + erf(√2·s/w)). Correct in the w≪a regime of real
+    # lenses: a beam fully inside but off-centre (a − r_c ≫ w) passes
+    # ~100%, T = ½ at the rim (r_c = a), → 0 once the centre sits a few w
+    # outside. The previous ``exp(−2·r_c²/w²)`` factor modelled a pinhole at
+    # the offset and wrongly zeroed a contained off-centre beam. (Limitation:
+    # near-edge clip only — for w ≳ a the far rim also vignettes, not modelled.)
+    if r_c > a + 3.0 * w:
+        return 0.0  # beam centre well outside the aperture
+    s = a - r_c
+    return _clamp01(0.5 * (1.0 + math.erf(math.sqrt(2.0) * s / w)))
 
 
 def _clamp01(x: float) -> float:

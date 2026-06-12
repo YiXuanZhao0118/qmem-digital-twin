@@ -57,6 +57,20 @@ describe("calculateProfileClipping — gaussian", () => {
     const q = qForWaist(2);
     expect(calculateProfileClipping(20, 2, { kind: "gaussian" }, q, q, lambdaNm)).toBe(0);
   });
+  it("decentred but still contained in a large aperture ⇒ ≈1", () => {
+    // Regression: 1 mm beam 8.76 mm off-axis in a 12.7 mm-radius lens is fully
+    // contained ⇒ passes. The old exp(−2·rC²/w²) factor wrongly zeroed it.
+    const q = qForWaist(0.972);
+    expect(
+      calculateProfileClipping(8.759, 12.7, { kind: "gaussian" }, q, q, lambdaNm),
+    ).toBeCloseTo(1, 5);
+  });
+  it("centre exactly on the aperture rim ⇒ ½", () => {
+    const q = qForWaist(0.5);
+    expect(
+      calculateProfileClipping(5, 5, { kind: "gaussian" }, q, q, lambdaNm),
+    ).toBeCloseTo(0.5, 6);
+  });
   it("undefined profile is treated as gaussian", () => {
     const q = qForWaist(0.5);
     expect(calculateProfileClipping(0, 5, undefined, q, q, lambdaNm)).toBeCloseTo(1, 6);

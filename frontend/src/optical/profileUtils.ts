@@ -7,10 +7,12 @@
  * Gaussian (see BeamProfile in beam-ray.ts):
  *   - ray:      binary (centre inside ⇒ 1, else 0)
  *   - top_hat:  circle∩circle overlap area / beam area
- *   - gaussian: integrated Gaussian through a circular aperture; the
- *               misaligned case is an APPROXIMATION (the decentred
- *               Gaussian-through-circular-aperture integral has no closed
- *               form — exact on-axis, heuristic off-axis).
+ *   - gaussian: integrated Gaussian through a circular aperture; exact
+ *               on-axis (1 − exp(−2a²/w²)), and the decentred case is a
+ *               knife-edge APPROXIMATION on the nearest aperture rim (the
+ *               decentred Gaussian-through-circular integral has no closed
+ *               form). Must stay in lock-step with the backend mirror
+ *               gaussian_circular_aperture_fraction (aperture.py).
  *
  * The Gaussian width is derived from the existing astigmatic qx/qy (not a
  * separate single-q), using an area-equivalent effective radius
@@ -82,12 +84,35 @@ export function calculateProfileClipping(
   if (rC <= 1e-12) {
     return clamp01(1 - Math.exp((-2 * a * a) / (wEff * wEff)));
   }
-  const u = rC / wEff;
-  const v = a / wEff;
-  if (u > v + 3) return 0; // beam centre far outside aperture
-  return clamp01(Math.exp(-2 * u * u) * (1 - Math.exp(-2 * v * v)));
+  // Decentred beam: clip by the NEAREST aperture edge, modelled as a
+  // straight knife-edge at signed distance s = a − rC from the beam centre.
+  // T = ½·(1 + erf(√2·s/w)). Correct in the w≪a regime of real lenses: a
+  // beam fully inside but off-centre (a − rC ≫ w) passes ~100%, T = ½ at the
+  // rim (rC = a), → 0 once the centre sits a few w outside. The previous
+  // exp(−2·rC²/w²) factor modelled a pinhole at the offset and wrongly zeroed
+  // a contained off-centre beam. (Near-edge clip only — for w ≳ a the far rim
+  // also vignettes, not modelled.) Must match backend gaussian_circular_
+  // aperture_fraction (aperture.py).
+  if (rC > a + 3 * wEff) return 0; // beam centre well outside aperture
+  const s = a - rC;
+  return clamp01(0.5 * (1 + erf((Math.SQRT2 * s) / wEff)));
 }
 
 function clamp(x: number, lo: number, hi: number): number {
   return x < lo ? lo : x > hi ? hi : x;
+}
+
+/** Gauss error function — Abramowitz & Stegun 7.1.26 (max abs error ≈1.5e-7),
+ *  enough for the knife-edge aperture approximation. JS has no Math.erf. */
+function erf(x: number): number {
+  const sign = x < 0 ? -1 : 1;
+  const ax = Math.abs(x);
+  const t = 1 / (1 + 0.3275911 * ax);
+  const y =
+    1 -
+    ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t +
+      0.254829592) *
+      t *
+      Math.exp(-ax * ax);
+  return sign * y;
 }
