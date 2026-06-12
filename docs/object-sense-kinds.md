@@ -1,6 +1,6 @@
 # Object Sense — 所有 kinds 與其運行方式（整合參考）
 
-> 本檔盤點 **31 個 physics kinds** 在 **Object Sense**（主 3D 視埠 `DigitalTwinViewer` 的渲染 + 後端 v3 anchor trace 畫光束）裡「怎麼被畫出來」與「怎麼作用在光束上」。其中 `fiber_connector` / `rf_cable_connector`（2026-06-12, alembic `0114`）是纜線接頭的 catalog kind、物理 passthrough（不獨立參與 trace），尚無獨立 Object-Sense 渲染——實體接頭 Asset3D 與 binding-tree 渲染於後續 phase 落地（見 [kinds.md](introduce/kinds.md) 纜線接頭段）。故下方主表仍列 29 個有 render/trace 行為的 kind。
+> 本檔盤點 **31 個 physics kinds** 在 **Object Sense**（主 3D 視埠 `DigitalTwinViewer` 的渲染 + 後端 v3 anchor trace 畫光束）裡「怎麼被畫出來」與「怎麼作用在光束上」。其中 `fiber_connector` / `rf_cable_connector`（2026-06-12, alembic `0114`）是纜線接頭的 catalog kind、物理 passthrough（不獨立參與 trace），尚無獨立 Object-Sense 渲染——9 列實體接頭 Asset3D 已於 `0115` 落地（5 fiber + 4 RF），但 binding-tree 渲染與 RF female 程序模型於後續 phase 接線（見 [kinds.md](introduce/kinds.md) 纜線接頭段）。故下方主表仍列 29 個有 render/trace 行為的 kind。
 > 由多 agent 掃描全程式碼產生、再經獨立 critic 逐項對照原始碼校驗（confidence: high）。最後整理：2026-06-10。
 > 權威來源：`backend/data/kinds.json`（kind 參數）、`backend/app/optical/anchor_ops/`（trace op）、`frontend/src/three/loadAsset/`（渲染）。
 

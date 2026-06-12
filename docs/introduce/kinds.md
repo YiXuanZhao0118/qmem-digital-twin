@@ -16,6 +16,8 @@
 
 **纜線接頭 kind（`fiber_connector` / `rf_cable_connector`，2026-06-12, alembic `0114`）**：纜線端接頭（FC ferrule / SMA·BNC coax）的一級 catalog kind；9 個實體接頭在 `0115` 成為其下的 Asset3D 列。各持兩個幾何 anchor——`connect_out`（原點、−X、纜線/spline junction）與 `connect_in`（在 `tipMm`、+X、配對 / ferrule 端面）；纜線層級的 `intercept_in/out`(光) 與 `rf_in/out`(RF) 埠 anchor 由端接頭的 `connect_in` 推導（取代寫死的 36.28 / 15.5 / 27mm tip 常數，P2/P3 落地）。**物理是 passthrough**：接頭本身不獨立參與 trace——`connect_in/out` 不在 `PRIMARY_ANCHOR_IDS`，tracer 的 `nearest_anchor_hit` 根本不會命中它們；`optical/anchor_ops/connector.py` 仍**防禦性**註冊一個直通 op（`return [ray_in]`，鍵以 kind 名，因 tracer 以 kind 名分派、缺 op 的 primary-anchor 命中會被當 sink 吸光），確保未來接頭即便被賦予 primary anchor 也直通而非吸光。真正的耦合物理由纜線本體 op 從兩端接頭 params 讀。詳見接頭重構規劃（plan 2026-06-12）。
 
+**9 個接頭 Asset3D（alembic `0115`）**：`fiber_connector` 下 5 列（`fiber_connector_{apc,pc}_{pm,sm}` + `fiber_connector_pc_mm`，共用 FC STL、依 0061「always clone, never share」每列獨立 row，`default_params` 帶 polish/polishAngleDeg/fiberType/mfd/na/core/cladding/slowAxisKeyed/returnLossDb，`wavelengthRangeNm` 走 column）；`rf_cable_connector` 下 4 列（`rf_connector_{sma,bnc}_{male,female}`，`file_path = primitive://{family}_{gender}_connector`，`default_params` 帶 family/gender/tipMm/impedanceOhm/maxFreqGhz/couplingType）。各列 `anchors` 為完整 tri-axis frame：`connect_out`(原點,axisX −X)、`connect_in`(在 tipMm, axisX +X；fiber 帶 apertureMm 0.125)。`tunable_params=[]`、`locked=false`。**標準渲染尚未接線**（接頭非獨立擺放，RF female 程序模型與 binding-tree 渲染為後續 phase）；遷移是唯一 seed 路徑（`seed_v3_assets.py` 是手動且已過時的 script，非 fresh-install 路徑）。
+
 ## Domain 與 Category（兩條獨立的軸）
 
 兩者都「只是分類」，但分屬不同層、來源不同 kind，**互不覆蓋**：
