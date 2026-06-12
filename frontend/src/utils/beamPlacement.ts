@@ -1136,10 +1136,9 @@ export type SnapCandidate = {
   missMm: number;
   /** New (xMm, yMm, zMm) for this object's body so the anchor lands on axis. */
   newBodyPos: Vec3;
-  /** Unit direction of the matched beam axis. Carried so consumers (e.g.
-   *  MirrorAdjustControls' u/v basis) don't need to re-derive it via
-   *  optical_links — the geometric chain walker already knew the direction
-   *  even on reflected segments where no link row exists. */
+  /** Unit direction of the matched beam axis. Carried so consumers don't need
+   *  to re-derive it via optical_links — the geometric chain walker already
+   *  knew the direction even on reflected segments where no link row exists. */
   axisDirection: Vec3;
 };
 
@@ -1588,23 +1587,6 @@ export function findFiberEndSnap(
     fromPort: best.fromPort,
     distanceMm: best.distanceMm,
   };
-}
-
-/** Build an orthonormal basis (u, v) perpendicular to `direction`.
- *  Used by P5/P6 to project transverse displacement / center offset.
- *  Conventions:
- *    - u = direction × world_up (or world_x if direction nearly parallel to up)
- *    - v = direction × u
- *  Both u and v are unit vectors and orthogonal to direction. */
-export function perpendicularBasis(direction: Vec3): { u: Vec3; v: Vec3 } {
-  const dirLen = v3len(direction);
-  if (dirLen < 1e-9) return { u: { x: 1, y: 0, z: 0 }, v: { x: 0, y: 1, z: 0 } };
-  const dir = v3scale(direction, 1 / dirLen);
-  const upWorld: Vec3 =
-    Math.abs(dir.y) < 0.9 ? { x: 0, y: 1, z: 0 } : { x: 1, y: 0, z: 0 };
-  const u = v3norm(v3cross(dir, upWorld));
-  const v = v3norm(v3cross(dir, u));
-  return { u, v };
 }
 
 // =============================================================================

@@ -54,7 +54,6 @@ export function SectionCard({
 // (Snap-to-beam align moved to the Object panel — ComponentPanel →
 // AlignToBeamControls; this section is the per-kind PARAMETER editors only.)
 import { TaperedAmplifierAdjustControls } from "./TaperedAmplifierAdjustControls";
-import { MirrorAdjustControls } from "./SimpleAdjustControls";
 
 export function wavelengthHex(wavelengthNm: number): string {
   return `#${wavelengthToColor(wavelengthNm).getHexString()}`;
@@ -154,23 +153,14 @@ export function AlignToBeamSection({
     );
   }
 
-  // Mirrors keep a dedicated control: it nudges the SceneObject POSE (transverse
-  // shift on the face + rotation), which reaches the trace. The former
-  // Waveplate / BeamSplitter / Lens dedicated editors were retired — they wrote
+  // mirror / dichroic_mirror / aom / isolator / fiber / emitters / RF have no
+  // dedicated settings panel here — the optical kinds get the generic
+  // coefficient editor from OpticalSettingPanel, and mirror pose nudges live in
+  // the Object panel's snap-to-beam (AlignToBeamControls). The former Waveplate
+  // / BeamSplitter / Lens dedicated editors were retired — they wrote
   // PhysicsElement.kindParams, which the v3 anchor tracer does NOT read (it
   // merges asset.default_params ⊕ dynamic_sources). Those kinds' intrinsic
   // coefficients are now asset-only; only asset-blessed tunable params are
   // per-instance editable (InstanceDynamicSourcesEditor → dynamicSources).
-  if (elementKind === "mirror" || elementKind === "dichroic_mirror") {
-    return (
-      <div className="snap-to-beam">
-        <MirrorAdjustControls sceneObject={sceneObject} />
-      </div>
-    );
-  }
-
-  // aom / isolator / fiber / emitters / RF have no dedicated settings panel
-  // here — the optical kinds get the generic coefficient editor from
-  // OpticalSettingPanel.
   return null;
 }
