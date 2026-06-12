@@ -134,6 +134,55 @@ async def run_v3_solver_from_db(
     return result.to_dict()
 
 
+class SolverRunFromComponentRequest(CamelModel):
+    """Trace a probe ray through ONE component's binding assembly, in
+    component frame. Powers the PHY Editor COMPONENT preview: the component's
+    bindings/assets come from DB (by ``componentId``), but no SceneObject
+    placement is needed. ``initialRays`` carries the probe (origin/direction
+    in component frame, optional Jones for polarization)."""
+    component_id: str
+    initial_rays: list[RayIn] = Field(default_factory=list)
+    options: Optional[TraceOptionsIn] = None
+
+
+@router.post("/run-from-component")
+async def run_v3_solver_from_component(
+    request: SolverRunFromComponentRequest,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Trace a probe ray through one Component's assembly in component frame.
+
+    Same anchor tracer + SolverResult schema as ``run-from-db`` (segments,
+    labSegments, finalRays with per-segment Jones), so the COMPONENT preview
+    draws per-asset polarization exactly like the Lab optical link — and it
+    reflects the authoritative physics (e.g. the non-reciprocal Faraday
+    rotator) instead of the legacy frontend face probe."""
+    import uuid
+
+    from app.optical import anchor_ops  # noqa: F401
+    from app.optical.anchor_tracer import AnchorTraceOptions
+    from app.optical.db_scene_loader import load_anchor_scene_from_component
+    from app.optical.solver import solve_anchor_scene
+
+    try:
+        component_uuid = uuid.UUID(request.component_id)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"componentId is not a valid UUID: {request.component_id!r}",
+        )
+    scene = await load_anchor_scene_from_component(session, component_uuid)
+    rays = [_to_beam_ray(r) for r in request.initial_rays]
+    opts = AnchorTraceOptions()
+    if request.options:
+        opts = AnchorTraceOptions(
+            max_steps=request.options.max_steps,
+            power_threshold_mw=request.options.power_threshold_mw,
+        )
+    result = solve_anchor_scene(scene, rays, opts)
+    return result.to_dict()
+
+
 class AomSidebandRequest(CamelModel):
     """Inputs for the AOM sideband table — the panel sends its effective params
     (RF resolved upstream) and renders exactly what this returns, so the table,

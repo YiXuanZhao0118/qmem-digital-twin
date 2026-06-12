@@ -66,7 +66,7 @@ export type TransferMatrix =
     }
   | { kind: "matrix5x5"; M: number[] /* row-major flat, length 25 */ };
 
-/** Free-form parameter bag (merged from asset.defaultParams + paramOverrides + transition.params). */
+/** Free-form parameter bag (merged from asset.defaultParams ⊕ dynamicSources). */
 export type KindParams = Record<string, unknown>;
 
 /** Dynamic per-instance state from SceneObject (laser power, AOM freq, ...). */

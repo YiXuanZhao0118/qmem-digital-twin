@@ -538,11 +538,16 @@ def trace_ray_anchor_scene(
                 gaussian_width_mm(ray_at_anchor.qx, wl)
                 * gaussian_width_mm(ray_at_anchor.qy, wl)
             ) ** 0.5
-            t_ap = gaussian_circular_aperture_fraction(w_eff, anchor.aperture_mm)
+            # Same radial decenter the lens op feeds to the aperture fraction,
+            # so the displayed combinedFraction matches the power the op
+            # actually attenuates for a misaligned (off-axis) beam.
+            r_c = math.hypot(hit.offset_y_body, hit.offset_z_body)
+            t_ap = gaussian_circular_aperture_fraction(w_eff, anchor.aperture_mm, r_c)
             transmittance = float(merged_params.get("transmittance", 1.0))
             entry_seg.aperture_truncation = {
                 "apertureMm": anchor.aperture_mm,
                 "wEffMm": w_eff,
+                "decenterMm": r_c,
                 "transmittedFraction": t_ap,
                 "transmittance": transmittance,
                 "combinedFraction": t_ap * transmittance,

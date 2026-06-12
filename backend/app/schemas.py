@@ -258,7 +258,13 @@ class Asset3DBase(CamelModel):
     # defaults here. (Asset3DUpdate keeps it optional for partial PATCH.)
     kind_id: str = "unclassified"
     default_params: JsonDict | None = None
+    # Top-level default_params keys the asset marks tunable per-instance
+    # (alembic 0113). The SceneObject dynamic-sources editor exposes only these.
+    tunable_params: list[str] = Field(default_factory=list)
     wavelength_range_nm: list[float] | None = None
+    # Human-confirmed "frozen" flag (alembic 0112). True = read-only in the
+    # PHY Editor; the API rejects writes that change any field but this one.
+    locked: bool = False
 
 
 class Asset3DCreate(Asset3DBase):
@@ -278,7 +284,9 @@ class Asset3DUpdate(CamelModel):
     catalog_id: str | None = None
     kind_id: str | None = None
     default_params: JsonDict | None = None
+    tunable_params: list[str] | None = None
     wavelength_range_nm: list[float] | None = None
+    locked: bool | None = None
 
 
 class LocalAssetImport(CamelModel):
@@ -489,7 +497,6 @@ class SceneObjectBase(CamelModel):
     locked: bool = False
     serial_number: str | None = None
     properties: JsonDict = Field(default_factory=dict)
-    param_overrides: JsonDict | None = None
     dynamic_sources: JsonDict | None = None
 
 
@@ -510,7 +517,6 @@ class SceneObjectUpdate(CamelModel):
     locked: bool | None = None
     serial_number: str | None = None
     properties: JsonDict | None = None
-    param_overrides: JsonDict | None = None
     dynamic_sources: JsonDict | None = None
 
 
@@ -3024,6 +3030,8 @@ class KindBase(CamelModel):
     wavelength_range_nm: list[float] | None = None
     frequency_range_mhz: list[float] | None = None
     description: str | None = None
+    # Human-confirmed "frozen" flag (alembic 0112). See Asset3DBase.locked.
+    locked: bool = False
 
 
 class KindCreate(KindBase):
@@ -3051,6 +3059,7 @@ class KindUpdate(CamelModel):
     wavelength_range_nm: list[float] | None = None
     frequency_range_mhz: list[float] | None = None
     description: str | None = None
+    locked: bool | None = None
 
 
 class KindOut(KindBase):

@@ -13,7 +13,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Edit3, Save, Trash2, X } from "lucide-react";
+import { Edit3, Lock, Save, Trash2, Unlock, X } from "lucide-react";
 
 import {
   createKindApi,
@@ -132,6 +132,8 @@ export function KindsEditor({
 
   // Delete confirmation tracking.
   const [deleteStatus, setDeleteStatus] = useState<Record<string, "idle" | "deleting" | "error">>({});
+  // Per-row lock toggle in-flight tracking.
+  const [lockBusy, setLockBusy] = useState<Record<string, boolean>>({});
 
   // aside (list) state — which kind row the user is inspecting + free-text
   // filter. Mirrors Asset3DEditor / ComponentsEditor's shell pattern.
@@ -275,6 +277,27 @@ export function KindsEditor({
     }
   };
 
+  // Toggle a kind's locked flag. Locked = human-confirmed complete: the
+  // backend then rejects every edit but this toggle, so the only legal
+  // mutation while locked is unlocking it. PATCHing only `locked` is the
+  // exception the API allows in both directions.
+  const toggleLock = async (row: KindRow) => {
+    if (editingId === row.id && !row.locked) cancelEdit();
+    setLockBusy((prev) => ({ ...prev, [row.id]: true }));
+    try {
+      const updated = await updateKindApi(row.id, { locked: !row.locked });
+      setRows((prev) => prev.map((r) => (r.id === row.id ? updated : r)));
+    } catch (e) {
+      window.alert(`Lock toggle failed: ${(e as Error).message}`);
+    } finally {
+      setLockBusy((prev) => {
+        const next = { ...prev };
+        delete next[row.id];
+        return next;
+      });
+    }
+  };
+
   const domainLabel =
     domain === "all"
       ? "All domains"
@@ -391,20 +414,56 @@ export function KindsEditor({
           <div style={{ color: "#b91c1c", fontSize: 11, marginBottom: 6 }}>{loadError}</div>
         )}
         {filtered.map((row) => (
-          <button
-            key={row.id}
-            type="button"
-            onClick={() => handleSelect(row.id)}
-            style={asideItemStyle(row.id === selectedId)}
-          >
-            <div style={{ fontWeight: 700 }}>{row.displayName}</div>
-            <div style={{ fontSize: 10, color: "#6b7280" }}>
-              <span style={{ color: "#9ca3af" }}>id:</span> {row.name}
-            </div>
-            <div style={{ marginTop: 3 }}>
-              <DomainBadges domains={row.domains} />
-            </div>
-          </button>
+          <div key={row.id} style={{ position: "relative" }}>
+            <button
+              type="button"
+              onClick={() => handleSelect(row.id)}
+              style={{ ...asideItemStyle(row.id === selectedId), paddingRight: 30 }}
+            >
+              <div style={{ fontWeight: 700 }}>{row.displayName}</div>
+              <div style={{ fontSize: 10, color: "#6b7280" }}>
+                <span style={{ color: "#9ca3af" }}>id:</span> {row.name}
+              </div>
+              <div style={{ marginTop: 3 }}>
+                <DomainBadges domains={row.domains} />
+              </div>
+            </button>
+            {/* Per-row lock toggle. Locked = human-confirmed complete:
+                read-only in the editor + the API rejects all edits but
+                unlocking. Hidden in read-only viewer mode. */}
+            {!readOnly && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void toggleLock(row);
+                }}
+                disabled={lockBusy[row.id]}
+                title={
+                  row.locked
+                    ? "Locked — confirmed complete. Click to unlock for editing."
+                    : "Unlocked. Click to lock (freeze as confirmed complete)."
+                }
+                style={{
+                  position: "absolute",
+                  top: 6,
+                  right: 6,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 22,
+                  height: 22,
+                  padding: 0,
+                  border: "none",
+                  background: "transparent",
+                  cursor: lockBusy[row.id] ? "default" : "pointer",
+                  color: row.locked ? "#b45309" : "#9ca3af",
+                }}
+              >
+                {row.locked ? <Lock size={13} /> : <Unlock size={13} />}
+              </button>
+            )}
+          </div>
         ))}
       </aside>
 
@@ -420,23 +479,32 @@ export function KindsEditor({
             </div>
           </div>
           <div style={{ display: "flex", gap: 6 }}>
-            {/* View mode: Edit + Delete */}
+            {/* View mode: Edit + Delete. Both disabled when the row is
+                locked (confirmed complete) — unlock via the list-row lock
+                button first. The API rejects edits/deletes either way. */}
             {!createOpen && !isEditing && selectedRow && !readOnly && (
               <>
                 <button
                   type="button"
                   onClick={() => startEdit(selectedRow)}
+                  disabled={selectedRow.locked}
                   style={ICON_BUTTON}
-                  title="Edit kind"
+                  title={selectedRow.locked ? "Locked — unlock to edit" : "Edit kind"}
                 >
                   <Edit3 size={14} />
                 </button>
                 <button
                   type="button"
                   onClick={() => void handleDelete(selectedRow)}
-                  disabled={delStatus === "deleting"}
+                  disabled={delStatus === "deleting" || selectedRow.locked}
                   style={ICON_BUTTON}
-                  title={delStatus === "error" ? "Delete failed — click to retry" : "Delete kind"}
+                  title={
+                    selectedRow.locked
+                      ? "Locked — unlock to delete"
+                      : delStatus === "error"
+                        ? "Delete failed — click to retry"
+                        : "Delete kind"
+                  }
                 >
                   <Trash2 size={14} />
                 </button>

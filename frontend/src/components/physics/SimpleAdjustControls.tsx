@@ -7,8 +7,9 @@
  * former Waveplate / BeamSplitter / Lens dedicated editors were retired —
  * they wrote PhysicsElement.kindParams, which the v3 anchor tracer does NOT
  * read (it merges asset.default_params ⊕ dynamic_sources), so their edits
- * never reached the beam. Those kinds now use the generic per-instance
- * coefficient editor (BindingCoefficientOverrides → paramOverrides).
+ * never reached the beam. Those kinds' intrinsic coefficients are now
+ * asset-only; only asset-blessed tunable params are per-instance editable
+ * (InstanceDynamicSourcesEditor → dynamicSources).
  */
 import { useMemo } from "react";
 

@@ -42,6 +42,7 @@ import {
 import { applyObjectTransformWorld } from "../../three/transformUtils";
 import { anchorObjectLocalAxisX, anchorObjectLocalPos } from "../../utils/anchorAccess";
 import { mmToThree, labRootSwapInverseQuaternion, labRootSwapQuaternion } from "../../optical/frames";
+import { polEllipseFromJones } from "../../optical/polarizationMarker";
 import { VIEWER_BG_LIGHT, VIEWER_GRID_LINE, VIEWER_GRID_CENTER } from "../../three/viewerTheme";
 import { domainForElementKind, kindIdToElementKind } from "../../utils/elementDefaults";
 import { BeamScopeContents, beamWidthsUmAtPathMm, type SegmentBeamMode } from "./BeamScopePanel";
@@ -586,46 +587,9 @@ type EmitterChoice = {
   kind: "laser" | "tapered_amplifier";
 };
 
-/** Beam-local s/p unit vectors (jones.ts beam_local_sp convention, lab Z up):
- *  s = up × d, p = d × s. Matches the solver frame the Jones vector lives in. */
-function beamLocalSPThree(beamDir: THREE.Vector3): { s: THREE.Vector3; p: THREE.Vector3 } {
-  const d = beamDir.clone().normalize();
-  const GLOBAL_UP = new THREE.Vector3(0, 0, 1);
-  const FALLBACK_UP = new THREE.Vector3(1, 0, 0);
-  const up = Math.abs(d.dot(GLOBAL_UP)) > 0.999 ? FALLBACK_UP : GLOBAL_UP;
-  const s = new THREE.Vector3().crossVectors(up, d).normalize();
-  const p = new THREE.Vector3().crossVectors(d, s).normalize();
-  return { s, p };
-}
-
-/** Full polarization ELLIPSE (world/three) from the Jones vector
- *  [E_s.re, E_s.im, E_p.re, E_p.im] and the beam direction. Returns the major
- *  (`u`) and minor (`v`) axis directions in the beam's transverse plane, the
- *  minor/major ratio (`minorFrac` ∈ [0,1]: 0 = linear, 1 = circular), and the
- *  rotation sense (`handed` ±1). Lets the viewer draw a line for linear light,
- *  a circle for circular, and an ellipse in between.
- *      ψ = ½·atan2( 2·Re(E_s·conj(E_p)), |E_s|²−|E_p|² )   (orientation)
- *      χ = ½·asin( 2·Im(E_s·conj(E_p)) / I )               (ellipticity)
- *      minorFrac = |tan χ|,  u = cosψ ŝ + sinψ p̂,  v = −sinψ ŝ + cosψ p̂ */
-function polEllipseFromJones(
-  jones: [number, number, number, number],
-  beamDir: THREE.Vector3,
-): { u: THREE.Vector3; v: THREE.Vector3; minorFrac: number; handed: number } {
-  const [sre, sim, pre, pim] = jones;
-  const intensity = sre * sre + sim * sim + pre * pre + pim * pim;
-  const reCross = sre * pre + sim * pim;                 // Re(E_s·conj(E_p))
-  const imCross = sre * pim - sim * pre;                 // Im(E_s·conj(E_p))
-  const diff = (sre * sre + sim * sim) - (pre * pre + pim * pim);
-  const psi = 0.5 * Math.atan2(2 * reCross, diff);
-  const chi = 0.5 * Math.asin(
-    intensity > 1e-12 ? Math.max(-1, Math.min(1, (2 * imCross) / intensity)) : 0,
-  );
-  const { s, p } = beamLocalSPThree(beamDir);
-  const cu = Math.cos(psi), su = Math.sin(psi);
-  const u = s.clone().multiplyScalar(cu).add(p.clone().multiplyScalar(su)).normalize();
-  const v = s.clone().multiplyScalar(-su).add(p.clone().multiplyScalar(cu)).normalize();
-  return { u, v, minorFrac: Math.tan(Math.abs(chi)), handed: imCross >= 0 ? 1 : -1 };
-}
+// Polarization helpers (beamLocalSPThree, polEllipseFromJones) live in the
+// shared optical/polarizationMarker util so the Lab optical link and the PHY
+// Editor COMPONENT preview interpret Jones identically. Imported at the top.
 
 /** Camera state shared with the main viewer so the optical-link mode adopts
  *  the SAME view (position / orbit target / fov / up) instead of re-fitting to
@@ -1216,8 +1180,14 @@ export function OpticalLinkViewerContent({
         })
         .filter(Boolean)
         .join(";");
+      // Render-logic version: the contentKey short-circuits rebuilds when the
+      // segment DATA is unchanged — but it must ALSO bust when the rendering
+      // LOGIC changes (e.g. the polarization s/p basis fix), or a hot-patched
+      // viewer keeps drawing stale markers. Bump this tag whenever the beam /
+      // marker drawing math changes so the next rebuild redraws everything.
+      const RENDER_LOGIC_VERSION = "pol-projection-2026-06-12";
       const key = segments.length === 0
-        ? `(none)|${obDigest}|col:${colDigest}`
+        ? `(none)|${obDigest}|col:${colDigest}|rv:${RENDER_LOGIC_VERSION}`
         : segments
             .map(
               (s) =>
@@ -1230,7 +1200,7 @@ export function OpticalLinkViewerContent({
                 `${s.powerFactorAtStart.toFixed(6)}|` +
                 `${s.polarizationAtStart.map((v) => v.toFixed(6)).join(",")}`,
             )
-            .join(";") + `|ob:${obDigest}|col:${colDigest}`;
+            .join(";") + `|ob:${obDigest}|col:${colDigest}|rv:${RENDER_LOGIC_VERSION}`;
       if (key === prevContentKey) return;
       prevContentKey = key;
 

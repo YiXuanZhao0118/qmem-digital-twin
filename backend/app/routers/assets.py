@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import crud, schemas
 from app.config import settings
 from app.db import get_session
+from app.lock_guard import assert_delete_allowed, assert_update_allowed
 from app.models import Asset3D, Component
 from app.services.asset_converter import (
     SUPPORTED_ASSET_EXTENSIONS,
@@ -233,6 +234,9 @@ async def update_asset(
 ) -> Asset3D:
     asset = await crud.get_or_404(session, Asset3D, asset_id)
     updates = payload.model_dump(exclude_unset=True)
+    assert_update_allowed(
+        locked=asset.locked, changed_fields=updates.keys(), label=f"Asset3D {asset.name!r}"
+    )
     if "anchors" in updates and payload.anchors is not None:
         updates["anchors"] = _anchors_camel(payload.anchors)
     crud.apply_updates(asset, updates)
@@ -244,6 +248,7 @@ async def update_asset(
 @router.delete("/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_asset(asset_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> Response:
     asset = await crud.get_or_404(session, Asset3D, asset_id)
+    assert_delete_allowed(locked=asset.locked, label=f"Asset3D {asset.name!r}")
     await session.delete(asset)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

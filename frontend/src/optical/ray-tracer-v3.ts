@@ -7,7 +7,7 @@
  *   loop until ray escapes / absorbed / power < threshold:
  *     1. find nearest face hit across all scene objects
  *     2. for each matching transition (in == faceHit):
- *        - merge params (asset.defaultParams + paramOverrides + transition.params)
+ *        - merge params (asset.defaultParams ⊕ dynamicSources)
  *        - call op(ray, ctx) → out_rays
  *     3. push out_rays to queue
  *

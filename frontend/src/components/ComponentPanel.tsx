@@ -25,7 +25,7 @@ import { NumberField } from "./NumberField";
 import { capabilityProfile } from "../kinds/_capabilityProfile";
 import { sceneObjectEulerFromQuaternion, sceneObjectToQuaternion } from "../optical/frames";
 
-type DraftObject = Required<Omit<SceneObjectPatch, "name" | "properties" | "serialNumber" | "dynamicSources" | "paramOverrides">> & {
+type DraftObject = Required<Omit<SceneObjectPatch, "name" | "properties" | "serialNumber" | "dynamicSources">> & {
   name: string;
   serialNumber: string | null;
 };

@@ -8,6 +8,15 @@ Project-specific guidance. Merge with the global guidelines.
 - **Trust the docs for orientation.** Do NOT re-read source just to confirm what a doc already states — *unless you are about to change that area's code* (see "Read vs verify").
 - **Auto-memory** (`MEMORY.md` + topic files) holds project state/decisions/gotchas — check it before assuming. Note: it is **machine-local and keyed to the launch cwd** (`~/.claude/projects/<cwd-hash>/memory/`), so it does **NOT** live in or travel with this repo, and it differs per cwd — launch Claude from a consistent directory or the memory won't load. Keep it updated as state changes.
 
+## Locked rows — do NOT modify (human-confirmed complete)
+
+A Kind or Asset3D row can carry `locked = true` (DB column, alembic 0112). It means a human has reviewed that row, confirmed it is **complete and correct**, and frozen it. Treat a locked row as off-limits:
+
+- **Never edit, re-tune, "fix", or delete a locked Kind / Asset3D** — not its `default_params`, anchors, `wavelength_range_nm`, nothing. If your task seems to require changing a locked row, **stop and ask the user to unlock it first** (or to confirm the change); don't work around the lock.
+- **How to check:** the flag is `kinds.locked` / `assets_3d.locked`, surfaced as `locked` on `KindOut` / `Asset3DV3Out` (GET `/api/kinds`, `/api/v3/assets3d`). The PHY Editor shows a 🔒 on each locked list row.
+- **Enforcement is real, not advisory:** every write path (`PATCH /api/kinds/{id}`, `PUT /api/v3/assets3d/{key}`, `PUT /api/assets/{id}`, and the deletes) rejects any change to a locked row with **422** unless the request *only* toggles `locked` (i.e. unlock). Guard: `backend/app/lock_guard.py`. So a tool call that edits a locked row will fail — don't retry it, surface the lock to the user.
+- Unlocking is a deliberate **human** action (click the lock icon in the PHY Editor). Do not unlock a row on your own initiative to push an edit through.
+
 ## Read vs verify (balance context cost against correctness)
 
 This is the core rule for using docs efficiently:
@@ -30,4 +39,4 @@ This is the core rule for using docs efficiently:
 - **Rendering**: unified onto the ComponentBinding tree (`bindingRendererGate.ts`, `shouldRenderViaBindings` always true). Legacy single-asset `loadAssetObject` dispatch is dead code; per-instance fiber/rf_cable/isolator state forwarding through the tree is still TODO.
 - **Classification (two separate axes)**: **category ← component kind** (`Component.kind_id` → plugin `assetCategory`); **domain ← asset kind** (`Asset3D.kind_id` → `kind.domains` ∈ {optical, rf, mechanical}). Decoupled — `physicsCapabilities` no longer drives either.
 - **Multiphysics**: Lab is the only top-level module (Optics/Electronics/EM removed 2026-06-10, migration 0109); Magnetics is a Lab overlay.
-- **Alembic head**: `0109_drop_circuits_em_runs`. Stack ports: frontend 5173 / backend 8010 / Postgres 55432.
+- **Alembic head**: `0113_param_ownership_tunable` (per-instance editing now gated by `assets_3d.tunable_params`, values in `objects.dynamic_sources`; `objects.param_overrides` dropped). Stack ports: frontend 5173 / backend 8010 / Postgres 55432.

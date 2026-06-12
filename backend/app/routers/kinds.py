@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import schemas
 from app.db import get_session
+from app.lock_guard import assert_delete_allowed, assert_update_allowed
 from app.kinds_manifest import element_kinds, load_manifest
 from app.models import Asset3D, Kind
 from app.optical.db_kinds import (
@@ -120,6 +121,9 @@ async def update_kind(
     if kind is None:
         raise HTTPException(status_code=404, detail=f"Kind {kind_id} not found")
     updates = payload.model_dump(exclude_unset=True)
+    assert_update_allowed(
+        locked=kind.locked, changed_fields=updates.keys(), label=f"Kind {kind.name!r}"
+    )
     for field, value in updates.items():
         setattr(kind, field, value)
     await session.commit()
@@ -134,6 +138,7 @@ async def delete_kind(
     kind = await session.get(Kind, kind_id)
     if kind is None:
         raise HTTPException(status_code=404, detail=f"Kind {kind_id} not found")
+    assert_delete_allowed(locked=kind.locked, label=f"Kind {kind.name!r}")
     in_use = (
         await session.scalars(
             select(Asset3D.id).where(Asset3D.kind_id == kind.name).limit(1)

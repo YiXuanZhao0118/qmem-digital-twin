@@ -236,6 +236,9 @@ export type KindRow = {
   needsAperture: boolean;
   wavelengthRangeNm: number[] | null;
   description: string | null;
+  /** Human-confirmed "frozen" flag (alembic 0112). True = read-only in the
+   *  PHY Editor; the API rejects edits until unlocked. */
+  locked: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -260,6 +263,7 @@ export type KindPatchPayload = {
   needsAperture?: boolean;
   wavelengthRangeNm?: number[] | null;
   description?: string | null;
+  locked?: boolean;
 };
 
 export async function listKindsApi(domain?: KindDomain): Promise<KindRow[]> {
@@ -324,6 +328,10 @@ export type V3LabSegment = {
   apertureTruncation?: {
     apertureMm: number;
     wEffMm: number;
+    // Radial decenter (mm) of the chief ray from the optical axis. >0 when the
+    // beam is misaligned off the lens centre, asymmetrically clipping the
+    // Gaussian (folded into transmittedFraction). See backend anchor_tracer.py.
+    decenterMm?: number;
     transmittedFraction: number;
     transmittance: number;
     combinedFraction: number;
@@ -360,6 +368,30 @@ export async function runV3SolverFromDbApi(
   const response = await client.post<V3SolverResult>(
     "/api/v3/solver/run-from-db",
     body,
+  );
+  return response.data;
+}
+
+
+/** Trace a probe ray through ONE component's binding assembly, in component
+ *  frame — powers the PHY Editor COMPONENT preview's per-asset polarization.
+ *  The component's bindings/assets come from DB (by id); no SceneObject
+ *  placement is needed. The ray's origin/direction are in component-frame mm;
+ *  optional `jones` ([E_s, E_p]) sets the input polarization. Returns the same
+ *  SolverResult schema as the Lab trace, so the preview draws polarization
+ *  exactly like the optical link — reflecting the authoritative physics. */
+export async function runV3SolverFromComponentApi(
+  componentId: string,
+  ray: {
+    origin: { x: number; y: number; z: number };
+    direction: { x: number; y: number; z: number };
+    wavelengthNm: number;
+    jones?: [{ re: number; im: number }, { re: number; im: number }];
+  },
+): Promise<V3SolverResult> {
+  const response = await client.post<V3SolverResult>(
+    "/api/v3/solver/run-from-component",
+    { componentId, initialRays: [ray] },
   );
   return response.data;
 }

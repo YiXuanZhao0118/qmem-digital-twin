@@ -19,13 +19,14 @@
 
 - **後端 anchor 求解器**（`anchor_tracer.py` + `solver.py` 的 `solve_anchor_scene`，端點 `/api/v3/solver`、DB 載入 `db_scene_loader.load_anchor_scene_from_db`）是**唯一權威光學引擎**。實驗室看到的光束 = 後端 anchor trace。
 - 舊的 legacy chain solver（`optical_solver.py` + `rf_propagation.py` + `optics_seq` 的 solve_chain）已於 Phase 1（migration ~0094 期）**刪除**；Lab「Run」按鈕現在也走此引擎。RF 的圖傳播現由 `rf_resolve.py` 負責（見 [cable.md](cable.md)）。
+- **元件預覽 probe（2026-06-12）**：PHY Editor COMPONENT 預覽的 probe beam 也走**同一個 anchor 引擎**，端點 `POST /api/v3/solver/run-from-component`（`v3_solver.py`）+ loader `db_scene_loader.load_anchor_scene_from_component`。它從**單一 Component 的 bindings** 組 scene（**component frame**，identity SceneObject pose、無 ObjectBinding delta / dynamic_sources / RF / power-gating），把 caller 給的 probe ray 當 initial ray 追跡，回傳與 run-from-db 相同的 `labSegments`（含逐段 Jones）。前端因此能在元件預覽逐段畫**真實偏振**（含非互易 Faraday），取代舊的前端 face-probe 近似（見 [rendering.md](rendering.md)）。
 - 前端 `optical/` 的 TypeScript 光追引擎（`ray-tracer-v3.ts` 等，**face-based**）是**平行、尚未上線**的實作，目前只被 vitest 引用、main.tsx 到不了，但有完整 parity 測試 + golden fixtures——**勿當廢案刪**。
 
 ## 雷射源發射與高斯傳播（emit_laser_source.py）
 
-emitter 不等入射光，主動種出初始 `BeamRay`（`emit_anchor_source_rays`）。beam propagation 由 **複數 q 參數**（per-axis `qx`/`qy`，支援像散）+ **embedded-Gaussian** 法控制。`laser_source` defaultParams（可被 `SceneObject.dynamic_sources` per-instance 覆寫）：
+emitter 不等入射光，主動種出初始 `BeamRay`（`emit_anchor_source_rays`）。beam propagation 由 **複數 q 參數**（per-axis `qx`/`qy`，支援像散）+ **embedded-Gaussian** 法控制。`laser_source` defaultParams（**只有 Asset `tunable_params` 標記的 key** 可被 `SceneObject.dynamic_sources` per-instance 覆寫，預設 tunable = `nominalPowerMw` + `centerWavelengthNm`，其餘由 Asset 決定——見 [data-model.md](data-model.md)）：
 
-- `centerWavelengthNm`（λ）、`nominalPowerMw`（P）、`polarization`（Jones，在 anchor axisY/axisZ 基底）。
+- `centerWavelengthNm`（λ）、`nominalPowerMw`（P，emit op 讀 dynamic 時 `nominalPowerMw` 優先於 legacy `powerMw`/`laserPowerMw` alias，逐實例調功率才生效）、`polarization`（Jones，在 anchor axisY/axisZ 基底）。
 - `spatialModeX/Y.waistUm`（束腰 w₀）、`.mSquared`（M²）、`.waistZOffsetMm`（束腰沿 +axisX 的位置偏移）。
 - `transverseModeType`(`"HG"`/`"LG"`) + `mode_index_1`/`mode_index_2`（HG=m/n；LG=p/l）。
 
@@ -44,7 +45,7 @@ emitter 不等入射光，主動種出初始 `BeamRay`（`emit_anchor_source_ray
 
 透鏡 op `anchor_ops/lens.py`（`lens`/`lens_biconvex`/`lens_plano_convex`/`lens_cylindrical`）除了 `1/q'=1/q−1/f` 的 ABCD，現在還對 `power_mw` 套兩個衰減因子（`_lens_power_factor`，`lens.py:44`）：
 
-- **通光孔徑裁切**：chief ray 在 `optical_center` 必過光軸，故光斑比 `anchor.aperture_mm`（半徑）寬時邊緣被擋。能量穿透率用 on-axis 高斯封閉解 **`T_ap = 1 − exp(−2a²/w²)`**，`w = √(wx·wy)`、`a = anchor.aperture_mm`。
+- **通光孔徑裁切**：光斑比 `anchor.aperture_mm`（半徑）寬時邊緣被擋。能量穿透率用高斯封閉解 **`T_ap = 1 − exp(−2a²/w²)`**，`w = √(wx·wy)`、`a = anchor.aperture_mm`。**對準（2026-06-11）**：chief ray 不一定正中孔徑——op 把 `hit.offset_y/z` 的徑向偏心 `r_c=√(off_y²+off_z²)` 餵進 `gaussian_circular_aperture_fraction(w,a,r_c)`，偏心束用**最近孔徑邊緣的刀口（knife-edge）模型**：`T = ½(1+erf(√2·(a−r_c)/w))`（邊緣帶符號距離 `s=a−r_c`；`r_c=0` 退回 on-axis 封閉解）。tracer 端建 `aperture_truncation` descriptor 時用**同一個** `r_c`（多帶 `decenterMm` 欄位），確保 scope 顯示的 `combinedFraction` = op 實際扣的功率。
 - **鍍膜穿透率**：`default_params.transmittance`（缺省 1.0），AR/Fresnel 損耗。
 - `power_out = P_in · T_ap · transmittance`。**唯一真值來源** `optical/aperture.py`（`gaussian_circular_aperture_fraction` + `gaussian_width_mm`），前端 `profileUtils.ts` 同公式；tracer 與 op 都呼叫它，永不分歧。
 - **向後相容**：無 aperture（`apertureMm=0`）或無 transmittance 的舊透鏡資產 → 因子 1.0，功率不變；一般細光束（w≪a）→ `T_ap≈1`。
@@ -53,6 +54,17 @@ emitter 不等入射光，主動種出初始 `BeamRay`（`emit_anchor_source_ray
 
 - **這是能量半**：同一個截斷產生的**繞射環（Airy）圖樣**屬波動場，q-引擎不畫（見上「限制」）；繞射 *pattern* 由獨立的 **POP 場通道**處理（見下），3D 場景光束仍為高斯錐。偏振/RF/AOM/fiber 一律留在 q 通道。
 - **A230TM-B**（Thorlabs 非球面，`kind=lens_plano_convex`）：`default_params.focalLengthMm=4.51`（op 讀此 key，**非** Object 面板的 `focalMm`）、`clearApertureMm=4.95`、`transmittance=0.995`；intercept anchor 的 `apertureMm=2.475`（=clearAperture/2，半徑）。
+
+## 斜入射像散（beam 與透鏡不對準，2026-06-11）
+
+beam 軸與透鏡光軸（anchor `axisX`）不平行時，薄透鏡是**像散**的。`_tilt_astig_focals`（`lens.py`）把焦距依入射角 α 拆成 tangential `f·cosα`（入射面內）與 sagittal `f/cosα`（垂直），再依入射面方位角 φ=atan2(θ_z,θ_y) 把聚焦功率張量 `diag(1/f_t,1/f_s)` 投影回 (axisY, axisZ)，取**對角項** → `f_y` 套 `qx`（axisY 平面）、`f_z` 套 `qy`（axisZ 平面）+ 對應的幾何 kick。
+
+- α 由 `beam_state_from_anchor_hit` 的斜率求出（`tanα=√(θ_y²+θ_z²)`）；正向入射（α=0）→ `f_y=f_z=f`，完全退回對稱薄透鏡（既有行為不變）。橢圓光斑經 beamMode per-axis qx/qy 自動流到 beam-scope + 3D 錐管，**無需新增管線**。
+- **限制**：(1) 投影的**非對角交叉項**（φ≈45° 的斜向像散）被丟棄——q-tracer 的 qx/qy 各自獨立、無法表示旋轉的像散軸；(2) cosα 設下限 `_COS_INCIDENCE_FLOOR=0.5`（≈60°），near-grazing 不會讓 `f·cosα→0` 塌縮（同 `beam_ray._NONPARAXIAL_S_FLOOR` 慣例）；(3) **僅薄透鏡分支**——厚透鏡 ABCD 與 cylindrical 不套（需逐面傾斜，未做）；(4) coma 等離軸像差屬非近軸幾何，q-tracer 不模（同上「限制」）。
+
+## 偏心截斷（beam 沒打在孔徑中心）
+
+chief ray 不一定正中孔徑：op 與 tracer descriptor 都把 `hit.offset_y/z` 的徑向偏心 `r_c` 餵進 `gaussian_circular_aperture_fraction(w,a,r_c)`（見上「通光孔徑裁切」），偏心束用**刀口模型** `T=½(1+erf(√2·(a−r_c)/w))`，descriptor 多帶 `decenterMm` 供顯示。**為何不是 `exp(−2(r_c/w)²)`**：舊式把鏡片當成「偏心 r_c 處的針孔」、用該點高斯強度當穿透率，會把「偏心但仍整顆落在大孔徑內」的光束（如 `r_c=8.76 < a=12.7`、`w≈1`）錯誤歸零（`≈e⁻¹⁶²`）；真實 2D 積分 ≈1.0。刀口模型改看**光束邊緣離孔徑邊緣多遠**（`a−r_c`）：完整在內（`a−r_c≫w`）→≈1、束心正在孔緣（`r_c=a`）→½、束心出孔數個 w → 0。**限制**：偏心高斯過圓孔無封閉解，此為與前端 `profileUtils.ts` 一致的近似（僅近邊裁切，`w≳a` 時遠邊 vignette 未模）；大偏心（`r_c>a+3w`）直接歸零。
 
 ## 厚透鏡模型（短焦 / 非球面，2026-06-11）
 
@@ -77,6 +89,31 @@ emitter 不等入射光，主動種出初始 `BeamRay`（`emit_anchor_source_ray
 - **Stage 3 — DONE 2026-06-11**：`BeamScopePanel` 找出該透鏡的 `apertureTruncation`(含 `focalLengthMm`)→ 呼叫 `POST /api/v3/pop` → 雙線性取樣回傳的強度網格餵進現有 `Heatmap`（取代解析 `sampleIntensity`），標題標「diffraction (POP) · focal plane」。幾何（透鏡處光束半徑 w、孔徑、焦距、λ）全來自 q 通道的 segment descriptor。
   - **只在焦面附近顯示（2026-06-11 修）**：POP 是**焦平面** Airy,只在焦點附近有意義。`truncLens` 取焦面(`lensZ+EFL`)離 probe 最近的透鏡,且**僅當 `|probe.z − focalZ| ≤ EFL`** 才回傳 → 否則 `popPattern=null`、退回**隨 z 變化的解析 profile**(否則遠下游探測會一直顯示同一張定位焦面圖,與 probe z 無關 → 使用者回報的 bug)。POP 焦面視圖也**不套**解析 profile 的 90° 旋轉/世界軸標籤(見 [rendering.md](rendering.md))。
 - **尚未做**：偵測器影像面、astigmatic POP 場（v1 種圓形 `w_eff`，焦面 Airy 由圓孔主導本就近圓）、入射波前曲率、**任意下游平面**（option B：會聚透鏡的環只在焦點 ±景深~3µm 內存在,離焦處是平滑光斑;且 mm 尺度近場 + 孔徑/焦斑~3000× 比例是硬取樣問題 → 暫不做）。
+
+## 偏振分光器 PBS / Glan（beam_splitter，2026-06-11）
+
+Op 在 `anchor_ops/pbs.py`（`register_anchor_op` 同時註冊 `pbs` 與 `beam_splitter`），單一 anchor `intercept_face`（axisX = coating/cut normal、axisY = s 參考、axisZ = p 參考）。每次命中**回兩條 branch**：
+
+- **透射（p，extraordinary）**：方向 = `ray.direction`（直穿,不靠 axisX,所以 Glan 那種 cut normal 偏 ~38° 也不會打歪);slab `B = L/n_e`。
+- **反射（s，ordinary）**：方向 = 對 axisX 鏡射 `d − 2(d·axisX)axisX`;slab `B = L/n_o`。
+
+**slab 折射率分 branch**：透射 e-ray 用 `refractiveIndex_e`、反射 o-ray 用 `refractiveIndex_o`;一般 PBS cube 只設 isotropic `refractiveIndex` → 兩 branch fallback 同值（`_pick_index`，鍵序 `refractiveIndex` 先於 `refractiveIndex_e/o`）。length 取 `cubeSizeMm` 或 `lengthMm`。
+
+**有限消光（漏光）**：`att = 10^(−ER_dB/10)` 為被拒偏振漏進該埠的功率比，**能量守恆**（每偏振兩出口比例和為 1）：透射埠 = `(1−att_s)·E_p + att_p·E_s`、反射埠 = `(1−att_p)·E_s + att_s·E_p`。`extinctionRatioPpDb`=透射 P 埠（s 漏）、`extinctionRatioSpDb`=反射 S 埠（p 漏);**值為合法 dB**（100000:1 → 50dB）。缺參數 ⇒ att=0 = 理想完美分光（一般 cube 不受影響）。
+
+**分光基於偏振器自身方位（plane-of-incidence frame，2026-06-12）**：分光**不是**在世界-up 的 beam-local s/p 框做，而是先把入射 Jones 旋進**偏振器自己的入射面框**：`s_glan = dir × axisX`（⊥入射面 = 反射 o-ray 的 s 偏振）、`p_glan = dir × s_glan`（透射 e-ray）。`_glan_frame_phi` 算 beam-local-s 到 `s_glan` 的有號角 φ、`rotate_jones` 把 jones 轉進去分光、兩條輸出再轉回 beam-local（`pbs.py`）。**為何**：isolator 的出口 Glan 相對入口 Glan **繞光軸轉 ~45°**——舊版兩顆都用同一個 beam-local 框分光 → 出口 Glan 會**透射**它該**反射**的（被 Faraday 轉過的）分量。水平擺的單顆 PBS：`dir×axisX ≈ beam-local s` → φ≈0 不變（向後相容）；近正入射（beam ∥ axisX，degenerate 入射面）→ 退回 raw beam-local。測試 `test_pbs_axis_referenced.py`（轉過的 Glan 沿自身 s 軸的偏振必全反射）。**反射 branch 仍維持入射 beam-local 框**（換方向後的 re-base 是既有近似，未動）。連結：[passive ops 偏振框](#) 見 memory `polarization_frame_convention`（PBS 現已 orientation-referenced，但 faraday/seeded-TA 仍待補）。
+
+isolator 內的 Glan-Laser 稜鏡 asset **掛 `beam_splitter` kind 走此雙 branch op**，不是 `glan_polarizer`（後者單透射、且其 op 會把透射方向沿 cut normal 打歪 → 對 Glan 幾何是壞的，見 kinds.md / 程式註解）。參數全集見 [kinds.md](kinds.md)（beam_splitter 的 defaultParams 即此 op 實讀的全集，無 optionalParams）。
+
+**除錯：「透射光偏振是垂直/不純」≠ frame bug（2026-06-12 診斷）**。isolator 正向光本來就**穿過兩顆 Glan**（隔離只在回程 glan1 反射擋光），所以 Object Sense / Optical Link 看到 glan2「透射」是對的。若透射光顯示成**垂直、且看似不純**，根因通常是**入射偏振落在 glan1 的拒斥(o-ray)軸**：glan1 把主功率全反射出側面，往前只剩 `extinctionRatioPpDb` 定義的那條漏光 `E_s·√att_p`（`pbs.py:162`，`att_p=10^(−Pp/10)`，Pp=50dB→1e-5），是**純 s（垂直）**但功率≈0；面板正規化後仍畫一條滿線 + 偏振標籤，易誤判成「順利透射」。把 `Pp→∞` 只會讓垂直入射的透射→**零**（不是變水平）。修法在上游：把雷射 `polarization`（或 glan1 繞光軸）對齊 glan1 透射(p)軸。詳見 memory `isolator_glan_input_pol_gotcha`。
+
+## Faraday rotator（非互易偏振旋轉，2026-06-12）
+
+Live op = `anchor_ops/misc_ops.py` 的 `faraday_anchor_op`（單 anchor `optical_center`）。**`kinds/faraday_rotator/physics.py` 是退役的 face-based legacy，live 不跑到**（但其 registry 測試 `test_faraday_rotator.py` 仍綠）。op 做兩件事：slab 直穿（`B=L/n`，q 前進、不聚焦、功率不變）＋ Jones 旋轉 `rotationDeg`（預設 45°）。
+
+- **非互易性靠 anchor axisX 定號（`misc_ops.py:53`）**：旋轉固定在 lab B-field 軸（= rod 光軸 anchor `axisX`），**不是** beam-local 框。`beam_local_sp` 反向時保留 ŝ、翻 p̂，所以「方向無關的固定矩陣」在回程會被讀成 `R(−θ)` 而**抵銷**去程 → 退化成互易旋光體、isolator 失效（2026-06-12 前的 bug，使用者實測「來回相互抵銷」）。修法：`fwd = sign(direction·axisX)`，`θ ← rotationDeg·fwd`，去/回程在 lab 都是 `R(+θ)` → 往返累積 **2θ**（45°+45°=90°，配交叉偏振器擋反射）。
+- **矩陣**（`rotate_jones(+θ)` 慣例）：`E_s' = cosθ·E_s + sinθ·E_p`、`E_p' = −sinθ·E_s + cosθ·E_p`。
+- **op 層 vs 整鏈**：單 op 呼叫只看到 `±θ`（forward/reverse 號相反）；完整 2θ 非互易要靠 tracer 在反射處 re-base jones 才浮現。op 層契約測試見 `tests/optical/test_faraday_anchor_nonreciprocal.py`。
 
 ## RF tracer
 

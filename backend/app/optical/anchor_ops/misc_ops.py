@@ -55,13 +55,20 @@ def faraday_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
         return [ray_in]
     out_ray = _slab_passthrough(ray_in, ctx)
     rot_deg = float(ctx.params.get("rotationDeg", 45.0))
-    theta = math.radians(rot_deg)
+    # Faraday rotation is fixed about the lab B-field axis (the rod's
+    # optical axis = anchor axisX), NOT the beam-local frame. beam_local_sp
+    # keeps ŝ but flips p̂ on reversal, so a direction-independent matrix
+    # reads as R(−θ) on the return pass and CANCELS the forward rotation —
+    # a reciprocal optical-activity rotator that defeats the isolator.
+    # Flip θ by the sign of travel along axisX so both passes are R(+θ) in
+    # lab and a round trip accumulates 2θ (non-reciprocal).
+    fwd = 1.0 if ray_in.direction.dot(ctx.anchor.axis_x_body) >= 0.0 else -1.0
+    theta = math.radians(rot_deg) * fwd
     c, s = math.cos(theta), math.sin(theta)
-    # Jones rotation by θ around beam axis (axis-fixed):
-    #   E_s' = c·E_s − s·E_p
-    #   E_p' = s·E_s + c·E_p
+    #   E_s' = c·E_s + s·E_p
+    #   E_p' = −s·E_s + c·E_p
     es, ep = ray_in.jones
-    new_jones = (c * es - s * ep, s * es + c * ep)
+    new_jones = (c * es + s * ep, -s * es + c * ep)
     return [out_ray.replaced(jones=new_jones)]
 
 

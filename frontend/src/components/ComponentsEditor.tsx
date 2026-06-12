@@ -43,9 +43,11 @@ import {
   updateComponentBindingApi,
   deleteComponentBindingApi,
   resolveAssetUrl,
+  runV3SolverFromComponentApi,
   type ComponentBindingUpdatePayload,
   type KindRow,
 } from "../api/client";
+import { buildPolarizationMarkers } from "../optical/polarizationMarker";
 import { CATEGORY_DEFS } from "./AssetLibraryPanel";
 import { useKindsStore } from "../store/kindsStore";
 import { useSceneStore } from "../store/sceneStore";
@@ -75,7 +77,6 @@ import {
   kindIdToElementKind,
   domainForElementKind,
 } from "../utils/elementDefaults";
-import { mThinLens } from "../optical/generalizedAbcd";
 import {
   ASIDE_STYLE,
   asideItemStyle,
@@ -394,6 +395,56 @@ function computeProbeOpticalAim(
   // visible, then aim straight through to the output face.
   const standoff = Math.max(outPos.distanceTo(inPos) * 0.6, 20);
   const origin = inPos.clone().sub(axis.clone().multiplyScalar(standoff));
+  return {
+    pos: { x: origin.x, y: origin.y, z: origin.z },
+    dir: { x: axis.x, y: axis.y, z: axis.z },
+  };
+}
+
+/** Fallback probe aim when the component declares no optical_in/optical_out
+ *  exposed faces (e.g. IO-3-850-HP). Derives the optical axis from the bound
+ *  OPTICAL assets' anchors: the axis is the farthest-apart pair of anchor
+ *  world positions (collinear optics → that line), and the probe starts just
+ *  behind the near end aimed at the far end. Returns null with < 2 anchors. */
+const PROBE_OPTICAL_KINDS = new Set([
+  "faraday_rotator", "beam_splitter", "pbs", "lens", "lens_plano_convex",
+  "lens_biconvex", "lens_cylindrical", "waveplate", "polarizer", "mirror",
+  "dichroic_mirror", "aom", "glan_polarizer",
+]);
+function computeProbeAnchorAim(
+  bindings: ReadonlyArray<{ id: string; asset3dId?: string | null }>,
+  pivotById: ReadonlyMap<string, THREE.Object3D>,
+  assetById: ReadonlyMap<string, unknown>,
+): { pos: { x: number; y: number; z: number }; dir: { x: number; y: number; z: number } } | null {
+  const pts: THREE.Vector3[] = [];
+  for (const b of bindings) {
+    if (!b.asset3dId) continue;
+    const asset = assetById.get(b.asset3dId) as
+      | { kindId?: string | null; anchors?: ReadonlyArray<Record<string, unknown>> | null }
+      | undefined;
+    if (!asset || !PROBE_OPTICAL_KINDS.has(asset.kindId ?? "")) continue;
+    const pivot = pivotById.get(b.id);
+    if (!pivot) continue;
+    pivot.updateWorldMatrix(true, false);
+    for (const a of asset.anchors ?? []) {
+      const p = a.positionMmBodyLocal as { x: number; y: number; z: number } | undefined;
+      if (!p) continue;
+      pts.push(new THREE.Vector3(p.x, p.y, p.z).applyMatrix4(pivot.matrixWorld));
+    }
+  }
+  if (pts.length < 2) return null;
+  let best = -1, near = pts[0], far = pts[0];
+  for (let i = 0; i < pts.length; i++) {
+    for (let j = i + 1; j < pts.length; j++) {
+      const d = pts[i].distanceToSquared(pts[j]);
+      if (d > best) { best = d; near = pts[i]; far = pts[j]; }
+    }
+  }
+  const axis = far.clone().sub(near);
+  if (axis.lengthSq() < 1e-9) return null;
+  axis.normalize();
+  const standoff = Math.max(Math.sqrt(best) * 0.5, 20);
+  const origin = near.clone().sub(axis.clone().multiplyScalar(standoff));
   return {
     pos: { x: origin.x, y: origin.y, z: origin.z },
     dir: { x: axis.x, y: axis.y, z: axis.z },
@@ -1718,6 +1769,13 @@ function ComponentPreview3D({
   // selected one. Rebuilt when bindings or beam controls change.
   const probeBeamGroupRef = useRef<THREE.Group | null>(null);
   const rebuildProbeBeamRef = useRef<() => void>(() => {});
+  // Probe trace is now an async backend call (run-from-component). This token
+  // drops a slower earlier response when rapid probe edits overlap.
+  const probeSeqRef = useRef(0);
+  // The component being edited, via ref so rebuildProbeBeam reads the current
+  // id without being recreated on every prop change.
+  const parentComponentRef = useRef(parentComponent);
+  parentComponentRef.current = parentComponent;
   // Camera-pose snapshot across scene rebuilds. Pose edits in the
   // bindings table change `bindings`, which retriggers the big scene
   // useEffect — without this the camera would re-fit on every keystroke
@@ -1950,604 +2008,96 @@ function ComponentPreview3D({
     function rebuildProbeBeam() {
       const group = probeBeamGroupRef.current;
       if (!group) return;
-      while (group.children.length > 0) {
-        const c = group.children[0];
-        group.remove(c);
-        c.traverse((node) => {
-          const m = node as THREE.Mesh;
-          m.geometry?.dispose();
-          const mat = m.material;
-          if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
-          else mat?.dispose?.();
-        });
-      }
+      const clearGroup = () => {
+        while (group.children.length > 0) {
+          const c = group.children[0];
+          group.remove(c);
+          c.traverse((node) => {
+            const m = node as THREE.Mesh;
+            m.geometry?.dispose();
+            const mat = m.material as THREE.Material | THREE.Material[] | undefined;
+            if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+            else mat?.dispose?.();
+          });
+        }
+      };
+
+      const componentId = parentComponentRef.current?.id ?? null;
+      const seq = ++probeSeqRef.current;
+      if (!componentId) { clearGroup(); return; }
 
       const beam = beamRef.current;
-      const dirInit = new THREE.Vector3(beam.dir.x, beam.dir.y, beam.dir.z);
-      if (dirInit.lengthSq() < 1e-12) dirInit.set(0, 0, 1);
-      dirInit.normalize();
-      const sourceInit = new THREE.Vector3(beam.pos.x, beam.pos.y, beam.pos.z);
+      const dirVec = new THREE.Vector3(beam.dir.x, beam.dir.y, beam.dir.z);
+      if (dirVec.lengthSq() < 1e-12) dirVec.set(0, 0, 1);
+      dirVec.normalize();
+      // polDeg is the s↔p mix: 0° = pure s, 90° = pure p (matches the beam
+      // controls). The backend reads jones as [E_s, E_p] in the same beam-local
+      // frame the segments come back in.
+      const polRad = (beam.polDeg * Math.PI) / 180;
 
-      // Size the arrows off the current scene bbox so they're visible
-      // without dwarfing the geometry. Skip both groups recursively
-      // (gizmoPivot may be nested under a binding pivot when the
-      // selected binding has a parent ??see bboxExcluding for why
-      // a direct sibling filter wasn't enough).
+      // Marker + beam-line sizing off the component bbox (mm), excluding the
+      // gizmo and the probe group itself.
       const bbox = bboxExcluding(new Set([gizmoPivot, probeBeamGroup]));
-      const size = bbox.isEmpty()
+      const span = bbox.isEmpty()
         ? 30
         : Math.max(...bbox.getSize(new THREE.Vector3()).toArray(), 20);
-      const armLen = Math.max(size * 0.6, 25);
-      const beamRad = Math.max(size * 0.006, 0.4);
-      const reflectArmLen = armLen * 0.6;
+      const markerSize = Math.max(span * 0.01, 0.4);
+      const beamRadius = Math.max(span * 0.004, 0.3);
 
-      // Collect every (face, owner binding) triple along with its
-      // world-frame pose AND its aperture + tangent basis so the trace
-      // can (a) intersect the face plane, (b) check the hit is inside
-      // the aperture (else the element doesn't see the beam), and (c)
-      // build the body-frame (x, x', y, y', 1) state vector for the
-      // 5×5 ABCD transitions defined on the asset.
-      root.updateMatrixWorld(true);
-      type RawFace = {
-        id: string;
-        positionMmBodyLocal: { x: number; y: number; z: number };
-        normalBodyLocal?: { x: number; y: number; z: number } | null;
-        apertureMm?: number;
-        apertureShape?: "circle" | "rectangle" | "ellipse";
-        apertureWidthMm?: number | null;
-        apertureHeightMm?: number | null;
-      };
-      type Transition = {
-        in: string;
-        out: string | string[];
-        op?: string;
-        matrix5x5?: number[][] | null;
-        via?: string[] | null;
-      };
-      type FaceHit = {
-        bindingId: string;
-        faceId: string;
-        pivot: THREE.Object3D;
-        rawFace: RawFace;
-        posWorld: THREE.Vector3;
-        normalWorld: THREE.Vector3;
-        // Tangent basis perpendicular to the face normal (world frame).
-        // Used for the aperture inside-test.
-        uWorld: THREE.Vector3;
-        vWorld: THREE.Vector3;
-      };
-      const allFaces: FaceHit[] = [];
-      const facesByBinding = new Map<string, FaceHit[]>();
-      const transitionsByBinding = new Map<string, Transition[]>();
-      for (const [bId, pivot] of pivotByBindingIdRef.current) {
-        const binding = bindingsRef.current.find((b) => b.id === bId);
-        if (!binding || binding.targetKind !== "asset" || !binding.asset3dId) continue;
-        const asset = assetById.get(binding.asset3dId);
-        if (!asset) continue;
-        // Modern assets carry anchors[] (Phase 9.8), not faces[]. Synthesize
-        // RawFaces from anchors so the probe beam actually traces them: an
-        // anchor's axisX IS the surface normal (mirror) / propagation axis,
-        // exactly what plane-intersection + the kind-aware reflect below
-        // need. Legacy faces[] still win when present.
-        const rawFaces: RawFace[] =
-          asset.faces && asset.faces.length > 0
-            ? (asset.faces as unknown as RawFace[])
-            : ((asset.anchors ?? []) as ReadonlyArray<Record<string, unknown>>).map((a) => {
-                const ax = (a.axisXBodyLocal ?? a.directionBodyLocal) as
-                  | { x: number; y: number; z: number }
-                  | undefined;
-                return {
-                  id: String(a.id ?? ""),
-                  positionMmBodyLocal: a.positionMmBodyLocal as RawFace["positionMmBodyLocal"],
-                  normalBodyLocal: ax ?? null,
-                  apertureMm: a.apertureMm as number | undefined,
-                  apertureShape: a.apertureShape as RawFace["apertureShape"],
-                  apertureWidthMm: a.apertureWidthMm as number | null | undefined,
-                  apertureHeightMm: a.apertureHeightMm as number | null | undefined,
-                };
-              });
-        if (rawFaces.length === 0) continue;
-        transitionsByBinding.set(
-          bId,
-          (asset.transitions ?? []) as unknown as Transition[],
-        );
-        const bindingFaces: FaceHit[] = [];
-        for (const rawFace of rawFaces) {
-          const p = rawFace.positionMmBodyLocal;
-          const posWorld = new THREE.Vector3(p.x, p.y, p.z).applyMatrix4(pivot.matrixWorld);
-          const n = rawFace.normalBodyLocal;
-          const normalLocal = n
-            ? new THREE.Vector3(n.x, n.y, n.z)
-            : new THREE.Vector3(0, 0, 1);
-          if (normalLocal.lengthSq() < 1e-12) normalLocal.set(0, 0, 1);
-          normalLocal.normalize();
-          const normalWorld = normalLocal.clone()
-            .transformDirection(pivot.matrixWorld)
-            .normalize();
-          // Build a tangent basis perpendicular to the normal. Pick
-          // body +x as the seed unless the normal is parallel to it
-          // (then fall back to body +y) — keeps the basis consistent
-          // across faces of the same asset for symmetric apertures.
-          let seedBody = new THREE.Vector3(1, 0, 0);
-          if (Math.abs(seedBody.dot(normalLocal)) > 0.99) {
-            seedBody = new THREE.Vector3(0, 1, 0);
-          }
-          const uBody = seedBody.clone()
-            .sub(normalLocal.clone().multiplyScalar(seedBody.dot(normalLocal)))
-            .normalize();
-          const vBody = normalLocal.clone().cross(uBody).normalize();
-          const uWorld = uBody.clone().transformDirection(pivot.matrixWorld).normalize();
-          const vWorld = vBody.clone().transformDirection(pivot.matrixWorld).normalize();
-          const hit: FaceHit = {
-            bindingId: bId,
-            faceId: rawFace.id ?? "",
-            pivot,
-            rawFace,
-            posWorld,
-            normalWorld,
-            uWorld,
-            vWorld,
-          };
-          allFaces.push(hit);
-          bindingFaces.push(hit);
-        }
-        facesByBinding.set(bId, bindingFaces);
-      }
-
-      // Aperture inside-test. Centerline must cross within the face's
-      // declared aperture for the element to see the beam.
-      // - circle:    x² + y² ≤ apertureMm²       (apertureMm = radius)
-      // - rectangle: |x| ≤ W/2, |y| ≤ H/2         (W,H = width/height;
-      //              fall back to 2·apertureMm when not declared)
-      // - ellipse:   (x/(W/2))² + (y/(H/2))² ≤ 1
-      const apertureContains = (face: FaceHit, hitWorld: THREE.Vector3): boolean => {
-        const offset = hitWorld.clone().sub(face.posWorld);
-        const x = offset.dot(face.uWorld);
-        const y = offset.dot(face.vWorld);
-        const ap = face.rawFace.apertureMm ?? 0;
-        const shape = face.rawFace.apertureShape ?? "circle";
-        if (ap <= 0) return true;  // no aperture declared → don't filter
-        if (shape === "circle") return x * x + y * y <= ap * ap;
-        const halfW = (face.rawFace.apertureWidthMm ?? ap * 2) * 0.5;
-        const halfH = (face.rawFace.apertureHeightMm ?? ap * 2) * 0.5;
-        if (shape === "rectangle") return Math.abs(x) <= halfW && Math.abs(y) <= halfH;
-        // ellipse
-        const ex = halfW > 0 ? x / halfW : 0;
-        const ey = halfH > 0 ? y / halfH : 0;
-        return ex * ex + ey * ey <= 1;
-      };
-
-      // Apply a 5×5 ABCD transition (in: face A → out: face B) to a
-      // ray currently at `hitWorld` going `dirWorld`. Returns the
-      // teleported (origin, direction) at the output face in world
-      // frame, or null if the matrix can't be applied (degenerate
-      // axis, missing output face, etc.).
-      //
-      // State vector convention: [x, θx, y, θy, 1] in BODY frame with
-      // body +z as the optical axis. (x, y) are transverse offsets
-      // from the face centre in mm; (θx, θy) are tilt angles in
-      // radians measured from the +z axis ??derived from dir via
-      // atan2 so they remain valid for arbitrary tilts (not just the
-      // small-angle approximation). Output direction is reconstructed
-      // with sin/cos so the same trigonometric round-trip holds.
-      const applyMatrix5x5 = (
-        face: FaceHit,
-        transition: Transition,
-        hitWorld: THREE.Vector3,
-        dirWorld: THREE.Vector3,
-      ): { origin: THREE.Vector3; direction: THREE.Vector3; outFaceId: string } | null => {
-        const M = transition.matrix5x5;
-        if (!M || M.length < 4 || M.some((row) => !row || row.length < 4)) return null;
-        const outFaceId = Array.isArray(transition.out) ? transition.out[0] : transition.out;
-        if (!outFaceId) return null;
-        const outFace = facesByBinding.get(face.bindingId)?.find((f) => f.faceId === outFaceId);
-        if (!outFace) return null;
-
-        const pivot = face.pivot;
-        const inverse = pivot.matrixWorld.clone().invert();
-        const hitBody = hitWorld.clone().applyMatrix4(inverse);
-        const dirBody = dirWorld.clone().transformDirection(inverse).normalize();
-        if (Math.abs(dirBody.z) < 1e-6) return null;
-        const sign = Math.sign(dirBody.z);
-
-        const inPosBody = new THREE.Vector3(
-          face.rawFace.positionMmBodyLocal.x,
-          face.rawFace.positionMmBodyLocal.y,
-          face.rawFace.positionMmBodyLocal.z,
-        );
-        const x = hitBody.x - inPosBody.x;
-        const y = hitBody.y - inPosBody.y;
-        // Tilt angles in radians from the optical axis. atan2 handles
-        // any direction (including grazing) without the dx/dz blowup.
-        const absZ = Math.abs(dirBody.z);
-        const thetaX = Math.atan2(dirBody.x, absZ);
-        const thetaY = Math.atan2(dirBody.y, absZ);
-
-        const v = [x, thetaX, y, thetaY, 1];
-        const row = (i: number) =>
-          (M[i][0] ?? 0) * v[0] + (M[i][1] ?? 0) * v[1] + (M[i][2] ?? 0) * v[2]
-          + (M[i][3] ?? 0) * v[3] + (M[i][4] ?? 0) * v[4];
-        const xOut = row(0);
-        const thetaXOut = row(1);
-        const yOut = row(2);
-        const thetaYOut = row(3);
-
-        const outPosBody = new THREE.Vector3(
-          outFace.rawFace.positionMmBodyLocal.x + xOut,
-          outFace.rawFace.positionMmBodyLocal.y + yOut,
-          outFace.rawFace.positionMmBodyLocal.z,
-        );
-        // Reconstruct direction from output tilts via sin/cos.
-        //
-        // Sign handling: θ_out is in the matrix's local frame where
-        // +z_matrix is the beam's propagation direction. Body +z and
-        // matrix +z are the same only when the beam already goes +z
-        // (sign = +1). For a -z body beam the matrix frame has
-        // matrix +z = body -z, so the transverse axes (body x, body
-        // y) stay unflipped — only body z flips. Earlier code
-        // multiplied the transverse components by `sign` too, which
-        // inverted the focusing direction for -z beams (a positive
-        // lens looked divergent).
-        const sinX = Math.sin(thetaXOut);
-        const sinY = Math.sin(thetaYOut);
-        const cosZSquared = Math.max(0, 1 - sinX * sinX - sinY * sinY);
-        const cosZ = Math.sqrt(cosZSquared);
-        const newDirBody = new THREE.Vector3(sinX, sinY, sign * cosZ);
-        if (newDirBody.lengthSq() < 1e-12) return null;
-        newDirBody.normalize();
-
-        const newOriginWorld = outPosBody.clone().applyMatrix4(pivot.matrixWorld);
-        const newDirWorld = newDirBody.clone()
-          .transformDirection(pivot.matrixWorld)
-          .normalize();
-        return { origin: newOriginWorld, direction: newDirWorld, outFaceId };
-      };
-
-      const makeBeam = (
-        origin: THREE.Vector3,
-        direction: THREE.Vector3,
-        length: number,
-        radius: number,
-        color: string,
-      ) => {
-        const shaft = new THREE.Mesh(
-          new THREE.CylinderGeometry(radius, radius, length, 12),
-          new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false }),
-        );
-        shaft.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
-        shaft.position.copy(origin).add(direction.clone().multiplyScalar(length / 2));
-        shaft.renderOrder = 60;
-        group.add(shaft);
-        const head = new THREE.Mesh(
-          new THREE.ConeGeometry(radius * 3, armLen * 0.12, 12),
-          new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false }),
-        );
-        head.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
-        head.position.copy(origin).add(direction.clone().multiplyScalar(length + armLen * 0.06));
-        head.renderOrder = 60;
-        group.add(head);
-      };
-
-      // Compute beam-local s and p unit vectors (jones.ts
-      // beam_local_sp convention). Reused by drawPolMark and by the
-      // pbs power split.
-      const beamLocalSP = (beamDir: THREE.Vector3): { s: THREE.Vector3; p: THREE.Vector3 } => {
-        const d = beamDir.clone().normalize();
-        const GLOBAL_UP = new THREE.Vector3(0, 0, 1);
-        const FALLBACK_UP = new THREE.Vector3(1, 0, 0);
-        const up = Math.abs(d.dot(GLOBAL_UP)) > 0.999 ? FALLBACK_UP : GLOBAL_UP;
-        const s = new THREE.Vector3().crossVectors(up, d).normalize();
-        const p = new THREE.Vector3().crossVectors(d, s).normalize();
-        return { s, p };
-      };
-
-      const polDegToWorld = (beamDir: THREE.Vector3, polDeg: number): THREE.Vector3 => {
-        const { s, p } = beamLocalSP(beamDir);
-        const polRad = (polDeg * Math.PI) / 180;
-        return s.multiplyScalar(Math.cos(polRad))
-          .add(p.multiplyScalar(Math.sin(polRad)))
-          .normalize();
-      };
-
-      const worldPolToDeg = (beamDir: THREE.Vector3, polWorld: THREE.Vector3): number => {
-        const { s, p } = beamLocalSP(beamDir);
-        const projected = polWorld.clone()
-          .sub(beamDir.clone().normalize().multiplyScalar(polWorld.dot(beamDir.clone().normalize())));
-        if (projected.lengthSq() < 1e-12) return 0;
-        projected.normalize();
-        return Math.atan2(projected.dot(p), projected.dot(s)) * 180 / Math.PI;
-      };
-
-      const rotatePolAroundAxis = (
-        polWorld: THREE.Vector3,
-        axisWorld: THREE.Vector3,
-        rotationDeg: number,
-      ): THREE.Vector3 => {
-        const axis = axisWorld.clone();
-        if (axis.lengthSq() < 1e-12) return polWorld.clone().normalize();
-        axis.normalize();
-        const rad = (rotationDeg * Math.PI) / 180;
-        return polWorld.clone().applyAxisAngle(axis, rad).normalize();
-      };
-
-      const faradayAxisWorld = (
-        asset: Asset3D | undefined,
-        pivot: THREE.Object3D | undefined,
-        fallback: THREE.Vector3,
-      ): THREE.Vector3 => {
-        const opticalCenter = (asset?.anchors ?? []).find((a) => a.id === "optical_center");
-        const axisLocal = opticalCenter && asset ? anchorObjectLocalAxisX(opticalCenter, asset) : null;
-        if (!axisLocal || !pivot) return fallback.clone().normalize();
-        pivot.updateWorldMatrix(true, false);
-        return new THREE.Vector3(axisLocal.x, axisLocal.y, axisLocal.z)
-          .transformDirection(pivot.matrixWorld)
-          .normalize();
-      };
-
-      // Linear polarization mark — cyan double-headed arrow drawn
-      // perpendicular to the beam direction at the start of each
-      // segment. Length scales with sqrt(power) so a half-power beam
-      // shows a noticeably shorter mark; orientation rotates when the
-      // beam passes through a faraday rotator.
-      const drawPolMark = (
-        origin: THREE.Vector3, beamDir: THREE.Vector3, polDeg: number, power: number,
-      ): void => {
-        if (power < 0.01) return;  // skip near-dark beams
-        const { s, p } = beamLocalSP(beamDir);
-        const polRad = (polDeg * Math.PI) / 180;
-        const polDir = s.clone().multiplyScalar(Math.cos(polRad))
-          .add(p.clone().multiplyScalar(Math.sin(polRad)))
-          .normalize();
-
-        const scale = Math.sqrt(power);
-        const markLen = Math.max(beamRad * 14, armLen * 0.08) * scale;
-        const markRad = beamRad * 0.55 * scale;
-        const color = "#06b6d4";
-
-        const shaft = new THREE.Mesh(
-          new THREE.CylinderGeometry(markRad, markRad, markLen, 10),
-          new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false }),
-        );
-        shaft.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), polDir);
-        shaft.position.copy(origin);
-        shaft.renderOrder = 65;
-        group.add(shaft);
-
-        const coneLen = markLen * 0.25;
-        const coneRad = markRad * 2.2;
-        for (const sign of [1, -1] as const) {
-          const axis = polDir.clone().multiplyScalar(sign);
-          const cone = new THREE.Mesh(
-            new THREE.ConeGeometry(coneRad, coneLen, 10),
-            new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false }),
-          );
-          cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), axis);
-          cone.position.copy(origin).add(axis.clone().multiplyScalar(markLen / 2 + coneLen / 2));
-          cone.renderOrder = 65;
-          group.add(cone);
-        }
-      };
-
-      // Power-aware beam draw: arrows share a single gold colour;
-      // radius = base · √power so the visual cross-section is
-      // proportional to power. Below 1 % the segment is skipped so the
-      // viz doesn't spam invisibly-thin arrows.
-      const BEAM_COLOR = "#fbbf24";
-      const drawBeam = (
-        origin: THREE.Vector3, direction: THREE.Vector3, length: number, power: number,
-      ): void => {
-        if (power < 0.01) return;
-        const radius = Math.max(beamRad * Math.sqrt(power), beamRad * 0.15);
-        makeBeam(origin, direction, length, radius, BEAM_COLOR);
-      };
-
-      // Trace the transmit chain forward up to MAX_HITS interfaces.
-      // Reflect arrows draw only for reflective kinds — faraday /
-      // lens / waveplate are transmissive in this preview and a
-      // splitter arrow at their face normal misled the user into
-      // reading a transmission as a split.
-      const reflectiveKinds = new Set([
-        "mirror", "pbs", "beam_splitter", "dichroic_mirror",
-      ]);
-      const MAX_HITS = 12;
-      const EPS = 1e-4;
-      let source = sourceInit.clone();
-      let dir = dirInit.clone();
-      let lastFaceKey: string | null = null;
-      let hits = 0;
-      // Polarization + power state evolve as the beam crosses
-      // elements. Faraday adds rotationDeg with no power loss; pbs
-      // splits power based on the projection of the polarization onto
-      // the polarizer's transmission axis. Lens applies a paraxial
-      // thin-lens kick to the direction so off-axis rays converge.
-      let currentPolDeg = beam.polDeg;
-      let currentPower = 1.0;
-      const enteredFaradays = new Set<string>();
-
-      // Pol mark at the very start of the beam.
-      drawPolMark(sourceInit.clone(), dir, currentPolDeg, currentPower);
-
-      while (hits < MAX_HITS) {
-        let bestT = Infinity;
-        let bestFace: FaceHit | null = null;
-        for (const face of allFaces) {
-          const faceKey = `${face.bindingId}/${face.faceId}`;
-          if (faceKey === lastFaceKey) continue;  // skip the face we just exited
-          const denom = dir.dot(face.normalWorld);
-          if (Math.abs(denom) < 1e-9) continue;
-          const t = face.posWorld.clone().sub(source).dot(face.normalWorld) / denom;
-          if (t <= EPS || t >= bestT) continue;
-          // Aperture filter: the element only sees the beam if the
-          // centreline crosses inside its declared aperture. Beams
-          // skirting past the clear aperture pass through unaffected
-          // (the loop falls through to the next face hit).
-          const candidateHit = source.clone().add(dir.clone().multiplyScalar(t));
-          if (!apertureContains(face, candidateHit)) continue;
-          bestT = t;
-          bestFace = face;
-        }
-        if (!bestFace) break;
-
-        const hitPoint = source.clone().add(dir.clone().multiplyScalar(bestT));
-        // Incoming segment ??single gold colour, radius scales with
-        // the current beam power.
-        drawBeam(source.clone(), dir, bestT, currentPower);
-
-        // Resolve the hit binding's asset kind so we can decide
-        // whether to split power and whether to update the
-        // polarization state.
-        const hitBinding = bindingsRef.current.find((b) => b.id === bestFace!.bindingId);
-        const hitAsset = hitBinding?.asset3dId ? assetById.get(hitBinding.asset3dId) : undefined;
-        const hitKind = hitAsset?.kindId ?? null;
-
-        // Power split per kind:
-        //   mirror          — 100 % reflect (no transmit)
-        //   dichroic_mirror — 100 % reflect (wavelength-dependent in
-        //                       reality; we don't track lambda here)
-        //   beam_splitter   — Malus' law against the anchor's
-        //                       axisZ (p-pol / transmission axis,
-        //                       per Phase 9.1 anchor convention).
-        //                       Falls back to 50/50 if the asset
-        //                       lacks tri-axis anchor data.
-        // Anything not in reflectiveKinds defaults to full transmit
-        // with no reject branch (lens, waveplate, faraday, ...).
-        let transmitFrac = 1.0;
-        let rejectFrac = 0.0;
-        if (hitKind === "mirror" || hitKind === "dichroic_mirror") {
-          transmitFrac = 0.0;
-          rejectFrac = 1.0;
-        } else if (hitKind === "beam_splitter") {
-          // PBS / Glan-Laser: split by polarization. Transmission axis
-          // = asset anchor's axisZ (in body frame). axisY is s-pol →
-          // reflects, axisZ is p-pol → transmits.
-          const anchors = (hitAsset?.anchors ?? []) as ReadonlyArray<{
-            id?: string;
-            axisZBodyLocal?: { x: number; y: number; z: number };
-          }>;
-          const matchAnchor = anchors.find(
-            (a) => a.id === bestFace!.faceId && a.axisZBodyLocal,
-          ) ?? anchors.find((a) => a.axisZBodyLocal);
-          const zLocal = matchAnchor?.axisZBodyLocal;
-          const pivot = pivotByBindingIdRef.current.get(bestFace.bindingId);
-          if (zLocal && pivot) {
-            pivot.updateWorldMatrix(true, false);
-            const transAxisWorld = new THREE.Vector3(zLocal.x, zLocal.y, zLocal.z)
-              .transformDirection(pivot.matrixWorld);
-            const projected = transAxisWorld.clone()
-              .sub(dir.clone().multiplyScalar(dir.dot(transAxisWorld)));
-            if (projected.lengthSq() > 1e-12) {
-              projected.normalize();
-              const { s, p } = beamLocalSP(dir);
-              const sComp = projected.dot(s);
-              const pComp = projected.dot(p);
-              const polAxisDeg = Math.atan2(pComp, sComp) * 180 / Math.PI;
-              const deltaRad = (currentPolDeg - polAxisDeg) * Math.PI / 180;
-              transmitFrac = Math.cos(deltaRad) ** 2;
-              rejectFrac = 1 - transmitFrac;
-            } else {
-              // Beam direction parallel to transmission axis (rare
-              // edge case) — fall back to 50/50 so the viz doesn't
-              // silently flatten one branch.
-              transmitFrac = 0.5;
-              rejectFrac = 0.5;
+      // Trace the probe through the component assembly on the AUTHORITATIVE
+      // backend engine (run-from-component) — same anchor ops as the Lab, so
+      // per-asset polarization (Faraday rotation, PBS s/p split, …) is real,
+      // not the old frontend face-probe approximation. Component frame == this
+      // preview's root frame (identity), so segment mm coords drop straight
+      // into probeBeamGroup local space.
+      void runV3SolverFromComponentApi(componentId, {
+        origin: { x: beam.pos.x, y: beam.pos.y, z: beam.pos.z },
+        direction: { x: dirVec.x, y: dirVec.y, z: dirVec.z },
+        wavelengthNm: 780,
+        jones: [
+          { re: Math.cos(polRad), im: 0 },
+          { re: Math.sin(polRad), im: 0 },
+        ],
+      })
+        .then((result) => {
+          if (seq !== probeSeqRef.current) return;  // a newer trace superseded this
+          clearGroup();
+          for (const s of result.labSegments ?? []) {
+            // Skip near-dark branches (e.g. the polarization rejected at a Glan
+            // prism): the Jones amplitude collapses to ~0, so a beam line +
+            // polarization marker there would be misleading noise. Mirrors the
+            // optical link's powerFactor>0.01 gate, but on Jones intensity since
+            // that is what the marker depicts.
+            const [sr, si, pr, pi] = [s.jones[0].re, s.jones[0].im, s.jones[1].re, s.jones[1].im];
+            if (sr * sr + si * si + pr * pr + pi * pi < 0.01) continue;
+            const start = new THREE.Vector3(s.start.x, s.start.y, s.start.z);
+            const end = new THREE.Vector3(s.end.x, s.end.y, s.end.z);
+            const d = new THREE.Vector3().subVectors(end, start);
+            const len = d.length();
+            if (len < 1e-6) continue;
+            d.normalize();
+            // Beam segment: gold cylinder along the chief ray.
+            const shaft = new THREE.Mesh(
+              new THREE.CylinderGeometry(beamRadius, beamRadius, len, 12),
+              new THREE.MeshBasicMaterial({ color: "#fbbf24", depthTest: false, depthWrite: false }),
+            );
+            shaft.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d);
+            shaft.position.copy(start).addScaledVector(d, len / 2);
+            shaft.renderOrder = 60;
+            group.add(shaft);
+            // Per-asset polarization marker at the segment midpoint, from the
+            // backend Jones vector (shared with the Lab optical link).
+            const jones: [number, number, number, number] = [sr, si, pr, pi];
+            const mid = start.clone().addScaledVector(d, len / 2);
+            for (const obj of buildPolarizationMarkers(jones, d, mid, markerSize, { renderOrder: 65 })) {
+              group.add(obj);
             }
-          } else {
-            // Legacy / non-polarizing beam_splitter — keep equal split.
-            transmitFrac = 0.5;
-            rejectFrac = 0.5;
           }
-        }
-
-        // Reflect/reject arrow ??sized by the rejected power so the
-        // viz reflects how much actually bounces off.
-        if (hitKind && reflectiveKinds.has(hitKind) && rejectFrac > 0) {
-          const reflectDir = dir.clone()
-            .sub(bestFace.normalWorld.clone().multiplyScalar(2 * dir.dot(bestFace.normalWorld)))
-            .normalize();
-          drawBeam(hitPoint.clone(), reflectDir, reflectArmLen, currentPower * rejectFrac);
-        }
-
-        // Power into the transmit branch.
-        currentPower *= transmitFrac;
-
-        // Faraday: rotate polarization once per binding (on the first
-        // face we hit for that binding). Both A and B faces will be
-        // crossed in a straight-through transit but the rod only
-        // contributes one rotation in total.
-        if (hitKind === "faraday_rotator" && !enteredFaradays.has(bestFace.bindingId)) {
-          enteredFaradays.add(bestFace.bindingId);
-          const rotDeg = Number(
-            (hitAsset?.defaultParams as { rotationDeg?: unknown } | undefined | null)?.rotationDeg ?? 45,
-          );
-          const axisWorld = faradayAxisWorld(hitAsset, bestFace.pivot, bestFace.normalWorld);
-          currentPolDeg = worldPolToDeg(
-            dir,
-            rotatePolAroundAxis(polDegToWorld(dir, currentPolDeg), axisWorld, rotDeg),
-          );
-        }
-
-        // 5×5 ABCD transition. Pick a transition whose `in` matches
-        // the hit face AND which carries a matrix5x5 (so we know how
-        // to transform the state). For pbs assets that have a reject
-        // transition with no matrix (op = glan_reject_s), `find`
-        // prefers the matrix-bearing transmit branch.
-        const transitions = transitionsByBinding.get(bestFace.bindingId) ?? [];
-        let transition = transitions.find(
-          (t) => t.in === bestFace!.faceId && t.matrix5x5 && t.matrix5x5.length >= 4,
-        );
-        // Lens fallback: when no explicit transition is defined, dispatch
-        // through the generalized-ABCD operator (1aba98a-style). Build
-        // mThinLens(focalLengthMm) on the fly from the asset's defaultParams
-        // and apply it at the same face (input = output).
-        if (!transition && (hitKind === "lens_plano_convex" || hitKind === "lens_biconvex")) {
-          const focalLengthMm = (
-            hitAsset?.defaultParams as { focalLengthMm?: number } | undefined | null
-          )?.focalLengthMm;
-          if (typeof focalLengthMm === "number" && Math.abs(focalLengthMm) > 1e-12) {
-            const flat = mThinLens(focalLengthMm);
-            const nested: number[][] = [
-              flat.slice(0, 5),
-              flat.slice(5, 10),
-              flat.slice(10, 15),
-              flat.slice(15, 20),
-              flat.slice(20, 25),
-            ];
-            transition = {
-              in: bestFace.faceId,
-              out: bestFace.faceId,
-              matrix5x5: nested,
-            };
-          }
-        }
-        const matrixResult = transition
-          ? applyMatrix5x5(bestFace, transition, hitPoint, dir)
-          : null;
-
-        if (matrixResult) {
-          // Teleport across the element: the matrix maps state at the
-          // input face to state at the output face, accounting for
-          // in-element translation + lens kick in one step. The next
-          // hit search starts from the output face position.
-          source = matrixResult.origin;
-          dir = matrixResult.direction;
-          lastFaceKey = `${bestFace.bindingId}/${matrixResult.outFaceId}`;
-        } else {
-          // No matrix → straight-through transit (lens with no matrix
-          // and no focalLengthMm, faraday, waveplate, etc.). The
-          // beam keeps going in the same direction from the hit
-          // point onward.
-          source = hitPoint;
-          lastFaceKey = `${bestFace.bindingId}/${bestFace.faceId}`;
-        }
-        hits += 1;
-
-        // Mark the polarization at the start of the next segment.
-        drawPolMark(source.clone(), dir, currentPolDeg, currentPower);
-      }
-
-      // Final transmit arrow after the last hit (or the whole arrow if
-      // no faces were hit at all).
-      drawBeam(source.clone(), dir, armLen * 1.4, hits === 0 ? 1.0 : currentPower);
+        })
+        .catch(() => {
+          // Trace failed (backend unreachable / bad component) — keep the last
+          // good drawing rather than blanking the preview.
+        });
     }
     rebuildProbeBeamRef.current = rebuildProbeBeam;
 
@@ -2910,7 +2460,8 @@ function ComponentPreview3D({
       // autoAimedRef gates this to component changes so manual probe
       // tweaks aren't clobbered when only a pose field is edited.
       if (componentId && componentId !== autoAimedRef.current) {
-        const aim = computeProbeOpticalAim(parentComponent, bindings, pivotById, assetById);
+        const aim = computeProbeOpticalAim(parentComponent, bindings, pivotById, assetById)
+          ?? computeProbeAnchorAim(bindings, pivotById, assetById);
         if (aim) {
           beamRef.current = { ...beamRef.current, pos: aim.pos, dir: aim.dir };
           setBeamPos(aim.pos);

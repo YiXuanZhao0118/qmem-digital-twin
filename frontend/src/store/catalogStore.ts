@@ -91,8 +91,15 @@ export type V3Asset = {
    *  may appear from older backfills — see Phase 2 cleanup migration. */
   anchors: Record<string, unknown>[] | null;
   defaultParams: Record<string, unknown> | null;
+  /** Top-level defaultParams keys the asset author marked tunable per-instance
+   *  (alembic 0113). Drives which params the SceneObject dynamic-sources editor
+   *  exposes. */
+  tunableParams: string[] | null;
   wavelengthRangeNm: [number, number] | null;
   properties: Record<string, unknown>;
+  /** Human-confirmed "frozen" flag (alembic 0112). True = read-only in the
+   *  PHY Editor; the API rejects edits until unlocked. */
+  locked: boolean;
 };
 
 export type V3AssetUpdate = Partial<{
@@ -102,8 +109,10 @@ export type V3AssetUpdate = Partial<{
   transitions: V3Transition[] | null;
   anchors: V3Anchor[] | null;
   defaultParams: Record<string, unknown> | null;
+  tunableParams: string[] | null;
   wavelengthRangeNm: [number, number] | null;
   properties: Record<string, unknown>;
+  locked: boolean;
 }>;
 
 export type V3AssetUpload = {

@@ -37,10 +37,11 @@ the diffraction *pattern* lives in the POP field channel).
 
 from __future__ import annotations
 
+import math
+
 from app.optical.anchor_tracer import (
     AnchorOpContext,
     apply_abcd_state,
-    apply_thin_lens_state,
     beam_state_from_anchor_hit,
     out_ray_from_state,
     register_anchor_op,
@@ -50,6 +51,12 @@ from app.optical.aperture import (
     gaussian_width_mm,
 )
 from app.optical.beam_ray import BeamRay, Vec3
+
+
+# Floor on cos α for the tilted-lens astigmatism split (≈ 60° incidence). The
+# thin-lens f·cosα / f/cosα model is a small-angle approximation; past this a
+# near-grazing hit would otherwise drive f·cosα → 0 and collapse the beam.
+_COS_INCIDENCE_FLOOR = 0.5
 
 
 def _q_after_lens(q: complex, f_mm: float) -> complex:
@@ -100,14 +107,61 @@ def _lens_power_factor(ray_in: BeamRay, ctx: AnchorOpContext) -> float:
     """Combined power transmission of the lens: clear-aperture clipping ×
     coating transmittance. ``ray_in`` is already propagated to the hit, so
     its qx/qy give the spot at the lens. Returns 1.0 when no aperture is
-    defined (``anchor.aperture_mm`` ≤ 0)."""
+    defined (``anchor.aperture_mm`` ≤ 0).
+
+    Beam decenter: when the chief ray hits the lens off the optical axis
+    (``hit.offset_y/z``) the Gaussian is clipped asymmetrically, so we feed
+    the radial decenter ``r_c`` into the aperture fraction — the on-axis
+    closed form would over-state how much power survives a misaligned beam.
+    """
     wl = ray_in.wavelength_nm
     wx = gaussian_width_mm(ray_in.qx, wl)
     wy = gaussian_width_mm(ray_in.qy, wl)
     w_eff = (wx * wy) ** 0.5
-    t_ap = gaussian_circular_aperture_fraction(w_eff, ctx.anchor.aperture_mm)
+    r_c = math.hypot(ctx.hit.offset_y_body, ctx.hit.offset_z_body)
+    t_ap = gaussian_circular_aperture_fraction(w_eff, ctx.anchor.aperture_mm, r_c)
     transmittance = float(ctx.params.get("transmittance", 1.0))
     return t_ap * transmittance
+
+
+def _tilt_astig_focals(
+    f_mm: float, theta_y: float, theta_z: float,
+) -> tuple[float, float]:
+    """Per-axis effective focal lengths ``(f_y, f_z)`` for a thin lens hit at
+    oblique incidence — i.e. when the beam axis is tilted relative to the
+    lens optical axis (anchor axisX).
+
+    A tilt by angle α splits the focal length into the tangential
+    ``f·cos α`` (in the plane of incidence) and sagittal ``f/cos α``
+    (perpendicular) — the standard thin-lens astigmatism of a tilted lens.
+    ``theta_y``/``theta_z`` are the beam-direction slopes onto axisY/axisZ
+    (tan α = √(θ_y²+θ_z²)); the incidence plane sits at azimuth
+    φ = atan2(θ_z, θ_y) in the (axisY, axisZ) frame. We rotate the focusing-
+    power tensor diag(1/f_t, 1/f_s) into that frame and keep the DIAGONAL
+    terms 1/f_y, 1/f_z (qx ↔ axisY plane, qy ↔ axisZ plane).
+
+    Limitation: the off-diagonal cross-astigmatism term (non-zero for a tilt
+    not aligned with a principal axis, e.g. φ≈45°) is dropped — the q-tracer
+    carries qx/qy independently and cannot represent a rotated astigmatism
+    axis. Reduces exactly to (f, f) at normal incidence. Thick-lens and
+    cylindrical paths are NOT corrected (see docs/introduce/optics.md).
+    """
+    tan2 = theta_y * theta_y + theta_z * theta_z
+    if tan2 < 1e-15:
+        return f_mm, f_mm
+    cos_a = 1.0 / math.sqrt(1.0 + tan2)  # tan α = √tan2 ⇒ cos α = 1/√(1+tan²α)
+    # The thin-lens cos α split is only meaningful for modest tilts; beyond
+    # ~60° the approximation breaks down and a near-grazing hit would collapse
+    # f·cos α → 0. Floor cos α so the focal split is capped at [0.5f, 2f]
+    # rather than diverging (mirrors beam_ray's _NONPARAXIAL_S_FLOOR pattern).
+    cos_a = max(cos_a, _COS_INCIDENCE_FLOOR)
+    p_t = 1.0 / (f_mm * cos_a)           # tangential focusing power 1/f_t
+    p_s = cos_a / f_mm                   # sagittal focusing power 1/f_s
+    c2 = theta_y * theta_y / tan2        # cos²φ
+    s2 = theta_z * theta_z / tan2        # sin²φ
+    p_yy = p_t * c2 + p_s * s2
+    p_zz = p_t * s2 + p_s * c2
+    return 1.0 / p_yy, 1.0 / p_zz
 
 
 def _is_thick(params: dict) -> bool:
@@ -163,18 +217,21 @@ def lens_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
             path_length_mm=ray_in.path_length_mm + d_mm,
         )]
 
-    # Thin lens (fallback): focusing on both axes equally.
+    # Thin lens (fallback). At oblique incidence the lens is astigmatic: the
+    # focal length splits per transverse axis (f_y for axisY/qx, f_z for
+    # axisZ/qy). At normal incidence f_y = f_z = f, so this is a no-op for a
+    # head-on beam and keeps the symmetric behaviour.
     f_mm = float(ctx.params.get("focalLengthMm", 100.0))
-    y_out, ty_out, z_out, tz_out = apply_thin_lens_state(
-        y, theta_y, z, theta_z, f_mm,
-    )
+    f_y, f_z = _tilt_astig_focals(f_mm, theta_y, theta_z)
     out_ray = out_ray_from_state(
-        ray_in, ctx.anchor, y_out, ty_out, z_out, tz_out,
+        ray_in, ctx.anchor,
+        y=y, theta_y=theta_y - y / f_y,
+        z=z, theta_z=theta_z - z / f_z,
         flip_propagation=False,
     )
     return [out_ray.replaced(
-        qx=_q_after_lens(ray_in.qx, f_mm),
-        qy=_q_after_lens(ray_in.qy, f_mm),
+        qx=_q_after_lens(ray_in.qx, f_y),
+        qy=_q_after_lens(ray_in.qy, f_z),
         power_mw=power_out,
     )]
 

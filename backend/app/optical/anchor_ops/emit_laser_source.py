@@ -107,8 +107,14 @@ def _ray_from_anchor(
         if isinstance(dynamic.get("centerWavelengthNm"), (int, float))
         else default_params.get("centerWavelengthNm", 780.0)
     )
+    # ``nominalPowerMw`` is the asset's own param key, so a per-instance tunable
+    # override (SceneObject.dynamic_sources, keyed by the asset key) is read
+    # FIRST — it must win over the legacy ``powerMw``/``laserPowerMw`` aliases
+    # the opticalSources beam path injects, else tuning power per-instance no-ops.
     power_mw = float(
-        dynamic.get("laserPowerMw")
+        dynamic.get("nominalPowerMw")
+        if isinstance(dynamic.get("nominalPowerMw"), (int, float))
+        else dynamic.get("laserPowerMw")
         if isinstance(dynamic.get("laserPowerMw"), (int, float))
         else dynamic.get("powerMw")
         if isinstance(dynamic.get("powerMw"), (int, float))

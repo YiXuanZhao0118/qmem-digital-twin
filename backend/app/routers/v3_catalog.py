@@ -22,6 +22,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
+from app.lock_guard import assert_delete_allowed, assert_update_allowed
 from app.models import (
     Asset3D, Component, ComponentBinding, ObjectBinding, SceneObject,
 )
@@ -375,6 +376,11 @@ async def update_asset3d_by_catalog_id(
         )
 
     fields = payload.model_fields_set
+    assert_update_allowed(
+        locked=row.locked, changed_fields=fields, label=f"Asset3D {row.name!r}"
+    )
+    if "locked" in fields and payload.locked is not None:
+        row.locked = payload.locked
     if "name" in fields and payload.name is not None:
         row.name = payload.name
     if "kind_id" in fields:
@@ -392,6 +398,9 @@ async def update_asset3d_by_catalog_id(
         )
     if "default_params" in fields:
         row.default_params = payload.default_params
+    if "tunable_params" in fields:
+        # Whole-list overwrite — editor sends the full set of tunable keys.
+        row.tunable_params = list(payload.tunable_params or [])
     if "wavelength_range_nm" in fields:
         row.wavelength_range_nm = payload.wavelength_range_nm
     if "frequency_range_mhz" in fields:
@@ -442,6 +451,7 @@ async def delete_asset3d_by_catalog_id(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"asset3d key={catalog_id!r} not found",
         )
+    assert_delete_allowed(locked=row.locked, label=f"Asset3D {row.name!r}")
     _, object_count = await _asset_usage(session, row)
     if object_count > 0:
         raise HTTPException(

@@ -20,7 +20,7 @@ import {
   TEXTAREA,
   TH,
 } from "./phyEditorTheme";
-import { Eye, EyeOff, RefreshCw, Save, Trash2, X } from "lucide-react";
+import { Eye, EyeOff, Lock, RefreshCw, Save, Trash2, Unlock, X } from "lucide-react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
@@ -53,7 +53,7 @@ import { domainForElementKind } from "../utils/elementDefaults";
 import type { ElementKind } from "../types/digitalTwin";
 import { isPhysicsPlugin, resolvePortDomain } from "../kinds/_plugin";
 import { pluginForKind } from "../kinds/_plugins";
-import { isEditableValue } from "./physics/ObjectCoefficientOverrides";
+import { isEditableValue } from "../utils/paramLeaves";
 import { cleanNumber } from "../utils/numberFormat";
 
 const stlLoader = new STLLoader();
@@ -116,6 +116,8 @@ type AssetDraft = {
   anchors: DraftAnchor[];
   transitions: DraftTransition[];
   defaultParamsText: string;
+  /** Top-level defaultParams keys marked tunable per-instance (alembic 0113). */
+  tunableParams: string[];
 };
 
 function n(value: number | null | undefined): string {
@@ -216,6 +218,7 @@ function draftFromAsset(asset: V3Asset): AssetDraft {
       abcdText: jsonText(transition.abcd),
     })),
     defaultParamsText: jsonText(defaultParamsRest),
+    tunableParams: [...(asset.tunableParams ?? [])],
   };
 }
 
@@ -902,12 +905,16 @@ function draftToPatch(draft: AssetDraft): V3AssetUpdate {
     kindIdValue,
     readJsonObject(draft.defaultParamsText, "defaultParams"),
   );
+  // Keep only tunable flags that still point at a live top-level param, so a
+  // flag left over from a removed/renamed param doesn't persist.
+  const tunableParams = draft.tunableParams.filter((k) => k in defaultParams);
   return {
     name: nameValue,
     kindId: kindIdValue,
     wavelengthRangeNm,
     anchors,
     defaultParams,
+    tunableParams,
     properties: draft.properties,
   };
 }
@@ -1286,10 +1293,15 @@ function DefaultParamsKindFields({
   kindId,
   defaultParamsText,
   onChangeText,
+  tunableParams,
+  onToggleTunable,
 }: {
   kindId: string;
   defaultParamsText: string;
   onChangeText: (text: string) => void;
+  /** Top-level keys currently marked tunable per-instance. */
+  tunableParams: string[];
+  onToggleTunable: (key: string, on: boolean) => void;
 }) {
   const kindDefaults = (pluginForKind(kindId)?.physics.defaultParams ?? {}) as Record<string, unknown>;
   const optionalParams = kindOptionalParams(kindId);
@@ -1323,17 +1335,32 @@ function DefaultParamsKindFields({
     onChangeText(jsonText(next));
   };
 
+  const tunableSet = new Set(tunableParams);
+
   return (
     <div style={{ display: "grid", gap: 8 }}>
+      <div style={{ fontSize: 10, color: "#9ca3af" }}>
+        ✓ tunable = adjustable per-instance (laser power, RF freq…); unchecked
+        params are fixed by this asset.
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8 }}>
         {requiredKeys.map((key) => (
-          <ParamTree
-            key={key}
-            label={key}
-            value={key in current ? current[key] : kindDefaults[key]}
-            path={[key]}
-            onLeaf={onLeaf}
-          />
+          <div key={key} style={{ display: "grid", gap: 2 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "#9ca3af" }}>
+              <input
+                type="checkbox"
+                checked={tunableSet.has(key)}
+                onChange={(e) => onToggleTunable(key, e.target.checked)}
+              />
+              tunable
+            </label>
+            <ParamTree
+              label={key}
+              value={key in current ? current[key] : kindDefaults[key]}
+              path={[key]}
+              onLeaf={onLeaf}
+            />
+          </div>
         ))}
       </div>
       {optionalKeys.length > 0 && (
@@ -2611,6 +2638,13 @@ function AssetEditForm({
       Array.isArray(seedWavelength)
       && draft.wavelengthMinNm.trim() === ""
       && draft.wavelengthMaxNm.trim() === "";
+    // Seed the tunable set from the kind's declared state params (∩ the params
+    // actually seeded) the first time params land, so a new laser/RF asset is
+    // born with sensible per-instance knobs. Only when nothing tunable yet.
+    const stateKeys = (pluginForKind(draft.kindId)?.physics.stateParamKeys ?? []) as string[];
+    const seedTunable =
+      seedParams && draft.tunableParams.length === 0
+      && stateKeys.some((k) => k in kindParams);
 
     setDraft({
       ...draft,
@@ -2630,6 +2664,7 @@ function AssetEditForm({
         })),
       ],
       ...(seedParams ? { defaultParamsText: jsonText(kindParams) } : {}),
+      ...(seedTunable ? { tunableParams: stateKeys.filter((k) => k in kindParams) } : {}),
       ...(seedWavelengthFields
         ? {
             wavelengthMinNm: n(seedWavelength[0] as number),
@@ -3053,6 +3088,15 @@ function AssetEditForm({
               kindId={draft.kindId}
               defaultParamsText={draft.defaultParamsText}
               onChangeText={(text) => setDraft({ ...draft, defaultParamsText: text })}
+              tunableParams={draft.tunableParams}
+              onToggleTunable={(key, on) =>
+                setDraft({
+                  ...draft,
+                  tunableParams: on
+                    ? [...draft.tunableParams.filter((k) => k !== key), key]
+                    : draft.tunableParams.filter((k) => k !== key),
+                })
+              }
             />
           ) : (
             <textarea
@@ -3111,6 +3155,8 @@ export function Asset3DEditor({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Per-row lock toggle in-flight tracking (asset id -> busy).
+  const [lockBusy, setLockBusy] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (status === "idle") void fetchAll();
@@ -3304,6 +3350,26 @@ export function Asset3DEditor({
     }
   };
 
+  // Toggle an asset's locked flag. Locked = human-confirmed complete: the
+  // backend rejects every write but this toggle, and the editor renders the
+  // form read-only. PATCHing only `locked` is the exception the API allows
+  // in both directions, so unlock-then-edit is always possible.
+  const toggleAssetLock = async (asset: V3Asset) => {
+    const key = asset.catalogId ?? asset.id;
+    setLockBusy((prev) => ({ ...prev, [asset.id]: true }));
+    try {
+      await updateAsset(key, { locked: !asset.locked });
+    } catch (err) {
+      window.alert(`Lock toggle failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setLockBusy((prev) => {
+        const next = { ...prev };
+        delete next[asset.id];
+        return next;
+      });
+    }
+  };
+
   if (status === "loading") {
     return <div style={{ padding: 16, color: "#6b7280" }}>Loading v3 catalog...</div>;
   }
@@ -3352,27 +3418,60 @@ export function Asset3DEditor({
         {filtered.map((asset) => {
           const isSelected = asset.id === selectedAssetId;
           return (
-            <button
-              key={asset.id}
-              type="button"
-              onClick={() => setSelectedAssetId(asset.id)}
-              style={{
-                display: "block",
-                width: "100%",
-                textAlign: "left",
-                padding: "6px 8px",
-                marginBottom: 3,
-                background: isSelected ? "#f3f4f1" : "transparent",
-                color: "#1f2937",
-                border: isSelected ? "1px solid #4ec9b0" : "1px solid transparent",
-                cursor: "pointer",
-                fontFamily: "ui-monospace, monospace",
-                fontSize: 11,
-              }}
-            >
-              <div style={{ fontWeight: 700 }}>{asset.catalogId ?? asset.name}</div>
-              <div style={{ fontSize: 10, color: "#6b7280" }}>kind: {asset.kindId ?? "(mech)"}</div>
-            </button>
+            <div key={asset.id} style={{ position: "relative" }}>
+              <button
+                type="button"
+                onClick={() => setSelectedAssetId(asset.id)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "6px 30px 6px 8px",
+                  marginBottom: 3,
+                  background: isSelected ? "#f3f4f1" : "transparent",
+                  color: "#1f2937",
+                  border: isSelected ? "1px solid #4ec9b0" : "1px solid transparent",
+                  cursor: "pointer",
+                  fontFamily: "ui-monospace, monospace",
+                  fontSize: 11,
+                }}
+              >
+                <div style={{ fontWeight: 700 }}>{asset.catalogId ?? asset.name}</div>
+                <div style={{ fontSize: 10, color: "#6b7280" }}>kind: {asset.kindId ?? "(mech)"}</div>
+              </button>
+              {/* Per-row lock toggle. Locked = human-confirmed complete:
+                  read-only form + the API rejects all edits but unlocking. */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void toggleAssetLock(asset);
+                }}
+                disabled={lockBusy[asset.id]}
+                title={
+                  asset.locked
+                    ? "Locked — confirmed complete. Click to unlock for editing."
+                    : "Unlocked. Click to lock (freeze as confirmed complete)."
+                }
+                style={{
+                  position: "absolute",
+                  top: 6,
+                  right: 6,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 22,
+                  height: 22,
+                  padding: 0,
+                  border: "none",
+                  background: "transparent",
+                  cursor: lockBusy[asset.id] ? "default" : "pointer",
+                  color: asset.locked ? "#b45309" : "#9ca3af",
+                }}
+              >
+                {asset.locked ? <Lock size={13} /> : <Unlock size={13} />}
+              </button>
+            </div>
           );
         })}
       </aside>
@@ -3400,7 +3499,11 @@ export function Asset3DEditor({
           <div style={{ display: "flex", gap: 6 }}>
             {selected && draft && (
               <>
-                <IconButton title="Save changes" onClick={() => void save()} disabled={saving}>
+                <IconButton
+                  title={selected.locked ? "Locked — unlock to save" : "Save changes"}
+                  onClick={() => void save()}
+                  disabled={saving || selected.locked}
+                >
                   <Save size={14} />
                 </IconButton>
                 <IconButton
@@ -3417,12 +3520,14 @@ export function Asset3DEditor({
                 {isBindingDev && (
                   <IconButton
                     title={
-                      inUse
-                        ? `In use by ${usage?.objectCount} placed object(s) — remove them before deleting`
-                        : "Delete asset (removes DB row + bindings; catalog JSON untouched)"
+                      selected.locked
+                        ? "Locked — unlock to delete"
+                        : inUse
+                          ? `In use by ${usage?.objectCount} placed object(s) — remove them before deleting`
+                          : "Delete asset (removes DB row + bindings; catalog JSON untouched)"
                     }
                     onClick={() => void deleteCurrent()}
-                    disabled={deleting || inUse}
+                    disabled={deleting || inUse || selected.locked}
                   >
                     <Trash2 size={14} />
                   </IconButton>
@@ -3446,17 +3551,35 @@ export function Asset3DEditor({
               change would retroactively break those instances.
             </div>
           )}
+          {selected && selected.locked && (
+            <div style={{ marginBottom: 10, color: "#fde68a", background: "#78350f", padding: 8, fontSize: 12, borderRadius: 4 }}>
+              🔒 Locked — confirmed complete. The form is read-only and saves
+              are rejected. Click the lock icon on this asset in the list to
+              unlock before editing.
+            </div>
+          )}
           {selected && draft && (
-            <AssetEditForm
-              asset={selected}
-              draft={draft}
-              setDraft={setDraft}
-              selectedAnchorIndex={selectedAnchorIndex}
-              setSelectedAnchorIndex={setSelectedAnchorIndex}
-              parentDomain={domain}
-              mode={mode}
-              inUse={inUse}
-            />
+            // Locked → read-only: pointerEvents:none disables every field at
+            // once (no per-input prop threading) and the backend rejects any
+            // write anyway. Unlock via the list-row lock button.
+            <div
+              style={
+                selected.locked
+                  ? { pointerEvents: "none", opacity: 0.6 }
+                  : undefined
+              }
+            >
+              <AssetEditForm
+                asset={selected}
+                draft={draft}
+                setDraft={setDraft}
+                selectedAnchorIndex={selectedAnchorIndex}
+                setSelectedAnchorIndex={setSelectedAnchorIndex}
+                parentDomain={domain}
+                mode={mode}
+                inUse={inUse}
+              />
+            </div>
           )}
           {saveError && (
             <div style={{ marginTop: 10, color: "#fecaca", background: "#7f1d1d", padding: 8, fontSize: 12 }}>

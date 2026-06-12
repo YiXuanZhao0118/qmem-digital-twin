@@ -236,6 +236,57 @@ def anchor_asset_to_snapshot(asset: Asset3D) -> V3AssetAnchorSnapshot | None:
     )
 
 
+async def load_anchor_scene_from_component(
+    session: AsyncSession,
+    component_id: object,
+) -> V3AnchorScene:
+    """Build an anchor scene from ONE Component's bindings, in COMPONENT
+    frame (no SceneObject pose).
+
+    Powers the PHY Editor COMPONENT preview's probe-beam trace: the
+    assembly is traced by the SAME live engine as the Lab (same anchor ops,
+    same binding-tree pose math) but without placing the component in the
+    scene. ``effective_transform`` is the binding-tree transform ALONE
+    (identity SceneObject pose), so the returned segments live in the
+    component frame the preview renders in, and per-asset Jones/polarization
+    reflects the authoritative physics — including the Faraday rotator.
+
+    Unlike ``load_anchor_scene_from_db`` there is no SceneObject, so: no
+    ObjectBinding deltas, no per-instance dynamic_sources, no RF cable
+    resolution, no power-panel gating (everything powered on). The probe
+    ray is supplied by the caller as an initial ray.
+    """
+    comp = await session.get(Component, component_id)
+    if comp is None:
+        return V3AnchorScene(slots=[])
+    binding_rows = (await session.scalars(
+        select(ComponentBinding).where(ComponentBinding.component_id == comp.id)
+    )).all()
+    binding_by_id = {b.id: b for b in binding_rows}
+    memo: dict[object, object] = {}
+    slots: list[V3AnchorBindingSlot] = []
+    for b in binding_rows:
+        if b.target_kind != "asset" or not b.asset_3d_id:
+            continue
+        asset_row = await session.get(Asset3D, b.asset_3d_id)
+        if asset_row is None:
+            continue
+        snap = anchor_asset_to_snapshot(asset_row)
+        if snap is None:
+            continue
+        # Binding-tree transform only (no so_transform): component frame.
+        effective = _binding_tree_transform(b, binding_by_id, {}, memo, set())
+        slots.append(V3AnchorBindingSlot(
+            scene_object_id=f"preview:{comp.id}",
+            binding_id=b.role or str(b.id),
+            asset=snap,
+            effective_transform=effective,
+            dynamic_sources=None,
+            powered_on=True,
+        ))
+    return V3AnchorScene(slots=slots)
+
+
 async def load_anchor_scene_from_db(
     session: AsyncSession,
     dynamic_overrides: dict[str, dict] | None = None,
@@ -327,20 +378,33 @@ async def load_anchor_scene_from_db(
 
             binding_id = b.role or str(b.id)
             dyn = _extract_dynamic(so.properties)
-            # Per-binding coefficient overrides (SceneObject.param_overrides,
-            # alembic 0082) let a composite component (e.g. the isolator's front
-            # / back Glan prisms) tune each sub-asset's optical coefficients
-            # independently. Keyed by the SAME binding_id this slot carries and
-            # merged on top of the object's dynamic_sources, so the anchor
-            # tracer's {**default_params, **dynamic_sources} merge picks them up
-            # with no per-kind backend code.
-            po = so.param_overrides if isinstance(so.param_overrides, dict) else None
-            if po:
-                binding_po = po.get(binding_id)
-                if isinstance(binding_po, dict) and binding_po:
-                    dyn = {**(dyn or {}), **binding_po}
+            # Per-instance tunable values (SceneObject.dynamic_sources column,
+            # alembic 0113). The asset author marks which default_params keys are
+            # tunable (Asset3D.tunable_params); the SceneObject editor writes
+            # those values here, and they merge on top of the asset defaults so
+            # the anchor tracer's {**default_params, **dynamic_sources} merge
+            # picks them up with no per-kind backend code. Object-scoped (not
+            # per-binding), which suits the single-asset source components
+            # (laser / rf_source) that actually carry tunable params.
+            if isinstance(so.dynamic_sources, dict) and so.dynamic_sources:
+                dyn = {**(dyn or {}), **so.dynamic_sources}
+            # Enforce the tunable contract: a per-instance value may override a
+            # default_params key ONLY if the asset marks it tunable. Drop every
+            # other asset-param key from the per-instance bag so NON-tunable
+            # params always track the asset — legacy laser-beam snapshots (in
+            # SceneObject.properties.opticalSources or a dormant dynamic_sources
+            # column written by the old write_laser_dynamic_sources path) no
+            # longer shadow asset edits. Keys that aren't asset params at all
+            # (aomFreqMhz, channels, … runtime coupling) pass through untouched.
+            if dyn:
+                asset_defaults = asset_row.default_params or {}
+                tunable = set(asset_row.tunable_params or [])
+                dyn = {
+                    k: v for k, v in dyn.items()
+                    if k not in asset_defaults or k in tunable
+                }
             # Server-resolved AOM RF drive (RF cable graph) wins over asset
-            # defaults / param_overrides; a request dynamic_override still wins
+            # defaults / dynamic_sources; a request dynamic_override still wins
             # over it (manual / test escape hatch).
             rf = rf_drive.get(str(so.id))
             if rf:

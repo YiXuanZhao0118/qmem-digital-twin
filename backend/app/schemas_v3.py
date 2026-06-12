@@ -154,9 +154,16 @@ class Asset3DV3Out(CamelModel):
     kind_id: str
     anchors: Optional[list[dict[str, Any]]] = None
     default_params: Optional[dict[str, Any]] = None
+    # Per-instance-tunable param keys (alembic 0113). Default_params keys the
+    # asset author marked editable per-instance; only these reach the
+    # SceneObject dynamic-sources editor.
+    tunable_params: Optional[list[str]] = None
     wavelength_range_nm: Optional[list[float]] = None
     frequency_range_mhz: Optional[list[float]] = None
     properties: dict[str, Any]
+    # Human-confirmed "frozen" flag (alembic 0112). Read-only editor + the
+    # PUT below rejects any field change but ``locked`` while it is true.
+    locked: bool = False
 
 
 class Asset3DV3Update(CamelModel):
@@ -169,10 +176,12 @@ class Asset3DV3Update(CamelModel):
     # merged list on every save.
     anchors: Optional[list[AnchorV3]] = None
     default_params: Optional[dict[str, Any]] = None
+    tunable_params: Optional[list[str]] = None
     wavelength_range_nm: Optional[list[float]] = None
     frequency_range_mhz: Optional[list[float]] = None
     # Callers should send the full merged dict; partial keys would`r`n    # clobber unrelated entries.
     properties: Optional[dict[str, Any]] = None
+    locked: Optional[bool] = None
 
 
 class Asset3DUsageOut(CamelModel):
@@ -238,5 +247,4 @@ class ComponentV3Out(CamelModel):
 
 class SceneObjectV3Patch(CamelModel):
     """PATCH payload for assigning v3 fields to a SceneObject."""
-    param_overrides: Optional[dict[str, dict[str, Any]]] = None
     dynamic_sources: Optional[dict[str, Any]] = None

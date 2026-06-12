@@ -97,6 +97,21 @@ class Asset3D(Base):
     anchors: Mapped[JsonList] = mapped_column(
         JSONB, nullable=False, default=list, server_default="[]"
     )
+    # Per-instance-tunable param keys (alembic 0113). The asset author marks
+    # which default_params keys instances may override at runtime; the
+    # SceneObject editor exposes only these, and their values live in
+    # SceneObject.dynamic_sources. Replaces the retired per-binding
+    # param_overrides (which let instances override ANY intrinsic coefficient).
+    tunable_params: Mapped[JsonList] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
+    # Human-confirmed "frozen" flag (alembic 0112). True = reviewed +
+    # complete; the PHY Editor renders the row read-only and the API rejects
+    # any write that changes a field other than ``locked``. Also signals
+    # automated agents not to modify the row (see CLAUDE.md "locked" rule).
+    locked: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sa.false()
+    )
 
     components: Mapped[list[Component]] = relationship(back_populates="asset")
 
@@ -230,6 +245,11 @@ class Kind(Base):
         sa.ARRAY(sa.Float())
     )
     description: Mapped[str | None] = mapped_column(Text)
+    # Human-confirmed "frozen" flag (alembic 0112). See Asset3D.locked —
+    # same semantics for a kind row (read-only editor + write-reject API).
+    locked: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sa.false()
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

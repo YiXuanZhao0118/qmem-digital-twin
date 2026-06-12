@@ -18,26 +18,16 @@ import {
   resolveBindingTree,
   type ResolvedBindingNode,
 } from "../../utils/componentBindings";
-import { BindingCoefficientOverrides, isEditableValue } from "./ObjectCoefficientOverrides";
+import { isEditableValue } from "../../utils/paramLeaves";
+import { InstanceDynamicSourcesEditor } from "./InstanceDynamicSourcesEditor";
 import { BindingTreeAdjustControls } from "../BindingTreeAdjustControls";
 import { IntrinsicSpecPanel } from "../IntrinsicSpecPanel";
-import { AlignToBeamSection, SectionCard } from "./_shared";
-
-/** Optical kinds whose dedicated controls (dispatched by AlignToBeamSection)
- *  own their per-instance editing — they handle nested params (laser spectrum /
- *  polarization, fiber endpoints, TA line shape) the generic coefficient editor
- *  can't reach, so the generic per-binding editor is skipped for them. Every
- *  OTHER optical kind uses the generic per-instance coefficient editor
- *  (paramOverrides[bindingId] → the path the v3 anchor loader merges per slot). */
-const KINDS_WITHOUT_GENERIC_COEFFICIENTS: ReadonlySet<ElementKind> = new Set([
-  "laser_source",
-  "tapered_amplifier",
-  "fiber",
-]);
+import { AlignToBeamSection } from "./_shared";
 
 type CompositeKind = {
-  /** Slot binding_id (= ComponentBinding.role || id) — MUST match the key the
-   *  backend anchor loader uses to look up param_overrides for this slot. */
+  /** Slot binding_id (= ComponentBinding.role || id) — distinguishes a
+   *  composite's sub-asset slots in the panel. Per-instance values live in the
+   *  object-scoped dynamicSources, so this is display-only. */
   bindingKey: string;
   label: string;
   asset: Asset3D;
@@ -129,13 +119,14 @@ export function OpticalSettingPanel({ component, sceneObject }: Props) {
   const [error, setError] = useState<string>("");
   const [busy, setBusy] = useState<boolean>(false);
 
-  // Every optical asset slot (single optic = 1, composite = N), minus the kinds
-  // whose dedicated controls own their params. Each becomes a coefficient block
-  // writing SceneObject.paramOverrides[bindingKey].
+  // Every optical asset slot (single optic = 1, composite = N) that exposes at
+  // least one author-blessed tunable param. Each becomes a block of editable
+  // runtime values writing SceneObject.dynamicSources. Assets with no tunable
+  // params (most passive optics) drop out, so the section hides itself.
   const coeffKinds = useMemo(() => {
     if (!sceneObject) return [] as CompositeKind[];
     return collectOpticalBindingKinds(component, sceneObject, scene).filter(
-      (k) => !(k.elementKind && KINDS_WITHOUT_GENERIC_COEFFICIENTS.has(k.elementKind)),
+      (k) => (k.asset.tunableParams?.length ?? 0) > 0,
     );
   }, [component, sceneObject, scene]);
 
@@ -212,44 +203,32 @@ export function OpticalSettingPanel({ component, sceneObject }: Props) {
         </AdjustErrorBoundary>
       )}
 
-      {/* Per-instance coefficients. One block for a single optic; for a
-          composite (isolator) one card per contained optical asset kind. Writes
-          SceneObject.paramOverrides[bindingKey] — the path the anchor loader
-          merges into each slot, so every element's coefficients reach the
-          trace independently. */}
-      {sceneObject && coeffKinds.length === 1 && (
+      {/* Tunable parameters. Only the params the asset author marked tunable
+          (Asset3D.tunableParams) appear here — e.g. a laser's power/wavelength.
+          Values are per-instance and live in SceneObject.dynamicSources, which
+          the anchor loader merges over the asset default_params at trace time.
+          A composite shows a per-asset sub-label; a single optic renders the
+          bare grid. Intrinsic optical coefficients are no longer editable here. */}
+      {sceneObject && coeffKinds.length >= 1 && (
         <div className="physics-panel-kind-params" style={{ marginTop: 6 }}>
-          <div className="physics-panel-kind-params-header">Per-instance coefficients</div>
-          <BindingCoefficientOverrides
-            sceneObject={sceneObject}
-            asset={coeffKinds[0].asset}
-            bindingKey={coeffKinds[0].bindingKey}
-            elementKind={coeffKinds[0].elementKind}
-          />
-          <p className="mirror-adjust-hint">
-            Overrides apply only to this instance and revert to the asset default
-            on reset.
-          </p>
-        </div>
-      )}
-
-      {sceneObject && coeffKinds.length > 1 && (
-        <div className="physics-panel-kind-params" style={{ marginTop: 6 }}>
-          <div className="physics-panel-kind-params-header">Optical elements</div>
+          <div className="physics-panel-kind-params-header">Tunable parameters</div>
           {coeffKinds.map((k) => (
-            <SectionCard
-              key={k.bindingKey}
-              id={`optical.composite.${k.bindingKey}`}
-              title={`${k.label} — ${k.kindLabel}`}
-            >
-              <BindingCoefficientOverrides
-                sceneObject={sceneObject}
-                asset={k.asset}
-                bindingKey={k.bindingKey}
-                elementKind={k.elementKind}
-              />
-            </SectionCard>
+            <div key={k.bindingKey} style={{ marginTop: coeffKinds.length > 1 ? 8 : 0 }}>
+              {coeffKinds.length > 1 && (
+                <div
+                  className="physics-panel-kind-params-header"
+                  style={{ fontSize: 11, opacity: 0.75, marginTop: 0 }}
+                >
+                  {k.label} — {k.kindLabel}
+                </div>
+              )}
+              <InstanceDynamicSourcesEditor sceneObject={sceneObject} asset={k.asset} />
+            </div>
           ))}
+          <p className="mirror-adjust-hint">
+            Values apply only to this instance and revert to the asset default on
+            reset.
+          </p>
         </div>
       )}
 

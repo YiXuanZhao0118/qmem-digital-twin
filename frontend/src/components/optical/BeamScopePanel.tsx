@@ -607,6 +607,7 @@ export function BeamScopeContents() {
       apertureTruncation?: {
         apertureMm: number;
         wEffMm: number;
+        decenterMm?: number;
         transmittedFraction: number;
         transmittance: number;
         combinedFraction: number;
@@ -1070,7 +1071,10 @@ export function BeamScopeContents() {
               {" "}(clip {(apertureTruncation.transmittedFraction * 100).toFixed(1)}%
               {" × "}T {(apertureTruncation.transmittance * 100).toFixed(1)}% · w_eff{" "}
               {(apertureTruncation.wEffMm * 1000).toFixed(1)} µm / a{" "}
-              {apertureTruncation.apertureMm.toFixed(2)} mm)
+              {apertureTruncation.apertureMm.toFixed(2)} mm
+              {apertureTruncation.decenterMm != null && apertureTruncation.decenterMm > 1e-6
+                ? ` · decenter ${(apertureTruncation.decenterMm * 1000).toFixed(1)} µm`
+                : ""})
             </span>
           </div>
         )}

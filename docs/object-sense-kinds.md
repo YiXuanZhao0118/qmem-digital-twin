@@ -13,7 +13,7 @@
 
 **Trace 管線**（`backend/app/optical/anchor_tracer.py` `trace_ray_anchor_scene`）：BFS。每條 ray 找 `nearest_anchor_hit`（只認 **PRIMARY_ANCHOR_IDS** = `intercept_in`/`intercept_out`/`intercept_face`/`interaction_center`/`optical_center`）→ `get_anchor_op(kind)` 查表分派（**無 `switch(kind)`**；查無 op → 當 sink）→ ray lab→body、補自由空間 q 傳播 → `op(BeamRay, ctx)` 回傳 out rays → body→lab、push 回 queue。**Sink 回 `[]`**（光束終止）；**分支 op 回 ≥2 條**（PBS、AOM 階）。`solver.solve_anchor_scene`：先 seeded emit pass，再 TA ASE pass。
 
-**參數合併**（later wins）：`asset.default_params` ← `dynamic_sources`(properties) ← `param_overrides[binding]` ← **`rf_drive`（後端 `rf_resolve.hydrate_aom_rf_drive` 解析）** ← request `dynamic_overrides`。
+**參數合併**（later wins）：`asset.default_params` ← `dynamic_sources`(properties 的 legacy laser beam) ← **`dynamic_sources` 欄位**（只含 Asset `tunable_params` 標記的 key，migration 0113）← **`rf_drive`（後端 `rf_resolve.hydrate_aom_rf_drive` 解析）** ← request `dynamic_overrides`。
 
 **輸出回視埠**：`labSegments[]` → `three/v3TraceAdapter.ts` → `window.__rayTraceDebug` → `renderRayTraces()` 用 `THREE.Line` 依波長著色畫出。
 

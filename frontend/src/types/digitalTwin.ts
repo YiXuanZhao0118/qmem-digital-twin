@@ -165,6 +165,10 @@ export type Asset3D = {
   faces?: Array<Record<string, unknown>> | null;
   transitions?: Array<Record<string, unknown>> | null;
   defaultParams?: Record<string, unknown> | null;
+  /** Top-level defaultParams keys the asset author marked tunable per-instance
+   *  (alembic 0113). The SceneObject editor exposes only these; their values
+   *  live in SceneObject.dynamicSources and merge over defaultParams at trace. */
+  tunableParams?: string[] | null;
   wavelengthRangeNm?: number[] | null;
   /** Asset-level metadata bucket; ``viewerHints`` is the main consumer
    *  today (alembic 0064). Other per-asset fields can live here without
@@ -172,6 +176,9 @@ export type Asset3D = {
   properties?: {
     viewerHints?: AssetViewerHints;
   } & Record<string, unknown>;
+  /** Human-confirmed "frozen" flag (alembic 0112). True = read-only in the
+   *  PHY Editor; the API rejects edits until unlocked. */
+  locked?: boolean;
   createdAt?: string;
 };
 
@@ -318,7 +325,9 @@ export type SceneObject = {
   visible: boolean;
   locked: boolean;
   serialNumber?: string | null;
-  paramOverrides?: Record<string, Record<string, unknown>> | null;
+  /** Per-instance runtime values for the asset's tunable params (laser
+   *  power/wavelength, RF freq/amp, …). Merged over the asset defaultParams at
+   *  trace time. Replaces the retired per-binding paramOverrides (alembic 0113). */
   dynamicSources?: Record<string, unknown> | null;
   properties: {
     size?: { x: number; y: number; z: number };
@@ -1253,7 +1262,6 @@ export type SceneObjectPatch = Partial<
     | "serialNumber"
     | "properties"
     | "dynamicSources"
-    | "paramOverrides"
   >
 >;
 

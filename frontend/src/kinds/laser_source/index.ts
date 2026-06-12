@@ -88,5 +88,10 @@ export const laserSourcePlugin = definePhysicsPlugin<LaserSourceParams>({
       polarization: { exRe: 1.0, exIm: 0.0, eyRe: 0.0, eyIm: 0.0 },
       nominalPowerMw: 50.0,
     },
+    // Seeds the default per-instance-tunable set for laser assets (power +
+    // wavelength are the operating knobs an experiment actually turns). The
+    // asset author can widen this in the Asset editor; everything else
+    // (spectrum / spatial mode / polarization) stays asset-defined.
+    stateParamKeys: ["nominalPowerMw", "centerWavelengthNm"],
   },
 });
