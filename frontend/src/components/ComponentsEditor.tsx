@@ -1127,8 +1127,11 @@ export function ComponentsEditor({
               </>
             )}
 
+            {/* Cables (fiber / rf_cable) have no component-level align — their
+                alignment is defined by the end-connector asset's connect_in
+                anchor, so the "Align (body mm)" section is hidden for them. */}
             {(domainsOf(selected).includes("optical")
-              || OPTICAL_ALIGN_KINDS.has(selected.kindId ?? "")) && (
+              || OPTICAL_ALIGN_KINDS.has(selected.kindId ?? "")) && !isCableComp && (
               <AlignSpecSection component={selected} onPatch={handlePatchComponent} />
             )}
 
