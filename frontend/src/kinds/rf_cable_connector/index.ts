@@ -19,11 +19,8 @@ import { definePhysicsPlugin } from "../_plugin";
 export interface RfCableConnectorParams extends Record<string, unknown> {
   family: "sma" | "bnc";
   gender: "male" | "female";
-  /** Cable-side junction → mating face length (mm) = connect_in.x. */
-  tipMm: number;
   impedanceOhm: number;
   maxFreqGhz: number;
-  couplingType: "thread" | "bayonet";
 }
 
 export const rfCableConnectorPlugin = definePhysicsPlugin<RfCableConnectorParams>({
@@ -44,18 +41,18 @@ export const rfCableConnectorPlugin = definePhysicsPlugin<RfCableConnectorParams
     alignVariant: "none",
     alignToleranceMm: 25,
     alignSummary:
-      "Coax cable connector (SMA / BNC, male / female). connect_out (−X, " +
-      "origin) pins to the cable spline endpoint; connect_in (+X, at " +
-      "tipMm) is the mating face. Mating requires same family + opposite " +
-      "gender (plan §4.3). Not aligned standalone.",
-    // Generic SMA-male template; the 4 real connectors override per-asset.
+      "Coax cable connector (SMA / BNC, male / female). connect_out pins to " +
+      "the cable spline endpoint; connect_in is the mating face. The model " +
+      "geometry/tip is defined entirely by the connect_in/out anchors. " +
+      "Mating requires same family + opposite gender (plan §4.3). Not " +
+      "aligned standalone.",
+    // Physics-essential template (spec params only; geometry lives on the
+    // anchors). The real connectors override these per-asset.
     defaultParams: {
       family: "sma",
       gender: "male",
-      tipMm: 15.5,
       impedanceOhm: 50.0,
       maxFreqGhz: 18.0,
-      couplingType: "thread",
     },
   },
 });

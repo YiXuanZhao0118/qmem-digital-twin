@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-12T12:32:49.895Z",
+  "generated_at": "2026-06-13T04:50:27.154Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -933,19 +933,13 @@
         },
         "align_variant": "none",
         "align_tolerance_mm": 25,
-        "align_summary": "Fibre patch-cable connector (FC ferrule). connect_out (−X, origin) pins to the spline endpoint; connect_in (+X, at tipMm) is the ferrule end face where light enters/exits free space and the cable-level intercept port derives from. PM connectors key the slow axis via connect_in.axisY. Not aligned standalone.",
+        "align_summary": "Fibre patch-cable connector. connect_out pins to the spline endpoint; connect_in is the ferrule end face (anchor-defined) where light enters/exits free space and the cable-level intercept port derives from. PM connectors key the slow axis via connect_in.axisY. The model geometry/tip is defined entirely by the connect_in/out anchors. Not aligned standalone.",
         "default_params": {
-          "housing": "FC",
           "polish": "PC",
           "polishAngleDeg": 0,
           "fiberType": "single_mode",
           "mfdUm": 5.3,
           "na": 0.13,
-          "coreUm": 4.4,
-          "claddingUm": 125,
-          "tipMm": 36.28,
-          "apertureDiameterMm": 0.125,
-          "glassIndexAtDesignLambda": 1.4506,
           "slowAxisKeyed": false,
           "returnLossDb": 40,
           "wavelengthRangeNm": [
@@ -1608,14 +1602,12 @@
         },
         "align_variant": "none",
         "align_tolerance_mm": 25,
-        "align_summary": "Coax cable connector (SMA / BNC, male / female). connect_out (−X, origin) pins to the cable spline endpoint; connect_in (+X, at tipMm) is the mating face. Mating requires same family + opposite gender (plan §4.3). Not aligned standalone.",
+        "align_summary": "Coax cable connector (SMA / BNC, male / female). connect_out pins to the cable spline endpoint; connect_in is the mating face. The model geometry/tip is defined entirely by the connect_in/out anchors. Mating requires same family + opposite gender (plan §4.3). Not aligned standalone.",
         "default_params": {
           "family": "sma",
           "gender": "male",
-          "tipMm": 15.5,
           "impedanceOhm": 50,
-          "maxFreqGhz": 18,
-          "couplingType": "thread"
+          "maxFreqGhz": 18
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,

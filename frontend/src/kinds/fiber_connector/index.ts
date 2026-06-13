@@ -32,20 +32,12 @@
 import { definePhysicsPlugin } from "../_plugin";
 
 export interface FiberConnectorParams extends Record<string, unknown> {
-  /** Connector housing family. FC for now; SC/LC are a future split. */
-  housing: "FC" | "SC" | "LC" | "ST";
   polish: "PC" | "APC" | "UPC";
   polishAngleDeg: number;
   fiberType: "single_mode" | "multi_mode" | "polarization_maintaining";
-  /** Mode-field diameter (µm). null for multi-mode (use coreUm instead). */
+  /** Mode-field diameter (µm). null for multi-mode. */
   mfdUm: number | null;
   na: number;
-  coreUm: number;
-  claddingUm: number;
-  /** Cable-side junction → ferrule tip length (mm) = connect_in.x. */
-  tipMm: number;
-  apertureDiameterMm: number;
-  glassIndexAtDesignLambda: number;
   /** PM connectors are keyed to the slow axis; SM/MM are axisymmetric. */
   slowAxisKeyed: boolean;
   returnLossDb: number;
@@ -75,25 +67,21 @@ export const fiberConnectorPlugin = definePhysicsPlugin<FiberConnectorParams>({
     alignVariant: "none",
     alignToleranceMm: 25,
     alignSummary:
-      "Fibre patch-cable connector (FC ferrule). connect_out (−X, origin) " +
-      "pins to the spline endpoint; connect_in (+X, at tipMm) is the " +
-      "ferrule end face where light enters/exits free space and the " +
-      "cable-level intercept port derives from. PM connectors key the " +
-      "slow axis via connect_in.axisY. Not aligned standalone.",
-    // Generic FC/PC single-mode template. The 9 real connectors override
-    // these per-asset (plan §4.1); seeding is additive from this template.
+      "Fibre patch-cable connector. connect_out pins to the spline endpoint; " +
+      "connect_in is the ferrule end face (anchor-defined) where light " +
+      "enters/exits free space and the cable-level intercept port derives " +
+      "from. PM connectors key the slow axis via connect_in.axisY. The model " +
+      "geometry/tip is defined entirely by the connect_in/out anchors. Not " +
+      "aligned standalone.",
+    // Physics-essential template (spec params only; geometry lives on the
+    // anchors). The real connectors override these per-asset; seeding is
+    // additive from this template.
     defaultParams: {
-      housing: "FC",
       polish: "PC",
       polishAngleDeg: 0.0,
       fiberType: "single_mode",
       mfdUm: 5.3,
       na: 0.13,
-      coreUm: 4.4,
-      claddingUm: 125.0,
-      tipMm: 36.28,
-      apertureDiameterMm: 0.125,
-      glassIndexAtDesignLambda: 1.4506,
       slowAxisKeyed: false,
       returnLossDb: 40.0,
       wavelengthRangeNm: [770.0, 790.0],
