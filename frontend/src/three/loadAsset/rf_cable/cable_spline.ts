@@ -14,6 +14,7 @@ import {
   normalizeRfConnectorKind,
   type RfConnectorKind,
 } from "./connectorModels";
+import { readCableAppearance } from "../cableAppearance";
 
 /** Resolve which connector to draw at each cable end. Reads
  *  `properties.endAConnector` / `properties.endBConnector` (preferred), then
@@ -63,13 +64,18 @@ function createSmaCableSpline(
   group.userData.rfCableRole = "wrapper";
   group.userData.rfCableComponentId = component.id;
 
-  // RG-316 reddish-brown jacket — TubeGeometry sweeps a 1.6 mm radius
-  // circle along the Bezier path. 64 longitudinal × 14 radial segments
-  // matches the smoothness of the straight-tube cylinder fallback.
+  // RG-316 reddish-brown jacket — TubeGeometry sweeps the jacket radius
+  // circle along the Bezier path. cableAppearance overrides the default
+  // colour (#c4a884) / radius (1.6 mm); 64 longitudinal × 14 radial segments.
+  const appearance = readCableAppearance(component.properties);
+  const radiusMm = appearance.radiusMm ?? 1.6;
+  const jacketMat = appearance.jacketColorHex
+    ? new THREE.MeshStandardMaterial({ color: appearance.jacketColorHex, metalness: 0.1, roughness: 0.6 })
+    : ddsCableTanMat;
   const path = buildFiberCurvePath(nodes);
   const jacket = new THREE.Mesh(
-    new THREE.TubeGeometry(path, 64, mmToThree(1.6), 14, false),
-    ddsCableTanMat,
+    new THREE.TubeGeometry(path, 64, mmToThree(radiusMm), 14, false),
+    jacketMat,
   );
   jacket.userData.rfCableRole = "tube";
   group.add(jacket);

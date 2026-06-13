@@ -9,6 +9,7 @@ import {
 } from "./curve";
 import { buildFcConnectorMesh } from "./thorlabs_30126a9_fc_connector";
 import { buildFiberConnectorGroup } from "./fiberConnectorModels";
+import { readCableAppearance } from "../cableAppearance";
 import type { FiberEndPlacement, FiberNode, FiberType, Polish } from "./types";
 
 // Jacket colours follow the Thorlabs colour-coding convention used in the
@@ -160,19 +161,27 @@ export function createFiberSplineObject(
     { posMm: [0, 0, 50], handleOutMm: [100, 0, 0] },
     { posMm: [300, 0, 50], handleInMm: [-100, 0, 0] },
   ];
+  // cableAppearance (jacket colour + radius) overrides the fiberType colour
+  // table + legacy radiusMm; the connector boot colours below are unaffected.
+  const appearance = readCableAppearance(component.properties);
   const radiusMm =
-    typeof objectRadiusMm === "number" && objectRadiusMm > 0
-      ? objectRadiusMm
-      : typeof compProps.radiusMm === "number" && compProps.radiusMm > 0
-        ? compProps.radiusMm
-        : 1.0;
+    appearance.radiusMm != null
+      ? appearance.radiusMm
+      : typeof objectRadiusMm === "number" && objectRadiusMm > 0
+        ? objectRadiusMm
+        : typeof compProps.radiusMm === "number" && compProps.radiusMm > 0
+          ? compProps.radiusMm
+          : 1.0;
 
   const fiberType = pickFiberType(component);
-  const jacketColor = FIBER_JACKET_COLOR[fiberType];
+  const jacketColor = appearance.jacketColorHex ?? FIBER_JACKET_COLOR[fiberType];
+  // Connector boot colour follows the fiberType default, NOT a jacket
+  // override — the jacket colour only dyes the tube.
+  const bootBase = FIBER_JACKET_COLOR[fiberType];
   const polishA = endA?.polish ?? pickEndPolish(component, "A");
   const polishB = endB?.polish ?? pickEndPolish(component, "B");
-  const bootColorA = polishA === "APC" ? APC_BOOT_COLOR : jacketColor;
-  const bootColorB = polishB === "APC" ? APC_BOOT_COLOR : jacketColor;
+  const bootColorA = polishA === "APC" ? APC_BOOT_COLOR : bootBase;
+  const bootColorB = polishB === "APC" ? APC_BOOT_COLOR : bootBase;
 
   const path = buildFiberCurvePath(nodes);
   const tubularSegments = Math.max(64, (nodes.length - 1) * 32);

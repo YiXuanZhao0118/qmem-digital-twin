@@ -64,6 +64,8 @@ import { createFiberSplineObject } from "../three/loadAsset/fiber/spline";
 import type { FiberNode } from "../three/loadAsset/fiber";
 import { anchorObjectLocalAxisX, anchorObjectLocalPos } from "../utils/anchorAccess";
 import { deriveCablePropsFromConnectorBindings } from "../utils/componentBindings";
+import { readCableAppearance } from "../three/loadAsset/cableAppearance";
+import { CableAppearanceEditor } from "./CableAppearanceEditor";
 import { OPTICAL_ALIGN_KINDS } from "../utils/isolatorAlign";
 import { getNumericProperty } from "../three/transformUtils";
 import type {
@@ -643,6 +645,18 @@ export function ComponentsEditor({
     );
   }, [childBindings]);
 
+  // Kind-default jacket colour shown when no cableAppearance override is set:
+  // RG-316 tan for RF, the fiberType colour table for fibre (from End A's
+  // connector asset).
+  const cableDefaultColor = useMemo(() => {
+    if (selected?.kindId === "rf_cable") return "#c4a884";
+    const a = cableEndBindings[0]?.asset3dId
+      ? (assetById.get(cableEndBindings[0].asset3dId) as { defaultParams?: { fiberType?: string } } | undefined)
+      : undefined;
+    const ft = a?.defaultParams?.fiberType;
+    return ft === "single_mode" ? "#facc15" : ft === "multi_mode" ? "#fb923c" : "#1d4ed8";
+  }, [selected?.kindId, cableEndBindings, assetById]);
+
   // Composite kind set: a component's "kinds" are the distinct physics kinds
   // of its bound Asset3Ds, read straight off the bindings so they stay
   // aligned with the assets and can't drift. (The single `kind_id` is kept
@@ -1194,6 +1208,17 @@ export function ComponentsEditor({
                     );
                   })}
                 </div>
+              )}
+              {isCableComp && (
+                <CableAppearanceEditor
+                  value={readCableAppearance(selected?.properties)}
+                  defaultColorHex={cableDefaultColor}
+                  onChange={(next) =>
+                    void handlePatchComponent({
+                      properties: { ...(selected?.properties ?? {}), cableAppearance: next },
+                    })
+                  }
+                />
               )}
               {childBindings.length > 0 && !isCableComp && (
                 <table
@@ -1992,6 +2017,10 @@ function ComponentPreview3D({
   // Component's alignSpec changes, not only when bindings / id change.
   const alignSpecDepKey = JSON.stringify(
     (parentComponent?.properties as { alignSpec?: unknown } | null)?.alignSpec ?? null,
+  );
+  // Re-render the preview when a cable's jacket colour / radius changes.
+  const cableAppearanceDepKey = JSON.stringify(
+    (parentComponent?.properties as { cableAppearance?: unknown } | null)?.cableAppearance ?? null,
   );
 
   useEffect(() => {
@@ -2841,7 +2870,7 @@ function ComponentPreview3D({
         mount.removeChild(renderer.domElement);
       }
     };
-  }, [bindings, assetById, parentComponent?.id, alignSpecDepKey]);
+  }, [bindings, assetById, parentComponent?.id, alignSpecDepKey, cableAppearanceDepKey]);
 
   // Rebuild gizmo and probe beam whenever the selection / bindings /
   // beam controls change. Gizmo follows the selected binding; the
