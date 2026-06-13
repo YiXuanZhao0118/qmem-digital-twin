@@ -2291,7 +2291,7 @@ function ComponentPreview3D({
         const shaftRad = armLen * 0.015;
         const shaft = new THREE.Mesh(
           new THREE.CylinderGeometry(shaftRad, shaftRad, shaftLen, 12),
-          new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false }),
+          new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false, transparent: true, opacity: 0.45 }),
         );
         shaft.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
         shaft.position.copy(dir.clone().multiplyScalar(shaftLen / 2));
@@ -2301,7 +2301,7 @@ function ComponentPreview3D({
         const headRad = armLen * 0.045;
         const head = new THREE.Mesh(
           new THREE.ConeGeometry(headRad, headLen, 16),
-          new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false }),
+          new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false, transparent: true, opacity: 0.45 }),
         );
         head.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
         head.position.copy(dir.clone().multiplyScalar(shaftLen + headLen / 2));
