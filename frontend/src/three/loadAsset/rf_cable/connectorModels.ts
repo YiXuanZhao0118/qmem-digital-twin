@@ -71,6 +71,16 @@ type Resolver = (kind: RfConnectorKind) => RfConnectorAssetSpec | null;
 let resolver: Resolver | null = null;
 const geomCache = new Map<RfConnectorKind, THREE.BufferGeometry>();
 const loading = new Set<RfConnectorKind>();
+const loadListeners = new Set<() => void>();
+
+/** Subscribe to "a connector model finished loading into the cache". A static
+ *  consumer (the PHY-editor COMPONENT preview) needs this to rebuild and swap
+ *  the procedural fallback for the real baked mesh once the async load lands;
+ *  the Lab re-renders often enough not to. Returns an unsubscribe fn. */
+export function subscribeRfConnectorLoaded(cb: () => void): () => void {
+  loadListeners.add(cb);
+  return () => loadListeners.delete(cb);
+}
 
 /** App wiring point: the store-aware layer (DigitalTwinViewer) registers how
  *  each connector kind maps to a catalog asset. Re-registering clears the cache
@@ -98,6 +108,7 @@ async function loadConnector(kind: RfConnectorKind): Promise<void> {
       kind,
       bakeConnectorByAnchors(merged, spec.connectOutMm, spec.connectInMm, new THREE.Vector3(1, 0, 0)),
     );
+    loadListeners.forEach((cb) => cb());
   } catch (e) {
     console.warn(`[rf_cable] failed to load "${kind}" connector model — using procedural fallback`, e);
   } finally {
