@@ -50,8 +50,14 @@ import {
 import { _testReflect, type TraceSegment } from "../three/rayTrace";
 import { resolveAssetUrl, runV3SolverFromDbApi, type V3LabSegment, type V3SolverResult } from "../api/client";
 import { useV3Catalog } from "../store/catalogStore";
-import { setRfConnectorAssetResolver } from "../three/loadAsset/rf_cable/connectorModels";
-import { setFiberConnectorAssetResolver } from "../three/loadAsset/fiber/fiberConnectorModels";
+import {
+  setRfConnectorAssetResolver,
+  subscribeRfConnectorLoaded,
+} from "../three/loadAsset/rf_cable/connectorModels";
+import {
+  setFiberConnectorAssetResolver,
+  subscribeFiberConnectorLoaded,
+} from "../three/loadAsset/fiber/fiberConnectorModels";
 import { portKey, vppToPowerW } from "../utils/rfPropagation";
 import { adaptV3LabSegmentsToTraceSegments } from "../three/v3TraceAdapter";
 import { disposeFarfieldLobe, makeFarfieldLobe } from "../three/hornFarfield";
@@ -1397,6 +1403,10 @@ export function DigitalTwinViewer({
         // componentRef stays equal and the wrapper would otherwise reuse a
         // stale mesh (e.g. the pre-tree primitive box). Rebuild on change.
         componentBindingsRefKey?: string;
+        // Connector-load epoch at build time (cables only): a connector GLB
+        // loads async after the first build, so without this the cable's
+        // wrapper keeps the procedural-fallback connectors forever.
+        connectorEpoch?: number;
       }
     >
   >(new Map());
@@ -1961,6 +1971,21 @@ export function DigitalTwinViewer({
       };
     });
     return () => setFiberConnectorAssetResolver(null);
+  }, []);
+
+  // Connector GLBs load async; on a wrapper cache-miss a cable is built with
+  // the procedural fallback. Bump connectorEpoch when a GLB lands so cable
+  // wrappers (which key on it in canReuse) rebuild with the real mesh — the
+  // wrapper cache would otherwise keep serving the procedural build forever.
+  const [connectorEpoch, setConnectorEpoch] = useState(0);
+  useEffect(() => {
+    const bump = (): void => setConnectorEpoch((n) => n + 1);
+    const unRf = subscribeRfConnectorLoaded(bump);
+    const unFiber = subscribeFiberConnectorLoaded(bump);
+    return () => {
+      unRf();
+      unFiber();
+    };
   }, []);
 
   useEffect(() => {
@@ -3876,6 +3901,9 @@ export function DigitalTwinViewer({
             cached.fiberEndsRefKey === fiberEndsRefKeyNow) &&
           cached.objectBindingsRefKey === objectBindingsRefKeyNow &&
           cached.componentBindingsRefKey === componentBindingsRefKeyNow &&
+          // Cables rebuild once their connector GLB finishes loading.
+          ((component.kindId !== "fiber" && component.kindId !== "rf_cable") ||
+            cached.connectorEpoch === connectorEpoch) &&
           cached.renderHintsKey === renderHintsKeyNow;
 
         let wrapper: THREE.Group;
@@ -4164,6 +4192,7 @@ export function DigitalTwinViewer({
             objectBindingsRefKey: objectBindingsRefKeyNow,
             componentBindingsRefKey: componentBindingsRefKeyNow,
             renderHintsKey: renderHintsKeyNow,
+            connectorEpoch,
           });
         }
 
@@ -4600,7 +4629,7 @@ export function DigitalTwinViewer({
       // cache entirely.
       cancelled = true;
     };
-  }, [sceneData, selectedComponentId, selectedObjectId, selectedObjectIds, selectedRelationId, previewObjectTransforms, relationDraftTarget, renderCtx, displayMode, rfChains]);
+  }, [sceneData, selectedComponentId, selectedObjectId, selectedObjectIds, selectedRelationId, previewObjectTransforms, relationDraftTarget, renderCtx, displayMode, rfChains, connectorEpoch]);
 
   // Phase PB.3 — when the scrub-time slider moves (or PB bindings change),
   // trigger a beam-only redraw via the ref exposed by the big effect above.
