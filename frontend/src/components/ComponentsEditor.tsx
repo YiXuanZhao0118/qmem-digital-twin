@@ -51,6 +51,7 @@ import { buildPolarizationMarkers } from "../optical/polarizationMarker";
 import { CATEGORY_DEFS } from "./AssetLibraryPanel";
 import { useKindsStore } from "../store/kindsStore";
 import { useSceneStore } from "../store/sceneStore";
+import { useV3Catalog } from "../store/catalogStore";
 import { applyAssetScale, createPrimitive } from "../three/loadAsset/primitive";
 import { applyViewerHintsToGeometry } from "../three/loadAsset/viewerHints";
 import {
@@ -58,9 +59,17 @@ import {
   buildGlanPolarizerPrismObject,
 } from "../three/loadAsset/procedural/glan_polarizer_prism";
 import { createSmaShortCable } from "../three/loadAsset/rf_cable";
+import {
+  setRfConnectorAssetResolver,
+  subscribeRfConnectorLoaded,
+} from "../three/loadAsset/rf_cable/connectorModels";
 import { createNewportOpticalTable } from "../three/photoRoom";
 import { VIEWER_BG_LIGHT, VIEWER_GROUND_FILL } from "../three/viewerTheme";
 import { createFiberSplineObject } from "../three/loadAsset/fiber/spline";
+import {
+  setFiberConnectorAssetResolver,
+  subscribeFiberConnectorLoaded,
+} from "../three/loadAsset/fiber/fiberConnectorModels";
 import type { FiberNode } from "../three/loadAsset/fiber";
 import { anchorObjectLocalAxisX, anchorObjectLocalPos } from "../utils/anchorAccess";
 import { deriveCablePropsFromConnectorBindings } from "../utils/componentBindings";
@@ -2016,6 +2025,92 @@ function ComponentPreview3D({
     forComponentId: string | null;
   } | null>(null);
 
+  // Bumped when a connector model finishes loading so the scene effect
+  // rebuilds and swaps the procedural fallback for the real baked mesh.
+  const [connectorEpoch, setConnectorEpoch] = useState(0);
+
+  // Data-driven RF-cable connector models, same as the Lab viewer
+  // (DigitalTwinViewer): map each connector kind to its catalog Asset3D so
+  // the cable spline loads → bakes → places the real mesh at each end.
+  // Without this the PHY-editor COMPONENT preview (a full-page take-over with
+  // DigitalTwinViewer unmounted, so its resolver is cleared) falls back to the
+  // procedural connector, making e.g. a real bnc_male GLB look different here
+  // than in the ASSET3D editor / Lab. Reads the catalog live so it's robust to
+  // load timing; cleans up on unmount.
+  useEffect(() => {
+    const bump = (): void => setConnectorEpoch((n) => n + 1);
+    const unsubscribeRf = subscribeRfConnectorLoaded(bump);
+    const unsubscribeFiber = subscribeFiberConnectorLoaded(bump);
+    // Fibre: map (fiberType, polish) → a fiber_connector .glb asset by its
+    // default_params, mirroring DigitalTwinViewer, so the preview shows the
+    // real GLB ferrule instead of the procedural FC housing.
+    setFiberConnectorAssetResolver((fiberType, polish) => {
+      const match = useV3Catalog
+        .getState()
+        .getAssetsByKind("fiber_connector")
+        .find((a) => {
+          const dp = (a.defaultParams ?? {}) as { fiberType?: string; polish?: string };
+          return (
+            a.filePath.toLowerCase().endsWith(".glb") &&
+            dp.fiberType === fiberType &&
+            dp.polish === polish
+          );
+        });
+      if (!match) return null;
+      const anchorPos = (id: string): { x: number; y: number; z: number } | null => {
+        const a = (match.anchors ?? []).find((x) => (x as { id?: string }).id === id);
+        const p = (a as { positionMmBodyLocal?: { x?: number; y?: number; z?: number } } | undefined)
+          ?.positionMmBodyLocal;
+        return p && typeof p.x === "number" && typeof p.y === "number" && typeof p.z === "number"
+          ? { x: p.x, y: p.y, z: p.z }
+          : null;
+      };
+      return {
+        key: match.catalogId ?? match.filePath,
+        url: resolveAssetUrl(match.filePath),
+        ext: match.filePath.split("?")[0].split(".").pop()?.toLowerCase() ?? "",
+        unit: match.unit,
+        scaleFactor: match.scaleFactor,
+        connectOutMm: anchorPos("connect_out"),
+        connectInMm: anchorPos("connect_in"),
+      };
+    });
+    setRfConnectorAssetResolver((kind) => {
+      // Try the real-asset slug first ("bnc_male" — the user's GLB upload),
+      // then the placeholder slug ("rf_connector_<kind>"). A primitive:// row
+      // has no loadable mesh → fall through to null so the procedural builder
+      // draws (the female ends, today).
+      for (const cid of [kind as string, `rf_connector_${kind}`]) {
+        const asset = useV3Catalog.getState().getAssetByCatalogId(cid);
+        if (asset && !asset.filePath.startsWith("primitive://")) {
+          const anchorPos = (id: string): { x: number; y: number; z: number } | null => {
+            const a = (asset.anchors ?? []).find((x) => (x as { id?: string }).id === id);
+            const p = (a as { positionMmBodyLocal?: { x?: number; y?: number; z?: number } } | undefined)
+              ?.positionMmBodyLocal;
+            return p && typeof p.x === "number" && typeof p.y === "number" && typeof p.z === "number"
+              ? { x: p.x, y: p.y, z: p.z }
+              : null;
+          };
+          return {
+            url: resolveAssetUrl(asset.filePath),
+            ext: asset.filePath.split("?")[0].split(".").pop()?.toLowerCase() ?? "",
+            unit: asset.unit,
+            scaleFactor: asset.scaleFactor,
+            connectOutMm: anchorPos("connect_out"),
+            connectInMm: anchorPos("connect_in"),
+          };
+        }
+      }
+      return null;
+    });
+    return () => {
+      unsubscribeRf();
+      unsubscribeFiber();
+      setRfConnectorAssetResolver(null);
+      setFiberConnectorAssetResolver(null);
+    };
+  }, []);
+
   // Stable key so the scene effect (and its align marker) rebuilds when the
   // Component's alignSpec changes, not only when bindings / id change.
   const alignSpecDepKey = JSON.stringify(
@@ -2873,7 +2968,7 @@ function ComponentPreview3D({
         mount.removeChild(renderer.domElement);
       }
     };
-  }, [bindings, assetById, parentComponent?.id, alignSpecDepKey, cableAppearanceDepKey]);
+  }, [bindings, assetById, parentComponent?.id, alignSpecDepKey, cableAppearanceDepKey, connectorEpoch]);
 
   // Rebuild gizmo and probe beam whenever the selection / bindings /
   // beam controls change. Gizmo follows the selected binding; the

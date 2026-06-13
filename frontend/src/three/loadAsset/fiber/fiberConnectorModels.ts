@@ -42,6 +42,17 @@ type Resolver = (fiberType: string, polish: string) => FiberConnectorAssetSpec |
 let resolver: Resolver | null = null;
 const geomCache = new Map<string, THREE.BufferGeometry>();
 const loading = new Set<string>();
+const loadListeners = new Set<() => void>();
+
+/** Subscribe to "a fibre connector model finished loading into the cache".
+ *  A static consumer (the PHY-editor COMPONENT preview) needs this to rebuild
+ *  and swap the procedural FC fallback for the real baked mesh once the async
+ *  load lands; the Lab re-renders often enough not to. Returns an unsubscribe
+ *  fn. Mirrors rf_cable/connectorModels' subscribeRfConnectorLoaded. */
+export function subscribeFiberConnectorLoaded(cb: () => void): () => void {
+  loadListeners.add(cb);
+  return () => loadListeners.delete(cb);
+}
 
 /** App wiring point (DigitalTwinViewer): map (fiberType, polish) → a catalog
  *  connector asset. Re-registering clears the cache so a new mapping reloads. */
@@ -66,6 +77,7 @@ async function loadFiberConnector(spec: FiberConnectorAssetSpec): Promise<void> 
       spec.key,
       bakeConnectorByAnchors(merged, spec.connectOutMm, spec.connectInMm, new THREE.Vector3(0, 1, 0)),
     );
+    loadListeners.forEach((cb) => cb());
   } catch (e) {
     console.warn(`[fiber] failed to load connector model "${spec.key}" — using procedural FC fallback`, e);
   } finally {
