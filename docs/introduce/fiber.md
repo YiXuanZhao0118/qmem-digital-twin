@@ -28,7 +28,11 @@
 
 ## 對準（`utils/fiberAlignment.ts`）
 
-`computeFiberEndAlignment()` / `findFiberEndAlignmentCandidates()`：把目前 ferrule **tip** 投影到各 beam 段，取 `toleranceMm`（25mm）內的候選，反推新 spline node（End A 入射 `outward=-beam_tangent`、End B 出射 `outward=+beam_tangent`，`node = tip - outward·36.28`），Bezier handle 對齊 beam 方向。對端與 body pose 不動。
+`computeFiberEndAlignment()` / `findFiberEndAlignmentCandidates()`：把目前 ferrule **tip** 投影到各 beam 段，取 `toleranceMm`（25mm）內的候選，反推新 spline node（End A 入射 `outward=-beam_tangent`、End B 出射 `outward=+beam_tangent`，`node = tip - outward·36.28`），Bezier handle 對齊 beam 方向。對端與 body pose 不動。投影數學是純函式,Align A/B 與 per-end 端口編輯器共用。
+
+**端點讀取的單一入口 = `sceneStore.resolveEffectiveFiberNodes(obj, component, physicsElements)`**：優先 `SceneObject.properties.fiberNodes`(≥2)→ `Component.properties.fiberNodes`(≥2)→ 否則由 fiber PE 的 `kindParams.endA/endB` 經 `syncFiberNodesFromKindParams()` 重建。**這一步是 connector-component fiber 能對齊的關鍵** —— 它剛實例化時只有 `kindParams.endA/endB`、沒有 cached `fiberNodes`(後端 `default_kind_params_for_component` 只 seed kindParams),舊版直接讀 `properties.fiberNodes` 在 `length<2` early-return → Align「完全沒反應」。`findFiberAlignmentCandidates` / `applyFiberAlignmentCandidate` / `setFiberPortLabPose` / `FiberPortPoseEditor` / FiberEditor 的 node 計數全走這個 resolver。
+
+**寫回必須雙寫**:端點編輯(Align apply 與 port-pose 編輯)除了寫 `properties.fiberNodes`,還要把端點同步進 `kindParams.endA/endB`(`posMm`=junction、`tensionHandleMm`=handle),由共用 helper `sceneStore.syncFiberEndpointToKindParams()` 完成。只寫 `fiberNodes` 是死路 —— load 時 `syncFiberNodesFromKindParams()` 會用 kindParams 覆寫端點,改動會回彈。
 
 ## 光學物理（後端 `anchor_ops/fiber.py`）
 
@@ -38,6 +42,17 @@
 - `η_α` — Beer-Lambert：`10^(-α·L/10)`，`α=attenuationDbPerKm`、`L=lengthM`。
 
 出射 ray：origin = 出射 anchor.position、direction = 出射 anchor.axisX（**光纖強制基模、抹掉入射傾角資訊**），q 重設為純虛（出射面為腰），power ×= η。
+
+### connector-component fiber 的 intercept slot 由後端「合成」(2026-06-13)
+
+`fiber_anchor_op` 只在 ray 命中 id 為 `intercept_in/intercept_out` 的 anchor 時觸發。但新的 connector-component fiber 綁的是兩個 `fiber_connector` 資產(anchor 是 `connect_in/connect_out`、op passthrough、且 `connect_*` 不在 `anchor_tracer.PRIMARY_ANCHOR_IDS`)—— 場景裡**沒有**任何 `fiber`-kind + `intercept_in/out` 的 slot,beam 會直接穿過、不耦合。
+
+修法在後端 loader:`db_scene_loader.load_anchor_scene_from_db` 對每個 `comp.kind_id=="fiber"` 的物件,由其 fiber PhysicsElement 的 `kindParams.endA/endB` **合成一個 `fiber`-kind slot**(`_synth_fiber_slot`):
+- `intercept_in`←endA、`intercept_out`←endB;`position = posMm + outward·tip_mm`、`outward = −unit(tensionHandleMm)`。`posMm`(junction)+ outward 來自 **Align 寫進 kindParams 的 per-instance 真值**(接頭實際擺放處,loader 不讀靜態 Asset3D anchor)。
+- **光學面偏移 `tip_mm` 與命中 aperture 都取自該端 connector 綁定資產的 `connect_in` anchor**(`_connector_tip_and_aperture`):`tip_mm = |connect_in − connect_out|`、`aperture = connect_in.apertureMm`。**亦即合成的 `intercept_in/out` 精準落在你在 asset 定義的 `connect_in` 上(= fiber 收光面 = beam waist 處)** —— 調 asset 的 connect_in 位置/aperture 就同步改變光學面與接受窗;缺 connector 時退回 36.28 / endX.apertureDiameterMm。aperture 只決定「算不算命中」,η 仍由 Marcuse 重疊決定。
+- `default_params` 由 kindParams 映射成 op 讀的 key:`coreMfdUm←modeFieldDiameterUm`、`numericalAperture`、`coreRefractiveIndex←glassIndexAtDesignLambda`、`attenuationDbPerKm←attenuationCurve[0].dbPerKm`、`lengthM←`spline 長度。
+- 兩個 `fiber_connector` passthrough slot 照樣存在,無害(connect_* 不被命中)。
+- 範圍:目前只 Lab(`run-from-db`);COMPONENT 預覽(`load_anchor_scene_from_component`)尚未合成。`fiber_coupler`(單 anchor)走原路徑。測試見 `backend/tests/optical/test_fiber_connector_coupling.py`。
 
 ## kinds：fiber vs fiber_coupler
 

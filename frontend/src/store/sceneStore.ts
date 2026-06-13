@@ -118,6 +118,10 @@ import {
   type FiberAlignmentCandidate,
 } from "../utils/fiberAlignment";
 import {
+  resolveFiberEndKindParams,
+  syncFiberNodesFromKindParams,
+} from "../utils/fiberAnchorResolver";
+import {
   computeSnapPositionForLink,
   validateOpticalLink,
 } from "../utils/beamPlacement";
@@ -151,6 +155,85 @@ export type FiberNodePersist = {
   handleInMm?: [number, number, number];
   handleOutMm?: [number, number, number];
 };
+
+/** Resolve a fiber's effective spline nodes. Prefers the per-instance
+ *  `SceneObject.properties.fiberNodes`, then the catalog
+ *  `Component.properties.fiberNodes`; when neither holds ≥2 nodes (e.g. a
+ *  freshly-placed connector-component fiber whose endpoints live ONLY on
+ *  the PE's `kindParams.endA/endB`), reconstructs them from the fiber PE via
+ *  `syncFiberNodesFromKindParams` — the same source the renderer / anchor
+ *  resolver / solver read. Returns undefined only when there is no usable
+ *  source (no cached nodes AND no fiber PE kindParams). Centralises the
+ *  read so every fiber-endpoint editor (Align A/B, port-pose editor) sees
+ *  the real endpoints instead of bailing on an empty cache. */
+export function resolveEffectiveFiberNodes(
+  obj: { id: string; properties?: unknown } | null | undefined,
+  component: { properties?: unknown } | null | undefined,
+  physicsElements: ReadonlyArray<{
+    objectId: string;
+    elementKind: string;
+    kindParams?: unknown;
+  }>,
+): FiberNodePersist[] | undefined {
+  const objNodes = (obj?.properties as { fiberNodes?: FiberNodePersist[] } | undefined)?.fiberNodes;
+  if (Array.isArray(objNodes) && objNodes.length >= 2) return objNodes;
+  const compNodes = (component?.properties as { fiberNodes?: FiberNodePersist[] } | undefined)
+    ?.fiberNodes;
+  if (Array.isArray(compNodes) && compNodes.length >= 2) return compNodes;
+  if (!obj) return undefined;
+  const pe = physicsElements.find((e) => e.objectId === obj.id && e.elementKind === "fiber");
+  if (!pe) return undefined;
+  const { endA, endB } = resolveFiberEndKindParams(pe);
+  if (!endA && !endB) return undefined;
+  return syncFiberNodesFromKindParams(endA, endB, undefined) as FiberNodePersist[];
+}
+
+/** Sync a fiber's touched endpoint into the fiber PE's `kindParams.endA/endB`
+ *  — the authoritative source the renderer / anchor resolver / solver read.
+ *  Under the 2026-05-17 contract: `posMm` = endpoint node posMm (= back of
+ *  connector = junction), `tensionHandleMm` = the handle pointing into the
+ *  body (handleOutMm for A, handleInMm for B). No-op when the fiber PE or
+ *  the handle is missing. Shared by `setFiberPortLabPose` and
+ *  `applyFiberAlignmentCandidate` so endpoint edits from BOTH surfaces
+ *  persist — writing only `properties.fiberNodes` is a dead end because
+ *  `syncFiberNodesFromKindParams` overwrites the endpoints from kindParams
+ *  on load. */
+async function syncFiberEndpointToKindParams(
+  upsertOpticalElement: (payload: {
+    objectId: string;
+    elementKind: "fiber";
+    kindParams: Record<string, unknown>;
+  }) => Promise<unknown>,
+  obj: { id: string },
+  end: "A" | "B",
+  nextNodes: FiberNodePersist[],
+  physicsElements: ReadonlyArray<{
+    objectId: string;
+    elementKind: string;
+    kindParams?: unknown;
+  }>,
+): Promise<void> {
+  const fpe = physicsElements.find(
+    (e) => e.objectId === obj.id && e.elementKind === "fiber",
+  );
+  if (!fpe) return;
+  const idx = end === "A" ? 0 : nextNodes.length - 1;
+  const node = nextNodes[idx];
+  const tau = end === "A" ? node.handleOutMm : node.handleInMm;
+  if (!tau) return;
+  const kp = { ...((fpe.kindParams ?? {}) as Record<string, unknown>) };
+  const endKey = end === "A" ? "endA" : "endB";
+  const existing =
+    kp[endKey] && typeof kp[endKey] === "object"
+      ? (kp[endKey] as Record<string, unknown>)
+      : {};
+  kp[endKey] = {
+    ...existing,
+    posMm: [node.posMm[0], node.posMm[1], node.posMm[2]] as [number, number, number],
+    tensionHandleMm: [tau[0], tau[1], tau[2]] as [number, number, number],
+  };
+  await upsertOpticalElement({ objectId: obj.id, elementKind: "fiber", kindParams: kp });
+}
 export type TransformPivotMode = "median" | "individual" | "cursor";
 export type TransformAxis = "x" | "y" | "z";
 export type LabPoint = { x: number; y: number; z: number };
@@ -2018,10 +2101,10 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     //     near-identical picker entries.
     const state = get();
     const obj = state.scene.objects.find((o) => o.componentId === componentId);
-    const objProps = obj?.properties as { fiberNodes?: FiberNodePersist[] } | undefined;
-    const compProps = state.scene.components.find((c) => c.id === componentId)?.properties as
-      { fiberNodes?: FiberNodePersist[] } | undefined;
-    const nodes = objProps?.fiberNodes ?? compProps?.fiberNodes;
+    const component = state.scene.components.find((c) => c.id === componentId);
+    // Shared resolver: connector-component fibers keep their endpoints on
+    // PE.kindParams (no cached fiberNodes), so reconstruct rather than bail.
+    const nodes = resolveEffectiveFiberNodes(obj, component, state.scene.physicsElements);
     if (!nodes || nodes.length < 2) return [];
 
     const beamSegmentsLab: BeamSegmentLab[] = [];
@@ -2115,11 +2198,12 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     // this node and all interior nodes are preserved.
     const state = get();
     const obj = state.scene.objects.find((o) => o.componentId === componentId);
-    const objProps = obj?.properties as { fiberNodes?: FiberNodePersist[] } | undefined;
-    const compProps = state.scene.components.find((c) => c.id === componentId)?.properties as
-      { fiberNodes?: FiberNodePersist[] } | undefined;
-    const nodes = objProps?.fiberNodes ?? compProps?.fiberNodes;
-    if (!nodes || nodes.length < 2) return;
+    const component = state.scene.components.find((c) => c.id === componentId);
+    // Shared resolver: a connector-component fiber has no cached fiberNodes
+    // (endpoints live on PE.kindParams) — reconstruct them so the align
+    // doesn't bail on an empty cache.
+    const nodes = resolveEffectiveFiberNodes(obj, component, state.scene.physicsElements);
+    if (!nodes || nodes.length < 2 || !obj) return;
     const idx = end === "A" ? 0 : nodes.length - 1;
     const newNode: FiberNodePersist = {
       posMm: candidate.newPosMmBody,
@@ -2139,6 +2223,16 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     const nextNodes = [...nodes];
     nextNodes[idx] = newNode;
     await get().updateFiberNodes(componentId, nextNodes);
+    // Persist the aligned endpoint to PE.kindParams.endA/endB (the
+    // authoritative source) — mirrors setFiberPortLabPose. Without this the
+    // endpoint reverts on the next syncFiberNodesFromKindParams.
+    await syncFiberEndpointToKindParams(
+      get().upsertOpticalElement,
+      obj,
+      end,
+      nextNodes,
+      state.scene.physicsElements,
+    );
   },
 
   async findRfCableAlignmentCandidates(objectId, end, toleranceMm = 25) {
@@ -2565,10 +2659,11 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   async setFiberPortLabPose(componentId, end, targetPosLab, targetOutwardLab) {
     const state = get();
     const obj = state.scene.objects.find((o) => o.componentId === componentId);
-    const objProps = obj?.properties as { fiberNodes?: FiberNodePersist[] } | undefined;
-    const compProps = state.scene.components.find((c) => c.id === componentId)?.properties as
-      { fiberNodes?: FiberNodePersist[] } | undefined;
-    const nodes = objProps?.fiberNodes ?? compProps?.fiberNodes;
+    const component = state.scene.components.find((c) => c.id === componentId);
+    // Resolve nodes through the shared resolver so a connector-component
+    // fiber (no cached fiberNodes; endpoints only on PE.kindParams) is
+    // editable too — not just legacy fibers with properties.fiberNodes.
+    const nodes = resolveEffectiveFiberNodes(obj, component, state.scene.physicsElements);
     if (!nodes || nodes.length < 2 || !obj) return;
     const nextNodes = withFiberPortLabPose({
       end,
@@ -2586,37 +2681,17 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     });
     if (nextNodes === nodes) return;
     await get().updateFiberNodes(componentId, nextNodes);
-
-    // Sync the touched endpoint into fiber PE.kindParams.endA/endB so
-    // the renderer (which reads kindParams) and the ray tracer + anchor
-    // resolver stay aligned with the panel edit. Under the 2026-05-17
-    // clarified contract: kindParams.endA/B.posMm = fiberNodes[idx].posMm
-    // (= back of connector = junction), tensionHandleMm = handle vector
-    // pointing into the body (handleOutMm for A, handleInMm for B).
-    const fpe = state.scene.physicsElements.find(
-      (e) => e.objectId === obj.id && e.elementKind === "fiber",
+    // Sync the touched endpoint into fiber PE.kindParams.endA/endB so the
+    // renderer / ray tracer / anchor resolver (all read kindParams) stay
+    // aligned with the edit. Writing only properties.fiberNodes is a dead
+    // end — syncFiberNodesFromKindParams overwrites endpoints on load.
+    await syncFiberEndpointToKindParams(
+      get().upsertOpticalElement,
+      obj,
+      end,
+      nextNodes,
+      state.scene.physicsElements,
     );
-    if (!fpe) return;
-    const idx = end === "A" ? 0 : nextNodes.length - 1;
-    const node = nextNodes[idx];
-    const tau = end === "A" ? node.handleOutMm : node.handleInMm;
-    if (!tau) return;
-    const kp = { ...(fpe.kindParams ?? {}) } as Record<string, unknown>;
-    const endKey = end === "A" ? "endA" : "endB";
-    const existing =
-      kp[endKey] && typeof kp[endKey] === "object"
-        ? (kp[endKey] as Record<string, unknown>)
-        : {};
-    kp[endKey] = {
-      ...existing,
-      posMm: [node.posMm[0], node.posMm[1], node.posMm[2]] as [number, number, number],
-      tensionHandleMm: [tau[0], tau[1], tau[2]] as [number, number, number],
-    };
-    await get().upsertOpticalElement({
-      objectId: obj.id,
-      elementKind: "fiber",
-      kindParams: kp,
-    });
   },
 
   async toggleFiberBeamEntry(objectId, end) {

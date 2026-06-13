@@ -21,7 +21,15 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Asset3D, Component, ComponentBinding, DeviceState, ObjectBinding, SceneObject
+from app.models import (
+    Asset3D,
+    Component,
+    ComponentBinding,
+    DeviceState,
+    ObjectBinding,
+    PhysicsElement,
+    SceneObject,
+)
 from app.optical.anchor_tracer import (
     V3Anchor,
     V3AnchorBindingSlot,
@@ -236,6 +244,206 @@ def anchor_asset_to_snapshot(asset: Asset3D) -> V3AssetAnchorSnapshot | None:
     )
 
 
+# Fallback ferrule length used ONLY when the bound connector asset doesn't
+# expose connect_in/connect_out. Normally the tip offset (junction → optical
+# face) is read from the connector asset's `connect_in` position so the fiber
+# coupling face = the connect_in the user defines on the asset (see
+# `_connector_tip_and_aperture`). 36.28 mm matches the Thorlabs FC 30126A9
+# housing (frontend `utils/fiberAnchorResolver.ts:32`).
+FIBER_FERRULE_TIP_MM = 36.28
+
+
+def _cross(a: Vec3, b: Vec3) -> Vec3:
+    return Vec3(
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x,
+    )
+
+
+def _ortho_basis(axis_x: Vec3) -> tuple[Vec3, Vec3]:
+    """An arbitrary orthonormal (axisY, axisZ) perpendicular to axis_x. The
+    fiber op only uses r = √(off_y²+off_z²) (rotation-invariant), so any
+    perpendicular basis is fine for the coupling hit/offset math."""
+    ref = Vec3(0.0, 0.0, 1.0) if abs(axis_x.z) < 0.9 else Vec3(0.0, 1.0, 0.0)
+    ay = _cross(axis_x, ref).normalized()
+    az = _cross(axis_x, ay)
+    return ay, az
+
+
+def _connector_tip_and_aperture(
+    connector_asset: Asset3D | None,
+    fallback_tip_mm: float,
+    fallback_aperture_mm: float,
+) -> tuple[float, float]:
+    """Read the optical-face offset + hit aperture from the bound connector
+    asset's `connect_in` anchor — the single asset-side definition of the
+    fiber's coupling face (= where the beam waist sits) and acceptance window.
+
+    Both are user-editable in the ASSET3D anchor editor:
+      * tip_mm   = |connect_in − connect_out| (junction → ferrule face). The
+                   synthesized intercept port lands exactly on connect_in, so
+                   moving connect_in on the asset moves the optical face.
+      * aperture = connect_in.apertureMm (whether the beam centre counts as
+                   entering the fiber; η then falls off via Marcuse overlap).
+    Falls back to the FC housing length / the fiber end's apertureDiameterMm
+    when the connector or its anchors are missing."""
+    tip_mm, aperture_mm = fallback_tip_mm, fallback_aperture_mm
+    if connector_asset is None:
+        return tip_mm, aperture_mm
+    anchors = connector_asset.anchors or []
+    c_in = next((a for a in anchors if isinstance(a, dict) and a.get("id") == "connect_in"), None)
+    c_out = next((a for a in anchors if isinstance(a, dict) and a.get("id") == "connect_out"), None)
+    if c_in is not None:
+        ap = c_in.get("apertureMm")
+        if isinstance(ap, (int, float)) and ap > 0:
+            aperture_mm = float(ap)
+        p_in = c_in.get("positionMmBodyLocal") or {}
+        p_out = (c_out or {}).get("positionMmBodyLocal") or {}
+        try:
+            dx = float(p_in.get("x", 0.0)) - float(p_out.get("x", 0.0))
+            dy = float(p_in.get("y", 0.0)) - float(p_out.get("y", 0.0))
+            dz = float(p_in.get("z", 0.0)) - float(p_out.get("z", 0.0))
+            d = (dx * dx + dy * dy + dz * dz) ** 0.5
+            if d > 1e-6:
+                tip_mm = d
+        except (TypeError, ValueError):
+            pass
+    return tip_mm, aperture_mm
+
+
+def _spline_length_m(properties: dict | None) -> float:
+    """Fiber length (m) for Beer-Lambert attenuation, summed from the
+    per-instance spline node positions when present; else 1.0 m (a short
+    patch — attenuation is negligible either way)."""
+    nodes = (properties or {}).get("fiberNodes") if isinstance(properties, dict) else None
+    if not isinstance(nodes, list) or len(nodes) < 2:
+        return 1.0
+    total_mm = 0.0
+    prev = None
+    for n in nodes:
+        p = n.get("posMm") if isinstance(n, dict) else None
+        if not (isinstance(p, list) and len(p) == 3):
+            return 1.0
+        cur = Vec3(float(p[0]), float(p[1]), float(p[2]))
+        if prev is not None:
+            total_mm += (cur - prev).length()
+        prev = cur
+    return total_mm / 1000.0 if total_mm > 0 else 1.0
+
+
+async def _synth_fiber_slot(
+    session: AsyncSession,
+    so: SceneObject,
+    pe: PhysicsElement,
+    binding_rows: list,
+    override_by_binding_id: dict,
+    so_transform,
+) -> V3AnchorBindingSlot | None:
+    """Synthesize the kind="fiber" optical slot for a connector-component
+    fiber so the v3 tracer can couple light through it.
+
+    The bound `fiber_connector` assets are passthrough (connect_in/out aren't
+    PRIMARY_ANCHOR_IDS), so the fiber's optical ports live ONLY on the fiber
+    PhysicsElement's kindParams.endA/endB (the per-instance pose Align writes).
+    This builds an intercept_in (endA) + intercept_out (endB) anchor pair from
+    that pose so `fiber_anchor_op` fires. Returns None when endA/endB lack the
+    posMm + tensionHandleMm needed to place the ports.
+    """
+    kp = pe.kind_params or {}
+    end_a = kp.get("endA") if isinstance(kp.get("endA"), dict) else None
+    end_b = kp.get("endB") if isinstance(kp.get("endB"), dict) else None
+    if not end_a or not end_b:
+        return None
+
+    # Resolve each end's connector asset (for the editable hit aperture),
+    # matched by binding splineEnd / role.
+    async def _connector_asset(end_letter: str) -> Asset3D | None:
+        for b in binding_rows:
+            if b.target_kind != "asset":
+                continue
+            props = b.properties or {}
+            role = b.role or ""
+            if props.get("splineEnd") == end_letter or role == f"end_{end_letter.lower()}":
+                override = override_by_binding_id.get(b.id)
+                asset_id = (
+                    override.asset_3d_id_override
+                    if override is not None and override.asset_3d_id_override is not None
+                    else b.asset_3d_id
+                )
+                return await session.get(Asset3D, asset_id) if asset_id else None
+        return None
+
+    def _vec_or_none(v):
+        if not (isinstance(v, list) and len(v) == 3):
+            return None
+        try:
+            return Vec3(float(v[0]), float(v[1]), float(v[2]))
+        except (TypeError, ValueError):
+            return None
+
+    def _make_anchor(anchor_id: str, end: dict, ap_mm: float, tip_mm: float) -> V3Anchor | None:
+        pos = _vec_or_none(end.get("posMm"))
+        tau = _vec_or_none(end.get("tensionHandleMm"))
+        if pos is None or tau is None or tau.length() < 1e-9:
+            return None
+        outward = tau.normalized() * -1.0   # ferrule faces away from wire
+        tip = pos + outward * tip_mm        # junction → optical face (= connect_in)
+        ay, az = _ortho_basis(outward)
+        return V3Anchor(
+            id=anchor_id,
+            position_body=tip,
+            axis_x_body=outward,
+            axis_y_body=ay,
+            axis_z_body=az,
+            aperture_mm=ap_mm,
+            aperture_shape="circle",
+        )
+
+    tip_a, ap_a = _connector_tip_and_aperture(
+        await _connector_asset("A"),
+        FIBER_FERRULE_TIP_MM, float(end_a.get("apertureDiameterMm", 0.125)),
+    )
+    tip_b, ap_b = _connector_tip_and_aperture(
+        await _connector_asset("B"),
+        FIBER_FERRULE_TIP_MM, float(end_b.get("apertureDiameterMm", 0.125)),
+    )
+    in_anchor = _make_anchor("intercept_in", end_a, ap_a, tip_a)
+    out_anchor = _make_anchor("intercept_out", end_b, ap_b, tip_b)
+    if in_anchor is None or out_anchor is None:
+        return None
+
+    # Map the fiber PE kindParams to the keys fiber_anchor_op reads via
+    # ctx.params (= snapshot.default_params here — no dynamic_sources merge
+    # needed for the synthetic slot). Note the key rename
+    # glassIndexAtDesignLambda → coreRefractiveIndex.
+    atten = kp.get("attenuationCurve")
+    atten_db_km = 4.0
+    if isinstance(atten, list) and atten and isinstance(atten[0], dict):
+        atten_db_km = float(atten[0].get("dbPerKm", 4.0))
+    default_params = {
+        "coreMfdUm": float(end_a.get("modeFieldDiameterUm", 5.3)),
+        "numericalAperture": float(end_a.get("numericalAperture", 0.13)),
+        "coreRefractiveIndex": float(end_a.get("glassIndexAtDesignLambda", 1.46)),
+        "attenuationDbPerKm": atten_db_km,
+        "lengthM": _spline_length_m(so.properties),
+    }
+
+    return V3AnchorBindingSlot(
+        scene_object_id=str(so.id),
+        binding_id="fiber_body",
+        asset=V3AssetAnchorSnapshot(
+            catalog_id="fiber",
+            kind="fiber",
+            anchors=[in_anchor, out_anchor],
+            default_params=default_params,
+        ),
+        effective_transform=so_transform,
+        dynamic_sources=None,
+        powered_on=True,
+    )
+
+
 async def load_anchor_scene_from_component(
     session: AsyncSession,
     component_id: object,
@@ -306,6 +514,14 @@ async def load_anchor_scene_from_db(
     dynamic_overrides = dynamic_overrides or {}
     so_rows = (await session.scalars(select(SceneObject))).all()
     slots: list[V3AnchorBindingSlot] = []
+
+    # PhysicsElements (one per SceneObject) — keyed by object_id. Needed to
+    # synthesize the fiber optical slot from the fiber PE's kindParams.endA/endB
+    # (the connector-component fiber's ports live there, not on a fiber Asset3D).
+    pe_by_object_id = {
+        pe.object_id: pe
+        for pe in (await session.scalars(select(PhysicsElement))).all()
+    }
 
     # Resolve each AOM's RF drive from the cable graph (rf_source -> amp ->
     # switch -> aom rf_in), time-sampled at scrub_time_ns. Keyed by AOM
@@ -420,5 +636,20 @@ async def load_anchor_scene_from_db(
                 dynamic_sources=dyn,
                 powered_on=powered_on,
             ))
+
+        # Connector-component fiber: the bound fiber_connector assets are
+        # passthrough, so synthesize the kind="fiber" optical slot (intercept_in
+        # /out from the fiber PE's kindParams.endA/endB) — otherwise the beam
+        # passes straight through with no Marcuse coupling. The connector
+        # passthrough slots above stay (harmless: connect_* aren't primary).
+        if comp.kind_id == "fiber":
+            fiber_pe = pe_by_object_id.get(so.id)
+            if fiber_pe is not None and fiber_pe.element_kind == "fiber":
+                fiber_slot = await _synth_fiber_slot(
+                    session, so, fiber_pe, binding_rows,
+                    override_by_binding_id, so_transform,
+                )
+                if fiber_slot is not None:
+                    slots.append(fiber_slot)
 
     return V3AnchorScene(slots=slots)

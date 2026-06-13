@@ -4,7 +4,12 @@ import * as THREE from "three";
 
 import { resolveAssetUrl } from "../api/client";
 import { isAd9959PcbAsset } from "../three/loadAsset/stl_builders";
-import { useSceneStore, type LabPoint, type TransformAxis } from "../store/sceneStore";
+import {
+  useSceneStore,
+  resolveEffectiveFiberNodes,
+  type LabPoint,
+  type TransformAxis,
+} from "../store/sceneStore";
 import type { ComponentItem, SceneObject, SceneObjectPatch } from "../types/digitalTwin";
 import { TRIGGER_KINDS, TTL_GATE_KINDS } from "../types/digitalTwin";
 import { resolveBeamPosition } from "../utils/beamPlacement";
@@ -1069,15 +1074,10 @@ function FiberPortPoseEditor({
     state.scene.objects.find((o) => o.componentId === component.id),
   );
   const setFiberPortLabPose = useSceneStore((state) => state.setFiberPortLabPose);
-  const objProps = (fiberSceneObject?.properties ?? {}) as {
-    fiberNodes?: { posMm: [number, number, number]; handleInMm?: [number, number, number]; handleOutMm?: [number, number, number] }[];
-  };
-  const compProps = (component.properties ?? {}) as {
-    fiberNodes?: { posMm: [number, number, number]; handleInMm?: [number, number, number]; handleOutMm?: [number, number, number] }[];
-  };
-  const nodes = (objProps.fiberNodes && objProps.fiberNodes.length >= 2)
-    ? objProps.fiberNodes
-    : compProps.fiberNodes;
+  const physicsElements = useSceneStore((state) => state.scene.physicsElements);
+  // Shared resolver: falls back to PE.kindParams.endA/endB so the port-pose
+  // editor works for connector-component fibers (no cached fiberNodes) too.
+  const nodes = resolveEffectiveFiberNodes(fiberSceneObject, component, physicsElements);
   if (!fiberSceneObject || !nodes || nodes.length < 2) return null;
 
   const portPose = getFiberPortLabPose(end, nodes, {
@@ -1213,10 +1213,14 @@ function FiberEditor({ component }: { component: ComponentItem }) {
   const compProps = (component.properties ?? {}) as {
     fiberNodes?: { posMm: number[] }[]; radiusMm?: number;
   };
-  const resolvedNodes =
-    (Array.isArray(objProps.fiberNodes) && objProps.fiberNodes.length >= 2)
-      ? objProps.fiberNodes
-      : compProps.fiberNodes;
+  // Shared resolver: falls back to PE.kindParams.endA/endB so a
+  // connector-component fiber reports its real node count (not 0) and lists
+  // any interior nodes — same source the Align buttons resolve from.
+  const resolvedNodes = resolveEffectiveFiberNodes(
+    fiberSceneObject,
+    component,
+    physicsElements,
+  );
   const nodeCount = Array.isArray(resolvedNodes) ? resolvedNodes.length : 0;
   const radius =
     typeof objProps.radiusMm === "number" ? objProps.radiusMm :
