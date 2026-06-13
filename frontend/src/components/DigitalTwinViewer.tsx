@@ -51,6 +51,7 @@ import { _testReflect, type TraceSegment } from "../three/rayTrace";
 import { resolveAssetUrl, runV3SolverFromDbApi, type V3LabSegment, type V3SolverResult } from "../api/client";
 import { useV3Catalog } from "../store/catalogStore";
 import { setRfConnectorAssetResolver } from "../three/loadAsset/rf_cable/connectorModels";
+import { setFiberConnectorAssetResolver } from "../three/loadAsset/fiber/fiberConnectorModels";
 import { portKey, vppToPowerW } from "../utils/rfPropagation";
 import { adaptV3LabSegmentsToTraceSegments } from "../three/v3TraceAdapter";
 import { disposeFarfieldLobe, makeFarfieldLobe } from "../three/hornFarfield";
@@ -1913,6 +1914,34 @@ export function DigitalTwinViewer({
       return null;
     });
     return () => setRfConnectorAssetResolver(null);
+  }, []);
+
+  // Data-driven FIBRE connector models: map a cable end's (fiberType, polish)
+  // to a catalog `fiber_connector` Asset3D by its default_params, so the fibre
+  // spline loads → bakes → places the real GLB at each ferrule. Matches only
+  // .glb rows (the user's uploads); the FC STL placeholder / MM end falls
+  // through to null so the procedural FC housing (with polish colouring) draws.
+  useEffect(() => {
+    setFiberConnectorAssetResolver((fiberType, polish) => {
+      const assets = useV3Catalog.getState().getAssetsByKind("fiber_connector");
+      const match = assets.find((a) => {
+        const dp = (a.defaultParams ?? {}) as { fiberType?: string; polish?: string };
+        return (
+          a.filePath.toLowerCase().endsWith(".glb") &&
+          dp.fiberType === fiberType &&
+          dp.polish === polish
+        );
+      });
+      if (!match) return null;
+      return {
+        key: match.catalogId ?? match.filePath,
+        url: resolveAssetUrl(match.filePath),
+        ext: match.filePath.split("?")[0].split(".").pop()?.toLowerCase() ?? "",
+        unit: match.unit,
+        scaleFactor: match.scaleFactor,
+      };
+    });
+    return () => setFiberConnectorAssetResolver(null);
   }, []);
 
   useEffect(() => {

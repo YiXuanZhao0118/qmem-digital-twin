@@ -8,6 +8,7 @@ import {
   buildFiberCurvePath,
 } from "./curve";
 import { buildFcConnectorMesh } from "./thorlabs_30126a9_fc_connector";
+import { buildFiberConnectorGroup } from "./fiberConnectorModels";
 import type { FiberEndPlacement, FiberNode, FiberType, Polish } from "./types";
 
 // Jacket colours follow the Thorlabs colour-coding convention used in the
@@ -220,12 +221,16 @@ export function createFiberSplineObject(
     }
   };
 
-  const connA = buildFcConnectorMesh({ polish: polishA, bootColor: bootColorA });
+  const connA = buildFiberConnectorGroup(fiberType, polishA, () =>
+    buildFcConnectorMesh({ polish: polishA, bootColor: bootColorA }),
+  );
   connA.userData.fiberConnectorEndpoint = "A";
   if (endA) placeFerruleAtJunction(connA, endA);
   else applyFiberConnectorTransform(connA, nodes, "A");
   group.add(connA);
-  const connB = buildFcConnectorMesh({ polish: polishB, bootColor: bootColorB });
+  const connB = buildFiberConnectorGroup(fiberType, polishB, () =>
+    buildFcConnectorMesh({ polish: polishB, bootColor: bootColorB }),
+  );
   connB.userData.fiberConnectorEndpoint = "B";
   if (endB) placeFerruleAtJunction(connB, endB);
   else applyFiberConnectorTransform(connB, nodes, "B");
