@@ -253,6 +253,65 @@ export function resolveBindingTree(
 }
 
 
+/** For a cable Component (kind_id 'fiber' / 'rf_cable') whose binding tree
+ *  references two connector Asset3Ds (one per end), derive the
+ *  spline-renderer properties so the spline draws the bound connector at
+ *  each end. The cable itself renders procedurally (its kindId spline
+ *  branch in loadAssetObject), so the connector bindings are DATA — which
+ *  connector asset goes at end A / end B — not separately-rendered nodes.
+ *
+ *  Returns null when fewer than two connector-asset bindings exist; the
+ *  caller then falls back to the Component's own `properties`
+ *  (fiberKindParamsOverride / endAConnector — the single-binding preset
+ *  cables use that path).
+ *
+ *  End A / B order: `binding.properties.splineEnd` "A" / "B" when set,
+ *  else ascending `sortOrder`. */
+export function deriveCablePropsFromConnectorBindings(
+  component: ComponentItem,
+  scene: Pick<SceneData, "componentBindings" | "assets">,
+): Record<string, unknown> | null {
+  const assetById = new Map((scene.assets ?? []).map((a) => [a.id, a]));
+  const isConnector = (id: string | null): boolean => {
+    const k = id ? assetById.get(id)?.kindId : null;
+    return k === "fiber_connector" || k === "rf_cable_connector";
+  };
+  const conn = (scene.componentBindings ?? []).filter(
+    (b) => b.componentId === component.id && b.targetKind === "asset" && isConnector(b.asset3dId),
+  );
+  if (conn.length < 2) return null;
+
+  const endRank = (b: ComponentBinding): number => {
+    const e = (b.properties as { splineEnd?: string } | undefined)?.splineEnd;
+    return e === "A" ? 0 : e === "B" ? 1 : 2;
+  };
+  const sorted = [...conn].sort(
+    (x, y) => endRank(x) - endRank(y) || (x.sortOrder ?? 0) - (y.sortOrder ?? 0),
+  );
+  const aAsset = assetById.get(sorted[0].asset3dId ?? "");
+  const bAsset = assetById.get(sorted[1].asset3dId ?? "");
+  if (!aAsset || !bAsset) return null;
+  const dpA = (aAsset.defaultParams ?? {}) as Record<string, unknown>;
+  const dpB = (bAsset.defaultParams ?? {}) as Record<string, unknown>;
+
+  if (component.kindId === "fiber") {
+    return {
+      fiberKindParamsOverride: {
+        fiberType:
+          (dpA.fiberType as string) ?? (dpB.fiberType as string) ?? "polarization_maintaining",
+        endA: { polish: (dpA.polish as string) ?? "PC" },
+        endB: { polish: (dpB.polish as string) ?? "PC" },
+      },
+    };
+  }
+  // rf_cable — endAConnector / endBConnector are the gendered tokens the
+  // cable spline normalises (e.g. "sma_male").
+  const tok = (dp: Record<string, unknown>): string =>
+    `${(dp.family as string) ?? "sma"}_${(dp.gender as string) ?? "male"}`;
+  return { endAConnector: tok(dpA), endBConnector: tok(dpB) };
+}
+
+
 function _resolveLevel(
   bindings: ComponentBinding[],
   ownerComponentId: string,

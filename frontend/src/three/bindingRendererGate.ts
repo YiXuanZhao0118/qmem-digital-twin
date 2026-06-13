@@ -34,7 +34,10 @@ import type {
   SceneData,
   SceneObject,
 } from "../types/digitalTwin";
-import { resolveBindingTree } from "../utils/componentBindings";
+import {
+  deriveCablePropsFromConnectorBindings,
+  resolveBindingTree,
+} from "../utils/componentBindings";
 import { loadAssetObject } from "./loadAsset";
 import { buildBindingTreeObject } from "./bindingTreeObject";
 import { GLAN_POLARIZER_PRISM_FILEPATH } from "./loadAsset/procedural/glan_polarizer_prism";
@@ -85,6 +88,35 @@ export async function buildSceneObjectFromBindings(
   sceneObject: SceneObject | null,
   scene: Pick<SceneData, "componentBindings" | "objectBindings" | "assets" | "components">,
 ): Promise<THREE.Object3D> {
+  // Cables (fiber / rf_cable) render procedurally via their kindId spline
+  // branch in loadAssetObject — NOT by walking binding nodes, which would
+  // re-render the whole spline once per connector-asset node. Derive the two
+  // end connectors from the connector-asset bindings, inject them into the
+  // spline's properties, and render the spline ONCE. Per-instance spline
+  // state (fiberNodes / rfCableNodes / radiusMm) forwards from the
+  // SceneObject here too.
+  if (component.kindId === "fiber" || component.kindId === "rf_cable") {
+    const derived = deriveCablePropsFromConnectorBindings(component, scene);
+    const loaderComponent = derived
+      ? { ...component, properties: { ...(component.properties ?? {}), ...derived } }
+      : component;
+    const objectProps = sceneObject?.properties as unknown as Parameters<
+      typeof loadAssetObject
+    >[3];
+    const content = await loadAssetObject(
+      loaderComponent,
+      undefined,
+      undefined,
+      objectProps,
+      null,
+      null,
+    );
+    const group = new THREE.Group();
+    group.add(content);
+    group.name = component.name;
+    return group;
+  }
+
   const tree = resolveBindingTree(component, sceneObject, scene);
   // Per-instance binding-override deltas are applied INSIDE
   // resolveBindingTree (via _effectiveTransform), which reads them off
