@@ -564,6 +564,12 @@ export function ComponentsEditor({
   const [createModel, setCreateModel] = useState("");
   const [createAssetIds, setCreateAssetIds] = useState<string[]>([]);
   const [createFilter, setCreateFilter] = useState("");
+  // Creation profile: a plain component (pick any assets) vs a cable / fibre
+  // patch (kind_id rf_cable / fiber + exactly two connector-asset bindings,
+  // one per spline end; the two ends may be the same connector asset).
+  const [createProfile, setCreateProfile] = useState<"standard" | "cable" | "fiber">("standard");
+  const [createEndA, setCreateEndA] = useState("");
+  const [createEndB, setCreateEndB] = useState("");
 
   const reloadBindings = async (componentId: string): Promise<void> => {
     setBindingsLoading(true);
@@ -656,6 +662,9 @@ export function ComponentsEditor({
     setCreateModel("");
     setCreateAssetIds([]);
     setCreateFilter("");
+    setCreateProfile("standard");
+    setCreateEndA("");
+    setCreateEndB("");
     setCreateOpen(true);
   };
 
@@ -665,6 +674,54 @@ export function ComponentsEditor({
       setError("Component name is required");
       return;
     }
+
+    // Cable / fibre patch: kind_id rf_cable / fiber + two connector-asset
+    // bindings (one per spline end, may be the same asset). The spline
+    // renderer derives each end's connector from the bound asset.
+    if (createProfile === "cable" || createProfile === "fiber") {
+      if (!createEndA || !createEndB) {
+        setError("Pick a connector for both End A and End B");
+        return;
+      }
+      const kindId = createProfile === "fiber" ? "fiber" : "rf_cable";
+      try {
+        const created = await createComponentApi({
+          name,
+          kindId,
+          brand: createBrand.trim() || undefined,
+          model: createModel.trim() || undefined,
+        });
+        const ends: Array<{ id: string; end: "A" | "B" }> = [
+          { id: createEndA, end: "A" },
+          { id: createEndB, end: "B" },
+        ];
+        for (let i = 0; i < ends.length; i++) {
+          const asset = assets.find((a) => a.id === ends[i].id);
+          if (!asset) continue;
+          await createComponentBindingApi(created.id, {
+            targetKind: "asset",
+            parentBindingId: null,
+            asset3dId: asset.id,
+            role: `end_${ends[i].end.toLowerCase()}`,
+            localXMm: 0,
+            localYMm: 0,
+            localZMm: 0,
+            localRxDeg: 0,
+            localRyDeg: 0,
+            localRzDeg: 0,
+            sortOrder: i,
+            properties: { splineEnd: ends[i].end },
+          });
+        }
+        await loadScene();
+        setSelectedId(created.id);
+        setCreateOpen(false);
+      } catch (e) {
+        setError(`Create failed: ${String(e)}`);
+      }
+      return;
+    }
+
     // Kind is determined by the bound assets: one shared physics kind → that
     // kind; multiple distinct kinds or none → "none" (composite, e.g. the
     // isolator). domain then follows via componentDomainById.
@@ -799,6 +856,24 @@ export function ComponentsEditor({
       : assets;
     return [...base].sort((a, b) => a.name.localeCompare(b.name));
   }, [assets, createFilter]);
+
+  // Connector assets for the cable / fibre profile's End-A / End-B pickers.
+  const createConnectorKind =
+    createProfile === "fiber"
+      ? "fiber_connector"
+      : createProfile === "cable"
+        ? "rf_cable_connector"
+        : null;
+  const createConnectorAssets = useMemo(() => {
+    if (!createConnectorKind) return [];
+    return assets
+      .filter((a) => (a as { kindId?: string | null }).kindId === createConnectorKind)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [assets, createConnectorKind]);
+
+  const createValid =
+    createName.trim().length > 0 &&
+    (createProfile === "standard" || (createEndA !== "" && createEndB !== ""));
 
   // Esc closes the picker; matches the rest of this codebase's modal
   // conventions (Asset3DEditor's New Asset modal handles its own
@@ -1138,6 +1213,33 @@ export function ComponentsEditor({
                 style={{ ...inputStyle, width: "100%" }}
               />
             </label>
+            <div style={{ display: "flex", gap: 6 }}>
+              {(["standard", "cable", "fiber"] as const).map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => {
+                    setCreateProfile(p);
+                    setCreateEndA("");
+                    setCreateEndB("");
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: "6px 8px",
+                    fontSize: 11,
+                    borderRadius: 3,
+                    border: "1px solid",
+                    borderColor: createProfile === p ? "#4ec9b0" : "#d8ded8",
+                    background: createProfile === p ? "#e6f7f3" : "#ffffff",
+                    color: "#374151",
+                    fontWeight: createProfile === p ? 700 : 400,
+                    cursor: "pointer",
+                  }}
+                >
+                  {p === "standard" ? "一般 Standard" : p === "cable" ? "RF Cable" : "Fiber"}
+                </button>
+              ))}
+            </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
               <label style={{ fontSize: 11, color: "#6b7280" }}>
                 brand
@@ -1148,47 +1250,89 @@ export function ComponentsEditor({
                 <input value={createModel} onChange={(e) => setCreateModel(e.target.value)} placeholder="optional" style={{ ...inputStyle, width: "100%" }} />
               </label>
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
-              <span style={{ fontSize: 11, color: "#374151", fontWeight: 600 }}>
-                Bindings — assets to attach ({createAssetIds.length})
-              </span>
-              <span style={{ fontSize: 10, color: "#9ca3af" }}>kind &amp; domain derived from these</span>
-            </div>
-            <input
-              placeholder="filter assets by name / catalog_id / kind"
-              value={createFilter}
-              onChange={(e) => setCreateFilter(e.target.value)}
-              style={{ ...inputStyle, width: "100%" }}
-            />
-            <div style={{ overflowY: "auto", border: "1px solid #e9ece9", borderRadius: 2, minHeight: 80, maxHeight: "40vh", flex: 1 }}>
-              {createAssetsFiltered.length === 0 && (
-                <div style={{ padding: 16, color: "#6b7280", fontSize: 11 }}>No assets match the filter.</div>
-              )}
-              {createAssetsFiltered.map((asset) => {
-                const checked = createAssetIds.includes(asset.id);
-                return (
-                  <label
-                    key={asset.id}
-                    style={{ display: "flex", gap: 8, alignItems: "center", padding: "6px 10px", borderBottom: "1px solid #f3f4f1", cursor: "pointer" }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() =>
-                        setCreateAssetIds((prev) =>
-                          prev.includes(asset.id) ? prev.filter((x) => x !== asset.id) : [...prev, asset.id],
-                        )
-                      }
-                    />
-                    <span style={{ fontWeight: 600, fontSize: 12 }}>{asset.name}</span>
-                    {asset.catalogId && <code style={{ fontSize: 10, color: "#6b7280" }}>{asset.catalogId}</code>}
-                    {asset.kindId && asset.kindId !== "none" && (
-                      <span style={{ fontSize: 10, color: "#4ec9b0", fontFamily: "ui-monospace, monospace" }}>{asset.kindId}</span>
-                    )}
-                  </label>
-                );
-              })}
-            </div>
+            {createProfile === "standard" && (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+                  <span style={{ fontSize: 11, color: "#374151", fontWeight: 600 }}>
+                    Bindings — assets to attach ({createAssetIds.length})
+                  </span>
+                  <span style={{ fontSize: 10, color: "#9ca3af" }}>kind &amp; domain derived from these</span>
+                </div>
+                <input
+                  placeholder="filter assets by name / catalog_id / kind"
+                  value={createFilter}
+                  onChange={(e) => setCreateFilter(e.target.value)}
+                  style={{ ...inputStyle, width: "100%" }}
+                />
+                <div style={{ overflowY: "auto", border: "1px solid #e9ece9", borderRadius: 2, minHeight: 80, maxHeight: "40vh", flex: 1 }}>
+                  {createAssetsFiltered.length === 0 && (
+                    <div style={{ padding: 16, color: "#6b7280", fontSize: 11 }}>No assets match the filter.</div>
+                  )}
+                  {createAssetsFiltered.map((asset) => {
+                    const checked = createAssetIds.includes(asset.id);
+                    return (
+                      <label
+                        key={asset.id}
+                        style={{ display: "flex", gap: 8, alignItems: "center", padding: "6px 10px", borderBottom: "1px solid #f3f4f1", cursor: "pointer" }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() =>
+                            setCreateAssetIds((prev) =>
+                              prev.includes(asset.id) ? prev.filter((x) => x !== asset.id) : [...prev, asset.id],
+                            )
+                          }
+                        />
+                        <span style={{ fontWeight: 600, fontSize: 12 }}>{asset.name}</span>
+                        {asset.catalogId && <code style={{ fontSize: 10, color: "#6b7280" }}>{asset.catalogId}</code>}
+                        {asset.kindId && asset.kindId !== "none" && (
+                          <span style={{ fontSize: 10, color: "#4ec9b0", fontFamily: "ui-monospace, monospace" }}>{asset.kindId}</span>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+            {(createProfile === "cable" || createProfile === "fiber") && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
+                <span style={{ fontSize: 11, color: "#374151", fontWeight: 600 }}>
+                  Connectors — pick one per end{" "}
+                  <code style={{ fontSize: 10, color: "#6b7280" }}>{createConnectorKind}</code>
+                </span>
+                {createConnectorAssets.length === 0 && (
+                  <div style={{ fontSize: 11, color: "#b91c1c" }}>
+                    No {createConnectorKind} assets exist yet — add one in the ASSET3D tab first.
+                  </div>
+                )}
+                {(["A", "B"] as const).map((end) => {
+                  const value = end === "A" ? createEndA : createEndB;
+                  const setValue = end === "A" ? setCreateEndA : setCreateEndB;
+                  return (
+                    <label key={end} style={{ fontSize: 11, color: "#6b7280", display: "flex", flexDirection: "column", gap: 2 }}>
+                      End {end}
+                      <select
+                        value={value}
+                        onChange={(e) => setValue(e.target.value)}
+                        style={{ ...inputStyle, width: "100%" }}
+                      >
+                        <option value="">— pick connector —</option>
+                        {createConnectorAssets.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name}
+                            {a.catalogId ? ` (${a.catalogId})` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  );
+                })}
+                <span style={{ fontSize: 10, color: "#9ca3af" }}>
+                  兩端可選同一個接頭。spline 形狀預設直線,建立後可編輯 fiberNodes。
+                </span>
+              </div>
+            )}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
               <button
                 type="button"
@@ -1200,8 +1344,8 @@ export function ComponentsEditor({
               <button
                 type="button"
                 onClick={() => void handleCreateComponent()}
-                disabled={!createName.trim()}
-                style={{ ...btnPrimary, opacity: createName.trim() ? 1 : 0.5, cursor: createName.trim() ? "pointer" : "not-allowed" }}
+                disabled={!createValid}
+                style={{ ...btnPrimary, opacity: createValid ? 1 : 0.5, cursor: createValid ? "pointer" : "not-allowed" }}
               >
                 Create
               </button>
