@@ -1136,8 +1136,8 @@ export function ComponentsEditor({
                 justifyContent: "space-between",
               }}
             >
-              <span>Bindings ({childBindings.length})</span>
-                {isBindingDev && (
+              <span>{isCableComp ? "Ends" : `Bindings (${childBindings.length})`}</span>
+                {isBindingDev && !isCableComp && (
                   <button
                     type="button"
                     onClick={handleAddBinding}
@@ -1158,83 +1158,42 @@ export function ComponentsEditor({
                 </div>
               )}
               {childBindings.length > 0 && isCableComp && (
-                <table
+                <div
                   style={{
-                    width: "100%",
+                    marginTop: 8,
                     fontSize: 11,
                     fontFamily: "ui-monospace, monospace",
-                    marginTop: 8,
-                    borderCollapse: "collapse",
+                    border: "1px solid #e9ece9",
+                    borderRadius: 2,
+                    padding: "8px 10px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 6,
                   }}
                 >
-                  <thead>
-                    <tr style={{ borderBottom: "1px solid #e9ece9" }}>
-                      <th style={thStyle} title="Which spline end this connector sits on">end</th>
-                      <th style={thStyle}>connector</th>
-                      {isBindingDev && <th style={thStyle}></th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cableEndBindings.map((b) => {
-                      const end = (b.properties as { splineEnd?: string } | undefined)?.splineEnd ?? "";
-                      const a = b.asset3dId ? assetById.get(b.asset3dId) : undefined;
-                      const tdS = { padding: "4px 6px", borderBottom: "1px solid #e9ece9", verticalAlign: "top" as const };
-                      return (
-                        <tr
-                          key={b.id}
-                          style={{ cursor: "pointer", background: b.id === selectedBindingId ? "#fef3c7" : "transparent" }}
-                          onClick={() => setSelectedBindingId(b.id)}
-                        >
-                          <td style={tdS}>
-                            <select
-                              value={end}
-                              onClick={(e) => e.stopPropagation()}
-                              onChange={(e) =>
-                                void handlePatchBinding(b.id, {
-                                  properties: {
-                                    ...((b.properties as Record<string, unknown> | undefined) ?? {}),
-                                    splineEnd: e.target.value,
-                                  },
-                                })
-                              }
-                              style={{ ...inputStyle, width: 56 }}
-                            >
-                              <option value="">—</option>
-                              <option value="A">A</option>
-                              <option value="B">B</option>
-                            </select>
-                          </td>
-                          <td style={tdS}>
-                            <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.2, gap: 2 }}>
-                              <span style={{ fontWeight: 600 }}>
-                                {(a as { name?: string } | undefined)?.name ?? "—"}
-                              </span>
-                              {(a as { catalogId?: string | null } | undefined)?.catalogId && (
-                                <code style={{ fontSize: 10, color: "#6b7280" }}>
-                                  {(a as { catalogId?: string }).catalogId}
-                                </code>
-                              )}
-                            </div>
-                          </td>
-                          {isBindingDev && (
-                            <td style={tdS}>
-                              <button
-                                type="button"
-                                onClick={(ev) => {
-                                  ev.stopPropagation();
-                                  void handleRemoveBinding(b.id);
-                                }}
-                                style={{ background: "transparent", color: "#f87171", border: "none", cursor: "pointer", fontSize: 14 }}
-                              >
-                                ✗
-                              </button>
-                            </td>
-                          )}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                  {(["A", "B"] as const).map((end, i) => {
+                    const b =
+                      cableEndBindings.find(
+                        (x) => (x.properties as { splineEnd?: string } | undefined)?.splineEnd === end,
+                      ) ?? cableEndBindings[i];
+                    const a = b?.asset3dId ? assetById.get(b.asset3dId) : undefined;
+                    return (
+                      <div key={end} style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+                        <span style={{ fontWeight: 700, color: "#374151", width: 48, flexShrink: 0 }}>
+                          End {end}
+                        </span>
+                        <span style={{ fontWeight: 600 }}>
+                          {(a as { name?: string } | undefined)?.name ?? "— not set —"}
+                        </span>
+                        {(a as { catalogId?: string | null } | undefined)?.catalogId && (
+                          <code style={{ fontSize: 10, color: "#6b7280" }}>
+                            {(a as { catalogId?: string }).catalogId}
+                          </code>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               )}
               {childBindings.length > 0 && !isCableComp && (
                 <table
