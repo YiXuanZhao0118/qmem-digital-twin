@@ -63,6 +63,7 @@ import { VIEWER_BG_LIGHT, VIEWER_GROUND_FILL } from "../three/viewerTheme";
 import { createFiberSplineObject } from "../three/loadAsset/fiber/spline";
 import type { FiberNode } from "../three/loadAsset/fiber";
 import { anchorObjectLocalAxisX, anchorObjectLocalPos } from "../utils/anchorAccess";
+import { deriveCablePropsFromConnectorBindings } from "../utils/componentBindings";
 import { OPTICAL_ALIGN_KINDS } from "../utils/isolatorAlign";
 import { getNumericProperty } from "../three/transformUtils";
 import type {
@@ -2274,6 +2275,57 @@ function ComponentPreview3D({
       if (b.targetKind !== "asset" || !b.asset3dId) return null;
       const asset = assetById.get(b.asset3dId);
       if (!asset) return null;
+
+      // Cable Component (kind_id fiber / rf_cable) whose two ends are defined
+      // by connector-asset bindings: render the spline ONCE. The first
+      // connector binding (splineEnd "A" / lowest sortOrder) draws the whole
+      // cable — both ends derived from the bindings — and the other connector
+      // bindings draw nothing. Matches the lab viewer's
+      // buildSceneObjectFromBindings cable special-case.
+      const pc = parentComponent;
+      const isConnAsset =
+        asset.kindId === "fiber_connector" || asset.kindId === "rf_cable_connector";
+      if (pc && (pc.kindId === "fiber" || pc.kindId === "rf_cable") && isConnAsset) {
+        const rank = (x: ComponentBinding): number => {
+          const e = (x.properties as { splineEnd?: string } | undefined)?.splineEnd;
+          return e === "A" ? 0 : e === "B" ? 1 : 2;
+        };
+        const connBindings = bindings
+          .filter((x) => {
+            const k = x.asset3dId
+              ? (assetById.get(x.asset3dId) as { kindId?: string } | undefined)?.kindId
+              : null;
+            return (
+              x.targetKind === "asset" &&
+              (k === "fiber_connector" || k === "rf_cable_connector")
+            );
+          })
+          .sort((x, y) => rank(x) - rank(y) || (x.sortOrder ?? 0) - (y.sortOrder ?? 0));
+        if (connBindings[0]?.id !== b.id) return null; // only the first draws the cable
+        const derived = deriveCablePropsFromConnectorBindings(pc, {
+          componentBindings: bindings,
+          assets: [...assetById.values()],
+        });
+        const cableComp: ComponentItem = {
+          id: `preview-${pc.id}`,
+          name: pc.name,
+          kindId: pc.kindId,
+          properties: { ...(pc.properties ?? {}), ...(derived ?? {}) },
+          physicsCapabilities: pc.kindId === "fiber" ? ["optical"] : ["rf"],
+        } as ComponentItem;
+        const straightNodes: FiberNode[] = [{ posMm: [-150, 0, 0] }, { posMm: [150, 0, 0] }];
+        const cableObj =
+          pc.kindId === "fiber"
+            ? createFiberSplineObject(cableComp, straightNodes)
+            : createSmaShortCable(cableComp);
+        if (pc.kindId === "fiber") replaceSpiralTubeWithCylinder(cableObj, "fiberRole");
+        const cableMm = new THREE.Group();
+        cableMm.add(cableObj);
+        cableMm.scale.setScalar(100);
+        cableMm.rotation.x = Math.PI / 2;
+        return cableMm;
+      }
+
       const pivot = poseFromBinding(b);
       // Physics-face overlay (reflection coating for beam splitters, the
       // polarization-rotation plane for faraday rotators) so the isolator
