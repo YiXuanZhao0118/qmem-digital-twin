@@ -21,9 +21,11 @@ import * as THREE from "three";
 
 import { loadAssetGeometry } from "../../loadAssetGeometry";
 import { mergeColoredGeometries, geometryToColoredMesh } from "../../glbExport";
-import { mmToThree } from "../../transformUtils";
+import { bakeConnectorByAnchors, type Vec3Mm } from "../connectorBake";
 
-/** What the store-aware caller resolves a (fiberType, polish) pair to. */
+/** What the store-aware caller resolves a (fiberType, polish) pair to.
+ *  connectOutMm / connectInMm are the asset's connect_out / connect_in anchor
+ *  positions (mm, body frame) — when present they drive the bake. */
 export type FiberConnectorAssetSpec = {
   /** Stable cache key — the resolved asset's catalogId. */
   key: string;
@@ -31,6 +33,8 @@ export type FiberConnectorAssetSpec = {
   ext: string;
   unit?: string;
   scaleFactor?: number;
+  connectOutMm?: Vec3Mm | null;
+  connectInMm?: Vec3Mm | null;
 };
 
 type Resolver = (fiberType: string, polish: string) => FiberConnectorAssetSpec | null;
@@ -48,23 +52,6 @@ export function setFiberConnectorAssetResolver(fn: Resolver | null): void {
   loading.clear();
 }
 
-/** Bake a loaded connector model into the fibre connector frame: cable-side
- *  end at y=0, ferrule axis = +Y (the spline rotates +Y onto the outward
- *  tangent). The model's longest bbox axis becomes +Y, its near end drops to
- *  y=0, centred on X/Z. */
-function bakeFiberConnectorFrame(geom: THREE.BufferGeometry): THREE.BufferGeometry {
-  geom.scale(mmToThree(1), mmToThree(1), mmToThree(1)); // mm → scene units
-  geom.computeBoundingBox();
-  const size = new THREE.Vector3();
-  geom.boundingBox!.getSize(size);
-  if (size.x >= size.y && size.x >= size.z) geom.rotateZ(Math.PI / 2); // longest X → Y
-  else if (size.z >= size.x && size.z >= size.y) geom.rotateX(-Math.PI / 2); // longest Z → Y
-  geom.computeBoundingBox();
-  const bb = geom.boundingBox!;
-  geom.translate(-(bb.min.x + bb.max.x) / 2, -bb.min.y, -(bb.min.z + bb.max.z) / 2);
-  return geom;
-}
-
 async function loadFiberConnector(spec: FiberConnectorAssetSpec): Promise<void> {
   if (geomCache.has(spec.key) || loading.has(spec.key)) return;
   loading.add(spec.key);
@@ -73,9 +60,11 @@ async function loadFiberConnector(spec: FiberConnectorAssetSpec): Promise<void> 
       unit: spec.unit,
       scaleFactor: spec.scaleFactor,
     });
+    // Fibre placement rotates the connector's local +Y onto the outward tangent.
+    const merged = mergeColoredGeometries(subs.map((s) => s.geometry));
     geomCache.set(
       spec.key,
-      bakeFiberConnectorFrame(mergeColoredGeometries(subs.map((s) => s.geometry))),
+      bakeConnectorByAnchors(merged, spec.connectOutMm, spec.connectInMm, new THREE.Vector3(0, 1, 0)),
     );
   } catch (e) {
     console.warn(`[fiber] failed to load connector model "${spec.key}" — using procedural FC fallback`, e);

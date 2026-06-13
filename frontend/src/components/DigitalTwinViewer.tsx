@@ -366,6 +366,21 @@ function addSelectionMarker(object: THREE.Object3D, container: THREE.Object3D): 
   object.add(marker);
 }
 
+/** Extract a connector asset's connect_out / connect_in anchor position (mm,
+ *  body frame) so the connector bake can be driven by anchors instead of a
+ *  bbox guess. Returns null when the anchor is absent. */
+function connectorAnchorPos(
+  anchors: readonly unknown[] | null | undefined,
+  id: string,
+): { x: number; y: number; z: number } | null {
+  const a = (anchors ?? []).find((x) => (x as { id?: string }).id === id);
+  const p = (a as { positionMmBodyLocal?: { x?: number; y?: number; z?: number } } | undefined)
+    ?.positionMmBodyLocal;
+  return p && typeof p.x === "number" && typeof p.y === "number" && typeof p.z === "number"
+    ? { x: p.x, y: p.y, z: p.z }
+    : null;
+}
+
 /** Add INPUT / OUTPUT port labels to a tapered-amplifier mesh wrapper.
  *  Reads the same aperture coordinates the ray-tracer uses
  *  (`apertureBackwardLocalMm` = INPUT seed port, `apertureForwardLocalMm`
@@ -1908,6 +1923,8 @@ export function DigitalTwinViewer({
             ext: asset.filePath.split("?")[0].split(".").pop()?.toLowerCase() ?? "",
             unit: asset.unit,
             scaleFactor: asset.scaleFactor,
+            connectOutMm: connectorAnchorPos(asset.anchors, "connect_out"),
+            connectInMm: connectorAnchorPos(asset.anchors, "connect_in"),
           };
         }
       }
@@ -1939,6 +1956,8 @@ export function DigitalTwinViewer({
         ext: match.filePath.split("?")[0].split(".").pop()?.toLowerCase() ?? "",
         unit: match.unit,
         scaleFactor: match.scaleFactor,
+        connectOutMm: connectorAnchorPos(match.anchors, "connect_out"),
+        connectInMm: connectorAnchorPos(match.anchors, "connect_in"),
       };
     });
     return () => setFiberConnectorAssetResolver(null);
