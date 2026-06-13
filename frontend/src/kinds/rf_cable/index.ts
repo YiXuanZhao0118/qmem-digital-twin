@@ -1,8 +1,20 @@
-import { definePhysicsPlugin } from "../_plugin";
+import {
+  anchorContractFromRoles,
+  definePhysicsPlugin,
+  portDomainsFromRoles,
+  type RolesMap,
+} from "../_plugin";
 
 export interface RfCableParams extends Record<string, unknown> {
   lengthMm: number;
 }
+
+// Bidirectional coax cable — two connector tips, both required and
+// direction-bearing. Per-role spec (plan §2.1).
+const RF_CABLE_ROLES: RolesMap = {
+  rf_in: { min: 1, domain: "rf", direction: true },
+  rf_out: { min: 1, domain: "rf", direction: true },
+};
 
 export const rfCablePlugin = definePhysicsPlugin<RfCableParams>({
   id: "rf_cable",
@@ -16,11 +28,8 @@ export const rfCablePlugin = definePhysicsPlugin<RfCableParams>({
     elementKind: "rf_cable",
     primaryDomain: "rf",
     defaultPhysics: ["rf"],
-    anchors: {
-      required: ["rf_in", "rf_out"],
-      optional: [],
-      needsDirection: ["rf_in", "rf_out"],
-    },
+    roles: RF_CABLE_ROLES,
+    anchors: anchorContractFromRoles(RF_CABLE_ROLES),
     alignVariant: "none",
     alignToleranceMm: 25,
     alignSummary:
@@ -28,5 +37,6 @@ export const rfCablePlugin = definePhysicsPlugin<RfCableParams>({
     defaultParams: {
       lengthMm: 152.0,
     },
+    portDomains: portDomainsFromRoles(RF_CABLE_ROLES),
   },
 });

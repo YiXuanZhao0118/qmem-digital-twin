@@ -11,7 +11,12 @@
  * TTL state on ttl_in (or kind-level TTL_GATE_KINDS picker if no cable).
  * Needs ±5 V supply (POWER_KINDS).
  */
-import { definePhysicsPlugin } from "../_plugin";
+import {
+  anchorContractFromRoles,
+  definePhysicsPlugin,
+  portDomainsFromRoles,
+  type RolesMap,
+} from "../_plugin";
 
 export interface RfSwitchParams extends Record<string, unknown> {
   throwCount: number;
@@ -26,6 +31,14 @@ export interface RfSwitchParams extends Record<string, unknown> {
   ttlState: "HIGH" | "LOW";
 }
 
+// SP2T+ coax switch — common input, N throws (rf_out unbounded multiport,
+// disambiguated by name), one TTL control line. Per-role spec (plan §2.1).
+const RF_SWITCH_ROLES: RolesMap = {
+  rf_in: { min: 1, domain: "rf", direction: true },
+  rf_out: { min: 1, max: null, domain: "rf", direction: true },
+  ttl_in: { min: 1, domain: "ttl", direction: true },
+};
+
 export const rfSwitchPlugin = definePhysicsPlugin<RfSwitchParams>({
   id: "rf_switch",
   displayName: "RF Switch",
@@ -36,11 +49,8 @@ export const rfSwitchPlugin = definePhysicsPlugin<RfSwitchParams>({
     elementKind: "rf_switch",
     primaryDomain: "rf",
     defaultPhysics: ["rf"],
-    anchors: {
-      required: ["rf_in", "rf_out", "ttl_in"],
-      optional: [],
-      needsDirection: ["rf_in", "rf_out", "ttl_in"],
-    },
+    roles: RF_SWITCH_ROLES,
+    anchors: anchorContractFromRoles(RF_SWITCH_ROLES),
     alignVariant: "none",
     alignToleranceMm: 25,
     alignSummary:
@@ -51,5 +61,6 @@ export const rfSwitchPlugin = definePhysicsPlugin<RfSwitchParams>({
       ttlActiveHighThrow: 2,
       ttlState: "LOW",
     },
+    portDomains: portDomainsFromRoles(RF_SWITCH_ROLES),
   },
 });

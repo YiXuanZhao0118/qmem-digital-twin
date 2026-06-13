@@ -4,7 +4,7 @@
 
 > 屬 [核心資料模型](data-model.md) 第 1 層。相關：[anchors.md](anchors.md)（anchor 標註）、[kinds.md](kinds.md)（每 kind 物理參數）、[rendering.md](rendering.md)（如何渲染）。
 
-**Asset3D** — 可重用 3D 模型 + 其物理預設。DB 表 `assets_3d`，存：`file_path`（.glb/.stl，API `filePath`；舊文件曾叫 geometryRef）、`kind_id`（**NOT NULL，migration 0111**；預設 `unclassified`，無「無 kind」狀態）、`anchors[]`（光學介面：每個 anchor 帶方向 + aperture）、`default_params`（該零件內在物理，如某顆 Thorlabs 透鏡的焦距）、`wavelength_range_nm`、`properties.viewerHints`。**物理預設只存在這裡。**
+**Asset3D** — 可重用 3D 模型 + 其物理預設。DB 表 `assets_3d`，存：`file_path`（.glb/.stl，API `filePath`；舊文件曾叫 geometryRef）、`kind_id`（**NOT NULL，migration 0111**；預設 `unclassified`，無「無 kind」狀態）、`device_id`（**nullable，migration 0118**；device registry 指標，設值＝anchors 為 device 模板 materialized view、kind_id 由 device behavioralKind 寫穿，見 [kinds.md](kinds.md) device 節）、`anchors[]`（光學介面：每個 anchor 帶方向 + aperture）、`default_params`（該零件內在物理，如某顆 Thorlabs 透鏡的焦距）、`wavelength_range_nm`、`properties.viewerHints`。**物理預設只存在這裡。**
 
 ## 相關概念
 

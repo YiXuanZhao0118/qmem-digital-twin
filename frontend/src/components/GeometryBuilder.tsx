@@ -80,7 +80,7 @@ function isProceduralPath(filePath: string): boolean {
  *  but the value always conforms to `Asset3D`'s "mm" | "m", and the procedural
  *  builder only reads filePath / kindId / defaultParams, so the bridge is sound. */
 async function loadEditableAsset(asset: V3Asset): Promise<LoadedSubMesh[]> {
-  if (isProceduralPath(asset.filePath)) return loadProceduralAssetGeometry(asset as Asset3D);
+  if (isProceduralPath(asset.filePath)) return loadProceduralAssetGeometry(asset as unknown as Asset3D);
   const ext = extOf(asset.assetType || asset.filePath);
   if (!VIEWER_EXTS.has(ext)) {
     throw new Error(`"${asset.catalogId}" is .${ext} — only GLB/GLTF/OBJ/STL or procedural assets can be loaded.`);
@@ -1367,9 +1367,9 @@ export function GeometryBuilder() {
                 </button>
               </div>
               <div>
-                x {facePick.x.toFixed(1)}  y {facePick.y.toFixed(1)}  z {facePick.z.toFixed(1)} mm
+                x {facePick.x.toFixed(5)}  y {facePick.y.toFixed(5)}  z {facePick.z.toFixed(5)} mm
               </div>
-              <div>distance <b>{facePick.dist.toFixed(2)}</b> mm</div>
+              <div>distance <b>{facePick.dist.toFixed(5)}</b> mm</div>
             </div>
           )}
         </div>

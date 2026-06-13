@@ -53,6 +53,7 @@ import { domainForElementKind } from "../utils/elementDefaults";
 import type { ElementKind } from "../types/digitalTwin";
 import { isPhysicsPlugin, resolvePortDomain } from "../kinds/_plugin";
 import { pluginForKind } from "../kinds/_plugins";
+import { DEVICES, deviceById, devicesForBehavioralKind } from "../devices/_registry";
 import { isEditableValue } from "../utils/paramLeaves";
 import { cleanNumber } from "../utils/numberFormat";
 
@@ -329,6 +330,31 @@ function faceNormal(anchor: DraftAnchor): THREE.Vector3 {
   const z = readDraftNumber(anchor.nz) ?? 1;
   const normal = new THREE.Vector3(x, y, z);
   return normal.lengthSq() > 1e-12 ? normal.normalize() : new THREE.Vector3(0, 0, 1);
+}
+
+/** Full body-local orientation of an anchor's aperture marker. The marker's
+ *  local frame maps: +Z → axisX (the normal), +X → axisY, +Y → axisZ. So a
+ *  PlaneGeometry(w, h) has its width along axisY and height along axisZ, and
+ *  the marker ROLLS with the anchor's axisY (the in-plane transverse / s-p
+ *  reference) instead of an arbitrary shortest-arc roll. Uses the SAME basis
+ *  derivation as save (`deriveOrthonormalBasis`) so the preview matches the
+ *  persisted frame; e.g. rotating axisY 45° about axisX visibly rolls a
+ *  rectangular aperture 45°. */
+function faceOrientation(anchor: DraftAnchor): THREE.Quaternion {
+  const normal = faceNormal(anchor);
+  const yx = readDraftNumber(anchor.yx) ?? 0;
+  const yy = readDraftNumber(anchor.yy) ?? 1;
+  const yz = readDraftNumber(anchor.yz) ?? 0;
+  const { axisX, axisY, axisZ } = deriveOrthonormalBasis(
+    { x: normal.x, y: normal.y, z: normal.z },
+    { x: yx, y: yy, z: yz },
+  );
+  const m = new THREE.Matrix4().makeBasis(
+    new THREE.Vector3(axisY.x, axisY.y, axisY.z),
+    new THREE.Vector3(axisZ.x, axisZ.y, axisZ.z),
+    new THREE.Vector3(axisX.x, axisX.y, axisX.z),
+  );
+  return new THREE.Quaternion().setFromRotationMatrix(m);
 }
 
 function mmText(value: number): string {
@@ -1656,7 +1682,7 @@ function FaceLocator3D({
         }),
       );
       ring.renderOrder = 29;
-      ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
+      ring.quaternion.copy(faceOrientation(anchor));
       group.add(ring);
 
       // For internal B* faces, also render a filled translucent disk to
@@ -1674,7 +1700,7 @@ function FaceLocator3D({
           }),
         );
         disk.renderOrder = 25;
-        disk.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
+        disk.quaternion.copy(faceOrientation(anchor));
         group.add(disk);
       }
 
@@ -2540,6 +2566,8 @@ function AssetEditForm({
   parentDomain,
   mode,
   inUse,
+  onApplyDevice,
+  applyingDevice,
 }: {
   asset: V3Asset;
   draft: AssetDraft;
@@ -2551,6 +2579,11 @@ function AssetEditForm({
   /** Asset is placed in a scene — lock connector_type to avoid
    *  retroactively breaking those instances. */
   inUse: boolean;
+  /** Seed this asset's anchors from a device template (RF_ARCHITECTURE_PLAN
+   *  §2.3). Persists immediately + refreshes the draft. */
+  onApplyDevice: (deviceId: string) => Promise<void>;
+  /** A device seed is in flight — disable the picker. */
+  applyingDevice: boolean;
 }) {
   const isBindingDev = mode === "binding-dev";
   const kinds = useKindsStore((s) => s.kinds);
@@ -2971,6 +3004,69 @@ function AssetEditForm({
         )}
       </div>
 
+      {/* Device registry picker (RF_ARCHITECTURE_PLAN §2.3). Selecting a
+          device seeds this asset's anchors from the device template and
+          writes kind_id through from the device's behavioralKind — the
+          one-click replacement for the upsert_dds_chassis_1u.py seed script.
+          Shows devices matching the current kind; falls back to the full
+          registry so an unclassified asset can be classified by picking a
+          device. */}
+      {(() => {
+        const matching = devicesForBehavioralKind(draft.kindId);
+        const list = matching.length ? matching : DEVICES;
+        const current = asset.deviceId ?? "";
+        const pickerDisabled = applyingDevice || inUse;
+        return (
+          <div style={{ marginTop: 8 }}>
+            <label style={{ fontSize: 11, color: "#6b7280" }}>
+              device{" "}
+              <span style={{ color: "#9ca3af" }}>
+                (seeds anchors + kind from the device registry)
+              </span>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <select
+                  value={current}
+                  disabled={pickerDisabled}
+                  onChange={(event) => {
+                    const id = event.target.value;
+                    if (id) void onApplyDevice(id);
+                  }}
+                  style={pickerDisabled ? INPUT_DISABLED : INPUT}
+                >
+                  <option value="">— none (hand-authored) —</option>
+                  {list.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.displayName}
+                      {d.behavioralKind ? ` · ${d.behavioralKind}` : ""}
+                    </option>
+                  ))}
+                </select>
+                {current && (
+                  <button
+                    type="button"
+                    title="Re-seed anchors from this device template (discards coordinate tweaks)"
+                    disabled={pickerDisabled}
+                    onClick={() => void onApplyDevice(current)}
+                    style={{
+                      ...ICON_BUTTON,
+                      opacity: pickerDisabled ? 0.45 : 1,
+                      cursor: pickerDisabled ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    ⟳
+                  </button>
+                )}
+              </div>
+            </label>
+            {inUse && (
+              <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2 }}>
+                Placed in a scene — unplace instances to re-seed from a device.
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* Anchors are defined by the kind's anchorTemplate and auto-seeded
           above — no manual add/remove. To change which anchors a kind
           has, edit the kind in the Kinds editor. */}
@@ -3325,6 +3421,37 @@ export function Asset3DEditor({
     }
   };
 
+  // Device-driven seed (RF_ARCHITECTURE_PLAN §2.3): picking a device
+  // materialises its anchor template onto the asset + writes kind_id through
+  // from the device's behavioralKind. We PUT deviceId ALONE — the backend
+  // re-seeds only when a payload carries no explicit anchors, so this is a
+  // dedicated one-click action (the normal Save, which always sends anchors,
+  // then preserves any coordinate fine-tuning the user does afterwards).
+  const applyDevice = async (deviceId: string) => {
+    if (!selected || !selectedKey || saving) return;
+    const device = deviceById(deviceId);
+    if (!device) return;
+    const ok = window.confirm(
+      `Seed anchors from device "${device.displayName}"?\n\n`
+      + `This replaces the asset's anchors with the device template and sets `
+      + `its kind to "${device.behavioralKind ?? "unclassified"}". `
+      + `Unsaved edits are discarded; you can fine-tune coordinates and Save after.`,
+    );
+    if (!ok) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const updated = await updateAsset(selectedKey, { deviceId });
+      setDraft(draftFromAsset(updated));
+      setSelectedAnchorIndex((updated.anchors?.length ?? 0) > 0 ? 0 : null);
+      void useSceneStore.getState().loadScene();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const deleteCurrent = async () => {
     if (!selected || deleting) return;
     const ok = window.confirm(
@@ -3578,6 +3705,8 @@ export function Asset3DEditor({
                 parentDomain={domain}
                 mode={mode}
                 inUse={inUse}
+                onApplyDevice={applyDevice}
+                applyingDevice={saving}
               />
             </div>
           )}

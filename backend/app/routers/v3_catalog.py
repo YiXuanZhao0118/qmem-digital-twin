@@ -22,7 +22,9 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
+from app.kinds_manifest import device_by_id
 from app.lock_guard import assert_delete_allowed, assert_update_allowed
+from app.services.device_seed import materialize_device_anchors
 from app.models import (
     Asset3D, Component, ComponentBinding, ObjectBinding, SceneObject,
 )
@@ -387,6 +389,25 @@ async def update_asset3d_by_catalog_id(
         # kind_id is NOT NULL (0111); a null/empty edit falls back to the
         # "unclassified" placeholder rather than blanking the column.
         row.kind_id = payload.kind_id or "unclassified"
+    if "device_id" in fields:
+        # Device-driven seed (RF_ARCHITECTURE_PLAN §2.3): set the pointer,
+        # then materialise anchors + write kind_id through from the device's
+        # behavioralKind. Explicit anchors / kind_id in the SAME payload win
+        # (the editor sends them when the user has fine-tuned coordinates).
+        row.device_id = payload.device_id
+        device = device_by_id(payload.device_id) if payload.device_id else None
+        if device is not None:
+            behavioral = device.get("behavioral_kind")
+            if behavioral and "kind_id" not in fields:
+                row.kind_id = behavioral
+            if "anchors" not in fields:
+                row.anchors = materialize_device_anchors(device)
+            dev_defaults = device.get("default_params") or {}
+            if dev_defaults:
+                merged = dict(row.default_params or {})
+                for k, v in dev_defaults.items():
+                    merged.setdefault(k, v)
+                row.default_params = merged
     if "anchors" in fields:
         # Phase 9.8: editor's primary write path. Replaces faces[]/
         # transitions[] over time. Pass-through-store as camelCase dicts

@@ -1,8 +1,22 @@
-import { definePhysicsPlugin } from "../_plugin";
+import {
+  anchorContractFromRoles,
+  definePhysicsPlugin,
+  portDomainsFromRoles,
+  type RolesMap,
+} from "../_plugin";
 
 export interface ProgrammablePulseGeneratorParams extends Record<string, unknown> {
   timingProgramId: string | null;
 }
+
+// One coax rf_out emitting the bound TimingProgram's gate. Domain "ttl" per
+// plan §3.1 (⏱); note `rfLinkPorts.resolveRfLinkPortDomain` special-cases a
+// PPG rf_out to the "rfout" gate domain (compatible with ttl + trigger), so
+// this role domain only affects the generic heuristic, not link typing.
+// Per-role spec (plan §2.1).
+const PPG_ROLES: RolesMap = {
+  rf_out: { min: 0, domain: "ttl", direction: true },
+};
 
 export const programmablePulseGeneratorPlugin =
   definePhysicsPlugin<ProgrammablePulseGeneratorParams>({
@@ -15,11 +29,8 @@ export const programmablePulseGeneratorPlugin =
       elementKind: "programmable_pulse_generator",
       primaryDomain: "rf",
       defaultPhysics: ["rf"],
-      anchors: {
-        required: [],
-        optional: ["rf_out"],
-        needsDirection: ["rf_out"],
-      },
+      roles: PPG_ROLES,
+      anchors: anchorContractFromRoles(PPG_ROLES),
       alignVariant: "none",
       alignToleranceMm: 0,
       alignSummary:
@@ -27,5 +38,6 @@ export const programmablePulseGeneratorPlugin =
       defaultParams: {
         timingProgramId: null,
       },
+      portDomains: portDomainsFromRoles(PPG_ROLES),
     },
   });

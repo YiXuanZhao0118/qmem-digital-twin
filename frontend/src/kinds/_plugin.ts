@@ -197,6 +197,44 @@ export interface AnchorContract {
 }
 
 // =============================================================================
+// Per-role anchor spec (RF_ARCHITECTURE_PLAN §2.1) — the unified replacement
+// for the 5 parallel AnchorContract arrays + portDomains.
+// =============================================================================
+
+/** Unified per-role anchor spec. One entry per anchor ROLE the kind owns;
+ *  collapses `required` / `optional` / `needsDirection` / `needsAperture` /
+ *  `needsFastAxis` / `portDomains` into a single declaration keyed by role id.
+ *
+ *  Cardinality (plan §8 — "omit max = 1"):
+ *    - `min`  : 0 → optional, ≥1 → required.
+ *    - `max`  : omitted → single port (1); a number → bounded multiport;
+ *               `null` → unbounded multiport (rf_out on a DDS / switch).
+ *
+ *  Migration model: the 6 RF kinds author `roles` as their single source of
+ *  truth and DERIVE the legacy `anchors` / `portDomains` from it via
+ *  `anchorContractFromRoles` / `portDomainsFromRoles` (so every existing
+ *  consumer keeps reading the same arrays). Optical / mechanical kinds keep
+ *  authoring `anchors` directly until their own rollout phase (plan §7's
+ *  explicit fallback path). */
+export interface RoleSpec {
+  /** 0 = optional anchor, ≥1 = required. */
+  readonly min: number;
+  /** Omit = single port (1). Number = bounded. `null` = unbounded multiport. */
+  readonly max?: number | null;
+  /** Signal domain of the port — replaces `portDomains`. */
+  readonly domain: PortDomain;
+  /** Direction (not just position) matters for align — replaces
+   *  `needsDirection`. */
+  readonly direction?: boolean;
+  /** `apertureMm` must be set — replaces `needsAperture`. */
+  readonly aperture?: boolean;
+  /** Asset-level fast-axis angle applies — replaces `needsFastAxis`. */
+  readonly fastAxis?: boolean;
+}
+
+export type RolesMap = Readonly<Record<string, RoleSpec>>;
+
+// =============================================================================
 // Plugin shape
 // =============================================================================
 
@@ -301,6 +339,13 @@ export interface PhysicsPlugin<TParams extends Record<string, unknown> = Record<
     readonly defaultPhysics: ReadonlyArray<PhysicsDomain>;
 
     readonly anchors: AnchorContract;
+    /** Unified per-role anchor spec (plan §2.1). When present this is the
+     *  authored single source of truth; `anchors` above is derived from it
+     *  via `anchorContractFromRoles` (and `portDomains` via
+     *  `portDomainsFromRoles`) at the plugin definition site, so the two are
+     *  guaranteed consistent and every legacy consumer keeps working.
+     *  Omitted on kinds still authoring `anchors` directly. */
+    readonly roles?: RolesMap;
     readonly alignVariant: AlignVariant;
     /** Snap-to-beam tolerance in mm. 0 for `alignVariant: "none"`. */
     readonly alignToleranceMm: number;
@@ -479,6 +524,45 @@ export function partitionKindParamKeys<TParams extends Record<string, unknown>>(
   }
 
   return { intrinsic, state, overlap, unclassified };
+}
+
+// =============================================================================
+// RoleSpec → legacy derivation (plan §2.1). Authored `roles` is projected back
+// into the AnchorContract arrays + portDomains map so every existing consumer
+// reads the same shapes. Used at plugin definition sites (RF kinds).
+// =============================================================================
+
+/** Derive the legacy `AnchorContract` (5 arrays) from a `roles` map.
+ *  `min ≥ 1` → required, else optional; `direction` / `aperture` / `fastAxis`
+ *  flags collect into `needsDirection` / `needsAperture` / `needsFastAxis`.
+ *  Role insertion order is preserved so the derived arrays are stable. */
+export function anchorContractFromRoles(roles: RolesMap): AnchorContract {
+  const required: string[] = [];
+  const optional: string[] = [];
+  const needsDirection: string[] = [];
+  const needsAperture: string[] = [];
+  const needsFastAxis: string[] = [];
+  for (const [roleId, spec] of Object.entries(roles)) {
+    if (spec.min >= 1) required.push(roleId);
+    else optional.push(roleId);
+    if (spec.direction) needsDirection.push(roleId);
+    if (spec.aperture) needsAperture.push(roleId);
+    if (spec.fastAxis) needsFastAxis.push(roleId);
+  }
+  return {
+    required: required as ReadonlyArray<AnchorId>,
+    optional: optional as ReadonlyArray<AnchorId>,
+    needsDirection: needsDirection as ReadonlyArray<AnchorId>,
+    needsAperture: needsAperture as ReadonlyArray<AnchorId>,
+    needsFastAxis: needsFastAxis as ReadonlyArray<AnchorId>,
+  };
+}
+
+/** Derive the `portDomains` map (anchor id → domain) from a `roles` map. */
+export function portDomainsFromRoles(roles: RolesMap): Record<string, PortDomain> {
+  const out: Record<string, PortDomain> = {};
+  for (const [roleId, spec] of Object.entries(roles)) out[roleId] = spec.domain;
+  return out;
 }
 
 /** Resolve a port's signal domain. Plugin-declared overrides win; otherwise

@@ -143,6 +143,34 @@ def state_keys_by_kind() -> dict[str, list[str]]:
     return out
 
 
+def roles_by_kind() -> dict[str, dict[str, Any] | None]:
+    """`elementKind → roles map | None` (RF_ARCHITECTURE_PLAN §2.1). The roles
+    map is the authored per-role anchor spec (min / max / domain / direction /
+    aperture / fast_axis). `None` for kinds still authoring the legacy `anchors`
+    arrays directly (optical / mechanical — converted in a later phase)."""
+    out: dict[str, dict[str, Any] | None] = {}
+    for p in load_manifest()["physics_plugins"]:
+        out[p["physics"]["element_kind"]] = p.get("physics", {}).get("roles")
+    return out
+
+
+def devices() -> list[dict[str, Any]]:
+    """Device registry records (RF_ARCHITECTURE_PLAN §2.2) — concrete
+    instruments, each pinning a `behavioral_kind` and supplying the
+    per-componentType anchor layout. Empty list if the manifest predates the
+    device block."""
+    return list(load_manifest().get("devices") or [])
+
+
+def device_by_id(device_id: str) -> dict[str, Any] | None:
+    """One device record by its `id` (the value stored in
+    ``Asset3D.device_id``), or ``None`` if unknown."""
+    for d in devices():
+        if d.get("id") == device_id:
+            return d
+    return None
+
+
 def port_domains_by_kind() -> dict[str, dict[str, str]]:
     """`elementKind → {anchor_id: domain_label}`. Phase 2 metadata for
     typed cable connections (rf / optical / trigger / ttl / dc).

@@ -152,6 +152,10 @@ class Asset3DV3Out(CamelModel):
     scale_factor: float = 1.0
     # NOT NULL since alembic 0111 — always carries at least "unclassified".
     kind_id: str
+    # Device-registry pointer (alembic 0118). When set, anchors are a
+    # materialised view of the device template and kind_id is written through
+    # from the device's behavioralKind.
+    device_id: Optional[str] = None
     anchors: Optional[list[dict[str, Any]]] = None
     default_params: Optional[dict[str, Any]] = None
     # Per-instance-tunable param keys (alembic 0113). Default_params keys the
@@ -170,6 +174,11 @@ class Asset3DV3Update(CamelModel):
     """Editable v3 fields for the Asset3D catalog editor."""
     name: Optional[str] = None
     kind_id: Optional[str] = None
+    # Device-registry pointer (alembic 0118). Setting this seeds anchors from
+    # the device template + writes kind_id through from the device's
+    # behavioralKind (unless the same payload also sends explicit anchors /
+    # kind_id, which then win).
+    device_id: Optional[str] = None
     # Phase 9.8: PHY Editor's primary write target ??replaces faces[] +
     # transitions[] over time. Anchors use the Phase 9.1 tri-axis schema
     # (axisX/Y/Z) consumed by the anchor tracer. Editor sends the full

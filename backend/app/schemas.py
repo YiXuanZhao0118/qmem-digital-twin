@@ -257,6 +257,10 @@ class Asset3DBase(CamelModel):
     # placeholder. A null kind is rejected at validation; an omitted one
     # defaults here. (Asset3DUpdate keeps it optional for partial PATCH.)
     kind_id: str = "unclassified"
+    # Device-registry pointer (alembic 0118). When set, anchors are a
+    # materialised view of the device template and kind_id is written through
+    # from the device's behavioralKind. Null = no device (hand-authored asset).
+    device_id: str | None = None
     default_params: JsonDict | None = None
     # Top-level default_params keys the asset marks tunable per-instance
     # (alembic 0113). The SceneObject dynamic-sources editor exposes only these.
@@ -283,6 +287,7 @@ class Asset3DUpdate(CamelModel):
     properties: JsonDict | None = None
     catalog_id: str | None = None
     kind_id: str | None = None
+    device_id: str | None = None
     default_params: JsonDict | None = None
     tunable_params: list[str] | None = None
     wavelength_range_nm: list[float] | None = None

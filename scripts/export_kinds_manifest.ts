@@ -61,6 +61,11 @@ interface ManifestPhysicsPlugin {
     align_tolerance_mm: number;
     align_summary: string;
     default_params: Record<string, unknown>;
+    // Per-role anchor spec (RF_ARCHITECTURE_PLAN §2.1). `null` for kinds that
+    // still author the legacy `anchors` arrays directly (optical / mechanical
+    // — converted in a later phase). `max`: 1 = single, N = bounded, null =
+    // unbounded multiport.
+    roles: Record<string, ManifestRoleSpec> | null;
     // Phase 2 / 3 additions. Always emitted (even when the plugin author
     // didn't supply intrinsic/state lists) so the backend can detect
     // un-migrated kinds by `intrinsic_param_keys === null` and fall back
@@ -69,6 +74,34 @@ interface ManifestPhysicsPlugin {
     state_param_keys: string[] | null;
     port_domains: Record<string, string>;
   };
+}
+
+interface ManifestRoleSpec {
+  min: number;
+  max: number | null; // 1 = single, N = bounded, null = unbounded
+  domain: string;
+  direction?: boolean;
+  aperture?: boolean;
+  fast_axis?: boolean;
+}
+
+interface ManifestDeviceAnchor {
+  role: string;
+  name?: string;
+  position_mm_body_local?: { x: number; y: number; z: number };
+  direction_body_local?: { x: number; y: number; z: number };
+  connector_type?: string;
+  aperture_mm?: number;
+}
+
+interface ManifestDevice {
+  id: string;
+  display_name: string;
+  behavioral_kind: string | null;
+  component_type: string;
+  mesh: string;
+  anchors: ManifestDeviceAnchor[];
+  default_params: Record<string, unknown>;
 }
 
 interface ManifestPassivePlugin {
@@ -103,17 +136,51 @@ interface Manifest {
   component_anchor_contracts: Record<string, ManifestAnchorTemplate[]>;
   physics_plugins: ManifestPhysicsPlugin[];
   passive_plugins: ManifestPassivePlugin[];
+  /** Device registry (RF_ARCHITECTURE_PLAN §2.2). Concrete instruments;
+   *  each pins a `behavioral_kind` and supplies the per-componentType anchor
+   *  layout that used to live in the plugin's `componentAnchorContracts`. */
+  devices: ManifestDevice[];
+}
+
+/** Build a per-role manifest spec from the plugin's authored RoleSpec.
+ *  Normalises `max`: omitted → 1 (single), null → unbounded, N → bounded. */
+function roleSpecToManifest(spec: any): ManifestRoleSpec {
+  return {
+    min: spec.min,
+    max: spec.max === undefined ? 1 : spec.max,
+    domain: spec.domain,
+    ...(spec.direction ? { direction: true } : {}),
+    ...(spec.aperture ? { aperture: true } : {}),
+    ...(spec.fastAxis ? { fast_axis: true } : {}),
+  };
+}
+
+function deviceAnchorToManifest(a: any): ManifestDeviceAnchor {
+  return {
+    role: a.role,
+    ...(a.name !== undefined ? { name: a.name } : {}),
+    ...(a.positionMmBodyLocal !== undefined
+      ? { position_mm_body_local: a.positionMmBodyLocal }
+      : {}),
+    ...(a.directionBodyLocal !== undefined
+      ? { direction_body_local: a.directionBodyLocal }
+      : {}),
+    ...(a.connectorType !== undefined ? { connector_type: a.connectorType } : {}),
+    ...(a.apertureMm !== undefined ? { aperture_mm: a.apertureMm } : {}),
+  };
 }
 
 function build(
   plugins: readonly unknown[],
   isPhysics: (plugin: unknown) => boolean,
+  devices: readonly unknown[],
 ): Manifest {
   const physics: ManifestPhysicsPlugin[] = [];
   const passive: ManifestPassivePlugin[] = [];
   const componentTypeToKind: Record<string, string> = {};
   const elementKinds: string[] = [];
   const componentAnchorContracts: Record<string, ManifestAnchorTemplate[]> = {};
+  const deviceRecords: ManifestDevice[] = [];
 
   for (const pUnknown of plugins) {
     const p = pUnknown as any;
@@ -167,6 +234,14 @@ function build(
             ? [...p.physics.stateParamKeys]
             : null,
           port_domains: { ...(p.physics.portDomains ?? {}) },
+          roles: p.physics.roles
+            ? Object.fromEntries(
+                Object.entries(p.physics.roles).map(([role, spec]) => [
+                  role,
+                  roleSpecToManifest(spec),
+                ]),
+              )
+            : null,
         },
       });
     } else {
@@ -181,6 +256,34 @@ function build(
     }
   }
 
+  // Device registry: emit each device, and materialise its anchor layout into
+  // `component_anchor_contracts` keyed by the device's componentType — this is
+  // the new home of what used to be the plugin's `componentAnchorContracts`
+  // (e.g. the AD9959's 4×CH layout). A device entry wins over a plugin-authored
+  // contract for the same componentType (the device is the more specific source).
+  for (const dUnknown of devices) {
+    const d = dUnknown as any;
+    deviceRecords.push({
+      id: d.id,
+      display_name: d.displayName,
+      behavioral_kind: d.behavioralKind ?? null,
+      component_type: d.componentType,
+      mesh: d.mesh,
+      anchors: (d.anchors as any[]).map(deviceAnchorToManifest),
+      default_params: { ...(d.defaultParams ?? {}) },
+    });
+    componentAnchorContracts[d.componentType] = (d.anchors as any[]).map((a) => ({
+      id: a.role,
+      ...(a.name !== undefined ? { name: a.name } : {}),
+      ...(a.positionMmBodyLocal !== undefined
+        ? { position_mm_body_local: a.positionMmBodyLocal }
+        : {}),
+      ...(a.directionBodyLocal !== undefined
+        ? { direction_body_local: a.directionBodyLocal }
+        : {}),
+    }));
+  }
+
   return {
     schema_version: 1,
     generated_at: new Date().toISOString(),
@@ -189,23 +292,29 @@ function build(
     component_anchor_contracts: componentAnchorContracts,
     physics_plugins: physics,
     passive_plugins: passive,
+    devices: deviceRecords,
   };
 }
 
 async function main(): Promise<void> {
-  const [{ PLUGINS }, { isPhysicsPlugin }] = await Promise.all([
+  const [{ PLUGINS }, { isPhysicsPlugin }, { DEVICES }] = await Promise.all([
     import("../frontend/src/kinds/_plugins"),
     import("../frontend/src/kinds/_plugin"),
+    import("../frontend/src/devices/_registry"),
   ]);
 
-  const manifest = build(PLUGINS, isPhysicsPlugin as (plugin: unknown) => boolean);
+  const manifest = build(
+    PLUGINS,
+    isPhysicsPlugin as (plugin: unknown) => boolean,
+    DEVICES,
+  );
   mkdirSync(dirname(OUT_PATH), { recursive: true });
   writeFileSync(OUT_PATH, JSON.stringify(manifest, null, 2) + "\n", "utf-8");
 
   const physicsCount = manifest.physics_plugins.length;
   const passiveCount = manifest.passive_plugins.length;
   console.log(
-  `wrote ${OUT_PATH}\n  ${physicsCount} physics + ${passiveCount} passive plugins\n  ${Object.keys(manifest.component_type_to_kind).length} componentType → kind entries`,
+  `wrote ${OUT_PATH}\n  ${physicsCount} physics + ${passiveCount} passive plugins\n  ${manifest.devices.length} devices\n  ${Object.keys(manifest.component_type_to_kind).length} componentType → kind entries`,
   );
 }
 

@@ -1,10 +1,22 @@
-import { definePhysicsPlugin } from "../_plugin";
+import {
+  anchorContractFromRoles,
+  definePhysicsPlugin,
+  portDomainsFromRoles,
+  type RolesMap,
+} from "../_plugin";
 import { rfAmplifierTransfer } from "./transfer";
 
 export interface RfAmplifierParams extends Record<string, unknown> {
   gainDb: number;
   outputPowerMaxDbm: number;
 }
+
+// Single in/out coax amplifier — both ports required, both direction-bearing
+// (outward face normals). Per-role spec (plan §2.1).
+const RF_AMPLIFIER_ROLES: RolesMap = {
+  rf_in: { min: 1, domain: "rf", direction: true },
+  rf_out: { min: 1, domain: "rf", direction: true },
+};
 
 export const rfAmplifierPlugin = definePhysicsPlugin<RfAmplifierParams>({
   id: "rf_amplifier",
@@ -16,11 +28,8 @@ export const rfAmplifierPlugin = definePhysicsPlugin<RfAmplifierParams>({
     elementKind: "rf_amplifier",
     primaryDomain: "rf",
     defaultPhysics: ["rf", "thermal"],
-    anchors: {
-      required: ["rf_in", "rf_out"],
-      optional: [],
-      needsDirection: ["rf_in", "rf_out"],
-    },
+    roles: RF_AMPLIFIER_ROLES,
+    anchors: anchorContractFromRoles(RF_AMPLIFIER_ROLES),
     alignVariant: "none",
     alignToleranceMm: 0,
     alignSummary:
@@ -42,7 +51,7 @@ export const rfAmplifierPlugin = definePhysicsPlugin<RfAmplifierParams>({
       "outputPowerMaxDbm",
     ],
     stateParamKeys: [],
-    portDomains: { rf_in: "rf", rf_out: "rf" },
+    portDomains: portDomainsFromRoles(RF_AMPLIFIER_ROLES),
     // Phase 5: the canonical example of the plugin-level transfer
     // pattern. The RF propagation walker (`utils/rfPropagation.ts`)
     // calls this whenever a signal arrives at rf_in. Adding a new RF

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-13T04:50:27.154Z",
+  "generated_at": "2026-06-13T23:12:27.570Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -131,6 +131,68 @@
           "z": 0
         }
       }
+    ],
+    "rf_amplifier": [
+      {
+        "id": "rf_in",
+        "direction_body_local": {
+          "x": -1,
+          "y": 0,
+          "z": 0
+        }
+      },
+      {
+        "id": "rf_out",
+        "direction_body_local": {
+          "x": 1,
+          "y": 0,
+          "z": 0
+        }
+      }
+    ],
+    "rf_switch": [
+      {
+        "id": "rf_in"
+      },
+      {
+        "id": "rf_out",
+        "name": "RF1"
+      },
+      {
+        "id": "rf_out",
+        "name": "RF2"
+      },
+      {
+        "id": "ttl_in"
+      }
+    ],
+    "rf_cable": [
+      {
+        "id": "rf_in"
+      },
+      {
+        "id": "rf_out"
+      }
+    ],
+    "programmable_pulse_generator": [
+      {
+        "id": "rf_out",
+        "direction_body_local": {
+          "x": 1,
+          "y": 0,
+          "z": 0
+        }
+      }
+    ],
+    "horn_antenna": [
+      {
+        "id": "aperture",
+        "direction_body_local": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        }
+      }
     ]
   },
   "physics_plugins": [
@@ -203,7 +265,8 @@
           "nominalPowerMw",
           "centerWavelengthNm"
         ],
-        "port_domains": {}
+        "port_domains": {},
+        "roles": null
       }
     },
     {
@@ -285,7 +348,8 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {},
+        "roles": null
       }
     },
     {
@@ -327,7 +391,8 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {},
+        "roles": null
       }
     },
     {
@@ -372,7 +437,8 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {},
+        "roles": null
       }
     },
     {
@@ -418,7 +484,8 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {},
+        "roles": null
       }
     },
     {
@@ -463,7 +530,8 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {},
+        "roles": null
       }
     },
     {
@@ -508,7 +576,8 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {},
+        "roles": null
       }
     },
     {
@@ -559,7 +628,8 @@
         "state_param_keys": [],
         "port_domains": {
           "intercept_in": "optical"
-        }
+        },
+        "roles": null
       }
     },
     {
@@ -600,7 +670,8 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {},
+        "roles": null
       }
     },
     {
@@ -663,7 +734,8 @@
         "port_domains": {
           "intercept_in": "optical",
           "intercept_out": "optical"
-        }
+        },
+        "roles": null
       }
     },
     {
@@ -709,7 +781,8 @@
         "state_param_keys": null,
         "port_domains": {
           "optical_center": "optical"
-        }
+        },
+        "roles": null
       }
     },
     {
@@ -764,7 +837,8 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {},
+        "roles": null
       }
     },
     {
@@ -806,7 +880,8 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {},
+        "roles": null
       }
     },
     {
@@ -899,7 +974,8 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {},
+        "roles": null
       }
     },
     {
@@ -949,7 +1025,8 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {},
+        "roles": null
       }
     },
     {
@@ -1038,7 +1115,8 @@
           "intercept_in": "optical",
           "intercept_out": "optical",
           "rf_in": "rf"
-        }
+        },
+        "roles": null
       }
     },
     {
@@ -1082,7 +1160,8 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {},
+        "roles": null
       }
     },
     {
@@ -1128,7 +1207,8 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {},
+        "roles": null
       }
     },
     {
@@ -1171,7 +1251,8 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {},
+        "roles": null
       }
     },
     {
@@ -1210,7 +1291,8 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {},
+        "roles": null
       }
     },
     {
@@ -1249,7 +1331,8 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {},
+        "roles": null
       }
     },
     {
@@ -1288,7 +1371,8 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {},
+        "roles": null
       }
     },
     {
@@ -1327,7 +1411,8 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {},
+        "roles": null
       }
     },
     {
@@ -1367,7 +1452,8 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {},
+        "roles": null
       }
     },
     {
@@ -1407,6 +1493,13 @@
         ],
         "port_domains": {
           "rf_out": "rf"
+        },
+        "roles": {
+          "rf_out": {
+            "min": 0,
+            "max": null,
+            "domain": "rf"
+          }
         }
       }
     },
@@ -1453,6 +1546,20 @@
         "port_domains": {
           "rf_in": "rf",
           "rf_out": "rf"
+        },
+        "roles": {
+          "rf_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "rf",
+            "direction": true
+          },
+          "rf_out": {
+            "min": 1,
+            "max": 1,
+            "domain": "rf",
+            "direction": true
+          }
         }
       }
     },
@@ -1495,7 +1602,17 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {
+          "aperture": "rf"
+        },
+        "roles": {
+          "aperture": {
+            "min": 0,
+            "max": 1,
+            "domain": "rf",
+            "direction": true
+          }
+        }
       }
     },
     {
@@ -1531,7 +1648,17 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {
+          "rf_out": "ttl"
+        },
+        "roles": {
+          "rf_out": {
+            "min": 0,
+            "max": 1,
+            "domain": "ttl",
+            "direction": true
+          }
+        }
       }
     },
     {
@@ -1570,7 +1697,24 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {
+          "rf_in": "rf",
+          "rf_out": "rf"
+        },
+        "roles": {
+          "rf_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "rf",
+            "direction": true
+          },
+          "rf_out": {
+            "min": 1,
+            "max": 1,
+            "domain": "rf",
+            "direction": true
+          }
+        }
       }
     },
     {
@@ -1611,7 +1755,8 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {},
+        "roles": null
       }
     },
     {
@@ -1654,7 +1799,31 @@
         },
         "intrinsic_param_keys": null,
         "state_param_keys": null,
-        "port_domains": {}
+        "port_domains": {
+          "rf_in": "rf",
+          "rf_out": "rf",
+          "ttl_in": "ttl"
+        },
+        "roles": {
+          "rf_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "rf",
+            "direction": true
+          },
+          "rf_out": {
+            "min": 1,
+            "max": null,
+            "domain": "rf",
+            "direction": true
+          },
+          "ttl_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "ttl",
+            "direction": true
+          }
+        }
       }
     }
   ],
@@ -1898,6 +2067,192 @@
       "asset_category": "electronics",
       "catalog_group": null,
       "asset_name_pattern": null
+    }
+  ],
+  "devices": [
+    {
+      "id": "ad9959",
+      "display_name": "Analog Devices AD9959/PCBZ (4-ch DDS)",
+      "behavioral_kind": "rf_source",
+      "component_type": "dds_ad9959_pcb",
+      "mesh": "ad9959_pcbz_lod1.stl",
+      "anchors": [
+        {
+          "role": "rf_out",
+          "name": "CH0",
+          "position_mm_body_local": {
+            "x": 82.55,
+            "y": -30,
+            "z": 4
+          },
+          "direction_body_local": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          "connector_type": "sma_female"
+        },
+        {
+          "role": "rf_out",
+          "name": "CH1",
+          "position_mm_body_local": {
+            "x": 82.55,
+            "y": -10,
+            "z": 4
+          },
+          "direction_body_local": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          "connector_type": "sma_female"
+        },
+        {
+          "role": "rf_out",
+          "name": "CH2",
+          "position_mm_body_local": {
+            "x": 82.55,
+            "y": 10,
+            "z": 4
+          },
+          "direction_body_local": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          "connector_type": "sma_female"
+        },
+        {
+          "role": "rf_out",
+          "name": "CH3",
+          "position_mm_body_local": {
+            "x": 82.55,
+            "y": 30,
+            "z": 4
+          },
+          "direction_body_local": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          "connector_type": "sma_female"
+        }
+      ],
+      "default_params": {
+        "maxOutputMHz": 200,
+        "refClockMHz": 20
+      }
+    },
+    {
+      "id": "zhl_1_2w",
+      "display_name": "Mini-Circuits ZHL-1-2W+ (RF amp)",
+      "behavioral_kind": "rf_amplifier",
+      "component_type": "rf_amplifier",
+      "mesh": "primitive://rf_amplifier",
+      "anchors": [
+        {
+          "role": "rf_in",
+          "direction_body_local": {
+            "x": -1,
+            "y": 0,
+            "z": 0
+          },
+          "connector_type": "sma_female"
+        },
+        {
+          "role": "rf_out",
+          "direction_body_local": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          "connector_type": "sma_female"
+        }
+      ],
+      "default_params": {}
+    },
+    {
+      "id": "zyswa_2_50dr",
+      "display_name": "Mini-Circuits ZYSWA-2-50DR (SP2T switch)",
+      "behavioral_kind": "rf_switch",
+      "component_type": "rf_switch",
+      "mesh": "primitive://rf_switch",
+      "anchors": [
+        {
+          "role": "rf_in",
+          "connector_type": "sma_female"
+        },
+        {
+          "role": "rf_out",
+          "name": "RF1",
+          "connector_type": "sma_female"
+        },
+        {
+          "role": "rf_out",
+          "name": "RF2",
+          "connector_type": "sma_female"
+        },
+        {
+          "role": "ttl_in",
+          "connector_type": "sma_female"
+        }
+      ],
+      "default_params": {}
+    },
+    {
+      "id": "rg316_sma",
+      "display_name": "RG-316 SMA jumper (RF cable)",
+      "behavioral_kind": "rf_cable",
+      "component_type": "rf_cable",
+      "mesh": "primitive://rf_cable",
+      "anchors": [
+        {
+          "role": "rf_in",
+          "connector_type": "sma_male"
+        },
+        {
+          "role": "rf_out",
+          "connector_type": "sma_male"
+        }
+      ],
+      "default_params": {}
+    },
+    {
+      "id": "ppg_sma",
+      "display_name": "PPG (SMA, TTL/Trigger out)",
+      "behavioral_kind": "programmable_pulse_generator",
+      "component_type": "programmable_pulse_generator",
+      "mesh": "primitive://programmable_pulse_generator",
+      "anchors": [
+        {
+          "role": "rf_out",
+          "direction_body_local": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          "connector_type": "sma_female"
+        }
+      ],
+      "default_params": {}
+    },
+    {
+      "id": "horn_wr90",
+      "display_name": "WR-90 microwave horn",
+      "behavioral_kind": "horn_antenna",
+      "component_type": "horn_antenna",
+      "mesh": "primitive://horn_antenna",
+      "anchors": [
+        {
+          "role": "aperture",
+          "direction_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          }
+        }
+      ],
+      "default_params": {}
     }
   ]
 }

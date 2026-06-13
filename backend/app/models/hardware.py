@@ -78,6 +78,15 @@ class Asset3D(Base):
     kind_id: Mapped[str] = mapped_column(
         Text, nullable=False, default="unclassified", server_default="unclassified"
     )
+    # Device-registry pointer (RF_ARCHITECTURE_PLAN §2.3, alembic 0118).
+    # References a device slug in the frontend `devices/` registry (mirrored
+    # to the manifest's `devices` block). When set, the asset's anchors are a
+    # materialised view of that device's template (one-click seed/refresh in
+    # the PHY Editor) and `kind_id` is written through from the device's
+    # behavioralKind. Nullable: legacy assets without a device keep authoring
+    # kind_id + anchors by hand. The tracer still reads `anchors` directly, so
+    # the read path is unchanged.
+    device_id: Mapped[str | None] = mapped_column(Text)
     default_params: Mapped[JsonDict | None] = mapped_column(JSONB)
     wavelength_range_nm: Mapped[list[float] | None] = mapped_column(
         sa.ARRAY(sa.Float())

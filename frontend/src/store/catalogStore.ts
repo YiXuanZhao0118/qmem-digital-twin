@@ -82,6 +82,10 @@ export type V3Asset = {
   scaleFactor: number;
   /** Classification slug (alembic 0090). Pointer into the Kind registry. */
   kindId: string | null;
+  /** Device-registry pointer (alembic 0118). When set, anchors are a
+   *  materialised view of the device template and kindId is written through
+   *  from the device's behavioralKind. Null = hand-authored asset. */
+  deviceId: string | null;
   /** v3-era schema, being retired (Phase 9.8). Anchors[] is the new
    *  authority. Kept for back-compat reads while migration completes. */
   faces: V3Face[] | null;
@@ -105,6 +109,10 @@ export type V3Asset = {
 export type V3AssetUpdate = Partial<{
   name: string;
   kindId: string | null;
+  /** Setting this seeds anchors from the device template + writes kindId
+   *  through from the device's behavioralKind (alembic 0118). Send it ALONE
+   *  (no anchors) to trigger the server-side re-seed. */
+  deviceId: string | null;
   faces: V3Face[] | null;
   transitions: V3Transition[] | null;
   anchors: V3Anchor[] | null;
