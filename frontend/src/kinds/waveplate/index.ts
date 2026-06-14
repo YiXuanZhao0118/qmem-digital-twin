@@ -1,4 +1,8 @@
-import { definePhysicsPlugin } from "../_plugin";
+import {
+  anchorContractFromRoles,
+  definePhysicsPlugin,
+  type RolesMap,
+} from "../_plugin";
 
 export interface WaveplateParams extends Record<string, unknown> {
   retardanceDeg: number;
@@ -6,6 +10,10 @@ export interface WaveplateParams extends Record<string, unknown> {
   refractiveIndex: number;
   wavelengthRangeNm: [number, number];
 }
+
+const WAVEPLATE_ROLES: RolesMap = {
+  intercept_in: { min: 1, domain: "optical", direction: true, aperture: true, fastAxis: true },
+};
 
 export const waveplatePlugin = definePhysicsPlugin<WaveplateParams>({
   id: "waveplate",
@@ -17,13 +25,8 @@ export const waveplatePlugin = definePhysicsPlugin<WaveplateParams>({
     elementKind: "waveplate",
     primaryDomain: "optical",
     defaultPhysics: ["optical"],
-    anchors: {
-      required: ["intercept_in"],
-      optional: [],
-      needsDirection: ["intercept_in"],
-      needsAperture: ["intercept_in"],
-      needsFastAxis: ["intercept_in"],
-    },
+    roles: WAVEPLATE_ROLES,
+    anchors: anchorContractFromRoles(WAVEPLATE_ROLES),
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
     alignSummary:

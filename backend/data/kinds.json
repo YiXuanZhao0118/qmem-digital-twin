@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-13T23:12:27.570Z",
+  "generated_at": "2026-06-14T14:06:40.969Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -125,6 +125,26 @@
           "y": 30,
           "z": 4
         },
+        "direction_body_local": {
+          "x": 1,
+          "y": 0,
+          "z": 0
+        }
+      }
+    ],
+    "rf_generator": [
+      {
+        "id": "rf_out",
+        "name": "CH1",
+        "direction_body_local": {
+          "x": 1,
+          "y": 0,
+          "z": 0
+        }
+      },
+      {
+        "id": "rf_out",
+        "name": "CH2",
         "direction_body_local": {
           "x": 1,
           "y": 0,
@@ -266,7 +286,20 @@
           "centerWavelengthNm"
         ],
         "port_domains": {},
-        "roles": null
+        "roles": {
+          "out": {
+            "min": 0,
+            "max": 1,
+            "domain": "optical",
+            "fast_axis": true
+          },
+          "intercept_out": {
+            "min": 0,
+            "max": 1,
+            "domain": "optical",
+            "fast_axis": true
+          }
+        }
       }
     },
     {
@@ -349,7 +382,27 @@
         "intrinsic_param_keys": null,
         "state_param_keys": null,
         "port_domains": {},
-        "roles": null
+        "roles": {
+          "intercept_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "direction": true,
+            "fast_axis": true
+          },
+          "intercept_out": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "direction": true,
+            "fast_axis": true
+          },
+          "seed": {
+            "min": 0,
+            "max": 1,
+            "domain": "optical"
+          }
+        }
       }
     },
     {
@@ -392,7 +445,15 @@
         "intrinsic_param_keys": null,
         "state_param_keys": null,
         "port_domains": {},
-        "roles": null
+        "roles": {
+          "intercept_face": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "direction": true,
+            "aperture": true
+          }
+        }
       }
     },
     {
@@ -438,7 +499,15 @@
         "intrinsic_param_keys": null,
         "state_param_keys": null,
         "port_domains": {},
-        "roles": null
+        "roles": {
+          "intercept_face": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "direction": true,
+            "aperture": true
+          }
+        }
       }
     },
     {
@@ -485,7 +554,20 @@
         "intrinsic_param_keys": null,
         "state_param_keys": null,
         "port_domains": {},
-        "roles": null
+        "roles": {
+          "intercept_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "direction": true,
+            "aperture": true
+          },
+          "intercept_out": {
+            "min": 0,
+            "max": 1,
+            "domain": "optical"
+          }
+        }
       }
     },
     {
@@ -531,7 +613,20 @@
         "intrinsic_param_keys": null,
         "state_param_keys": null,
         "port_domains": {},
-        "roles": null
+        "roles": {
+          "intercept_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "direction": true,
+            "aperture": true
+          },
+          "intercept_out": {
+            "min": 0,
+            "max": 1,
+            "domain": "optical"
+          }
+        }
       }
     },
     {
@@ -577,7 +672,20 @@
         "intrinsic_param_keys": null,
         "state_param_keys": null,
         "port_domains": {},
-        "roles": null
+        "roles": {
+          "intercept_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "direction": true,
+            "aperture": true
+          },
+          "intercept_out": {
+            "min": 0,
+            "max": 1,
+            "domain": "optical"
+          }
+        }
       }
     },
     {
@@ -629,7 +737,16 @@
         "port_domains": {
           "intercept_in": "optical"
         },
-        "roles": null
+        "roles": {
+          "intercept_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "direction": true,
+            "aperture": true,
+            "fast_axis": true
+          }
+        }
       }
     },
     {
@@ -671,7 +788,15 @@
         "intrinsic_param_keys": null,
         "state_param_keys": null,
         "port_domains": {},
-        "roles": null
+        "roles": {
+          "intercept_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "aperture": true,
+            "fast_axis": true
+          }
+        }
       }
     },
     {
@@ -735,7 +860,21 @@
           "intercept_in": "optical",
           "intercept_out": "optical"
         },
-        "roles": null
+        "roles": {
+          "intercept_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "direction": true,
+            "aperture": true,
+            "fast_axis": true
+          },
+          "intercept_out": {
+            "min": 0,
+            "max": 1,
+            "domain": "optical"
+          }
+        }
       }
     },
     {
@@ -782,7 +921,15 @@
         "port_domains": {
           "optical_center": "optical"
         },
-        "roles": null
+        "roles": {
+          "optical_center": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "direction": true,
+            "aperture": true
+          }
+        }
       }
     },
     {
@@ -838,7 +985,20 @@
         "intrinsic_param_keys": null,
         "state_param_keys": null,
         "port_domains": {},
-        "roles": null
+        "roles": {
+          "intercept_face": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "direction": true,
+            "aperture": true
+          },
+          "intercept_out": {
+            "min": 0,
+            "max": 1,
+            "domain": "optical"
+          }
+        }
       }
     },
     {
@@ -881,7 +1041,14 @@
         "intrinsic_param_keys": null,
         "state_param_keys": null,
         "port_domains": {},
-        "roles": null
+        "roles": {
+          "intercept_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "aperture": true
+          }
+        }
       }
     },
     {
@@ -975,7 +1142,22 @@
         "intrinsic_param_keys": null,
         "state_param_keys": null,
         "port_domains": {},
-        "roles": null
+        "roles": {
+          "intercept_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "direction": true,
+            "aperture": true
+          },
+          "intercept_out": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "direction": true,
+            "aperture": true
+          }
+        }
       }
     },
     {
@@ -1026,7 +1208,21 @@
         "intrinsic_param_keys": null,
         "state_param_keys": null,
         "port_domains": {},
-        "roles": null
+        "roles": {
+          "connect_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "direction": true,
+            "aperture": true
+          },
+          "connect_out": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "direction": true
+          }
+        }
       }
     },
     {
@@ -1055,8 +1251,8 @@
           ],
           "optional": [],
           "needs_direction": [
-            "rf_in",
-            "acoustic_axis"
+            "acoustic_axis",
+            "rf_in"
           ],
           "needs_aperture": [
             "intercept_in",
@@ -1116,7 +1312,32 @@
           "intercept_out": "optical",
           "rf_in": "rf"
         },
-        "roles": null
+        "roles": {
+          "intercept_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "aperture": true
+          },
+          "intercept_out": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "aperture": true
+          },
+          "acoustic_axis": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "direction": true
+          },
+          "rf_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "rf",
+            "direction": true
+          }
+        }
       }
     },
     {
@@ -1161,7 +1382,20 @@
         "intrinsic_param_keys": null,
         "state_param_keys": null,
         "port_domains": {},
-        "roles": null
+        "roles": {
+          "intercept_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "aperture": true,
+            "fast_axis": true
+          },
+          "intercept_out": {
+            "min": 0,
+            "max": 1,
+            "domain": "optical"
+          }
+        }
       }
     },
     {
@@ -1208,7 +1442,19 @@
         "intrinsic_param_keys": null,
         "state_param_keys": null,
         "port_domains": {},
-        "roles": null
+        "roles": {
+          "intercept_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "aperture": true
+          },
+          "intercept_out": {
+            "min": 0,
+            "max": 1,
+            "domain": "optical"
+          }
+        }
       }
     },
     {
@@ -1252,7 +1498,14 @@
         "intrinsic_param_keys": null,
         "state_param_keys": null,
         "port_domains": {},
-        "roles": null
+        "roles": {
+          "intercept_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "aperture": true
+          }
+        }
       }
     },
     {
@@ -1292,7 +1545,14 @@
         "intrinsic_param_keys": null,
         "state_param_keys": null,
         "port_domains": {},
-        "roles": null
+        "roles": {
+          "intercept_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "aperture": true
+          }
+        }
       }
     },
     {
@@ -1332,7 +1592,14 @@
         "intrinsic_param_keys": null,
         "state_param_keys": null,
         "port_domains": {},
-        "roles": null
+        "roles": {
+          "intercept_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "aperture": true
+          }
+        }
       }
     },
     {
@@ -1372,7 +1639,14 @@
         "intrinsic_param_keys": null,
         "state_param_keys": null,
         "port_domains": {},
-        "roles": null
+        "roles": {
+          "intercept_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "aperture": true
+          }
+        }
       }
     },
     {
@@ -1412,7 +1686,14 @@
         "intrinsic_param_keys": null,
         "state_param_keys": null,
         "port_domains": {},
-        "roles": null
+        "roles": {
+          "intercept_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "aperture": true
+          }
+        }
       }
     },
     {
@@ -1453,7 +1734,14 @@
         "intrinsic_param_keys": null,
         "state_param_keys": null,
         "port_domains": {},
-        "roles": null
+        "roles": {
+          "intercept_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "optical",
+            "aperture": true
+          }
+        }
       }
     },
     {
@@ -1756,7 +2044,20 @@
         "intrinsic_param_keys": null,
         "state_param_keys": null,
         "port_domains": {},
-        "roles": null
+        "roles": {
+          "connect_in": {
+            "min": 1,
+            "max": 1,
+            "domain": "rf",
+            "direction": true
+          },
+          "connect_out": {
+            "min": 1,
+            "max": 1,
+            "domain": "rf",
+            "direction": true
+          }
+        }
       }
     },
     {
@@ -2141,6 +2442,38 @@
       "default_params": {
         "maxOutputMHz": 200,
         "refClockMHz": 20
+      }
+    },
+    {
+      "id": "dg4202",
+      "display_name": "Rigol DG4202 (2-ch AWG)",
+      "behavioral_kind": "rf_source",
+      "component_type": "rf_generator",
+      "mesh": "primitive://rf_source",
+      "anchors": [
+        {
+          "role": "rf_out",
+          "name": "CH1",
+          "direction_body_local": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          "connector_type": "bnc_female"
+        },
+        {
+          "role": "rf_out",
+          "name": "CH2",
+          "direction_body_local": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          "connector_type": "bnc_female"
+        }
+      ],
+      "default_params": {
+        "maxOutputMHz": 200
       }
     },
     {

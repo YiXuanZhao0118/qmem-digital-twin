@@ -1,4 +1,8 @@
-import { definePhysicsPlugin } from "../_plugin";
+import {
+  anchorContractFromRoles,
+  definePhysicsPlugin,
+  type RolesMap,
+} from "../_plugin";
 
 /**
  * beam_splitter params — EXACTLY the inputs the live optical-path op reads
@@ -34,6 +38,11 @@ export interface BeamSplitterParams extends Record<string, unknown> {
   wavelengthRangeNm: [number, number];
 }
 
+const BEAM_SPLITTER_ROLES: RolesMap = {
+  intercept_face: { min: 1, domain: "optical", direction: true, aperture: true },
+  intercept_out: { min: 0, domain: "optical" },
+};
+
 export const beamSplitterPlugin = definePhysicsPlugin<BeamSplitterParams>({
   id: "beam_splitter",
   displayName: "Beam Splitter",
@@ -44,19 +53,12 @@ export const beamSplitterPlugin = definePhysicsPlugin<BeamSplitterParams>({
     elementKind: "beam_splitter",
     primaryDomain: "optical",
     defaultPhysics: ["optical"],
-    anchors: {
-      required: ["intercept_in"],
-      optional: ["intercept_out"],
-      needsDirection: ["intercept_in"],
-      needsAperture: ["intercept_in"],
-      // s/p polarization basis at the coating — transverse reference
-      // edited as axisY. Relevant for PBS (beamSplitterType="pbs").
-      needsFastAxis: ["intercept_in"],
-    },
+    roles: BEAM_SPLITTER_ROLES,
+    anchors: anchorContractFromRoles(BEAM_SPLITTER_ROLES),
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
     alignSummary:
-      "Cube of two right-angle prisms cemented along the diagonal. intercept_in marks that diagonal interface: position = cube centre, direction = coating normal (along ±(X±Y) / ±(X±Z) / ±(Y±Z) for face-aligned cubes), aperture = half the active interface size. PBS vs BS distinguished by Component.properties.beamSplitterType (Phase 2 schema).",
+      "Cube of two right-angle prisms cemented along the diagonal. intercept_face marks that diagonal interface: position = cube centre, direction = coating normal (along ±(X±Y) / ±(X±Z) / ±(Y±Z) for face-aligned cubes), aperture = half the active interface size. PBS vs BS distinguished by Component.properties.beamSplitterType (Phase 2 schema).",
     // Every key here is read by the live op (directly, or via the anchor it
     // seeds). Representative Glan-Laser values (Thorlabs IO-*-HP internals); a
     // plain isotropic PBS cube sets refractiveIndex_o = refractiveIndex_e.

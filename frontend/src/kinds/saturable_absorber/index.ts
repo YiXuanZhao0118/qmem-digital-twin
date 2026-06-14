@@ -1,4 +1,8 @@
-import { definePhysicsPlugin } from "../_plugin";
+import {
+  anchorContractFromRoles,
+  definePhysicsPlugin,
+  type RolesMap,
+} from "../_plugin";
 
 export interface SaturableAbsorberParams extends Record<string, unknown> {
   saturationIntensityWPerCm2: number;
@@ -7,6 +11,10 @@ export interface SaturableAbsorberParams extends Record<string, unknown> {
   recoveryTimePs: number;
   wavelengthRangeNm: [number, number];
 }
+
+const SATURABLE_ABSORBER_ROLES: RolesMap = {
+  intercept_in: { min: 1, domain: "optical", aperture: true },
+};
 
 export const saturableAbsorberPlugin = definePhysicsPlugin<SaturableAbsorberParams>({
   id: "saturable_absorber",
@@ -18,12 +26,8 @@ export const saturableAbsorberPlugin = definePhysicsPlugin<SaturableAbsorberPara
     elementKind: "saturable_absorber",
     primaryDomain: "optical",
     defaultPhysics: ["optical"],
-    anchors: {
-      required: ["intercept_in"],
-      optional: [],
-      needsDirection: [],
-      needsAperture: ["intercept_in"],
-    },
+    roles: SATURABLE_ABSORBER_ROLES,
+    anchors: anchorContractFromRoles(SATURABLE_ABSORBER_ROLES),
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
     alignSummary: "intercept_in translates to beam axis.",

@@ -1,4 +1,8 @@
-import { definePhysicsPlugin } from "../_plugin";
+import {
+  anchorContractFromRoles,
+  definePhysicsPlugin,
+  type RolesMap,
+} from "../_plugin";
 
 interface GaussianMode {
   waistUm: number;
@@ -38,6 +42,12 @@ export interface TaperedAmplifierParams extends Record<string, unknown> {
   driverQualityFactor: number;
 }
 
+const TAPERED_AMPLIFIER_ROLES: RolesMap = {
+  intercept_in: { min: 1, domain: "optical", direction: true, fastAxis: true },
+  intercept_out: { min: 1, domain: "optical", direction: true, fastAxis: true },
+  seed: { min: 0, domain: "optical" },
+};
+
 export const taperedAmplifierPlugin = definePhysicsPlugin<TaperedAmplifierParams>({
   id: "tapered_amplifier",
   displayName: "Tapered Amplifier",
@@ -48,16 +58,8 @@ export const taperedAmplifierPlugin = definePhysicsPlugin<TaperedAmplifierParams
     elementKind: "tapered_amplifier",
     primaryDomain: "optical",
     defaultPhysics: ["optical", "thermal"],
-    anchors: {
-      required: ["intercept_in", "intercept_out"],
-      optional: ["seed"],
-      needsDirection: ["intercept_in", "intercept_out"],
-      // Both facets carry a transverse polarization reference (axisY): the
-      // input gain axis (intercept_in) selects/amplifies one linear pol,
-      // and the amplified output (intercept_out) exits along that axis.
-      // Editable as axisY in the PHY Editor anchor table.
-      needsFastAxis: ["intercept_in", "intercept_out"],
-    },
+    roles: TAPERED_AMPLIFIER_ROLES,
+    anchors: anchorContractFromRoles(TAPERED_AMPLIFIER_ROLES),
     alignVariant: "translate_anti_parallel",
     alignToleranceMm: 25,
     alignSummary:

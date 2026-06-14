@@ -6,6 +6,7 @@
  */
 import type { Device } from "./_device";
 import { ad9959 } from "./ad9959";
+import { dg4202 } from "./dg4202";
 import { horn_wr90 } from "./horn_wr90";
 import { ppg_sma } from "./ppg_sma";
 import { rg316_sma } from "./rg316_sma";
@@ -15,6 +16,7 @@ import { zyswa_2_50dr } from "./zyswa_2_50dr";
 /** All registered devices. Order is display order in the PHY Editor picker. */
 export const DEVICES = [
   ad9959,
+  dg4202,
   zhl_1_2w,
   zyswa_2_50dr,
   rg316_sma,

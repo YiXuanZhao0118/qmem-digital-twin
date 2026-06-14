@@ -14,7 +14,11 @@
  * at (tipMm,0,0) pointing +X is the mating face. RF connectors are
  * axisymmetric so connect_in carries no slow-axis key.
  */
-import { definePhysicsPlugin } from "../_plugin";
+import {
+  anchorContractFromRoles,
+  definePhysicsPlugin,
+  type RolesMap,
+} from "../_plugin";
 
 export interface RfCableConnectorParams extends Record<string, unknown> {
   family: "sma" | "bnc";
@@ -22,6 +26,11 @@ export interface RfCableConnectorParams extends Record<string, unknown> {
   impedanceOhm: number;
   maxFreqGhz: number;
 }
+
+const RF_CABLE_CONNECTOR_ROLES: RolesMap = {
+  connect_in: { min: 1, domain: "rf", direction: true },
+  connect_out: { min: 1, domain: "rf", direction: true },
+};
 
 export const rfCableConnectorPlugin = definePhysicsPlugin<RfCableConnectorParams>({
   id: "rf_cable_connector",
@@ -33,11 +42,8 @@ export const rfCableConnectorPlugin = definePhysicsPlugin<RfCableConnectorParams
     elementKind: "rf_cable_connector",
     primaryDomain: "rf",
     defaultPhysics: ["rf"],
-    anchors: {
-      required: ["connect_in", "connect_out"],
-      optional: [],
-      needsDirection: ["connect_in", "connect_out"],
-    },
+    roles: RF_CABLE_CONNECTOR_ROLES,
+    anchors: anchorContractFromRoles(RF_CABLE_CONNECTOR_ROLES),
     alignVariant: "none",
     alignToleranceMm: 25,
     alignSummary:

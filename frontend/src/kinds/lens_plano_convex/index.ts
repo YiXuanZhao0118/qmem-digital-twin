@@ -1,4 +1,8 @@
-import { definePhysicsPlugin } from "../_plugin";
+import {
+  anchorContractFromRoles,
+  definePhysicsPlugin,
+  type RolesMap,
+} from "../_plugin";
 
 export interface LensPlanoConvexParams extends Record<string, unknown> {
   focalLengthMm: number;
@@ -19,6 +23,11 @@ export interface LensPlanoConvexParams extends Record<string, unknown> {
   radiusBackMm?: number;
 }
 
+const LENS_PLANO_CONVEX_ROLES: RolesMap = {
+  intercept_in: { min: 1, domain: "optical", direction: true, aperture: true },
+  intercept_out: { min: 0, domain: "optical" },
+};
+
 export const lensPlanoConvexPlugin = definePhysicsPlugin<LensPlanoConvexParams>({
   id: "lens_plano_convex",
   displayName: "Plano-Convex Lens",
@@ -29,12 +38,8 @@ export const lensPlanoConvexPlugin = definePhysicsPlugin<LensPlanoConvexParams>(
     elementKind: "lens_plano_convex",
     primaryDomain: "optical",
     defaultPhysics: ["optical"],
-    anchors: {
-      required: ["intercept_in"],
-      optional: ["intercept_out"],
-      needsDirection: ["intercept_in"],
-      needsAperture: ["intercept_in"],
-    },
+    roles: LENS_PLANO_CONVEX_ROLES,
+    anchors: anchorContractFromRoles(LENS_PLANO_CONVEX_ROLES),
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
     alignSummary:

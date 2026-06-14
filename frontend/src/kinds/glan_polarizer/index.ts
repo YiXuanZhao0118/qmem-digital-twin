@@ -13,7 +13,11 @@
  * ``glan_polarizer_calcite`` for the front/back polariser slot
  * instead of ``polarizer_pbs_cube`` (Stage A''.3/.4).
  */
-import { definePhysicsPlugin } from "../_plugin";
+import {
+  anchorContractFromRoles,
+  definePhysicsPlugin,
+  type RolesMap,
+} from "../_plugin";
 
 
 export interface GlanPolarizerParams extends Record<string, unknown> {
@@ -43,6 +47,11 @@ export interface GlanPolarizerParams extends Record<string, unknown> {
 }
 
 
+const GLAN_POLARIZER_ROLES: RolesMap = {
+  intercept_in: { min: 1, domain: "optical", direction: true, aperture: true, fastAxis: true },
+  intercept_out: { min: 0, domain: "optical" },
+};
+
 export const glanPolarizerPlugin = definePhysicsPlugin<GlanPolarizerParams>({
   id: "glan_polarizer",
   displayName: "Glan-Laser",
@@ -59,16 +68,8 @@ export const glanPolarizerPlugin = definePhysicsPlugin<GlanPolarizerParams>({
     // aperture = active interface size. The cut behaves as a TIR
     // reflector for the O-ray, so it is the optically relevant surface
     // — the same role PBS's diagonal cement plane plays.
-    anchors: {
-      required: ["intercept_in"],
-      // intercept_out marks the side exit of the rejected O-ray
-      // (~67-68° from the optical axis through the side face).
-      optional: ["intercept_out"],
-      needsDirection: ["intercept_in"],
-      needsAperture: ["intercept_in"],
-      // Transmission (e-ray) axis — transverse reference edited as axisY.
-      needsFastAxis: ["intercept_in"],
-    },
+    roles: GLAN_POLARIZER_ROLES,
+    anchors: anchorContractFromRoles(GLAN_POLARIZER_ROLES),
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
     alignSummary:

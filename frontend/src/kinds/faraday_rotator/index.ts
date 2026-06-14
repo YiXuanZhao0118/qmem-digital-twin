@@ -17,7 +17,11 @@
  * Physics op lives in `optical/kinds/faraday-rotator/physics.ts` (frontend)
  * and `backend/app/optical/kinds/faraday_rotator/physics.py` (backend).
  */
-import { definePhysicsPlugin } from "../_plugin";
+import {
+  anchorContractFromRoles,
+  definePhysicsPlugin,
+  type RolesMap,
+} from "../_plugin";
 
 export interface FaradayRotatorParams extends Record<string, unknown> {
   rotationDeg: number;
@@ -25,6 +29,10 @@ export interface FaradayRotatorParams extends Record<string, unknown> {
   refractiveIndex: number;
   wavelengthRangeNm: [number, number];
 }
+
+const FARADAY_ROTATOR_ROLES: RolesMap = {
+  optical_center: { min: 1, domain: "optical", direction: true, aperture: true },
+};
 
 export const faradayRotatorPlugin = definePhysicsPlugin<FaradayRotatorParams>({
   id: "faraday_rotator",
@@ -36,12 +44,8 @@ export const faradayRotatorPlugin = definePhysicsPlugin<FaradayRotatorParams>({
     elementKind: "faraday_rotator",
     primaryDomain: "optical",
     defaultPhysics: ["optical"],
-    anchors: {
-      required: ["optical_center"],
-      optional: [],
-      needsDirection: ["optical_center"],
-      needsAperture: ["optical_center"],
-    },
+    roles: FARADAY_ROTATOR_ROLES,
+    anchors: anchorContractFromRoles(FARADAY_ROTATOR_ROLES),
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
     alignSummary: "optical_center translates to beam axis. Translation only.",

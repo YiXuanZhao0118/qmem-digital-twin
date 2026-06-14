@@ -6,13 +6,21 @@
  * `createPrimitive` switch case in loadAsset.ts. M6 will inline that
  * geometry into this folder's `renderer.ts`.
  */
-import { definePhysicsPlugin } from "../_plugin";
+import {
+  anchorContractFromRoles,
+  definePhysicsPlugin,
+  type RolesMap,
+} from "../_plugin";
 import { renderMirror } from "./renderer";
 
 export interface MirrorParams extends Record<string, unknown> {
   reflectivity: number;
   wavelengthRangeNm: [number, number];
 }
+
+const MIRROR_ROLES: RolesMap = {
+  intercept_face: { min: 1, domain: "optical", direction: true, aperture: true },
+};
 
 export const mirrorPlugin = definePhysicsPlugin<MirrorParams>({
   id: "mirror",
@@ -25,12 +33,8 @@ export const mirrorPlugin = definePhysicsPlugin<MirrorParams>({
     elementKind: "mirror",
     primaryDomain: "optical",
     defaultPhysics: ["optical"],
-    anchors: {
-      required: ["intercept_face"],
-      optional: [],
-      needsDirection: ["intercept_face"],
-      needsAperture: ["intercept_face"],
-    },
+    roles: MIRROR_ROLES,
+    anchors: anchorContractFromRoles(MIRROR_ROLES),
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
     alignSummary:

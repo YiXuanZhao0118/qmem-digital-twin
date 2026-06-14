@@ -1,4 +1,8 @@
-import { definePhysicsPlugin } from "../_plugin";
+import {
+  anchorContractFromRoles,
+  definePhysicsPlugin,
+  type RolesMap,
+} from "../_plugin";
 
 export interface NonlinearCrystalParams extends Record<string, unknown> {
   process: "SHG" | "SFG" | "DFG" | "OPO" | "OPA";
@@ -7,6 +11,11 @@ export interface NonlinearCrystalParams extends Record<string, unknown> {
   walkOffUrad: number;
   wavelengthRangeNm: [number, number];
 }
+
+const NONLINEAR_CRYSTAL_ROLES: RolesMap = {
+  intercept_in: { min: 1, domain: "optical", aperture: true },
+  intercept_out: { min: 0, domain: "optical" },
+};
 
 export const nonlinearCrystalPlugin = definePhysicsPlugin<NonlinearCrystalParams>({
   id: "nonlinear_crystal",
@@ -18,12 +27,8 @@ export const nonlinearCrystalPlugin = definePhysicsPlugin<NonlinearCrystalParams
     elementKind: "nonlinear_crystal",
     primaryDomain: "optical",
     defaultPhysics: ["optical", "thermal"],
-    anchors: {
-      required: ["intercept_in"],
-      optional: ["intercept_out"],
-      needsDirection: [],
-      needsAperture: ["intercept_in"],
-    },
+    roles: NONLINEAR_CRYSTAL_ROLES,
+    anchors: anchorContractFromRoles(NONLINEAR_CRYSTAL_ROLES),
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
     alignSummary: "intercept_in translates to fundamental beam. Phase matching set in kindParams.",

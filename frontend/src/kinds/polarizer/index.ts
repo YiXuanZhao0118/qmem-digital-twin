@@ -1,10 +1,18 @@
-import { definePhysicsPlugin } from "../_plugin";
+import {
+  anchorContractFromRoles,
+  definePhysicsPlugin,
+  type RolesMap,
+} from "../_plugin";
 
 export interface PolarizerParams extends Record<string, unknown> {
   transmissionAxisDegBeamLocal: number;
   extinctionRatioDb: number;
   wavelengthRangeNm: [number, number];
 }
+
+const POLARIZER_ROLES: RolesMap = {
+  intercept_in: { min: 1, domain: "optical", aperture: true, fastAxis: true },
+};
 
 export const polarizerPlugin = definePhysicsPlugin<PolarizerParams>({
   id: "polarizer",
@@ -16,15 +24,8 @@ export const polarizerPlugin = definePhysicsPlugin<PolarizerParams>({
     elementKind: "polarizer",
     primaryDomain: "optical",
     defaultPhysics: ["optical"],
-    anchors: {
-      required: ["intercept_in"],
-      optional: [],
-      needsDirection: [],
-      needsAperture: ["intercept_in"],
-      // Transmission axis — the transverse reference the PHY Editor edits
-      // as axisY (slow/fast/transmit). See Asset3DEditor anchor table.
-      needsFastAxis: ["intercept_in"],
-    },
+    roles: POLARIZER_ROLES,
+    anchors: anchorContractFromRoles(POLARIZER_ROLES),
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
     alignSummary: "intercept_in translates to beam axis. Translation only.",

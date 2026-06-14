@@ -10,7 +10,11 @@
  * stays where it is (consumed by rayTrace and PhysicsElementPanel) and
  * is re-exported through this plugin folder's `physics.ts` (M6).
  */
-import { definePhysicsPlugin } from "../_plugin";
+import {
+  anchorContractFromRoles,
+  definePhysicsPlugin,
+  type RolesMap,
+} from "../_plugin";
 
 export interface AomParams extends Record<string, unknown> {
   baseEfficiency: number;            // datasheet PEAK efficiency (η at rated drive)
@@ -32,6 +36,13 @@ export interface AomParams extends Record<string, unknown> {
   wavelengthRangeNm: [number, number];
 }
 
+const AOM_ROLES: RolesMap = {
+  intercept_in: { min: 1, domain: "optical", aperture: true },
+  intercept_out: { min: 1, domain: "optical", aperture: true },
+  acoustic_axis: { min: 1, domain: "optical", direction: true },
+  rf_in: { min: 1, domain: "rf", direction: true },
+};
+
 export const aomPlugin = definePhysicsPlugin<AomParams>({
   id: "aom",
   // Canonical name matches KIND_LABELS (the UI-facing short label).
@@ -47,18 +58,8 @@ export const aomPlugin = definePhysicsPlugin<AomParams>({
     elementKind: "aom",
     primaryDomain: "optical",
     defaultPhysics: ["optical", "rf", "thermal"],
-    anchors: {
-      // acoustic_axis is REQUIRED for the optical (Bragg) calculation: its
-      // axisX is the acoustic propagation direction (perpendicular to the
-      // intercept_in -> intercept_out optical axis) and is the single source
-      // of truth for which way the +-1 orders fan. The optical path does NOT
-      // use rf_in (that is only the RF cable connector). rf_in stays declared
-      // for RF-link wiring, but the beam trace consumes acoustic_axis.
-      required: ["intercept_in", "intercept_out", "acoustic_axis", "rf_in"],
-      optional: [],
-      needsDirection: ["rf_in", "acoustic_axis"],
-      needsAperture: ["intercept_in", "intercept_out"],
-    },
+    roles: AOM_ROLES,
+    anchors: anchorContractFromRoles(AOM_ROLES),
     alignVariant: "translate_and_bragg_rotate",
     alignToleranceMm: 25,
     alignSummary:

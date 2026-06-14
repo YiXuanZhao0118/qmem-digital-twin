@@ -29,7 +29,11 @@
  *       `axisY` keys the PM slow axis (PM-to-PM mating compares the two
  *       ends' axisY angle).
  */
-import { definePhysicsPlugin } from "../_plugin";
+import {
+  anchorContractFromRoles,
+  definePhysicsPlugin,
+  type RolesMap,
+} from "../_plugin";
 
 export interface FiberConnectorParams extends Record<string, unknown> {
   polish: "PC" | "APC" | "UPC";
@@ -44,6 +48,11 @@ export interface FiberConnectorParams extends Record<string, unknown> {
   wavelengthRangeNm: [number, number];
 }
 
+const FIBER_CONNECTOR_ROLES: RolesMap = {
+  connect_in: { min: 1, domain: "optical", direction: true, aperture: true },
+  connect_out: { min: 1, domain: "optical", direction: true },
+};
+
 export const fiberConnectorPlugin = definePhysicsPlugin<FiberConnectorParams>({
   id: "fiber_connector",
   displayName: "Fiber Connector",
@@ -54,14 +63,8 @@ export const fiberConnectorPlugin = definePhysicsPlugin<FiberConnectorParams>({
     elementKind: "fiber_connector",
     primaryDomain: "optical",
     defaultPhysics: ["optical"],
-    anchors: {
-      required: ["connect_in", "connect_out"],
-      optional: [],
-      needsDirection: ["connect_in", "connect_out"],
-      // connect_in carries the fibre-core aperture; connect_out is the
-      // wire junction and needs no aperture.
-      needsAperture: ["connect_in"],
-    },
+    roles: FIBER_CONNECTOR_ROLES,
+    anchors: anchorContractFromRoles(FIBER_CONNECTOR_ROLES),
     // Connectors align via the cable binding (their connect_out pins to
     // the spline endpoint), never standalone — so no own align variant.
     alignVariant: "none",

@@ -1,8 +1,16 @@
-import { definePhysicsPlugin } from "../_plugin";
+import {
+  anchorContractFromRoles,
+  definePhysicsPlugin,
+  type RolesMap,
+} from "../_plugin";
 
 export interface WavemeterParams extends Record<string, unknown> {
   wavelengthRangeNm: [number, number];
 }
+
+const WAVEMETER_ROLES: RolesMap = {
+  intercept_in: { min: 1, domain: "optical", aperture: true },
+};
 
 export const wavemeterPlugin = definePhysicsPlugin<WavemeterParams>({
   id: "wavemeter",
@@ -14,12 +22,8 @@ export const wavemeterPlugin = definePhysicsPlugin<WavemeterParams>({
     elementKind: "wavemeter",
     primaryDomain: "optical",
     defaultPhysics: ["optical"],
-    anchors: {
-      required: ["intercept_in"],
-      optional: [],
-      needsDirection: [],
-      needsAperture: ["intercept_in"],
-    },
+    roles: WAVEMETER_ROLES,
+    anchors: anchorContractFromRoles(WAVEMETER_ROLES),
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
     alignSummary: "Input port (intercept_in) translates to beam.",

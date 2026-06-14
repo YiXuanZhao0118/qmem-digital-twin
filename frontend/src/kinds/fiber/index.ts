@@ -11,7 +11,11 @@
  * intercept_in anchor rides End A's connector frame; intercept_out
  * rides End B's. Moving a spline node carries the optical port with it.
  */
-import { definePhysicsPlugin } from "../_plugin";
+import {
+  anchorContractFromRoles,
+  definePhysicsPlugin,
+  type RolesMap,
+} from "../_plugin";
 
 export interface FiberEndSpec extends Record<string, unknown> {
   apertureDiameterMm: number;
@@ -65,6 +69,11 @@ const DEFAULT_END: FiberEndSpec = {
   slowAxisDegInBodyFrame: 0.0,
 };
 
+const FIBER_ROLES: RolesMap = {
+  intercept_in: { min: 1, domain: "optical", direction: true, aperture: true },
+  intercept_out: { min: 1, domain: "optical", direction: true, aperture: true },
+};
+
 export const fiberPlugin = definePhysicsPlugin<FiberParams>({
   id: "fiber",
   displayName: "Fiber Patch Cable",
@@ -75,12 +84,8 @@ export const fiberPlugin = definePhysicsPlugin<FiberParams>({
     elementKind: "fiber",
     primaryDomain: "optical",
     defaultPhysics: ["optical"],
-    anchors: {
-      required: ["intercept_in", "intercept_out"],
-      optional: [],
-      needsDirection: ["intercept_in", "intercept_out"],
-      needsAperture: ["intercept_in", "intercept_out"],
-    },
+    roles: FIBER_ROLES,
+    anchors: anchorContractFromRoles(FIBER_ROLES),
     alignVariant: "none",
     alignToleranceMm: 25,
     alignSummary:

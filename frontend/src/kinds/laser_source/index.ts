@@ -1,4 +1,8 @@
-import { definePhysicsPlugin } from "../_plugin";
+import {
+  anchorContractFromRoles,
+  definePhysicsPlugin,
+  type RolesMap,
+} from "../_plugin";
 
 const C_M_PER_S = 299_792_458;
 
@@ -50,6 +54,11 @@ export interface LaserSourceParams extends Record<string, unknown> {
   nominalPowerMw: number;
 }
 
+const LASER_SOURCE_ROLES: RolesMap = {
+  out: { min: 0, domain: "optical", fastAxis: true },
+  intercept_out: { min: 0, domain: "optical", fastAxis: true },
+};
+
 export const laserSourcePlugin = definePhysicsPlugin<LaserSourceParams>({
   id: "laser_source",
   displayName: "Laser Source",
@@ -60,15 +69,8 @@ export const laserSourcePlugin = definePhysicsPlugin<LaserSourceParams>({
     elementKind: "laser_source",
     primaryDomain: "optical",
     defaultPhysics: ["optical", "thermal"],
-    anchors: {
-      required: [],
-      optional: ["out", "intercept_out"],
-      needsDirection: [],
-      // The emit anchor's axisY is the linear-polarization reference for
-      // the emitted beam (the Jones vector in defaultParams.polarization
-      // is defined in this axisY/axisZ basis). Editable in the PHY Editor.
-      needsFastAxis: ["out", "intercept_out"],
-    },
+    roles: LASER_SOURCE_ROLES,
+    anchors: anchorContractFromRoles(LASER_SOURCE_ROLES),
     alignVariant: "none",
     alignToleranceMm: 0,
     alignSummary: "Emitter — beam originates here. Not aligned to anything.",

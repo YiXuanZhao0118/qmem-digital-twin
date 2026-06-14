@@ -1,4 +1,8 @@
-import { definePhysicsPlugin } from "../_plugin";
+import {
+  anchorContractFromRoles,
+  definePhysicsPlugin,
+  type RolesMap,
+} from "../_plugin";
 
 export interface DichroicMirrorParams extends Record<string, unknown> {
   cutoffWavelengthNm: number;
@@ -7,6 +11,10 @@ export interface DichroicMirrorParams extends Record<string, unknown> {
   reflectivity: number;
   wavelengthRangeNm: [number, number];
 }
+
+const DICHROIC_MIRROR_ROLES: RolesMap = {
+  intercept_face: { min: 1, domain: "optical", direction: true, aperture: true },
+};
 
 export const dichroicMirrorPlugin = definePhysicsPlugin<DichroicMirrorParams>({
   id: "dichroic_mirror",
@@ -18,12 +26,8 @@ export const dichroicMirrorPlugin = definePhysicsPlugin<DichroicMirrorParams>({
     elementKind: "dichroic_mirror",
     primaryDomain: "optical",
     defaultPhysics: ["optical"],
-    anchors: {
-      required: ["intercept_face"],
-      optional: [],
-      needsDirection: ["intercept_face"],
-      needsAperture: ["intercept_face"],
-    },
+    roles: DICHROIC_MIRROR_ROLES,
+    anchors: anchorContractFromRoles(DICHROIC_MIRROR_ROLES),
     alignVariant: "translate_anchor_to_beam",
     alignToleranceMm: 25,
     alignSummary:
