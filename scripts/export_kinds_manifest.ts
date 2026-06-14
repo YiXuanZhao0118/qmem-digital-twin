@@ -256,11 +256,17 @@ function build(
     }
   }
 
-  // Device registry: emit each device, and materialise its anchor layout into
-  // `component_anchor_contracts` keyed by the device's componentType — this is
-  // the new home of what used to be the plugin's `componentAnchorContracts`
-  // (e.g. the AD9959's 4×CH layout). A device entry wins over a plugin-authored
-  // contract for the same componentType (the device is the more specific source).
+  // Device registry: emit each device into the `devices[]` block (keyed by the
+  // unique device id — that's what the seeder reads via `device_by_id`).
+  //
+  // Additionally materialise the anchor layout into `component_anchor_contracts`
+  // ONLY for devices whose `componentType` is a DISTINCT catalog part-form
+  // (componentType !== behavioralKind, e.g. `dds_ad9959_pcb` vs kind
+  // `rf_source`). That map is keyed by componentType and drives the PHY Editor's
+  // "lock anchor identity" feature; it MUST NOT be keyed off the generic kind
+  // componentType (e.g. `mirror`, `rf_amplifier`) because many devices share one
+  // kind and would collide/overwrite. Generic-form devices live only in
+  // `devices[]`; their anchors are still seedable, just not anchor-locked.
   for (const dUnknown of devices) {
     const d = dUnknown as any;
     deviceRecords.push({
@@ -272,16 +278,18 @@ function build(
       anchors: (d.anchors as any[]).map(deviceAnchorToManifest),
       default_params: { ...(d.defaultParams ?? {}) },
     });
-    componentAnchorContracts[d.componentType] = (d.anchors as any[]).map((a) => ({
-      id: a.role,
-      ...(a.name !== undefined ? { name: a.name } : {}),
-      ...(a.positionMmBodyLocal !== undefined
-        ? { position_mm_body_local: a.positionMmBodyLocal }
-        : {}),
-      ...(a.directionBodyLocal !== undefined
-        ? { direction_body_local: a.directionBodyLocal }
-        : {}),
-    }));
+    if (d.componentType !== d.behavioralKind) {
+      componentAnchorContracts[d.componentType] = (d.anchors as any[]).map((a) => ({
+        id: a.role,
+        ...(a.name !== undefined ? { name: a.name } : {}),
+        ...(a.positionMmBodyLocal !== undefined
+          ? { position_mm_body_local: a.positionMmBodyLocal }
+          : {}),
+        ...(a.directionBodyLocal !== undefined
+          ? { direction_body_local: a.directionBodyLocal }
+          : {}),
+      }));
+    }
   }
 
   return {

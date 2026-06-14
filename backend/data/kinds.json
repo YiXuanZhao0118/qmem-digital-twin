@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-14T14:06:40.969Z",
+  "generated_at": "2026-06-14T14:17:42.588Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -149,68 +149,6 @@
           "x": 1,
           "y": 0,
           "z": 0
-        }
-      }
-    ],
-    "rf_amplifier": [
-      {
-        "id": "rf_in",
-        "direction_body_local": {
-          "x": -1,
-          "y": 0,
-          "z": 0
-        }
-      },
-      {
-        "id": "rf_out",
-        "direction_body_local": {
-          "x": 1,
-          "y": 0,
-          "z": 0
-        }
-      }
-    ],
-    "rf_switch": [
-      {
-        "id": "rf_in"
-      },
-      {
-        "id": "rf_out",
-        "name": "RF1"
-      },
-      {
-        "id": "rf_out",
-        "name": "RF2"
-      },
-      {
-        "id": "ttl_in"
-      }
-    ],
-    "rf_cable": [
-      {
-        "id": "rf_in"
-      },
-      {
-        "id": "rf_out"
-      }
-    ],
-    "programmable_pulse_generator": [
-      {
-        "id": "rf_out",
-        "direction_body_local": {
-          "x": 1,
-          "y": 0,
-          "z": 0
-        }
-      }
-    ],
-    "horn_antenna": [
-      {
-        "id": "aperture",
-        "direction_body_local": {
-          "x": 0,
-          "y": 0,
-          "z": 1
         }
       }
     ]
@@ -2586,6 +2524,61 @@
         }
       ],
       "default_params": {}
+    },
+    {
+      "id": "bb1_e03",
+      "display_name": "Thorlabs BB1-E03 mirror (Ø1\", E03)",
+      "behavioral_kind": "mirror",
+      "component_type": "mirror",
+      "mesh": "bb1_e03_step.glb",
+      "anchors": [
+        {
+          "role": "intercept_face",
+          "position_mm_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "aperture_mm": 12.7
+        }
+      ],
+      "default_params": {
+        "reflectivity": 0.99
+      }
+    },
+    {
+      "id": "la1509_b",
+      "display_name": "Thorlabs LA1509-B lens (f=100mm, Ø1\")",
+      "behavioral_kind": "lens_plano_convex",
+      "component_type": "lens_plano_convex",
+      "mesh": "la1509_b_step.glb",
+      "anchors": [
+        {
+          "role": "intercept_in",
+          "position_mm_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "aperture_mm": 12.7
+        }
+      ],
+      "default_params": {
+        "focalLengthMm": 100,
+        "transmittance": 0.995,
+        "refractiveIndex": 1.5098,
+        "centerThicknessMm": 3.6
+      }
     }
   ]
 }
