@@ -17,6 +17,7 @@ import {
   portDomainsFromRoles,
   type RolesMap,
 } from "../_plugin";
+import type { ParamSchema } from "../paramSchema";
 
 export interface RfSwitchParams extends Record<string, unknown> {
   throwCount: number;
@@ -37,6 +38,20 @@ const RF_SWITCH_ROLES: RolesMap = {
   rf_in: { min: 1, domain: "rf", direction: true },
   rf_out: { min: 1, max: null, domain: "rf", direction: true },
   ttl_in: { min: 1, domain: "ttl", direction: true },
+};
+
+// Typed UI schema — ttlState is the per-instance manual TTL knob (enum →
+// dropdown); the rest are model spec (numbers).
+const RF_SWITCH_PARAM_SCHEMA: ParamSchema = {
+  throwCount: { type: "number", label: "throw count", min: 2, step: 1 },
+  insertionLossDb: { type: "number", label: "insertion loss (dB)", min: 0, step: 0.1 },
+  ttlActiveHighThrow: { type: "number", label: "TTL-high throw", min: 1, step: 1 },
+  ttlState: {
+    type: "enum",
+    label: "manual TTL state",
+    tunable: true,
+    options: [{ value: "LOW" }, { value: "HIGH" }],
+  },
 };
 
 export const rfSwitchPlugin = definePhysicsPlugin<RfSwitchParams>({
@@ -61,6 +76,7 @@ export const rfSwitchPlugin = definePhysicsPlugin<RfSwitchParams>({
       ttlActiveHighThrow: 2,
       ttlState: "LOW",
     },
+    paramSchema: RF_SWITCH_PARAM_SCHEMA,
     portDomains: portDomainsFromRoles(RF_SWITCH_ROLES),
   },
 });

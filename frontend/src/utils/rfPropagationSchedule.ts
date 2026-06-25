@@ -19,6 +19,7 @@
  */
 import type {
   Asset3D,
+  ComponentBinding,
   ComponentItem,
   PhysicsElement,
   SceneObject,
@@ -51,6 +52,9 @@ type BuildArgs = {
   objects: readonly SceneObject[];
   components: readonly ComponentItem[];
   assets: readonly Asset3D[];
+  /** Forwarded to every snapshot so binding-backed scenes resolve each
+   *  object's primary asset (anchors + spec). See `buildRfPropagation`. */
+  componentBindings?: readonly ComponentBinding[];
   physicsElements: readonly PhysicsElement[];
   timingPrograms?: readonly TimingProgram[];
   /** Forwarded to every snapshot — see `buildRfPropagation` for semantics.

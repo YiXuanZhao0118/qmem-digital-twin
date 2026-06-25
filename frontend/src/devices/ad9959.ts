@@ -54,6 +54,10 @@ export const ad9959 = defineDevice({
     },
   ],
   defaultParams: {
+    // Full-scale single-ended Vpp into 50 Ω at default Rset. The RF trace
+    // reads this asset coefficient (per-channel amplitudeScale × fullScaleVpp);
+    // seeded onto the asset's default_params so a device re-seed carries it.
+    fullScaleVpp: 1.0,
     maxOutputMHz: 200,
     refClockMHz: 20,
   },

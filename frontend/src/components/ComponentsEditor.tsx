@@ -2028,6 +2028,14 @@ function ComponentPreview3D({
   // Bumped when a connector model finishes loading so the scene effect
   // rebuilds and swaps the procedural fallback for the real baked mesh.
   const [connectorEpoch, setConnectorEpoch] = useState(0);
+  // Also bump when the catalog's asset list arrives: the connector resolver
+  // reads the catalog live, so a preview built before the catalog loaded drew
+  // the procedural fallback with no GLB load kicked. Re-resolve once assets are
+  // available.
+  const catalogAssetCount = useV3Catalog((s) => s.assets.length);
+  useEffect(() => {
+    if (catalogAssetCount > 0) setConnectorEpoch((n) => n + 1);
+  }, [catalogAssetCount]);
 
   // Data-driven RF-cable connector models, same as the Lab viewer
   // (DigitalTwinViewer): map each connector kind to its catalog Asset3D so

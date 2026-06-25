@@ -11,10 +11,13 @@ import math
 
 import pytest
 
+from types import SimpleNamespace
+
 from app.optical.rf_resolve import (
     AomPort,
     RfInputs,
     RfNode,
+    _primary_asset_id,
     build_rf_propagation,
     port_key,
     resolve_aom_rf_drive,
@@ -70,6 +73,52 @@ def test_source_seeds_every_channel_anchor_with_defaults() -> None:
         sig = res.signal_at_port[port_key("src", ch)]
         assert sig.frequency_mhz == pytest.approx(80.0)
         assert sig.vpp == pytest.approx(1.0)
+
+
+def test_full_scale_vpp_from_asset_params() -> None:
+    # fullScaleVpp lives on the asset (default_params) — the authoritative
+    # store. amp 1.0 * fullScale 0.5 = 0.5 Vpp, overriding the 1.0 default.
+    src = RfNode("src", "rf_source",
+                 {"channels": [{"anchorName": "CH0", "frequencyMhz": 80.0, "amplitudeScale": 1.0}]},
+                 _SRC_ANCHORS, asset_params={"fullScaleVpp": 0.5})
+    res = build_rf_propagation(_inputs([src]), scrub_time_ns=0.0)
+    assert res.signal_at_port[port_key("src", "CH0")].vpp == pytest.approx(0.5)
+
+
+def test_full_scale_vpp_dynamic_sources_override_wins() -> None:
+    # Per-instance dynamic_sources.fullScaleVpp (tunable) overrides the asset.
+    src = RfNode("src", "rf_source", {}, _SRC_ANCHORS,
+                 asset_params={"fullScaleVpp": 0.5},
+                 dynamic_sources={"fullScaleVpp": 2.0})
+    res = build_rf_propagation(_inputs([src]), scrub_time_ns=0.0)
+    # default amp 1.0 * dynamic fullScale 2.0 = 2.0 Vpp.
+    assert res.signal_at_port[port_key("src", "CH0")].vpp == pytest.approx(2.0)
+
+
+def test_channels_from_asset_params() -> None:
+    # channels live on the asset (default_params) — the authoritative store;
+    # CH0 configured there, CH1..3 fall back to 80 MHz / amp 1.0.
+    src = RfNode("src", "rf_source", {}, _SRC_ANCHORS,
+                 asset_params={"channels": [
+                     {"anchorName": "CH0", "frequencyMhz": 120.0, "amplitudeScale": 0.5}]})
+    res = build_rf_propagation(_inputs([src]), scrub_time_ns=0.0)
+    ch0 = res.signal_at_port[port_key("src", "CH0")]
+    assert ch0.frequency_mhz == pytest.approx(120.0)
+    assert ch0.vpp == pytest.approx(0.5)
+    assert res.signal_at_port[port_key("src", "CH1")].frequency_mhz == pytest.approx(80.0)
+
+
+def test_channels_dynamic_sources_override_asset() -> None:
+    # Per-instance dynamic_sources.channels (tunable) overrides the asset.
+    src = RfNode("src", "rf_source", {}, _SRC_ANCHORS,
+                 asset_params={"channels": [
+                     {"anchorName": "CH0", "frequencyMhz": 120.0, "amplitudeScale": 0.5}]},
+                 dynamic_sources={"channels": [
+                     {"anchorName": "CH0", "frequencyMhz": 200.0, "amplitudeScale": 1.0}]})
+    res = build_rf_propagation(_inputs([src]), scrub_time_ns=0.0)
+    ch0 = res.signal_at_port[port_key("src", "CH0")]
+    assert ch0.frequency_mhz == pytest.approx(200.0)
+    assert ch0.vpp == pytest.approx(1.0)
 
 
 def test_direct_source_to_aom() -> None:
@@ -191,3 +240,43 @@ def test_rest_snapshot_uses_ppg_reststate_when_scrub_stopped() -> None:
     drive = resolve_aom_rf_drive(inp, None)  # rest snapshot, restState HIGH -> RF2 -> aomB
     assert drive["aomB"].get("rfDrivePowerW", 0.0) > 0.0
     assert drive["aomA"] == {"rfDrivePowerW": 0.0}
+
+
+# --- _primary_asset_id: parity with frontend componentBindings.primaryAsset ---
+
+def _comp(asset_3d_id=None):
+    return SimpleNamespace(id="comp", asset_3d_id=asset_3d_id)
+
+
+def _binding(*, parent=None, target_kind="asset", asset_3d_id="A"):
+    return SimpleNamespace(
+        parent_binding_id=parent, target_kind=target_kind, asset_3d_id=asset_3d_id,
+    )
+
+
+def test_primary_asset_single_root_asset_binding_wins() -> None:
+    # Binding-backed scene: Component.asset_3d_id is None, asset hangs on the
+    # single root binding. This is the case the legacy reader missed.
+    assert _primary_asset_id(_comp(None), [_binding(asset_3d_id="A")]) == "A"
+
+
+def test_primary_asset_falls_back_to_legacy_field() -> None:
+    # No bindings (pre-binding scene) -> legacy Component.asset_3d_id.
+    assert _primary_asset_id(_comp("L"), []) == "L"
+
+
+def test_primary_asset_none_for_composite_multi_root() -> None:
+    # Composite Component (>1 root) and no legacy field -> not a single-asset
+    # device, so the RF graph seeds nothing.
+    roots = [_binding(asset_3d_id="A"), _binding(asset_3d_id="B")]
+    assert _primary_asset_id(_comp(None), roots) is None
+
+
+def test_primary_asset_ignores_non_root_and_non_asset_bindings() -> None:
+    # A child asset binding (e.g. a connector) is NOT the primary; the single
+    # root must itself be target_kind="asset".
+    bindings = [
+        _binding(parent="root", asset_3d_id="child"),
+        _binding(target_kind="subcomponent", asset_3d_id=None),
+    ]
+    assert _primary_asset_id(_comp("L"), bindings) == "L"

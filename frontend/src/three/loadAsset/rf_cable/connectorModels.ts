@@ -92,6 +92,22 @@ export function setRfConnectorAssetResolver(fn: Resolver | null): void {
   loading.clear();
 }
 
+/** Drop all baked connector geometry so the next build re-resolves + re-bakes
+ *  from the current catalog, then signal consumers to rebuild. Call when a
+ *  connector asset's mesh/anchors change: the cache is keyed by connector KIND
+ *  (stable across a re-upload / anchor edit), so `loadConnector` early-returns
+ *  on the cache hit and serves the stale bake forever otherwise — the bug where
+ *  Object Sense / the COMPONENT preview keep the old model until you switch to
+ *  the ASSET3D tab and back (which unmounts a viewer → `setResolver(null)`).
+ *  Firing the load listeners makes the mounted viewer bump its connectorEpoch →
+ *  rebuild → the empty cache kicks a fresh async load → real mesh. */
+export function invalidateRfConnectorCache(): void {
+  geomCache.forEach((g) => g.dispose());
+  geomCache.clear();
+  loading.clear();
+  loadListeners.forEach((cb) => cb());
+}
+
 async function loadConnector(kind: RfConnectorKind): Promise<void> {
   if (geomCache.has(kind) || loading.has(kind) || !resolver) return;
   const spec = resolver(kind);
@@ -126,7 +142,7 @@ export function buildRfConnectorGroup(
   const cached = geomCache.get(kind);
   if (cached) {
     const group = new THREE.Group();
-    group.add(geometryToColoredMesh(cached));
+    group.add(geometryToColoredMesh(cached, THREE.DoubleSide));
     return group;
   }
   void loadConnector(kind);

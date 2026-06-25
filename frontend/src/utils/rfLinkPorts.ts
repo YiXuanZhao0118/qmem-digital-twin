@@ -121,3 +121,33 @@ export function kindParticipatesInRfLink(kind: string | null): boolean {
   ];
   return declared.some((id) => isRfLinkSignalDomain(resolvePortDomain(plugin, id)));
 }
+
+/** RF-link ports derived from the kind's role contract rather than an
+ *  Asset3D's anchor list. The fallback for a mesh-less RF object — a
+ *  Component whose `asset3dId` is null still has a behavioral kind, so its
+ *  logical RF node (and its declared ports) should appear in the panel even
+ *  before a mesh asset is attached. Returns one entry per distinct declared
+ *  anchor whose port domain is an RF-link signal domain, in declared order
+ *  (required first, then optional). Multiport roles (rf_out on a DDS / switch)
+ *  collapse to a single generic port here because cardinality + per-channel
+ *  names live on the asset, which by definition is absent in this path. */
+export function rfLinkRoleAnchors(
+  kind: string | null,
+): { anchorId: string; domain: RfLinkSignalDomain }[] {
+  if (!kind) return [];
+  const plugin = pluginForKind(kind);
+  if (!plugin || !isPhysicsPlugin(plugin)) return [];
+  const declared = [
+    ...plugin.physics.anchors.required,
+    ...plugin.physics.anchors.optional,
+  ];
+  const out: { anchorId: string; domain: RfLinkSignalDomain }[] = [];
+  const seen = new Set<string>();
+  for (const anchorId of declared) {
+    if (seen.has(anchorId)) continue;
+    seen.add(anchorId);
+    const domain = resolveRfLinkPortDomain({ kind, anchorId });
+    if (domain) out.push({ anchorId, domain });
+  }
+  return out;
+}

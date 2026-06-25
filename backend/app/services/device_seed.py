@@ -50,6 +50,22 @@ def _frame_from_axis_x(axis_x: Vec3) -> tuple[Vec3, Vec3, Vec3]:
     return x, y, z
 
 
+def _frame_from_axes(axis_x: Vec3, axis_y: Vec3 | None) -> tuple[Vec3, Vec3, Vec3]:
+    """Orthonormal (X, Y, Z) frame. When the device anchor declares an explicit
+    body-local axisY (polarisation-sensitive optics: waveplate / PBS / Glan /
+    Faraday), honour it — Gram-Schmidt it against X to stay orthonormal, then
+    Z = X × Y. Without an explicit axisY, fall back to the arbitrary RF-port
+    complement (`_frame_from_axis_x`)."""
+    x = _normalize(axis_x)
+    if axis_y is None:
+        return _frame_from_axis_x(x)
+    dot = axis_y[0] * x[0] + axis_y[1] * x[1] + axis_y[2] * x[2]
+    y_orth = (axis_y[0] - dot * x[0], axis_y[1] - dot * x[1], axis_y[2] - dot * x[2])
+    y = _normalize(y_orth, fallback=_frame_from_axis_x(x)[1])
+    z = _normalize(_cross(x, y))
+    return x, y, z
+
+
 def _vec(d: dict[str, Any] | None, fallback: Vec3) -> Vec3:
     if not isinstance(d, dict):
         return fallback
@@ -67,8 +83,10 @@ def materialize_device_anchors(device: dict[str, Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for a in device.get("anchors") or []:
         pos = _vec(a.get("position_mm_body_local"), (0.0, 0.0, 0.0))
-        axis_x, axis_y, axis_z = _frame_from_axis_x(
-            _vec(a.get("direction_body_local"), (1.0, 0.0, 0.0))
+        explicit_y = a.get("axis_y_body_local")
+        axis_x, axis_y, axis_z = _frame_from_axes(
+            _vec(a.get("direction_body_local"), (1.0, 0.0, 0.0)),
+            _vec(explicit_y, (0.0, 1.0, 0.0)) if explicit_y is not None else None,
         )
         anchor: dict[str, Any] = {
             "id": a["role"],
@@ -83,5 +101,11 @@ def materialize_device_anchors(device: dict[str, Any]) -> list[dict[str, Any]]:
             anchor["connectorType"] = a["connector_type"]
         if a.get("aperture_mm") is not None:
             anchor["apertureMm"] = a["aperture_mm"]
+        if a.get("aperture_shape") is not None:
+            anchor["apertureShape"] = a["aperture_shape"]
+        if a.get("aperture_width_mm") is not None:
+            anchor["apertureWidthMm"] = a["aperture_width_mm"]
+        if a.get("aperture_height_mm") is not None:
+            anchor["apertureHeightMm"] = a["aperture_height_mm"]
         out.append(anchor)
     return out

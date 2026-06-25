@@ -30,7 +30,11 @@ SceneObject（Lab pose + dynamicSources）
 - **dynamicSources** = 整個 instance 的執行期值，有效的只有 tunableParams 標記的 key，把光學耦合到電子/RF/雷射狀態：
   - laser_source：nominalPowerMw、centerWavelengthNm（預設 tunable；其餘 beam 參數由 asset 決定）。註：emit op 讀 power 時 `nominalPowerMw`（asset 自己的 key）優先於 legacy 的 `powerMw`/`laserPowerMw` alias，逐實例調功率才會生效（`emit_laser_source.py`）。
   - aom：aomFreqMhz、rfDrivePowerW/aomRfVpp（由上游 RF 鏈灌入；dynamicSources 是手動覆寫 fallback）
-  - rf_source：channels[] CH0–3
+  - rf_source：`channels[]` CH0–3 + `fullScaleVpp` 都是 asset `default_params` 係數，`dynamic_sources` 逐實例覆寫（tunable 預設 `["channels","fullScaleVpp"]`）——**跟光學同一套模型**。channels 解析鏈 `dynamic_sources` → asset default → 舊 `kindParams.channels`(legacy fallback)；AD9959 面板 per-channel 編輯寫 `dynamicSources.channels`。**注意 RF 走獨立路徑**：`rf_resolve.py`（非 `db_scene_loader`/`anchor_tracer`）自己讀 `asset.default_params` + `dynamic_sources`，seed Vpp = `amplitudeScale × fullScaleVpp`（見 [cable.md](cable.md)）。
   - 限制：dynamic_sources 為 per-object（非 per-binding），複合元件的多個子資產共用同一份，故 tunable 參數適用於單一資產的 source 元件（laser/rf_source）。
 
 物理參數分兩類：`intrinsic_param_keys`（硬體固定，如折射率、晶體長度——只能由 Asset 改）vs `state_param_keys`（執行期可調，如 RF 頻率、繞射階數）。kind 的 `state_param_keys` 是 Asset `tunableParams` 的種子預設（migration 0113 回填、Asset 編輯器新建時種子）。
+
+## Typed param schema + 通用編輯器（schema-driven UI）
+
+為了不用「每個 asset 各寫一套 UI」,kind 可在 plugin 宣告 **`physics.paramSchema`**（`kinds/paramSchema.ts`:`ParamSpec` = `number`/`enum`/`boolean`/`record`/`list`）——係數型別 `number→輸入框`、`enum→下拉`。**一個** 通用 renderer（`components/physics/SchemaParamEditor.tsx`）依此 schema 畫出所有欄位 + tunable 勾選,取代 per-asset bespoke 編輯器（device-registry 規劃書「❌ per-type 編輯器分支」）。schema **住在 kind**（行為層共用,DRY）;asset/device 供值;**list 的長度由 anchors 決定**（`cardinalityFromRole:"rf_out"`→AD9959 4 通道、DG4202 2 通道）。`paramSchema` 是**前端專用**(同 `optionalParams`,不進 kinds.json manifest)。首位採用者:`rf_source`(2026-06-15,Phase 1 = PHY 編輯器 `Asset3DEditor` 走 `DefaultParamsSchemaFields`,終結 rf_source 的 raw-JSON);Object 面板逐實例 + 退役 `Ad9959ObjectControls`/光學 `InstanceDynamicSourcesEditor` 收斂為後續 phase。AD9959 的 sweep 預覽 / FM-PM-AM profiles / 衍生 SYS_CLK 等不可泛化的 widget 留 bespoke escape hatch。

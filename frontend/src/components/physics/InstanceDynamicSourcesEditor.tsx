@@ -20,6 +20,7 @@ import { useMemo } from "react";
 import { RotateCcw } from "lucide-react";
 
 import { useSceneStore } from "../../store/sceneStore";
+import { pluginForKind } from "../../kinds/_plugins";
 import type { Asset3D, SceneObject } from "../../types/digitalTwin";
 import { cleanNumber } from "../../utils/numberFormat";
 import {
@@ -29,6 +30,8 @@ import {
   getAtPath,
   setAtPath,
 } from "../../utils/paramLeaves";
+import { SpecField } from "./SchemaParamEditor";
+import type { ParamSchema } from "../../kinds/paramSchema";
 
 function fmtDefault(v: unknown): string {
   if (Array.isArray(v)) return `[${v.join(", ")}]`;
@@ -46,6 +49,23 @@ export function InstanceDynamicSourcesEditor({
 
   const tunable = asset.tunableParams ?? [];
   const baseline = (asset.defaultParams ?? {}) as Record<string, unknown>;
+
+  // Typed-schema path: when the asset's kind declares physics.paramSchema, the
+  // generic schema-driven editor (number → input, enum → dropdown, list →
+  // per-channel blocks) renders the tunable params — the same widgets the PHY
+  // Editor uses. Kinds without a schema fall through to the legacy flattenLeaves
+  // editor below (zero regression). Mirrors the Asset3DEditor convergence.
+  const schema = pluginForKind(asset.kindId ?? "")?.physics.paramSchema;
+  if (schema) {
+    return (
+      <SchemaInstanceFields
+        schema={schema}
+        asset={asset}
+        sceneObject={sceneObject}
+        onWrite={(dyn) => void updateSceneObject(sceneObject.id, { dynamicSources: dyn })}
+      />
+    );
+  }
 
   // Every editable leaf under a tunable top-level key (nested included), in the
   // tunableParams order so the laser's power/wavelength keep a stable layout.
@@ -104,6 +124,68 @@ export function InstanceDynamicSourcesEditor({
             onChange={(v) => writeOverride(leaf.path, v)}
             onReset={() => resetOverride(topKey)}
           />
+        );
+      })}
+    </div>
+  );
+}
+
+/** Schema-driven per-instance editor: one block per tunable top-level key,
+ *  value = dynamicSources override ?? asset default, write the WHOLE key to
+ *  dynamicSources (backend shallow-merges per object), reset clears it. List
+ *  cardinality (channel count) comes from the asset's anchors. */
+function SchemaInstanceFields({
+  schema,
+  asset,
+  sceneObject,
+  onWrite,
+}: {
+  schema: ParamSchema;
+  asset: Asset3D;
+  sceneObject: SceneObject;
+  onWrite: (dynamicSources: Record<string, unknown> | null) => void;
+}) {
+  const tunable = asset.tunableParams ?? [];
+  const baseline = (asset.defaultParams ?? {}) as Record<string, unknown>;
+  const overrides = (sceneObject.dynamicSources ?? {}) as Record<string, unknown>;
+  const cardinalityByRole: Record<string, number> = {};
+  for (const a of asset.anchors ?? []) {
+    const id = (a as { id?: string }).id;
+    if (id) cardinalityByRole[id] = (cardinalityByRole[id] ?? 0) + 1;
+  }
+  const keys = tunable.filter((k) => k in schema);
+  if (keys.length === 0) return null;
+
+  const writeKey = (key: string, v: unknown) => onWrite({ ...overrides, [key]: v });
+  const resetKey = (key: string) => {
+    if (!(key in overrides)) return;
+    const next = { ...overrides };
+    delete next[key];
+    onWrite(Object.keys(next).length ? next : null);
+  };
+
+  return (
+    <div className="physics-panel-kind-params-grid">
+      {keys.map((key) => {
+        const spec = schema[key];
+        const overridden = key in overrides;
+        const value = overridden ? overrides[key] : baseline[key];
+        return (
+          <div key={key} style={{ display: "grid", gap: 3 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 11, color: "#374151", fontWeight: 600 }}>
+                {spec.label ?? key}
+                {overridden ? " •" : ""}
+              </span>
+              {overridden ? <ResetButton onReset={() => resetKey(key)} /> : null}
+            </div>
+            <SpecField
+              spec={spec}
+              value={value}
+              onChange={(v) => writeKey(key, v)}
+              cardinalityByRole={cardinalityByRole}
+            />
+          </div>
         );
       })}
     </div>

@@ -56,7 +56,7 @@ export function bindingsByComponent(
  *  trust the incoming order). */
 export function bindingsFor(
   componentId: string,
-  scene: Pick<SceneData, "componentBindings">,
+  scene: { componentBindings?: readonly ComponentBinding[] },
 ): ComponentBinding[] {
   const all = scene.componentBindings ?? [];
   return all.filter((b) => b.componentId === componentId);
@@ -68,7 +68,7 @@ export function bindingsFor(
  *  anchoring body). */
 export function rootBindingsOf(
   componentId: string,
-  scene: Pick<SceneData, "componentBindings">,
+  scene: { componentBindings?: readonly ComponentBinding[] },
 ): ComponentBinding[] {
   return bindingsFor(componentId, scene).filter(
     (b) => b.parentBindingId === null,
@@ -103,7 +103,10 @@ export function childrenOf(
  */
 export function primaryAsset(
   component: ComponentItem,
-  scene: Pick<SceneData, "componentBindings" | "assets">,
+  scene: {
+    componentBindings?: readonly ComponentBinding[];
+    assets: readonly Asset3D[];
+  },
 ): Asset3D | null {
   const roots = rootBindingsOf(component.id, scene);
   if (roots.length === 1 && roots[0].targetKind === "asset" && roots[0].asset3dId) {

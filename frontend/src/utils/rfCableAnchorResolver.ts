@@ -58,6 +58,29 @@ export function connectorTipMmForFamily(family: string | null | undefined): numb
     : RF_CONNECTOR_TIP_MM;
 }
 
+/** Tip offset (mm) derived from a connector asset's own anchors =
+ *  |connect_in − connect_out|. This is EXACTLY where the connector bake
+ *  (`bakeConnectorByAnchors`) places the mating face (connect_in) ahead of
+ *  connect_out, which sits on the cable spline node. Backing the node off the
+ *  target by this value makes connect_in land on the target port — the
+ *  hardcoded family constants (`connectorTipMmForFamily`) only match the
+ *  *procedural* connectors, not the imported device GLBs (sma_male's real
+ *  offset is 25.45 mm, not 15.5; bnc_male's is 43.5, not 27). Falls back to
+ *  the family constant when the connector has no connect_out/connect_in
+ *  anchors (procedural / placeholder asset). */
+export function connectorTipMmFromAnchors(
+  anchors: readonly Anchor[] | null | undefined,
+  family: string | null | undefined,
+): number {
+  const co = anchors?.find((a) => a.id === "connect_out")?.positionMmBodyLocal;
+  const ci = anchors?.find((a) => a.id === "connect_in")?.positionMmBodyLocal;
+  if (co && ci) {
+    const d = Math.hypot(ci.x - co.x, ci.y - co.y, ci.z - co.z);
+    if (d > 1e-6) return d;
+  }
+  return connectorTipMmForFamily(family);
+}
+
 function endpointIndex(end: "A" | "B", nodes: RfCableNodePersistent[]): number {
   return end === "A" ? 0 : nodes.length - 1;
 }

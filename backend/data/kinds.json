@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-14T14:17:42.588Z",
+  "generated_at": "2026-06-15T10:56:00.734Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -2378,6 +2378,7 @@
         }
       ],
       "default_params": {
+        "fullScaleVpp": 1,
         "maxOutputMHz": 200,
         "refClockMHz": 20
       }
@@ -2526,6 +2527,210 @@
       "default_params": {}
     },
     {
+      "id": "sma_male",
+      "display_name": "sma male",
+      "behavioral_kind": "rf_cable_connector",
+      "component_type": "rf_cable_connector",
+      "mesh": "sma_male.glb",
+      "anchors": [
+        {
+          "role": "connect_out",
+          "position_mm_body_local": {
+            "x": -4,
+            "y": 0,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "aperture_mm": 0,
+          "aperture_shape": "circle"
+        },
+        {
+          "role": "connect_in",
+          "position_mm_body_local": {
+            "x": -29.45,
+            "y": 0,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": -1,
+            "y": 0,
+            "z": 0
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "aperture_mm": 0,
+          "aperture_shape": "circle"
+        }
+      ],
+      "default_params": {
+        "maxFreqGhz": 18,
+        "impedanceOhm": 50
+      }
+    },
+    {
+      "id": "sma_female",
+      "display_name": "SMA Connector (female)",
+      "behavioral_kind": "rf_cable_connector",
+      "component_type": "rf_cable_connector",
+      "mesh": "sma_female_connector",
+      "anchors": [
+        {
+          "role": "connect_out",
+          "position_mm_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": -1,
+            "y": 0,
+            "z": 0
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          }
+        },
+        {
+          "role": "connect_in",
+          "position_mm_body_local": {
+            "x": 15.5,
+            "y": 0,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          }
+        }
+      ],
+      "default_params": {
+        "maxFreqGhz": 18,
+        "impedanceOhm": 50
+      }
+    },
+    {
+      "id": "bnc_male",
+      "display_name": "BNC Male",
+      "behavioral_kind": "rf_cable_connector",
+      "component_type": "rf_cable_connector",
+      "mesh": "bnc_male.glb",
+      "anchors": [
+        {
+          "role": "connect_out",
+          "position_mm_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": -29.7
+          },
+          "direction_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": -1
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "aperture_mm": 0,
+          "aperture_shape": "circle"
+        },
+        {
+          "role": "connect_in",
+          "position_mm_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 13.8
+          },
+          "direction_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "aperture_mm": 0,
+          "aperture_shape": "circle"
+        }
+      ],
+      "default_params": {
+        "maxFreqGhz": 4,
+        "impedanceOhm": 50
+      }
+    },
+    {
+      "id": "bnc_female",
+      "display_name": "BNC Connector (female)",
+      "behavioral_kind": "rf_cable_connector",
+      "component_type": "rf_cable_connector",
+      "mesh": "bnc_female_connector",
+      "anchors": [
+        {
+          "role": "connect_out",
+          "position_mm_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": -1,
+            "y": 0,
+            "z": 0
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          }
+        },
+        {
+          "role": "connect_in",
+          "position_mm_body_local": {
+            "x": 27,
+            "y": 0,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          }
+        }
+      ],
+      "default_params": {
+        "maxFreqGhz": 4,
+        "impedanceOhm": 50
+      }
+    },
+    {
       "id": "bb1_e03",
       "display_name": "Thorlabs BB1-E03 mirror (Ø1\", E03)",
       "behavioral_kind": "mirror",
@@ -2578,6 +2783,679 @@
         "transmittance": 0.995,
         "refractiveIndex": 1.5098,
         "centerThicknessMm": 3.6
+      }
+    },
+    {
+      "id": "a230tm_b",
+      "display_name": "A230TM-B-Step",
+      "behavioral_kind": "lens_plano_convex",
+      "component_type": "lens_plano_convex",
+      "mesh": "a230tm_b_step.glb",
+      "anchors": [
+        {
+          "role": "intercept_in",
+          "position_mm_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "aperture_mm": 2.475,
+          "aperture_shape": "circle"
+        }
+      ],
+      "default_params": {
+        "radiusBackMm": 10.308,
+        "focalLengthMm": 4.51,
+        "radiusFrontMm": 2.3244,
+        "transmittance": 0.995,
+        "refractiveIndex": 1.59,
+        "centerThicknessMm": 2.75
+      }
+    },
+    {
+      "id": "lj1960l1_b",
+      "display_name": "LJ1960L1-B-Step",
+      "behavioral_kind": "lens_cylindrical",
+      "component_type": "lens_cylindrical",
+      "mesh": "lj1960l1_b_step.glb",
+      "anchors": [
+        {
+          "role": "intercept_in",
+          "position_mm_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "aperture_mm": 1,
+          "aperture_shape": "rectangle",
+          "aperture_width_mm": 12,
+          "aperture_height_mm": 10
+        }
+      ],
+      "default_params": {
+        "focalLengthMm": 20.01,
+        "transmittance": 0.995
+      }
+    },
+    {
+      "id": "glan_io3_850",
+      "display_name": "Glan-Laser Prism (IO-3-850-HP, L=5.0mm)",
+      "behavioral_kind": "beam_splitter",
+      "component_type": "beam_splitter",
+      "mesh": "glan_polarizer_prism",
+      "anchors": [
+        {
+          "role": "intercept_face",
+          "position_mm_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": 0.6225096458616945,
+            "y": 0,
+            "z": -0.7826121266688548
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "aperture_mm": 3,
+          "aperture_shape": "rectangle"
+        }
+      ],
+      "default_params": {
+        "lengthMm": 5,
+        "polarizing": true,
+        "refractiveIndex_e": 1.48,
+        "refractiveIndex_o": 1.66,
+        "extinctionRatioPpDb": 50,
+        "extinctionRatioSpDb": 30,
+        "transmissionAxisDegBeamLocal": 0
+      }
+    },
+    {
+      "id": "glan_io5_850",
+      "display_name": "Glan-Laser Prism (IO-5-850-HP, L=7.5mm)",
+      "behavioral_kind": "beam_splitter",
+      "component_type": "beam_splitter",
+      "mesh": "glan_polarizer_prism",
+      "anchors": [
+        {
+          "role": "intercept_face",
+          "position_mm_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": 0.6225096458616945,
+            "y": 0,
+            "z": -0.7826121266688548
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "aperture_mm": 5,
+          "aperture_shape": "rectangle"
+        }
+      ],
+      "default_params": {
+        "lengthMm": 7.5,
+        "polarizing": true,
+        "refractiveIndex_e": 1.48,
+        "refractiveIndex_o": 1.66,
+        "extinctionRatioPpDb": 50,
+        "extinctionRatioSpDb": 30,
+        "transmissionAxisDegBeamLocal": 0
+      }
+    },
+    {
+      "id": "pbs252",
+      "display_name": "PBS252-Step",
+      "behavioral_kind": "beam_splitter",
+      "component_type": "beam_splitter",
+      "mesh": "pbs252_step.glb",
+      "anchors": [
+        {
+          "role": "intercept_face",
+          "position_mm_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": -0.7071067811865475,
+            "y": 0.7071067811865475,
+            "z": 0
+          },
+          "axis_y_body_local": {
+            "x": 0.7071067811865475,
+            "y": 0.7071067811865475,
+            "z": 0
+          },
+          "aperture_mm": 1,
+          "aperture_shape": "rectangle",
+          "aperture_width_mm": 35.92,
+          "aperture_height_mm": 25.4
+        }
+      ],
+      "default_params": {
+        "lengthMm": 25.4,
+        "polarizing": true,
+        "refractiveIndex_e": 1.693,
+        "refractiveIndex_o": 1.693,
+        "extinctionRatioPpDb": 30,
+        "extinctionRatioSpDb": 30,
+        "transmissionAxisDegBeamLocal": 0
+      }
+    },
+    {
+      "id": "io5_850_faraday",
+      "display_name": "IO-5-850-HP-Faraday-Rod",
+      "behavioral_kind": "faraday_rotator",
+      "component_type": "faraday_rotator",
+      "mesh": "io_5_850_hp_middle_piece.glb",
+      "anchors": [
+        {
+          "role": "optical_center",
+          "position_mm_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": -47.752
+          },
+          "direction_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": -1
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "aperture_mm": 12.5,
+          "aperture_shape": "circle"
+        }
+      ],
+      "default_params": {
+        "lengthMm": 18,
+        "reciprocal": false,
+        "arResidualR": 0.005,
+        "rotationDeg": 45,
+        "refractiveIndex": 1.95,
+        "VerdetConstantRadPerTeslaMm": 0.0427
+      }
+    },
+    {
+      "id": "io5_850_front",
+      "display_name": "IO-5-850-HP-front",
+      "behavioral_kind": "isolator",
+      "component_type": "isolator",
+      "mesh": "io_5_850_hp_front_piece.glb",
+      "anchors": [],
+      "default_params": {}
+    },
+    {
+      "id": "io5_850_back",
+      "display_name": "IO-5-850-HP-back",
+      "behavioral_kind": "isolator",
+      "component_type": "isolator",
+      "mesh": "io_5_850_hp_back_piece.glb",
+      "anchors": [],
+      "default_params": {}
+    },
+    {
+      "id": "dbr_tosa",
+      "display_name": "dbr_tosa",
+      "behavioral_kind": "laser_source",
+      "component_type": "laser_source",
+      "mesh": "dbr_tosa.glb",
+      "anchors": [
+        {
+          "role": "intercept_out",
+          "position_mm_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "aperture_mm": 1,
+          "aperture_shape": "circle"
+        }
+      ],
+      "default_params": {
+        "mode_index_1": 0,
+        "mode_index_2": 0,
+        "nominalPowerMw": 50,
+        "centerWavelengthNm": 852.347
+      }
+    },
+    {
+      "id": "toptica_boosta_pro",
+      "display_name": "toptica_boosta_pro",
+      "behavioral_kind": "tapered_amplifier",
+      "component_type": "tapered_amplifier",
+      "mesh": "toptica_boosta_pro.glb",
+      "anchors": [
+        {
+          "role": "intercept_in",
+          "position_mm_body_local": {
+            "x": 141.85,
+            "y": 0,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "aperture_mm": 1,
+          "aperture_shape": "circle"
+        },
+        {
+          "role": "intercept_out",
+          "position_mm_body_local": {
+            "x": -141.85,
+            "y": 0,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": -1,
+            "y": 0,
+            "z": 0
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "aperture_mm": 1,
+          "aperture_shape": "circle"
+        }
+      ],
+      "default_params": {
+        "maxInputPowerMw": 30,
+        "minInputPowerMw": 10,
+        "saturationPowerMw": 500,
+        "smallSignalGainDb": 30,
+        "centerWavelengthNm": 780,
+        "inputAcceptanceRadiusMm": 25
+      }
+    },
+    {
+      "id": "aa_mt80_a1_5",
+      "display_name": "aa_mt80_a1_5_ir",
+      "behavioral_kind": "aom",
+      "component_type": "aom",
+      "mesh": "aa_mt80_a1_5_ir.glb",
+      "anchors": [
+        {
+          "role": "intercept_in",
+          "position_mm_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": -0.8
+          },
+          "direction_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": -1
+          },
+          "aperture_mm": 1.5,
+          "aperture_shape": "circle"
+        },
+        {
+          "role": "intercept_out",
+          "position_mm_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 0.8
+          },
+          "direction_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "aperture_mm": 1.5,
+          "aperture_shape": "circle"
+        },
+        {
+          "role": "rf_in",
+          "position_mm_body_local": {
+            "x": 15,
+            "y": 0,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          "connector_type": "sma_female"
+        }
+      ],
+      "default_params": {
+        "rfPowerMaxW": 2,
+        "baseEfficiency": 0.85,
+        "crystalLengthMm": 25,
+        "refractiveIndex": 2.26,
+        "diffractionOrder": 1,
+        "braggAngularAcceptanceMrad": 2
+      }
+    },
+    {
+      "id": "sm_pc_780",
+      "display_name": "SM_780_PC",
+      "behavioral_kind": "fiber_connector",
+      "component_type": "fiber_connector",
+      "mesh": "sm_pc_780.glb",
+      "anchors": [
+        {
+          "role": "connect_out",
+          "position_mm_body_local": {
+            "x": 0.001,
+            "y": 0,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": -1
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "aperture_mm": 0,
+          "aperture_shape": "circle"
+        },
+        {
+          "role": "connect_in",
+          "position_mm_body_local": {
+            "x": 0.001,
+            "y": 0,
+            "z": 56.891
+          },
+          "direction_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "aperture_mm": 5,
+          "aperture_shape": "circle"
+        }
+      ],
+      "default_params": {
+        "na": 0.13,
+        "mfdUm": 5,
+        "returnLossDb": 50,
+        "slowAxisKeyed": false,
+        "polishAngleDeg": 0
+      }
+    },
+    {
+      "id": "sm_apc_780",
+      "display_name": "sm_780_apc",
+      "behavioral_kind": "fiber_connector",
+      "component_type": "fiber_connector",
+      "mesh": "sm_apc_780.glb",
+      "anchors": [
+        {
+          "role": "connect_out",
+          "position_mm_body_local": {
+            "x": 0.001,
+            "y": 0.001,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": -1
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "aperture_mm": 0,
+          "aperture_shape": "circle"
+        },
+        {
+          "role": "connect_in",
+          "position_mm_body_local": {
+            "x": 0.001,
+            "y": -0.055,
+            "z": 56.815
+          },
+          "direction_body_local": {
+            "x": 0,
+            "y": -0.13904025798287284,
+            "z": 0.9902867295183028
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 0.9902867295183028,
+            "z": 0.13904025798287284
+          },
+          "aperture_mm": 0.125,
+          "aperture_shape": "circle"
+        }
+      ],
+      "default_params": {
+        "na": 0.13,
+        "mfdUm": 5,
+        "returnLossDb": 60,
+        "slowAxisKeyed": false,
+        "polishAngleDeg": 8
+      }
+    },
+    {
+      "id": "pm_pc_780",
+      "display_name": "pm_780_pc",
+      "behavioral_kind": "fiber_connector",
+      "component_type": "fiber_connector",
+      "mesh": "pm_pc_780.glb",
+      "anchors": [
+        {
+          "role": "connect_out",
+          "position_mm_body_local": {
+            "x": -0.002,
+            "y": 0.002,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": -1
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "aperture_mm": 0,
+          "aperture_shape": "circle"
+        },
+        {
+          "role": "connect_in",
+          "position_mm_body_local": {
+            "x": -0.002,
+            "y": 0.002,
+            "z": 59.525
+          },
+          "direction_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "aperture_mm": 0.125,
+          "aperture_shape": "circle"
+        }
+      ],
+      "default_params": {
+        "na": 0.12,
+        "mfdUm": 5.3,
+        "returnLossDb": 50,
+        "slowAxisKeyed": true,
+        "polishAngleDeg": 0
+      }
+    },
+    {
+      "id": "pm_apc_780",
+      "display_name": "pm_780_apc",
+      "behavioral_kind": "fiber_connector",
+      "component_type": "fiber_connector",
+      "mesh": "pm_apc_780.glb",
+      "anchors": [
+        {
+          "role": "connect_out",
+          "position_mm_body_local": {
+            "x": 0,
+            "y": 0.001,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": -1
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "aperture_mm": 0,
+          "aperture_shape": "circle"
+        },
+        {
+          "role": "connect_in",
+          "position_mm_body_local": {
+            "x": 0.009,
+            "y": -0.051,
+            "z": 59.333
+          },
+          "direction_body_local": {
+            "x": 0,
+            "y": -0.13904025798287284,
+            "z": 0.9902867295183028
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 0.9902867295183028,
+            "z": 0.13904025798287284
+          },
+          "aperture_mm": 0.125,
+          "aperture_shape": "circle"
+        }
+      ],
+      "default_params": {
+        "na": 0.12,
+        "mfdUm": 5.3,
+        "returnLossDb": 60,
+        "slowAxisKeyed": true,
+        "polishAngleDeg": 8
+      }
+    },
+    {
+      "id": "mm_pc_780",
+      "display_name": "Fiber Connector FC/PC (MM 50µm)",
+      "behavioral_kind": "fiber_connector",
+      "component_type": "fiber_connector",
+      "mesh": "thorlabs_fc_apc_30126a9.stl",
+      "anchors": [
+        {
+          "role": "connect_out",
+          "position_mm_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": -1,
+            "y": 0,
+            "z": 0
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          }
+        },
+        {
+          "role": "connect_in",
+          "position_mm_body_local": {
+            "x": 36.28,
+            "y": 0,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "aperture_mm": 0.125,
+          "aperture_shape": "circle"
+        }
+      ],
+      "default_params": {
+        "na": 0.22,
+        "returnLossDb": 40,
+        "slowAxisKeyed": false,
+        "polishAngleDeg": 0
       }
     }
   ]

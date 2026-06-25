@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Power, Radio } from "lucide-react";
+import { ChevronDown, ChevronRight, Power, Radio, RotateCcw } from "lucide-react";
 import { useSceneStore } from "../store/sceneStore";
 import type {
   ComponentItem,
@@ -91,6 +91,7 @@ function resolveChannels(stored: DdsChannel[] | null | undefined): DdsChannel[] 
 
 export function Ad9959ObjectControls({ component }: { component: ComponentItem }) {
   const upsertOpticalElement = useSceneStore((state) => state.upsertOpticalElement);
+  const updateSceneObject = useSceneStore((state) => state.updateSceneObject);
   // Look up the per-OBJECT PhysicsElement for the currently selected scene
   // object whose componentId matches this component. Same pattern as
   // FiberSlowAxisEditor — per-object kindParams, not per-template.
@@ -102,9 +103,40 @@ export function Ad9959ObjectControls({ component }: { component: ComponentItem }
     if (!obj) return null;
     return state.scene.physicsElements.find((e) => e.objectId === obj.id) ?? null;
   });
+  // The SceneObject + asset back the per-instance fullScaleVpp control: unlike
+  // the channel/PLL params (PhysicsElement.kindParams), fullScaleVpp is an
+  // asset coefficient whose per-instance override lives in
+  // SceneObject.dynamicSources — that's the channel the RF trace reads.
+  const sceneObject = useSceneStore(
+    (state) =>
+      (state.selectedObjectId &&
+        state.scene.objects.find((o) => o.id === state.selectedObjectId)) ||
+      state.scene.objects.find((o) => o.componentId === component.id) ||
+      null,
+  );
+  const asset = useSceneStore((state) =>
+    component.asset3dId
+      ? state.scene.assets.find((a) => a.id === component.asset3dId) ?? null
+      : null,
+  );
 
   const params = (physicsElement?.kindParams ?? {}) as Partial<RfSourceParams>;
-  const channels = useMemo(() => resolveChannels(params.channels), [params.channels]);
+  // Per-instance override bag (SceneObject.dynamicSources). Both channels and
+  // fullScaleVpp resolve through it, mirroring the optical tunable model.
+  const dynOverrides = (sceneObject?.dynamicSources ?? {}) as Record<string, unknown>;
+  // Channels unified onto the asset model: dynamicSources override → asset
+  // default_params → legacy PhysicsElement.kindParams. Edits write to
+  // dynamicSources (see updateChannel), not kindParams.
+  const dynChannels = dynOverrides.channels;
+  const assetChannels = asset?.defaultParams?.channels;
+  const channelsSource = (
+    Array.isArray(dynChannels)
+      ? dynChannels
+      : Array.isArray(assetChannels)
+        ? assetChannels
+        : params.channels
+  ) as DdsChannel[] | null | undefined;
+  const channels = useMemo(() => resolveChannels(channelsSource), [channelsSource]);
   const pllMultiplier = params.pllMultiplier ?? 25;
   const pllBypass = params.pllBypass ?? false;
   const refClockMhz = params.referenceClockMhz ?? 20.0;
@@ -126,11 +158,44 @@ export function Ad9959ObjectControls({ component }: { component: ComponentItem }
   };
 
   const updateChannel = (idx: number, patch: Partial<DdsChannel>) => {
+    if (!sceneObject) return;
     const next = channels.map((c, i) => (i === idx ? { ...c, ...patch } : c));
-    void writeParams({ channels: next });
+    // Per-instance channel edits live in dynamicSources (unified with optical),
+    // NOT kindParams — that's the channel the RF trace reads as the override.
+    void updateSceneObject(sceneObject.id, {
+      dynamicSources: { ...dynOverrides, channels: next },
+    });
   };
 
   const hasInstance = physicsElement != null;
+
+  // Full-scale Vpp: asset coefficient (default 1.0), per-instance override in
+  // dynamicSources. Resolution mirrors the RF trace: dynamicSources → asset
+  // default_params → 1.0. Writes go to dynamicSources via updateSceneObject.
+  const fullScaleDefault =
+    typeof asset?.defaultParams?.fullScaleVpp === "number"
+      ? (asset.defaultParams.fullScaleVpp as number)
+      : 1.0;
+  const fullScaleOverridden = "fullScaleVpp" in dynOverrides;
+  const fullScaleVpp =
+    fullScaleOverridden && typeof dynOverrides.fullScaleVpp === "number"
+      ? (dynOverrides.fullScaleVpp as number)
+      : fullScaleDefault;
+
+  const writeFullScale = (v: number) => {
+    if (!sceneObject) return;
+    void updateSceneObject(sceneObject.id, {
+      dynamicSources: { ...dynOverrides, fullScaleVpp: v },
+    });
+  };
+  const resetFullScale = () => {
+    if (!sceneObject || !fullScaleOverridden) return;
+    const next = { ...dynOverrides };
+    delete next.fullScaleVpp;
+    void updateSceneObject(sceneObject.id, {
+      dynamicSources: Object.keys(next).length ? next : null,
+    });
+  };
 
   return (
     <section className="edit-section">
@@ -192,6 +257,36 @@ export function Ad9959ObjectControls({ component }: { component: ComponentItem }
           <span>SYS_CLK</span>
           <code>{sysClockMhz.toFixed(2)} MHz</code>
         </div>
+        <label className="ad9959-row">
+          <span title={fullScaleOverridden ? `asset default: ${fullScaleDefault}` : undefined}>
+            Full-scale (Vpp){fullScaleOverridden ? " •" : ""}
+          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input
+              type="number"
+              step={0.01}
+              min={0}
+              disabled={!hasInstance}
+              value={fullScaleVpp}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                if (!Number.isFinite(v) || v < 0) return;
+                writeFullScale(v);
+              }}
+            />
+            {fullScaleOverridden && (
+              <button
+                type="button"
+                className="icon-button"
+                title="Reset to asset default"
+                onClick={resetFullScale}
+                style={{ display: "inline-flex", alignItems: "center", padding: 2 }}
+              >
+                <RotateCcw size={12} />
+              </button>
+            )}
+          </div>
+        </label>
       </div>
 
       {/* Sync & serial ------------------------------------------------- */}

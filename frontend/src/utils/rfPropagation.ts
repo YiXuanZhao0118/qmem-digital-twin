@@ -23,7 +23,9 @@
 import type {
   Anchor,
   Asset3D,
+  ComponentBinding,
   ComponentItem,
+  DdsChannel,
   PhysicsElement,
   RfAmplifierParams,
   RfCableEndpointLink,
@@ -33,6 +35,7 @@ import type {
 } from "../types/digitalTwin";
 import { isPhysicsPlugin, type RfTransferSignal } from "../kinds/_plugin";
 import { pluginForKind } from "../kinds/_plugins";
+import { primaryAsset } from "./componentBindings";
 
 /** Singleton empty set for the default "nothing powered off" case —
  *  avoids allocating a fresh Set per buildRfPropagation call. */
@@ -155,21 +158,49 @@ function buildAdjacency(edges: readonly CableEdge[]): Map<RfPortKey, CableEndpoi
   return adj;
 }
 
-/** Anchors keyed by SceneObject id. Resolves through Component → Asset3D. */
+/** Anchors keyed by SceneObject id. Resolves through Component → Asset3D
+ *  via `primaryAsset` (binding-aware: single root-asset binding, else the
+ *  legacy `component.asset3dId`) so binding-backed scenes — where
+ *  `component.asset3dId` is null — still find the device's rf_out/rf_in
+ *  anchors. Mirrors the backend `load_rf_inputs`. */
 function buildAnchorsByObject(
   objects: readonly SceneObject[],
   components: readonly ComponentItem[],
   assets: readonly Asset3D[],
+  componentBindings: readonly ComponentBinding[],
 ): Map<string, readonly Anchor[]> {
   const compById = new Map<string, ComponentItem>(components.map((c) => [c.id, c]));
-  const assetById = new Map<string, Asset3D>(assets.map((a) => [a.id, a]));
   const out = new Map<string, readonly Anchor[]>();
   for (const obj of objects) {
     const c = compById.get(obj.componentId);
-    const a = c?.asset3dId ? assetById.get(c.asset3dId) : undefined;
+    const a = c ? primaryAsset(c, { componentBindings, assets }) : null;
     out.set(obj.id, a?.anchors ?? []);
   }
   return out;
+}
+
+/** Asset.defaultParams keyed by SceneObject id. The asset is the authoritative
+ *  store for an RF source's spec coefficients (``fullScaleVpp`` etc.); the seed
+ *  loop reads them here. Mirrors the backend `RfNode.asset_params`. */
+function buildAssetParamsByObject(
+  objects: readonly SceneObject[],
+  components: readonly ComponentItem[],
+  assets: readonly Asset3D[],
+  componentBindings: readonly ComponentBinding[],
+): Map<string, Readonly<Record<string, unknown>>> {
+  const compById = new Map<string, ComponentItem>(components.map((c) => [c.id, c]));
+  const out = new Map<string, Readonly<Record<string, unknown>>>();
+  for (const obj of objects) {
+    const c = compById.get(obj.componentId);
+    const a = c ? primaryAsset(c, { componentBindings, assets }) : null;
+    out.set(obj.id, a?.defaultParams ?? {});
+  }
+  return out;
+}
+
+/** Finite-number coercion (bools excluded), else null. Mirrors backend `_opt_num`. */
+function optNum(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
 /** Find an anchor by its role (rf_in / rf_out). Returns the first match —
@@ -378,6 +409,11 @@ export function buildRfPropagation(args: {
   objects: readonly SceneObject[];
   components: readonly ComponentItem[];
   assets: readonly Asset3D[];
+  /** Flat ComponentBinding list — used to resolve each object's primary
+   *  asset (and thus its rf_out/rf_in anchors + spec params) in
+   *  binding-backed scenes. Omit / pass [] for legacy single-asset
+   *  scenes, where resolution falls back to `component.asset3dId`. */
+  componentBindings?: readonly ComponentBinding[];
   physicsElements: readonly PhysicsElement[];
   /** TimingPrograms in the scene; used by the rf_switch TTL resolver to
    *  decide a switch's active throw when a PPG is wired to its ttl_in.
@@ -402,13 +438,16 @@ export function buildRfPropagation(args: {
   poweredOffObjectIds?: ReadonlySet<string>;
 }): RfPropagationResult {
   const { objects, components, assets, physicsElements } = args;
+  const componentBindings = args.componentBindings ?? [];
   const timingPrograms = args.timingPrograms ?? [];
   const scrubTimeNs = args.scrubTimeNs ?? 0;
   const idleRestMode = args.idleRestMode === true;
   const poweredOffObjectIds = args.poweredOffObjectIds ?? EMPTY_POWERED_OFF;
   const cables = readCables(objects, physicsElements);
   const adj = buildAdjacency(cables);
-  const anchorsByObj = buildAnchorsByObject(objects, components, assets);
+  const anchorsByObj = buildAnchorsByObject(objects, components, assets, componentBindings);
+  const assetParamsByObj = buildAssetParamsByObject(objects, components, assets, componentBindings);
+  const objById = new Map<string, SceneObject>(objects.map((o) => [o.id, o]));
   const peByObj = new Map<string, PhysicsElement>();
   for (const pe of physicsElements) peByObj.set(pe.objectId, pe);
 
@@ -487,7 +526,22 @@ export function buildRfPropagation(args: {
     // Power gate: unbiased AD9959 / synth produces nothing on any anchor.
     if (poweredOffObjectIds.has(pe.objectId)) continue;
     const params = pe.kindParams as RfSourceParams;
-    const explicitChannels = params.channels ?? [];
+    // Full-scale Vpp is an ASSET coefficient (authoritative store), with an
+    // optional per-instance override in dynamicSources (tunable). Falls back
+    // to the AD9959 default when the asset doesn't specify it.
+    const dsFs = optNum(objById.get(pe.objectId)?.dynamicSources?.fullScaleVpp);
+    const assetFs = optNum(assetParamsByObj.get(pe.objectId)?.fullScaleVpp);
+    const fullScale = dsFs ?? assetFs ?? AD9959_VPP_FULL_SCALE;
+    // Channels unified onto the asset model (like optical): per-instance
+    // override in dynamicSources, else asset default_params, else legacy
+    // PhysicsElement.kindParams.
+    const dsCh = objById.get(pe.objectId)?.dynamicSources?.channels;
+    const assetCh = assetParamsByObj.get(pe.objectId)?.channels;
+    const explicitChannels = (
+      Array.isArray(dsCh) ? dsCh
+      : Array.isArray(assetCh) ? assetCh
+      : params.channels ?? []
+    ) as DdsChannel[];
     const persistedByAnchor = new Map<
       string,
       { frequencyMhz: number; amplitudeScale: number }
@@ -528,7 +582,7 @@ export function buildRfPropagation(args: {
     for (const seed of seeds) {
       const signal: RfSignalState = {
         frequencyMhz: seed.frequencyMhz,
-        vpp: seed.amplitudeScale * AD9959_VPP_FULL_SCALE,
+        vpp: seed.amplitudeScale * fullScale,
         sourceObjectId: pe.objectId,
         sourceAnchorName: seed.anchorName,
         cumulativeGainDb: 0,

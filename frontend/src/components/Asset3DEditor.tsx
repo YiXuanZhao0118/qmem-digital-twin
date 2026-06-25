@@ -53,6 +53,7 @@ import { domainForElementKind } from "../utils/elementDefaults";
 import type { ElementKind } from "../types/digitalTwin";
 import { isPhysicsPlugin, resolvePortDomain } from "../kinds/_plugin";
 import { pluginForKind } from "../kinds/_plugins";
+import { SchemaParamEditor } from "./physics/SchemaParamEditor";
 import { DEVICES, deviceById, devicesForBehavioralKind } from "../devices/_registry";
 import { isEditableValue } from "../utils/paramLeaves";
 import { cleanNumber } from "../utils/numberFormat";
@@ -1407,6 +1408,102 @@ function DefaultParamsKindFields({
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/** Generic schema-driven defaultParams editor — for kinds that declare
+ *  `physics.paramSchema` (rf_source …). Renders number inputs / enum dropdowns
+ *  / per-channel blocks + tunable checkboxes from ONE schema, replacing the
+ *  raw-JSON textarea and per-asset bespoke UI. List cardinality (channel count)
+ *  comes from the asset's anchors (rf_out → 4 on AD9959, 2 on DG4202). */
+function DefaultParamsSchemaFields({
+  kindId,
+  defaultParamsText,
+  onChangeText,
+  tunableParams,
+  onToggleTunable,
+  anchors,
+}: {
+  kindId: string;
+  defaultParamsText: string;
+  onChangeText: (text: string) => void;
+  tunableParams: string[];
+  onToggleTunable: (key: string, on: boolean) => void;
+  anchors: DraftAnchor[];
+}) {
+  const schema = pluginForKind(kindId)?.physics.paramSchema;
+  let current: Record<string, unknown> = {};
+  try {
+    current = readJsonObject(defaultParamsText, "defaultParams");
+  } catch {
+    current = {};
+  }
+  if (!schema) return null;
+  const cardinalityByRole: Record<string, number> = {};
+  for (const a of anchors) cardinalityByRole[a.id] = (cardinalityByRole[a.id] ?? 0) + 1;
+  return (
+    <div style={{ display: "grid", gap: 8 }}>
+      <div style={{ fontSize: 10, color: "#9ca3af" }}>
+        ✓ tunable = adjustable per-instance (writes SceneObject.dynamicSources);
+        unchecked params are fixed by this asset.
+      </div>
+      <SchemaParamEditor
+        schema={schema}
+        value={current}
+        onChange={(next) => onChangeText(jsonText(next))}
+        tunableParams={tunableParams}
+        onToggleTunable={onToggleTunable}
+        cardinalityByRole={cardinalityByRole}
+      />
+    </div>
+  );
+}
+
+/** Per-top-level-key tunable checkboxes for schema-less kinds (rf_source, …)
+ *  whose defaultParams are edited via the raw JSON textarea (no structured
+ *  scalar schema → no DefaultParamsKindFields). Surfaces the same "mark
+ *  tunable" toggle so per-instance tunability is definable regardless of how
+ *  the kind exposes its params — unifying rf_source with the optical model.
+ *  Checked keys merge over the asset default from SceneObject.dynamicSources. */
+function TunableKeyToggles({
+  defaultParamsText,
+  tunableParams,
+  onToggleTunable,
+}: {
+  defaultParamsText: string;
+  tunableParams: string[];
+  onToggleTunable: (key: string, on: boolean) => void;
+}) {
+  let keys: string[] = [];
+  try {
+    keys = Object.keys(readJsonObject(defaultParamsText, "defaultParams"));
+  } catch {
+    keys = [];
+  }
+  if (keys.length === 0) return null;
+  const tunableSet = new Set(tunableParams);
+  return (
+    <div style={{ display: "grid", gap: 4, marginBottom: 6 }}>
+      <div style={{ fontSize: 10, color: "#9ca3af" }}>
+        ✓ tunable = adjustable per-instance (writes SceneObject.dynamicSources);
+        unchecked params are fixed by this asset.
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+        {keys.map((key) => (
+          <label
+            key={key}
+            style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#6b7280" }}
+          >
+            <input
+              type="checkbox"
+              checked={tunableSet.has(key)}
+              onChange={(e) => onToggleTunable(key, e.target.checked)}
+            />
+            {key}
+          </label>
+        ))}
+      </div>
     </div>
   );
 }
@@ -3154,9 +3251,14 @@ function AssetEditForm({
               <td style={TD}>
                 <select
                   value={ff.showConnector ? anchor.connectorType : ""}
-                  disabled={!ff.showConnector || inUse}
+                  // Editable on any RF anchor regardless of `inUse` — a row
+                  // that's truly frozen is `locked`, which makes the whole
+                  // form read-only via the wrapping pointerEvents:none. The
+                  // options are the four gendered values the `Anchor`
+                  // schema accepts (bare "sma"/"bnc" would 500 SceneOut).
+                  disabled={!ff.showConnector}
                   onChange={(event) => updateAnchor(index, { connectorType: event.target.value })}
-                  style={ff.showConnector && !inUse ? INPUT : INPUT_DISABLED}
+                  style={ff.showConnector ? INPUT : INPUT_DISABLED}
                 >
                   <option value="">—</option>
                   <option value="sma_male">sma_male</option>
@@ -3179,7 +3281,23 @@ function AssetEditForm({
       {isBindingDev && (
         <>
           <div style={SECTION_LABEL}>defaultParams</div>
-          {kindScalarParamKeys(draft.kindId).length > 0 ? (
+          {pluginForKind(draft.kindId)?.physics.paramSchema ? (
+            <DefaultParamsSchemaFields
+              kindId={draft.kindId}
+              defaultParamsText={draft.defaultParamsText}
+              onChangeText={(text) => setDraft({ ...draft, defaultParamsText: text })}
+              tunableParams={draft.tunableParams}
+              onToggleTunable={(key, on) =>
+                setDraft({
+                  ...draft,
+                  tunableParams: on
+                    ? [...draft.tunableParams.filter((k) => k !== key), key]
+                    : draft.tunableParams.filter((k) => k !== key),
+                })
+              }
+              anchors={draft.anchors}
+            />
+          ) : kindScalarParamKeys(draft.kindId).length > 0 ? (
             <DefaultParamsKindFields
               kindId={draft.kindId}
               defaultParamsText={draft.defaultParamsText}
@@ -3195,11 +3313,25 @@ function AssetEditForm({
               }
             />
           ) : (
-            <textarea
-              value={draft.defaultParamsText}
-              onChange={(event) => setDraft({ ...draft, defaultParamsText: event.target.value })}
-              style={{ ...TEXTAREA, minHeight: 180 }}
-            />
+            <>
+              <TunableKeyToggles
+                defaultParamsText={draft.defaultParamsText}
+                tunableParams={draft.tunableParams}
+                onToggleTunable={(key, on) =>
+                  setDraft({
+                    ...draft,
+                    tunableParams: on
+                      ? [...draft.tunableParams.filter((k) => k !== key), key]
+                      : draft.tunableParams.filter((k) => k !== key),
+                  })
+                }
+              />
+              <textarea
+                value={draft.defaultParamsText}
+                onChange={(event) => setDraft({ ...draft, defaultParamsText: event.target.value })}
+                style={{ ...TEXTAREA, minHeight: 180 }}
+              />
+            </>
           )}
         </>
       )}
@@ -3674,8 +3806,9 @@ export function Asset3DEditor({
             <div style={{ marginBottom: 10, color: "#fde68a", background: "#78350f", padding: 8, fontSize: 12, borderRadius: 4 }}>
               In use by {usage?.objectCount} placed scene object(s)
               {usage?.componentCount ? ` (${usage.componentCount} component ref(s))` : ""}.
-              connector_type editing + Delete are locked — a catalog-level
-              change would retroactively break those instances.
+              Delete is locked. connector_type stays editable, but changing it
+              affects cable compatibility for those instances — to freeze the
+              row entirely, use the 🔒 lock.
             </div>
           )}
           {selected && selected.locked && (

@@ -74,6 +74,7 @@ import type * as THREE from "three";
 
 import type { Asset3D, ComponentItem, DeviceState } from "../types/digitalTwin";
 import type { AnchorId } from "./_registry";
+import type { ParamSchema } from "./paramSchema";
 
 // =============================================================================
 // Shared enums — every plugin picks values from these
@@ -354,6 +355,14 @@ export interface PhysicsPlugin<TParams extends Record<string, unknown> = Record<
 
     /** Default kindParams written into new Components of this kind. */
     readonly defaultParams: TParams;
+
+    /** Typed UI schema for `defaultParams` — drives the GENERIC schema-driven
+     *  editor (number → input, enum → dropdown, list → repeated blocks) in
+     *  both the PHY Editor (asset defaults + tunable toggles) and the Object
+     *  panel (per-instance → dynamicSources), replacing per-asset bespoke UI.
+     *  Optional: kinds without it fall back to the legacy structured/JSON
+     *  editor. See `kinds/paramSchema.ts`. */
+    readonly paramSchema?: ParamSchema;
 
     /** Opt-in params that are deliberately NOT in `defaultParams`: the
      *  structured Asset3D editor renders a BLANK field for each, and the

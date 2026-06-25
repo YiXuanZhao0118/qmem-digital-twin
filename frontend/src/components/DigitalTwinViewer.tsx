@@ -12,7 +12,7 @@ import {
   refreshRfCableWrapperGeometry,
   type FiberNode,
 } from "../three/loadAsset";
-import { connectorTipMmForFamily, resolveLinkedRfCableEndpoint } from "../utils/rfCableAnchorResolver";
+import { connectorTipMmFromAnchors, resolveLinkedRfCableEndpoint } from "../utils/rfCableAnchorResolver";
 import {
   bodyHandleToTensionHandle,
   FIBER_END_CONNECTOR_LENGTH_MM,
@@ -1569,6 +1569,7 @@ export function DigitalTwinViewer({
         objects: sceneData.objects,
         components: sceneData.components,
         assets: sceneData.assets,
+        componentBindings: sceneData.componentBindings ?? [],
         physicsElements: sceneData.physicsElements,
         timingPrograms: sceneData.timingPrograms ?? [],
         poweredOffObjectIds: poweredOff,
@@ -1987,6 +1988,15 @@ export function DigitalTwinViewer({
       unFiber();
     };
   }, []);
+  // The connector resolver reads the catalog (useV3Catalog) live. If a cable
+  // renders BEFORE the catalog has loaded, the resolver finds no asset and the
+  // spline draws its procedural fallback — and because no GLB load was kicked,
+  // no connector-loaded bump ever fires to rebuild it. Bump connectorEpoch when
+  // the catalog's asset list arrives so cables re-resolve their connectors then.
+  const catalogAssetCount = useV3Catalog((s) => s.assets.length);
+  useEffect(() => {
+    if (catalogAssetCount > 0) setConnectorEpoch((n) => n + 1);
+  }, [catalogAssetCount]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -3686,6 +3696,19 @@ export function DigitalTwinViewer({
           };
           const endFamily = (end === "A" ? cableConnProps.endAConnector : cableConnProps.endBConnector)
             ?? cableConnProps.connectorType;
+          // Tip offset from THIS end's bound connector asset's own anchors
+          // (|connect_in − connect_out|), so connect_in lands on the port.
+          // The family constant is only the fallback for procedural connectors
+          // with no anchors — the imported GLBs (sma_male 25.45 / bnc_male
+          // 43.5 mm) differ from the procedural 15.5 / 27.
+          const connBinding = (sceneData.componentBindings ?? []).find(
+            (b) => b.componentId === component.id
+              && b.role === (end === "A" ? "end_a" : "end_b")
+              && b.targetKind === "asset",
+          );
+          const connAsset = connBinding?.asset3dId
+            ? sceneData.assets.find((a) => a.id === connBinding.asset3dId)
+            : undefined;
           // Per-cable / per-end manual connector nudge — tune EACH connector
           // independently. Key = `${cableName}|${A|B}`. Connector frame:
           // depthMm along the mating axis, sideX/sideY in the perpendicular
@@ -3715,7 +3738,7 @@ export function DigitalTwinViewer({
             targetAnchorDirBody: anchorDirLocal
               ? [anchorDirLocal.x, anchorDirLocal.y, anchorDirLocal.z]
               : [1, 0, 0],
-            connectorTipMm: connectorTipMmForFamily(endFamily),
+            connectorTipMm: connectorTipMmFromAnchors(connAsset?.anchors, endFamily),
             nodeOffset,
             targetAnchorAxisYBody: anchorAxisYLocal
               ? [anchorAxisYLocal.x, anchorAxisYLocal.y, anchorAxisYLocal.z]

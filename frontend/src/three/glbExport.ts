@@ -33,14 +33,22 @@ export function mergeColoredGeometries(
   return merged;
 }
 
-/** A coloured Mesh ready for preview or export from a baked geometry. */
-export function geometryToColoredMesh(geometry: THREE.BufferGeometry): THREE.Mesh {
+/** A coloured Mesh ready for preview or export from a baked geometry.
+ *  `side` defaults to FrontSide (the export / builder default); connector
+ *  renderers pass DoubleSide so a CAD-exported mesh with inconsistent face
+ *  winding shows solid in the lab — matching how the ASSET3D editor renders
+ *  the same GLB (it forces material.side = DoubleSide). */
+export function geometryToColoredMesh(
+  geometry: THREE.BufferGeometry,
+  side: THREE.Side = THREE.FrontSide,
+): THREE.Mesh {
   return new THREE.Mesh(
     geometry,
     new THREE.MeshStandardMaterial({
       vertexColors: true,
       metalness: 0.1,
       roughness: 0.7,
+      side,
     }),
   );
 }

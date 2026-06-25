@@ -32,7 +32,14 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Asset3D, Component, DeviceState, PhysicsElement, SceneObject
+from app.models import (
+    Asset3D,
+    Component,
+    ComponentBinding,
+    DeviceState,
+    PhysicsElement,
+    SceneObject,
+)
 from app.models.timing import TimingProgram
 from app.optical.aom_physics import RF_LOAD_Z_OHM
 
@@ -130,6 +137,15 @@ class RfNode:
     # ``properties.rfCableEndpoints`` ({A, B} endpoint links) — only rf_cable
     # nodes carry it; it supplies the graph edges.
     rf_cable_endpoints: dict | None = None
+    # ``Asset3D.default_params`` — the asset is the authoritative store for the
+    # source's spec coefficients (``fullScaleVpp`` etc.). The RF BFS reads it
+    # here so coefficients live on the asset, mirroring how the optical anchor
+    # tracer consumes ``default_params``.
+    asset_params: dict = field(default_factory=dict)
+    # ``SceneObject.dynamic_sources`` — per-instance overrides for the asset's
+    # ``tunable_params`` keys (e.g. a board with a non-default Rset → different
+    # ``fullScaleVpp``). Overrides ``asset_params`` for the keys it carries.
+    dynamic_sources: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -378,7 +394,26 @@ def build_rf_propagation(
         if node.object_id in powered_off:
             continue
         params = node.kind_params or {}
-        explicit = params.get("channels") or []
+        # Full-scale Vpp is an ASSET coefficient (the authoritative store), with
+        # an optional per-instance override in dynamic_sources (tunable). Falls
+        # back to the AD9959 default when the asset doesn't specify it.
+        ds_fs = _opt_num((node.dynamic_sources or {}).get("fullScaleVpp"))
+        asset_fs = _opt_num((node.asset_params or {}).get("fullScaleVpp"))
+        full_scale = (
+            ds_fs if ds_fs is not None
+            else asset_fs if asset_fs is not None
+            else AD9959_VPP_FULL_SCALE
+        )
+        # Channels unified onto the asset model (like optical): per-instance
+        # override in dynamic_sources, else asset default_params, else the
+        # legacy PhysicsElement.kindParams (pre-unification instances).
+        ds_ch = (node.dynamic_sources or {}).get("channels")
+        asset_ch = (node.asset_params or {}).get("channels")
+        explicit = (
+            ds_ch if isinstance(ds_ch, list)
+            else asset_ch if isinstance(asset_ch, list)
+            else params.get("channels") or []
+        )
         persisted: dict[str, tuple[float | None, float]] = {}
         for ch in explicit:
             an = ch.get("anchorName")
@@ -405,7 +440,7 @@ def build_rf_propagation(
         for an, freq, amp in seeds:
             signal = RfSignalState(
                 frequency_mhz=freq,
-                vpp=amp * AD9959_VPP_FULL_SCALE,
+                vpp=amp * full_scale,
                 source_object_id=node.object_id,
                 source_anchor_name=an,
                 cumulative_gain_db=0.0,
@@ -457,6 +492,25 @@ def build_rf_propagation(
 # DB load + hydrate
 # ---------------------------------------------------------------------------
 
+def _primary_asset_id(
+    comp: Component, bindings: list[ComponentBinding],
+) -> object | None:
+    """The Component's main-geometry asset id — binding-aware.
+
+    Exact port of the frontend ``componentBindings.primaryAsset``:
+      1. single root ``target_kind='asset'`` binding -> that asset_3d_id;
+      2. else legacy ``Component.asset_3d_id`` (pre-binding scenes).
+    Returns ``None`` for composite Components (multi-root / subcomponent
+    root) — the RF graph only seeds single-asset devices. Parity note:
+    primaryAsset takes no per-instance override, so this deliberately
+    ignores ``ObjectBinding.asset_3d_id_override`` (FE does the same).
+    """
+    roots = [b for b in bindings if b.parent_binding_id is None]
+    if len(roots) == 1 and roots[0].target_kind == "asset" and roots[0].asset_3d_id:
+        return roots[0].asset_3d_id
+    return comp.asset_3d_id if comp.asset_3d_id else None
+
+
 async def load_rf_inputs(session: AsyncSession) -> RfInputs:
     """Read the live scene once and project it to pure :class:`RfInputs`.
 
@@ -468,11 +522,15 @@ async def load_rf_inputs(session: AsyncSession) -> RfInputs:
     ds_rows = (await session.scalars(select(DeviceState))).all()
     comp_rows = (await session.scalars(select(Component))).all()
     asset_rows = (await session.scalars(select(Asset3D))).all()
+    cb_rows = (await session.scalars(select(ComponentBinding))).all()
     tp_rows = (await session.scalars(select(TimingProgram))).all()
 
     pe_by_obj = {pe.object_id: pe for pe in pe_rows}
     comp_by_id = {c.id: c for c in comp_rows}
     asset_by_id = {a.id: a for a in asset_rows}
+    bindings_by_comp: dict[object, list[ComponentBinding]] = {}
+    for b in cb_rows:
+        bindings_by_comp.setdefault(b.component_id, []).append(b)
     powered_off = frozenset(
         ds.object_id for ds in ds_rows
         if isinstance(ds.state, dict) and ds.state.get("power") is False
@@ -486,16 +544,25 @@ async def load_rf_inputs(session: AsyncSession) -> RfInputs:
         if pe is None:
             continue  # no physics element -> not part of the RF graph
         comp = comp_by_id.get(so.component_id)
-        asset = asset_by_id.get(comp.asset_3d_id) if (comp and comp.asset_3d_id) else None
+        asset_id = (
+            _primary_asset_id(comp, bindings_by_comp.get(comp.id, []))
+            if comp is not None
+            else None
+        )
+        asset = asset_by_id.get(asset_id) if asset_id else None
         anchors = tuple(asset.anchors or []) if asset is not None else ()
+        asset_params = (asset.default_params or {}) if asset is not None else {}
         props = so.properties if isinstance(so.properties, dict) else {}
         rf_cable_endpoints = props.get("rfCableEndpoints")
+        dynamic_sources = so.dynamic_sources if isinstance(so.dynamic_sources, dict) else {}
         node = RfNode(
             object_id=str(so.id),
             element_kind=pe.element_kind,
             kind_params=pe.kind_params or {},
             anchors=anchors,
             rf_cable_endpoints=rf_cable_endpoints if isinstance(rf_cable_endpoints, dict) else None,
+            asset_params=asset_params if isinstance(asset_params, dict) else {},
+            dynamic_sources=dynamic_sources,
         )
         nodes.append(node)
         if pe.element_kind == "aom":

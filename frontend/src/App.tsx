@@ -28,6 +28,9 @@ import { TopBar } from "./components/workspace/TopBar";
 import { WorkspaceProvider } from "./components/workspace/WorkspaceProvider";
 import { MagneticsPanel } from "./modules/magnetics/MagneticsPanel";
 import { useSceneStore } from "./store/sceneStore";
+import { useV3Catalog } from "./store/catalogStore";
+import { invalidateRfConnectorCache } from "./three/loadAsset/rf_cable/connectorModels";
+import { invalidateFiberConnectorCache } from "./three/loadAsset/fiber/fiberConnectorModels";
 import type { SceneEvent } from "./types/digitalTwin";
 import type { OverlayKind } from "./types/visibility";
 
@@ -256,6 +259,57 @@ export default function App() {
       socket?.close();
     };
   }, [applyEvent, setSocketStatus]);
+
+  // bfcache guard. iOS Chrome/Safari restore a backgrounded tab from the
+  // back-forward cache WITHOUT re-running JS, so the catalog store (and every
+  // in-memory mesh cache) stays frozen at whatever it held when the tab was
+  // parked. After replacing an asset's geometry, a "reload" that is really a
+  // bfcache restore then keeps showing the OLD mesh (e.g. a re-uploaded fiber
+  // connector) — the exact symptom that incognito, which can't restore from
+  // bfcache, does not have. Force a true reload on a persisted pageshow so the
+  // restored tab refetches the catalog and reloads meshes from their current
+  // file_path. Fires only on bfcache restore (persisted), not on every tab
+  // switch, so it isn't disruptive.
+  useEffect(() => {
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) window.location.reload();
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, []);
+
+  // Connector cache invalidation. The baked-connector caches (rf_cable / fiber)
+  // are module singletons keyed by connector kind / catalogId — both stable
+  // across a re-upload or anchor edit — so a changed connector asset keeps
+  // serving its OLD baked mesh until a viewer unmounts and clears the resolver
+  // (the "switch to ASSET3D and back" workaround). Drop the caches whenever the
+  // catalog's assets change; the firing of the load listeners makes the mounted
+  // viewer (Object Sense / COMPONENT preview) bump its connectorEpoch, rebuild,
+  // and re-load the current mesh.
+  useEffect(() => {
+    return useV3Catalog.subscribe((state, prev) => {
+      if (state.assets !== prev.assets) {
+        invalidateRfConnectorCache();
+        invalidateFiberConnectorCache();
+      }
+    });
+  }, []);
+
+  // Load the Asset3D / Component catalog at app startup. Until now `fetchAll`
+  // ran ONLY inside the ASSET3D editor (Asset3DEditor), so a fresh app that
+  // landed on the Lab (or the PHY-editor Component preview) had an EMPTY
+  // catalog store. The cable connector resolver
+  // (`getAssetsByKind("fiber_connector")` / RF) then found nothing → returned
+  // null → the spline drew its procedural FC/SMA fallback (low-detail "blurry"
+  // connector). Visiting the ASSET3D tab populated the catalog, so coming back
+  // the connector finally resolved to the real GLB — the "looks low-detail
+  // until I open ASSET3D then it's full" symptom. Fetching here makes the
+  // catalog available to every view from the start.
+  useEffect(() => {
+    if (useV3Catalog.getState().status === "idle") {
+      void useV3Catalog.getState().fetchAll();
+    }
+  }, []);
 
   // PHY Editor sub-page: full-page take-over when active. The back
   // button inside `PhyEditor` flips `editorMode` back to "scene",

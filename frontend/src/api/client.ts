@@ -58,11 +58,20 @@ import type {
 // cleanly in both contexts; production builds still substitute the real
 // env values via Vite's define plugin.
 const _vite = ((import.meta as unknown) as { env?: Record<string, string> }).env ?? {};
+// Default to same-origin relative URLs so requests flow through the Vite dev
+// proxy (server.proxy in vite.config.ts → backend on 8010). This keeps the app
+// working over the LAN (host: 0.0.0.0): an external device hits <host-ip>:5173
+// and Vite proxies /api + /assets + /ws to the host's backend. A hardcoded
+// http://localhost:8010 would resolve to the *visiting* device, not the host.
+// Override with VITE_API_BASE_URL when pointing at a non-proxied backend.
 export const API_BASE_URL =
-  _vite.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:8010";
+  _vite.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "";
 
 export const WS_URL =
-  _vite.VITE_WS_URL ?? `${API_BASE_URL.replace(/^http/, "ws")}/ws/scene`;
+  _vite.VITE_WS_URL ??
+  (typeof window !== "undefined"
+    ? `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws/scene`
+    : "ws://localhost:8010/ws/scene");
 
 export const client = axios.create({
   baseURL: API_BASE_URL,

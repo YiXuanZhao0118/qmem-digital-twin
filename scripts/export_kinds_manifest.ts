@@ -90,8 +90,12 @@ interface ManifestDeviceAnchor {
   name?: string;
   position_mm_body_local?: { x: number; y: number; z: number };
   direction_body_local?: { x: number; y: number; z: number };
+  axis_y_body_local?: { x: number; y: number; z: number };
   connector_type?: string;
   aperture_mm?: number;
+  aperture_shape?: string;
+  aperture_width_mm?: number;
+  aperture_height_mm?: number;
 }
 
 interface ManifestDevice {
@@ -165,8 +169,18 @@ function deviceAnchorToManifest(a: any): ManifestDeviceAnchor {
     ...(a.directionBodyLocal !== undefined
       ? { direction_body_local: a.directionBodyLocal }
       : {}),
+    ...(a.axisYBodyLocal !== undefined
+      ? { axis_y_body_local: a.axisYBodyLocal }
+      : {}),
     ...(a.connectorType !== undefined ? { connector_type: a.connectorType } : {}),
     ...(a.apertureMm !== undefined ? { aperture_mm: a.apertureMm } : {}),
+    ...(a.apertureShape !== undefined ? { aperture_shape: a.apertureShape } : {}),
+    ...(a.apertureWidthMm !== undefined
+      ? { aperture_width_mm: a.apertureWidthMm }
+      : {}),
+    ...(a.apertureHeightMm !== undefined
+      ? { aperture_height_mm: a.apertureHeightMm }
+      : {}),
   };
 }
 

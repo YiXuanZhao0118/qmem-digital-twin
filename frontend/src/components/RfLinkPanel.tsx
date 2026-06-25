@@ -52,11 +52,13 @@ import {
   buildRfPropagationSchedule,
   getRfSnapshotAt,
 } from "../utils/rfPropagationSchedule";
+import { primaryAsset } from "../utils/componentBindings";
 import {
   connectorFamilyFromAnchor,
   kindParticipatesInRfLink,
   ppgChannelIndex,
   resolveRfLinkPortDomain,
+  rfLinkRoleAnchors,
   type RfLinkConnectorFamily,
   type RfLinkSignalDomain,
 } from "../utils/rfLinkPorts";
@@ -227,6 +229,28 @@ function rfLinkPortsOf(
       };
     })
     .filter((port): port is Port => port !== null);
+}
+
+/** Fallback ports for an RF object with no resolvable Asset3D at all —
+ *  neither a root `targetKind="asset"` ComponentBinding nor the legacy
+ *  `component.asset3dId` field (see `assetByObjectId` → `primaryAsset`).
+ *  Synthesized from the kind's role contract via `rfLinkRoleAnchors` so the
+ *  logical RF node still appears instead of being silently dropped.
+ *  `connectorFamily` is null because connector types live on the (absent)
+ *  asset — these ports render as "NO CONN" and aren't cable-draggable until
+ *  an asset is attached. */
+function rfLinkFallbackPorts(kind: string | null): Port[] {
+  return rfLinkRoleAnchors(kind).map(({ anchorId, domain }) => ({
+    anchorId,
+    anchorName: anchorId,
+    displayName: normaliseAnchorName(anchorId, null),
+    role:
+      anchorId === "rf_in" || anchorId === "ttl_in" || anchorId === "trigger_in"
+        ? ("in" as const)
+        : ("out" as const),
+    domain,
+    connectorFamily: null,
+  }));
 }
 
 function classifyColumn(kind: string | null, ports: Port[]): 0 | 1 | 2 {
@@ -626,6 +650,7 @@ export function RfLinkPanel() {
   const objects = useSceneStore((s) => s.scene.objects);
   const components = useSceneStore((s) => s.scene.components);
   const assets = useSceneStore((s) => s.scene.assets);
+  const componentBindings = useSceneStore((s) => s.scene.componentBindings);
   const physicsElements = useSceneStore((s) => s.scene.physicsElements);
   const timingPrograms = useSceneStore((s) => s.scene.timingPrograms) ?? [];
   const selectObject = useSceneStore((s) => s.selectObject);
@@ -784,13 +809,18 @@ export function RfLinkPanel() {
 
   const assetByObjectId = useMemo(() => {
     const compMap = new Map<string, ComponentItem>(components.map((c) => [c.id, c]));
-    const assetMap = new Map<string, Asset3D>(assets.map((a) => [a.id, a]));
     return (obj: SceneObject): Asset3D | undefined => {
       const c = compMap.get(obj.componentId);
-      if (!c || !c.asset3dId) return undefined;
-      return assetMap.get(c.asset3dId);
+      if (!c) return undefined;
+      // Resolve the main-geometry asset via the binding tree first. In
+      // binding-backed scenes (the norm) `component.asset3dId` is null and
+      // the asset lives on a root `targetKind="asset"` ComponentBinding;
+      // `primaryAsset` checks that, then falls back to the legacy field.
+      // Reading asset3dId directly here was why RF objects with a real
+      // (binding-attached) asset still showed up empty / "NO CONN".
+      return primaryAsset(c, { componentBindings, assets }) ?? undefined;
     };
-  }, [components, assets]);
+  }, [components, assets, componentBindings]);
 
   const nodes = useMemo<RfNode[]>(() => {
     const list: RfNode[] = [];
@@ -801,7 +831,13 @@ export function RfLinkPanel() {
       // if their asset row spuriously carries an rf_* anchor name.
       if (!kindParticipatesInRfLink(kind)) continue;
       const asset = assetByObjectId(obj);
-      const ports = rfLinkPortsOf(asset?.anchors ?? [], kind);
+      let ports = rfLinkPortsOf(asset?.anchors ?? [], kind);
+      if (ports.length === 0) {
+        // No resolvable Asset3D (no binding + no legacy field): fall back to
+        // the kind's declared RF role contract so the logical node still
+        // shows up instead of being silently dropped.
+        ports = rfLinkFallbackPorts(kind);
+      }
       if (ports.length === 0) continue;
       list.push({
         objectId: obj.id,
@@ -950,11 +986,12 @@ export function RfLinkPanel() {
         objects,
         components,
         assets,
+        componentBindings,
         physicsElements,
         timingPrograms,
         poweredOffObjectIds,
       }),
-    [objects, components, assets, physicsElements, timingPrograms, poweredOffObjectIds],
+    [objects, components, assets, componentBindings, physicsElements, timingPrograms, poweredOffObjectIds],
   );
   const rfPropagation = useMemo(
     () => getRfSnapshotAt(rfPropagationSchedule, scrubTimeNs),

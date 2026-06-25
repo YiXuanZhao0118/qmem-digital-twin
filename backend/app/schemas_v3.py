@@ -197,9 +197,9 @@ class Asset3DUsageOut(CamelModel):
     """Reference counts for an Asset3D. ``component_count`` is how many
     catalog Components point at this asset (direct FK or via a binding);
     ``object_count`` is how many placed scene objects resolve to it. The
-    PHY Editor reads this to lock connector_type editing + Delete on an
-    in-use asset, so a catalog-level change can't retroactively break
-    already-placed instances."""
+    PHY Editor reads this to lock Delete on an in-use asset (a deletion would
+    orphan placed instances). connector_type stays editable — freezing a row
+    entirely is the separate ``locked`` flag, not in-use."""
     component_count: int
     object_count: int
 

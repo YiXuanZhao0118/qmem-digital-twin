@@ -249,7 +249,13 @@ export function worldAnchor(
   if (placementAnchor?.directionBodyLocal) { /* raw-anchor-ok: placement override is object-local */
     localDirection = placementAnchor.directionBodyLocal; /* raw-anchor-ok: placement override is object-local */
   } else if (assetAnchor) {
-    localDirection = anchorObjectLocalLegacyDir(assetAnchor, asset ?? null) ?? undefined;
+    // axisX-first (tri-axis schema) ?? legacy directionBodyLocal — matches
+    // assetAnchorWorld below. Device-materialized anchors carry only axisX,
+    // so reading legacy alone fell through to the kind default direction.
+    localDirection =
+      anchorObjectLocalAxisX(assetAnchor, asset ?? null) ??
+      anchorObjectLocalLegacyDir(assetAnchor, asset ?? null) ??
+      undefined;
     if (!localDirection) localDirection = standard?.direction;
   } else {
     localDirection = standard?.direction;

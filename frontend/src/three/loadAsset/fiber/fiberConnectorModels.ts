@@ -63,6 +63,19 @@ export function setFiberConnectorAssetResolver(fn: Resolver | null): void {
   loading.clear();
 }
 
+/** Fibre counterpart to invalidateRfConnectorCache: drop all baked fibre
+ *  connector geometry and signal consumers to rebuild. Call when a
+ *  fiber_connector asset changes — the cache is keyed by catalogId (stable
+ *  across a re-upload / anchor edit), so `loadFiberConnector` early-returns on
+ *  the cache hit and the stale bake would otherwise persist until a viewer
+ *  unmounts and clears the resolver. */
+export function invalidateFiberConnectorCache(): void {
+  geomCache.forEach((g) => g.dispose());
+  geomCache.clear();
+  loading.clear();
+  loadListeners.forEach((cb) => cb());
+}
+
 async function loadFiberConnector(spec: FiberConnectorAssetSpec): Promise<void> {
   if (geomCache.has(spec.key) || loading.has(spec.key)) return;
   loading.add(spec.key);
@@ -99,7 +112,7 @@ export function buildFiberConnectorGroup(
   const cached = geomCache.get(spec.key);
   if (cached) {
     const group = new THREE.Group();
-    group.add(geometryToColoredMesh(cached));
+    group.add(geometryToColoredMesh(cached, THREE.DoubleSide));
     return group;
   }
   void loadFiberConnector(spec);

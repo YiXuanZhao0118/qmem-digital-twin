@@ -42,12 +42,24 @@ export interface DeviceAnchorTemplate {
    *  anchor's `name`; the RF BFS keys multiport adjacency by it. */
   readonly name?: string;
   readonly positionMmBodyLocal?: { x: number; y: number; z: number };
+  /** Propagation / face normal → seeds the anchor's body-local axisX. */
   readonly directionBodyLocal?: { x: number; y: number; z: number };
+  /** Explicit body-local transverse reference axis. Only needed for
+   *  polarisation-sensitive optics (waveplate / PBS / Glan / Faraday) where
+   *  the seeder must NOT pick an arbitrary axisY; it is Gram-Schmidt'd against
+   *  axisX and Z = X × Y. Omit for rotationally-symmetric / RF parts — the
+   *  seeder then derives an arbitrary consistent complement. */
+  readonly axisYBodyLocal?: { x: number; y: number; z: number };
   /** Connector family string ("sma" / "bnc" / …) — drives RF-Link
    *  connector-compatibility + the cable-tip mesh. Optional. */
   readonly connectorType?: string;
   /** Hit aperture in mm (optical sinks / apertured ports). Optional. */
   readonly apertureMm?: number;
+  /** Aperture outline. "rectangle" parts (PBS / cylindrical lens / Glan)
+   *  additionally carry width/height below. Optional. */
+  readonly apertureShape?: "rectangle" | "ellipse" | "circle";
+  readonly apertureWidthMm?: number;
+  readonly apertureHeightMm?: number;
 }
 
 /** A leaf device — covers every RF instrument (and, later, single-mesh

@@ -27,6 +27,7 @@
 ### 多物理與時間
 - [多物理場模組 · multiphysics.md](multiphysics.md) — 現只剩 Lab tab + Magnetics overlay（Optics/Electronics/EM 已移除）
 - [時間域模擬 · timing.md](timing.md) — Sequence、Scrub time、AD9959、RF 鏈
+- [RF 子系統總覽 · rf.md](rf.md) — 射頻全景索引：kinds/devices/面板/傳播 BFS/cable，含現況與盲點
 - [RF Cable · cable.md](cable.md) — 同軸線：單物件 + spline、端點連結、RF 圖傳播
 - [擺放與吸附 · placement.md](placement.md) — Placement & Snapping 引擎
 
