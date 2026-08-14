@@ -53,6 +53,7 @@ import {
   getRfSnapshotAt,
 } from "../utils/rfPropagationSchedule";
 import { primaryAsset } from "../utils/componentBindings";
+import { ppgAttachments } from "../utils/ppgAttachment";
 import {
   connectorFamilyFromAnchor,
   kindParticipatesInRfLink,
@@ -884,8 +885,24 @@ export function RfLinkPanel() {
         });
       }
     }
+    // Cable-less PPGs contribute the same edge a zero-length cable used to
+    // (`utils/ppgAttachment.ts`). `cableObjectId` carries the PPG's own id —
+    // it is only ever used as a react key / a delete target, and deleting
+    // the PPG IS how you disconnect it.
+    for (const { ppgObjectId, attachment } of ppgAttachments(objects, physicsElements)) {
+      const ppg = objects.find((o) => o.id === ppgObjectId);
+      edgesOut.push({
+        cableObjectId: ppgObjectId,
+        cableName: ppg?.name ?? "PPG",
+        lengthMm: null,
+        fromObjectId: ppgObjectId,
+        fromKey: `rf_out|rf_out`,
+        toObjectId: attachment.targetObjectId,
+        toKey: `${attachment.targetAnchorId}|${attachment.targetAnchorName}`,
+      });
+    }
     return { edges: edgesOut, dangling: danglingOut };
-  }, [objects, kindByObjectId, peByObjectId]);
+  }, [objects, kindByObjectId, peByObjectId, physicsElements]);
 
   /** For each (objectId|anchorName) of an rf_source rf_out port, find the
    *  matching DdsChannel by `channel.anchorName === anchorName`. */
@@ -919,8 +936,14 @@ export function RfLinkPanel() {
         if (link) s.add(`${link.targetObjectId}|${link.targetAnchorId}|${link.targetAnchorName}`);
       }
     }
+    // A cable-less PPG occupies BOTH ends of its attachment: the instrument
+    // port it is plugged into, and its own rf_out.
+    for (const { ppgObjectId, attachment } of ppgAttachments(objects, physicsElements)) {
+      s.add(`${attachment.targetObjectId}|${attachment.targetAnchorId}|${attachment.targetAnchorName}`);
+      s.add(`${ppgObjectId}|rf_out|rf_out`);
+    }
     return s;
-  }, [objects, kindByObjectId]);
+  }, [objects, kindByObjectId, physicsElements]);
 
   /** Reverse index: port key → owning rf_cable SceneObject id. Used by
    *  the right-click "Remove cable" context menu so a single click can
@@ -942,8 +965,20 @@ export function RfLinkPanel() {
         }
       }
     }
+    // For a cable-less PPG there is no cable to remove — disconnecting IS
+    // deleting the PPG, which is also the ONLY sanctioned way to remove one
+    // (it has no Outliner row and no Object-panel remove button). Mapping
+    // both ends to the PPG's own id makes the existing right-click handler
+    // do exactly that.
+    for (const { ppgObjectId, attachment } of ppgAttachments(objects, physicsElements)) {
+      m.set(
+        `${attachment.targetObjectId}|${attachment.targetAnchorId}|${attachment.targetAnchorName}`,
+        ppgObjectId,
+      );
+      m.set(`${ppgObjectId}|rf_out|rf_out`, ppgObjectId);
+    }
     return m;
-  }, [objects, kindByObjectId]);
+  }, [objects, kindByObjectId, physicsElements]);
 
   /** AOM kindParams keyed by SceneObject id. Lets the rf_in port reader
    *  pull M²/L/W in one lookup. */
@@ -1392,10 +1427,19 @@ export function RfLinkPanel() {
                 const toSig = rfPropagation.signalAtPort.get(
                   rfPortKey(e.toObjectId, toAnchorName),
                 );
+                // A PPG carries a gate, not an RF carrier, so its edge never
+                // appears in `signalAtPort` — it lights up when the PPG's
+                // resolved level is HIGH (rest level when scrub is stopped,
+                // rest XOR interval while scrubbing). Only PPG object ids
+                // land in the set, so testing both endpoints also covers
+                // legacy scenes whose PPG still goes through an rf_cable.
+                const ppgHigh = rfPropagation.ppgGateHighObjectIds;
                 const active =
-                  !!fromSig
-                  && !!toSig
-                  && fromSig.sourceObjectId === toSig.sourceObjectId;
+                  (!!fromSig
+                    && !!toSig
+                    && fromSig.sourceObjectId === toSig.sourceObjectId)
+                  || ppgHigh.has(e.fromObjectId)
+                  || ppgHigh.has(e.toObjectId);
 
                 return (
                   <g key={e.cableObjectId}>

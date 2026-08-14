@@ -176,8 +176,10 @@ def test_powered_off_source_emits_nothing() -> None:
     inp = _inputs([src, aom, cab], aoms=[AomPort("aom", "rf_in", False)], powered_off=["src"])
     res = build_rf_propagation(inp, scrub_time_ns=0.0)
     assert port_key("aom", "rf_in") not in res.signal_at_port
-    # Never link-driven across any snapshot -> AOM absent (keeps rated drive).
-    assert resolve_aom_rf_drive(inp, 0.0) == {}
+    # The AOM is still CABLED to the (dead) source, so the RF link stays the
+    # authority: 0 W -> no diffraction. Powering the source off must not hand
+    # the AOM back its rated operating point.
+    assert resolve_aom_rf_drive(inp, 0.0) == {"aom": {"rfDrivePowerW": 0.0}}
 
 
 def test_manual_mode_aom_is_skipped() -> None:
@@ -232,6 +234,57 @@ def test_switch_routes_to_high_throw_inside_interval() -> None:
     assert drive["aomA"] == {"rfDrivePowerW": 0.0}
 
 
+def test_rest_high_holds_the_line_high_outside_intervals_while_scrubbing() -> None:
+    # rest_state is the level OUTSIDE the drawn blocks — not an idle-only knob.
+    # At t=0 (outside the interval) a HIGH rest keeps the switch on RF2.
+    nodes, aoms = _switch_scene(ttl_program_id="prog", restState="HIGH")
+    programs = {"prog": [{"spinCoreStartNs": 1000.0, "spinCoreEndNs": 2000.0}]}
+    inp = _inputs(nodes, aoms=aoms, programs=programs)
+    drive = resolve_aom_rf_drive(inp, 0.0)
+    assert drive["aomB"].get("rfDrivePowerW", 0.0) > 0.0
+    assert drive["aomA"] == {"rfDrivePowerW": 0.0}
+
+
+def test_rest_high_inverts_drawn_intervals_to_low_pulses() -> None:
+    # Same scene, sampled INSIDE the interval: HIGH rest makes it a LOW pulse.
+    nodes, aoms = _switch_scene(ttl_program_id="prog", restState="HIGH")
+    programs = {"prog": [{"spinCoreStartNs": 1000.0, "spinCoreEndNs": 2000.0}]}
+    inp = _inputs(nodes, aoms=aoms, programs=programs)
+    drive = resolve_aom_rf_drive(inp, 1500.0)
+    assert drive["aomA"].get("rfDrivePowerW", 0.0) > 0.0
+    assert drive["aomB"] == {"rfDrivePowerW": 0.0}
+
+
+def test_ppg_with_no_program_still_asserts_its_rest_level() -> None:
+    # A PPG is plugged in but carries no TimingProgram: it owns the line at its
+    # rest level (it used to fall through to the switch's manual ttlState).
+    nodes, aoms = _switch_scene(ttl_program_id=None, restState="HIGH")
+    inp = _inputs(nodes, aoms=aoms)
+    drive = resolve_aom_rf_drive(inp, 0.0)
+    assert drive["aomB"].get("rfDrivePowerW", 0.0) > 0.0
+    assert drive["aomA"] == {"rfDrivePowerW": 0.0}
+
+
+def test_wired_but_never_driven_aom_is_gated_off_not_left_at_rated_drive() -> None:
+    # Switch parked on RF1 in every section -> aomB never sees a carrier. It is
+    # still CABLED, so the RF link is the authority: 0 W, no diffraction. (It
+    # used to look "unwired" and fall back to its rated operating point.)
+    nodes, aoms = _switch_scene(ttl_program_id=None, restState="LOW")
+    inp = _inputs(nodes, aoms=aoms)
+    drive = resolve_aom_rf_drive(inp, 0.0)
+    assert drive["aomA"].get("rfDrivePowerW", 0.0) > 0.0
+    assert drive["aomB"] == {"rfDrivePowerW": 0.0}
+    # Rest snapshot too — nothing in the schedule ever drives aomB.
+    assert resolve_aom_rf_drive(inp, None)["aomB"] == {"rfDrivePowerW": 0.0}
+
+
+def test_uncabled_aom_keeps_its_rated_operating_point() -> None:
+    src = _src([{"anchorName": "CH0", "frequencyMhz": 80.0, "amplitudeScale": 1.0}])
+    aom = RfNode("aom", "aom", {}, _AOM_ANCHORS)
+    inp = _inputs([src, aom], aoms=[AomPort("aom", "rf_in", False)])
+    assert resolve_aom_rf_drive(inp, 0.0) == {}
+
+
 def test_rest_snapshot_uses_ppg_reststate_when_scrub_stopped() -> None:
     # Scrub stopped (t=None): switch TTL follows the PPG restState, ignoring intervals.
     nodes, aoms = _switch_scene(ttl_program_id="prog", restState="HIGH")
@@ -240,6 +293,95 @@ def test_rest_snapshot_uses_ppg_reststate_when_scrub_stopped() -> None:
     drive = resolve_aom_rf_drive(inp, None)  # rest snapshot, restState HIGH -> RF2 -> aomB
     assert drive["aomB"].get("rfDrivePowerW", 0.0) > 0.0
     assert drive["aomA"] == {"rfDrivePowerW": 0.0}
+
+
+def test_ppg_attachment_supplies_ttl_edge_without_a_cable() -> None:
+    """A PPG plugged straight into ttl_in (no rf_cable) still drives the switch.
+
+    Parity with the frontend `readPpgAttachmentEdges`.
+    """
+    src = _src([{"anchorName": "CH0", "frequencyMhz": 80.0, "amplitudeScale": 1.0}])
+    sw = RfNode("sw", "rf_switch", {"throwCount": 2, "insertionLossDb": 1.0}, _SWITCH_ANCHORS)
+    ppg = RfNode(
+        "ppg", "programmable_pulse_generator", {"timingProgramId": "prog"},
+        (_anc("rf_out"),),
+        ppg_attachment={
+            "targetObjectId": "sw", "targetAnchorId": "ttl_in", "targetAnchorName": "TTL",
+        },
+    )
+    nodes = [src, sw, ppg, _cable("c0", "src", "CH0", "sw", "rf_in")]
+    programs = {"prog": [{"spinCoreStartNs": 1000.0, "spinCoreEndNs": 2000.0}]}
+    # t inside the HIGH interval -> TTL HIGH -> highThrow 2 -> RF2 carries it.
+    res = build_rf_propagation(_inputs(nodes, programs=programs), scrub_time_ns=1500.0)
+    assert port_key("sw", "RF2") in res.signal_at_port
+    assert port_key("sw", "RF1") not in res.signal_at_port
+    # t outside -> LOW -> RF1.
+    res_low = build_rf_propagation(_inputs(nodes, programs=programs), scrub_time_ns=0.0)
+    assert port_key("sw", "RF1") in res_low.signal_at_port
+    assert port_key("sw", "RF2") not in res_low.signal_at_port
+
+
+def test_ppg_attachment_ignored_when_malformed() -> None:
+    # A half-written attachment must not fabricate an edge.
+    src = _src([{"anchorName": "CH0", "frequencyMhz": 80.0, "amplitudeScale": 1.0}])
+    sw = RfNode("sw", "rf_switch", {"throwCount": 2, "insertionLossDb": 1.0}, _SWITCH_ANCHORS)
+    ppg = RfNode("ppg", "programmable_pulse_generator", {"timingProgramId": "prog"},
+                 (_anc("rf_out"),), ppg_attachment={"targetObjectId": "sw"})
+    nodes = [src, sw, ppg, _cable("c0", "src", "CH0", "sw", "rf_in")]
+    programs = {"prog": [{"spinCoreStartNs": 0.0, "spinCoreEndNs": 9999.0}]}
+    # No edge -> TTL falls back to manual LOW -> RF1, even mid-"interval".
+    res = build_rf_propagation(_inputs(nodes, programs=programs), scrub_time_ns=1500.0)
+    assert port_key("sw", "RF1") in res.signal_at_port
+    assert port_key("sw", "RF2") not in res.signal_at_port
+
+
+def test_switch_ttl_state_from_asset_params_when_no_ppg() -> None:
+    # No TTL cable at all: the manual ttlState decides. It lives on the ASSET
+    # (default_params) -- the authoritative store -- not just kind_params.
+    src = _src([{"anchorName": "CH0", "frequencyMhz": 80.0, "amplitudeScale": 1.0}])
+    sw = RfNode("sw", "rf_switch", {"throwCount": 2, "insertionLossDb": 1.0},
+                _SWITCH_ANCHORS, asset_params={"ttlState": "HIGH"})
+    nodes = [src, sw, _cable("c0", "src", "CH0", "sw", "rf_in")]
+    res = build_rf_propagation(_inputs(nodes), scrub_time_ns=0.0)
+    # HIGH + default highThrow 2 -> RF2 carries the signal, RF1 stays dark.
+    assert port_key("sw", "RF2") in res.signal_at_port
+    assert port_key("sw", "RF1") not in res.signal_at_port
+
+
+def test_switch_ttl_state_dynamic_sources_override_asset() -> None:
+    # Per-instance dynamic_sources.ttlState (the plugin marks it tunable)
+    # overrides the asset default.
+    src = _src([{"anchorName": "CH0", "frequencyMhz": 80.0, "amplitudeScale": 1.0}])
+    sw = RfNode("sw", "rf_switch", {"throwCount": 2, "insertionLossDb": 1.0},
+                _SWITCH_ANCHORS, asset_params={"ttlState": "HIGH"},
+                dynamic_sources={"ttlState": "LOW"})
+    nodes = [src, sw, _cable("c0", "src", "CH0", "sw", "rf_in")]
+    res = build_rf_propagation(_inputs(nodes), scrub_time_ns=0.0)
+    assert port_key("sw", "RF1") in res.signal_at_port
+    assert port_key("sw", "RF2") not in res.signal_at_port
+
+
+def test_switch_active_high_throw_from_asset_params() -> None:
+    # ttlActiveHighThrow authored on the asset flips which throw LOW selects.
+    src = _src([{"anchorName": "CH0", "frequencyMhz": 80.0, "amplitudeScale": 1.0}])
+    sw = RfNode("sw", "rf_switch", {"throwCount": 2, "insertionLossDb": 1.0},
+                _SWITCH_ANCHORS, asset_params={"ttlActiveHighThrow": 1})
+    nodes = [src, sw, _cable("c0", "src", "CH0", "sw", "rf_in")]
+    res = build_rf_propagation(_inputs(nodes), scrub_time_ns=0.0)
+    # LOW + highThrow 1 -> active = 3 - 1 = RF2.
+    assert port_key("sw", "RF2") in res.signal_at_port
+    assert port_key("sw", "RF1") not in res.signal_at_port
+
+
+def test_amplifier_gain_from_dynamic_sources() -> None:
+    # rf_amplifier reads gainDb through the same chain.
+    src = _src([{"anchorName": "CH0", "frequencyMhz": 80.0, "amplitudeScale": 1.0}])
+    amp = RfNode("amp", "rf_amplifier", {"gainDb": 0.0}, _AMP_ANCHORS,
+                 dynamic_sources={"gainDb": 20.0})
+    nodes = [src, amp, _cable("c0", "src", "CH0", "amp", "rf_in")]
+    res = build_rf_propagation(_inputs(nodes), scrub_time_ns=0.0)
+    out = res.signal_at_port[port_key("amp", "rf_out")]
+    assert out.vpp == pytest.approx(10.0)  # 1.0 Vpp * 10^(20/20)
 
 
 # --- _primary_asset_id: parity with frontend componentBindings.primaryAsset ---

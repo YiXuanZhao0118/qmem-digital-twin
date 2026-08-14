@@ -15,6 +15,7 @@ import {
   createOpticalElementApi,
   createOpticalLinkApi,
   createComponentApi,
+  createComponentBindingApi,
   createSimulationRunApi,
   deleteAssemblyRelationApi,
   deleteCollectionApi,
@@ -127,7 +128,10 @@ import {
 } from "../utils/beamPlacement";
 import { expandPoseToRigidGroup, patchHasPoseChange } from "../utils/rigidGroup";
 import { anchorObjectLocalPrimaryDir } from "../utils/anchorAccess";
-import { primaryAsset } from "../utils/componentBindings";
+import { capabilityProfile } from "../kinds/_capabilityProfile";
+import { deriveCablePropsFromConnectorBindings, primaryAsset } from "../utils/componentBindings";
+import { TEXT_ANNOTATION_ASSET_FILEPATH } from "../three/loadAsset/passive/text_annotation";
+import { ppgsAttachedTo } from "../utils/ppgAttachment";
 import {
   connectorFamilyFromAnchor,
   domainsAreCompatible,
@@ -393,6 +397,10 @@ type SceneStore = {
    *  changes. PhyEditor's top-bar Back button reads this to decide
    *  whether to prompt for confirmation. */
   phyEditorDirty: boolean;
+  /** Initial-setup (room dimensions) popover visibility. Lives in the
+   *  store because the trigger is in the Lab tab menu (ModuleSwitcher)
+   *  while the panel itself renders inside SceneToolbar. */
+  initialSetupOpen: boolean;
   /** Phase RF.6: all RfChainNodes in the database. The 3D viewer reads
    *  this to overlay frequency-power badges above terminal devices, and
    *  AOM/EOM panels read it to display the chain output. Auto-loaded on
@@ -440,6 +448,8 @@ type SceneStore = {
   openPhyEditor: () => void;
   /** Close the PHY editor and return to the main scene. */
   closePhyEditor: () => void;
+  /** Show/hide the initial-setup (room dimensions) popover. */
+  setInitialSetupOpen: (open: boolean) => void;
   /** Switch to a specific sub-editor inside the PHY editor (e.g.
    *  Asset3D filtered to RF). When null, returns to the editor home. */
   setPhyEditorView: (view: PhyEditorView | null) => void;
@@ -664,6 +674,13 @@ type SceneStore = {
     tgtAnchorId: string;
     tgtAnchorName: string;
   }) => Promise<string | null>;
+  /** Write-through re-snap: after any of `movedObjectIds` commits a pose
+   *  change, recompute every linked rf_cable end that targets one of them
+   *  and PERSIST the new node + handle (via applyRfCableAlignmentCandidate).
+   *  Keeps stored `rfCableNodes` equal to what the renderer derives, so a
+   *  fresh page load paints cables at the right ports immediately instead
+   *  of showing connect-time nodes until the live re-snap pass runs. */
+  resnapRfCablesLinkedTo: (movedObjectIds: readonly string[]) => Promise<void>;
   /** Manually set one fiber endpoint's optical-port lab pose. The user
    *  supplies the desired ferrule-tip lab position and outward direction
    *  (need not be unit-length — it's normalised internally); the action
@@ -998,6 +1015,36 @@ function withoutRelationsForObjects(relations: AssemblyRelation[], objectIds: Se
   );
 }
 
+/** Keep a PPG's bound TimingProgram name in step with its SceneObject name.
+ *
+ *  The PPG's `SceneObject.name` is the single source of truth for the
+ *  channel's identity — Pulse & Timing's left column and the RF Link node
+ *  header both display it, and both let the user edit it in place. But the
+ *  compiled timing output labels its channels from `TimingProgram.name`, so
+ *  the two must not drift. Doing the mirror in the store (rather than in one
+ *  panel) means every rename path agrees no matter where it starts.
+ *
+ *  No-ops unless the patch actually changes the name of an object that is a
+ *  PPG with a bound program. Fire-and-forget at the call site: a failed
+ *  mirror must not fail the rename itself. */
+async function mirrorPpgNameToTimingProgram(
+  get: () => SceneStore,
+  objectId: string,
+  patch: SceneObjectPatch,
+): Promise<void> {
+  if (!("name" in patch)) return;
+  const nextName = patch.name;
+  if (typeof nextName !== "string") return;
+  const state = get();
+  const pe = state.scene.physicsElements.find((p) => p.objectId === objectId);
+  if (pe?.elementKind !== "programmable_pulse_generator") return;
+  const programId = (pe.kindParams as { timingProgramId?: string } | undefined)?.timingProgramId;
+  if (typeof programId !== "string" || !programId) return;
+  const program = (state.scene.timingPrograms ?? []).find((p) => p.id === programId);
+  if (!program || program.name === nextName) return;
+  await state.updateTimingProgram(programId, { name: nextName });
+}
+
 function nextObjectOffset(count: number): SceneObjectPatch {
   return {
     xMm: -700 + ((count * 140) % 1400),
@@ -1146,6 +1193,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   phyEditorView: readPersistedEditorState().phyEditorView ?? null,
   editingAssetId: null,
   phyEditorDirty: false,
+  initialSetupOpen: false,
   rfChains: [],
   scrubTimeNs: null,
   userTimelineTotalNs: null,
@@ -1584,6 +1632,37 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       next.soloIncludeNeighbors = state.session.soloIncludeNeighbors;
       return { session: next };
     });
+    // Session state alone isn't enough to make this the escape hatch its
+    // label promises. "Hide (permanent)" writes SceneObject.visible=false to
+    // the DB, and the usual way back is the Outliner's eye button — but
+    // kinds with `outlinerVisible: false` (rf_cable, PPG) have no Outliner
+    // row, so nothing there can un-hide them. Since picking now ignores
+    // invisible objects (you shouldn't be able to click what you can't see),
+    // a permanently-hidden cable would otherwise be unreachable from every
+    // surface at once. Restore exactly those rows here; Outliner-listed
+    // kinds keep their own eye toggle and are deliberately left alone.
+    const state = get();
+    const kindByObject = new Map(
+      state.scene.physicsElements.map((pe) => [pe.objectId, pe.elementKind]),
+    );
+    const stranded = state.scene.objects.filter(
+      (o) => o.visible === false
+        && !capabilityProfile(kindByObject.get(o.id)).outlinerVisible,
+    );
+    if (stranded.length === 0) return;
+    set((current) => ({
+      scene: {
+        ...current.scene,
+        objects: current.scene.objects.map((o) =>
+          stranded.some((s) => s.id === o.id) ? { ...o, visible: true } : o,
+        ),
+      },
+    }));
+    // Persist; fire-and-forget so the un-hide paints immediately and a
+    // backend hiccup can't wedge the escape hatch.
+    for (const o of stranded) {
+      void updateObjectApi(o.id, { visible: true }).catch(() => {});
+    }
   },
 
   async loadScene() {
@@ -1801,10 +1880,27 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     ).length;
     const programName = `CH${ppgCount}`;
 
+    // Pick a PPG catalog component matching the requested connector family
+    // AND that actually has a usable asset (primary Asset3D with an rf_out
+    // anchor). Empty stub PPG components — no binding, no asset — would
+    // otherwise be selected and then silently fail: the PPG materialises
+    // with no rf_out port, so createRfCableBetweenPorts returns null and
+    // createPpgAtPort rolls the whole thing back ("nothing happened").
+    const ppgHasUsableAsset = (candidate: ComponentItem): boolean => {
+      const asset = primaryAsset(candidate, {
+        componentBindings: state.scene.componentBindings,
+        assets: state.scene.assets,
+      });
+      return (
+        !!asset
+        && Array.isArray(asset.anchors)
+        && asset.anchors.some((a) => a.id === "rf_out")
+      );
+    };
     const component = state.scene.components.find((candidate) => {
       if (candidate.kindId !== "programmable_pulse_generator") return false;
       const props = candidate.properties as Record<string, unknown>;
-      return props.connectorType === connectorType;
+      return props.connectorType === connectorType && ppgHasUsableAsset(candidate);
     });
     if (!component) return null;
 
@@ -1813,38 +1909,48 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       intervals: [],
     });
 
-    const obj = await createObjectApi({
-      // PPG SceneObject.name is the user-facing identity of this channel
-      // (Pulse & Timing left column, RF Link node header). Set it to a
-      // short positional label rather than letting the backend auto-name
-      // it ``programmable_pulse_generator_bnc_object_4`` — the user can
-      // rename it from either panel later.
-      name: programName,
-      componentId: component.id,
-      collectionId: get().activeCollectionId,
-      ...cursorSpawnPatch(get().transformCursorMm.left, state.scene.objects.length),
-      visible: true,
-      locked: false,
-    });
-
-    const kindParams = {
-      connectorType,
-      timingProgramId: program.id,
-      outputDomain: "rfout" as const,
-      highVoltageV: 3.2,
-    };
+    // From here on the program row exists in the DB. Any failure below must
+    // delete it again — otherwise it lingers as a phantom "CHn" in the
+    // Pulse & Timing panel with no PPG behind it (seen live 2026-07-04:
+    // a mid-create backend outage left one behind).
+    let obj: SceneObject;
     let element: PhysicsElement;
     try {
-      element = await updateOpticalElementApi(obj.id, {
-        elementKind: "programmable_pulse_generator",
-        kindParams,
+      obj = await createObjectApi({
+        // PPG SceneObject.name is the user-facing identity of this channel
+        // (Pulse & Timing left column, RF Link node header). Set it to a
+        // short positional label rather than letting the backend auto-name
+        // it ``programmable_pulse_generator_bnc_object_4`` — the user can
+        // rename it from either panel later.
+        name: programName,
+        componentId: component.id,
+        collectionId: get().activeCollectionId,
+        ...cursorSpawnPatch(get().transformCursorMm.left, state.scene.objects.length),
+        visible: true,
+        locked: false,
       });
-    } catch {
-      element = await createOpticalElementApi({
-        objectId: obj.id,
-        elementKind: "programmable_pulse_generator",
-        kindParams,
-      });
+
+      const kindParams = {
+        connectorType,
+        timingProgramId: program.id,
+        outputDomain: "rfout" as const,
+        highVoltageV: 3.2,
+      };
+      try {
+        element = await updateOpticalElementApi(obj.id, {
+          elementKind: "programmable_pulse_generator",
+          kindParams,
+        });
+      } catch {
+        element = await createOpticalElementApi({
+          objectId: obj.id,
+          elementKind: "programmable_pulse_generator",
+          kindParams,
+        });
+      }
+    } catch (err) {
+      await deleteTimingProgramApi(program.id).catch(() => {});
+      throw err;
     }
 
     set((current) => ({
@@ -1853,7 +1959,12 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       selectedObjectIds: obj.id ? [obj.id] : [],
       scene: {
         ...current.scene,
-        timingPrograms: [...(current.scene.timingPrograms ?? []), program],
+        // upsert, not append: the websocket `timing_program.created`
+        // broadcast lands independently, and a raw push made the same
+        // program id appear twice — Pulse & Timing then listed two "CH0"
+        // rows for one PPG (the phantom-channel symptom, this time from
+        // duplication rather than a leaked row).
+        timingPrograms: upsertById(current.scene.timingPrograms ?? [], program),
         objects: upsertObject(current.scene.objects, obj),
         physicsElements: upsertById(
           current.scene.physicsElements.filter((item) => item.objectId !== element.objectId),
@@ -1874,18 +1985,50 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       connectorType: targetConnectorFamily,
     });
     if (!created) return null;
-    const cableId = await get().createRfCableBetweenPorts({
-      srcObjectId: created.objectId,
-      srcAnchorId: "rf_out",
-      srcAnchorName: "rf_out",
-      tgtObjectId: targetObjectId,
-      tgtAnchorId: targetAnchorId,
-      tgtAnchorName: targetAnchorName,
-    });
-    if (!cableId) {
-      // PPG materialised but cable failed — roll back the PPG (and the
-      // cascaded TimingProgram) so we don't leave dangling state.
+    // The PPG plugs STRAIGHT into the port — no cable. Record the
+    // relationship on the PPG itself (`utils/ppgAttachment.ts`); the mount
+    // math, the RF BFS (both sides) and the RF Link panel all read it as the
+    // zero-length edge a cable used to stand in for. See that module's header
+    // for why the old real-rf_cable approach had to go.
+    let attached = false;
+    try {
+      const attachment = { targetObjectId, targetAnchorId, targetAnchorName };
+      const updated = await updateObjectApi(created.objectId, {
+        properties: {
+          ...((get().scene.objects.find((o) => o.id === created.objectId)?.properties
+            ?? {}) as Record<string, unknown>),
+          ppgAttachment: attachment,
+        },
+      });
+      set((s) => ({
+        scene: { ...s.scene, objects: upsertObject(s.scene.objects, updated) },
+      }));
+      attached = true;
+    } catch {
+      attached = false;
+    }
+    if (!attached) {
+      // PPG materialised but the attachment write failed — roll back the PPG
+      // (and the cascaded TimingProgram) so we don't leave dangling state.
       await get().deleteObject(created.objectId).catch(() => {});
+      // Belt and braces: when the backend is healthy the delete's
+      // ``timing_program.deleted`` broadcast prunes the program from the
+      // store. But if the delete itself failed (server hiccup — exactly
+      // when the cable step is failing too), the optimistic rows would
+      // linger as a phantom "CHn" channel until reload. Prune locally;
+      // idempotent with the websocket event.
+      set((s) => ({
+        scene: {
+          ...s.scene,
+          objects: s.scene.objects.filter((o) => o.id !== created.objectId),
+          physicsElements: s.scene.physicsElements.filter(
+            (pe) => pe.objectId !== created.objectId,
+          ),
+          timingPrograms: (s.scene.timingPrograms ?? []).filter(
+            (p) => p.id !== created.timingProgramId,
+          ),
+        },
+      }));
       return null;
     }
     return created;
@@ -1893,6 +2036,21 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
 
   async addTextAnnotation(text) {
     const initialText = (text && text.trim().length > 0) ? text : "Text";
+    // Every Component renders by walking its ComponentBinding tree
+    // (bindingRendererGate, 2026-06-10), so the label needs a leaf to
+    // resolve: the procedural `primitive://text_annotation` Asset3D seeded
+    // by alembic 0119. `loadAsset`'s primitive:// branch then dispatches to
+    // the sprite renderer by the Component's kindId. Resolve it BEFORE
+    // creating anything so a missing row can't leave an orphan Component.
+    const labelAsset = get().scene.assets.find(
+      (a) => a.filePath === TEXT_ANNOTATION_ASSET_FILEPATH,
+    );
+    if (!labelAsset) {
+      throw new Error(
+        `Text annotation asset (${TEXT_ANNOTATION_ASSET_FILEPATH}) is missing — ` +
+          "run `alembic upgrade head` (migration 0119).",
+      );
+    }
     const component = await createComponentApi({
       name: initialText,
       kindId: "text_annotation",
@@ -1904,6 +2062,11 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         fontSizePx: 56,
         scaleMm: 80,
       },
+    });
+    await createComponentBindingApi(component.id, {
+      targetKind: "asset",
+      asset3dId: labelAsset.id,
+      sortOrder: 0,
     });
     const obj = await createObjectApi({
       componentId: component.id,
@@ -2419,6 +2582,89 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     }));
   },
 
+  async resnapRfCablesLinkedTo(movedObjectIds) {
+    // Write-through half of the cable-follows-instrument behaviour. The
+    // renderer already re-derives cable ends live (viewer applyLink), but
+    // the STORED rfCableNodes stay at connect-time values — so a page
+    // reload first paints the old geometry until the live pass catches up.
+    // Persisting the recomputed end here makes stored data == derived data.
+    // Math mirrors createRfCableBetweenPorts' buildCandidate (same body
+    // frame, same tip derivation) so connect-time and re-snap agree.
+    const moved = new Set(movedObjectIds);
+    if (moved.size === 0) return;
+    const state = get();
+    const { resolveLinkedRfCableEndpoint, connectorTipMmFromAnchors } =
+      await import("../utils/rfCableAnchorResolver");
+    for (const cable of state.scene.objects) {
+      const comp = state.scene.components.find((c) => c.id === cable.componentId);
+      if (!comp || (comp.kindId !== "rf_cable" && comp.kindId !== "sma_cable")) continue;
+      const endpoints = (cable.properties as {
+        rfCableEndpoints?: Record<"A" | "B", {
+          targetObjectId: string;
+          targetAnchorId: string;
+          targetAnchorName: string;
+        } | undefined>;
+      } | undefined)?.rfCableEndpoints;
+      if (!endpoints) continue;
+      for (const end of ["A", "B"] as const) {
+        const link = endpoints[end];
+        if (!link || !moved.has(link.targetObjectId)) continue;
+        const targetObj = get().scene.objects.find((o) => o.id === link.targetObjectId);
+        if (!targetObj) continue;
+        const targetComp = state.scene.components.find((c) => c.id === targetObj.componentId);
+        if (!targetComp) continue;
+        const asset = primaryAsset(targetComp, {
+          componentBindings: state.scene.componentBindings,
+          assets: state.scene.assets,
+        });
+        if (!asset || !Array.isArray(asset.anchors)) continue;
+        const anchor = asset.anchors.find(
+          (a) => a.id === link.targetAnchorId && (a.name ?? a.id) === link.targetAnchorName,
+        );
+        if (!anchor) continue;
+        const primaryDir = anchorObjectLocalPrimaryDir(anchor, asset);
+        const connBinding = (state.scene.componentBindings ?? []).find(
+          (b) => b.componentId === comp.id
+            && b.role === (end === "A" ? "end_a" : "end_b")
+            && b.targetKind === "asset",
+        );
+        const connAsset = connBinding?.asset3dId
+          ? state.scene.assets.find((a) => a.id === connBinding.asset3dId)
+          : undefined;
+        const resolved = resolveLinkedRfCableEndpoint({
+          endpoint: end,
+          cablePose: {
+            xMm: cable.xMm, yMm: cable.yMm, zMm: cable.zMm,
+            rxDeg: cable.rxDeg, ryDeg: cable.ryDeg, rzDeg: cable.rzDeg,
+          },
+          targetPose: {
+            xMm: targetObj.xMm, yMm: targetObj.yMm, zMm: targetObj.zMm,
+            rxDeg: targetObj.rxDeg, ryDeg: targetObj.ryDeg, rzDeg: targetObj.rzDeg,
+          },
+          targetAnchorPosBodyMm: [
+            anchor.positionMmBodyLocal.x,
+            anchor.positionMmBodyLocal.y,
+            anchor.positionMmBodyLocal.z,
+          ],
+          targetAnchorDirBody: primaryDir
+            ? [primaryDir.x, primaryDir.y, primaryDir.z]
+            : [1, 0, 0],
+          connectorTipMm: connectorTipMmFromAnchors(connAsset?.anchors, null),
+        });
+        if (!resolved) continue;
+        await get().applyRfCableAlignmentCandidate(cable.id, end, {
+          targetObjectId: link.targetObjectId,
+          targetAnchorId: link.targetAnchorId,
+          targetAnchorName: link.targetAnchorName,
+          targetName: targetObj.name,
+          distMm: 0,
+          newPosMmBody: resolved.posMmBody,
+          newHandleMmBody: resolved.handleMmBody,
+        });
+      }
+    }
+  },
+
   async createRfCableBetweenPorts(args) {
     const { srcObjectId, srcAnchorId, srcAnchorName, tgtObjectId, tgtAnchorId, tgtAnchorName } = args;
     const state = get();
@@ -2534,15 +2780,28 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     //    (sma_to_bnc) and the drag direction reverses it, we swap which
     //    spline endpoint (A vs B) attaches to src vs tgt so the rendered
     //    SMA / BNC connector geometry lands on the matching physical port.
+    const familyFromToken = (t: unknown): ConnectorFamily => {
+      if (typeof t !== "string") return null;
+      if (t.startsWith("sma")) return "sma";
+      if (t.startsWith("bnc")) return "bnc";
+      return null;
+    };
     const cableEndFamily = (
       c: ComponentItem,
       end: "endAConnector" | "endBConnector",
     ): ConnectorFamily => {
+      // The family lives on the cable's bound connector ASSETS (end_a/end_b
+      // → rf_cable_connector asset, defaultParams.family). Derive it the same
+      // way the renderer / ComponentsEditor does — the catalog cable rows'
+      // own `properties.endAConnector` are empty, so reading them made every
+      // cross-family drag fall through to the sma-sma fallback below. The
+      // derived tokens are gendered (e.g. "bnc_male"), so prefix-match.
+      const derived = deriveCablePropsFromConnectorBindings(c, {
+        componentBindings: state.scene.componentBindings,
+        assets: state.scene.assets,
+      });
       const props = (c.properties ?? {}) as Record<string, unknown>;
-      const explicit = props[end];
-      if (explicit === "sma" || explicit === "bnc") return explicit;
-      const fallback = props.connectorType;
-      return fallback === "sma" || fallback === "bnc" ? fallback : null;
+      return familyFromToken(derived?.[end] ?? props[end] ?? props.connectorType);
     };
     const rfCables = state.scene.components.filter(
       (c) =>
@@ -2947,6 +3206,12 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
             );
           },
         });
+        // Write-through: persist re-snapped nodes for cables linked to any
+        // group member, so stored rfCableNodes stay equal to what the
+        // renderer derives (fresh loads paint correctly at once).
+        void get()
+          .resnapRfCablesLinkedTo(expansion.entries.map((e) => e.id))
+          .catch(() => {});
         return;
       }
       // kind === "single": fall through to the regular single-object path.
@@ -2964,6 +3229,20 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         objects: upsertObject(current.scene.objects, obj),
       },
     }));
+    // Write-through: a committed pose change re-snaps + persists the nodes
+    // of every cable linked to this object (fire-and-forget — rendering
+    // already follows live; this only keeps the STORED nodes in sync so
+    // F5 paints correctly on the first frame).
+    if (patchHasPoseChange(safePatch)) {
+      void get().resnapRfCablesLinkedTo([objectId]).catch(() => {});
+    }
+    // PPG name is the single source of truth for its channel identity, and
+    // Pulse & Timing renders it in the left column. Mirror it onto the bound
+    // TimingProgram here — in the STORE — so every rename path agrees. The
+    // Pulse & Timing panel already mirrored on its own, but renaming the same
+    // PPG from the RF Link panel wrote only SceneObject.name, leaving
+    // TimingProgram.name (what the compile output labels channels with) stale.
+    void mirrorPpgNameToTimingProgram(get, objectId, safePatch).catch(() => {});
     if (inverseForSingle) {
       get().recordAction({
         description: `Update ${currentObject?.name ?? "object"}`,
@@ -3007,6 +3286,14 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         objects: upsertObjects(current.scene.objects, updated),
       },
     }));
+    // Write-through: persist re-snapped nodes for cables linked to any
+    // pose-changed member (see updateSceneObject single-path note).
+    const poseChangedIds = prepared
+      .filter((entry) => patchHasPoseChange(entry.patch))
+      .map((entry) => entry.objectId);
+    if (poseChangedIds.length > 0) {
+      void get().resnapRfCablesLinkedTo(poseChangedIds).catch(() => {});
+    }
   },
 
   async deleteObject(objectId) {
@@ -3071,6 +3358,14 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     // Pulse & Timing stays in sync without any extra work here.
     const peByObjectId = new Map<string, PhysicsElement>();
     for (const pe of state.scene.physicsElements) peByObjectId.set(pe.objectId, pe);
+    // Cable-less PPGs (the current model — `properties.ppgAttachment`) have
+    // no cable to go dangling, so the orphan test below can't see them.
+    // Delete a PPG when the instrument it is plugged into is doomed.
+    for (const ppgId of ppgsAttachedTo(state.scene.objects, state.scene.physicsElements, doomedSet)) {
+      if (doomedSet.has(ppgId)) continue;
+      toDelete.push(ppgId);
+      doomedSet.add(ppgId);
+    }
     const cablesPerPpg = new Map<string, string[]>();
     for (const obj of state.scene.objects) {
       const pe = peByObjectId.get(obj.id);
@@ -3094,6 +3389,11 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       if (doomedSet.has(obj.id)) continue;
       if (peByObjectId.get(obj.id)?.elementKind !== "programmable_pulse_generator") continue;
       const cables = cablesPerPpg.get(obj.id) ?? [];
+      // LEGACY PPGs ONLY (those still wired through a real rf_cable). A
+      // cable-less PPG has no cables at all, which would read as "every
+      // cable is doomed" and delete it on ANY unrelated delete — its
+      // lifetime is governed by the ppgAttachment cascade above instead.
+      if (cables.length === 0) continue;
       const aliveCables = cables.filter((cableId) => !doomedSet.has(cableId));
       if (aliveCables.length === 0) {
         toDelete.push(obj.id);
@@ -3101,11 +3401,22 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       }
     }
     // Fire every DELETE in parallel — the API is idempotent per-row and
-    // there's no inter-row ordering constraint, so Promise.all is safe
-    // even when one fails (allSettled keeps the partial successes).
-    // We use Promise.all so a backend 500 surfaces; the local state stays
-    // consistent because we only reduce the deleted set after.
-    await Promise.all(toDelete.map((id) => deleteObjectApi(id)));
+    // there's no inter-row ordering constraint. A 404 means the row is
+    // ALREADY gone from the DB, which is the outcome we wanted, so it must
+    // count as success: rethrowing left the object in the local store
+    // forever, and any caller that re-fires on scene change (the cable
+    // panel's dangling-link cleanup) then retried the same dead id on every
+    // render — an endless 404 loop against a ghost row. Other failures
+    // still surface.
+    await Promise.all(
+      toDelete.map((id) =>
+        deleteObjectApi(id).catch((err: unknown) => {
+          const status = (err as { response?: { status?: number } })?.response?.status;
+          if (status === 404) return;
+          throw err;
+        }),
+      ),
+    );
     // Cross-table cascade: when a PPG is among the doomed set, also drop
     // its bound TimingProgram and PhysicsElement locally. Backend
     // cascades + broadcasts the same — this optimistic update closes the
@@ -3921,6 +4232,10 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
 
   setEditingAssetId(assetId) {
     set({ editingAssetId: assetId });
+  },
+
+  setInitialSetupOpen(open) {
+    set({ initialSetupOpen: open });
   },
 
   openPhyEditor() {

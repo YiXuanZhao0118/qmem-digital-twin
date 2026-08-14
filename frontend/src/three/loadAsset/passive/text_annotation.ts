@@ -20,6 +20,13 @@ import { mmToThree } from "../../transformUtils";
  *   - scaleMm      : number  – on-screen WIDTH of the label in mm at scene
  *                              scale; height auto-derives from aspect ratio
  *                              (default 80) */
+/** `file_path` of the procedural Asset3D seeded by alembic 0119. Every
+ *  Component renders through its ComponentBinding tree, so a text-annotation
+ *  Component binds this row as its single root — the leaf the tree resolves,
+ *  which `loadAsset`'s `primitive://` branch turns back into the sprite
+ *  below (dispatch is by the Component's kindId, not by this key). */
+export const TEXT_ANNOTATION_ASSET_FILEPATH = "primitive://text_annotation";
+
 export function createTextAnnotation(component: ComponentItem): THREE.Sprite {
   const props = component.properties as {
     text?: unknown;

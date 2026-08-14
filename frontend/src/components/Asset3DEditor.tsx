@@ -30,6 +30,7 @@ import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { resolveAssetUrl } from "../api/client";
 import { useKindsStore } from "../store/kindsStore";
 import { useSceneStore } from "../store/sceneStore";
+import { primaryAsset } from "../utils/componentBindings";
 import {
   type V3Asset,
   type V3AssetUpdate,
@@ -3539,7 +3540,31 @@ export function Asset3DEditor({
       // io_3_850_hp_back_piece won't pick up anchor / body-frame / mesh
       // edits). loadScene re-fetches the scene and preserves the user's
       // current selection, so the edit propagates everywhere at once.
-      void useSceneStore.getState().loadScene();
+      // Moving an anchor moves a PORT without moving any SceneObject, so the
+      // pose-commit hooks that normally re-snap linked rf_cables never fire —
+      // the stored `rfCableNodes` keep pointing at where the port used to be
+      // and every cable plugged into this asset ends up floating off it (seen
+      // for real: retuning the ZYSWA / ZHL port anchors onto their measured
+      // connector faces left the amp's cable 8.3 mm short). Re-snap every
+      // cable linked to an object that uses this asset, after loadScene has
+      // published the new anchor coordinates.
+      void useSceneStore.getState().loadScene().then(() => {
+        const store = useSceneStore.getState();
+        const affected = store.scene.objects
+          .filter((o) => {
+            const comp = store.scene.components.find((c) => c.id === o.componentId);
+            if (!comp) return false;
+            const asset = primaryAsset(comp, {
+              componentBindings: store.scene.componentBindings ?? [],
+              assets: store.scene.assets,
+            });
+            return asset?.id === updated.id;
+          })
+          .map((o) => o.id);
+        if (affected.length > 0) {
+          void store.resnapRfCablesLinkedTo(affected).catch(() => {});
+        }
+      });
       const nextAnchorCount = updated.anchors?.length ?? 0;
       setSelectedAnchorIndex((prev) => {
         if (nextAnchorCount === 0) return null;

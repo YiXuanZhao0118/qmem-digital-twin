@@ -36,6 +36,7 @@ import type {
 import { isPhysicsPlugin, type RfTransferSignal } from "../kinds/_plugin";
 import { pluginForKind } from "../kinds/_plugins";
 import { primaryAsset } from "./componentBindings";
+import { PPG_ELEMENT_KIND, ppgAttachments } from "./ppgAttachment";
 
 /** Singleton empty set for the default "nothing powered off" case —
  *  avoids allocating a fresh Set per buildRfPropagation call. */
@@ -102,6 +103,17 @@ export type RfPropagationResult = {
    *  ports it's the post-chain state; for passthrough rf_out ports it's
    *  the post-transform state. */
   signalAtPort: ReadonlyMap<RfPortKey, RfSignalState>;
+  /** Every port that has at least one edge (cable or PPG attachment) —
+   *  i.e. "something is plugged in here", regardless of whether a carrier
+   *  currently arrives. Time-invariant (topology, not routing). Consumers
+   *  use it to tell "wired but silent" (→ gated off) apart from "not wired
+   *  at all" (→ the device keeps its rated operating point). */
+  connectedPorts: ReadonlySet<RfPortKey>;
+  /** SceneObject ids of PPGs whose output is HIGH in this snapshot. The
+   *  PPG is not an RF carrier source, so its gate never shows up in
+   *  `signalAtPort`; the RF Link panel reads this to draw the TTL line as
+   *  live. */
+  ppgGateHighObjectIds: ReadonlySet<string>;
 };
 
 // ---------------------------------------------------------------------------
@@ -140,6 +152,28 @@ function readCables(
     });
   }
   return edges;
+}
+
+/** Edges contributed by PPGs that plug straight into a port with no cable
+ *  (`properties.ppgAttachment` — see `utils/ppgAttachment.ts`). A PPG mates
+ *  its own `rf_out` onto the target anchor, so the edge is exactly the one a
+ *  zero-length cable would have provided; the TTL pre-pass and the BFS then
+ *  need no special case. `cableObjectId` is the PPG's own id — nothing else
+ *  reads it as "a cable", it just needs to be a stable identity.
+ *
+ *  Mirrors backend `_read_ppg_attachments`. */
+function readPpgAttachmentEdges(
+  objects: readonly SceneObject[],
+  physicsElements: readonly PhysicsElement[],
+): CableEdge[] {
+  return ppgAttachments(objects, physicsElements).map(({ ppgObjectId, attachment }) => ({
+    cableObjectId: ppgObjectId,
+    a: { targetObjectId: ppgObjectId, targetAnchorName: "rf_out" },
+    b: {
+      targetObjectId: attachment.targetObjectId,
+      targetAnchorName: attachment.targetAnchorName,
+    },
+  }));
 }
 
 /** Indexed view of cables: port key → list of peer endpoints. Undirected,
@@ -345,11 +379,9 @@ const PASSTHROUGH_BY_KIND: Record<string, PassthroughTransfer | undefined> = {
   rf_switch: rfSwitchTransfer,
 };
 
-/** Geometric "does ``tNs`` fall inside any HIGH interval of the program?".
- *  Pure interval lookup. Intervals always assert HIGH (positive logic) —
- *  the PPG's `restState` does NOT flip interval meaning. Rest state is
- *  consulted separately, only when the user has scrub stopped (see
- *  `idleRestMode` in `buildRfPropagation`). */
+/** Geometric "does ``tNs`` fall inside any drawn interval of the program?".
+ *  Pure interval lookup — the level the interval asserts is decided by the
+ *  PPG's `restState` (see `buildRfPropagation`'s gate pre-pass), not here. */
 function ppgIntervalCovers(
   program: TimingProgram | undefined,
   tNs: number,
@@ -443,7 +475,10 @@ export function buildRfPropagation(args: {
   const scrubTimeNs = args.scrubTimeNs ?? 0;
   const idleRestMode = args.idleRestMode === true;
   const poweredOffObjectIds = args.poweredOffObjectIds ?? EMPTY_POWERED_OFF;
-  const cables = readCables(objects, physicsElements);
+  const cables = [
+    ...readCables(objects, physicsElements),
+    ...readPpgAttachmentEdges(objects, physicsElements),
+  ];
   const adj = buildAdjacency(cables);
   const anchorsByObj = buildAnchorsByObject(objects, components, assets, componentBindings);
   const assetParamsByObj = buildAssetParamsByObject(objects, components, assets, componentBindings);
@@ -451,19 +486,71 @@ export function buildRfPropagation(args: {
   const peByObj = new Map<string, PhysicsElement>();
   for (const pe of physicsElements) peByObj.set(pe.objectId, pe);
 
-  // TTL pre-pass: for each rf_switch, look one hop up its ttl_in cable.
-  // If the peer is a PPG with a bound TimingProgram, derive HIGH/LOW
-  // by evaluating the program at the current scrub time; else use the
-  // switch's manual `ttlState` param.
+  // Params a passthrough transfer sees, resolved through the ownership
+  // chain documented in docs/introduce/object.md: per-instance
+  // `dynamicSources` wins, then the Asset's `defaultParams` (authoritative
+  // store for a device's coefficients), then the PhysicsElement's legacy
+  // `kindParams`. The rf_source seed loop below already resolves
+  // fullScaleVpp / channels this way; the passthrough transfers used to read
+  // `kindParams` ALONE, which silently dead-ended every asset-authored or
+  // per-instance switch/amp knob — most visibly `ttlState`, which the
+  // rf_switch plugin declares tunable but the walker never read, so flipping
+  // the manual TTL state in the Object panel changed nothing.
+  const resolveElementParams = (
+    objectId: string,
+    pe: PhysicsElement,
+  ): Readonly<Record<string, unknown>> => ({
+    ...((pe.kindParams ?? {}) as Record<string, unknown>),
+    ...(assetParamsByObj.get(objectId) ?? {}),
+    ...((objById.get(objectId)?.dynamicSources ?? {}) as Record<string, unknown>),
+  });
+
   const programById = new Map<string, TimingProgram>();
   for (const p of timingPrograms) programById.set(p.id, p);
+
+  // Gate pre-pass: the output level of every PPG in the scene.
+  //
+  //     level = inInterval XOR (restState === "HIGH")
+  //
+  // i.e. `restState` is the level the line sits at OUTSIDE the drawn
+  // intervals, and a HIGH rest turns those intervals into LOW pulses
+  // (negative logic) — the contract documented on
+  // `ProgrammablePulseGeneratorParams.restState` and mirrored by the
+  // backend `schemas.ProgrammablePulseGeneratorParams.rest_state`. This
+  // used to be positive-logic-only during active scrub (intervals assert
+  // HIGH, restState consulted for the idle snapshot alone), so a channel
+  // resting HIGH read LOW the moment the scrub bar was switched on — most
+  // visibly a PPG with no intervals at all, which then gated its switch
+  // off and killed the whole downstream chain.
+  //
+  // In `idleRestMode` (scrub stopped) intervals aren't consulted at all:
+  // the line sits at `restState`, which is what the XOR degenerates to.
+  const ppgGateHighObjectIds = new Set<string>();
+  for (const pe of physicsElements) {
+    if (pe.elementKind !== PPG_ELEMENT_KIND) continue;
+    const params = resolveElementParams(pe.objectId, pe) as {
+      timingProgramId?: string;
+      restState?: "HIGH" | "LOW";
+    };
+    const rest = params.restState === "HIGH";
+    const programId = params.timingProgramId;
+    const inInterval =
+      !idleRestMode
+      && !!programId
+      && ppgIntervalCovers(programById.get(programId), scrubTimeNs);
+    if (inInterval !== rest) ppgGateHighObjectIds.add(pe.objectId);
+  }
+
+  // TTL pre-pass: for each rf_switch, look one hop up its ttl_in edge. A
+  // PPG peer owns the line (its gate level decides the throw); with no PPG
+  // plugged in, the switch's manual `ttlState` param applies.
   const switchTtlStates = new Map<string, "HIGH" | "LOW">();
   for (const pe of physicsElements) {
     if (pe.elementKind !== "rf_switch") continue;
     const anchors = anchorsByObj.get(pe.objectId) ?? [];
     const ttl = anchors.find((a) => a.id === "ttl_in");
     const manual =
-      ((pe.kindParams as { ttlState?: "HIGH" | "LOW" })?.ttlState) ?? "LOW";
+      ((resolveElementParams(pe.objectId, pe) as { ttlState?: "HIGH" | "LOW" }).ttlState) ?? "LOW";
     if (!ttl) {
       switchTtlStates.set(pe.objectId, manual);
       continue;
@@ -473,25 +560,8 @@ export function buildRfPropagation(args: {
     let derived: "HIGH" | "LOW" | null = null;
     for (const peer of peers) {
       const peerPe = peByObj.get(peer.targetObjectId);
-      if (!peerPe || peerPe.elementKind !== "programmable_pulse_generator") continue;
-      const ppgParams = peerPe.kindParams as
-        | { timingProgramId?: string; restState?: "HIGH" | "LOW" }
-        | undefined;
-      if (idleRestMode) {
-        // Scrub-stop / idle: rest_state alone drives the TTL. We don't
-        // consult the program here (the user can wire a PPG without a
-        // program and still pick HIGH or LOW idle).
-        derived = ppgParams?.restState === "HIGH" ? "HIGH" : "LOW";
-        break;
-      }
-      const programId = ppgParams?.timingProgramId;
-      if (!programId) continue;
-      const program = programById.get(programId);
-      // Active scrub: intervals always assert HIGH (positive logic).
-      // restState is intentionally NOT applied here — the user's spec
-      // is that rest only affects the idle / scrub-stopped state, not
-      // the meaning of the user-drawn HIGH blocks during playback.
-      derived = ppgIntervalCovers(program, scrubTimeNs) ? "HIGH" : "LOW";
+      if (!peerPe || peerPe.elementKind !== PPG_ELEMENT_KIND) continue;
+      derived = ppgGateHighObjectIds.has(peer.targetObjectId) ? "HIGH" : "LOW";
       break;
     }
     switchTtlStates.set(pe.objectId, derived ?? manual);
@@ -619,7 +689,7 @@ export function buildRfPropagation(args: {
       const outputs = transfer({
         inputAnchorName: peer.targetAnchorName,
         incoming: signal,
-        kindParams: peerPe.kindParams,
+        kindParams: resolveElementParams(peer.targetObjectId, peerPe),
         anchors,
         objectId: peer.targetObjectId,
         switchTtlStates,
@@ -635,5 +705,5 @@ export function buildRfPropagation(args: {
     }
   }
 
-  return { signalAtPort };
+  return { signalAtPort, connectedPorts: new Set(adj.keys()), ppgGateHighObjectIds };
 }

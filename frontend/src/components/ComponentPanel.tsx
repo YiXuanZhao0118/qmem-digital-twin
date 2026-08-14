@@ -28,6 +28,7 @@ import { OPTICAL_ALIGN_KINDS } from "../utils/isolatorAlign";
 import { AlignPanel } from "./AlignPanel";
 import { NumberField } from "./NumberField";
 import { capabilityProfile } from "../kinds/_capabilityProfile";
+import { primaryAsset } from "../utils/componentBindings";
 import { sceneObjectEulerFromQuaternion, sceneObjectToQuaternion } from "../optical/frames";
 
 type DraftObject = Required<Omit<SceneObjectPatch, "name" | "properties" | "serialNumber" | "dynamicSources">> & {
@@ -1471,6 +1472,7 @@ function RfCableEditor({ component }: { component: ComponentItem }) {
   const sceneObjects = useSceneStore((state) => state.scene.objects);
   const sceneComponents = useSceneStore((state) => state.scene.components);
   const sceneAssets = useSceneStore((state) => state.scene.assets);
+  const sceneComponentBindings = useSceneStore((state) => state.scene.componentBindings);
   const [alignFeedback, setAlignFeedback] = useState<string | null>(null);
   const [picker, setPicker] = useState<{
     end: "A" | "B";
@@ -1492,17 +1494,36 @@ function RfCableEditor({ component }: { component: ComponentItem }) {
   }).rfCableEndpoints) ?? {};
 
   /** Look up the live target SceneObject + asset anchor for a link.
-   *  Returns null if either is missing — used for both the panel's
-   *  status label (so dangling links can be flagged before the auto-
-   *  cleanup effect fires) and the cleanup decision itself. */
+   *
+   *  Three outcomes, deliberately distinguished because the auto-cleanup
+   *  effect below DELETES the cable on a negative answer:
+   *    - `{ targetName }`  — link fully resolved.
+   *    - `"gone"`          — the target SceneObject no longer exists. This
+   *                          is a FACT about the scene, and the only case
+   *                          that justifies deleting the cable.
+   *    - `null`            — the object is there but we couldn't resolve
+   *                          its asset / anchor. That's an "I don't know",
+   *                          not "the link is dead": the panel flags it,
+   *                          but nothing gets deleted over it.
+   *
+   *  The asset is resolved binding-aware via `primaryAsset` (single root
+   *  `targetKind="asset"` binding, else legacy `component.asset3dId`) — the
+   *  same helper the RF BFS / cable resolver / PPG mount use. Reading
+   *  `tc.asset3dId` alone returned null for every binding-backed instrument
+   *  (switch, amp, DDS), so both ends of a perfectly healthy cable looked
+   *  dangling and the cleanup effect deleted the cable the moment the user
+   *  clicked it — taking any attached PPG with it via the orphan cascade. */
   const resolveLinkLive = (
     link: { targetObjectId: string; targetAnchorId: string; targetAnchorName: string },
-  ): { targetName: string } | null => {
+  ): { targetName: string } | "gone" | null => {
     const t = sceneObjects.find((o) => o.id === link.targetObjectId);
-    if (!t) return null;
+    if (!t) return "gone";
     const tc = sceneComponents.find((c) => c.id === t.componentId);
-    if (!tc || !tc.asset3dId) return null;
-    const ta = sceneAssets.find((a) => a.id === tc.asset3dId);
+    if (!tc) return null;
+    const ta = primaryAsset(tc, {
+      componentBindings: sceneComponentBindings ?? [],
+      assets: sceneAssets,
+    });
     if (!ta || !Array.isArray(ta.anchors)) return null;
     const ok = ta.anchors.some(
       (a) => a.id === link.targetAnchorId
@@ -1512,18 +1533,23 @@ function RfCableEditor({ component }: { component: ComponentItem }) {
     return { targetName: t.name };
   };
 
-  // Auto-cleanup dangling links: when the target SceneObject is deleted
-  // or its asset anchor renamed / removed, fire `clearRfCableEndpointLink`
-  // so the cable falls back cleanly to the stored node value (which is
-  // the last good position the resolver wrote). Runs only when this
-  // cable instance is selected — bulk cross-cable cleanup belongs in a
-  // store-side migration / startup pass.
+  // Auto-cleanup dangling links: when the target SceneObject is GONE,
+  // fire `clearRfCableEndpointLink` (which, per the cable contract,
+  // deletes the cable outright). Runs only when this cable instance is
+  // selected — bulk cross-cable cleanup belongs in a store-side migration
+  // / startup pass.
+  //
+  // Only `"gone"` triggers the delete. An unresolvable asset / anchor
+  // (`null`) must NOT: this effect destroys user data, so it may act only
+  // on a fact it can positively establish, never on a lookup it merely
+  // failed to complete. That distinction is what turned a legacy-field
+  // blind spot into "clicking a cable deletes it".
   useEffect(() => {
     if (!isThisCableSelected || !selectedObject) return;
     (["A", "B"] as const).forEach((end) => {
       const link = endpointLinks[end];
       if (!link) return;
-      if (resolveLinkLive(link)) return;
+      if (resolveLinkLive(link) !== "gone") return;
       void clearRfCableEndpointLink(selectedObject.id, end);
     });
     // We intentionally don't depend on endpointLinks here — it's a fresh
@@ -1670,10 +1696,17 @@ function RfCableEditor({ component }: { component: ComponentItem }) {
                   <span style={{ fontWeight: 600, minWidth: 38 }}>End {end}:</span>
                   {!link ? (
                     <span style={{ opacity: 0.6 }}>— free (manual)</span>
-                  ) : !live ? (
+                  ) : live === "gone" ? (
                     <span style={{ color: "#f87171" }}>
                       ⚠ dangling → {link.targetAnchorName} [{link.targetAnchorId}]
                       <span style={{ opacity: 0.6 }}> (target missing)</span>
+                    </span>
+                  ) : !live ? (
+                    // Object is present but its asset / anchor didn't resolve.
+                    // Reported, never auto-deleted — see resolveLinkLive.
+                    <span style={{ color: "#fbbf24" }}>
+                      ? unresolved → {link.targetAnchorName} [{link.targetAnchorId}]
+                      <span style={{ opacity: 0.6 }}> (anchor not found on target asset)</span>
                     </span>
                   ) : (
                     <span style={{ color: "#86efac" }}>

@@ -116,18 +116,24 @@ export function PulseTimingPanel() {
   };
 
   /** Edit handler — writes to the bound PPG SceneObject.name when one
-   *  exists (cascading through the WS broadcast so RF Link panel
-   *  updates too); also mirrors the new name to TimingProgram.name so
-   *  the compile output keeps a recognisable label and orphan programs
-   *  remain editable. */
+   *  exists (cascading through the WS broadcast so RF Link panel updates
+   *  too). `sceneStore.updateSceneObject` mirrors that onto the bound
+   *  TimingProgram.name, so the compile output keeps a recognisable label
+   *  without this panel writing it a second time — and, crucially, the RF
+   *  Link panel's own rename gets the same mirror. Orphan programs (no
+   *  bound PPG) have no SceneObject to write to, so they still go straight
+   *  to TimingProgram.name here. */
   const renameChannel = async (program: TimingProgram, nextName: string): Promise<void> => {
     setError(null);
     try {
       const bound = ppgObjectForProgram.get(program.id);
       const trimmed = nextName.trim();
       const value = trimmed.length > 0 ? trimmed : null;
-      if (bound && bound.name !== (value ?? "")) {
-        await updateSceneObject(bound.objectId, { name: value ?? "" });
+      if (bound) {
+        if (bound.name !== (value ?? "")) {
+          await updateSceneObject(bound.objectId, { name: value ?? "" });
+        }
+        return;
       }
       if ((program.name ?? null) !== value) {
         await updateProgram(program.id, { name: value });
@@ -712,8 +718,9 @@ function MultiChannelTimeline({
                         {isHigh ? "H" : "L"}
                       </text>
                       <title>
-                        Rest level (the channel's idle / scrub-stop state).
-                        Click to flip between LOW and HIGH.
+                        Rest level — the level OUTSIDE the drawn blocks (and
+                        the idle / scrub-stop state). HIGH makes the blocks
+                        LOW pulses. Click to flip between LOW and HIGH.
                       </title>
                     </g>
                   );

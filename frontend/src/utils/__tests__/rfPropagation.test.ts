@@ -168,6 +168,20 @@ function makeAmp(objectId: string, gainDb: number, outputMaxDbm?: number) {
   return { obj, comp, asset, pe };
 }
 
+function makeSwitch(objectId: string) {
+  const anchors = [
+    makeAnchor("rf_in", "rf_in"),
+    makeAnchor("rf_out", "RF1"),
+    makeAnchor("rf_out", "RF2"),
+    makeAnchor("ttl_in", "TTL"),
+  ];
+  const asset = makeAsset(`asset-${objectId}`, anchors);
+  const comp = makeComponent(`comp-${objectId}`, asset.id, "rf_switch");
+  const obj = makeObject(objectId, comp.id);
+  const pe = makePe(objectId, "rf_switch", { throwCount: 2, insertionLossDb: 1.0 });
+  return { obj, comp, asset, pe };
+}
+
 function makeAom(objectId: string) {
   const anchors = [makeAnchor("rf_in", "rf_in")];
   const asset = makeAsset(`asset-${objectId}`, anchors);
@@ -378,5 +392,166 @@ describe("buildRfPropagation", () => {
     expect(atAom!.vpp).toBeCloseTo(0.7 * AD9959_VPP_FULL_SCALE, 6);
     expect(atAom!.cumulativeGainDb).toBe(0);
     expect(atAom!.passthroughObjectIds).toEqual([]);
+  });
+
+  // --- passthrough param ownership: dynamicSources > asset defaultParams >
+  // kindParams. Parity with backend test_rf_resolve.py. Before this, the
+  // transfers read kindParams alone, so an asset-authored or per-instance
+  // switch/amp knob (notably the tunable `ttlState`) was silently ignored.
+
+  it("resolves rf_switch ttlState from the asset defaultParams", () => {
+    const src = makeAd9959("src1", 80.0, 1.0);
+    const sw = makeSwitch("sw1");
+    sw.asset.defaultParams = { ttlState: "HIGH" };
+    const cable = makeCable("c", { objectId: "src1", anchorName: "CH0" }, { objectId: "sw1", anchorName: "rf_in" });
+
+    const result = buildRfPropagation({
+      objects: [src.obj, sw.obj, cable.obj],
+      components: [src.comp, sw.comp, cable.comp],
+      assets: [src.asset, sw.asset, cable.asset],
+      physicsElements: [src.pe, sw.pe, cable.pe],
+    });
+
+    // HIGH + default highThrow 2 → RF2 carries the signal, RF1 stays dark.
+    expect(result.signalAtPort.get(portKey("sw1", "RF2"))).toBeDefined();
+    expect(result.signalAtPort.get(portKey("sw1", "RF1"))).toBeUndefined();
+  });
+
+  it("lets per-instance dynamicSources.ttlState override the asset", () => {
+    const src = makeAd9959("src1", 80.0, 1.0);
+    const sw = makeSwitch("sw1");
+    sw.asset.defaultParams = { ttlState: "HIGH" };
+    sw.obj.dynamicSources = { ttlState: "LOW" };
+    const cable = makeCable("c", { objectId: "src1", anchorName: "CH0" }, { objectId: "sw1", anchorName: "rf_in" });
+
+    const result = buildRfPropagation({
+      objects: [src.obj, sw.obj, cable.obj],
+      components: [src.comp, sw.comp, cable.comp],
+      assets: [src.asset, sw.asset, cable.asset],
+      physicsElements: [src.pe, sw.pe, cable.pe],
+    });
+
+    expect(result.signalAtPort.get(portKey("sw1", "RF1"))).toBeDefined();
+    expect(result.signalAtPort.get(portKey("sw1", "RF2"))).toBeUndefined();
+  });
+
+  it("resolves rf_switch ttlActiveHighThrow from the asset defaultParams", () => {
+    const src = makeAd9959("src1", 80.0, 1.0);
+    const sw = makeSwitch("sw1");
+    sw.asset.defaultParams = { ttlActiveHighThrow: 1 };
+    const cable = makeCable("c", { objectId: "src1", anchorName: "CH0" }, { objectId: "sw1", anchorName: "rf_in" });
+
+    const result = buildRfPropagation({
+      objects: [src.obj, sw.obj, cable.obj],
+      components: [src.comp, sw.comp, cable.comp],
+      assets: [src.asset, sw.asset, cable.asset],
+      physicsElements: [src.pe, sw.pe, cable.pe],
+    });
+
+    // LOW + highThrow 1 → active = 3 − 1 = RF2.
+    expect(result.signalAtPort.get(portKey("sw1", "RF2"))).toBeDefined();
+    expect(result.signalAtPort.get(portKey("sw1", "RF1"))).toBeUndefined();
+  });
+
+  it("resolves rf_amplifier gainDb from dynamicSources", () => {
+    const src = makeAd9959("src1", 80.0, 1.0);
+    const amp = makeAmp("amp1", 0.0);
+    amp.obj.dynamicSources = { gainDb: 20.0 };
+    const cable = makeCable("c", { objectId: "src1", anchorName: "CH0" }, { objectId: "amp1", anchorName: "rf_in" });
+
+    const result = buildRfPropagation({
+      objects: [src.obj, amp.obj, cable.obj],
+      components: [src.comp, amp.comp, cable.comp],
+      assets: [src.asset, amp.asset, cable.asset],
+      physicsElements: [src.pe, amp.pe, cable.pe],
+    });
+
+    const out = result.signalAtPort.get(portKey("amp1", "rf_out"))!;
+    expect(out.vpp).toBeCloseTo(AD9959_VPP_FULL_SCALE * 10, 5);
+  });
+
+  // --- PPG gate level: restState is the level OUTSIDE the drawn intervals
+  // (level = inInterval XOR rest), not an idle-only knob. Parity with backend
+  // test_rf_resolve.py.
+
+  /** src → sw.rf_in, PPG plugged into sw.TTL (attachment, no cable). */
+  function ppgSwitchScene(restState: "HIGH" | "LOW", timingProgramId?: string) {
+    const src = makeAd9959("src1", 80.0, 1.0);
+    const sw = makeSwitch("sw1");
+    const cable = makeCable(
+      "c", { objectId: "src1", anchorName: "CH0" }, { objectId: "sw1", anchorName: "rf_in" },
+    );
+    const ppgAsset = makeAsset("asset-ppg1", [makeAnchor("rf_out", "rf_out")]);
+    const ppgComp = makeComponent("comp-ppg1", ppgAsset.id, "programmable_pulse_generator");
+    const ppgObj = makeObject("ppg1", ppgComp.id, {
+      ppgAttachment: {
+        targetObjectId: "sw1", targetAnchorId: "ttl_in", targetAnchorName: "TTL",
+      },
+    });
+    const ppgPe = makePe("ppg1", "programmable_pulse_generator", {
+      restState,
+      ...(timingProgramId ? { timingProgramId } : {}),
+    });
+    return {
+      objects: [src.obj, sw.obj, cable.obj, ppgObj],
+      components: [src.comp, sw.comp, cable.comp, ppgComp],
+      assets: [src.asset, sw.asset, cable.asset, ppgAsset],
+      physicsElements: [src.pe, sw.pe, cable.pe, ppgPe],
+    };
+  }
+
+  const program = (startNs: number, endNs: number) => [{
+    id: "prog", name: "CH0",
+    intervals: [{ spinCoreStartNs: startNs, spinCoreEndNs: endNs }],
+  }] as never;
+
+  it("holds the line at restState HIGH outside the intervals while scrubbing", () => {
+    const scene = ppgSwitchScene("HIGH", "prog");
+    const result = buildRfPropagation({
+      ...scene, timingPrograms: program(1000, 2000), scrubTimeNs: 0, idleRestMode: false,
+    });
+    // HIGH + default highThrow 2 → RF2 carries the signal.
+    expect(result.signalAtPort.get(portKey("sw1", "RF2"))).toBeDefined();
+    expect(result.signalAtPort.get(portKey("sw1", "RF1"))).toBeUndefined();
+    expect(result.ppgGateHighObjectIds.has("ppg1")).toBe(true);
+  });
+
+  it("inverts the drawn intervals to LOW pulses when restState is HIGH", () => {
+    const scene = ppgSwitchScene("HIGH", "prog");
+    const result = buildRfPropagation({
+      ...scene, timingPrograms: program(1000, 2000), scrubTimeNs: 1500, idleRestMode: false,
+    });
+    expect(result.signalAtPort.get(portKey("sw1", "RF1"))).toBeDefined();
+    expect(result.signalAtPort.get(portKey("sw1", "RF2"))).toBeUndefined();
+    expect(result.ppgGateHighObjectIds.has("ppg1")).toBe(false);
+  });
+
+  it("keeps positive logic when restState is LOW", () => {
+    const scene = ppgSwitchScene("LOW", "prog");
+    const low = buildRfPropagation({
+      ...scene, timingPrograms: program(1000, 2000), scrubTimeNs: 0, idleRestMode: false,
+    });
+    expect(low.signalAtPort.get(portKey("sw1", "RF1"))).toBeDefined();
+    const high = buildRfPropagation({
+      ...scene, timingPrograms: program(1000, 2000), scrubTimeNs: 1500, idleRestMode: false,
+    });
+    expect(high.signalAtPort.get(portKey("sw1", "RF2"))).toBeDefined();
+  });
+
+  it("lets a program-less PPG assert its rest level on the line", () => {
+    const result = buildRfPropagation({
+      ...ppgSwitchScene("HIGH"), scrubTimeNs: 0, idleRestMode: false,
+    });
+    expect(result.signalAtPort.get(portKey("sw1", "RF2"))).toBeDefined();
+    expect(result.ppgGateHighObjectIds.has("ppg1")).toBe(true);
+  });
+
+  it("reports every cabled / attached port in connectedPorts", () => {
+    const result = buildRfPropagation({ ...ppgSwitchScene("LOW") });
+    expect(result.connectedPorts.has(portKey("sw1", "rf_in"))).toBe(true);
+    expect(result.connectedPorts.has(portKey("sw1", "TTL"))).toBe(true);
+    expect(result.connectedPorts.has(portKey("ppg1", "rf_out"))).toBe(true);
+    // RF2 is a real port but nothing is plugged into it.
+    expect(result.connectedPorts.has(portKey("sw1", "RF2"))).toBe(false);
   });
 });

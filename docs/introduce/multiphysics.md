@@ -6,6 +6,8 @@
 
 UI 可切換的**模組**（前端 `modules/<name>/`，`modules/_registry.ts` 註冊、`ModuleSwitcher.tsx` 切換，各模組 workspace 內的 Run 按鈕跑求解）。
 
+**Lab tab 兼作 Scene 選單（2026-08-14）**：`status: "available"` 的 tab 會多一個 caret，點擊展開 `.module-tab-menu`（沿用 `.window-menu` 樣式，`ModuleSwitcher.tsx:70` 起），內含原本 `SceneToolbar` "Scene" group 的三個動作——Initial Setup / PHY Editor / Add text annotation；SceneToolbar 只剩 View + Status group。Initial Setup 的開關狀態移到 store（`sceneStore.initialSetupOpen` + `setInitialSetupOpen`），因為觸發點在 ModuleSwitcher 而面板仍由 `SceneToolbar` 繪製。invariant：該面板必須 portal 到 `<body>`（`position: fixed`，`top` 由量測 `.top-bar` 下緣後 inline 指定）——`.top-bar-toolbar` 是 `overflow: hidden`，留在 toolbar 內的絕對定位彈窗會被裁掉（`DisplayPopover` 也是為此才 portal）。
+
 **現行（2026-06-10 之後）只剩 Lab 一個 top-level tab**：
 
 | 模組 | 內容 | 後端求解器 | 函式庫 |

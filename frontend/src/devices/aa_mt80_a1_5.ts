@@ -35,8 +35,16 @@ export const aa_mt80_a1_5 = defineDevice({
       apertureShape: "circle",
     },
     {
+      // Measured off aa_mt80_a1_5_ir.glb (2026-08-14): the SMA-female
+      // receptacle is the only coax feature in the mesh — barrel r≈3.18 mm
+      // centred on (y 0.000, z −1.2265), running x≈40 → 45.52 (= mesh bbox
+      // max = the mating face), hex flange r≈5.37 at x≈37, mounted on the
+      // +X end of the housing (body ends x≈33). The old (15, 0, 0) was the
+      // migration-0048 placeholder (`transducerOffsetFromCenterMmX`
+      // "typical 15 mm") and sat ~30 mm INSIDE the housing, so a mated
+      // cable's connector was drawn buried in the AOM body.
       role: "rf_in",
-      positionMmBodyLocal: { x: 15, y: 0, z: 0 },
+      positionMmBodyLocal: { x: 45.5, y: 0, z: -1.2265 },
       directionBodyLocal: { x: 1, y: 0, z: 0 },
       connectorType: "sma_female",
     },

@@ -227,6 +227,18 @@ export function OutlinerPanel() {
     () => scene.objects.filter((o) => !outlinerHiddenKinds.has(o.id)),
     [scene.objects, outlinerHiddenKinds],
   );
+  // The complement of `visibleObjects` — rendered in the "Managed" section
+  // at the bottom with an eye toggle and nothing else (see the JSX for why).
+  const managedObjects = useMemo(() => {
+    const kindByObject = new Map(scene.physicsElements.map((pe) => [pe.objectId, pe.elementKind]));
+    return scene.objects
+      .filter((o) => outlinerHiddenKinds.has(o.id))
+      .map((object) => ({
+        object,
+        kindLabel: (kindByObject.get(object.id) ?? "object").replace(/_/g, " "),
+      }))
+      .sort((a, b) => a.object.name.localeCompare(b.object.name));
+  }, [scene.objects, scene.physicsElements, outlinerHiddenKinds]);
   const objectsById = useMemo(
     () => new Map(visibleObjects.map((o) => [o.id, o])),
     [visibleObjects],
@@ -878,6 +890,39 @@ export function OutlinerPanel() {
       >
         {renderCollectionRow(masterCollection, 0)}
       </MarqueeTree>
+      {/* Managed objects — the kinds deliberately kept out of the tree above
+          (`capabilityProfile.outlinerVisible === false`: rf_cable, PPG). They
+          are created and removed from the RF Link panel, so listing them as
+          normal rows would invite exactly the out-of-band edits that profile
+          prevents. But they still need ONE affordance: visibility. Picking in
+          the 3D viewer now ignores invisible objects, so without a row here a
+          permanently-hidden cable would be unreachable from every surface at
+          once. Hence eye-only — no drag, no lock, no delete. */}
+      {managedObjects.length > 0 && (
+        <div className="outliner-managed">
+          <div className="outliner-managed-header">
+            <span>Managed</span>
+            <small>RF Link / Pulse &amp; Timing owns these — visibility only</small>
+          </div>
+          {managedObjects.map(({ object, kindLabel }) => (
+            <div key={object.id} className="outliner-row object-row" title={object.name}>
+              <Layers3 size={14} />
+              <span className="outliner-name">
+                <em>{object.name}</em>
+                <small>{kindLabel}</small>
+              </span>
+              <button
+                type="button"
+                className={`outliner-action${object.visible ? "" : " muted"}`}
+                title={object.visible ? "Hide object" : "Show object"}
+                onClick={() => void updateSceneObject(object.id, { visible: !object.visible })}
+              >
+                {object.visible ? <Eye size={13} /> : <EyeOff size={13} />}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       {templatesOpen && (
         <div className="outliner-templates">
           <div className="outliner-templates-header">

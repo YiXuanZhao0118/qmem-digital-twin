@@ -35,7 +35,7 @@ import {
   buildSceneObjectFromBindings,
   shouldRenderViaBindings,
 } from "../three/bindingRendererGate";
-import { resolveBindingTree, type ResolvedBindingNode } from "../utils/componentBindings";
+import { primaryAsset, resolveBindingTree, type ResolvedBindingNode } from "../utils/componentBindings";
 import { beamColorForSource } from "../three/opticalBeams";
 import {
   type DebugLabSegment,
@@ -1558,7 +1558,6 @@ export function DigitalTwinViewer({
       // the signature and triggers a refetch. This map is NOT sent to the server.
       const aomOverrides: Record<string, Record<string, unknown>> = {};
       const compById = new Map(sceneData.components.map((c) => [c.id, c]));
-      const assetById = new Map(sceneData.assets.map((a) => [a.id, a]));
       const poweredOff = new Set<string>();
       for (const ds of sceneData.deviceStates ?? []) {
         if ((ds.state as { power?: unknown } | undefined)?.power === false) {
@@ -1575,21 +1574,39 @@ export function DigitalTwinViewer({
         poweredOffObjectIds: poweredOff,
       });
       const snapshot = getRfSnapshotAt(schedule, scrubTimeNs);
-      const allSnapshots = [...schedule.snapshots, schedule.restSnapshot];
       for (const obj of sceneData.objects) {
         if (compById.get(obj.componentId)?.kindId !== "aom") continue;
         const props = obj.properties as Record<string, unknown> | undefined;
         if (props?.aomRfDriveMode === "manual") continue;
         const comp = compById.get(obj.componentId);
-        const asset = comp?.asset3dId ? assetById.get(comp.asset3dId) : undefined;
+        // Binding-aware primary asset — same rule as the FE/BE BFS
+        // (`rfPropagation.buildAnchorsByObject` / `rf_resolve._primary_asset_id`),
+        // so the port key built here matches the one the schedule keyed its
+        // signals under. Reading `comp.asset3dId` directly returned null in
+        // binding-backed scenes → `rf_in` never found → every AOM fell through
+        // → `aomOverrides` permanently `{}` → `driveSig` constant, so the
+        // dedup below skipped the backend round-trip even when scrubbing
+        // CROSSED a timing section (PPG-TTL flips the switch): the drawn beam
+        // stayed at the previous section's diffraction until some unrelated
+        // scene edit forced a refetch. (The drive itself is resolved
+        // server-side, so this was a staleness bug, not wrong physics.)
+        const asset = comp
+          ? primaryAsset(comp, {
+              componentBindings: sceneData.componentBindings ?? [],
+              assets: sceneData.assets,
+            })
+          : null;
         const rfIn = asset?.anchors?.find((a) => a.id === "rf_in");
         if (!rfIn) continue;
         const key = portKey(obj.id, rfIn.name ?? rfIn.id);
-        // RF-link driven iff SOME timing section delivers a carrier to its
-        // rf_in. (A bare AOM with no rf_cable is never driven → leave it on the
-        // asset's rated operating point.) We can't use the idle/static signal
-        // for this: a switch routed off at rest would falsely look "unwired".
-        const linkDriven = allSnapshots.some((s) => (s.signalAtPort.get(key)?.vpp ?? 0) > 0);
+        // RF-link driven iff something is PLUGGED INTO its rf_in — topology,
+        // not carrier presence. (A bare AOM with no rf_cable is never driven →
+        // leave it on the asset's rated operating point.) Testing "some timing
+        // section delivers a carrier" instead made a cabled-but-always-silent
+        // AOM — switch parked on the other throw, source powered off — look
+        // unwired, so it fell back to its RATED drive and kept diffracting a
+        // full sideband fan with no RF anywhere in the chain.
+        const linkDriven = snapshot.connectedPorts.has(key);
         if (!linkDriven) continue;
         const sig = snapshot.signalAtPort.get(key);
         aomOverrides[obj.id] = sig && sig.vpp > 0
@@ -2423,13 +2440,28 @@ export function DigitalTwinViewer({
     const pointer = new THREE.Vector2();
     const axisRaycaster = new THREE.Raycaster();
     const axisPointer = new THREE.Vector2();
+    /** True when every ancestor up to (and including) the hit object is
+     *  visible. three's raycaster does NOT skip `visible === false` nodes —
+     *  visibility is a render-time flag, not a pick-time one — so without
+     *  this an invisible object stays fully clickable. That let the user
+     *  select things they cannot see: the rf_cable that a PPG hides (it
+     *  mounts straight onto the port, so its cable is force-hidden below),
+     *  anything switched off via the Cables overlay, and session/collection
+     *  hidden objects. The marquee path already enforces `isObjectVisible`;
+     *  this brings click-picking in line. */
+    const pickVisible = (object: THREE.Object3D): boolean => {
+      for (let n: THREE.Object3D | null = object; n; n = n.parent) {
+        if (n.visible === false) return false;
+      }
+      return true;
+    };
     const pickObject = (event: { clientX: number; clientY: number }) => {
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
       const hits = raycaster.intersectObjects(componentGroupRef.current.children, true);
-      return hits.find((item) => item.object.userData.objectId);
+      return hits.find((item) => item.object.userData.objectId && pickVisible(item.object));
     };
     const pickBeam = (event: { clientX: number; clientY: number }) => {
       const rect = renderer.domElement.getBoundingClientRect();
@@ -2466,7 +2498,9 @@ export function DigitalTwinViewer({
       raycaster.setFromCamera(pointer, camera);
       const hits = raycaster.intersectObjects(componentGroupRef.current.children, true);
       const hit = hits.find(
-        (item) => item.object.userData?.objectId && item.face !== null && item.face !== undefined,
+        (item) => item.object.userData?.objectId
+          && item.face !== null && item.face !== undefined
+          && pickVisible(item.object),
       );
       if (!hit || !hit.face) return null;
       const objectId = String(hit.object.userData.objectId);
@@ -3669,8 +3703,16 @@ export function DigitalTwinViewer({
           const targetObj = sceneData.objects.find((o) => o.id === link.targetObjectId);
           if (!targetObj) return;
           const targetComp = sceneData.components.find((c) => c.id === targetObj.componentId);
-          if (!targetComp || !targetComp.asset3dId) return;
-          const targetAsset = sceneData.assets.find((a) => a.id === targetComp.asset3dId);
+          if (!targetComp) return;
+          // Binding-aware primary asset (single root targetKind="asset"
+          // binding, else legacy comp.asset3dId) — reading asset3dId
+          // directly returned null in binding-backed scenes, so this
+          // early-returned and cables never live re-snapped when their
+          // linked instrument moved (they froze at connect-time nodes).
+          const targetAsset = primaryAsset(targetComp, {
+            componentBindings: sceneData.componentBindings,
+            assets: sceneData.assets,
+          });
           if (!targetAsset || !Array.isArray(targetAsset.anchors)) return;
           const targetAnchor = targetAsset.anchors.find(
             (a) => a.id === link.targetAnchorId
@@ -4228,9 +4270,21 @@ export function DigitalTwinViewer({
         const peForPlacement = sceneData.physicsElements.find(
           (e) => e.objectId === placement.id,
         );
+        // The PPG's OWN asset must be resolved binding-aware too: the
+        // catalog PPG component carries its Asset3D as a root binding, so
+        // the legacy `component.asset3dId` (used by `asset` above) is null
+        // and the mount math would find no rf_out anchor to mate.
         const mountedPose =
           peForPlacement?.elementKind === "programmable_pulse_generator"
-            ? computePpgMountedThreePose(sceneData, effectivePlacement, component, asset)
+            ? computePpgMountedThreePose(
+                sceneData,
+                effectivePlacement,
+                component,
+                asset ?? primaryAsset(component, {
+                  componentBindings: sceneData.componentBindings ?? [],
+                  assets: sceneData.assets,
+                }) ?? undefined,
+              )
             : null;
         if (mountedPose) {
           wrapper.position.copy(mountedPose.positionThree);

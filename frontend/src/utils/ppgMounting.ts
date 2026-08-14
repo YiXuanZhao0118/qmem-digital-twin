@@ -31,6 +31,8 @@ import {
   sceneObjectToQuaternion,
 } from "../optical/frames";
 import { anchorObjectLocalAxisY, anchorObjectLocalPos, anchorObjectLocalPrimaryDir } from "./anchorAccess";
+import { primaryAsset } from "./componentBindings";
+import { ppgAttachmentOf } from "./ppgAttachment";
 
 type RfCableEndpoints = {
   A?: { targetObjectId: string; targetAnchorId: string; targetAnchorName: string };
@@ -54,6 +56,23 @@ function anchorDirThree(anchor: Anchor, asset: Asset3D | null | undefined): THRE
   // flipping when the target's RZ changed.
   const d = anchorObjectLocalPrimaryDir(anchor, asset) ?? { x: 1, y: 0, z: 0 };
   return labDirToThreeLocal(d).normalize();
+}
+
+/** Which port this PPG is plugged into.
+ *
+ *  Primary source is the PPG's own `properties.ppgAttachment` record — the
+ *  PPG plugs straight into the port with no cable (see
+ *  `utils/ppgAttachment.ts`). Legacy scenes created before that record
+ *  existed wired the PPG through a real (force-hidden) rf_cable, so we fall
+ *  back to walking the cable list for them. */
+function findMatingPort(
+  scene: SceneData,
+  ppgObjectId: string,
+): { targetObjectId: string; targetAnchorId: string; targetAnchorName: string } | null {
+  const ppgObject = scene.objects.find((o) => o.id === ppgObjectId);
+  const attachment = ppgAttachmentOf(ppgObject);
+  if (attachment) return attachment;
+  return findConnectingCable(scene, ppgObjectId)?.peer ?? null;
 }
 
 function findConnectingCable(scene: SceneData, ppgObjectId: string): {
@@ -117,14 +136,40 @@ function findAnchor(
   const obj = scene.objects.find((o) => o.id === objectId);
   if (!obj) return null;
   const comp = scene.components.find((c) => c.id === obj.componentId);
-  if (!comp || !comp.asset3dId) return null;
-  const asset = scene.assets.find((a) => a.id === comp.asset3dId);
+  if (!comp) return null;
+  // Binding-aware: the mating target's device asset is the component's
+  // PRIMARY asset (single root `targetKind="asset"` binding, else the
+  // legacy `component.asset3dId`) — the same helper the RF BFS, the RF
+  // Link panel and the cable resolver use. Reading `comp.asset3dId`
+  // alone returned null on every binding-backed instrument (switch, AOM,
+  // amp), so this whole function bailed and the caller fell back to the
+  // PPG's raw spawn pose — the PPG floated at the 3D cursor instead of
+  // sitting on the port it is plugged into.
+  const asset = primaryAsset(comp, {
+    componentBindings: scene.componentBindings ?? [],
+    assets: scene.assets,
+  });
   if (!asset || !Array.isArray(asset.anchors)) return null;
   const anchor = asset.anchors.find(
     (a) => a.id === anchorId && (a.name ?? a.id) === anchorName,
   );
   if (!anchor) return null;
   return { obj, anchor, asset };
+}
+
+/** Distance (mm) the PPG's own plug protrudes past its `rf_out` anchor,
+ *  read from the asset's `defaultParams.matingProtrusionMm`.
+ *
+ *  Measure it once per PPG asset from its mesh: the outermost extent of the
+ *  connector along the `rf_out` axis, minus the anchor coordinate on that
+ *  axis. For `PPG BNC Male` that is 13.8 − 4.8 = 9.0 mm.
+ *
+ *  Returns 0 for an uncharacterised asset, which reproduces the historical
+ *  anchor-on-anchor seating rather than guessing an offset. */
+export function matingProtrusionMm(ppgAsset: Asset3D | null | undefined): number {
+  const raw = (ppgAsset?.defaultParams as { matingProtrusionMm?: unknown } | undefined)
+    ?.matingProtrusionMm;
+  return typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? raw : 0;
 }
 
 /** Resolve the PPG's own rf_out anchor from its asset. The body-local
@@ -162,14 +207,14 @@ export function computePpgMountedThreePose(
   const ppgAnchor = findPpgRfOutAnchor(ppgObject, ppgComponent, ppgAsset);
   if (!ppgAnchor) return null;
 
-  const connection = findConnectingCable(scene, ppgObject.id);
-  if (!connection) return null;
+  const peer = findMatingPort(scene, ppgObject.id);
+  if (!peer) return null;
 
   const resolved = findAnchor(
     scene,
-    connection.peer.targetObjectId,
-    connection.peer.targetAnchorId,
-    connection.peer.targetAnchorName,
+    peer.targetObjectId,
+    peer.targetAnchorId,
+    peer.targetAnchorName,
   );
   if (!resolved) return null;
 
@@ -185,10 +230,33 @@ export function computePpgMountedThreePose(
     ppgAnchorBodyDir,
     matingDir,
   );
+  // How far the PPG's OWN male connector sticks out past its `rf_out` anchor.
+  //
+  // The anchor marks where the connector leaves the PPG body, not the plane
+  // that mates with the port — on the BNC-male PPG the anchor sits at
+  // z = 4.8 while the bayonet sleeve runs out to z = 13.8, so 9 mm of plug
+  // protrudes. Landing the ANCHOR on the port therefore buries that 9 mm
+  // inside the instrument and seats the whole PPG body too deep.
+  //
+  // This is a property of the PPG, so it is corrected here rather than by
+  // nudging the instrument's port anchor: `ttl_in` is a shared contract that
+  // the cable resolver reads too, and tuning it to flatter the PPG silently
+  // moves every cable plugged into the same port.
+  //
+  // Authored per-asset as `defaultParams.matingProtrusionMm` (the mesh isn't
+  // measurable at runtime); absent → 0, i.e. the previous anchor-on-anchor
+  // behaviour, so an asset that hasn't been characterised is unchanged.
+  const protrusionMm = matingProtrusionMm(ppgAsset);
   // Position: place the PPG body such that ``quaternion * anchorBodyPos +
   // bodyPos == targetAnchorLabPos``  → bodyPos = targetPos - q·anchorBodyPos.
+  // Then back the body off along the mating axis by the plug protrusion so
+  // the connector TIP — not the anchor — meets the port face. `matingDir`
+  // points from the PPG into the port, so retreating means subtracting it.
   const rotatedAnchor = ppgAnchorBodyPos.clone().applyQuaternion(quaternion);
-  const positionThree = target.posThree.clone().sub(rotatedAnchor);
+  const positionThree = target.posThree
+    .clone()
+    .sub(rotatedAnchor)
+    .sub(matingDir.clone().multiplyScalar(protrusionMm / 100));
 
   // Connector side basis with Z = mating axis. Y comes from the TARGET
   // anchor's axisY (projected off Z) so the perpendicular plane co-moves

@@ -822,11 +822,12 @@ h3 {
   white-space: nowrap;
 }
 
+/* Portaled to <body> (the top bar clips overflow); `top` is set inline from
+   the measured top-bar bottom edge. */
 .initial-setup-panel {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 12px;
-  z-index: 4;
+  position: fixed;
+  left: 14px;
+  z-index: 100;
   display: grid;
   grid-template-columns: repeat(3, minmax(96px, 1fr)) auto;
   align-items: end;
@@ -4518,6 +4519,39 @@ input:disabled {
   font-size: var(--fs-xs);
 }
 
+/* Managed objects (rf_cable / PPG) — kept out of the tree because the RF Link
+   panel owns their lifecycle, but listed here with an eye toggle so a hidden
+   one is never unreachable (3D picking ignores invisible objects). */
+.outliner-managed {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.outliner-managed-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.outliner-managed-header span {
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Not selectable / not draggable — these rows exist purely to expose the eye. */
+.outliner-managed .object-row {
+  cursor: default;
+  opacity: 0.85;
+}
+
 /* Collection templates (Collection Drift) — collapsible section below the tree */
 .outliner-templates {
   margin-top: 8px;
@@ -5724,6 +5758,24 @@ body.is-timing-bar-drag * {
   background: rgba(15, 23, 42, 0.06);
   border: 1px solid rgba(15, 23, 42, 0.1);
   border-radius: 8px;
+}
+
+/* Anchor for the active tab's Scene dropdown (.module-tab-menu). */
+.module-tab-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+/* Reuses .window-menu chrome but drops down from the left edge of the tab
+   instead of the right edge of the top bar. */
+.module-tab-menu {
+  left: 0;
+  right: auto;
+  min-width: 200px;
+}
+
+.module-tab-caret {
+  opacity: 0.5;
 }
 
 .module-tab {

@@ -1,5 +1,6 @@
-import { Columns2, Eye, Move, PenTool, Play, RotateCw, Settings2, Square, Type, Wifi, WifiOff } from "lucide-react";
+import { Columns2, Eye, Move, Play, RotateCw, Square, Wifi, WifiOff } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { useSceneStore, TOUCH_OPS } from "../store/sceneStore";
 import { DisplayPopover } from "./VisibilityControls";
@@ -62,14 +63,18 @@ function TouchOpIcon({
 }
 
 export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneToolbarProps) {
-  const [setupOpen, setSetupOpen] = useState(false);
+  const setupOpen = useSceneStore((state) => state.initialSetupOpen);
+  const setSetupOpen = useSceneStore((state) => state.setInitialSetupOpen);
   const [draftDimensions, setDraftDimensions] = useState(roomDimensions);
   const [displayOpen, setDisplayOpen] = useState(false);
   const displayAnchorRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  // The setup popover is portaled to <body> because `.top-bar-toolbar` clips
+  // overflow — same reason DisplayPopover portals. Anchor it just under the
+  // top bar, whose bottom edge we measure when the panel opens.
+  const [setupPanelTop, setSetupPanelTop] = useState(64);
   const loadScene = useSceneStore((state) => state.loadScene);
   const runOpticalSimulation = useSceneStore((state) => state.runOpticalSimulation);
-  const openPhyEditor = useSceneStore((state) => state.openPhyEditor);
-  const addTextAnnotation = useSceneStore((state) => state.addTextAnnotation);
   const socketStatus = useSceneStore((state) => state.socketStatus);
   const gizmoMode = useSceneStore((state) => state.gizmoMode);
   const setGizmoMode = useSceneStore((state) => state.setGizmoMode);
@@ -97,6 +102,12 @@ export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneTo
     if (gizmoMode.left !== "translate") setGizmoMode("left", "translate");
     if (viewMode === "dual" && gizmoMode.right !== "translate") setGizmoMode("right", "translate");
   }, [selectedObjectIds, gizmoMode, setGizmoMode, viewMode]);
+
+  useEffect(() => {
+    if (!setupOpen) return;
+    const bar = rootRef.current?.closest(".top-bar") ?? rootRef.current;
+    if (bar) setSetupPanelTop(bar.getBoundingClientRect().bottom + 8);
+  }, [setupOpen]);
 
   const [simBusy, setSimBusy] = useState(false);
   const [simStatus, setSimStatus] = useState<string>("");
@@ -146,31 +157,11 @@ export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneTo
   };
 
   return (
-    <div className="scene-toolbar">
-      <div className="toolbar-group" data-group-label="Scene">
-        <button className="setup-button" title="Initial setup" onClick={() => setSetupOpen((open) => !open)}>
-          <Settings2 size={17} />
-          Initial Setup
-        </button>
-        <button
-          className="setup-button"
-          title="Open the PHY editor (optical kinds, optical components, ...)"
-          onClick={openPhyEditor}
-        >
-          <PenTool size={17} />
-          PHY Editor
-        </button>
-        <button
-          className="icon-button"
-          title="Add a text label to the scene at the cursor"
-          aria-label="Add text annotation"
-          onClick={() => void addTextAnnotation()}
-        >
-          <Type size={17} />
-        </button>
-      </div>
-
-      <div className="toolbar-divider" aria-hidden="true" />
+    <div className="scene-toolbar" ref={rootRef}>
+      {/* The Scene group (Initial Setup / PHY Editor / text annotation) now
+          lives in the Lab tab menu — see workspace/ModuleSwitcher.tsx. The
+          initial-setup popover still renders here (bottom of this file); the
+          menu item just flips `sceneStore.initialSetupOpen`. */}
 
       <div className="toolbar-group" data-group-label="View">
         <div className="display-anchor" ref={displayAnchorRef}>
@@ -218,8 +209,8 @@ export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneTo
         </span>
       </div>
 
-      {setupOpen && (
-        <div className="initial-setup-panel">
+      {setupOpen && createPortal(
+        <div className="initial-setup-panel" style={{ top: setupPanelTop }}>
           <label>
             Length (mm)
             <input
@@ -253,7 +244,8 @@ export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneTo
           <button className="primary-button" onClick={applyRoomDimensions}>
             Apply
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

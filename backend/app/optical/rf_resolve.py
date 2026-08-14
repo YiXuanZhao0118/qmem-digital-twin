@@ -124,6 +124,13 @@ class RfPropagationResult:
     # their own state; sink rf_in ports the post-chain state; passthrough rf_out
     # ports the post-transform state. Keyed ``"{objectId}|{anchorName}"``.
     signal_at_port: dict[str, RfSignalState]
+    # Every port with at least one edge (cable or PPG attachment) — "something
+    # is plugged in here", whether or not a carrier currently arrives.
+    # Time-invariant (topology, not routing). Mirrors TS ``connectedPorts``.
+    connected_ports: frozenset[str] = frozenset()
+    # SceneObject ids of PPGs whose gate is HIGH in this snapshot. Mirrors TS
+    # ``ppgGateHighObjectIds``.
+    ppg_gate_high_object_ids: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -137,6 +144,13 @@ class RfNode:
     # ``properties.rfCableEndpoints`` ({A, B} endpoint links) — only rf_cable
     # nodes carry it; it supplies the graph edges.
     rf_cable_endpoints: dict | None = None
+    # ``properties.ppgAttachment`` ({targetObjectId, targetAnchorId,
+    # targetAnchorName}) — only programmable_pulse_generator nodes carry it. A
+    # PPG plugs straight into a port with no cable in between (its rf_out is a
+    # male connector; every catalog cable is male on both ends), so the
+    # attachment supplies the graph edge a cable would otherwise have. Mirrors
+    # the frontend ``utils/ppgAttachment.ts``.
+    ppg_attachment: dict | None = None
     # ``Asset3D.default_params`` — the asset is the authoritative store for the
     # source's spec coefficients (``fullScaleVpp`` etc.). The RF BFS reads it
     # here so coefficients live on the asset, mirroring how the optical anchor
@@ -193,6 +207,32 @@ def _read_cables(nodes) -> list[tuple[_CableEndpoint, _CableEndpoint]]:
         edges.append((
             _CableEndpoint(str(ta_obj), str(ta_an)),
             _CableEndpoint(str(tb_obj), str(tb_an)),
+        ))
+    return edges
+
+
+def _read_ppg_attachments(nodes) -> list[tuple[_CableEndpoint, _CableEndpoint]]:
+    """Edges contributed by cable-less PPG attachments.
+
+    A PPG mates its own ``rf_out`` onto the target anchor, so the edge is
+    exactly what a zero-length cable would have supplied — the TTL pre-pass
+    and the BFS need no special case. Mirrors the frontend
+    ``readPpgAttachmentEdges``.
+    """
+    edges: list[tuple[_CableEndpoint, _CableEndpoint]] = []
+    for node in nodes:
+        if node.element_kind != "programmable_pulse_generator":
+            continue
+        att = node.ppg_attachment
+        if not isinstance(att, dict):
+            continue
+        target_obj = att.get("targetObjectId")
+        target_anchor = att.get("targetAnchorName")
+        if not (target_obj and target_anchor):
+            continue
+        edges.append((
+            _CableEndpoint(node.object_id, "rf_out"),
+            _CableEndpoint(str(target_obj), str(target_anchor)),
         ))
     return edges
 
@@ -347,18 +387,61 @@ def build_rf_propagation(
     programs_by_id = inputs.programs_by_id
 
     node_by_id = {n.object_id: n for n in nodes}
-    edges = _read_cables(nodes)
+    edges = _read_cables(nodes) + _read_ppg_attachments(nodes)
     adj = _build_adjacency(edges)
 
-    # TTL pre-pass: for each rf_switch look one hop up its ttl_in cable. If the
-    # peer is a PPG with a bound TimingProgram, evaluate it at the scrub time;
-    # else fall back to the switch's manual ttlState.
+    def _resolved_params(node: RfNode) -> dict:
+        """Params a passthrough transfer sees, resolved through the ownership
+        chain: per-instance ``dynamic_sources`` wins, then the Asset's
+        ``default_params`` (authoritative store for device coefficients), then
+        the PhysicsElement's legacy ``kind_params``. Mirrors the frontend
+        ``resolveElementParams`` in ``rfPropagation.ts`` — the seed loop below
+        already resolves fullScaleVpp / channels this way, but the passthrough
+        transfers used to read ``kind_params`` alone, which dead-ended every
+        asset-authored / per-instance switch + amp knob (notably ``ttlState``).
+        """
+        return {
+            **(node.kind_params or {}),
+            **(node.asset_params or {}),
+            **(node.dynamic_sources or {}),
+        }
+
+    # Gate pre-pass: the output level of every PPG in the scene.
+    #
+    #     level = in_interval XOR (rest_state == "HIGH")
+    #
+    # ``rest_state`` is the level the line sits at OUTSIDE the drawn intervals,
+    # so a HIGH rest turns those intervals into LOW pulses (negative logic) —
+    # the contract on ``schemas.ProgrammablePulseGeneratorParams.rest_state``,
+    # mirrored by the frontend ``rfPropagation.ts`` gate pre-pass. Previously
+    # active scrub was positive-logic-only (intervals assert HIGH, rest_state
+    # consulted for the idle snapshot alone), so a channel resting HIGH read
+    # LOW as soon as the scrub bar came on. In ``idle_rest_mode`` intervals
+    # aren't consulted at all, which is what the XOR degenerates to.
+    ppg_gate_high: set[str] = set()
+    for node in nodes:
+        if node.element_kind != "programmable_pulse_generator":
+            continue
+        params = _resolved_params(node)
+        rest = params.get("restState") == "HIGH"
+        program_id = params.get("timingProgramId")
+        in_interval = (
+            not idle_rest_mode
+            and bool(program_id)
+            and _ppg_interval_covers(programs_by_id.get(str(program_id)), scrub_t)
+        )
+        if in_interval != rest:
+            ppg_gate_high.add(node.object_id)
+
+    # TTL pre-pass: for each rf_switch look one hop up its ttl_in edge. A PPG
+    # peer owns the line (its gate level decides the throw); with no PPG plugged
+    # in, the switch's manual ttlState param applies.
     switch_ttl_states: dict[str, str] = {}
     for node in nodes:
         if node.element_kind != "rf_switch":
             continue
         ttl = _find_anchor_by_role(node.anchors, "ttl_in")
-        manual = (node.kind_params or {}).get("ttlState") or "LOW"
+        manual = _resolved_params(node).get("ttlState") or "LOW"
         if ttl is None:
             switch_ttl_states[node.object_id] = manual
             continue
@@ -369,15 +452,7 @@ def build_rf_propagation(
             peer_node = node_by_id.get(peer.target_object_id)
             if peer_node is None or peer_node.element_kind != "programmable_pulse_generator":
                 continue
-            ppg_params = peer_node.kind_params or {}
-            if idle_rest_mode:
-                derived = "HIGH" if ppg_params.get("restState") == "HIGH" else "LOW"
-                break
-            program_id = ppg_params.get("timingProgramId")
-            if not program_id:
-                continue
-            intervals = programs_by_id.get(str(program_id))
-            derived = "HIGH" if _ppg_interval_covers(intervals, scrub_t) else "LOW"
+            derived = "HIGH" if peer.target_object_id in ppg_gate_high else "LOW"
             break
         switch_ttl_states[node.object_id] = derived or manual
 
@@ -470,7 +545,7 @@ def build_rf_propagation(
                 continue
             outputs = transfer(
                 incoming=signal,
-                kind_params=peer_node.kind_params,
+                kind_params=_resolved_params(peer_node),
                 anchors=peer_node.anchors,
                 object_id=peer.target_object_id,
                 switch_ttl_states=switch_ttl_states,
@@ -485,7 +560,11 @@ def build_rf_propagation(
                 signal_at_port[out_key] = outgoing
                 queue.append((out_key, outgoing))
 
-    return RfPropagationResult(signal_at_port=signal_at_port)
+    return RfPropagationResult(
+        signal_at_port=signal_at_port,
+        connected_ports=frozenset(adj.keys()),
+        ppg_gate_high_object_ids=frozenset(ppg_gate_high),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -554,6 +633,7 @@ async def load_rf_inputs(session: AsyncSession) -> RfInputs:
         asset_params = (asset.default_params or {}) if asset is not None else {}
         props = so.properties if isinstance(so.properties, dict) else {}
         rf_cable_endpoints = props.get("rfCableEndpoints")
+        ppg_attachment = props.get("ppgAttachment")
         dynamic_sources = so.dynamic_sources if isinstance(so.dynamic_sources, dict) else {}
         node = RfNode(
             object_id=str(so.id),
@@ -561,6 +641,7 @@ async def load_rf_inputs(session: AsyncSession) -> RfInputs:
             kind_params=pe.kind_params or {},
             anchors=anchors,
             rf_cable_endpoints=rf_cable_endpoints if isinstance(rf_cable_endpoints, dict) else None,
+            ppg_attachment=ppg_attachment if isinstance(ppg_attachment, dict) else None,
             asset_params=asset_params if isinstance(asset_params, dict) else {},
             dynamic_sources=dynamic_sources,
         )
@@ -610,10 +691,16 @@ def resolve_aom_rf_drive(inputs: RfInputs, scrub_time_ns: float | None) -> dict[
     """Pure resolver: ``{aom_object_id: {aomFreqMhz, rfDrivePowerW}}``.
 
     An AOM in manual mode is skipped (its drive lives in dynamic_sources). An
-    AOM never reached by any cable (no carrier at its ``rf_in`` in any section)
-    is skipped too, keeping its rated ``centerFreqMhz``. A link-driven AOM that
-    is gated off at this instant (switch routed away / source silent) gets
-    ``{rfDrivePowerW: 0}`` so the Bragg op produces no diffraction.
+    AOM with NOTHING plugged into its ``rf_in`` is skipped too, keeping its
+    rated ``centerFreqMhz`` / rated drive. Once something IS plugged in, the RF
+    link is the authority: an AOM gated off at this instant (switch routed away
+    / source silent / source powered off) gets ``{rfDrivePowerW: 0}`` so the
+    Bragg op produces no diffraction.
+
+    Wiredness is topological on purpose. Deciding it from "does some section
+    deliver a carrier" made a cabled-but-always-silent AOM look unwired, so it
+    fell back to the rated drive and kept diffracting a full sideband fan with
+    no RF anywhere in the chain.
     """
     starts = collect_section_starts(inputs.programs_by_id)
     snapshots = [
@@ -622,18 +709,13 @@ def resolve_aom_rf_drive(inputs: RfInputs, scrub_time_ns: float | None) -> dict[
     ]
     rest = build_rf_propagation(inputs, scrub_time_ns=0.0, idle_rest_mode=True)
     snapshot = _snapshot_at(starts, snapshots, rest, scrub_time_ns)
-    all_snapshots = snapshots + [rest]
 
     out: dict[str, dict] = {}
     for aom in inputs.aoms:
         if aom.manual:
             continue
         key = port_key(aom.object_id, aom.rf_in_anchor_name)
-        link_driven = any(
-            (s.signal_at_port.get(key).vpp if s.signal_at_port.get(key) else 0.0) > 0.0
-            for s in all_snapshots
-        )
-        if not link_driven:
+        if key not in snapshot.connected_ports:
             continue
         sig = snapshot.signal_at_port.get(key)
         if sig is not None and sig.vpp > 0.0:
