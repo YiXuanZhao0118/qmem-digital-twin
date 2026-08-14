@@ -1,5 +1,6 @@
 import * as THREE from "three";
 
+import { MM_PER_THREE_UNIT } from "../../../optical/frames";
 import type { FiberEndPlacement, FiberNode } from "./types";
 
 /** Lab (mm) → fiber-wrapper-local three units. Shared with rf_cable/. */
@@ -33,6 +34,23 @@ export function buildFiberCurvePath(nodes: FiberNode[]): THREE.CurvePath<THREE.V
     path.add(new THREE.CubicBezierCurve3(p0, p1, p2, p3));
   }
   return path;
+}
+
+/** Arc length (lab mm) of the Bezier polyline `nodes` — measured on the
+ *  SAME `CurvePath` that feeds `TubeGeometry`, so it is the length of the
+ *  cable/fiber the user actually sees.
+ *
+ *  Scope: the flexible body only. Connector tips sit BEYOND the end nodes
+ *  (`connectorTipMmFromAnchors`, see docs/introduce/cable.md) and are not
+ *  counted.
+ *
+ *  Returns null for a degenerate node list; callers then fall back to the
+ *  nominal `lengthMm` param, which is exactly what the renderer's own
+ *  auto-generated straight spline uses. */
+export function cableSplineLengthMm(nodes: readonly FiberNode[] | undefined | null): number | null {
+  if (!nodes || nodes.length < 2) return null;
+  const lengthThree = buildFiberCurvePath(nodes as FiberNode[]).getLength();
+  return Number.isFinite(lengthThree) ? lengthThree * MM_PER_THREE_UNIT : null;
 }
 
 /** OUTWARD direction (in three units, fiber-wrapper-local) at endpoint

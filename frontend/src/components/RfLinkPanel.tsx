@@ -58,6 +58,8 @@ import {
   getRfSnapshotAt,
 } from "../utils/rfPropagationSchedule";
 import { primaryAsset } from "../utils/componentBindings";
+import { cableSplineLengthMm } from "../three/loadAsset/fiber/curve";
+import type { FiberNode } from "../three/loadAsset/fiber/types";
 import { ppgAttachments } from "../utils/ppgAttachment";
 import {
   connectorFamilyFromAnchor,
@@ -182,7 +184,12 @@ type RfNode = {
 type RfEdge = {
   cableObjectId: string;
   cableName: string;
+  /** Rendered spline length (mm); falls back to the nominal param when the
+   *  cable has no spline. Shown on the edge label. */
   lengthMm: number | null;
+  /** Catalog / kindParams `lengthMm`, kept only for the tooltip so a routed
+   *  cable can be compared against the part it is supposed to be. */
+  nominalLengthMm: number | null;
   fromObjectId: string;
   fromKey: string;
   toObjectId: string;
@@ -914,15 +921,28 @@ export function RfLinkPanel() {
       const a = ep?.A;
       const b = ep?.B;
       const pe = peByObjectId.get(obj.id);
-      const lengthMm =
+      // Length = the RENDERED spline, not the nominal param. The user drags
+      // the cable's Bezier nodes freely, so `kindParams.lengthMm` (the 152 mm
+      // catalog default) stops describing the cable the moment it is routed —
+      // it only ever seeds the auto-generated straight spline. Measured on the
+      // same CurvePath the tube is extruded along; falls back to the nominal
+      // when there is no spline, which is precisely when the renderer builds
+      // that straight default. (Connector tips are excluded — see
+      // docs/introduce/cable.md.)
+      const nominalLengthMm =
         pe && pe.elementKind === "rf_cable"
           ? ((pe as { kindParams: { lengthMm?: number } }).kindParams.lengthMm ?? null)
           : null;
+      const splineLengthMm = cableSplineLengthMm(
+        (obj.properties as { rfCableNodes?: FiberNode[] }).rfCableNodes,
+      );
+      const lengthMm = splineLengthMm ?? nominalLengthMm;
       if (a && b) {
         edgesOut.push({
           cableObjectId: obj.id,
           cableName: obj.name,
           lengthMm,
+          nominalLengthMm,
           fromObjectId: a.targetObjectId,
           fromKey: endpointKey(a),
           toObjectId: b.targetObjectId,
@@ -946,6 +966,7 @@ export function RfLinkPanel() {
         cableObjectId: ppgObjectId,
         cableName: ppg?.name ?? "PPG",
         lengthMm: null,
+        nominalLengthMm: null,
         fromObjectId: ppgObjectId,
         fromKey: `rf_out|rf_out`,
         toObjectId: attachment.targetObjectId,
@@ -1592,6 +1613,15 @@ export function RfLinkPanel() {
                     >
                       {e.cableName}
                       {e.lengthMm != null ? ` · ${e.lengthMm.toFixed(0)} mm` : ""}
+                      <title>
+                        {e.lengthMm != null
+                          ? `${e.cableName}: ${e.lengthMm.toFixed(1)} mm as routed`
+                            + " (Bezier spline, connectors excluded)"
+                            + (e.nominalLengthMm != null
+                              ? ` · nominal part length ${e.nominalLengthMm.toFixed(0)} mm`
+                              : "")
+                          : e.cableName}
+                      </title>
                     </text>
                   </g>
                 );
