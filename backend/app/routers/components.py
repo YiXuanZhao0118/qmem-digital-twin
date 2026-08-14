@@ -325,7 +325,7 @@ DEFAULT_KIND_PARAMS: dict[str, dict[str, object]] = {
         # MT80 (80 MHz, slow-shear ~4200 m/s).
         "refractiveIndex": 2.26,
         "figureOfMeritM2": 34e-15,        # m²/W (TeO₂)
-        "crystalLengthMm": 25.0,          # L
+        "crystalLengthMm": 22.4,          # L (MT80 datasheet size along the beam; alembic 0120)
         "acousticBeamWidthMm": 1.5,       # W
         "rfPowerMaxW": 2.0,
         # V2 Phase 7 (alembic 0033): RF / acoustic direction moved to

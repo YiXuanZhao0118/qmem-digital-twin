@@ -52,7 +52,11 @@ export const aa_mt80_a1_5 = defineDevice({
   defaultParams: {
     rfPowerMaxW: 2,
     baseEfficiency: 0.85,
-    crystalLengthMm: 25,
+    // Datasheet Size 59.5 x 22.4 x 17.3 mm — 22.4 mm is the dimension the
+    // beam crosses, and equals this device's intercept_in → intercept_out
+    // separation. Sets the slab propagation L/n AND the Bragg angular
+    // acceptance n·v/(f·L) = ±5.3 mrad (alembic 0120).
+    crystalLengthMm: 22.4,
     refractiveIndex: 2.26,
     diffractionOrder: 1,
     braggAngularAcceptanceMrad: 2,

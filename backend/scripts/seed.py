@@ -602,7 +602,7 @@ COMPONENTS = [
             "regime": "bragg",
             "refractiveIndex": 2.26,
             "acousticVelocityMPerS": 4200,
-            "crystalLengthMm": 25.0,
+            "crystalLengthMm": 22.4,   # MT80 datasheet size along the beam (alembic 0120)
             "figureOfMeritM2": 34e-15,
             "acousticBeamWidthMm": 1.5,
             # Body +Y is laser -> 0th, body -X is transducer -> absorber,

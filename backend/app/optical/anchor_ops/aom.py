@@ -141,7 +141,7 @@ def aom_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
         return [ray_in]
 
     y, theta_y, z, theta_z = beam_state_from_anchor_hit(ray_in, ctx.hit)
-    L = float(ctx.params.get("crystalLengthMm", 1.6))
+    L = float(ctx.params.get("crystalLengthMm", 22.4))
     n = float(ctx.params.get("refractiveIndex", 2.2))
     L_over_n = L / n
 

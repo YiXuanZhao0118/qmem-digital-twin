@@ -49,11 +49,9 @@ pinned by the parity golden `aom_plus1_order.json`.
 > one "Bragg align" click (below). Assets with neither an `acoustic_axis` anchor
 > nor `rfPropagationDirectionBodyLocal` keep the old unsigned behaviour.
 >
-> How sharp the penalty is depends on `crystalLengthMm`: the external half-width
-> to the first sinc² null is `n·v/(f·L)`. At L = 1.6 mm (datasheet interaction
-> length) that is ±74 mrad ≫ θ_B, so the cell is only weakly order-selective;
-> the live `aa_mt80_a1_5_ir` asset row carries **L = 25 mm**, giving ±4.7 mrad —
-> narrower than θ_B, so alignment dominates the efficiency there.
+> How sharp the penalty is depends on `crystalLengthMm` — see the note under
+> the asset table: at the MT80's **L = 22.4 mm** the acceptance is ±5.3 mrad,
+> narrower than θ_B, so alignment dominates the efficiency.
 
 ## Alignment / positioning
 
@@ -131,9 +129,11 @@ takes whatever is left.
 `±maxDiffractionOrder`. If `η ≈ 0` (RF off / gated) only the 0-order
 passthrough is drawn.
 
-> CAVEAT: MT80 is a Bragg cell (Klein–Cook Q ≈ 5), so physically it is mostly
-> 0 + the selected order; the ±2/±3 sidebands are a Raman-Nath approximation
-> kept for visualisation.
+> CAVEAT: MT80 is a Bragg cell (Klein–Cook `Q = 2πλL/(nΛ²)` ≈ 19 at 852 nm with
+> L = 22.4 mm, Λ = v/f = 52.5 µm), so physically it is mostly 0 + the selected
+> order; the ±2/±3 sidebands are a Raman-Nath approximation kept for
+> visualisation. Their per-order detune does suppress them off-Bragg, but their
+> on-Bragg amplitudes are still the J_n² model, not a Bragg-regime result.
 
 ## Asset params (MT80-A1.5-IR)
 
@@ -147,7 +147,7 @@ passthrough is drawn.
 | `rfPowerMaxW` | 2.2 | hardware clamp |
 | `requiresRfDrive` | false | no RF → rated (not off) |
 | `acousticVelocityMps` | 4200 | TeO₂-L; Bragg angle + Doppler |
-| `crystalLengthMm` | 1.6 | off-Bragg detune geometry (⚠ the live asset row says **25**; that narrows the angular acceptance from ±74 to ±4.7 mrad — see the Bragg-matching note) |
+| `crystalLengthMm` | 22.4 | slab propagation `L/n` + Bragg angular acceptance — see note below |
 | `rfPropagationDirectionBodyLocal` | [−1, 0, 0] | acoustic axis `D2` (order fan-out + Bragg incidence) when there is no `acoustic_axis` anchor |
 | `modulationBandwidthMhz` | 10 | analog amp-mod BW (unused by η) |
 | `figureOfMeritM2` | 34.5e-15 | TeO₂-L (legacy; unused by η) |
@@ -155,3 +155,26 @@ passthrough is drawn.
 Bragg angle (external, lab frame): `θ_B = asin(λ·f / (2·v))` → 2θ_B ≈ 14.9 mrad
 at 780 nm / 80 MHz (datasheet "separation 0→1" >13.3 mrad). Doppler: order `m`
 shifts the optical frequency by `m·f`.
+
+### `crystalLengthMm` = 22.4 (decided 2026-08-14, alembic `0120`)
+
+AA does **not** publish an acousto-optic interaction length. 22.4 mm is the only
+along-the-beam length the datasheet gives (**Size 59.5 × 22.4 × 17.3 mm**), and
+it is exactly the asset's `intercept_in` (y = −11.2) → `intercept_out`
+(y = +11.2) separation — so the slab propagation `L/n` and the optical path now
+agree with the anchor geometry instead of contradicting it.
+
+It is a **double-duty** parameter — slab propagation *and* Bragg acceptance
+`n·v/(f·L)` — which is why the choice matters:
+
+| L | acceptance | Klein–Cook Q (852 nm) | regime |
+|---|---|---|---|
+| 22.4 mm | ±5.3 mrad | ≈19 | Bragg — ±1 well separated (wrong order <1 %) |
+| 6.4 mm | ±18.5 mrad | ≈5 | the Q≈5 this doc used to claim |
+| 1.6 mm | ±74 mrad | ≈1.4 | near Raman-Nath — ±1 nearly indistinguishable (~85 %) |
+
+Previously 25.0 (a rounded guess at the housing) in the DB and 1.6 in the kind
+plugin — the two disagreed by 15×. Both are now 22.4; a hand-tuned per-asset
+value still survives the migration. If the real acoustic column length ever
+turns up, the honest fix is to split the parameter (interaction length for the
+sinc², physical length for `L/n`) rather than re-tune this one.

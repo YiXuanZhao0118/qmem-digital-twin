@@ -391,7 +391,7 @@ function AomBraggSection({
   const order = Math.round(num(dyn.diffractionOrder, num(params.diffractionOrder, 1)));
   const vAcoustic = num(params.acousticVelocityMps, 4200);
   const refractiveIndex = num(params.refractiveIndex, 2.26);
-  const crystalLengthMm = num(params.crystalLengthMm, 1.6);
+  const crystalLengthMm = num(params.crystalLengthMm, 22.4);
   const wavelengthNm = num(beam?.wavelengthNm, 780);
 
   // Same resolution order the trace uses: the live RF chain wins, then the

@@ -74,7 +74,14 @@ export const aomPlugin = definePhysicsPlugin<AomParams>({
       requiresRfDrive: false,          // no RF source → show rated diffraction
       acousticVelocityMps: 4200.0,
       refractiveIndex: 2.26,
-      crystalLengthMm: 1.6,
+      // Acousto-optic interaction length. AA does NOT publish one; we use the
+      // MT80-A1.5-IR datasheet's along-the-beam housing dimension (Size 59.5 ×
+      // 22.4 × 17.3 mm), which is also the asset's intercept_in→out spacing.
+      // Drives BOTH the slab propagation L/n and the Bragg angular acceptance
+      // n·v/(f·L) = ±5.3 mrad (so it decides how sharply the cell picks +1 vs
+      // −1 — see docs/aom-model.md). Was 1.6 mm, which put the cell near
+      // Raman-Nath (Q≈1.4) and made the two first orders indistinguishable.
+      crystalLengthMm: 22.4,
       rfPowerMaxW: 2.2,
       acousticAxisBodyLocal: [-1, 0, 0],
       rfPropagationDirectionBodyLocal: [-1, 0, 0],
