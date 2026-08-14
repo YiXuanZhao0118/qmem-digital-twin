@@ -128,6 +128,13 @@ const HOME_CAMERA_TARGET = new THREE.Vector3(0, 0, 5.2);
 const HOME_CAMERA_OFFSET = HOME_CAMERA_POSITION.clone().sub(HOME_CAMERA_TARGET);
 const AXIS_GIZMO_SIZE = 132;
 
+/** The viewer's world is Z-up, and OrbitControls snapshots its orbit pole
+ *  from `camera.up` ONCE, in its constructor (`_quat` in OrbitControls.js) —
+ *  later writes to `camera.up` do NOT move the pole. So every camera pose we
+ *  set (Home, axis snaps, restored custom Home) must keep this exact up, or
+ *  the rendered roll stops matching the axis a left-drag orbits about. */
+const WORLD_UP = new THREE.Vector3(0, 0, 1);
+
 const DISPLAY_MODE_OPTIONS: Array<{
   mode: ViewerDisplayMode;
   title: string;
@@ -151,13 +158,17 @@ const DISPLAY_MODE_OPTIONS: Array<{
   },
 ];
 
+// No per-view `up`: every axis snap keeps WORLD_UP so the drag pole never
+// changes between views (see WORLD_UP). For the ±Z views the view direction
+// is parallel to up — THREE.Matrix4.lookAt detects that degenerate case and
+// nudges the basis, and OrbitControls' Spherical.makeSafe() clamps the polar
+// angle off the pole on the first update, so the framing stays well defined.
 const AXIS_VIEW_CONFIG: Record<
   AxisView,
   {
     label: string;
     title: string;
     direction: THREE.Vector3;
-    up: THREE.Vector3;
     className: string;
   }
 > = {
@@ -165,42 +176,36 @@ const AXIS_VIEW_CONFIG: Record<
     label: "+X",
     title: "View from +X",
     direction: new THREE.Vector3(1, 0, 0),
-    up: new THREE.Vector3(0, 0, 1),
     className: "axis-x",
   },
   xNeg: {
     label: "-X",
     title: "View from -X",
     direction: new THREE.Vector3(-1, 0, 0),
-    up: new THREE.Vector3(0, 0, 1),
     className: "axis-x",
   },
   yPos: {
     label: "+Y",
     title: "View from +Y",
     direction: new THREE.Vector3(0, 1, 0),
-    up: new THREE.Vector3(0, 0, 1),
     className: "axis-y",
   },
   yNeg: {
     label: "-Y",
     title: "View from -Y",
     direction: new THREE.Vector3(0, -1, 0),
-    up: new THREE.Vector3(0, 0, 1),
     className: "axis-y",
   },
   zPos: {
     label: "+Z",
     title: "View from +Z",
     direction: new THREE.Vector3(0, 0, 1),
-    up: new THREE.Vector3(0, 1, 0),
     className: "axis-z",
   },
   zNeg: {
     label: "-Z",
     title: "View from -Z",
     direction: new THREE.Vector3(0, 0, -1),
-    up: new THREE.Vector3(0, 1, 0),
     className: "axis-z",
   },
 };
@@ -1828,7 +1833,10 @@ export function DigitalTwinViewer({
       const saved = useSceneStore.getState().homeView[panelKey];
       if (saved) {
         controls.target.set(saved.target.x, saved.target.y, saved.target.z);
-        camera.up.set(saved.up.x, saved.up.y, saved.up.z);
+        // saved.up is ignored on purpose: a pose stored before this frame was
+        // locked down could carry a non-Z up, which would put the roll out of
+        // sync with the (immutable) orbit pole. See WORLD_UP.
+        camera.up.copy(WORLD_UP);
         camera.position.set(saved.position.x, saved.position.y, saved.position.z);
         camera.lookAt(controls.target);
         controls.update();
@@ -1836,7 +1844,7 @@ export function DigitalTwinViewer({
       }
       controls.target.copy(target);
       camera.position.copy(target).add(HOME_CAMERA_OFFSET);
-      camera.up.set(0, 0, 1);
+      camera.up.copy(WORLD_UP);
       camera.lookAt(controls.target);
       controls.update();
       return;
@@ -1845,7 +1853,7 @@ export function DigitalTwinViewer({
     const config = AXIS_VIEW_CONFIG[view];
     const distance = Math.max(camera.position.distanceTo(previousTarget), 12);
     controls.target.copy(target);
-    camera.up.copy(config.up);
+    camera.up.copy(WORLD_UP);
     camera.position.copy(target).addScaledVector(config.direction, distance);
     camera.lookAt(target);
     controls.update();
@@ -2029,7 +2037,7 @@ export function DigitalTwinViewer({
 
     const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 220);
     camera.position.set(28, -19, 16);
-    camera.up.set(0, 0, 1);
+    camera.up.copy(WORLD_UP);
     cameraRef.current = camera;
 
     // logarithmicDepthBuffer is INCOMPATIBLE with polygon offset on most
@@ -2089,7 +2097,8 @@ export function DigitalTwinViewer({
     const savedHome = useSceneStore.getState().homeView[panelKey];
     if (savedHome) {
       camera.position.set(savedHome.position.x, savedHome.position.y, savedHome.position.z);
-      camera.up.set(savedHome.up.x, savedHome.up.y, savedHome.up.z);
+      // savedHome.up deliberately not applied — camera.up must stay WORLD_UP
+      // (same reasoning as the H restore in snapCameraToView).
       controls.target.set(savedHome.target.x, savedHome.target.y, savedHome.target.z);
       camera.lookAt(controls.target);
     }
