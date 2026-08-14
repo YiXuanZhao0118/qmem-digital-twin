@@ -49,6 +49,11 @@ import {
   type RfSignalState,
 } from "../utils/rfPropagation";
 import {
+  diffractionEfficiency,
+  rfPowerForPeakEfficiencyW,
+  type AomPhysicsParams,
+} from "../optical/kinds/aom/physics";
+import {
   buildRfPropagationSchedule,
   getRfSnapshotAt,
 } from "../utils/rfPropagationSchedule";
@@ -95,10 +100,13 @@ function estimateTextWidthPx(text: string, fontSizePx = 10): number {
 const VPP_FULL_SCALE = AD9959_VPP_FULL_SCALE;
 /** RF load impedance (50 Ω) — used for the AOM required-Vpp computation. */
 const Z_OHM = 50;
-/** Default optical wavelength for the AOM required-Vpp readout. Real beam
- *  λ would require tracing the upstream optical chain to this AOM; for the
- *  Phase A readout we use 780 nm (Rb/Cs cold-atom typical). */
+/** Fallback optical wavelength for the AOM drive readout, used only when the
+ *  scene has no emitter or several with different wavelengths (see
+ *  `sceneWavelengthNm`). 780 nm = Rb/Cs cold-atom typical. */
 const DEFAULT_LAMBDA_NM = 780;
+/** `baseEfficiency` default, mirroring `aom/physics.ts` — the datasheet peak
+ *  the drive badge grades the live efficiency against. */
+const DEFAULT_AOM_PEAK_EFFICIENCY = 0.85;
 
 /** localStorage key for the per-object (dx, dy) layout offsets the user
  *  has dragged blocks to. Keyed by SceneObject.id so an object moves
@@ -320,21 +328,47 @@ function powerWToVpp(p: number): number {
   return Math.sqrt(8 * Z_OHM * Math.max(0, p));
 }
 
-/** Required RF drive power (W) for full Bragg diffraction efficiency
- *  (η = 1) on a given AOM at the chosen optical wavelength. Mirrors the
- *  inverse of the closed-form formula in `aom/physics.ts`:
- *    η = sin²((πL / 2λ cosθ_B) · √(2 M² P_d / W))
- *  Solving η = 1 (arg = π/2) at small θ_B → P_d = (W · λ²) / (2 M² L²).
- *  Returns null when any of M², L, W is missing. */
-function aomRequiredPowerW(aom: AOMParams, lambdaNm: number = DEFAULT_LAMBDA_NM): number | null {
-  const m2 = aom.figureOfMeritM2;
-  const lMm = aom.crystalLengthMm;
-  const wMm = aom.acousticBeamWidthMm;
-  if (m2 == null || lMm == null || wMm == null || m2 <= 0 || lMm <= 0 || wMm <= 0) return null;
-  const lambdaM = lambdaNm * 1e-9;
-  const lM = lMm * 1e-3;
-  const wM = wMm * 1e-3;
-  return (wM * lambdaM * lambdaM) / (2 * m2 * lM * lM);
+/** Drive readout for one AOM: the RF power that takes it to peak efficiency at
+ *  the scene's wavelength, and the efficiency the incoming drive actually buys.
+ *
+ *  Both come from `optical/kinds/aom/physics.ts` — the SAME datasheet-calibrated
+ *  model the solver runs (`aom_physics.first_order_efficiency`):
+ *      η = baseEfficiency · sin²((π/2)·√(P / P_peak(λ))) · G(f),
+ *      P_peak(λ) = rfPowerForPeakW · (λ / peakRefWavelengthNm)².
+ *
+ *  It used to compute the threshold from a legacy closed form (M² / acoustic
+ *  beam width) at a hardcoded 780 nm — a model the tracer doesn't use and
+ *  parameters the AOM asset doesn't even carry. On the MT80 at 852 nm that
+ *  asked for 92.68 Vpp while the solver was happily running at η ≈ 0.81 on
+ *  20 Vpp, so the row permanently showed "⚠ under" on a correctly driven AOM. */
+function aomDriveReadout(
+  params: AomPhysicsParams,
+  incomingPowerW: number | null,
+  incomingFreqMhz: number | null,
+  lambdaNm: number,
+): { peakPowerW: number | null; efficiency: number | null } {
+  const peakPowerW = rfPowerForPeakEfficiencyW(params, lambdaNm);
+  if (incomingPowerW == null) return { peakPowerW, efficiency: null };
+  // Feed the live drive in exactly as the anchor op does: power + carrier from
+  // the RF link, while the DESIGN centre G(f) is measured against stays the
+  // AOM's own `centerFreqMhz`. (In `diffractionEfficiency` the drive carrier is
+  // `centerFreqMhz` and the design centre is `designCenterFreqMhz`, so tuning
+  // the source away from the AOM's centre correctly costs efficiency instead of
+  // silently re-centring the passband on the new carrier.)
+  const efficiency = diffractionEfficiency(
+    {
+      ...params,
+      rfDrivePowerW: incomingPowerW,
+      ...(incomingFreqMhz != null
+        ? {
+            centerFreqMhz: incomingFreqMhz,
+            designCenterFreqMhz: params.designCenterFreqMhz ?? params.centerFreqMhz,
+          }
+        : {}),
+    },
+    lambdaNm,
+  );
+  return { peakPowerW, efficiency };
 }
 
 // ============================================================================
@@ -449,7 +483,14 @@ function EditableAd9959Row({ port, channel, onCommit }: EditableAd9959RowProps) 
 
 type AomInRowProps = {
   port: Port;
+  /** Vpp that would drive this AOM to peak efficiency at the scene's
+   *  wavelength (solver model). Null when the AOM has no usable params. */
   requiredVpp: number | null;
+  /** First-order efficiency the incoming drive actually buys, same model.
+   *  Null when nothing is arriving. */
+  efficiency: number | null;
+  /** Datasheet peak efficiency (`baseEfficiency`) the badge grades against. */
+  peakEfficiency: number;
   /** Live signal arriving at the AOM rf_in port. Pulled from the RF
    *  propagation map so it reflects ANY upstream amplifier gain that's
    *  already been applied; bypasses the rf_source channel's raw Vpp. */
@@ -469,16 +510,23 @@ function formatPowerW(p: number): string {
   return `${(p * 1e6).toFixed(0)} µW`;
 }
 
-function AomInRow({ port, requiredVpp, incomingSignal, sourceObjectName }: AomInRowProps) {
+function AomInRow({
+  port, requiredVpp, efficiency, peakEfficiency, incomingSignal, sourceObjectName,
+}: AomInRowProps) {
   // Pre-compute every readout so the JSX stays a thin layout pass.
   const incomingVpp = incomingSignal ? incomingSignal.vpp : null;
   const incomingFreqMhz = incomingSignal ? incomingSignal.frequencyMhz : null;
   const incomingPowerW = incomingSignal ? (incomingVpp! * incomingVpp!) / (8 * 50) : null;
-  const ratio = requiredVpp && incomingVpp ? incomingVpp / requiredVpp : null;
+  // Grade the drive by the efficiency it actually buys, as a fraction of the
+  // AOM's datasheet peak — the same number the solver diffracts with. (Grading
+  // Vpp against a threshold couldn't express over-driving past the sin² turning
+  // point, where MORE power means LESS diffraction.)
+  const etaFrac =
+    efficiency != null && peakEfficiency > 0 ? efficiency / peakEfficiency : null;
   let badge: { color: string; text: string } | null = null;
-  if (requiredVpp != null && incomingVpp != null) {
-    if (ratio! < 0.5) badge = { color: "#d96666", text: "⚠ under" };
-    else if (ratio! > 1.5) badge = { color: "#d49a3a", text: "⚠ over" };
+  if (etaFrac != null) {
+    if (etaFrac < 0.5) badge = { color: "#d96666", text: "⚠ under" };
+    else if (etaFrac < 0.9) badge = { color: "#d49a3a", text: "⚠ off-peak" };
     else badge = { color: "#7be08a", text: "OK" };
   }
   // Build the provenance hint shown right-aligned. Examples:
@@ -513,7 +561,10 @@ function AomInRow({ port, requiredVpp, incomingSignal, sourceObjectName }: AomIn
         // Full tooltip — fits even when the inline row truncates.
         incomingSignal
           ? `${port.displayName} input: ${incomingFreqMhz!.toFixed(2)} MHz · ${incomingVpp!.toFixed(2)} Vpp · ${formatPowerW(incomingPowerW!)}` +
-            (requiredVpp != null ? `\nneed ≥ ${requiredVpp.toFixed(2)} Vpp for full Bragg η` : "") +
+            (efficiency != null
+              ? `\nfirst-order η = ${(efficiency * 100).toFixed(0)}% (peak ${(peakEfficiency * 100).toFixed(0)}%)`
+              : "") +
+            (requiredVpp != null ? `\npeak η at ≈ ${requiredVpp.toFixed(2)} Vpp for this wavelength` : "") +
             (provenance ? `\n${provenance.replace("← ", "from ")}` : "") +
             (incomingSignal.saturated ? "\n⚠ Upstream amplifier clamped at P_max" : "")
           : `${port.displayName} input: no upstream rf_source linked`
@@ -535,11 +586,11 @@ function AomInRow({ port, requiredVpp, incomingSignal, sourceObjectName }: AomIn
       ) : (
         <span style={{ color: "#9aa0a6" }}>no upstream</span>
       )}
-      {/* Required-Vpp hint shrinks to a small secondary label so the
-          actual incoming reading stays dominant. */}
-      {requiredVpp != null && (
+      {/* Efficiency the drive buys — the number the solver diffracts with.
+          Small secondary label so the incoming reading stays dominant. */}
+      {efficiency != null && (
         <span style={{ color: "#9aa0a6", fontSize: 9 }}>
-          (≥ {requiredVpp.toFixed(2)} V)
+          η {(efficiency * 100).toFixed(0)}%
         </span>
       )}
       {badge && (
@@ -1008,16 +1059,52 @@ export function RfLinkPanel() {
     return m;
   }, [objects, kindByObjectId, physicsElements]);
 
-  /** AOM kindParams keyed by SceneObject id. Lets the rf_in port reader
-   *  pull M²/L/W in one lookup. */
+  /** AOM params keyed by SceneObject id, resolved the way the anchor tracer
+   *  sees them: Asset `defaultParams` merged with per-instance
+   *  `dynamicSources`. Legacy `kindParams` sits underneath as a floor for
+   *  pre-binding scenes — the tracer never reads it, so anything that only
+   *  exists there (figureOfMeritM2, acousticBeamWidthMm, …) is NOT part of
+   *  the physics the solver runs. */
   const aomByObjectId = useMemo(() => {
     const m = new Map<string, AOMParams>();
+    const objById = new Map(objects.map((o) => [o.id, o]));
     for (const pe of physicsElements) {
       if (pe.elementKind !== "aom") continue;
-      m.set(pe.objectId, pe.kindParams as AOMParams);
+      const obj = objById.get(pe.objectId);
+      if (!obj) continue;
+      m.set(pe.objectId, {
+        ...(pe.kindParams as AOMParams),
+        ...((assetByObjectId(obj)?.defaultParams ?? {}) as AOMParams),
+        ...((obj.dynamicSources ?? {}) as AOMParams),
+      });
     }
     return m;
-  }, [physicsElements]);
+  }, [physicsElements, objects, assetByObjectId]);
+
+  /** Optical wavelength the AOM readout is evaluated at. P_peak scales as λ²,
+   *  so this materially moves the efficiency: the MT80 needs 1.32 W at 852 nm
+   *  but only 1.11 W at 780 nm. Taken from the scene's emitters
+   *  (`dynamicSources.centerWavelengthNm` → asset `defaultParams`, mirroring
+   *  `emit_laser_source.py`); a scene with several different wavelengths has no
+   *  single answer here, so it falls back to the nominal constant rather than
+   *  picking one arbitrarily. */
+  const sceneWavelengthNm = useMemo(() => {
+    const objById = new Map(objects.map((o) => [o.id, o]));
+    const found = new Set<number>();
+    for (const pe of physicsElements) {
+      if (pe.elementKind !== "laser_source" && pe.elementKind !== "tapered_amplifier") continue;
+      const obj = objById.get(pe.objectId);
+      if (!obj) continue;
+      const ds = (obj.dynamicSources ?? {}) as { centerWavelengthNm?: unknown };
+      const dp = (assetByObjectId(obj)?.defaultParams ?? {}) as { centerWavelengthNm?: unknown };
+      const nm =
+        typeof ds.centerWavelengthNm === "number" ? ds.centerWavelengthNm
+        : typeof dp.centerWavelengthNm === "number" ? dp.centerWavelengthNm
+        : null;
+      if (nm != null && Number.isFinite(nm) && nm > 0) found.add(nm);
+    }
+    return found.size === 1 ? [...found][0] : DEFAULT_LAMBDA_NM;
+  }, [physicsElements, objects, assetByObjectId]);
 
   /** Full RF propagation map — for every port that an RF signal reaches,
    *  the frequency + Vpp + provenance. Replaces the old direct-only
@@ -1159,9 +1246,15 @@ export function RfLinkPanel() {
     }
     if (node.kind === "aom" && port.role === "in") {
       const aom = aomByObjectId.get(node.objectId);
-      const requiredP = aom ? aomRequiredPowerW(aom) : null;
-      const requiredVpp = requiredP != null ? powerWToVpp(requiredP) : null;
       const signal = rfPropagation.signalAtPort.get(rfPortKey(node.objectId, port.anchorName));
+      const { efficiency } = aom
+        ? aomDriveReadout(
+            aom as AomPhysicsParams,
+            signal ? (signal.vpp * signal.vpp) / (8 * Z_OHM) : null,
+            signal ? signal.frequencyMhz : null,
+            sceneWavelengthNm,
+          )
+        : { efficiency: null };
       const sourceName = signal
         ? objects.find((o) => o.id === signal.sourceObjectId)?.name ?? null
         : null;
@@ -1171,8 +1264,8 @@ export function RfLinkPanel() {
             10,
           )
         : estimateTextWidthPx("no upstream", 10);
-      const requiredW = requiredVpp != null ? estimateTextWidthPx(`(≥ ${requiredVpp.toFixed(2)} V)`, 9) : 0;
-      const badgeW = signal && requiredVpp != null ? estimateTextWidthPx("⚠ over", 9) : 0;
+      const requiredW = efficiency != null ? estimateTextWidthPx("η 100%", 9) : 0;
+      const badgeW = efficiency != null ? estimateTextWidthPx("⚠ off-peak", 9) : 0;
       const clampW = signal?.saturated ? estimateTextWidthPx("⚠ clamp", 9) : 0;
       const provenanceW = signal
         ? Math.min(
@@ -1692,13 +1785,19 @@ export function RfLinkPanel() {
                           />
                         );
                       } else if (aom && port.role === "in") {
-                        const requiredP = aomRequiredPowerW(aom);
-                        const requiredVpp = requiredP != null ? powerWToVpp(requiredP) : null;
                         // Pull the post-chain signal from the propagation map.
                         // It already includes any in-line amplifier gain
                         // (and saturation clamps), so the incoming reading
                         // matches what the Bragg solver / backend will see.
                         const signal = rfPropagation.signalAtPort.get(rfPortKey(n.objectId, port.anchorName)) as RfSignalState | undefined;
+                        // Same model + same params the tracer runs, so the
+                        // readout and the drawn diffraction can't disagree.
+                        const { peakPowerW, efficiency } = aomDriveReadout(
+                          aom as AomPhysicsParams,
+                          signal ? (signal.vpp * signal.vpp) / (8 * Z_OHM) : null,
+                          signal ? signal.frequencyMhz : null,
+                          sceneWavelengthNm,
+                        );
                         // Resolve the originating rf_source object name so
                         // the AOM row can show provenance ("← AD9959 · CH0").
                         const sourceObjectName = signal
@@ -1707,7 +1806,9 @@ export function RfLinkPanel() {
                         body = (
                           <AomInRow
                             port={port}
-                            requiredVpp={requiredVpp}
+                            requiredVpp={peakPowerW != null ? powerWToVpp(peakPowerW) : null}
+                            efficiency={efficiency}
+                            peakEfficiency={aom.baseEfficiency ?? DEFAULT_AOM_PEAK_EFFICIENCY}
                             incomingSignal={signal ?? null}
                             sourceObjectName={sourceObjectName}
                           />
@@ -2023,7 +2124,7 @@ export function RfLinkPanel() {
           <span><span style={{ color: "#62a3ff" }}>●</span> rf_in (computed Vpp)</span>
           <span>Amplifier rows show Vpp_in → +gain dB → Vpp_out (clamped at P_max).</span>
           <span>Drag a block to reposition · drag a port to create a cable.</span>
-          <span>AD9959 full-scale ≈ {VPP_FULL_SCALE.toFixed(1)} Vpp @ 50 Ω · λ = {DEFAULT_LAMBDA_NM} nm for AOM req.</span>
+          <span>AD9959 full-scale ≈ {VPP_FULL_SCALE.toFixed(1)} Vpp @ 50 Ω · AOM η from the solver model at λ = {sceneWavelengthNm.toFixed(1)} nm.</span>
           {nodeOffsets.size > 0 && (
             <button
               type="button"
