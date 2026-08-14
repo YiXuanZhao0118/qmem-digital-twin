@@ -345,8 +345,9 @@ type EditableAd9959RowProps = {
   port: Port;
   ownerObjectId: string;
   channel: DdsChannel;
-  /** Synchronously call upsertOpticalElement under the hood; returns when
-   *  the backend has acknowledged so the panel re-renders with fresh state. */
+  /** Writes the patch into the object's per-instance `dynamicSources`;
+   *  returns when the backend has acknowledged so the panel re-renders
+   *  with fresh state. */
   onCommit: (patch: { frequencyMhz?: number; amplitudeScale?: number }) => Promise<void>;
 };
 
@@ -656,7 +657,6 @@ export function RfLinkPanel() {
   const timingPrograms = useSceneStore((s) => s.scene.timingPrograms) ?? [];
   const selectObject = useSceneStore((s) => s.selectObject);
   const selectedObjectId = useSceneStore((s) => s.selectedObjectId);
-  const upsertOpticalElement = useSceneStore((s) => s.upsertOpticalElement);
   const createRfCableBetweenPorts = useSceneStore((s) => s.createRfCableBetweenPorts);
 
   // Drag-to-connect state: pointerdown on a port starts a rubber-band; if
@@ -904,6 +904,35 @@ export function RfLinkPanel() {
     return { edges: edgesOut, dangling: danglingOut };
   }, [objects, kindByObjectId, peByObjectId, physicsElements]);
 
+  /** Every rf_source's channel list, resolved through the SAME ownership
+   *  chain the RF BFS reads (`rfPropagation.buildRfPropagation` seed loop):
+   *  per-instance `dynamicSources` → Asset `defaultParams` → legacy
+   *  PhysicsElement `kindParams`.
+   *
+   *  Reading `kindParams` alone made this panel lie: the AD9959 asset AUTHORS
+   *  `channels` (and marks it tunable), so the asset entry always won in the
+   *  BFS while the row rendered — and wrote — the kindParams copy. Editing
+   *  Freq/Vpp here therefore changed the number on screen and nothing else:
+   *  the AOM downstream kept the asset's 80 MHz / 1.0 Vpp. */
+  const channelsByObjectId = useMemo(() => {
+    const m = new Map<string, DdsChannel[]>();
+    const objById = new Map(objects.map((o) => [o.id, o]));
+    for (const pe of physicsElements) {
+      if (pe.elementKind !== "rf_source") continue;
+      const obj = objById.get(pe.objectId);
+      if (!obj) continue;
+      const dsCh = obj.dynamicSources?.channels;
+      const assetCh = assetByObjectId(obj)?.defaultParams?.channels;
+      const resolved = (
+        Array.isArray(dsCh) ? dsCh
+        : Array.isArray(assetCh) ? assetCh
+        : (pe.kindParams as RfSourceParams).channels ?? []
+      ) as DdsChannel[];
+      m.set(pe.objectId, resolved);
+    }
+    return m;
+  }, [physicsElements, objects, assetByObjectId]);
+
   /** For each (objectId|anchorName) of an rf_source rf_out port, find the
    *  matching DdsChannel by `channel.anchorName === anchorName`. */
   const channelByPortKey = useMemo(() => {
@@ -911,14 +940,13 @@ export function RfLinkPanel() {
     for (const pe of physicsElements) {
       if (pe.elementKind !== "rf_source") continue;
       const params = pe.kindParams as RfSourceParams;
-      const channels = params.channels ?? [];
-      channels.forEach((ch, i) => {
+      (channelsByObjectId.get(pe.objectId) ?? []).forEach((ch, i) => {
         if (!ch.anchorName) return;
         m.set(`${pe.objectId}|${ch.anchorName}`, { channel: ch, channelIdx: i, params });
       });
     }
     return m;
-  }, [physicsElements]);
+  }, [physicsElements, channelsByObjectId]);
 
   /** Set of port keys that are already claimed by an existing rf_cable
    *  endpoint. Used to (a) visually mute the port circle so the user
@@ -1063,8 +1091,9 @@ export function RfLinkPanel() {
   ) => {
     const pe = peByObjectId.get(srcObjectId);
     if (!pe || pe.elementKind !== "rf_source") return;
-    const params = pe.kindParams as RfSourceParams;
-    const channels = params.channels ?? [];
+    const obj = objects.find((o) => o.id === srcObjectId);
+    if (!obj) return;
+    const channels = channelsByObjectId.get(srcObjectId) ?? [];
     const idx = channels.findIndex((c) => c.anchorName === srcAnchorName);
     let nextChannels: DdsChannel[];
     if (idx === -1) {
@@ -1086,12 +1115,16 @@ export function RfLinkPanel() {
     } else {
       nextChannels = channels.map((c, i) => (i === idx ? { ...c, ...patch } : c));
     }
-    await upsertOpticalElement({
-      objectId: srcObjectId,
-      elementKind: pe.elementKind,
-      kindParams: { ...params, channels: nextChannels },
-      inputPorts: pe.inputPorts,
-      outputPorts: pe.outputPorts,
+    // Per-instance channel edits live in `SceneObject.dynamicSources` — the
+    // top of the ownership chain and the only tier that can override the
+    // asset's authored `channels`. Writing `kindParams` (what this did) put
+    // the value in the tier the BFS consults LAST, so the edit never reached
+    // the propagation. Same write path as `Ad9959ObjectControls.updateChannel`.
+    await updateSceneObject(srcObjectId, {
+      dynamicSources: {
+        ...((obj.dynamicSources ?? {}) as Record<string, unknown>),
+        channels: nextChannels,
+      },
     });
   };
 
