@@ -50,6 +50,7 @@ import {
   type PhysicsOpContext,
   registerKind,
 } from "../../registry";
+import { acousticIncidenceRad, braggOrderDetune } from "../aom/physics";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -288,49 +289,33 @@ export function firstOrderEfficiencyFromContext(
   return clamp01(peak * relAmp * g);
 }
 
-/** Unsigned angle between a ray direction and the optical axis. */
-function angleToAxisRad(direction: Vec3, axis: Vec3): number {
-  const d = vecNormalize(direction);
-  const a = vecNormalize(axis);
-  return Math.acos(Math.max(-1, Math.min(1, vecDot(d, a))));
-}
-
 /**
- * sinc^2 Bragg phase-matching factor for off-axis incidence.
+ * sinc² Bragg phase-matching factor for THIS order at the actual tilt.
  *
- * Thick-grating coupled-wave theory: efficiency scales as sinc^2(dk·L/2),
- * where dk is the longitudinal wave-vector mismatch produced by deviating
- * from the matched incidence angle. The canonical on-axis input (ray along
- * the A->B optical axis) is treated as perfectly matched, so a ray arriving
- * at external angle dthetaExt sees:
- *   K       = 2π·f / v               (acoustic grating vector, 1/m)
- *   thetaB  = asin(λ·f / (2·n·v))    (internal Bragg angle)
- *   dk      = K·cos(thetaB)·(dthetaExt / n)
- *   xi      = dk·L / 2
- *   factor  = (sin xi / xi)^2        (→ 1 as xi → 0)
+ * Order m is matched when the signed incidence about the acoustic axis is
+ * `−m·θ_B`, so ±1 peak at tilts 2·θ_B apart. Delegates to the shared model
+ * in `optical/kinds/aom/physics.ts`, which mirrors backend `aom_physics`, so
+ * the v3 op, the production anchor op and the panel can't drift.
  */
 export function braggDetuningFactor(
   rayIn: BeamRay,
   ctx: PhysicsOpContext,
+  order: number,
+  thetaBRad: number,
   freqMhz: number,
   vAcoustic: number,
   n: number,
   Lmm: number,
 ): number {
-  const dthetaExt = angleToAxisRad(rayIn.direction, transitionOpticalAxis(ctx));
-  if (dthetaExt === 0) return 1;
-  const lambdaM = rayIn.wavelengthNm * 1e-9;
-  const fHz = freqMhz * 1e6;
-  const Lm = Lmm * 1e-3;
-  const kAcoustic = (2 * Math.PI * fHz) / vAcoustic;
-  const thetaBInt = Math.asin(
-    Math.max(-1, Math.min(1, (lambdaM * fHz) / (2 * n * vAcoustic))),
+  const thetaIn = acousticIncidenceRad(
+    rayIn.direction,
+    readRfDirectionBodyLocal(ctx),
+    transitionOpticalAxis(ctx),
   );
-  const dthetaInt = dthetaExt / n;
-  const dk = kAcoustic * Math.cos(thetaBInt) * dthetaInt;
-  const xi = (dk * Lm) / 2;
-  if (xi === 0) return 1;
-  return clamp01((Math.sin(xi) / xi) ** 2);
+  if (thetaIn === null) return 1;
+  return braggOrderDetune(
+    order, thetaIn, thetaBRad, rayIn.wavelengthNm, freqMhz, vAcoustic, n, Lmm,
+  );
 }
 
 /** External half-width to the first sinc^2 null (xi = π), in mrad:
@@ -374,7 +359,9 @@ export const diffractAomOp: PhysicsOp = (
     deflectRad,
   );
 
-  const detune = braggDetuningFactor(rayIn, ctx, freqMhz, vAcoustic, n, L);
+  const detune = braggDetuningFactor(
+    rayIn, ctx, order, theta_B, freqMhz, vAcoustic, n, L,
+  );
   const firstOrderEfficiency = firstOrderEfficiencyFromContext(rayIn, ctx, theta_B) * detune;
   const eff = orderEfficiency(order, firstOrderEfficiency);
   const newPower = rayIn.powerMw * eff;

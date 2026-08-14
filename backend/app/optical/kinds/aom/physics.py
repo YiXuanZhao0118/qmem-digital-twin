@@ -15,7 +15,8 @@ import re
 from typing import Optional
 
 from app.optical.aom_physics import (
-    bragg_detuning_sinc2,
+    acoustic_incidence_rad,
+    bragg_order_detune,
     first_order_efficiency,
     order_efficiency,
 )
@@ -58,6 +59,10 @@ def _vec_dot(a: Vec3, b: Vec3) -> float:
 
 def _vec_len(a: Vec3) -> float:
     return math.sqrt(_vec_dot(a, a))
+
+
+def _vec_tuple(a: Vec3) -> tuple[float, float, float]:
+    return (a.x, a.y, a.z)
 
 
 def _vec_norm(a: Vec3) -> Vec3:
@@ -226,40 +231,34 @@ def _deflect_along_rf_side(input_dir: Vec3, rf_dir: Vec3, deflect_rad: float) ->
     ))
 
 
-def _angle_to_axis_rad(direction: Vec3, axis: Vec3) -> float:
-    """Unsigned angle between a ray direction and the optical axis."""
-    d = _vec_norm(direction)
-    a = _vec_norm(axis)
-    return math.acos(max(-1.0, min(1.0, _vec_dot(d, a))))
-
-
 def bragg_detuning_factor(
     ray_in: BeamRay,
     ctx: PhysicsOpContext,
+    order: int,
+    theta_b_rad: float,
     freq_mhz: float,
     v_acoustic: float,
     n: float,
     l_mm: float,
 ) -> float:
-    """sinc^2 Bragg phase-matching factor for off-axis incidence.
+    """sinc^2 Bragg phase-matching factor for THIS order at the actual tilt.
 
-    Thick-grating coupled-wave theory: efficiency scales as sinc^2(dk*L/2),
-    where dk is the longitudinal wave-vector mismatch produced by deviating
-    from the matched incidence angle. We treat the canonical on-axis input
-    (ray along the A->B optical axis) as perfectly matched, so a ray arriving
-    at external angle dtheta_ext to that axis sees:
-
-        K       = 2*pi*f / v                 (acoustic grating vector, 1/m)
-        theta_B = asin(lambda*f / (2*n*v))   (internal Bragg angle)
-        dk      = K * cos(theta_B) * (dtheta_ext / n)   (Snell to internal)
-        xi      = dk * L / 2
-        factor  = (sin xi / xi)^2            (-> 1 as xi -> 0)
-
-    On-axis input (dtheta_ext = 0) returns 1.0 exactly.
+    Order m is matched when the signed incidence about the acoustic axis is
+    ``-m * theta_B`` (``aom_physics.bragg_matched_incidence_rad``), so the two
+    +/-1 orders peak at tilts 2*theta_B apart. Mirrors the production anchor op
+    (``anchor_ops/aom.py``) — both go through ``aom_physics`` so the two trace
+    paths can't drift.
     """
-    dtheta_ext = _angle_to_axis_rad(ray_in.direction, _transition_optical_axis(ctx))
-    return bragg_detuning_sinc2(
-        dtheta_ext, ray_in.wavelength_nm, freq_mhz, v_acoustic, n, l_mm,
+    theta_in = acoustic_incidence_rad(
+        (ray_in.direction.x, ray_in.direction.y, ray_in.direction.z),
+        _vec_tuple(_read_rf_direction_body_local(ctx)),
+        _vec_tuple(_transition_optical_axis(ctx)),
+    )
+    if theta_in is None:
+        return 1.0
+    return bragg_order_detune(
+        order, theta_in, theta_b_rad,
+        ray_in.wavelength_nm, freq_mhz, v_acoustic, n, l_mm,
     )
 
 
@@ -327,7 +326,9 @@ def diffract_aom_op(ray_in: BeamRay, ctx: PhysicsOpContext) -> list[BeamRay]:
         deflect_rad,
     )
 
-    detune = bragg_detuning_factor(ray_in, ctx, freq_mhz, v_acoustic, n, L)
+    detune = bragg_detuning_factor(
+        ray_in, ctx, order, theta_b, freq_mhz, v_acoustic, n, L,
+    )
     first_order_eff = first_order_efficiency_from_context(ray_in, ctx, theta_b) * detune
     eff = order_efficiency(order, first_order_eff)
     new_power = ray_in.power_mw * eff

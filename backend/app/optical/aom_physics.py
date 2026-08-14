@@ -23,11 +23,11 @@ def bragg_detuning_sinc2(
     n: float,
     l_mm: float,
 ) -> float:
-    """sinc^2 Bragg phase-matching factor for off-axis incidence.
+    """sinc^2 Bragg phase-matching factor for a given angular MISMATCH.
 
     Thick-grating coupled-wave theory: diffraction efficiency scales as
     sinc^2(dk*L/2), where dk is the longitudinal wave-vector mismatch produced
-    by deviating from the matched (on-axis) incidence angle:
+    by deviating from the matched incidence angle by ``dtheta_ext_rad``:
 
         K       = 2*pi*f / v                 (acoustic grating vector, 1/m)
         theta_B = asin(lambda*f / (2*n*v))   (internal Bragg angle)
@@ -35,9 +35,14 @@ def bragg_detuning_sinc2(
         xi      = dk * L / 2
         factor  = (sin xi / xi)^2            (-> 1 as xi -> 0)
 
-    On-axis incidence (dtheta_ext = 0) returns 1.0 exactly. As the beam (or the
-    AOM) tilts away from match, the factor falls — so rotating the AOM lowers
-    the diffraction efficiency.
+    Zero mismatch returns 1.0 exactly. The factor is even in the mismatch, so
+    callers pass a SIGNED mismatch freely.
+
+    NOTE: the mismatch is measured against the order's Bragg-matched incidence
+    (``bragg_matched_incidence_rad``), NOT against the crystal's optical axis —
+    use ``bragg_order_detune`` rather than calling this with a raw incidence
+    angle. A real AOM peaks when the cell is rotated by theta_B, which is what
+    the two functions together encode.
     """
     if dtheta_ext_rad == 0.0:
         return 1.0
@@ -54,6 +59,94 @@ def bragg_detuning_sinc2(
     if xi == 0.0:
         return 1.0
     return clamp01((math.sin(xi) / xi) ** 2)
+
+
+def bragg_matched_incidence_rad(order: int, theta_b_rad: float) -> float:
+    """Signed external incidence angle at which diffraction order ``order`` is
+    Bragg-matched, measured from the plane perpendicular to the acoustic axis
+    (positive = the beam leans toward +acoustic).
+
+    Momentum conservation with |k_out| = |k_in| and k_out = k_in + m*K*a_hat:
+
+        k_hat_in . a_hat = -m * K / (2k) = -m * sin(theta_B)
+        => theta_in = -m * theta_B
+
+    The diffracted order then leaves at +m*theta_B (the op adds 2*m*theta_B to
+    the input direction along +a_hat), giving the familiar symmetric
+    in/out geometry. Independent of which face the beam entered — the Bragg
+    condition constrains only ``k_hat . a_hat``.
+
+    Mirrors the frontend's ``expectedInputDotD2`` (dot form, D2 = acoustic
+    axis) — same convention, angle instead of sine.
+    """
+    return -float(order) * theta_b_rad
+
+
+def acoustic_incidence_rad(
+    direction: tuple[float, float, float],
+    acoustic_axis: tuple[float, float, float],
+    optical_axis: tuple[float, float, float],
+) -> float | None:
+    """Signed incidence angle of a (body-frame) ray direction relative to the
+    plane perpendicular to the acoustic axis: ``asin(k_hat . a_hat_perp)``.
+
+    ``a_hat_perp`` is the acoustic direction projected perpendicular to the
+    optical axis and normalised — the acoustic axis authored on an asset is
+    only nominally perpendicular, and the component along the optical axis
+    carries no Bragg geometry.
+
+    Returns None when either vector is degenerate or the acoustic axis is
+    parallel to the optical axis (no Bragg plane defined).
+    """
+    ax = _unit(optical_axis)
+    a = _unit(acoustic_axis)
+    if ax is None or a is None:
+        return None
+    par = a[0] * ax[0] + a[1] * ax[1] + a[2] * ax[2]
+    perp = _unit((a[0] - ax[0] * par, a[1] - ax[1] * par, a[2] - ax[2] * par))
+    if perp is None:
+        return None
+    d = _unit(direction)
+    if d is None:
+        return None
+    s = d[0] * perp[0] + d[1] * perp[1] + d[2] * perp[2]
+    return math.asin(max(-1.0, min(1.0, s)))
+
+
+def bragg_order_detune(
+    order: int,
+    theta_in_rad: float,
+    theta_b_rad: float,
+    wavelength_nm: float,
+    freq_mhz: float,
+    v_acoustic: float,
+    n: float,
+    l_mm: float,
+) -> float:
+    """Phase-matching factor for ONE diffraction order at the actual incidence.
+
+    ``theta_in_rad`` is the signed incidence from ``acoustic_incidence_rad``.
+    Order m peaks when the cell is rotated so ``theta_in = -m*theta_B``, and
+    falls off as sinc^2 of the residual — so +1 and -1 are matched at opposite
+    tilts (2*theta_B apart) and the classic "rotate the AOM for maximum
+    diffraction" alignment is reproduced.
+
+    Order 0 is not diffracted, so it carries no phase-matching factor (the ops
+    give it whatever power the diffracted orders leave behind).
+    """
+    if order == 0:
+        return 1.0
+    mismatch = theta_in_rad - bragg_matched_incidence_rad(order, theta_b_rad)
+    return bragg_detuning_sinc2(
+        mismatch, wavelength_nm, freq_mhz, v_acoustic, n, l_mm,
+    )
+
+
+def _unit(v: tuple[float, float, float]) -> tuple[float, float, float] | None:
+    m = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+    if m < 1e-12:
+        return None
+    return (v[0] / m, v[1] / m, v[2] / m)
 
 
 def order_efficiency(order: int, first_order_efficiency: float) -> float:

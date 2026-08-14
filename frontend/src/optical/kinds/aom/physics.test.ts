@@ -13,10 +13,14 @@
 import { describe, expect, it } from "vitest";
 import {
   AomPhysicsParams,
+  acousticIncidenceRad,
   aomBodyFrameBodyLocal,
   aomTraversalSignFromEntryPort,
   besselJ,
   braggAngleRad,
+  braggDetuningSinc2,
+  braggMatchedIncidenceRad,
+  braggOrderDetune,
   computeBraggTiltAxisBodyLocal,
   computeBraggTiltAxisFromRfDirectionBodyLocal,
   DEFAULT_STAGE1_MODE,
@@ -602,5 +606,62 @@ describe("rfPowerForPeakEfficiencyW", () => {
     expect(peakPd).not.toBeNull();
     const eta = diffractionEfficiency({ ...params, rfDrivePowerW: peakPd as number }, 780);
     expect(eta).toBeCloseTo(0.85, 10);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Order-aware Bragg phase matching (mirrors backend aom_physics; the parity
+// harness pins the two implementations to the same numbers).
+// ---------------------------------------------------------------------------
+
+describe("Bragg order matching", () => {
+  const L = 1.6, V = 4200, N = 2.26, F = 80, LAMBDA = 780;
+  const thetaB = braggAngleRad({ centerFreqMhz: F, acousticVelocityMps: V }, LAMBDA);
+  const detune = (order: number, thetaIn: number) =>
+    braggOrderDetune(order, thetaIn, thetaB, LAMBDA, F, V, N, L);
+
+  it("matched incidence is −m·θ_B, agreeing with expectedInputDotD2", () => {
+    expect(braggMatchedIncidenceRad(1, thetaB)).toBeCloseTo(-thetaB, 15);
+    expect(braggMatchedIncidenceRad(-1, thetaB)).toBeCloseTo(thetaB, 15);
+    // Angle form vs the pre-existing dot form (lab-fixed traversal sign).
+    expect(Math.sin(braggMatchedIncidenceRad(1, thetaB)))
+      .toBeCloseTo(expectedInputDotD2(1, 1, thetaB), 15);
+    expect(Math.sin(braggMatchedIncidenceRad(-1, thetaB)))
+      .toBeCloseTo(expectedInputDotD2(-1, 1, thetaB), 15);
+  });
+
+  it("each order peaks at its own matched tilt", () => {
+    expect(detune(1, -thetaB)).toBeCloseTo(1, 12);
+    expect(detune(-1, thetaB)).toBeCloseTo(1, 12);
+    expect(detune(1, -thetaB)).toBeGreaterThan(detune(1, 0));
+    expect(detune(1, -thetaB)).toBeGreaterThan(detune(1, thetaB));
+  });
+
+  it("on-axis is off-Bragg by θ_B, symmetric between ±1", () => {
+    expect(detune(1, 0)).toBeLessThan(1);
+    expect(detune(1, 0)).toBeCloseTo(detune(-1, 0), 15);
+    expect(detune(1, 0)).toBeCloseTo(
+      braggDetuningSinc2(thetaB, LAMBDA, F, V, N, L), 15,
+    );
+  });
+
+  it("order 0 carries no phase-matching factor", () => {
+    expect(detune(0, 0)).toBe(1);
+    expect(detune(0, 0.05)).toBe(1);
+  });
+
+  it("acousticIncidenceRad is signed and ignores the axial component", () => {
+    const optical = { x: 0, y: 0, z: 1 };
+    const acoustic = { x: 1, y: 0, z: 0 };
+    const at = (a: number) =>
+      acousticIncidenceRad({ x: Math.sin(a), y: 0, z: Math.cos(a) }, acoustic, optical);
+    expect(at(0.01)).toBeCloseTo(0.01, 12);
+    expect(at(-0.01)).toBeCloseTo(-0.01, 12);
+    // A tilted (nominally perpendicular) acoustic axis is projected first.
+    expect(acousticIncidenceRad(
+      { x: Math.sin(0.01), y: 0, z: Math.cos(0.01) }, { x: 1, y: 0, z: 0.3 }, optical,
+    )).toBeCloseTo(0.01, 12);
+    // Degenerate: acoustic ∥ optical ⇒ no Bragg plane.
+    expect(acousticIncidenceRad({ x: 0, y: 0, z: 1 }, optical, optical)).toBeNull();
   });
 });

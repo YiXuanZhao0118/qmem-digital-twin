@@ -168,6 +168,80 @@ def test_orders_fan_along_acoustic_not_axisY():
         assert abs(o.direction.y) < 1e-9   # NOT axisY (+y)
 
 
+# ---------------------------------------------------------------------------
+# Order-aware Bragg matching: order m peaks at signed incidence -m*theta_B
+# about the acoustic axis, so +1 and -1 are matched at opposite tilts and the
+# cell has to be rotated to the correct side ("optimise the angle for +1/-1").
+# ---------------------------------------------------------------------------
+
+THETA_B_780_80 = math.asin(780e-9 * 80e6 / (2 * 4200.0))   # 7.43 mrad
+
+
+def _tilted_mt80_ray(theta_rad: float, reverse: bool = False):
+    """Ray through the MT80 frame (optical +z, acoustic +x) at signed
+    incidence `theta_rad` about the acoustic axis."""
+    zsign = -1.0 if reverse else 1.0
+    return _ray(
+        direction=Vec3(math.sin(theta_rad), 0, zsign * math.cos(theta_rad)),
+        origin=Vec3(0, 0, -zsign),
+    )
+
+
+def _mt80_ctx(**extra):
+    return _ctx(
+        anchor=MT80_ANCHOR,
+        extra={"rfPropagationDirectionBodyLocal": [1, 0, 0], **extra},
+    )
+
+
+def _order_power(order: int, theta_rad: float, reverse: bool = False) -> float:
+    op = get_anchor_op("aom")
+    outs = op(
+        _tilted_mt80_ray(theta_rad, reverse),
+        _mt80_ctx(diffractionOrder=order),
+    )
+    return _by_order(outs)[order].power_mw
+
+
+def test_selected_order_peaks_at_its_matched_tilt():
+    # +1 wants incidence -theta_B, -1 wants +theta_B; on-axis is off-Bragg for
+    # both (this is what makes "rotate the AOM for max diffraction" real).
+    assert _order_power(1, -THETA_B_780_80) > _order_power(1, 0.0)
+    assert _order_power(1, -THETA_B_780_80) > _order_power(1, +THETA_B_780_80)
+    assert _order_power(-1, +THETA_B_780_80) > _order_power(-1, 0.0)
+    assert _order_power(-1, +THETA_B_780_80) > _order_power(-1, -THETA_B_780_80)
+
+
+def test_matched_tilts_are_mirror_images():
+    assert _order_power(1, -THETA_B_780_80) == pytest.approx(
+        _order_power(-1, +THETA_B_780_80), rel=1e-9,
+    )
+
+
+def test_wrong_side_tilt_moves_power_to_zero_order():
+    op = get_anchor_op("aom")
+    right = _by_order(op(_tilted_mt80_ray(-THETA_B_780_80), _mt80_ctx()))
+    wrong = _by_order(op(_tilted_mt80_ray(+THETA_B_780_80), _mt80_ctx()))
+    assert wrong[1].power_mw < right[1].power_mw
+    assert wrong[0].power_mw > right[0].power_mw
+
+
+def test_matched_tilt_is_traversal_independent():
+    # The Bragg condition constrains only k_hat . a_hat, so entering from the
+    # far face at the same signed incidence is matched just the same.
+    assert _order_power(1, -THETA_B_780_80, reverse=True) == pytest.approx(
+        _order_power(1, -THETA_B_780_80), rel=1e-9,
+    )
+
+
+def test_no_acoustic_axis_falls_back_to_legacy_on_axis_match():
+    # Assets with neither an acoustic_axis anchor nor the legacy param keep the
+    # old unsigned "matched on the optical axis" behaviour.
+    op = get_anchor_op("aom")
+    by = _by_order(op(_ray(), _ctx()))
+    assert by[1].power_mw == pytest.approx(0.792, abs=0.01)
+
+
 def test_acoustic_axis_anchor_overrides_param():
     op = get_anchor_op("aom")
     acoustic = V3Anchor(

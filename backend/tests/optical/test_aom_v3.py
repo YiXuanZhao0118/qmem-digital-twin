@@ -67,6 +67,35 @@ def make_reverse_ray() -> BeamRay:
     )
 
 
+# Bragg-matched inputs. Order m peaks at signed incidence -m*theta_B about the
+# acoustic axis (+x in this fixture), so a matched ray is tilted, NOT on-axis.
+THETA_B = bragg_angle_rad(780, 80, 4200)
+
+
+def matched_ray(order: int) -> BeamRay:
+    """Forward ray (toward +z) at the Bragg-matched tilt for `order`."""
+    a = -order * THETA_B
+    return make_beam_ray(
+        origin=Vec3(0, 0, -L / 2),
+        direction=Vec3(math.sin(a), 0, math.cos(a)),
+        wavelength_nm=780,
+        power_mw=1.0,
+    )
+
+
+def matched_reverse_ray(order: int) -> BeamRay:
+    """Reverse ray (toward -z) at the Bragg-matched tilt for `order`. The Bragg
+    condition constrains only k_hat . a_hat, so the matched tilt is the same
+    -m*theta_B regardless of which face the beam enters."""
+    a = -order * THETA_B
+    return make_beam_ray(
+        origin=Vec3(0, 0, L / 2),
+        direction=Vec3(math.sin(a), 0, -math.cos(a)),
+        wavelength_nm=780,
+        power_mw=1.0,
+    )
+
+
 def ctx_for_faces(
     face_in: Face,
     face_out: Face,
@@ -157,19 +186,19 @@ def test_zero_order_unchanged_direction():
 
 def test_a1_to_b1_plus1_order_follows_rf_side():
     op = get_op("aom", "diffract_aom")
-    [out] = op(make_forward_ray(), ctx_for(1))
-    theta_b = bragg_angle_rad(780, 80, 4200, 2.26)
-    assert out.direction.x == pytest.approx(math.sin(2 * theta_b), abs=1e-9)
-    assert out.direction.z == pytest.approx(math.cos(2 * theta_b), abs=1e-9)
+    # Matched input at -theta_B -> the +1 order leaves at +theta_B (the
+    # symmetric Bragg geometry), i.e. 2*theta_B away from the 0 order.
+    [out] = op(matched_ray(1), ctx_for(1))
+    assert out.direction.x == pytest.approx(math.sin(THETA_B), abs=1e-9)
+    assert out.direction.z == pytest.approx(math.cos(THETA_B), abs=1e-9)
     assert out.power_mw == pytest.approx(0.85, abs=1e-12)
 
 
 def test_a2_to_b2_minus1_order_exits_opposite_optical_side():
     op = get_op("aom", "diffract_aom")
-    [out] = op(make_reverse_ray(), ctx_for(-1))
-    theta_b = bragg_angle_rad(780, 80, 4200, 2.26)
-    assert out.direction.x == pytest.approx(-math.sin(2 * theta_b), abs=1e-9)
-    assert out.direction.z == pytest.approx(-math.cos(2 * theta_b), abs=1e-9)
+    [out] = op(matched_reverse_ray(-1), ctx_for(-1))
+    assert out.direction.x == pytest.approx(-math.sin(THETA_B), abs=1e-9)
+    assert out.direction.z == pytest.approx(-math.cos(THETA_B), abs=1e-9)
     assert out.power_mw == pytest.approx(0.0085, abs=1e-12)
 
 
@@ -231,21 +260,21 @@ def _ctx_with_dynamic(order, dynamic, **overrides):
 def test_efficiency_scales_with_rf_drive_power():
     op = get_op("aom", "diffract_aom")
     # No RF source -> rated operating point -> peak (baseEfficiency) on +1.
-    [rated] = op(make_forward_ray(), ctx_for(1))
+    [rated] = op(matched_ray(1), ctx_for(1))
     assert rated.power_mw == pytest.approx(0.85, abs=1e-9)
     # A small RF drive power sits well below the rated peak.
-    [low] = op(make_forward_ray(), _ctx_with_dynamic(1, {"rfDrivePowerW": 0.05}))
+    [low] = op(matched_ray(1), _ctx_with_dynamic(1, {"rfDrivePowerW": 0.05}))
     assert 0.0 < low.power_mw < 0.85
     # RF explicitly OFF (power 0) -> no diffraction.
-    [off] = op(make_forward_ray(), _ctx_with_dynamic(1, {"rfDrivePowerW": 0.0}))
+    [off] = op(matched_ray(1), _ctx_with_dynamic(1, {"rfDrivePowerW": 0.0}))
     assert off.power_mw == pytest.approx(0.0, abs=1e-12)
 
 
 def test_efficiency_drops_off_centre_frequency():
     op = get_op("aom", "diffract_aom")
-    [centre] = op(make_forward_ray(), ctx_for(1))  # 80 MHz (design centre)
+    [centre] = op(matched_ray(1), ctx_for(1))  # 80 MHz (design centre)
     # Drive +15 MHz off centre -> RF bandwidth factor G ~= 0.75 -> lower eta.
-    [off] = op(make_forward_ray(), _ctx_with_dynamic(1, {"aomFreqMhz": 95}))
+    [off] = op(matched_ray(1), _ctx_with_dynamic(1, {"aomFreqMhz": 95}))
     assert off.power_mw < centre.power_mw
     assert off.power_mw == pytest.approx(0.85 * 0.75, abs=0.02)
 
@@ -338,20 +367,35 @@ def test_acceptance_matches_physics():
     assert bragg_acceptance_mrad(80, 4200, 2.26, L) == pytest.approx(74.16, abs=0.1)
 
 
-def test_detuning_unity_on_axis():
-    f = bragg_detuning_factor(make_forward_ray(), ctx_for(1), 80, 4200, 2.26, L)
-    assert f == pytest.approx(1.0, abs=1e-12)
+def detune_for(order: int, tilt_rad: float) -> float:
+    """Phase-matching factor for `order` with the beam tilted `tilt_rad` from
+    the optical axis toward the acoustic axis (+x here)."""
+    return bragg_detuning_factor(
+        tilted_ray(tilt_rad), ctx_for(order), order, THETA_B, 80, 4200, 2.26, L,
+    )
+
+
+def test_detuning_unity_at_matched_tilt():
+    # Order m peaks at incidence -m*theta_B, NOT on the optical axis.
+    assert detune_for(1, -THETA_B) == pytest.approx(1.0, abs=1e-12)
+    assert detune_for(-1, +THETA_B) == pytest.approx(1.0, abs=1e-12)
+
+
+def test_detuning_below_unity_on_axis():
+    # On-axis is off-Bragg by theta_B for both first orders (symmetric).
+    on_axis = detune_for(1, 0.0)
+    assert on_axis < 1.0
+    assert on_axis == pytest.approx(detune_for(-1, 0.0), abs=1e-12)
 
 
 def test_detuning_zero_at_first_null():
     null_rad = bragg_acceptance_mrad(80, 4200, 2.26, L) * 1e-3
-    f = bragg_detuning_factor(tilted_ray(null_rad), ctx_for(1), 80, 4200, 2.26, L)
-    assert f == pytest.approx(0.0, abs=1e-9)
+    assert detune_for(1, -THETA_B + null_rad) == pytest.approx(0.0, abs=1e-9)
 
 
 def test_detuning_half_null_is_sinc_half():
     null_rad = bragg_acceptance_mrad(80, 4200, 2.26, L) * 1e-3
-    f = bragg_detuning_factor(tilted_ray(null_rad / 2), ctx_for(1), 80, 4200, 2.26, L)
+    f = detune_for(1, -THETA_B + null_rad / 2)
     # ~sinc^2(pi/2); the cos(theta_B) factor shifts it by ~5e-6 from the ideal.
     assert f == pytest.approx((2 / math.pi) ** 2, abs=1e-4)
 
@@ -359,6 +403,6 @@ def test_detuning_half_null_is_sinc_half():
 def test_detuning_reduces_first_order_power():
     op = get_op("aom", "diffract_aom")
     null_rad = bragg_acceptance_mrad(80, 4200, 2.26, L) * 1e-3
-    [out] = op(tilted_ray(null_rad / 2), ctx_for(1))
+    [out] = op(tilted_ray(-THETA_B + null_rad / 2), ctx_for(1))
     # base 0.85 first-order * sinc^2(pi/2) ~ 0.85 * 0.405.
     assert out.power_mw == pytest.approx(0.85 * (2 / math.pi) ** 2, abs=1e-4)

@@ -13,7 +13,7 @@
 - **Kind Registry**（alembic 0086）：DB `kinds` 表存 metadata（name、domain、`op_set_name`、default_params、needs_aperture、wavelength_range_nm）；**code 端 REGISTRY 存 op callable**，由 `op_set_name` 連結。新 kind 可在 UI 用既有 op 建立。
 - **Live：anchor tracer**（`anchor_tracer.py`，Phase 9.2）：單一迴圈，**沒有 `switch(kind)`**——靠每 kind 的 **anchor op** 查表分派（`anchor_ops/<kind>.py`，以 `register_anchor_op(kind, op)` 註冊）。op ≈ `(rayIn, in_anchor, out_anchor, params, dynamic?) => BeamRay[]`，回傳陣列以支援分支（AOM 階數、PBS 穿透+反射、ghost）。`BeamRay` 帶 chief ray + 獨立 qx/qy（像散）+ Jones s/p。命中用 ray-plane（過 `anchor.position`、垂直 `axisX`）+ aperture 裁切（見 [anchors.md](anchors.md)）。
 - **Legacy（已退役）**：舊的 **face-based** dispatch（`ray_tracer.py` 的 `PhysicsOp(rayIn, faceIn, faceOut)`）在 **0106 drop faces/transitions** 後被 anchor-based 取代。
-- **AOM Bragg**：`theta_B = asin(λ·f_rf / (2·v_acoustic))`、`theta_deflect(order) = order·2·theta_B`（外角慣例）。
+- **AOM Bragg**：`theta_B = asin(λ·f_rf / (2·v_acoustic))`、`theta_deflect(order) = order·2·theta_B`（外角慣例）。**階數選擇是幾何的**（2026-08-14）：階 m 的匹配入射角是 `theta_in = −m·theta_B`（帶號、對聲軸量測），每階各自乘上自己的 `sinc²` 失配因子——所以 +1／−1 匹配位置相差 `2·theta_B`，AOM 必須被轉到對應那一側。Object 面板 → Align 的 Bragg 區塊（`utils/aomAlign.ts`）做兩階段擺位＋mrad 微調。細節見 [aom-model.md](../aom-model.md)。
 
 ## 求解器現況（重要）
 

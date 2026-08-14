@@ -434,6 +434,103 @@ export function expectedInputDotD2(
   return -selectedOrder * traversalSign * Math.sin(thetaBRad);
 }
 
+/** Signed incidence angle of a direction relative to the plane
+ *  perpendicular to the acoustic axis (D2): `asin(k̂ · D̂2_perp)`.
+ *
+ *  `D2` is projected perpendicular to the optical axis and normalised —
+ *  the authored acoustic axis is only nominally perpendicular, and its
+ *  component along the optical axis carries no Bragg geometry.
+ *
+ *  Returns `null` for degenerate inputs (zero vectors, or D2 parallel to
+ *  the optical axis — no Bragg plane defined).
+ *
+ *  Mirrors backend `aom_physics.acoustic_incidence_rad`. */
+export function acousticIncidenceRad(
+  direction: Vec3Like,
+  acousticAxis: Vec3Like,
+  opticalAxis: Vec3Like,
+): number | null {
+  const unit = (v: Vec3Like): Vec3Like | null => {
+    const m = Math.hypot(v.x, v.y, v.z);
+    return m < 1e-12 ? null : { x: v.x / m, y: v.y / m, z: v.z / m };
+  };
+  const ax = unit(opticalAxis);
+  const a = unit(acousticAxis);
+  if (!ax || !a) return null;
+  const par = a.x * ax.x + a.y * ax.y + a.z * ax.z;
+  const perp = unit({ x: a.x - ax.x * par, y: a.y - ax.y * par, z: a.z - ax.z * par });
+  const d = unit(direction);
+  if (!perp || !d) return null;
+  const s = d.x * perp.x + d.y * perp.y + d.z * perp.z;
+  return Math.asin(Math.max(-1, Math.min(1, s)));
+}
+
+/** Signed incidence angle at which order `m` is Bragg-matched:
+ *  `θ_in = −m·θ_B` — the angle form of `expectedInputDotD2` (whose dot
+ *  form is `−m·traversalSign·sin θ_B`) with the lab-fixed traversal sign.
+ *
+ *  Mirrors backend `aom_physics.bragg_matched_incidence_rad`. */
+export function braggMatchedIncidenceRad(order: number, thetaBRad: number): number {
+  return -order * thetaBRad;
+}
+
+/** sinc² phase-matching factor for an angular MISMATCH (even in its sign):
+ *
+ *    K   = 2π·f / v                  (acoustic grating vector, 1/m)
+ *    θ_B = asin(λ·f / (2·n·v))       (internal Bragg angle)
+ *    dk  = K·cos(θ_B)·(Δθ_ext / n)   (Snell to internal)
+ *    ξ   = dk·L / 2   →   (sin ξ / ξ)²
+ *
+ *  Mirrors backend `aom_physics.bragg_detuning_sinc2`. Pass the mismatch
+ *  from the order's matched incidence, not a raw incidence angle — use
+ *  `braggOrderDetune`. */
+export function braggDetuningSinc2(
+  dthetaExtRad: number,
+  wavelengthNm: number,
+  freqMhz: number,
+  vAcoustic: number,
+  n: number,
+  lMm: number,
+): number {
+  if (dthetaExtRad === 0) return 1;
+  if (vAcoustic <= 0 || freqMhz <= 0 || lMm <= 0 || n <= 0) return 1;
+  const lambdaM = wavelengthNm * 1e-9;
+  const fHz = freqMhz * 1e6;
+  const lM = lMm * 1e-3;
+  const kAcoustic = (2 * Math.PI * fHz) / vAcoustic;
+  const thetaBInt = Math.asin(
+    Math.max(-1, Math.min(1, (lambdaM * fHz) / (2 * n * vAcoustic))),
+  );
+  const dk = kAcoustic * Math.cos(thetaBInt) * (dthetaExtRad / n);
+  const xi = (dk * lM) / 2;
+  if (xi === 0) return 1;
+  return clamp01((Math.sin(xi) / xi) ** 2);
+}
+
+/** Phase-matching factor for ONE diffraction order at the actual signed
+ *  incidence `thetaInRad` (from `acousticIncidenceRad`). Order m peaks at
+ *  `θ_in = −m·θ_B`, so ±1 are matched at tilts 2·θ_B apart and rotating
+ *  the cell trades one order for the other — the real "walk the AOM angle
+ *  for maximum diffraction" behaviour. Order 0 is undiffracted (factor 1).
+ *
+ *  Mirrors backend `aom_physics.bragg_order_detune`. */
+export function braggOrderDetune(
+  order: number,
+  thetaInRad: number,
+  thetaBRad: number,
+  wavelengthNm: number,
+  freqMhz: number,
+  vAcoustic: number,
+  n: number,
+  lMm: number,
+): number {
+  if (order === 0) return 1;
+  return braggDetuningSinc2(
+    thetaInRad - braggMatchedIncidenceRad(order, thetaBRad),
+    wavelengthNm, freqMhz, vAcoustic, n, lMm,
+  );
+}
+
 /** Diffracted output direction for order m: rotate the input direction
  *  by `+m·2·θ_B` about the D3 axis (right-hand rule). Pure Rodrigues
  *  rotation; no THREE.js dependency so this can mirror to backend later.

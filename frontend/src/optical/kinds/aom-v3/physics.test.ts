@@ -68,6 +68,33 @@ function reverseRay(): BeamRay {
   });
 }
 
+// Bragg-matched inputs. Order m peaks at signed incidence −m·θ_B about the
+// acoustic axis (+x in this fixture), so a matched ray is tilted, NOT on-axis.
+const THETA_B = braggAngleRad(780, 80, 4200);
+
+function matchedRay(order: number): BeamRay {
+  const a = -order * THETA_B;
+  return makeBeamRay({
+    origin: { x: 0, y: 0, z: -L / 2 },
+    direction: { x: Math.sin(a), y: 0, z: Math.cos(a) },
+    wavelengthNm: 780,
+    powerMw: 1.0,
+  });
+}
+
+/** Reverse-traversing ray at the matched tilt for `order` — the Bragg
+ *  condition constrains only k̂·â, so the matched tilt doesn't depend on
+ *  which face the beam enters. */
+function matchedReverseRay(order: number): BeamRay {
+  const a = -order * THETA_B;
+  return makeBeamRay({
+    origin: { x: 0, y: 0, z: L / 2 },
+    direction: { x: Math.sin(a), y: 0, z: -Math.cos(a) },
+    wavelengthNm: 780,
+    powerMw: 1.0,
+  });
+}
+
 function ctxForFaces(
   faceIn: Face,
   faceOut: Face,
@@ -159,21 +186,20 @@ describe("AOM / diffract_aom op", () => {
 
   it("A1 -> B1: +1 order follows RF +x side", () => {
     const op = getOp("aom", "diffract_aom");
-    const [out] = op(forwardRay(), ctxFor(1));
-    const thetaB = braggAngleRad(780, 80, 4200, 2.26);
-    const expectedDeflect = 2 * thetaB;
-    expect(out.direction.x).toBeCloseTo(Math.sin(expectedDeflect), 9);
-    expect(out.direction.z).toBeCloseTo(Math.cos(expectedDeflect), 9);
+    // Matched input at −θ_B ⇒ the +1 order leaves at +θ_B (symmetric Bragg
+    // geometry), i.e. 2·θ_B away from the 0 order.
+    const [out] = op(matchedRay(1), ctxFor(1));
+    expect(out.direction.x).toBeCloseTo(Math.sin(THETA_B), 9);
+    expect(out.direction.z).toBeCloseTo(Math.cos(THETA_B), 9);
     expect(out.direction.y).toBeCloseTo(0, 12);
     expect(out.powerMw).toBeCloseTo(0.85, 12);
   });
 
   it("A2 -> B2: -1 order exits from the opposite optical side", () => {
     const op = getOp("aom", "diffract_aom");
-    const [out] = op(reverseRay(), ctxFor(-1));
-    const thetaB = braggAngleRad(780, 80, 4200, 2.26);
-    expect(out.direction.x).toBeCloseTo(-Math.sin(2 * thetaB), 9);
-    expect(out.direction.z).toBeCloseTo(-Math.cos(2 * thetaB), 9);
+    const [out] = op(matchedReverseRay(-1), ctxFor(-1));
+    expect(out.direction.x).toBeCloseTo(-Math.sin(THETA_B), 9);
+    expect(out.direction.z).toBeCloseTo(-Math.cos(THETA_B), 9);
     expect(out.powerMw).toBeCloseTo(0.0085, 12);
   });
 
@@ -198,8 +224,8 @@ describe("AOM / diffract_aom op", () => {
   it("sum of order powers ~1 (eta + (1-eta) + small)", () => {
     const op = getOp("aom", "diffract_aom");
     const p0 = op(forwardRay(), ctxFor(0))[0]!.powerMw;
-    const pp1 = op(forwardRay(), ctxFor(1))[0]!.powerMw;
-    const pm1 = op(reverseRay(), ctxFor(-1))[0]!.powerMw;
+    const pp1 = op(matchedRay(1), ctxFor(1))[0]!.powerMw;
+    const pm1 = op(matchedReverseRay(-1), ctxFor(-1))[0]!.powerMw;
     expect(p0 + pp1 + pm1).toBeCloseTo(1.0085, 12);  // small overshoot from -1 order
   });
 
@@ -225,14 +251,14 @@ describe("AOM / diffract_aom op", () => {
   it("efficiency scales with RF drive power; 0 power → no diffraction", () => {
     const op = getOp("aom", "diffract_aom");
     // No RF source → rated operating point → peak (baseEfficiency) on +1.
-    const [rated] = op(forwardRay(), ctxFor(1));
+    const [rated] = op(matchedRay(1), ctxFor(1));
     expect(rated.powerMw).toBeCloseTo(0.85, 9);
     // A small RF drive power sits below the rated peak.
-    const [low] = op(forwardRay(), { ...ctxFor(1), dynamic: { rfDrivePowerW: 0.05 } });
+    const [low] = op(matchedRay(1), { ...ctxFor(1), dynamic: { rfDrivePowerW: 0.05 } });
     expect(low.powerMw).toBeGreaterThan(0);
     expect(low.powerMw).toBeLessThan(0.85);
     // RF explicitly OFF (power 0) → no diffraction.
-    const [off] = op(forwardRay(), { ...ctxFor(1), dynamic: { rfDrivePowerW: 0 } });
+    const [off] = op(matchedRay(1), { ...ctxFor(1), dynamic: { rfDrivePowerW: 0 } });
     expect(off.powerMw).toBeCloseTo(0, 12);
   });
 
@@ -317,31 +343,39 @@ function tiltedRay(angleRad: number): BeamRay {
 }
 
 describe("AOM / Bragg detuning", () => {
+  const detuneFor = (order: number, tiltRad: number) =>
+    braggDetuningFactor(
+      tiltedRay(tiltRad), ctxFor(order), order, THETA_B, 80, 4200, 2.26, L,
+    );
+
   it("acceptance = n·v/(f·L), in mrad", () => {
     expect(braggAcceptanceMrad(80, 4200, 2.26, L)).toBeCloseTo(74.16, 1);
   });
 
-  it("on-axis input: detuning factor 1", () => {
-    const f = braggDetuningFactor(forwardRay(), ctxFor(1), 80, 4200, 2.26, L);
-    expect(f).toBeCloseTo(1, 12);
+  it("matched tilt (−m·θ_B): detuning factor 1", () => {
+    expect(detuneFor(1, -THETA_B)).toBeCloseTo(1, 12);
+    expect(detuneFor(-1, THETA_B)).toBeCloseTo(1, 12);
   });
 
-  it("at the first null (Δθ = acceptance): factor → 0", () => {
+  it("on-axis input is off-Bragg by θ_B for both first orders", () => {
+    expect(detuneFor(1, 0)).toBeLessThan(1);
+    expect(detuneFor(1, 0)).toBeCloseTo(detuneFor(-1, 0), 12);
+  });
+
+  it("at the first null past match (Δθ = acceptance): factor → 0", () => {
     const nullRad = braggAcceptanceMrad(80, 4200, 2.26, L) * 1e-3;
-    const f = braggDetuningFactor(tiltedRay(nullRad), ctxFor(1), 80, 4200, 2.26, L);
-    expect(f).toBeCloseTo(0, 6);
+    expect(detuneFor(1, -THETA_B + nullRad)).toBeCloseTo(0, 6);
   });
 
   it("at half the null: factor ≈ sinc²(π/2)", () => {
     const nullRad = braggAcceptanceMrad(80, 4200, 2.26, L) * 1e-3;
-    const f = braggDetuningFactor(tiltedRay(nullRad / 2), ctxFor(1), 80, 4200, 2.26, L);
-    expect(f).toBeCloseTo((2 / Math.PI) ** 2, 4);
+    expect(detuneFor(1, -THETA_B + nullRad / 2)).toBeCloseTo((2 / Math.PI) ** 2, 4);
   });
 
-  it("off-axis input reduces first-order power", () => {
+  it("off-Bragg input reduces first-order power", () => {
     const op = getOp("aom", "diffract_aom");
     const nullRad = braggAcceptanceMrad(80, 4200, 2.26, L) * 1e-3;
-    const [out] = op(tiltedRay(nullRad / 2), ctxFor(1));
+    const [out] = op(tiltedRay(-THETA_B + nullRad / 2), ctxFor(1));
     expect(out.powerMw).toBeCloseTo(0.85 * (2 / Math.PI) ** 2, 4);
   });
 });

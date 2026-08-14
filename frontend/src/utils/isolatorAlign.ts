@@ -157,6 +157,12 @@ export function computeIsolatorAlignPose(args: {
  *    - `rollDeg`: clockwise rotation (looking ALONG the chosen direction)
  *      about the beam axis — matches the waveplate convention (+Δ about the
  *      +axis, right-hand). Sets the element's roll orientation on the beam.
+ *    - `extraTilt`: an OFF-beam tilt applied last, about a body/CAD-frame
+ *      axis (carried through the base rotation). Used by the AOM Bragg
+ *      align, whose stage 2 tilts the cell by ±θ_B about D3 — every other
+ *      kind leaves this undefined and stays exactly parallel to the beam.
+ *      `pointCadMm` is the tilt pivot (it is placed on the beam AFTER the
+ *      tilt), so for the AOM it should be the interaction centre.
  *
  *  All maths in raw Z-up (labDirToThreeLocal identity), matching TA / AOM
  *  align, so the decomposed Euler is a plain Z-up pose. */
@@ -168,8 +174,11 @@ export function computePointDirAlignPose(args: {
   beamRef: Vec3;
   reverse?: boolean;
   rollDeg?: number;
+  extraTilt?: { axisCadMm: Vec3; angleRad: number };
 }): AlignPose | null {
-  const { pointCadMm, dirCadMm, sceneObject, beamDir, beamRef, reverse, rollDeg } = args;
+  const {
+    pointCadMm, dirCadMm, sceneObject, beamDir, beamRef, reverse, rollDeg, extraTilt,
+  } = args;
 
   const dir = new THREE.Vector3(dirCadMm.x, dirCadMm.y, dirCadMm.z);
   if (dir.length() < 1e-6) return null;
@@ -190,6 +199,16 @@ export function computePointDirAlignPose(args: {
   if (Math.abs(roll) > 1e-9) {
     const axis = labDirToThreeLocal({ x: targetDir.x, y: targetDir.y, z: targetDir.z }).normalize();
     quat = new THREE.Quaternion().setFromAxisAngle(axis, roll).multiply(base);
+  }
+  // Off-beam tilt, last: the CAD-frame axis is carried through the rotation
+  // so far, then the body turns about it (the point stays the pivot).
+  if (extraTilt && Math.abs(extraTilt.angleRad) > 1e-12) {
+    const tiltAxis = labDirToThreeLocal(extraTilt.axisCadMm).normalize().applyQuaternion(quat);
+    if (tiltAxis.lengthSq() > 1e-18) {
+      quat = new THREE.Quaternion()
+        .setFromAxisAngle(tiltAxis, extraTilt.angleRad)
+        .multiply(quat);
+    }
   }
 
   // Translate so the rotated point lands on the beam: foot of the current
