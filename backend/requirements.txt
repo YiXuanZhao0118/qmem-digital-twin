@@ -1,4 +1,7 @@
 alembic>=1.13.3
+# Imported at module scope by app/services/agent_orchestrator.py, so it is a
+# hard import-time dependency of the app package, not an optional extra.
+anthropic>=0.102.0
 asyncpg>=0.29.0
 asyncssh>=2.18.0
 fastapi>=0.115.0
