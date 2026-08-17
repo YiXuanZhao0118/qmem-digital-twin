@@ -13,7 +13,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas import CamelModel
+from app.schemas import AssetLodOut, CamelModel
 
 
 # ---------------------------------------------------------------------------
@@ -139,22 +139,6 @@ class Asset3DV3In(CamelModel):
     mechanical_anchors: list[MechanicalAnchorV3] = Field(default_factory=list)
 
     notes: Optional[dict[str, Any]] = None
-
-
-class AssetLodOut(CamelModel):
-    """One LOD tier of an asset (alembic 0122). Read-only projection — tiers
-    are written through ``POST /v3/assets3d/{key}/lods``, never through the
-    asset PUT, so that generating them does not collide with ``locked``.
-
-    ``error_mm`` is the tier's measured max deviation from LOD0 and is what
-    the renderer's screen-space-error switch consumes (objectives.md R-5);
-    level 0 is the asset's own mesh, with error 0 by definition."""
-    level: int
-    file_path: str
-    tri_count: int
-    byte_size: int
-    error_mm: float
-    hints_digest: Optional[str] = None
 
 
 class Asset3DV3Out(CamelModel):

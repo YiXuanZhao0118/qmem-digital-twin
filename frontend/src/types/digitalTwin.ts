@@ -179,7 +179,24 @@ export type Asset3D = {
   /** Human-confirmed "frozen" flag (alembic 0112). True = read-only in the
    *  PHY Editor; the API rejects edits until unlocked. */
   locked?: boolean;
+  /** LOD tier manifest (alembic 0122), ordered by level; absent or empty when
+   *  the asset's tiers have not been generated, which the renderer treats as
+   *  "always LOD0". See docs/introduce/rendering.md §LOD. */
+  lods?: AssetLod[];
   createdAt?: string;
+};
+
+/** One LOD tier of an asset. Level 0 is the asset's own mesh (`filePath`
+ *  mirrors the asset's, `errorMm` is 0 by definition); 1 and 2 are decimated.
+ *  `errorMm` is the tier's measured max deviation from LOD0 in mm and is the
+ *  screen-space-error switch's only input — see docs/objectives.md §R-5. */
+export type AssetLod = {
+  level: number;
+  filePath: string;
+  triCount: number;
+  byteSize: number;
+  errorMm: number;
+  hintsDigest?: string | null;
 };
 
 export type PhysicsCapability =

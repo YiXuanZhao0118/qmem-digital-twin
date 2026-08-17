@@ -4,7 +4,13 @@ import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 
 import { resolveAssetUrl } from "../../api/client";
-import type { Asset3D, ComponentItem, DeviceState } from "../../types/digitalTwin";
+import type { Asset3D, AssetLod, ComponentItem, DeviceState } from "../../types/digitalTwin";
+import {
+  createLodNode,
+  disposeLodNode,
+  lodStateOf,
+  setLodLevel,
+} from "../lod/lodNode";
 
 // =============================================================================
 // Module load order matters here. There is an unavoidable circular import:
@@ -105,6 +111,57 @@ const gltfLoader = new GLTFLoader();
 const objLoader = new OBJLoader();
 const stlLoader = new STLLoader();
 
+/** Z-fighting treatment for loaded meshes, plus shadow flags.
+ *
+ * User-supplied GLBs (notably the BoosTA pro housing) come out of CAD with
+ * coplanar surfaces — top plate + edge trim sharing a face plane. Two
+ * compounding fixes:
+ *   1. Force `side: FrontSide`. CAD exporters often default to DoubleSide,
+ *      which renders BOTH triangle faces; for two coplanar DoubleSide meshes
+ *      the GPU has 4 faces (two front, two back) at the same depth and
+ *      polygon offset cannot fully disambiguate. Solid bodies only need
+ *      front-face rendering anyway.
+ *   2. Per-mesh polygon offset stratification cycling [0, -3.5] on mesh
+ *      index. Even after #1 collapses to 2 front faces, identical coplanar
+ *      surfaces still need a deterministic per-mesh bias so the GPU picks the
+ *      same winner every frame.
+ * Materials are cloned so the offset cannot bleed across meshes sharing a
+ * material instance from the GLB.
+ *
+ * Extracted from `loadAssetObject` so each LOD tier gets the same treatment
+ * as it is built — a tier swapped in later must not render untreated.
+ */
+function applyGlbSurfaceTreatment(object: THREE.Object3D): void {
+  let meshSeenIndex = 0;
+  object.traverse((child) => {
+    child.castShadow = true;
+    child.receiveShadow = true;
+    if (child instanceof THREE.Mesh && child.material) {
+      const offsetMagnitude = (meshSeenIndex % 8) * 0.5;
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      const cloned = materials.map((m) => {
+        const c = m.clone();
+        c.side = THREE.FrontSide;
+        c.polygonOffset = true;
+        c.polygonOffsetFactor = -offsetMagnitude;
+        c.polygonOffsetUnits = -offsetMagnitude;
+        return c;
+      });
+      child.material = Array.isArray(child.material) ? cloned : cloned[0];
+      meshSeenIndex += 1;
+    }
+  });
+}
+
+/** The asset's LOD manifest, level-ordered; empty when it has none.
+ *  An asset with only a level-0 row has nothing to switch to and is treated
+ *  as un-tiered. */
+function lodTiersFor(asset: Asset3D): AssetLod[] {
+  const tiers = asset.lods;
+  if (!Array.isArray(tiers) || tiers.length === 0) return [];
+  return [...tiers].sort((a, b) => a.level - b.level);
+}
+
 export async function loadAssetObject(
   component: ComponentItem,
   asset: Asset3D | undefined,
@@ -140,6 +197,14 @@ export async function loadAssetObject(
      *  collapses multi-part assemblies (the IO-3-850-HP front/back
      *  housing halves overlapped at the origin). */
     skipAutoCenter?: boolean;
+    /** Opt IN to distance-switched LOD (objectives.md §R-5). Default off, and
+     *  deliberately opt-in rather than opt-out: the safe answer for any
+     *  caller is full detail, and the authoring surfaces (PHY Editor
+     *  previews, BUILD) must never see a decimated mesh — face-picking
+     *  authors anchors off mesh triangles and is already at the ~5 mrad
+     *  triangulation limit (docs/float64-audit.md §2.2). Only the live scene
+     *  renderer passes true, so a new caller cannot silently inherit it. */
+    enableLod?: boolean;
   } | null,
 ): Promise<THREE.Object3D> {
   // NOTE: optical_table has no short-circuit here. It used to return the
@@ -232,6 +297,8 @@ export async function loadAssetObject(
     return createUnsupportedAssetPlaceholder(component, extension ?? "");
   }
   let object: THREE.Object3D;
+  // Set by the GLB branch, which treats each LOD tier as it builds it.
+  let surfaceTreated = false;
 
   if (extension === "obj") {
     object = (await objLoader.loadAsync(assetUrl)).clone(true);
@@ -311,45 +378,41 @@ export async function loadAssetObject(
       object = new THREE.Mesh(geometry, material);
     }
   } else {
-    object = (await gltfLoader.loadAsync(assetUrl)).scene.clone(true);
+    // LOD (objectives.md §R-5): when the asset has decimated tiers this
+    // branch returns an LOD container instead of the mesh directly, and the
+    // viewer's per-frame evaluator swaps its single child by screen-space
+    // error. Only the generic GLB path participates — the STL builders above
+    // post-process geometry in ways a decimated tier would not survive, and
+    // procedural / primitive assets are cheap already.
+    const tiers = renderHints?.enableLod ? lodTiersFor(asset) : [];
+    const buildTier = async (level: number): Promise<THREE.Object3D> => {
+      const tier = tiers.find((t) => t.level === level);
+      // No row for the level => the asset's own file, which IS level 0.
+      const url = tier ? resolveAssetUrl(tier.filePath) : assetUrl;
+      const built = (await gltfLoader.loadAsync(url)).scene.clone(true);
+      applyGlbSurfaceTreatment(built);
+      return built;
+    };
+    if (tiers.some((t) => t.level > 0)) {
+      const node = createLodNode(asset.id, tiers, buildTier);
+      // Coarse-first: the cheapest tier paints immediately (it is ≤ 1 MB, so
+      // this also serves R-7's 3 s interactive target) and the evaluator
+      // promotes it on the next frame if the camera is close.
+      const coarsest = Math.max(...tiers.map((t) => t.level));
+      await setLodLevel(node, coarsest);
+      object = node;
+    } else {
+      object = await buildTier(0);
+    }
+    // buildTier already treated the surface; skip the shared pass below so
+    // materials are not cloned twice.
+    surfaceTreated = true;
   }
 
   object.name = component.name;
   applyAssetScale(object, asset);
 
-  // Z-fighting on user-supplied GLBs (notably the BoosTA pro housing) where
-  // the original CAD has coplanar surfaces — top plate + edge trim sharing
-  // a face plane. Two compounding fixes:
-  //   1. Force `side: FrontSide`. CAD exporters often default to
-  //      DoubleSide which renders BOTH triangle faces; for two coplanar
-  //      DoubleSide meshes the GPU has 4 faces (two front, two back) at
-  //      the same depth — polygon offset can't fully disambiguate.
-  //      Solid bodies only need front-face rendering anyway.
-  //   2. Per-mesh polygon offset stratification cycling [0, -3.5] on
-  //      mesh index. Even after #1 collapses to 2 front faces, identical
-  //      coplanar surfaces still need a deterministic per-mesh bias so
-  //      the GPU consistently picks the same winner every frame.
-  // Materials are cloned to avoid bleeding the offset across meshes that
-  // share a material instance from the GLB.
-  let meshSeenIndex = 0;
-  object.traverse((child) => {
-    child.castShadow = true;
-    child.receiveShadow = true;
-    if (child instanceof THREE.Mesh && child.material) {
-      const offsetMagnitude = (meshSeenIndex % 8) * 0.5;
-      const materials = Array.isArray(child.material) ? child.material : [child.material];
-      const cloned = materials.map((m) => {
-        const c = m.clone();
-        c.side = THREE.FrontSide;
-        c.polygonOffset = true;
-        c.polygonOffsetFactor = -offsetMagnitude;
-        c.polygonOffsetUnits = -offsetMagnitude;
-        return c;
-      });
-      child.material = Array.isArray(child.material) ? cloned : cloned[0];
-      meshSeenIndex += 1;
-    }
-  });
+  if (!surfaceTreated) applyGlbSurfaceTreatment(object);
   // Anchor strategy: anchors are authored directly in the native Asset/CAD
   // frame. Legacy aperture-forward hints may still shift older meshes;
   // otherwise the geometry stays in its CAD frame.
@@ -401,6 +464,10 @@ export async function loadAssetObject(
 
 export function disposeObject(object: THREE.Object3D): void {
   object.traverse((child) => {
+    // An LOD node keeps the tiers it is NOT currently showing detached, so
+    // traversal cannot reach them — they have to be freed explicitly or the
+    // GPU memory for every visited tier leaks on scene rebuild.
+    if (lodStateOf(child)) disposeLodNode(child);
     const mesh = child as THREE.Mesh;
     if (mesh.geometry) mesh.geometry.dispose();
     const material = mesh.material;

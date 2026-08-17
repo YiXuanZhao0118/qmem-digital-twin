@@ -31,6 +31,7 @@ import type { RfCableEndpointLink } from "../types/digitalTwin";
 
 import { useSceneStore, TOUCH_OPS, TOUCH_OP_BY_ID, type FeatureKind, type TouchOp } from "../store/sceneStore";
 import { disposeObject, loadAssetObject } from "../three/loadAsset";
+import { createLodUpdaterState, updateSceneLod } from "../three/lod/lodUpdater";
 import {
   buildSceneObjectFromBindings,
   shouldRenderViaBindings,
@@ -1438,6 +1439,8 @@ export function DigitalTwinViewer({
   // call requestRenderRef.current() to schedule a single frame. Default is a
   // no-op so calls before the init useEffect mounts are safe.
   const requestRenderRef = useRef<() => void>(() => {});
+  // Throttle bookkeeping for the per-frame LOD pass (three/lod/lodUpdater).
+  const lodUpdaterStateRef = useRef(createLodUpdaterState());
   // Phase PB.3 — exposes the inner renderRayTraces() so an external
   // useEffect can request a beam-only refresh when scrubTimeNs or PB
   // bindings change, without rebuilding component meshes.
@@ -3282,6 +3285,31 @@ export function DigitalTwinViewer({
         renderer.render(scene, camera);
         orientationRenderer.render(orientationScene, orientationCamera);
         pendingRender = false;
+        // LOD (objectives.md §R-5). AFTER the render so every matrixWorld is
+        // current — evaluating first would use last frame's transforms, and
+        // on the first pass after a scene rebuild they are still identity.
+        // Self-throttled to 10 Hz and budgeted per pass, so this costs
+        // nothing on an idle scene (which renders zero frames anyway).
+        const selection = useSceneStore.getState();
+        const pinnedObjectIds = new Set(
+          selection.selectedObjectIds.length > 0
+            ? selection.selectedObjectIds
+            : selection.selectedObjectId
+            ? [selection.selectedObjectId]
+            : [],
+        );
+        updateSceneLod(
+          lodUpdaterStateRef.current,
+          componentGroupRef.current,
+          camera,
+          renderer.domElement.height,
+          {
+            pinnedObjectIds,
+            // The viewer paints on demand, so a tier that lands between
+            // frames needs a redraw scheduled or it stays invisible.
+            onSwapApplied: () => requestRenderRef.current?.(),
+          },
+        );
       }
       animationFrameRef.current = requestAnimationFrame(animate);
     };
@@ -4187,7 +4215,11 @@ export function DigitalTwinViewer({
               component.id,
               sceneData,
             )
-              ? await buildSceneObjectFromBindings(component, placement, sceneData)
+              // The live scene is the one surface that opts into LOD; the PHY
+              // Editor previews and BUILD deliberately do not (§R-5).
+              ? await buildSceneObjectFromBindings(component, placement, sceneData, {
+                  enableLod: true,
+                })
               : await loadAssetObject(
                   component,
                   asset,

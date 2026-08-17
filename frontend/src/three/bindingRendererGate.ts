@@ -87,6 +87,10 @@ export async function buildSceneObjectFromBindings(
   component: ComponentItem,
   sceneObject: SceneObject | null,
   scene: Pick<SceneData, "componentBindings" | "objectBindings" | "assets" | "components">,
+  /** Opt in to distance-switched LOD (objectives.md §R-5). Only the live
+   *  scene renderer should — see the ``enableLod`` note on ``loadAssetObject``
+   *  for why this is opt-in rather than opt-out. */
+  options?: { enableLod?: boolean },
 ): Promise<THREE.Object3D> {
   // Cables (fiber / rf_cable) render procedurally via their kindId spline
   // branch in loadAssetObject — NOT by walking binding nodes, which would
@@ -171,6 +175,7 @@ export async function buildSceneObjectFromBindings(
     return loadAssetObject(loaderComponent, node.target.asset, undefined, null, null, {
       translucentHousing: renderHints?.translucentHousing,
       skipAutoCenter: true,
+      enableLod: options?.enableLod === true,
     });
   });
   // CAD→three basis swap for the whole assembled tree.

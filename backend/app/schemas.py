@@ -288,6 +288,26 @@ class Asset3DBase(CamelModel):
     locked: bool = False
 
 
+class AssetLodOut(CamelModel):
+    """One LOD tier of an asset (alembic 0122). Read-only projection — tiers
+    are written through ``POST /v3/assets3d/{key}/lods``, never through an
+    asset update, so that generating them does not collide with ``locked``.
+
+    ``error_mm`` is the tier's measured max deviation from LOD0 and is what
+    the renderer's screen-space-error switch consumes (objectives.md §R-5);
+    level 0 is the asset's own mesh, with error 0 by definition.
+
+    Defined here rather than in ``schemas_v3`` because both the scene payload
+    (``Asset3DOut``) and the v3 catalog (``Asset3DV3Out``) embed it, and
+    schemas_v3 imports from this module — the reverse would be a cycle."""
+    level: int
+    file_path: str
+    tri_count: int
+    byte_size: int
+    error_mm: float
+    hints_digest: str | None = None
+
+
 class Asset3DCreate(Asset3DBase):
     pass
 
@@ -324,6 +344,12 @@ class LocalAssetImport(CamelModel):
 class Asset3DOut(Asset3DBase):
     id: uuid.UUID
     created_at: datetime
+    # LOD tier manifest (alembic 0122), ordered by level; empty until the
+    # asset's tiers have been generated. On the Out model only — tiers are
+    # never created or edited through an asset write. The renderer reads this
+    # off the /api/scene payload, so it has to travel with the scene rather
+    # than only with the v3 catalog.
+    lods: list[AssetLodOut] = []
 
 
 PhysicsCapability = Literal["stress", "optical", "rf", "em", "thermal", "fluid", "quantum"]
