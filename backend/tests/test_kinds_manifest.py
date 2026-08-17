@@ -11,6 +11,8 @@ Run via:
 """
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from app.kinds_manifest import (
@@ -213,14 +215,38 @@ class TestComponentAnchorContracts:
         assert names == {"CH0", "CH1", "CH2", "CH3"}
 
     def test_templates_carry_position_and_direction(self) -> None:
+        """Real geometry reaches the backend through the manifest.
+
+        Deliberately asserts no specific coordinate. This used to pin
+        CH0 at (82.55, -30.0), which made it a change-detector: those were
+        nominal placeholders, and syncing the template to the measured
+        board (2026-08-17, see docs/float64-audit.md §3-5) broke the test
+        without anything being wrong. What matters is that the fields
+        survive the export and carry usable values.
+        """
         templates = component_anchor_contracts().get("dds_ad9959_pcb") or []
-        ch0 = next(t for t in templates if t.get("name") == "CH0")
-        # snake_case from JSON; backend reader converts to camelCase.
-        assert "position_mm_body_local" in ch0
-        assert "direction_body_local" in ch0
-        # +X edge of the PCB, y=-30 puts CH0 at the lower edge.
-        assert ch0["position_mm_body_local"]["x"] == 82.55
-        assert ch0["position_mm_body_local"]["y"] == -30.0
+        assert len(templates) == 4
+
+        seen: set[tuple[float, float, float]] = set()
+        for t in templates:
+            # snake_case from JSON; backend reader converts to camelCase.
+            assert "position_mm_body_local" in t
+            assert "direction_body_local" in t
+
+            pos = t["position_mm_body_local"]
+            xyz = (float(pos["x"]), float(pos["y"]), float(pos["z"]))
+            assert all(math.isfinite(v) for v in xyz)
+            seen.add(xyz)
+
+            d = t["direction_body_local"]
+            length = math.sqrt(
+                float(d["x"]) ** 2 + float(d["y"]) ** 2 + float(d["z"]) ** 2
+            )
+            assert length == pytest.approx(1.0, abs=1e-9)
+
+        # Four physically distinct jacks. Catches a template that collapsed
+        # every channel onto one placeholder coordinate.
+        assert len(seen) == 4
 
 
 class TestManifestMissing:
