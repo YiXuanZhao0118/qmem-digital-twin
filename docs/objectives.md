@@ -55,6 +55,24 @@
 - **Measurement**: Playwright + `requestAnimationFrame` sampling, discarding the first 3 s of warm-up.
 - **CI**: on the reference-machine runner, compared against a pinned baseline; a > 10 % regression fails.
 
+#### Measured, 2026-08-17 — comfortably inside budget, but vsync-clamped
+
+Hand-measured on the development machine over a 4 s scripted orbit (synthetic pointer drag on the canvas), sampling `requestAnimationFrame` deltas and counting real draw calls by wrapping the WebGL context's `drawElements` / `drawArrays`. **Not a CI baseline** — different hardware from §1's reference machine, and a short run rather than the 60 s path above.
+
+| Metric | Measured | Threshold | |
+|---|---|---|---|
+| Frame time p50 | **4.2 ms** | ≤ 16.7 ms | 4× headroom |
+| Frame time p95 | **4.6 ms** | ≤ 22.2 ms | 4.8× headroom |
+| Worst single frame | **7.3 ms** | ≤ 50 ms | 6.8× headroom |
+| Draw calls / frame | **avg 119, max 125** | ≤ 2000 (R-6) | 6 % |
+| Triangles / frame | avg 1.69 M | (no cap) | |
+
+⚠️ **The p50 is clamped by vsync, not by the renderer.** The display runs at 240 Hz (4.17 ms), and the app drew 959 of 960 available frames during the drag — so 4.2 ms is an *upper bound* on the true cost, and the real headroom is larger than the table suggests by an unknown margin. Do not quote 4.2 ms as "rendering costs 4.2 ms".
+
+Two things this measurement pinned down that the static count in §R-6 could not:
+- **On-demand rendering works as claimed**: over an idle second the page took 242 rAF ticks and issued **zero** draw calls.
+- **Real draw calls are ~2× the scene-graph count** (119 vs 66) because the `DirectionalLight`'s shadow map re-renders the scene. §R-6's walk only estimates the main pass, so treat it as a lower bound on the real draw list — still 6 % of budget either way.
+
 ### R-2 Render resolution — native 1080p + MSAA×4
 - Render buffer = CSS size × min(devicePixelRatio, **1.5**).
 - WebGLRenderer antialiasing = MSAA×4 (`antialias: true` + samples=4).
@@ -129,13 +147,13 @@ Hand-measured on the development machine against the live lab scene (26 componen
 | Unique geometries / materials | 61 / 64 | | |
 | Hidden meshes still in the graph | 63 (4 740 tris) | | negligible |
 
-Method: walk the rendered scene graph, count each visible `Mesh` (plus one per extra material group) and `Line`. That is an **upper bound** — frustum culling only removes draw calls — and it is the same shape as the headless count the CI gate would compute, so it needs no GPU.
+Method: walk the rendered scene graph, count each visible `Mesh` (plus one per extra material group) and `Line`. It needs no GPU and is the same shape as the headless count the CI gate would compute — but it counts **the main pass only**. The live measurement in §R-1 recorded 119 real draw calls against this 66, the difference being the `DirectionalLight`'s shadow map re-rendering the scene, so **treat this walk as a lower bound on the real draw list**, not the upper bound frustum culling alone would make it.
 
 Where the triangles are: `ad9959` alone is 238 802 (35 %), and the three RF cables carry 271 766 between them (40 %) — almost all of it `bnc_male` connectors at 64.7k each. **Those connectors bypass LOD entirely**: a cable renders through `buildSceneObjectFromBindings`' spline branch and its connectors are built by the procedural cable renderer, never reaching `loadAssetObject`'s GLB path where the LOD node is created. That is the one obvious remaining lever — and by these numbers it is not worth pulling.
 
 **Reading: geometry is not this scene's constraint.** Neither R-4/R-5 (see the P2 result in §7-3) nor R-6 is close to binding. Any future "the viewer feels slow" report should be measured before anything here is optimised further — the cost is more likely shadows, the beam-tube rebuilds, or React/CPU work than the draw list.
 
-⚠️ **R-1 (real FPS / frame time) is still unmeasured.** It needs a machine that composites frames continuously and, per §6, a pinned reference machine to be gated at all.
+R-1 has since been measured too — see the block under §R-1. Same conclusion, with far more headroom than these static counts alone could show.
 
 ### R-7 / R-8 Load times
 - **R-7 scene load < 3 s**: from entering the route to "first interactive" (components can be clicked). GLBs go through an IndexedDB cache + meshopt compression.
@@ -231,7 +249,7 @@ In priority order:
    - ~~**P1 (runtime switching)**~~ — the px_error evaluator in `DigitalTwinViewer`'s `animate()` loop, the single-child LOD container, and a per-container tier cache. Implementation map and the traps it avoids are in [`introduce/rendering.md`](introduce/rendering.md) §LOD.
    - ~~**P2 (backfill)**~~ — `frontend/scripts/backfill-lods.ts` (`npm run backfill:lods`). Writes only the new table, so locked rows stayed untouched. **Measured outcome: only 4 of 24 GLB assets warrant a tier at all** — 18 are already under the 20k LOD2 budget, and `ad9959` resists simplification (both tiers stall at 89 % of LOD0). The R-4/R-5 budgets were set from a 464k-triangle import experiment, not from the shipped catalog, so R-5 is now *on* but mostly inert by construction. **That is the honest reading: the geometry budgets are not currently the constraint on this scene.** Draw calls were then measured to check the other half of that claim — 66 against a 2000 budget, see §R-6 — so **neither geometry metric is binding, and no further LOD work is justified without a measured slowdown to chase.**
 4. **Optimistic locking / a write-conflict strategy** — the prerequisite for A-2; there is currently no version column and no `If-Match` support.
-5. **A pinned reference machine** — R-1, O-5 and A-1 need a self-hosted runner; without one, the performance targets can only be measured by hand. **This is now the binding gap for the R group**: R-6's proxy metrics have been measured and are far inside budget (§R-6), so the only rendering target still genuinely unknown is R-1's real frame time — and that needs continuously composited frames on pinned hardware, not a hand reading.
+5. **A pinned reference machine** — R-1, O-5 and A-1 need a self-hosted runner; without one the performance targets can only be measured by hand, which is exactly what §R-1 and §R-6 now record. Those hand readings sit 4–6× inside budget, so **the missing runner is no longer a risk that something is secretly slow — it is only the missing gate against future regression.** Priority should be judged on that basis.
 6. **Aspects with no target yet**: memory ceiling, GPU VRAM ceiling, mobile support, offline mode, accessibility. Deliberately left unset this time.
 
 ---
