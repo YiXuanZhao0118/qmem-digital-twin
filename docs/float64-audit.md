@@ -189,7 +189,22 @@ anchor 表格每列的 `anchor_id` 欄下方新增兩枚徽章（`pos` / `axis`�
    - [`backend/tests/test_anchor_precision_guard.py`](../backend/tests/test_anchor_precision_guard.py) — 序列化位元相等、DB 往返位元相等（anchor + object pose）、`information_schema` 斷言 `objects.x_mm…rz_deg` 為 `double precision` 且 `assets_3d.anchors` 為 `jsonb`。全部用 `==` 而非 `approx`。額外有一條 **self-guard**：驗證 witness 值本身確實偵測得到 float32 與 3 位小數捨入，防止有人把常數換成整數後測試變成空轉。
    - [`frontend/src/components/__tests__/anchorWritePath.guard.test.ts`](../frontend/src/components/__tests__/anchorWritePath.guard.test.ts) — 掃描 `updateAnchor(...)` 的每個呼叫點（平衡括號取參數），禁止 `toFixed` / `toPrecision` / `Math.round`；斷言 `mmText` 不存在；斷言九個 anchor 輸入框都用 `ANCHOR_STEP`（≤ 0.001）且維持 controlled（§2.3 的不變式）。
    - **已實測會擋**：把 `moveFace` 的 `px: n(position.x)` 改回 `toFixed(3)`，守門立刻失敗並印出理由；還原後恢復綠燈。
-5. **實測現有資料損壞範圍** —— 掃全表 anchors，統計有多少 `positionMmBodyLocal` / `axisXBodyLocal` / `axisYBodyLocal` 分量剛好是 3 位小數的整數倍（`v*1000` 為整數）。命中率高者即為破口 A 的歷史受害者。⚠️ 修復 locked 列需先請使用者解鎖，不得自行處理。
+5. ~~**實測現有資料損壞範圍**~~ —— ✅ **2026-08-17 掃描完成：全表 27 筆 asset / 23 筆有 anchor / 41 個 anchor，找到 0 個破口 A 受害者。** 純讀取，未修改任何資料（locked 列一律沒碰）。
+
+   **軸向量（123 個）——結論是確定性的，不是「沒找到」：**
+   - 113 個是軸對齊的（`(±1,0,0)` 這類）。這種向量**沒有小數位可截**，`toFixed(3)` 對它們是恆等 —— 因此**不可能**被破口 A 損壞。
+   - 其餘 10 個非平凡向量的模長 `||v|−1|` 皆 < 1e-9（float64 等級）。被 3 位小數量化過的單位向量模長會偏 ~1e-4（例：`(0.7071,0.7071,0)` → `(0.707,0.707,0)`，殘差 1.5e-4）。全數乾淨。
+
+   **位置（41 個）——與 device template 逐筆比對：**
+   | 分類 | 數量 | 說明 |
+   |---|---|---|
+   | 與 template 完全相同 | 27 | 乾淨 |
+   | 偏離 template 8–63 mm | 7 | **刻意實測值，非捨入**。3 位小數捨入最多只能造成 5e-4 mm 誤差，差了 4~5 個數量級 |
+   | 無法驗證 | 7 | `zhl_1_2w` / `zyswa_2_50dr` / `ppg_sma` 三個 device template 未宣告 position（見 §2.2 實測表），無對照基準 |
+
+   **為什麼這麼乾淨**：破口 A 只在「有人在 PHY Editor 動過某個 anchor 並存檔」時才會發生。絕大多數 anchor 是由 `materialize_device_anchors` 在後端以 float64 產生的（§1.4），且 23 筆有 anchor 的 asset 中 17 筆是 locked（審核後凍結）——可被觸碰的窗口本來就很窄。
+
+   ⚠️ **那 7 個「偏離 template」的 anchor 反而暴露了 §2.2 徽章的一個侷限**：AD9959 的 4 個 `rf_out` 與 AOM 的 3 個 anchor，**資產端是手工實測值、template 端是標稱佔位值**（AD9959 template 寫 `x=82.55` 等距排列，實測是 `55.1 / 33.3 / 34.5 / 55.058` 不等距）。徽章會把它們標成 `◐ overridden`，但這裡**比較準的是資產而不是 template**。徽章的語意預設 template 是真值，這個前提在這幾筆上不成立 —— 要根治得回頭把實測值補進 device template。
 
 ---
 
