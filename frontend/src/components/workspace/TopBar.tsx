@@ -8,6 +8,7 @@
 import { LayoutGrid, RotateCcw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { HelpButton } from "../help/HelpButton";
 import { ModuleSwitcher } from "./ModuleSwitcher";
 import { ProjectLogo } from "./ProjectLogo";
 import { useWorkspace, type PanelId } from "./WorkspaceProvider";
@@ -53,6 +54,7 @@ export function TopBar({ children }: TopBarProps) {
       </div>
       <ModuleSwitcher />
       <div className="top-bar-toolbar">{children}</div>
+      <HelpButton />
       <div className="top-bar-menu" ref={menuRef}>
         <button
           type="button"

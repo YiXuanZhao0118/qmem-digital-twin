@@ -33,6 +33,32 @@
 
 ---
 
+## App 內建說明（Help）
+
+頂列右側的 **?**（`components/help/HelpButton.tsx`）開啟全螢幕說明視窗
+（`components/help/HelpModal.tsx`），Lab 與 PHY Editor 兩個頂列都有。內容兩半：
+
+| 半邊 | 來源 | 性質 |
+|---|---|---|
+| **User guide** | `components/help/usageGuide.ts`（手寫，英文） | 怎麼「操作」：三個工作區、擺放/吸附、面板、快捷鍵；重點用 `> **Key —** …` callout |
+| **Architecture** | `docs/introduce/*.md` + `docs/*.md`（原檔逐字） | 系統「是什麼」：就是本說明檔群 |
+
+**不變式：架構那半邊不得手抄。** `components/help/helpDocs.ts` 用
+`import.meta.glob(..., { query: "?raw", eager: true })` 在建置時把 md 原檔打包進前端，
+所以 app 內文件永遠等於 repo 內文件。連帶條件：
+
+- 這些 md 位於 Vite root（`frontend/`）**之外**，dev server 需要 `server.fs.allow: [".."]`
+  （`frontend/vite.config.ts`）才讀得到；拿掉會讓說明視窗的架構那半邊 403。
+- 分組/順序寫在 `helpDocs.ts` 的 `GROUP_ORDER`，鏡射本目錄 `README.md` 的分組。**新增
+  md 檔不必改程式**——未列在 `GROUP_ORDER` 的檔案會落到 "More" 群組，不會被靜默丟掉。
+- 文件內的相對連結（`[anchors.md](anchors.md)`）在視窗內導覽而不離開 app；指向未打包
+  目標（原始碼路徑等）則降級顯示成灰色路徑而非死連結。
+
+渲染用 `react-markdown` + `remark-gfm`（表格），樣式在 `styles.css` 的 `.help-modal*` /
+`.help-doc*` 段。
+
+---
+
 ## 目錄結構
 
 ```

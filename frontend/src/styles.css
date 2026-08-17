@@ -8123,3 +8123,244 @@ body.is-timing-bar-drag * {
   -moz-appearance: textfield;
   appearance: textfield;
 }
+
+/* =============================================================================
+ * Help modal — 使用指南 + docs/introduce architecture docs
+ * ============================================================================= */
+
+/* The help trigger is a direct flex child of the top bars; keep it from being
+   squeezed when the toolbar strip runs out of room. */
+.top-bar > .icon-button,
+.phy-editor-topbar > .icon-button {
+  flex: 0 0 auto;
+}
+
+.help-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  /* Above the window menu (100) and every floating panel / viewer HUD. */
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(20, 24, 22, 0.42);
+  backdrop-filter: blur(2px);
+}
+
+.help-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(1180px, 100%);
+  height: min(880px, 100%);
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.32);
+  overflow: hidden;
+}
+
+.help-modal-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.help-modal-subtitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--fs-md);
+}
+
+.help-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+}
+
+.help-modal-nav {
+  overflow-y: auto;
+  padding: 8px;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+}
+
+.help-nav-section {
+  padding: 10px 8px 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.help-nav-item {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font-size: var(--fs-md);
+  text-align: left;
+  cursor: pointer;
+}
+
+.help-nav-item:hover {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.help-nav-item.is-active {
+  background: var(--accent-soft-strong);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.help-modal-content {
+  overflow-y: auto;
+  padding: 20px 32px 48px;
+}
+
+/* --- Markdown typography -------------------------------------------------- */
+
+.help-doc {
+  max-width: 78ch;
+  line-height: 1.7;
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+
+.help-doc h1 {
+  margin: 0 0 16px;
+  font-size: 22px;
+}
+
+.help-doc h2 {
+  margin: 28px 0 10px;
+  padding-bottom: 4px;
+  font-size: 17px;
+  border-bottom: 1px solid var(--line);
+}
+
+.help-doc h3 {
+  margin: 20px 0 8px;
+  font-size: 14.5px;
+}
+
+.help-doc p,
+.help-doc ul,
+.help-doc ol {
+  margin: 0 0 12px;
+}
+
+.help-doc ul,
+.help-doc ol {
+  padding-left: 22px;
+}
+
+.help-doc li {
+  margin-bottom: 4px;
+}
+
+.help-doc code {
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: rgba(15, 118, 110, 0.08);
+  font-size: 0.92em;
+}
+
+.help-doc pre {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  background: #f4f6f3;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  line-height: 1.5;
+}
+
+.help-doc pre code {
+  padding: 0;
+  background: transparent;
+}
+
+/* Callout. The user guide leads its takeaways with `> **Key —** …`; the
+   architecture docs use `>` for warnings and cross-links. Both want the same
+   "read this bit" treatment. */
+.help-doc blockquote {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border-left: 4px solid var(--accent);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.help-doc blockquote strong {
+  color: var(--accent-strong);
+}
+
+.help-doc blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+/* Wide tables (the kind/param matrices) scroll inside themselves instead of
+   widening the whole modal. */
+.help-doc table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0 0 14px;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.help-doc th,
+.help-doc td {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.help-doc th {
+  background: var(--panel);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.help-doc hr {
+  margin: 24px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.help-doc a {
+  color: var(--accent-strong);
+}
+
+/* Cross-doc link — navigates inside the modal, so it's a button styled to
+   read as a link. */
+.help-inline-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent-strong);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* Link target that isn't bundled (source paths, docs outside introduce/):
+   shown as a path so the reader can still find it in the repo. */
+.help-dead-link {
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.04);
+}

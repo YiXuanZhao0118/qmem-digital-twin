@@ -19,6 +19,7 @@ import { Asset3DEditor } from "./Asset3DEditor";
 import { ComponentsEditor } from "./ComponentsEditor";
 import { GeometryBuilder } from "./GeometryBuilder";
 import { KindsEditor } from "./KindsEditor";
+import { HelpButton } from "./help/HelpButton";
 
 type Section = PhyEditorView["section"];
 type DomainFilter = PhyEditorView["domain"];
@@ -114,6 +115,7 @@ export function PhyEditor() {
         {phyEditorDirty && (
           <span style={{ color: "#fbbf24" }}>● Unsaved</span>
         )}
+        <HelpButton />
       </div>
 
       <div

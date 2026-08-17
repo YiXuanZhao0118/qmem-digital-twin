@@ -6,6 +6,10 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 5173,
+    // The Help modal bundles `docs/introduce/*.md` (see components/help/
+    // helpDocs.ts), which sit outside the Vite root. Relative entries resolve
+    // against the root, so ".." = the repo root.
+    fs: { allow: [".."] },
     proxy: {
       "/api": "http://localhost:8010",
       "/assets": "http://localhost:8010",
