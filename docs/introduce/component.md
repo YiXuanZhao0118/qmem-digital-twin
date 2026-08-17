@@ -10,7 +10,7 @@
 
 ## ComponentBinding
 
-**ComponentBinding** — a node of the binding tree. It hangs an asset (or a sub-component) under a parent node with a local transform (`local_x_mm`/`local_y_mm`/`local_z_mm` + `local_rx_deg`/`local_ry_deg`/`local_rz_deg`, three-axis rotation), plus `tunable_axes`, `role` and `sort_order`. This is what makes composite components possible (e.g. an isolator = Faraday rod + front and back Glan prisms + housing). Table `component_bindings`: `parent_binding_id`, `target_kind` (asset/empty/subcomponent), `asset_3d_id`, …
+**ComponentBinding** — a node of the binding tree. It hangs an asset (or a sub-component) under a parent node with a local transform (`local_x_mm`/`local_y_mm`/`local_z_mm` + `local_rx_deg`/`local_ry_deg`/`local_rz_deg`, three-axis rotation), plus `tunable_axes`, `role` and `sort_order`. This is what makes composite components possible (e.g. an isolator = Faraday rod + front and back Glan prisms + housing). Table `component_bindings`: `parent_binding_id`, `target_kind` (asset/empty/subcomponent), `asset_3d_id`, … The local transform is **quantized** on write and on read (1 nm / 1e-9°), same contract as the SceneObject Lab pose — see "Pose quantization" in [anchors.md](anchors.md).
 
 ## exposedFaces
 

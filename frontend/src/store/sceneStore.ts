@@ -112,6 +112,7 @@ import {
 // distinguish "user toggling a normally-visible object off" from "user
 // force-showing an object whose collection is hidden".
 import { computeVisibleCollectionIds } from "../utils/visibility";
+import { quantizePosePatch } from "../optical/poseQuantize";
 import {
   findFiberEndAlignmentCandidates,
   withFiberPortLabPose,
@@ -1083,6 +1084,16 @@ function cursorSpawnPatch(cursor: LabPoint, count: number): SceneObjectPatch {
 }
 
 const OBJECT_TRANSFORM_PATCH_KEYS = ["xMm", "yMm", "zMm", "rxDeg", "ryDeg", "rzDeg"] as const;
+
+/** Lock filter + pose quantization, in that order — the single gate every
+ *  object patch passes through before it reaches the API. Quantizing here
+ *  (rather than at each caller) means the patch that goes out, the one
+ *  recorded for undo/redo, and the one the store echoes are all the same
+ *  snapped numbers. See optical/poseQuantize.ts for the grid. */
+function preparePatch(object: SceneObject | undefined, patch: SceneObjectPatch): SceneObjectPatch | null {
+  const safe = stripLockedTransformPatch(object, patch);
+  return safe === null ? null : quantizePosePatch(safe);
+}
 
 function stripLockedTransformPatch(object: SceneObject | undefined, patch: SceneObjectPatch): SceneObjectPatch | null {
   const lockedAtUpdateStart = object?.locked === true;
@@ -3565,7 +3576,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     // now just show a warning badge in the OE panel and the user manages
     // them manually.
     const currentObject = get().scene.objects.find((object) => object.id === objectId);
-    const safePatch = stripLockedTransformPatch(currentObject, patch);
+    const safePatch = preparePatch(currentObject, patch);
     if (!safePatch) return;
     // History: snapshot every field the patch will touch, before the API
     // call lands. extractInversePatch handles both pose and property
@@ -3703,7 +3714,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     const explicitIds = new Set<string>();
     for (const entry of entries) {
       const current = objsById.get(entry.objectId);
-      const safe = stripLockedTransformPatch(current, entry.patch);
+      const safe = preparePatch(current, entry.patch);
       if (!safe) continue;
       merged.set(entry.objectId, safe);
       explicitIds.add(entry.objectId);

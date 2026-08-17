@@ -10,3 +10,5 @@
 - The old per-binding `param_overrides` (which could override **any** intrinsic coefficient per instance) was removed in migration 0113 — intrinsic coefficients are now decided purely by the Asset.
 
 > The coordinate conventions and transform chain of the Lab pose are in [anchors.md](anchors.md); the `effective` / `dynamic` parameter-merge formula is in [data-model.md](data-model.md).
+
+The stored pose is **quantized** — 1 nm for `x/y/z mm`, 1e-9° for `rx/ry/rz deg` — so a quaternion round-trip can never persist float residue such as `ryDeg = -8.99e-15`. See "Pose quantization" in [anchors.md](anchors.md).

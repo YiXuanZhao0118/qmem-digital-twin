@@ -35,3 +35,9 @@ The tracer does a ray-plane hit test against "the plane through `position`, perp
 - A 5×5 augmented matrix (V=[x,θx,y,θy,1]) handles transverse displacement (prism wedge angle, the Glan-Laser 38.5° decenter); the general case uses 2×2 ABCD; cylindrical lenses and Glan prisms use abcdXY (x and y separately).
 
 Frame math: frontend `optical/frames.ts`, `optical/pose.ts`, `utils/anchorAccess.ts`; backend `optical/db_scene_loader.py`.
+
+**Pose quantization (stored resolution).** Every position / Euler value that gets **persisted** is snapped onto a fixed grid: **1 nm** for mm lengths, **1e-9°** for angles. Reason: decomposing a quaternion / rotation matrix back to Euler (`sceneObjectEulerFromQuaternion`, `euler_from_matrix`) returns ~1e-15 of double residue on the axes that are mathematically zero, which used to be stored and displayed as `ryDeg = -8.995967132789893e-15`. The grid is ~1000× (position) / ~5700× (angle) finer than the O-1 1 µm / O-2 0.1 µrad budget in [objectives.md](../objectives.md), so quantizing costs nothing measurable, while being far coarser than double dust — residue lands on an exact `0` (never `-0`).
+
+- Definitions + invariants: `frontend/src/optical/poseQuantize.ts` and `backend/app/pose_quantize.py` (mirrors — keep the two grids in step).
+- Enforced at the write choke points: the `PoseMm` / `PoseDeg` annotated types on `SceneObjectBase` / `SceneObjectUpdate` / `ComponentBindingBase` / `ComponentBindingUpdate` in `backend/app/schemas.py:33` (they run on the `…Out` models too, so even an un-scrubbed legacy row reads back clean), `assembly_solver.euler_from_matrix`, `frames.ts:sceneObjectEulerFromQuaternion`, `sceneStore.preparePatch` (lock filter → quantize, the single gate for object patches) and the PHY Editor's Alt+drag commit in `ComponentsEditor.tsx`.
+- Invariant: a value at or above the objectives' budget must survive untouched — only sub-grid dust may move.

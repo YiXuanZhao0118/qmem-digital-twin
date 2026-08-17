@@ -48,6 +48,7 @@ import {
   type KindRow,
 } from "../api/client";
 import { buildPolarizationMarkers } from "../optical/polarizationMarker";
+import { quantizeDeg } from "../optical/poseQuantize";
 import { CATEGORY_DEFS } from "./AssetLibraryPanel";
 import { useKindsStore } from "../store/kindsStore";
 import { useSceneStore } from "../store/sceneStore";
@@ -1679,7 +1680,7 @@ function BindingRow({
     if (key in next) {
       delete next[key];
     } else {
-      // Default to "parent" frame ??localXMm/RyDeg/etc. are already
+      // Default to "parent" frame — localXMm/RyDeg/etc. are already
       // stored as offsets in the parent binding's frame, so an
       // override delta in the same frame is the least-surprising
       // default. User can edit min/max later if a slider UI surfaces.
@@ -2182,7 +2183,7 @@ function ComponentPreview3D({
     // Bounding box of every mesh under `root` *except* the subtrees
     // in `skip`. Needed because both rebuildGizmo and rebuildProbeBeam
     // size their arrows off the scene bbox and must exclude each
-    // other (and themselves) ??otherwise gizmo axes grown for one
+    // other (and themselves) — otherwise gizmo axes grown for one
     // bbox feed into the next bbox and the arrows grow unbounded
     // every time the user clicks between nested bindings.
     function bboxExcluding(skip: ReadonlySet<THREE.Object3D>): THREE.Box3 {
@@ -2933,9 +2934,12 @@ function ComponentPreview3D({
       const selBinding = bindingsRef.current.find((b) => b.id === selId);
       const tunable = (selBinding?.tunableAxes ?? {}) as Record<string, unknown>;
       const patch: ComponentBindingUpdatePayload = {};
-      if ("localRxDeg" in tunable) patch.localRxDeg = euler.x * r2d;
-      if ("localRyDeg" in tunable) patch.localRyDeg = euler.y * r2d;
-      if ("localRzDeg" in tunable) patch.localRzDeg = euler.z * r2d;
+      // quantizeDeg: setFromQuaternion returns ~1e-15° of double dust on the
+      // axes the drag never touched, which would otherwise be persisted as
+      // localRyDeg = -8.99e-15. See optical/poseQuantize.ts.
+      if ("localRxDeg" in tunable) patch.localRxDeg = quantizeDeg(euler.x * r2d);
+      if ("localRyDeg" in tunable) patch.localRyDeg = quantizeDeg(euler.y * r2d);
+      if ("localRzDeg" in tunable) patch.localRzDeg = quantizeDeg(euler.z * r2d);
       if (Object.keys(patch).length > 0) onPatchBindingRef.current(selId, patch);
     };
     renderer.domElement.addEventListener("pointerdown", onPointerDown);

@@ -48,6 +48,7 @@
 import * as THREE from "three";
 
 import type { SceneObject, Vec3 } from "../types/digitalTwin";
+import { quantizeDeg } from "./poseQuantize";
 
 export type SceneObjectEulerDeg = {
   rxDeg: number;
@@ -248,10 +249,15 @@ export function sceneObjectEulerFromQuaternion(q: THREE.Quaternion): SceneObject
       : Math.atan2(-r01, r02);
   }
 
+  // Quantized: atan2/asin of an off-diagonal term that is mathematically
+  // zero returns ~1e-15 rad of double dust, which would otherwise be stored
+  // and displayed as e.g. ry = -8.995967132789893e-15. See poseQuantize.ts —
+  // the 1e-9° grid is ~5700x below the O-2 0.1 µrad budget, so this snaps
+  // dust to an exact 0 without touching any real angle.
   return {
-    rxDeg: THREE.MathUtils.radToDeg(alpha),
-    ryDeg: THREE.MathUtils.radToDeg(beta),
-    rzDeg: THREE.MathUtils.radToDeg(gamma),
+    rxDeg: quantizeDeg(THREE.MathUtils.radToDeg(alpha)),
+    ryDeg: quantizeDeg(THREE.MathUtils.radToDeg(beta)),
+    rzDeg: quantizeDeg(THREE.MathUtils.radToDeg(gamma)),
   };
 }
 

@@ -3,9 +3,18 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    model_validator,
+)
+
+from .pose_quantize import quantize_deg, quantize_mm
 
 
 def to_camel(value: str) -> str:
@@ -24,6 +33,14 @@ class CamelModel(BaseModel):
 JsonDict = dict[str, Any]
 JsonList = list[Any]
 Vec3 = tuple[float, float, float]
+
+# Pose scalars. Every position / Euler field on a SceneObject or a
+# ComponentBinding is typed with these so the value is snapped onto the
+# authored grid (1 nm / 1e-9°) on the way in AND on the way out — a
+# quaternion round-trip upstream otherwise persists things like
+# ry_deg = -8.995967132789893e-15. See app/pose_quantize.py.
+PoseMm = Annotated[float, AfterValidator(quantize_mm)]
+PoseDeg = Annotated[float, AfterValidator(quantize_deg)]
 
 
 def _accept_legacy_keys(data: Any, renames: tuple[tuple[str, str], ...]) -> Any:
@@ -358,12 +375,12 @@ class ComponentBindingBase(CamelModel):
     asset_3d_id: uuid.UUID | None = None
     sub_component_id: uuid.UUID | None = None
     role: str = "body"
-    local_x_mm: float = 0
-    local_y_mm: float = 0
-    local_z_mm: float = 0
-    local_rx_deg: float = 0
-    local_ry_deg: float = 0
-    local_rz_deg: float = 0
+    local_x_mm: PoseMm = 0
+    local_y_mm: PoseMm = 0
+    local_z_mm: PoseMm = 0
+    local_rx_deg: PoseDeg = 0
+    local_ry_deg: PoseDeg = 0
+    local_rz_deg: PoseDeg = 0
     tunable_axes: JsonDict = Field(default_factory=dict)
     sort_order: int = 0
     properties: JsonDict = Field(default_factory=dict)
@@ -403,12 +420,12 @@ class ComponentBindingUpdate(CamelModel):
 
     parent_binding_id: uuid.UUID | None = None
     role: str | None = None
-    local_x_mm: float | None = None
-    local_y_mm: float | None = None
-    local_z_mm: float | None = None
-    local_rx_deg: float | None = None
-    local_ry_deg: float | None = None
-    local_rz_deg: float | None = None
+    local_x_mm: PoseMm | None = None
+    local_y_mm: PoseMm | None = None
+    local_z_mm: PoseMm | None = None
+    local_rx_deg: PoseDeg | None = None
+    local_ry_deg: PoseDeg | None = None
+    local_rz_deg: PoseDeg | None = None
     tunable_axes: JsonDict | None = None
     sort_order: int | None = None
     properties: JsonDict | None = None
@@ -492,12 +509,12 @@ class ComponentOut(ComponentBase):
 
 class SceneObjectBase(CamelModel):
     name: str | None = None
-    x_mm: float = 0
-    y_mm: float = 0
-    z_mm: float = 0
-    rx_deg: float = 0
-    ry_deg: float = 0
-    rz_deg: float = 0
+    x_mm: PoseMm = 0
+    y_mm: PoseMm = 0
+    z_mm: PoseMm = 0
+    rx_deg: PoseDeg = 0
+    ry_deg: PoseDeg = 0
+    rz_deg: PoseDeg = 0
     visible: bool = True
     locked: bool = False
     serial_number: str | None = None
@@ -512,12 +529,12 @@ class SceneObjectCreate(SceneObjectBase):
 
 class SceneObjectUpdate(CamelModel):
     name: str | None = None
-    x_mm: float | None = None
-    y_mm: float | None = None
-    z_mm: float | None = None
-    rx_deg: float | None = None
-    ry_deg: float | None = None
-    rz_deg: float | None = None
+    x_mm: PoseMm | None = None
+    y_mm: PoseMm | None = None
+    z_mm: PoseMm | None = None
+    rx_deg: PoseDeg | None = None
+    ry_deg: PoseDeg | None = None
+    rz_deg: PoseDeg | None = None
     visible: bool | None = None
     locked: bool | None = None
     serial_number: str | None = None
@@ -2199,12 +2216,12 @@ class CollectionMembershipRequest(CamelModel):
 
 class CollectionTemplateMemberPayload(CamelModel):
     component_id: uuid.UUID
-    relative_x_mm: float = 0.0
-    relative_y_mm: float = 0.0
-    relative_z_mm: float = 0.0
-    rx_deg: float = 0.0
-    ry_deg: float = 0.0
-    rz_deg: float = 0.0
+    relative_x_mm: PoseMm = 0.0
+    relative_y_mm: PoseMm = 0.0
+    relative_z_mm: PoseMm = 0.0
+    rx_deg: PoseDeg = 0.0
+    ry_deg: PoseDeg = 0.0
+    rz_deg: PoseDeg = 0.0
     visible: bool = True
     properties: JsonDict = Field(default_factory=dict)
     sort_order: int = 0

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models import Asset3D, AssemblyRelation, Component, SceneObject
+from app.pose_quantize import quantize_deg
 
 
 Vec = dict[str, float]
@@ -166,7 +167,15 @@ def euler_from_matrix(m: Matrix) -> tuple[float, float, float]:
         # Gimbal lock: cos(rx) = 0 ⇒ Ry and Rz axes coincide.
         ry = 0.0
         rz = math.atan2(m[1][0], m[0][0])
-    return math.degrees(rx), math.degrees(ry), math.degrees(rz)
+    # Quantized: asin/atan2 of a matrix entry that is mathematically zero
+    # returns ~1e-15 rad of double dust, and the relation solver writes this
+    # tuple straight onto SceneObject.{rx,ry,rz}_deg — without the snap a
+    # solved relation persists ry_deg = -8.99e-15. See app/pose_quantize.py.
+    return (
+        quantize_deg(math.degrees(rx)),
+        quantize_deg(math.degrees(ry)),
+        quantize_deg(math.degrees(rz)),
+    )
 
 
 def axis_angle_matrix(axis: Vec, angle_rad: float) -> Matrix:
