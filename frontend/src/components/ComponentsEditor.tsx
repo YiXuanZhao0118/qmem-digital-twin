@@ -1327,7 +1327,7 @@ export function ComponentsEditor({
                     cursor: "pointer",
                   }}
                 >
-                  {p === "standard" ? "一般 Standard" : p === "cable" ? "RF Cable" : "Fiber"}
+                  {p === "standard" ? "Standard" : p === "cable" ? "RF Cable" : "Fiber"}
                 </button>
               ))}
             </div>
@@ -1420,7 +1420,8 @@ export function ComponentsEditor({
                   );
                 })}
                 <span style={{ fontSize: 10, color: "#9ca3af" }}>
-                  兩端可選同一個接頭。spline 形狀預設直線,建立後可編輯 fiberNodes。
+                  Both ends may use the same connector. The spline defaults to a straight
+                  line; edit fiberNodes after creating it.
                 </span>
               </div>
             )}
