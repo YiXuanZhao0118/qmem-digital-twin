@@ -2298,52 +2298,66 @@ export function DigitalTwinViewer({
           requestRender();
         },
         onDragEnd: ({ primary, followers }) => {
-          useSceneStore.getState().setLastPlacementResult(primary.result);
-          // Primary: full pose + intent metadata.
-          const primaryProps = useSceneStore
-            .getState()
-            .scene.objects.find((o) => o.id === primary.objectId)
-            ?.properties as Record<string, unknown> | undefined;
-          void useSceneStore.getState().updateSceneObject(primary.objectId, {
-            xMm: primary.result.positionLab.x,
-            yMm: primary.result.positionLab.y,
-            zMm: primary.result.positionLab.z,
-            ...(primary.result.rotationLab
-              ? {
-                  rxDeg: primary.result.rotationLab.rxDeg,
-                  ryDeg: primary.result.rotationLab.ryDeg,
-                  rzDeg: primary.result.rotationLab.rzDeg,
-                }
-              : {}),
-            properties: {
-              ...(primaryProps ?? {}),
-              placedRelativeTo: primary.result.intentMetadata,
-            },
-          });
-          // Followers: position + rotation (multi-rotate semantics — each
-          // follower orbits the collective centroid AND rotates itself).
-          // Persisted as absolute; no per-object snap intent metadata.
-          for (const f of followers) {
-            const props = useSceneStore
-              .getState()
-              .scene.objects.find((o) => o.id === f.objectId)
-              ?.properties as Record<string, unknown> | undefined;
-            void useSceneStore.getState().updateSceneObject(f.objectId, {
-              xMm: f.positionLab.x,
-              yMm: f.positionLab.y,
-              zMm: f.positionLab.z,
-              rxDeg: f.rotationLab.rxDeg,
-              ryDeg: f.rotationLab.ryDeg,
-              rzDeg: f.rotationLab.rzDeg,
-              properties: {
-                ...(props ?? {}),
-                placedRelativeTo: {
-                  kind: "absolute",
-                  recordedAt: new Date().toISOString(),
+          const store = useSceneStore.getState();
+          store.setLastPlacementResult(primary.result);
+          // ONE batched commit for the whole selection. Committing the
+          // primary and each follower through `updateSceneObject`
+          // separately made an N-object drag land as N independent
+          // set() calls: N scene rebuilds, N cable re-snaps, N undo
+          // entries, and selectedObjectId hopping onto each follower in
+          // turn (re-attaching the gizmo mid-commit). The batch path
+          // writes every pose first, then commits once — so the
+          // debounced optical / RF recompute sees the settled scene.
+          const propsOf = (objectId: string) =>
+            store.scene.objects.find((o) => o.id === objectId)?.properties as
+              | Record<string, unknown>
+              | undefined;
+          // Followers persist as absolute; no per-object snap intent
+          // metadata. One timestamp for the batch — it is the same drag.
+          const followerRecordedAt = new Date().toISOString();
+          void store.updateSceneObjects([
+            {
+              // Primary: full pose + intent metadata.
+              objectId: primary.objectId,
+              patch: {
+                xMm: primary.result.positionLab.x,
+                yMm: primary.result.positionLab.y,
+                zMm: primary.result.positionLab.z,
+                ...(primary.result.rotationLab
+                  ? {
+                      rxDeg: primary.result.rotationLab.rxDeg,
+                      ryDeg: primary.result.rotationLab.ryDeg,
+                      rzDeg: primary.result.rotationLab.rzDeg,
+                    }
+                  : {}),
+                properties: {
+                  ...(propsOf(primary.objectId) ?? {}),
+                  placedRelativeTo: primary.result.intentMetadata,
                 },
               },
-            });
-          }
+            },
+            // Followers: position + rotation (multi-rotate semantics —
+            // each follower orbits the collective centroid AND rotates
+            // itself).
+            ...followers.map((f) => ({
+              objectId: f.objectId,
+              patch: {
+                xMm: f.positionLab.x,
+                yMm: f.positionLab.y,
+                zMm: f.positionLab.z,
+                rxDeg: f.rotationLab.rxDeg,
+                ryDeg: f.rotationLab.ryDeg,
+                rzDeg: f.rotationLab.rzDeg,
+                properties: {
+                  ...(propsOf(f.objectId) ?? {}),
+                  placedRelativeTo: {
+                    kind: "absolute",
+                    recordedAt: followerRecordedAt,
+                  },
+                },
+              },
+            })),
+          ]);
         },
       },
       config: {

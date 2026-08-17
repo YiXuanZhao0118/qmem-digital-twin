@@ -62,34 +62,39 @@ export function CursorMenu() {
   // ─── Selection → ... commands ──────────────────────────────────────────
   const selectionToCursor = async () => {
     const state = useSceneStore.getState();
-    const { transformCursorMm, scene, selectedObjectIds, selectedObjectId, updateSceneObject } = state;
+    const { transformCursorMm, scene, selectedObjectIds, selectedObjectId, updateSceneObjects } = state;
     // Shift+S menu is a global UI (anchored to the user's mouse), so it
     // operates on the LEFT panel's cursor — the principal pivot in both
     // single- and dual-view modes.
     const cursor = transformCursorMm.left;
     const ids = selectedObjectIds.length > 0 ? selectedObjectIds : selectedObjectId ? [selectedObjectId] : [];
-    for (const id of ids) {
-      const obj = scene.objects.find((o) => o.id === id);
-      if (!obj) continue;
-      await updateSceneObject(id, {
-        xMm: cursor.x,
-        yMm: cursor.y,
-        zMm: cursor.z,
-      });
-    }
+    // Batched: the whole selection lands in one commit, so the optical /
+    // RF recompute runs once at the end instead of once per object.
+    await updateSceneObjects(
+      ids
+        .filter((id) => scene.objects.some((o) => o.id === id))
+        .map((id) => ({
+          objectId: id,
+          patch: { xMm: cursor.x, yMm: cursor.y, zMm: cursor.z },
+        })),
+    );
     close();
   };
 
   const selectionToActive = async () => {
     const state = useSceneStore.getState();
-    const { scene, selectedObjectIds, selectedObjectId, updateSceneObject } = state;
+    const { scene, selectedObjectIds, selectedObjectId, updateSceneObjects } = state;
     if (!selectedObjectId) return;
     const active = scene.objects.find((o) => o.id === selectedObjectId);
     if (!active) return;
-    for (const id of selectedObjectIds) {
-      if (id === selectedObjectId) continue;
-      await updateSceneObject(id, { xMm: active.xMm, yMm: active.yMm, zMm: active.zMm });
-    }
+    await updateSceneObjects(
+      selectedObjectIds
+        .filter((id) => id !== selectedObjectId)
+        .map((id) => ({
+          objectId: id,
+          patch: { xMm: active.xMm, yMm: active.yMm, zMm: active.zMm },
+        })),
+    );
     close();
   };
 

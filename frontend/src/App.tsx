@@ -50,6 +50,11 @@ const _viteEnv =
   ((import.meta as unknown) as { env?: Record<string, string> }).env ?? {};
 const AI_PANEL_ENABLED = _viteEnv.VITE_ENABLE_AI_PANEL === "true";
 
+// How long incoming WebSocket broadcasts are buffered before being
+// applied as one batch (~one frame). Long enough to catch the echo of a
+// multi-object write, short enough to stay imperceptible.
+const WS_FLUSH_MS = 16;
+
 // Only the four surfaced overlays (see OVERLAY_GROUPS) get number-key
 // shortcuts, numbered 1–4 to match their popover order.
 const NUMBER_KEY_OVERLAYS: Record<string, OverlayKind> = {
@@ -72,7 +77,7 @@ export default function App() {
   const loadScene = useSceneStore((state) => state.loadScene);
   const loadTimingPrograms = useSceneStore((state) => state.loadTimingPrograms);
   const loadRfChains = useSceneStore((state) => state.loadRfChains);
-  const applyEvent = useSceneStore((state) => state.applyEvent);
+  const applyEvents = useSceneStore((state) => state.applyEvents);
   const setSocketStatus = useSceneStore((state) => state.setSocketStatus);
   const loadStatus = useSceneStore((state) => state.loadStatus);
   const error = useSceneStore((state) => state.error);
@@ -230,6 +235,20 @@ export default function App() {
     let closed = false;
     let reconnectTimer: number | undefined;
     let socket: WebSocket | undefined;
+    // Broadcast coalescing. Each message arrives as its own task, so
+    // applying them individually gave a 13-object group move 13 separate
+    // store commits — 13 scene rebuilds and 13 optical / RF re-traces
+    // for one user action. Buffer whatever lands inside a frame and
+    // apply it as one batch; the delay is invisible and the recompute
+    // then runs once, on the settled scene.
+    let pending: SceneEvent[] = [];
+    let flushTimer: number | undefined;
+    const flush = () => {
+      flushTimer = undefined;
+      const batch = pending;
+      pending = [];
+      if (batch.length > 0) applyEvents(batch);
+    };
 
     const connect = () => {
       setSocketStatus("connecting");
@@ -239,10 +258,12 @@ export default function App() {
       socket.onerror = () => setSocketStatus("error");
       socket.onmessage = (message) => {
         try {
-          applyEvent(JSON.parse(message.data) as SceneEvent);
+          pending.push(JSON.parse(message.data) as SceneEvent);
         } catch {
           setSocketStatus("error");
+          return;
         }
+        if (flushTimer === undefined) flushTimer = window.setTimeout(flush, WS_FLUSH_MS);
       };
       socket.onclose = () => {
         if (closed) return;
@@ -256,9 +277,10 @@ export default function App() {
     return () => {
       closed = true;
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      if (flushTimer !== undefined) window.clearTimeout(flushTimer);
       socket?.close();
     };
-  }, [applyEvent, setSocketStatus]);
+  }, [applyEvents, setSocketStatus]);
 
   // bfcache guard. iOS Chrome/Safari restore a backgrounded tab from the
   // back-forward cache WITHOUT re-running JS, so the catalog store (and every

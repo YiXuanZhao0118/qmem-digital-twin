@@ -16,7 +16,9 @@ export function AlignPanel() {
   // the primary reference (single-view only has left, dual-view treats left
   // as the principal pivot for global ops).
   const cursorMm = useSceneStore((state) => state.transformCursorMm.left);
-  const updateSceneObject = useSceneStore((state) => state.updateSceneObject);
+  // Batch updater — align/distribute move the whole selection, so they
+  // commit once instead of once per object (see sceneStore).
+  const updateSceneObjects = useSceneStore((state) => state.updateSceneObjects);
 
   const [axis, setAxis] = useState<Axis>("x");
   const [target, setTarget] = useState<Target>("median");
@@ -49,8 +51,11 @@ export function AlignPanel() {
     try {
       const value = computeTargetValue();
       const f = fieldName(axis);
-      await Promise.all(
-        editable.map((o) => updateSceneObject(o.id, { [f]: value } as { xMm?: number; yMm?: number; zMm?: number })),
+      await updateSceneObjects(
+        editable.map((o) => ({
+          objectId: o.id,
+          patch: { [f]: value } as { xMm?: number; yMm?: number; zMm?: number },
+        })),
       );
     } finally {
       setBusy(false);
@@ -65,10 +70,11 @@ export function AlignPanel() {
       const lo = sorted[0][f] as number;
       const hi = sorted[sorted.length - 1][f] as number;
       const step = (hi - lo) / Math.max(1, sorted.length - 1);
-      await Promise.all(
-        sorted.map((o, idx) =>
-          updateSceneObject(o.id, { [f]: lo + idx * step } as { xMm?: number; yMm?: number; zMm?: number }),
-        ),
+      await updateSceneObjects(
+        sorted.map((o, idx) => ({
+          objectId: o.id,
+          patch: { [f]: lo + idx * step } as { xMm?: number; yMm?: number; zMm?: number },
+        })),
       );
     } finally {
       setBusy(false);

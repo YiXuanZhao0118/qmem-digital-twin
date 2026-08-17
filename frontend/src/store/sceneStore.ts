@@ -724,13 +724,23 @@ type SceneStore = {
   updateSceneObject: (objectId: string, patch: SceneObjectPatch) => Promise<void>;
   /** Batch counterpart to `updateSceneObject` — fires every API call in
    *  parallel and applies a SINGLE state update at the end, so 50 moves
-   *  cause 1 re-render instead of 50. Silently drops locked objects from
-   *  the patch list (same lock-protection contract as `updateSceneObject`).
-   *  Locked-aware rigid-group expansion is NOT applied to batch entries;
-   *  callers that need group semantics still use `updateSceneObject` for
-   *  the leading object. */
+   *  cause 1 re-render instead of 50 (and the debounced optical / RF
+   *  recompute runs once, on the settled scene, instead of chasing N
+   *  intermediate commits). Silently drops locked objects from the patch
+   *  list (same lock-protection contract as `updateSceneObject`).
+   *  Locked-aware rigid-group expansion IS applied, batch-wide: each
+   *  explicitly patched object fans its pose out to its rigid group, and
+   *  an explicit patch always wins over a derived one. History records a
+   *  SINGLE entry for the whole batch, unless `recordHistory: false`
+   *  marks the write as derived (the cable re-snap write-through, which
+   *  rides along with the move that already recorded an entry). Every
+   *  multi-object transform path (gizmo multi-drag, group delta fields,
+   *  Align/Distribute, the Shift+S cursor menu) goes through here — do
+   *  NOT loop `updateSceneObject`, that is what made 13-object moves
+   *  stutter. */
   updateSceneObjects: (
     entries: ReadonlyArray<{ objectId: string; patch: SceneObjectPatch }>,
+    opts?: { recordHistory?: boolean },
   ) => Promise<void>;
   deleteObject: (objectId: string) => Promise<void>;
   /** Batch counterpart to `deleteObject` — fires every DELETE in parallel
@@ -983,6 +993,14 @@ type SceneStore = {
   clearPreviewObjectTransform: (objectId?: string) => void;
   setRelationDraftTarget: (target: RelationDraftTarget) => void;
   applyEvent: (event: SceneEvent) => void;
+  /** Batch counterpart to `applyEvent` — folds a burst of broadcasts
+   *  into ONE store commit. Every write the app makes echoes back over
+   *  the WebSocket, so a batched 13-object move arrives as 13
+   *  `object.updated` events; applying them one by one produced 13
+   *  distinct `scene.objects` arrays, i.e. 13 scene rebuilds and 13
+   *  optical / RF re-traces on top of the one the write already caused.
+   *  App.tsx buffers socket messages per frame and calls this. */
+  applyEvents: (events: SceneEvent[]) => void;
   setSocketStatus: (status: SocketStatus) => void;
 };
 
@@ -1171,6 +1189,464 @@ function extractInversePatch<T extends Record<string, unknown>>(
     inverse[key] = oldState[key];
   }
   return inverse;
+}
+
+/** Object ids this client is currently PATCHing, refcounted. The
+ *  backend broadcasts on commit while the HTTP response is still in
+ *  flight, so during a batched multi-object write the echo of the first
+ *  rows lands BEFORE we store the responses — early enough that the
+ *  `updatedAt` self-echo guard can't recognise it yet, and each one
+ *  costs a scene rebuild + optical/RF re-trace. While a write is in
+ *  flight the writer's own response is authoritative, so the echo is
+ *  dropped. Registered only by paths that commit the response
+ *  themselves; paths that rely on the broadcast to update the store
+ *  (undo / redo, which PATCH via `updateObjectApi` directly) never
+ *  register and so keep working. */
+const inFlightObjectWrites = new Map<string, number>();
+
+/** Mark ids as being written; returns the release function. */
+function markObjectWritesInFlight(ids: readonly string[]): () => void {
+  for (const id of ids) inFlightObjectWrites.set(id, (inFlightObjectWrites.get(id) ?? 0) + 1);
+  return () => {
+    for (const id of ids) {
+      const remaining = (inFlightObjectWrites.get(id) ?? 1) - 1;
+      if (remaining <= 0) inFlightObjectWrites.delete(id);
+      else inFlightObjectWrites.set(id, remaining);
+    }
+  };
+}
+
+/** Stitch one aligned rf_cable endpoint into the cable's stored
+ *  properties. Pure so both the interactive single-end apply and the
+ *  batched `resnapRfCablesLinkedTo` write-through can use it — the
+ *  latter folds End A and End B of the same cable into ONE patch
+ *  instead of issuing a PATCH (and a store commit) per end.
+ *  Only the touched endpoint's posMm + matching handle change; the
+ *  other handle on that node and every interior node are preserved. */
+function buildRfCableAlignmentProps(
+  objProperties: SceneObject["properties"] | undefined,
+  componentProperties: ComponentItem["properties"] | undefined,
+  end: "A" | "B",
+  candidate: import("../utils/rfCableAlignment").RfCableAlignmentResult,
+): SceneObject["properties"] {
+  const objProps = objProperties as { rfCableNodes?: FiberNodePersist[] } | undefined;
+  const lengthMm = (() => {
+    const v = (componentProperties as { lengthMm?: number } | undefined)?.lengthMm;
+    return typeof v === "number" ? v : 150;
+  })();
+  const nodes: FiberNodePersist[] =
+    (objProps?.rfCableNodes && objProps.rfCableNodes.length >= 2)
+      ? objProps.rfCableNodes
+      : [
+          { posMm: [-lengthMm / 2, 0, 0] },
+          { posMm: [lengthMm / 2, 0, 0] },
+        ];
+  const idx = end === "A" ? 0 : nodes.length - 1;
+  const newNode: FiberNodePersist = {
+    posMm: candidate.newPosMmBody,
+    handleInMm:
+      end === "B"
+        ? candidate.newHandleMmBody
+        : nodes[idx].handleInMm
+          ? ([...nodes[idx].handleInMm] as [number, number, number])
+          : undefined,
+    handleOutMm:
+      end === "A"
+        ? candidate.newHandleMmBody
+        : nodes[idx].handleOutMm
+          ? ([...nodes[idx].handleOutMm] as [number, number, number])
+          : undefined,
+  };
+  const nextNodes = [...nodes];
+  nextNodes[idx] = newNode;
+  // Persist the per-end link record alongside the node update so the
+  // renderer can re-derive cable End A / End B at draw time whenever
+  // the target SceneObject moves — the user's "logical connection"
+  // requirement (B). Stored under
+  //   SceneObject.properties.rfCableEndpoints[A|B]
+  // The matching node[idx].posMm + handle stay populated as a fallback
+  // for when the link can't be resolved (target deleted / archived).
+  const existingEndpoints = (objProperties as { rfCableEndpoints?: Record<string, unknown> } | undefined)
+    ?.rfCableEndpoints ?? {};
+  return {
+    ...(objProperties ?? {}),
+    rfCableNodes: nextNodes,
+    rfCableEndpoints: {
+      ...existingEndpoints,
+      [end]: {
+        targetObjectId: candidate.targetObjectId,
+        targetAnchorId: candidate.targetAnchorId,
+        targetAnchorName: candidate.targetAnchorName,
+      },
+    },
+  };
+}
+
+/** Pure reducer for one broadcast SceneEvent. Extracted from
+ *  `applyEvent` so `applyEvents` can fold a burst of events into a
+ *  SINGLE store commit — a 13-object group move echoes back 13
+ *  `object.updated` broadcasts, and committing each one separately
+ *  rebuilt the whole scene (and re-ran the optical / RF trace effect)
+ *  13 times. Returns `state` unchanged for events it does not handle.
+ */
+function reduceSceneEvent(
+  state: SceneStore,
+  event: SceneEvent,
+): Partial<SceneStore> | SceneStore {
+  const scene = state.scene;
+  switch (event.type) {
+    case "component.created":
+    case "component.updated":
+      return {
+        scene: {
+          ...scene,
+          components: upsertById(scene.components, event.payload),
+        },
+      };
+    case "component_binding.created":
+    case "component_binding.updated":
+      return {
+        scene: {
+          ...scene,
+          componentBindings: upsertById(
+            scene.componentBindings ?? [],
+            event.payload,
+          ),
+        },
+      };
+    case "component_binding.deleted": {
+      const bid = event.payload.id;
+      return {
+        scene: {
+          ...scene,
+          componentBindings: (scene.componentBindings ?? []).filter(
+            (b) => b.id !== bid,
+          ),
+        },
+      };
+    }
+    case "object_binding.created":
+    case "object_binding.updated":
+      return {
+        scene: {
+          ...scene,
+          objectBindings: upsertById(
+            scene.objectBindings ?? [],
+            event.payload,
+          ),
+        },
+      };
+    case "object_binding.deleted": {
+      const bid = event.payload.id;
+      return {
+        scene: {
+          ...scene,
+          objectBindings: (scene.objectBindings ?? []).filter(
+            (b) => b.id !== bid,
+          ),
+        },
+      };
+    }
+    case "component.deleted": {
+      const componentId = event.payload.componentId ?? event.payload.id;
+      const removedObjectIds = new Set(
+        scene.objects.filter((item) => item.componentId === componentId).map((item) => item.id),
+      );
+      const nextObjects = scene.objects.filter((item) => item.componentId !== componentId);
+      const nextObjectIdSet = new Set(nextObjects.map((item) => item.id));
+      const activeWasRemoved = state.selectedObjectId ? removedObjectIds.has(state.selectedObjectId) : false;
+      const nextSelectedObjectIds = state.selectedObjectIds.filter((id) => nextObjectIdSet.has(id));
+      return {
+        selectedComponentId:
+          state.selectedComponentId === componentId ? null : state.selectedComponentId,
+        selectedObjectId: activeWasRemoved ? nextSelectedObjectIds[0] ?? null : state.selectedObjectId,
+        selectedObjectIds: nextSelectedObjectIds,
+        scene: {
+          ...scene,
+          components: scene.components.filter((item) => item.id !== componentId),
+          objects: nextObjects,
+          // Per-object endpoints (alembic 0015): drop refs that pointed
+          // at any of the just-removed object instances.
+          connections: scene.connections.filter(
+            (item) =>
+              !removedObjectIds.has(item.fromObjectId) &&
+              !removedObjectIds.has(item.toObjectId),
+          ),
+          assemblyRelations: withoutRelationsForObjects(scene.assemblyRelations, removedObjectIds),
+          deviceStates: scene.deviceStates.filter(
+            (item) => !removedObjectIds.has(item.objectId),
+          ),
+        },
+      };
+    }
+    case "object.updated": {
+      // Self-echo guard. Every write this client makes is broadcast back
+      // to it, and the write path already stored the API's response row.
+      // Re-applying an identical version would still hand the renderer a
+      // fresh `scene.objects` array — a full scene rebuild plus an
+      // optical / RF re-trace — for no actual change, which is exactly
+      // the trailing stutter after a multi-object move. `updatedAt` is
+      // stamped by the backend on every write at microsecond precision,
+      // so an equal timestamp means the same version; a genuine remote
+      // edit always carries a newer one.
+      if (event.payload.id && inFlightObjectWrites.has(event.payload.id)) return state;
+      const known = scene.objects.find((item) => item.id === event.payload.id);
+      if (known?.updatedAt && known.updatedAt === event.payload.updatedAt) {
+        return state;
+      }
+      return {
+        selectedObjectId:
+          state.selectedComponentId === event.payload.componentId && !state.selectedObjectId
+            ? event.payload.id ?? null
+            : state.selectedObjectId,
+        selectedObjectIds:
+          state.selectedComponentId === event.payload.componentId && !state.selectedObjectId && event.payload.id
+            ? [event.payload.id]
+            : state.selectedObjectIds,
+        scene: {
+          ...scene,
+          objects: upsertObject(scene.objects, event.payload),
+        },
+      };
+    }
+    case "object.deleted": {
+      const objectId = event.payload.objectId ?? event.payload.id;
+      const nextObjects = scene.objects.filter((item) => item.id !== objectId);
+      const nextObjectIdSet = new Set(nextObjects.map((item) => item.id));
+      const remainingSelectedIds = state.selectedObjectIds.filter((id) => id !== objectId && nextObjectIdSet.has(id));
+      const activeWasDeleted = state.selectedObjectId === objectId;
+      // Selection rule: clear selection when the active object is
+      // deleted; do NOT auto-jump to nextObjects[0] (the user
+      // explicitly rejected this — felt like a phantom click). Same
+      // for selectedComponentId — leave it as-is if it pointed to
+      // something else, clear it only if it belonged to the deleted
+      // object (which we no longer infer here).
+      const nextSelectedObjectIds = remainingSelectedIds;
+      return {
+        selectedObjectId: activeWasDeleted ? nextSelectedObjectIds[0] ?? null : state.selectedObjectId,
+        selectedObjectIds: nextSelectedObjectIds,
+        selectedComponentId:
+          activeWasDeleted ? null : state.selectedComponentId,
+        scene: {
+          ...scene,
+          objects: nextObjects,
+          assemblyRelations: scene.assemblyRelations.filter(
+            (relation) => relation.objectAId !== objectId && relation.objectBId !== objectId,
+          ),
+        },
+      };
+    }
+    case "assembly_relation.updated":
+      return {
+        scene: {
+          ...scene,
+          assemblyRelations: event.payload.deleted
+            ? scene.assemblyRelations.filter((item) => item.id !== event.payload.id)
+            : upsertById(scene.assemblyRelations, event.payload as AssemblyRelation),
+        },
+      };
+    case "connection.updated":
+      return {
+        scene: {
+          ...scene,
+          connections: event.payload.deleted
+            ? scene.connections.filter((item) => item.id !== event.payload.id)
+            : upsertById(scene.connections, event.payload as ConnectionItem),
+        },
+      };
+    case "device_state.updated":
+      return {
+        scene: {
+          ...scene,
+          deviceStates: upsertDeviceState(scene.deviceStates, event.payload),
+        },
+      };
+    case "physics_element.updated": {
+      const payload = event.payload as Partial<PhysicsElement> & { deleted?: boolean; objectId?: string };
+      const objectId = payload.objectId;
+      if (!objectId) return state;
+      if (payload.deleted) {
+        return {
+          scene: {
+            ...scene,
+            physicsElements: scene.physicsElements.filter((item) => item.objectId !== objectId),
+            opticalLinks: scene.opticalLinks.filter(
+              (link) => link.fromObjectId !== objectId && link.toObjectId !== objectId,
+            ),
+          },
+        };
+      }
+      const others = scene.physicsElements.filter((item) => item.objectId !== objectId);
+      return {
+        scene: { ...scene, physicsElements: [...others, payload as PhysicsElement] },
+      };
+    }
+    case "optical_link.updated": {
+      const payload = event.payload as Partial<OpticalLink> & { deleted?: boolean; id?: string };
+      if (payload.deleted && payload.id) {
+        return {
+          scene: {
+            ...scene,
+            opticalLinks: scene.opticalLinks.filter((item) => item.id !== payload.id),
+          },
+        };
+      }
+      if (!payload.id) return state;
+      return {
+        scene: { ...scene, opticalLinks: upsertById(scene.opticalLinks, payload as OpticalLink) },
+      };
+    }
+    case "optical_simulation.completed":
+      // Currently advisory only; UI listens via runOpticalSimulation return value.
+      return state;
+    case "simulation_run.status_changed": {
+      // Multiphysics WS event. Only mutate rows we already track in
+      // recentSimulationRuns; if the id is unknown we ignore — the
+      // workspace will pick it up the next time it refetches.
+      const payload = event.payload;
+      const recentSimulationRuns = state.recentSimulationRuns.map((run) =>
+        run.id === payload.id
+          ? {
+              ...run,
+              status: payload.status,
+              progress: payload.progress,
+              errorMessage: payload.errorMessage,
+            }
+          : run,
+      );
+      // When the row hits a terminal state, fetch the full row in the
+      // background so consumers (WaveformChart etc.) get
+      // resultSummary + finishedAt without polling. WS payload only
+      // carries status/progress/error to keep events small.
+      if (payload.status === "completed" || payload.status === "failed") {
+        void fetchSimulationRunApi(payload.id)
+          .then((fullRow) => {
+            // `useSceneStore.setState` rather than the store's own `set`:
+            // this reducer is module-level (so `applyEvents` can fold a
+            // burst of events into one commit) and has no closure over it.
+            // Runs in a later tick, so the store is always initialised.
+            useSceneStore.setState((s) => ({
+              recentSimulationRuns: s.recentSimulationRuns.map((r) =>
+                r.id === fullRow.id ? fullRow : r,
+              ),
+            }));
+          })
+          .catch(() => {
+            /* swallow — UI keeps the partial row */
+          });
+      }
+      return { recentSimulationRuns };
+    }
+    case "collection.updated": {
+      const payload = event.payload as Partial<Collection> & { id?: string; deleted?: boolean };
+      const collections = scene.collections ?? [];
+      if (payload.deleted && payload.id) {
+        const nextCollections = collections.filter((c) => c.id !== payload.id);
+        const nextActive =
+          state.activeCollectionId === payload.id
+            ? findMasterCollectionId(nextCollections)
+            : state.activeCollectionId;
+        const nextSession = cloneSession(state.session);
+        nextSession.forceVisibleCollectionIds.delete(payload.id);
+        saveActiveCollectionId(nextActive);
+        return {
+          activeCollectionId: nextActive,
+          session: nextSession,
+          scene: {
+            ...scene,
+            collections: nextCollections,
+            collectionMembers: (scene.collectionMembers ?? []).filter(
+              (m) => m.collectionId !== payload.id,
+            ),
+          },
+        };
+      }
+      if (!payload.id) return state;
+      return {
+        scene: {
+          ...scene,
+          collections: upsertById(collections, payload as Collection),
+        },
+      };
+    }
+    case "collection_member.updated": {
+      const payload = event.payload as {
+        collectionId?: string;
+        objectId?: string;
+        sortOrder?: number;
+        deleted?: boolean;
+        resetToMaster?: boolean;
+      };
+      const collectionId = payload.collectionId;
+      const objectId = payload.objectId;
+      const memberships = scene.collectionMembers ?? [];
+      if (payload.resetToMaster && objectId) {
+        const masterId = findMasterCollectionId(scene.collections);
+        const filtered = memberships.filter((m) => m.objectId !== objectId);
+        if (masterId) {
+          return {
+            scene: {
+              ...scene,
+              collectionMembers: [
+                ...filtered,
+                {
+                  collectionId: masterId,
+                  objectId,
+                  sortOrder: 0,
+                  addedAt: new Date().toISOString(),
+                },
+              ],
+            },
+          };
+        }
+        return { scene: { ...scene, collectionMembers: filtered } };
+      }
+      if (payload.deleted && collectionId && objectId) {
+        return {
+          scene: {
+            ...scene,
+            collectionMembers: memberships.filter(
+              (m) => !(m.collectionId === collectionId && m.objectId === objectId),
+            ),
+          },
+        };
+      }
+      if (!collectionId || !objectId) return state;
+      const next: CollectionMember = {
+        collectionId,
+        objectId,
+        sortOrder: payload.sortOrder ?? 0,
+        addedAt: new Date().toISOString(),
+      };
+      const others = memberships.filter(
+        (m) => m.objectId !== objectId,
+      );
+      return {
+        scene: { ...scene, collectionMembers: [...others, next] },
+      };
+    }
+    case "timing_program.updated": {
+      const program = event.payload;
+      const programs = scene.timingPrograms ?? [];
+      const others = programs.filter((p) => p.id !== program.id);
+      return {
+        scene: { ...scene, timingPrograms: [...others, program] },
+      };
+    }
+    case "timing_program.deleted": {
+      const programId = event.payload.id;
+      return {
+        scene: {
+          ...scene,
+          timingPrograms: (scene.timingPrograms ?? []).filter(
+            (p) => p.id !== programId,
+          ),
+        },
+      };
+    }
+    default:
+      return state;
+  }
 }
 
 export const useSceneStore = create<SceneStore>((set, get) => ({
@@ -2509,58 +2985,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     if (!obj) return;
     const component = state.scene.components.find((c) => c.id === obj.componentId);
     if (!component) return;
-    const objProps = obj.properties as { rfCableNodes?: FiberNodePersist[] } | undefined;
-    const lengthMm = (() => {
-      const v = (component.properties as { lengthMm?: number } | undefined)?.lengthMm;
-      return typeof v === "number" ? v : 150;
-    })();
-    const nodes: FiberNodePersist[] =
-      (objProps?.rfCableNodes && objProps.rfCableNodes.length >= 2)
-        ? objProps.rfCableNodes
-        : [
-            { posMm: [-lengthMm / 2, 0, 0] },
-            { posMm: [lengthMm / 2, 0, 0] },
-          ];
-    const idx = end === "A" ? 0 : nodes.length - 1;
-    const newNode: FiberNodePersist = {
-      posMm: candidate.newPosMmBody,
-      handleInMm:
-        end === "B"
-          ? candidate.newHandleMmBody
-          : nodes[idx].handleInMm
-            ? ([...nodes[idx].handleInMm] as [number, number, number])
-            : undefined,
-      handleOutMm:
-        end === "A"
-          ? candidate.newHandleMmBody
-          : nodes[idx].handleOutMm
-            ? ([...nodes[idx].handleOutMm] as [number, number, number])
-            : undefined,
-    };
-    const nextNodes = [...nodes];
-    nextNodes[idx] = newNode;
-    // Persist the per-end link record alongside the node update so the
-    // renderer can re-derive cable End A / End B at draw time whenever
-    // the target SceneObject moves — the user's "logical connection"
-    // requirement (B). Stored under
-    //   SceneObject.properties.rfCableEndpoints[A|B]
-    // The matching node[idx].posMm + handle stay populated as a fallback
-    // for when the link can't be resolved (target deleted / archived).
-    const existingEndpoints = (obj.properties as { rfCableEndpoints?: Record<string, unknown> } | undefined)
-      ?.rfCableEndpoints ?? {};
-    const nextEndpoints = {
-      ...existingEndpoints,
-      [end]: {
-        targetObjectId: candidate.targetObjectId,
-        targetAnchorId: candidate.targetAnchorId,
-        targetAnchorName: candidate.targetAnchorName,
-      },
-    };
-    const nextProps = {
-      ...(obj.properties ?? {}),
-      rfCableNodes: nextNodes,
-      rfCableEndpoints: nextEndpoints,
-    };
+    const nextProps = buildRfCableAlignmentProps(obj.properties, component.properties, end, candidate);
     const updated = await updateObjectApi(obj.id, { properties: nextProps });
     set((s) => ({
       scene: { ...s.scene, objects: upsertById(s.scene.objects, updated) },
@@ -2575,9 +3000,16 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     // Persisting the recomputed end here makes stored data == derived data.
     // Math mirrors createRfCableBetweenPorts' buildCandidate (same body
     // frame, same tip derivation) so connect-time and re-snap agree.
+    //
+    // Accumulated, not applied per end: a group move re-snaps both ends
+    // of several cables at once, and one PATCH + commit per end meant
+    // 2×N extra scene rebuilds trailing the move. Fold every end of
+    // every affected cable into one properties patch per cable, then
+    // commit the lot through `updateSceneObjects` (a single commit).
     const moved = new Set(movedObjectIds);
     if (moved.size === 0) return;
     const state = get();
+    const nextPropsByCable = new Map<string, SceneObject["properties"]>();
     const { resolveLinkedRfCableEndpoint, connectorTipMmFromAnchors } =
       await import("../utils/rfCableAnchorResolver");
     for (const cable of state.scene.objects) {
@@ -2637,17 +3069,34 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
           connectorTipMm: connectorTipMmFromAnchors(connAsset?.anchors, null),
         });
         if (!resolved) continue;
-        await get().applyRfCableAlignmentCandidate(cable.id, end, {
-          targetObjectId: link.targetObjectId,
-          targetAnchorId: link.targetAnchorId,
-          targetAnchorName: link.targetAnchorName,
-          targetName: targetObj.name,
-          distMm: 0,
-          newPosMmBody: resolved.posMmBody,
-          newHandleMmBody: resolved.handleMmBody,
-        });
+        // Fold onto whatever the other end of THIS cable already wrote,
+        // so End B doesn't clobber End A's nodes.
+        nextPropsByCable.set(
+          cable.id,
+          buildRfCableAlignmentProps(
+            nextPropsByCable.get(cable.id) ?? cable.properties,
+            comp.properties,
+            end,
+            {
+              targetObjectId: link.targetObjectId,
+              targetAnchorId: link.targetAnchorId,
+              targetAnchorName: link.targetAnchorName,
+              targetName: targetObj.name,
+              distMm: 0,
+              newPosMmBody: resolved.posMmBody,
+              newHandleMmBody: resolved.handleMmBody,
+            },
+          ),
+        );
       }
     }
+    if (nextPropsByCable.size === 0) return;
+    // Derived write — the move that triggered it already recorded a
+    // history entry, and undoing that move re-runs this pass.
+    await get().updateSceneObjects(
+      [...nextPropsByCable].map(([objectId, properties]) => ({ objectId, patch: { properties } })),
+      { recordHistory: false },
+    );
   },
 
   async createRfCableBetweenPorts(args) {
@@ -3241,7 +3690,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     }
   },
 
-  async updateSceneObjects(entries) {
+  async updateSceneObjects(entries, opts) {
     // Skip locked / no-op patches BEFORE issuing any network call.
     // Mirrors the single-object lock contract; multi-select callers
     // that include a locked object in the patch list get a silent skip
@@ -3308,19 +3757,26 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     // cross-row ordering constraint. One Promise.all so a single
     // backend 500 still surfaces (Promise.all short-circuits on
     // reject).
-    const updated = await Promise.all(
-      prepared.map((entry) => updateObjectApi(entry.objectId, entry.patch)),
-    );
-    // ONE state update — 50 moves cause 1 re-render instead of 50, and
-    // the downstream optical / RF recompute (DigitalTwinViewer's
-    // debounced /api/v3/solver effect, keyed on the scene object) sees
-    // one settled scene rather than N intermediate ones.
-    set((current) => ({
-      scene: {
-        ...current.scene,
-        objects: upsertObjects(current.scene.objects, updated),
-      },
-    }));
+    // Held until after the commit below, so the broadcasts these PATCHes
+    // trigger are dropped rather than each committing a scene of its own.
+    const releaseInFlight = markObjectWritesInFlight(prepared.map((entry) => entry.objectId));
+    try {
+      const updated = await Promise.all(
+        prepared.map((entry) => updateObjectApi(entry.objectId, entry.patch)),
+      );
+      // ONE state update — 50 moves cause 1 re-render instead of 50, and
+      // the downstream optical / RF recompute (DigitalTwinViewer's
+      // debounced /api/v3/solver effect, keyed on the scene object) sees
+      // one settled scene rather than N intermediate ones.
+      set((current) => ({
+        scene: {
+          ...current.scene,
+          objects: upsertObjects(current.scene.objects, updated),
+        },
+      }));
+    } finally {
+      releaseInFlight();
+    }
     // Write-through: persist re-snapped nodes for cables linked to any
     // pose-changed member (see updateSceneObject single-path note).
     // One call for the whole batch — resnap itself commits once.
@@ -3331,7 +3787,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       void get().resnapRfCablesLinkedTo(poseChangedIds).catch(() => {});
     }
     const withInverse = snapshot.filter((s) => s.inverse !== null);
-    if (withInverse.length > 0) {
+    if (opts?.recordHistory !== false && withInverse.length > 0) {
       get().recordAction({
         description:
           prepared.length === 1
@@ -4462,343 +4918,43 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       return;
     }
     if (event.type === "scene.connected" || event.type === "pong") return;
+    set((state) => reduceSceneEvent(state, event));
+  },
 
+  applyEvents(events) {
+    // Coalesce a burst of broadcasts into ONE commit. Every PATCH the
+    // app issues echoes back over the WebSocket, so a batched multi-
+    // object move produced N `object.updated` events; applying them one
+    // at a time handed the renderer N distinct `scene.objects` arrays,
+    // which is a full scene rebuild plus an optical / RF re-trace each
+    // time. Folding them means the trace still sees exactly one settled
+    // scene, matching the batched write path.
+    if (events.some((event) => event.type === "scene.reload")) {
+      void get().loadScene();
+      return;
+    }
+    const handled = events.filter(
+      (event) => event.type !== "scene.connected" && event.type !== "pong",
+    );
+    if (handled.length === 0) return;
+    if (handled.length === 1) {
+      set((state) => reduceSceneEvent(state, handled[0]));
+      return;
+    }
     set((state) => {
-      const scene = state.scene;
-      switch (event.type) {
-        case "component.created":
-        case "component.updated":
-          return {
-            scene: {
-              ...scene,
-              components: upsertById(scene.components, event.payload),
-            },
-          };
-        case "component_binding.created":
-        case "component_binding.updated":
-          return {
-            scene: {
-              ...scene,
-              componentBindings: upsertById(
-                scene.componentBindings ?? [],
-                event.payload,
-              ),
-            },
-          };
-        case "component_binding.deleted": {
-          const bid = event.payload.id;
-          return {
-            scene: {
-              ...scene,
-              componentBindings: (scene.componentBindings ?? []).filter(
-                (b) => b.id !== bid,
-              ),
-            },
-          };
-        }
-        case "object_binding.created":
-        case "object_binding.updated":
-          return {
-            scene: {
-              ...scene,
-              objectBindings: upsertById(
-                scene.objectBindings ?? [],
-                event.payload,
-              ),
-            },
-          };
-        case "object_binding.deleted": {
-          const bid = event.payload.id;
-          return {
-            scene: {
-              ...scene,
-              objectBindings: (scene.objectBindings ?? []).filter(
-                (b) => b.id !== bid,
-              ),
-            },
-          };
-        }
-        case "component.deleted": {
-          const componentId = event.payload.componentId ?? event.payload.id;
-          const removedObjectIds = new Set(
-            scene.objects.filter((item) => item.componentId === componentId).map((item) => item.id),
-          );
-          const nextObjects = scene.objects.filter((item) => item.componentId !== componentId);
-          const nextObjectIdSet = new Set(nextObjects.map((item) => item.id));
-          const activeWasRemoved = state.selectedObjectId ? removedObjectIds.has(state.selectedObjectId) : false;
-          const nextSelectedObjectIds = state.selectedObjectIds.filter((id) => nextObjectIdSet.has(id));
-          return {
-            selectedComponentId:
-              state.selectedComponentId === componentId ? null : state.selectedComponentId,
-            selectedObjectId: activeWasRemoved ? nextSelectedObjectIds[0] ?? null : state.selectedObjectId,
-            selectedObjectIds: nextSelectedObjectIds,
-            scene: {
-              ...scene,
-              components: scene.components.filter((item) => item.id !== componentId),
-              objects: nextObjects,
-              // Per-object endpoints (alembic 0015): drop refs that pointed
-              // at any of the just-removed object instances.
-              connections: scene.connections.filter(
-                (item) =>
-                  !removedObjectIds.has(item.fromObjectId) &&
-                  !removedObjectIds.has(item.toObjectId),
-              ),
-              assemblyRelations: withoutRelationsForObjects(scene.assemblyRelations, removedObjectIds),
-              deviceStates: scene.deviceStates.filter(
-                (item) => !removedObjectIds.has(item.objectId),
-              ),
-            },
-          };
-        }
-        case "object.updated":
-          return {
-            selectedObjectId:
-              state.selectedComponentId === event.payload.componentId && !state.selectedObjectId
-                ? event.payload.id ?? null
-                : state.selectedObjectId,
-            selectedObjectIds:
-              state.selectedComponentId === event.payload.componentId && !state.selectedObjectId && event.payload.id
-                ? [event.payload.id]
-                : state.selectedObjectIds,
-            scene: {
-              ...scene,
-              objects: upsertObject(scene.objects, event.payload),
-            },
-          };
-        case "object.deleted": {
-          const objectId = event.payload.objectId ?? event.payload.id;
-          const nextObjects = scene.objects.filter((item) => item.id !== objectId);
-          const nextObjectIdSet = new Set(nextObjects.map((item) => item.id));
-          const remainingSelectedIds = state.selectedObjectIds.filter((id) => id !== objectId && nextObjectIdSet.has(id));
-          const activeWasDeleted = state.selectedObjectId === objectId;
-          // Selection rule: clear selection when the active object is
-          // deleted; do NOT auto-jump to nextObjects[0] (the user
-          // explicitly rejected this — felt like a phantom click). Same
-          // for selectedComponentId — leave it as-is if it pointed to
-          // something else, clear it only if it belonged to the deleted
-          // object (which we no longer infer here).
-          const nextSelectedObjectIds = remainingSelectedIds;
-          return {
-            selectedObjectId: activeWasDeleted ? nextSelectedObjectIds[0] ?? null : state.selectedObjectId,
-            selectedObjectIds: nextSelectedObjectIds,
-            selectedComponentId:
-              activeWasDeleted ? null : state.selectedComponentId,
-            scene: {
-              ...scene,
-              objects: nextObjects,
-              assemblyRelations: scene.assemblyRelations.filter(
-                (relation) => relation.objectAId !== objectId && relation.objectBId !== objectId,
-              ),
-            },
-          };
-        }
-        case "assembly_relation.updated":
-          return {
-            scene: {
-              ...scene,
-              assemblyRelations: event.payload.deleted
-                ? scene.assemblyRelations.filter((item) => item.id !== event.payload.id)
-                : upsertById(scene.assemblyRelations, event.payload as AssemblyRelation),
-            },
-          };
-        case "connection.updated":
-          return {
-            scene: {
-              ...scene,
-              connections: event.payload.deleted
-                ? scene.connections.filter((item) => item.id !== event.payload.id)
-                : upsertById(scene.connections, event.payload as ConnectionItem),
-            },
-          };
-        case "device_state.updated":
-          return {
-            scene: {
-              ...scene,
-              deviceStates: upsertDeviceState(scene.deviceStates, event.payload),
-            },
-          };
-        case "physics_element.updated": {
-          const payload = event.payload as Partial<PhysicsElement> & { deleted?: boolean; objectId?: string };
-          const objectId = payload.objectId;
-          if (!objectId) return state;
-          if (payload.deleted) {
-            return {
-              scene: {
-                ...scene,
-                physicsElements: scene.physicsElements.filter((item) => item.objectId !== objectId),
-                opticalLinks: scene.opticalLinks.filter(
-                  (link) => link.fromObjectId !== objectId && link.toObjectId !== objectId,
-                ),
-              },
-            };
-          }
-          const others = scene.physicsElements.filter((item) => item.objectId !== objectId);
-          return {
-            scene: { ...scene, physicsElements: [...others, payload as PhysicsElement] },
-          };
-        }
-        case "optical_link.updated": {
-          const payload = event.payload as Partial<OpticalLink> & { deleted?: boolean; id?: string };
-          if (payload.deleted && payload.id) {
-            return {
-              scene: {
-                ...scene,
-                opticalLinks: scene.opticalLinks.filter((item) => item.id !== payload.id),
-              },
-            };
-          }
-          if (!payload.id) return state;
-          return {
-            scene: { ...scene, opticalLinks: upsertById(scene.opticalLinks, payload as OpticalLink) },
-          };
-        }
-        case "optical_simulation.completed":
-          // Currently advisory only; UI listens via runOpticalSimulation return value.
-          return state;
-        case "simulation_run.status_changed": {
-          // Multiphysics WS event. Only mutate rows we already track in
-          // recentSimulationRuns; if the id is unknown we ignore — the
-          // workspace will pick it up the next time it refetches.
-          const payload = event.payload;
-          const recentSimulationRuns = state.recentSimulationRuns.map((run) =>
-            run.id === payload.id
-              ? {
-                  ...run,
-                  status: payload.status,
-                  progress: payload.progress,
-                  errorMessage: payload.errorMessage,
-                }
-              : run,
-          );
-          // When the row hits a terminal state, fetch the full row in the
-          // background so consumers (WaveformChart etc.) get
-          // resultSummary + finishedAt without polling. WS payload only
-          // carries status/progress/error to keep events small.
-          if (payload.status === "completed" || payload.status === "failed") {
-            void fetchSimulationRunApi(payload.id)
-              .then((fullRow) => {
-                set((s) => ({
-                  recentSimulationRuns: s.recentSimulationRuns.map((r) =>
-                    r.id === fullRow.id ? fullRow : r,
-                  ),
-                }));
-              })
-              .catch(() => {
-                /* swallow — UI keeps the partial row */
-              });
-          }
-          return { recentSimulationRuns };
-        }
-        case "collection.updated": {
-          const payload = event.payload as Partial<Collection> & { id?: string; deleted?: boolean };
-          const collections = scene.collections ?? [];
-          if (payload.deleted && payload.id) {
-            const nextCollections = collections.filter((c) => c.id !== payload.id);
-            const nextActive =
-              state.activeCollectionId === payload.id
-                ? findMasterCollectionId(nextCollections)
-                : state.activeCollectionId;
-            const nextSession = cloneSession(state.session);
-            nextSession.forceVisibleCollectionIds.delete(payload.id);
-            saveActiveCollectionId(nextActive);
-            return {
-              activeCollectionId: nextActive,
-              session: nextSession,
-              scene: {
-                ...scene,
-                collections: nextCollections,
-                collectionMembers: (scene.collectionMembers ?? []).filter(
-                  (m) => m.collectionId !== payload.id,
-                ),
-              },
-            };
-          }
-          if (!payload.id) return state;
-          return {
-            scene: {
-              ...scene,
-              collections: upsertById(collections, payload as Collection),
-            },
-          };
-        }
-        case "collection_member.updated": {
-          const payload = event.payload as {
-            collectionId?: string;
-            objectId?: string;
-            sortOrder?: number;
-            deleted?: boolean;
-            resetToMaster?: boolean;
-          };
-          const collectionId = payload.collectionId;
-          const objectId = payload.objectId;
-          const memberships = scene.collectionMembers ?? [];
-          if (payload.resetToMaster && objectId) {
-            const masterId = findMasterCollectionId(scene.collections);
-            const filtered = memberships.filter((m) => m.objectId !== objectId);
-            if (masterId) {
-              return {
-                scene: {
-                  ...scene,
-                  collectionMembers: [
-                    ...filtered,
-                    {
-                      collectionId: masterId,
-                      objectId,
-                      sortOrder: 0,
-                      addedAt: new Date().toISOString(),
-                    },
-                  ],
-                },
-              };
-            }
-            return { scene: { ...scene, collectionMembers: filtered } };
-          }
-          if (payload.deleted && collectionId && objectId) {
-            return {
-              scene: {
-                ...scene,
-                collectionMembers: memberships.filter(
-                  (m) => !(m.collectionId === collectionId && m.objectId === objectId),
-                ),
-              },
-            };
-          }
-          if (!collectionId || !objectId) return state;
-          const next: CollectionMember = {
-            collectionId,
-            objectId,
-            sortOrder: payload.sortOrder ?? 0,
-            addedAt: new Date().toISOString(),
-          };
-          const others = memberships.filter(
-            (m) => m.objectId !== objectId,
-          );
-          return {
-            scene: { ...scene, collectionMembers: [...others, next] },
-          };
-        }
-        case "timing_program.updated": {
-          const program = event.payload;
-          const programs = scene.timingPrograms ?? [];
-          const others = programs.filter((p) => p.id !== program.id);
-          return {
-            scene: { ...scene, timingPrograms: [...others, program] },
-          };
-        }
-        case "timing_program.deleted": {
-          const programId = event.payload.id;
-          return {
-            scene: {
-              ...scene,
-              timingPrograms: (scene.timingPrograms ?? []).filter(
-                (p) => p.id !== programId,
-              ),
-            },
-          };
-        }
-        default:
-          return state;
+      // `working` carries each event's result forward so the next event
+      // reduces against the already-updated scene; `merged` is what the
+      // store actually receives. A reducer that returns its input
+      // unchanged (unhandled event type) contributes nothing.
+      let working = state;
+      let merged: Partial<SceneStore> = {};
+      for (const event of handled) {
+        const partial = reduceSceneEvent(working, event);
+        if (partial === working) continue;
+        merged = { ...merged, ...partial };
+        working = { ...working, ...partial } as SceneStore;
       }
+      return merged;
     });
   },
 

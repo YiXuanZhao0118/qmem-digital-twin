@@ -73,6 +73,32 @@
 - **L6** `placedRelativeTo` + Re-snap。
 - **L7** 表達式數字欄（`+50` / `*2` / `@200` / `mid(A,B)`，`exprInput.ts` / `NumberField.tsx`）。
 
+## 多選變更：先全部寫完，才算光路 / RF
+
+**鐵則：任何一次動到多個 SceneObject 的 pose，必須走 `sceneStore.updateSceneObjects`（`store/sceneStore.ts:3250`）一次 commit，不可以 loop `updateSceneObject`。**
+
+原因：光路 trace 與 RF 是 **scene 驅動**的 —— `DigitalTwinViewer` 的 debounce effect（`components/DigitalTwinViewer.tsx:1553`，150 ms，dedup key = `sceneData` identity）在 `scene.objects` 換身分時重跑 `/api/v3/solver/run-from-db`，RF schedule 也在同一個 effect 內重建。每呼叫一次 `updateSceneObject` 就是一次獨立 `set()` → 一次全場景 rebuild + 一次 cable re-snap + 一支 undo 紀錄；13 個物件一起搬就是 13 次，這正是「多選一起移動很卡」的來源。批次版把所有 PATCH 併發送出、**最後只 commit 一次**，所以重算只在定案的場景上跑一次。
+
+`updateSceneObjects` 的契約（測試釘在 `store/__tests__/updateSceneObjects.test.ts`）：
+
+- N 個物件 → **1 次 store commit**、**1 筆 undo**（描述 `Update N objects`）、1 次 `resnapRfCablesLinkedTo`。
+- locked 物件在任何網路呼叫前就被丟掉（與單筆路徑同契約）；重複的 `objectId` 為 last-write-wins。
+- **剛性群組展開整批做**：每個明確給定且帶 pose 的 entry 各自 `expandPoseToRigidGroup`（`utils/rigidGroup.ts:227`）；衍生 patch 遇上呼叫端已明確指定的物件時**讓給明確 patch**（多選拖曳本來就自己搬每個成員）。某個 leading 物件因群組內有 locked 成員被拒時，只丟掉那一筆，選取範圍其餘照搬。
+
+目前走批次路徑的入口：gizmo 多選拖曳（`DigitalTwinViewer.tsx` 的 `onDragEnd`，primary + followers 併成一次呼叫）、Object 面板的 Group delta 欄位（`ComponentPanel.MultiSelectTransformPanel`）、Align / Distribute（`AlignPanel.tsx`）、Shift+S 游標選單的 Selection→Cursor / →Active（`optical/CursorMenu.tsx`）。
+
+### 光走回頭路的三個洩漏點（都已封住）
+
+只把「寫入」批次化還不夠 —— 實測（13 個物件一起搬）一開始仍有 **22 次 commit**，收斂到 **2 次**（1 次搬移 + 1 次 cable 寫回）靠的是三件事一起做：
+
+1. **寫入合批** —— `updateSceneObjects`，如上。
+2. **WebSocket 回音合批 + 自我回音丟棄**（`sceneStore.applyEvents` + `App.tsx` 的 `WS_FLUSH_MS = 16` 緩衝）。所有寫入都會被後端廣播回來，13 筆 PUT 就是 13 個 `object.updated`，各自 commit 一次。現在 App 把一個 frame 內到達的訊息收成一批交給 `applyEvents`（`reduceSceneEvent` 逐事件摺疊，只 set 一次），而 `object.updated` 另外有兩道自我回音閘門：
+   - **in-flight 閘門**（`inFlightObjectWrites`）：本端 PATCH 尚未落地時丟棄該物件的廣播 —— 後端是 **commit 當下就廣播、HTTP response 後到**，批次寫入時前幾筆的回音會早於我們存下回應，`updatedAt` 還比不出來。只有「自己 commit 回應」的路徑會註冊；**undo / redo 直接呼叫 `updateObjectApi` 而不 set()，靠廣播更新 store，所以刻意不註冊**（動到這裡要保住這條）。
+   - **`updatedAt` 閘門**：store 內已是同一版本就原封返回 `state`（不換陣列）。後端每次寫入都蓋微秒級 `updatedAt`，遠端真編輯一定更新。
+3. **cable 寫回合批**（`resnapRfCablesLinkedTo`）：原本每條 cable 每個端點各一次 PATCH + commit（3 條線 = 6 次）。現在用純函式 `buildRfCableAlignmentProps` 把 End A / End B 摺進同一份 properties，最後一次 `updateSceneObjects(..., { recordHistory: false })` —— `recordHistory: false` 是因為它是**衍生寫入**，觸發它的搬移已經記過一筆 undo。
+
+實測驗證（Lab 分頁、13 物件、含 3 條 rf_cable 的場景）：commit 22 → 2、`/api/v3/solver/run-from-db` 每次搬移 2 次、undo 由 13 筆變 1 筆且一次還原全部。
+
 ## 已知限制
 
 - 後端基本不動（`placedRelativeTo` 只是 `SceneObject.properties` 上的 JSON）。
