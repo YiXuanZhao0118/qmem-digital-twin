@@ -1,32 +1,39 @@
 // Object panel — read-only "spec sheet" view of a SceneObject.
 //
-// The Phase-3-aware twin of the existing PhysicsElementPanel (which edits
-// state knobs): IntrinsicSpecPanel surfaces every kindParam the plugin
-// tagged `intrinsicParamKeys` — wavelength, AOM acoustic velocity, ZHL-1-2W
-// gain, AD9959 channel count, … — alongside a port-domain summary so the
-// user can see, at a glance, which Link graph each anchor participates in
-// (Optical / RF / Trigger / TTL / DC).
+// SOURCE OF TRUTH = the ASSETS the object's component binds (2026-08-17).
+// Physical parameters live on `Asset3D.default_params` + `wavelength_range_nm`
+// — that is what the tracer reads (see docs/introduce/asset.md and the
+// param-ownership note in kinds.md) — so the spec sheet reads them straight
+// off the bound assets, one block per asset. A composite optic therefore
+// shows its real internals: the IO-3-850-HP isolator lists its two
+// Glan-Laser prisms and its Faraday rod rather than nothing at all.
+//
+// It used to read `PhysicsElement.kindParams` filtered by the FRONTEND
+// plugin's `intrinsicParamKeys`, keyed off the COMPONENT kind. That hid the
+// spec for 10 of the 12 optics in a real scene: only 4 plugins ever declared
+// `intrinsicParamKeys`, so `partitionKindParamKeys(...).intrinsic` was empty
+// for lenses, mirrors, PBSs, fibers and every composite — and the rows that
+// did render were half "—", because keys like `wavelengthRangeNm` are asset
+// COLUMNS that never appear in kindParams at all.
+//
+// Per-instance tunables (`Asset3D.tunable_params`, edited below the sheet via
+// dynamicSources) are excluded: the sheet is the fixed hardware, the editor
+// underneath owns whatever this instance overrides.
 //
 // Why read-only: intrinsics describe the hardware itself. Changing them
-// would mean "I'm pretending this is a different part" — a calibration
-// override belongs on the SceneObject instance, not the catalog. Phase 4
-// surfaces an explicit "Calibration override" affordance backed by
-// `intrinsic_overrides` columns; until then this panel is purely a
-// reference card.
+// would mean "I'm pretending this is a different part" — edit the asset in
+// the PHY Editor instead (and note most optical assets are `locked`).
 //
-// Plugins that haven't opted into the Phase-2 partition (`intrinsicParamKeys`
-// + `stateParamKeys`) cause the panel to hide its content sections —
-// nothing to show, no surprises. The exhaustiveness test in
-// `plugin_partition.test.ts` ensures every migrated kind partitions cleanly.
+// The "Ports by domain" block still resolves through the legacy
+// `component.asset3dId`, so it only appears for pre-binding components.
 
 import { Cpu, Info, PlugZap } from "lucide-react";
 import { useMemo } from "react";
 
-import type { ComponentItem, PhysicsElement, SceneObject } from "../types/digitalTwin";
+import type { ComponentItem, SceneObject } from "../types/digitalTwin";
 import { useSceneStore } from "../store/sceneStore";
 import {
   isPhysicsPlugin,
-  partitionKindParamKeys,
   resolvePortDomain,
   type PortDomain,
 } from "../kinds/_plugin";
@@ -66,7 +73,11 @@ function formatValue(v: unknown): string {
   }
   if (typeof v === "boolean") return v ? "true" : "false";
   if (typeof v === "string") return v;
-  return JSON.stringify(v);
+  // Nested objects (a laser's `spectrum`, say) are a whole record, not a
+  // field — dumping the JSON into a two-column table stretches the drawer.
+  // Show the head of it and hand the rest to the cell's tooltip.
+  const json = JSON.stringify(v);
+  return json.length > 64 ? `${json.slice(0, 63)}…` : json;
 }
 
 type Props = {
@@ -75,67 +86,107 @@ type Props = {
 };
 
 export function IntrinsicSpecPanel({ component, sceneObject }: Props) {
-  const physicsElements = useSceneStore((s) => s.scene.physicsElements);
   const assets = useSceneStore((s) => s.scene.assets);
   const components = useSceneStore((s) => s.scene.components);
+  const componentBindings = useSceneStore((s) => s.scene.componentBindings);
+  const objectBindings = useSceneStore((s) => s.scene.objectBindings);
 
-  // Resolve plugin via componentType. PassivePlugins (mirror_mount, posts,
-  // …) don't have a physics block and therefore no intrinsic params —
-  // we hide the panel entirely for those.
+  // One spec block per bound asset, in binding order. Assets that carry no
+  // physics at all (housings, mount pieces — e.g. the isolator's front/back
+  // shells) are skipped: an empty table reads as "no spec" when the truth is
+  // "this piece is geometry".
+  const specBlocks = useMemo(() => {
+    const overrideByBinding = new Map(
+      (objectBindings ?? [])
+        .filter((b) => b.objectId === sceneObject.id)
+        .map((b) => [b.componentBindingId, b.asset3dIdOverride] as const),
+    );
+    return (componentBindings ?? [])
+      .filter((b) => b.componentId === sceneObject.componentId && b.targetKind === "asset")
+      .slice()
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .flatMap((binding) => {
+        // Honour a per-instance asset swap, exactly as the loader does.
+        const assetId = overrideByBinding.get(binding.id) ?? binding.asset3dId;
+        const asset = assetId ? assets.find((a) => a.id === assetId) : undefined;
+        if (!asset) return [];
+        const tunable = new Set(asset.tunableParams ?? []);
+        const params = Object.entries(asset.defaultParams ?? {}).filter(([k]) => !tunable.has(k));
+        const range = asset.wavelengthRangeNm ?? null;
+        if (params.length === 0 && range == null) return [];
+        return [{
+          key: binding.id,
+          role: binding.role,
+          assetName: asset.name,
+          kindId: asset.kindId ?? null,
+          params,
+          range,
+        }];
+      });
+  }, [componentBindings, objectBindings, assets, sceneObject.componentId, sceneObject.id]);
+
+  // Ports-by-domain is still plugin + legacy-`asset3dId` driven, so it only
+  // shows for components that predate the binding tree.
   const plugin = component && component.kindId != null ? pluginForComponentType(component.kindId) : null;
   const physicsPlugin = plugin && isPhysicsPlugin(plugin) ? plugin : null;
-
-  const physicsElement: PhysicsElement | undefined = useMemo(
-    () => physicsElements.find((e) => e.objectId === sceneObject.id),
-    [physicsElements, sceneObject.id],
-  );
-
   const anchors = useMemo(() => {
     const comp = components.find((c) => c.id === sceneObject.componentId);
     const asset = comp?.asset3dId ? assets.find((a) => a.id === comp.asset3dId) : undefined;
     return asset?.anchors ?? [];
   }, [components, assets, sceneObject.componentId]);
 
-  if (!physicsPlugin) return null;
-
-  const partition = partitionKindParamKeys(physicsPlugin);
-  const kindParams = (physicsElement?.kindParams ?? physicsPlugin.physics.defaultParams) as Record<string, unknown>;
-
-  // Don't show the panel at all when the plugin hasn't been migrated yet
-  // (no intrinsic keys declared). Phase 4 will flip this to an empty-state
-  // hint, but during the migration window silence is the right default.
-  const hasIntrinsic = partition.intrinsic.length > 0;
-  const hasPortDomains = anchors.length > 0;
-  if (!hasIntrinsic && !hasPortDomains) return null;
+  const fieldCount = specBlocks.reduce(
+    (n, b) => n + b.params.length + (b.range ? 1 : 0),
+    0,
+  );
+  const hasSpec = specBlocks.length > 0;
+  const hasPortDomains = physicsPlugin != null && anchors.length > 0;
+  if (!hasSpec && !hasPortDomains) return null;
 
   return (
     <CollapsibleSection
-      id={`intrinsic-spec-${physicsPlugin.id}`}
+      id={`intrinsic-spec-${component?.kindId ?? "object"}`}
       title="Spec"
       icon={<Info size={13} />}
       defaultOpen
-      badge={hasIntrinsic ? `${partition.intrinsic.length} fields` : undefined}
+      badge={hasSpec ? `${fieldCount} fields` : undefined}
     >
       <div className="intrinsic-spec">
-        {hasIntrinsic && (
-          <div className="intrinsic-spec-block">
+        {specBlocks.map((block) => (
+          <div key={block.key} className="intrinsic-spec-block">
             <div className="intrinsic-spec-subhead">
-              <Cpu size={11} /> Spec sheet — read-only
+              <Cpu size={11} />{" "}
+              {specBlocks.length > 1 ? `${block.role} — ` : ""}
+              {block.kindId ?? "unkinded"}
+              <span className="intrinsic-spec-asset" title={block.assetName}>
+                {block.assetName}
+              </span>
             </div>
             <table className="intrinsic-spec-table">
               <tbody>
-                {partition.intrinsic.map((key) => (
+                {block.params.map(([key, value]) => (
                   <tr key={key}>
                     <td className="intrinsic-spec-key">{key}</td>
-                    <td className="intrinsic-spec-val">{formatValue(kindParams[key])}</td>
+                    <td
+                      className="intrinsic-spec-val"
+                      title={typeof value === "object" && value !== null ? JSON.stringify(value) : undefined}
+                    >
+                      {formatValue(value)}
+                    </td>
                   </tr>
                 ))}
+                {block.range && (
+                  <tr>
+                    <td className="intrinsic-spec-key">wavelengthRangeNm</td>
+                    <td className="intrinsic-spec-val">{formatValue(block.range)}</td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
-        )}
+        ))}
 
-        {hasPortDomains && (
+        {physicsPlugin != null && anchors.length > 0 && (
           <div className="intrinsic-spec-block">
             <div className="intrinsic-spec-subhead">
               <PlugZap size={11} /> Ports by domain

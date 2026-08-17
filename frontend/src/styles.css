@@ -7665,6 +7665,18 @@ body.is-timing-bar-drag * {
   letter-spacing: 0.04em;
 }
 
+/* Asset name trailing each spec block's subhead — secondary to the kind, and
+   truncated so a long catalog name can't widen the drawer. */
+.intrinsic-spec-asset {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.65;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 .intrinsic-spec-table {
   width: 100%;
   border-collapse: collapse;
@@ -7686,6 +7698,9 @@ body.is-timing-bar-drag * {
   color: var(--ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   text-align: right;
+  /* Record-valued params (a laser's spectrum / spatial mode) are long even
+     after truncation — wrap them rather than widening the drawer. */
+  overflow-wrap: anywhere;
 }
 
 .intrinsic-spec-ports {
