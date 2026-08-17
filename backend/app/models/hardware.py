@@ -123,6 +123,69 @@ class Asset3D(Base):
     )
 
     components: Mapped[list[Component]] = relationship(back_populates="asset")
+    # lazy="selectin": every Asset3D read serialises ``lods`` into
+    # Asset3DV3Out, and under asyncio a lazy relationship load at
+    # serialisation time raises MissingGreenlet. Eager at the mapper level
+    # means no query in the routers has to remember an explicit
+    # selectinload(), including the post-commit ``session.refresh``.
+    lods: Mapped[list[AssetLod]] = relationship(
+        back_populates="asset",
+        cascade="all, delete-orphan",
+        order_by="AssetLod.level",
+        lazy="selectin",
+    )
+
+
+class AssetLod(Base):
+    """One LOD tier of an Asset3D (alembic 0122). See objectives.md R-4/R-5.
+
+    Level 0 is the asset's own mesh (``file_path`` mirrors
+    ``Asset3D.file_path``, ``error_mm`` is 0 by definition); 1 and 2 are the
+    decimated tiers. ``error_mm`` is the tier's measured maximum deviation
+    from LOD0 — the renderer's screen-space-error switch divides by it, so it
+    is load-bearing data, not a report.
+
+    This lives in its own table rather than on ``assets_3d`` **because of
+    ``locked``**: ``lock_guard`` 422s any non-``locked`` write to a locked
+    asset, and a derived render artifact must not need a human unlock to
+    regenerate. Nothing here is physics — the tracer never reads a mesh.
+    """
+
+    __tablename__ = "asset_lods"
+    __table_args__ = (
+        CheckConstraint("level >= 0 AND level <= 2", name="ck_asset_lods_level"),
+        UniqueConstraint("asset_id", "level", name="uq_asset_lods_asset_level"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    asset_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("assets_3d.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    level: Mapped[int] = mapped_column(sa.SmallInteger, nullable=False)
+    file_path: Mapped[str] = mapped_column(Text, nullable=False)
+    tri_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    error_mm: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0, server_default="0"
+    )
+    # Digest of the asset's viewerHints at generation time. viewerHints
+    # centroid keys are computed on the FULL-resolution mesh, so decimation
+    # invalidates them — a hints edit must drop these rows (enforced in the
+    # asset PUT). NULL = the tiers were baked with no hints applied.
+    hints_digest: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    asset: Mapped[Asset3D] = relationship(back_populates="lods")
 
 
 class Component(Base):

@@ -27,7 +27,7 @@
 | **R-2** | Render resolution | 1920×1080 native, dpr capped at 1.5, MSAA×4 | ordinary runner |
 | **R-3** | No degradation while interacting | No resolution drop or shadow disabling during drag/orbit | reference machine |
 | **R-4** | Per-Asset3D geometry budget | LOD0 ≤ 500k tris / ≤ 20 MB GLB | ordinary runner |
-| **R-5** | LOD tiers | LOD1 ≤ 100k, LOD2 ≤ 20k tris, switched by view distance | ordinary runner |
+| **R-5** | LOD tiers | LOD1 ≤ 100k, LOD2 ≤ 20k tris, switched by **screen-space error ≤ 1 px** | ordinary runner |
 | **R-6** | Scene scale | **No cap on component count**; R-1 is held with instancing + frustum/occlusion culling + LOD | reference machine |
 | **R-7** | Scene load | A cached scene interactive in < 3 s | reference machine |
 | **R-8** | Cold start | < 10 s (including the DB connection + the first GLB fetch) | reference machine |
@@ -66,14 +66,49 @@
 
 ### R-4 / R-5 Per-asset geometry budget — three LOD tiers
 
-| Tier | Triangles | GLB size | Used at |
+| Tier | Triangles | GLB size | Typical use |
 |---|---|---|---|
-| LOD0 | ≤ 500k | ≤ 20 MB | selected / close (< 0.3 m) |
-| LOD1 | ≤ 100k | ≤ 5 MB | medium (0.3–1.5 m) |
-| LOD2 | ≤ 20k | ≤ 1 MB | far (> 1.5 m) / scene overview |
+| LOD0 | ≤ 500k | ≤ 20 MB | selected / close |
+| LOD1 | ≤ 100k | ≤ 5 MB | medium |
+| LOD2 | ≤ 20k | ≤ 1 MB | far / scene overview |
 
 - The LOD0 cap is aligned with the measured floor (a 1353-part board measured 464k tris / 18.5 MB).
 - **CI**: on asset upload/import, check all three tiers exist and fit their budgets; a missing tier fails.
+
+#### The switching metric is screen-space **error**, not screen-space size
+
+The "Typical use" column above is descriptive only — **the tier is not chosen by camera distance.** Distance (or projected object size) is the wrong metric because it is not scale-free: a 2 m optical table and a 12.7 mm mirror filling the same number of pixels need completely different triangle densities, and for any object large enough to contain the camera inside its bounding sphere the distance term collapses to 0 and pins it at LOD0 forever.
+
+The tier is chosen by how many pixels the tier's own **geometric error** projects to:
+
+```
+px_error = ε_world × viewportHeight / (2 × d × tan(fov/2))
+choose the coarsest tier whose px_error ≤ τ,  τ = 1 px
+```
+
+- **`ε_world`** — that tier's maximum deviation from LOD0, in mm. It is produced at generation time (meshoptimizer's `simplify()` returns it as the second element of its result tuple; `MeshoptSimplifier.getScale()` converts the relative value to absolute) and **stored per tier** in `asset_lods.error_mm`. LOD0's ε is 0 by definition. This is the same quantity B-1 measures, so the spec and the runtime switch agree on one number.
+- **`d`** — distance from the camera to the object's **world AABB surface** (`Box3.distanceToPoint`, clamped at the near plane), **never** to its centre. The centre form is the degenerate case above.
+- Object size does not appear in the formula. Large and small assets are handled by the same rule with no special case.
+- **Hysteresis 15 %** on each threshold, so an object sitting on a boundary cannot thrash between tiers.
+
+Calibration check: the 1353-part board's LOD2 measures ε ≈ 1.8 mm; at 1080p / fov 50° that is 1.0 px at 2 m and 4.2 px at 0.5 m — i.e. τ = 1 px reproduces roughly the distances the table above describes, while scaling correctly for assets of any size.
+
+**Known limitation of the metric.** `ε` is a quadric error bound, not a perceptual one: thin plates, hole grids and slender posts can vanish without ε growing much (see the note at `three/loadAsset/stl_builders/analog_devices_ad9959_pcbz.ts:120`). Two guards, neither of which is expressible in the formula:
+- the **selected** object always renders at LOD0;
+- an asset may pin a floor via `asset_lods` policy (see R-5 policy below), for parts whose features quadric error under-reports.
+
+#### R-5 per-asset policy
+
+Uniform whole-asset LOD is always wrong somewhere on a very large asset (stand at one corner of the table and the far end is dragged to LOD0 with you). Rather than chunking — which is essentially a hand-rolled virtual-geometry system and is **deliberately out of scope** — each asset carries a policy:
+
+| Policy | Meaning | For |
+|---|---|---|
+| `auto` (default) | pure px_error rule | ordinary components |
+| `pin_lod0` | never coarsen | parts whose features quadric error under-reports |
+| `cap_lod1` | never load LOD0 | large background structure (optical table, chassis) |
+| `exclude` | no LOD at all | procedural / spline geometry (fiber, rf_cable) — cheap already, and their AABB is huge but nearly empty |
+
+Chunking is revisited only if measurement shows a single large asset is the actual bottleneck. For the optical table the expected win is not triangle count at all but **draw calls** — LOD2 generation merges by material, which is what R-6's ≤ 2000 draw-call budget actually responds to.
 
 ### R-6 Scene scale — no cap on component count
 - No limit is placed on the number of components; gating uses the following **deterministic proxy metrics** instead (ordinary runner, headless scene construction):
@@ -129,7 +164,8 @@ This is **the single most engineering-demanding line in the document**, and its 
 
 ### B — The BUILD asset pipeline
 - **B-1 geometric fidelity ≤ 0.05 mm**: LOD0's maximum Hausdorff distance from the source CAD. The point is to stop decimation from eating into O-1's 1 µm budget — **but note: 0.05 mm is the tolerance of the *render* geometry; optical interface accuracy is guaranteed by the anchors (§O-1), and the two are separate paths.**
-- LOD1 / LOD2 have no geometric tolerance (they exist for distant display and take no part in physics).
+- LOD1 / LOD2 have no geometric **tolerance** — but each one's actual deviation **is measured and stored** (`asset_lods.error_mm`), because R-5's switching rule consumes it. Recorded, not gated.
+- **Authoring surfaces never see a coarsened mesh.** The PHY Editor (ASSET3D / COMPONENT previews) and BUILD always load LOD0 and never switch tiers. Face-picking already sits at the ~5 mrad triangulation limit ([float64-audit.md](float64-audit.md) §2.2); authoring an anchor against a decimated mesh would degrade the one precision breach that is still open. Physics itself is unaffected either way — the tracer reads only anchors, never mesh vertices (§O-1).
 - **B-2 conversion time ≤ 60 s**: the in-browser occt-import-js path. An oversized STEP beyond the WASM address-space limit (243 MB was measured to crash) **must go through offline `cascadio`** and is not counted against this threshold.
 - **CI**: run the conversion over pinned STEP samples and assert the three LOD triangle counts, LOD0's Hausdorff distance, and the conversion time.
 
@@ -170,7 +206,10 @@ In priority order:
 1. **Build the measured benchmark dataset** — the prerequisite for O-4 and F-2. **The measurement protocol and case list are written: [`docs/bench-dataset.md`](bench-dataset.md)** (12 cases: O-4 ×7, F-2 ×5, each listing the conditions to record and which `defaultParams` it exercises); the data's home and format are in [`backend/tests/fixtures/bench/`](../backend/tests/fixtures/bench/README.md), with the structural gate in `backend/tests/test_bench_cases.py`.
    **But there are 0 measured values and 0 comparators so far — a gap that can only be closed with lab time, not with code.** The recommendation is to do the four ★priority cases first (O-4.1 fibre coupling, O-4.2 AOM first-order efficiency, O-4.4 isolator extinction, F-2.5 RF drive → diffraction efficiency).
 2. ~~**The float64 end-to-end audit**~~ — **completed 2026-08-17**; results in [`docs/float64-audit.md`](float64-audit.md). Conclusion: the machine path through DB/API/tracer is float64-clean end to end; every breach is in the PHY Editor's authoring UI. **Breach A (`mmText`'s `toFixed(3)`, quantizing position to 1 µm and direction to ~870 µrad) was fixed the same day.** One fundamental limitation remains — **face-picking cannot author µrad-level axes because of mesh triangulation error (~5 mrad), so O-2's anchors must be authored numerically through the device registry**; the remaining repairs (input field step, a two-tier authoring policy, CI guards, a scan for existing corrupted data) are in §3 of that file.
-3. **The LOD1/LOD2 generation pipeline** — BUILD currently produces only one tier. R-5 needs graded decimation plus distance-switched LOD nodes.
+3. **The LOD1/LOD2 pipeline** — in progress, three phases:
+   - **P0 (generation + storage, landing now)** — the `asset_lods` sidecar table (alembic 0122), BUILD emitting all three tiers with their measured `error_mm`, and `Asset3DV3Out.lods` delivering the manifest in the existing catalog fetch. Storage is a **separate table on purpose**: 17 of 23 assets are `locked`, and any write to a non-`locked` column of `assets_3d` is rejected 422 by `lock_guard`, so putting the manifest in `properties` would make "generate a LOD" a human unlock action. A derived render artifact is not the asset's ground truth and must not need one.
+   - **P1 (runtime switching)** — the px_error evaluator in `DigitalTwinViewer`'s `animate()` loop plus a shared per-`(assetId, level)` geometry cache. See [`introduce/rendering.md`](introduce/rendering.md) for the two implementation constraints that are already known (do **not** use `THREE.LOD`; `disposeObject` must not free cached geometry).
+   - **P2 (backfill)** — generate tiers for the existing catalog. Writes only the new table, so locked rows stay untouched.
 4. **Optimistic locking / a write-conflict strategy** — the prerequisite for A-2; there is currently no version column and no `If-Match` support.
 5. **A pinned reference machine** — R-1, O-5 and A-1 need a self-hosted runner; without one, the performance targets can only be measured by hand.
 6. **Aspects with no target yet**: memory ceiling, GPU VRAM ceiling, mobile support, offline mode, accessibility. Deliberately left unset this time.

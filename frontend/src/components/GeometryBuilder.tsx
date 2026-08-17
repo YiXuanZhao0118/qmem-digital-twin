@@ -23,7 +23,13 @@ import occtWasmUrl from "occt-import-js/dist/occt-import-js.wasm?url";
 
 import { importStep, occtMeshToGeometry, type OcctLocateFile } from "../three/occtImport";
 import { exportGlb, geometryToColoredMesh, glbToFile, mergeColoredGeometries } from "../three/glbExport";
-import { decimateWelded, estimateGlbBytes, triangleCount, weldForSimplify } from "../three/decimate";
+import {
+  decimateWelded,
+  decimateWeldedGraded,
+  estimateGlbBytes,
+  triangleCount,
+  weldForSimplify,
+} from "../three/decimate";
 import { loadAssetGeometry, type LoadedSubMesh } from "../three/loadAssetGeometry";
 import { loadProceduralAssetGeometry } from "../three/proceduralAssetGeometry";
 import { VIEWER_BG_LIGHT, VIEWER_GRID_BLACK, VIEWER_GROUND_FILL } from "../three/viewerTheme";
@@ -58,6 +64,12 @@ const PRESETS: { label: string; tris: number }[] = [
 
 const VIEWER_EXTS = new Set(["glb", "gltf", "obj", "stl"]);
 const DRAG_THRESHOLD_PX = 5;
+
+// Triangle budgets for the two decimated LOD tiers (docs/objectives.md §R-5).
+// The saved mesh is LOD0 and keeps whatever budget the user chose above.
+// Changing these means changing that spec, not just this file.
+const LOD1_TRIS = 100_000;
+const LOD2_TRIS = 20_000;
 
 function slugify(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
@@ -179,6 +191,7 @@ export function GeometryBuilder() {
 
   const uploadAsset = useV3Catalog((s) => s.uploadAsset);
   const updateAssetGeometry = useV3Catalog((s) => s.updateAssetGeometry);
+  const uploadAssetLod = useV3Catalog((s) => s.uploadAssetLod);
   const fetchAssetUsage = useV3Catalog((s) => s.fetchAssetUsage);
   const assets = useV3Catalog((s) => s.assets);
   const refreshCatalog = useV3Catalog((s) => s.refresh);
@@ -1025,6 +1038,50 @@ export function GeometryBuilder() {
     applyEdits();
   }, [deletedKeys, lockedKeys, showLocks, applyEdits]);
 
+  /** Emit the LOD1 / LOD2 tiers for the asset just saved (objectives.md
+   *  §R-4/R-5). The saved mesh IS LOD0, so tiers derive from it and inherit
+   *  BUILD's deletions and decimation-slider setting; level 0 is recorded
+   *  metrics-only so the budget check has one uniform place to read.
+   *
+   *  Failures here are reported but never rethrown: the asset itself is
+   *  already saved, and losing the tiers is a degraded render, not lost work
+   *  (P1's switch simply keeps everything at LOD0). Re-saving regenerates. */
+  const emitLodTiers = useCallback(
+    async (key: string, lod0: THREE.BufferGeometry): Promise<string> => {
+      const lod0Tris = triangleCount(lod0);
+      const welded = weldForSimplify(lod0);
+      try {
+        await uploadAssetLod(key, { level: 0, triCount: lod0Tris, errorMm: 0 });
+        const tiers = await decimateWeldedGraded(welded, [LOD1_TRIS, LOD2_TRIS]);
+        const notes: string[] = [];
+        for (let i = 0; i < tiers.length; i++) {
+          const tier = tiers[i];
+          const level = (i + 1) as 1 | 2;
+          const glb = await exportGlb(tier.geometry);
+          await uploadAssetLod(key, {
+            level,
+            triCount: tier.triangles,
+            errorMm: tier.errorMm,
+            file: glbToFile(glb, `${key}.lod${level}`),
+          });
+          notes.push(
+            `LOD${level} ${(tier.triangles / 1000).toFixed(0)}k ±${tier.errorMm.toFixed(3)} mm`,
+          );
+          tier.geometry.dispose();
+        }
+        return `${(lod0Tris / 1000).toFixed(0)}k tris · ${notes.join(" · ")}`;
+      } catch (e) {
+        // Swallowed on purpose — see the note above. Surfacing it as a save
+        // failure would misreport an asset that is already stored.
+        console.error(`[GeometryBuilder] LOD tier generation failed for ${key}`, e);
+        return "LOD tiers failed — re-save to retry";
+      } finally {
+        if (welded !== lod0) welded.dispose();
+      }
+    },
+    [uploadAssetLod],
+  );
+
   const handleSave = useCallback(async () => {
     const geometry = decimatedRef.current ?? editGeomRef.current;
     if (!geometry) {
@@ -1058,7 +1115,10 @@ export function GeometryBuilder() {
           scaleFactor: 1,
           preserveColors: true,
         });
-        setInfo(`Updated “${editingCatalogId}” (${mb} MB). Re-check anchors in the ASSET3D tab.`);
+        const lodNote = await emitLodTiers(editingCatalogId, geometry);
+        setInfo(
+          `Updated “${editingCatalogId}” (${mb} MB · ${lodNote}). Re-check anchors in the ASSET3D tab.`,
+        );
       } else {
         await uploadAsset({
           file: glbToFile(glb, catalogId),
@@ -1067,14 +1127,15 @@ export function GeometryBuilder() {
           kindId: kindId || "unclassified",
           preserveColors: true,
         });
-        setInfo(`Saved “${catalogId}” (${mb} MB). Place anchors in the ASSET3D tab.`);
+        const lodNote = await emitLodTiers(catalogId, geometry);
+        setInfo(`Saved “${catalogId}” (${mb} MB · ${lodNote}). Place anchors in the ASSET3D tab.`);
       }
       setStatus("ready");
     } catch (e) {
       setStatus("ready");
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [catalogId, name, kindId, uploadAsset, updateAssetGeometry, editingCatalogId]);
+  }, [catalogId, name, kindId, uploadAsset, updateAssetGeometry, editingCatalogId, emitLodTiers]);
 
   const hasModel = sourceTris > 0;
   const busy = status === "parsing" || status === "saving";

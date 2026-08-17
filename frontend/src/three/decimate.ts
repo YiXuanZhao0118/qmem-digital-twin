@@ -52,15 +52,58 @@ export function estimateGlbBytes(geometry: THREE.BufferGeometry): number {
   return vertexCount * perVertex + indexBytes;
 }
 
+/** One decimated tier: the geometry plus how far it deviates from its source.
+ *
+ *  `errorMm` is meshoptimizer's simplification error converted to absolute
+ *  units via `getScale()`. BUILD geometry is millimetres (uploads are treated
+ *  as mm and the builder saves unit=mm scale=1), so the value is mm as-is; a
+ *  caller working in other units must scale it. This number is what the
+ *  renderer's screen-space-error LOD switch consumes — see objectives.md R-5. */
+export interface DecimatedTier {
+  geometry: THREE.BufferGeometry;
+  triangles: number;
+  errorMm: number;
+}
+
 /** Decimate an already-welded indexed geometry to ~`targetTriangles`. */
 export async function decimateWelded(
   welded: THREE.BufferGeometry,
   targetTriangles: number,
 ): Promise<THREE.BufferGeometry> {
+  return (await decimateWeldedTier(welded, targetTriangles)).geometry;
+}
+
+/** Decimate a set of triangle budgets off ONE welded source, returning each
+ *  tier with its measured error. Every tier simplifies from the original
+ *  rather than from the previous tier: chaining compounds quadric error and
+ *  would make `errorMm` a lower bound instead of the deviation from LOD0.
+ *
+ *  Targets at or above the source triangle count yield the source unchanged
+ *  (error 0) — a small asset legitimately has identical LOD1/LOD2. */
+export async function decimateWeldedGraded(
+  welded: THREE.BufferGeometry,
+  targetTriangles: number[],
+): Promise<DecimatedTier[]> {
+  const tiers: DecimatedTier[] = [];
+  for (const target of targetTriangles) {
+    tiers.push(await decimateWeldedTier(welded, target));
+  }
+  return tiers;
+}
+
+/** Decimate an already-welded indexed geometry to ~`targetTriangles`,
+ *  reporting the resulting absolute error. */
+export async function decimateWeldedTier(
+  welded: THREE.BufferGeometry,
+  targetTriangles: number,
+): Promise<DecimatedTier> {
   const simplifier = await loadSimplifier();
   const indexAttr = welded.getIndex();
   const positionAttr = welded.getAttribute("position");
-  if (!indexAttr || !positionAttr) return welded.clone();
+  if (!indexAttr || !positionAttr) {
+    const passthrough = welded.clone();
+    return { geometry: passthrough, triangles: triangleCount(passthrough), errorMm: 0 };
+  }
 
   const index =
     indexAttr.array instanceof Uint32Array
@@ -75,9 +118,16 @@ export async function decimateWelded(
     index.length,
     Math.max(3, Math.floor(targetTriangles) * 3),
   );
-  if (targetIndexCount >= index.length) return welded.clone();
+  if (targetIndexCount >= index.length) {
+    const passthrough = welded.clone();
+    return { geometry: passthrough, triangles: triangleCount(passthrough), errorMm: 0 };
+  }
 
-  const [newIndex] = simplifier.simplify(
+  // simplify() returns [index, error]; the error is RELATIVE to the mesh
+  // extent, and getScale() converts it to absolute units. It used to be
+  // discarded here — but it is exactly what the LOD switch needs (R-5), so
+  // dropping it made the tiers unusable for anything but a size budget.
+  const [newIndex, relativeError] = simplifier.simplify(
     index,
     positions,
     3,
@@ -85,6 +135,7 @@ export async function decimateWelded(
     TARGET_ERROR,
     ["LockBorder"],
   );
+  const errorMm = relativeError * simplifier.getScale(positions, 3);
 
   // Expand the simplified index into a de-indexed geometry (this drops the
   // vertices it no longer references), then mergeVertices welds it back into a
@@ -119,7 +170,7 @@ export async function decimateWelded(
   if (outColor) expanded.setAttribute("color", new THREE.BufferAttribute(outColor, 3));
   const compact = mergeVertices(expanded);
   expanded.dispose();
-  return compact;
+  return { geometry: compact, triangles: triangleCount(compact), errorMm };
 }
 
 /** Convenience: weld + decimate in one call (used by tests / one-shot paths). */

@@ -104,6 +104,23 @@ export type V3Asset = {
   /** Human-confirmed "frozen" flag (alembic 0112). True = read-only in the
    *  PHY Editor; the API rejects edits until unlocked. */
   locked: boolean;
+  /** LOD tier manifest (alembic 0122), ordered by level; empty until the
+   *  asset's tiers have been generated. Read-only — tiers are written through
+   *  `uploadAssetLod`, deliberately not through the asset PUT so that a
+   *  locked asset can still have its derived geometry regenerated. */
+  lods: V3AssetLod[];
+};
+
+/** One LOD tier of an asset. `errorMm` is the tier's measured max deviation
+ *  from LOD0 (0 for level 0 by definition) and is the renderer's screen-space
+ *  -error switching input — see docs/objectives.md §R-5. */
+export type V3AssetLod = {
+  level: number;
+  filePath: string;
+  triCount: number;
+  byteSize: number;
+  errorMm: number;
+  hintsDigest: string | null;
 };
 
 export type V3AssetUpdate = Partial<{
@@ -133,6 +150,16 @@ export type V3AssetUpload = {
   scaleFactor?: number;
   precisionPreset?: "preview" | "standard" | "high";
   preserveColors?: boolean;
+};
+
+/** One tier handed to `uploadAssetLod`. Level 0 carries metrics only (it *is*
+ *  the asset's own mesh, error 0 by definition); levels 1–2 carry the
+ *  decimated GLB. See docs/objectives.md §R-4/R-5. */
+export type V3AssetLodUpload = {
+  level: 0 | 1 | 2;
+  triCount: number;
+  errorMm: number;
+  file?: File;
 };
 
 type UploadComponentFallbackResponse = {
@@ -241,6 +268,10 @@ type V3CatalogState = {
   fetchAssetUsage: (key: string) => Promise<V3AssetUsage>;
   uploadAsset: (payload: V3AssetUpload) => Promise<V3Asset>;
   updateAssetGeometry: (catalogId: string, payload: V3AssetUpload) => Promise<V3Asset>;
+  /** Record one LOD tier for an asset (alembic 0122). Separate from the asset
+   *  PUT on purpose: tiers are derived render artifacts, so this route is not
+   *  behind `lock_guard` and works on locked assets. */
+  uploadAssetLod: (key: string, tier: V3AssetLodUpload) => Promise<V3Asset>;
   getAssetByCatalogId: (catalogId: string) => V3Asset | undefined;
   getAssetByDbId: (dbId: string) => V3Asset | undefined;
   getAssetsByKind: (kind: string) => V3Asset[];
@@ -394,6 +425,27 @@ export const useV3Catalog = create<V3CatalogState>((set, get) => ({
     const updated = res.data;
     set((state) => ({
       assets: state.assets.map((a) => (a.catalogId === catalogId ? updated : a)),
+    }));
+    return updated;
+  },
+
+  uploadAssetLod: async (key, tier) => {
+    const form = new FormData();
+    form.append("level", String(tier.level));
+    form.append("tri_count", String(tier.triCount));
+    form.append("error_mm", String(tier.errorMm));
+    // Level 0 is metrics-only — its geometry is the asset's own file, and
+    // the route rejects a file on that level rather than silently storing a
+    // duplicate that could drift from Asset3D.file_path.
+    if (tier.file) form.append("file", tier.file);
+    const res = await client.post<V3Asset>(
+      `/api/v3/assets3d/${encodeURIComponent(key)}/lods`,
+      form,
+      { timeout: 600000 },
+    );
+    const updated = res.data;
+    set((state) => ({
+      assets: state.assets.map((a) => (a.id === updated.id ? updated : a)),
     }));
     return updated;
   },

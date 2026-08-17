@@ -18,6 +18,7 @@ The BUILD tab turns CAD into a catalog Asset3D **entirely in the browser** — *
 2. **Decimate**: **meshoptimizer** simplifies the visible mesh live, while an **un-decimated hidden mesh** is kept so centroid keys stay stable after decimation.
 3. **Colour / geometry filtering**: include / delete is keyed on a **0.5 mm centroid grid** (`centroidKey`, `findCoplanarCluster`), which maps onto the Asset3D's `viewerHints` (`includeOnlyCentroids` / `deletedCentroids`, see [rendering.md](rendering.md)); filtering carries per-triangle colour along, so colours survive.
 4. **Save**: export a **GLB** (`glbToFile`) → through the existing upload route `uploadAsset()` (`catalogStore`). `catalog_id` must be lower-snake-case (`[a-z0-9_]+`).
+5. **Emit the LOD tiers**: the saved mesh is LOD0; `emitLodTiers` then runs `decimateWeldedGraded` (`three/decimate.ts`) down to the LOD1 / LOD2 budgets and POSTs each tier to `/api/v3/assets3d/{catalog_id}/lods` with its **measured error in mm** — the input R-5's runtime switch consumes. Tiers derive from the *saved* (post-edit, post-decimation-slider) geometry, so BUILD's deletions are already baked in. A tier failure never fails the save (the asset is already stored); the save message says so. Details in [rendering.md](rendering.md); budgets in [../objectives.md](../objectives.md) §R-4/R-5.
 
 ## Kind and domain
 

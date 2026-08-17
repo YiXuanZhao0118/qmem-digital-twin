@@ -7,7 +7,12 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 
-import { decimateGeometry, triangleCount } from "../decimate";
+import {
+  decimateGeometry,
+  decimateWeldedGraded,
+  triangleCount,
+  weldForSimplify,
+} from "../decimate";
 
 describe("decimate", () => {
   it("reduces triangle count toward the target with colours intact, no NaN", async () => {
@@ -46,5 +51,36 @@ describe("decimate", () => {
     const sourceTris = triangleCount(source);
     const out = await decimateGeometry(source, sourceTris * 4);
     expect(triangleCount(out)).toBe(sourceTris);
+  }, 30000);
+
+  // objectives.md §R-5: the LOD switch divides by each tier's error, so a
+  // tier that reports 0 would always be judged pixel-perfect and win at every
+  // distance. This guards the wrapper actually forwarding meshoptimizer's
+  // error instead of discarding it (which it did before 2026-08-17).
+  it("reports a positive, monotonically growing error per graded tier", async () => {
+    // Radius 10 => the absolute error is in the same units as the geometry,
+    // so a plausible mm-scale magnitude is also asserted.
+    const source = new THREE.IcosahedronGeometry(10, 4);
+    const welded = weldForSimplify(source);
+    const sourceTris = triangleCount(source);
+
+    const [coarse, coarser] = await decimateWeldedGraded(welded, [
+      Math.floor(sourceTris * 0.25),
+      Math.floor(sourceTris * 0.05),
+    ]);
+
+    expect(coarse.errorMm).toBeGreaterThan(0);
+    expect(coarser.errorMm).toBeGreaterThan(coarse.errorMm);
+    // Deviation from a radius-10 sphere cannot exceed the sphere itself.
+    expect(coarser.errorMm).toBeLessThan(10);
+    expect(coarse.triangles).toBeGreaterThan(coarser.triangles);
+  }, 30000);
+
+  it("reports zero error for a tier that did not decimate", async () => {
+    const source = new THREE.IcosahedronGeometry(5, 2);
+    const welded = weldForSimplify(source);
+    const [tier] = await decimateWeldedGraded(welded, [triangleCount(source) * 4]);
+    expect(tier.errorMm).toBe(0);
+    expect(tier.triangles).toBe(triangleCount(source));
   }, 30000);
 });

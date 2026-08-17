@@ -11,6 +11,8 @@ Endpoints:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid as _uuid
 from typing import Optional
 
@@ -26,7 +28,7 @@ from app.kinds_manifest import device_by_id
 from app.lock_guard import assert_delete_allowed, assert_update_allowed
 from app.services.device_seed import materialize_device_anchors
 from app.models import (
-    Asset3D, Component, ComponentBinding, ObjectBinding, SceneObject,
+    Asset3D, AssetLod, Component, ComponentBinding, ObjectBinding, SceneObject,
 )
 from app.schemas import CamelModel
 from app.schemas_v3 import (
@@ -66,6 +68,39 @@ async def _fetch_asset_by_key(session: AsyncSession, key: str) -> Optional[Asset
     return (await session.execute(
         select(Asset3D).where(Asset3D.id == uid)
     )).scalar_one_or_none()
+
+
+def _viewer_hints_digest(properties: dict | None) -> str | None:
+    """Stable digest of an asset's ``viewerHints``, or None when it has none.
+
+    LOD tiers are baked from the POST-hint geometry, and viewerHints centroid
+    keys are computed on the full-resolution mesh — decimation moves every
+    centroid, so a hints edit silently invalidates the tiers. Storing this
+    digest with each tier is what lets the asset PUT detect that.
+    """
+    hints = (properties or {}).get("viewerHints")
+    if not hints:
+        return None
+    payload = json.dumps(hints, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+
+async def _drop_asset_lods(session: AsyncSession, row: Asset3D) -> int:
+    """Delete every LOD tier of an asset and unlink its tier files.
+
+    Called whenever the source mesh or the viewerHints it was baked from
+    change: a tier that outlives its source renders geometry that no longer
+    matches the asset. Level 0 is skipped for file removal — it points at
+    ``Asset3D.file_path``, which the caller owns.
+    """
+    tiers = (await session.execute(
+        select(AssetLod).where(AssetLod.asset_id == row.id)
+    )).scalars().all()
+    for tier in tiers:
+        if tier.level > 0:
+            (settings.asset_root / tier.file_path).unlink(missing_ok=True)
+        await session.delete(tier)
+    return len(tiers)
 
 
 async def _asset_usage(session: AsyncSession, row: Asset3D) -> tuple[int, int]:
@@ -335,6 +370,11 @@ async def replace_asset3d_geometry(
     if scale_factor is not None:
         row.scale_factor = scale_factor
     row.properties = properties
+    # The mesh just changed, so every LOD tier derived from the old one is
+    # stale. Drop them; the builder re-POSTs the new tiers right after this
+    # call returns. Never leave a tier pointing at geometry that no longer
+    # matches the asset (objectives.md R-5).
+    await _drop_asset_lods(session, row)
     try:
         await session.commit()
     except Exception as e:
@@ -342,6 +382,133 @@ async def replace_asset3d_geometry(
         target.unlink(missing_ok=True)
         if conversion and conversion.ok and conversion.viewer_relative_path:
             (settings.asset_root / conversion.viewer_relative_path).unlink(missing_ok=True)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    await session.refresh(row)
+    return row
+
+
+@router.post(
+    "/assets3d/{catalog_id}/lods",
+    response_model=Asset3DV3Out,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upsert_asset3d_lod(
+    catalog_id: str,
+    level: int = Form(...),
+    tri_count: int = Form(...),
+    error_mm: float = Form(0.0),
+    file: UploadFile | None = File(None),
+    session: AsyncSession = Depends(get_session),
+) -> Asset3D:
+    """Record one LOD tier for an asset (alembic 0122; objectives.md R-4/R-5).
+
+    One call per tier, called by BUILD right after the asset itself is saved:
+
+      * **level 0** carries **metrics only, no file** — its ``file_path``
+        mirrors ``Asset3D.file_path`` and its ``error_mm`` is 0 by definition
+        (it *is* the reference the other tiers' error is measured against).
+      * **level 1 / 2** upload the decimated GLB, stored beside the source as
+        ``<stem>.lod<n>.glb``.
+
+    ``tri_count`` and ``error_mm`` come from the client because only it has a
+    mesh parser; ``error_mm`` is meshoptimizer's simplification error scaled
+    to mm and is the renderer's switching input, so a caller that omits it
+    leaves the tier unusable (it would compare as "zero error" and always win).
+
+    **Deliberately not behind ``lock_guard``**: a LOD tier is a derived render
+    artifact, not the asset's ground truth, so regenerating one on a locked
+    asset must not require a human unlock. Nothing this route writes can reach
+    the tracer — physics reads anchors only.
+
+    Upsert semantics: re-POSTing a level replaces that tier's row and file.
+    """
+    row = await _fetch_asset_by_key(session, catalog_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"asset3d key={catalog_id!r} not found",
+        )
+    if level not in (0, 1, 2):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="level must be 0, 1, or 2.",
+        )
+    if tri_count <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="tri_count must be positive.",
+        )
+    if error_mm < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="error_mm must be >= 0.",
+        )
+
+    written: Path | None = None
+    if level == 0:
+        if file is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "level 0 is the asset's own mesh — send metrics only. "
+                    "Upload geometry through /assets3d/upload or "
+                    "/assets3d/{key}/geometry."
+                ),
+            )
+        tier_path = row.file_path
+        # Authoritative size from disk; the asset may predate its LOD rows.
+        source = settings.asset_root / tier_path
+        byte_size = source.stat().st_size if source.exists() else 0
+        error_mm = 0.0
+    else:
+        if file is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"level {level} requires a geometry file.",
+            )
+        content = await file.read()
+        if not content:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Uploaded file is empty.",
+            )
+        upload_dir = settings.asset_root / "files" / "glb"
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        stem = row.catalog_id or str(row.id)
+        filename = safe_upload_name(f"{stem}.lod{level}.glb")
+        written = upload_dir / filename
+        written.write_bytes(content)
+        tier_path = f"files/glb/{filename}"
+        byte_size = len(content)
+
+    existing = (await session.execute(
+        select(AssetLod).where(
+            AssetLod.asset_id == row.id, AssetLod.level == level
+        )
+    )).scalar_one_or_none()
+    if existing is not None:
+        # Replacing a tier: unlink the file it owned, unless the new upload
+        # landed on the very same path (same stem → same name).
+        if existing.level > 0 and existing.file_path != tier_path:
+            (settings.asset_root / existing.file_path).unlink(missing_ok=True)
+        await session.delete(existing)
+        await session.flush()
+
+    session.add(AssetLod(
+        asset_id=row.id,
+        level=level,
+        file_path=tier_path,
+        tri_count=tri_count,
+        byte_size=byte_size,
+        error_mm=error_mm,
+        hints_digest=_viewer_hints_digest(row.properties),
+    ))
+    try:
+        await session.commit()
+    except Exception as e:
+        await session.rollback()
+        if written is not None:
+            written.unlink(missing_ok=True)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     await session.refresh(row)
     return row
@@ -430,7 +597,14 @@ async def update_asset3d_by_catalog_id(
         # Whole-dict overwrite (caller is expected to send the merged
         # state). Keep None as "no-op" rather than blanking the column.
         if payload.properties is not None:
+            before = _viewer_hints_digest(row.properties)
             row.properties = payload.properties
+            # viewerHints changed => the LOD tiers were baked from a
+            # different filtered mesh and their centroid-keyed filtering no
+            # longer applies. Drop them rather than serve geometry that
+            # disagrees with LOD0.
+            if _viewer_hints_digest(row.properties) != before:
+                await _drop_asset_lods(session, row)
 
     await session.commit()
     await session.refresh(row)

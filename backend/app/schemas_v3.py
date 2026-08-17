@@ -141,6 +141,22 @@ class Asset3DV3In(CamelModel):
     notes: Optional[dict[str, Any]] = None
 
 
+class AssetLodOut(CamelModel):
+    """One LOD tier of an asset (alembic 0122). Read-only projection — tiers
+    are written through ``POST /v3/assets3d/{key}/lods``, never through the
+    asset PUT, so that generating them does not collide with ``locked``.
+
+    ``error_mm`` is the tier's measured max deviation from LOD0 and is what
+    the renderer's screen-space-error switch consumes (objectives.md R-5);
+    level 0 is the asset's own mesh, with error 0 by definition."""
+    level: int
+    file_path: str
+    tri_count: int
+    byte_size: int
+    error_mm: float
+    hints_digest: Optional[str] = None
+
+
 class Asset3DV3Out(CamelModel):
     """API response: includes DB-side UUID + v3 catalog fields."""
     id: uuid.UUID
@@ -168,6 +184,10 @@ class Asset3DV3Out(CamelModel):
     # Human-confirmed "frozen" flag (alembic 0112). Read-only editor + the
     # PUT below rejects any field change but ``locked`` while it is true.
     locked: bool = False
+    # LOD tier manifest (alembic 0122), ordered by level. Empty until the
+    # asset's tiers have been generated. Eager-loaded by the list route so a
+    # single catalog fetch carries the whole manifest.
+    lods: list[AssetLodOut] = []
 
 
 class Asset3DV3Update(CamelModel):
