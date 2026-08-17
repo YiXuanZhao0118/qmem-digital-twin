@@ -1,5 +1,5 @@
 /**
- * Top-bar "說明" button. Owns its own open state so it can be dropped into
+ * Top-bar Help button. Owns its own open state so it can be dropped into
  * both the Lab top bar (`workspace/TopBar.tsx`) and the PHY Editor's own top
  * bar (`PhyEditor.tsx`) without threading state through the store.
  */

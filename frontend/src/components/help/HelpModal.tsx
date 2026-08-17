@@ -2,8 +2,8 @@
  * Full-screen Help overlay — "how do I use this" + "how is this built".
  *
  * Two halves, one renderer:
- *   - 使用指南 — hand-written operating instructions (`usageGuide.ts`).
- *   - 架構文件 — the repo's own `docs/introduce/*.md`, bundled verbatim
+ *   - User guide — hand-written operating instructions (`usageGuide.ts`).
+ *   - Architecture — the repo's own `docs/introduce/*.md`, bundled verbatim
  *     (`helpDocs.ts`), so the in-app architecture docs can't drift.
  *
  * Portaled to <body>: `.top-bar-toolbar` clips overflow (same reason the
@@ -66,7 +66,7 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
           );
         }
         if (target.startsWith("#")) return <a href={target}>{children}</a>;
-        // Doc-internal link ([anchors.md](anchors.md), [← 文件索引](README.md)):
+        // Doc-internal link ([anchors.md](anchors.md), [← Doc index](README.md)):
         // navigate inside the modal instead of leaving the app.
         const file = target.split("/").pop() ?? "";
         if (getHelpDoc(file)) {

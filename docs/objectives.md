@@ -1,195 +1,195 @@
-# qmem-digital-twin — 量化目標規格書（Quantified Objectives）
+# qmem-digital-twin — quantified objectives
 
-> 建立日期：**2026-08-17**。本檔定義專案的**可量化驗收目標**（targets），不是現況描述。
-> 現況/架構請看 [`docs/introduce/README.md`](introduce/README.md)。
-> 本檔的每一條目標都有：**數字門檻 + 量測方法 + CI 擋關方式**。沒有這三樣的不算目標，放在 §7「待量化」。
+> Created **2026-08-17**. This file defines the project's **quantified acceptance targets**, not a description of the current state.
+> For the current state and architecture see [`docs/introduce/README.md`](introduce/README.md).
+> Every target here carries three things: **a numeric threshold + a measurement method + how CI gates it**. Anything missing one of those is not a target and lives in §7, "still to be quantified".
 
 ---
 
-## 1. 適用範圍與總則
+## 1. Scope and general rules
 
-| 項目 | 決定 |
+| Item | Decision |
 |---|---|
-| 涵蓋子系統 | 光學求解與渲染、RF 與多物理、資產管線（BUILD）、資料層與 API（**全部四層**） |
-| 驗收機制 | **CI 自動擋關** — 每條目標對應一個自動化測試/基準，超標即 fail、不得合併 |
-| 基準硬體（效能類） | 獨顯桌機：**RTX 3060 / Ryzen 5 5600 等級或以上**，1920×1080 視窗 |
-| 基準硬體（正確性類） | 與硬體無關，任何 CI runner 皆須通過 |
+| Subsystems covered | Optical solving and rendering, RF and multiphysics, the asset pipeline (BUILD), the data layer and API (**all four**) |
+| Acceptance mechanism | **CI gating** — every target maps to an automated test/benchmark; exceeding it fails and blocks the merge |
+| Reference hardware (performance targets) | A discrete-GPU desktop: **RTX 3060 / Ryzen 5 5600 class or better**, a 1920×1080 window |
+| Reference hardware (correctness targets) | Hardware-independent; every CI runner must pass |
 
-**總則：** 效能類目標依賴硬體，因此 CI 擋關分兩段 —— (a) 硬體無關的**確定性代理指標**（draw call 數、三角面數、CPU frame-build 時間、solver 純計算時間）在一般 runner 上擋關；(b) 真實 FPS/端到端延遲在**釘選的基準機**（self-hosted runner）上量測擋關。詳見 §6。
+**General rule:** performance targets depend on hardware, so CI gating comes in two parts — (a) hardware-independent **deterministic proxy metrics** (draw-call count, triangle count, CPU frame-build time, pure solver compute time) gate on ordinary runners; (b) real FPS and end-to-end latency are measured and gated on a **pinned reference machine** (a self-hosted runner). See §6.
 
 ---
 
-## 2. 驗收總表
+## 2. Acceptance summary
 
-| ID | 目標 | 門檻 | 擋關層 |
+| ID | Target | Threshold | Gating tier |
 |---|---|---|---|
-| **R-1** | 互動 FPS | 60 FPS（frame time ≤ 16.7 ms），p95 ≥ 45 FPS | 基準機 |
-| **R-2** | 渲染解析度 | 1920×1080 原生，dpr 上限 1.5，MSAA×4 | 一般 runner |
-| **R-3** | 互動不降級 | 拖曳/旋轉期間不降解析度、不關陰影 | 基準機 |
-| **R-4** | 單一 Asset3D 幾何預算 | LOD0 ≤ 500k tris / ≤ 20 MB GLB | 一般 runner |
-| **R-5** | LOD 分級 | LOD1 ≤ 100k、LOD2 ≤ 20k tris，依視距切換 | 一般 runner |
-| **R-6** | 場景規模 | **元件數不設上限**；靠 instancing + 視錐/遮蔽剔除 + LOD 撐住 R-1 | 基準機 |
-| **R-7** | 場景載入 | 已快取場景 < 3 s 可互動 | 基準機 |
-| **R-8** | 冷啟動 | < 10 s（含 DB 連線 + 首次拉 GLB） | 基準機 |
-| **O-1** | 光路空間精度（位置） | 與解析解誤差 ≤ **1 µm** | 一般 runner |
-| **O-2** | 光路空間精度（角度） | 與解析解誤差 ≤ **0.1 µrad** | 一般 runner |
-| **O-3** | 物理數值（內層） | 與解析解誤差 < **0.1 %** | 一般 runner |
-| **O-4** | 物理數值（外層） | 與實驗室實測誤差 < **5 %** | 一般 runner（釘選資料集） |
-| **O-5** | 求解延遲 | 參數改動 → 光路重繪 p95 < **500 ms** | 基準機 |
-| **F-1** | RF 數值（內層） | 與解析解誤差 < 0.1 % | 一般 runner |
-| **F-2** | RF 數值（外層） | 與實測誤差 < 5 % | 一般 runner（釘選資料集） |
-| **F-3** | RF 拓撲正確性 | 傳播 BFS 通斷 100 % 正確 | 一般 runner |
-| **B-1** | BUILD 幾何保真度 | LOD0 與原 CAD 最大幾何偏差 ≤ 0.05 mm | 一般 runner |
-| **B-2** | BUILD 轉換時間 | 瀏覽器端 ≤ 60 s / 資產；超大件走離線 `cascadio` | 基準機 |
-| **A-1** | API 延遲 | 讀取端點 p95 < **300 ms @ 10 並發** | 基準機 |
-| **A-2** | 並行使用者 | 實驗室 **5–10 人**同時開同一場景不資料損毀 | 一般 runner |
-| **A-3** | 資料層正確性 | migration 可逆；locked 列寫入必 422 | 一般 runner |
+| **R-1** | Interactive FPS | 60 FPS (frame time ≤ 16.7 ms), p95 ≥ 45 FPS | reference machine |
+| **R-2** | Render resolution | 1920×1080 native, dpr capped at 1.5, MSAA×4 | ordinary runner |
+| **R-3** | No degradation while interacting | No resolution drop or shadow disabling during drag/orbit | reference machine |
+| **R-4** | Per-Asset3D geometry budget | LOD0 ≤ 500k tris / ≤ 20 MB GLB | ordinary runner |
+| **R-5** | LOD tiers | LOD1 ≤ 100k, LOD2 ≤ 20k tris, switched by view distance | ordinary runner |
+| **R-6** | Scene scale | **No cap on component count**; R-1 is held with instancing + frustum/occlusion culling + LOD | reference machine |
+| **R-7** | Scene load | A cached scene interactive in < 3 s | reference machine |
+| **R-8** | Cold start | < 10 s (including the DB connection + the first GLB fetch) | reference machine |
+| **O-1** | Optical spatial accuracy (position) | Within **1 µm** of the analytic solution | ordinary runner |
+| **O-2** | Optical spatial accuracy (angle) | Within **0.1 µrad** of the analytic solution | ordinary runner |
+| **O-3** | Physics numerics (inner) | Within **0.1 %** of the analytic solution | ordinary runner |
+| **O-4** | Physics numerics (outer) | Within **5 %** of lab measurement | ordinary runner (pinned dataset) |
+| **O-5** | Solve latency | Parameter change → optical path redrawn, p95 < **500 ms** | reference machine |
+| **F-1** | RF numerics (inner) | Within 0.1 % of the analytic solution | ordinary runner |
+| **F-2** | RF numerics (outer) | Within 5 % of measurement | ordinary runner (pinned dataset) |
+| **F-3** | RF topological correctness | Propagation BFS connectivity 100 % correct | ordinary runner |
+| **B-1** | BUILD geometric fidelity | LOD0 within 0.05 mm maximum deviation from the source CAD | ordinary runner |
+| **B-2** | BUILD conversion time | ≤ 60 s per asset in the browser; oversized parts go through offline `cascadio` | reference machine |
+| **A-1** | API latency | Read endpoints p95 < **300 ms @ 10 concurrent** | reference machine |
+| **A-2** | Concurrent users | **5–10 people** in the lab on the same scene with no data corruption | ordinary runner |
+| **A-3** | Data-layer correctness | Migrations reversible; a write to a locked row always 422s | ordinary runner |
 
 ---
 
-## 3. 渲染目標（R）
+## 3. Rendering targets (R)
 
-### R-1 互動 FPS — 60 FPS @ 獨顯桌機
-- **定義**：以腳本化的固定相機軌跡（60 s 環繞 + 2 次 zoom + 1 次元件拖曳）量測 frame time 直方圖。
-- **門檻**：p50 ≤ 16.7 ms、**p95 ≤ 22.2 ms（=45 FPS）**、最大單幀 ≤ 50 ms（允許偶發 GC）。
-- **量測**：Playwright + `requestAnimationFrame` 取樣，丟棄前 3 s 暖機。
-- **CI**：基準機 runner，與釘選 baseline 比較，退步 > 10 % 即 fail。
+### R-1 Interactive FPS — 60 FPS on a discrete-GPU desktop
+- **Definition**: measure the frame-time histogram over a scripted fixed camera path (a 60 s orbit + 2 zooms + 1 component drag).
+- **Threshold**: p50 ≤ 16.7 ms, **p95 ≤ 22.2 ms (= 45 FPS)**, worst single frame ≤ 50 ms (an occasional GC is allowed).
+- **Measurement**: Playwright + `requestAnimationFrame` sampling, discarding the first 3 s of warm-up.
+- **CI**: on the reference-machine runner, compared against a pinned baseline; a > 10 % regression fails.
 
-### R-2 渲染解析度 — 1080p 原生 + MSAA×4
-- 渲染緩衝 = CSS 尺寸 × min(devicePixelRatio, **1.5**)。
-- WebGLRenderer 抗鋸齒 = MSAA×4（`antialias: true` + samples=4）。
-- **CI**：單元測試斷言 renderer 設定與 dpr clamp 值，不需 GPU。
+### R-2 Render resolution — native 1080p + MSAA×4
+- Render buffer = CSS size × min(devicePixelRatio, **1.5**).
+- WebGLRenderer antialiasing = MSAA×4 (`antialias: true` + samples=4).
+- **CI**: a unit test asserting the renderer settings and the dpr clamp; no GPU required.
 
-### R-3 互動不降級
-- 拖曳、旋轉、align 進行中**不得**動態降解析度、不得關閉陰影或後處理。
-- 這條把「用降畫質換 FPS」的路封死 —— FPS 只能靠 §R-4~R-6 的幾何預算達成。
+### R-3 No degradation while interacting
+- During drags, orbits and aligns it **must not** dynamically drop resolution, nor disable shadows or post-processing.
+- This closes off the "trade image quality for FPS" escape route — FPS must be earned through the geometry budgets in R-4–R-6.
 
-### R-4 / R-5 單一資產幾何預算 — LOD 三級
+### R-4 / R-5 Per-asset geometry budget — three LOD tiers
 
-| 級別 | 三角面 | GLB 大小 | 使用時機 |
+| Tier | Triangles | GLB size | Used at |
 |---|---|---|---|
-| LOD0 | ≤ 500k | ≤ 20 MB | 選中 / 近距離（< 0.3 m） |
-| LOD1 | ≤ 100k | ≤ 5 MB | 中距離（0.3–1.5 m） |
-| LOD2 | ≤ 20k | ≤ 1 MB | 遠距離（> 1.5 m）/ 場景概覽 |
+| LOD0 | ≤ 500k | ≤ 20 MB | selected / close (< 0.3 m) |
+| LOD1 | ≤ 100k | ≤ 5 MB | medium (0.3–1.5 m) |
+| LOD2 | ≤ 20k | ≤ 1 MB | far (> 1.5 m) / scene overview |
 
-- LOD0 上限對齊實測底線（1353 件板卡實測 464k tris / 18.5 MB）。
-- **CI**：資產上傳/匯入時檢查三級皆存在且符合預算；缺級即 fail。
+- The LOD0 cap is aligned with the measured floor (a 1353-part board measured 464k tris / 18.5 MB).
+- **CI**: on asset upload/import, check all three tiers exist and fit their budgets; a missing tier fails.
 
-### R-6 場景規模 — 元件數不設上限
-- 不對場景元件數設限，改以下列**確定性代理指標**擋關（一般 runner，headless 場景建構）：
-  - draw call ≤ **2000**（靠 instancing 合併同型元件）
-  - 每幀 CPU 場景遍歷時間 ≤ **4 ms**
-  - 視錐剔除必須生效：畫面外元件不得進入 draw list
-- 實際 FPS 由 R-1 在基準機把關。
+### R-6 Scene scale — no cap on component count
+- No limit is placed on the number of components; gating uses the following **deterministic proxy metrics** instead (ordinary runner, headless scene construction):
+  - draw calls ≤ **2000** (merging same-type components with instancing)
+  - per-frame CPU scene traversal ≤ **4 ms**
+  - frustum culling must be effective: off-screen components must not enter the draw list
+- Actual FPS is policed by R-1 on the reference machine.
 
-### R-7 / R-8 載入時間
-- **R-7 場景載入 < 3 s**：從路由進入到「第一次可互動（可點選元件）」。GLB 走 IndexedDB 快取 + meshopt 壓縮。
-- **R-8 冷啟動 < 10 s**：清空快取 + 冷 DB 連線，到同一個可互動判準。
-- **量測**：Playwright performance timeline，取 5 次中位數。
-
----
-
-## 4. 光學目標（O）
-
-### O-1 / O-2 空間精度 — 1 µm / 0.1 µrad
-
-這是**全文件中工程壓力最大的一條**，其直接後果必須寫死成設計約束：
-
-- **求解路徑必須全程 float64。** 0.1 µrad = 1×10⁻⁷ rad，而 float32 的相對精度約 1.2×10⁻⁷ —— 方向向量只要在任何一處存成 float32，誤差預算當場用完。
-- 因此：anchor 姿態（position + axisX/axisY）在 DB、JSON 序列化、`anchor_tracer` 內部**一律 float64**；序列化不得截位（至少 15 位有效數字）。
-- **物理路徑不得取用 render mesh 座標。** GLB 頂點是 float32，只供渲染；光學介面位置只能來自 anchor 定義。（呼應現有教訓：`loadAsset` 的 bbox-centering 曾讓 mesh 與原始 CAD anchor 失聯。）
-- 光束在 1 m 光程上的位置誤差 ≤ 1 µm ⇒ 變換鏈累積誤差需 < 1×10⁻⁶ 相對值，變換矩陣連乘要控制在 float64。
-- **CI**：對每個 kind 建解析解對照案例（平面鏡反射、薄透鏡成像、Bragg 繞射角、Faraday 旋轉），斷言位置 ≤ 1 µm、方向 ≤ 0.1 µrad。
-
-### O-3 內層數值 — 對解析解 < 0.1 %
-- 對象：高斯光束傳播（w(z)、R(z)、Gouy）、Jones 矩陣鏈、Bragg 繞射效率、光纖耦合重疊積分、孔徑截斷（knife-edge erf）。
-- **CI**：純數值單元測試，硬體無關，必須永遠綠。
-
-### O-4 外層數值 — 對實測 < 5 %
-- 對象：**整條光路的端對端量**（雷射→光纖耦合效率、AOM ±1 階功率比、隔離器正/反向消光比、TA 增益）。
-- 需要一組**釘選的實測基準案例**（scene JSON + 實測值 + 量測日期 + 儀器），存於 `backend/tests/fixtures/bench/`。
-- **CI**：載入基準場景跑 solver，與實測值比對，偏差 > 5 % fail。
-- ⚠️ 這組基準案例目前**尚未建立**，是本規格書最大的前置工作（見 §7）。
-
-### O-5 求解延遲 — p95 < 500 ms
-- **定義**：使用者放開滑鼠 / 送出參數改動 → 光路 polyline 在畫面上更新完成。
-- 拆解預算：前端組請求 ≤ 30 ms｜網路往返 ≤ 20 ms（本機）｜`/api/v3/solver` ≤ 300 ms｜前端重繪 ≤ 100 ms｜餘裕 50 ms。
-- 拖曳**進行中**顯示暫時光路（幾何近似）不受此條約束。
-- **CI**：後端 solver 純計算時間在一般 runner 擋關（≤ 300 ms，標準 20 元件場景）；端到端 500 ms 在基準機擋關。
+### R-7 / R-8 Load times
+- **R-7 scene load < 3 s**: from entering the route to "first interactive" (components can be clicked). GLBs go through an IndexedDB cache + meshopt compression.
+- **R-8 cold start < 10 s**: with the cache cleared and a cold DB connection, to the same interactivity criterion.
+- **Measurement**: the Playwright performance timeline, taking the median of 5 runs.
 
 ---
 
-## 5. RF / 多物理、BUILD、資料層
+## 4. Optical targets (O)
 
-### F — RF 採用與光學相同的雙層標準
-- **F-1 內層 < 0.1 %**：對解析解 —— 傳輸線衰減、阻抗失配反射、放大器增益壓縮模型、AD9959 相位累加器輸出頻率。
-- **F-2 外層 < 5 %**：對實測 —— 鏈上功率（Vpp ↔ dBm）、AOM 驅動功率 → 繞射效率、cable 長度 → 插入損耗。同樣需要釘選實測基準案例。
-- **F-3 拓撲正確性 100 %**：傳播 BFS 的通/斷必須完全正確（雷射斷電 → TA 無光 → AOM 無輸出；switch/AMP 無輸出）。這條沒有容差，錯一個即 fail。
-  - 已知陷阱：BFS 必須走 **primaryAsset** 語意，不吃 `asset_3d_id_override`（前後端須維持同一鐵則）。
+### O-1 / O-2 Spatial accuracy — 1 µm / 0.1 µrad
 
-### B — BUILD 資產管線
-- **B-1 幾何保真度 ≤ 0.05 mm**：LOD0 相對原 CAD 的最大 Hausdorff 距離。這是為了不讓 decimation 吃掉 O-1 的 1 µm 精度預算 —— **但注意：0.05 mm 是渲染幾何的容差，光學介面精度由 anchor（§O-1）保證，兩者是不同路徑。**
-- LOD1 / LOD2 不設幾何容差（僅供遠距顯示，不參與物理）。
-- **B-2 轉換時間 ≤ 60 s**：瀏覽器端 occt-import-js 路徑。超過 WASM 位址空間上限的超大 STEP（實測 243 MB 即崩）**必須走離線 `cascadio`**，不列入此門檻。
-- **CI**：對釘選的 STEP 樣本跑轉換，斷言三級 LOD 面數 + LOD0 Hausdorff 距離 + 轉換耗時。
+This is **the single most engineering-demanding line in the document**, and its direct consequences have to be written down as hard design constraints:
 
-### A — 資料層與 API
-- **A-1 p95 < 300 ms @ 10 並發**：對 `/api/v3/assets3d`、`/api/kinds`、`/api/v3/scenes/*` 等讀取端點做負載測試（10 並發、60 s）。
-- **A-2 5–10 人並用**：需要明確的寫衝突策略 —— 樂觀鎖（version / ETag + `If-Match`），衝突回 409 而非後寫覆蓋。**目前尚未實作**（見 §7）。
-- **A-3 資料正確性**：
-  - 每個 alembic migration 皆可 `downgrade` 回上一版（CI 跑 upgrade→downgrade→upgrade）。
-  - revision id ≤ 32 字元（已知踩過的雷）。
-  - locked 列的任何非解鎖寫入必回 **422**（`lock_guard` 已實作，需有回歸測試守住）。
+- **The solve path must be float64 end to end.** 0.1 µrad = 1×10⁻⁷ rad, while float32's relative precision is about 1.2×10⁻⁷ — a direction vector stored as float32 anywhere consumes the entire error budget on the spot.
+- Therefore: anchor poses (position + axisX/axisY) are **float64 everywhere** — in the DB, in JSON serialization and inside `anchor_tracer`; serialization must not truncate (at least 15 significant digits).
+- **The physics path must never consume render-mesh coordinates.** GLB vertices are float32 and exist only for rendering; an optical interface's position may only come from the anchor definition. (This echoes an existing lesson: `loadAsset`'s bbox-centering once desynced the mesh from its raw CAD anchor.)
+- A position error ≤ 1 µm over a 1 m optical path ⇒ the transform chain's accumulated error must stay below 1×10⁻⁶ relative, so chained matrix multiplication has to stay in float64.
+- **CI**: build an analytic reference case per kind (plane-mirror reflection, thin-lens imaging, the Bragg diffraction angle, Faraday rotation) and assert position ≤ 1 µm and direction ≤ 0.1 µrad.
 
----
+### O-3 Inner numerics — within 0.1 % of analytic
+- Subjects: Gaussian beam propagation (w(z), R(z), Gouy), the Jones matrix chain, Bragg diffraction efficiency, the fibre coupling overlap integral, and aperture truncation (the knife-edge erf).
+- **CI**: purely numerical unit tests, hardware-independent, always green.
 
-## 6. CI 擋關實作規劃
+### O-4 Outer numerics — within 5 % of measurement
+- Subjects: **end-to-end quantities along a whole optical path** (laser → fibre coupling efficiency, the AOM's ±1 order power ratio, isolator forward/backward extinction, TA gain).
+- Requires a set of **pinned measured benchmark cases** (scene JSON + measured value + measurement date + instrument), stored in `backend/tests/fixtures/bench/`.
+- **CI**: load the benchmark scene, run the solver, compare against the measurement, and fail on a deviation > 5 %.
+- ⚠️ That set of benchmark cases **does not exist yet** and is the largest prerequisite in this specification (see §7).
 
-分兩條 pipeline：
-
-> **狀態（2026-08-17）：`ci-correctness` 已建立** — [`.github/workflows/ci-correctness.yml`](../.github/workflows/ci-correctness.yml)，這是本 repo 的第一個 workflow。
-> `ci-performance` **尚未建立**（需要釘選基準機，見 §7-5）。
-
-**(a) `ci-correctness`（每個 PR，一般 runner）**
-- O-1、O-2、O-3、F-1、F-3、A-3 全部單元/整合測試
-- O-4、F-2 的釘選基準案例比對 —— ⚠️ **目前只有結構閘門**（`test_bench_cases.py` 驗 fixture 格式、擋不確定度過大的資料、並在有實測值卻無比較器時 fail）。**真正的模擬 vs 實測比對尚未實作，因為還沒有任何實測資料**，見 §7-1
-- R-2、R-4、R-5、R-6、B-1 的靜態/確定性代理斷言
-- 全綠才可合併。
-
-**(b) `ci-performance`（合併到 main 後 + 每晚，釘選基準機 self-hosted runner）**
-- R-1、R-3、R-7、R-8、O-5、B-2、A-1
-- 與釘選 baseline 比較，**退步 > 10 % 即 fail 並擋住下一次發布**（不擋 PR，避免硬體抖動誤殺）。
-- 每次跑完把數字寫進 `docs/perf-baseline.json`，變更需人工核可。
+### O-5 Solve latency — p95 < 500 ms
+- **Definition**: from the user releasing the mouse / submitting a parameter change to the optical polyline finishing its update on screen.
+- Budget breakdown: assembling the request in the frontend ≤ 30 ms ｜ network round trip ≤ 20 ms (local) ｜ `/api/v3/solver` ≤ 300 ms ｜ frontend redraw ≤ 100 ms ｜ 50 ms of slack.
+- Showing a provisional optical path (a geometric approximation) **while** dragging is not bound by this target.
+- **CI**: the backend solver's pure compute time gates on an ordinary runner (≤ 300 ms on a standard 20-component scene); the end-to-end 500 ms gates on the reference machine.
 
 ---
 
-## 7. 待量化 / 前置工作（尚未成為擋關項）
+## 5. RF / multiphysics, BUILD, and the data layer
 
-按優先序：
+### F — RF uses the same two-tier standard as optics
+- **F-1 inner < 0.1 %**: against analytic solutions — transmission-line attenuation, impedance-mismatch reflection, the amplifier gain-compression model, the AD9959 phase accumulator's output frequency.
+- **F-2 outer < 5 %**: against measurement — power along the chain (Vpp ↔ dBm), AOM drive power → diffraction efficiency, cable length → insertion loss. It likewise needs pinned measured benchmark cases.
+- **F-3 topological correctness 100 %**: the propagation BFS's connectivity must be exactly right (laser powered off → the TA has no light → the AOM has no output; the switch/AMP produce nothing). There is no tolerance here — one wrong case fails.
+  - A known trap: the BFS must use **primaryAsset** semantics and must not honour `asset_3d_id_override` (frontend and backend have to keep the same iron rule).
 
-1. **建立實測基準資料集** — O-4 與 F-2 的先決條件。**量測協定與案例清單已寫好：[`docs/bench-dataset.md`](bench-dataset.md)**（12 個案例：O-4 ×7、F-2 ×5，含每案例要記的條件與它牽動哪些 `defaultParams`），資料落點與格式在 [`backend/tests/fixtures/bench/`](../backend/tests/fixtures/bench/README.md)，結構閘門在 `backend/tests/test_bench_cases.py`。
-   **但實測值目前 0 筆、比較器 0 個 —— 這條缺口只能靠進實驗室補，寫程式解決不了。** 建議先做四項 ★優先案例（O-4.1 光纖耦合、O-4.2 AOM 一階效率、O-4.4 隔離器消光比、F-2.5 RF 驅動→繞射效率）。
-2. ~~**float64 全鏈稽核**~~ — **已完成 2026-08-17**，結果見 [`docs/float64-audit.md`](float64-audit.md)。結論：DB/API/tracer 機器路徑全程 float64 乾淨；破口全在 PHY Editor 授權 UI。**破口 A（`mmText` 的 `toFixed(3)` 把位置量化到 1 µm、方向量化到 ~870 µrad）已於同日修復。** 剩餘一條原理性限制 —— **face-pick 因網格三角化誤差（~5 mrad）無法授權 µrad 級軸向，O-2 的 anchor 必須走 device registry 數值授權**；剩餘修補項（輸入框 step、兩級授權政策、CI 守門、既有資料損壞掃描）見該檔 §3。
-3. **LOD1/LOD2 產生管線** — 目前 BUILD 只產一級。R-5 需要 decimation 分級 + 視距切換的 LOD 節點。
-4. **樂觀鎖 / 寫衝突策略** — A-2 的先決條件，目前無 version 欄位與 `If-Match` 支援。
-5. **釘選基準機** — R-1、O-5、A-1 需要 self-hosted runner；沒有它，效能目標只能人工量測。
-6. **尚未設目標的面向**：記憶體上限、GPU VRAM 上限、行動裝置支援、離線模式、無障礙。本次刻意不訂。
+### B — The BUILD asset pipeline
+- **B-1 geometric fidelity ≤ 0.05 mm**: LOD0's maximum Hausdorff distance from the source CAD. The point is to stop decimation from eating into O-1's 1 µm budget — **but note: 0.05 mm is the tolerance of the *render* geometry; optical interface accuracy is guaranteed by the anchors (§O-1), and the two are separate paths.**
+- LOD1 / LOD2 have no geometric tolerance (they exist for distant display and take no part in physics).
+- **B-2 conversion time ≤ 60 s**: the in-browser occt-import-js path. An oversized STEP beyond the WASM address-space limit (243 MB was measured to crash) **must go through offline `cascadio`** and is not counted against this threshold.
+- **CI**: run the conversion over pinned STEP samples and assert the three LOD triangle counts, LOD0's Hausdorff distance, and the conversion time.
+
+### A — The data layer and API
+- **A-1 p95 < 300 ms @ 10 concurrent**: load-test the read endpoints (`/api/v3/assets3d`, `/api/kinds`, `/api/v3/scenes/*`, …) at 10 concurrent for 60 s.
+- **A-2 5–10 concurrent users**: requires an explicit write-conflict strategy — optimistic locking (version / ETag + `If-Match`), returning 409 on conflict rather than letting the later write win. **Not implemented yet** (see §7).
+- **A-3 data correctness**:
+  - Every alembic migration can `downgrade` to the previous revision (CI runs upgrade→downgrade→upgrade).
+  - Revision ids ≤ 32 characters (a landmine already stepped on).
+  - Any non-unlocking write to a locked row must return **422** (`lock_guard` is implemented; a regression test has to hold it).
 
 ---
 
-## 8. 已知張力（設計時必須權衡的矛盾）
+## 6. The CI gating plan
 
-| 張力 | 說明 | 目前的解法 |
+Two pipelines:
+
+> **Status (2026-08-17): `ci-correctness` exists** — [`.github/workflows/ci-correctness.yml`](../.github/workflows/ci-correctness.yml), the repo's first workflow.
+> `ci-performance` **does not exist yet** (it needs a pinned reference machine, see §7-5).
+
+**(a) `ci-correctness` (every PR, ordinary runner)**
+- All the unit/integration tests for O-1, O-2, O-3, F-1, F-3 and A-3
+- The pinned benchmark comparisons for O-4 and F-2 — ⚠️ **currently only a structural gate** (`test_bench_cases.py` validates the fixture format, rejects data whose uncertainty is too large, and fails when a measured value exists with no comparator). **The actual simulation-vs-measurement comparison is not implemented, because there is no measured data yet**; see §7-1
+- The static / deterministic proxy assertions for R-2, R-4, R-5, R-6 and B-1
+- All green is required to merge.
+
+**(b) `ci-performance` (after merge to main + nightly, on the pinned reference machine as a self-hosted runner)**
+- R-1, R-3, R-7, R-8, O-5, B-2, A-1
+- Compared against a pinned baseline; **a > 10 % regression fails and blocks the next release** (it does not gate PRs, to avoid hardware jitter killing them).
+- Each run writes its numbers into `docs/perf-baseline.json`; changing them requires human sign-off.
+
+---
+
+## 7. Still to be quantified / prerequisites (not yet gating)
+
+In priority order:
+
+1. **Build the measured benchmark dataset** — the prerequisite for O-4 and F-2. **The measurement protocol and case list are written: [`docs/bench-dataset.md`](bench-dataset.md)** (12 cases: O-4 ×7, F-2 ×5, each listing the conditions to record and which `defaultParams` it exercises); the data's home and format are in [`backend/tests/fixtures/bench/`](../backend/tests/fixtures/bench/README.md), with the structural gate in `backend/tests/test_bench_cases.py`.
+   **But there are 0 measured values and 0 comparators so far — a gap that can only be closed with lab time, not with code.** The recommendation is to do the four ★priority cases first (O-4.1 fibre coupling, O-4.2 AOM first-order efficiency, O-4.4 isolator extinction, F-2.5 RF drive → diffraction efficiency).
+2. ~~**The float64 end-to-end audit**~~ — **completed 2026-08-17**; results in [`docs/float64-audit.md`](float64-audit.md). Conclusion: the machine path through DB/API/tracer is float64-clean end to end; every breach is in the PHY Editor's authoring UI. **Breach A (`mmText`'s `toFixed(3)`, quantizing position to 1 µm and direction to ~870 µrad) was fixed the same day.** One fundamental limitation remains — **face-picking cannot author µrad-level axes because of mesh triangulation error (~5 mrad), so O-2's anchors must be authored numerically through the device registry**; the remaining repairs (input field step, a two-tier authoring policy, CI guards, a scan for existing corrupted data) are in §3 of that file.
+3. **The LOD1/LOD2 generation pipeline** — BUILD currently produces only one tier. R-5 needs graded decimation plus distance-switched LOD nodes.
+4. **Optimistic locking / a write-conflict strategy** — the prerequisite for A-2; there is currently no version column and no `If-Match` support.
+5. **A pinned reference machine** — R-1, O-5 and A-1 need a self-hosted runner; without one, the performance targets can only be measured by hand.
+6. **Aspects with no target yet**: memory ceiling, GPU VRAM ceiling, mobile support, offline mode, accessibility. Deliberately left unset this time.
+
+---
+
+## 8. Known tensions (contradictions that have to be traded off in design)
+
+| Tension | Explanation | The current resolution |
 |---|---|---|
-| 1 µm 精度 ↔ float32 幾何 | GLB/three.js 是 float32，精度預算不夠 | 物理與渲染走**兩條路徑**：物理只信 anchor（float64），渲染信 mesh |
-| 60 FPS ↔ 不限元件數 | 元件數無上限但幀率有硬門檻 | LOD 三級 + instancing + 剔除；用代理指標（draw call/CPU 時間）當早期警報 |
-| 互動不降級（R-3）↔ 60 FPS | 封死了「掉畫質保幀率」的退路 | 壓力全部轉嫁到幾何預算（R-4~R-6） |
-| CI 擋關 ↔ 效能量測抖動 | FPS 在共用 runner 上不可重現 | 效能改在釘選基準機、走 post-merge pipeline、比 baseline 不比絕對值 |
-| 5 % 實測目標 ↔ 實驗漂移 | 實測基準本身會隨實驗室狀態變 | 基準案例必須釘選量測日期與條件，過期需重測而非放寬門檻 |
+| 1 µm accuracy ↔ float32 geometry | GLB/three.js are float32 and the precision budget doesn't fit | Physics and rendering take **two separate paths**: physics trusts only the anchors (float64), rendering trusts the mesh |
+| 60 FPS ↔ unlimited component count | No cap on components yet a hard frame-rate threshold | Three LOD tiers + instancing + culling, with proxy metrics (draw calls / CPU time) as the early warning |
+| No degradation while interacting (R-3) ↔ 60 FPS | It closes off the "drop quality to keep frames" retreat | All the pressure is transferred onto the geometry budgets (R-4–R-6) |
+| CI gating ↔ performance jitter | FPS is not reproducible on a shared runner | Performance moves to the pinned reference machine, in a post-merge pipeline, compared against a baseline rather than an absolute |
+| The 5 % measurement target ↔ experimental drift | The measured benchmark itself moves with the state of the lab | Benchmark cases must pin their measurement date and conditions; an expired one gets re-measured, never a looser threshold |
 
 ---
 
-## 附註
+## Notes
 
-- 效能與精度數字一旦寫進 CI，變更門檻必須改本檔並在 PR 說明理由 —— 不得在測試裡默默放寬。
-- 本檔與 [`docs/introduce/`](introduce/README.md) 的分工：introduce 描述**現在是什麼**，本檔定義**要達到什麼**。兩者衝突時，introduce 反映現況為準，本檔為目標。
+- Once a performance or accuracy number is in CI, changing the threshold requires editing this file and justifying it in the PR — never quietly loosening it inside a test.
+- The division of labour between this file and [`docs/introduce/`](introduce/README.md): introduce describes **what is**, this file defines **what to reach**. When they conflict, introduce is authoritative for the current state and this file is the target.
