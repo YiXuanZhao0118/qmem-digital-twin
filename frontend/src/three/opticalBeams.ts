@@ -23,7 +23,7 @@ const PREVIEW_RAY_KINDS: ReadonlySet<ElementKind> = new Set<ElementKind>([
 ]);
 
 function rotateVecLab(v: THREE.Vector3, rxDeg: number, ryDeg: number, rzDeg: number): THREE.Vector3 {
-  // Mirror the lab-frame rotation R = Rz(rz) 繚 Rx(rx) 繚 Ry(ry) used by the
+  // Mirror the lab-frame rotation R = Rz(rz) · Rx(rx) · Ry(ry) used by the
   // backend solver and frontend relationAnchors. v is in lab coords.
   const rx = (rxDeg * Math.PI) / 180;
   const ry = (ryDeg * Math.PI) / 180;
@@ -124,7 +124,7 @@ function findEmitterAnchor(asset: Asset3D | undefined): Anchor | null {
 /** World-space emission origin and direction (lab coords) for a placement.
  * Reads the laser's emitter anchor (Phase 9.8 `intercept_out`, with
  * legacy fallbacks). Direction = anchor.axisXBodyLocal (propagation /
- * face normal, per spec 禮3.1) with fallback to legacy
+ * face normal, per spec §3.1) with fallback to legacy
  * directionBodyLocal.
  *
  * Frame convention:
@@ -204,7 +204,7 @@ function spectrumWavelengthNm(segment: BeamSegment): number {
 }
 
 function clampThreeRadius(waistUm: number): number {
-  // waistUm is in micrometres; convert to mm then to Three.js units (繩100),
+  // waistUm is in micrometres; convert to mm then to Three.js units (÷100),
   // then bound so very tight foci or very wide diverged beams stay visible.
   const radiusMm = Math.max(waistUm, 1) / 1000;
   const radiusThree = mmToThree(radiusMm) * 30; // exaggerate for visibility

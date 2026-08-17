@@ -58,7 +58,7 @@ export function anchorObjectLocalAxisZ(
  *  is the legacy (pre-Phase-9.1) primary direction field, still set on
  *  many catalog rows. Returns `null` when the anchor doesn't carry it.
  *
- *  Prefer {@link anchorObjectLocalAxisX} for new code ??fall back to
+ *  Prefer {@link anchorObjectLocalAxisX} for new code — fall back to
  *  this only when axisX is absent. {@link anchorObjectLocalPrimaryDir}
  *  encapsulates that fallback chain. */
 export function anchorObjectLocalLegacyDir(
@@ -71,9 +71,9 @@ export function anchorObjectLocalLegacyDir(
 }
 
 /** Primary direction in object-local frame:
- *    axisX (Phase 9.1) ??directionBodyLocal (legacy) ??`null`.
+ *    axisX (Phase 9.1) → directionBodyLocal (legacy) → `null`.
  *  This is the right call for "give me whichever propagation direction
- *  this anchor declares" ??beam emit, ray hit normal, etc. */
+ *  this anchor declares" — beam emit, ray hit normal, etc. */
 export function anchorObjectLocalPrimaryDir(
   anchor: Anchor,
   asset: Asset3D | null | undefined,
@@ -86,7 +86,7 @@ export function anchorObjectLocalPrimaryDir(
 
 /** Fully resolved view of an anchor with every position / direction
  *  pre-transformed into object-local frame. Pass-through fields
- *  (aperture, connector type, fast axis) are copied verbatim ??they
+ *  (aperture, connector type, fast axis) are copied verbatim — they
  *  don't depend on the body frame.
  *
  *  Use this when you need more than one field of the same anchor:

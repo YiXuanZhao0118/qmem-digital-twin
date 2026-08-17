@@ -2,7 +2,7 @@
  * Device registry barrel — collects every `devices/<slug>.ts` into one
  * tuple and derives the lookup tables. Adding an instrument = create the
  * file + add one import line here. Nothing else in the codebase changes
- * (plan §1 "加儀器=加一檔").
+ * (plan §1: "adding an instrument = adding one file").
  */
 import type { Device } from "./_device";
 import { a230tm_b } from "./a230tm_b";

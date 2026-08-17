@@ -3785,7 +3785,7 @@ export function DigitalTwinViewer({
             // nudges here only if a residual mesh offset remains.
             // "RF_CABLE0|A": { sideXMm: 0, sideYMm: 0 },
             // "RF_CABLE0|B": { sideXMm: 0, sideYMm: 0 },
-            // "RF_CABLE2|B": { sideXMm: 0, sideYMm: 0 },  // ← 自己加
+            // "RF_CABLE2|B": { sideXMm: 0, sideYMm: 0 },  // ← add your own
           };
           const nodeOffset = NODE_OFFSETS[`${placement.name}|${end}`];
           // Target anchor axisY → stable side basis (co-moves with the

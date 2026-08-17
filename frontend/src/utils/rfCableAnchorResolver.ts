@@ -310,7 +310,7 @@ export function resolveLinkedRfCableEndpoint(args: {
     sideXMm: args.nodeOffset?.sideXMm ?? 0,
     sideYMm: args.nodeOffset?.sideYMm ?? 0,
   };
-  const zc = newOutwardLab; // 已是單位向量
+  const zc = newOutwardLab; // already a unit vector
   const cross = (a: Vec3T, b: Vec3T): Vec3T => [
     a[1] * b[2] - a[2] * b[1],
     a[2] * b[0] - a[0] * b[2],

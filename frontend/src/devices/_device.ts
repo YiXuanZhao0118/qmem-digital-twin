@@ -6,7 +6,7 @@
  * its default params, pinned to ONE behavioral kind. Adding the 50th
  * instrument is supposed to be "add one file in this directory" — never a
  * new behavioral kind, never a schema change, never a per-type editor
- * branch (plan §1, the three 禁止疊上去 rules).
+ * branch (plan §1, the three "never stack another layer on top" rules).
  *
  * IRON RULE — dependency is one-way: `device → behavioral kind`, never the
  * reverse. A device names a `behavioralKind` (an ElementKind string the

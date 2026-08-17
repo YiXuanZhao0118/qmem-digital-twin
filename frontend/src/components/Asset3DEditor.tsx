@@ -67,7 +67,7 @@ const stlLoader = new STLLoader();
 const gltfLoader = new GLTFLoader();
 const objLoader = new OBJLoader();
 
-/** Draft row in the PHY Editor's Anchors table (Phase 9.8 ??replaces
+/** Draft row in the PHY Editor's Anchors table (Phase 9.8 — replaces
  *  the old Faces table). Each anchor has a position + two body-local
  *  axes the user edits directly:
  *    - axisX (nx/ny/nz): propagation / face normal
@@ -493,7 +493,7 @@ function faceOrientation(anchor: DraftAnchor): THREE.Quaternion {
  *
  * Boundary-loop centroid: for flat patches this is the geometric centre; for
  * curved patches bounded by a closed edge loop (e.g. a lens dome rim) this is
- * the centre of that rim ??exactly what "click face -> position to centre"
+ * the centre of that rim — exactly what "click face -> position to centre"
  * should mean for both flat and round optical surfaces.
  */
 function detectFaceCenterFromHit(
@@ -646,7 +646,7 @@ function detectFaceCenterFromHit(
     for (const p of boundaryVerts.values()) center.add(p);
     center.divideScalar(boundaryVerts.size);
   } else {
-    // Fully closed region (e.g. whole sphere) ??fall back to centroid average.
+    // Fully closed region (e.g. whole sphere) — fall back to centroid average.
     let count = 0;
     for (let t = 0; t < triCount; t++) {
       if (!inRegion[t]) continue;
@@ -734,7 +734,7 @@ function proceduralPreviewProperties(asset: V3Asset, kindId: string): Record<str
     // (`createFiberSplineObject`) instead reads a nested
     // `fiberKindParamsOverride` with the long enum names. Bridge the two
     // so each catalog fiber paints its true jacket colour (SM=yellow,
-    // PM=blue) and APC ends get the green boot ??without this every
+    // PM=blue) and APC ends get the green boot — without this every
     // fiber falls back to the PM-blue + PC default and they all look
     // identical. The Component preview already works because the fiber
     // *Component* row carries a proper fiberKindParamsOverride.
@@ -809,7 +809,7 @@ function proceduralPreviewModel(asset: V3Asset): string | null {
  *  `userData[roleKey] === "tube"`, and swaps its TubeGeometry for a
  *  CylinderGeometry of equivalent length + radius (Y-axis cylinder
  *  rotated to lie along X). TubeGeometry's Frenet-frame fallback
- *  twists the cross-section by 360簞 on a perfectly-straight curve ??
+ *  twists the cross-section by 360° on a perfectly-straight curve —
  *  invisible on smooth uniform-colour cylinders but it shows up on
  *  fibers as a spiral artefact. The replacement is rotationally
  *  symmetric so it can't twist regardless of view angle. */
@@ -877,7 +877,7 @@ function buildProceduralFaceLocatorModel(asset: V3Asset): THREE.Object3D | null 
     // Fiber preview = same Bezier spline + 2 FC ferrules the lab scene
     // viewer renders. Object Sense paints freshly-spawned fibers as a
     // straight line between two anchor nodes (no curve handles), so we
-    // pass an explicit 2-node straight spline here ??overrides the
+    // pass an explicit 2-node straight spline here — overrides the
     // builder's curved default and matches what the user sees in the
     // lab viewer. Centred at origin so it sits inside the body-axes
     // gizmo cluster instead of being offset 50 mm in +Z.
@@ -887,14 +887,14 @@ function buildProceduralFaceLocatorModel(asset: V3Asset): THREE.Object3D | null 
     ];
     model = createFiberSplineObject(component, straightNodes);
     // three.js TubeGeometry's Frenet-frame computation twists the
-    // cross-section vertices 360簞 around the curve when fed a
-    // perfectly-straight CubicBezier (a known artefact ??see e.g.
+    // cross-section vertices 360° around the curve when fed a
+    // perfectly-straight CubicBezier (a known artefact — see e.g.
     // mrdoob/three.js#16040). On the thin yellow / blue / orange
     // fiber jacket that twist shows up as a visible spiral pattern,
     // even though the surface is rotationally symmetric. The thicker
     // RF-cable jacket hides it, which is why the user sees "fiber
     // spirals, rf cable straight". Replace the spiraling tube with a
-    // plain CylinderGeometry (no Frenet frame ??no twist).
+    // plain CylinderGeometry (no Frenet frame — no twist).
     replaceSpiralTubeWithCylinder(model, "fiberRole");
   }
   if (!model) return null;
@@ -941,7 +941,7 @@ function makeFaceLabel(text: string, color: string): THREE.Sprite {
  *  axisY. axisX is normalized; axisY is Gram-Schmidt orthogonalized
  *  against axisX (any component along X is projected out) then
  *  normalized; axisZ = axisX ? axisY. The user-facing axisY *direction*
- *  is preserved as much as possible ??this is the semantic axis (slow
+ *  is preserved as much as possible — this is the semantic axis (slow
  *  / fast / transmission / acoustic). If axisY is parallel to axisX
  *  (degenerate), fall back to world +Y or +Z whichever is less
  *  parallel to X. */
@@ -964,7 +964,7 @@ function deriveOrthonormalBasis(
   if (Math.hypot(ay.x, ay.y, ay.z) < 1e-9) {
     Yseed = Math.abs(X.y) > 0.95 ? { x: 0, y: 0, z: 1 } : { x: 0, y: 1, z: 0 };
   }
-  // Gram-Schmidt: Y' = Yseed ??(Yseed繚X) X
+  // Gram-Schmidt: Y' = Yseed − (Yseed·X) X
   let dotYX = Yseed.x * X.x + Yseed.y * X.y + Yseed.z * X.z;
   let Yp = {
     x: Yseed.x - dotYX * X.x,
@@ -973,7 +973,7 @@ function deriveOrthonormalBasis(
   };
   let yLen = Math.hypot(Yp.x, Yp.y, Yp.z);
   if (yLen < 1e-9) {
-    // axisY collapsed onto axisX ??Yseed was parallel to X. Pick a
+    // axisY collapsed onto axisX — Yseed was parallel to X. Pick a
     // world fallback that's not parallel to X.
     Yseed = Math.abs(X.y) > 0.95 ? { x: 0, y: 0, z: 1 } : { x: 0, y: 1, z: 0 };
     dotYX = Yseed.x * X.x + Yseed.y * X.y + Yseed.z * X.z;
@@ -1196,7 +1196,7 @@ function strictDefaultParamsForKind(
 }
 
 /** One kind-param input, styled like the editor's other fields. Mirrors the
- *  Object panel's CoefficientField (跟 object 一樣) minus the override/reset
+ *  Object panel's CoefficientField minus the override/reset
  *  chrome — the asset editor sets absolute defaults, not per-instance deltas.
  *
  *  `optional` fields render BLANK when unset and emit `undefined` when cleared
@@ -1436,7 +1436,7 @@ function ParamTree({
 
 /** Structured, kind-constrained defaultParams editor. Renders EVERY required
  *  kind param — scalars and nested objects/arrays alike (recursing to each
- *  leaf, 跟 object 一樣) — so the asset shows the kind's full param set, plus
+ *  leaf, same as the Object panel) — so the asset shows the kind's full param set, plus
  *  any opt-in optionalParams as blank scalar fields. Every write rebuilds the
  *  bag from the kind's keys alone (unknown top-level keys dropped, nested
  *  structure preserved). Shown only when the kind exposes a scalar schema;
@@ -1677,7 +1677,7 @@ function FaceLocator3D({
   /** Ctrl+middle-click / Ctrl+middle-drag: flat-face cluster or
    *  screen-rectangle delete. Receives centroid keys (0.5 mm grid, same
    *  format as viewerHints.deletedCentroids). Only wired up in Binding
-   *  dev ??undefined here disables the handler entirely. */
+   *  dev — undefined here disables the handler entirely. */
   onDeleteCluster?: (centroidKeys: string[]) => void;
   /** UI-only "keep" markers. Shift+middle-click toggles a single
    *  cluster's lock state; Shift+middle-drag adds every cluster in the
@@ -1821,10 +1821,10 @@ function FaceLocator3D({
     for (const [dir, color] of bodyAxisColors) {
       // Shaft = thin cylinder along axis, depthTest false so it pokes through
       // the proxy cube; renderOrder ensures it draws after transparent CAD.
-      // Thickness shrunk 5? from the earlier halving ??current values:
-      //   shaft rad 0.018 ??0.009 ??0.0018
-      //   head  rad 0.05  ??0.025 ??0.005
-      //   head  len 0.15  ??0.10  ??0.02
+      // Thickness shrunk 5× from the earlier halving — current values:
+      //   shaft rad 0.018 → 0.009 → 0.0018
+      //   head  rad 0.05  → 0.025 → 0.005
+      //   head  len 0.15  → 0.10  → 0.02
       // Length axis (shaftLen) unchanged so the triad still reaches as
       // far as before; only the cylinder/cone thickness shrinks.
       const shaftLen = bodyArmLen * 0.85;
@@ -1926,8 +1926,8 @@ function FaceLocator3D({
         group.add(disk);
       }
 
-      // Anchor normal arrow. Head length / width shrunk 5? from the
-      // earlier halving (0.22 ??0.12 ??0.024 head len; 0.10 ??0.05 ??
+      // Anchor normal arrow. Head length / width shrunk 5× from the
+      // earlier halving (0.22 → 0.12 → 0.024 head len; 0.10 → 0.05 →
       // 0.01 head width) so the arrow reads as a slim line + tiny
       // indicator tip, not a fat cone covering the aperture ring.
       const arrow = new THREE.ArrowHelper(
@@ -2140,7 +2140,7 @@ function FaceLocator3D({
           const hints = (draft.properties as { viewerHints?: AssetViewerHints } | undefined)?.viewerHints;
           let geometry = applyViewerHintsToGeometry(rawGeometry, hints);
           // When the toolbar's "Hide locks" is engaged, treat the
-          // locked centroids as if they were deleted ??this previews
+          // locked centroids as if they were deleted — this previews
           // the mesh as it would look if those patches went away too,
           // which is the comparison the user actually wants
           // ("show me without these"). The committed deletion set on
@@ -2160,7 +2160,7 @@ function FaceLocator3D({
               side: THREE.DoubleSide,
             }),
           );
-          // Lock overlay ??green-tinted copy of just the locked
+          // Lock overlay — green-tinted copy of just the locked
           // triangles, drawn on top so the user can see what they've
           // marked as "keep" while reviewing what to delete. Only
           // built when showLocks is on; the off state hides both the
@@ -2316,7 +2316,7 @@ function FaceLocator3D({
     }
 
     /** Triangle centroid keys whose projection lies inside the
-     *  middle-button drag rectangle. Does NOT filter locks ??the caller
+     *  middle-button drag rectangle. Does NOT filter locks — the caller
      *  decides what to do with them (delete mode strips them out; lock
      *  mode includes them so an already-locked cluster stays locked). */
     function centroidKeysInsideMiddleActionBox(): string[] {
@@ -2374,8 +2374,8 @@ function FaceLocator3D({
 
     function onPointerDown(event: PointerEvent) {
       // Middle button + Ctrl/Shift = geometry edit gesture.
-      // - Ctrl+mid     ??delete mode (yellow rectangle on drag)
-      // - Shift+mid    ??lock mode   (green rectangle on drag)
+      // - Ctrl+mid     — delete mode (yellow rectangle on drag)
+      // - Shift+mid    — lock mode   (green rectangle on drag)
       // Click vs drag is decided later in onPointerUp by total cursor
       // travel; this just captures the pointer and locks out
       // OrbitControls so the wheel-button dolly doesn't kick in.
@@ -2436,7 +2436,7 @@ function FaceLocator3D({
       if (!hit) return;
       const faceIndex = hit.object.userData.faceIndex as number;
       callbacksRef.current.onSelectFace(faceIndex);
-      // Marker drag commits a new face position ??only allowed when
+      // Marker drag commits a new face position — only allowed when
       // geometry is editable (PHY Editor). Binding dev still lets the
       // user click to select but not move.
       if (readOnlyGeometryRef.current) return;
@@ -2460,7 +2460,7 @@ function FaceLocator3D({
           middleAction.currentY - middleAction.startY,
         );
         if (moved >= DRAG_THRESHOLD_PX) {
-          // First time we cross the threshold ??show the rectangle.
+          // First time we cross the threshold — show the rectangle.
           if (!middleAction.dragged) {
             middleAction.dragged = true;
             ensureMiddleActionOverlay();
@@ -2508,7 +2508,7 @@ function FaceLocator3D({
             onAddLockClusterRef.current?.(allKeys);
           }
         } else {
-          // Click without movement ??single cluster pick.
+          // Click without movement — single cluster pick.
           setPointer(event);
           const keys = clusterKeysAtPointer();
           if (!keys || keys.length === 0) return;
@@ -2655,7 +2655,7 @@ function FaceLocator3D({
           )}
           {canDeleteGeometry && (
             <span
-              title="Ctrl+middle = delete 繚 Shift+middle = lock (keep). Click for one cluster; drag for a screen rectangle. Plain left/right buttons still orbit/pan the camera."
+              title="Ctrl+middle = delete · Shift+middle = lock (keep). Click for one cluster; drag for a screen rectangle. Plain left/right buttons still orbit/pan the camera."
               style={{
                 padding: "3px 8px",
                 fontSize: 10,
@@ -2832,7 +2832,7 @@ function AssetEditForm({
   // face_id is a kind-level contract: kinds.face_template lists which
   // face ids are `required` + `optional` for this kind. Build a closed
   // set from the asset's kind so the face_id picker can offer only
-  // those ??typing a freeform id would silently desync the asset from
+  // those — typing a freeform id would silently desync the asset from
   // the kind contract and break tracer lookups.
   const faceIdTemplate = useMemo(() => {
     const template = kinds.find((k) => k.name === draft.kindId)?.anchorTemplate as
@@ -3046,12 +3046,12 @@ function AssetEditForm({
     setDraft({ ...draft, anchors: next });
   };
 
-  // Enforce axisY ??axisX on blur: project user's axisY onto the plane
+  // Enforce axisY ⊥ axisX on blur: project user's axisY onto the plane
   // perpendicular to axisX (Gram-Schmidt), normalize, write back into
-  // the draft. Skips when axisX is degenerate (length ??0) so the user
+  // the draft. Skips when axisX is degenerate (length ≈ 0) so the user
   // can fix axisX without the helper fighting them. Falls back to the
   // current displayed value if the projection collapses (axisY parallel
-  // to axisX) ??leaves the data alone, lets the user choose how to fix.
+  // to axisX) — leaves the data alone, lets the user choose how to fix.
   const orthogonalizeAnchorY = (index: number) => {
     const a = draft.anchors[index];
     if (!a) return;
@@ -3428,8 +3428,8 @@ function AssetEditForm({
       </table>
 
       {/* defaultParams are catalog-level (used by the kind's ABCD formula)
-          ??Binding dev only. Kinds with a scalar param schema get a
-          structured, kind-constrained editor (跟 object 一樣 — you can only
+          — Binding dev only. Kinds with a scalar param schema get a
+          structured, kind-constrained editor (same as the Object panel — you can only
           set params the kind defines); schema-less / nested-only kinds fall
           back to the raw JSON textarea. */}
       {isBindingDev && (
@@ -3495,7 +3495,7 @@ function AssetEditForm({
 
 export type V3EditorDomain = "optical" | "rf" | "mechanical";
 
-/** Editor mode ??controls which fields are editable.
+/** Editor mode — controls which fields are editable.
  *  - "binding-dev": catalog editor. Picks kind, edits asset name +
  *    defaultParams (catalog-level params used by the ABCD formula).
  *    New assets are created in the BUILD tab (import CAD -> coloured
@@ -3606,7 +3606,7 @@ export function Asset3DEditor({
       });
   }, [domainAssets, kindFilter, search]);
 
-  // Selection keyed by DB id (UUID) ??catalogId can be null for legacy
+  // Selection keyed by DB id (UUID) — catalogId can be null for legacy
   // mechanical Asset3Ds that were ingested before the v3 catalog flow,
   // so comparing on catalogId would collapse all of them into one
   // "selected" pseudo-row.
@@ -3680,14 +3680,14 @@ export function Asset3DEditor({
       const updated = await updateAsset(selected.catalogId ?? selected.id, patch);
       // Refresh the draft from the server response (drops stomped
       // fields like reformatted JSON, picks up server-side defaults)
-      // but stay in edit mode ??the user often saves mid-edit to
+      // but stay in edit mode — the user often saves mid-edit to
       // checkpoint progress and expects to keep working. Cancel /
       // close still exit edit mode normally.
       setDraft(draftFromAsset(updated));
       // The Asset3D editor writes to the V3 catalog store (useV3Catalog),
-      // but every OTHER consumer of asset data ??the lab viewer, the
+      // but every OTHER consumer of asset data — the lab viewer, the
       // Optical Link panel, and the PHY editor's Component preview
-      // (ComponentsEditor reads useSceneStore.scene.assets) ??reads
+      // (ComponentsEditor reads useSceneStore.scene.assets) — reads
       // from the scene store. Without this refresh those views keep
       // rendering the pre-edit asset (e.g. a Component that references
       // io_3_850_hp_back_piece won't pick up anchor / body-frame / mesh
@@ -3777,7 +3777,7 @@ export function Asset3DEditor({
       setSelectedAssetId(null);
       setDraft(null);
       // deleteAsset also drops ComponentBinding rows that referenced
-      // this asset ??refresh the scene store so the Component preview /
+      // this asset — refresh the scene store so the Component preview /
       // lab viewer stop rendering the now-deleted asset + its bindings.
       void useSceneStore.getState().loadScene();
     } catch (err) {

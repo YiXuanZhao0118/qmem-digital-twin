@@ -158,7 +158,7 @@ export function buildGlanPolarizerPrismObject(
   // about Z leaves the optical axis and the square cross-section
   // unchanged, so the prism still seats in the housing identically;
   // only the internal cut turns 90°. Without this the beam reflected off
-  // a plane perpendicular to the visible cut ("反射面跟可見切面差 90°").
+  // a plane perpendicular to the visible cut (the reflecting face sits 90° off it).
   group.rotateZ(Math.PI / 2);
 
   return group;
