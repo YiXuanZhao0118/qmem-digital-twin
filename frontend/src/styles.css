@@ -1251,6 +1251,38 @@ h3 {
   font-size: 12px;
 }
 
+/* Optic picker: beam-path-ordered list of every optic, so the panel below is
+   reachable without hitting a small element with a click in the 3D view. */
+.vol-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 156px;
+  overflow: auto;
+  margin-bottom: 6px;
+  padding: 2px;
+  border: 1px solid #e2e6e0;
+  border-radius: 3px;
+  background: #f4f5f1;
+}
+.vol-picker-row {
+  text-align: left;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: #242726;
+  font-size: 11px;
+  cursor: pointer;
+}
+.vol-picker-row:hover {
+  background: #e6eae2;
+}
+.vol-picker-row.active {
+  background: #2f6f4f;
+  color: #fbfbf8;
+}
+
 .vol-drawer-tab {
   width: 22px;
   flex-shrink: 0;

@@ -308,6 +308,24 @@ function liveSegments(): LinkTraceSegment[] {
   return (window as unknown as { __rayTraceDebug?: LinkTraceSegment[] }).__rayTraceDebug ?? [];
 }
 
+/** Scene-object ids in the order the light reaches them: the tracer emits its
+ *  segments in traversal order, so walking them and taking each segment's
+ *  source (the emitter, for the first hop) then its hit optic yields the beam
+ *  path. Objects the beam never touches are absent — the picker appends them
+ *  alphabetically after these. */
+function pathOrderFromSegments(segments: readonly LinkTraceSegment[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const seg of segments) {
+    for (const id of [seg.sourceObjectId, seg.hitObjectId]) {
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+    }
+  }
+  return out;
+}
+
 export function OpticalLinkViewerContent() {
   const objects = useSceneStore((s) => s.scene.objects);
   const physicsElements = useSceneStore((s) => s.scene.physicsElements);
@@ -315,10 +333,17 @@ export function OpticalLinkViewerContent() {
   const assets = useSceneStore((s) => s.scene.assets);
   const componentBindings = useSceneStore((s) => s.scene.componentBindings);
   const scopeProbe = useSceneStore((s) => s.scopeProbe);
+  const selectObject = useSceneStore((s) => s.selectObject);
 
   // Left drawer: every OPTICAL scene object is inspectable; the drawer follows
   // the global selection so clicking an optic in the 3D scene shows its
-  // physics here.
+  // physics here. It is also listed in the drawer's own picker (below), so
+  // reaching an optic's panel never depends on landing a click on a small
+  // element in the 3D view.
+  //
+  // Order is BEAM-PATH order (emitter → first optic → …) with anything the
+  // beam misses appended alphabetically, so the list reads like the setup.
+  const [pathOrder, setPathOrder] = useState<string[]>([]);
   const opticalObjects = useMemo(() => {
     const opticalIds = opticalObjectIdSet({
       objects,
@@ -327,10 +352,16 @@ export function OpticalLinkViewerContent() {
       componentBindings,
       assets,
     });
+    const rank = new Map(pathOrder.map((id, i) => [id, i]));
     return objects
       .filter((o) => opticalIds.has(o.id))
-      .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
-  }, [objects, components, physicsElements, componentBindings, assets]);
+      .sort((a, b) => {
+        const ra = rank.get(a.id) ?? Infinity;
+        const rb = rank.get(b.id) ?? Infinity;
+        if (ra !== rb) return ra - rb;
+        return (a.name ?? "").localeCompare(b.name ?? "");
+      });
+  }, [objects, components, physicsElements, componentBindings, assets, pathOrder]);
   const [inspectObjectId, setInspectObjectId] = useState<string | null>(null);
   // Inspector is a collapsible LEFT drawer — default collapsed so the 3D view
   // is clear. Selecting an optic (or the edge tab) opens it.
@@ -404,8 +435,15 @@ export function OpticalLinkViewerContent() {
   const [warnings, setWarnings] = useState<LinkWarning[]>([]);
   useEffect(() => {
     const sync = () => {
+      const segments = liveSegments();
+      // Same poll feeds the picker's beam-path ordering; only set state when
+      // the order actually changes so React doesn't re-render at 4 Hz.
+      const order = pathOrderFromSegments(segments);
+      setPathOrder((prev) =>
+        prev.length === order.length && prev.every((id, i) => id === order[i]) ? prev : order,
+      );
       const next = computeLinkWarnings(
-        liveSegments(), objects, components, assets, physicsElements,
+        segments, objects, components, assets, physicsElements,
       );
       setWarnings((prev) => {
         if (prev.length !== next.length) return next;
@@ -438,11 +476,33 @@ export function OpticalLinkViewerContent() {
               <span className="vol-drawer-label">Optical setting</span>
               <span className="vol-drawer-name">{inspectObject?.name ?? "—"}</span>
             </div>
+            {/* Picker — every optic in beam-path order. Clicking a row drives
+                the GLOBAL selection (so the 3D view highlights it too), which
+                is what re-points the panel below. */}
+            {opticalObjects.length > 0 && (
+              <div className="vol-picker" role="listbox" aria-label="Optical elements">
+                {opticalObjects.map((o) => (
+                  <button
+                    key={o.id}
+                    type="button"
+                    role="option"
+                    aria-selected={o.id === effectiveInspectId}
+                    className={`vol-picker-row${o.id === effectiveInspectId ? " active" : ""}`}
+                    onClick={() => {
+                      setInspectObjectId(o.id);
+                      selectObject(o.id);
+                    }}
+                  >
+                    {o.name ?? o.id.slice(0, 8)}
+                  </button>
+                ))}
+              </div>
+            )}
             {inspectObject && inspectComponent ? (
               <OpticalSettingPanel component={inspectComponent} sceneObject={inspectObject} />
             ) : (
               <p className="vol-empty">
-                Click an optical element in the scene to edit its physics.
+                No optical elements in this scene.
               </p>
             )}
           </div>

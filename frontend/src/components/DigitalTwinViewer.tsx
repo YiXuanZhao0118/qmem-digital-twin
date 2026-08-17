@@ -3156,7 +3156,15 @@ export function DigitalTwinViewer({
       // SINGLE click in optical-link mode — that mode exists to inspect the
       // light path, so clicking a beam there should just work (it is what the
       // old optical-link overlay's own click handler did).
-      if (isDoubleClick || displayModeRef.current === "optical-link") {
+      //
+      // On a SINGLE click the optic wins, though: the beam tube runs through
+      // the middle of every element it hits, so probing first made the optics
+      // themselves hard to click — and selecting one is the only way to reach
+      // its Optical-setting panel. Double-click still probes first, so a probe
+      // right at an element's face stays reachable.
+      const opticFirst = !isDoubleClick && displayModeRef.current === "optical-link";
+      const opticFirstHit = opticFirst ? pickObject(event) : undefined;
+      if (!opticFirstHit && (isDoubleClick || displayModeRef.current === "optical-link")) {
         const beamHit2 = pickBeam(event);
         if (beamHit2) {
           let n2: THREE.Object3D | null = beamHit2.object;
@@ -3210,7 +3218,8 @@ export function DigitalTwinViewer({
       // are intentionally ignored there so a click near a beam can't grab the
       // click off the object behind it; a double-click still picks beams for
       // power-user precise scope placement.
-      const objectHit = pickObject(event);
+      // Already raycast above on the optic-first path — don't pay for a second.
+      const objectHit = opticFirst ? opticFirstHit : pickObject(event);
       if (objectHit) {
         const objectId = String(objectHit.object.userData.objectId);
         // If the click landed on a fiber connector (housing, ferrule, body
