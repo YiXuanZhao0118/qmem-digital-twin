@@ -20,7 +20,7 @@
 | device registry 授權路徑 | ✅ 乾淨 |
 | 前端 align 寫回路徑 | ✅ 乾淨 |
 | **PHY Editor anchor 寫入路徑** | ~~❌ 破口 A~~ → ✅ **已修（2026-08-17）**，見 §2.1 |
-| **PHY Editor 面選取（face-pick）** | ❌ **破口 B：從 float32 mesh + 三角化面推導,原理上達不到 0.1 µrad** |
+| **PHY Editor 面選取（face-pick）** | ❌ **破口 B：原理性限制,改不掉** → ✅ 已於 UI 標示分級（2026-08-17），見 §2.2 |
 | PHY Editor 輸入框 spinner 顆粒度 | ~~⚠️ 破口 C~~ → ✅ **已修（2026-08-17）**，見 §2.3 |
 | RF cable 快取摘要 | ⚠️ 17 µrad 級失效門檻,RF 域可接受 |
 
@@ -120,6 +120,28 @@ function mmText(value: number): string {
 >
 > ⇒ **需要滿足 O-2 的 anchor 必須走 device registry 數值授權**（`materialize_device_anchors`，§1.4），由 datasheet / CAD 標稱值給定，不得由滑鼠點取。face-pick 只能定位到「幾何等級」（~0.05 mm / ~mrad），適用於機械對位與可視化，不適用於光學介面軸向。
 
+#### 已落地的對策：PHY Editor 逐 anchor 顯示授權等級（2026-08-17）
+
+破口 B 本身無法「修」——它是網格三角化的物理上限。能做的是**讓等級可見**，避免有人以為滑鼠點出來的軸是精密的。
+anchor 表格每列的 `anchor_id` 欄下方新增兩枚徽章（`pos` / `axis`），等級**即時**由 draft 與 device template 比對推導（`gradeAnchor`，`Asset3DEditor.tsx`）——**不改 schema、不加欄位**：
+
+| 徽章 | 意義 |
+|---|---|
+| `●` **device**（綠） | device template 宣告了此欄，且 draft 仍與之相符。datasheet / CAD 數值授權，**唯一能扛 1 µm / 0.1 µrad 的等級** |
+| `◐` **overridden**（琥珀） | template 有宣告，但 draft 已偏離——被 face-pick / 拖曳 / 手打覆蓋過。精度等同於覆蓋它的東西，不會更好 |
+| `○` **geometry**（灰） | 沒有 device，或 template 把此欄留給使用者。face-pick 受三角化限制在 ~mrad |
+
+比對關鍵：**anchor 的 `id` 就是 template 的 `role`**（`materialize_device_anchors` 寫 `role → id`），`name` 用來區分重複 role（AD9959 CH0..CH3、rf_switch RF1/RF2）。容差 `GRADE_DIR_TOL_RAD = 1e-6`、`GRADE_POS_TOL_MM = 1e-6`——遠低於 face-pick 誤差（~mrad / ~0.05 mm）、遠高於 float64 往返噪音。
+
+**設計上的附帶效果**：徽章在 face-pick 的當下就從 `device` 翻成 `overridden`，等於把「face-pick 警示」做成持續顯示而不是一次性彈窗；同時被退役的 `toFixed(3)` 量化過的舊值也會顯示 `overridden`，所以這同時是 §3-5 的「既有資料損壞掃描」的 UI 版本。
+
+**這是純顯示，不擋存檔。** 是否要升級成 optical kind 上的硬性 gate，留給後續決定。
+
+**實測（2026-08-17，27 筆 asset）**：只有 3 筆的 device template 留有未授權欄位，且全是 RF——
+`minicircuits_zhl_1_2w_plus`（pos 0/2）、`minicircuits_zyswa_2_50dr`（dir 0/4、pos 0/4）、`ppg`（pos 0/1）。
+**光學那批的 anchor 位置與軸向全部由 device template 數值授權**，O-2 在現有目錄上是達標的。
+（注意：`_device.ts` 開頭「只有 AD9959 有實測座標」那句註解已過時。）
+
 ### 2.3 破口 C — 輸入框 `step="0.01"` ✅ 已修
 
 > **狀態：2026-08-17 已修復。** anchor 的位置 / axisX / axisY 九個輸入框改用
@@ -162,10 +184,7 @@ function mmText(value: number): string {
 
 1. ~~**移除寫入路徑上的 `mmText`**~~ —— ✅ **2026-08-17 完成。** 三處呼叫（`moveFace` / `autoPlaceFace` / `orthogonalizeAnchorY`）改用載入端同一個無損 `n()`；`mmText` 全檔無其他用途，已刪除。破口 A 消除。
 2. ~~**`step` 改為 `any`**~~ —— ✅ **2026-08-17 完成，但沒有用 `any`。** 改為 `ANCHOR_STEP = "0.001"`：`step="any"` 會讓 Chrome 的箭頭鍵退回一格 1.0（對 [-1,1] 的方向分量是災難），而有限 step 在 controlled input 下不會誤判 validity（見 §2.3）。位置/方向皆 0.001，aperture 維持 0.01。
-3. **政策落地：anchor 分兩級授權**（破口 B 的唯一解）
-   - *device-grade*：device registry 數值授權，保證 µm/µrad —— 光學介面必走此路。
-   - *geometry-grade*：face-pick，只保證 ~0.05 mm / ~mrad —— 機械/可視化用。
-   - PHY Editor 應標示 anchor 屬於哪一級，並在光學 kind 上警示 face-pick 授權的軸向。
+3. ~~**政策落地：anchor 分兩級授權**~~ —— ✅ **2026-08-17 完成（顯示層）。** PHY Editor 逐 anchor 顯示 `device` / `overridden` / `geometry` 三級徽章，詳見 §2.2。實作為三級而非原本設想的兩級：`overridden`（曾是 device-grade、已被覆蓋）在實務上是最需要看見的狀態。仍待決定的是要不要在光學 kind 上把它升級成**硬性存檔 gate**。
 4. **CI 守門**（對應 objectives §6 `ci-correctness`）
    - 往返測試：`anchor{x: 12.3456789012345} → PUT → GET` 必須位元相同。
    - 靜態守則：anchor 寫入路徑禁止出現 `toFixed` / `Math.round`（lint rule 或測試 grep）。

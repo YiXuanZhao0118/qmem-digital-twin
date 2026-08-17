@@ -14,7 +14,10 @@ import {
   ICON_BUTTON,
   INPUT,
   INPUT_DISABLED,
+  MUTED,
+  PRIMARY_BORDER,
   SECTION_LABEL,
+  SUCCESS_BORDER,
   TABLE,
   TD,
   TEXTAREA,
@@ -56,6 +59,7 @@ import { isPhysicsPlugin, resolvePortDomain } from "../kinds/_plugin";
 import { pluginForKind } from "../kinds/_plugins";
 import { SchemaParamEditor } from "./physics/SchemaParamEditor";
 import { DEVICES, deviceById, devicesForBehavioralKind } from "../devices/_registry";
+import type { DeviceAnchorTemplate } from "../devices/_device";
 import { isEditableValue } from "../utils/paramLeaves";
 import { cleanNumber } from "../utils/numberFormat";
 
@@ -283,6 +287,110 @@ function readDraftNumber(value: string): number | null {
   if (value.trim() === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** How an anchor field was authored. Derived by comparing the draft against
+ * the asset's device template — no schema change, no new column.
+ *
+ * - "device"     — the device template declares this field and the draft still
+ *                  matches it. Authored numerically from a datasheet / CAD, so
+ *                  it is the ONLY grade that can hold the 1 µm / 0.1 µrad
+ *                  budget (docs/objectives.md O-1/O-2).
+ * - "overridden" — the template declares it but the draft has drifted from it:
+ *                  face-picked, dragged, or typed over. No better than
+ *                  whatever replaced it.
+ * - "geometry"   — no device, or the template leaves this field to the user.
+ *                  A face-picked axis is bounded by MESH TESSELLATION at
+ *                  ~mrad, not by float precision, so it cannot hold 0.1 µrad
+ *                  however carefully it is clicked (docs/float64-audit.md
+ *                  §2.2). Fine for mechanical fit and for looking right. */
+type AnchorGrade = "device" | "overridden" | "geometry";
+
+/** "Still matches the template" tolerances. Both sit far below face-pick
+ * error (~mrad / ~0.05 mm) and far above float64 round-trip noise, so the
+ * comparison flags real hand-edits and nothing else. A value quantised by the
+ * retired `toFixed(3)` write path shows up as "overridden" too, which is the
+ * intended reading — it no longer is what the device declared. */
+const GRADE_DIR_TOL_RAD = 1e-6;
+const GRADE_POS_TOL_MM = 1e-6;
+
+function gradeAnchor(
+  anchor: DraftAnchor,
+  template: DeviceAnchorTemplate | null,
+): { pos: AnchorGrade; axis: AnchorGrade } {
+  const vec = (a: string, b: string, c: string): [number, number, number] | null => {
+    const x = readDraftNumber(a);
+    const y = readDraftNumber(b);
+    const z = readDraftNumber(c);
+    return x === null || y === null || z === null ? null : [x, y, z];
+  };
+  const posDraft = vec(anchor.px, anchor.py, anchor.pz);
+  const axisDraft = vec(anchor.nx, anchor.ny, anchor.nz);
+  const declaredPos = template?.positionMmBodyLocal;
+  const declaredAxis = template?.directionBodyLocal;
+
+  let pos: AnchorGrade = "geometry";
+  if (declaredPos) {
+    pos =
+      posDraft &&
+      Math.hypot(
+        posDraft[0] - declaredPos.x,
+        posDraft[1] - declaredPos.y,
+        posDraft[2] - declaredPos.z,
+      ) <= GRADE_POS_TOL_MM
+        ? "device"
+        : "overridden";
+  }
+
+  let axis: AnchorGrade = "geometry";
+  if (declaredAxis) {
+    const dl = Math.hypot(declaredAxis.x, declaredAxis.y, declaredAxis.z);
+    const vl = axisDraft ? Math.hypot(...axisDraft) : 0;
+    let same = false;
+    if (axisDraft && dl > 1e-12 && vl > 1e-12) {
+      // Compare as directions, not components: the stored axisX is the
+      // template direction normalised, so only the angle between them is
+      // meaningful.
+      const dot =
+        (declaredAxis.x * axisDraft[0] +
+          declaredAxis.y * axisDraft[1] +
+          declaredAxis.z * axisDraft[2]) /
+        (dl * vl);
+      same = Math.acos(Math.min(1, Math.max(-1, dot))) <= GRADE_DIR_TOL_RAD;
+    }
+    axis = same ? "device" : "overridden";
+  }
+  return { pos, axis };
+}
+
+const GRADE_STYLE: Record<AnchorGrade, { color: string; mark: string; note: string }> = {
+  device: {
+    color: SUCCESS_BORDER,
+    mark: "●",
+    note: "authored numerically from the device template — can hold the 1 µm / 0.1 µrad budget",
+  },
+  overridden: {
+    color: PRIMARY_BORDER,
+    mark: "◐",
+    note: "the device template declares this, but the stored value has drifted from it (face-picked, dragged or typed over) — only as good as what replaced it",
+  },
+  geometry: {
+    color: MUTED,
+    mark: "○",
+    note: "no device template for this field — geometry-grade only. A face-picked axis is bounded by mesh tessellation at ~mrad and cannot hold 0.1 µrad",
+  },
+};
+
+function AnchorGradeBadge({ label, grade }: { label: string; grade: AnchorGrade }) {
+  const g = GRADE_STYLE[grade];
+  return (
+    <span
+      title={`${label}: ${grade} — ${g.note}`}
+      style={{ color: g.color, fontSize: 10, whiteSpace: "nowrap" }}
+    >
+      {g.mark} {label}
+    </span>
+  );
 }
 
 /** Outline (ring/border) for an aperture. Half-extents (w/2, h/2) define
@@ -2707,6 +2815,20 @@ function AssetEditForm({
   const isBindingDev = mode === "binding-dev";
   const kinds = useKindsStore((s) => s.kinds);
 
+  // Anchor authoring grade (see gradeAnchor). The anchor's `id` IS the
+  // device template's `role` (materialize_device_anchors writes role -> id),
+  // and `name` disambiguates a role that repeats (AD9959 CH0..CH3,
+  // rf_switch RF1/RF2).
+  const deviceAnchorFor = useMemo(() => {
+    const device = deviceById(asset.deviceId);
+    if (!device) return (_: DraftAnchor): DeviceAnchorTemplate | null => null;
+    return (anchor: DraftAnchor): DeviceAnchorTemplate | null => {
+      const byRole = device.anchors.filter((a) => a.role === anchor.id);
+      if (byRole.length <= 1) return byRole[0] ?? null;
+      return byRole.find((a) => (a.name ?? "") === anchor.name) ?? null;
+    };
+  }, [asset.deviceId]);
+
   // face_id is a kind-level contract: kinds.face_template lists which
   // face ids are `required` + `optional` for this kind. Build a closed
   // set from the asset's kind so the face_id picker can offer only
@@ -3207,6 +3329,7 @@ function AssetEditForm({
         <tbody>
           {draft.anchors.map((anchor, index) => {
             const ff = anchorFieldsOf(anchor.id);
+            const grade = gradeAnchor(anchor, deviceAnchorFor(anchor));
             return (
             <tr
               key={`${anchor.id}-${index}`}
@@ -3221,6 +3344,15 @@ function AssetEditForm({
                   axisX on save (deriveOrthonormalBasis). */}
               <td style={TD}>
                 <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 600 }}>{anchor.id}</span>
+                {/* Authoring grade, derived live from the device template —
+                    it flips to "overridden" the moment a face-pick or a
+                    typed value replaces what the device declared, which is
+                    the face-pick warning the audit asked for. Display only:
+                    nothing here blocks a save. */}
+                <div style={{ display: "flex", gap: 8, marginTop: 3 }}>
+                  <AnchorGradeBadge label="pos" grade={grade.pos} />
+                  <AnchorGradeBadge label="axis" grade={grade.axis} />
+                </div>
               </td>
               {/* Per-anchor `name` (rf_switch RF1/RF2, AD9959 CH0..CH3) is
                   no longer editable here — it's a kind-level RF detail, not
