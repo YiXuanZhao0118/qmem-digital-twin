@@ -20,31 +20,45 @@ export const aa_mt80_a1_5 = defineDevice({
   componentType: "aom",
   mesh: "aa_mt80_a1_5_ir.glb",
   anchors: [
+    // Optical faces: the beam runs along body ±Y, separated by 22.4 mm
+    // (±11.2), which is `crystalLengthMm` below — the datasheet Size
+    // dimension the beam crosses. Synced 2026-08-17 from the locked
+    // aa_mt80_a1_5_ir Asset3D row. These used to read ±0.8 on Z, i.e. a
+    // 1.6 mm separation on the wrong axis: 1.6 mm is the retired crystal
+    // length that alembic 0120 replaced (at 1.6 the ±1 Bragg orders are
+    // not distinguishable), so this block contradicted the defaultParams
+    // in its own file. See docs/float64-audit.md §3-5.
     {
       role: "intercept_in",
-      positionMmBodyLocal: { x: 0, y: 0, z: -0.8 },
-      directionBodyLocal: { x: 0, y: 0, z: -1 },
+      positionMmBodyLocal: { x: 0, y: -11.2, z: 0 },
+      directionBodyLocal: { x: 0, y: -1, z: 0 },
       apertureMm: 1.5,
       apertureShape: "circle",
     },
     {
       role: "intercept_out",
-      positionMmBodyLocal: { x: 0, y: 0, z: 0.8 },
-      directionBodyLocal: { x: 0, y: 0, z: 1 },
+      positionMmBodyLocal: { x: 0, y: 11.2, z: 0 },
+      directionBodyLocal: { x: 0, y: 1, z: 0 },
       apertureMm: 1.5,
       apertureShape: "circle",
     },
     {
-      // Measured off aa_mt80_a1_5_ir.glb (2026-08-14): the SMA-female
-      // receptacle is the only coax feature in the mesh — barrel r≈3.18 mm
-      // centred on (y 0.000, z −1.2265), running x≈40 → 45.52 (= mesh bbox
-      // max = the mating face), hex flange r≈5.37 at x≈37, mounted on the
-      // +X end of the housing (body ends x≈33). The old (15, 0, 0) was the
-      // migration-0048 placeholder (`transducerOffsetFromCenterMmX`
-      // "typical 15 mm") and sat ~30 mm INSIDE the housing, so a mated
-      // cable's connector was drawn buried in the AOM body.
+      // The SMA-female receptacle is the only coax feature in the mesh:
+      // barrel r≈3.18 mm centred on (y 0.000, z −1.2265), running x≈40 →
+      // 45.52 (mesh bbox max), hex flange r≈5.37 at x≈37, mounted on the
+      // +X end of the housing (body ends x≈33).
+      //
+      // The anchor sits at the flange, x = 37.174 — synced 2026-08-17 from
+      // the locked aa_mt80_a1_5_ir Asset3D row, which is the value the
+      // renderer and tracer have actually been using. This file briefly
+      // carried 45.5 (the bbox-max mating face) instead; both are measured
+      // off the same connector, just off different features, and the asset
+      // is the human-confirmed one. Either way it clears the housing — the
+      // bug both replaced was the migration-0048 placeholder (15, 0, 0)
+      // (`transducerOffsetFromCenterMmX` "typical 15 mm"), which sat ~30 mm
+      // INSIDE the housing and drew a mated cable buried in the AOM body.
       role: "rf_in",
-      positionMmBodyLocal: { x: 45.5, y: 0, z: -1.2265 },
+      positionMmBodyLocal: { x: 37.174, y: 0, z: -1.226 },
       directionBodyLocal: { x: 1, y: 0, z: 0 },
       connectorType: "sma_female",
     },

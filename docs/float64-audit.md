@@ -204,7 +204,25 @@ anchor 表格每列的 `anchor_id` 欄下方新增兩枚徽章（`pos` / `axis`�
 
    **為什麼這麼乾淨**：破口 A 只在「有人在 PHY Editor 動過某個 anchor 並存檔」時才會發生。絕大多數 anchor 是由 `materialize_device_anchors` 在後端以 float64 產生的（§1.4），且 23 筆有 anchor 的 asset 中 17 筆是 locked（審核後凍結）——可被觸碰的窗口本來就很窄。
 
-   ⚠️ **那 7 個「偏離 template」的 anchor 反而暴露了 §2.2 徽章的一個侷限**：AD9959 的 4 個 `rf_out` 與 AOM 的 3 個 anchor，**資產端是手工實測值、template 端是標稱佔位值**（AD9959 template 寫 `x=82.55` 等距排列，實測是 `55.1 / 33.3 / 34.5 / 55.058` 不等距）。徽章會把它們標成 `◐ overridden`，但這裡**比較準的是資產而不是 template**。徽章的語意預設 template 是真值，這個前提在這幾筆上不成立 —— 要根治得回頭把實測值補進 device template。
+   ~~⚠️ 那 7 個「偏離 template」的 anchor 暴露了 §2.2 徽章的一個侷限~~ —— ✅ **2026-08-17 已回填 device template。**
+
+   問題是：AD9959 的 4 個 `rf_out` 與 AOM 的 3 個 anchor，**資產端是手工實測值、template 端是標稱佔位值**，而徽章的語意預設 template 是真值 —— 這幾筆上前提不成立，於是把比較準的資料標成了 `◐ overridden`。
+
+   回填內容（`frontend/src/devices/`，同步方向是 **template ← 資產**，資產一列都沒動）：
+
+   | device | 欄位 | 舊 template（標稱） | 新（實測，來自 locked 資產） |
+   |---|---|---|---|
+   | `ad9959` | 4 × `rf_out` 位置 | `x=82.55`、y 等距 −30/−10/+10/+30、z=4 | `(55.1, 21.7, 2)` / `(33.3, 27.8, 2)` / `(34.5, −31, 2)` / `(55.058, −24.7, 2)` |
+   | `ad9959` | 4 × `rf_out` 方向 | `+X`（板緣） | **`+Z`**（板面立式 SMA jack，差 90°） |
+   | `aa_mt80_a1_5` | 兩個光學面 | `z = ∓0.8`、方向 ∓Z | **`y = ∓11.2`、方向 ∓Y** |
+   | `aa_mt80_a1_5` | `rf_in` 位置 | `x=45.5`（bbox max / 對接面） | `x=37.174`（法蘭，資產值） |
+   | `ppg_sma` | `rf_out` 方向 | `+X` | **`+Z`**（差 90°；不在原本範圍內，順手修） |
+
+   兩個順帶發現：
+   - AOM 的 `±0.8` 代表 **1.6 mm** 的光學面間距 —— 那正是 alembic 0120 作廢掉的舊 `crystalLengthMm`。同一個檔案的 `defaultParams.crystalLengthMm: 22.4` 註解明寫「等於此 device 的 intercept_in → intercept_out 間距」，所以 template 先前是**自我矛盾**的。
+   - `ppg_sma` 的方向錯誤是掃描方向欄位時才浮出來的，先前只比對位置沒發現。
+
+   驗證：全資產 **位置 34/34、方向 37/37 與 template 一致，0 分歧**；PHY Editor 上 AD9959 與 AOM 的 7 個 anchor 徽章全部翻成 `● device`。剩餘 7 個欄位是 `zhl_1_2w`(pos×2)、`zyswa_2_50dr`(pos×4)、`ppg_sma`(pos×1) 的 template **未宣告** —— 是缺資料而非衝突，未補（需要實體量測）。
 
 ---
 

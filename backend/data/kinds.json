@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-14T01:11:00.357Z",
+  "generated_at": "2026-08-17T01:33:43.846Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -79,56 +79,56 @@
         "id": "rf_out",
         "name": "CH0",
         "position_mm_body_local": {
-          "x": 82.55,
-          "y": -30,
-          "z": 4
+          "x": 55.1,
+          "y": 21.7,
+          "z": 2
         },
         "direction_body_local": {
-          "x": 1,
+          "x": 0,
           "y": 0,
-          "z": 0
+          "z": 1
         }
       },
       {
         "id": "rf_out",
         "name": "CH1",
         "position_mm_body_local": {
-          "x": 82.55,
-          "y": -10,
-          "z": 4
+          "x": 33.3,
+          "y": 27.8,
+          "z": 2
         },
         "direction_body_local": {
-          "x": 1,
+          "x": 0,
           "y": 0,
-          "z": 0
+          "z": 1
         }
       },
       {
         "id": "rf_out",
         "name": "CH2",
         "position_mm_body_local": {
-          "x": 82.55,
-          "y": 10,
-          "z": 4
+          "x": 34.5,
+          "y": -31,
+          "z": 2
         },
         "direction_body_local": {
-          "x": 1,
+          "x": 0,
           "y": 0,
-          "z": 0
+          "z": 1
         }
       },
       {
         "id": "rf_out",
         "name": "CH3",
         "position_mm_body_local": {
-          "x": 82.55,
-          "y": 30,
-          "z": 4
+          "x": 55.058,
+          "y": -24.7,
+          "z": 2
         },
         "direction_body_local": {
-          "x": 1,
+          "x": 0,
           "y": 0,
-          "z": 0
+          "z": 1
         }
       }
     ],
@@ -1208,7 +1208,7 @@
           "requiresRfDrive": false,
           "acousticVelocityMps": 4200,
           "refractiveIndex": 2.26,
-          "crystalLengthMm": 1.6,
+          "crystalLengthMm": 22.4,
           "rfPowerMaxW": 2.2,
           "acousticAxisBodyLocal": [
             -1,
@@ -2320,14 +2320,14 @@
           "role": "rf_out",
           "name": "CH0",
           "position_mm_body_local": {
-            "x": 82.55,
-            "y": -30,
-            "z": 4
+            "x": 55.1,
+            "y": 21.7,
+            "z": 2
           },
           "direction_body_local": {
-            "x": 1,
+            "x": 0,
             "y": 0,
-            "z": 0
+            "z": 1
           },
           "connector_type": "sma_female"
         },
@@ -2335,14 +2335,14 @@
           "role": "rf_out",
           "name": "CH1",
           "position_mm_body_local": {
-            "x": 82.55,
-            "y": -10,
-            "z": 4
+            "x": 33.3,
+            "y": 27.8,
+            "z": 2
           },
           "direction_body_local": {
-            "x": 1,
+            "x": 0,
             "y": 0,
-            "z": 0
+            "z": 1
           },
           "connector_type": "sma_female"
         },
@@ -2350,14 +2350,14 @@
           "role": "rf_out",
           "name": "CH2",
           "position_mm_body_local": {
-            "x": 82.55,
-            "y": 10,
-            "z": 4
+            "x": 34.5,
+            "y": -31,
+            "z": 2
           },
           "direction_body_local": {
-            "x": 1,
+            "x": 0,
             "y": 0,
-            "z": 0
+            "z": 1
           },
           "connector_type": "sma_female"
         },
@@ -2365,14 +2365,14 @@
           "role": "rf_out",
           "name": "CH3",
           "position_mm_body_local": {
-            "x": 82.55,
-            "y": 30,
-            "z": 4
+            "x": 55.058,
+            "y": -24.7,
+            "z": 2
           },
           "direction_body_local": {
-            "x": 1,
+            "x": 0,
             "y": 0,
-            "z": 0
+            "z": 1
           },
           "connector_type": "sma_female"
         }
@@ -2499,9 +2499,9 @@
         {
           "role": "rf_out",
           "direction_body_local": {
-            "x": 1,
+            "x": 0,
             "y": 0,
-            "z": 0
+            "z": 1
           },
           "connector_type": "sma_female"
         }
@@ -3131,13 +3131,13 @@
           "role": "intercept_in",
           "position_mm_body_local": {
             "x": 0,
-            "y": 0,
-            "z": -0.8
+            "y": -11.2,
+            "z": 0
           },
           "direction_body_local": {
             "x": 0,
-            "y": 0,
-            "z": -1
+            "y": -1,
+            "z": 0
           },
           "aperture_mm": 1.5,
           "aperture_shape": "circle"
@@ -3146,13 +3146,13 @@
           "role": "intercept_out",
           "position_mm_body_local": {
             "x": 0,
-            "y": 0,
-            "z": 0.8
+            "y": 11.2,
+            "z": 0
           },
           "direction_body_local": {
             "x": 0,
-            "y": 0,
-            "z": 1
+            "y": 1,
+            "z": 0
           },
           "aperture_mm": 1.5,
           "aperture_shape": "circle"
@@ -3160,9 +3160,9 @@
         {
           "role": "rf_in",
           "position_mm_body_local": {
-            "x": 45.5,
+            "x": 37.174,
             "y": 0,
-            "z": -1.2265
+            "z": -1.226
           },
           "direction_body_local": {
             "x": 1,
@@ -3175,7 +3175,7 @@
       "default_params": {
         "rfPowerMaxW": 2,
         "baseEfficiency": 0.85,
-        "crystalLengthMm": 25,
+        "crystalLengthMm": 22.4,
         "refractiveIndex": 2.26,
         "diffractionOrder": 1,
         "braggAngularAcceptanceMrad": 2
