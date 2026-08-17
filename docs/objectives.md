@@ -117,6 +117,26 @@ Chunking is revisited only if measurement shows a single large asset is the actu
   - frustum culling must be effective: off-screen components must not enter the draw list
 - Actual FPS is policed by R-1 on the reference machine.
 
+#### Measured, 2026-08-17 — the proxy metrics are nowhere near their budgets
+
+Hand-measured on the development machine against the live lab scene (26 components). **Not a CI baseline**: the numbers below come from one scene on one machine, so treat them as a sanity reading, not as the pinned figures §6 wants on the reference runner.
+
+| Metric | Measured | Budget | |
+|---|---|---|---|
+| Draw calls | **66** | ≤ 2000 | 3 % |
+| Visible triangles | **683 129** | (no total cap) | |
+| Meshes / lines | 44 / 22 | | |
+| Unique geometries / materials | 61 / 64 | | |
+| Hidden meshes still in the graph | 63 (4 740 tris) | | negligible |
+
+Method: walk the rendered scene graph, count each visible `Mesh` (plus one per extra material group) and `Line`. That is an **upper bound** — frustum culling only removes draw calls — and it is the same shape as the headless count the CI gate would compute, so it needs no GPU.
+
+Where the triangles are: `ad9959` alone is 238 802 (35 %), and the three RF cables carry 271 766 between them (40 %) — almost all of it `bnc_male` connectors at 64.7k each. **Those connectors bypass LOD entirely**: a cable renders through `buildSceneObjectFromBindings`' spline branch and its connectors are built by the procedural cable renderer, never reaching `loadAssetObject`'s GLB path where the LOD node is created. That is the one obvious remaining lever — and by these numbers it is not worth pulling.
+
+**Reading: geometry is not this scene's constraint.** Neither R-4/R-5 (see the P2 result in §7-3) nor R-6 is close to binding. Any future "the viewer feels slow" report should be measured before anything here is optimised further — the cost is more likely shadows, the beam-tube rebuilds, or React/CPU work than the draw list.
+
+⚠️ **R-1 (real FPS / frame time) is still unmeasured.** It needs a machine that composites frames continuously and, per §6, a pinned reference machine to be gated at all.
+
 ### R-7 / R-8 Load times
 - **R-7 scene load < 3 s**: from entering the route to "first interactive" (components can be clicked). GLBs go through an IndexedDB cache + meshopt compression.
 - **R-8 cold start < 10 s**: with the cache cleared and a cold DB connection, to the same interactivity criterion.
@@ -206,12 +226,12 @@ In priority order:
 1. **Build the measured benchmark dataset** — the prerequisite for O-4 and F-2. **The measurement protocol and case list are written: [`docs/bench-dataset.md`](bench-dataset.md)** (12 cases: O-4 ×7, F-2 ×5, each listing the conditions to record and which `defaultParams` it exercises); the data's home and format are in [`backend/tests/fixtures/bench/`](../backend/tests/fixtures/bench/README.md), with the structural gate in `backend/tests/test_bench_cases.py`.
    **But there are 0 measured values and 0 comparators so far — a gap that can only be closed with lab time, not with code.** The recommendation is to do the four ★priority cases first (O-4.1 fibre coupling, O-4.2 AOM first-order efficiency, O-4.4 isolator extinction, F-2.5 RF drive → diffraction efficiency).
 2. ~~**The float64 end-to-end audit**~~ — **completed 2026-08-17**; results in [`docs/float64-audit.md`](float64-audit.md). Conclusion: the machine path through DB/API/tracer is float64-clean end to end; every breach is in the PHY Editor's authoring UI. **Breach A (`mmText`'s `toFixed(3)`, quantizing position to 1 µm and direction to ~870 µrad) was fixed the same day.** One fundamental limitation remains — **face-picking cannot author µrad-level axes because of mesh triangulation error (~5 mrad), so O-2's anchors must be authored numerically through the device registry**; the remaining repairs (input field step, a two-tier authoring policy, CI guards, a scan for existing corrupted data) are in §3 of that file.
-3. **The LOD1/LOD2 pipeline** — **P0 and P1 are done (2026-08-17)**; P2 remains:
+3. ~~**The LOD1/LOD2 pipeline**~~ — **all three phases done 2026-08-17**; the outcome is that the geometry budgets turned out not to bind (see §R-6's measured block):
    - ~~**P0 (generation + storage)**~~ — the `asset_lods` sidecar table (alembic 0122), BUILD emitting all three tiers with their measured `error_mm`, and the manifest delivered on both the catalog and the scene payload. Storage is a **separate table on purpose**: most catalog assets are `locked`, and any write to a non-`locked` column of `assets_3d` is rejected 422 by `lock_guard`, so putting the manifest in `properties` would make "generate a LOD" a human unlock action. A derived render artifact is not the asset's ground truth and must not need one.
    - ~~**P1 (runtime switching)**~~ — the px_error evaluator in `DigitalTwinViewer`'s `animate()` loop, the single-child LOD container, and a per-container tier cache. Implementation map and the traps it avoids are in [`introduce/rendering.md`](introduce/rendering.md) §LOD.
-   - ~~**P2 (backfill)**~~ — `frontend/scripts/backfill-lods.ts` (`npm run backfill:lods`). Writes only the new table, so locked rows stayed untouched. **Measured outcome: only 4 of 24 GLB assets warrant a tier at all** — 18 are already under the 20k LOD2 budget, and `ad9959` resists simplification (both tiers stall at 89 % of LOD0). The R-4/R-5 budgets were set from a 464k-triangle import experiment, not from the shipped catalog, so R-5 is now *on* but mostly inert by construction. **That is the honest reading: the geometry budgets are not currently the constraint on this scene.** Before investing further in LOD, measure draw calls and CPU frame time (§R-6) — that is the more likely bottleneck.
+   - ~~**P2 (backfill)**~~ — `frontend/scripts/backfill-lods.ts` (`npm run backfill:lods`). Writes only the new table, so locked rows stayed untouched. **Measured outcome: only 4 of 24 GLB assets warrant a tier at all** — 18 are already under the 20k LOD2 budget, and `ad9959` resists simplification (both tiers stall at 89 % of LOD0). The R-4/R-5 budgets were set from a 464k-triangle import experiment, not from the shipped catalog, so R-5 is now *on* but mostly inert by construction. **That is the honest reading: the geometry budgets are not currently the constraint on this scene.** Draw calls were then measured to check the other half of that claim — 66 against a 2000 budget, see §R-6 — so **neither geometry metric is binding, and no further LOD work is justified without a measured slowdown to chase.**
 4. **Optimistic locking / a write-conflict strategy** — the prerequisite for A-2; there is currently no version column and no `If-Match` support.
-5. **A pinned reference machine** — R-1, O-5 and A-1 need a self-hosted runner; without one, the performance targets can only be measured by hand.
+5. **A pinned reference machine** — R-1, O-5 and A-1 need a self-hosted runner; without one, the performance targets can only be measured by hand. **This is now the binding gap for the R group**: R-6's proxy metrics have been measured and are far inside budget (§R-6), so the only rendering target still genuinely unknown is R-1's real frame time — and that needs continuously composited frames on pinned hardware, not a hand reading.
 6. **Aspects with no target yet**: memory ceiling, GPU VRAM ceiling, mobile support, offline mode, accessibility. Deliberately left unset this time.
 
 ---
