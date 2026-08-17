@@ -39,6 +39,7 @@
 
 ### 既有專題文件（在上層 `docs/`）
 - [量化目標規格書 · ../objectives.md](../objectives.md) — FPS/解析度/光學精度/延遲/LOD/API 的驗收門檻與 CI 擋關方式（**目標**，非現況）
+- [實測基準資料集 · ../bench-dataset.md](../bench-dataset.md) — O-4/F-2「對實測 <5%」的量測協定與 12 個案例清單（實測值目前 0 筆）
 - [float64 全鏈稽核 · ../float64-audit.md](../float64-audit.md) — anchor 姿態精度稽核（2026-08-17）：機器路徑乾淨，破口在 PHY Editor 授權 UI + face-pick 三角化極限
 - [AOM 模型 · ../aom-model.md](../aom-model.md) + `../aom_align_*.png` / `../aom_align_*.py`（AOM 對準圖表腳本與圖）
 - [Object Sense kinds · ../object-sense-kinds.md](../object-sense-kinds.md)

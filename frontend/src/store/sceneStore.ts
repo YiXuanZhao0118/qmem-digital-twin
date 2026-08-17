@@ -3248,15 +3248,62 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     // for that entry, rest go through.
     const state = get();
     const objsById = new Map(state.scene.objects.map((o) => [o.id, o]));
-    type Prepared = { objectId: string; patch: SceneObjectPatch };
-    const prepared: Prepared[] = [];
+    // Explicit patches first — a repeated objectId means "last write
+    // wins", same as issuing the two PATCHes in order.
+    const merged = new Map<string, SceneObjectPatch>();
+    const explicitIds = new Set<string>();
     for (const entry of entries) {
       const current = objsById.get(entry.objectId);
       const safe = stripLockedTransformPatch(current, entry.patch);
       if (!safe) continue;
-      prepared.push({ objectId: entry.objectId, patch: safe });
+      merged.set(entry.objectId, safe);
+      explicitIds.add(entry.objectId);
     }
+    if (merged.size === 0) return;
+    // Rigid-group expansion, applied to the WHOLE batch instead of
+    // per-call. Every explicitly patched object that carries a pose
+    // change fans its rigid-body transform out to its group members;
+    // an object the caller patched explicitly keeps that patch (a
+    // multi-select drag already moves each selected member itself, so
+    // the derived patch would be a duplicate of it). Rejection is
+    // per-leading-object, matching what the old per-object loop did:
+    // that one move is dropped, the rest of the selection still moves.
+    const rejected = new Set<string>();
+    for (const [objectId, patch] of [...merged]) {
+      if (!explicitIds.has(objectId) || !patchHasPoseChange(patch)) continue;
+      const current = objsById.get(objectId);
+      if (!current) continue;
+      const expansion = expandPoseToRigidGroup(state.scene, current, patch);
+      if (expansion.kind === "rejectedLockedMember") {
+        // eslint-disable-next-line no-console
+        console.warn(
+          "[rigidTransform] Move rejected — locked member(s) in rigid group:",
+          expansion.lockedIds,
+        );
+        rejected.add(objectId);
+        continue;
+      }
+      if (expansion.kind !== "group") continue;
+      for (const derived of expansion.entries) {
+        if (explicitIds.has(derived.id)) continue;
+        const prev = merged.get(derived.id);
+        merged.set(derived.id, prev ? { ...prev, ...derived.patch } : derived.patch);
+      }
+    }
+    const prepared = [...merged]
+      .filter(([objectId]) => !rejected.has(objectId))
+      .map(([objectId, patch]) => ({ objectId, patch }));
     if (prepared.length === 0) return;
+    // History: one entry for the whole batch, so a 13-object move is a
+    // single Ctrl+Z instead of 13. Snapshot before the API call lands.
+    const snapshot = prepared.map((entry) => {
+      const current = objsById.get(entry.objectId);
+      return {
+        id: entry.objectId,
+        forward: entry.patch,
+        inverse: current ? extractInversePatch(current, entry.patch) : null,
+      };
+    });
     // Fire every PATCH in parallel — the API path is per-row, no
     // cross-row ordering constraint. One Promise.all so a single
     // backend 500 still surfaces (Promise.all short-circuits on
@@ -3264,7 +3311,10 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     const updated = await Promise.all(
       prepared.map((entry) => updateObjectApi(entry.objectId, entry.patch)),
     );
-    // ONE state update — 50 moves cause 1 re-render instead of 50.
+    // ONE state update — 50 moves cause 1 re-render instead of 50, and
+    // the downstream optical / RF recompute (DigitalTwinViewer's
+    // debounced /api/v3/solver effect, keyed on the scene object) sees
+    // one settled scene rather than N intermediate ones.
     set((current) => ({
       scene: {
         ...current.scene,
@@ -3273,11 +3323,27 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     }));
     // Write-through: persist re-snapped nodes for cables linked to any
     // pose-changed member (see updateSceneObject single-path note).
+    // One call for the whole batch — resnap itself commits once.
     const poseChangedIds = prepared
       .filter((entry) => patchHasPoseChange(entry.patch))
       .map((entry) => entry.objectId);
     if (poseChangedIds.length > 0) {
       void get().resnapRfCablesLinkedTo(poseChangedIds).catch(() => {});
+    }
+    const withInverse = snapshot.filter((s) => s.inverse !== null);
+    if (withInverse.length > 0) {
+      get().recordAction({
+        description:
+          prepared.length === 1
+            ? `Update ${objsById.get(prepared[0].objectId)?.name ?? "object"}`
+            : `Update ${prepared.length} objects`,
+        undo: async () => {
+          await Promise.all(withInverse.map((s) => updateObjectApi(s.id, s.inverse!)));
+        },
+        redo: async () => {
+          await Promise.all(snapshot.map((s) => updateObjectApi(s.id, s.forward)));
+        },
+      });
     }
   },
 

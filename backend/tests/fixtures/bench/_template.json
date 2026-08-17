@@ -1,0 +1,8 @@
+{
+  "id": "_template",
+  "spec": "O-4.2",
+  "quantity": "power_ratio",
+  "description": "Skeleton for a bench case. Copy to <case-id>.json, keep `measured` null until the bench run, then fill it in per docs/bench-dataset.md §1.",
+  "tolerance_pct": 5.0,
+  "measured": null
+}

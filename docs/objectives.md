@@ -152,7 +152,7 @@
 
 **(a) `ci-correctness`（每個 PR，一般 runner）**
 - O-1、O-2、O-3、F-1、F-3、A-3 全部單元/整合測試
-- O-4、F-2 的釘選基準案例比對
+- O-4、F-2 的釘選基準案例比對 —— ⚠️ **目前只有結構閘門**（`test_bench_cases.py` 驗 fixture 格式、擋不確定度過大的資料、並在有實測值卻無比較器時 fail）。**真正的模擬 vs 實測比對尚未實作，因為還沒有任何實測資料**，見 §7-1
 - R-2、R-4、R-5、R-6、B-1 的靜態/確定性代理斷言
 - 全綠才可合併。
 
@@ -167,7 +167,8 @@
 
 按優先序：
 
-1. **建立實測基準資料集** — O-4 與 F-2 的先決條件。需要一組實驗室量測（光纖耦合效率、AOM 階功率比、隔離器消光比、RF 鏈功率），連同 scene JSON、量測日期與儀器型號一起釘選。**沒有這個，5 % 的目標無法驗收。**
+1. **建立實測基準資料集** — O-4 與 F-2 的先決條件。**量測協定與案例清單已寫好：[`docs/bench-dataset.md`](bench-dataset.md)**（12 個案例：O-4 ×7、F-2 ×5，含每案例要記的條件與它牽動哪些 `defaultParams`），資料落點與格式在 [`backend/tests/fixtures/bench/`](../backend/tests/fixtures/bench/README.md)，結構閘門在 `backend/tests/test_bench_cases.py`。
+   **但實測值目前 0 筆、比較器 0 個 —— 這條缺口只能靠進實驗室補，寫程式解決不了。** 建議先做四項 ★優先案例（O-4.1 光纖耦合、O-4.2 AOM 一階效率、O-4.4 隔離器消光比、F-2.5 RF 驅動→繞射效率）。
 2. ~~**float64 全鏈稽核**~~ — **已完成 2026-08-17**，結果見 [`docs/float64-audit.md`](float64-audit.md)。結論：DB/API/tracer 機器路徑全程 float64 乾淨；破口全在 PHY Editor 授權 UI。**破口 A（`mmText` 的 `toFixed(3)` 把位置量化到 1 µm、方向量化到 ~870 µrad）已於同日修復。** 剩餘一條原理性限制 —— **face-pick 因網格三角化誤差（~5 mrad）無法授權 µrad 級軸向，O-2 的 anchor 必須走 device registry 數值授權**；剩餘修補項（輸入框 step、兩級授權政策、CI 守門、既有資料損壞掃描）見該檔 §3。
 3. **LOD1/LOD2 產生管線** — 目前 BUILD 只產一級。R-5 需要 decimation 分級 + 視距切換的 LOD 節點。
 4. **樂觀鎖 / 寫衝突策略** — A-2 的先決條件，目前無 version 欄位與 `If-Match` 支援。
