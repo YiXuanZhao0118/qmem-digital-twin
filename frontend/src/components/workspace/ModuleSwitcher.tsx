@@ -6,13 +6,14 @@
  * coming-soon placeholders for Electronics / EM.
  *
  * The active tab doubles as a menu: it drops down the Scene actions that
- * used to sit in SceneToolbar's "Scene" group (Initial Setup, PHY Editor,
- * Add text annotation). Initial Setup flips ``sceneStore.initialSetupOpen``
- * — the popover itself still renders inside SceneToolbar.
+ * used to sit in SceneToolbar's "Scene" group (Initial Setup, PHY Editor).
+ * Initial Setup flips ``sceneStore.initialSetupOpen`` — the popover itself
+ * still renders inside SceneToolbar. "Add text annotation" moved back to
+ * SceneToolbar's View group, left of the Display-overlays eye.
  *
  * Phase A. See docs/MULTIPHYSICS_PLAN.md §1.
  */
-import { ChevronDown, PenTool, Settings2, Type } from "lucide-react";
+import { ChevronDown, PenTool, Settings2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { MODULES, type ModuleDef } from "../../modules/_registry";
@@ -24,7 +25,6 @@ export function ModuleSwitcher() {
   const initialSetupOpen = useSceneStore((state) => state.initialSetupOpen);
   const setInitialSetupOpen = useSceneStore((state) => state.setInitialSetupOpen);
   const openPhyEditor = useSceneStore((state) => state.openPhyEditor);
-  const addTextAnnotation = useSceneStore((state) => state.addTextAnnotation);
 
   const [menuModuleId, setMenuModuleId] = useState<string | null>(null);
   const switcherRef = useRef<HTMLDivElement | null>(null);
@@ -98,21 +98,6 @@ export function ModuleSwitcher() {
                     <PenTool size={13} />
                   </span>
                   <span>PHY Editor</span>
-                </button>
-                <button
-                  type="button"
-                  className="window-menu-item"
-                  role="menuitem"
-                  title="Add a text label to the scene at the cursor"
-                  onClick={() => {
-                    void addTextAnnotation();
-                    setMenuModuleId(null);
-                  }}
-                >
-                  <span className="window-menu-check">
-                    <Type size={13} />
-                  </span>
-                  <span>Add text annotation</span>
                 </button>
               </div>
             )}

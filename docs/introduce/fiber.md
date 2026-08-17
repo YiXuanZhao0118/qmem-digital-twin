@@ -25,6 +25,7 @@
 - **兩端 FC 接頭**：`thorlabs_30126a9_fc_connector.ts` 的快取 STL，`applyFiberFerruleOrientation()` 把接頭 +Y 對到 outward。
 - **端點鎖定**：capability profile `fiber: { endpointSplineNodesLocked: true }` — spline 端點（node 0 / N−1）只能用 **Align End A / B** 按鈕動，中間 node 可自由拖。
 - `refreshFiberWrapperGeometry()` 在 node/半徑變動時就地換 tube，不重建整個 wrapper。
+- **jacket 半徑歸 Component 層**（2026-08-14）：只在 COMPONENT 編輯器的 `CableAppearanceEditor`（`Component.properties.cableAppearance.radiusMm`，`ComponentsEditor.tsx:1224`）調整；Object 面板的 `FiberEditor` 已移除 per-instance「Jacket radius」slider（連同 `sceneStore.updateFiberRadius`）。讀取仍是 `cableAppearance.radiusMm` → `SceneObject.properties.radiusMm`（legacy 遺留資料）→ `Component.properties.radiusMm` → 1.0（`spline.ts:167`）。
 
 ## 對準（`utils/fiberAlignment.ts`）
 

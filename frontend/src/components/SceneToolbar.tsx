@@ -1,4 +1,4 @@
-import { Columns2, Eye, Move, Play, RotateCw, Square, Wifi, WifiOff } from "lucide-react";
+import { Columns2, Eye, Move, Play, RotateCw, Square, Type, Wifi, WifiOff } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -87,6 +87,7 @@ export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneTo
   const setActiveTool = useSceneStore((state) => state.setActiveTool);
   const faceTouchOp = useSceneStore((state) => state.faceTouchOp);
   const setFaceTouchOp = useSceneStore((state) => state.setFaceTouchOp);
+  const addTextAnnotation = useSceneStore((state) => state.addTextAnnotation);
 
   // Auto-switch to Translate gizmo mode on every selection action.
   // We watch `selectedObjectIds` (the array reference) — Zustand returns a
@@ -158,12 +159,21 @@ export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneTo
 
   return (
     <div className="scene-toolbar" ref={rootRef}>
-      {/* The Scene group (Initial Setup / PHY Editor / text annotation) now
-          lives in the Lab tab menu — see workspace/ModuleSwitcher.tsx. The
-          initial-setup popover still renders here (bottom of this file); the
-          menu item just flips `sceneStore.initialSetupOpen`. */}
+      {/* The Scene group (Initial Setup / PHY Editor) now lives in the Lab tab
+          menu — see workspace/ModuleSwitcher.tsx. The initial-setup popover
+          still renders here (bottom of this file); the menu item just flips
+          `sceneStore.initialSetupOpen`. "Add text annotation" came back out of
+          that menu into the View group below. */}
 
       <div className="toolbar-group" data-group-label="View">
+        <button
+          className="icon-button"
+          title="Add a text label to the scene at the cursor"
+          aria-label="Add text annotation"
+          onClick={() => void addTextAnnotation()}
+        >
+          <Type size={17} />
+        </button>
         <div className="display-anchor" ref={displayAnchorRef}>
           <button
             className={`icon-button${displayOpen ? " active" : ""}`}

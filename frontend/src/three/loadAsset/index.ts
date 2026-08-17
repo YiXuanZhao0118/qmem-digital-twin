@@ -5,7 +5,6 @@ import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 
 import { resolveAssetUrl } from "../../api/client";
 import type { Asset3D, ComponentItem, DeviceState } from "../../types/digitalTwin";
-import { createNewportOpticalTable } from "../photoRoom";
 
 // =============================================================================
 // Module load order matters here. There is an unavoidable circular import:
@@ -143,11 +142,14 @@ export async function loadAssetObject(
     skipAutoCenter?: boolean;
   } | null,
 ): Promise<THREE.Object3D> {
-  if (component.kindId === "optical_table") {
-    const table = createNewportOpticalTable();
-    table.name = component.name;
-    return table;
-  }
+  // NOTE: optical_table has no short-circuit here. It used to return the
+  // procedural Newport breadboard purely from `component.kindId`, ignoring the
+  // asset entirely — so an optical_table asset baked to a GLB rendered its old
+  // code geometry instead of the mesh it points at. The kind is still served
+  // by the plugin renderer (`_renderer_bindings.ts` `optical_table`) through
+  // the `primitive://` branch below, so a `primitive://table` asset is
+  // unchanged; anything with a real file now loads that file like every other
+  // asset.
 
   // Fiber patch cables render procedurally as a Bezier-spline tube using
   // user-editable anchor + tangent-handle data. Per V2 the spline shape is

@@ -1969,12 +1969,17 @@ function FaceLocator3D({
       // buildProceduralFaceLocatorModel because that helper dereferences
       // asset.catalogId (null for the primitive_table asset) and would throw.
       // createNewportOpticalTable authors geometry in the main-viewer ÷100
-      // frame; this editor renders body-local raw mm, so scale ×100. No
-      // rotation, so it sits Y-up like the lab.
-      if (asset.kindId === "optical_table" || path === "primitive://table") {
+      // Y-up frame; this editor renders body-local raw mm with the grid in
+      // X–Y (Z-up), so scale ×100 AND rotate Y-up→Z-up — same conversion
+      // buildProceduralFaceLocatorModel applies. Without the rotation the
+      // table stood on edge here while BUILD showed it flat.
+      // Keyed on the primitive path, NOT kind_id: once the asset has been
+      // baked to a GLB in BUILD it must load that mesh like any other file.
+      if (path === "primitive://table") {
         const tableMm = new THREE.Group();
         tableMm.add(createNewportOpticalTable());
         tableMm.scale.setScalar(100);
+        tableMm.rotation.x = Math.PI / 2;
         modelGroup.add(tableMm);
         tableMm.updateMatrixWorld(true);
         tableMm.traverse((child) => {

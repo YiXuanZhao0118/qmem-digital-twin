@@ -1144,7 +1144,6 @@ function FiberPortPoseEditor({
 }
 
 function FiberEditor({ component }: { component: ComponentItem }) {
-  const updateFiberRadius = useSceneStore((state) => state.updateFiberRadius);
   const findFiberAlignmentCandidates = useSceneStore(
     (state) => state.findFiberAlignmentCandidates,
   );
@@ -1203,17 +1202,13 @@ function FiberEditor({ component }: { component: ComponentItem }) {
       setAlignFeedback(`Align failed: ${(err as Error).message}`);
     }
   };
-  // Per-instance values first (V2: fiber spline + jacket radius live on
+  // Per-instance values first (V2: the fiber spline lives on
   // SceneObject.properties), then catalog template as legacy fallback.
+  // The jacket radius is NOT edited here — it is a Component-layer
+  // appearance property (`cableAppearance.radiusMm`, ComponentsEditor).
   const fiberSceneObject = useSceneStore((state) =>
     state.scene.objects.find((o) => o.componentId === component.id),
   );
-  const objProps = (fiberSceneObject?.properties ?? {}) as {
-    fiberNodes?: { posMm: number[] }[]; radiusMm?: number;
-  };
-  const compProps = (component.properties ?? {}) as {
-    fiberNodes?: { posMm: number[] }[]; radiusMm?: number;
-  };
   // Shared resolver: falls back to PE.kindParams.endA/endB so a
   // connector-component fiber reports its real node count (not 0) and lists
   // any interior nodes — same source the Align buttons resolve from.
@@ -1223,9 +1218,6 @@ function FiberEditor({ component }: { component: ComponentItem }) {
     physicsElements,
   );
   const nodeCount = Array.isArray(resolvedNodes) ? resolvedNodes.length : 0;
-  const radius =
-    typeof objProps.radiusMm === "number" ? objProps.radiusMm :
-    typeof compProps.radiusMm === "number" ? compProps.radiusMm : 1.0;
 
   // Phase fiber-split: resolve the paired fiber_end SceneObjects via
   // the fiber body PE's kindParams. Returns null entries for legacy
@@ -1299,20 +1291,6 @@ function FiberEditor({ component }: { component: ComponentItem }) {
           </div>
         </div>
       )}
-      <label style={{ display: "block" }}>
-        <span>Jacket radius ({radius.toFixed(2)} mm)</span>
-        <input
-          type="range"
-          min="0.4"
-          max="6"
-          step="0.1"
-          value={radius}
-          onChange={(event) => {
-            void updateFiberRadius(component.id, Number(event.target.value));
-          }}
-          style={{ width: "100%" }}
-        />
-      </label>
       {splitReady ? (
         // Phase fiber-split: each end is a sibling fiber_end
         // SceneObject. The Object panel here belongs to the fiber BODY

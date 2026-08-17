@@ -578,7 +578,6 @@ type SceneStore = {
   updateFiberNodes: (componentId: string, nodes: FiberNodePersist[]) => Promise<void>;
   insertFiberNode: (componentId: string, index: number, node: FiberNodePersist) => Promise<void>;
   removeFiberNode: (componentId: string, index: number) => Promise<void>;
-  updateFiberRadius: (componentId: string, radiusMm: number) => Promise<void>;
   /** RF-cable analog of updateFiberNodes / insertFiberNode / removeFiberNode.
    *  All write through to `SceneObject.properties.rfCableNodes` (keyed by
    *  objectId since rf_cable geometry is always per-instance — no V1 catalog
@@ -2217,20 +2216,6 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     if (index <= 0 || index >= current.length - 1) return;
     const nextNodes = current.filter((_, i) => i !== index);
     await get().updateRfCableNodes(objectId, nextNodes);
-  },
-  async updateFiberRadius(componentId, radiusMm) {
-    // Same per-instance treatment as fiberNodes: a fiber's visual jacket
-    // radius is an instance property (you can have two cables of the same
-    // type with different rendered thicknesses), so write to the
-    // SceneObject. Falls back gracefully — no object => no write.
-    const state = get();
-    const obj = state.scene.objects.find((o) => o.componentId === componentId);
-    if (!obj) return;
-    const nextProps = { ...(obj.properties ?? {}), radiusMm };
-    const updated = await updateObjectApi(obj.id, { properties: nextProps });
-    set((s) => ({
-      scene: { ...s.scene, objects: upsertById(s.scene.objects, updated) },
-    }));
   },
   async alignFiberEndToBeam(componentId, end, toleranceMm = 25) {
     // Back-compat shim: list candidates, apply the closest, return the

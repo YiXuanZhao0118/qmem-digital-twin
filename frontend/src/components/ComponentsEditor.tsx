@@ -2638,16 +2638,17 @@ function ComponentPreview3D({
         return pivot;
       }
 
-      // Optical table — render the real Newport breadboard the lab viewer
-      // draws (createNewportOpticalTable, loadAsset/index.ts) instead of a
-      // placeholder cube. The builder authors geometry in the main-viewer
-      // ÷100 frame (1 unit = 100 mm); this preview is raw mm, so scale ×100
-      // to match — same units fix as the glan/fiber paths above. No
-      // rotation, so it sits Y-up exactly like the lab.
-      if (asset.kindId === "optical_table" || filePath === "primitive://table") {
+      // Optical table — an asset still pointing at `primitive://table` has no
+      // mesh file, so build the Newport breadboard in code instead of showing
+      // a placeholder cube. Same frame fix as the glan / fiber paths above:
+      // the builder authors Y-up in the ÷100 frame, this preview is raw mm
+      // Z-up → scale ×100 and rotate 90° about X. Keyed on the path, NOT
+      // kind_id: an optical_table asset baked to a GLB must load that mesh.
+      if (filePath === "primitive://table") {
         const tableMm = new THREE.Group();
         tableMm.add(createNewportOpticalTable());
         tableMm.scale.setScalar(100);
+        tableMm.rotation.x = Math.PI / 2;
         pivot.add(tableMm);
         return pivot;
       }
