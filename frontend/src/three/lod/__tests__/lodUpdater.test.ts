@@ -123,13 +123,17 @@ describe("updateSceneLod", () => {
     ).toBe(0);
   });
 
-  it("requests a redraw once a tier lands", async () => {
+  it("requests a redraw once a tier lands, naming the swapped node", async () => {
     const node = await makeNode("n", 50, 0);
     const onSwapApplied = vi.fn();
     pass(sceneWith(node), cameraAtMm(8000), { onSwapApplied });
     await Promise.resolve();
     await Promise.resolve();
-    expect(onSwapApplied).toHaveBeenCalled();
+    // The node is part of the contract, not a convenience: the freshly built
+    // tier is a bare subtree, so the viewer has to re-stamp userData.objectId
+    // and re-apply the display-mode material to it (DigitalTwinViewer's
+    // `integrateLodTier`). Without the node it cannot find what to fix.
+    expect(onSwapApplied).toHaveBeenCalledWith(node);
   });
 
   it("ignores nodes whose bounds are not built yet", () => {

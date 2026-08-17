@@ -1,0 +1,379 @@
+/** Shared "optical link" beam-chain geometry.
+ *
+ *  Builds the rich beam visualisation the `optical-link` viewer display mode
+ *  draws INSIDE the main scene (DigitalTwinViewer): one elliptical Gaussian
+ *  tube per trace segment plus the per-segment polarization marker, and the
+ *  translucent optic-surface faces that mark where each optic actually acts
+ *  on the beam.
+ *
+ *  This code used to live in `components/optical/OpticalLinkViewerPanel.tsx`,
+ *  which rendered it into its OWN mini scene stacked over the main canvas —
+ *  so the orientation gizmo drove the (hidden) main camera and only the optics
+ *  the beam touched were drawn. It now runs in the main viewer's `beamGroup`
+ *  under `labRoot`, i.e. raw lab Z-up coordinates scaled by `mmToThree`, which
+ *  is exactly the frame the adapted trace segments (`startThree`/`endThree`,
+ *  see `three/v3TraceAdapter.ts`) already live in.
+ *
+ *  Invariants:
+ *   - callers add the returned group to a parent whose local frame is lab Z-up
+ *     (`labRoot` in the main viewer); nothing here applies the world swap S.
+ *   - every tube carries `userData.beamSegment` so the viewer's `pickBeam`
+ *     raycast can resolve the clicked segment (the markers deliberately don't).
+ */
+import * as THREE from "three";
+
+import { beamWidthsUmAtPathMm, type SegmentBeamMode } from "../components/optical/BeamScopePanel";
+import { beamColorForSource } from "../three/opticalBeams";
+import type { Asset3D, SceneObject } from "../types/digitalTwin";
+import { anchorObjectLocalAxisX, anchorObjectLocalPos } from "../utils/anchorAccess";
+import { mmToThree } from "./frames";
+import { buildPolarizationMarkers } from "./polarizationMarker";
+
+/** Loose subset of `V3TraceSegment` the beam chain reads. */
+export type LinkTraceSegment = {
+  startThree: { x: number; y: number; z: number };
+  endThree: { x: number; y: number; z: number };
+  emitterObjectId: string;
+  sourceObjectId: string;
+  sourceComponentId: string;
+  hitObjectId: string | null;
+  wavelengthNm: number;
+  pathLengthFromSourceMmAtStart: number;
+  lengthMm: number;
+  waistAtStartUm: number;
+  waistAtEndUm: number;
+  // Y-axis (qy) widths for the astigmatic elliptical tube; equal to X for a
+  // circular beam.
+  waistAtStartUmY: number;
+  waistAtEndUmY: number;
+  // Per-axis q-parameter Gaussian snapshot. Lets the tube sample the true
+  // analytic width along the segment (intra-segment focus) — same math as the
+  // scope plot. Optional: legacy payloads without it fall back to endpoint lerp.
+  beamMode?: SegmentBeamMode;
+  powerFactorAtStart: number;
+  nominalPowerMwAtSource?: number;
+  polarizationAtStart: [number, number, number, number];
+};
+
+const VISUAL_BOOST = 4; // amplify the Gaussian waist for visibility
+const VISUAL_FLOOR_UM = 30; // never draw a tube thinner than this in µm
+/** Jones intensity below which a segment is treated as dark — no polarization
+ *  marker (a Glan's rejected branch would otherwise draw a full-strength mark
+ *  on light that carries no power). */
+const DARK_POWER_FACTOR = 0.01;
+
+/** Diagonal of the box enclosing every segment endpoint (three units), floored
+ *  so an empty / degenerate chain still yields a usable marker scale. */
+export function beamChainSpan(segments: readonly LinkTraceSegment[]): number {
+  const bbox = new THREE.Box3();
+  for (const seg of segments) {
+    bbox.expandByPoint(new THREE.Vector3(seg.startThree.x, seg.startThree.y, seg.startThree.z));
+    bbox.expandByPoint(new THREE.Vector3(seg.endThree.x, seg.endThree.y, seg.endThree.z));
+  }
+  return bbox.isEmpty() ? 1 : Math.max(bbox.getSize(new THREE.Vector3()).length(), 1e-3);
+}
+
+/** Build one segment's tapered tube. Local frame: +Y = beam axis, +X/+Z = the
+ *  transverse ellipse axes, so an astigmatic beam renders elliptical and a
+ *  round one degenerates to the old circular cone. */
+function buildBeamTube(seg: LinkTraceSegment, colour: THREE.Color | string): THREE.Mesh | null {
+  const start = new THREE.Vector3(seg.startThree.x, seg.startThree.y, seg.startThree.z);
+  const end = new THREE.Vector3(seg.endThree.x, seg.endThree.y, seg.endThree.z);
+  const direction = new THREE.Vector3().subVectors(end, start);
+  const length = direction.length();
+  if (length < 1e-9) return null;
+  direction.normalize();
+
+  // µm → mm → three units (1 unit = 100 mm) × the visual boost. Each axis is
+  // floored independently so a micron waist stays visible.
+  const toScene = (um: number) => mmToThree(Math.max(um, VISUAL_FLOOR_UM) / 1000) * VISUAL_BOOST;
+  // Half-widths at axial fraction t ∈ [0,1]. With a beamMode we sample the
+  // TRUE analytic Gaussian (same q-parameter math as the scope plot) so a
+  // focus INSIDE the segment — e.g. just past a lens — renders as a real pinch
+  // instead of the straight start→end cone a 2-ring taper draws. Legacy
+  // payloads (no beamMode) fall back to endpoint interpolation.
+  const mode = seg.beamMode;
+  const widthsAt = (t: number): { rx: number; ry: number } => {
+    if (mode) {
+      const pathMm = seg.pathLengthFromSourceMmAtStart + seg.lengthMm * t;
+      const { wxUm, wyUm } = beamWidthsUmAtPathMm(mode, pathMm);
+      return { rx: toScene(wxUm), ry: toScene(wyUm) };
+    }
+    const lerp = (a: number, b: number) => a + (b - a) * t;
+    return {
+      rx: toScene(lerp(seg.waistAtStartUm, seg.waistAtEndUm)),
+      ry: toScene(lerp(seg.waistAtStartUmY, seg.waistAtEndUmY)),
+    };
+  };
+
+  const yAxis = new THREE.Vector3(0, 1, 0);
+  const sHat = new THREE.Vector3().crossVectors(direction, yAxis);
+  if (sHat.lengthSq() < 1e-9) {
+    sHat.crossVectors(direction, new THREE.Vector3(1, 0, 0));
+  }
+  sHat.normalize();
+  const pHat = new THREE.Vector3().crossVectors(sHat, direction).normalize();
+
+  const RING = 24;
+  // Axial slices: one ring per slice so the hyperbolic taper / focus pinch is
+  // resolved smoothly. 24 is cheap (beam tubes are few) yet smooth.
+  const SLICES = 24;
+  const ringStride = RING + 1;
+  const pos: number[] = [];
+  const idx: number[] = [];
+  for (let j = 0; j <= SLICES; j++) {
+    const t = j / SLICES;
+    const { rx, ry } = widthsAt(t);
+    const y = -length / 2 + t * length;
+    for (let i = 0; i <= RING; i++) {
+      const a = (i / RING) * Math.PI * 2;
+      pos.push(rx * Math.cos(a), y, ry * Math.sin(a));
+    }
+  }
+  for (let j = 0; j < SLICES; j++) {
+    for (let i = 0; i < RING; i++) {
+      const a0 = j * ringStride + i, a1 = a0 + 1;
+      const b0 = (j + 1) * ringStride + i, b1 = b0 + 1;
+      idx.push(a0, b0, a1, a1, b0, b1);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geometry.setIndex(idx);
+  geometry.computeVertexNormals();
+  const tube = new THREE.Mesh(
+    geometry,
+    new THREE.MeshBasicMaterial({
+      color: colour,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.55,
+    }),
+  );
+  tube.position.copy(start).addScaledVector(direction, length / 2);
+  tube.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(sHat, direction, pHat));
+  // Skinny centreline so a near-focus pinch is still visible.
+  const centreline = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, -length / 2, 0),
+      new THREE.Vector3(0, length / 2, 0),
+    ]),
+    new THREE.LineBasicMaterial({ color: colour }),
+  );
+  tube.add(centreline);
+  return tube;
+}
+
+/** Build the whole chain: one Gaussian tube per segment + a polarization mark
+ *  at each segment midpoint. `objectById` resolves the emitter so a per-source
+ *  colour override (`properties.emissionVisuals`) paints its entire chain. */
+export function buildBeamChainGroup(
+  segments: readonly LinkTraceSegment[],
+  objectById: ReadonlyMap<string, SceneObject>,
+): THREE.Group {
+  const group = new THREE.Group();
+  group.name = "beam-chain";
+  const span = beamChainSpan(segments);
+  for (const seg of segments) {
+    // Key on the EMITTER (the laser/TA that originated the beam), which is
+    // stable down the whole chain; sourceObjectId is the per-segment source
+    // optic and would only colour the first hop.
+    const colour = beamColorForSource(objectById.get(seg.emitterObjectId), seg.wavelengthNm);
+    const tube = buildBeamTube(seg, colour);
+    if (!tube) continue;
+    tube.userData.beamSegment = seg;
+    group.add(tube);
+
+    if (seg.powerFactorAtStart > DARK_POWER_FACTOR) {
+      const start = new THREE.Vector3(seg.startThree.x, seg.startThree.y, seg.startThree.z);
+      const end = new THREE.Vector3(seg.endThree.x, seg.endThree.y, seg.endThree.z);
+      const direction = new THREE.Vector3().subVectors(end, start);
+      const mid = start.clone().addScaledVector(direction, 0.5);
+      for (const mark of buildPolarizationMarkers(
+        seg.polarizationAtStart,
+        direction.clone().normalize(),
+        mid,
+        span * 0.0025,
+        // Lab scale: 1 three-unit = 100 mm, so the helper's default 0.05
+        // shaft-radius floor would be 5 mm — thicker than the arrow is long.
+        // Scale the floor with the bench instead.
+        { minRadius: span * 0.00015 },
+      )) {
+        group.add(mark);
+      }
+    }
+  }
+  return group;
+}
+
+/** Build ONE optic-surface marker in the asset's body/mm frame, then bake
+ *  `mw` (the owning mesh's matrix relative to the wrapper) so the marker
+ *  tracks the drawn mesh exactly, regardless of per-builder axis swaps/scale:
+ *   - beam_splitter (PBS cube, IO-3/IO-5 glan) → translucent PINK reflective-
+ *     coating quad at intercept_face (axisX = coating normal).
+ *   - faraday_rotator → translucent AMBER disk at optical_center, ⊥ to the
+ *     optical axis (the polarisation-rotation plane).
+ *   - any other optic → translucent SLATE disk/rect at its primary optical
+ *     anchor (optical_center / optical_anchor / intercept_face /
+ *     interaction_center / intercept_in / intercept_out), ⊥ to the optical axis.
+ *  Returns null only when the asset has no such optical anchor. */
+function buildOpticSurfaceMarker(asset: Asset3D, mw: THREE.Matrix4): THREE.Group | null {
+  const kind = asset.kindId;
+  const hasAnc = (id: string) => (asset.anchors ?? []).some((a) => a.id === id);
+  let ancId: string | null = null;
+  let style: "pbs" | "faraday" | "generic" = "generic";
+  if (kind === "beam_splitter" && hasAnc("intercept_face")) {
+    ancId = "intercept_face";
+    style = "pbs";
+  } else if (kind === "faraday_rotator" && hasAnc("optical_center")) {
+    ancId = "optical_center";
+    style = "faraday";
+  } else {
+    // Prefer a known primary anchor id; otherwise fall back to the asset's
+    // FIRST anchor so ANY anchor-bearing asset still gets a surface marker.
+    const order = [
+      "optical_center", "optical_anchor", "intercept_face",
+      "interaction_center", "intercept_in", "intercept_out",
+    ];
+    ancId = order.find(hasAnc) ?? (asset.anchors ?? [])[0]?.id ?? null;
+    style = "generic";
+  }
+  if (!ancId) return null;
+  // axisX is the coating normal (beam_splitter) / optical axis (faraday &
+  // generic); read through anchorAccess so any R_body is applied, landing the
+  // marker in the same body frame the geometry lives in.
+  const anc = (asset.anchors ?? []).find((a) => a.id === ancId);
+  if (!anc) return null;
+  const axisX = anchorObjectLocalAxisX(anc, asset);
+  if (!axisX) return null;
+  const normal = new THREE.Vector3(axisX.x, axisX.y, axisX.z);
+  if (normal.lengthSq() < 1e-9) return null;
+  normal.normalize();
+  const p = anchorObjectLocalPos(anc, asset);
+
+  const group = new THREE.Group();
+  group.name = `optic-surface-${ancId}`;
+  group.position.set(p.x, p.y, p.z); // body-frame mm
+  // Plane/disk face normal is +Z; rotate it onto the surface normal.
+  group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
+
+  // Translucent fill + edge outline of a shared geometry (disk or rect).
+  const addFace = (geom: THREE.BufferGeometry, fillHex: number, lineHex: number, opacity: number) => {
+    const fill = new THREE.Mesh(
+      geom,
+      new THREE.MeshBasicMaterial({
+        color: fillHex, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false,
+      }),
+    );
+    fill.renderOrder = 20;
+    group.add(fill);
+    const outline = new THREE.LineSegments(
+      new THREE.EdgesGeometry(geom),
+      new THREE.LineBasicMaterial({ color: lineHex, transparent: true, opacity: 0.9 }),
+    );
+    outline.renderOrder = 21;
+    group.add(outline);
+  };
+
+  if (style === "pbs") {
+    // Aperture extent is a frame-invariant scalar (mm): explicit B1 coating
+    // face (36 × 25.4 mm for the PBS252 cube) → anchor aperture → 1" default.
+    const faces = (asset.faces ?? []) as Array<Record<string, unknown>>;
+    const b1 = faces.find((f) => f.id === "B1");
+    const wMm = Number(b1?.apertureWidthMm) || anc.apertureMm || 25.4;
+    const hMm = Number(b1?.apertureHeightMm) || anc.apertureMm || 25.4;
+    addFace(new THREE.PlaneGeometry(wMm, hMm), 0xf472b6, 0xf9a8d4, 0.22);
+  } else if (style === "faraday") {
+    // faraday_rotator — amber disk marking the polarisation-rotation plane.
+    const rMm = anc.apertureMm && anc.apertureMm > 0 ? anc.apertureMm : 5;
+    addFace(new THREE.CircleGeometry(rMm, 40), 0xfbbf24, 0xfcd34d, 0.2);
+  } else {
+    // Generic optic face — neutral slate disk (or rect) at the anchor aperture.
+    const wMm = anc.apertureWidthMm;
+    const hMm = anc.apertureHeightMm;
+    const geom = (typeof wMm === "number" && wMm > 0 && typeof hMm === "number" && hMm > 0)
+      ? new THREE.PlaneGeometry(wMm, hMm)
+      : new THREE.CircleGeometry(anc.apertureMm && anc.apertureMm > 0 ? anc.apertureMm : 6.35, 40);
+    addFace(geom, 0xcbd5e1, 0xe2e8f0, 0.16);
+  }
+
+  // Place via the owning mesh's translation + rotation, but force the
+  // body-mm → three scale to mmToThree (1/100). The mesh matrix's own scale
+  // differs by asset: STL geometry is authored in mm so its matrix carries the
+  // 1/100 unit scale, but procedural prisms (IO-3 glans / Faraday rod) author
+  // geometry already in three units so their scale is 1. Reusing that raw
+  // scale on a mm-built marker blew the glan / faraday markers up ~100×;
+  // substituting the canonical mm→three scale sizes every marker correctly
+  // regardless of how its mesh was built.
+  // Use the asset/binding ROOT transform. Descendant meshes can include
+  // renderer-internal correction rotations (for example the IO-3 Glan prism's
+  // visible diagonal is rotated onto its physics plane); applying those again
+  // would turn this body-local anchor marker 90° away from the real surface.
+  const mPos = new THREE.Vector3();
+  const mQuat = new THREE.Quaternion();
+  const mScale = new THREE.Vector3();
+  mw.decompose(mPos, mQuat, mScale);
+  const unit = mmToThree(1);
+  group.applyMatrix4(new THREE.Matrix4().compose(mPos, mQuat, new THREE.Vector3(unit, unit, unit)));
+  return group;
+}
+
+/** Walk a loaded asset tree and build optic-surface markers for every optic
+ *  asset unit inside it. Resolves each unit's asset — single-asset =
+ *  `singleAsset`; binding tree = `__bindingId` userData → ComponentBinding →
+ *  Asset3D — and bakes the marker with that unit's matrix RELATIVE TO `parent`
+ *  so composite optics (the IO-3 glan coatings + Faraday rod) get markers too,
+ *  not just the root asset. The returned group is meant to be added to
+ *  `parent` so it follows the object as it moves (no rebuild on drag).
+ *
+ *  `assetRoot` is the loaded asset object itself — the node whose transform
+ *  (frame airlock + geometry offset) positions a SINGLE-asset component's
+ *  marker; for a binding tree each unit brings its own node.
+ *
+ *  The returned group carries `userData.isOpticSurfaceMarker` so the viewer's
+ *  `stripDynamicDecorations` can clean it off a cached wrapper.
+ *  Returns null when no markers apply. */
+export function buildOpticSurfaceMarkers(
+  parent: THREE.Object3D,
+  assetRoot: THREE.Object3D,
+  singleAsset: Asset3D | undefined,
+  bindings: ReadonlyArray<{ id: string; asset3dId?: string | null }>,
+  assetById: ReadonlyMap<string, Asset3D>,
+): THREE.Group | null {
+  parent.updateMatrixWorld(true);
+  const parentInverse = parent.matrixWorld.clone().invert();
+  const relative = (node: THREE.Object3D) =>
+    parentInverse.clone().multiply(node.matrixWorld);
+
+  const bindingById = new Map(bindings.map((b) => [b.id, b]));
+  const units = new Map<string, { asset: Asset3D; mw: THREE.Matrix4 }>();
+  assetRoot.traverse((node) => {
+    const bid = (node.userData as { __bindingId?: string } | undefined)?.__bindingId;
+    if (typeof bid !== "string" || units.has(bid)) return;
+    const b = bindingById.get(bid);
+    const asset = b?.asset3dId ? assetById.get(b.asset3dId) : undefined;
+    if (asset) units.set(bid, { asset, mw: relative(node) });
+  });
+  if (singleAsset && !units.has("__root__")) {
+    units.set("__root__", { asset: singleAsset, mw: relative(assetRoot) });
+  }
+  // Binding-based components (created via "+ New Component": asset3dId is null
+  // so singleAsset is undefined, and a flat single binding isn't
+  // __bindingId-tagged) still need their anchor shown. Resolve the bound
+  // assets straight from the bindings and bake at the asset root.
+  if (units.size === 0) {
+    for (const b of bindings) {
+      if (!b.asset3dId || units.has(b.id)) continue;
+      const a = assetById.get(b.asset3dId);
+      if (a) units.set(b.id, { asset: a, mw: relative(assetRoot) });
+    }
+  }
+  const out = new THREE.Group();
+  out.name = "optic-surface-markers";
+  out.userData.isOpticSurfaceMarker = true;
+  for (const { asset, mw } of units.values()) {
+    const marker = buildOpticSurfaceMarker(asset, mw);
+    if (marker) out.add(marker);
+  }
+  return out.children.length ? out : null;
+}

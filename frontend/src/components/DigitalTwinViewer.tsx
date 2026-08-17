@@ -61,6 +61,8 @@ import {
 } from "../three/loadAsset/fiber/fiberConnectorModels";
 import { portKey, vppToPowerW } from "../utils/rfPropagation";
 import { adaptV3LabSegmentsToTraceSegments } from "../three/v3TraceAdapter";
+import { buildBeamChainGroup, buildOpticSurfaceMarkers } from "../optical/beamChain";
+import { opticalObjectIdSet } from "../utils/opticalDomain";
 import { disposeFarfieldLobe, makeFarfieldLobe } from "../three/hornFarfield";
 import { disposeRfBadgeSprite, makeRfBadgeSprite } from "../three/rfBadge";
 import { computeWaveplateFastAxisDeg } from "../utils/waveplateAxis";
@@ -297,6 +299,47 @@ function applyViewerDisplayMode(object: THREE.Object3D, mode: ViewerDisplayMode)
     delete child.userData.__renderedMaterial;
     delete child.userData.__renderedCastShadow;
     delete child.userData.__renderedReceiveShadow;
+  });
+}
+
+/** Ghost an object that is NOT part of the optical domain.
+ *
+ *  `optical-link` mode renders the whole scene exactly like "rendered" (so the
+ *  orientation gizmo, selection and every component are the usual ones) and
+ *  only pushes the non-optical hardware — table, mounts, RF gear — back to a
+ *  translucent shell so the beam chain and the optics themselves read clearly.
+ *
+ *  The original material is stashed on `mesh.userData.__opaqueMaterial` and a
+ *  CLONE is dimmed, because loaders may share one material across instances of
+ *  the same asset — mutating it in place would ghost every copy. Idempotent in
+ *  both directions; the caller must un-ghost BEFORE `applyViewerDisplayMode`
+ *  so the wireframe swap never caches a ghosted material. */
+function applyOpticalLinkGhost(object: THREE.Object3D, ghost: boolean): void {
+  object.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+    const stashed = child.userData.__opaqueMaterial as THREE.Material | THREE.Material[] | undefined;
+    if (ghost) {
+      if (stashed !== undefined) return;
+      child.userData.__opaqueMaterial = child.material;
+      const dim = (material: THREE.Material): THREE.Material => {
+        const clone = material.clone();
+        clone.transparent = true;
+        clone.opacity = Math.min(
+          "opacity" in material ? (material as THREE.MeshBasicMaterial).opacity : 1,
+          0.16,
+        );
+        clone.depthWrite = false;
+        return clone;
+      };
+      child.material = Array.isArray(child.material)
+        ? child.material.map(dim)
+        : dim(child.material);
+      return;
+    }
+    if (stashed === undefined) return;
+    disposeMaterial(child.material); // the clone made above
+    child.material = stashed;
+    delete child.userData.__opaqueMaterial;
   });
 }
 
@@ -671,6 +714,7 @@ function stripDynamicDecorations(wrapper: THREE.Object3D): void {
       ud.isPortLabel ||
       ud.isAomTiltAxisMarker ||
       ud.isBeamFlowIndicator ||
+      ud.isOpticSurfaceMarker ||
       child.name === "relation-driver-axes" ||
       child.name === "relation-driven-axes" ||
       child.name === "relation-driver-marker" ||
@@ -1325,28 +1369,6 @@ export function DigitalTwinViewer({
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const orientationRendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
-  // Shared with the optical-link overlay so it adopts THIS viewport's camera
-  // (no view jump on mode switch) and hands an orbited view back on exit.
-  const getMainView = useCallback(() => {
-    const cam = cameraRef.current;
-    const ctrl = controlsRef.current;
-    if (!cam || !ctrl) return null;
-    return {
-      position: cam.position.clone(),
-      target: ctrl.target.clone(),
-      fov: cam.fov,
-      up: cam.up.clone(),
-    };
-  }, []);
-  const setMainView = useCallback((position: THREE.Vector3, target: THREE.Vector3) => {
-    const cam = cameraRef.current;
-    const ctrl = controlsRef.current;
-    if (!cam || !ctrl) return;
-    cam.position.copy(position);
-    ctrl.target.copy(target);
-    cam.lookAt(target);
-    ctrl.update();
-  }, []);
   const environmentGroupRef = useRef<THREE.Group | null>(null);
   // Reference grid shown only in wireframe mode (the photo-room floor is
   // hidden there, so the bench would otherwise float in the dark void).
@@ -1528,6 +1550,12 @@ export function DigitalTwinViewer({
   // its own). The parent calls onDisplayModeChange when the user clicks the
   // overlay buttons; the parent in turn writes to zustand under the right
   // panel key so the face-touch cancel logic still fires.
+  //
+  // Mirrored into a ref for the long-lived setup effect (deps:
+  // [roomDimensions, selectObject, snapCameraToView]) — its pointer handlers
+  // would otherwise capture the mode at mount and never see a switch.
+  const displayModeRef = useRef(displayMode);
+  displayModeRef.current = displayMode;
 
   const transformCursorMm = useSceneStore((state) => state.transformCursorMm[panelKey]);
 
@@ -1539,6 +1567,15 @@ export function DigitalTwinViewer({
     () => sceneData.objects.find((object) => object.id === selectedObjectId) ?? null,
     [sceneData.objects, selectedObjectId],
   );
+
+  // Objects in the OPTICAL domain. `optical-link` mode keeps these at full
+  // strength (and is the only thing pickable there); everything else — table,
+  // mounts, RF gear — is ghosted, the same "only the parts this mode is about
+  // stay live" rule node-edit applies to cables. Mirrored into a ref for the
+  // long-lived setup effect's pick handlers.
+  const opticalObjectIds = useMemo(() => opticalObjectIdSet(sceneData), [sceneData]);
+  const opticalObjectIdsRef = useRef(opticalObjectIds);
+  opticalObjectIdsRef.current = opticalObjectIds;
 
   // Phase 6.5 — fetch v3 backend trace whenever the scene changes.
   // The legacy in-browser raycaster (`traceBeamsFromLasers`) ignores
@@ -2487,7 +2524,14 @@ export function DigitalTwinViewer({
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
       const hits = raycaster.intersectObjects(componentGroupRef.current.children, true);
-      return hits.find((item) => item.object.userData.objectId && pickVisible(item.object));
+      // In optical-link mode only the optics are live: the ghosted hardware
+      // (table, mounts, RF) must not intercept a click meant for the optic or
+      // beam behind it — mirroring node-edit, where only cables are pickable.
+      const opticalOnly = displayModeRef.current === "optical-link";
+      return hits.find((item) => {
+        if (!item.object.userData.objectId || !pickVisible(item.object)) return false;
+        return !opticalOnly || opticalObjectIdsRef.current.has(String(item.object.userData.objectId));
+      });
     };
     const pickBeam = (event: { clientX: number; clientY: number }) => {
       const rect = renderer.domElement.getBoundingClientRect();
@@ -3104,7 +3148,11 @@ export function DigitalTwinViewer({
         && dyFromLast < DOUBLE_CLICK_PX;
       lastClick = { t: now, x: event.clientX, y: event.clientY };
 
-      if (isDoubleClick) {
+      // Beam-segment probe. Runs on a double-click in every mode, and on a
+      // SINGLE click in optical-link mode — that mode exists to inspect the
+      // light path, so clicking a beam there should just work (it is what the
+      // old optical-link overlay's own click handler did).
+      if (isDoubleClick || displayModeRef.current === "optical-link") {
         const beamHit2 = pickBeam(event);
         if (beamHit2) {
           let n2: THREE.Object3D | null = beamHit2.object;
@@ -3145,22 +3193,18 @@ export function DigitalTwinViewer({
                 ? (seg2.polarizationAtStart as [number, number, number, number])
                 : [1, 0, 0, 0],
             });
-            // Beam scope no longer auto-opens from the main scene — the
-            // scope contents now live inside the Optical link viewer
-            // panel, which the user opens explicitly via the Window menu.
-            // We still update `scopeProbe` so the cyan probe marker
-            // renders at the clicked point; the link-viewer panel reads
-            // the same store value to populate its plots.
+            // The beam scope itself lives in the optical-link mode chrome
+            // (the panel docked at the bottom of the viewport); it reads the
+            // same `scopeProbe` store value. Here we only publish the probe,
+            // which also draws the cyan marker at the clicked point.
             return;
           }
         }
       }
 
-      // Single click → object-selection-only. Beam tubes are intentionally
-      // ignored in the main object scene so a click near a beam can't grab
-      // the click off the object behind it. Beam-picking is reserved for
-      // the Optical link viewer panel (its own click-on-beam handler still
-      // sets `scopeProbe`); double-click here also still picks beams for
+      // Single click → object-selection-only in every other mode. Beam tubes
+      // are intentionally ignored there so a click near a beam can't grab the
+      // click off the object behind it; a double-click still picks beams for
       // power-user precise scope placement.
       const objectHit = pickObject(event);
       if (objectHit) {
@@ -3251,6 +3295,35 @@ export function DigitalTwinViewer({
     orientationRenderer.domElement.addEventListener("pointerdown", handleAxisGizmoPointerDown);
     orientationRenderer.domElement.addEventListener("click", handleAxisGizmoClick);
 
+    /** Re-integrate a freshly attached LOD tier into the scene's per-mesh
+     *  conventions. `setLodLevel` replaces the node's children with a subtree
+     *  the loader built moments ago, so that subtree has NONE of what
+     *  `renderComponents` applied to the wrapper at load time:
+     *    - `userData.objectId` / `componentId` — `pickObject` reads them off
+     *      the hit mesh itself, so without the stamp the object silently stops
+     *      being clickable after it switches tier.
+     *    - the display-mode material — the tier arrives with its authored
+     *      solid material, which in wireframe mode shows up as one solid body
+     *      among wireframes ("MECHANICAL0 goes solid after I move it"), and in
+     *      optical-link mode un-ghosts a non-optical part.
+     *  Both are idempotent, and the node keeps its own stamps (it was part of
+     *  the original wrapper), so we copy them down. */
+    const integrateLodTier = (node: THREE.Object3D) => {
+      const objectId = node.userData.objectId as string | undefined;
+      const componentId = node.userData.componentId as string | undefined;
+      node.traverse((child) => {
+        if (objectId !== undefined) child.userData.objectId = objectId;
+        if (componentId !== undefined) child.userData.componentId = componentId;
+      });
+      const mode = displayModeRef.current;
+      applyOpticalLinkGhost(node, false);
+      applyViewerDisplayMode(node, mode);
+      applyOpticalLinkGhost(
+        node,
+        mode === "optical-link" && !!objectId && !opticalObjectIdsRef.current.has(objectId),
+      );
+    };
+
     const animate = () => {
       // controls.update() returns true while the camera is still moving
       // (active drag or damping settling). Combined with pendingRender — set
@@ -3288,6 +3361,7 @@ export function DigitalTwinViewer({
         // LOD (objectives.md §R-5). AFTER the render so every matrixWorld is
         // current — evaluating first would use last frame's transforms, and
         // on the first pass after a scene rebuild they are still identity.
+        // See `integrateLodTier` for what a landed tier still needs.
         // Self-throttled to 10 Hz and budgeted per pass, so this costs
         // nothing on an idle scene (which renders zero frames anyway).
         const selection = useSceneStore.getState();
@@ -3305,9 +3379,19 @@ export function DigitalTwinViewer({
           renderer.domElement.height,
           {
             pinnedObjectIds,
-            // The viewer paints on demand, so a tier that lands between
-            // frames needs a redraw scheduled or it stays invisible.
-            onSwapApplied: () => requestRenderRef.current?.(),
+            // A landed tier is a BARE subtree — built by the LOD node long
+            // after renderComponents decorated the wrapper — so it carries
+            // neither the current display mode's material nor the
+            // objectId/componentId stamp every other mesh got at load time.
+            // Without this the swapped body renders SOLID among wireframes
+            // (the "object turns solid after I move it" report) and stops
+            // being clickable, until an unrelated scene rebuild happens by.
+            // The viewer also paints on demand, so the tier needs a redraw
+            // scheduled or it stays invisible.
+            onSwapApplied: (node) => {
+              integrateLodTier(node);
+              requestRenderRef.current?.();
+            },
           },
         );
       }
@@ -3467,6 +3551,25 @@ export function DigitalTwinViewer({
   useEffect(() => {
     if (environmentGroupRef.current) {
       applyEnvironmentDisplayMode(environmentGroupRef.current, displayMode);
+    }
+    // Re-assert the per-mesh materials for the new mode on every wrapper,
+    // synchronously. The scene-rebuild effect normally does this per object,
+    // but its async run can be cancelled mid-loop (two store updates landing
+    // together — see its comment), which would leave the objects it never
+    // reached carrying the PREVIOUS mode's material: a solid/ghosted body
+    // sitting among wireframes until something else triggers a rebuild. Both
+    // helpers are idempotent, so re-running them here is free.
+    {
+      const opticalIds = opticalObjectIdsRef.current;
+      for (const [objectId, cached] of objectWrappersRef.current) {
+        applyOpticalLinkGhost(cached.wrapper, false);
+        applyViewerDisplayMode(cached.wrapper, displayMode);
+        applyOpticalLinkGhost(
+          cached.wrapper,
+          displayMode === "optical-link" && !opticalIds.has(objectId),
+        );
+      }
+      requestRenderRef.current?.();
     }
     // Dark background ONLY in wireframe mode (VIEWER_BG_WIRE) so the slate
     // wireframe lines read clearly; the light palette (VIEWER_BG_LIGHT)
@@ -3636,6 +3739,11 @@ export function DigitalTwinViewer({
 
     const assetById = new Map(sceneData.assets.map((asset) => [asset.id, asset]));
     const componentById = new Map(sceneData.components.map((component) => [component.id, component]));
+    // `optical-link` mode renders the scene like "rendered" but emphasises the
+    // light path: optics keep their materials and get a translucent surface
+    // marker at the anchor the tracer actually acts on, everything else is
+    // ghosted (see applyOpticalLinkGhost) and unpickable (see pickObject).
+    const opticalLinkMode = displayMode === "optical-link";
     // Per-object device state (alembic 0015) — index by object_id.
     const stateByObjectId = new Map(
       sceneData.deviceStates.map((deviceState) => [deviceState.objectId, deviceState]),
@@ -3672,6 +3780,21 @@ export function DigitalTwinViewer({
         const aomAsset = component.asset3dId ? assetById.get(component.asset3dId) : undefined;
         const aomElement = sceneData.physicsElements.find((e) => e.objectId === placement.id);
         addAomTiltAxisMarker(wrapper, aomAsset, aomElement, component);
+      }
+      // Optic-surface faces (pink PBS coating quad, amber Faraday rotation
+      // plane, slate generic optic face) — only in optical-link mode, and only
+      // on optics, so the user sees WHERE along the body the tracer acts. They
+      // are children of the wrapper, so a drag carries them along.
+      if (opticalLinkMode && opticalObjectIds.has(placement.id)) {
+        const assetRoot = wrapper.children.find((child) => child.userData.isLoadedAsset) ?? wrapper;
+        const markers = buildOpticSurfaceMarkers(
+          wrapper,
+          assetRoot,
+          component.asset3dId ? assetById.get(component.asset3dId) : undefined,
+          sceneData.componentBindings ?? [],
+          assetById,
+        );
+        if (markers) wrapper.add(markers);
       }
       // Fiber beam-flow indicator (green entry ring, red exit ring, orange
       // midpoint arrow) removed per user request — too visually noisy.
@@ -4349,7 +4472,12 @@ export function DigitalTwinViewer({
         } else {
           applyObjectTransform(wrapper, effectivePlacement);
         }
+        // Un-ghost FIRST: applyViewerDisplayMode stashes whatever material it
+        // finds when it swaps in the wireframe one, so it must never see a
+        // ghosted clone.
+        applyOpticalLinkGhost(wrapper, false);
         applyViewerDisplayMode(wrapper, displayMode);
+        applyOpticalLinkGhost(wrapper, opticalLinkMode && !opticalObjectIds.has(placement.id));
         applyVisibilityFlags(wrapper, visibleInView);
         // PPG mounts directly on its peer instrument's coax port (the
         // ppgMounting math above places the PPG body so its rf_out
@@ -4595,6 +4723,17 @@ export function DigitalTwinViewer({
         beamGroup,
       });
       if (!renderCtx.overlayFlags.beam_segments) return;
+      if (opticalLinkMode) {
+        // Optical-link mode: the full beam-chain visualisation — an elliptical
+        // Gaussian tube per segment (sampling the true q-parameter width, so a
+        // focus inside a segment pinches) plus the per-segment polarization
+        // marker. Same geometry the old optical-link overlay drew in its own
+        // mini scene; it now lives here so the orientation gizmo, selection and
+        // every component behave exactly as in rendered mode.
+        const objectById = new Map(sceneData.objects.map((object) => [object.id, object]));
+        beamGroup.add(buildBeamChainGroup(adaptedTraces, objectById));
+        return;
+      }
       for (const seg of labSegments) {
         const startThree = new THREE.Vector3(
           mmToThree(seg.start.x),
@@ -6304,11 +6443,10 @@ export function DigitalTwinViewer({
   return (
     <div className="viewer-shell">
       <div ref={mountRef} className="viewer-canvas" />
-      {displayMode === "optical-link" && (
-        <div className="viewer-optical-link-overlay">
-          <OpticalLinkViewerContent active getMainView={getMainView} setMainView={setMainView} />
-        </div>
-      )}
+      {/* Optical-link chrome (optic inspector, link warnings, beam scope). The
+          beam chain itself is drawn by this very scene — see renderRayTraces —
+          so the chrome only floats over the canvas and never covers it. */}
+      {displayMode === "optical-link" && <OpticalLinkViewerContent />}
       {/* Marquee selection rectangle. Positioned absolute over the canvas
           and toggled visible by the pointer drag handler in DOM (no React
           re-render churn during a drag). */}

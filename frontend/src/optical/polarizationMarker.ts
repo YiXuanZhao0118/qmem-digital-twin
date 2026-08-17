@@ -61,16 +61,23 @@ export function polEllipseFromJones(
  *    - ELLIPTICAL / CIRCULAR: the polarization ellipse loop (circle at
  *      minorFrac = 1) plus a small arrowhead showing the rotation sense.
  *  `size` is the major radius / arrow half-length in the caller's scene units;
- *  the caller adds the returned objects to its own group. */
+ *  the caller adds the returned objects to its own group.
+ *
+ *  `opts.minRadius` floors the arrow SHAFT radius. The default (0.05) suits the
+ *  PHY Editor's component-frame preview, where one three-unit ≈ one component;
+ *  at Lab scale (1 unit = 100 mm) that floor is ~5 mm of shaft and dominates
+ *  `size`, drawing fat clubs instead of arrows — the Lab optical link passes a
+ *  span-relative floor instead. */
 export function buildPolarizationMarkers(
   jones: [number, number, number, number],
   beamDir: THREE.Vector3,
   mid: THREE.Vector3,
   size: number,
-  opts?: { color?: number; renderOrder?: number },
+  opts?: { color?: number; renderOrder?: number; minRadius?: number },
 ): THREE.Object3D[] {
   const color = opts?.color ?? 0x06b6d4; // cyan
   const renderOrder = opts?.renderOrder ?? 2100;
+  const minRadius = opts?.minRadius ?? 0.05;
   const yAxis = new THREE.Vector3(0, 1, 0);
   const { u, v, minorFrac, handed } = polEllipseFromJones(jones, beamDir);
   const mat = new THREE.MeshBasicMaterial({
@@ -81,7 +88,7 @@ export function buildPolarizationMarkers(
   if (minorFrac < 0.08) {
     // LINEAR → double-headed arrow along the E-field axis (= u).
     const markLen = size * 2;
-    const markRad = Math.max(size * 0.08, 0.05);
+    const markRad = Math.max(size * 0.08, minRadius);
     const headLen = markLen * 0.3;
     const headRad = markRad * 3.0;
     const shaft = new THREE.Mesh(

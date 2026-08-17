@@ -108,29 +108,6 @@ export function applyObjectTransform(target: THREE.Object3D, sceneObject: SceneO
   target.visible = sceneObject.visible;
 }
 
-/**
- * Place a wrapper in three's Y-up WORLD frame — for render surfaces added
- * straight to a Y-up scene with NO labRoot to supply the swap S.
- *
- * Position uses `labMmToThree` (the S axis-swap baked into the world
- * position) and the plain pose quaternion M, i.e. the exact behaviour
- * `applyObjectTransform` had before the labRoot unification moved S out to
- * the root. The only current caller is `OpticalLinkViewerPanel`, whose beam
- * tubes are placed at `labMmToThree(segment)` so their wireframe overlays
- * must live in the same world frame. Anything parented UNDER labRoot must use
- * `applyObjectTransform` (raw Z-up local) instead.
- */
-export function applyObjectTransformWorld(target: THREE.Object3D, sceneObject: SceneObject): void {
-  target.position.copy(labMmToThree({
-    xMm: sceneObject.xMm,
-    yMm: sceneObject.yMm,
-    zMm: sceneObject.zMm,
-  }));
-  target.quaternion.copy(sceneObjectToQuaternion(sceneObject));
-  target.scale.setScalar(getObjectScale(sceneObject));
-  target.visible = sceneObject.visible;
-}
-
 export function getNumericProperty(
   properties: Record<string, unknown>,
   key: string,

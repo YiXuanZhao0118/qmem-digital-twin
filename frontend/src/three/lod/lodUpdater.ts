@@ -36,10 +36,14 @@ export interface LodUpdateOptions {
    *  the current selection. Quadric error under-reports the loss of thin
    *  features, so whatever the user is actually looking at stays exact. */
   pinnedObjectIds?: ReadonlySet<string>;
-  /** Called once a requested tier is actually attached. The viewer renders
-   *  on demand, so without this the swapped geometry would not be painted
-   *  until the next unrelated redraw. */
-  onSwapApplied?: () => void;
+  /** Called with the LOD node once a requested tier is actually attached.
+   *  The viewer renders on demand, so without this the swapped geometry would
+   *  not be painted until the next unrelated redraw. The node is passed
+   *  because the freshly built tier is a BARE subtree: it carries none of the
+   *  per-scene conventions the wrapper's meshes got at load time (display-mode
+   *  material, `userData.objectId` for picking), so the caller has to re-apply
+   *  them to it. */
+  onSwapApplied?: (node: THREE.Object3D) => void;
   /** Test seam for the interval throttle. */
   nowMs?: number;
 }
@@ -103,7 +107,7 @@ export function updateSceneLod(
     swaps += 1;
     // Fire and forget: the swap lands whenever the tier is ready. Errors are
     // handled inside setLodLevel, which keeps the current tier attached.
-    void setLodLevel(child, target).then(() => options.onSwapApplied?.());
+    void setLodLevel(child, target).then(() => options.onSwapApplied?.(child));
   });
   return swaps;
 }
