@@ -61,7 +61,11 @@ import {
 } from "../three/loadAsset/fiber/fiberConnectorModels";
 import { portKey, vppToPowerW } from "../utils/rfPropagation";
 import { adaptV3LabSegmentsToTraceSegments } from "../three/v3TraceAdapter";
-import { buildBeamChainGroup, buildOpticSurfaceMarkers } from "../optical/beamChain";
+import {
+  buildBeamChainGroup,
+  buildFiberCouplingMarkers,
+  buildOpticSurfaceMarkers,
+} from "../optical/beamChain";
 import { opticalObjectIdSet } from "../utils/opticalDomain";
 import { disposeFarfieldLobe, makeFarfieldLobe } from "../three/hornFarfield";
 import { disposeRfBadgeSprite, makeRfBadgeSprite } from "../three/rfBadge";
@@ -3786,16 +3790,48 @@ export function DigitalTwinViewer({
       // on optics, so the user sees WHERE along the body the tracer acts. They
       // are children of the wrapper, so a drag carries them along.
       if (opticalLinkMode && opticalObjectIds.has(placement.id)) {
-        const assetRoot = wrapper.children.find((child) => child.userData.isLoadedAsset) ?? wrapper;
         const allBindings = sceneData.componentBindings ?? [];
-        const markers = buildOpticSurfaceMarkers(
-          wrapper,
-          assetRoot,
-          component.asset3dId ? assetById.get(component.asset3dId) : undefined,
-          allBindings,
-          allBindings.filter((b) => b.componentId === component.id),
-          assetById,
+        const ownBindings = allBindings.filter((b) => b.componentId === component.id);
+        const fiberElement = sceneData.physicsElements.find(
+          (e) => e.objectId === placement.id && e.elementKind === "fiber",
         );
+        // A fiber has no optical anchor of its own — the tracer synthesizes its
+        // ports from the PhysicsElement pose, so the marker must be built the
+        // same way (see buildFiberCouplingMarkers). Everything else reads its
+        // asset anchors.
+        const markers = fiberElement
+          ? (() => {
+              const kp = (fiberElement.kindParams ?? {}) as Record<string, unknown>;
+              const connectorFor = (end: "A" | "B") => {
+                const binding = ownBindings.find(
+                  (b) =>
+                    b.targetKind === "asset" &&
+                    ((b.properties as { splineEnd?: string } | undefined)?.splineEnd === end ||
+                      b.role === `end_${end.toLowerCase()}`),
+                );
+                if (!binding) return undefined;
+                // Honour a per-instance asset override, exactly as the loader's
+                // _synth_fiber_slot does when it reads the hit aperture.
+                const override = (sceneData.objectBindings ?? []).find(
+                  (ob) => ob.objectId === placement.id && ob.componentBindingId === binding.id,
+                )?.asset3dIdOverride;
+                const assetId = override ?? binding.asset3dId;
+                return assetId ? assetById.get(assetId) : undefined;
+              };
+              return buildFiberCouplingMarkers(
+                { A: kp.endA as never, B: kp.endB as never },
+                { A: connectorFor("A"), B: connectorFor("B") },
+                FIBER_FERRULE_TIP_MM,
+              );
+            })()
+          : buildOpticSurfaceMarkers(
+              wrapper,
+              wrapper.children.find((child) => child.userData.isLoadedAsset) ?? wrapper,
+              component.asset3dId ? assetById.get(component.asset3dId) : undefined,
+              allBindings,
+              ownBindings,
+              assetById,
+            );
         if (markers) wrapper.add(markers);
       }
       // Fiber beam-flow indicator (green entry ring, red exit ring, orange

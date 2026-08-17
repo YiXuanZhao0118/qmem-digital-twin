@@ -216,6 +216,31 @@ export function buildBeamChainGroup(
   return group;
 }
 
+/** Translucent fill + edge outline of one shared geometry (disk or rect),
+ *  added to `group` in whatever frame the caller set up. */
+function addTranslucentFace(
+  group: THREE.Group,
+  geom: THREE.BufferGeometry,
+  fillHex: number,
+  lineHex: number,
+  opacity: number,
+): void {
+  const fill = new THREE.Mesh(
+    geom,
+    new THREE.MeshBasicMaterial({
+      color: fillHex, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false,
+    }),
+  );
+  fill.renderOrder = 20;
+  group.add(fill);
+  const outline = new THREE.LineSegments(
+    new THREE.EdgesGeometry(geom),
+    new THREE.LineBasicMaterial({ color: lineHex, transparent: true, opacity: 0.9 }),
+  );
+  outline.renderOrder = 21;
+  group.add(outline);
+}
+
 /** Build ONE optic-surface marker in the asset's body/mm frame, then bake
  *  `mw` (the owning mesh's matrix relative to the wrapper) so the marker
  *  tracks the drawn mesh exactly, regardless of per-builder axis swaps/scale:
@@ -266,23 +291,8 @@ function buildOpticSurfaceMarker(asset: Asset3D, mw: THREE.Matrix4): THREE.Group
   // Plane/disk face normal is +Z; rotate it onto the surface normal.
   group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
 
-  // Translucent fill + edge outline of a shared geometry (disk or rect).
-  const addFace = (geom: THREE.BufferGeometry, fillHex: number, lineHex: number, opacity: number) => {
-    const fill = new THREE.Mesh(
-      geom,
-      new THREE.MeshBasicMaterial({
-        color: fillHex, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false,
-      }),
-    );
-    fill.renderOrder = 20;
-    group.add(fill);
-    const outline = new THREE.LineSegments(
-      new THREE.EdgesGeometry(geom),
-      new THREE.LineBasicMaterial({ color: lineHex, transparent: true, opacity: 0.9 }),
-    );
-    outline.renderOrder = 21;
-    group.add(outline);
-  };
+  const addFace = (geom: THREE.BufferGeometry, fillHex: number, lineHex: number, opacity: number) =>
+    addTranslucentFace(group, geom, fillHex, lineHex, opacity);
 
   if (style === "pbs") {
     // Aperture extent is a frame-invariant scalar (mm): explicit B1 coating
@@ -395,6 +405,100 @@ export function buildOpticSurfaceMarkers(
   for (const { asset, mw } of units.values()) {
     const marker = buildOpticSurfaceMarker(asset, mw);
     if (marker) out.add(marker);
+  }
+  return out.children.length ? out : null;
+}
+
+/** A fiber end's pose + spec, as stored on the fiber PhysicsElement's
+ *  `kindParams.endA` / `endB` (fiber BODY-local mm). */
+type FiberEndParams = {
+  posMm?: number[] | null;
+  tensionHandleMm?: number[] | null;
+  apertureDiameterMm?: number | null;
+};
+
+function vec3From(value: number[] | null | undefined): THREE.Vector3 | null {
+  if (!Array.isArray(value) || value.length !== 3) return null;
+  if (!value.every((v) => typeof v === "number" && Number.isFinite(v))) return null;
+  return new THREE.Vector3(value[0], value[1], value[2]);
+}
+
+/** Optical-face offset + hit aperture of one fiber end, read off the bound
+ *  `fiber_connector` asset's `connect_in` anchor. Mirror of the backend's
+ *  `db_scene_loader._connector_tip_and_aperture` — the ASSET is the single
+ *  definition of both, so editing `connect_in` in the ASSET3D editor moves the
+ *  coupling face here exactly as it moves the traced waist. */
+function connectorTipAndAperture(
+  connector: Asset3D | undefined,
+  fallbackTipMm: number,
+  fallbackApertureMm: number,
+): { tipMm: number; apertureMm: number } {
+  let tipMm = fallbackTipMm;
+  let apertureMm = fallbackApertureMm;
+  if (!connector) return { tipMm, apertureMm };
+  const cIn = (connector.anchors ?? []).find((a) => a.id === "connect_in");
+  const cOut = (connector.anchors ?? []).find((a) => a.id === "connect_out");
+  if (!cIn) return { tipMm, apertureMm };
+  if (typeof cIn.apertureMm === "number" && cIn.apertureMm > 0) apertureMm = cIn.apertureMm;
+  if (cOut) {
+    const pIn = anchorObjectLocalPos(cIn, connector);
+    const pOut = anchorObjectLocalPos(cOut, connector);
+    const d = new THREE.Vector3(pIn.x - pOut.x, pIn.y - pOut.y, pIn.z - pOut.z).length();
+    if (d > 1e-6) tipMm = d;
+  }
+  return { tipMm, apertureMm };
+}
+
+/** Coupling-face markers for a FIBER, which has no optical anchor of its own.
+ *
+ *  A connector-component fiber binds two passthrough `fiber_connector` assets
+ *  (`connect_*` are not primary anchors), so the backend SYNTHESIZES the
+ *  optical slot instead: `db_scene_loader._synth_fiber_slot` builds
+ *  intercept_in (end A) / intercept_out (end B) from the fiber
+ *  PhysicsElement's `kindParams.endA/endB` — the per-instance pose Align
+ *  writes — offset to the ferrule face by the connector's `connect_in`. This
+ *  mirrors that construction so the drawn face is the one the tracer couples
+ *  through; keep the two in lockstep (see docs/introduce/fiber.md).
+ *
+ *  Returns a group in the fiber wrapper's local frame (body mm × mmToThree),
+ *  or null when the ends lack the pose the slot needs — the same condition
+ *  under which the backend declines to synthesize a slot at all. */
+export function buildFiberCouplingMarkers(
+  ends: { A: FiberEndParams | null | undefined; B: FiberEndParams | null | undefined },
+  connectors: { A?: Asset3D; B?: Asset3D },
+  fallbackTipMm: number,
+): THREE.Group | null {
+  const out = new THREE.Group();
+  out.name = "optic-surface-markers";
+  out.userData.isOpticSurfaceMarker = true;
+  const unit = mmToThree(1);
+  for (const end of ["A", "B"] as const) {
+    const params = ends[end];
+    if (!params) continue;
+    const pos = vec3From(params.posMm);
+    const tension = vec3From(params.tensionHandleMm);
+    if (!pos || !tension || tension.lengthSq() < 1e-18) continue;
+    // The ferrule faces AWAY from the wire: outward = −unit(tensionHandle),
+    // and the optical face sits `tipMm` along it from the junction (posMm).
+    const outward = tension.clone().normalize().multiplyScalar(-1);
+    const { tipMm, apertureMm } = connectorTipAndAperture(
+      connectors[end],
+      fallbackTipMm,
+      typeof params.apertureDiameterMm === "number" ? params.apertureDiameterMm : 0.125,
+    );
+    const group = new THREE.Group();
+    group.name = `optic-surface-${end === "A" ? "intercept_in" : "intercept_out"}`;
+    group.position.copy(pos).addScaledVector(outward, tipMm); // body-frame mm
+    group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), outward);
+    addTranslucentFace(group, new THREE.CircleGeometry(apertureMm, 40), 0xcbd5e1, 0xe2e8f0, 0.16);
+    group.applyMatrix4(
+      new THREE.Matrix4().compose(
+        new THREE.Vector3(),
+        new THREE.Quaternion(),
+        new THREE.Vector3(unit, unit, unit),
+      ),
+    );
+    out.add(group);
   }
   return out.children.length ? out : null;
 }
