@@ -115,7 +115,7 @@ export function ToolbarHint({ displayMode = "rendered", gizmoMode = "translate" 
       };
     }
     if (selectedObjectIds.length === 1) {
-      const modeText = gizmoMode === "translate" ? "Drag X/Y/Z arrows to move" : gizmoMode === "rotate" ? "Drag rings to rotate" : "Drag handles to scale";
+      const modeText = gizmoMode === "translate" ? "Drag X/Y/Z arrows to move" : gizmoMode === "rotate" ? "Drag rings to rotate — sticky at every 45°, hold Shift for free rotation" : "Drag handles to scale";
       const wireText = displayMode === "wireframe" ? "  ·  Touch tool available in toolbar" : "";
       return {
         primary: `${modeText}${wireText}`,

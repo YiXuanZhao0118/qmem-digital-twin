@@ -73,6 +73,16 @@ The snap result maps into persisted intent (`snapTargetToMetadata`), which a lat
 - **L6** `placedRelativeTo` + Re-snap.
 - **L7** expression number fields (`+50` / `*2` / `@200` / `mid(A,B)`, `exprInput.ts` / `NumberField.tsx`).
 
+### The rotation magnet (rotate mode only)
+
+The position snap engine above never sees rotation. Rotate-mode drags instead go through a small magnet in the gizmo itself, `magnetizeRotationDelta` (`frontend/src/three/placement/gizmo.ts:51`, pure + unit-tested in `three/placement/__tests__/rotationMagnet.test.ts`), called from `runEngineFromGizmoPose` before the rigid delta is applied to any wrapper.
+
+- **Sticky points**: every multiple of `ROTATION_MAGNET_STEP_DEG = 45` (0 / 45 / 90 / 135 / …), with a `ROTATION_MAGNET_TOLERANCE_DEG = 5` window on each side. Inside the window the committed angle is *exactly* the multiple; outside it rotation stays free, so the magnet costs no precision away from the sticky points.
+- **What is magnetized**: the *stored* Euler triple (`rxDeg` / `ryDeg` / `rzDeg` of the primary object), not the drag delta — so the magnet lands on the numbers shown in the Object panel regardless of gizmo space (global / local / beam) or the object's starting pose.
+- **Invariant — untouched axes are never disturbed**: a component whose Euler value moved by less than `ROTATION_MAGNET_MOVED_EPS_DEG = 1e-6` during the drag is passed through unchanged. Without this, turning one ring would yank a hand-tuned 43° on another axis to 45°, silently destroying an alignment.
+- **Invariant — the delta stays rigid**: the magnet returns a corrected *delta* quaternion (derived from the primary), which every selected wrapper then rides. Multi-select rotation therefore keeps its relative poses. The proxy quaternion is rewritten to match, so the gizmo ring does not drift away from the objects.
+- **Bypass**: hold **Shift** during the drag (`freeRotate`, tracked on document `keydown`/`keyup`). Translate and scale modes are untouched.
+
 ## Multi-object changes: write everything first, *then* compute optics / RF
 
 **Iron rule: any change that touches the pose of more than one SceneObject must go through `sceneStore.updateSceneObjects` (`store/sceneStore.ts:3250`) as a single commit — never loop over `updateSceneObject`.**

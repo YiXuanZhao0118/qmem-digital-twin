@@ -19,10 +19,59 @@ import { computePlacement } from "./engine";
 import {
   labMmToThree,
   sceneObjectEulerFromQuaternion,
+  sceneObjectToQuaternion,
   threeToLabPointMm,
 } from "../../optical/frames";
+import type { SceneObject } from "../../types/digitalTwin";
 
 export type GizmoOrientation = "global" | "local" | "beam";
+
+/** Rotation magnet: every multiple of 45° (0 / 45 / 90 / 135 / …) is a sticky
+ *  point in rotate mode, so the common right-angle and diagonal poses are easy
+ *  to land on exactly. Inside the tolerance window the committed angle snaps to
+ *  the multiple; outside it rotation stays free. Hold Shift to bypass. */
+const ROTATION_MAGNET_STEP_DEG = 45;
+const ROTATION_MAGNET_TOLERANCE_DEG = 5;
+
+/** Below this the Euler component counts as "not touched by this drag" and is
+ *  left alone — an axis the user hand-tuned to 43° must not be yanked to 45°
+ *  because they turned a different ring. */
+const ROTATION_MAGNET_MOVED_EPS_DEG = 1e-6;
+
+function magnetizeDeg(valueDeg: number): number {
+  const nearest = Math.round(valueDeg / ROTATION_MAGNET_STEP_DEG) * ROTATION_MAGNET_STEP_DEG;
+  return Math.abs(valueDeg - nearest) <= ROTATION_MAGNET_TOLERANCE_DEG ? nearest : valueDeg;
+}
+
+/** Snap a rotate-drag delta so the object's stored Euler lands on multiples of
+ *  45° whenever it is within the tolerance window. `initialQuat` is the
+ *  object's pose when the drag started; the returned delta replaces the raw one
+ *  for the whole selection, so a multi-select still rotates rigidly. Returns
+ *  null when nothing is close enough to snap. */
+export function magnetizeRotationDelta(
+  deltaQuat: THREE.Quaternion,
+  initialQuat: THREE.Quaternion,
+): THREE.Quaternion | null {
+  const start = sceneObjectEulerFromQuaternion(initialQuat);
+  const raw = sceneObjectEulerFromQuaternion(deltaQuat.clone().multiply(initialQuat));
+  const moved = (now: number, before: number) =>
+    Math.abs(now - before) > ROTATION_MAGNET_MOVED_EPS_DEG;
+  const snapped: LabRotation = {
+    rxDeg: moved(raw.rxDeg, start.rxDeg) ? magnetizeDeg(raw.rxDeg) : raw.rxDeg,
+    ryDeg: moved(raw.ryDeg, start.ryDeg) ? magnetizeDeg(raw.ryDeg) : raw.ryDeg,
+    rzDeg: moved(raw.rzDeg, start.rzDeg) ? magnetizeDeg(raw.rzDeg) : raw.rzDeg,
+  };
+  if (
+    snapped.rxDeg === raw.rxDeg &&
+    snapped.ryDeg === raw.ryDeg &&
+    snapped.rzDeg === raw.rzDeg
+  ) {
+    return null;
+  }
+  return sceneObjectToQuaternion(snapped as SceneObject)
+    .multiply(initialQuat.clone().invert())
+    .normalize();
+}
 
 export type GizmoCallbacks = {
   /** Called continuously during drag with the latest engine result for the
@@ -104,6 +153,9 @@ export class PlacementGizmo {
   private alternativeIndex = 0;
 
   private orientation: GizmoOrientation = "global";
+  private mode: "translate" | "rotate" | "scale" = "translate";
+  /** Shift held → rotation magnet off for this drag (free fine rotation). */
+  private freeRotate = false;
 
   constructor(args: {
     camera: THREE.Camera;
@@ -181,7 +233,14 @@ export class PlacementGizmo {
 
     // Tab key during drag → cycle alternatives.
     document.addEventListener("keydown", this.onKeyDown);
+    // Shift state drives the rotation-magnet bypass; track both edges.
+    document.addEventListener("keydown", this.onModifierChange);
+    document.addEventListener("keyup", this.onModifierChange);
   }
+
+  private onModifierChange = (event: KeyboardEvent): void => {
+    this.freeRotate = event.shiftKey;
+  };
 
   private onKeyDown = (event: KeyboardEvent): void => {
     if (event.key !== "Tab") return;
@@ -297,6 +356,7 @@ export class PlacementGizmo {
   }
 
   setMode(mode: "translate" | "rotate" | "scale"): void {
+    this.mode = mode;
     this.controls.setMode(mode);
   }
 
@@ -372,7 +432,18 @@ export class PlacementGizmo {
     // Compute proxy drag delta (rigid transform around the proxy origin).
     const deltaPos = this.proxy.position.clone().sub(this.initialProxyPosThree);
     const inverseInitialQuat = this.initialProxyQuat.clone().invert();
-    const deltaQuat = this.proxy.quaternion.clone().multiply(inverseInitialQuat);
+    let deltaQuat = this.proxy.quaternion.clone().multiply(inverseInitialQuat);
+
+    if (this.mode === "rotate" && !this.freeRotate) {
+      const magnetized = magnetizeRotationDelta(deltaQuat, this.selectedRigid[0].initialQuat);
+      if (magnetized) {
+        deltaQuat = magnetized;
+        // Pull the proxy onto the magnetized orientation too, otherwise the
+        // gizmo ring would drift away from the objects it is rotating.
+        this.proxy.quaternion.copy(deltaQuat).multiply(this.initialProxyQuat).normalize();
+        this.proxy.updateMatrixWorld(true);
+      }
+    }
 
     // Apply (translate + rotate-around-proxy-origin) to every selected
     // wrapper. DigitalTwinViewer supplies the pivot source: SceneObject pose
@@ -462,6 +533,8 @@ export class PlacementGizmo {
   dispose(): void {
     this.controls.detach();
     document.removeEventListener("keydown", this.onKeyDown);
+    document.removeEventListener("keydown", this.onModifierChange);
+    document.removeEventListener("keyup", this.onModifierChange);
     const helper = (this.controls as unknown as { getHelper?: () => THREE.Object3D }).getHelper;
     const obj = typeof helper === "function" ? helper.call(this.controls) : (this.controls as unknown as THREE.Object3D);
     this.scene.remove(obj);
