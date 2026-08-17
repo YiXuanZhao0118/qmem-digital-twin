@@ -23,13 +23,8 @@ import occtWasmUrl from "occt-import-js/dist/occt-import-js.wasm?url";
 
 import { importStep, occtMeshToGeometry, type OcctLocateFile } from "../three/occtImport";
 import { exportGlb, geometryToColoredMesh, glbToFile, mergeColoredGeometries } from "../three/glbExport";
-import {
-  decimateWelded,
-  decimateWeldedGraded,
-  estimateGlbBytes,
-  triangleCount,
-  weldForSimplify,
-} from "../three/decimate";
+import { decimateWelded, estimateGlbBytes, triangleCount, weldForSimplify } from "../three/decimate";
+import { buildLodTiers, lod0TriangleCount } from "../three/lod/buildTiers";
 import { loadAssetGeometry, type LoadedSubMesh } from "../three/loadAssetGeometry";
 import { loadProceduralAssetGeometry } from "../three/proceduralAssetGeometry";
 import { VIEWER_BG_LIGHT, VIEWER_GRID_BLACK, VIEWER_GROUND_FILL } from "../three/viewerTheme";
@@ -64,12 +59,6 @@ const PRESETS: { label: string; tris: number }[] = [
 
 const VIEWER_EXTS = new Set(["glb", "gltf", "obj", "stl"]);
 const DRAG_THRESHOLD_PX = 5;
-
-// Triangle budgets for the two decimated LOD tiers (docs/objectives.md §R-5).
-// The saved mesh is LOD0 and keeps whatever budget the user chose above.
-// Changing these means changing that spec, not just this file.
-const LOD1_TRIS = 100_000;
-const LOD2_TRIS = 20_000;
 
 function slugify(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
@@ -1048,35 +1037,27 @@ export function GeometryBuilder() {
    *  (P1's switch simply keeps everything at LOD0). Re-saving regenerates. */
   const emitLodTiers = useCallback(
     async (key: string, lod0: THREE.BufferGeometry): Promise<string> => {
-      const lod0Tris = triangleCount(lod0);
-      const welded = weldForSimplify(lod0);
       try {
+        const lod0Tris = lod0TriangleCount(lod0);
         await uploadAssetLod(key, { level: 0, triCount: lod0Tris, errorMm: 0 });
-        const tiers = await decimateWeldedGraded(welded, [LOD1_TRIS, LOD2_TRIS]);
-        const notes: string[] = [];
-        for (let i = 0; i < tiers.length; i++) {
-          const tier = tiers[i];
-          const level = (i + 1) as 1 | 2;
-          const glb = await exportGlb(tier.geometry);
+        const tiers = await buildLodTiers(lod0);
+        for (const tier of tiers) {
           await uploadAssetLod(key, {
-            level,
+            level: tier.level,
             triCount: tier.triangles,
             errorMm: tier.errorMm,
-            file: glbToFile(glb, `${key}.lod${level}`),
+            file: glbToFile(tier.glb, `${key}.lod${tier.level}`),
           });
-          notes.push(
-            `LOD${level} ${(tier.triangles / 1000).toFixed(0)}k ±${tier.errorMm.toFixed(3)} mm`,
-          );
-          tier.geometry.dispose();
         }
+        const notes = tiers.map(
+          (t) => `LOD${t.level} ${(t.triangles / 1000).toFixed(0)}k ±${t.errorMm.toFixed(3)} mm`,
+        );
         return `${(lod0Tris / 1000).toFixed(0)}k tris · ${notes.join(" · ")}`;
       } catch (e) {
         // Swallowed on purpose — see the note above. Surfacing it as a save
         // failure would misreport an asset that is already stored.
         console.error(`[GeometryBuilder] LOD tier generation failed for ${key}`, e);
         return "LOD tiers failed — re-save to retry";
-      } finally {
-        if (welded !== lod0) welded.dispose();
       }
     },
     [uploadAssetLod],

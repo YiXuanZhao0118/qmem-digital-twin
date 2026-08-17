@@ -24,7 +24,7 @@
 ## LOD (level of detail)
 
 > Targets and the switching rule live in [../objectives.md](../objectives.md) §R-4/R-5. This section is the implementation map.
-> **Status: P0 (generation + storage) and P1 (runtime switching) are both live.** What remains is P2, backfilling tiers for the existing catalog — until an asset has tiers it simply renders LOD0 at every distance, which is the no-op case.
+> **Status: P0 (generation + storage), P1 (runtime switching) and P2 (catalog backfill) are all live.** An asset with no tiers renders LOD0 at every distance — that is the intended no-op, and it is what most of the catalog does, because most parts are already under the coarsest budget (see P2).
 
 ### P0 — where the tiers come from and where they live
 
@@ -52,6 +52,17 @@ Objects start at the **coarsest** tier (`loadAssetObject` builds it that way) an
 
 Only the generic GLB path participates. The STL builders (PBS252, BB1E03, AD9959, isolator) post-process geometry in ways a decimated tier would not survive, and procedural / `primitive://` assets are cheap already.
 
-### P2 — what is left
+### P2 — the catalog backfill
 
-Backfilling tiers for the existing catalog, and the per-asset policy field (`pin_lod0` / `cap_lod1` / `exclude`) described in [../objectives.md](../objectives.md) §R-5 — deliberately not built until a case needs it, since the selection pin already covers the one policy in use.
+`frontend/scripts/backfill-lods.ts` (`npm run backfill:lods`, backend must be up; `-- --dry-run` to survey, `--force` to regenerate, `--only <slug>` to narrow). It decimates through the **same** `buildLodTiers` BUILD uses, so a tier cannot depend on which route produced it, and POSTs to the tier route — writing only `asset_lods` and new files, which is why it works on locked assets. Node needs no DOM library: the one browser API involved is `FileReader`, which `GLTFExporter.writeAsync` uses to finish a binary GLB, and a four-line shim over the native `Blob.arrayBuffer()` covers it (installing happy-dom's instead pairs *its* FileReader with Node's Blob and throws).
+
+A GLB is many meshes under a transform hierarchy but the simplifier wants one geometry, so `scripts/lodMergeGeometry.ts` bakes world transforms and merges first, folding per-mesh material colour into vertex colours. That merge is also where the draw-call win lives — the thing R-6's ≤ 2000 budget actually responds to on a multi-part board.
+
+**The script refuses to store a tier that has not earned its place**, and says so rather than skipping silently. Three ways a tier fails to earn it, all seen in the first real run:
+- the asset is already under the coarsest budget, so the simplifier returns it untouched (18 of 24 GLB assets — the shipped catalog is mostly small parts);
+- a tier cuts less than 25 % of the triangles of the finest tier kept;
+- the mesh **resists** simplification: `ad9959` stops at 89 % of LOD0 for both tiers, because `LockBorder` plus a forest of thin open-bordered plates leaves nothing safe to collapse. Two 14 MB near-copies of LOD0 are worse than no tiers at all.
+
+**First run result (2026-08-17): 4 assets carry a real LOD2** — `bnc_male`, `ppg` (64.7k → 20k, ±0.017 mm), `ks1t_step` (92.5k → 20k, ±0.129 mm), `toptica_boosta_pro` (29.8k → 20k, ±0.025 mm). Everything else is legitimately un-tiered. Re-running is a no-op for anything already tiered.
+
+Still deferred: the per-asset policy field (`pin_lod0` / `cap_lod1` / `exclude`) in [../objectives.md](../objectives.md) §R-5 — not built until a case needs it, since the selection pin already covers the one policy in use.

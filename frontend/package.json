@@ -12,7 +12,8 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "export:kinds": "npx -y tsx ../scripts/export_kinds_manifest.ts",
-    "check:anchors": "node ./scripts/check-anchor-access.mjs"
+    "check:anchors": "node ./scripts/check-anchor-access.mjs",
+    "backfill:lods": "vite-node scripts/backfill-lods.ts"
   },
   "dependencies": {
     "@kitware/vtk.js": "^35.15.1",
