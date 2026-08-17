@@ -123,6 +123,11 @@ type AssetDraft = {
   tunableParams: string[];
 };
 
+/** Number -> draft-field text. MUST stay lossless (`String`, not `toFixed`):
+ * the draft fields are the anchor WRITE path, and anchor poses carry a
+ * 1 µm / 0.1 µrad budget (docs/objectives.md O-1/O-2). A previous
+ * `toFixed(3)` helper here quantised positions to 1 µm and direction
+ * components to ~870 µrad — see docs/float64-audit.md §2.1. */
 function n(value: number | null | undefined): string {
   return value === null || value === undefined ? "" : String(value);
 }
@@ -357,10 +362,6 @@ function faceOrientation(anchor: DraftAnchor): THREE.Quaternion {
     new THREE.Vector3(axisX.x, axisX.y, axisX.z),
   );
   return new THREE.Quaternion().setFromRotationMatrix(m);
-}
-
-function mmText(value: number): string {
-  return Number(value.toFixed(3)).toString();
 }
 
 /**
@@ -2928,26 +2929,26 @@ function AssetEditForm({
     const yLen = Math.hypot(Yp.x, Yp.y, Yp.z);
     if (yLen < 1e-9) return;
     updateAnchor(index, {
-      yx: mmText(Yp.x / yLen),
-      yy: mmText(Yp.y / yLen),
-      yz: mmText(Yp.z / yLen),
+      yx: n(Yp.x / yLen),
+      yy: n(Yp.y / yLen),
+      yz: n(Yp.z / yLen),
     });
   };
   const moveFace = (index: number, position: THREE.Vector3) => {
     updateAnchor(index, {
-      px: mmText(position.x),
-      py: mmText(position.y),
-      pz: mmText(position.z),
+      px: n(position.x),
+      py: n(position.y),
+      pz: n(position.z),
     });
   };
   const autoPlaceFace = (index: number, position: THREE.Vector3, normal: THREE.Vector3) => {
     updateAnchor(index, {
-      px: mmText(position.x),
-      py: mmText(position.y),
-      pz: mmText(position.z),
-      nx: mmText(normal.x),
-      ny: mmText(normal.y),
-      nz: mmText(normal.z),
+      px: n(position.x),
+      py: n(position.y),
+      pz: n(position.z),
+      nx: n(normal.x),
+      ny: n(normal.y),
+      nz: n(normal.z),
     });
   };
 

@@ -1,0 +1,155 @@
+# float64 全鏈稽核 — anchor 姿態精度
+
+> 稽核日期：**2026-08-17**。對應 [`docs/objectives.md`](objectives.md) §7 前置工作第 2 項。
+> 稽核目標：驗證 anchor 姿態從 **DB → API → tracer** 是否全程維持 float64，足以支撐 **O-1（位置 ≤ 1 µm）** 與 **O-2（角度 ≤ 0.1 µrad）**。
+
+---
+
+## 0. 結論
+
+**機器路徑（DB / API / solver）已經是乾淨的 float64，不需要改。**
+**所有精度損失都發生在人工授權 UI（PHY Editor 的 anchor 編輯器）。**
+
+這是好消息 —— 修補範圍侷限在 `Asset3DEditor.tsx` 一個檔案，不是跨層改造。
+
+| 環節 | 判定 |
+|---|---|
+| DB 欄位型別 | ✅ 乾淨 |
+| Pydantic / JSON 序列化 | ✅ 乾淨 |
+| 後端 tracer / pose 數學 | ✅ 乾淨 |
+| device registry 授權路徑 | ✅ 乾淨 |
+| 前端 align 寫回路徑 | ✅ 乾淨 |
+| **PHY Editor anchor 寫入路徑** | ~~❌ 破口 A~~ → ✅ **已修（2026-08-17）**，見 §2.1 |
+| **PHY Editor 面選取（face-pick）** | ❌ **破口 B：從 float32 mesh + 三角化面推導,原理上達不到 0.1 µrad** |
+| RF cable 快取摘要 | ⚠️ 17 µrad 級失效門檻,RF 域可接受 |
+
+---
+
+## 1. 乾淨的環節（逐一驗證）
+
+### 1.1 DB 欄位
+
+- **`assets_3d.anchors`** — `JSONB`（[`models/hardware.py:106`](../backend/app/models/hardware.py#L106)）。
+  Postgres 的 jsonb 以 `numeric` 儲存數值，任意精度，float64 進出無損。
+- **`objects.x_mm / y_mm / z_mm / rx_deg / ry_deg / rz_deg`** — `sa.Float()`
+  （[`models/scene.py:42-47`](../backend/app/models/scene.py#L42)，建表於 `0001_initial_schema.py:56-61`）。
+  實測 DDL 編譯結果：
+  ```
+  sa.Float() DDL -> FLOAT
+  ```
+  Postgres 對不帶精度的 `FLOAT` 一律解讀為 **`double precision`（float8）**。**不是 `real`。**
+- 精度餘裕：float64 在 90° 附近的絕對精度約 1.4×10⁻¹⁴ 度 = 2.5×10⁻¹⁶ rad，比 0.1 µrad（10⁻⁷ rad）寬鬆 **9 個數量級**。角度用「度」存完全不是問題。
+
+### 1.2 Pydantic / JSON
+
+- `Vec3V3.x/y/z: float`（[`schemas_v3.py:23-26`](../backend/app/schemas_v3.py#L23)）= Python `float` = float64。
+- `AnchorV3`（[`schemas_v3.py:88-115`](../backend/app/schemas_v3.py#L88)）四個 Vec3 欄位全部走同一型別，**無 `Decimal`、無自訂 encoder、無 `round`**。
+- JSON 數值序列化（Python `repr` / pydantic-core）採最短往返表示法，float64 → JSON → float64 位元完全相同。
+
+### 1.3 後端數學
+
+- 全 backend grep `float32|float16|astype|dtype=` 的結果中，**幾何/光學路徑一個 float32 都沒有**。
+  唯一的 float32 是 [`pop_field.py:210`](../backend/app/optical/pop_field.py#L210) `out.astype(np.float32)` —— 那是 POP 顯示用的強度影像，不進幾何。
+- [`pose.py`](../backend/app/optical/pose.py) 的旋轉矩陣 `dtype=float`（=float64），`scipy.spatial.transform.Rotation` 內部亦為 float64。點/方向變換、`compose_transforms` 全程 float64。
+- 全 backend grep `round(` 只命中 `magnetics_dc.py`（磁場輸出顯示，`round(v, 6)`）、`schemas.py:2301`（timing 對齊到 TIMING_RESOLUTION_NS，刻意行為）、`pop_pass.py`（像素索引）。**anchor / pose 路徑零命中。**
+
+### 1.4 device registry 授權路徑
+
+[`services/device_seed.py:69-111`](../backend/app/services/device_seed.py#L69) 的 `materialize_device_anchors` 以裸 `float()` 讀取，Gram-Schmidt 正交化在 float64 完成，無任何量化。
+**這是目前唯一能達到 0.1 µrad 的 anchor 授權方式**（見 §2.2 結論）。
+
+### 1.5 前端 align 寫回
+
+- `syncFiberEndpointToKindParams`（[`sceneStore.ts:207-242`](../frontend/src/store/sceneStore.ts#L207)）直接搬 `node.posMm` / `tau` 陣列，無格式化。
+- `frontend/src/optical/` 下 **零 `Float32Array`**。
+- three.js 的 `Vector3` / `Matrix4` / `Quaternion` 元素都是 JS number = float64；只有 `BufferAttribute` 是 float32，而物理路徑不讀它（見 §2.2）。
+
+---
+
+## 2. 破口
+
+### 2.1 破口 A — `mmText()` 把 anchor 寫入量化到 1e-3 ✅ 已修
+
+> **狀態：2026-08-17 已修復。** `mmText` 已刪除，三個寫入路徑改用與載入端相同的無損 `n()`
+> （`String(value)`）。`Asset3DEditor.tsx` 全檔已無 `mmText`，`tsc --noEmit` 通過。
+> `n()` 的定義處加了註解，說明它為何必須維持無損，避免日後重新引入 `toFixed`。
+> 以下保留原始分析作為記錄。
+
+原本的 [`Asset3DEditor.tsx:362-364`](../frontend/src/components/Asset3DEditor.tsx#L362)：
+
+```ts
+function mmText(value: number): string {
+  return Number(value.toFixed(3)).toString();
+}
+```
+
+它被套在**三個寫入路徑**上（不是顯示格式化 —— 寫進 `draft.anchors`，存檔即進 DB）：
+
+| 路徑 | 被量化的欄位 | 影響 |
+|---|---|---|
+| `moveFace` | 位置 px/py/pz | **1 µm 量化** |
+| `autoPlaceFace` | 位置 + **axisX (nx/ny/nz)** | 1 µm + **~870 µrad** |
+| `orthogonalizeAnchorY` | **axisY (yx/yy/yz)** | **~870 µrad** |
+
+**誤差量化：**
+- **位置**：`toFixed(3)` = 0.001 mm = **1 µm**。O-1 的整個誤差預算，**在單一次寫入就用光**。
+- **方向**：把單位向量的分量捨入到 1e-3，最壞情況分量誤差 5×10⁻⁴，三分量合成角度誤差可達 √3 × 5×10⁻⁴ ≈ **8.7×10⁻⁴ rad ≈ 870 µrad**。相對 O-2 的 0.1 µrad 預算是 **約 8700 倍超標**。
+
+**觸發面比想像中大。** `orthogonalizeAnchorY` 掛在 axisX **與** axisY 六個輸入框的 `onBlur` 上（[3224–3226](../frontend/src/components/Asset3DEditor.tsx#L3224) / [3231–3233](../frontend/src/components/Asset3DEditor.tsx#L3231)）—— 使用者只要用 Tab 掃過 axisX 欄位，axisY 就被重寫成 3 位小數。
+
+**不幸中的大幸：載入是無損的。** 讀 DB → 表單走 `n()`（[:126-128](../frontend/src/components/Asset3DEditor.tsx#L126)）= `String(value)`，float64 往返完整。**所以只有被「碰過」的 anchor 會壞，沒碰的存檔後原值不變。** 現有 DB 的損壞範圍取決於歷史編輯行為，需要實測稽核（見 §4）。
+
+### 2.2 破口 B — face-pick 從 float32 mesh 推導 anchor
+
+`detectFaceCenterFromHit`（[`Asset3DEditor.tsx:375-571`](../frontend/src/components/Asset3DEditor.tsx#L375)）用 `target.fromBufferAttribute(positionAttr, vertIdx)`（[:405](../frontend/src/components/Asset3DEditor.tsx#L405)）讀頂點 —— `positionAttr` 是 `Float32Array`。中心與法線都由這些 float32 頂點算出，再經 `autoPlaceFace` 寫入 anchor。
+
+**逐項量化：**
+
+| 誤差來源 | 量級 | 對 O-1/O-2 |
+|---|---|---|
+| float32 頂點 → **位置** | 零件座標 100 mm 尺度：100 × 1.19×10⁻⁷ ≈ **0.012 µm** | ✅ 在預算內 |
+| float32 頂點 → 位置（CAD 原點遠離零件，座標 ~5000 mm） | ≈ **0.6 µm** | ⚠️ 逼近預算 |
+| float32 頂點 → **法線**（三角邊長 1 mm、座標 50 mm） | δ/L ≈ 6×10⁻⁶ rad = **6 µrad**；平均 N 個三角形降到 6/√N µrad，要 N ≈ 3600 才壓到 0.1 µrad | ❌ 實務上超標 |
+| **三角化本身**（不是浮點誤差） | B-1 允許 0.05 mm 幾何偏差；0.05 mm 弧垂配 10 mm 面 ≈ **5 mrad = 5×10⁴ µrad** 法線誤差 | ❌ **超標 5 萬倍** |
+
+**這是本次稽核最重要的結論：**
+
+> **face-pick 原理上無法授權 µrad 等級的 anchor 軸向 —— 主導誤差是網格三角化，不是浮點格式。**
+> 就算把整條路徑改成 float64，曲面上選取到的法線仍然是「三角面的法線」而不是「CAD 曲面的法線」。
+>
+> ⇒ **需要滿足 O-2 的 anchor 必須走 device registry 數值授權**（`materialize_device_anchors`，§1.4），由 datasheet / CAD 標稱值給定，不得由滑鼠點取。face-pick 只能定位到「幾何等級」（~0.05 mm / ~mrad），適用於機械對位與可視化，不適用於光學介面軸向。
+
+### 2.3 破口 C — 輸入框 `step="0.01"`
+
+[:3217–3233](../frontend/src/components/Asset3DEditor.tsx#L3217) 的 `<input type="number" step="0.01">`：位置箭頭鍵一格 = **10 µm**，方向分量一格 = **10 mrad**。
+不是硬性量化（手打任意值可通過），但它是 UI 對使用者示範的預設顆粒度，與 µm/µrad 目標矛盾。
+
+### 2.4 觀察 D — RF cable 快取摘要（可接受）
+
+[`DigitalTwinViewer.tsx:3815`](../frontend/src/components/DigitalTwinViewer.tsx#L3815) 與 `:3880` 用 `.toFixed(3)` 組快取失效摘要字串。
+意義：目標物件姿態變動小於 0.001 mm / 0.001°（= **17 µrad**）時，cable 端點快取不會重算。
+**這是快取門檻，不是儲存值** —— 註解已標明 `raw-anchor-ok: digest of stored body-frame value`。RF 域無 µrad 需求，**判定可接受，但需記錄**：若日後把同一模式複製到光學路徑會直接違反 O-2。
+
+---
+
+## 3. 建議修補（依優先序）
+
+1. ~~**移除寫入路徑上的 `mmText`**~~ —— ✅ **2026-08-17 完成。** 三處呼叫（`moveFace` / `autoPlaceFace` / `orthogonalizeAnchorY`）改用載入端同一個無損 `n()`；`mmText` 全檔無其他用途，已刪除。破口 A 消除。
+2. **`step` 改為 `any`**（或位置 `0.001`、方向 `1e-6`），消除破口 C 的誤導。
+3. **政策落地：anchor 分兩級授權**（破口 B 的唯一解）
+   - *device-grade*：device registry 數值授權，保證 µm/µrad —— 光學介面必走此路。
+   - *geometry-grade*：face-pick，只保證 ~0.05 mm / ~mrad —— 機械/可視化用。
+   - PHY Editor 應標示 anchor 屬於哪一級，並在光學 kind 上警示 face-pick 授權的軸向。
+4. **CI 守門**（對應 objectives §6 `ci-correctness`）
+   - 往返測試：`anchor{x: 12.3456789012345} → PUT → GET` 必須位元相同。
+   - 靜態守則：anchor 寫入路徑禁止出現 `toFixed` / `Math.round`（lint rule 或測試 grep）。
+   - DDL 斷言：查 `information_schema.columns`，`objects.x_mm` 等六欄必須是 `double precision`。
+5. **實測現有資料損壞範圍** —— 掃全表 anchors，統計有多少 `positionMmBodyLocal` / `axisXBodyLocal` / `axisYBodyLocal` 分量剛好是 3 位小數的整數倍（`v*1000` 為整數）。命中率高者即為破口 A 的歷史受害者。⚠️ 修復 locked 列需先請使用者解鎖，不得自行處理。
+
+---
+
+## 4. 未涵蓋
+
+- **未實測現有 DB 資料**的量化痕跡（建議 3-5，需要跑起 stack）。
+- **未驗證 live DB** 的 `information_schema` 實際型別 —— 本次以 SQLAlchemy DDL 編譯結果推定為 float8（Postgres 對 `FLOAT` 的定義是明確的，風險低），建議 3-4 補上實查。
+- 前端 `v3TraceAdapter` 回傳的光路 polyline 精度未稽核（那是顯示路徑，不回寫 anchor）。
