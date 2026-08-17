@@ -3787,11 +3787,13 @@ export function DigitalTwinViewer({
       // are children of the wrapper, so a drag carries them along.
       if (opticalLinkMode && opticalObjectIds.has(placement.id)) {
         const assetRoot = wrapper.children.find((child) => child.userData.isLoadedAsset) ?? wrapper;
+        const allBindings = sceneData.componentBindings ?? [];
         const markers = buildOpticSurfaceMarkers(
           wrapper,
           assetRoot,
           component.asset3dId ? assetById.get(component.asset3dId) : undefined,
-          sceneData.componentBindings ?? [],
+          allBindings,
+          allBindings.filter((b) => b.componentId === component.id),
           assetById,
         );
         if (markers) wrapper.add(markers);

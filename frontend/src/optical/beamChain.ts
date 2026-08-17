@@ -62,6 +62,16 @@ const VISUAL_FLOOR_UM = 30; // never draw a tube thinner than this in µm
  *  on light that carries no power). */
 const DARK_POWER_FACTOR = 0.01;
 
+/** The anchors an optic-surface marker may sit on, in preference order. Mirror
+ *  of the backend's `anchor_tracer.PRIMARY_ANCHOR_IDS` (the only anchors the
+ *  tracer hit-tests) plus the legacy `optical_anchor` alias — a marker claims
+ *  "this is the surface the beam is acted on", so it must not appear anywhere
+ *  the tracer would never intercept. */
+const PRIMARY_OPTICAL_ANCHOR_IDS = [
+  "optical_center", "optical_anchor", "intercept_face",
+  "interaction_center", "intercept_in", "intercept_out",
+];
+
 /** Diagonal of the box enclosing every segment endpoint (three units), floored
  *  so an empty / degenerate chain still yields a usable marker scale. */
 export function beamChainSpan(segments: readonly LinkTraceSegment[]): number {
@@ -229,13 +239,12 @@ function buildOpticSurfaceMarker(asset: Asset3D, mw: THREE.Matrix4): THREE.Group
     ancId = "optical_center";
     style = "faraday";
   } else {
-    // Prefer a known primary anchor id; otherwise fall back to the asset's
-    // FIRST anchor so ANY anchor-bearing asset still gets a surface marker.
-    const order = [
-      "optical_center", "optical_anchor", "intercept_face",
-      "interaction_center", "intercept_in", "intercept_out",
-    ];
-    ancId = order.find(hasAnc) ?? (asset.anchors ?? [])[0]?.id ?? null;
+    // ONLY an anchor the tracer actually hit-tests earns a face — the same set
+    // as the backend's `anchor_tracer.PRIMARY_ANCHOR_IDS`. There is deliberately
+    // no "else use the asset's first anchor" fallback: connectors would then
+    // draw a face on `connect_out`, and RF parts one on `rf_in`/`rf_out`, i.e.
+    // big pale discs floating where no light is ever intercepted.
+    ancId = PRIMARY_OPTICAL_ANCHOR_IDS.find(hasAnc) ?? null;
     style = "generic";
   }
   if (!ancId) return null;
@@ -330,6 +339,11 @@ function buildOpticSurfaceMarker(asset: Asset3D, mw: THREE.Matrix4): THREE.Group
  *  (frame airlock + geometry offset) positions a SINGLE-asset component's
  *  marker; for a binding tree each unit brings its own node.
  *
+ *  `bindings` is the whole scene's ComponentBinding list (a composite's tree
+ *  carries `__bindingId`s from its sub-components, so the lookup needs all of
+ *  them); `ownBindings` is only this component's rows and is what the
+ *  last-resort branch may enumerate.
+ *
  *  The returned group carries `userData.isOpticSurfaceMarker` so the viewer's
  *  `stripDynamicDecorations` can clean it off a cached wrapper.
  *  Returns null when no markers apply. */
@@ -338,6 +352,7 @@ export function buildOpticSurfaceMarkers(
   assetRoot: THREE.Object3D,
   singleAsset: Asset3D | undefined,
   bindings: ReadonlyArray<{ id: string; asset3dId?: string | null }>,
+  ownBindings: ReadonlyArray<{ id: string; asset3dId?: string | null }>,
   assetById: ReadonlyMap<string, Asset3D>,
 ): THREE.Group | null {
   parent.updateMatrixWorld(true);
@@ -361,8 +376,14 @@ export function buildOpticSurfaceMarkers(
   // so singleAsset is undefined, and a flat single binding isn't
   // __bindingId-tagged) still need their anchor shown. Resolve the bound
   // assets straight from the bindings and bake at the asset root.
+  //
+  // `ownBindings` MUST be this component's own rows, not the whole scene's:
+  // the full list is needed above to resolve a `__bindingId` inside a
+  // composite's tree, but reusing it here made an untagged component (the
+  // fiber) sprout a marker for EVERY bound asset in the scene — ~35 discs
+  // stacked at the fiber's origin, sized after other components' optics.
   if (units.size === 0) {
-    for (const b of bindings) {
+    for (const b of ownBindings) {
       if (!b.asset3dId || units.has(b.id)) continue;
       const a = assetById.get(b.asset3dId);
       if (a) units.set(b.id, { asset: a, mw: relative(assetRoot) });
