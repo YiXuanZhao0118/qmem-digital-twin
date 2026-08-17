@@ -1,72 +1,72 @@
-[← 文件索引](README.md)
+[← Doc index](README.md)
 
-# Fiber — 光纖（單物件 + per-instance spline）
+# Fiber — optical fibre (single object + per-instance spline)
 
-> 相關：[optics.md](optics.md)（耦合物理進到光追）、[anchors.md](anchors.md)（端點 anchor 由 spline 推導）、[kinds.md](kinds.md)（fiber / fiber_coupler）、[cable.md](cable.md)（RF cable 用同一套 spline/端點架構）。
-> 程式：`optical/fiber/`、`three/loadAsset/fiber/`、`utils/fiber{Alignment,BodyEndpointResolver,AnchorResolver}.ts`、後端 `optical/anchor_ops/fiber.py`。
+> Related: [optics.md](optics.md) (how the coupling physics enters the trace), [anchors.md](anchors.md) (the endpoint anchors are derived from the spline), [kinds.md](kinds.md) (fiber / fiber_coupler), [cable.md](cable.md) (RF cables use the same spline/endpoint architecture).
+> Code: `optical/fiber/`, `three/loadAsset/fiber/`, `utils/fiber{Alignment,BodyEndpointResolver,AnchorResolver}.ts`, backend `optical/anchor_ops/fiber.py`.
 
-## 資料模型（單物件模型，post-0056）
+## Data model (single-object model, post-0056)
 
-一條光纖 = **一個 SceneObject**（Outliner 一條）。兩端 A/B 的 pose 內嵌在 `PE.kindParams.endA` / `endB`（body-local）：
+One fibre = **one SceneObject** (one row in the Outliner). The poses of both ends A/B are embedded in `PE.kindParams.endA` / `endB` (body-local):
 
-- `posMm` — **接頭後端（wire 與 ferrule 的 junction）= spline 端點 = mesh 原點**。
-- `tensionHandleMm` — outward 方向 + Bezier 切線的**單一真值**（ferrule 朝向也由它定）。
-- `rotDeg` — **只是 ferrule 視覺 roll**，不轉 wire 切線。
-- 加上每端物理欄：`numericalAperture`、`modeFieldDiameterUm`、`coreDiameterUm`、`connectorType`(FC/SC/…)、`polish`(PC/APC/UPC)…
+- `posMm` — **the back of the connector (the junction between wire and ferrule) = the spline endpoint = the mesh origin**.
+- `tensionHandleMm` — the **single source of truth** for the outward direction and the Bezier tangent (it also sets the ferrule's orientation).
+- `rotDeg` — **only the ferrule's visual roll**; it does not rotate the wire tangent.
+- Plus the per-end physics fields: `numericalAperture`, `modeFieldDiameterUm`, `coreDiameterUm`, `connectorType` (FC/SC/…), `polish` (PC/APC/UPC), …
 
-> **光學 tip ≠ posMm**：`tip = posMm + outward · FIBER_FERRULE_TIP_MM`，`outward = -unit(tensionHandleMm)`，`FIBER_FERRULE_TIP_MM = 36.28 mm`（Thorlabs FC 30126A9 殼長）。所有 anchor 位置/方向都經 `fiberAnchorResolver.ts` 的 `resolveAnchorPosition()`/`resolveAnchorDirection()` 由 spline 推導（anchor 標 `derivedFromFiberEndpoint`）。
+> **The optical tip ≠ posMm**: `tip = posMm + outward · FIBER_FERRULE_TIP_MM`, with `outward = -unit(tensionHandleMm)` and `FIBER_FERRULE_TIP_MM = 36.28 mm` (the housing length of the Thorlabs FC 30126A9). All anchor positions and directions are derived from the spline by `resolveAnchorPosition()` / `resolveAnchorDirection()` in `fiberAnchorResolver.ts` (those anchors are marked `derivedFromFiberEndpoint`).
 
-**Migration 演進**：`0052` 把一條 fiber 拆成三個 SceneObject（`fiber_end_a` / body / `fiber_end_b`）→ `0056` **收回單物件**，把端點 pose 烤進 kindParams、刪掉 fiber_end 物件。移動/旋轉 fiber 會同時帶兩端。
+**Migration history**: `0052` split one fibre into three SceneObjects (`fiber_end_a` / body / `fiber_end_b`) → `0056` **collapsed it back to a single object**, baking the endpoint poses into kindParams and deleting the fiber_end objects. Moving or rotating the fibre now carries both ends with it.
 
-## 渲染（`three/loadAsset/fiber/`）
+## Rendering (`three/loadAsset/fiber/`)
 
-`createFiberSplineObject()`（`spline.ts`）建一個 Group：
-- **管身**：`buildFiberCurvePath()`（`curve.ts`）由 `FiberNode[]`（含 `handleInMm`/`handleOutMm`）組 CubicBezier → `TubeGeometry`（半徑 `radiusMm`）。jacket 顏色依 fiberType（SM 黃、PM 藍、MM 橘）。
-- **兩端 FC 接頭**：`thorlabs_30126a9_fc_connector.ts` 的快取 STL，`applyFiberFerruleOrientation()` 把接頭 +Y 對到 outward。
-- **端點鎖定**：capability profile `fiber: { endpointSplineNodesLocked: true }` — spline 端點（node 0 / N−1）只能用 **Align End A / B** 按鈕動，中間 node 可自由拖。
-- `refreshFiberWrapperGeometry()` 在 node/半徑變動時就地換 tube，不重建整個 wrapper。
-- **jacket 半徑歸 Component 層**（2026-08-14）：只在 COMPONENT 編輯器的 `CableAppearanceEditor`（`Component.properties.cableAppearance.radiusMm`，`ComponentsEditor.tsx:1224`）調整；Object 面板的 `FiberEditor` 已移除 per-instance「Jacket radius」slider（連同 `sceneStore.updateFiberRadius`）。讀取仍是 `cableAppearance.radiusMm` → `SceneObject.properties.radiusMm`（legacy 遺留資料）→ `Component.properties.radiusMm` → 1.0（`spline.ts:167`）。
+`createFiberSplineObject()` (`spline.ts`) builds a Group:
+- **The tube**: `buildFiberCurvePath()` (`curve.ts`) assembles CubicBeziers from `FiberNode[]` (each with `handleInMm` / `handleOutMm`) → a `TubeGeometry` (radius `radiusMm`). The jacket colour follows fiberType (SM yellow, PM blue, MM orange).
+- **The two FC connectors**: a cached STL from `thorlabs_30126a9_fc_connector.ts`, with `applyFiberFerruleOrientation()` mating the connector's +Y to outward.
+- **Endpoint locking**: capability profile `fiber: { endpointSplineNodesLocked: true }` — the spline endpoints (node 0 / N−1) can only be moved with the **Align End A / B** buttons, while intermediate nodes drag freely.
+- `refreshFiberWrapperGeometry()` swaps the tube in place when nodes or radius change, instead of rebuilding the whole wrapper.
+- **Jacket radius belongs to the Component layer** (2026-08-14): it is adjusted only in the COMPONENT editor's `CableAppearanceEditor` (`Component.properties.cableAppearance.radiusMm`, `ComponentsEditor.tsx:1224`); the Object panel's `FiberEditor` no longer has a per-instance "Jacket radius" slider (nor `sceneStore.updateFiberRadius`). Reading still falls through `cableAppearance.radiusMm` → `SceneObject.properties.radiusMm` (legacy leftover data) → `Component.properties.radiusMm` → 1.0 (`spline.ts:167`).
 
-## 對準（`utils/fiberAlignment.ts`）
+## Alignment (`utils/fiberAlignment.ts`)
 
-`computeFiberEndAlignment()` / `findFiberEndAlignmentCandidates()`：把目前 ferrule **tip** 投影到各 beam 段，取 `toleranceMm`（25mm）內的候選，反推新 spline node（End A 入射 `outward=-beam_tangent`、End B 出射 `outward=+beam_tangent`，`node = tip - outward·36.28`），Bezier handle 對齊 beam 方向。對端與 body pose 不動。投影數學是純函式,Align A/B 與 per-end 端口編輯器共用。
+`computeFiberEndAlignment()` / `findFiberEndAlignmentCandidates()`: project the ferrule's current **tip** onto each beam segment, keep the candidates within `toleranceMm` (25 mm), and back out the new spline node (End A entering with `outward=-beam_tangent`, End B exiting with `outward=+beam_tangent`, `node = tip - outward·36.28`), with the Bezier handle aligned to the beam direction. The other end and the body pose stay put. The projection math is a pure function shared by Align A/B and the per-end port editor.
 
-**端點讀取的單一入口 = `sceneStore.resolveEffectiveFiberNodes(obj, component, physicsElements)`**：優先 `SceneObject.properties.fiberNodes`(≥2)→ `Component.properties.fiberNodes`(≥2)→ 否則由 fiber PE 的 `kindParams.endA/endB` 經 `syncFiberNodesFromKindParams()` 重建。**這一步是 connector-component fiber 能對齊的關鍵** —— 它剛實例化時只有 `kindParams.endA/endB`、沒有 cached `fiberNodes`(後端 `default_kind_params_for_component` 只 seed kindParams),舊版直接讀 `properties.fiberNodes` 在 `length<2` early-return → Align「完全沒反應」。`findFiberAlignmentCandidates` / `applyFiberAlignmentCandidate` / `setFiberPortLabPose` / `FiberPortPoseEditor` / FiberEditor 的 node 計數全走這個 resolver。
+**The single entry point for reading endpoints is `sceneStore.resolveEffectiveFiberNodes(obj, component, physicsElements)`**: it prefers `SceneObject.properties.fiberNodes` (≥2) → `Component.properties.fiberNodes` (≥2) → otherwise rebuilds them from the fiber PE's `kindParams.endA/endB` via `syncFiberNodesFromKindParams()`. **This step is what makes a connector-component fibre alignable at all** — freshly instantiated it has only `kindParams.endA/endB` and no cached `fiberNodes` (the backend's `default_kind_params_for_component` seeds only kindParams), so the old code, which read `properties.fiberNodes` directly, hit its `length<2` early return and Align did "absolutely nothing". `findFiberAlignmentCandidates`, `applyFiberAlignmentCandidate`, `setFiberPortLabPose`, `FiberPortPoseEditor` and FiberEditor's node count all go through this resolver.
 
-**寫回必須雙寫**:端點編輯(Align apply 與 port-pose 編輯)除了寫 `properties.fiberNodes`,還要把端點同步進 `kindParams.endA/endB`(`posMm`=junction、`tensionHandleMm`=handle),由共用 helper `sceneStore.syncFiberEndpointToKindParams()` 完成。只寫 `fiberNodes` 是死路 —— load 時 `syncFiberNodesFromKindParams()` 會用 kindParams 覆寫端點,改動會回彈。
+**Writes must be double writes**: endpoint edits (applying an Align, or editing the port pose) must, besides writing `properties.fiberNodes`, also sync the endpoint into `kindParams.endA/endB` (`posMm` = junction, `tensionHandleMm` = handle) — done by the shared helper `sceneStore.syncFiberEndpointToKindParams()`. Writing only `fiberNodes` is a dead end: on load, `syncFiberNodesFromKindParams()` overwrites the endpoints from kindParams and the edit springs back.
 
-## 光學物理（後端 `anchor_ops/fiber.py`）
+## Optical physics (backend `anchor_ops/fiber.py`)
 
-雙 anchor：`intercept_in`(A) / `intercept_out`(B)。閉式 v1 耦合，無內部光追。耦合效率 `η = η_mode · η_Fresnel · η_α`：
-- `η_mode` — Marcuse 高斯重疊：`exp(-r²/w₀²)·exp(-θ²/θ_NA²)`，`w₀ = MFD/2`、`θ_NA = asin(NA)`、r/θ 取自命中橫向偏移與傾角。
-- `η_Fresnel` — 兩個 air-glass 面：`(1-R)²`，`R=((n-1)/(n+1))²`。
-- `η_α` — Beer-Lambert：`10^(-α·L/10)`，`α=attenuationDbPerKm`、`L=lengthM`。
+Two anchors: `intercept_in` (A) / `intercept_out` (B). Closed-form v1 coupling, with no internal ray tracing. The coupling efficiency is `η = η_mode · η_Fresnel · η_α`:
+- `η_mode` — the Marcuse Gaussian overlap: `exp(-r²/w₀²)·exp(-θ²/θ_NA²)`, with `w₀ = MFD/2`, `θ_NA = asin(NA)`, and r/θ taken from the hit's transverse offset and tilt.
+- `η_Fresnel` — the two air-glass surfaces: `(1-R)²`, `R=((n-1)/(n+1))²`.
+- `η_α` — Beer-Lambert: `10^(-α·L/10)`, with `α=attenuationDbPerKm` and `L=lengthM`.
 
-出射 ray：origin = 出射 anchor.position、direction = 出射 anchor.axisX（**光纖強制基模、抹掉入射傾角資訊**），q 重設為純虛（出射面為腰），power ×= η。
+The outgoing ray: origin = the exit anchor's position, direction = the exit anchor's axisX (**the fibre forces the fundamental mode and erases the incoming tilt**), q reset to purely imaginary (the exit face is the waist), power ×= η.
 
-### connector-component fiber 的 intercept slot 由後端「合成」(2026-06-13)
+### The intercept slot of a connector-component fibre is *synthesized* by the backend (2026-06-13)
 
-`fiber_anchor_op` 只在 ray 命中 id 為 `intercept_in/intercept_out` 的 anchor 時觸發。但新的 connector-component fiber 綁的是兩個 `fiber_connector` 資產(anchor 是 `connect_in/connect_out`、op passthrough、且 `connect_*` 不在 `anchor_tracer.PRIMARY_ANCHOR_IDS`)—— 場景裡**沒有**任何 `fiber`-kind + `intercept_in/out` 的 slot,beam 會直接穿過、不耦合。
+`fiber_anchor_op` only fires when a ray hits an anchor whose id is `intercept_in` / `intercept_out`. But the new connector-component fibre binds two `fiber_connector` assets (whose anchors are `connect_in` / `connect_out`, whose op is passthrough, and whose `connect_*` are not in `anchor_tracer.PRIMARY_ANCHOR_IDS`) — so there is **no** `fiber`-kind slot with `intercept_in/out` anywhere in the scene, and the beam sails straight through without coupling.
 
-修法在後端 loader:`db_scene_loader.load_anchor_scene_from_db` 對每個 `comp.kind_id=="fiber"` 的物件,由其 fiber PhysicsElement 的 `kindParams.endA/endB` **合成一個 `fiber`-kind slot**(`_synth_fiber_slot`):
-- `intercept_in`←endA、`intercept_out`←endB;`position = posMm + outward·tip_mm`、`outward = −unit(tensionHandleMm)`。`posMm`(junction)+ outward 來自 **Align 寫進 kindParams 的 per-instance 真值**(接頭實際擺放處,loader 不讀靜態 Asset3D anchor)。
-- **光學面偏移 `tip_mm` 與命中 aperture 都取自該端 connector 綁定資產的 `connect_in` anchor**(`_connector_tip_and_aperture`):`tip_mm = |connect_in − connect_out|`、`aperture = connect_in.apertureMm`。**亦即合成的 `intercept_in/out` 精準落在你在 asset 定義的 `connect_in` 上(= fiber 收光面 = beam waist 處)** —— 調 asset 的 connect_in 位置/aperture 就同步改變光學面與接受窗;缺 connector 時退回 36.28 / endX.apertureDiameterMm。aperture 只決定「算不算命中」,η 仍由 Marcuse 重疊決定。
-- `default_params` 由 kindParams 映射成 op 讀的 key:`coreMfdUm←modeFieldDiameterUm`、`numericalAperture`、`coreRefractiveIndex←glassIndexAtDesignLambda`、`attenuationDbPerKm←attenuationCurve[0].dbPerKm`、`lengthM←`spline 長度。
-- 兩個 `fiber_connector` passthrough slot 照樣存在,無害(connect_* 不被命中)。
-- 範圍:目前只 Lab(`run-from-db`);COMPONENT 預覽(`load_anchor_scene_from_component`)尚未合成。`fiber_coupler`(單 anchor)走原路徑。測試見 `backend/tests/optical/test_fiber_connector_coupling.py`。
+The fix lives in the backend loader: for every object with `comp.kind_id=="fiber"`, `db_scene_loader.load_anchor_scene_from_db` **synthesizes a `fiber`-kind slot** (`_synth_fiber_slot`) from that fibre's PhysicsElement `kindParams.endA/endB`:
+- `intercept_in` ← endA, `intercept_out` ← endB; `position = posMm + outward·tip_mm`, `outward = −unit(tensionHandleMm)`. `posMm` (the junction) and outward come from the **per-instance truth Align wrote into kindParams** (where the connector actually sits — the loader does not read the static Asset3D anchor).
+- **Both the optical-face offset `tip_mm` and the hit aperture come from the `connect_in` anchor of that end's bound connector asset** (`_connector_tip_and_aperture`): `tip_mm = |connect_in − connect_out|`, `aperture = connect_in.apertureMm`. **That is, the synthesized `intercept_in/out` land exactly on the `connect_in` you defined on the asset (= the fibre's collection face = the beam waist)** — editing the asset's connect_in position/aperture moves the optical face and the acceptance window together. With no connector it falls back to 36.28 / `endX.apertureDiameterMm`. The aperture only decides whether something counts as a hit; η is still set by the Marcuse overlap.
+- `default_params` are mapped from kindParams into the keys the op reads: `coreMfdUm←modeFieldDiameterUm`, `numericalAperture`, `coreRefractiveIndex←glassIndexAtDesignLambda`, `attenuationDbPerKm←attenuationCurve[0].dbPerKm`, `lengthM←` the spline length.
+- The two `fiber_connector` passthrough slots still exist and are harmless (`connect_*` is never hit).
+- Scope: currently Lab only (`run-from-db`); the COMPONENT preview (`load_anchor_scene_from_component`) does not synthesize yet. `fiber_coupler` (a single anchor) takes the original path. Tests: `backend/tests/optical/test_fiber_connector_coupling.py`.
 
-## kinds：fiber vs fiber_coupler
+## Kinds: fiber vs fiber_coupler
 
-| kind | 角色 | anchors | 對準 |
+| kind | Role | Anchors | Alignment |
 |---|---|---|---|
-| `fiber` | 雙向 patch cable（兩個光學埠） | `intercept_in` + `intercept_out` | per-end Align 按鈕（`align_variant: none`，tol 25mm） |
-| `fiber_coupler` | 自由空間 ↔ 光纖耦合/準直 | 只 `intercept_in` | translate-to-beam（單 anchor） |
+| `fiber` | A bidirectional patch cable (two optical ports) | `intercept_in` + `intercept_out` | per-end Align buttons (`align_variant: none`, tol 25 mm) |
+| `fiber_coupler` | Free-space ↔ fibre coupling / collimation | `intercept_in` only | translate-to-beam (single anchor) |
 
-兩者**共用** `fiber_anchor_op`（後端 `register_anchor_op("fiber"/"fiber_coupler", …)`）；差別在 anchor 數與對準方式。fiber 代表性 defaultParams：PM、NA 0.13、MFD 5.3µm、design 780nm、5 dB/km、min bend 25mm。
+The two **share** `fiber_anchor_op` (backend `register_anchor_op("fiber"/"fiber_coupler", …)`); they differ in anchor count and alignment method. Representative fiber defaultParams: PM, NA 0.13, MFD 5.3 µm, design 780 nm, 5 dB/km, min bend 25 mm.
 
-## 已知 / 注意
+## Known issues / cautions
 
-- **posMm = 接頭後端 junction，不是光學 tip**（2026-05-17 釐清；舊註解曾誤寫 posMm=emission point）。
-- 端點鎖定 → 只能用 Align A/B 按鈕移端點，避免端點漂移。
-- `fiber_end` kind 於 0056 後封存（僅留 manifest 讓舊資料可解析）。
-- `utils/__tests__/fiberAlignment.test.ts`、`fiberBodyEndpointResolver.test.ts` 屬已知 pre-existing-red（見 [known-issues.md](known-issues.md)）。
+- **posMm is the connector's back junction, not the optical tip** (clarified 2026-05-17; an old comment wrongly said posMm = emission point).
+- Endpoint locking → endpoints move only via the Align A/B buttons, which prevents endpoint drift.
+- The `fiber_end` kind was mothballed after 0056 (only the manifest entry remains, so old data still parses).
+- `utils/__tests__/fiberAlignment.test.ts` and `fiberBodyEndpointResolver.test.ts` are known pre-existing reds (see [known-issues.md](known-issues.md)).

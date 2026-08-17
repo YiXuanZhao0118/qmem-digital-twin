@@ -1,18 +1,18 @@
-[← 文件索引](README.md)
+[← Doc index](README.md)
 
-# 已知過時 / 待處理事項
+# Known stale / outstanding items
 
-> 死碼/孤兒檔/正名建議另見根目錄 `CLEANUP_AUDIT.md`。
+> Dead code, orphan files and renaming suggestions are tracked separately in `CLEANUP_AUDIT.md` at the repo root.
 
-- 後端 port 是 8010（非 8000）；`docker-compose.yml` 的 5432 + adminer 實質未用（走本機 55432 腳本，Docker 未裝）。見 [overview.md](overview.md)。
-- 前端 `optical/` TS 光追引擎（face-based）被部分舊文件當成 production，實際線上是後端 anchor 求解器（`anchor_tracer.py`）。見 [optics.md](optics.md)。
-- **渲染統一未收尾（2026-06-10）**：`shouldRenderViaBindings` 已恆 `true`、全走 binding-tree，但 fiber/rf_cable/isolator 的 per-instance 狀態（`fiberNodes`/`rfCableNodes`/`radiusMm`/ferrule pose/`translucentHousing`）**尚未透過 binding 樹轉送**，這三類可能暫以 catalog 預設 spline/pose 渲染；legacy `loadAssetObject` 直連分支也成 dead code 待移除。見 [rendering.md](rendering.md)。
-- **`physicsCapabilities` 已成 vestigial（2026-06-10）**：domain 改為 asset-kind-authoritative（category 改由 `component.properties.category` 直接決定），UI 已不再讀 `physicsCapabilities` 判 domain/category；DB 欄位與 `setComponentCapabilities` 之外的設定點仍留著，日後可 deprecate。見 [kinds.md](kinds.md)。
-- 斷掉的 geometryRef：`thorlabs_io_3_850_faraday_rod.json` 指向不存在的 `files/stl/thorlabs_io_3_850_hp/` 切片子目錄（`split_io_3_hp_stl.py` 可能沒跑或檔案遺失）。
-- isolator 的 front/back piece 與 body housing 顏色都寫死 `#1a1a1c`（不走 colorForComponent）；要換色須同改 subset-piece 分支與 `buildThorlabsIsolatorObject`。
-- TA 資產 `gainLinear` vs op `smallSignalGainDb` 單位不一致，待統一。見 [optics.md](optics.md)。
-- pulse-envelope/色散時域數學在 legacy 退役時被刪（可從 git 復原）。見 [timing.md](timing.md)。
-- ~~`test_kinds_manifest` 期待 30 kinds 但實際 `element_kinds` 為 29。~~（已解決：測試與 live 數同步，2026-06-12 加入 `fiber_connector` + `rf_cable_connector` 後為 **31**。）見 [kinds.md](kinds.md)。
-- `objects.parent_component_id` model/schema 與 DB 欄位可能不一致；非 emitter 的 chain root（無入射 link 的 mirror）會報「chain root cannot emit」。
-- **雷射光束舊資料存在兩處（properties.opticalSources[0].beam + dynamic_sources column）**：兩處都殘留整束光（`spectrum`/`spatialEnvelope`/...）。**migration 0113 後已大幅緩解**：v3 trace 經 `db_scene_loader` 讀這兩處後，會**丟掉「是 defaultParams key 但非 Asset tunable」的 key**（tunable 契約，見 [data-model.md](data-model.md)），所以 non-tunable 的 beam 參數（spectrum/spatialEnvelope/polarization/waist）**永遠跟著 Asset**，不再因殘留資料而 desync；只有 tunable 的 `nominalPowerMw`/`centerWavelengthNm` 是逐實例值。顯示用的 `physics_elements.kindParams`（不落 DB，即時衍生）經 `bindings.get_laser_beam_for_kind_params` 仍優先讀 `dynamic_sources` column，故「顯示」與「trace」對 non-tunable 參數理論上仍可能不一致——但 trace 端已以 Asset 為準。見 [optics.md](optics.md)、auto-memory `laser_beam_dual_source_astigmatism`。
-- 死碼/孤兒檔/正名建議：見根目錄 `CLEANUP_AUDIT.md`。
+- The backend port is 8010 (not 8000); the 5432 + adminer entries in `docker-compose.yml` are effectively unused (we run the local 55432 script, Docker isn't installed). See [overview.md](overview.md).
+- Some older docs treat the frontend `optical/` TS ray-tracing engine (face-based) as production. What actually runs is the backend anchor solver (`anchor_tracer.py`). See [optics.md](optics.md).
+- **Render unification is unfinished (2026-06-10)**: `shouldRenderViaBindings` is now permanently `true` and everything goes through the binding tree, but per-instance state for fiber / rf_cable / isolator (`fiberNodes` / `rfCableNodes` / `radiusMm` / ferrule pose / `translucentHousing`) is **not yet forwarded through the binding tree**, so those three may render with the catalog's default spline/pose for now. The legacy direct `loadAssetObject` branch is dead code awaiting removal. See [rendering.md](rendering.md).
+- **`physicsCapabilities` is now vestigial (2026-06-10)**: domain became asset-kind-authoritative (and category is decided directly by `component.properties.category`), so the UI no longer reads `physicsCapabilities` to determine domain/category. The DB column and the setters other than `setComponentCapabilities` are still there and could be deprecated later. See [kinds.md](kinds.md).
+- Broken geometryRef: `thorlabs_io_3_850_faraday_rod.json` points at a non-existent `files/stl/thorlabs_io_3_850_hp/` slice sub-directory (`split_io_3_hp_stl.py` was probably never run, or the files were lost).
+- The isolator's front/back pieces and its body housing both hard-code the colour `#1a1a1c` (they don't go through colorForComponent); recolouring requires changing the subset-piece branch **and** `buildThorlabsIsolatorObject` together.
+- The TA asset's `gainLinear` and the op's `smallSignalGainDb` disagree on units; still to be unified. See [optics.md](optics.md).
+- The pulse-envelope / dispersion time-domain math was deleted when the legacy path retired (recoverable from git). See [timing.md](timing.md).
+- ~~`test_kinds_manifest` expects 30 kinds but `element_kinds` actually holds 29.~~ (Resolved: the test and the live count are in sync; after `fiber_connector` + `rf_cable_connector` were added on 2026-06-12 it is **31**.) See [kinds.md](kinds.md).
+- `objects.parent_component_id` may disagree between model/schema and the DB column; a non-emitter chain root (a mirror with no incoming link) raises "chain root cannot emit".
+- **Legacy laser-beam data lives in two places (properties.opticalSources[0].beam + the dynamic_sources column)**: both still hold a whole beam (`spectrum` / `spatialEnvelope` / …). **Migration 0113 largely defused this**: after `db_scene_loader` reads both places for the v3 trace, it **drops any key that is a defaultParams key but not Asset-tunable** (the tunable contract, see [data-model.md](data-model.md)). So non-tunable beam parameters (spectrum / spatialEnvelope / polarization / waist) **always track the Asset** and can no longer desync from leftover data; only the tunable `nominalPowerMw` / `centerWavelengthNm` are per-instance. The display-side `physics_elements.kindParams` (never persisted, derived live) still prefers the `dynamic_sources` column via `bindings.get_laser_beam_for_kind_params`, so "display" and "trace" can in theory still disagree on non-tunable parameters — but the trace side is now Asset-authoritative. See [optics.md](optics.md) and the auto-memory `laser_beam_dual_source_astigmatism`.
+- Dead code, orphan files and renaming suggestions: see `CLEANUP_AUDIT.md` at the repo root.

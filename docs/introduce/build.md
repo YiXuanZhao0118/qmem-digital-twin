@@ -1,38 +1,38 @@
-[← 文件索引](README.md)
+[← Doc index](README.md)
 
-# BUILD — Geometry Builder（瀏覽器內 CAD → GLB 資產）
+# BUILD — Geometry Builder (in-browser CAD → GLB asset)
 
-> 相關：[asset.md](asset.md)（產出的就是 Asset3D）、[anchors.md](anchors.md)（anchor 在 ASSET3D tab 事後標）、[kinds.md](kinds.md)（kind 決定 domain）、[rendering.md](rendering.md)（viewerHints）。
-> 程式：`components/GeometryBuilder.tsx`、`three/occtImport.ts`、`three/loadAsset/viewerHints.ts`、`store/catalogStore.ts`。
+> Related: [asset.md](asset.md) (what it produces is an Asset3D), [anchors.md](anchors.md) (anchors are annotated afterwards on the ASSET3D tab), [kinds.md](kinds.md) (kind decides domain), [rendering.md](rendering.md) (viewerHints).
+> Code: `components/GeometryBuilder.tsx`, `three/occtImport.ts`, `three/loadAsset/viewerHints.ts`, `store/catalogStore.ts`.
 
-## 它是什麼
+## What it is
 
-BUILD tab 讓你**全程在瀏覽器**把 CAD 變成 catalog 裡的 Asset3D，**不需要 server 端 CAD 轉檔**。每個來源（上傳的 STEP 或挑選的既有資產）是一個 unit，組成一顆資產後存進 v3 catalog。
+The BUILD tab turns CAD into a catalog Asset3D **entirely in the browser** — **no server-side CAD conversion required**. Each source (an uploaded STEP, or an existing asset you pick) is one unit; together they form an asset that gets saved into the v3 catalog.
 
-## 管線
+## Pipeline
 
-1. **載入來源**
-   - 上傳 **STEP**（`.step` / `.stp`）→ 用 `occt-import-js`（OpenCASCADE 編成的 WASM；`occtImport.ts` 的 `importStep` + `occtMeshToGeometry`）在前端解析成 three geometry，**保留每面顏色**。
-   - 或上傳 **mesh 檔**（`.stl` / `.obj` / `.glb` / `.gltf`）→ 走共用的 `loadAssetGeometry`（從暫時 blob URL 載入；`GeometryBuilder.handleFiles` → `loadSourceFile`）。上傳檔不帶單位，與 STEP 一樣**視為 mm**；STL 無內嵌顏色 → 套 default 灰。
-   - 或從 catalog **挑既有資產**（GLB / GLTF / OBJ / STL 或 `procedural://`）當來源。
-2. **減面（decimate）**：用 **meshoptimizer** 即時簡化可見 mesh；同時保留一份**未減面的隱藏 mesh**，讓 centroid key 在減面後仍穩定。
-3. **顏色 / 幾何過濾**：以 **0.5 mm centroid 格點**為 key（`centroidKey`、`findCoplanarCluster`）做 include / delete，對應 Asset3D 的 `viewerHints`（`includeOnlyCentroids` / `deletedCentroids`，見 [rendering.md](rendering.md)）；篩選時連 per-triangle 顏色一起帶，保色。
-4. **存檔**：匯出 **GLB**（`glbToFile`）→ 走既有上傳路由 `uploadAsset()`（`catalogStore`）。`catalog_id` 必須是 lower-snake-case（`[a-z0-9_]+`）。
+1. **Load a source**
+   - Upload a **STEP** (`.step` / `.stp`) → parsed into three geometry on the frontend by `occt-import-js` (OpenCASCADE compiled to WASM; `importStep` + `occtMeshToGeometry` in `occtImport.ts`), **preserving per-face colour**.
+   - Or upload a **mesh file** (`.stl` / `.obj` / `.glb` / `.gltf`) → goes through the shared `loadAssetGeometry` (loaded from a temporary blob URL; `GeometryBuilder.handleFiles` → `loadSourceFile`). Uploads carry no units and, like STEP, are **treated as mm**; STL has no embedded colour → the default grey is applied.
+   - Or **pick an existing catalog asset** (GLB / GLTF / OBJ / STL or `procedural://`) as the source.
+2. **Decimate**: **meshoptimizer** simplifies the visible mesh live, while an **un-decimated hidden mesh** is kept so centroid keys stay stable after decimation.
+3. **Colour / geometry filtering**: include / delete is keyed on a **0.5 mm centroid grid** (`centroidKey`, `findCoplanarCluster`), which maps onto the Asset3D's `viewerHints` (`includeOnlyCentroids` / `deletedCentroids`, see [rendering.md](rendering.md)); filtering carries per-triangle colour along, so colours survive.
+4. **Save**: export a **GLB** (`glbToFile`) → through the existing upload route `uploadAsset()` (`catalogStore`). `catalog_id` must be lower-snake-case (`[a-z0-9_]+`).
 
-## kind 與 domain
+## Kind and domain
 
-BUILD 上選的 **kind 決定資產的 domain**（`kind.domains` 為權威）。新匯入的資產**預設 kind = `unclassified`**（migration `0110`）：op_set/params/anchor 全空、`domains=['optical','rf','mechanical']` 全選，所以未分類前會同時出現在三個 domain rail。下拉可改選任一真實 kind。**「無 kind」不是合法狀態**：`assets_3d.kind_id` **NOT NULL**（migration `0111`），下拉已無 `— none —` 空選項，每個 asset 至少是 `unclassified`。前後端多層都保證非 None：前端 `GeometryBuilder` 下拉初值 + ASSET3D 編輯器 save fallback、後端 `v3_catalog.upload_asset3d_v3` 與 PUT 的 `... or "unclassified"`、model/DB 的 `server_default='unclassified'`。domain rail 分桶**完全 kind-authoritative**：asset 的 domain 只由 `kind.domains` 決定，**不再讀** `properties.domains`（per-asset 覆寫已於 2026-06-11 連同 code 與 DB 資料一併移除）。BUILD 也不再寫入 `properties.domains`。
+The **kind you pick in BUILD decides the asset's domain** (`kind.domains` is authoritative). A newly imported asset **defaults to kind `unclassified`** (migration `0110`): empty op_set/params/anchors and `domains=['optical','rf','mechanical']` all selected, so before classification it appears in all three domain rails. The dropdown can change it to any real kind. **"No kind" is not a legal state**: `assets_3d.kind_id` is **NOT NULL** (migration `0111`), the dropdown no longer offers a `— none —` entry, and every asset is at least `unclassified`. Several layers on both sides guarantee non-None: the frontend `GeometryBuilder` dropdown's initial value and the ASSET3D editor's save fallback, the backend `v3_catalog.upload_asset3d_v3` and the PUT's `... or "unclassified"`, and `server_default='unclassified'` in the model/DB. Domain-rail bucketing is **fully kind-authoritative**: an asset's domain comes only from `kind.domains` and **no longer reads** `properties.domains` (the per-asset override was removed on 2026-06-11, code and DB data together). BUILD no longer writes `properties.domains` either.
 
-> **Anchor 不在 BUILD 標**：BUILD 只負責幾何 + 顏色 + kind。anchor（方向 + aperture）在 **ASSET3D tab** 事後標（見 [anchors.md](anchors.md)）。
+> **Anchors are not annotated in BUILD**: BUILD only handles geometry + colour + kind. Anchors (direction + aperture) are annotated afterwards on the **ASSET3D tab** (see [anchors.md](anchors.md)).
 
 ## Edit-in-place
 
-可把既有資產載成唯一來源、鎖住其 `catalog_id` 編輯：Save 走 geometry-replace 端點，**保留 kind_id**、不新建資產（重編後記得回 ASSET3D tab 複查 anchors）。
+You can load an existing asset as the only source and edit it with its `catalog_id` locked: Save goes through the geometry-replace endpoint, **preserves kind_id** and does not create a new asset (after re-editing, remember to re-check anchors on the ASSET3D tab).
 
-## Viewport 注意事項
+## Viewport caveats
 
-BUILD 視埠**必須用 flex 佈局**（不要套共用 SHELL grid）＋ canvas CSS 填滿 ＋ 每幀 resize，否則視埠會塌成空白；背景刻意深色 + 打亮燈光。
+The BUILD viewport **must use a flex layout** (do not apply the shared SHELL grid), with the canvas filling via CSS and a per-frame resize — otherwise the viewport collapses to blank. The dark background plus bright lighting is deliberate.
 
-## 狀態
+## Status
 
-M1 §A + M2 §B 已完成（瀏覽器 STEP → 上色 GLB 的 BUILD tab，occt-import-js + meshoptimizer）；B-3 / B-4 / §C / §D 仍待做。
+M1 §A + M2 §B are done (the in-browser STEP → coloured GLB BUILD tab, occt-import-js + meshoptimizer); B-3 / B-4 / §C / §D remain.

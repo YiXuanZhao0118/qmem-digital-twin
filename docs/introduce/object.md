@@ -1,12 +1,12 @@
-[← 文件索引](README.md)
+[← Doc index](README.md)
 
-# SceneObject（Object）— 場景實例層
+# SceneObject (Object) — the scene-instance layer
 
-> 屬 [核心資料模型](data-model.md) 第 4 層。它如何把 [Component](component.md) 實例化、參數如何合併見 [data-model.md](data-model.md)。
+> Layer 4 of the [core data model](data-model.md). How it instantiates a [Component](component.md), and how parameters merge, is in [data-model.md](data-model.md).
 
-**SceneObject（Object）** — 場景中放置的實例。有 Lab pose（x/y/z/rx/ry/rz）、`visible`、`locked`、`dynamic_sources`（per-instance 執行期值）。名稱自動產生為 `KIND+index`（AOM0、MIRROR1；kind 為 none → NONE0）。
+**SceneObject (Object)** — an instance placed in the scene. It carries a Lab pose (x/y/z/rx/ry/rz), `visible`, `locked`, and `dynamic_sources` (per-instance runtime values). The name is generated as `KIND+index` (AOM0, MIRROR1; kind = none → NONE0).
 
-- **dynamic_sources** = 整個 instance 的執行期值。存放 Asset 標記為可調（`Asset3D.tunable_params`，migration 0113）的參數值，把光學耦合到電子/RF/雷射狀態（laser power/wavelength、rf_source channels、aom RF）。anchor loader 把這個 dict 摺在 asset default_params 之上送進 trace，但**只有 tunable 的 key 生效**——loader 會丟掉「是 defaultParams key 但非 tunable」的殘留值，所以 non-tunable 參數永遠跟著 Asset（見 [data-model.md](data-model.md) 的 tunable 契約）。
-- 舊的 per-binding `param_overrides`（可逐實例覆寫**任一** intrinsic 係數）已於 migration 0113 移除——intrinsic 係數現純由 Asset 決定。
+- **dynamic_sources** = the runtime values of the whole instance. It stores values for the parameters the Asset marked tunable (`Asset3D.tunable_params`, migration 0113), which is how optics couples to electronics / RF / laser state (laser power and wavelength, rf_source channels, aom RF). The anchor loader folds this dict on top of the asset's default_params before handing it to the trace, but **only tunable keys take effect** — the loader drops leftovers that are a defaultParams key yet not tunable, so non-tunable parameters always track the Asset (see the tunable contract in [data-model.md](data-model.md)).
+- The old per-binding `param_overrides` (which could override **any** intrinsic coefficient per instance) was removed in migration 0113 — intrinsic coefficients are now decided purely by the Asset.
 
-> Lab pose 的座標慣例與變換鏈見 [anchors.md](anchors.md)；`effective` / `dynamic` 參數合併公式見 [data-model.md](data-model.md)。
+> The coordinate conventions and transform chain of the Lab pose are in [anchors.md](anchors.md); the `effective` / `dynamic` parameter-merge formula is in [data-model.md](data-model.md).

@@ -1,90 +1,83 @@
-[← 文件索引](README.md)
+[← Doc index](README.md)
 
-# 系統概觀
+# System overview
 
-> 相關：[資料模型](data-model.md)、[座標系與 Anchor](anchors.md)、[啟動 Runbook](runbook.md)
+> Related: [data model](data-model.md), [coordinate frames & anchors](anchors.md), [startup runbook](runbook.md)
 
-## 這是什麼
+## What this is
 
-**QMsimulation**（別名 qmem-digital-twin）是一套**量子記憶體 / 冷原子光學實驗室的數位分身（digital twin / 數位孿生）**。它把一張真實的量子光學桌（laser → tapered amplifier → 波片 → PBS → AOM → 量子記憶體 cell，加上 RF 電子與時序控制）建模成一個可互動、物理精確的 3D 數位分身，支援光束追跡、偏振模擬與多物理場模擬。
+**QMsimulation** (also known as qmem-digital-twin) is a **digital twin of a quantum-memory / cold-atom optics lab**. It models a real quantum-optics table (laser → tapered amplifier → waveplates → PBS → AOM → quantum-memory cell, plus the RF electronics and timing control) as an interactive, physically accurate 3D twin, with beam tracing, polarization simulation and multiphysics simulation.
 
-使用者可以在瀏覽器裡擺放/對準光學元件、連接光路與 RF 鏈、沿時間排程脈衝，並即時看到光束如何傳播與被各元件作用。長期目標是做成類 Ansys Workbench 的「多物理整合平台」（光學 + 電子 + 電磁 + 磁學 + 時序），但全用開源求解器、供實驗室內部使用。
+In the browser you can place and align optical components, wire up optical and RF chains, schedule pulses along a timeline, and watch live how the beam propagates and is acted on by each component. The long-term goal is an Ansys-Workbench-like "integrated multiphysics platform" (optics + electronics + electromagnetics + magnetics + timing) built entirely from open-source solvers, for in-house lab use.
 
 ---
 
-## 系統架構（三層服務）
+## System architecture (three service tiers)
 
-| 層 | 技術 | 連接埠 | 角色 |
+| Tier | Technology | Port | Role |
 |---|---|---|---|
-| 前端 Frontend | React 18 + TypeScript + Vite 6 + three.js 0.170 + zustand + axios | **5173** | 3D 視埠、編輯 UI、各模組工作區 |
-| 後端 Backend | FastAPI + SQLAlchemy 2.x async + Pydantic v2 + numpy/scipy | **8010** | REST API + WebSocket、光學/多物理求解器、持久化 |
-| 資料庫 Database | PostgreSQL 16（本機隔離實例，位於 `.local-postgres/`） | **55432** | 場景 / 資產 / 元件 / 模擬結果持久化 |
+| Frontend | React 18 + TypeScript + Vite 6 + three.js 0.170 + zustand + axios | **5173** | 3D viewport, editing UI, per-module workspaces |
+| Backend | FastAPI + SQLAlchemy 2.x async + Pydantic v2 + numpy/scipy | **8010** | REST API + WebSocket, optical / multiphysics solvers, persistence |
+| Database | PostgreSQL 16 (an isolated local instance under `.local-postgres/`) | **55432** | Persistence for scenes / assets / components / simulation results |
 
-**連接方式：**
-- 前端寫死連後端 `http://localhost:8010`（`frontend/src/api/client.ts`，可用 `VITE_API_BASE_URL` 覆寫），**直接打、不透過 Vite proxy**。
-- WebSocket：`ws://localhost:8010/ws/scene`（伺服器→客戶端推 `component.*`/`object.*`/`simulation_run.*` 等事件，客戶端只送 `ping`）。
-- 後端 CORS 白名單 `localhost:5173`、`localhost:3000`（`backend/app/config.py`）。
-- DB 連線字串：`postgresql+asyncpg://qmem:qmem_password@localhost:55432/qmem_twin`。
-- 資產檔：前端 `resolveAssetUrl()` 組出 `http://localhost:8010/assets/files/...`，後端靜態服務 `assets/`。
+**How they connect:**
+- The frontend hard-codes the backend at `http://localhost:8010` (`frontend/src/api/client.ts`, overridable with `VITE_API_BASE_URL`) and calls it **directly, not through the Vite proxy**.
+- WebSocket: `ws://localhost:8010/ws/scene` (server → client pushes `component.*` / `object.*` / `simulation_run.*` events; the client only sends `ping`).
+- The backend's CORS allowlist is `localhost:5173` and `localhost:3000` (`backend/app/config.py`).
+- DB connection string: `postgresql+asyncpg://qmem:qmem_password@localhost:55432/qmem_twin`.
+- Asset files: the frontend's `resolveAssetUrl()` builds `http://localhost:8010/assets/files/...`, which the backend serves statically from `assets/`.
 
-> ⚠️ **常見過時資訊更正：**
-> - 後端 port 是 **8010**（部分舊文件/根 README 寫 8000，那是 docker 模式預設，本機開發用 8010）。
-> - `docker-compose.yml` 內 Postgres 寫 **5432**；本專案實際用本機 **55432** + `scripts/start-local-postgres.ps1`，且環境未安裝 Docker。5432 vs 55432 是最常見的混淆點。
+> ⚠️ **Corrections to commonly stale information:**
+> - The backend port is **8010** (some old docs and the root README say 8000 — that's the docker-mode default; local development uses 8010).
+> - `docker-compose.yml` says Postgres **5432**; this project actually uses local **55432** via `scripts/start-local-postgres.ps1`, and Docker isn't installed in this environment. 5432 vs 55432 is the single most common source of confusion.
 
 ---
 
-## App 內建說明（Help）
+## The app's built-in Help
 
-頂列右側的 **?**（`components/help/HelpButton.tsx`）開啟全螢幕說明視窗
-（`components/help/HelpModal.tsx`），Lab 與 PHY Editor 兩個頂列都有。內容兩半：
+The **?** at the right of the top bar (`components/help/HelpButton.tsx`) opens a full-screen Help modal (`components/help/HelpModal.tsx`); it is present in both the Lab and the PHY Editor top bars. It has two halves:
 
-| 半邊 | 來源 | 性質 |
+| Half | Source | Nature |
 |---|---|---|
-| **User guide** | `components/help/usageGuide.ts`（手寫，英文） | 怎麼「操作」：三個工作區、擺放/吸附、面板、快捷鍵；重點用 `> **Key —** …` callout |
-| **Architecture** | `docs/introduce/*.md` + `docs/*.md`（原檔逐字） | 系統「是什麼」：就是本說明檔群 |
+| **User guide** | `components/help/usageGuide.ts` (hand-written) | How to *operate* the app: the three workspaces, placement/snapping, panels, keyboard shortcuts; takeaways marked with `> **Key —** …` callouts |
+| **Architecture** | `docs/introduce/*.md` + `docs/*.md` (verbatim) | What the system *is*: exactly this doc set |
 
-**不變式：架構那半邊不得手抄。** `components/help/helpDocs.ts` 用
-`import.meta.glob(..., { query: "?raw", eager: true })` 在建置時把 md 原檔打包進前端，
-所以 app 內文件永遠等於 repo 內文件。連帶條件：
+**Invariant: the architecture half must never be hand-copied.** `components/help/helpDocs.ts` uses `import.meta.glob(..., { query: "?raw", eager: true })` to bundle the raw md files into the frontend at build time, so the in-app docs always equal the repo's docs. Consequences:
 
-- 這些 md 位於 Vite root（`frontend/`）**之外**，dev server 需要 `server.fs.allow: [".."]`
-  （`frontend/vite.config.ts`）才讀得到；拿掉會讓說明視窗的架構那半邊 403。
-- 分組/順序寫在 `helpDocs.ts` 的 `GROUP_ORDER`，鏡射本目錄 `README.md` 的分組。**新增
-  md 檔不必改程式**——未列在 `GROUP_ORDER` 的檔案會落到 "More" 群組，不會被靜默丟掉。
-- 文件內的相對連結（`[anchors.md](anchors.md)`）在視窗內導覽而不離開 app；指向未打包
-  目標（原始碼路徑等）則降級顯示成灰色路徑而非死連結。
+- Those md files live **outside** the Vite root (`frontend/`), so the dev server needs `server.fs.allow: [".."]` (`frontend/vite.config.ts`) to read them; removing it makes the architecture half of the Help modal 403.
+- Grouping and order live in `GROUP_ORDER` in `helpDocs.ts`, mirroring this directory's `README.md`. **Adding an md file requires no code change** — a file not listed in `GROUP_ORDER` lands in the "More" group rather than being silently dropped.
+- Relative links inside the docs (`[anchors.md](anchors.md)`) navigate within the modal instead of leaving the app; links to unbundled targets (source paths and so on) degrade to a greyed-out path rather than a dead link.
 
-渲染用 `react-markdown` + `remark-gfm`（表格），樣式在 `styles.css` 的 `.help-modal*` /
-`.help-doc*` 段。
+Rendering uses `react-markdown` + `remark-gfm` (tables); the styling is the `.help-modal*` / `.help-doc*` section of `styles.css`.
 
 ---
 
-## 目錄結構
+## Directory structure
 
 ```
 qmem-digital-twin/
 ├── frontend/src/
-│   ├── components/   # React UI：DigitalTwinViewer（主場景，~6000 行）、各 panel、editor
-│   │   └── physics/  # 各 kind 的 *AdjustControls（Laser/Aom/TaperedAmplifier/Simple）
-│   ├── three/        # three.js 場景、loadAsset、rayTrace、v3TraceAdapter、beam、placement/
-│   ├── kinds/        # 每 kind 的 plugin 渲染器 + 註冊表（_plugins.ts、_renderer_bindings.ts）
-│   ├── optical/      # TS 光學：jones、frames、pose、fiber/、WIP v3 光追島（見 optics.md）
-│   ├── store/        # zustand：sceneStore、kindsStore、(v3)catalogStore
-│   ├── utils/        # (v2)bindings、anchorAccess、componentBindings、rfPropagation
-│   └── modules/      # Lab 工作區（唯一 tab）+ Magnetics overlay；Optics/Electronics/EM tab 已於 2026-06-10 完整移除（資料夾刪除）
+│   ├── components/   # React UI: DigitalTwinViewer (the main scene, ~6000 lines), the panels, the editors
+│   │   └── physics/  # per-kind *AdjustControls (Laser/Aom/TaperedAmplifier/Simple)
+│   ├── three/        # three.js scene, loadAsset, rayTrace, v3TraceAdapter, beam, placement/
+│   ├── kinds/        # per-kind plugin renderers + registries (_plugins.ts, _renderer_bindings.ts)
+│   ├── optical/      # TS optics: jones, frames, pose, fiber/, the WIP v3 tracing island (see optics.md)
+│   ├── store/        # zustand: sceneStore, kindsStore, (v3)catalogStore
+│   ├── utils/        # (v2)bindings, anchorAccess, componentBindings, rfPropagation
+│   └── modules/      # the Lab workspace (the only tab) + the Magnetics overlay; the Optics/Electronics/EM tabs were fully removed on 2026-06-10 (folders deleted)
 ├── backend/
 │   ├── app/
-│   │   ├── main.py       # FastAPI 進入點，~40 routers 註冊於 /api/<resource>
-│   │   ├── routers/      # 每資源 REST router
-│   │   ├── models/       # SQLAlchemy ORM（scene、hardware、timing…）
-│   │   ├── optical/      # ★權威光學引擎：anchor_tracer（live, anchor-based）+ solver（solve_anchor_scene）+ anchor_ops/<kind>；rf_resolve（RF 圖傳播）；ray_tracer/solver_v3 face-based 為 legacy（0106 後退役）；db_scene_loader、jones、abcd
-│   │   ├── solvers/      # 多物理：optics_seq、magnetics_dc、runner（Optics/Electronics/EM solvers 已於 2026-06-10 移除）
-│   │   ├── services/     # touchstone…（onshape_client / instrument_polling 為死碼）
-│   │   └── schemas*.py   # Pydantic（CamelModel：DB snake_case ↔ API camelCase）
-│   ├── alembic/versions/ # migration 0001..0109（線性鏈，head 0109）
-│   └── data/             # kinds.json（★kind 物理參數權威來源）、thorlabs_cad_manifest.json
+│   │   ├── main.py       # FastAPI entry point, ~40 routers mounted under /api/<resource>
+│   │   ├── routers/      # one REST router per resource
+│   │   ├── models/       # SQLAlchemy ORM (scene, hardware, timing, …)
+│   │   ├── optical/      # ★the authoritative optical engine: anchor_tracer (live, anchor-based) + solver (solve_anchor_scene) + anchor_ops/<kind>; rf_resolve (RF graph propagation); the face-based ray_tracer/solver_v3 is legacy (retired after 0106); db_scene_loader, jones, abcd
+│   │   ├── solvers/      # multiphysics: optics_seq, magnetics_dc, runner (the Optics/Electronics/EM solvers were removed on 2026-06-10)
+│   │   ├── services/     # touchstone, … (onshape_client / instrument_polling are dead code)
+│   │   └── schemas*.py   # Pydantic (CamelModel: DB snake_case ↔ API camelCase)
+│   ├── alembic/versions/ # migrations 0001..0109 (a linear chain, head 0109)
+│   └── data/             # kinds.json (★the authoritative source of per-kind physics parameters), thorlabs_cad_manifest.json
 ├── assets/
-│   ├── catalog/          # 元件/資產/kinds JSON 定義（seed 來源；DB 才是 runtime 真值）
-│   └── files/            # stl、glb、cad_sources（CAD 二進位不進 DB）
-└── docs/                 # 本說明檔群 + aom_align_*.{png,py}（AOM 對準圖表腳本）
+│   ├── catalog/          # component/asset/kind JSON definitions (the seed source; the DB is the runtime truth)
+│   └── files/            # stl, glb, cad_sources (CAD binaries never go into the DB)
+└── docs/                 # this doc set + aom_align_*.{png,py} (the AOM alignment plotting scripts)
 ```

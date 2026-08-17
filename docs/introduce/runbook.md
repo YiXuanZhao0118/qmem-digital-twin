@@ -1,29 +1,29 @@
-[← 文件索引](README.md)
+[← Doc index](README.md)
 
-# 啟動與開發 Runbook
+# Startup & development runbook
 
-> 三層服務與連接埠見 [overview.md](overview.md)；migration 鏈見 [migrations.md](migrations.md)。
+> The three service tiers and their ports are in [overview.md](overview.md); the migration chain is in [migrations.md](migrations.md).
 
-**一鍵重啟（建議）：**
+**One-shot restart (recommended):**
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File `
   "C:\repos\qmem-digital-twin\.claude\skills\start-project\scripts\restart-stack.ps1"
 ```
-釋放 5173/8010、啟動 Postgres、跑 `alembic upgrade head`、起 uvicorn + vite，印出驗證表。
+Frees 5173/8010, starts Postgres, runs `alembic upgrade head`, brings up uvicorn + vite, and prints a verification table.
 
-**手動：**
+**Manual:**
 ```powershell
-scripts/start-local-postgres.ps1                    # Postgres → 55432（qmem/qmem_password, db qmem_twin）
-# 在 backend/ 下，用 DATABASE_URL env 覆寫到 55432：
+scripts/start-local-postgres.ps1                    # Postgres → 55432 (qmem/qmem_password, db qmem_twin)
+# From backend/, with DATABASE_URL overridden to 55432:
 alembic upgrade head
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8010 --reload   # ★8010
-frontend/node_modules/.bin/vite.cmd                 # Vite → 5173（勿用 npx）
+frontend/node_modules/.bin/vite.cmd                 # Vite → 5173 (do NOT use npx)
 ```
 
-**驗證**：前端 `http://localhost:5173`（200）、後端 `/api/health`（`{"ok":true}`）、`alembic current` 報 head。
+**Verify**: frontend `http://localhost:5173` (200), backend `/api/health` (`{"ok":true}`), `alembic current` reports head.
 
-**Seed**：live DB 由 `backend/scripts/seed_v3_assets.py` + v3 catalog 種；舊 `seed.py` 已 deprecated（有 banner，不在 live DB）。
+**Seed**: the live DB is seeded by `backend/scripts/seed_v3_assets.py` + the v3 catalog; the old `seed.py` is deprecated (it carries a banner and is not in the live DB).
 
-**工具**：pytest（backend）、vitest（frontend）、`tsc --noEmit`、`vite build`。
+**Tooling**: pytest (backend), vitest (frontend), `tsc --noEmit`, `vite build`.
 
-> Windows/工具陷阱：PowerShell `Set-Content` 預設 cp950 會讓含中文的 JSON mojibake → 用 `-Encoding UTF8`；uvicorn `--reload` 在 Windows 檔案監看不穩，必要時手動重啟；PS 5.1 無 `??`；Asset3D JSON 不可有 `+` 前綴數字；scipy `from_euler` "YXZ"(intrinsic) 才對應 three.js。
+> Windows / tooling traps: PowerShell `Set-Content` defaults to cp950, which mojibakes JSON containing Chinese → pass `-Encoding UTF8`; uvicorn `--reload` file watching is unreliable on Windows, so restart by hand when needed; PS 5.1 has no `??`; Asset3D JSON must not contain `+`-prefixed numbers; only scipy `from_euler` "YXZ" (intrinsic) matches three.js.

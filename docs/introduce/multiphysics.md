@@ -1,26 +1,26 @@
-[← 文件索引](README.md)
+[← Doc index](README.md)
 
-# 多物理場模組系統
+# The multiphysics module system
 
-> 時間域演化見 [timing.md](timing.md)；光學模組細節見 [optics.md](optics.md)。
+> Time-domain evolution is in [timing.md](timing.md); optics module details in [optics.md](optics.md).
 
-UI 可切換的**模組**（前端 `modules/<name>/`，`modules/_registry.ts` 註冊、`ModuleSwitcher.tsx` 切換，各模組 workspace 內的 Run 按鈕跑求解）。
+**Modules** are the switchable top-level workspaces (frontend `modules/<name>/`, registered in `modules/_registry.ts`, switched by `ModuleSwitcher.tsx`; the Run button inside each module's workspace runs its solver).
 
-**Lab tab 兼作 Scene 選單（2026-08-14）**：`status: "available"` 的 tab 會多一個 caret，點擊展開 `.module-tab-menu`（沿用 `.window-menu` 樣式，`ModuleSwitcher.tsx:70` 起），內含原本 `SceneToolbar` "Scene" group 的動作——Initial Setup / PHY Editor；SceneToolbar 只剩 View + Status group。**2026-08-14 後續**：Add text annotation 已從此選單搬回 SceneToolbar 的 View group，做成與 Display overlays 同款的 `.icon-button`（`lucide-react` `Type`，`size=17`），位置在 Display overlays 眼睛鈕**左邊**（`SceneToolbar.tsx:168` 起）。Initial Setup 的開關狀態移到 store（`sceneStore.initialSetupOpen` + `setInitialSetupOpen`），因為觸發點在 ModuleSwitcher 而面板仍由 `SceneToolbar` 繪製。invariant：該面板必須 portal 到 `<body>`（`position: fixed`，`top` 由量測 `.top-bar` 下緣後 inline 指定）——`.top-bar-toolbar` 是 `overflow: hidden`，留在 toolbar 內的絕對定位彈窗會被裁掉（`DisplayPopover` 也是為此才 portal）。
+**The Lab tab doubles as the Scene menu (2026-08-14)**: a tab with `status: "available"` gets an extra caret; clicking it opens `.module-tab-menu` (reusing the `.window-menu` styling, from `ModuleSwitcher.tsx:70`), which holds what used to be `SceneToolbar`'s "Scene" group — Initial Setup / PHY Editor. SceneToolbar is left with only its View and Status groups. **Follow-up on 2026-08-14**: "Add text annotation" moved back out of that menu into SceneToolbar's View group, as an `.icon-button` matching Display overlays (`lucide-react` `Type`, `size=17`), sitting to the **left** of the Display-overlays eye button (from `SceneToolbar.tsx:168`). Initial Setup's open state moved into the store (`sceneStore.initialSetupOpen` + `setInitialSetupOpen`) because the trigger lives in ModuleSwitcher while the panel is still drawn by `SceneToolbar`. Invariant: that panel must portal to `<body>` (`position: fixed`, with `top` set inline from the measured bottom edge of `.top-bar`) — `.top-bar-toolbar` is `overflow: hidden`, so an absolutely positioned popover left inside the toolbar gets clipped (`DisplayPopover` portals for the same reason).
 
-**現行（2026-06-10 之後）只剩 Lab 一個 top-level tab**：
+**Currently (after 2026-06-10) Lab is the only top-level tab**:
 
-| 模組 | 內容 | 後端求解器 | 函式庫 |
+| Module | Contents | Backend solver | Library |
 |---|---|---|---|
-| **Lab**（唯一 tab） | 主 3D 光學實驗室（預設） | `optics_seq` → v3 anchor tracer | — |
-| Magnetics（**Lab 內的 overlay panel**，非獨立 tab） | DC 線圈 / 磁場 | `magnetics_dc` | magpylib v5 Biot-Savart（Helmholtz 已驗證） |
+| **Lab** (the only tab) | The main 3D optics lab (default) | `optics_seq` → v3 anchor tracer | — |
+| Magnetics (**an overlay panel inside Lab**, not its own tab) | DC coils / magnetic field | `magnetics_dc` | magpylib v5 Biot-Savart (Helmholtz verified) |
 
-> ⚠️ **已移除的模組（2026-06-10，完整刪除）**：**Optics**（`optics_cavity` 光腔 + `optics_crystal` 非線性晶體）、**Electronics**（`spice` 電路/SPICE）、**EM**（`em_fem` 電磁/天線）三個 tab 整組移除——前端 `modules/{optics_cavity,electronics,em}/` 資料夾刪除、`_registry.ts`／`App.tsx` 對應 import 與分支刪除、後端 solvers（`optics_cavity`/`optics_crystal`/`spice`/`em_fem`）與 routers（`/api/optics-cavity`、`/api/optics-crystal`、`/api/circuits`）刪除、`SimulationModule` enum 只剩 `optics_seq`／`optics_fdtd`／`magnetics_dc`、`circuits` 表與 `rf_chain_nodes.linked_circuit_id` 由 **migration 0109** drop（並清除 `simulation_runs` 殘留列）。**保留**：`em_problems`／`meshes`／`touchstone` 表與 routes、`SshWorkstationRunner` 基建（目前無模組使用）。
+> ⚠️ **Removed modules (2026-06-10, deleted outright)**: the three tabs **Optics** (`optics_cavity` cavities + `optics_crystal` nonlinear crystals), **Electronics** (`spice` circuits/SPICE) and **EM** (`em_fem` electromagnetics/antennas) were removed wholesale — the frontend `modules/{optics_cavity,electronics,em}/` folders were deleted, the corresponding imports and branches in `_registry.ts` / `App.tsx` were deleted, the backend solvers (`optics_cavity` / `optics_crystal` / `spice` / `em_fem`) and routers (`/api/optics-cavity`, `/api/optics-crystal`, `/api/circuits`) were deleted, the `SimulationModule` enum is down to `optics_seq` / `optics_fdtd` / `magnetics_dc`, and the `circuits` table plus `rf_chain_nodes.linked_circuit_id` were dropped by **migration 0109** (which also purged the leftover `simulation_runs` rows). **Kept**: the `em_problems` / `meshes` / `touchstone` tables and routes, and the `SshWorkstationRunner` infrastructure (no module uses it today).
 
-**設計原則**：不重做殼，擴充既有 SceneObject 樹 + per-module sidecar 表。
+**Design principle**: don't rebuild the shell — extend the existing SceneObject tree plus per-module sidecar tables.
 
-**SolverRunner 抽象**（`solvers/runner.py` Protocol：submit/cancel/status）：`InProcessRunner`（光學，ms 級）、`ContainerRunner`（ngspice/MEEP 子程序）、`SshWorkstationRunner`（palace 跑在實驗室工作站，經 SSH）。`simulation_runs.runner_kind` 記錄分派方式。
+**The SolverRunner abstraction** (`solvers/runner.py` Protocol: submit/cancel/status): `InProcessRunner` (optics, millisecond scale), `ContainerRunner` (ngspice/MEEP subprocesses), `SshWorkstationRunner` (palace running on the lab workstation over SSH). `simulation_runs.runner_kind` records which one dispatched the run.
 
-**sidecar 表（additive）**：`simulation_runs`(0036)、~~`circuits`(0037)~~（0109 drop）、`em_problems`+`meshes`(0038)、`coils`+`magnetics_problems`(0039)。
+**Sidecar tables (additive)**: `simulation_runs` (0036), ~~`circuits` (0037)~~ (dropped in 0109), `em_problems` + `meshes` (0038), `coils` + `magnetics_problems` (0039).
 
-**EM 工作站（Phase C，已隨 EM tab 於 2026-06-10 移除；以下為歷史記錄）**：13700K+128GB+RTX4070Ti、Windows+WSL2+Docker Desktop；palace 用 `awslabs/palace` image；流程 SSH→SCP mesh+config.json→`docker run palace`→SCP 回 `port-S.csv`→`palace_io.parse_palace_sparams`。env `WORKSTATION_HOST`/`WORKSTATION_KEY_PATH`/`WORKSTATION_PALACE_IMAGE` 與 `SshWorkstationRunner` 仍在 code 中但已無模組使用。
+**The EM workstation (Phase C, removed together with the EM tab on 2026-06-10; kept here as history)**: 13700K + 128 GB + RTX 4070 Ti, Windows + WSL2 + Docker Desktop; palace ran from the `awslabs/palace` image; the flow was SSH → SCP mesh + config.json → `docker run palace` → SCP back `port-S.csv` → `palace_io.parse_palace_sparams`. The env vars `WORKSTATION_HOST` / `WORKSTATION_KEY_PATH` / `WORKSTATION_PALACE_IMAGE` and `SshWorkstationRunner` are still in the code but no module uses them.

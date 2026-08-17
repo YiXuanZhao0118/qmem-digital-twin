@@ -1,13 +1,13 @@
-[← 文件索引](README.md)
+[← Doc index](README.md)
 
-# 主要 API 端點
+# Main API endpoints
 
-> 啟動方式見 [runbook.md](runbook.md)；連接設定見 [overview.md](overview.md)。
+> How to start the stack: [runbook.md](runbook.md). Wiring / ports: [overview.md](overview.md).
 
-- `GET /api/health` → `{"ok": true}`；`GET /api/scene` — 場景快照
-- `POST /api/v3/solver/run-from-db` — 對持久化場景跑光學 trace（產生光束段：dir、pol、命中面）
-- `POST /api/v3/pop` — **on-demand** 物理光學繞射：給透鏡處光束半徑+孔徑+焦距，回傳焦平面 Airy 強度網格（繞射環）。絕不進 live trace。見 [optics.md](optics.md) POP 場通道
-- `GET /api/v3/catalog/...`、`/api/v3/assets3d`、`/api/v3/components`
-- `/api/timing-programs`、`/api/rf-chains/nodes`、`/api/coils`、`/api/magnetics-problems`、`/api/simulation-runs`、`/api/touchstone/parse`、`/api/app-settings/{key}`
-- 靜態：`/assets/files/...`；Swagger：`/docs`；WebSocket：`/ws/scene`
-- 慣例：所有持久 id 為 UUIDv7；CamelModel（DB snake_case ↔ API camelCase）。
+- `GET /api/health` → `{"ok": true}`; `GET /api/scene` — scene snapshot
+- `POST /api/v3/solver/run-from-db` — run the optical trace over the persisted scene (produces beam segments: dir, pol, hit face)
+- `POST /api/v3/pop` — **on-demand** physical-optics diffraction: given the beam radius at the lens plus aperture and focal length, returns the focal-plane Airy intensity grid (diffraction rings). Never part of the live trace. See the POP field channel in [optics.md](optics.md)
+- `GET /api/v3/catalog/...`, `/api/v3/assets3d`, `/api/v3/components`
+- `/api/timing-programs`, `/api/rf-chains/nodes`, `/api/coils`, `/api/magnetics-problems`, `/api/simulation-runs`, `/api/touchstone/parse`, `/api/app-settings/{key}`
+- Static: `/assets/files/...`; Swagger: `/docs`; WebSocket: `/ws/scene`
+- Conventions: every persisted id is a UUIDv7; CamelModel (DB snake_case ↔ API camelCase).
