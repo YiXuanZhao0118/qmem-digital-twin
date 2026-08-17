@@ -23,12 +23,16 @@ from app.services.asset_converter import CadConversionResult
 
 class _FakeSession:
     """Just enough of ``AsyncSession`` for the upload route; never touches a
-    database. ``add`` stamps the server-default ``id`` so the response model
-    (which requires it) serializes without a real flush."""
+    database. ``add`` stands in for the INSERT, stamping the column defaults
+    the response model needs — they normally fire against Postgres, so with
+    no database in the loop they never fire at all and the row reaches
+    ``Asset3DV3Out`` with ``id``/``locked`` still None."""
 
     def add(self, obj) -> None:
         if getattr(obj, "id", None) is None:
             obj.id = uuid.uuid4()
+        if getattr(obj, "locked", None) is None:
+            obj.locked = False
 
     async def commit(self) -> None:
         pass

@@ -10,9 +10,8 @@
 //   - utils/rfCableAnchorResolver.ts   (returns body-local by design)
 //   - utils/v2Bindings.ts              (V2 binding read, body-local)
 //   - store/sceneStore.ts              (raw store / API I/O)
-//   - components/Asset3DV3Editor.tsx   (raw asset editor ??write side)
-//   - components/ComponentsV2Editor.tsx (same)
-//   - components/ComponentComposer.tsx (same)
+//   - components/Asset3DEditor.tsx     (raw asset editor ??write side)
+//   - components/ComponentsEditor.tsx  (same)
 //   - optical/__tests__/parity/runner.ts (parity fixture loader)
 //   - optical/ray-tracer-v3.ts         (V3 in-browser tracer)
 //   - optical/kinds/**/physics.ts      (per-kind physics)
@@ -40,9 +39,8 @@ const ALLOWED = new Set([
   "utils/rfCableAnchorResolver.ts",
   "utils/v2Bindings.ts",
   "store/sceneStore.ts",
-  "components/Asset3DV3Editor.tsx",
-  "components/ComponentsV2Editor.tsx",
-  "components/ComponentComposer.tsx",
+  "components/Asset3DEditor.tsx",
+  "components/ComponentsEditor.tsx",
   "optical/__tests__/parity/runner.ts",
   "optical/ray-tracer-v3.ts",
   "optical/registry.ts",

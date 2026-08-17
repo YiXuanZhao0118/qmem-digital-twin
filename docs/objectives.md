@@ -147,6 +147,9 @@
 
 分兩條 pipeline：
 
+> **狀態（2026-08-17）：`ci-correctness` 已建立** — [`.github/workflows/ci-correctness.yml`](../.github/workflows/ci-correctness.yml)，這是本 repo 的第一個 workflow。
+> `ci-performance` **尚未建立**（需要釘選基準機，見 §7-5）。
+
 **(a) `ci-correctness`（每個 PR，一般 runner）**
 - O-1、O-2、O-3、F-1、F-3、A-3 全部單元/整合測試
 - O-4、F-2 的釘選基準案例比對

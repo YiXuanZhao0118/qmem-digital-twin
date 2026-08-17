@@ -386,7 +386,7 @@ function connectorAnchorPos(
 ): { x: number; y: number; z: number } | null {
   const a = (anchors ?? []).find((x) => (x as { id?: string }).id === id);
   const p = (a as { positionMmBodyLocal?: { x?: number; y?: number; z?: number } } | undefined)
-    ?.positionMmBodyLocal;
+    ?.positionMmBodyLocal; // raw-anchor-ok: returns the body-frame position by contract
   return p && typeof p.x === "number" && typeof p.y === "number" && typeof p.z === "number"
     ? { x: p.x, y: p.y, z: p.z }
     : null;

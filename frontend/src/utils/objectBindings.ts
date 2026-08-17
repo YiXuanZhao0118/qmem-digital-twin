@@ -125,14 +125,14 @@ export function getRfDirectionBodyLocal(
   // [0] new single source: acoustic_axis anchor (axisX = acoustic direction)
   const acoustic = asset?.anchors?.find((a) => a.id === ACOUSTIC_AXIS_ANCHOR_ID);
   const ax = (acoustic as { axisXBodyLocal?: { x: number; y: number; z: number } } | undefined)
-    ?.axisXBodyLocal;
+    ?.axisXBodyLocal; // raw-anchor-ok: this function returns body-local by contract
   if (ax && typeof ax.x === "number" && typeof ax.y === "number" && typeof ax.z === "number") {
     const m = Math.hypot(ax.x, ax.y, ax.z);
     if (m > 1e-9) return { x: ax.x / m, y: ax.y / m, z: ax.z / m };
   }
   // [1] legacy: rf_direction asset anchor
   const anchor = asset?.anchors?.find((a) => a.id === RF_DIRECTION_ANCHOR_ID);
-  const dir = anchor?.directionBodyLocal;
+  const dir = anchor?.directionBodyLocal; // raw-anchor-ok: body-local by contract (legacy fallback)
   if (dir && typeof dir.x === "number" && typeof dir.y === "number" && typeof dir.z === "number") {
     const m = Math.hypot(dir.x, dir.y, dir.z);
     if (m > 1e-9) return { x: dir.x / m, y: dir.y / m, z: dir.z / m };

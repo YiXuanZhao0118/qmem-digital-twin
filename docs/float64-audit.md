@@ -185,10 +185,10 @@ anchor 表格每列的 `anchor_id` 欄下方新增兩枚徽章（`pos` / `axis`�
 1. ~~**移除寫入路徑上的 `mmText`**~~ —— ✅ **2026-08-17 完成。** 三處呼叫（`moveFace` / `autoPlaceFace` / `orthogonalizeAnchorY`）改用載入端同一個無損 `n()`；`mmText` 全檔無其他用途，已刪除。破口 A 消除。
 2. ~~**`step` 改為 `any`**~~ —— ✅ **2026-08-17 完成，但沒有用 `any`。** 改為 `ANCHOR_STEP = "0.001"`：`step="any"` 會讓 Chrome 的箭頭鍵退回一格 1.0（對 [-1,1] 的方向分量是災難），而有限 step 在 controlled input 下不會誤判 validity（見 §2.3）。位置/方向皆 0.001，aperture 維持 0.01。
 3. ~~**政策落地：anchor 分兩級授權**~~ —— ✅ **2026-08-17 完成（顯示層）。** PHY Editor 逐 anchor 顯示 `device` / `overridden` / `geometry` 三級徽章，詳見 §2.2。實作為三級而非原本設想的兩級：`overridden`（曾是 device-grade、已被覆蓋）在實務上是最需要看見的狀態。仍待決定的是要不要在光學 kind 上把它升級成**硬性存檔 gate**。
-4. **CI 守門**（對應 objectives §6 `ci-correctness`）
-   - 往返測試：`anchor{x: 12.3456789012345} → PUT → GET` 必須位元相同。
-   - 靜態守則：anchor 寫入路徑禁止出現 `toFixed` / `Math.round`（lint rule 或測試 grep）。
-   - DDL 斷言：查 `information_schema.columns`，`objects.x_mm` 等六欄必須是 `double precision`。
+4. ~~**CI 守門**~~ —— ✅ **2026-08-17 完成。** [`.github/workflows/ci-correctness.yml`](../.github/workflows/ci-correctness.yml)（本 repo 第一個 workflow，backend job 帶 postgres service）。三條守則落在兩個檔：
+   - [`backend/tests/test_anchor_precision_guard.py`](../backend/tests/test_anchor_precision_guard.py) — 序列化位元相等、DB 往返位元相等（anchor + object pose）、`information_schema` 斷言 `objects.x_mm…rz_deg` 為 `double precision` 且 `assets_3d.anchors` 為 `jsonb`。全部用 `==` 而非 `approx`。額外有一條 **self-guard**：驗證 witness 值本身確實偵測得到 float32 與 3 位小數捨入，防止有人把常數換成整數後測試變成空轉。
+   - [`frontend/src/components/__tests__/anchorWritePath.guard.test.ts`](../frontend/src/components/__tests__/anchorWritePath.guard.test.ts) — 掃描 `updateAnchor(...)` 的每個呼叫點（平衡括號取參數），禁止 `toFixed` / `toPrecision` / `Math.round`；斷言 `mmText` 不存在；斷言九個 anchor 輸入框都用 `ANCHOR_STEP`（≤ 0.001）且維持 controlled（§2.3 的不變式）。
+   - **已實測會擋**：把 `moveFace` 的 `px: n(position.x)` 改回 `toFixed(3)`，守門立刻失敗並印出理由；還原後恢復綠燈。
 5. **實測現有資料損壞範圍** —— 掃全表 anchors，統計有多少 `positionMmBodyLocal` / `axisXBodyLocal` / `axisYBodyLocal` 分量剛好是 3 位小數的整數倍（`v*1000` 為整數）。命中率高者即為破口 A 的歷史受害者。⚠️ 修復 locked 列需先請使用者解鎖，不得自行處理。
 
 ---
