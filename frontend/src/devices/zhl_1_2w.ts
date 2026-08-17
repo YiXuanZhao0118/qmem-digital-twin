@@ -16,8 +16,25 @@ export const zhl_1_2w = defineDevice({
   behavioralKind: "rf_amplifier",
   componentType: "rf_amplifier",
   mesh: "primitive://rf_amplifier",
+  // Positions synced 2026-08-17 from the locked
+  // `minicircuits_zhl_1_2w_plus` Asset3D row and verified against the GLB
+  // it renders (42c2b987…_minicircuits_zhl_1_2w_plus.glb): walking inward
+  // along x, the housing ends at 44.5, there is a recess with no geometry
+  // from 44.5 to 47.0, and the connector body runs 47.0 → 55.5. So x =
+  // 47.2 is the connector's rear face, and the transverse centroid through
+  // that whole region is (0.000, 0.000) — the connector axis.
   anchors: [
-    { role: "rf_in", connectorType: "sma_female", directionBodyLocal: { x: -1, y: 0, z: 0 } },
-    { role: "rf_out", connectorType: "sma_female", directionBodyLocal: { x: 1, y: 0, z: 0 } },
+    {
+      role: "rf_in",
+      positionMmBodyLocal: { x: -47.2, y: 0, z: 0 },
+      directionBodyLocal: { x: -1, y: 0, z: 0 },
+      connectorType: "sma_female",
+    },
+    {
+      role: "rf_out",
+      positionMmBodyLocal: { x: 47.2, y: 0, z: 0 },
+      directionBodyLocal: { x: 1, y: 0, z: 0 },
+      connectorType: "sma_female",
+    },
   ],
 });

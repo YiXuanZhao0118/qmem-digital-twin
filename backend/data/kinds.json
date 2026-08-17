@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-17T01:33:43.846Z",
+  "generated_at": "2026-08-17T01:51:19.895Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -2424,6 +2424,11 @@
       "anchors": [
         {
           "role": "rf_in",
+          "position_mm_body_local": {
+            "x": -47.2,
+            "y": 0,
+            "z": 0
+          },
           "direction_body_local": {
             "x": -1,
             "y": 0,
@@ -2433,6 +2438,11 @@
         },
         {
           "role": "rf_out",
+          "position_mm_body_local": {
+            "x": 47.2,
+            "y": 0,
+            "z": 0
+          },
           "direction_body_local": {
             "x": 1,
             "y": 0,
@@ -2452,20 +2462,60 @@
       "anchors": [
         {
           "role": "rf_in",
+          "position_mm_body_local": {
+            "x": -9.525,
+            "y": 4.7,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": -1,
+            "y": 0,
+            "z": 0
+          },
           "connector_type": "sma_female"
         },
         {
           "role": "rf_out",
           "name": "RF1",
+          "position_mm_body_local": {
+            "x": 9.525,
+            "y": 4.7,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
           "connector_type": "sma_female"
         },
         {
           "role": "rf_out",
           "name": "RF2",
+          "position_mm_body_local": {
+            "x": 9.525,
+            "y": -4.7,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
           "connector_type": "sma_female"
         },
         {
           "role": "ttl_in",
+          "position_mm_body_local": {
+            "x": -9.525,
+            "y": -4.7,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": -1,
+            "y": 0,
+            "z": 0
+          },
           "connector_type": "sma_female"
         }
       ],
@@ -2498,6 +2548,11 @@
       "anchors": [
         {
           "role": "rf_out",
+          "position_mm_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 4.8
+          },
           "direction_body_local": {
             "x": 0,
             "y": 0,
