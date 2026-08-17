@@ -132,6 +132,21 @@ function n(value: number | null | undefined): string {
   return value === null || value === undefined ? "" : String(value);
 }
 
+/** Spinner increment for the anchor position + axis inputs. 0.001 = 1 µm per
+ * arrow press on position (the O-1 budget) and ~1 mrad on a normalised axis
+ * component — 10x finer than the 0.01 it replaces. Arrows are deliberately
+ * not a µrad-grade tool: an axis that must hold 0.1 µrad comes from the
+ * device registry, not the spinner (docs/float64-audit.md §2.2). Typed
+ * values are unaffected by `step` either way.
+ *
+ * `step` is also an HTML validity constraint, but React mirrors the value
+ * into the `value` content attribute and that becomes the step base, so a
+ * full-precision value is always on its own grid and never reports
+ * stepMismatch. That masking is the only reason a finite step is safe here —
+ * making these inputs uncontrolled would turn every 17-digit anchor value
+ * :invalid ("the two nearest valid values are -0.58 and -0.57"). */
+const ANCHOR_STEP = "0.001";
+
 function vec3Str(v?: V3Vec3 | null): string {
   if (!v) return "-";
   return `(${v.x.toFixed(2)}, ${v.y.toFixed(2)}, ${v.z.toFixed(2)})`;
@@ -3215,23 +3230,23 @@ function AssetEditForm({
                   hidden (optical anchors never use it). */}
               <td style={TD}>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
-                  <input value={anchor.px} onChange={(event) => updateAnchor(index, { px: event.target.value })} style={INPUT} type="number" step="0.01" />
-                  <input value={anchor.py} onChange={(event) => updateAnchor(index, { py: event.target.value })} style={INPUT} type="number" step="0.01" />
-                  <input value={anchor.pz} onChange={(event) => updateAnchor(index, { pz: event.target.value })} style={INPUT} type="number" step="0.01" />
+                  <input value={anchor.px} onChange={(event) => updateAnchor(index, { px: event.target.value })} style={INPUT} type="number" step={ANCHOR_STEP} />
+                  <input value={anchor.py} onChange={(event) => updateAnchor(index, { py: event.target.value })} style={INPUT} type="number" step={ANCHOR_STEP} />
+                  <input value={anchor.pz} onChange={(event) => updateAnchor(index, { pz: event.target.value })} style={INPUT} type="number" step={ANCHOR_STEP} />
                 </div>
               </td>
               <td style={TD}>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
-                  <input value={anchor.nx} onChange={(event) => updateAnchor(index, { nx: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={INPUT} type="number" step="0.01" />
-                  <input value={anchor.ny} onChange={(event) => updateAnchor(index, { ny: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={INPUT} type="number" step="0.01" />
-                  <input value={anchor.nz} onChange={(event) => updateAnchor(index, { nz: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={INPUT} type="number" step="0.01" />
+                  <input value={anchor.nx} onChange={(event) => updateAnchor(index, { nx: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={INPUT} type="number" step={ANCHOR_STEP} />
+                  <input value={anchor.ny} onChange={(event) => updateAnchor(index, { ny: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={INPUT} type="number" step={ANCHOR_STEP} />
+                  <input value={anchor.nz} onChange={(event) => updateAnchor(index, { nz: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={INPUT} type="number" step={ANCHOR_STEP} />
                 </div>
               </td>
               <td style={TD}>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
-                  <input value={ff.showAxisY ? anchor.yx : ""} disabled={!ff.showAxisY} onChange={(event) => updateAnchor(index, { yx: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={ff.showAxisY ? INPUT : INPUT_DISABLED} type="number" step="0.01" />
-                  <input value={ff.showAxisY ? anchor.yy : ""} disabled={!ff.showAxisY} onChange={(event) => updateAnchor(index, { yy: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={ff.showAxisY ? INPUT : INPUT_DISABLED} type="number" step="0.01" />
-                  <input value={ff.showAxisY ? anchor.yz : ""} disabled={!ff.showAxisY} onChange={(event) => updateAnchor(index, { yz: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={ff.showAxisY ? INPUT : INPUT_DISABLED} type="number" step="0.01" />
+                  <input value={ff.showAxisY ? anchor.yx : ""} disabled={!ff.showAxisY} onChange={(event) => updateAnchor(index, { yx: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={ff.showAxisY ? INPUT : INPUT_DISABLED} type="number" step={ANCHOR_STEP} />
+                  <input value={ff.showAxisY ? anchor.yy : ""} disabled={!ff.showAxisY} onChange={(event) => updateAnchor(index, { yy: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={ff.showAxisY ? INPUT : INPUT_DISABLED} type="number" step={ANCHOR_STEP} />
+                  <input value={ff.showAxisY ? anchor.yz : ""} disabled={!ff.showAxisY} onChange={(event) => updateAnchor(index, { yz: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={ff.showAxisY ? INPUT : INPUT_DISABLED} type="number" step={ANCHOR_STEP} />
                 </div>
               </td>
               <td style={TD}>

@@ -21,6 +21,7 @@
 | 前端 align 寫回路徑 | ✅ 乾淨 |
 | **PHY Editor anchor 寫入路徑** | ~~❌ 破口 A~~ → ✅ **已修（2026-08-17）**，見 §2.1 |
 | **PHY Editor 面選取（face-pick）** | ❌ **破口 B：從 float32 mesh + 三角化面推導,原理上達不到 0.1 µrad** |
+| PHY Editor 輸入框 spinner 顆粒度 | ~~⚠️ 破口 C~~ → ✅ **已修（2026-08-17）**，見 §2.3 |
 | RF cable 快取摘要 | ⚠️ 17 µrad 級失效門檻,RF 域可接受 |
 
 ---
@@ -119,10 +120,35 @@ function mmText(value: number): string {
 >
 > ⇒ **需要滿足 O-2 的 anchor 必須走 device registry 數值授權**（`materialize_device_anchors`，§1.4），由 datasheet / CAD 標稱值給定，不得由滑鼠點取。face-pick 只能定位到「幾何等級」（~0.05 mm / ~mrad），適用於機械對位與可視化，不適用於光學介面軸向。
 
-### 2.3 破口 C — 輸入框 `step="0.01"`
+### 2.3 破口 C — 輸入框 `step="0.01"` ✅ 已修
 
-[:3217–3233](../frontend/src/components/Asset3DEditor.tsx#L3217) 的 `<input type="number" step="0.01">`：位置箭頭鍵一格 = **10 µm**，方向分量一格 = **10 mrad**。
+> **狀態：2026-08-17 已修復。** anchor 的位置 / axisX / axisY 九個輸入框改用
+> `ANCHOR_STEP = "0.001"`：位置箭頭鍵一格 = **1 µm**（= O-1 預算），方向分量一格 ≈ **1 mrad**，
+> 比原本細 10 倍。aperture 三格維持 `0.01`（clip 半徑，不在 O-1/O-2 預算內）。
+> 實機驗證：位置 spinner 141.85 → 141.851（Δ = 0.001 mm）。
+
+原本 `<input type="number" step="0.01">`：位置箭頭鍵一格 = **10 µm**，方向分量一格 = **10 mrad**。
 不是硬性量化（手打任意值可通過），但它是 UI 對使用者示範的預設顆粒度，與 µm/µrad 目標矛盾。
+
+**稽核時漏掉、修復時才發現的一條潛伏陷阱（重要）：**
+
+`step` 不只是 spinner 增量，也是 **HTML 的 validity 約束** —— 落在 step 網格外的值會 `stepMismatch`。
+修完破口 A 之後寫進欄位的是 17 位數（`-0.5734623443633284`），照理應該立刻變 `:invalid`。**實測沒有**，原因是：
+
+> HTML 規格的 **step base** 在沒有 `min` 屬性時取自 **`value` content attribute**；React 的 controlled
+> input 會把值同時鏡射到該屬性，於是「值 = 自己的基準」，永遠落在格子上。
+
+實測佐證（同一個欄位，只拿掉 `value` 屬性）：
+
+| 狀態 | `stepMismatch` |
+|---|---|
+| React 正常渲染（有 `value` 屬性） | `false` |
+| 手動 `removeAttribute("value")` | `true` —「最接近的兩個有效值分別是 -0.58 和 -0.57」 |
+
+⇒ **不變式：這幾個 anchor 輸入框必須維持 controlled（`value={...}`）。** 一旦改成 uncontrolled
+（`defaultValue`、或自行管理 DOM 值），所有全精度 anchor 值會立刻變成 `:invalid`。
+這也是「保留有限 `step` 而不是改用 `step="any"`」唯一安全的前提 —— 已寫進
+`ANCHOR_STEP` 的註解。
 
 ### 2.4 觀察 D — RF cable 快取摘要（可接受）
 
@@ -135,7 +161,7 @@ function mmText(value: number): string {
 ## 3. 建議修補（依優先序）
 
 1. ~~**移除寫入路徑上的 `mmText`**~~ —— ✅ **2026-08-17 完成。** 三處呼叫（`moveFace` / `autoPlaceFace` / `orthogonalizeAnchorY`）改用載入端同一個無損 `n()`；`mmText` 全檔無其他用途，已刪除。破口 A 消除。
-2. **`step` 改為 `any`**（或位置 `0.001`、方向 `1e-6`），消除破口 C 的誤導。
+2. ~~**`step` 改為 `any`**~~ —— ✅ **2026-08-17 完成，但沒有用 `any`。** 改為 `ANCHOR_STEP = "0.001"`：`step="any"` 會讓 Chrome 的箭頭鍵退回一格 1.0（對 [-1,1] 的方向分量是災難），而有限 step 在 controlled input 下不會誤判 validity（見 §2.3）。位置/方向皆 0.001，aperture 維持 0.01。
 3. **政策落地：anchor 分兩級授權**（破口 B 的唯一解）
    - *device-grade*：device registry 數值授權，保證 µm/µrad —— 光學介面必走此路。
    - *geometry-grade*：face-pick，只保證 ~0.05 mm / ~mrad —— 機械/可視化用。
