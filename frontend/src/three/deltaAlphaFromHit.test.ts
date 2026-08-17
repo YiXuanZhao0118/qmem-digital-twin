@@ -10,14 +10,17 @@ const BEAM_DIR_HORIZONTAL_THREE = new THREE.Vector3(1, 0, 0);
 describe("buildBeamBasis", () => {
   it("horizontal lab-X beam: e_x ≈ lab+Y, e_y ≈ lab+Z (up)", () => {
     const { ex, ey } = buildBeamBasis(BEAM_DIR_HORIZONTAL_THREE);
-    // lab +Y in three frame = (0, 0, -1)
+    // Three is Z-up, so the three frame equals the lab frame up to scale:
+    // lab +Y is (0, 1, 0), lab +Z is (0, 0, 1). These assertions used to
+    // spell out the Y-up answers ((0,0,-1) / (0,1,0)), which is why they
+    // kept passing against the un-migrated Y-up basis while every test
+    // below — the ones that route through labMmToThree — failed.
     expect(ex.x).toBeCloseTo(0);
-    expect(ex.y).toBeCloseTo(0);
-    expect(ex.z).toBeCloseTo(-1);
-    // lab +Z in three frame = (0, 1, 0)
+    expect(ex.y).toBeCloseTo(1);
+    expect(ex.z).toBeCloseTo(0);
     expect(ey.x).toBeCloseTo(0);
-    expect(ey.y).toBeCloseTo(1);
-    expect(ey.z).toBeCloseTo(0);
+    expect(ey.y).toBeCloseTo(0);
+    expect(ey.z).toBeCloseTo(1);
   });
 
   it("vertical lab-Z beam falls back to world-X reference (non-degenerate)", () => {

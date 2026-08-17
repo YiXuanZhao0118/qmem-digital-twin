@@ -5,7 +5,9 @@
 // already in the fiber BODY-local frame:
 //
 //   endA / endB: {
-//     posMm: [x, y, z]              // emission point at the ferrule tip
+//     posMm: [x, y, z]              // connector REAR = wire junction = the
+//                                   // spline endpoint (see the contract note
+//                                   // on resolveEndpointFromKindParams)
 //     rotDeg: [rx, ry, rz]          // residual ferrule roll/orientation metadata
 //     tensionHandleMm: [dx, dy, dz] // wire extension direction from this end
 //                                  // into the fiber body, BODY-local mm
@@ -14,9 +16,11 @@
 // Important convention:
 // - tensionHandleMm is the single source of truth for BOTH the Bezier tangent
 //   at the fiber line endpoint and the ferrule head direction.
-// - The visible connector model is anchored by its tip/port face. Its rear
-//   wire-junction point is derived from the tip:
-//     rear = tip + unit(tensionHandleMm) * FIBER_END_CONNECTOR_LENGTH_MM
+// - The optical TIP is derived from posMm, not the other way round:
+//     tip = posMm - unit(tensionHandleMm) * FIBER_FERRULE_TIP_MM
+//   This block used to state the inverse (posMm = tip, rear derived from it),
+//   which is the pre-2026-05-17 contract and contradicted the function's own
+//   docstring below.
 // - rotDeg must not rotate the wire tangent. It is residual ferrule metadata
 //   (for example visual roll / slow-axis presentation).
 

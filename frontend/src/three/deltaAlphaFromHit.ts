@@ -13,7 +13,7 @@
  *   e_z = incomingDir
  *   e_x = world_up × e_z        (horizontal cross-beam when beam is horizontal)
  *   e_y = e_z × e_x             (vertical / "up" component when beam is horizontal)
- *   world_up = three's (0, 1, 0) = lab +Z
+ *   world_up = three's (0, 0, 1) = lab +Z
  *   Falls back to world-X reference when the beam is nearly vertical.
  *
  * Sign conventions chosen to match the 5×5 spec:
@@ -27,7 +27,13 @@ import * as THREE from "three";
 
 import { MM_PER_THREE_UNIT } from "../optical/frames";
 
-const WORLD_UP_THREE = new THREE.Vector3(0, 1, 0);
+// Three is configured Z-up in this app, so world up is (0, 0, 1) and the
+// three frame equals the lab frame up to scale (optical/frames.ts:
+// `labDirToThree` is the identity, `labRootSwapQuaternion` is identity).
+// This module was written when three was Y-up and kept (0, 1, 0) through
+// that migration, which silently rotated the whole beam-local basis 90°
+// about lab X — δ_x/δ_y and α_x/α_y came back swapped and sign-flipped.
+const WORLD_UP_THREE = new THREE.Vector3(0, 0, 1);
 const WORLD_X_THREE = new THREE.Vector3(1, 0, 0);
 const NEAR_PARALLEL = 0.99;
 

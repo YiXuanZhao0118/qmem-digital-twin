@@ -334,10 +334,12 @@ describe("computeFiberEndAlignment — with pose rotation", () => {
 
   it("rotation: 90° about Z swaps x/y, beam along lab +y aligns body+x port", () => {
     // Fiber with the same initial body coords (handleOut along body +x).
-    // SceneObject rotated +90° about Z (lab Z is also body Z), so body
-    // +x maps to lab +y. Aim a beam along lab +y at lab x=0, z=50.
-    // Expectation: port lands on the beam (which is along lab +y at
-    // x=0, z=50), node sits 36.28 mm "behind" along lab -y (= body -x).
+    // SceneObject rotated +90° about Z (lab Z is also body Z). This
+    // project's pinned convention is rz=+90 maps body +X -> lab -Y — see
+    // sceneObjectToQuaternion (optical/frames.ts) and its backend mirror
+    // backend/app/optical/pose.py, whose docstring pins exactly that.
+    // So lab +y corresponds to body -x. Aim a beam along lab +y at lab
+    // x=0, z=50; the port lands on it and the node sits 36.28 mm behind.
     const nodes: FiberNodePersist[] = [
       { posMm: [0, 0, 50], handleOutMm: [100, 0, 0] },
       { posMm: [300, 0, 50], handleInMm: [-100, 0, 0] },
@@ -357,9 +359,11 @@ describe("computeFiberEndAlignment — with pose rotation", () => {
     // Port should now be ON the beam (lab x ≈ 0, z = 50).
     expect(Math.abs(result.projectedPortLab[0])).toBeLessThan(1e-6);
     expect(result.projectedPortLab[2]).toBeCloseTo(50, 5);
-    // In body frame, outward at End A entry must be anti-parallel to
-    // the beam in lab. Beam lab = (0,1,0). Rotated to body: rz=+90°
-    // inverse → (0,1,0) lab is body (1,0,0). So outward_body = (-1,0,0).
-    expectVec3Close(result.newOutwardBody, [-1, 0, 0]);
+    // In body frame, outward at End A entry must be anti-parallel to the
+    // beam in lab. Beam lab = (0,1,0); under rz=+90 (body +X -> lab -Y)
+    // that is body (-1,0,0), so outward_body = -(-1,0,0) = (1,0,0).
+    // This assertion previously read (-1,0,0), derived from the opposite
+    // rotation sense, and had been red since the test was written.
+    expectVec3Close(result.newOutwardBody, [1, 0, 0]);
   });
 });

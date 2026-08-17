@@ -89,33 +89,7 @@ jobs:
       - name: anchor-access guard
         run: node ./scripts/check-anchor-access.mjs
 
-      # QUARANTINE — 16 pre-existing failures in 6 files, red since well
-      # before this workflow existed (frame/fiber assertion mismatches, not
-      # import errors). They are excluded so the other 533 tests can actually
-      # gate; a CI that is red on arrival gets ignored within a week.
-      #
-      # This list is debt, not policy. Every line removed from it is a real
-      # improvement — delete the flag once the file passes.
-      - name: vitest (minus quarantine)
-        run: |
-          npx vitest run \
-            --exclude 'src/three/__tests__/bindingRendererGate.swap.test.ts' \
-            --exclude 'src/three/__tests__/labRoot.invariant.test.ts' \
-            --exclude 'src/three/__tests__/pbs252.swap.test.ts' \
-            --exclude 'src/three/deltaAlphaFromHit.test.ts' \
-            --exclude 'src/utils/__tests__/fiberAlignment.test.ts' \
-            --exclude 'src/utils/__tests__/fiberBodyEndpointResolver.test.ts'
-
-      # Visibility for the quarantine: runs the excluded files and reports
-      # without gating, so the debt stays on screen instead of being silently
-      # forgotten. Flip this to blocking (and delete it) once they are fixed.
-      - name: vitest quarantine (non-blocking)
-        continue-on-error: true
-        run: |
-          npx vitest run \
-            src/three/__tests__/bindingRendererGate.swap.test.ts \
-            src/three/__tests__/labRoot.invariant.test.ts \
-            src/three/__tests__/pbs252.swap.test.ts \
-            src/three/deltaAlphaFromHit.test.ts \
-            src/utils/__tests__/fiberAlignment.test.ts \
-            src/utils/__tests__/fiberBodyEndpointResolver.test.ts
+      # No quarantine. The workflow shipped with 16 excluded failures in 6
+      # files; they were the Z-up migration's stragglers and are fixed, so
+      # the whole suite gates.
+      - run: npx vitest run
