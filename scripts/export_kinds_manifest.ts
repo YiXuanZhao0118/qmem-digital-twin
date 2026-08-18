@@ -292,7 +292,11 @@ function build(
       anchors: (d.anchors as any[]).map(deviceAnchorToManifest),
       default_params: { ...(d.defaultParams ?? {}) },
     });
-    if (d.componentType !== d.behavioralKind) {
+    // An anchorless device (the render-only mechanical fixtures, whose
+    // behavioralKind is null so componentType can never equal it) would
+    // otherwise write an empty contract over the key — inert today, but it
+    // would silently clobber a real template later. Skip those.
+    if (d.componentType !== d.behavioralKind && (d.anchors as any[]).length) {
       componentAnchorContracts[d.componentType] = (d.anchors as any[]).map((a) => ({
         id: a.role,
         ...(a.name !== undefined ? { name: a.name } : {}),

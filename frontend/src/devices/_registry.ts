@@ -11,6 +11,7 @@ import { ad9959 } from "./ad9959";
 import { bb1_e03 } from "./bb1_e03";
 import { bnc_female } from "./bnc_female";
 import { bnc_male } from "./bnc_male";
+import { cp33_m } from "./cp33_m";
 import { dbr_tosa } from "./dbr_tosa";
 import { dg4202 } from "./dg4202";
 import { glan_io3_850 } from "./glan_io3_850";
@@ -19,20 +20,27 @@ import { horn_wr90 } from "./horn_wr90";
 import { io5_850_back } from "./io5_850_back";
 import { io5_850_faraday } from "./io5_850_faraday";
 import { io5_850_front } from "./io5_850_front";
+import { ks1t } from "./ks1t";
 import { la1509_b } from "./la1509_b";
 import { lj1960l1_b } from "./lj1960l1_b";
 import { mm_pc_780 } from "./mm_pc_780";
+import { optical_table } from "./optical_table";
 import { pbs252 } from "./pbs252";
+import { pm100d2 } from "./pm100d2";
 import { pm_apc_780 } from "./pm_apc_780";
 import { pm_pc_780 } from "./pm_pc_780";
 import { ppg_sma } from "./ppg_sma";
 import { rg316_sma } from "./rg316_sma";
+import { rs1p } from "./rs1p";
+import { s1tm08 } from "./s1tm08";
 import { sm_apc_780 } from "./sm_apc_780";
 import { sm_pc_780 } from "./sm_pc_780";
 import { sma_female } from "./sma_female";
 import { sma_male } from "./sma_male";
 import { toptica_boosta_pro } from "./toptica_boosta_pro";
+import { tornos_back } from "./tornos_back";
 import { tornos_faraday } from "./tornos_faraday";
+import { tornos_front } from "./tornos_front";
 import { zhl_1_2w } from "./zhl_1_2w";
 import { zyswa_2_50dr } from "./zyswa_2_50dr";
 
@@ -65,6 +73,8 @@ export const DEVICES = [
   io5_850_front,
   io5_850_back,
   tornos_faraday,
+  tornos_front,
+  tornos_back,
   // Optical — sources / amplifiers / modulators
   dbr_tosa,
   toptica_boosta_pro,
@@ -75,6 +85,14 @@ export const DEVICES = [
   pm_pc_780,
   pm_apc_780,
   mm_pc_780,
+  // Mechanical / render-only fixtures (behavioralKind null — no solver
+  // participation, so attaching one leaves the asset's kind_id alone)
+  cp33_m,
+  ks1t,
+  rs1p,
+  s1tm08,
+  optical_table,
+  pm100d2,
 ] as const satisfies readonly Device[];
 
 const DEVICE_BY_ID: Record<string, Device> = Object.fromEntries(

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-18T04:05:31.992Z",
+  "generated_at": "2026-08-18T04:19:19.106Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -3119,6 +3119,24 @@
       }
     },
     {
+      "id": "tornos_front",
+      "display_name": "TORNOS_isolator_front_piece",
+      "behavioral_kind": "isolator",
+      "component_type": "isolator",
+      "mesh": "tornos_isolator_front_piece.glb",
+      "anchors": [],
+      "default_params": {}
+    },
+    {
+      "id": "tornos_back",
+      "display_name": "TORNOS_isolator_back_piece",
+      "behavioral_kind": "isolator",
+      "component_type": "isolator",
+      "mesh": "tornos_isolator_back_piece.glb",
+      "anchors": [],
+      "default_params": {}
+    },
+    {
       "id": "dbr_tosa",
       "display_name": "dbr_tosa",
       "behavioral_kind": "laser_source",
@@ -3547,6 +3565,60 @@
         "slowAxisKeyed": false,
         "polishAngleDeg": 0
       }
+    },
+    {
+      "id": "cp33_m",
+      "display_name": "CP33/M",
+      "behavioral_kind": null,
+      "component_type": "mechanical",
+      "mesh": "cp33_m_step.glb",
+      "anchors": [],
+      "default_params": {}
+    },
+    {
+      "id": "ks1t",
+      "display_name": "KS1T",
+      "behavioral_kind": null,
+      "component_type": "mechanical",
+      "mesh": "ks1t_step.glb",
+      "anchors": [],
+      "default_params": {}
+    },
+    {
+      "id": "rs1p",
+      "display_name": "RS1P",
+      "behavioral_kind": null,
+      "component_type": "mechanical",
+      "mesh": "rs1p_step.glb",
+      "anchors": [],
+      "default_params": {}
+    },
+    {
+      "id": "s1tm08",
+      "display_name": "S1TM08",
+      "behavioral_kind": null,
+      "component_type": "mechanical",
+      "mesh": "s1tm08_step.glb",
+      "anchors": [],
+      "default_params": {}
+    },
+    {
+      "id": "optical_table",
+      "display_name": "optical_table",
+      "behavioral_kind": null,
+      "component_type": "optical_table",
+      "mesh": "optical_table.glb",
+      "anchors": [],
+      "default_params": {}
+    },
+    {
+      "id": "pm100d2",
+      "display_name": "PM100D2",
+      "behavioral_kind": null,
+      "component_type": "mechanical",
+      "mesh": "pm100d2_step.glb",
+      "anchors": [],
+      "default_params": {}
     }
   ]
 }
