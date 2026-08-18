@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-18T06:55:06.557Z",
+  "generated_at": "2026-08-18T08:18:51.142Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -824,6 +824,7 @@
         "align_summary": "Cube of two right-angle prisms cemented along the diagonal. intercept_face marks that diagonal interface: position = cube centre, direction = coating normal (along ±(X±Y) / ±(X±Z) / ±(Y±Z) for face-aligned cubes), aperture = half the active interface size. PBS vs BS distinguished by Component.properties.beamSplitterType (Phase 2 schema).",
         "default_params": {
           "polarizing": true,
+          "splitRatioTransmitted": 0.5,
           "transmissionAxisDegBeamLocal": 0,
           "coatingNormalBodyLocal": [
             0.6225096458616945,

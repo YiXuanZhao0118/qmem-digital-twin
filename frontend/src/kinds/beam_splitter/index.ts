@@ -14,10 +14,13 @@ import {
  * tracer never read them (only the retired face-based TS solver did).
  */
 export interface BeamSplitterParams extends Record<string, unknown> {
-  /** Polarizing (PBS / Glan) vs 50:50 BS. Gates the transmission-axis
-   *  (polarization-reference) binding; the op itself always splits by
-   *  polarization. */
+  /** Polarizing (PBS / Glan) vs non-polarizing BS. Gates the transmission-axis
+   *  (polarization-reference) binding; `false` also switches the op to an
+   *  intensity split driven by `splitRatioTransmitted`. */
   polarizing: boolean;
+  /** Transmitted power fraction, non-polarizing cubes only (0.9 for a 10:90
+   *  R:T cube like Thorlabs BS041). Ignored when `polarizing` is true. */
+  splitRatioTransmitted: number;
   /** Transmission (p / e-ray) axis, degrees, beam-local at the cut interface —
    *  seeds the intercept_face anchor's fast axis (the s/p reference). */
   transmissionAxisDegBeamLocal: number;
@@ -64,6 +67,7 @@ export const beamSplitterPlugin = definePhysicsPlugin<BeamSplitterParams>({
     // plain isotropic PBS cube sets refractiveIndex_o = refractiveIndex_e.
     defaultParams: {
       polarizing: true,
+      splitRatioTransmitted: 0.5,
       transmissionAxisDegBeamLocal: 0.0,
       // XZ-plane 38.5° cut normal ([sin, 0, -cos]); reflects a +Z beam toward
       // +X. (The old [0.7071,0.7071,0] was perpendicular to a +Z beam, so the

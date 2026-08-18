@@ -5,6 +5,8 @@ coating / air-gap centre. Shared by:
   - 45° cube PBS (Thorlabs PBS252 etc.) — params ``cubeSizeMm`` + ``refractiveIndex``.
   - Glan-Laser air-gap polarizer (Thorlabs IO-3/IO-5) — params
     ``lengthMm`` + ``refractiveIndex_e``/``refractiveIndex_o``.
+  - Non-polarizing cube BS (Thorlabs BS0xx) — ``polarizing: false`` +
+    ``splitRatioTransmitted``; splits by intensity, polarization untouched.
   axisX = coating normal (the surface the beam reflects off in s)
   axisY = s-polarisation reference axis (in coating plane)
   axisZ = p-polarisation reference axis (= axisX × axisY)
@@ -108,6 +110,31 @@ def _extinction_atten(er_db: object) -> float:
     return 10.0 ** (-float(er_db) / 10.0)
 
 
+def _nonpolarizing_atten(params: dict) -> tuple[float, float]:
+    """(att_p, att_s) that turn the polarizing split below into a plain
+    intensity split, for ``polarizing: false`` cubes (Thorlabs BS0xx
+    non-polarizing beamsplitters).
+
+    A non-polarizing cube must scale BOTH jones components by the same factor
+    on each port: √T on the transmitted port, √R = √(1−T) on the reflected one.
+    Feeding the branch formulas below with ``att_p = T`` and ``att_s = 1 − T``
+    does exactly that —
+      jones_p = (e_s·√att_p, e_p·√(1−att_s)) = (e_s·√T, e_p·√T)
+      jones_s = (e_s·√(1−att_p), e_p·√att_s) = (e_s·√R, e_p·√R)
+    — so the ratio split reuses the existing energy-conserving path instead of
+    a parallel branch, and the polarization state passes through unchanged.
+
+    ``splitRatioTransmitted`` is the TRANSMITTED power fraction (0.9 for a
+    10:90 R:T cube like BS041). Missing / out of range ⇒ 50:50. The coating's
+    absorption (BS041 spec: T+R ≈ 94%) is not representable — this op is
+    energy-conserving by construction.
+    """
+    t = params.get("splitRatioTransmitted")
+    if not isinstance(t, (int, float)) or not 0.0 <= float(t) <= 1.0:
+        return 0.5, 0.5
+    return float(t), 1.0 - float(t)
+
+
 def _pick_index(params: dict, keys: tuple[str, ...]) -> float:
     """First positive index among ``keys``, else the BK7 fallback. Lets the
     slab use the index the relevant ray actually sees (per branch below)."""
@@ -157,8 +184,14 @@ def pbs_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
     # Pp governs the transmitted (P) port's s-leak; Sp the reflected (S) port's
     # p-leak. att=0 (no spec / plain cube) reproduces the ideal pure-p/pure-s
     # split, so existing assets without these keys are unchanged.
-    att_p = _extinction_atten(ctx.params.get("extinctionRatioPpDb"))
-    att_s = _extinction_atten(ctx.params.get("extinctionRatioSpDb"))
+    # ``polarizing: false`` (non-polarizing BS cube) instead derives att_p /
+    # att_s from the split ratio — see _nonpolarizing_atten. Only an EXPLICIT
+    # false switches paths; a missing key keeps the polarizing default.
+    if ctx.params.get("polarizing") is False:
+        att_p, att_s = _nonpolarizing_atten(ctx.params)
+    else:
+        att_p = _extinction_atten(ctx.params.get("extinctionRatioPpDb"))
+        att_s = _extinction_atten(ctx.params.get("extinctionRatioSpDb"))
     jones_p = (e_s * math.sqrt(att_p), e_p * math.sqrt(1.0 - att_s))
     jones_s = (e_s * math.sqrt(1.0 - att_p), e_p * math.sqrt(att_s))
     t_p = _jones_mag2(jones_p) / mag_in if mag_in > 1e-30 else 0.0
