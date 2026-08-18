@@ -66,6 +66,22 @@ async def list_kinds(
     return list((await session.scalars(stmt)).all())
 
 
+@router.get("/op-sets", response_model=list[str])
+async def list_op_sets() -> list[str]:
+    """Every op-set name a Kind row may reference.
+
+    Declared BEFORE ``/{kind_id}`` so FastAPI matches the literal path
+    first — ``kind_id`` is a UUID and would otherwise 422 on "op-sets".
+
+    The Kinds editor used to derive its op-set dropdown from the
+    op_set_name values of existing rows, which hid every code-side op
+    set that had no Kind row yet: the user had to type the name blind
+    and only learned it was wrong from the 400 that ``create_kind``
+    raises. This is the same set that validation checks against.
+    """
+    return sorted(_registered_op_set_names())
+
+
 @router.get("/{kind_id}", response_model=schemas.KindOut)
 async def get_kind(
     kind_id: uuid.UUID, session: AsyncSession = Depends(get_session)

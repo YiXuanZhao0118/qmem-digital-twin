@@ -19,6 +19,11 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models import Device
+
 Vec3 = tuple[float, float, float]
 
 
@@ -109,3 +114,30 @@ def materialize_device_anchors(device: dict[str, Any]) -> list[dict[str, Any]]:
             anchor["apertureHeightMm"] = a["aperture_height_mm"]
         out.append(anchor)
     return out
+
+
+async def load_device_record(
+    session: AsyncSession, slug: str
+) -> dict[str, Any] | None:
+    """One device as the manifest-shaped dict the helpers above expect.
+
+    Devices moved from `kinds.json::devices[]` into the `devices` table
+    (alembic 0123); `devices.anchors` deliberately keeps the manifest's
+    snake_case shape so `materialize_device_anchors` reads a DB row with
+    no conversion. This is the replacement for the old synchronous
+    `kinds_manifest.device_by_id`.
+    """
+    device = (
+        await session.scalars(select(Device).where(Device.slug == slug))
+    ).first()
+    if device is None:
+        return None
+    return {
+        "id": device.slug,
+        "display_name": device.display_name,
+        "behavioral_kind": device.behavioral_kind,
+        "component_type": device.component_type,
+        "mesh": device.mesh,
+        "anchors": list(device.anchors or []),
+        "default_params": dict(device.default_params or {}),
+    }

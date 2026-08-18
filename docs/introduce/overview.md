@@ -62,7 +62,7 @@ qmem-digital-twin/
 │   ├── three/        # three.js scene, loadAsset, rayTrace, v3TraceAdapter, beam, placement/
 │   ├── kinds/        # per-kind plugin renderers + registries (_plugins.ts, _renderer_bindings.ts)
 │   ├── optical/      # TS optics: jones, frames, pose, fiber/, the WIP v3 tracing island (see optics.md)
-│   ├── store/        # zustand: sceneStore, kindsStore, (v3)catalogStore
+│   ├── store/        # zustand: sceneStore, kindsStore, devicesStore, (v3)catalogStore
 │   ├── utils/        # (v2)bindings, anchorAccess, componentBindings, rfPropagation
 │   └── modules/      # the Lab workspace (the only tab) + the Magnetics overlay; the Optics/Electronics/EM tabs were fully removed on 2026-06-10 (folders deleted)
 ├── backend/
@@ -74,8 +74,8 @@ qmem-digital-twin/
 │   │   ├── solvers/      # multiphysics: optics_seq, magnetics_dc, runner (the Optics/Electronics/EM solvers were removed on 2026-06-10)
 │   │   ├── services/     # touchstone, … (onshape_client / instrument_polling are dead code)
 │   │   └── schemas*.py   # Pydantic (CamelModel: DB snake_case ↔ API camelCase)
-│   ├── alembic/versions/ # migrations 0001..0109 (a linear chain, head 0109)
-│   └── data/             # kinds.json (★the authoritative source of per-kind physics parameters), thorlabs_cad_manifest.json
+│   ├── alembic/versions/ # migrations 0001..0123 (a linear chain, head 0123)
+│   └── data/             # kinds.json (★the authoritative source of per-kind physics parameters; devices moved to the DB in 0123), thorlabs_cad_manifest.json
 ├── assets/
 │   ├── catalog/          # component/asset/kind JSON definitions (the seed source; the DB is the runtime truth)
 │   └── files/            # stl, glb, cad_sources (CAD binaries never go into the DB)

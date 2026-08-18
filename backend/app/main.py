@@ -20,6 +20,7 @@ from app.routers import (
     components,
     connections,
     device_states,
+    devices,
     coils,
     em_problems,
     kinds,
@@ -65,6 +66,7 @@ app.mount("/assets", StaticFiles(directory=str(settings.asset_root)), name="asse
 app.include_router(assets.router, prefix="/api/assets", tags=["assets"])
 app.include_router(components.router, prefix="/api/components", tags=["components"])
 app.include_router(kinds.router, prefix="/api/kinds", tags=["kinds"])
+app.include_router(devices.router, prefix="/api/devices", tags=["devices"])
 app.include_router(v3_catalog.router, prefix="/api")
 app.include_router(v3_solver.router, prefix="/api")
 app.include_router(pop.router, prefix="/api")

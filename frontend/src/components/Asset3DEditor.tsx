@@ -59,8 +59,8 @@ import type { ElementKind } from "../types/digitalTwin";
 import { isPhysicsPlugin, resolvePortDomain } from "../kinds/_plugin";
 import { pluginForKind } from "../kinds/_plugins";
 import { SchemaParamEditor } from "./physics/SchemaParamEditor";
-import { DEVICES, deviceById, devicesForBehavioralKind } from "../devices/_registry";
-import type { DeviceAnchorTemplate } from "../devices/_device";
+import { useDevicesStore } from "../store/devicesStore";
+import type { DeviceAnchorTemplate } from "../api/client";
 import { isEditableValue } from "../utils/paramLeaves";
 import { cleanNumber } from "../utils/numberFormat";
 
@@ -2815,20 +2815,28 @@ function AssetEditForm({
 }) {
   const isBindingDev = mode === "binding-dev";
   const kinds = useKindsStore((s) => s.kinds);
+  // Devices moved from the compile-time `devices/_registry` barrel into the
+  // `devices` table (alembic 0123), so the picker and the authoring-grade
+  // check read fetched rows. `fetchAll` is a no-op once loaded.
+  const devices = useDevicesStore((s) => s.devices);
+  const fetchDevices = useDevicesStore((s) => s.fetchAll);
+  useEffect(() => {
+    void fetchDevices();
+  }, [fetchDevices]);
 
   // Anchor authoring grade (see gradeAnchor). The anchor's `id` IS the
   // device template's `role` (materialize_device_anchors writes role -> id),
   // and `name` disambiguates a role that repeats (AD9959 CH0..CH3,
   // rf_switch RF1/RF2).
   const deviceAnchorFor = useMemo(() => {
-    const device = deviceById(asset.deviceId);
+    const device = devices.find((d) => d.slug === asset.deviceId) ?? null;
     if (!device) return (_: DraftAnchor): DeviceAnchorTemplate | null => null;
     return (anchor: DraftAnchor): DeviceAnchorTemplate | null => {
       const byRole = device.anchors.filter((a) => a.role === anchor.id);
       if (byRole.length <= 1) return byRole[0] ?? null;
       return byRole.find((a) => (a.name ?? "") === anchor.name) ?? null;
     };
-  }, [asset.deviceId]);
+  }, [devices, asset.deviceId]);
 
   // face_id is a kind-level contract: kinds.face_template lists which
   // face ids are `required` + `optional` for this kind. Build a closed
@@ -3254,8 +3262,8 @@ function AssetEditForm({
           registry so an unclassified asset can be classified by picking a
           device. */}
       {(() => {
-        const matching = devicesForBehavioralKind(draft.kindId);
-        const list = matching.length ? matching : DEVICES;
+        const matching = devices.filter((d) => d.behavioralKind === draft.kindId);
+        const list = matching.length ? matching : devices;
         const current = asset.deviceId ?? "";
         const pickerDisabled = applyingDevice || inUse;
         return (
@@ -3277,7 +3285,7 @@ function AssetEditForm({
                 >
                   <option value="">— none (hand-authored) —</option>
                   {list.map((d) => (
-                    <option key={d.id} value={d.id}>
+                    <option key={d.slug} value={d.slug}>
                       {d.displayName}
                       {d.behavioralKind ? ` · ${d.behavioralKind}` : ""}
                     </option>
@@ -3745,7 +3753,7 @@ export function Asset3DEditor({
   // then preserves any coordinate fine-tuning the user does afterwards).
   const applyDevice = async (deviceId: string) => {
     if (!selected || !selectedKey || saving) return;
-    const device = deviceById(deviceId);
+    const device = useDevicesStore.getState().bySlug(deviceId);
     if (!device) return;
     const ok = window.confirm(
       `Seed anchors from device "${device.displayName}"?\n\n`

@@ -14,6 +14,13 @@
  * Idempotent — the file is overwritten every run. Add it to git so
  * fresh checkouts have the file before the seed runs (M5's
  * `make data-bootstrap` runs this as step 1).
+ *
+ * NOT exported here any more: the device registry and the per-componentType
+ * `component_anchor_contracts` derived from it. Devices became DB rows in
+ * alembic 0123 (`devices` table + `/api/devices`), so the backend reads them
+ * from Postgres — `app/services/device_seed.load_device_record` and
+ * `app/components/anchor_contracts` — and this script would have no source
+ * to build them from.
  */
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -85,29 +92,6 @@ interface ManifestRoleSpec {
   fast_axis?: boolean;
 }
 
-interface ManifestDeviceAnchor {
-  role: string;
-  name?: string;
-  position_mm_body_local?: { x: number; y: number; z: number };
-  direction_body_local?: { x: number; y: number; z: number };
-  axis_y_body_local?: { x: number; y: number; z: number };
-  connector_type?: string;
-  aperture_mm?: number;
-  aperture_shape?: string;
-  aperture_width_mm?: number;
-  aperture_height_mm?: number;
-}
-
-interface ManifestDevice {
-  id: string;
-  display_name: string;
-  behavioral_kind: string | null;
-  component_type: string;
-  mesh: string;
-  anchors: ManifestDeviceAnchor[];
-  default_params: Record<string, unknown>;
-}
-
 interface ManifestPassivePlugin {
   id: string;
   display_name: string;
@@ -115,13 +99,6 @@ interface ManifestPassivePlugin {
   asset_category: string;
   catalog_group: string | null;
   asset_name_pattern: string | null;
-}
-
-interface ManifestAnchorTemplate {
-  id: string;
-  name?: string;
-  position_mm_body_local?: { x: number; y: number; z: number };
-  direction_body_local?: { x: number; y: number; z: number };
 }
 
 interface Manifest {
@@ -133,17 +110,8 @@ interface Manifest {
   /** ElementKind values declared by physics plugins (Pydantic Literal
    *  uses this to validate incoming `kind` strings). */
   element_kinds: string[];
-  /** Per-componentType anchor templates (Stage H, single source of
-   *  truth). Backend reads via ``kinds_manifest.component_anchor_contracts()``
-   *  to drive PHY-Editor "lock anchor identity"; was previously
-   *  duplicated in ``anchor_contracts.py`` + ``componentAnchorContracts.ts``. */
-  component_anchor_contracts: Record<string, ManifestAnchorTemplate[]>;
   physics_plugins: ManifestPhysicsPlugin[];
   passive_plugins: ManifestPassivePlugin[];
-  /** Device registry (RF_ARCHITECTURE_PLAN §2.2). Concrete instruments;
-   *  each pins a `behavioral_kind` and supplies the per-componentType anchor
-   *  layout that used to live in the plugin's `componentAnchorContracts`. */
-  devices: ManifestDevice[];
 }
 
 /** Build a per-role manifest spec from the plugin's authored RoleSpec.
@@ -159,63 +127,17 @@ function roleSpecToManifest(spec: any): ManifestRoleSpec {
   };
 }
 
-function deviceAnchorToManifest(a: any): ManifestDeviceAnchor {
-  return {
-    role: a.role,
-    ...(a.name !== undefined ? { name: a.name } : {}),
-    ...(a.positionMmBodyLocal !== undefined
-      ? { position_mm_body_local: a.positionMmBodyLocal }
-      : {}),
-    ...(a.directionBodyLocal !== undefined
-      ? { direction_body_local: a.directionBodyLocal }
-      : {}),
-    ...(a.axisYBodyLocal !== undefined
-      ? { axis_y_body_local: a.axisYBodyLocal }
-      : {}),
-    ...(a.connectorType !== undefined ? { connector_type: a.connectorType } : {}),
-    ...(a.apertureMm !== undefined ? { aperture_mm: a.apertureMm } : {}),
-    ...(a.apertureShape !== undefined ? { aperture_shape: a.apertureShape } : {}),
-    ...(a.apertureWidthMm !== undefined
-      ? { aperture_width_mm: a.apertureWidthMm }
-      : {}),
-    ...(a.apertureHeightMm !== undefined
-      ? { aperture_height_mm: a.apertureHeightMm }
-      : {}),
-  };
-}
-
 function build(
   plugins: readonly unknown[],
   isPhysics: (plugin: unknown) => boolean,
-  devices: readonly unknown[],
 ): Manifest {
   const physics: ManifestPhysicsPlugin[] = [];
   const passive: ManifestPassivePlugin[] = [];
   const componentTypeToKind: Record<string, string> = {};
   const elementKinds: string[] = [];
-  const componentAnchorContracts: Record<string, ManifestAnchorTemplate[]> = {};
-  const deviceRecords: ManifestDevice[] = [];
 
   for (const pUnknown of plugins) {
     const p = pUnknown as any;
-    // Pull componentAnchorContracts off every plugin (physics + passive).
-    // The map's key (componentType) is unique across the registry, so we
-    // can safely flatten into one top-level dict — Pydantic / Python
-    // consumers don't need to know which plugin owns which entry.
-    if (p.componentAnchorContracts) {
-      for (const [ct, templates] of Object.entries(p.componentAnchorContracts)) {
-        componentAnchorContracts[ct] = (templates as any[]).map((t) => ({
-          id: t.id,
-          ...(t.name !== undefined ? { name: t.name } : {}),
-          ...(t.positionMmBodyLocal !== undefined
-            ? { position_mm_body_local: t.positionMmBodyLocal }
-            : {}),
-          ...(t.directionBodyLocal !== undefined
-            ? { direction_body_local: t.directionBodyLocal }
-            : {}),
-        }));
-      }
-    }
     if (isPhysics(pUnknown)) {
       const ek = p.physics.elementKind;
       elementKinds.push(ek);
@@ -270,77 +192,30 @@ function build(
     }
   }
 
-  // Device registry: emit each device into the `devices[]` block (keyed by the
-  // unique device id — that's what the seeder reads via `device_by_id`).
-  //
-  // Additionally materialise the anchor layout into `component_anchor_contracts`
-  // ONLY for devices whose `componentType` is a DISTINCT catalog part-form
-  // (componentType !== behavioralKind, e.g. `dds_ad9959_pcb` vs kind
-  // `rf_source`). That map is keyed by componentType and drives the PHY Editor's
-  // "lock anchor identity" feature; it MUST NOT be keyed off the generic kind
-  // componentType (e.g. `mirror`, `rf_amplifier`) because many devices share one
-  // kind and would collide/overwrite. Generic-form devices live only in
-  // `devices[]`; their anchors are still seedable, just not anchor-locked.
-  for (const dUnknown of devices) {
-    const d = dUnknown as any;
-    deviceRecords.push({
-      id: d.id,
-      display_name: d.displayName,
-      behavioral_kind: d.behavioralKind ?? null,
-      component_type: d.componentType,
-      mesh: d.mesh,
-      anchors: (d.anchors as any[]).map(deviceAnchorToManifest),
-      default_params: { ...(d.defaultParams ?? {}) },
-    });
-    // An anchorless device (the render-only mechanical fixtures, whose
-    // behavioralKind is null so componentType can never equal it) would
-    // otherwise write an empty contract over the key — inert today, but it
-    // would silently clobber a real template later. Skip those.
-    if (d.componentType !== d.behavioralKind && (d.anchors as any[]).length) {
-      componentAnchorContracts[d.componentType] = (d.anchors as any[]).map((a) => ({
-        id: a.role,
-        ...(a.name !== undefined ? { name: a.name } : {}),
-        ...(a.positionMmBodyLocal !== undefined
-          ? { position_mm_body_local: a.positionMmBodyLocal }
-          : {}),
-        ...(a.directionBodyLocal !== undefined
-          ? { direction_body_local: a.directionBodyLocal }
-          : {}),
-      }));
-    }
-  }
-
   return {
     schema_version: 1,
     generated_at: new Date().toISOString(),
     component_type_to_kind: componentTypeToKind,
     element_kinds: elementKinds,
-    component_anchor_contracts: componentAnchorContracts,
     physics_plugins: physics,
     passive_plugins: passive,
-    devices: deviceRecords,
   };
 }
 
 async function main(): Promise<void> {
-  const [{ PLUGINS }, { isPhysicsPlugin }, { DEVICES }] = await Promise.all([
+  const [{ PLUGINS }, { isPhysicsPlugin }] = await Promise.all([
     import("../frontend/src/kinds/_plugins"),
     import("../frontend/src/kinds/_plugin"),
-    import("../frontend/src/devices/_registry"),
   ]);
 
-  const manifest = build(
-    PLUGINS,
-    isPhysicsPlugin as (plugin: unknown) => boolean,
-    DEVICES,
-  );
+  const manifest = build(PLUGINS, isPhysicsPlugin as (plugin: unknown) => boolean);
   mkdirSync(dirname(OUT_PATH), { recursive: true });
   writeFileSync(OUT_PATH, JSON.stringify(manifest, null, 2) + "\n", "utf-8");
 
   const physicsCount = manifest.physics_plugins.length;
   const passiveCount = manifest.passive_plugins.length;
   console.log(
-  `wrote ${OUT_PATH}\n  ${physicsCount} physics + ${passiveCount} passive plugins\n  ${manifest.devices.length} devices\n  ${Object.keys(manifest.component_type_to_kind).length} componentType → kind entries`,
+  `wrote ${OUT_PATH}\n  ${physicsCount} physics + ${passiveCount} passive plugins\n  ${Object.keys(manifest.component_type_to_kind).length} componentType → kind entries`,
   );
 }
 

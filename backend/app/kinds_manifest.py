@@ -89,34 +89,6 @@ def physics_plugins() -> list[dict[str, Any]]:
     return list(load_manifest()["physics_plugins"])
 
 
-def component_anchor_contracts() -> dict[str, list[dict[str, Any]]]:
-    """Per-componentType anchor templates (Stage H, single source of
-    truth in the frontend plugin definitions).
-
-    Shape mirrors the JSON manifest field
-    ``component_anchor_contracts`` exactly — keys are componentType
-    strings, values are lists of anchor template dicts::
-
-        {
-          "dds_ad9959_pcb": [
-            {
-              "id": "rf_out",
-              "name": "CH0",
-              "position_mm_body_local": {"x": ..., "y": ..., "z": ...},
-              "direction_body_local":   {"x": ..., "y": ..., "z": ...}
-            },
-            ...
-          ]
-        }
-
-    Components with no template in the registry are simply absent.
-    Use :func:`get_anchor_contract` for the per-component-type lookup
-    that mirrors the legacy ``COMPONENT_ANCHOR_CONTRACTS.get(...)`` API.
-    """
-    raw = load_manifest().get("component_anchor_contracts") or {}
-    return {ct: list(templates) for ct, templates in raw.items()}
-
-
 def intrinsic_keys_by_kind() -> dict[str, list[str]]:
     """`elementKind → list of kindParam keys tagged as intrinsic`. Phase 2
     plugin metadata. Plugins that haven't been migrated yet (the export
@@ -152,23 +124,6 @@ def roles_by_kind() -> dict[str, dict[str, Any] | None]:
     for p in load_manifest()["physics_plugins"]:
         out[p["physics"]["element_kind"]] = p.get("physics", {}).get("roles")
     return out
-
-
-def devices() -> list[dict[str, Any]]:
-    """Device registry records (RF_ARCHITECTURE_PLAN §2.2) — concrete
-    instruments, each pinning a `behavioral_kind` and supplying the
-    per-componentType anchor layout. Empty list if the manifest predates the
-    device block."""
-    return list(load_manifest().get("devices") or [])
-
-
-def device_by_id(device_id: str) -> dict[str, Any] | None:
-    """One device record by its `id` (the value stored in
-    ``Asset3D.device_id``), or ``None`` if unknown."""
-    for d in devices():
-        if d.get("id") == device_id:
-            return d
-    return None
 
 
 def port_domains_by_kind() -> dict[str, dict[str, str]]:

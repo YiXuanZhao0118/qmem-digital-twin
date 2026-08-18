@@ -18,6 +18,7 @@ import { Edit3, Lock, Save, Trash2, Unlock, X } from "lucide-react";
 import {
   createKindApi,
   deleteKindApi,
+  listKindOpSetsApi,
   listKindsApi,
   updateKindApi,
   type KindCreatePayload,
@@ -48,6 +49,7 @@ type EditDraft = {
   anchorTemplate: string;
   needsAperture: boolean;
   wavelengthRangeNm: string;
+  frequencyRangeMhz: string;
   description: string;
 };
 
@@ -69,16 +71,24 @@ function rowToDraft(row: KindRow): EditDraft {
     wavelengthRangeNm: row.wavelengthRangeNm
       ? row.wavelengthRangeNm.join(", ")
       : "",
+    frequencyRangeMhz: row.frequencyRangeMhz
+      ? row.frequencyRangeMhz.join(", ")
+      : "",
     description: row.description ?? "",
   };
 }
 
-function parseWavelengthRange(s: string): number[] | null {
+/** Parse a "min, max" range field. Shared by wavelengthRangeNm and
+ *  frequencyRangeMhz - same shape, same validation, different label. */
+function parseRange(s: string, fieldLabel: string, example: string): number[] | null {
   const t = s.trim();
   if (!t) return null;
   const parts = t.split(",").map((p) => Number(p.trim()));
   if (parts.length !== 2 || parts.some((n) => !Number.isFinite(n))) {
-    throw new Error("wavelengthRangeNm must be two comma-separated numbers, e.g. \"350, 700\"");
+    throw new Error(`${fieldLabel} must be two comma-separated numbers, e.g. "${example}"`);
+  }
+  if (parts[0] > parts[1]) {
+    throw new Error(`${fieldLabel}: min must not exceed max`);
   }
   return parts;
 }
@@ -120,12 +130,14 @@ export function KindsEditor({
     anchorTemplate: {},
     needsAperture: false,
     wavelengthRangeNm: null,
+    frequencyRangeMhz: null,
     description: "",
   });
   const [createJsonDrafts, setCreateJsonDrafts] = useState({
     defaultParams: "{}",
     anchorTemplate: "{}",
     wavelengthRangeNm: "",
+    frequencyRangeMhz: "",
   });
   const [createStatus, setCreateStatus] = useState<"idle" | "saving" | "error">("idle");
   const [createError, setCreateError] = useState<string | null>(null);
@@ -157,15 +169,30 @@ export function KindsEditor({
     void reload();
   }, [reload]);
 
-  // op_set_name dropdown options derived from existing rows. Captures
-  // everything currently backfilled from the manifest plus anything the
-  // user has created. Doesn't include code-side op-set names not yet
-  // surfaced as a kind — that's fine for v1 since the typical "create
-  // variant" workflow picks an existing kind to clone behavior from.
+  // op_set_name dropdown options. `GET /api/kinds/op-sets` returns the
+  // exact set `POST /api/kinds` validates against, so every code-side op
+  // set is offered — including the ones with no Kind row yet, which the
+  // old "derive from the existing rows" version silently hid (the user
+  // had to guess the name and only found out from the 400). Union with
+  // the row values so the list still renders if the fetch fails.
+  const [codeOpSets, setCodeOpSets] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void listKindOpSetsApi()
+      .then((names) => {
+        if (!cancelled) setCodeOpSets(names);
+      })
+      .catch(() => {
+        // Non-fatal: fall back to the names already on screen.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const opSetOptions = useMemo(() => {
-    const set = new Set<string>(rows.map((r) => r.opSetName));
+    const set = new Set<string>([...codeOpSets, ...rows.map((r) => r.opSetName)]);
     return [...set].sort();
-  }, [rows]);
+  }, [codeOpSets, rows]);
 
   const startEdit = (row: KindRow) => {
     setEditingId(row.id);
@@ -196,7 +223,8 @@ export function KindsEditor({
         defaultParams: parseJsonObject(editDraft.defaultParams, "defaultParams"),
         anchorTemplate: parseJsonObject(editDraft.anchorTemplate, "anchorTemplate"),
         needsAperture: editDraft.needsAperture,
-        wavelengthRangeNm: parseWavelengthRange(editDraft.wavelengthRangeNm),
+        wavelengthRangeNm: parseRange(editDraft.wavelengthRangeNm, "wavelengthRangeNm", "350, 700"),
+        frequencyRangeMhz: parseRange(editDraft.frequencyRangeMhz, "frequencyRangeMhz", "10, 6000"),
         description: editDraft.description || null,
       };
     } catch (e) {
@@ -223,7 +251,8 @@ export function KindsEditor({
         ...createDraft,
         defaultParams: parseJsonObject(createJsonDrafts.defaultParams, "defaultParams"),
         anchorTemplate: parseJsonObject(createJsonDrafts.anchorTemplate, "anchorTemplate"),
-        wavelengthRangeNm: parseWavelengthRange(createJsonDrafts.wavelengthRangeNm),
+        wavelengthRangeNm: parseRange(createJsonDrafts.wavelengthRangeNm, "wavelengthRangeNm", "350, 700"),
+        frequencyRangeMhz: parseRange(createJsonDrafts.frequencyRangeMhz, "frequencyRangeMhz", "10, 6000"),
         description: createDraft.description || null,
       };
       if (!payload.name) throw new Error("name is required");
@@ -250,9 +279,15 @@ export function KindsEditor({
         anchorTemplate: {},
         needsAperture: false,
         wavelengthRangeNm: null,
+        frequencyRangeMhz: null,
         description: "",
       });
-      setCreateJsonDrafts({ defaultParams: "{}", anchorTemplate: "{}", wavelengthRangeNm: "" });
+      setCreateJsonDrafts({
+        defaultParams: "{}",
+        anchorTemplate: "{}",
+        wavelengthRangeNm: "",
+        frequencyRangeMhz: "",
+      });
       setCreateStatus("idle");
     } catch (e) {
       setCreateStatus("error");
@@ -594,6 +629,14 @@ export function KindsEditor({
                     style={INPUT}
                   />
                 </Field>
+                <Field label="frequencyRangeMhz">
+                  <input
+                    value={editDraft.frequencyRangeMhz}
+                    onChange={(e) => setEditDraft({ ...editDraft, frequencyRangeMhz: e.target.value })}
+                    placeholder="10, 6000"
+                    style={INPUT}
+                  />
+                </Field>
               </FieldGrid>
 
               <div style={SECTION_LABEL}>domains</div>
@@ -664,6 +707,12 @@ export function KindsEditor({
                     <tr>
                       <td style={{ ...TD, color: "#6b7280" }}>lambda range nm</td>
                       <td style={TD}>{selectedRow.wavelengthRangeNm[0]} – {selectedRow.wavelengthRangeNm[1]}</td>
+                    </tr>
+                  )}
+                  {selectedRow.frequencyRangeMhz && (
+                    <tr>
+                      <td style={{ ...TD, color: "#6b7280" }}>freq range MHz</td>
+                      <td style={TD}>{selectedRow.frequencyRangeMhz[0]} – {selectedRow.frequencyRangeMhz[1]}</td>
                     </tr>
                   )}
                 </tbody>
@@ -738,6 +787,14 @@ export function KindsEditor({
                     value={createJsonDrafts.wavelengthRangeNm}
                     onChange={(e) => setCreateJsonDrafts({ ...createJsonDrafts, wavelengthRangeNm: e.target.value })}
                     placeholder="e.g. 350, 700"
+                    style={INPUT}
+                  />
+                </Field>
+                <Field label="frequencyRangeMhz (optional)">
+                  <input
+                    value={createJsonDrafts.frequencyRangeMhz}
+                    onChange={(e) => setCreateJsonDrafts({ ...createJsonDrafts, frequencyRangeMhz: e.target.value })}
+                    placeholder="e.g. 10, 6000"
                     style={INPUT}
                   />
                 </Field>

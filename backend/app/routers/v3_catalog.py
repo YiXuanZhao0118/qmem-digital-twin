@@ -24,9 +24,11 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
-from app.kinds_manifest import device_by_id
 from app.lock_guard import assert_delete_allowed, assert_update_allowed
-from app.services.device_seed import materialize_device_anchors
+from app.services.device_seed import (
+    load_device_record,
+    materialize_device_anchors,
+)
 from app.models import (
     Asset3D, AssetLod, Component, ComponentBinding, ObjectBinding, SceneObject,
 )
@@ -562,7 +564,11 @@ async def update_asset3d_by_catalog_id(
         # behavioralKind. Explicit anchors / kind_id in the SAME payload win
         # (the editor sends them when the user has fine-tuned coordinates).
         row.device_id = payload.device_id
-        device = device_by_id(payload.device_id) if payload.device_id else None
+        device = (
+            await load_device_record(session, payload.device_id)
+            if payload.device_id
+            else None
+        )
         if device is not None:
             behavioral = device.get("behavioral_kind")
             if behavioral and "kind_id" not in fields:

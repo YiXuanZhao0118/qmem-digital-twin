@@ -4,7 +4,7 @@
  *
  * Layout: left rail + right pane. The rail shows the PHY domain filter
  * (Optical / RF / Mechanical) on top, then the catalog sections
- * (KIND / BUILD / ASSET3D / COMPONENT). Catalog is the primary axis of
+ * (BUILD / KIND / DEVICE / ASSET3D / COMPONENT). Catalog is the primary axis of
  * the data model; domain is a cross-cutting *filter* — a single part can
  * belong to more than one domain (an AOM is optical + RF), so domain
  * can't be the tree root without duplicating those parts. All editors mount in
@@ -17,6 +17,7 @@ import { useEffect } from "react";
 import { useSceneStore, type PhyEditorView } from "../store/sceneStore";
 import { Asset3DEditor } from "./Asset3DEditor";
 import { ComponentsEditor } from "./ComponentsEditor";
+import { DevicesEditor } from "./DevicesEditor";
 import { GeometryBuilder } from "./GeometryBuilder";
 import { KindsEditor } from "./KindsEditor";
 import { HelpButton } from "./help/HelpButton";
@@ -25,8 +26,9 @@ type Section = PhyEditorView["section"];
 type DomainFilter = PhyEditorView["domain"];
 
 const SECTIONS: { key: Section; label: string; hint: string }[] = [
-  { key: "kinds", label: "KIND", hint: "contract registry" },
   { key: "builder", label: "BUILD", hint: "import CAD → coloured GLB" },
+  { key: "kinds", label: "KIND", hint: "contract registry" },
+  { key: "device", label: "DEVICE", hint: "instrument + anchor layout" },
   { key: "asset3d", label: "ASSET3D", hint: "faces + transitions" },
   { key: "components", label: "COMPONENT", hint: "compose Asset3D into a part" },
 ];
@@ -40,6 +42,7 @@ const DOMAIN_FILTERS: { key: DomainFilter; label: string }[] = [
 
 const SECTION_LABEL: Record<Section, string> = {
   kinds: "KIND",
+  device: "DEVICE",
   asset3d: "ASSET3D",
   components: "COMPONENT",
   builder: "BUILD",
@@ -171,6 +174,7 @@ export function PhyEditor() {
 
         <div className="phy-editor-pane">
           {activeSection === "kinds" && <KindsEditor domain={activeDomain} />}
+          {activeSection === "device" && <DevicesEditor domain={activeDomain} />}
           {activeSection === "asset3d" && (
             <Asset3DEditor domain={activeDomain} mode="binding-dev" />
           )}

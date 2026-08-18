@@ -12,6 +12,8 @@
 //   - store/sceneStore.ts              (raw store / API I/O)
 //   - components/Asset3DEditor.tsx     (raw asset editor ??write side)
 //   - components/ComponentsEditor.tsx  (same)
+//   - components/DevicesEditor.tsx     (device anchor TEMPLATES, not asset
+//                                       anchors ??the authoring write side)
 //   - optical/__tests__/parity/runner.ts (parity fixture loader)
 //   - optical/ray-tracer-v3.ts         (V3 in-browser tracer)
 //   - optical/kinds/**/physics.ts      (per-kind physics)
@@ -41,6 +43,7 @@ const ALLOWED = new Set([
   "store/sceneStore.ts",
   "components/Asset3DEditor.tsx",
   "components/ComponentsEditor.tsx",
+  "components/DevicesEditor.tsx",
   "optical/__tests__/parity/runner.ts",
   "optical/ray-tracer-v3.ts",
   "optical/registry.ts",

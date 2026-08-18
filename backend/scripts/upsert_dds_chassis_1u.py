@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.components.anchor_contracts import COMPONENT_ANCHOR_CONTRACTS  # noqa: E402
+from app.components.anchor_contracts import get_anchor_contract  # noqa: E402
 from app.db import AsyncSessionLocal  # noqa: E402
 from app.models import Asset3D, Component  # noqa: E402
 
@@ -30,8 +30,9 @@ ASSETS: list[dict[str, object]] = [
         # has been promoted from primitive box → real STL mesh.
         #
         # Anchors are NOT inlined here — they are sourced from
-        # `app.components.anchor_contracts.COMPONENT_ANCHOR_CONTRACTS["dds_ad9959_pcb"]`
-        # which is the single source of truth shared with the frontend.
+        # `app.components.anchor_contracts.get_anchor_contract(session,
+        # "dds_ad9959_pcb")`, derived from the `devices` table (alembic
+        # 0123) — the single source of truth shared with the frontend.
         # `upsert_asset` looks up the contract via the component_type that
         # references this asset and merges contract identity (id+name) with
         # any user-edited position/direction already in DB.
@@ -319,10 +320,11 @@ async def upsert_asset(session, data: dict[str, object]) -> Asset3D:
     contract_key = data.pop("_anchor_contract_key", None)
     asset = await session.scalar(select(Asset3D).where(Asset3D.name == data["name"]))
     if contract_key is not None:
-        contract = COMPONENT_ANCHOR_CONTRACTS.get(str(contract_key))
+        contract = await get_anchor_contract(session, str(contract_key))
         if contract is None:
             raise KeyError(
-                f"_anchor_contract_key={contract_key!r} not in COMPONENT_ANCHOR_CONTRACTS"
+                f"_anchor_contract_key={contract_key!r} has no device-derived "
+                "anchor contract"
             )
         existing_anchors = list(asset.anchors) if asset is not None else []
         data["anchors"] = _merge_anchors_with_contract(existing_anchors, list(contract))

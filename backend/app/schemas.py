@@ -3067,6 +3067,89 @@ class AgentMessageCreate(CamelModel):
 # CRUD schemas for the new ``kinds`` table. See docs/asset-physics-model.md §6.
 
 
+class DeviceAnchorTemplate(CamelModel):
+    """One named anchor a device places against a behavioural-kind role.
+
+    Mirrors the old TypeScript ``DeviceAnchorTemplate``. Stored on
+    ``devices.anchors`` in snake_case (the shape
+    ``services.device_seed.materialize_device_anchors`` reads); the
+    CamelModel aliases expose it as camelCase over the wire.
+
+    Position / direction are optional on purpose: when omitted the PHY
+    Editor seeds the anchor at the body origin and the user drags it onto
+    the real mesh feature.
+    """
+
+    # Behavioural-kind role this anchor fills (rf_out / rf_in / ttl_in / ...).
+    role: str
+    # Disambiguator when one role repeats (CH0..CH3, RF1/RF2). Becomes the
+    # anchor's name; the RF BFS keys multiport adjacency by it.
+    name: str | None = None
+    position_mm_body_local: Vec3Mm | None = None
+    # Propagation / face normal -> seeds the anchor's body-local axisX.
+    direction_body_local: Vec3Mm | None = None
+    # Explicit transverse reference axis. Only needed for polarisation-
+    # sensitive optics (waveplate / PBS / Glan / Faraday) where an
+    # arbitrary axisY would be wrong.
+    axis_y_body_local: Vec3Mm | None = None
+    connector_type: str | None = None
+    # ge=0, not gt=0: the coax / fibre connector devices authored
+    # `apertureMm: 0` on their passthrough connect_in / connect_out
+    # anchors, meaning "this face has no hit aperture of its own".
+    aperture_mm: float | None = Field(default=None, ge=0)
+    aperture_shape: Literal["rectangle", "ellipse", "circle"] | None = None
+    aperture_width_mm: float | None = Field(default=None, ge=0)
+    aperture_height_mm: float | None = Field(default=None, ge=0)
+
+
+class DeviceBase(CamelModel):
+    """A device: one concrete instrument (alembic 0123).
+
+    ``slug`` is the value ``Asset3D.device_id`` stores, so it is the
+    identity that matters — the uuid is bookkeeping.
+    """
+
+    slug: str = Field(min_length=1, pattern=r"^[a-z0-9_]+$")
+    display_name: str = Field(min_length=1)
+    # ElementKind this instrument dispatches as; None = render-only.
+    behavioral_kind: str | None = None
+    component_type: str = Field(min_length=1)
+    mesh: str = ""
+    anchors: list[DeviceAnchorTemplate] = []
+    default_params: JsonDict = {}
+    locked: bool = False
+
+
+class DeviceCreate(DeviceBase):
+    pass
+
+
+class DeviceUpdate(CamelModel):
+    """All fields optional; only the provided ones get patched.
+
+    ``slug`` is intentionally omitted: it is what ``assets_3d.device_id``
+    points at, so renaming it would orphan every asset seeded from the
+    device. Delete + recreate if a slug is genuinely wrong.
+    """
+
+    display_name: str | None = Field(default=None, min_length=1)
+    behavioral_kind: str | None = None
+    component_type: str | None = Field(default=None, min_length=1)
+    mesh: str | None = None
+    anchors: list[DeviceAnchorTemplate] | None = None
+    default_params: JsonDict | None = None
+    locked: bool | None = None
+
+
+class DeviceOut(DeviceBase):
+    id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+    # Number of Asset3D rows pointing at this slug. Drives the editor's
+    # "in use by N assets" hint and explains a 409 on delete.
+    usage_count: int = 0
+
+
 class KindBase(CamelModel):
     name: str
     display_name: str

@@ -206,7 +206,7 @@ Meaning: when the target object's pose moves less than 0.001 mm / 0.001° (= **1
 
    The problem was: the AD9959's 4 `rf_out`s and the AOM's 3 anchors have **hand-measured values on the asset side and nominal placeholders on the template side**, while the badge's semantics assume the template is the truth — an assumption that does not hold for these rows, so the *more* accurate data was labelled `◐ overridden`.
 
-   What was backfilled (in `frontend/src/devices/`, syncing **template ← asset**; not a single asset row was touched):
+   What was backfilled (in `frontend/src/devices/`, syncing **template ← asset**; not a single asset row was touched). *Those files are gone since alembic 0123 — the device registry is the `devices` table now, edited in the PHY Editor's DEVICE section; the values below were carried into the seed:*
 
    | device | Field | Old template (nominal) | New (measured, from the locked asset) |
    |---|---|---|---|

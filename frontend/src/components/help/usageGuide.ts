@@ -29,7 +29,7 @@ propagates and gets acted on — live, in the browser.
 | Workspace | How to get there | What it's for |
 |---|---|---|
 | **Lab** (main scene) | the default screen | Place hardware, wire optical / RF links, trace beams, schedule timing |
-| **PHY Editor** | top bar → **Lab** tab → **PHY Editor** | Edit the catalog: KIND / ASSET3D / COMPONENT definitions |
+| **PHY Editor** | top bar → **Lab** tab → **PHY Editor** | Edit the catalog: KIND / DEVICE / ASSET3D / COMPONENT definitions |
 | **BUILD** | PHY Editor → **BUILD** in the left rail | Convert CAD (STEP) into a coloured GLB in-browser, producing a new Asset3D |
 
 ## The top bar
@@ -171,6 +171,7 @@ page; "← Back to scene" at the top left returns you. The left rail has two axe
 |---|---|
 | **KIND** | Contract registry — the parameters and anchor template of each physics kind |
 | **BUILD** | Import CAD (STEP) → coloured GLB → produce an Asset3D |
+| **DEVICE** | The instrument registry: one concrete part (mesh + named-anchor layout + default params) pinned to one behavioural kind. Picking a device in ASSET3D seeds that asset's anchors and writes its kind through |
 | **ASSET3D** | Geometry + physics ground truth: mesh, anchor poses, default params, tunable params |
 | **COMPONENT** | Compose one or more Asset3D into a part, with its binding tree |
 
@@ -226,7 +227,7 @@ const SHORTCUTS = `# Keyboard shortcuts
 
 | Key | Action |
 |---|---|
-| **Ctrl/Cmd + Z** | Undo |
+| **Ctrl/Cmd + Z** | Undo (also the ↶ button in the top bar's Edit group, whose tooltip names the step it will reverse) |
 | **Ctrl/Cmd + Shift + Z** or **Ctrl/Cmd + Y** | Redo |
 | **Tab** (while dragging) | Cycle through snap candidates |
 

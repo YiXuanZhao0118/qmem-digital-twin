@@ -234,6 +234,112 @@ export async function fetchPopLensFocalApi(
 
 export type KindDomain = "optical" | "rf" | "mechanical";
 
+// ─── Devices (alembic 0123) ───────────────────────────────────────────────
+//
+// A device is one concrete instrument: a mesh + a named-anchor layout + its
+// default params, pinned to ONE behavioural kind. Devices used to be
+// TypeScript files under `src/devices/`; they are DB rows now, so the PHY
+// Editor can create and correct them instead of only picking one.
+//
+// IRON RULE (unchanged from the TS registry): the dependency runs
+// `device → behavioural kind`, never the reverse.
+
+export type DeviceVec3 = { x: number; y: number; z: number };
+
+/** One named anchor a device places against a behavioural-kind role.
+ *  `positionMmBodyLocal` / `directionBodyLocal` are body-local Z-up mm and
+ *  are optional — omitted means the PHY Editor seeds the anchor at the body
+ *  origin and the user drags it onto the real mesh feature. */
+export type DeviceAnchorTemplate = {
+  /** Behavioural-kind role this anchor fills (rf_out / rf_in / ttl_in / …). */
+  role: string;
+  /** Disambiguator when one role repeats (CH0..CH3, RF1/RF2). Becomes the
+   *  anchor's name; the RF BFS keys multiport adjacency by it. */
+  name?: string | null;
+  positionMmBodyLocal?: DeviceVec3 | null;
+  /** Propagation / face normal → seeds the anchor's body-local axisX. */
+  directionBodyLocal?: DeviceVec3 | null;
+  /** Explicit transverse reference axis. Only needed for polarisation-
+   *  sensitive optics (waveplate / PBS / Glan / Faraday). */
+  axisYBodyLocal?: DeviceVec3 | null;
+  connectorType?: string | null;
+  apertureMm?: number | null;
+  apertureShape?: "rectangle" | "ellipse" | "circle" | null;
+  apertureWidthMm?: number | null;
+  apertureHeightMm?: number | null;
+};
+
+export type DeviceRow = {
+  id: string;
+  /** The value `Asset3D.deviceId` stores. This, not the uuid, is identity. */
+  slug: string;
+  displayName: string;
+  /** ElementKind this instrument dispatches as; null = render-only. */
+  behavioralKind: string | null;
+  componentType: string;
+  mesh: string;
+  anchors: DeviceAnchorTemplate[];
+  defaultParams: Record<string, unknown>;
+  locked: boolean;
+  /** Asset3D rows pointing at this slug. Non-zero blocks delete with 409. */
+  usageCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DeviceCreatePayload = {
+  slug: string;
+  displayName: string;
+  behavioralKind: string | null;
+  componentType: string;
+  mesh?: string;
+  anchors?: DeviceAnchorTemplate[];
+  defaultParams?: Record<string, unknown>;
+};
+
+/** `slug` is deliberately absent: it is what `assets_3d.device_id` points
+ *  at, so renaming it would orphan every asset seeded from the device. */
+export type DevicePatchPayload = {
+  displayName?: string;
+  behavioralKind?: string | null;
+  componentType?: string;
+  mesh?: string;
+  anchors?: DeviceAnchorTemplate[];
+  defaultParams?: Record<string, unknown>;
+  locked?: boolean;
+};
+
+export async function listDevicesApi(behavioralKind?: string): Promise<DeviceRow[]> {
+  const response = await client.get<DeviceRow[]>("/api/devices", {
+    params: behavioralKind ? { behavioral_kind: behavioralKind } : undefined,
+  });
+  return response.data;
+}
+
+/** Every ElementKind a device may pin itself to — the same set the API
+ *  validates `behavioralKind` against. */
+export async function listDeviceBehavioralKindsApi(): Promise<string[]> {
+  const response = await client.get<string[]>("/api/devices/behavioral-kinds");
+  return response.data;
+}
+
+export async function createDeviceApi(payload: DeviceCreatePayload): Promise<DeviceRow> {
+  const response = await client.post<DeviceRow>("/api/devices", payload);
+  return response.data;
+}
+
+export async function updateDeviceApi(
+  deviceId: string,
+  patch: DevicePatchPayload,
+): Promise<DeviceRow> {
+  const response = await client.patch<DeviceRow>(`/api/devices/${deviceId}`, patch);
+  return response.data;
+}
+
+export async function deleteDeviceApi(deviceId: string): Promise<void> {
+  await client.delete(`/api/devices/${deviceId}`);
+}
+
 export type KindRow = {
   id: string;
   name: string;
@@ -244,6 +350,10 @@ export type KindRow = {
   anchorTemplate: Record<string, unknown>;
   needsAperture: boolean;
   wavelengthRangeNm: number[] | null;
+  /** RF counterpart of wavelengthRangeNm — the [min, max] MHz band the
+   *  kind is specified for. Editable for the same reason: an RF kind's
+   *  usable band is metadata, not tracer behaviour. */
+  frequencyRangeMhz: number[] | null;
   description: string | null;
   /** Human-confirmed "frozen" flag (alembic 0112). True = read-only in the
    *  PHY Editor; the API rejects edits until unlocked. */
@@ -261,6 +371,7 @@ export type KindCreatePayload = {
   anchorTemplate?: Record<string, unknown>;
   needsAperture?: boolean;
   wavelengthRangeNm?: number[] | null;
+  frequencyRangeMhz?: number[] | null;
   description?: string | null;
 };
 
@@ -271,6 +382,7 @@ export type KindPatchPayload = {
   anchorTemplate?: Record<string, unknown>;
   needsAperture?: boolean;
   wavelengthRangeNm?: number[] | null;
+  frequencyRangeMhz?: number[] | null;
   description?: string | null;
   locked?: boolean;
 };
@@ -278,6 +390,15 @@ export type KindPatchPayload = {
 export async function listKindsApi(domain?: KindDomain): Promise<KindRow[]> {
   const params = domain ? { domain } : undefined;
   const response = await client.get<KindRow[]>("/api/kinds", { params });
+  return response.data;
+}
+
+/** Every op-set name a Kind row may legally reference — the same set
+ *  `POST /api/kinds` validates against. Includes code-side op sets that
+ *  have no Kind row yet, which is exactly what deriving the list from
+ *  the existing rows used to miss. */
+export async function listKindOpSetsApi(): Promise<string[]> {
+  const response = await client.get<string[]>("/api/kinds/op-sets");
   return response.data;
 }
 

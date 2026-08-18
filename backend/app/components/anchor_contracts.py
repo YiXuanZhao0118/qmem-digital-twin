@@ -1,80 +1,84 @@
 """Per-component-type anchor contracts — backend accessor.
 
-Stage H consolidated the contract data into the frontend kinds plugin
-definitions (``frontend/src/kinds/<id>/index.ts``'s
-``componentAnchorContracts`` field). The frontend ``export:kinds`` step
-emits the merged contract dictionary into
-``backend/data/kinds.json::component_anchor_contracts``, and this
-module is now a thin reader on top of that.
+A *contract* is the locked anchor identity (ids + names, plus the seeded
+coordinates) for one catalog componentType. It is not authored anywhere of
+its own: it is derived from the device registry, keyed by componentType,
+and only for devices whose componentType is a DISTINCT catalog part-form
+(``component_type != behavioral_kind``, e.g. ``dds_ad9959_pcb`` vs kind
+``rf_source``). Generic-form devices are deliberately excluded because many
+devices share one kind and would overwrite each other's entry.
 
-The legacy ``COMPONENT_ANCHOR_CONTRACTS`` constant still exists as a
-read-only cached view so callers that iterated the dict continue to
-work. New code should prefer :func:`get_anchor_contract` for a single
-lookup or :func:`all_anchor_contracts` for the full map (cached).
+History: the data lived in the frontend plugins' ``componentAnchorContracts``
+field, then in ``backend/data/kinds.json::component_anchor_contracts`` (which
+``npm run export:kinds`` materialised from the TypeScript device registry).
+Devices moved into the ``devices`` table in alembic 0123, so the manifest can
+no longer produce this map and it is computed from the DB here instead.
+
+That makes the accessor **async** and uncached — the old
+``COMPONENT_ANCHOR_CONTRACTS`` module constant could not survive the move,
+because a module-level constant cannot await a session. Callers pass their
+session in.
 """
 
 from __future__ import annotations
 
-from functools import lru_cache
+from typing import Any
 
-from app.kinds_manifest import component_anchor_contracts
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models import Device
 from app.schemas import AssetAnchorId
-
-
-# Keep the legacy field name shape so existing code that imports
-# ``COMPONENT_ANCHOR_CONTRACTS`` directly keeps working. Resolved
-# lazily on first access — module load order shouldn't depend on the
-# manifest being parsed yet.
-def _build_contracts() -> dict[str, list[dict]]:
-    raw = component_anchor_contracts()
-    out: dict[str, list[dict]] = {}
-    for ct, templates in raw.items():
-        out[ct] = [
-            {
-                "id": t["id"],
-                **({"name": t["name"]} if "name" in t else {}),
-                **(
-                    {"positionMmBodyLocal": _vec3(t["position_mm_body_local"])}
-                    if "position_mm_body_local" in t
-                    else {}
-                ),
-                **(
-                    {"directionBodyLocal": _vec3(t["direction_body_local"])}
-                    if "direction_body_local" in t
-                    else {}
-                ),
-            }
-            for t in templates
-        ]
-    return out
 
 
 def _vec3(d: dict[str, float]) -> dict[str, float]:
     return {"x": float(d["x"]), "y": float(d["y"]), "z": float(d["z"])}
 
 
-@lru_cache(maxsize=1)
-def all_anchor_contracts() -> dict[str, list[dict]]:
-    """Full ``componentType → [AnchorTemplate]`` map (cached).
+def _template(anchor: dict[str, Any]) -> dict[str, Any]:
+    """One device anchor as a contract template.
 
-    Pydantic-friendly key shape (``positionMmBodyLocal`` /
-    ``directionBodyLocal``) — same as the legacy ``COMPONENT_ANCHOR_CONTRACTS``
-    constant.
+    ``role`` becomes ``id`` (that is the anchor identity the asset stores);
+    the snake_case device shape becomes the pydantic-friendly camelCase the
+    Asset3D anchor payloads use.
     """
-    return _build_contracts()
+    out: dict[str, Any] = {"id": anchor["role"]}
+    if anchor.get("name") is not None:
+        out["name"] = anchor["name"]
+    if anchor.get("position_mm_body_local") is not None:
+        out["positionMmBodyLocal"] = _vec3(anchor["position_mm_body_local"])
+    if anchor.get("direction_body_local") is not None:
+        out["directionBodyLocal"] = _vec3(anchor["direction_body_local"])
+    return out
 
 
-COMPONENT_ANCHOR_CONTRACTS: dict[str, list[dict]] = all_anchor_contracts()
+async def all_anchor_contracts(
+    session: AsyncSession,
+) -> dict[str, list[dict[str, Any]]]:
+    """Full ``componentType -> [AnchorTemplate]`` map, derived from devices."""
+    devices = list((await session.scalars(select(Device))).all())
+    out: dict[str, list[dict[str, Any]]] = {}
+    for device in devices:
+        anchors = list(device.anchors or [])
+        # An anchorless device (the render-only mechanical fixtures, whose
+        # behavioral_kind is null so component_type can never equal it) would
+        # otherwise write an empty contract over the key — inert today, but it
+        # would silently clobber a real template later. Skip those.
+        if device.component_type == device.behavioral_kind or not anchors:
+            continue
+        out[device.component_type] = [_template(a) for a in anchors]
+    return out
 
 
-def get_anchor_contract(kind_id: str) -> list[dict] | None:
-    """Return the locked anchor template list for a kind_id, or None
-    if the kind_id isn't in the registry (= no identity lock)."""
-    return all_anchor_contracts().get(kind_id)
+async def get_anchor_contract(
+    session: AsyncSession, component_type: str
+) -> list[dict[str, Any]] | None:
+    """The locked anchor template list for one componentType, or None when
+    that componentType has no identity lock."""
+    return (await all_anchor_contracts(session)).get(component_type)
 
 
 __all__ = [
-    "COMPONENT_ANCHOR_CONTRACTS",
     "all_anchor_contracts",
     "get_anchor_contract",
     "AssetAnchorId",  # re-export for downstream type hints

@@ -254,6 +254,62 @@ class Component(Base):
     # timing_program, physics_element}. Component is purely a catalog row.
 
 
+class Device(Base):
+    """One concrete instrument: a mesh + a named-anchor layout + default
+    params, pinned to ONE behavioural kind (alembic 0123).
+
+    Devices used to be TypeScript files under ``frontend/src/devices/``
+    exported into ``backend/data/kinds.json``; they are now DB rows so the
+    PHY Editor can create and correct them. The dependency direction from
+    the original design is unchanged: ``device -> behavioural kind``, never
+    the reverse. ``behavioral_kind`` is an ElementKind string the solver
+    already dispatches on, or NULL for render-only mechanical fixtures.
+
+    ``anchors`` keeps the snake_case shape the exported manifest used
+    (``role`` / ``position_mm_body_local`` / ``direction_body_local`` /
+    ``axis_y_body_local`` / ``connector_type`` / ``aperture_*``) so
+    ``services.device_seed.materialize_device_anchors`` consumes a row
+    unchanged; the API layer aliases it to camelCase.
+    """
+
+    __tablename__ = "devices"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    # The value ``Asset3D.device_id`` stores (alembic 0118). Not a declared
+    # FK: an asset is allowed to point at a slug that no longer exists, and
+    # a 404 from the seeder beats a cascade through the asset catalog.
+    slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    behavioral_kind: Mapped[str | None] = mapped_column(Text, index=True)
+    component_type: Mapped[str] = mapped_column(Text, nullable=False)
+    mesh: Mapped[str] = mapped_column(Text, nullable=False)
+    anchors: Mapped[JsonList] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
+    default_params: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+    # Human-confirmed "frozen" flag. Same semantics as Kind.locked.
+    locked: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class Kind(Base):
     """Kind metadata catalog (alembic 0086).
 
