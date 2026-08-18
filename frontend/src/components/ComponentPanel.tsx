@@ -1781,6 +1781,20 @@ export function ComponentPanel() {
   const canAlignToBeam = useMemo(() => {
     if (!component) return false;
     if (physicsElement && OPTICAL_ALIGN_KINDS.has(physicsElement.elementKind)) return true;
+    // An explicit alignSpec (PHY Editor → Component) is on its own enough:
+    // it is the FIRST thing AlignToBeamControls resolves, so gating on the
+    // binding roles below would hide the button for a composite that already
+    // has a usable (point, direction). Same non-zero-direction test the
+    // resolver uses, so gate and resolver can't disagree.
+    const specDir = (component.properties as { alignSpec?: { directionMm?: unknown } } | null)
+      ?.alignSpec?.directionMm;
+    if (
+      Array.isArray(specDir)
+      && specDir.length === 3
+      && Math.hypot(...specDir.map((v) => (typeof v === "number" ? v : 0))) > 1e-6
+    ) {
+      return true;
+    }
     // (Isolators carry kindId "none" — handled by the front/back role check below.)
     const roles = (scene.componentBindings ?? [])
       .filter((b) => b.componentId === component.id)

@@ -12,6 +12,12 @@
 
 **ComponentBinding** — a node of the binding tree. It hangs an asset (or a sub-component) under a parent node with a local transform (`local_x_mm`/`local_y_mm`/`local_z_mm` + `local_rx_deg`/`local_ry_deg`/`local_rz_deg`, three-axis rotation), plus `tunable_axes`, `role` and `sort_order`. This is what makes composite components possible (e.g. an isolator = Faraday rod + front and back Glan prisms + housing). Table `component_bindings`: `parent_binding_id`, `target_kind` (asset/empty/subcomponent), `asset_3d_id`, … The local transform is **quantized** on write and on read (1 nm / 1e-9°), same contract as the SceneObject Lab pose — see "Pose quantization" in [anchors.md](anchors.md).
 
+### `role` is load-bearing, not a comment
+
+A binding's `role` (or `properties.role_label`, which wins when set) is **matched by substring** for the front/back semantics of a composite optic: `pickPolariserCentre` (`utils/isolatorAlign.ts:89`) resolves the front/back polariser centres from it, the Object panel's Align gate (`ComponentPanel.tsx:1781`) and the "translucent housing" toggle (`BindingTreeAdjustControls.tsx:195`) both key off "a role containing *front* AND a role containing *back*", and the PHY-Editor preview draws its align marker the same way (`ComponentsEditor.tsx:2764`). **A misspelled role silently disables all of them** — the IO-3-850-HP shipped with `"fornt"` / `"fornt Glan-Laser"` (fixed 2026-08-17), which is why its object had no Align section. Invariant: every composite optic must expose one role matching `/front/i` and one matching `/back/i`; nothing validates this, so check the spelling when a composite loses its Align block.
+
+**The Object-panel Align gate mirrors the resolver, in this order**: the object's PhysicsElement kind ∈ `OPTICAL_ALIGN_KINDS` → an explicit `component.properties.alignSpec` with a non-zero `directionMm` → the front/back roles above. The alignSpec branch matters because `AlignToBeamControls` resolves alignSpec *first* (`AlignToBeamControls.tsx:121`); without it in the gate, a composite whose roles are named anything else would have a perfectly usable align spec and no button to press.
+
 ## exposedFaces
 
 Through `exposedFaces` a Component maps outward semantic ports (e.g. `optical_in`) onto `assetBindingId + anchorId`, so a composite exposes only semantic optical ports to the outside (faces are retired → anchors, see [anchors.md](anchors.md)).
