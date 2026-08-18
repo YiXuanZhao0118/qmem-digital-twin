@@ -25,6 +25,7 @@ import { la1509_b } from "./la1509_b";
 import { lj1960l1_b } from "./lj1960l1_b";
 import { mm_pc_780 } from "./mm_pc_780";
 import { optical_table } from "./optical_table";
+import { pbs055 } from "./pbs055";
 import { pbs252 } from "./pbs252";
 import { pm100d2 } from "./pm100d2";
 import { pm_apc_780 } from "./pm_apc_780";
@@ -68,6 +69,7 @@ export const DEVICES = [
   glan_io3_850,
   glan_io5_850,
   pbs252,
+  pbs055,
   // Optical — isolator chain (Faraday rod + housing pieces)
   io5_850_faraday,
   io5_850_front,

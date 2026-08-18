@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-18T04:19:19.106Z",
+  "generated_at": "2026-08-18T05:03:14.061Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -3020,6 +3020,46 @@
       ],
       "default_params": {
         "lengthMm": 25.4,
+        "polarizing": true,
+        "refractiveIndex_e": 1.693,
+        "refractiveIndex_o": 1.693,
+        "extinctionRatioPpDb": 30,
+        "extinctionRatioSpDb": 30,
+        "transmissionAxisDegBeamLocal": 0
+      }
+    },
+    {
+      "id": "pbs055",
+      "display_name": "PBS055",
+      "behavioral_kind": "beam_splitter",
+      "component_type": "beam_splitter",
+      "mesh": "pbs055.glb",
+      "anchors": [
+        {
+          "role": "intercept_face",
+          "position_mm_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": -0.7071067811865475,
+            "y": 0.7071067811865475,
+            "z": 0
+          },
+          "axis_y_body_local": {
+            "x": 0.7071067811865475,
+            "y": 0.7071067811865475,
+            "z": 0
+          },
+          "aperture_mm": 1,
+          "aperture_shape": "rectangle",
+          "aperture_width_mm": 7.0710678118654755,
+          "aperture_height_mm": 5
+        }
+      ],
+      "default_params": {
+        "lengthMm": 5,
         "polarizing": true,
         "refractiveIndex_e": 1.693,
         "refractiveIndex_o": 1.693,
