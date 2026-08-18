@@ -7,7 +7,9 @@
  *
  * UX choices that mirror Blender intentionally:
  *  - The active collection is highlighted; new objects placed via the
- *    component library are added to it.
+ *    component library are added to it. It changes ONLY when a collection
+ *    row is clicked (or a new collection is created) — never by selecting
+ *    an object.
  *  - Drag a collection onto another to reparent it.
  *  - Drag an object onto a collection to move it.
  */
@@ -454,6 +456,15 @@ export function OutlinerPanel() {
   const handleDropOnCollection = useCallback(
     async (event: React.DragEvent, targetCollection: Collection) => {
       event.preventDefault();
+      // Collection nodes are NESTED (a node renders its children inside its
+      // own div), so a drop on a sub-collection also bubbles to every
+      // ancestor node — each one firing its own move for the same object.
+      // Those competing POSTs raced on the single `collection_members` home
+      // row and the last commit won, so a drop landed in the intended
+      // collection only sometimes (and a multi-select drop scattered:
+      // some members in, some snapped back to an ancestor). The innermost
+      // node under the cursor is the only legitimate drop target.
+      event.stopPropagation();
       const payload = readDragPayload(event);
       setDragOverId(null);
       if (!payload) return;
@@ -491,6 +502,10 @@ export function OutlinerPanel() {
     (event: React.DragEvent, targetId: string) => {
       if (event.dataTransfer.types.includes(DRAG_MIME)) {
         event.preventDefault();
+        // Same nesting story as the drop handler: without this the ancestor
+        // handlers run last and `dragOverId` always settled on the outermost
+        // (Master) node, so the highlight pointed at the wrong row.
+        event.stopPropagation();
         event.dataTransfer.dropEffect = "move";
         setDragOverId(targetId);
       }
@@ -766,7 +781,14 @@ export function OutlinerPanel() {
                     selectObject(object.id, {
                       additive: event.ctrlKey || event.metaKey || event.shiftKey,
                     });
-                    setActiveCollection(collection.id);
+                    // Deliberately does NOT touch the active collection.
+                    // It used to, which meant merely clicking a mirror in
+                    // the outliner silently re-homed every subsequently
+                    // created component into that mirror's collection —
+                    // and `activeCollectionId` is persisted, so it survived
+                    // reloads. Blender does the same: selecting an object
+                    // never changes the active collection, only clicking a
+                    // collection row does.
                   }}
                   title={object.name}
                 >
