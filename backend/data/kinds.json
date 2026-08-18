@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-17T01:51:19.895Z",
+  "generated_at": "2026-08-18T04:05:31.992Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -3082,6 +3082,41 @@
       "mesh": "io_5_850_hp_back_piece.glb",
       "anchors": [],
       "default_params": {}
+    },
+    {
+      "id": "tornos_faraday",
+      "display_name": "TORNOS-isolator-Faraday-Rod",
+      "behavioral_kind": "faraday_rotator",
+      "component_type": "faraday_rotator",
+      "mesh": "tornos_isolator_middle_piece.glb",
+      "anchors": [
+        {
+          "role": "optical_center",
+          "position_mm_body_local": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "direction_body_local": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          "axis_y_body_local": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "aperture_mm": 4,
+          "aperture_shape": "circle"
+        }
+      ],
+      "default_params": {
+        "rotationDeg": 45,
+        "reciprocal": false,
+        "lengthMm": 18,
+        "refractiveIndex": 1.95
+      }
     },
     {
       "id": "dbr_tosa",

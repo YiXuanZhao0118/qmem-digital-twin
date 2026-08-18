@@ -32,6 +32,7 @@ import { sm_pc_780 } from "./sm_pc_780";
 import { sma_female } from "./sma_female";
 import { sma_male } from "./sma_male";
 import { toptica_boosta_pro } from "./toptica_boosta_pro";
+import { tornos_faraday } from "./tornos_faraday";
 import { zhl_1_2w } from "./zhl_1_2w";
 import { zyswa_2_50dr } from "./zyswa_2_50dr";
 
@@ -63,6 +64,7 @@ export const DEVICES = [
   io5_850_faraday,
   io5_850_front,
   io5_850_back,
+  tornos_faraday,
   // Optical — sources / amplifiers / modulators
   dbr_tosa,
   toptica_boosta_pro,
