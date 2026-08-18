@@ -23,6 +23,7 @@ import {
   TEXTAREA,
   TH,
 } from "./phyEditorTheme";
+import { LOCK_FILTER_OPTIONS, matchesLockFilter, type LockFilter } from "./lockFilter";
 import { Eye, EyeOff, Lock, RefreshCw, Save, Trash2, Unlock, X } from "lucide-react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -3530,6 +3531,10 @@ export function Asset3DEditor({
   const [usage, setUsage] = useState<V3AssetUsage | null>(null);
 
   const [kindFilter, setKindFilter] = useState<string>("all");
+  // Lock-state filter: "all" | "locked" | "unlocked". Locked rows are
+  // human-confirmed complete and read-only, so hiding them (or showing
+  // only them) is how you find what still needs work.
+  const [lockFilter, setLockFilter] = useState<LockFilter>("all");
   const [search, setSearch] = useState<string>("");
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [draft, setDraft] = useState<AssetDraft | null>(null);
@@ -3595,6 +3600,7 @@ export function Asset3DEditor({
       .filter((asset) => {
         const kind = asset.kindId ?? "(mechanical)";
         if (kindFilter !== "all" && kind !== kindFilter) return false;
+        if (!matchesLockFilter(asset.locked, lockFilter)) return false;
         const label = asset.catalogId ?? asset.name;
         if (needle && !label.toLowerCase().includes(needle)) return false;
         return true;
@@ -3604,7 +3610,7 @@ export function Asset3DEditor({
         const bl = (b.catalogId ?? b.name).toLowerCase();
         return al.localeCompare(bl);
       });
-  }, [domainAssets, kindFilter, search]);
+  }, [domainAssets, kindFilter, lockFilter, search]);
 
   // Selection keyed by DB id (UUID) — catalogId can be null for legacy
   // mechanical Asset3Ds that were ingested before the v3 catalog flow,
@@ -3835,6 +3841,16 @@ export function Asset3DEditor({
           <IconButton title="Refresh catalog" onClick={() => void refresh()}>
             <RefreshCw size={14} />
           </IconButton>
+          <select
+            value={lockFilter}
+            onChange={(event) => setLockFilter(event.target.value as LockFilter)}
+            title="Filter by lock state (locked = human-confirmed complete, read-only)."
+            style={{ ...INPUT, gridColumn: "1 / span 2" }}
+          >
+            {LOCK_FILTER_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}

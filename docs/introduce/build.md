@@ -26,6 +26,10 @@ The **kind you pick in BUILD decides the asset's domain** (`kind.domains` is aut
 
 > **Anchors are not annotated in BUILD**: BUILD only handles geometry + colour + kind. Anchors (direction + aperture) are annotated afterwards on the **ASSET3D tab** (see [anchors.md](anchors.md)).
 
+## Lock filter on the asset pickers
+
+Both source pickers (**"add existing asset…"** and **"edit existing asset…"**) are fed by `importableAssets` (`GeometryBuilder.tsx:1129`) and each option is prefixed with 🔒 / 🔓 from `asset.locked`. The `lock: all / 🔒 locked / 🔓 unlocked` dropdown above them narrows both lists at once (shared helper `components/lockFilter.ts`, also used by the ASSET3D list — see [asset.md](asset.md)). This matters most for edit-in-place: saving over a **locked** asset is rejected with 422 by `lock_guard` (see [kinds.md](kinds.md)), so filtering to 🔓 unlocked keeps the list to rows you can actually overwrite. Invariant: the asset currently picked / being edited stays listed even when the filter would hide it, so the `<select>` never blanks out mid-edit.
+
 ## Edit-in-place
 
 You can load an existing asset as the only source and edit it with its `catalog_id` locked: Save goes through the geometry-replace endpoint, **preserves kind_id** and does not create a new asset (after re-editing, remember to re-check anchors on the ASSET3D tab).

@@ -48,6 +48,7 @@ import {
   SHELL_BG,
   SHELL_COLOR,
 } from "./phyEditorTheme";
+import { LOCK_FILTER_OPTIONS, matchesLockFilter, type LockFilter } from "./lockFilter";
 
 const locateOcctWasm: OcctLocateFile = (path) => (path.endsWith(".wasm") ? occtWasmUrl : path);
 
@@ -192,6 +193,10 @@ export function GeometryBuilder() {
   const [info, setInfo] = useState<string | null>(null);
   const [sources, setSources] = useState<Source[]>([]);
   const [existingPick, setExistingPick] = useState("");
+  // Lock-state filter for both asset pickers below. A locked asset is
+  // frozen as complete, so "edit existing asset" on one would be rejected
+  // by the API on save — filtering to unlocked keeps that list actionable.
+  const [lockFilter, setLockFilter] = useState<LockFilter>("all");
   const [editingCatalogId, setEditingCatalogId] = useState<string | null>(null);
   const [editUsage, setEditUsage] = useState<V3AssetUsage | null>(null);
   const [catalogId, setCatalogId] = useState("");
@@ -1124,7 +1129,12 @@ export function GeometryBuilder() {
   const importableAssets = assets.filter(
     (a) =>
       Boolean(a.catalogId) && // edit/save keys on catalog_id — skip catalog-less rows
-      (VIEWER_EXTS.has(extOf(a.assetType || a.filePath)) || isProceduralPath(a.filePath)),
+      (VIEWER_EXTS.has(extOf(a.assetType || a.filePath)) || isProceduralPath(a.filePath)) &&
+      // Keep whatever is currently picked / being edited listed even if the
+      // lock filter would hide it, so the <select> never blanks out on it.
+      (matchesLockFilter(a.locked, lockFilter) ||
+        a.catalogId === editingCatalogId ||
+        a.catalogId === existingPick),
   );
   const saveTitle =
     status === "saving"
@@ -1164,12 +1174,24 @@ export function GeometryBuilder() {
           {status === "parsing" ? "Working…" : sources.length === 0 ? "Import 3D…" : "Import more…"}
         </button>
 
+        <select
+          value={lockFilter}
+          onChange={(e) => setLockFilter(e.target.value as LockFilter)}
+          disabled={busy}
+          style={{ ...INPUT, width: "100%" }}
+          title="Filter both asset pickers by lock state (locked = confirmed complete; saving over one is rejected until it is unlocked)."
+        >
+          {LOCK_FILTER_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+
         <div style={{ display: "flex", gap: 6 }}>
           <select value={existingPick} onChange={(e) => setExistingPick(e.target.value)} disabled={busy} style={{ ...INPUT, flex: 1 }}>
             <option value="">add existing asset…</option>
             {importableAssets.map((a) => (
               <option key={a.catalogId} value={a.catalogId}>
-                {a.name || a.catalogId} ({isProceduralPath(a.filePath) ? "procedural" : `.${extOf(a.assetType || a.filePath)}`})
+                {a.locked ? "🔒" : "🔓"} {a.name || a.catalogId} ({isProceduralPath(a.filePath) ? "procedural" : `.${extOf(a.assetType || a.filePath)}`})
               </option>
             ))}
           </select>
@@ -1188,7 +1210,7 @@ export function GeometryBuilder() {
           <option value="">edit existing asset… (overwrite on save)</option>
           {importableAssets.map((a) => (
             <option key={a.catalogId} value={a.catalogId}>
-              {a.name || a.catalogId} (.{extOf(a.assetType || a.filePath)})
+              {a.locked ? "🔒" : "🔓"} {a.name || a.catalogId} (.{extOf(a.assetType || a.filePath)})
             </option>
           ))}
         </select>
