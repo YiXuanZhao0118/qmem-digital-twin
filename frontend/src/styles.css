@@ -893,6 +893,11 @@ h3 {
   border-color: var(--accent);
 }
 
+.icon-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* Touch tool op buttons — each contains a 26×16 SVG icon showing two
    primitives (dot/line/square) for the first and second pick kinds. */
 .touch-op-button {

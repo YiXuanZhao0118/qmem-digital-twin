@@ -1,4 +1,4 @@
-import { Columns2, Eye, Move, Play, RotateCw, Square, Type, Wifi, WifiOff } from "lucide-react";
+import { Columns2, Eye, Move, Play, Redo2, RotateCw, Square, Type, Undo2, Wifi, WifiOff } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -88,6 +88,14 @@ export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneTo
   const faceTouchOp = useSceneStore((state) => state.faceTouchOp);
   const setFaceTouchOp = useSceneStore((state) => state.setFaceTouchOp);
   const addTextAnnotation = useSceneStore((state) => state.addTextAnnotation);
+  // Undo / Redo. The history itself has existed since the placement work
+  // (sceneStore.undoStack); until now Ctrl+Z was its only affordance, so
+  // users had no way to discover that a gizmo drag is reversible.
+  const undoStack = useSceneStore((state) => state.undoStack);
+  const redoStack = useSceneStore((state) => state.redoStack);
+  const undoRedoBusy = useSceneStore((state) => state.undoRedoBusy);
+  const undo = useSceneStore((state) => state.undo);
+  const redo = useSceneStore((state) => state.redo);
 
   // Auto-switch to Translate gizmo mode on every selection action.
   // We watch `selectedObjectIds` (the array reference) — Zustand returns a
@@ -109,6 +117,9 @@ export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneTo
     const bar = rootRef.current?.closest(".top-bar") ?? rootRef.current;
     if (bar) setSetupPanelTop(bar.getBoundingClientRect().bottom + 8);
   }, [setupOpen]);
+
+  const nextUndo = undoStack.length > 0 ? undoStack[undoStack.length - 1] : null;
+  const nextRedo = redoStack.length > 0 ? redoStack[redoStack.length - 1] : null;
 
   const [simBusy, setSimBusy] = useState(false);
   const [simStatus, setSimStatus] = useState<string>("");
@@ -164,6 +175,37 @@ export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneTo
           still renders here (bottom of this file); the menu item just flips
           `sceneStore.initialSetupOpen`. "Add text annotation" came back out of
           that menu into the View group below. */}
+
+      <div className="toolbar-group" data-group-label="Edit">
+        <button
+          className="icon-button"
+          title={
+            nextUndo
+              ? `Undo: ${nextUndo.description} (Ctrl+Z)`
+              : "Nothing to undo (Ctrl+Z)"
+          }
+          aria-label="Undo"
+          disabled={!nextUndo || undoRedoBusy}
+          onClick={() => void undo()}
+        >
+          <Undo2 size={17} />
+        </button>
+        <button
+          className="icon-button"
+          title={
+            nextRedo
+              ? `Redo: ${nextRedo.description} (Ctrl+Shift+Z)`
+              : "Nothing to redo (Ctrl+Shift+Z)"
+          }
+          aria-label="Redo"
+          disabled={!nextRedo || undoRedoBusy}
+          onClick={() => void redo()}
+        >
+          <Redo2 size={17} />
+        </button>
+      </div>
+
+      <div className="toolbar-divider" aria-hidden="true" />
 
       <div className="toolbar-group" data-group-label="View">
         <button
