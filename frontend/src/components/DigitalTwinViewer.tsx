@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeftRight, Bookmark, BookmarkX, Crosshair, Eye, EyeOff, Grid3x3, MoreHorizontal, Move, RotateCw, Sparkles, Spline, Target, Waypoints } from "lucide-react";
+import { ArrowLeftRight, Bookmark, BookmarkX, Crosshair, Grid3x3, Move, RotateCw, Sparkles, Spline, Target, Waypoints } from "lucide-react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
@@ -133,7 +133,6 @@ type LabPoint = {
 // (x, y, z) -> (x, -z, y), so the default view reproduces the prior angle.
 const HOME_CAMERA_POSITION = new THREE.Vector3(28, -19, 16);
 const HOME_CAMERA_TARGET = new THREE.Vector3(0, 0, 5.2);
-const HOME_CAMERA_OFFSET = HOME_CAMERA_POSITION.clone().sub(HOME_CAMERA_TARGET);
 const AXIS_GIZMO_SIZE = 132;
 
 /** The viewer's world is Z-up, and OrbitControls snapshots its orbit pole
@@ -1295,8 +1294,6 @@ function ViewerCursorEditor({ panelKey }: { panelKey: "left" | "right" }) {
   const cursor = useSceneStore((state) => state.transformCursorMm[panelKey]);
   const setCursorRaw = useSceneStore((state) => state.setTransformCursorMm);
   const setCursor = (point: { x: number; y: number; z: number }) => setCursorRaw(panelKey, point);
-  const cursorHidden = useSceneStore((state) => state.transformCursorHidden[panelKey]);
-  const toggleCursorHidden = useSceneStore((state) => state.toggleTransformCursorHidden);
   // For the "⊕ Center on selection" button: track selection count to drive
   // the disabled state. The actual median is computed lazily on click via
   // getState() so we don't subscribe to every object's mm fields here.
@@ -1388,16 +1385,6 @@ function ViewerCursorEditor({ panelKey }: { panelKey: "left" | "right" }) {
         }
       >
         <Target size={14} />
-      </button>
-      <button
-        type="button"
-        className="viewer-cursor-toggle"
-        onClick={() => toggleCursorHidden(panelKey)}
-        aria-pressed={cursorHidden}
-        aria-label={cursorHidden ? "Show cursor marker" : "Hide cursor marker"}
-        title={cursorHidden ? "Show cursor marker" : "Hide cursor marker"}
-      >
-        {cursorHidden ? <EyeOff size={14} /> : <Eye size={14} />}
       </button>
     </div>
   );
@@ -1592,7 +1579,6 @@ export function DigitalTwinViewer({
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
   // Overflow toggle for the consolidated viewer toolbar — gates the less-used
   // cursor (mm) editor so the corner stays uncluttered until needed.
-  const [showMoreTools, setShowMoreTools] = useState(false);
   // displayMode is now a controlled prop (so each panel in dual-view holds
   // its own). The parent calls onDisplayModeChange when the user clicks the
   // overlay buttons; the parent in turn writes to zustand under the right
@@ -1895,28 +1881,56 @@ export function DigitalTwinViewer({
       overlay.add(highlight);
     }
   }, [scopeProbe, sceneData.objects]);
-  // The 3D cursor IS the orbit / view centre. Initial value comes from
-  // localStorage (default 0,0,0); changes via Shift+S menu, snap commands,
-  // or the cursor-pos field persist immediately.
+  // The 3D cursor FOLLOWS the view centre: once a camera gesture settles,
+  // `controls.target` is written back into it (see syncCursorToViewCenter), so
+  // cursor-anchored features (spawn position, align, template drop) always mean
+  // "the middle of what I'm looking at". The coupling is still two-way — an
+  // explicit set (Shift+S menu, snap commands, cursor-pos field) pulls the view
+  // onto the cursor. Initial value comes from localStorage (default 0,0,0).
   const resolvedViewCenterLab = transformCursorMm;
   const resolvedViewCenterThree = useMemo(
     () => labToThree(resolvedViewCenterLab),
     [resolvedViewCenterLab],
   );
 
+  /** Write the live orbit centre back into this panel's 3D cursor. Called
+   *  from the animate loop the frame a camera move settles (not on the
+   *  'end' event — with damping on, `controls.target` is still easing then,
+   *  and the stale value would be copied straight back by the marker effect,
+   *  snapping the view). The epsilon guard keeps idle frames and pure zooms
+   *  from churning the store / localStorage. */
+  const syncCursorToViewCenter = useCallback(() => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+    const lab = threeToLabPointMm(controls.target);
+    const current = useSceneStore.getState().transformCursorMm[panelKey];
+    if (
+      Math.abs(lab.x - current.x) < 0.05 &&
+      Math.abs(lab.y - current.y) < 0.05 &&
+      Math.abs(lab.z - current.z) < 0.05
+    ) {
+      return;
+    }
+    useSceneStore.getState().setTransformCursorMm(panelKey, lab);
+  }, [panelKey]);
+
   const snapCameraToView = useCallback((view: AxisViewTarget) => {
     const camera = cameraRef.current;
     const controls = controlsRef.current;
     if (!camera || !controls) return;
 
-    const target = resolvedViewCenterThreeRef.current.clone();
+    // Axis snaps orbit around the CURRENT view centre, not the 3D cursor.
+    // A pan moves `controls.target` on its own; re-anchoring on the cursor
+    // used to yank the camera back to wherever the cursor had been left.
     const previousTarget = controls.target.clone();
+    const target = previousTarget.clone();
 
     if (view === "home") {
       // If the user has saved a custom Home view for this panel, restore
       // that absolute camera pose verbatim — angle, distance, and pivot.
-      // Otherwise fall back to the factory framing: re-centre on the
-      // current cursor with the hard-coded HOME_CAMERA_OFFSET.
+      // Otherwise fall back to the factory framing, which is ABSOLUTE: the
+      // cursor used to anchor it, but the cursor now follows the view, so a
+      // cursor-relative Home could never undo a pan.
       const saved = useSceneStore.getState().homeView[panelKey];
       if (saved) {
         controls.target.set(saved.target.x, saved.target.y, saved.target.z);
@@ -1927,13 +1941,15 @@ export function DigitalTwinViewer({
         camera.position.set(saved.position.x, saved.position.y, saved.position.z);
         camera.lookAt(controls.target);
         controls.update();
+        syncCursorToViewCenter();
         return;
       }
-      controls.target.copy(target);
-      camera.position.copy(target).add(HOME_CAMERA_OFFSET);
+      controls.target.copy(HOME_CAMERA_TARGET);
+      camera.position.copy(HOME_CAMERA_POSITION);
       camera.up.copy(WORLD_UP);
       camera.lookAt(controls.target);
       controls.update();
+      syncCursorToViewCenter();
       return;
     }
 
@@ -1944,7 +1960,10 @@ export function DigitalTwinViewer({
     camera.position.copy(target).addScaledVector(config.direction, distance);
     camera.lookAt(target);
     controls.update();
-  }, [panelKey]);
+    // A programmatic pose change never runs the animate loop's settle check
+    // (update() has already consumed the delta), so push the cursor here.
+    syncCursorToViewCenter();
+  }, [panelKey, syncCursorToViewCenter]);
 
   /** Snapshot the live camera pose (position, target, up) and persist it
    *  as this panel's custom Home. Subsequent H presses restore exactly
@@ -2001,6 +2020,7 @@ export function DigitalTwinViewer({
 
 
   const cursorHidden = useSceneStore((state) => state.transformCursorHidden[panelKey]);
+  const toggleCursorHidden = useSceneStore((state) => state.toggleTransformCursorHidden);
   useEffect(() => {
     resolvedViewCenterThreeRef.current.copy(resolvedViewCenterThree);
     const markerGroup = viewCenterGroupRef.current;
@@ -2008,8 +2028,10 @@ export function DigitalTwinViewer({
     const marker = createViewCenterMarker();
     marker.position.copy(resolvedViewCenterThree);
     markerGroup.add(marker);
-    // Cursor IS the orbit pivot now — keep OrbitControls.target in sync so
-    // the camera orbits around the visible cursor marker.
+    // Cursor and orbit pivot are the same point — keep OrbitControls.target
+    // in sync so an explicit cursor set re-centres the view. Camera-driven
+    // updates land here too, but syncCursorToViewCenter only writes the store
+    // once the move has settled, so this copy-back is a no-op then.
     const controls = controlsRef.current;
     if (controls) {
       controls.target.copy(resolvedViewCenterThree);
@@ -2172,15 +2194,15 @@ export function DigitalTwinViewer({
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    // Initial target = current cursor position (loaded from localStorage if
-    // any, otherwise 0,0,0). The marker-effect later keeps it in sync as
-    // the user moves the cursor.
+    // Initial target = last view centre, persisted as the cursor (loaded from
+    // localStorage if any, otherwise 0,0,0). From here the two stay coupled:
+    // the marker effect pulls target ← cursor on an explicit cursor set, and
+    // syncCursorToViewCenter pushes cursor ← target once a camera move settles.
     controls.target.copy(resolvedViewCenterThreeRef.current);
     // If the user has saved a custom Home for this panel, open the page in
     // that exact framing — overriding both the hard-coded HOME_CAMERA_POSITION
-    // set above and the cursor-derived target. Subsequent cursor moves still
-    // pull controls.target along (via the marker effect); this only sets the
-    // starting pose. Same data path as the H gizmo button's restore.
+    // set above and the cursor-derived target. This only sets the starting
+    // pose. Same data path as the H gizmo button's restore.
     const savedHome = useSceneStore.getState().homeView[panelKey];
     if (savedHome) {
       camera.position.set(savedHome.position.x, savedHome.position.y, savedHome.position.z);
@@ -3380,6 +3402,7 @@ export function DigitalTwinViewer({
       );
     };
 
+    let cameraWasMoving = false;
     const animate = () => {
       // controls.update() returns true while the camera is still moving
       // (active drag or damping settling). Combined with pendingRender — set
@@ -3387,6 +3410,10 @@ export function DigitalTwinViewer({
       // net useEffect — this gates rendering so an idle scene draws zero
       // frames per second instead of 60.
       const cameraMoved = controls.update();
+      // The frame a rotate/pan/zoom finishes damping, hand the settled orbit
+      // centre to the 3D cursor so it tracks the view.
+      if (cameraWasMoving && !cameraMoved) syncCursorToViewCenter();
+      cameraWasMoving = cameraMoved;
       if (cameraMoved || pendingRender) {
         if (environmentGroupRef.current) {
           const halfWidth = roomDimensions.widthMm / 200;
@@ -3501,7 +3528,7 @@ export function DigitalTwinViewer({
       renderer.domElement.remove();
       scene.clear();
     };
-  }, [roomDimensions, selectObject, snapCameraToView]);
+  }, [roomDimensions, selectObject, snapCameraToView, syncCursorToViewCenter]);
 
   // Attach / detach placement gizmo as selection or orientation changes.
   useEffect(() => {
@@ -6563,33 +6590,11 @@ export function DigitalTwinViewer({
           and toggled visible by the pointer drag handler in DOM (no React
           re-render churn during a drag). */}
       <div ref={marqueeRef} className="viewer-marquee" />
-      {showMoreTools && <ViewerCursorEditor panelKey={panelKey} />}
-      <div className="viewer-home-controls" role="group" aria-label="Custom Home view">
-        <button
-          type="button"
-          className="viewer-home-button"
-          onClick={saveCurrentAsHome}
-          title="Save current view as Home (overrides the H button's default framing)"
-          aria-label="Save current view as Home"
-        >
-          <Bookmark size={14} />
-          <span>Set Home</span>
-        </button>
-        {customHomeSaved && (
-          <button
-            type="button"
-            className="viewer-home-button viewer-home-clear"
-            onClick={clearCustomHome}
-            title="Clear saved Home — H reverts to default framing"
-            aria-label="Clear saved Home"
-          >
-            <BookmarkX size={14} />
-          </button>
-        )}
-      </div>
+      {!cursorHidden && <ViewerCursorEditor panelKey={panelKey} />}
       <ToolbarHint displayMode={displayMode} gizmoMode={gizmoMode} />
-      {/* Consolidated HUD toolbar: display-mode pills + transform pills + an
-          overflow toggle for the cursor editor, in one strip (top-left). */}
+      {/* Consolidated HUD toolbar: display-mode pills + transform pills +
+          the 3D-cursor switch + the custom-Home controls, in one strip
+          (top-left). */}
       <div className="viewer-toolbar">
         <div className="viewer-display-modes" role="group" aria-label="Display mode">
           {DISPLAY_MODE_OPTIONS.map(({ mode, title, Icon }) => (
@@ -6633,16 +6638,44 @@ export function DigitalTwinViewer({
           </>
         )}
         <span className="viewer-toolbar-divider" aria-hidden />
+        {/* One switch for the whole 3D-cursor feature: it shows the marker AND
+            the Cursor (mm) editor. The marker defaults off because the cursor
+            now tracks the view centre on its own — see syncCursorToViewCenter. */}
         <button
           type="button"
-          className={`viewer-mode-button${showMoreTools ? " active" : ""}`}
-          title="Cursor (mm) editor & more"
-          aria-label="More tools"
-          aria-pressed={showMoreTools}
-          onClick={() => setShowMoreTools((v) => !v)}
+          className={`viewer-mode-button${!cursorHidden ? " active" : ""}`}
+          title={cursorHidden ? "Show 3D cursor + mm editor" : "Hide 3D cursor"}
+          aria-label={cursorHidden ? "Show 3D cursor" : "Hide 3D cursor"}
+          aria-pressed={!cursorHidden}
+          onClick={() => toggleCursorHidden(panelKey)}
         >
-          <MoreHorizontal size={16} />
+          <Crosshair size={16} />
         </button>
+        <span className="viewer-toolbar-divider" aria-hidden />
+        {/* Icon-only, same pill shape as every other button in the strip —
+            the label lives in the tooltip / aria-label. */}
+        <div className="viewer-home-controls" role="group" aria-label="Custom Home view">
+          <button
+            type="button"
+            className="viewer-mode-button"
+            onClick={saveCurrentAsHome}
+            title="Save current view as Home (overrides the H button's default framing)"
+            aria-label="Save current view as Home"
+          >
+            <Bookmark size={16} />
+          </button>
+          {customHomeSaved && (
+            <button
+              type="button"
+              className="viewer-mode-button"
+              onClick={clearCustomHome}
+              title="Clear saved Home — H reverts to default framing"
+              aria-label="Clear saved Home"
+            >
+              <BookmarkX size={16} />
+            </button>
+          )}
+        </div>
       </div>
       {displayMode === "wireframe" && (
         <ToolsPie

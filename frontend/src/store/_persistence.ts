@@ -71,14 +71,14 @@ export function saveTransformCursorMm(value: {
 }
 
 export function loadTransformCursorHidden(): { left: boolean; right: boolean } {
-  if (typeof window === "undefined") return { left: false, right: false };
+  if (typeof window === "undefined") return { left: true, right: true };
   try {
     const raw = window.localStorage.getItem(TRANSFORM_CURSOR_HIDDEN_STORAGE_KEY);
-    if (!raw) return { left: false, right: false };
+    if (!raw) return { left: true, right: true };
     const parsed = JSON.parse(raw) as Partial<{ left: boolean; right: boolean }>;
-    return { left: parsed.left === true, right: parsed.right === true };
+    return { left: parsed.left !== false, right: parsed.right !== false };
   } catch {
-    return { left: false, right: false };
+    return { left: true, right: true };
   }
 }
 

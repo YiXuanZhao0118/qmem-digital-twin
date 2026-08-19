@@ -67,7 +67,7 @@ The snap result maps into persisted intent (`snapTargetToMetadata`), which a lat
 - **L0** the pure engine (`computePlacement`, above).
 - **L1** the gizmo (Global / Local / Beam orientation, TransformControls).
 - **L2** snap visual feedback + Tab-cycling of alternatives.
-- **L3** the 3D cursor (the Shift+S menu; state `transformCursorMm`).
+- **L3** the 3D cursor (the Shift+S menu; state `transformCursorMm`). The cursor **is** the viewer's orbit centre, and since 2026-08-19 the coupling runs both ways: a settled rotate / pan / zoom writes `controls.target` back into it (`syncCursorToViewCenter`, `DigitalTwinViewer.tsx`), so the cursor always means "the middle of what I'm looking at"; an explicit set (Shift+S, snap commands, the Cursor (mm) field) still pulls the view onto it. Its marker therefore defaults to **hidden** (`loadTransformCursorHidden`, storage key `qmem.transformCursorHidden.v2`); the crosshair switch in `.viewer-toolbar` is the single control for the whole feature — it shows the marker *and* mounts the Cursor (mm) editor. The custom-Home buttons (Set Home / clear) ride in that same strip. The axis-gizmo X/Y/Z/-X/-Y/-Z buttons orbit around the *current* `controls.target`; only **H** (factory framing) is absolute (`HOME_CAMERA_POSITION`/`HOME_CAMERA_TARGET`), unless a custom Home pose is saved.
 - **L4** optical tools (Place / Insert along beam; the last-clicked beam point `scopeProbe`).
 - **L5** multi-select Align.
 - **L6** `placedRelativeTo` + Re-snap.

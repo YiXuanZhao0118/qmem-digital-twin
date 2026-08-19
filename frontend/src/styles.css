@@ -1437,46 +1437,21 @@ h3 {
   pointer-events: auto;
 }
 
-/* Custom-Home controls sit directly under the orientation gizmo at the
-   top-right of the viewer. "Set Home" snapshots the current camera pose
-   into the per-panel homeView store slot; the trash button only appears
-   when a custom Home is saved. */
+/* Custom-Home controls ride inside .viewer-toolbar (top-left) rather than
+   floating on their own, so the top-right corner belongs to the orientation
+   gizmo alone. Their buttons reuse .viewer-mode-button, so this only supplies
+   the grouping. Set Home snapshots the current camera pose into the per-panel
+   homeView store slot; the clear button only appears when a custom Home is
+   saved. */
 .viewer-home-controls {
-  position: absolute;
-  top: calc(14px + 132px + 8px);
-  right: max(14px, calc(100% - 100vw + 14px));
-  z-index: 4;
   display: flex;
   align-items: center;
   gap: 4px;
 }
-.viewer-home-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  border: 1px solid rgba(15, 23, 42, 0.18);
-  border-radius: 6px;
-  background: rgba(251, 251, 248, 0.78);
-  color: var(--muted);
-  font-size: var(--fs-xs);
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s, border-color 0.12s;
-  backdrop-filter: blur(10px);
-}
-.viewer-home-button:hover {
-  background: rgba(15, 23, 42, 0.12);
-  color: #242726;
-  border-color: rgba(15, 23, 42, 0.32);
-}
-.viewer-home-clear {
-  padding: 4px 6px;
-}
-
 /* Consolidated viewer HUD toolbar — one glass strip (top-left) holding the
-   display-mode pills, the transform pills and an overflow toggle (the cursor
-   editor is summoned from there). The pill groups inside drop their own
-   floating-bar chrome so they read as one bar. */
+   display-mode pills, the transform pills, the 3D-cursor switch and the
+   custom-Home controls. The groups inside drop their own floating-bar
+   chrome so they read as one bar. */
 .viewer-toolbar {
   position: absolute;
   top: 14px;
@@ -3032,11 +3007,6 @@ input:disabled {
     width: 112px;
     height: 112px;
   }
-
-  .viewer-home-controls {
-    top: calc(54px + 112px + 6px);
-    right: max(10px, calc(100% - 100vw + 10px));
-  }
 }
 
 /* === Optical domain panel === */
@@ -3682,9 +3652,14 @@ input:disabled {
   opacity: 0.65;
   font-style: italic;
 }
+/* Bottom-centred, not top-centred: the top band belongs to .viewer-toolbar
+   (left) and the orientation gizmo (right), and once Set Home moved into the
+   toolbar the strip grew wide enough that a centred hint covered its right
+   half. z-index 900 keeps it over the optical-link chrome; pointer-events
+   stay off so it never eats a click. */
 .toolbar-hint {
   position: absolute;
-  top: 8px;
+  bottom: 12px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 900;
