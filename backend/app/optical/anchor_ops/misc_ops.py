@@ -26,7 +26,12 @@ from app.optical.anchor_tracer import (
     out_ray_from_state,
     register_anchor_op,
 )
-from app.optical.beam_ray import BeamRay, Vec3, nonparaxial_fundamental_waist_mm
+from app.optical.beam_ray import (
+    BeamRay,
+    Vec3,
+    nonparaxial_fundamental_waist_mm,
+    vec3_distance,
+)
 from app.optical.jones import beam_local_sp, jones_rotation_angle, rotate_jones
 
 
@@ -120,6 +125,92 @@ def ta_saturated_power_mw(p_coupled_mw: float, params: dict) -> float:
     if p_max > 0.0:
         p_out = min(p_out, p_max)
     return max(0.0, p_out)
+
+
+def _samples(params: dict, key: str) -> list[dict]:
+    """Measured-table accessor. Returns [] for a missing / malformed table so
+    every caller can fall back to the closed-form model."""
+    rows = params.get(key)
+    if not isinstance(rows, list):
+        return []
+    return [r for r in rows if isinstance(r, dict)]
+
+
+def ta_ase_table_mw(
+    samples: list[dict], drive_current_ma: float,
+) -> tuple[float, float] | None:
+    """Interpolate an unseeded-ASE table {driveCurrentMa → (forward, backward)}.
+
+    Linear in drive current, clamped at both ends. Mirrors the frontend's
+    ``interpolateAse`` (rayTrace.ts) so the TA panel's operating-point readout
+    and the traced beam agree. Returns None for an empty table.
+    """
+    if not samples:
+        return None
+    rows = sorted(samples, key=lambda s: float(s.get("driveCurrentMa", 0.0)))
+    fwd = lambda s: float(s.get("forwardPowerMw", 0.0))    # noqa: E731
+    bwd = lambda s: float(s.get("backwardPowerMw", 0.0))   # noqa: E731
+    if drive_current_ma <= float(rows[0].get("driveCurrentMa", 0.0)):
+        return fwd(rows[0]), bwd(rows[0])
+    if drive_current_ma >= float(rows[-1].get("driveCurrentMa", 0.0)):
+        return fwd(rows[-1]), bwd(rows[-1])
+    for prev, cur in zip(rows, rows[1:]):
+        c0 = float(prev.get("driveCurrentMa", 0.0))
+        c1 = float(cur.get("driveCurrentMa", 0.0))
+        if drive_current_ma <= c1:
+            t = (drive_current_ma - c0) / (c1 - c0) if c1 > c0 else 0.0
+            return (
+                fwd(prev) + (fwd(cur) - fwd(prev)) * t,
+                bwd(prev) + (bwd(cur) - bwd(prev)) * t,
+            )
+    return None
+
+
+def ta_gain_table_mw(
+    samples: list[dict], input_power_mw: float, drive_current_ma: float,
+) -> tuple[float, float] | None:
+    """Interpolate a seeded-gain table {(inputPowerMw, driveCurrentMa) →
+    (forward, backward)}.
+
+    Inverse-distance weighting over the 4 nearest samples, with both axes
+    normalised by their span so mW and mA contribute comparably. Mirrors the
+    frontend's ``interpolateTaGain`` (rayTrace.ts). Returns None for an empty
+    table, so the caller falls back to the closed-form saturated gain.
+    """
+    if not samples:
+        return None
+    inputs = [float(s.get("inputPowerMw", 0.0)) for s in samples]
+    drives = [float(s.get("driveCurrentMa", 0.0)) for s in samples]
+    input_scale = max(max(inputs) - min(inputs), 1.0)
+    drive_scale = max(max(drives) - min(drives), 1.0)
+    weighted = []
+    for s, p_in, cur in zip(samples, inputs, drives):
+        di = (input_power_mw - p_in) / input_scale
+        dc = (drive_current_ma - cur) / drive_scale
+        weighted.append((1.0 / max(di * di + dc * dc, 1e-9), s))
+    weighted.sort(key=lambda w: w[0], reverse=True)
+    top = weighted[:4]
+    w_sum = sum(w for w, _s in top)
+    if w_sum <= 0.0:
+        return None
+    return (
+        sum(w * float(s.get("forwardPowerMw", 0.0)) for w, s in top) / w_sum,
+        sum(w * float(s.get("backwardPowerMw", 0.0)) for w, s in top) / w_sum,
+    )
+
+
+def ta_forward_power_mw(p_coupled_mw: float, params: dict) -> float:
+    """Amplified forward power for a coupled seed. Prefers the measured
+    ``gainSamples`` table (interpolated at ``driveCurrentMa``) and falls back
+    to the closed-form saturated gain when no table is configured."""
+    table = ta_gain_table_mw(
+        _samples(params, "gainSamples"),
+        p_coupled_mw,
+        float(params.get("driveCurrentMa", 0.0)),
+    )
+    if table is not None:
+        return max(0.0, table[0])
+    return ta_saturated_power_mw(p_coupled_mw, params)
 
 
 def _gaussian_waist_mm(q: complex, wavelength_nm: float) -> float:
@@ -217,12 +308,38 @@ def tapered_amplifier_anchor_op(
     Coupled seed power = ``P_in · frac_te · η``. The output is linearly
     polarized along the gain axis (axisY) with a finite extinction leak, and
     its transverse mode is reshaped to ``outputSpatialModeX/Y``. A seeded TA
-    emits no ASE — unseeded ASE is injected separately (decision 6b)."""
+    emits no ASE — unseeded ASE is injected separately (decision 6b).
+
+    GEOMETRY: the amplified beam leaves from the ``intercept_out`` anchor
+    along that anchor's outward normal (axisX) — the chip's waveguide sets the
+    output direction, so the seed's incidence does NOT steer it and the two
+    facets need not be collinear (side-output / shaped TAs). Assets with no
+    ``intercept_out`` fall back to the old slab passthrough at ``intercept_in``.
+    """
     if ctx.anchor.id != "intercept_in":
         return [ray_in]
 
-    out_ray = _slab_passthrough(ray_in, ctx)
     p = ctx.params
+    out_anchor = next(
+        (a for a in ctx.asset.anchors if a.id == "intercept_out"), None,
+    )
+    if out_anchor is None:
+        out_ray = _slab_passthrough(ray_in, ctx)
+        gain_anchor = ctx.anchor
+    else:
+        # On-axis at the output facet: the amplified beam takes the
+        # waveguide's mode, so the seed's transverse offset is not carried
+        # through. origin is the anchor position VERBATIM, which makes the
+        # self-intersection t exactly 0.0 and therefore rejected by
+        # intersect_anchor's t_min — no epsilon nudge needed.
+        out_ray = ray_in.replaced(
+            origin=out_anchor.position_body,
+            direction=out_anchor.axis_x_body,
+            path_length_mm=ray_in.path_length_mm + vec3_distance(
+                out_anchor.position_body, ctx.anchor.position_body,
+            ),
+        )
+        gain_anchor = out_anchor
 
     # (1) Polarization: TE = axisY component of the seed.
     jones_local = _jones_in_axis_basis(ray_in, ctx.anchor.axis_y_body, ray_in.direction)
@@ -236,9 +353,10 @@ def tapered_amplifier_anchor_op(
     # (3) Mode matching: seed↔waveguide overlap integral.
     eta_mode = _mode_match_eta(ray_in, ctx)
 
-    # (2) Gain saturation on the coupled seed power.
+    # (2) Gain saturation on the coupled seed power — from the measured
+    #     gainSamples table when the asset carries one, else closed-form.
     p_coupled = ray_in.power_mw * frac_te * eta_mode
-    p_out = ta_saturated_power_mw(p_coupled, p)
+    p_out = ta_forward_power_mw(p_coupled, p)
 
     # (4) Current-driver quality: steady-state extraction-efficiency penalty.
     driver_q = float(p.get("driverQualityFactor", 1.0))
@@ -248,7 +366,7 @@ def tapered_amplifier_anchor_op(
     # leak, re-expressed in the OUTPUT ray's beam-local s/p frame.
     leak = math.sqrt(10.0 ** (-float(p.get("polarizationExtinctionDb", 20.0)) / 10.0))
     s_out, _ = beam_local_sp(out_ray.direction)
-    phi_out = jones_rotation_angle(ctx.anchor.axis_y_body, s_out, out_ray.direction)
+    phi_out = jones_rotation_angle(gain_anchor.axis_y_body, s_out, out_ray.direction)
     out_jones = rotate_jones((complex(1.0, 0.0), complex(leak, 0.0)), phi_out)
 
     # Reshape the transverse mode to the chip's output facet (the input beam's

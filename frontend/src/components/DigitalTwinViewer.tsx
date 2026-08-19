@@ -104,7 +104,7 @@ import { applyObjectGeometryOffset, applyObjectTransform, mmToThree } from "../t
 import { assetAnchorWorld, relationTarget, worldAnchor } from "../utils/relationAnchors";
 import { anchorObjectLocalAxisY, anchorObjectLocalPos, anchorObjectLocalPrimaryDir } from "../utils/anchorAccess";
 import { computeBraggTiltAxisFromRfDirectionBodyLocal } from "../optical/kinds/aom/physics";
-import type { Asset3D, ComponentItem, DeviceState, PhysicsElement, SceneObject } from "../types/digitalTwin";
+import type { Anchor, Asset3D, ComponentItem, DeviceState, PhysicsElement, SceneObject } from "../types/digitalTwin";
 import {
   isAssemblyRelationVisible,
   isObjectVisible,
@@ -441,29 +441,23 @@ function connectorAnchorPos(
 }
 
 /** Add INPUT / OUTPUT port labels to a tapered-amplifier mesh wrapper.
- *  Reads the same aperture coordinates the ray-tracer uses
- *  (`apertureBackwardLocalMm` = INPUT seed port, `apertureForwardLocalMm`
- *  = OUTPUT amplified port; both in Blender Z-up frame, mm), converts to
- *  glTF/three coords, and places a billboard sprite with text + small
- *  arrow indicator at each aperture.
+ *  Anchor-driven: the label sits at the `intercept_in` (INPUT / seed) and
+ *  `intercept_out` (OUTPUT / amplified) anchor positions, with a short
+ *  arrow along each anchor's axisX (the outward face normal) so the port
+ *  DIRECTION is visible too. Edit an anchor in the PHY Editor and the
+ *  label follows it.
  *
- *  Sprites are children of the wrapper Group, so the SceneObject's
+ *  Falls back to the legacy bbox placement (labels on the ±X faces of the
+ *  mesh) when the asset has no anchor pair yet, so un-migrated assets keep
+ *  their labels.
+ *
+ *  Sprites/arrows are children of the wrapper Group, so the SceneObject's
  *  rotation/translation carry them automatically. They get
  *  userData.isPortLabel so raycasts (selection / face-touch) skip them. */
-function addTaPortLabels(wrapper: THREE.Object3D, _component: ComponentItem): void {
-  // Position labels relative to the BODY CENTRE (= wrapper origin after
-  // bbox-centering in loadAssetObject) using the bbox extent. Labels sit
-  // just OUTSIDE the +X (OUTPUT) and -X (INPUT) faces of the bbox along
-  // the body axis, vertically/laterally centred.
-  //
-  // Earlier this used apertureForwardLocalMm / apertureBackwardLocalMm
-  // which carry the user-supplied Blender-frame aperture coords —
-  // accurate for the ray-tracer, but visually the labels ended up at
-  // the wrong place because the GLB's coordinate system after
-  // bbox-centering interacts oddly with those numbers. Body-center
-  // placement always lands the labels at the housing's left/right side
-  // regardless of where the GLB's authored origin sits.
-
+function addTaPortLabels(
+  wrapper: THREE.Object3D,
+  asset: Asset3D | undefined,
+): void {
   // Build a CanvasTexture with the label text. Re-creating per call is
   // cheap (called once per TA per scene rebuild) and keeps the sprite
   // self-contained.
@@ -503,6 +497,57 @@ function addTaPortLabels(wrapper: THREE.Object3D, _component: ComponentItem): vo
     return sprite;
   };
 
+  // Lift labels ~25 mm clear of the port so the 19 mm-tall sprite does not
+  // cover the aperture itself. Scene unit = 100 mm.
+  //
+  // NOTE the axis: wrapper-local axes ARE the asset/CAD body axes (see
+  // addAomTiltAxisMarker — positions are body mm ÷ 100, no swap), and the lab
+  // is Z-up, so "up" is body +Z. Lifting along wrapper +Y instead pushes the
+  // label sideways across the body, off its own arrow — which is what the
+  // legacy bbox path below does, tuned by eye for the BoosTA pro GLB.
+  const labelLiftMm = 0.25;
+  const labelLiftY = labelLiftMm;   // legacy bbox path (body +Y), unchanged
+
+  // ── Anchor-driven placement (preferred) ──────────────────────────────
+  // Body-local mm → wrapper-local three units: /100, axes unchanged (same
+  // convention as addAomTiltAxisMarker).
+  const inAnchor = asset?.anchors?.find((a) => a.id === "intercept_in");
+  const outAnchor = asset?.anchors?.find((a) => a.id === "intercept_out");
+  if (asset && inAnchor && outAnchor) {
+    const arrowLength = 0.3;  // 30 mm
+    const placeAtAnchor = (anchor: Anchor, text: string, accent: string, colour: number) => {
+      const p = anchorObjectLocalPos(anchor, asset);
+      const d = anchorObjectLocalPrimaryDir(anchor, asset);
+      const dir = new THREE.Vector3(d?.x ?? 1, d?.y ?? 0, d?.z ?? 0);
+      if (dir.lengthSq() === 0) dir.set(1, 0, 0);
+      dir.normalize();
+      const base = new THREE.Vector3(p.x / 100, p.y / 100, p.z / 100);
+      // Arrow along axisX = the anchor's OUTWARD face normal, so a flipped
+      // or mis-authored anchor is visible at a glance.
+      const arrow = new THREE.ArrowHelper(
+        dir, base, arrowLength, colour, arrowLength * 0.3, arrowLength * 0.18,
+      );
+      arrow.userData.isPortLabel = true;
+      arrow.traverse((child) => {
+        child.userData.isPortLabel = true;
+      });
+      wrapper.add(arrow);
+
+      const sprite = makeLabel(text, "#ffffff", accent);
+      sprite.position.copy(base).addScaledVector(dir, arrowLength + 0.05);
+      sprite.position.z += labelLiftMm;   // body +Z = up (lab is Z-up)
+      wrapper.add(sprite);
+    };
+    placeAtAnchor(inAnchor, "INPUT", "#ef4444", 0xef4444);
+    placeAtAnchor(outAnchor, "OUTPUT", "#22c55e", 0x22c55e);
+    return;
+  }
+
+  // ── Legacy fallback: bbox ±X faces ───────────────────────────────────
+  // Used only when the asset has no intercept_in/out pair. Labels sit just
+  // outside the +X / -X faces of the mesh bbox, vertically/laterally
+  // centred, which is where the pre-anchor BoosTA pro GLB carried them.
+  //
   // Compute the loaded mesh's bbox in WRAPPER-local space. The GLB's
   // authored origin is NOT necessarily at the body centre — for the
   // BoosTA pro it's offset to one face — so we must use the bbox MIN/MAX
@@ -537,9 +582,6 @@ function addTaPortLabels(wrapper: THREE.Object3D, _component: ComponentItem): vo
   const centerZ = (bboxLocal.min.z + bboxLocal.max.z) / 2;
   // 5 mm outside the +X / -X faces.
   const labelOffset = 0.05;
-  // Lift labels ~25 mm above the optical axis so the 19 mm-tall sprite
-  // does not cover the laser-port aperture. Scene unit = 100 mm.
-  const labelLiftY = 0.25;
 
   const placeAt = (xPos: number, label: string, fg: string, accent: string) => {
     const sprite = makeLabel(label, fg, accent);
@@ -3787,7 +3829,16 @@ export function DigitalTwinViewer({
         addWireframeOutline(wrapper);
       }
       if (component.kindId === "tapered_amplifier") {
-        addTaPortLabels(wrapper, component);
+        // Binding-aware: a TA imported through "+ New Component" carries its
+        // Asset3D on a root binding, so `component.asset3dId` is null and the
+        // anchors would be invisible to the label placer.
+        addTaPortLabels(
+          wrapper,
+          primaryAsset(component, {
+            componentBindings: sceneData.componentBindings ?? [],
+            assets: sceneData.assets,
+          }) ?? undefined,
+        );
       }
       if (component.kindId === "aom" && selectedObjectIdSet.has(placement.id)) {
         const aomAsset = component.asset3dId ? assetById.get(component.asset3dId) : undefined;

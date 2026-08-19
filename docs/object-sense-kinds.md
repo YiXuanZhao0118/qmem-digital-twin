@@ -26,7 +26,7 @@
 | kind | Class | Trace role | Primary anchor | Anchor op | Effect on the beam (summary) | Status |
 |---|---|---|---|---|---|---|
 | **laser_source** | emitter | emit | intercept_out | `emit_laser_source.py` | Emits 1 ray per intercept_out; wavelength/power/polarization/waist come from dynamic→default, with the Jones vector referenced to the anchor's axisY | full |
-| **tapered_amplifier** | emitter | passthrough + ASE | intercept_in/out | `misc_ops.tapered_amplifier_anchor_op` + `emit_ta_ase_rays` | Four-factor seed amplification (TE polarization × mode overlap × gain saturation × driver); emits ASE in both directions when there is no seed | ⚠ partial |
+| **tapered_amplifier** | emitter | amplify + ASE | intercept_in/out | `misc_ops.tapered_amplifier_anchor_op` + `emit_ta_ase_rays` | Four-factor seed amplification (TE polarization × mode overlap × gain saturation × driver), or the measured `gainSamples` table when present; the amplified beam leaves **from `intercept_out` along its axisX** (2026-08-18 — it used to slab-passthrough out of `intercept_in`). Unseeded, it emits ASE out both facets, each from its own anchor, powered by `aseSamples` at `driveCurrentMa` | ⚠ partial |
 | **mirror** | passive | passthrough | intercept_face | `mirror.py:mirror_anchor_op` | Reflection (flipping propagation), Jones r_s=+1 / r_p=−1 flipping handedness, ×reflectivity 0.99; **a flat mirror, no focusing** | full |
 | **dichroic_mirror** | passive | passthrough | intercept_face | (the same mirror op) | **Identical to mirror**; ×0.95, with **no wavelength splitting** (cutoff/passband do nothing) | ⚠ partial |
 | **lens_biconvex** | passive | passthrough | intercept_in | `lens.py:lens_anchor_op` | A spherical thin-lens ABCD on both axes: θ′=θ−offset/f, q′=q/(1−q/f), f = focalLengthMm 100 | full |
@@ -93,7 +93,8 @@ Status legend: **full** physically usable ｜ **⚠ partial** works but with maj
 The recurring, horizontal problems worth handling in one consolidated pass:
 
 **A. Parameter-contract drift (the most widespread and highest-impact)** — several ops read keys that don't match `kinds.json`'s default_params, so the numbers in the panel/catalog **never reach the trace** and the op silently uses hard-coded defaults:
-- `tapered_amplifier`: the ASE op reads `aseForwardMw` / `aseBackwardMw` while kinds.json has `ase.{powerMw,...}` → **an unseeded TA actually emits 0 ASE** (the worst case).
+- ~~`tapered_amplifier`: the ASE op reads `aseForwardMw` / `aseBackwardMw` while kinds.json has `ase.{powerMw,...}` → **an unseeded TA actually emits 0 ASE**~~ — **fixed**. `emit_ta_ase_rays` now resolves per facet as flat key → `aseSamples` @ `driveCurrentMa` → nested `ase.powerMw`, so every catalog shape emits.
+- **The wider version of this drift is the wrong TABLE, not the wrong key**: the v3 tracer builds each slot from `Asset3D.default_params ⊕ dynamic_sources` (`db_scene_loader`), so anything a panel writes to `PhysicsElement.kind_params` — the TA panel's gain / wavelength / `aseSamples` / `gainSamples` are the live example — **never reaches the trace at all**. `kind_params` is read only for the synthesized fiber slot. When a panel edit "does nothing", check which table it landed in before hunting for a key mismatch.
 - `fiber`: the op reads `coreMfdUm` / `attenuationDbPerKm` / `lengthM` while kinds.json has `endA/endB.modeFieldDiameterUm` + `attenuationCurve[]` → editing attenuation/MFD does nothing.
 - `saturable_absorber`: the op reads `smallSignalTransmittance` / … while kinds.json has `saturationIntensityWPerCm2` / `modulationDepth` / … → nothing works.
 - `nonlinear_crystal`: the op defaults lengthMm to 1.0 while the catalog seeds 10.

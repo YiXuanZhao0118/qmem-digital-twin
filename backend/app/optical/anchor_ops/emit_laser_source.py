@@ -28,6 +28,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from app.optical.anchor_ops.misc_ops import _samples, ta_ase_table_mw
 from app.optical.anchor_tracer import V3Anchor, V3AnchorScene
 from app.optical.beam_ray import BeamRay, Vec3, make_beam_ray
 from app.optical.jones import jones_axis_to_lab
@@ -207,10 +208,17 @@ def emit_ta_ase_rays(
     broadband ASE out both facets (forward + backward), linearly polarized
     along the gain axis (anchor axisY). A *seeded* TA — one whose
     ``scene_object_id`` appears in ``seeded_object_ids`` — emits no ASE (the
-    seed extracts the inversion). Emitted from the ``intercept_in`` anchor along
-    ±axisX (BOTH facets); per-facet power defaults to ``default_params.ase.powerMw``
-    (the catalog shape), overridable per direction by the flat
-    ``aseForwardMw`` / ``aseBackwardMw`` keys.
+    seed extracts the inversion).
+
+    GEOMETRY: each facet emits from its OWN anchor along that anchor's outward
+    normal — forward out of ``intercept_out``, backward out of ``intercept_in``.
+    Assets carrying only ``intercept_in`` keep the legacy behaviour (both
+    facets from that one anchor, along ±axisX).
+
+    POWER, per facet, first match wins:
+      1. the flat ``aseForwardMw`` / ``aseBackwardMw`` keys (explicit override)
+      2. ``aseSamples`` interpolated at ``driveCurrentMa``
+      3. the nested catalog default ``ase.powerMw``
     """
     out: list[tuple[BeamRay, str, str]] = []
     for slot in scene.slots:
@@ -224,30 +232,49 @@ def emit_ta_ase_rays(
         anchor = next((a for a in slot.asset.anchors if a.id == "intercept_in"), None)
         if anchor is None:
             continue
+        out_anchor = next(
+            (a for a in slot.asset.anchors if a.id == "intercept_out"), None,
+        )
         wl = float(dp.get("centerWavelengthNm", 780.0))
         w0 = float((dp.get("spatialModeX") or {}).get("waistUm", 250.0))
-        origin_lab = point_body_to_lab_t(anchor.position_body, slot.effective_transform)
         ax = anchor.axis_x_body
-        # ASE power per facet. The catalog stores it as nested ``ase.powerMw``
-        # (kinds.json), so use that as the per-facet default; the flat
-        # ``aseForwardMw`` / ``aseBackwardMw`` keys (when present) override it
-        # per direction. Without the nested fallback a catalog TA emitted ZERO
-        # ASE because the flat keys are never seeded.
+        # Per-facet emitter: (anchor, outward direction). With both anchors
+        # present each facet emits from its own; with only intercept_in we keep
+        # the legacy ±axisX pair off that single anchor.
+        facets = (
+            [("aseForwardMw", out_anchor, out_anchor.axis_x_body),
+             ("aseBackwardMw", anchor, ax)]
+            if out_anchor is not None else
+            [("aseForwardMw", anchor, ax),
+             ("aseBackwardMw", anchor, Vec3(-ax.x, -ax.y, -ax.z))]
+        )
+        # The catalog stores ASE as nested ``ase.powerMw`` (kinds.json), so
+        # that is the last-resort per-facet default — without it a catalog TA
+        # emitted ZERO ASE because the flat keys are never seeded.
         ase = dp.get("ase") if isinstance(dp.get("ase"), dict) else {}
         ase_default_mw = float(ase.get("powerMw", 0.0) or 0.0)
-        for power_key, axis_body in (
-            ("aseForwardMw", ax),
-            ("aseBackwardMw", Vec3(-ax.x, -ax.y, -ax.z)),
-        ):
-            power = float(dp.get(power_key, ase_default_mw))
+        table = ta_ase_table_mw(
+            _samples(dp, "aseSamples"), float(dp.get("driveCurrentMa", 0.0)),
+        )
+        table_mw = {
+            "aseForwardMw": table[0] if table else None,
+            "aseBackwardMw": table[1] if table else None,
+        }
+        for power_key, facet_anchor, axis_body in facets:
+            power = float(
+                dp.get(power_key, table_mw[power_key] if table else ase_default_mw),
+            )
             if power <= 0.0:
                 continue
+            origin_lab = point_body_to_lab_t(
+                facet_anchor.position_body, slot.effective_transform,
+            )
             dir_lab = dir_body_to_lab_t(axis_body, slot.effective_transform)
             # ASE is linearly polarized along the gain axis = anchor axisY.
             # jones[0] (E_s) is referenced to axisY, so E_s=1 ⇒ field along
             # the physical gain axis regardless of beam direction / world-up.
             jones_lab = jones_axis_to_lab(
-                (complex(1.0, 0.0), complex(0.0, 0.0)), anchor.axis_y_body, dir_lab,
+                (complex(1.0, 0.0), complex(0.0, 0.0)), facet_anchor.axis_y_body, dir_lab,
                 lambda v: dir_body_to_lab_t(v, slot.effective_transform),
             )
             ray = make_beam_ray(
@@ -256,7 +283,7 @@ def emit_ta_ase_rays(
             ).replaced(
                 jones=jones_lab,
                 qx=_q_at_waist_mm(w0, wl), qy=_q_at_waist_mm(w0, wl),
-                exclude_face_key=f"{slot.scene_object_id}/{slot.binding_id}/{anchor.id}",
+                exclude_face_key=f"{slot.scene_object_id}/{slot.binding_id}/{facet_anchor.id}",
             )
             out.append((ray, slot.scene_object_id, slot.scene_object_id))
     return out

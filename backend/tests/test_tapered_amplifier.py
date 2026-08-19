@@ -160,3 +160,158 @@ def test_powered_off_laser_emits_nothing():
     )
     scene = SimpleNamespace(slots=[laser])
     assert emit_anchor_source_rays(scene) == []
+
+
+# --- Output geometry: the amplified beam leaves from intercept_out ----------
+
+def _op_ctx(anchors, params=None):
+    """AnchorOpContext for an op-level call landing on intercept_in."""
+    from app.optical.anchor_tracer import (
+        AnchorHit, AnchorOpContext, V3AssetAnchorSnapshot,
+    )
+
+    in_a = next(a for a in anchors if a.id == "intercept_in")
+    hit = AnchorHit(
+        slot=None, anchor=in_a, t_lab=1.0, hit_point_body=in_a.position_body,
+        offset_y_body=0.0, offset_z_body=0.0, cos_incidence=1.0,
+    )
+    asset = V3AssetAnchorSnapshot(
+        catalog_id="ta", kind="tapered_amplifier", anchors=list(anchors),
+    )
+    return AnchorOpContext(
+        asset=asset, anchor=in_a, hit=hit,
+        params=params or {"smallSignalGainDb": 20.0, "saturationPowerMw": 50.0},
+        dynamic={},
+    )
+    del Vec3
+
+
+def _anchor(anchor_id, pos, axis_x, axis_y=(0.0, 1.0, 0.0)):
+    from app.optical.anchor_tracer import V3Anchor
+    from app.optical.beam_ray import Vec3
+    ax = Vec3(*axis_x)
+    ay = Vec3(*axis_y)
+    az = Vec3(
+        ax.y * ay.z - ax.z * ay.y,
+        ax.z * ay.x - ax.x * ay.z,
+        ax.x * ay.y - ax.y * ay.x,
+    )
+    return V3Anchor(
+        id=anchor_id, position_body=Vec3(*pos),
+        axis_x_body=ax, axis_y_body=ay, axis_z_body=az, aperture_mm=3.0,
+    )
+
+
+def _seed_ray(direction=(1.0, 0.0, 0.0)):
+    from app.optical.beam_ray import Vec3, make_beam_ray
+    return make_beam_ray(
+        origin=Vec3(-10.0, 0.0, 0.0), direction=Vec3(*direction),
+        wavelength_nm=780.0, power_mw=1.0,
+    )
+
+
+def test_amplified_output_leaves_from_intercept_out():
+    """Regression: the op used to emit from intercept_in via a slab
+    passthrough, so the amplified beam started inside the chip and ran on
+    through the housing. It must start at the OUTPUT facet."""
+    from app.optical.anchor_tracer import get_anchor_op
+    from app.optical import anchor_ops  # noqa: F401  (registers ops)
+
+    anchors = [
+        _anchor("intercept_in", (-80.0, 0.0, 0.0), (-1.0, 0.0, 0.0)),
+        _anchor("intercept_out", (60.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+    ]
+    [out] = get_anchor_op("tapered_amplifier")(_seed_ray(), _op_ctx(anchors))
+    assert (out.origin.x, out.origin.y, out.origin.z) == (60.0, 0.0, 0.0)
+    assert out.direction.x == 1.0
+    # Facet-to-facet separation is added to the optical path length.
+    assert out.path_length_mm == 140.0
+
+
+def test_output_direction_ignores_seed_incidence():
+    """Side-output TA: the waveguide sets the exit direction, so a seed
+    arriving along +X still leaves along intercept_out's own axisX."""
+    from app.optical.anchor_tracer import get_anchor_op
+    from app.optical import anchor_ops  # noqa: F401
+
+    anchors = [
+        _anchor("intercept_in", (0.0, 0.0, 0.0), (-1.0, 0.0, 0.0)),
+        # exit facet rotated 90° away from the seed axis
+        _anchor("intercept_out", (0.0, 30.0, 0.0), (0.0, 1.0, 0.0),
+                axis_y=(0.0, 0.0, 1.0)),
+    ]
+    [out] = get_anchor_op("tapered_amplifier")(_seed_ray(), _op_ctx(anchors))
+    assert (round(out.direction.x), round(out.direction.y)) == (0, 1)
+
+
+def test_falls_back_to_slab_when_no_intercept_out():
+    """Un-migrated single-anchor assets keep the legacy behaviour."""
+    from app.optical.anchor_tracer import get_anchor_op
+    from app.optical import anchor_ops  # noqa: F401
+
+    anchors = [_anchor("intercept_in", (0.0, 0.0, 0.0), (-1.0, 0.0, 0.0))]
+    [out] = get_anchor_op("tapered_amplifier")(_seed_ray(), _op_ctx(anchors))
+    assert round(out.direction.x) == 1          # still transmits forward
+    assert abs(out.origin.x) < 1.0              # at intercept_in, not 60 mm away
+
+
+# --- Measured tables --------------------------------------------------------
+
+def test_ase_table_interpolates_and_clamps():
+    from app.optical.anchor_ops.misc_ops import ta_ase_table_mw
+    rows = [
+        {"driveCurrentMa": 0.0, "forwardPowerMw": 0.0, "backwardPowerMw": 0.0},
+        {"driveCurrentMa": 1000.0, "forwardPowerMw": 25.0, "backwardPowerMw": 5.0},
+        {"driveCurrentMa": 2000.0, "forwardPowerMw": 200.0, "backwardPowerMw": 80.0},
+    ]
+    assert ta_ase_table_mw(rows, 500.0) == (12.5, 2.5)      # midpoint
+    assert ta_ase_table_mw(rows, 9999.0) == (200.0, 80.0)   # clamped high
+    assert ta_ase_table_mw(rows, -1.0) == (0.0, 0.0)        # clamped low
+    assert ta_ase_table_mw([], 2400.0) is None
+
+
+def test_gain_table_wins_over_closed_form():
+    from app.optical.anchor_ops.misc_ops import (
+        ta_forward_power_mw, ta_saturated_power_mw,
+    )
+    params = {
+        "smallSignalGainDb": 20.0, "saturationPowerMw": 50.0,
+        "driveCurrentMa": 2400.0,
+        "gainSamples": [
+            {"inputPowerMw": 10.0, "driveCurrentMa": 2400.0,
+             "forwardPowerMw": 1800.0, "backwardPowerMw": 80.0},
+        ],
+    }
+    assert ta_forward_power_mw(10.0, params) == 1800.0
+    # …and the closed form still applies when no table is configured.
+    bare = {k: v for k, v in params.items() if k != "gainSamples"}
+    assert ta_forward_power_mw(10.0, bare) == ta_saturated_power_mw(10.0, bare)
+
+
+def test_ase_forward_emits_from_intercept_out():
+    """Forward ASE must leave the OUTPUT facet, backward the INPUT facet —
+    each along its own outward normal."""
+    in_a = _anchor("intercept_in", (-80.0, 0.0, 0.0), (-1.0, 0.0, 0.0))
+    out_a = _anchor("intercept_out", (60.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+    slot = SimpleNamespace(
+        asset=SimpleNamespace(
+            kind="tapered_amplifier",
+            default_params={
+                "centerWavelengthNm": 852.0,
+                "driveCurrentMa": 2000.0,
+                "aseSamples": [
+                    {"driveCurrentMa": 0.0, "forwardPowerMw": 0.0, "backwardPowerMw": 0.0},
+                    {"driveCurrentMa": 2000.0, "forwardPowerMw": 200.0, "backwardPowerMw": 80.0},
+                ],
+            },
+            anchors=[in_a, out_a],
+        ),
+        scene_object_id="ta-2anchor", binding_id="b",
+        effective_transform=_identity_transform(), powered_on=True,
+    )
+    rays = emit_ta_ase_rays(SimpleNamespace(slots=[slot]), set())
+    assert len(rays) == 2
+    by_power = {round(r[0].power_mw): r[0] for r in rays}
+    fwd, bwd = by_power[200], by_power[80]          # aseSamples @ 2000 mA
+    assert fwd.origin.x == 60.0 and round(fwd.direction.x) == 1
+    assert bwd.origin.x == -80.0 and round(bwd.direction.x) == -1
