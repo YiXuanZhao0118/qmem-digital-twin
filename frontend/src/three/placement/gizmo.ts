@@ -73,6 +73,96 @@ export function magnetizeRotationDelta(
     .normalize();
 }
 
+/** Auto-hide threshold for translate axes, as |axis . eye|.
+ *
+ *  TransformControls' own AXIS_HIDE_THRESHOLD is 0.99 (~8 deg off-axis), which
+ *  leaves an axis visible AND pickable in views where it is useless. Its
+ *  invisible picker is a cone whose wide end sits at the gizmo origin, so seen
+ *  end-on it projects right onto the gizmo centre, in front of the XY/YZ/XZ
+ *  quads, and steals their clicks. Dragging it there is worse than useless:
+ *  the drag plane is built from `eye x axis`, which degenerates as the eye
+ *  approaches the axis, so the plane turns edge-on to the camera and one pixel
+ *  of pointer travel becomes an enormous displacement.
+ *
+ *  0.97 ~ 14 deg off-axis: wide enough to cover "roughly a front/top view",
+ *  narrow enough that a mildly tilted view still offers all three axes. */
+const AXIS_HIDE_DOT = 0.97;
+
+/** Which translate axes are usable from a given view. `eye` is the normalised
+ *  direction from the gizmo towards the camera; `gizmoQuat` is the gizmo's
+ *  frame (identity in world space, the object's rotation in local space).
+ *  Hiding an axis hides its pickers too, so it also stops stealing clicks. */
+export function axisVisibilityForView(
+  eye: THREE.Vector3,
+  gizmoQuat: THREE.Quaternion,
+): { showX: boolean; showY: boolean; showZ: boolean } {
+  const axis = new THREE.Vector3();
+  const usable = (x: number, y: number, z: number): boolean =>
+    Math.abs(axis.set(x, y, z).applyQuaternion(gizmoQuat).dot(eye)) <= AXIS_HIDE_DOT;
+  return { showX: usable(1, 0, 0), showY: usable(0, 1, 0), showZ: usable(0, 0, 1) };
+}
+
+/** How far outwards the XY/YZ/XZ plane handles are pushed, in gizmo units.
+ *  Stock puts their 0.2-wide pickers at 0.15 (spanning 0.05..0.25) while the
+ *  axis picker cone has radius y/3 there - so the quad's inner corner is
+ *  literally inside the axis pick volume and the winner is whichever surface
+ *  happens to be nearer the camera. +0.15 moves them to 0.30 (0.20..0.40),
+ *  clear of the thinned cone and still inside the 0.5-long axis line. */
+const PLANE_HANDLE_OFFSET = 0.15;
+
+/** Radial thinning of the axis pickers, perpendicular to their own axis. */
+const AXIS_PICKER_THINNING = 0.5;
+
+/** Pull the translate plane handles away from the axis handles.
+ *
+ *  setupGizmo() bakes each handle's position/rotation INTO its geometry and
+ *  resets the node transform every frame, so the only durable place to move a
+ *  handle is the geometry itself. Reaches into `_gizmo` (three-internal); if a
+ *  three upgrade renames it the patch silently no-ops rather than throwing,
+ *  leaving stock behaviour. */
+export function spreadTranslateHandles(controls: TransformControls): void {
+  const internals = (controls as unknown as {
+    _gizmo?: { gizmo?: Record<string, THREE.Object3D>; picker?: Record<string, THREE.Object3D> };
+  })._gizmo;
+  const drawn = internals?.gizmo?.translate;
+  const picker = internals?.picker?.translate;
+  if (!drawn || !picker) return;
+
+  const d = PLANE_HANDLE_OFFSET;
+  const t = AXIS_PICKER_THINNING;
+  const outward: Record<string, [number, number, number]> = {
+    XY: [d, d, 0],
+    YZ: [0, d, d],
+    XZ: [d, 0, d],
+  };
+  // Cone axes are already baked world-aligned, so thinning is a plain scale
+  // on the two components perpendicular to the handle's own axis.
+  const thinning: Record<string, [number, number, number]> = {
+    X: [1, t, t],
+    Y: [t, 1, t],
+    Z: [t, t, 1],
+  };
+  const matrix = new THREE.Matrix4();
+
+  const shiftPlane = (handle: THREE.Object3D): boolean => {
+    const shift = outward[handle.name];
+    const geometry = (handle as THREE.Mesh).geometry;
+    if (!shift || !geometry) return false;
+    geometry.applyMatrix4(matrix.makeTranslation(shift[0], shift[1], shift[2]));
+    return true;
+  };
+
+  for (const handle of drawn.children) shiftPlane(handle);
+  for (const handle of picker.children) {
+    if (shiftPlane(handle)) continue;
+    const scale = thinning[handle.name];
+    const geometry = (handle as THREE.Mesh).geometry;
+    if (scale && geometry) {
+      geometry.applyMatrix4(matrix.makeScale(scale[0], scale[1], scale[2]));
+    }
+  }
+}
+
 export type GizmoCallbacks = {
   /** Called continuously during drag with the latest engine result for the
    * primary (active) object — drives the snap overlay/readout. */
@@ -136,6 +226,10 @@ export class PlacementGizmo {
   private proxy: THREE.Object3D = new THREE.Object3D();
   private initialProxyPosThree = new THREE.Vector3();
   private initialProxyQuat = new THREE.Quaternion();
+  /** Scratch for updateAxisVisibility, called every rendered frame. */
+  private eyeVec = new THREE.Vector3();
+  private pivotVec = new THREE.Vector3();
+  private frameQuat = new THREE.Quaternion();
   /** All selected wrappers (primary + followers) with their pre-drag pose
    *  in three-units. Captured at attach() time and used to derive each
    *  object's new pose from the proxy's drag delta. */
@@ -173,6 +267,7 @@ export class PlacementGizmo {
     this.controls = new TransformControls(this.camera, this.domElement);
     this.controls.size = 0.7;
     this.controls.setSpace("world");
+    spreadTranslateHandles(this.controls);
     // The TransformControls "root" is the gizmo helper itself. It must be
     // added to the scene via the helper accessor on newer three versions.
     const helper = (this.controls as unknown as { getHelper?: () => THREE.Object3D }).getHelper;
@@ -358,6 +453,36 @@ export class PlacementGizmo {
   setMode(mode: "translate" | "rotate" | "scale"): void {
     this.mode = mode;
     this.controls.setMode(mode);
+  }
+
+  /** Drop translate axes that point (nearly) at the camera - see
+   *  AXIS_HIDE_DOT. Cheap enough for every rendered frame, and the show*
+   *  setters only fire a change event when the value actually flips. */
+  updateAxisVisibility(): void {
+    // Rotate/scale keep every handle (the rings stay usable end-on), and a
+    // live drag must never lose the axis it is dragging.
+    if (this.mode !== "translate" || !this.attachedObject || this.controls.dragging) {
+      this.controls.showX = true;
+      this.controls.showY = true;
+      this.controls.showZ = true;
+      return;
+    }
+    if (this.camera instanceof THREE.OrthographicCamera) {
+      this.camera.getWorldDirection(this.eyeVec).negate();
+    } else {
+      this.camera
+        .getWorldPosition(this.eyeVec)
+        .sub(this.proxy.getWorldPosition(this.pivotVec))
+        .normalize();
+    }
+    const frame =
+      this.controls.space === "local"
+        ? this.proxy.getWorldQuaternion(this.frameQuat)
+        : this.frameQuat.identity();
+    const { showX, showY, showZ } = axisVisibilityForView(this.eyeVec, frame);
+    this.controls.showX = showX;
+    this.controls.showY = showY;
+    this.controls.showZ = showZ;
   }
 
   /** Re-derive the gizmo's local frame from current orientation + scene. */

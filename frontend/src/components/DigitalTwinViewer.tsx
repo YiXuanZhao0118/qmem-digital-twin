@@ -3411,6 +3411,11 @@ export function DigitalTwinViewer({
         if (globalAxesGizmoRef.current) {
           globalAxesGizmoRef.current.quaternion.copy(camera.quaternion).invert();
         }
+        // Must run BEFORE the render: the placement gizmo re-reads showX/Y/Z
+        // in its own updateMatrixWorld during this same draw, so deciding here
+        // means the axes appear/disappear on the frame the camera crosses the
+        // threshold rather than one frame late.
+        placementGizmoRef.current?.updateAxisVisibility();
         renderer.render(scene, camera);
         orientationRenderer.render(orientationScene, orientationCamera);
         pendingRender = false;
