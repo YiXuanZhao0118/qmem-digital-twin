@@ -13,7 +13,7 @@
  * Coverage (matches AssetLibraryPanel.tsx's hand-written Sets):
  *   - Mechanical (12)   : MECHANICAL_TYPES minus mirror_mount
  *   - Infrastructure (1): optical_table
- *   - Misc (2)          : text_annotation, tool
+ *   - Misc (3)          : text_annotation, rect_annotation, tool
  *   - Electronics (7)   : passive electronics componentTypes that
  *                         don't map to an ElementKind (chassis trim,
  *                         standalone jacks, IEC inlet, etc.)
@@ -89,6 +89,13 @@ export const textAnnotationPlugin = definePassivePlugin({
   assetCategory: "misc",
 });
 
+export const rectAnnotationPlugin = definePassivePlugin({
+  id: "rect_annotation",
+  displayName: "Rect Annotation",
+  componentTypes: ["rect_annotation"],
+  assetCategory: "misc",
+});
+
 export const toolPlugin = definePassivePlugin({
   id: "tool",
   displayName: "Tool",
@@ -146,6 +153,7 @@ export const PASSIVE_PLUGINS: readonly PassivePlugin[] = [
   vacuumChamberPlugin,
   // Misc
   textAnnotationPlugin,
+  rectAnnotationPlugin,
   toolPlugin,
   // Electronics passive
   mcuBoardPlugin,

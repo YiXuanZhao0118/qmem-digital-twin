@@ -38,8 +38,9 @@ propagates and gets acted on — live, in the browser.
 - **Lab tab** — click it to drop down the scene menu: **Initial Setup** (room
   length / width / height, in mm) and **PHY Editor**.
 - **Middle toolbar**, left to right: add a text annotation (drops a label at the
-  3D cursor) · **Display overlays** (eye icon) · single/dual viewport toggle ·
-  WebSocket connection status.
+  3D cursor) · add a rect annotation (drops a rectangular marking on the table
+  top, at the cursor's X/Y) · **Display overlays** (eye icon) · single/dual
+  viewport toggle · WebSocket connection status.
 - **Right — Window menu** (grid icon): re-open panels you closed, or
   **Reset layout**.
 - **Right — Help** (question mark): this window.

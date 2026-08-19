@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-18T08:18:51.142Z",
+  "generated_at": "2026-08-19T01:33:39.663Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -2143,6 +2143,16 @@
       "display_name": "Text Annotation",
       "component_types": [
         "text_annotation"
+      ],
+      "asset_category": "misc",
+      "catalog_group": null,
+      "asset_name_pattern": null
+    },
+    {
+      "id": "rect_annotation",
+      "display_name": "Rect Annotation",
+      "component_types": [
+        "rect_annotation"
       ],
       "asset_category": "misc",
       "catalog_group": null,

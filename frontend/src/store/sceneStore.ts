@@ -131,7 +131,7 @@ import { expandPoseToRigidGroup, patchHasPoseChange } from "../utils/rigidGroup"
 import { anchorObjectLocalPrimaryDir } from "../utils/anchorAccess";
 import { capabilityProfile } from "../kinds/_capabilityProfile";
 import { deriveCablePropsFromConnectorBindings, primaryAsset } from "../utils/componentBindings";
-import { TEXT_ANNOTATION_ASSET_FILEPATH } from "../three/loadAsset/passive/text_annotation";
+import { TABLE_TOP_HEIGHT_MM } from "../three/photoRoom";
 import { ppgsAttachedTo } from "../utils/ppgAttachment";
 import {
   connectorFamilyFromAnchor,
@@ -557,6 +557,20 @@ type SceneStore = {
    *  it. The new object becomes the active selection so the user can edit
    *  the text content immediately in the Object panel. */
   addTextAnnotation: (text?: string) => Promise<ComponentItem>;
+  /** Spawn a rectangular table marking at the transform cursor. Same shape
+   *  as `addTextAnnotation` — a fresh `rect_annotation` component whose
+   *  properties drive the procedural outline, plus a SceneObject pointing at
+   *  it — and the new object becomes the active selection so the size and
+   *  colour fields open straight away in the Object panel. */
+  addRectAnnotation: () => Promise<ComponentItem>;
+  /** Shared implementation of both: look up the annotation type's ONE catalog
+   *  Component (by `catalogId`, seeded by alembic 0125) and place a SceneObject
+   *  instance of it. `seed` becomes the object's initial dynamicSources, except
+   *  `zMm` which is a pose override. Returns the catalog Component. */
+  addAnnotationInstance: (
+    catalogId: string,
+    seed?: Record<string, unknown> & { zMm?: number },
+  ) => Promise<ComponentItem>;
   /** When non-null, the viewer renders Bezier-style anchor + tangent-handle
    *  gizmos for this fiber component, dims everything else, and routes
    *  pointer events to the spline editor (drag anchor / drag handle tip /
@@ -2522,54 +2536,58 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   },
 
   async addTextAnnotation(text) {
-    const initialText = (text && text.trim().length > 0) ? text : "Text";
-    // Every Component renders by walking its ComponentBinding tree
-    // (bindingRendererGate, 2026-06-10), so the label needs a leaf to
-    // resolve: the procedural `primitive://text_annotation` Asset3D seeded
-    // by alembic 0119. `loadAsset`'s primitive:// branch then dispatches to
-    // the sprite renderer by the Component's kindId. Resolve it BEFORE
-    // creating anything so a missing row can't leave an orphan Component.
-    const labelAsset = get().scene.assets.find(
-      (a) => a.filePath === TEXT_ANNOTATION_ASSET_FILEPATH,
+    // Text annotations are an ordinary catalog entry since alembic 0125: ONE
+    // shared Component (catalog_id "text_annotation") bound to the
+    // `primitive://text_annotation` asset, instantiated per label. Styling is
+    // per-instance and lives in the SceneObject's dynamicSources, merged over
+    // the asset's defaultParams at render time — see utils/instanceParams.ts.
+    const obj = await get().addAnnotationInstance("text_annotation", {
+      ...(text && text.trim().length > 0 ? { text } : {}),
+    });
+    return obj;
+  },
+
+  async addRectAnnotation() {
+    // Same catalog model as the text label (alembic 0125). A fresh marking
+    // carries NO dynamicSources at all: it renders the kind's style template
+    // (kind.default_params → asset.default_params) until the user overrides a
+    // field in the Object panel.
+    return get().addAnnotationInstance("rect_annotation", {
+      zMm: TABLE_TOP_HEIGHT_MM,
+    });
+  },
+
+  async addAnnotationInstance(catalogId, seed) {
+    const { zMm, ...dynamic } = seed ?? {};
+    const catalogComponent = get().scene.components.find(
+      (c) => c.catalogId === catalogId,
     );
-    if (!labelAsset) {
+    if (!catalogComponent) {
       throw new Error(
-        `Text annotation asset (${TEXT_ANNOTATION_ASSET_FILEPATH}) is missing — ` +
-          "run `alembic upgrade head` (migration 0119).",
+        `Catalog component "${catalogId}" is missing — run \`alembic upgrade head\` ` +
+          "(migration 0125).",
       );
     }
-    const component = await createComponentApi({
-      name: initialText,
-      kindId: "text_annotation",
-      properties: {
-        text: initialText,
-        textColor: "#ffffff",
-        bgColor: "rgba(15, 23, 42, 0.85)",
-        accentColor: "#38bdf8",
-        fontSizePx: 56,
-        scaleMm: 80,
-      },
-    });
-    await createComponentBindingApi(component.id, {
-      targetKind: "asset",
-      asset3dId: labelAsset.id,
-      sortOrder: 0,
-    });
     const obj = await createObjectApi({
-      componentId: component.id,
+      componentId: catalogComponent.id,
       collectionId: get().activeCollectionId,
       ...cursorSpawnPatch(get().transformCursorMm.left, get().scene.objects.length),
+      // A table marking belongs ON the table, so the cursor drives X/Y only and
+      // Z lands on the table top. A text label keeps the cursor's own Z.
+      ...(typeof zMm === "number" ? { zMm } : {}),
+      ...(Object.keys(dynamic).length > 0 ? { dynamicSources: dynamic } : {}),
       visible: true,
       locked: false,
     });
     await get().loadScene();
-    // Select the new object so the Object panel opens to its text editor.
+    // Select the new object so the Object panel opens on its per-instance
+    // fields straight away.
     set({
       selectedComponentId: null,
       selectedObjectId: obj.id ?? null,
       selectedObjectIds: obj.id ? [obj.id] : [],
     });
-    return component;
+    return catalogComponent;
   },
 
   enterFiberEdit(componentId) {

@@ -38,6 +38,7 @@ import {
   deriveCablePropsFromConnectorBindings,
   resolveBindingTree,
 } from "../utils/componentBindings";
+import { ANNOTATION_KIND_IDS, effectiveInstanceParams } from "../utils/instanceParams";
 import { loadAssetObject } from "./loadAsset";
 import { buildBindingTreeObject } from "./bindingTreeObject";
 import { GLAN_POLARIZER_PRISM_FILEPATH } from "./loadAsset/procedural/glan_polarizer_prism";
@@ -160,6 +161,22 @@ export async function buildSceneObjectFromBindings(
     // for the legacy single-asset path and a composite Component
     // (isolator, mirror_mount, …) never has fiber-style per-instance
     // state on its root.
+    // Annotations (rect_annotation / text_annotation) are pure params: the
+    // Component is ONE shared catalog row, so everything that makes THIS label
+    // look the way it does lives in asset.defaultParams merged with the
+    // object's dynamicSources (alembic 0125). Hand the renderer that merge
+    // through the same synthetic-component channel the glan prism uses below —
+    // plugin renderers only ever see a ComponentItem.
+    if (ANNOTATION_KIND_IDS.has(component.kindId ?? "")) {
+      const annotated: ComponentItem = {
+        ...component,
+        properties: effectiveInstanceParams(node.target.asset, sceneObject),
+      };
+      return loadAssetObject(annotated, node.target.asset, undefined, null, null, {
+        skipAutoCenter: true,
+        enableLod: options?.enableLod === true,
+      });
+    }
     const loaderComponent = node.target.asset.filePath === GLAN_POLARIZER_PRISM_FILEPATH
       ? ({
           id: `binding-${node.target.asset.id}`,

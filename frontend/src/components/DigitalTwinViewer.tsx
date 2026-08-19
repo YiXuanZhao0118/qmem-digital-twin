@@ -37,6 +37,7 @@ import {
   shouldRenderViaBindings,
 } from "../three/bindingRendererGate";
 import { primaryAsset, resolveBindingTree, type ResolvedBindingNode } from "../utils/componentBindings";
+import { ANNOTATION_KIND_IDS, instanceParamsKey } from "../utils/instanceParams";
 import { beamColorForSource } from "../three/opticalBeams";
 import {
   type DebugLabSegment,
@@ -4227,7 +4228,15 @@ export function DigitalTwinViewer({
         // stringification of every hint we honour today.
         const renderHintsKeyNow = (() => {
           const p = placement.properties as { translucentHousing?: unknown } | undefined;
-          return `tr=${p?.translucentHousing === true ? "1" : "0"}`;
+          // An annotation's geometry IS its dynamicSources (size / colour /
+          // caption), so those have to be part of the reuse key or editing a
+          // marking would keep serving the cached mesh. Restricted to
+          // annotation kinds on purpose: for a laser, dynamicSources carries
+          // power/wavelength, which must NOT force an STL/GLB reload.
+          const dyn = ANNOTATION_KIND_IDS.has(component.kindId ?? "")
+            ? instanceParamsKey(placement)
+            : "";
+          return `tr=${p?.translucentHousing === true ? "1" : "0"}|dyn=${dyn}`;
         })();
         const canReuse =
           cached !== undefined &&

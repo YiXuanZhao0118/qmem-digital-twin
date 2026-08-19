@@ -80,6 +80,7 @@ import {
   createSmaBulkheadJack,
   createUsbBJack,
 } from "./passive/electronics";
+import { createRectAnnotation } from "./passive/rect_annotation";
 import { createTextAnnotation } from "./passive/text_annotation";
 
 // Per-kind renderers. MUST load before primitive.ts.
@@ -501,6 +502,7 @@ export {
   createIecC14Inlet,
   createInstrumentChassis1u,
   createMeanwellIrm30,
+  createRectAnnotation,
   createRfSwitch,
   createSmaBulkheadJack,
   createSmaShortCable,

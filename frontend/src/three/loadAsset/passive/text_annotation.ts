@@ -9,7 +9,10 @@ import { mmToThree } from "../../transformUtils";
  *  the user can place arbitrary labels anywhere in the scene (section
  *  headers, debug notes, "Cooling beam" markers …) without writing code.
  *
- *  Properties read from component.properties:
+ *  Params arrive already merged — `bindingRendererGate` passes a synthetic
+ *  component whose properties are `asset.defaultParams ⊕ (dynamicSources ∩
+ *  tunableParams)` (alembic 0125). The defaults below are therefore only a
+ *  last-resort fallback; the real defaults live on the kind / asset row:
  *   - text         : string  – label content (default = component.name)
  *   - textColor    : string  – CSS colour for the glyphs (default white)
  *   - bgColor      : string  – CSS colour for the rounded panel (default
@@ -20,11 +23,11 @@ import { mmToThree } from "../../transformUtils";
  *   - scaleMm      : number  – on-screen WIDTH of the label in mm at scene
  *                              scale; height auto-derives from aspect ratio
  *                              (default 80) */
-/** `file_path` of the procedural Asset3D seeded by alembic 0119. Every
- *  Component renders through its ComponentBinding tree, so a text-annotation
- *  Component binds this row as its single root — the leaf the tree resolves,
- *  which `loadAsset`'s `primitive://` branch turns back into the sprite
- *  below (dispatch is by the Component's kindId, not by this key). */
+/** `file_path` of the procedural Asset3D seeded by alembic 0119. The ONE
+ *  shared "Text Annotation" catalog Component (alembic 0125) binds this row as
+ *  its single root — the leaf the tree resolves, which `loadAsset`'s
+ *  `primitive://` branch turns back into the sprite below (dispatch is by the
+ *  Component's kindId, not by this key). */
 export const TEXT_ANNOTATION_ASSET_FILEPATH = "primitive://text_annotation";
 
 export function createTextAnnotation(component: ComponentItem): THREE.Sprite {

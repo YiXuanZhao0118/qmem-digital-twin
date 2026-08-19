@@ -43,14 +43,14 @@ describe("ComponentPlugin alignment with legacy tables", () => {
 
   it("PLUGINS array covers every ElementKind + every catalog componentType", () => {
     // 31 physics plugins + mirror_mount (physics-flagged passive) +
-    // 23 PASSIVE_PLUGINS = 55. Snapshot value so a regression (someone
+    // 24 PASSIVE_PLUGINS = 56. Snapshot value so a regression (someone
     // deletes a plugin) shows up immediately. fiber_end + isolator were
     // dropped as plugins in Phase 9.X (fiber owns both tips on one asset;
     // isolator is a Component composition); faraday_rotator was added back
     // as a first-class plugin so the PHY Editor can edit its rod aperture;
     // fiber_connector + rf_cable_connector added 2026-06-12 (connector
     // refactor plan).
-    expect(PLUGINS.length).toBe(55);
+    expect(PLUGINS.length).toBe(56);
 
     // Every legacy ElementKind has a physics plugin claiming it.
     const physicsIds = new Set(

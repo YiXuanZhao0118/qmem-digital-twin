@@ -1,4 +1,4 @@
-import { Clock, Crosshair, Layers3, Lock, Move3D, Plus, RotateCw, Trash2, Type, Unlock } from "lucide-react";
+import { Clock, Crosshair, Layers3, Lock, Move3D, Plus, RotateCw, SquareDashed, Trash2, Type, Unlock } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
@@ -15,6 +15,9 @@ import { TRIGGER_KINDS, TTL_GATE_KINDS } from "../types/digitalTwin";
 import { resolveBeamPosition } from "../utils/beamPlacement";
 import { getBeamAnchor, objectPosForAnchorOnBeam } from "../utils/beamAnchor";
 import { getComponentName } from "../utils/components";
+import { effectiveInstanceParams } from "../utils/instanceParams";
+import { RECT_ANNOTATION_ASSET_FILEPATH } from "../three/loadAsset/passive/rect_annotation";
+import { TEXT_ANNOTATION_ASSET_FILEPATH } from "../three/loadAsset/passive/text_annotation";
 import { getFiberPortLabPose } from "../utils/fiberAlignment";
 import { Ad9959ObjectControls } from "./Ad9959ObjectControls";
 import { DdsChassisObjectControls } from "./DdsChassisObjectControls";
@@ -634,54 +637,35 @@ function parseMmInput(value: string, fallback: number): number {
  *  the canvas-textured sprite is built. We keep the SceneObject untouched
  *  here; position/rotation are handled by the standard transform widgets
  *  shared with every other object. */
-function TextAnnotationEditor({ component }: { component: ComponentItem }) {
-  const updateComponent = useSceneStore((state) => state.updateComponent);
-  const props = (component.properties ?? {}) as {
-    text?: unknown;
-    textColor?: unknown;
-    bgColor?: unknown;
-    accentColor?: unknown;
-    fontSizePx?: unknown;
-    scaleMm?: unknown;
-  };
-  const initialText = typeof props.text === "string" ? props.text : "";
-  const initialTextColor = typeof props.textColor === "string" ? props.textColor : "#ffffff";
-  const initialAccent = typeof props.accentColor === "string" ? props.accentColor : "#38bdf8";
-  const initialBg = typeof props.bgColor === "string" ? props.bgColor : "rgba(15, 23, 42, 0.85)";
-  const initialFontSize = typeof props.fontSizePx === "number" ? props.fontSizePx : 56;
-  const initialScale = typeof props.scaleMm === "number" ? props.scaleMm : 80;
+function TextAnnotationEditor({ sceneObject }: { sceneObject: SceneObject | undefined }) {
+  const { write, num, str, editable } = useAnnotationParams(
+    TEXT_ANNOTATION_ASSET_FILEPATH,
+    sceneObject,
+  );
+  const initialText = str("text", "");
+  const initialTextColor = str("textColor", "#ffffff");
+  const initialAccent = str("accentColor", "#38bdf8");
+  const initialBg = str("bgColor", "rgba(15, 23, 42, 0.85)");
 
   const [textDraft, setTextDraft] = useState(initialText);
-  // Re-sync local draft when the user selects a different annotation. We
-  // key on component.id so flipping between two text annotations doesn't
-  // leak the previous draft into the new one.
+  // Re-sync the draft when the user selects a different label.
   useEffect(() => {
     setTextDraft(initialText);
-  }, [component.id, initialText]);
+  }, [sceneObject?.id, initialText]);
 
-  const writeProps = (patch: Record<string, unknown>) => {
-    void updateComponent(component.id, {
-      properties: { ...(component.properties ?? {}), ...patch },
-    });
-  };
+  if (!editable) return null;
 
   const commitText = () => {
-    const next = textDraft;
-    if (next === initialText) return;
-    // Also update the component name so the Outliner row tracks the label.
-    writeProps({ text: next });
-    if (next.trim().length > 0) {
-      void updateComponent(component.id, {
-        name: next.trim(),
-        properties: { ...(component.properties ?? {}), text: next },
-      });
-    }
+    if (textDraft === initialText) return;
+    // Caption only. Before alembic 0125 this also renamed the Component, which
+    // is now the SHARED catalog row — renaming it would rename every label
+    // (and 409 on a duplicate name).
+    write({ text: textDraft });
   };
 
   // <input type="color"> can only emit `#rrggbb`. The bg colour stores an
-  // rgba() string by default to support translucency, so we round-trip
-  // through hex for the picker but preserve any user-typed CSS string in a
-  // sibling text field.
+  // rgba() string by default to support translucency, so we round-trip through
+  // hex for the picker.
   const bgHex = (() => {
     const m = /^#([0-9a-f]{6})$/i.exec(initialBg);
     return m ? `#${m[1]}` : "#0f172a";
@@ -714,15 +698,15 @@ function TextAnnotationEditor({ component }: { component: ComponentItem }) {
         <label>
           <span>Width mm</span>
           <NumberField
-            value={initialScale}
-            onChange={(next) => writeProps({ scaleMm: Math.max(10, next) })}
+            value={num("scaleMm", 80)}
+            onChange={(next) => write({ scaleMm: Math.max(10, next) })}
           />
         </label>
         <label>
           <span>Font px</span>
           <NumberField
-            value={initialFontSize}
-            onChange={(next) => writeProps({ fontSizePx: Math.max(12, Math.min(256, next)) })}
+            value={num("fontSizePx", 56)}
+            onChange={(next) => write({ fontSizePx: Math.max(12, Math.min(256, next)) })}
           />
         </label>
       </div>
@@ -732,7 +716,7 @@ function TextAnnotationEditor({ component }: { component: ComponentItem }) {
           <input
             type="color"
             value={initialTextColor}
-            onChange={(event) => writeProps({ textColor: event.target.value })}
+            onChange={(event) => write({ textColor: event.target.value })}
           />
         </label>
         <label>
@@ -740,7 +724,7 @@ function TextAnnotationEditor({ component }: { component: ComponentItem }) {
           <input
             type="color"
             value={initialAccent}
-            onChange={(event) => writeProps({ accentColor: event.target.value })}
+            onChange={(event) => write({ accentColor: event.target.value })}
           />
         </label>
         <label>
@@ -748,8 +732,149 @@ function TextAnnotationEditor({ component }: { component: ComponentItem }) {
           <input
             type="color"
             value={bgHex}
-            onChange={(event) => writeProps({ bgColor: event.target.value })}
+            onChange={(event) => write({ bgColor: event.target.value })}
           />
+        </label>
+      </div>
+    </section>
+  );
+}
+
+/** Per-instance annotation editing (alembic 0125).
+ *
+ *  The Component is ONE shared catalog row, so these fields must NOT be
+ *  written to `Component.properties` — that would restyle every other label in
+ *  the scene. Reads go through the documented merge
+ *  (`asset.defaultParams ⊕ dynamicSources ∩ tunableParams`) and writes land on
+ *  the SceneObject's dynamicSources. `reset` drops a key so it tracks the
+ *  kind's template again. */
+function useAnnotationParams(assetFilePath: string, sceneObject: SceneObject | undefined) {
+  const updateSceneObject = useSceneStore((state) => state.updateSceneObject);
+  const asset = useSceneStore((state) =>
+    state.scene.assets.find((a) => a.filePath === assetFilePath),
+  );
+  const params = effectiveInstanceParams(asset, sceneObject);
+  const write = (patch: Record<string, unknown>) => {
+    if (!sceneObject) return;
+    void updateSceneObject(sceneObject.id, {
+      dynamicSources: { ...(sceneObject.dynamicSources ?? {}), ...patch },
+    });
+  };
+  const num = (key: string, fallback: number) =>
+    typeof params[key] === "number" && Number.isFinite(params[key] as number)
+      ? (params[key] as number)
+      : fallback;
+  const str = (key: string, fallback: string) =>
+    typeof params[key] === "string" ? (params[key] as string) : fallback;
+  const bool = (key: string, fallback: boolean) =>
+    typeof params[key] === "boolean" ? (params[key] as boolean) : fallback;
+  return { params, write, num, str, bool, editable: sceneObject !== undefined };
+}
+
+/** Editor for rectangular table markings (componentType ===
+ *  "rect_annotation"). Like TextAnnotationEditor, every field writes to the
+ *  COMPONENT's properties — the same keys `createRectAnnotation` reads when
+ *  it builds the outline. Position/rotation stay with the shared transform
+ *  widgets. */
+function RectAnnotationEditor({ sceneObject }: { sceneObject: SceneObject | undefined }) {
+  const { write, num, str, bool, editable } = useAnnotationParams(
+    RECT_ANNOTATION_ASSET_FILEPATH,
+    sceneObject,
+  );
+  const color = str("color", "#38bdf8");
+  const initialLabel = str("label", "");
+  const [labelDraft, setLabelDraft] = useState(initialLabel);
+  // Re-sync when the user selects a different marking, so the previous draft
+  // can't leak into the new one.
+  useEffect(() => {
+    setLabelDraft(initialLabel);
+  }, [sceneObject?.id, initialLabel]);
+
+  if (!editable) return null;
+
+  const commitLabel = () => {
+    if (labelDraft === initialLabel) return;
+    write({ label: labelDraft });
+  };
+
+  return (
+    <section className="edit-section">
+      <h3>
+        <SquareDashed size={17} />
+        Rect annotation
+      </h3>
+      <div className="number-grid">
+        <label>
+          <span>Width mm</span>
+          <NumberField value={num("widthMm", 300)} onChange={(next) => write({ widthMm: Math.max(1, next) })} />
+        </label>
+        <label>
+          <span>Depth mm</span>
+          <NumberField value={num("depthMm", 200)} onChange={(next) => write({ depthMm: Math.max(1, next) })} />
+        </label>
+      </div>
+      <div className="number-grid">
+        <label>
+          <span>Line mm</span>
+          <NumberField value={num("lineWidthMm", 3)} onChange={(next) => write({ lineWidthMm: Math.max(0.2, next) })} />
+        </label>
+        <label>
+          <span>Text mm</span>
+          <NumberField value={num("textHeightMm", 20)} onChange={(next) => write({ textHeightMm: Math.max(2, next) })} />
+        </label>
+        <label>
+          <span>Colour</span>
+          <input
+            type="color"
+            value={/^#[0-9a-f]{6}$/i.test(color) ? color : "#38bdf8"}
+            onChange={(event) => write({ color: event.target.value })}
+          />
+        </label>
+      </div>
+      <label>
+        <span>Fill opacity</span>
+        <input
+          type="range"
+          min={0}
+          max={0.6}
+          step={0.02}
+          value={num("fillOpacity", 0.12)}
+          onChange={(event) => write({ fillOpacity: Number(event.target.value) })}
+        />
+      </label>
+      <label>
+        <span>Label</span>
+        <input
+          type="text"
+          value={labelDraft}
+          onChange={(event) => setLabelDraft(event.target.value)}
+          onBlur={commitLabel}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              commitLabel();
+              (event.currentTarget as HTMLInputElement).blur();
+            }
+          }}
+          placeholder="Region name"
+        />
+      </label>
+      <div className="identity-toggles">
+        <label>
+          <input
+            type="checkbox"
+            checked={bool("showLabel", true)}
+            onChange={(event) => write({ showLabel: event.target.checked })}
+          />
+          Show label
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={bool("showDimensions", true)}
+            onChange={(event) => write({ showDimensions: event.target.checked })}
+          />
+          Show size
         </label>
       </div>
     </section>
@@ -2158,7 +2283,12 @@ export function ComponentPanel() {
 
           {/* === Content (text_annotation only) === */}
           {component.kindId === "text_annotation" && (
-            <TextAnnotationEditor component={component} />
+            <TextAnnotationEditor sceneObject={placement} />
+          )}
+
+          {/* === Content (rect_annotation only) === */}
+          {component.kindId === "rect_annotation" && (
+            <RectAnnotationEditor sceneObject={placement} />
           )}
 
           {/* === Connections: cable/fiber node + endpoint editor. Wrapped

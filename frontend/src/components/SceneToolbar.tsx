@@ -1,4 +1,4 @@
-import { Columns2, Eye, Move, Play, Redo2, RotateCw, Square, Type, Undo2, Wifi, WifiOff } from "lucide-react";
+import { Columns2, Eye, Move, Play, Redo2, RotateCw, Square, SquareDashed, Type, Undo2, Wifi, WifiOff } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -88,6 +88,7 @@ export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneTo
   const faceTouchOp = useSceneStore((state) => state.faceTouchOp);
   const setFaceTouchOp = useSceneStore((state) => state.setFaceTouchOp);
   const addTextAnnotation = useSceneStore((state) => state.addTextAnnotation);
+  const addRectAnnotation = useSceneStore((state) => state.addRectAnnotation);
   // Undo / Redo. The history itself has existed since the placement work
   // (sceneStore.undoStack); until now Ctrl+Z was its only affordance, so
   // users had no way to discover that a gizmo drag is reversible.
@@ -215,6 +216,14 @@ export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneTo
           onClick={() => void addTextAnnotation()}
         >
           <Type size={17} />
+        </button>
+        <button
+          className="icon-button"
+          title="Add a rectangular marking to the table at the cursor"
+          aria-label="Add rect annotation"
+          onClick={() => void addRectAnnotation()}
+        >
+          <SquareDashed size={17} />
         </button>
         <div className="display-anchor" ref={displayAnchorRef}>
           <button

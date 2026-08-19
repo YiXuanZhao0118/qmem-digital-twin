@@ -7,7 +7,11 @@ const ROOM_HEIGHT = ROOM_HEIGHT_MM / 100;
 const FLOOR_Y = 0;
 const TABLE_LENGTH_MM = 3600;
 const TABLE_DEPTH_MM = 1200;
-const TABLE_TOP_HEIGHT_MM = 860;
+/** Height of the optical-table top surface above the floor, in lab mm. The
+ *  RS4000 asset in the scene independently tops out at this same z, so it
+ *  doubles as "the height a table-top annotation should spawn at" — see
+ *  `sceneStore.addRectAnnotation`. */
+export const TABLE_TOP_HEIGHT_MM = 860;
 const TABLE_THICKNESS_MM = 457;
 const TABLE_LENGTH = TABLE_LENGTH_MM / 100;
 const TABLE_DEPTH = TABLE_DEPTH_MM / 100;
