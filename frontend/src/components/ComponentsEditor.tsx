@@ -94,6 +94,7 @@ import {
   ASIDE_STYLE,
   asideItemStyle,
   ERROR_BANNER,
+  ICON_BUTTON,
   INPUT,
   MAIN_BODY_STYLE,
   PRIMARY_BUTTON,
@@ -556,6 +557,7 @@ export function ComponentsEditor({
   const [filterText, setFilterText] = useState("");
   const [bindings, setBindings] = useState<ComponentBinding[]>([]);
   const [bindingsLoading, setBindingsLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The binding whose orientation gizmo (+ PBS beam viz) is shown in the
   // 3D preview. Auto-targets the first asset-binding when the user picks
@@ -593,6 +595,20 @@ export function ComponentsEditor({
       setError(`Failed to load bindings: ${String(e)}`);
     } finally {
       setBindingsLoading(false);
+    }
+  };
+
+  // The list comes from the scene store, the detail's bindings from their
+  // own fetch — reload both so the whole section matches the server.
+  const handleRefresh = async (): Promise<void> => {
+    setRefreshing(true);
+    try {
+      await loadScene();
+      if (selectedId) await reloadBindings(selectedId);
+    } catch (e) {
+      setError(`Refresh failed: ${String(e)}`);
+    } finally {
+      setRefreshing(false);
     }
   };
 
@@ -969,13 +985,24 @@ export function ComponentsEditor({
             + New Component
           </button>
         )}
-        <input
-          type="text"
-          placeholder="filter by name / type"
-          value={filterText}
-          onChange={(e) => setFilterText(e.target.value)}
-          style={{ ...inputStyle, marginBottom: 6 }}
-        />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6, marginBottom: 6 }}>
+          <input
+            type="text"
+            placeholder="filter by name / type"
+            value={filterText}
+            onChange={(e) => setFilterText(e.target.value)}
+            style={inputStyle}
+          />
+          <button
+            type="button"
+            onClick={() => void handleRefresh()}
+            disabled={refreshing}
+            style={{ ...ICON_BUTTON, padding: "0 8px", width: "auto" }}
+            title="Refresh"
+          >
+            ↻
+          </button>
+        </div>
         <div style={{ fontSize: 10, color: "#4b5563", marginBottom: 6 }}>
           {filtered.length} of {components.length} components
         </div>
