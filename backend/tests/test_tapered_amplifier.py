@@ -112,6 +112,7 @@ def test_ase_emits_both_facets_from_nested_ase_powermw():
         binding_id="b",
         effective_transform=_identity_transform(),
         powered_on=True,
+        emission_visuals=None,
     )
     rays = emit_ta_ase_rays(SimpleNamespace(slots=[slot]), set())
     assert len(rays) == 2                                   # forward + backward
@@ -136,6 +137,7 @@ def test_flat_ase_keys_override_nested():
         binding_id="b",
         effective_transform=_identity_transform(),
         powered_on=True,
+        emission_visuals=None,
     )
     rays = emit_ta_ase_rays(SimpleNamespace(slots=[slot]), set())
     assert len(rays) == 1                                   # backward suppressed
@@ -310,13 +312,44 @@ def test_ase_forward_emits_from_intercept_out():
         ),
         scene_object_id="ta-2anchor", binding_id="b",
         effective_transform=_identity_transform(), powered_on=True,
+        emission_visuals=None,
     )
     rays = emit_ta_ase_rays(SimpleNamespace(slots=[slot]), set())
     assert len(rays) == 2
-    by_power = {round(r[0].power_mw): r[0] for r in rays}
+    by_power = {round(r[0].power_mw): r for r in rays}
     fwd, bwd = by_power[200], by_power[80]          # aseSamples @ 2000 mA
-    assert fwd.origin.x == 60.0 and round(fwd.direction.x) == 1
-    assert bwd.origin.x == -80.0 and round(bwd.direction.x) == -1
+    assert fwd[0].origin.x == 60.0 and round(fwd[0].direction.x) == 1
+    assert bwd[0].origin.x == -80.0 and round(bwd[0].direction.x) == -1
+    # Each facet is tagged with its own emission key, so the frontend can
+    # colour the two independently.
+    assert (fwd[3], bwd[3]) == ("forward", "backward")
+
+
+def test_hidden_ase_facet_is_not_emitted():
+    """`emissionVisuals.backward.visible = false` (Visualization card) drops
+    the whole emission, not just its rendering — downstream optics must stop
+    reflecting a beam the user hid."""
+    slot = SimpleNamespace(
+        asset=SimpleNamespace(
+            kind="tapered_amplifier",
+            default_params={
+                "ase": {"powerMw": 5.0},
+                "centerWavelengthNm": 780.0,
+            },
+            anchors=[
+                _anchor("intercept_in", (-80.0, 0.0, 0.0), (-1.0, 0.0, 0.0)),
+                _anchor("intercept_out", (60.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+            ],
+        ),
+        scene_object_id="ta-hidden", binding_id="b",
+        effective_transform=_identity_transform(), powered_on=True,
+        emission_visuals={"backward": {"visible": False}},
+    )
+    [(ray, _emitter, _source, key)] = emit_ta_ase_rays(
+        SimpleNamespace(slots=[slot]), set(),
+    )
+    assert key == "forward"
+    assert ray.origin.x == 60.0                     # only the output facet
 
 
 # --- Output mode: all three GaussianMode fields are honoured ---------------
@@ -389,3 +422,50 @@ def test_output_mode_reproduces_measured_sacher_beam():
     wy = gaussian_width_mm(out.qy + 15.0, 852.0) * math.sqrt(out.m2y)
     assert wx == pytest.approx(3.5, abs=0.01)
     assert wy == pytest.approx(3.5, abs=0.01)
+
+
+# --- Emitter provenance: a seeded TA re-emits -------------------------------
+
+def test_amplified_beam_is_emitted_by_the_ta_not_the_seed_laser():
+    """The amplified beam is the chip's own waveguide mode, so every segment
+    downstream of the output facet must be attributed to the TA. Before this,
+    the seed laser's id ran through the whole chain and the TA's per-instance
+    presentation (``properties.emissionVisuals``) could never take effect."""
+    from app.optical import anchor_ops  # noqa: F401  (registers ops)
+    from app.optical.anchor_tracer import (
+        AnchorTraceOptions, V3AnchorBindingSlot, V3AnchorScene,
+        V3AssetAnchorSnapshot, trace_ray_anchor_scene,
+    )
+
+    slot = V3AnchorBindingSlot(
+        scene_object_id="ta-1", binding_id="b0",
+        asset=V3AssetAnchorSnapshot(
+            catalog_id="ta", kind="tapered_amplifier",
+            # Gain axis (axisY) along the seed's polarization, so the TE
+            # fraction is ~1 and the amplified ray clears the tracer's power
+            # threshold instead of dying at the facet.
+            anchors=[
+                _anchor("intercept_in", (0.0, 0.0, 0.0), (-1.0, 0.0, 0.0),
+                        axis_y=(0.0, 0.0, 1.0)),
+                _anchor("intercept_out", (60.0, 0.0, 0.0), (1.0, 0.0, 0.0),
+                        axis_y=(0.0, 0.0, 1.0)),
+            ],
+            default_params={"smallSignalGainDb": 20.0, "saturationPowerMw": 50.0},
+        ),
+        effective_transform=_identity_transform(),
+    )
+    res = trace_ray_anchor_scene(
+        _seed_ray(), V3AnchorScene(slots=[slot]), AnchorTraceOptions(),
+        emitter_scene_object_id="laser-1", source_scene_object_id="laser-1",
+        emission_key="main",
+    )
+
+    seed_leg = next(s for s in res.lab_segments if not s.is_terminal)
+    assert seed_leg.emitter_scene_object_id == "laser-1"
+    assert seed_leg.emission_key == "main"
+
+    amplified = next(s for s in res.lab_segments if s.is_terminal)
+    assert amplified.emitter_scene_object_id == "ta-1"
+    assert amplified.source_scene_object_id == "ta-1"
+    # …and it is the TA's FORWARD emission, so it takes that colour.
+    assert amplified.emission_key == "forward"

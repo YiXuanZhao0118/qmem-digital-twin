@@ -4926,7 +4926,9 @@ export function DigitalTwinViewer({
         const emitterObj = seg.emitterSceneObjectId
           ? sceneData.objects.find((o) => o.id === seg.emitterSceneObjectId)
           : undefined;
-        const colorHex = beamColorForSource(emitterObj, seg.wavelengthNm);
+        const colorHex = beamColorForSource(
+          emitterObj, seg.wavelengthNm, seg.emissionKey,
+        );
         const geom = new THREE.BufferGeometry().setFromPoints([startThree, endThree]);
         const mat = new THREE.LineBasicMaterial({
           color: colorHex,

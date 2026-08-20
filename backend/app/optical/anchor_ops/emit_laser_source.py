@@ -207,14 +207,15 @@ def _ray_from_anchor(
 
 def emit_anchor_source_rays(
     scene: V3AnchorScene,
-) -> list[tuple[BeamRay, str, str]]:
+) -> list[tuple[BeamRay, str, str, str]]:
     """Emit one ray per emit_point anchor on each laser_source slot.
 
-    Returns list of (ray, emitter_scene_object_id, source_scene_object_id)
-    tuples — same shape as the old emit_scene_source_rays_with_provenance
-    so the trace queue seeding stays uniform.
+    Returns list of (ray, emitter_scene_object_id, source_scene_object_id,
+    emission_key) tuples — same shape as the old
+    emit_scene_source_rays_with_provenance plus the emission key, so the
+    trace queue seeding stays uniform.
     """
-    out: list[tuple[BeamRay, str, str]] = []
+    out: list[tuple[BeamRay, str, str, str]] = []
     for slot in scene.slots:
         if slot.asset.kind != "laser_source":
             continue
@@ -232,14 +233,16 @@ def emit_anchor_source_rays(
             ray = ray.replaced(
                 exclude_face_key=f"{slot.scene_object_id}/{slot.binding_id}/{anchor.id}",
             )
-            out.append((ray, slot.scene_object_id, slot.scene_object_id))
+            out.append((
+                ray, slot.scene_object_id, slot.scene_object_id, "main",
+            ))
     return out
 
 
 def emit_ta_ase_rays(
     scene: V3AnchorScene,
     seeded_object_ids: set[str],
-) -> list[tuple[BeamRay, str, str]]:
+) -> list[tuple[BeamRay, str, str, str]]:
     """Decision 6b: a ``tapered_amplifier`` with NO upstream seed emits
     broadband ASE out both facets (forward + backward), linearly polarized
     along the gain axis (anchor axisY). A *seeded* TA — one whose
@@ -255,8 +258,12 @@ def emit_ta_ase_rays(
       1. the flat ``aseForwardMw`` / ``aseBackwardMw`` keys (explicit override)
       2. ``aseSamples`` interpolated at ``driveCurrentMa``
       3. the nested catalog default ``ase.powerMw``
+
+    Each facet is also gated by its own
+    ``SceneObject.properties.emissionVisuals[<key>].visible``: an emission the
+    user hid is never emitted, so downstream optics stop reflecting it too.
     """
-    out: list[tuple[BeamRay, str, str]] = []
+    out: list[tuple[BeamRay, str, str, str]] = []
     for slot in scene.slots:
         if slot.asset.kind != "tapered_amplifier":
             continue
@@ -281,11 +288,13 @@ def emit_ta_ase_rays(
         # facet mode (same profile an injected beam gets), backward the seed
         # facet's own mode.
         facets = (
-            [("aseForwardMw", out_anchor, out_anchor.axis_x_body, "output"),
-             ("aseBackwardMw", anchor, ax, "input")]
+            [("aseForwardMw", out_anchor, out_anchor.axis_x_body, "output",
+              "forward"),
+             ("aseBackwardMw", anchor, ax, "input", "backward")]
             if out_anchor is not None else
-            [("aseForwardMw", anchor, ax, "output"),
-             ("aseBackwardMw", anchor, Vec3(-ax.x, -ax.y, -ax.z), "input")]
+            [("aseForwardMw", anchor, ax, "output", "forward"),
+             ("aseBackwardMw", anchor, Vec3(-ax.x, -ax.y, -ax.z), "input",
+              "backward")]
         )
         # The catalog stores ASE as nested ``ase.powerMw`` (kinds.json), so
         # that is the last-resort per-facet default — without it a catalog TA
@@ -299,11 +308,16 @@ def emit_ta_ase_rays(
             "aseForwardMw": table[0] if table else None,
             "aseBackwardMw": table[1] if table else None,
         }
-        for power_key, facet_anchor, axis_body, mode_prefix in facets:
+        visuals = slot.emission_visuals or {}
+        for power_key, facet_anchor, axis_body, mode_prefix, emission_key in facets:
             power = float(
                 dp.get(power_key, table_mw[power_key] if table else ase_default_mw),
             )
             if power <= 0.0:
+                continue
+            # Hidden by the user (Visualization card) — skip the whole
+            # emission, not just its rendering.
+            if (visuals.get(emission_key) or {}).get("visible") is False:
                 continue
             origin_lab = point_body_to_lab_t(
                 facet_anchor.position_body, slot.effective_transform,
@@ -333,5 +347,7 @@ def emit_ta_ase_rays(
                 facet_anchor.axis_y_body, dir_lab,
                 lambda v: dir_body_to_lab_t(v, slot.effective_transform),
             ))
-            out.append((ray, slot.scene_object_id, slot.scene_object_id))
+            out.append((
+                ray, slot.scene_object_id, slot.scene_object_id, emission_key,
+            ))
     return out

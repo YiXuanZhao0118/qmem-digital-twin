@@ -34,6 +34,9 @@ export type LinkTraceSegment = {
   startThree: { x: number; y: number; z: number };
   endThree: { x: number; y: number; z: number };
   emitterObjectId: string;
+  /** Which emission of the emitter this segment belongs to, so a TA's two
+   *  facets take their own colour override. */
+  emissionKey?: "main" | "forward" | "backward";
   sourceObjectId: string;
   sourceComponentId: string;
   hitObjectId: string | null;
@@ -219,7 +222,9 @@ export function buildBeamChainGroup(
     // Key on the EMITTER (the laser/TA that originated the beam), which is
     // stable down the whole chain; sourceObjectId is the per-segment source
     // optic and would only colour the first hop.
-    const colour = beamColorForSource(objectById.get(seg.emitterObjectId), seg.wavelengthNm);
+    const colour = beamColorForSource(
+      objectById.get(seg.emitterObjectId), seg.wavelengthNm, seg.emissionKey,
+    );
     const tube = buildBeamTube(seg, colour);
     if (!tube) continue;
     tube.userData.beamSegment = seg;

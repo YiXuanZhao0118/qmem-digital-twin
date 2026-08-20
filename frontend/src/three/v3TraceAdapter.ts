@@ -218,7 +218,7 @@ function adaptOne(seg: V3LabSegment, sourceComponentId: string): V3TraceSegment 
       jonesArr[1].re, jonesArr[1].im,
     ],
     beamMode,
-    emissionKey: "main",
+    emissionKey: seg.emissionKey ?? "main",
     emitterObjectId: seg.emitterSceneObjectId ?? "",
     freqOffsetHz: seg.freqOffsetHz ?? 0,
     apertureTruncation: seg.apertureTruncation ?? null,

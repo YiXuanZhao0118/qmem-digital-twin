@@ -544,6 +544,13 @@ async def load_anchor_scene_from_db(
             continue
 
         powered_on = so.id not in powered_off_ids
+        # Per-emission presentation overrides (Visualization card). Only
+        # `visible` is honoured server-side — a hidden emission is not emitted
+        # at all, so downstream optics stop reflecting it.
+        emission_visuals = (
+            so.properties.get("emissionVisuals")
+            if isinstance(so.properties, dict) else None
+        )
 
         binding_rows = (await session.scalars(
             select(ComponentBinding).where(ComponentBinding.component_id == comp.id)
@@ -635,6 +642,9 @@ async def load_anchor_scene_from_db(
                 effective_transform=effective,
                 dynamic_sources=dyn,
                 powered_on=powered_on,
+                emission_visuals=(
+                    emission_visuals if isinstance(emission_visuals, dict) else None
+                ),
             ))
 
         # Connector-component fiber: the bound fiber_connector assets are

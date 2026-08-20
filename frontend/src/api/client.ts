@@ -440,6 +440,11 @@ export type V3LabSegment = {
   // Phase 7.1 provenance + start-of-segment ray state.
   emitterSceneObjectId: string | null;
   sourceSceneObjectId: string | null;
+  /** Which of the emitter's emissions this segment descends from — "main"
+   *  (laser_source), "forward" / "backward" (TA facets). Keys match
+   *  `SceneObject.properties.emissionVisuals`, so a TA's two facets can be
+   *  coloured independently. Absent on legacy payloads => treat as "main". */
+  emissionKey?: "main" | "forward" | "backward" | null;
   jones: [{ re: number; im: number }, { re: number; im: number }];
   qxAtStart: { re: number; im: number };
   qyAtStart: { re: number; im: number };

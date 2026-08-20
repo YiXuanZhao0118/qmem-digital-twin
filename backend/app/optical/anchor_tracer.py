@@ -79,6 +79,12 @@ class V3AnchorBindingSlot:
     # device_states.state.power is False. Emitters (laser_source, TA ASE) skip
     # powered-off slots so the beam disappears on power-off.
     powered_on: bool = True
+    # `SceneObject.properties.emissionVisuals` verbatim — per-emission
+    # presentation overrides keyed "main" / "forward" / "backward" (see
+    # schemas.EmissionVisualOverride). Only `visible` is read here: an
+    # emission the user hid is never emitted, so downstream optics stop
+    # reflecting it too. Colour is a pure frontend concern.
+    emission_visuals: Optional[dict] = None
 
 
 @dataclass(frozen=True)
@@ -361,6 +367,11 @@ class LabSegment:
     is_terminal: bool
     emitter_scene_object_id: Optional[str] = None
     source_scene_object_id: Optional[str] = None
+    # Which of the emitter's emissions this segment descends from — "main"
+    # (laser_source), "forward" / "backward" (TA). Keys match
+    # `SceneObject.properties.emissionVisuals`, so the frontend can colour a
+    # TA's two facets independently. Propagates down the chain untouched.
+    emission_key: Optional[str] = None
     # Phase 7-style ray state at segment start (for frontend adapter +
     # OpticalLinkViewerPanel's waist / polarisation displays).
     jones_re_x: float = 1.0
@@ -422,6 +433,7 @@ def trace_ray_anchor_scene(
     *,
     emitter_scene_object_id: Optional[str] = None,
     source_scene_object_id: Optional[str] = None,
+    emission_key: Optional[str] = None,
 ) -> AnchorTraceResult:
     """BFS-style ray trace using anchor-based dispatch.
 
@@ -431,17 +443,20 @@ def trace_ray_anchor_scene(
     accumulated for rendering.
     """
     result = AnchorTraceResult()
-    queue: list[tuple[BeamRay, Optional[str], Optional[str]]] = [
-        (initial_ray, source_scene_object_id, emitter_scene_object_id),
+    queue: list[
+        tuple[BeamRay, Optional[str], Optional[str], Optional[str]]
+    ] = [
+        (initial_ray, source_scene_object_id, emitter_scene_object_id,
+         emission_key),
     ]
     total_steps = 0
 
     while queue:
         if total_steps >= options.max_steps:
             result.terminated = "max_steps"
-            result.final_rays.extend(r for r, _s, _e in queue)
+            result.final_rays.extend(r for r, _s, _e, _k in queue)
             break
-        ray, source_id, emitter_id = queue.pop(0)
+        ray, source_id, emitter_id, emission_id = queue.pop(0)
         if ray.power_mw < options.power_threshold_mw:
             result.terminated = "power_threshold"
             continue
@@ -466,6 +481,7 @@ def trace_ray_anchor_scene(
                 is_terminal=True,
                 emitter_scene_object_id=emitter_id,
                 source_scene_object_id=source_id,
+                emission_key=emission_id,
                 jones_re_x=ray.jones[0].real, jones_im_x=ray.jones[0].imag,
                 jones_re_y=ray.jones[1].real, jones_im_y=ray.jones[1].imag,
                 qx_re_at_start=ray.qx.real, qx_im_at_start=ray.qx.imag,
@@ -499,6 +515,7 @@ def trace_ray_anchor_scene(
             is_terminal=False,
             emitter_scene_object_id=emitter_id,
             source_scene_object_id=source_id,
+            emission_key=emission_id,
             jones_re_x=ray.jones[0].real, jones_im_x=ray.jones[0].imag,
             jones_re_y=ray.jones[1].real, jones_im_y=ray.jones[1].imag,
             qx_re_at_start=ray.qx.real, qx_im_at_start=ray.qx.imag,
@@ -589,6 +606,24 @@ def trace_ray_anchor_scene(
 
         out_rays_body = op(ray_at_anchor, ctx)
 
+        # A seeded tapered_amplifier RE-EMITS: the amplified beam is the chip's
+        # own waveguide mode (the seed's q / polarization are discarded by
+        # `tapered_amplifier_anchor_op`), so from the output facet onwards the
+        # TA — not the upstream laser — is the emitter. Downstream consumers key
+        # per-source presentation on `emitter_scene_object_id`, so without this
+        # the TA's own beam-colour override (`properties.emissionVisuals`) could
+        # never take effect: every segment past the TA still carried the seed
+        # laser's id. Only the amplifying pass (seed entering `intercept_in`)
+        # re-tags — a ray merely passing through the output facet keeps the
+        # emitter it arrived with.
+        ta_reemits = (
+            slot.asset.kind == "tapered_amplifier" and anchor.id == "intercept_in"
+        )
+        next_emitter_id = slot.scene_object_id if ta_reemits else emitter_id
+        # The amplified beam is the TA's FORWARD emission, so it takes that
+        # emission's colour — not the seed's "main".
+        next_emission_id = "forward" if ta_reemits else emission_id
+
         # Transform each out ray back to lab + push to queue
         for out_body in out_rays_body:
             out_dir_lab = dir_body_to_lab_t(out_body.direction, slot.effective_transform)
@@ -620,7 +655,10 @@ def trace_ray_anchor_scene(
             if out_lab.power_mw < options.power_threshold_mw:
                 result.final_rays.append(out_lab)
             else:
-                queue.append((out_lab, slot.scene_object_id, emitter_id))
+                queue.append((
+                    out_lab, slot.scene_object_id, next_emitter_id,
+                    next_emission_id,
+                ))
 
         total_steps += 1
 

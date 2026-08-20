@@ -11,7 +11,7 @@ import type {
   SceneObject,
 } from "../types/digitalTwin";
 import { anchorObjectLocalPos, anchorObjectLocalPrimaryDir } from "../utils/anchorAccess";
-import { getEmissionVisual } from "../utils/emissionVisuals";
+import { getEmissionVisual, type EmissionKey } from "../utils/emissionVisuals";
 import { labToThreeVector, mmToThree } from "./transformUtils";
 
 const DEFAULT_RAY_LENGTH_MM = 600;
@@ -94,16 +94,24 @@ export function wavelengthToColor(wavelengthNm: number): THREE.Color {
 /** Resolve the render colour for a beam segment emitted by `sourceObject`.
  *  Honours a per-instance override on
  *  `SceneObject.properties.emissionVisuals` (laser stores under "main", TA
- *  under "forward" — see utils/emissionVisuals.ts), falling back to the
- *  wavelength-derived colour when no override is set. Used by every live 3D
- *  beam renderer so the Optical-setting colour picker actually takes effect. */
+ *  under "forward" / "backward" — see utils/emissionVisuals.ts), falling back
+ *  to the wavelength-derived colour when no override is set. Used by every
+ *  live 3D beam renderer so the Optical-setting colour picker actually takes
+ *  effect.
+ *
+ *  `emissionKey` is the segment's own emission (backend `emissionKey`), so a
+ *  TA's two facets colour independently — a backward-ASE segment must NOT
+ *  inherit the forward override. Only when the segment doesn't carry one
+ *  (legacy payloads) do we fall back to scanning the object's keys. */
 export function beamColorForSource(
   sourceObject: SceneObject | undefined | null,
   wavelengthNm: number,
+  emissionKey?: EmissionKey | null,
 ): THREE.Color {
-  const override =
-    getEmissionVisual(sourceObject, "main").colorHex ??
-    getEmissionVisual(sourceObject, "forward").colorHex;
+  const override = emissionKey
+    ? getEmissionVisual(sourceObject, emissionKey).colorHex
+    : getEmissionVisual(sourceObject, "main").colorHex ??
+      getEmissionVisual(sourceObject, "forward").colorHex;
   return override ? new THREE.Color(override) : wavelengthToColor(wavelengthNm);
 }
 

@@ -95,6 +95,9 @@ class V3LabSegment:
     # Phase 7.1 provenance + start-of-segment ray state.
     emitter_scene_object_id: str | None = None
     source_scene_object_id: str | None = None
+    # Which of the emitter's emissions this segment descends from —
+    # "main" / "forward" / "backward" (see anchor_tracer.LabSegment).
+    emission_key: str | None = None
     jones_re_x: float = 1.0
     jones_im_x: float = 0.0
     jones_re_y: float = 0.0
@@ -154,6 +157,7 @@ class V3SolverResult:
                     "isTerminal": s.is_terminal,
                     "emitterSceneObjectId": s.emitter_scene_object_id,
                     "sourceSceneObjectId": s.source_scene_object_id,
+                    "emissionKey": s.emission_key,
                     "jones": [
                         {"re": s.jones_re_x, "im": s.jones_im_x},
                         {"re": s.jones_re_y, "im": s.jones_im_y},
@@ -217,7 +221,7 @@ def solve_anchor_scene(
         result.warnings.append("scene has no slots — no anchors to trace against")
 
     if initial_rays:
-        rays_with_prov = [(r, None, None) for r in initial_rays]
+        rays_with_prov = [(r, None, None, None) for r in initial_rays]
     else:
         rays_with_prov = emit_anchor_source_rays(scene)
 
@@ -225,12 +229,13 @@ def solve_anchor_scene(
         result.warnings.append("no laser_source emitters — solver runs no traces")
 
     def _run(rays: list, label: str) -> None:
-        for i, (ray, emitter_id, source_id) in enumerate(rays):
+        for i, (ray, emitter_id, source_id, emission_key) in enumerate(rays):
             try:
                 trace = trace_ray_anchor_scene(
                     ray, scene, options,
                     emitter_scene_object_id=emitter_id,
                     source_scene_object_id=source_id,
+                    emission_key=emission_key,
                 )
             except Exception as exc:
                 result.errors.append(f"{label}[{i}] trace failed: {exc!r}")
@@ -247,6 +252,7 @@ def solve_anchor_scene(
                     is_terminal=ls.is_terminal,
                     emitter_scene_object_id=ls.emitter_scene_object_id,
                     source_scene_object_id=ls.source_scene_object_id,
+                    emission_key=ls.emission_key,
                     jones_re_x=ls.jones_re_x, jones_im_x=ls.jones_im_x,
                     jones_re_y=ls.jones_re_y, jones_im_y=ls.jones_im_y,
                     qx_re_at_start=ls.qx_re_at_start, qx_im_at_start=ls.qx_im_at_start,
