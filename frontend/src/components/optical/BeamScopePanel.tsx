@@ -275,9 +275,15 @@ function waistAtZUmAxis(zMm: number, mode: AxisMode): number {
  *  q-parameter form the v3 adapter publishes: waist size, axial waist
  *  position relative to the emitter, M²). */
 export type SegmentBeamMode = {
+  /** x/y are the beam's PRINCIPAL axes — see `azimuthRad`. */
   x: { waist0Um: number; waistZUm: number; mSquared: number };
   y: { waist0Um: number; waistZUm: number; mSquared: number };
   wavelengthNm: number;
+  /** Roll of the principal axes away from the backend's beam-local +s axis
+   *  (`jones.beam_local_sp`), in radians. Non-zero once an element rolled
+   *  about the optical axis has acted on the beam — a cylindrical lens at an
+   *  angle, say. Absent => 0, i.e. principal axes == the (s, p) frame. */
+  azimuthRad?: number;
 };
 
 /** True analytic Gaussian half-widths (µm) at a path-length `pathMm` (mm from
@@ -287,7 +293,7 @@ export type SegmentBeamMode = {
  *  intra-segment focus — instead of linearly interpolating its endpoints. */
 export function beamWidthsUmAtPathMm(
   mode: SegmentBeamMode, pathMm: number,
-): { wxUm: number; wyUm: number } {
+): { wxUm: number; wyUm: number; azimuthRad: number } {
   const toAxis = (a: { waist0Um: number; waistZUm: number; mSquared: number }): AxisMode => ({
     waist0Um: a.waist0Um,
     mSquared: a.mSquared > 0 ? a.mSquared : 1,
@@ -297,6 +303,10 @@ export function beamWidthsUmAtPathMm(
   return {
     wxUm: waistAtZUmAxis(pathMm, toAxis(mode.x)),
     wyUm: waistAtZUmAxis(pathMm, toAxis(mode.y)),
+    // Constant along a segment: the tracer only ever builds rotated-diagonal
+    // operators, and free space adds L to the diagonal only, so the principal
+    // axes do not turn between elements. See optical/beamTensor.ts.
+    azimuthRad: mode.azimuthRad ?? 0,
   };
 }
 
@@ -400,6 +410,9 @@ type RawSegment = Record<string, unknown> & {
     x?: { waist0Um?: number; waistZUm?: number; mSquared?: number };
     y?: { waist0Um?: number; waistZUm?: number; mSquared?: number };
     wavelengthNm?: number;
+    /** Roll of the principal axes from the beam-local +s frame; see
+     *  SegmentBeamMode. */
+    azimuthRad?: number;
   };
 };
 
@@ -517,6 +530,9 @@ export function BeamScopeContents() {
       ...liveAxis(liveMode?.y, params.spatialModeY, 100),
     };
     const zMm = probe.zMm;
+    // Roll of the principal axes (modeX/modeY) away from the beam-local +s
+    // frame. Constant along a segment — see optical/beamTensor.ts.
+    const beamAzimuthRad = liveMode?.azimuthRad ?? 0;
     const wxUm = waistAtZUmAxis(zMm, modeX);
     const wyUm = waistAtZUmAxis(zMm, modeY);
     const rxMm = radiusOfCurvatureMmAxis(zMm, modeX);
@@ -640,6 +656,7 @@ export function BeamScopeContents() {
       modeX,
       modeY,
       zMm,
+      beamAzimuthRad,
       wxUm,
       wyUm,
       rxMm,
@@ -757,6 +774,7 @@ export function BeamScopeContents() {
     modeX,
     modeY,
     zMm,
+    beamAzimuthRad,
     wxUm,
     wyUm,
     rxMm,
@@ -891,15 +909,31 @@ export function BeamScopeContents() {
   const propIdx = absC.indexOf(Math.max(absC[0], absC[1], absC[2]));
   const transverse = ["x", "y", "z"].filter((_, i) => i !== propIdx);
 
+  // `sampleIntensity` works in the beam's PRINCIPAL frame (wxUm/wyUm are the
+  // principal widths), so a beam whose axes are rolled away from the display
+  // frame is sampled through the inverse roll — that is what makes a
+  // cylindrical lens mounted at 45° show up as a 45° ellipse instead of an
+  // axis-aligned one. Zero azimuth reduces to the previous expression exactly.
+  // (The absolute orientation still carries the 90°/mirror caveat noted above;
+  // this only fixes the beam's roll RELATIVE to it.)
+  const profileCa = Math.cos(beamAzimuthRad);
+  const profileSa = Math.sin(beamAzimuthRad);
   const profileSample = usePop
     ? popSampler!
-    : (x: number, y: number) => sampleIntensity(y, -x); // 90° (analytic only)
+    : (x: number, y: number) => {
+        const px = profileCa * x + profileSa * y;
+        const py = -profileSa * x + profileCa * y;
+        return sampleIntensity(py, -px); // 90° (analytic only)
+      };
   const profileHalf = usePop ? popPattern!.halfExtentUm : profileHalfUm;
   const profileTitle = usePop
     ? `Beam profile  diffraction (POP) · focal plane · 1st null ${popPattern!.firstNullUm.toFixed(2)} µm`
     : tmKind === "LG_pl"
     ? `Beam profile  ${modeLabel}  ·  w_eff ${wEffUm.toFixed(1)} µm`
-    : `Beam profile  ${modeLabel}  ·  w ${wxUm.toFixed(1)} × ${wyUm.toFixed(1)} µm`;
+    : `Beam profile  ${modeLabel}  ·  w ${wxUm.toFixed(1)} × ${wyUm.toFixed(1)} µm`
+      + (Math.abs(beamAzimuthRad) > 1e-6
+        ? `  ·  axes ${((beamAzimuthRad * 180) / Math.PI).toFixed(1)}°`
+        : "");
   const profileAxisLabel = usePop
     ? "x, y (µm) · focal plane"
     : `${transverse[0]} (µm)`;

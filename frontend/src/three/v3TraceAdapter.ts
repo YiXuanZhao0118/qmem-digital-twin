@@ -24,6 +24,11 @@
  * heuristics with the tracked value.
  */
 import * as THREE from "three";
+import {
+  principalAzimuthRad,
+  rotateCSym2,
+  rotateSym2,
+} from "../optical/beamTensor";
 
 import type { V3LabSegment, V3SolverResult } from "../api/client";
 import { labMmToThree } from "../optical/frames";
@@ -120,10 +125,37 @@ function adaptOne(seg: V3LabSegment, sourceComponentId: string): V3TraceSegment 
     seg.end.z - seg.start.z,
   );
 
-  const qxStart = seg.qxAtStart ?? { re: 0, im: 0 };
+  // The backend carries the transverse state in the beam-local (s, p) basis,
+  // where it may be a ROTATED diagonal (qxy != 0) — this model is per-axis and
+  // is only exact in the beam's own principal frame. So find that frame once
+  // and turn Q and both readout tensors into it; everything below is then the
+  // same per-axis math, applied where it is exact. `azimuthRad` carries the
+  // leftover roll for the renderers. The angle is constant along a segment
+  // (see beamTensor.ts) and comes out exactly 0 for an unrotated beam, so this
+  // is inert for every payload that predates it.
+  const qxRaw = seg.qxAtStart ?? { re: 0, im: 0 };
   // qy is tracked independently by the backend (astigmatism). Fall back to qx
   // for legacy/circular payloads that don't carry it.
-  const qyStart = seg.qyAtStart ?? qxStart;
+  const qyRaw = seg.qyAtStart ?? qxRaw;
+  const qxyRaw = seg.qxyAtStart ?? { re: 0, im: 0 };
+  const multRaw = {
+    xx: seg.widthMultAtStart?.x ?? 1,
+    yy: seg.widthMultAtStart?.y ?? seg.widthMultAtStart?.x ?? 1,
+    xy: seg.widthMultAtStart?.xy ?? 0,
+  };
+  const m2Raw = {
+    xx: seg.m2AtStart?.x ?? 1,
+    yy: seg.m2AtStart?.y ?? seg.m2AtStart?.x ?? 1,
+    xy: seg.m2AtStart?.xy ?? 0,
+  };
+  const azimuthRad = principalAzimuthRad(
+    { xx: qxRaw, yy: qyRaw, xy: qxyRaw }, multRaw, seg.wavelengthNm,
+  );
+  const qPrincipal = rotateCSym2({ xx: qxRaw, yy: qyRaw, xy: qxyRaw }, azimuthRad);
+  const multP = rotateSym2(multRaw, azimuthRad);
+  const m2P = rotateSym2(m2Raw, azimuthRad);
+  const qxStart = qPrincipal.xx;
+  const qyStart = qPrincipal.yy;
   const qxEnd = { re: qxStart.re + lengthMm, im: qxStart.im };
   const qyEnd = { re: qyStart.re + lengthMm, im: qyStart.im };
   // q carries the EMBEDDED fundamental Gaussian (M²-reduced z_R → correct
@@ -131,10 +163,10 @@ function adaptOne(seg: V3LabSegment, sourceComponentId: string): V3TraceSegment 
   // embedded width × widthMult, which folds √(M²) and the high-order
   // transverse-mode factor. Absent (legacy payload) → 1.0. Per-axis from
   // qx/qy so an astigmatic beam renders an elliptical 3D tube + 2D profile.
-  const widthMultX = seg.widthMultAtStart?.x ?? 1;
-  const widthMultY = seg.widthMultAtStart?.y ?? widthMultX;
-  const m2x = seg.m2AtStart?.x ?? 1;
-  const m2y = seg.m2AtStart?.y ?? m2x;
+  const widthMultX = multP.xx;
+  const widthMultY = multP.yy;
+  const m2x = m2P.xx;
+  const m2y = m2P.yy;
   // Transverse-mode width factor only (M² lives in the non-paraxial helper).
   const modeFacX = m2x > 0 ? widthMultX / Math.sqrt(m2x) : widthMultX;
   const modeFacY = m2y > 0 ? widthMultY / Math.sqrt(m2y) : widthMultY;
@@ -157,6 +189,9 @@ function adaptOne(seg: V3LabSegment, sourceComponentId: string): V3TraceSegment 
     x: { waist0Um: w0xUm, waistZUm: waistZxUm, mSquared: 1 },
     y: { waist0Um: w0yUm, waistZUm: waistZyUm, mSquared: 1 },
     wavelengthNm: seg.wavelengthNm,
+    // x/y above are the beam's PRINCIPAL axes; this is how far they sit from
+    // the beam-local +s axis the backend expresses everything in.
+    azimuthRad,
   };
 
   const jonesArr = seg.jones ?? [{ re: 1, im: 0 }, { re: 0, im: 0 }];

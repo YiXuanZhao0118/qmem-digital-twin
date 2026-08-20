@@ -116,7 +116,20 @@ Q was frame-correct after 2b, but `width_mult_x`/`_y` and `m2x`/`m2y` were still
 
 (The lab frame is Z-up and the three.js scene is Y-up, which is why "world up" is scene +y on that side.)
 
-**Still open.** The frontend carries `qxy` in its types but does not yet *use* it: `SegmentBeamMode` / `beamWidthsUmAtPathMm` / `BeamScopePanel` still model the beam as two independent axes, so a beam whose astigmatism is rolled away from the frame renders with the right widths on the wrong axes. Threading the principal-axis azimuth through that path is the remaining work; the backend already ships everything it needs.
+### Step 2e — the azimuth through the frontend (2026-08-20)
+
+The frontend models a beam as **two independent axes**, which is exact only while those axes coincide with the backend's beam-local (s, p) frame. Rather than teach it the matrix, the adapter now finds the beam's **own principal frame** and hands the existing per-axis model over in the frame where it is exact, carrying the leftover roll as one scalar.
+
+One angle per segment is enough, and that is a physical fact rather than a simplification: every element in the tracer applies a *rotated diagonal* operator, so Q always has the form `R·diag(qa, qb)·Rᵀ`, and free space is `Q + L·I = R·diag(qa+L, qb+L)·Rᵀ` — the same `R`. **The principal axes do not turn between elements; only the widths do.** (A beam with genuinely general astigmatism, where `Re` and `Im` of `Q⁻¹` have different principal axes, *would* twist as it propagates. The tracer cannot currently build one.)
+
+- **`frontend/src/optical/beamTensor.ts`** — a mirror of the backend's `sym2_rotate` / `sym2_eig` / `q_width_tensor` / `beam_real_widths`, plus `rotateCSym2` for Q. `principalAzimuthRad` takes the angle from the REAL width tensor (real symmetric, so `atan2` resolves the quadrant unambiguously) and returns **exactly 0** when there is nothing to rotate, which is what keeps every pre-existing payload bit-identical.
+- **`v3TraceAdapter`** rotates Q *and* both readout tensors into that frame before deriving `waist0Um` / `waistZUm`, so all the downstream per-axis math is unchanged and now exact. `BeamState.azimuthRad` / `SegmentBeamMode.azimuthRad` carry the angle; `beamWidthsUmAtPathMm` returns it alongside the widths.
+- **`beamChain`** builds the tube basis on the principal axes: `principalX = cos·sBeam + sin·pBeam`, oriented as `makeBasis(principalX, direction, -principalY)`. Zero azimuth reduces to the unrolled basis exactly, so it is a strict generalisation of the Step-2d fix, and the negation keeps it right-handed.
+- **`BeamScopePanel`** samples the analytic profile through the inverse roll, so a cylindrical lens mounted at 45° draws a 45° ellipse instead of an axis-aligned one, and the plot title appends `· axes NN°` when the roll is non-zero.
+
+**Verification.** 662 frontend tests (`beamTensor.test.ts` 16, `beamChain.test.ts` +3, `v3TraceAdapter.azimuth.test.ts` 7) and 656 backend, `tsc` clean. The adapter test is end-to-end: it rolls a known astigmatic Q by a known angle, asserts the angle comes back, and asserts the **principal widths are identical however the beam is rolled** — paired with a guard asserting the pre-azimuth behaviour *would* have got them wrong, so it cannot pass vacuously.
+
+**Caveat inherited, not introduced.** The profile's absolute orientation still carries the 90°/mirror uncertainty the code already flags (`sampleIntensity(y, -x)`, "verify in the UI"). This change fixes the beam's roll *relative* to that frame; it does not settle the frame itself.
 
 `m2x`/`m2y` and `width_mult_x`/`_y` are **scalar per-axis** quantities and are *not* frame-transported, so after a non-trivial rotation they no longer line up with the Q they annotate. Harmless while both axes share an M² — true of every beam in the live scene — and wrong otherwise. The fix is to carry the width multiplier as a symmetric tensor and take the readout width from `q_matrix_principal_widths`. Pinned by an explicit assertion in `test_output_mode_honours_waist_offset_and_m_squared` so 2c flips it deliberately. The chief-ray kick in `lens.py` (`theta - y/f_y`) likewise still drops the cross term that `_tilt_astig_power_tensor` now restores for Q; that one moves ray positions, so it wants its own pass.
 

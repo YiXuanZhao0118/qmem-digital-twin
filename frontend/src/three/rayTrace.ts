@@ -248,9 +248,14 @@ export type BeamAxisState = {
  *    - `mSquared` is per-axis (preserved by linear propagation).
  *    - `wavelengthNm` is shared. */
 export type BeamState = {
+  /** x/y are the beam's PRINCIPAL axes, not the backend's (s, p) frame. */
   x: BeamAxisState;
   y: BeamAxisState;
   wavelengthNm: number;
+  /** Roll of those principal axes from the backend's beam-local +s axis.
+   *  Non-zero once an element rolled about the optical axis has acted on the
+   *  beam. Absent/0 => the principal axes ARE the (s, p) frame. */
+  azimuthRad?: number;
 };
 
 function axisFromParam(

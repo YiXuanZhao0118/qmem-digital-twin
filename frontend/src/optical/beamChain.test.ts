@@ -89,3 +89,41 @@ describe("beam tube transverse basis", () => {
     expect(max - min).toBeLessThan(1e-6 * Math.max(max, 1));
   });
 });
+
+
+describe("beam tube principal-axis roll", () => {
+  const mode = (azimuthRad: number) => ({
+    x: { waist0Um: 4000, waistZUm: 0, mSquared: 1 },
+    y: { waist0Um: 500, waistZUm: 0, mSquared: 1 },
+    wavelengthNm: 852.347,
+    azimuthRad,
+  });
+
+  it("leaves the basis untouched at zero azimuth", () => {
+    const a = rxAxisWorld(tubeOf(segment()));
+    const b = rxAxisWorld(tubeOf(segment({ beamMode: mode(0) })));
+    expect(b.x).toBeCloseTo(a.x, 12);
+    expect(b.y).toBeCloseTo(a.y, 12);
+    expect(b.z).toBeCloseTo(a.z, 12);
+  });
+
+  it("rolls the rx axis by the azimuth about the propagation direction", () => {
+    const base = rxAxisWorld(tubeOf(segment({ beamMode: mode(0) })));
+    for (const deg of [30, 45, 90, -60]) {
+      const rolled = rxAxisWorld(tubeOf(segment({ beamMode: mode((deg * Math.PI) / 180) })));
+      // still transverse
+      expect(rolled.dot(new THREE.Vector3(1, 0, 0))).toBeCloseTo(0, 6);
+      // and turned by exactly the azimuth
+      const cos = Math.abs(rolled.dot(base));
+      expect(cos).toBeCloseTo(Math.abs(Math.cos((deg * Math.PI) / 180)), 6);
+    }
+  });
+
+  it("keeps the basis right-handed at every azimuth", () => {
+    for (const deg of [0, 17, 45, 123]) {
+      const tube = tubeOf(segment({ beamMode: mode((deg * Math.PI) / 180) }));
+      const m = new THREE.Matrix4().makeRotationFromQuaternion(tube.quaternion);
+      expect(m.determinant()).toBeCloseTo(1, 6);
+    }
+  });
+});

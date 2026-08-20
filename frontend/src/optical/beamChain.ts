@@ -131,10 +131,24 @@ function buildBeamTube(seg: LinkTraceSegment, colour: THREE.Color | string): THR
     sHat.crossVectors(direction, new THREE.Vector3(1, 0, 0));
   }
   sHat.normalize();
-  const upHat = new THREE.Vector3().crossVectors(sHat, direction).normalize();
-  // upHat x direction = -sHat, so the third column is negated to keep the
-  // basis right-handed — a reflection here would invert the tube's normals.
-  const minusSHat = sHat.clone().negate();
+  const sBeam = new THREE.Vector3().crossVectors(sHat, direction).normalize();
+  const pBeam = new THREE.Vector3().crossVectors(direction, sBeam).normalize();
+
+  // Roll the ellipse onto the beam's own principal axes. The widths above are
+  // already given in that frame (the v3 adapter rotates Q and both readout
+  // tensors into it), so all that is left is to point them the right way:
+  //   principalX =  cos.sBeam + sin.pBeam
+  //   principalY = -sin.sBeam + cos.pBeam
+  // Zero azimuth reduces to (sBeam, direction, -pBeam), i.e. exactly the
+  // unrolled basis, so this is a strict generalisation.
+  const azimuth = seg.beamMode?.azimuthRad ?? 0;
+  const ca = Math.cos(azimuth);
+  const sa = Math.sin(azimuth);
+  const principalX = sBeam.clone().multiplyScalar(ca).addScaledVector(pBeam, sa);
+  const principalY = sBeam.clone().multiplyScalar(-sa).addScaledVector(pBeam, ca);
+  // principalX x direction = -principalY, so the third column is negated to
+  // keep the basis right-handed — a reflection would invert the tube normals.
+  const minusPrincipalY = principalY.clone().negate();
 
   const RING = 24;
   // Axial slices: one ring per slice so the hyperbolic taper / focus pinch is
@@ -174,7 +188,7 @@ function buildBeamTube(seg: LinkTraceSegment, colour: THREE.Color | string): THR
   );
   tube.position.copy(start).addScaledVector(direction, length / 2);
   tube.quaternion.setFromRotationMatrix(
-    new THREE.Matrix4().makeBasis(upHat, direction, minusSHat),
+    new THREE.Matrix4().makeBasis(principalX, direction, minusPrincipalY),
   );
   // Skinny centreline so a near-focus pinch is still visible.
   const centreline = new THREE.Line(
