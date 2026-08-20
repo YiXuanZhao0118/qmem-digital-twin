@@ -11,10 +11,11 @@ import { buildBeamChainGroup, type LinkTraceSegment } from "./beamChain";
  * propagation axis**, +p = d x s. `waistAtStartUm` comes from qx and therefore
  * belongs on +s; `waistAtStartUmY` from qy on +p.
  *
- * The lab frame is Z-up and the three.js scene is Y-up, so "world up" here is
- * scene +y. The tube used to be oriented with `d x up` as its rx axis — which
- * is the backend's +p — so every astigmatic beam's ellipse was drawn rotated
- * by 90 degrees. These tests pin the corrected mapping.
+ * The three.js scene shares the LAB frame's axes — both Z-up, see
+ * optical/frames.ts — so "world up" is +z on this side too. The tube used to
+ * derive its transverse basis from +y instead, which put every astigmatic
+ * beam's ellipse a quarter-turn out. These tests pin the corrected mapping,
+ * and in particular that a beam along +x has its rx axis on +z.
  */
 
 function segment(over: Partial<LinkTraceSegment> = {}): LinkTraceSegment {
@@ -56,9 +57,17 @@ function rxAxisWorld(tube: THREE.Mesh): THREE.Vector3 {
 describe("beam tube transverse basis", () => {
   it("puts the rx (qx) axis along the projected world up, not perpendicular to it", () => {
     const rx = rxAxisWorld(tubeOf(segment()));
-    // d = +x, up = +y  =>  the (d, up)-plane transverse direction is +/-y.
-    expect(Math.abs(rx.y)).toBeCloseTo(1, 6);
-    expect(Math.abs(rx.z)).toBeCloseTo(0, 6);
+    // d = +x, up = +z  =>  the (d, up)-plane transverse direction is +/-z.
+    expect(Math.abs(rx.z)).toBeCloseTo(1, 6);
+    expect(Math.abs(rx.y)).toBeCloseTo(0, 6);
+  });
+
+  it("uses the fallback reference axis for a beam running along up", () => {
+    // d = +z triggers beam_local_sp's |d.z| > 0.999 branch (up -> +x), so the
+    // rx axis lands on +x. Getting this wrong is invisible for table-plane
+    // beams and only shows on a vertical one.
+    const rx = rxAxisWorld(tubeOf(segment({ endThree: { x: 0, y: 0, z: 10 } })));
+    expect(Math.abs(rx.x)).toBeCloseTo(1, 6);
   });
 
   it("keeps the basis right-handed so the tube's normals are not inverted", () => {
@@ -67,11 +76,10 @@ describe("beam tube transverse basis", () => {
     expect(m.determinant()).toBeCloseTo(1, 6);
   });
 
-  it("orients the rx axis consistently for a beam along scene +y", () => {
-    // d parallel to up triggers the fallback reference axis; the rx axis must
-    // still be transverse (perpendicular to the propagation direction).
+  it("orients the rx axis on +z for a beam along scene +y too", () => {
     const rx = rxAxisWorld(tubeOf(segment({ endThree: { x: 0, y: 10, z: 0 } })));
     expect(rx.dot(new THREE.Vector3(0, 1, 0))).toBeCloseTo(0, 6);
+    expect(Math.abs(rx.z)).toBeCloseTo(1, 6);
   });
 
   it("leaves a circular beam's orientation immaterial", () => {

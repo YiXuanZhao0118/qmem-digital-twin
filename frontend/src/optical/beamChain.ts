@@ -116,22 +116,25 @@ function buildBeamTube(seg: LinkTraceSegment, colour: THREE.Color | string): THR
     };
   };
 
-  // Transverse basis. The backend expresses the beam's transverse state in
-  // jones.beam_local_sp's frame: +s = the world UP direction projected
-  // perpendicular to the propagation axis, +p = d x s. rx comes from qx and
-  // therefore belongs on +s, ry from qy on +p.
+  // Transverse basis — an exact mirror of the backend's jones.beam_local_sp,
+  // which is the frame the beam's transverse state is expressed in:
+  //   up = +z, or +x when the beam runs along z
+  //   +s  = up projected perpendicular to the propagation axis
+  //   +p  = d x s
+  // rx comes from qx and therefore belongs on +s, ry from qy on +p.
   //
-  // `sHat` below is built as d x up, i.e. PERPENDICULAR to up — that is the
-  // backend's +p, not its +s. Mapping rx onto it rendered every astigmatic
-  // beam's ellipse rotated by 90 degrees. `upHat` is the one lying in the
-  // (d, up) plane, so it is the backend's +s and is what rx must follow.
-  const yAxis = new THREE.Vector3(0, 1, 0);   // scene is Y-up; lab is Z-up
-  const sHat = new THREE.Vector3().crossVectors(direction, yAxis);
-  if (sHat.lengthSq() < 1e-9) {
-    sHat.crossVectors(direction, new THREE.Vector3(1, 0, 0));
-  }
-  sHat.normalize();
-  const sBeam = new THREE.Vector3().crossVectors(sHat, direction).normalize();
+  // The three.js scene shares the lab frame's axes — BOTH are Z-up, see
+  // optical/frames.ts ("Three ... uses the same axis convention as Lab") — so
+  // "up" is +z on this side too. Deriving it any other way (this used to
+  // reference +y) puts every astigmatic beam's ellipse a quarter-turn out.
+  const up =
+    Math.abs(direction.z) > 0.999
+      ? new THREE.Vector3(1, 0, 0)
+      : new THREE.Vector3(0, 0, 1);
+  const sBeam = up
+    .clone()
+    .addScaledVector(direction, -up.dot(direction))
+    .normalize();
   const pBeam = new THREE.Vector3().crossVectors(direction, sBeam).normalize();
 
   // Roll the ellipse onto the beam's own principal axes. The widths above are

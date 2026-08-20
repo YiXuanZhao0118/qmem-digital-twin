@@ -6,6 +6,10 @@
 // plots: the beam-profile heatmap and the pulse-temporal envelope.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  displayToBeamFrame,
+  transverseAxisLabels,
+} from "../../optical/beamTensor";
 
 import { fetchPopLensFocalApi, type PopLensFocalResult } from "../../api/client";
 import { useSceneStore } from "../../store/sceneStore";
@@ -896,34 +900,46 @@ export function BeamScopeContents() {
 
   // ─ World-axis orientation (ANALYTIC profile only) ──────────────────────
   // The analytic beam profile shows the plane TRANSVERSE to propagation, so
-  // label it with the two world axes ⊥ to the beam (from its lab direction,
-  // object-sense X = (1,0,0)) and rotate the content 90° to match the scene.
-  // The POP focal-plane diffraction (Airy) view is EXCLUDED — it lives in the
-  // lens focal-plane's own coordinates, so it stays unrotated and labeled
-  // "x, y · focal plane". (Verify the analytic orientation in the UI — flip
-  // `sampleIntensity(y,-x)`→`(-y,x)` or swap `transverse[0]/[1]` if mirrored.)
+  // it is labelled with the two world axes ⊥ to the beam (from its lab
+  // direction, object-sense X = (1,0,0)). The POP focal-plane diffraction
+  // (Airy) view is EXCLUDED — it lives in the lens focal-plane's own
+  // coordinates, so it stays unrotated and labeled "x, y · focal plane".
+  //
+  // The mapping from those display axes to the beam's own is DERIVED, not
+  // assumed. It used to be a hard-coded 90° (`sampleIntensity(y, -x)`), which
+  // is right only when the beam's +s axis happens to be `transverse[1]`. That
+  // holds for propagation in the horizontal plane — every beam on an optical
+  // table — but NOT for a beam along lab +z: `beam_local_sp` switches to its
+  // fallback reference axis there, +s becomes lab +x = `transverse[0]`, and
+  // the fixed rotation put the profile a quarter-turn out. Building the s/p
+  // basis explicitly and projecting the display axes onto it is correct for
+  // every direction, and reduces to exactly `sampleIntensity(y, -x)` for a
+  // beam along +x, which is why the old form looked right.
   const activeSeg = overlappingSegments[safeBeamIndex] as
     (RawSegment & { dirLab?: { x: number; y: number; z: number } }) | undefined;
   const dirLab = activeSeg?.dirLab ?? { x: 1, y: 0, z: 0 };
   const absC = [Math.abs(dirLab.x), Math.abs(dirLab.y), Math.abs(dirLab.z)];
   const propIdx = absC.indexOf(Math.max(absC[0], absC[1], absC[2]));
-  const transverse = ["x", "y", "z"].filter((_, i) => i !== propIdx);
+  const transverse = transverseAxisLabels(dirLab);
 
-  // `sampleIntensity` works in the beam's PRINCIPAL frame (wxUm/wyUm are the
-  // principal widths), so a beam whose axes are rolled away from the display
-  // frame is sampled through the inverse roll — that is what makes a
-  // cylindrical lens mounted at 45° show up as a 45° ellipse instead of an
-  // axis-aligned one. Zero azimuth reduces to the previous expression exactly.
-  // (The absolute orientation still carries the 90°/mirror caveat noted above;
-  // this only fixes the beam's roll RELATIVE to it.)
+  const profileFrame = displayToBeamFrame(dirLab);
+
+  // Display (x = horizontal, y = vertical) → lab (s, p) → the beam's own
+  // principal frame, which is where `sampleIntensity` works (wxUm/wyUm are
+  // the principal widths). The second step is the azimuth roll — what makes a
+  // cylindrical lens mounted at 45° draw a 45° ellipse rather than an
+  // axis-aligned one.
   const profileCa = Math.cos(beamAzimuthRad);
   const profileSa = Math.sin(beamAzimuthRad);
   const profileSample = usePop
     ? popSampler!
     : (x: number, y: number) => {
-        const px = profileCa * x + profileSa * y;
-        const py = -profileSa * x + profileCa * y;
-        return sampleIntensity(py, -px); // 90° (analytic only)
+        const sc = profileFrame.sFromX * x + profileFrame.sFromY * y;
+        const pc = profileFrame.pFromX * x + profileFrame.pFromY * y;
+        return sampleIntensity(
+          profileCa * sc + profileSa * pc,
+          -profileSa * sc + profileCa * pc,
+        );
       };
   const profileHalf = usePop ? popPattern!.halfExtentUm : profileHalfUm;
   const profileTitle = usePop

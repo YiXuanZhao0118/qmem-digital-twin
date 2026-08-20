@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  beamLocalSp,
+  displayToBeamFrame,
   eigSym2,
   principalAzimuthRad,
   qWidthTensor,
   realWidthTensor,
   rotateCSym2,
   rotateSym2,
+  transverseAxisLabels,
   type CSym2,
   type Sym2,
 } from "./beamTensor";
@@ -126,5 +129,74 @@ describe("principalAzimuthRad", () => {
     // an anisotropic multiplier rolled by 20 deg is the only asymmetry here
     const mult = rotateSym2({ xx: 3, yy: 1, xy: 0 }, deg(-20));
     expect(principalAzimuthRad(round, mult, WL)).toBeCloseTo(deg(20), 8);
+  });
+});
+
+
+describe("beam-profile display orientation", () => {
+  const AXES = { x: 0, y: 1, z: 2 } as const;
+  const DIRS = [
+    { name: "+x", d: { x: 1, y: 0, z: 0 } },
+    { name: "-x", d: { x: -1, y: 0, z: 0 } },
+    { name: "+y", d: { x: 0, y: 1, z: 0 } },
+    { name: "-y", d: { x: 0, y: -1, z: 0 } },
+    { name: "+z", d: { x: 0, y: 0, z: 1 } },
+    { name: "-z", d: { x: 0, y: 0, z: -1 } },
+  ];
+
+  /** Which world axis a (necessarily axis-aligned) unit vector lies on. */
+  const axisOf = (v: readonly number[]) => {
+    const i = [0, 1, 2].find((k) => Math.abs(v[k]) > 0.999);
+    expect(i).toBeDefined();
+    return (["x", "y", "z"] as const)[i as number];
+  };
+
+  it.each(DIRS)(
+    "$name: a beam wide along +s is drawn wide on the axis LABELLED with s's world axis",
+    ({ d }) => {
+      const { s, p } = beamLocalSp(d);
+      const [hLabel, vLabel] = transverseAxisLabels(d);
+      const m = displayToBeamFrame(d);
+
+      // For axis-aligned propagation both s and p lie on world axes, so each
+      // display axis maps to exactly one of them.
+      const sAxis = axisOf(s);
+      const pAxis = axisOf(p);
+
+      // The display axis that carries s must be the one labelled with s's axis.
+      const sOnHorizontal = Math.abs(m.sFromX) > 0.999;
+      const sOnVertical = Math.abs(m.sFromY) > 0.999;
+      expect(sOnHorizontal !== sOnVertical).toBe(true);   // exactly one
+      expect(sOnHorizontal ? hLabel : vLabel).toBe(sAxis);
+
+      // ...and likewise for p, on the other one.
+      const pOnHorizontal = Math.abs(m.pFromX) > 0.999;
+      expect(pOnHorizontal ? hLabel : vLabel).toBe(pAxis);
+      expect(pOnHorizontal).toBe(!sOnHorizontal);
+
+      // the two axis names really are the two transverse ones
+      expect(new Set([hLabel, vLabel])).toEqual(new Set([sAxis, pAxis]));
+      expect(AXES[sAxis as keyof typeof AXES]).not.toBe(AXES[pAxis as keyof typeof AXES]);
+    },
+  );
+
+  it("reduces to the historical sampleIntensity(y, -x) for a beam along +x", () => {
+    // The old hard-coded 90° was right for this case, which is exactly why it
+    // survived: s = +z (vertical label), p = -y (horizontal label, mirrored).
+    const m = displayToBeamFrame({ x: 1, y: 0, z: 0 });
+    expect(m.sFromX).toBeCloseTo(0, 12);
+    expect(m.sFromY).toBeCloseTo(1, 12);
+    expect(m.pFromX).toBeCloseTo(-1, 12);
+    expect(m.pFromY).toBeCloseTo(0, 12);
+  });
+
+  it("does NOT reduce to it for a beam along +z — the case that was wrong", () => {
+    // beamLocalSp switches to its fallback reference axis here, so +s becomes
+    // lab +x, which is the HORIZONTAL label. A fixed 90° put this a quarter
+    // turn out; the derived map gets it right.
+    const m = displayToBeamFrame({ x: 0, y: 0, z: 1 });
+    expect(Math.abs(m.sFromX)).toBeCloseTo(1, 12);   // s on the horizontal axis
+    expect(Math.abs(m.sFromY)).toBeCloseTo(0, 12);
+    expect(transverseAxisLabels({ x: 0, y: 0, z: 1 })).toEqual(["x", "y"]);
   });
 });

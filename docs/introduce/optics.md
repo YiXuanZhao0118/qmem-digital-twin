@@ -112,9 +112,7 @@ Q was frame-correct after 2b, but `width_mult_x`/`_y` and `m2x`/`m2y` were still
 
 **The chief-ray kick now uses the full power tensor too.** `lens.py` applied `theta_y - y/f_y`, `theta_z - z/f_z` — the diagonal only — so a beam decentred in a lens tilted at an off-principal azimuth lost part of its deflection, the same cross term the envelope used to drop. It is now `theta' = theta - P·r` with `P = _tilt_astig_power_tensor(...)`, which reduces to the old expression exactly at normal incidence and whenever the incidence plane IS a principal axis. `_tilt_astig_focals` survives as the readable diagonal *view* of that tensor rather than a second derivation of it. Covered by `test_chief_ray_takes_the_full_power_tensor_not_just_its_diagonal` (asserts the axisZ kick a purely-axisY decentre now picks up) and a companion asserting the aligned case is untouched.
 
-**And the payload/renderer mirror, which turned up a pre-existing bug.** `client.ts` now types `qxyAtStart` plus the `xy` key on `widthMultAtStart` / `m2AtStart`. While wiring it, the beam tube's transverse basis in `frontend/src/optical/beamChain.ts` turned out to be **rotated 90°**: it oriented the tube with `makeBasis(sHat, direction, pHat)` where `sHat = d × up`, and put `rx` — which comes from `qx`, i.e. the backend's **+s** axis — on that `sHat`. But the backend's `beam_local_sp` defines **+s as world-up projected perpendicular to d**, which is the *other* vector, `pHat`. Concretely, for a beam along scene +x: `sHat = x̂ × ŷ = ẑ`, while the backend's +s is ŷ. So every astigmatic beam's ellipse was drawn a quarter-turn out. Fixed by orienting on `makeBasis(upHat, direction, -sHat)` — the negation keeps the basis right-handed, since `upHat × direction = -sHat` and a reflection there would invert the tube's normals. `beamChain.test.ts` pins the mapping, the handedness, and that a circular beam stays circular.
-
-(The lab frame is Z-up and the three.js scene is Y-up, which is why "world up" is scene +y on that side.)
+**And the payload/renderer mirror, which turned up a pre-existing bug.** `client.ts` now types `qxyAtStart` plus the `xy` key on `widthMultAtStart` / `m2AtStart`. While wiring it, the beam tube's transverse basis in `frontend/src/optical/beamChain.ts` turned out to be **rotated 90°**: it built its basis from `d × ŷ` and put `rx` — which comes from `qx`, i.e. the backend's **+s** axis — on it. But `beam_local_sp` defines **+s as world-up projected perpendicular to d**, and *up is +z*: **the three.js scene shares the lab frame's axes, both Z-up** (`optical/frames.ts`: "Three … uses the same axis convention as Lab"; `labToThree` is a pure scale with no axis re-map). So for a beam along +x the basis put `rx` on ±ŷ where it belongs on ẑ, and every astigmatic beam's ellipse was drawn a quarter-turn out. `beamChain` now mirrors `beam_local_sp` exactly, including its `|d·ẑ| > 0.999` fallback to +x̂, and orients on `makeBasis(principalX, direction, -principalY)` — the negation keeps the basis right-handed, since `principalX × direction = -principalY` and a reflection would invert the tube's normals. `beamChain.test.ts` pins the mapping (including the vertical-beam fallback, which is invisible for table-plane beams), the handedness, and that a circular beam stays circular.
 
 ### Step 2e — the azimuth through the frontend (2026-08-20)
 
@@ -129,7 +127,23 @@ One angle per segment is enough, and that is a physical fact rather than a simpl
 
 **Verification.** 662 frontend tests (`beamTensor.test.ts` 16, `beamChain.test.ts` +3, `v3TraceAdapter.azimuth.test.ts` 7) and 656 backend, `tsc` clean. The adapter test is end-to-end: it rolls a known astigmatic Q by a known angle, asserts the angle comes back, and asserts the **principal widths are identical however the beam is rolled** — paired with a guard asserting the pre-azimuth behaviour *would* have got them wrong, so it cannot pass vacuously.
 
-**Caveat inherited, not introduced.** The profile's absolute orientation still carries the 90°/mirror uncertainty the code already flags (`sampleIntensity(y, -x)`, "verify in the UI"). This change fixes the beam's roll *relative* to that frame; it does not settle the frame itself.
+### Step 2f — settling the profile's absolute orientation (2026-08-20)
+
+`BeamScopePanel` carried a standing "verify the analytic orientation in the UI" note against a hard-coded quarter turn, `sampleIntensity(y, -x)`. It is now **derived instead of assumed**, which settles the question without needing to eyeball anything.
+
+Reading the pieces: `Heatmap` samples `sample(x, y)` with x screen-horizontal (right positive) and y screen-vertical (up positive), labelling the horizontal axis `transverse[0]` and the vertical `transverse[1]`, where `transverse` is the two world axes ⊥ to propagation in x < y < z order. `sampleIntensity` takes the beam's own principal coordinates. So the question is just: which display axis does the beam's +s land on?
+
+| beam direction | +s | +p | `transverse` | fixed 90° |
+|---|---|---|---|---|
+| lab +x | +z | −y | x: `["y","z"]` | ✅ |
+| lab +y | +z | +x | y: `["x","z"]` | ✅ |
+| **lab +z** | **+x** | **+y** | z: `["x","y"]` | ❌ **quarter-turn out** |
+
+`beam_local_sp` switches to its fallback reference axis when the beam runs along up, so +s jumps from `transverse[1]` to `transverse[0]` — and a fixed rotation cannot follow. Correct for every beam in the table plane, wrong for a vertical one, which is why it went unnoticed.
+
+`optical/beamTensor.ts` now exports `beamLocalSp` / `transverseAxisLabels` / `displayToBeamFrame`; the panel projects the display axes onto the beam's (s, p) basis and then applies the azimuth roll. `beamTensor.test.ts` asserts, for all six axis directions, that **a beam wide along +s is drawn wide on the display axis LABELLED with s's world axis** — the precise statement of "the absolute orientation is right" — plus that the map reproduces `sampleIntensity(y, -x)` exactly for a beam along +x (why the old form survived) and provably does not for one along +z.
+
+The only thing still unpinned is a *mirror*: for a beam along +x, +p is lab −y, so the horizontal axis increases leftward. An intensity profile is symmetric, so this is invisible unless the beam is decentred or in an odd-order HG mode.
 
 `m2x`/`m2y` and `width_mult_x`/`_y` are **scalar per-axis** quantities and are *not* frame-transported, so after a non-trivial rotation they no longer line up with the Q they annotate. Harmless while both axes share an M² — true of every beam in the live scene — and wrong otherwise. The fix is to carry the width multiplier as a symmetric tensor and take the readout width from `q_matrix_principal_widths`. Pinned by an explicit assertion in `test_output_mode_honours_waist_offset_and_m_squared` so 2c flips it deliberately. The chief-ray kick in `lens.py` (`theta - y/f_y`) likewise still drops the cross term that `_tilt_astig_power_tensor` now restores for Q; that one moves ray positions, so it wants its own pass.
 

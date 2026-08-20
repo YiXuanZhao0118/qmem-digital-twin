@@ -138,3 +138,67 @@ export function principalAzimuthRad(
   if (w.xy === 0 && w.xx === w.yy) return 0;
   return eigSym2(w).azimuthRad;
 }
+
+
+/** Lab-frame beam-local (s, p) basis — the mirror of the backend's
+ *  `jones.beam_local_sp`. `up` is +z, or +x for a beam running along z. */
+export function beamLocalSp(
+  dir: { x: number; y: number; z: number },
+): { s: [number, number, number]; p: [number, number, number] } {
+  const n = Math.hypot(dir.x, dir.y, dir.z) || 1;
+  const d: [number, number, number] = [dir.x / n, dir.y / n, dir.z / n];
+  const up: [number, number, number] = Math.abs(d[2]) > 0.999 ? [1, 0, 0] : [0, 0, 1];
+  const dot = up[0] * d[0] + up[1] * d[1] + up[2] * d[2];
+  const sv: [number, number, number] = [
+    up[0] - d[0] * dot, up[1] - d[1] * dot, up[2] - d[2] * dot,
+  ];
+  const sn = Math.hypot(sv[0], sv[1], sv[2]) || 1;
+  const s: [number, number, number] = [sv[0] / sn, sv[1] / sn, sv[2] / sn];
+  return {
+    s,
+    p: [
+      d[1] * s[2] - d[2] * s[1],
+      d[2] * s[0] - d[0] * s[2],
+      d[0] * s[1] - d[1] * s[0],
+    ],
+  };
+}
+
+/** The two world axes transverse to `dir`, in x < y < z order — how the beam
+ *  profile labels its horizontal and vertical axes. */
+export function transverseAxisLabels(
+  dir: { x: number; y: number; z: number },
+): [string, string] {
+  const abs = [Math.abs(dir.x), Math.abs(dir.y), Math.abs(dir.z)];
+  const propIdx = abs.indexOf(Math.max(abs[0], abs[1], abs[2]));
+  const rest = ["x", "y", "z"].filter((_, i) => i !== propIdx);
+  return [rest[0], rest[1]];
+}
+
+/**
+ * Linear map from the beam-profile DISPLAY axes (horizontal = the world axis
+ * labelled `transverse[0]`, vertical = `transverse[1]`) to the beam's own
+ * (s, p) components.
+ *
+ * The profile used to assume a fixed 90° rotation, which is right only while
+ * the beam's +s happens to be the vertical label. That holds for propagation
+ * in the horizontal plane — every beam on an optical table — but not for one
+ * along +z, where `beamLocalSp` switches reference axis and +s becomes the
+ * HORIZONTAL label. Deriving the map removes the guess.
+ */
+export function displayToBeamFrame(
+  dir: { x: number; y: number; z: number },
+): { sFromX: number; sFromY: number; pFromX: number; pFromY: number } {
+  const { s, p } = beamLocalSp(dir);
+  const [h, v] = transverseAxisLabels(dir);
+  const unit = (name: string): [number, number, number] => [
+    name === "x" ? 1 : 0, name === "y" ? 1 : 0, name === "z" ? 1 : 0,
+  ];
+  const e0 = unit(h);
+  const e1 = unit(v);
+  const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  return {
+    sFromX: dot(e0, s), sFromY: dot(e1, s),
+    pFromX: dot(e0, p), pFromY: dot(e1, p),
+  };
+}
