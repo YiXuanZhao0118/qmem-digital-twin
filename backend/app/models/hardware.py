@@ -212,6 +212,13 @@ class Component(Base):
         JSONB, nullable=False, default=list, server_default="[]"
     )
     notes: Mapped[str | None] = mapped_column(Text)
+    # Human-confirmed "frozen" flag (alembic 0128). Same semantics and same
+    # guard (``app/lock_guard.py``) as Kind.locked / Asset3D.locked /
+    # Device.locked. Replaces the ad-hoc ``properties['locked']`` JSONB flag
+    # that used to guard delete only, and with a 409 rather than a 422.
+    locked: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sa.false()
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

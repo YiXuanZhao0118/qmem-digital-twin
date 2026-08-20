@@ -26,6 +26,9 @@ import {
   type KindPatchPayload,
   type KindRow,
 } from "../api/client";
+import { useV3Catalog } from "../store/catalogStore";
+import { LOCK_FILTER_OPTIONS, matchesLockFilter, type LockFilter } from "./lockFilter";
+import { USAGE_FILTER_OPTIONS, matchesUsageFilter, type UsageFilter } from "./usageFilter";
 import {
   ASIDE_STYLE,
   asideItemStyle,
@@ -151,6 +154,8 @@ export function KindsEditor({
   // filter. Mirrors Asset3DEditor / ComponentsEditor's shell pattern.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filterText, setFilterText] = useState<string>("");
+  const [lockFilter, setLockFilter] = useState<LockFilter>("all");
+  const [usageFilter, setUsageFilter] = useState<UsageFilter>("all");
 
   const reload = useCallback(async () => {
     setLoadStatus("loading");
@@ -342,14 +347,29 @@ export function KindsEditor({
           ? "Mechanical"
           : "Optical";
 
+  // How many Asset3D rows point at each kind. Domain is kind-authoritative
+  // (`Asset3D.kind_id` -> `kind.domains`), so this is the honest "is anyone
+  // using this kind" number — it is what the usage filter reads, and it is
+  // shown per row so a 0 is visible rather than inferred.
+  const assets = useV3Catalog((state) => state.assets);
+  const assetCountByKind = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const asset of assets) {
+      if (!asset.kindId) continue;
+      counts.set(asset.kindId, (counts.get(asset.kindId) ?? 0) + 1);
+    }
+    return counts;
+  }, [assets]);
+
   const filtered = useMemo(() => {
     const needle = filterText.trim().toLowerCase();
-    return needle
-      ? rows.filter((r) =>
-          `${r.displayName} ${r.name} ${r.opSetName}`.toLowerCase().includes(needle),
-        )
-      : rows;
-  }, [rows, filterText]);
+    return rows.filter((r) => {
+      if (!matchesLockFilter(r.locked, lockFilter)) return false;
+      if (!matchesUsageFilter(assetCountByKind.get(r.name) ?? 0, usageFilter)) return false;
+      if (!needle) return true;
+      return `${r.displayName} ${r.name} ${r.opSetName}`.toLowerCase().includes(needle);
+    });
+  }, [rows, filterText, lockFilter, usageFilter, assetCountByKind]);
 
   const selectedRow = useMemo(
     () => rows.find((r) => r.id === selectedId) ?? null,
@@ -440,6 +460,30 @@ export function KindsEditor({
           >
             ↻
           </button>
+          {/* View-only filters — same shape as the ASSET3D list's lock
+              dropdown. Neither writes a row: the kinds table is a catalog
+              of what the twin CAN model, so a kind with no assets yet is
+              hidden here, never deleted (see usageFilter.ts). */}
+          <select
+            value={lockFilter}
+            onChange={(e) => setLockFilter(e.target.value as LockFilter)}
+            title="Filter by lock state (locked = human-confirmed complete, read-only)."
+            style={{ ...INPUT, gridColumn: "1 / span 2" }}
+          >
+            {LOCK_FILTER_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+          <select
+            value={usageFilter}
+            onChange={(e) => setUsageFilter(e.target.value as UsageFilter)}
+            title="Filter by whether any Asset3D points at this kind. View only — a kind with no assets is still fully usable, it just has no hardware modelled yet."
+            style={{ ...INPUT, gridColumn: "1 / span 2" }}
+          >
+            {USAGE_FILTER_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
         </div>
         <div style={{ fontSize: 10, color: "#4b5563", marginBottom: 6 }}>
           {filtered.length} of {rows.length} kinds
@@ -458,6 +502,14 @@ export function KindsEditor({
               <div style={{ fontWeight: 700 }}>{row.displayName}</div>
               <div style={{ fontSize: 10, color: "#6b7280" }}>
                 <span style={{ color: "#9ca3af" }}>id:</span> {row.name}
+                {(() => {
+                  const n = assetCountByKind.get(row.name) ?? 0;
+                  return (
+                    <span style={{ color: n > 0 ? "#6b7280" : "#9ca3af", marginLeft: 6 }}>
+                      · {n === 0 ? "no assets" : `${n} asset${n === 1 ? "" : "s"}`}
+                    </span>
+                  );
+                })()}
               </div>
               <div style={{ marginTop: 3 }}>
                 <DomainBadges domains={row.domains} />

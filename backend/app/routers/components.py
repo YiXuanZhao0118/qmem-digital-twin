@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import crud, schemas
 from app.db import get_session
+from app.lock_guard import assert_delete_allowed, assert_update_allowed
 from app.models import (
     Asset3D,
     Collection,
@@ -36,8 +37,10 @@ def component_payload(component: Component) -> dict[str, object]:
     return schemas.ComponentOut.model_validate(component).model_dump(mode="json", by_alias=True)
 
 
-def is_component_locked(component: Component) -> bool:
-    return component.properties.get("locked") is True
+# `is_component_locked` (a `properties['locked']` JSONB reader that guarded
+# delete only, with a 409) was retired by alembic 0128 in favour of the real
+# `Component.locked` column + the shared `lock_guard`, so Component behaves
+# exactly like Kind / Asset3D / Device on every write path.
 
 
 # =============================================================================
@@ -800,6 +803,11 @@ async def update_component(
 ) -> Component:
     component = await crud.get_or_404(session, Component, component_id)
     updates = payload.model_dump(exclude_unset=True)
+    assert_update_allowed(
+        locked=component.locked,
+        changed_fields=updates.keys(),
+        label=f"Component {component.name!r}",
+    )
     if "name" in updates:
         updates["name"] = await require_unique_component_name(
             session,
@@ -881,8 +889,7 @@ async def delete_component(
     component_id: uuid.UUID, session: AsyncSession = Depends(get_session)
 ) -> Response:
     component = await crud.get_or_404(session, Component, component_id)
-    if is_component_locked(component):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Component is locked.")
+    assert_delete_allowed(locked=component.locked, label=f"Component {component.name!r}")
     if component.archived_at is not None:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 

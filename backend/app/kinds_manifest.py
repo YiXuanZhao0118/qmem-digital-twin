@@ -181,3 +181,83 @@ def asset_name_patterns() -> dict[str, str]:
             for ct in plugin["component_types"]:
                 out[ct] = pattern
     return out
+
+
+# Domains the ``kinds.domains`` CHECK constraint accepts (alembic 0092).
+VALID_KIND_DOMAINS = ("optical", "rf", "mechanical")
+
+# Columns of a `kinds` row the manifest OWNS. Alembic 0126 overwrites
+# exactly these on every plugin-backed row, and
+# `tests/test_kind_manifest_sync.py` asserts exactly these still match.
+#
+# Deliberately excluded, each with a source that outranks the manifest:
+#   op_set_name           user variants repoint it at a different op set
+#   domains               user-editable in the Kinds editor; 0092 backfilled
+#                         user-created kinds from the retired scalar column
+#   locked                human-confirmed flag, not derived from anything
+#   wavelength_range_nm   not emitted by the export at all — hand-entered
+#   frequency_range_mhz   likewise (alembic 0105)
+MANIFEST_OWNED_KIND_COLUMNS = (
+    "display_name",
+    "default_params",
+    "anchor_template",
+    "needs_aperture",
+    "description",
+)
+
+
+def kind_domains_for_plugin(plugin: dict[str, Any]) -> list[str]:
+    """PHY domains one physics plugin belongs to, order-stable.
+
+    Same derivation alembic 0092 used for its backfill: ``primary_domain``
+    first, then ``default_physics``, then every ``port_domains`` value,
+    filtered to the CHECK-constrained set. ``aom`` / ``eom`` come out
+    ``["optical", "rf"]``.
+
+    Only used to seed a row that does not exist yet — see
+    MANIFEST_OWNED_KIND_COLUMNS for why an existing row's domains are left
+    alone.
+    """
+    physics = plugin.get("physics") or {}
+    ordered: list[str] = []
+
+    def _add(value: Any) -> None:
+        if value in VALID_KIND_DOMAINS and value not in ordered:
+            ordered.append(value)
+
+    _add(physics.get("primary_domain"))
+    for d in physics.get("default_physics") or []:
+        _add(d)
+    for d in (physics.get("port_domains") or {}).values():
+        _add(d)
+    return ordered
+
+
+def kind_rows_from_manifest() -> dict[str, dict[str, Any]]:
+    """``kind name -> the `kinds` row the manifest says it should be``.
+
+    The single derivation shared by the three consumers that each need to
+    answer "what should this row hold?": alembic 0126's resync,
+    `tests/test_kind_manifest_sync.py`, and
+    `scripts/audit_kind_param_drift.py`. Keeping it here is the whole point
+    — 0086 inlined this logic in the migration, nothing re-ran it, and the
+    table fossilised at the early-2026 manifest (24 of 31 rows had drifted
+    by the time anyone diffed them).
+
+    Every returned dict carries the full INSERT column set. The subset that
+    an UPDATE may overwrite is MANIFEST_OWNED_KIND_COLUMNS.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for plugin in load_manifest().get("physics_plugins", []):
+        physics = plugin.get("physics") or {}
+        anchors = physics.get("anchors") or {}
+        out[plugin["id"]] = {
+            "display_name": plugin.get("display_name") or plugin["id"],
+            "op_set_name": plugin["id"],
+            "domains": kind_domains_for_plugin(plugin),
+            "default_params": physics.get("default_params") or {},
+            "anchor_template": anchors,
+            "needs_aperture": bool(anchors.get("needs_aperture")),
+            "description": physics.get("align_summary"),
+        }
+    return out

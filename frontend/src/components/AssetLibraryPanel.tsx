@@ -17,7 +17,7 @@ import { useEffect, useMemo, useState } from "react";
 import { OutlinerPanel } from "./OutlinerPanel";
 import { useSceneStore } from "../store/sceneStore";
 import type { ComponentItem } from "../types/digitalTwin";
-import { getComponentDisplayLabel, getComponentName } from "../utils/components";
+import { getComponentName, isComponentLocked } from "../utils/components";
 import { FloatingPanel } from "./workspace/FloatingPanel";
 
 const EXPANDED_GROUPS_STORAGE_KEY = "qmem.componentGroups.expanded";
@@ -45,10 +45,6 @@ function categoryForComponent(component: ComponentItem): CategoryDef {
   const explicit = (component.properties as { category?: string } | undefined)?.category;
   if (explicit && explicit in CATEGORY_DEFS) return CATEGORY_DEFS[explicit as CategoryKey];
   return CATEGORY_DEFS.other;
-}
-
-function isComponentLocked(component?: { properties?: Record<string, unknown> }): boolean {
-  return component?.properties?.locked === true;
 }
 
 function loadStringSet(storageKey: string): Set<string> {
@@ -233,7 +229,7 @@ export function ComponentsCatalogPanel() {
                                 >
                                   <Box size={17} />
                                   <span>
-                                    <strong>{getComponentDisplayLabel(component)}</strong>
+                                    <strong>{getComponentName(component)}</strong>
                                     {isComponentLocked(component) && <small>locked</small>}
                                   </span>
                                   {/* Cables can only enter the scene via the RF

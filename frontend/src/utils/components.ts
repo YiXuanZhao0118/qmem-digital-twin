@@ -27,3 +27,15 @@ export function isOpticalTableComponent(component: ComponentItem): boolean {
     getComponentName(component).toLowerCase().includes("optical_table")
   );
 }
+
+/** Is this Component frozen as human-confirmed complete?
+ *
+ *  Reads the real `Component.locked` column (alembic 0128). Until then the
+ *  flag lived in `properties.locked`, guarded delete only, and three files
+ *  each carried their own copy of this predicate — 0128 moved the value
+ *  into the column and stripped the key, so every reader has to come here.
+ *  The API refuses any write but unlocking with 422 (`app/lock_guard.py`).
+ */
+export function isComponentLocked(component?: ComponentItem | null): boolean {
+  return component?.locked === true;
+}

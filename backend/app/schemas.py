@@ -368,6 +368,9 @@ class ComponentBase(CamelModel):
     notes: str | None = None
     catalog_id: str | None = None
     exposed_faces: JsonList | None = None
+    # Human-confirmed "frozen" flag (alembic 0128). Same semantics as
+    # KindOut.locked / Asset3DV3Out.locked — see app/lock_guard.py.
+    locked: bool = False
 
 
 class ComponentCreate(ComponentBase):
@@ -385,6 +388,7 @@ class ComponentUpdate(CamelModel):
     properties: JsonDict | None = None
     physics_capabilities: list[PhysicsCapability] | None = None
     notes: str | None = None
+    locked: bool | None = None
 
 
 class ComponentBindingBase(CamelModel):

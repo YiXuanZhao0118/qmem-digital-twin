@@ -29,6 +29,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Lock, Unlock } from "lucide-react";
 import * as THREE from "three";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -48,6 +49,7 @@ import {
   type KindRow,
 } from "../api/client";
 import { buildPolarizationMarkers } from "../optical/polarizationMarker";
+import { LOCK_FILTER_OPTIONS, matchesLockFilter, type LockFilter } from "./lockFilter";
 import { quantizeDeg } from "../optical/poseQuantize";
 import { CATEGORY_DEFS } from "./AssetLibraryPanel";
 import { useKindsStore } from "../store/kindsStore";
@@ -555,6 +557,8 @@ export function ComponentsEditor({
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filterText, setFilterText] = useState("");
+  const [lockFilter, setLockFilter] = useState<LockFilter>("all");
+  const [lockBusy, setLockBusy] = useState<Record<string, boolean>>({});
   const [bindings, setBindings] = useState<ComponentBinding[]>([]);
   const [bindingsLoading, setBindingsLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -633,13 +637,13 @@ export function ComponentsEditor({
 
   const filtered = useMemo(() => {
     const q = filterText.trim().toLowerCase();
-    const base = q
-      ? components.filter((c) =>
-          `${c.name} ${c.kindId ?? ""}`.toLowerCase().includes(q),
-        )
-      : components;
+    const base = components.filter((c) => {
+      if (!matchesLockFilter(c.locked, lockFilter)) return false;
+      if (!q) return true;
+      return `${c.name} ${c.kindId ?? ""}`.toLowerCase().includes(q);
+    });
     return [...base].sort((a, b) => a.name.localeCompare(b.name));
-  }, [components, filterText]);
+  }, [components, filterText, lockFilter]);
 
   const assetById = useMemo(
     () => new Map(assets.map((a) => [a.id, a] as const)),
@@ -822,6 +826,10 @@ export function ComponentsEditor({
 
   const handleDeleteComponent = async (): Promise<void> => {
     if (!selected) return;
+    if (selected.locked) {
+      setError(`"${selected.name}" is locked. Unlock it (🔒 in the list) before deleting.`);
+      return;
+    }
     if (
       !window.confirm(
         `Delete Component "${selected.name}"? All child bindings will be removed.`,
@@ -841,11 +849,37 @@ export function ComponentsEditor({
     patch: Parameters<typeof updateComponentApi>[1],
   ): Promise<void> => {
     if (!selected) return;
+    // Locked rows are read-only in the form, but guard here too: the
+    // backend answers 422 either way (app/lock_guard.py) and a local
+    // check gives the user the reason instead of a raw error string.
+    if (selected.locked) {
+      setError(`"${selected.name}" is locked. Unlock it (🔒 in the list) before editing.`);
+      return;
+    }
     try {
       await updateComponentApi(selected.id, patch);
       await loadScene();
     } catch (e) {
       setError(`Update failed: ${String(e)}`);
+    }
+  };
+
+  /** Toggle `Component.locked` (alembic 0128). Same contract as the KIND /
+   *  ASSET3D / DEVICE lists: locked = a human confirmed this row is complete,
+   *  and the API then rejects every write but unlocking. */
+  const handleToggleLock = async (c: ComponentItem): Promise<void> => {
+    setLockBusy((prev) => ({ ...prev, [c.id]: true }));
+    try {
+      await updateComponentApi(c.id, { locked: !c.locked });
+      await loadScene();
+    } catch (e) {
+      setError(`Lock toggle failed: ${String(e)}`);
+    } finally {
+      setLockBusy((prev) => {
+        const next = { ...prev };
+        delete next[c.id];
+        return next;
+      });
     }
   };
 
@@ -1002,28 +1036,71 @@ export function ComponentsEditor({
           >
             ↻
           </button>
+          <select
+            value={lockFilter}
+            onChange={(e) => setLockFilter(e.target.value as LockFilter)}
+            title="Filter by lock state (locked = human-confirmed complete, read-only)."
+            style={{ ...inputStyle, gridColumn: "1 / span 2" }}
+          >
+            {LOCK_FILTER_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
         </div>
         <div style={{ fontSize: 10, color: "#4b5563", marginBottom: 6 }}>
           {filtered.length} of {components.length} components
         </div>
         {filtered.map((c) => (
-          <button
-            key={c.id}
-            type="button"
-            onClick={() => setSelectedId(c.id)}
-            style={asideItemStyle(c.id === selectedId)}
-          >
-            <div style={{ fontWeight: 700 }}>{c.name}</div>
-            <div style={{ fontSize: 10, color: "#6b7280" }}>
-              {(() => {
-                const ks = componentKindsById.get(c.id);
-                if (ks && ks.length > 0) return `kind: ${ks.join(", ")}`;
-                // No bound physics assets — fall back to the stored kind_id
-                // (skip the meaningless "none" placeholder).
-                return c.kindId && c.kindId !== "none" ? `kind: ${c.kindId}` : "kind: —";
-              })()}
-            </div>
-          </button>
+          <div key={c.id} style={{ position: "relative" }}>
+            <button
+              type="button"
+              onClick={() => setSelectedId(c.id)}
+              style={{ ...asideItemStyle(c.id === selectedId), paddingRight: 30 }}
+            >
+              <div style={{ fontWeight: 700 }}>{c.name}</div>
+              <div style={{ fontSize: 10, color: "#6b7280" }}>
+                {(() => {
+                  const ks = componentKindsById.get(c.id);
+                  if (ks && ks.length > 0) return `kind: ${ks.join(", ")}`;
+                  // No bound physics assets — fall back to the stored kind_id
+                  // (skip the meaningless "none" placeholder).
+                  return c.kindId && c.kindId !== "none" ? `kind: ${c.kindId}` : "kind: —";
+                })()}
+              </div>
+            </button>
+            {/* Per-row lock toggle — same affordance and position as the
+                KIND / ASSET3D / DEVICE lists. */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                void handleToggleLock(c);
+              }}
+              disabled={lockBusy[c.id]}
+              title={
+                c.locked
+                  ? "Locked — confirmed complete. Click to unlock for editing."
+                  : "Unlocked. Click to lock (freeze as confirmed complete)."
+              }
+              style={{
+                position: "absolute",
+                top: 6,
+                right: 6,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 22,
+                height: 22,
+                padding: 0,
+                border: "none",
+                background: "transparent",
+                cursor: lockBusy[c.id] ? "default" : "pointer",
+                color: c.locked ? "#b45309" : "#9ca3af",
+              }}
+            >
+              {c.locked ? <Lock size={13} /> : <Unlock size={13} />}
+            </button>
+          </div>
         ))}
       </aside>
 
@@ -1071,7 +1148,7 @@ export function ComponentsEditor({
               >
                 {selected.name}
               </h2>
-              {isBindingDev && (
+              {isBindingDev && !selected.locked && (
                 <button
                   type="button"
                   onClick={handleDeleteComponent}
@@ -1082,6 +1159,42 @@ export function ComponentsEditor({
               )}
             </header>
 
+            {/* Locked = human-confirmed complete. The form below goes
+                read-only via pointerEvents (the same device Asset3DEditor
+                uses over its whole block) and the API rejects any write
+                but unlocking with 422 (app/lock_guard.py). */}
+            {selected.locked && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  marginBottom: 8,
+                  padding: "5px 8px",
+                  borderRadius: 4,
+                  background: "#fef3c7",
+                  color: "#92400e",
+                  fontSize: 11,
+                }}
+              >
+                <Lock size={12} />
+                <span>
+                  Locked — confirmed complete, read-only. Click the 🔒 in the list to unlock.
+                </span>
+              </div>
+            )}
+
+            {/* Everything below the header is the editable form. A locked
+                row blocks it with pointerEvents, mirroring Asset3DEditor —
+                the writes are already refused by handlePatchComponent and
+                the API, this just stops the user typing into a dead field. */}
+            <div
+              style={
+                selected.locked
+                  ? { pointerEvents: "none", opacity: 0.6 }
+                  : undefined
+              }
+            >
             <div style={SECTION_LABEL}>Identity</div>
             <IdentityField
               label="name"
@@ -1301,6 +1414,7 @@ export function ComponentsEditor({
                   </tbody>
                 </table>
               )}
+            </div>
           </>
         )}
       </main>

@@ -159,7 +159,12 @@ export async function createComponentApi(payload: {
 
 export async function updateComponentApi(
   componentId: string,
-  patch: Partial<Pick<ComponentItem, "name" | "kindId" | "brand" | "model" | "properties" | "notes" | "physicsCapabilities">>,
+  patch: Partial<
+    Pick<
+      ComponentItem,
+      "name" | "kindId" | "brand" | "model" | "properties" | "notes" | "physicsCapabilities" | "locked"
+    >
+  >,
 ): Promise<ComponentItem> {
   const response = await client.put<ComponentItem>(`/api/components/${componentId}`, patch);
   return response.data;

@@ -129,6 +129,7 @@ import {
 } from "../utils/beamPlacement";
 import { expandPoseToRigidGroup, patchHasPoseChange } from "../utils/rigidGroup";
 import { anchorObjectLocalPrimaryDir } from "../utils/anchorAccess";
+import { isComponentLocked } from "../utils/components";
 import { capabilityProfile } from "../kinds/_capabilityProfile";
 import { deriveCablePropsFromConnectorBindings, primaryAsset } from "../utils/componentBindings";
 import { TABLE_TOP_HEIGHT_MM } from "../three/photoRoom";
@@ -1195,10 +1196,6 @@ function inverseRotateObjectVector(vector: LabPoint, object: SceneObject): LabPo
     y: y2,
     z: x2 * sy + z2 * cy,
   };
-}
-
-function isComponentLocked(component?: ComponentItem): boolean {
-  return component?.properties?.locked === true;
 }
 
 /** Build the inverse of a forward patch from the entity's old state.

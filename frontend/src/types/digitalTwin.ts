@@ -227,6 +227,10 @@ export type ComponentItem = {
   properties: Record<string, unknown>;
   physicsCapabilities: PhysicsCapability[];
   notes?: string | null;
+  /** Human-confirmed "frozen" flag (alembic 0128). Same semantics as
+   *  `Asset3D.locked` / `KindRow.locked` / `DeviceRow.locked`: the API
+   *  rejects every write but unlocking, with 422. */
+  locked?: boolean;
   archivedAt?: string | null;
   createdAt?: string;
   updatedAt?: string;

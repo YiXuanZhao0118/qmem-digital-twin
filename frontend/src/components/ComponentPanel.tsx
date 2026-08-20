@@ -14,7 +14,7 @@ import type { ComponentItem, SceneObject, SceneObjectPatch } from "../types/digi
 import { TRIGGER_KINDS, TTL_GATE_KINDS } from "../types/digitalTwin";
 import { resolveBeamPosition } from "../utils/beamPlacement";
 import { getBeamAnchor, objectPosForAnchorOnBeam } from "../utils/beamAnchor";
-import { getComponentName } from "../utils/components";
+import { getComponentName, isComponentLocked } from "../utils/components";
 import { effectiveInstanceParams } from "../utils/instanceParams";
 import { RECT_ANNOTATION_ASSET_FILEPATH } from "../three/loadAsset/passive/rect_annotation";
 import { TEXT_ANNOTATION_ASSET_FILEPATH } from "../three/loadAsset/passive/text_annotation";
@@ -128,10 +128,6 @@ function PulseTimingButton({ component }: { component: ComponentItem }) {
       Pulse & Timing
     </button>
   );
-}
-
-function isComponentLocked(component?: { properties?: Record<string, unknown> }): boolean {
-  return component?.properties?.locked === true;
 }
 
 function objectOriginMm(object: Pick<SceneObject, "xMm" | "yMm" | "zMm">): LabPoint {

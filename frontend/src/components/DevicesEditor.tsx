@@ -38,6 +38,7 @@ import {
   type KindDomain,
 } from "../api/client";
 import { useDevicesStore } from "../store/devicesStore";
+import { LOCK_FILTER_OPTIONS, matchesLockFilter, type LockFilter } from "./lockFilter";
 import { useKindsStore } from "../store/kindsStore";
 import {
   ASIDE_STYLE,
@@ -221,6 +222,7 @@ export function DevicesEditor({
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filterText, setFilterText] = useState<string>("");
+  const [lockFilter, setLockFilter] = useState<LockFilter>("all");
 
   // One draft buffer for both modes: `mode` says whether Save creates or
   // patches. Keeping them separate (as KindsEditor does) would mean two
@@ -285,14 +287,14 @@ export function DevicesEditor({
 
   const filtered = useMemo(() => {
     const needle = filterText.trim().toLowerCase();
-    return needle
-      ? inDomain.filter((r) =>
-          `${r.displayName} ${r.slug} ${r.behavioralKind ?? ""} ${r.componentType}`
-            .toLowerCase()
-            .includes(needle),
-        )
-      : inDomain;
-  }, [inDomain, filterText]);
+    return inDomain.filter((r) => {
+      if (!matchesLockFilter(r.locked, lockFilter)) return false;
+      if (!needle) return true;
+      return `${r.displayName} ${r.slug} ${r.behavioralKind ?? ""} ${r.componentType}`
+        .toLowerCase()
+        .includes(needle);
+    });
+  }, [inDomain, filterText, lockFilter]);
 
   const selectedRow = useMemo(
     () => rows.find((r) => r.id === selectedId) ?? null,
@@ -501,6 +503,16 @@ export function DevicesEditor({
           >
             ↻
           </button>
+          <select
+            value={lockFilter}
+            onChange={(e) => setLockFilter(e.target.value as LockFilter)}
+            title="Filter by lock state (locked = human-confirmed complete, read-only)."
+            style={{ ...INPUT, gridColumn: "1 / span 2" }}
+          >
+            {LOCK_FILTER_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
         </div>
         <div style={{ fontSize: 10, color: "#4b5563", marginBottom: 6 }}>
           {filtered.length} of {inDomain.length} devices

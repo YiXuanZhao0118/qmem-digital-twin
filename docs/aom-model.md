@@ -148,9 +148,44 @@ passthrough is drawn.
 | `requiresRfDrive` | false | no RF → rated (not off) |
 | `acousticVelocityMps` | 4200 | TeO₂-L; Bragg angle + Doppler |
 | `crystalLengthMm` | 22.4 | slab propagation `L/n` + Bragg angular acceptance — see note below |
-| `rfPropagationDirectionBodyLocal` | [−1, 0, 0] | acoustic axis `D2` (order fan-out + Bragg incidence) when there is no `acoustic_axis` anchor |
-| `modulationBandwidthMhz` | 10 | analog amp-mod BW (unused by η) |
-| `figureOfMeritM2` | 34.5e-15 | TeO₂-L (legacy; unused by η) |
+| `rfPropagationDirectionBodyLocal` | [−1, 0, 0] | acoustic axis `D2` **fallback** — since alembic `0127` the asset has a real `acoustic_axis` anchor, so this is now only reached by an asset the backfill could not see |
+
+`modulationBandwidthMhz` and `figureOfMeritM2` used to sit in this table as
+"legacy; unused by η". Alembic `0126` removed them from the `aom` kind template
+along with `acousticBeamWidthMm` and `deflectionPerMhzUrad`: the plugin declares
+none of the four, no solver reads any of them, and the closed-form η above needs
+neither M₂ nor W (see "Efficiency"). If you are looking for them in a row, they
+are gone on purpose.
+
+### The `acoustic_axis` anchor (backfilled 2026-08-20, alembic `0127`)
+
+`_read_acoustic_dir` (`anchor_ops/aom.py`) and `getRfDirectionBodyLocal`
+(`utils/objectBindings.ts`) have resolved the acoustic direction from the
+dedicated **`acoustic_axis` anchor's axisX** since 2026-06-03, falling back to
+the params above. The frontend comment said the fallback existed "until the
+alembic migration drains them" — that migration was never written, so the
+catalog's one AOM (`aa_mt80_a1_5_ir`) carried
+`[intercept_in, intercept_out, rf_in]` and the solver ran on the fallback the
+whole time. The reason nobody noticed: `kinds.aom.anchor_template`, which is
+what `Asset3DEditor` auto-seeds new assets from, predated the anchor and so
+never offered it (alembic `0126` fixed the template, but seeding is additive and
+does not revisit an asset the user already saved — see
+[kinds.md](introduce/kinds.md)).
+
+0127 is **behaviour-preserving by construction**: `axisX` is read from the very
+param the fallback resolves, so the anchor installs the direction the trace was
+already using (`[−1, 0, 0]` — RF enters the SMA jack at body +x, the acoustic
+wave travels toward −x). `position` is the midpoint of `intercept_in` /
+`intercept_out` = (0, 0, 0) = the Bragg interaction point the plugin's
+`alignSummary` names as the rotation pivot; the solver reads **only** `axisX`, so
+the position is for the editor gizmo. `axisY`/`axisZ` use the same construction
+as `device_seed._frame_from_axis_x`, so a later device re-seed reproduces them
+instead of fighting them. No aperture — `acoustic_axis` is a direction-only role.
+The migration applies to every `kind_id='aom'` asset missing the anchor, is
+idempotent, and its `downgrade` is an exact inverse (drop the anchor, the
+resolvers fall back to the params, which 0127 never touched). It writes the
+`locked` `aa_mt80_a1_5_ir` row — see the `locked` discussion in
+[kinds.md](introduce/kinds.md).
 
 Bragg angle (external, lab frame): `θ_B = asin(λ·f / (2·v))` → 2θ_B ≈ 14.9 mrad
 at 780 nm / 80 MHz (datasheet "separation 0→1" >13.3 mrad). Doppler: order `m`
