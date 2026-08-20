@@ -210,6 +210,9 @@ def emit_anchor_source_rays(
 ) -> list[tuple[BeamRay, str, str, str]]:
     """Emit one ray per emit_point anchor on each laser_source slot.
 
+    Skipped when the instrument is powered off, or when the user hid the
+    emission (``SceneObject.properties.emissionVisuals["main"].visible``).
+
     Returns list of (ray, emitter_scene_object_id, source_scene_object_id,
     emission_key) tuples — same shape as the old
     emit_scene_source_rays_with_provenance plus the emission key, so the
@@ -221,6 +224,11 @@ def emit_anchor_source_rays(
             continue
         if not slot.powered_on:
             continue  # instrument power off → no emission
+        # Hidden by the user (Visualization card) — skip the whole emission,
+        # so downstream optics stop reflecting it too. Same contract as the
+        # TA's per-facet gate below.
+        if ((slot.emission_visuals or {}).get("main") or {}).get("visible") is False:
+            continue
         for anchor in slot.asset.anchors:
             if anchor.id != "intercept_out":
                 continue

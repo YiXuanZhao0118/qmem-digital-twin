@@ -136,7 +136,10 @@ export function AlignToBeamSection({
   // InstanceDynamicSourcesEditor in OpticalSettingPanel and stored in
   // SceneObject.dynamicSources. It DOES get a beam-colour picker (key "main"),
   // mirroring the TA's Visualization card — the override is read by
-  // beamColorForSource in every live 3D beam renderer.
+  // beamColorForSource in every live 3D beam renderer — plus a Show toggle:
+  // the backend emitter skips a hidden emission entirely (emit_laser_source.py),
+  // so downstream optics stop reflecting the beam rather than it merely
+  // vanishing from the draw.
   if (elementKind === "laser_source") {
     const wavelengthNm =
       (element.kindParams as { centerWavelengthNm?: number }).centerWavelengthNm ?? 780;
@@ -147,7 +150,7 @@ export function AlignToBeamSection({
           emissionKey="main"
           label="Beam"
           fallbackColorHex={wavelengthHex(wavelengthNm)}
-          showVisibilityToggle={false}
+          showVisibilityToggle
         />
       </SectionCard>
     );

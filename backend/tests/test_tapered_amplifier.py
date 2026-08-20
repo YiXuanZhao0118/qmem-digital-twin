@@ -160,10 +160,33 @@ def test_powered_off_laser_emits_nothing():
     laser = SimpleNamespace(
         asset=SimpleNamespace(kind="laser_source", default_params={}, anchors=[]),
         scene_object_id="laser-1", binding_id="src",
-        effective_transform=None, powered_on=False,
+        effective_transform=None, powered_on=False, emission_visuals=None,
     )
     scene = SimpleNamespace(slots=[laser])
     assert emit_anchor_source_rays(scene) == []
+
+
+def test_hidden_laser_emits_nothing():
+    """`emissionVisuals.main.visible = false` drops the emission itself, not
+    just its rendering — same contract as the TA's per-facet gate."""
+    from app.optical.anchor_ops.emit_laser_source import emit_anchor_source_rays
+    laser = SimpleNamespace(
+        asset=SimpleNamespace(
+            kind="laser_source", default_params={},
+            anchors=[_anchor("intercept_out", (0.0, 0.0, 0.0), (1.0, 0.0, 0.0))],
+        ),
+        scene_object_id="laser-1", binding_id="src",
+        effective_transform=_identity_transform(), powered_on=True,
+        dynamic_sources=None, emission_visuals={"main": {"visible": False}},
+    )
+    assert emit_anchor_source_rays(SimpleNamespace(slots=[laser])) == []
+
+    # …and it still emits (tagged "main") when visible is left alone.
+    laser.emission_visuals = {"main": {"colorHex": "#00ff00"}}
+    [(_ray, _emitter, _source, key)] = emit_anchor_source_rays(
+        SimpleNamespace(slots=[laser]),
+    )
+    assert key == "main"
 
 
 # --- Output geometry: the amplified beam leaves from intercept_out ----------
