@@ -38,6 +38,7 @@
 - [Startup & development runbook · runbook.md](runbook.md)
 - [The Alembic migration chain · migrations.md](migrations.md)
 - [Known stale / outstanding items · known-issues.md](known-issues.md)
+- [Outstanding work · todo.md](todo.md) — the optics backlog: what is deliberately not done yet, each with a definition of done
 
 ### Standing topic papers (one level up, in `docs/`)
 - [Quantified objectives · ../objectives.md](../objectives.md) — the acceptance thresholds for FPS / resolution / optical accuracy / latency / LOD / API and how CI gates them (**targets**, not the current state)
