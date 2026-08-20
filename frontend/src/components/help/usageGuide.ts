@@ -88,6 +88,13 @@ const LAB = `# Working in the Lab scene
 > **Key —** The gizmo **snaps back to Translate every time you re-select**
 > something. That is deliberate, not a bug.
 
+In Translate mode an **arrow you are looking straight down disappears** (from
+about 14° off-axis) — so in a dead-on front or top view you get two arrows, not
+three. That is deliberate too: end-on, an arrow covers the flat XY / YZ / XZ
+handles and steals their clicks, and dragging it that way sends the object
+flying, because the direction you are pulling barely exists on screen. Orbit a
+little and the third arrow comes back. Rotate mode always keeps all three rings.
+
 ## Snapping
 
 While you drag, the engine collects nearby snap targets and ranks them roughly
@@ -105,6 +112,16 @@ world origin > grid.
 
 ## The 3D cursor (Blender-style)
 
+The 3D cursor is where new objects land and what several align / snap commands
+aim at. It is **also the orbit centre**, and the two follow each other both
+ways: orbit, pan or zoom and the cursor moves to the middle of your view once
+the motion settles; set it explicitly and the view swings onto it.
+
+> **Key —** The cursor means **"the middle of what I'm looking at"**. Frame the
+> spot you care about and the cursor is already there — there is normally
+> nothing to place by hand, which is why its crosshair marker is **hidden by
+> default**.
+
 Press **Shift+S** to open the cursor menu at the pointer:
 
 | Command | Effect |
@@ -115,6 +132,19 @@ Press **Shift+S** to open the cursor menu at the pointer:
 | Cursor → **Active** | Cursor jumps to the active object |
 | Cursor → **Selected (median)** | Cursor jumps to the median of the selection |
 | Cursor → **Beam point** | Cursor jumps to the last beam point you clicked (**click a beam first**) |
+
+## The viewport strip (top left)
+
+Left to right: **display modes** (Wireframe / Rendered / …) · **Translate /
+Rotate** · the **crosshair** switch · the **Home** controls.
+
+- **Crosshair** — one switch for the whole 3D-cursor feature: it shows the
+  cursor marker *and* the **Cursor (mm)** field for typing exact coordinates.
+- **Bookmark** — save the current view as **Home**. The **H** button on the
+  axis gizmo (top right) then returns to *your* view instead of the default
+  framing; a second button clears it again. The **X / Y / Z / -X / -Y / -Z**
+  buttons on that same axis gizmo orbit around wherever you are currently
+  looking, rather than snapping the view back to the cursor.
 
 ## Beams
 
@@ -189,6 +219,17 @@ A 🔒 on a row means someone reviewed it, confirmed it complete, and froze it.
 > **Key —** The lock is **enforced by the backend, not advisory** — any write to
 > a locked row is rejected with **422**. To change one you must click the lock
 > icon to unlock it first, which is a deliberate human decision.
+
+## Refreshing the COMPONENT list
+
+The component list and the binding tree of the component you have open are
+loaded **separately**, and neither notices a change made somewhere else —
+another browser tab, a migration, a direct database edit.
+
+> **Key —** If the COMPONENT section looks out of date, use the **↻** button
+> next to the filter box rather than reloading the page. It re-fetches the list
+> **and** the open component's bindings, so the whole section comes back on one
+> vintage.
 
 ## Unsaved changes
 

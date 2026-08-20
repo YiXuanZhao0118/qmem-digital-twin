@@ -50,7 +50,15 @@ from app.optical.aperture import (
     gaussian_circular_aperture_fraction,
     gaussian_width_mm,
 )
-from app.optical.beam_ray import BeamRay, Vec3
+from app.optical.beam_ray import (
+    BeamRay,
+    Mat2,
+    Vec3,
+    q_after_thin_element,
+    q_matrix_after_abcd,
+    q_power_tensor,
+)
+from app.optical.jones import q_axis_to_beam, q_beam_to_axis
 
 
 # Floor on cos α for the tilted-lens astigmatism split (≈ 60° incidence). The
@@ -101,6 +109,28 @@ def _q_after_abcd(q: complex, a: float, b: float, c: float, d: float) -> complex
     if abs(denom) < 1e-20:
         return q
     return (a * q + b) / denom
+
+
+def _tilt_astig_power_tensor(
+    f_mm: float, theta_y: float, theta_z: float,
+) -> Mat2:
+    """The same tilted-lens astigmatism as :func:`_tilt_astig_focals`, but as
+    the FULL 2x2 focusing-power tensor in the anchor's (axisY, axisZ) frame.
+
+    Its diagonal is identical to that function's ``(1/f_y, 1/f_z)``; the
+    difference is that the off-diagonal cross term -- which the scalar q pair
+    could not represent, and which that docstring records as dropped -- is now
+    carried. Non-zero whenever the incidence plane is not aligned with a
+    principal axis (worst at azimuth 45 deg).
+    """
+    tan2 = theta_y * theta_y + theta_z * theta_z
+    if tan2 < 1e-15:
+        return q_power_tensor(1.0 / f_mm, 1.0 / f_mm, 0.0)
+    cos_a = 1.0 / math.sqrt(1.0 + tan2)
+    cos_a = max(cos_a, _COS_INCIDENCE_FLOOR)
+    p_t = 1.0 / (f_mm * cos_a)   # tangential (in the plane of incidence)
+    p_s = cos_a / f_mm           # sagittal
+    return q_power_tensor(p_t, p_s, math.atan2(theta_z, theta_y))
 
 
 def _lens_power_factor(ray_in: BeamRay, ctx: AnchorOpContext) -> float:
@@ -209,10 +239,15 @@ def lens_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
             out_ray.origin.y + ax.y * d_mm * out_sign,
             out_ray.origin.z + ax.z * d_mm * out_sign,
         )
+        # Rotationally symmetric blocks: frame-independent, but routed through
+        # the matrix law so an incoming off-diagonal propagates correctly.
+        q_thick = q_matrix_after_abcd(
+            ray_in.q_matrix, Mat2.scalar(complex(a)), Mat2.scalar(complex(b)),
+            Mat2.scalar(complex(c)), Mat2.scalar(complex(dd)),
+        )
         return [out_ray.replaced(
             origin=back_origin,
-            qx=_q_after_abcd(ray_in.qx, a, b, c, dd),
-            qy=_q_after_abcd(ray_in.qy, a, b, c, dd),
+            qx=q_thick.xx, qy=q_thick.yy, qxy=q_thick.xy,
             power_mw=power_out,
             path_length_mm=ray_in.path_length_mm + d_mm,
         )]
@@ -229,9 +264,16 @@ def lens_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
         z=z, theta_z=theta_z - z / f_z,
         flip_propagation=False,
     )
+    # Q lives in the beam-local frame; the lens' power tensor lives in its own
+    # (axisY, axisZ) frame. Rotate in, apply, rotate back -- this is what makes
+    # a lens rolled about the optical axis behave correctly.
+    q_in = q_beam_to_axis(ray_in.q_matrix, ctx.anchor.axis_y_body, ray_in.direction)
+    q_out = q_after_thin_element(
+        q_in, _tilt_astig_power_tensor(f_mm, theta_y, theta_z),
+    )
+    q_out = q_axis_to_beam(q_out, ctx.anchor.axis_y_body, ray_in.direction)
     return [out_ray.replaced(
-        qx=_q_after_lens(ray_in.qx, f_y),
-        qy=_q_after_lens(ray_in.qy, f_z),
+        qx=q_out.xx, qy=q_out.yy, qxy=q_out.xy,
         power_mw=power_out,
     )]
 
@@ -257,8 +299,11 @@ def lens_cylindrical_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
         z=z, theta_z=theta_z,
         flip_propagation=False,
     )
+    q_in = q_beam_to_axis(ray_in.q_matrix, ctx.anchor.axis_y_body, ray_in.direction)
+    q_out = q_after_thin_element(q_in, q_power_tensor(1.0 / fy_mm, 0.0, 0.0))
+    q_out = q_axis_to_beam(q_out, ctx.anchor.axis_y_body, ray_in.direction)
     return [out_ray.replaced(
-        qx=_q_after_lens(ray_in.qx, fy_mm),
+        qx=q_out.xx, qy=q_out.yy, qxy=q_out.xy,
         power_mw=ray_in.power_mw * _lens_power_factor(ray_in, ctx),
     )]
 

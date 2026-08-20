@@ -103,10 +103,15 @@ class V3LabSegment:
     qx_im_at_start: float = 0.0
     qy_re_at_start: float = 0.0
     qy_im_at_start: float = 0.0
+    # Off-diagonal of the transverse beam matrix Q (see anchor_tracer).
+    qxy_re_at_start: float = 0.0
+    qxy_im_at_start: float = 0.0
     path_length_mm_at_start: float = 0.0
     freq_offset_hz_at_start: float = 0.0
     width_mult_x_at_start: float = 1.0
     width_mult_y_at_start: float = 1.0
+    width_mult_xy_at_start: float = 0.0
+    m2_xy_at_start: float = 0.0
     m2_x_at_start: float = 1.0
     m2_y_at_start: float = 1.0
     # Clear-aperture clipping at the segment's end optic (lens kinds only).
@@ -155,10 +160,18 @@ class V3SolverResult:
                     ],
                     "qxAtStart": {"re": s.qx_re_at_start, "im": s.qx_im_at_start},
                     "qyAtStart": {"re": s.qy_re_at_start, "im": s.qy_im_at_start},
-                    "widthMultAtStart": {
-                        "x": s.width_mult_x_at_start, "y": s.width_mult_y_at_start,
+                    "qxyAtStart": {
+                        "re": s.qxy_re_at_start, "im": s.qxy_im_at_start,
                     },
-                    "m2AtStart": {"x": s.m2_x_at_start, "y": s.m2_y_at_start},
+                    "widthMultAtStart": {
+                        "x": s.width_mult_x_at_start,
+                        "y": s.width_mult_y_at_start,
+                        "xy": s.width_mult_xy_at_start,
+                    },
+                    "m2AtStart": {
+                        "x": s.m2_x_at_start, "y": s.m2_y_at_start,
+                        "xy": s.m2_xy_at_start,
+                    },
                     "pathLengthMmAtStart": s.path_length_mm_at_start,
                     "freqOffsetHz": s.freq_offset_hz_at_start,
                     "apertureTruncation": s.aperture_truncation,
@@ -237,10 +250,14 @@ def solve_anchor_scene(
                     jones_re_x=ls.jones_re_x, jones_im_x=ls.jones_im_x,
                     jones_re_y=ls.jones_re_y, jones_im_y=ls.jones_im_y,
                     qx_re_at_start=ls.qx_re_at_start, qx_im_at_start=ls.qx_im_at_start,
+                    qxy_re_at_start=ls.qxy_re_at_start,
+                    qxy_im_at_start=ls.qxy_im_at_start,
                     qy_re_at_start=ls.qy_re_at_start, qy_im_at_start=ls.qy_im_at_start,
                     path_length_mm_at_start=ls.path_length_mm_at_start,
                     freq_offset_hz_at_start=ls.freq_offset_hz_at_start,
                     width_mult_x_at_start=ls.width_mult_x_at_start,
+                    width_mult_xy_at_start=ls.width_mult_xy_at_start,
+                    m2_xy_at_start=ls.m2_xy_at_start,
                     width_mult_y_at_start=ls.width_mult_y_at_start,
                     m2_x_at_start=ls.m2_x_at_start, m2_y_at_start=ls.m2_y_at_start,
                     aperture_truncation=ls.aperture_truncation,

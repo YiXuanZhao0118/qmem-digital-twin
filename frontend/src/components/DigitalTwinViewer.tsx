@@ -3384,8 +3384,9 @@ export function DigitalTwinViewer({
      *      solid material, which in wireframe mode shows up as one solid body
      *      among wireframes ("MECHANICAL0 goes solid after I move it"), and in
      *      optical-link mode un-ghosts a non-optical part.
-     *  Both are idempotent, and the node keeps its own stamps (it was part of
-     *  the original wrapper), so we copy them down. */
+     *    - the selection wireframe outline — see below.
+     *  All three are idempotent, and the node keeps its own stamps (it was
+     *  part of the original wrapper), so we copy them down. */
     const integrateLodTier = (node: THREE.Object3D) => {
       const objectId = node.userData.objectId as string | undefined;
       const componentId = node.userData.componentId as string | undefined;
@@ -3400,6 +3401,38 @@ export function DigitalTwinViewer({
         node,
         mode === "optical-link" && !!objectId && !opticalObjectIdsRef.current.has(objectId),
       );
+      // Selection outline. `addWireframeOutline` hangs its edge lines off the
+      // individual meshes, i.e. INSIDE the tier subtree, and selecting an
+      // object pins it to LOD0 — so every selection change swaps the tier the
+      // outline lives on. Two ways that goes wrong without this pass:
+      //   - the tier that lands is bare, so the object the user just clicked
+      //     shows no outline at all;
+      //   - the tier that left carries the outline into `state.cache`, where
+      //     stripDynamicDecorations can never reach it (it only walks
+      //     ATTACHED children) — so the next time that tier comes back the
+      //     amber outline reappears on an object that is no longer selected.
+      //     That is the "the outline is on the one I clicked BEFORE" report.
+      // Re-deriving it from the live selection on every swap fixes both.
+      const staleOutlines: THREE.Object3D[] = [];
+      node.traverse((child) => {
+        if (child.userData?.isOutline) staleOutlines.push(child);
+      });
+      for (const stale of staleOutlines) {
+        stale.parent?.remove(stale);
+        disposeObject(stale);
+      }
+      if (objectId) {
+        const live = useSceneStore.getState();
+        if (live.selectedObjectIds.includes(objectId)) {
+          const placement = live.scene.objects.find((object) => object.id === objectId);
+          const kindId = live.scene.components.find(
+            (item) => item.id === placement?.componentId,
+          )?.kindId;
+          // Same exclusion decorate() applies — a full table-edge highlight
+          // is visually noisy.
+          if (kindId !== "optical_table") addWireframeOutline(node);
+        }
+      }
     };
 
     let cameraWasMoving = false;
@@ -6619,7 +6652,7 @@ export function DigitalTwinViewer({
               <button
                 type="button"
                 className={`viewer-mode-button${gizmoMode === "translate" ? " active" : ""}`}
-                title="Translate (G)"
+                title="Translate"
                 aria-pressed={gizmoMode === "translate"}
                 onClick={() => setGizmoMode("translate")}
               >
@@ -6628,7 +6661,7 @@ export function DigitalTwinViewer({
               <button
                 type="button"
                 className={`viewer-mode-button${gizmoMode === "rotate" ? " active" : ""}`}
-                title="Rotate (R)"
+                title="Rotate"
                 aria-pressed={gizmoMode === "rotate"}
                 onClick={() => setGizmoMode("rotate")}
               >

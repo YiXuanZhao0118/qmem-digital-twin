@@ -119,6 +119,10 @@ def fiber_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
         power_mw=ray_in.power_mw * eta_total,
         qx=new_q,
         qy=new_q,
+        # The fibre mode is round, so it is the same in every transverse
+        # frame -- but the cross term the incoming beam carried must not
+        # survive into it.
+        qxy=0j,
         path_length_mm=ray_in.path_length_mm + length_m * 1000.0,
     )]
 

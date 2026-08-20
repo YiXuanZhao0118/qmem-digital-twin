@@ -31,7 +31,7 @@ from typing import Any
 from app.optical.anchor_ops.misc_ops import _samples, ta_ase_table_mw
 from app.optical.anchor_tracer import V3Anchor, V3AnchorScene
 from app.optical.beam_ray import BeamRay, Vec3, make_beam_ray
-from app.optical.jones import jones_axis_to_lab
+from app.optical.jones import jones_axis_to_lab, sp_rotation_axis_to_lab
 from app.optical.pose import dir_body_to_lab_t, point_body_to_lab_t
 
 
@@ -54,6 +54,35 @@ def _q_at_waist_mm(
     m2_eff = m2 if (m2 and m2 > 0) else 1.0
     zR_mm = math.pi * w0_mm * w0_mm / (m2_eff * lam_mm)
     return complex(-z_offset_mm, zR_mm)
+
+
+def _facet_beam(
+    mode_x: dict, mode_y: dict, wavelength_nm: float, fallback_w0_um: float,
+) -> tuple[complex, complex, float, float, float, float]:
+    """(qx, qy, m2x, m2y, width_mult_x, width_mult_y) for one TA facet.
+
+    ASE leaves through the same facet and collimator as the amplified beam,
+    so it is given that facet's waveguide mode rather than a circular guess:
+    the OUTPUT facet uses ``outputSpatialModeX/Y`` (identical to what
+    ``tapered_amplifier_anchor_op`` imposes on an injected beam), the SEED
+    facet uses ``inputSpatialModeX/Y``. An axis with no usable waist falls
+    back to ``fallback_w0_um``, keeping the legacy circular behaviour for
+    assets that declare neither.
+    """
+    def axis(mode: dict) -> tuple[complex, float, float]:
+        w0 = float(mode.get("waistUm", 0.0) or 0.0)
+        if w0 <= 0.0:
+            return _q_at_waist_mm(fallback_w0_um, wavelength_nm), 1.0, 1.0
+        m2 = float(mode.get("mSquared", 1.0) or 1.0)
+        q = _q_at_waist_mm(
+            w0, wavelength_nm, m2, float(mode.get("waistZOffsetMm", 0.0) or 0.0),
+        )
+        # TEM00 facet: mode_factor = 1, so width_mult = sqrt(M2).
+        return q, m2, math.sqrt(m2)
+
+    qx, m2x, wmx = axis(mode_x)
+    qy, m2y, wmy = axis(mode_y)
+    return qx, qy, m2x, m2y, wmx, wmy
 
 
 def _mode_factors(default_params: dict, dynamic: dict) -> tuple[float, float]:
@@ -157,6 +186,10 @@ def _ray_from_anchor(
     width_mult_x = math.sqrt(m2_x) * fac_x
     width_mult_y = math.sqrt(m2_y) * fac_y
 
+    # spatialModeX/Y are defined in the SAME anchor basis as the Jones vector
+    # (X along axisY, Y along axisZ), so Q is built there and re-expressed in
+    # the beam-local frame the ray carries it in — rotating the emitter's
+    # mount now rotates its astigmatism with it, exactly like the polarization.
     return make_beam_ray(
         origin=origin_lab,
         direction=dir_lab,
@@ -166,7 +199,10 @@ def _ray_from_anchor(
         jones=jones_lab, qx=qx, qy=qy,
         width_mult_x=width_mult_x, width_mult_y=width_mult_y,
         m2x=m2_x, m2y=m2_y,
-    )
+    ).rotated_frame(sp_rotation_axis_to_lab(
+        anchor.axis_y_body, dir_lab,
+        lambda v: dir_body_to_lab_t(v, slot_transform),
+    ))
 
 
 def emit_anchor_source_rays(
@@ -236,17 +272,20 @@ def emit_ta_ase_rays(
             (a for a in slot.asset.anchors if a.id == "intercept_out"), None,
         )
         wl = float(dp.get("centerWavelengthNm", 780.0))
-        w0 = float((dp.get("spatialModeX") or {}).get("waistUm", 250.0))
+        legacy_w0 = float((dp.get("spatialModeX") or {}).get("waistUm", 250.0))
         ax = anchor.axis_x_body
         # Per-facet emitter: (anchor, outward direction). With both anchors
         # present each facet emits from its own; with only intercept_in we keep
         # the legacy ±axisX pair off that single anchor.
+        # The 4th item is the mode prefix: forward ASE carries the OUTPUT
+        # facet mode (same profile an injected beam gets), backward the seed
+        # facet's own mode.
         facets = (
-            [("aseForwardMw", out_anchor, out_anchor.axis_x_body),
-             ("aseBackwardMw", anchor, ax)]
+            [("aseForwardMw", out_anchor, out_anchor.axis_x_body, "output"),
+             ("aseBackwardMw", anchor, ax, "input")]
             if out_anchor is not None else
-            [("aseForwardMw", anchor, ax),
-             ("aseBackwardMw", anchor, Vec3(-ax.x, -ax.y, -ax.z))]
+            [("aseForwardMw", anchor, ax, "output"),
+             ("aseBackwardMw", anchor, Vec3(-ax.x, -ax.y, -ax.z), "input")]
         )
         # The catalog stores ASE as nested ``ase.powerMw`` (kinds.json), so
         # that is the last-resort per-facet default — without it a catalog TA
@@ -260,7 +299,7 @@ def emit_ta_ase_rays(
             "aseForwardMw": table[0] if table else None,
             "aseBackwardMw": table[1] if table else None,
         }
-        for power_key, facet_anchor, axis_body in facets:
+        for power_key, facet_anchor, axis_body, mode_prefix in facets:
             power = float(
                 dp.get(power_key, table_mw[power_key] if table else ase_default_mw),
             )
@@ -277,13 +316,22 @@ def emit_ta_ase_rays(
                 (complex(1.0, 0.0), complex(0.0, 0.0)), facet_anchor.axis_y_body, dir_lab,
                 lambda v: dir_body_to_lab_t(v, slot.effective_transform),
             )
+            qx, qy, m2x, m2y, wmx, wmy = _facet_beam(
+                dp.get(f"{mode_prefix}SpatialModeX") or {},
+                dp.get(f"{mode_prefix}SpatialModeY") or {},
+                wl, legacy_w0,
+            )
             ray = make_beam_ray(
                 origin=origin_lab, direction=dir_lab,
                 wavelength_nm=wl, power_mw=power,
             ).replaced(
                 jones=jones_lab,
-                qx=_q_at_waist_mm(w0, wl), qy=_q_at_waist_mm(w0, wl),
+                qx=qx, qy=qy, m2x=m2x, m2y=m2y,
+                width_mult_x=wmx, width_mult_y=wmy,
                 exclude_face_key=f"{slot.scene_object_id}/{slot.binding_id}/{facet_anchor.id}",
-            )
+            ).rotated_frame(sp_rotation_axis_to_lab(
+                facet_anchor.axis_y_body, dir_lab,
+                lambda v: dir_body_to_lab_t(v, slot.effective_transform),
+            ))
             out.append((ray, slot.scene_object_id, slot.scene_object_id))
     return out

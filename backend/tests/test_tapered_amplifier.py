@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from app.optical.anchor_ops.emit_laser_source import emit_ta_ase_rays
 from app.optical.anchor_ops.misc_ops import ta_saturated_power_mw
 
@@ -315,3 +317,75 @@ def test_ase_forward_emits_from_intercept_out():
     fwd, bwd = by_power[200], by_power[80]          # aseSamples @ 2000 mA
     assert fwd.origin.x == 60.0 and round(fwd.direction.x) == 1
     assert bwd.origin.x == -80.0 and round(bwd.direction.x) == -1
+
+
+# --- Output mode: all three GaussianMode fields are honoured ---------------
+
+def _ta_out_ray(mode_x, mode_y, wl=852.0):
+    from app.optical.anchor_tracer import get_anchor_op
+    from app.optical import anchor_ops  # noqa: F401  (registers ops)
+
+    anchors = [
+        _anchor("intercept_in", (0.0, 0.0, 0.0), (-1.0, 0.0, 0.0)),
+        _anchor("intercept_out", (60.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+    ]
+    params = {
+        "smallSignalGainDb": 20.0, "saturationPowerMw": 50.0,
+        "centerWavelengthNm": wl,
+        "outputSpatialModeX": mode_x, "outputSpatialModeY": mode_y,
+    }
+    [out] = get_anchor_op("tapered_amplifier")(_seed_ray(), _op_ctx(anchors, params))
+    return out
+
+
+def test_output_mode_honours_waist_offset_and_m_squared():
+    """Regression: the op built q from waistUm alone, discarding
+    waistZOffsetMm and mSquared, so every TA output was pinned to an M²=1
+    waist sitting exactly on the output facet."""
+    import math
+
+    out = _ta_out_ray(
+        {"waistUm": 100.0, "waistZOffsetMm": -500.0, "mSquared": 4.0},
+        {"waistUm": 200.0, "waistZOffsetMm": 250.0, "mSquared": 1.0},
+    )
+    # Since Step 2b, Q is carried in the beam-local (s, p) basis, not the
+    # anchor's. For this geometry s = world +z while the anchor's axisY is
+    # world +y, so outputSpatialMode**X** (defined along axisY) lands on
+    # **qy** and vice versa. The optics is unchanged; only the labelling of
+    # which scalar holds which axis is now frame-correct.
+    # Re(q) = -waistZOffsetMm: the waist sits z_offset mm downstream.
+    assert out.qy.real == 500.0
+    assert out.qx.real == -250.0
+    # Im(q) = zR, reduced by M² (embedded-Gaussian convention).
+    assert out.qy.imag == pytest.approx(math.pi * 0.1**2 / (4.0 * 852e-6), rel=1e-9)
+    assert out.qx.imag == pytest.approx(math.pi * 0.2**2 / (1.0 * 852e-6), rel=1e-9)
+
+    # Step 2c closed the gap this test used to pin open: m2 and width_mult are
+    # carried as symmetric TENSORS and turn with the frame alongside Q, so they
+    # swap here in lockstep with qx/qy above — M² stays attached to the axis it
+    # describes instead of to a fixed slot. (Before 2c these read (4.0, 1.0),
+    # i.e. M²=4 annotating the axis whose q had moved to the other slot.)
+    assert (out.m2x, out.m2y) == (1.0, 4.0)
+    assert out.width_mult_x == pytest.approx(1.0)
+    assert out.width_mult_y == pytest.approx(2.0)
+    # A 90° frame turn is a clean swap, so no cross term is generated.
+    assert out.m2xy == pytest.approx(0.0, abs=1e-12)
+    assert out.width_mult_xy == pytest.approx(0.0, abs=1e-12)
+
+
+def test_output_mode_reproduces_measured_sacher_beam():
+    """The stored sacher_tec400_852nm_ta fit (WFS30-5C, OUT_1520) must trace
+    back to the measured 3.5 mm radius 15 mm past intercept_out on both
+    axes — the beam is astigmatic there only in curvature, not in size."""
+    import math
+
+    from app.optical.aperture import gaussian_width_mm
+
+    out = _ta_out_ray(
+        {"waistUm": 78.8, "waistZOffsetMm": 1031.3, "mSquared": 1.0},
+        {"waistUm": 140.8, "waistZOffsetMm": -1800.9, "mSquared": 1.0},
+    )
+    wx = gaussian_width_mm(out.qx + 15.0, 852.0) * math.sqrt(out.m2x)
+    wy = gaussian_width_mm(out.qy + 15.0, 852.0) * math.sqrt(out.m2y)
+    assert wx == pytest.approx(3.5, abs=0.01)
+    assert wy == pytest.approx(3.5, abs=0.01)

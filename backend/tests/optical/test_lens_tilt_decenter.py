@@ -14,7 +14,14 @@ from app.optical.anchor_tracer import (
     AnchorHit, AnchorOpContext, V3Anchor, V3AssetAnchorSnapshot, get_anchor_op,
 )
 from app.optical.aperture import gaussian_circular_aperture_fraction
-from app.optical.beam_ray import Vec3, make_beam_ray
+from app.optical.jones import beam_local_sp
+from app.optical.beam_ray import (
+    Mat2,
+    Vec3,
+    make_beam_ray,
+    q_matrix_after_abcd,
+    q_matrix_principal_widths,
+)
 
 
 def _anchor(aperture_mm: float = 0.0) -> V3Anchor:
@@ -89,15 +96,60 @@ def test_tilt_helper_diagonal_is_isotropic():
 # ── op end-to-end: oblique beam focuses astigmatically ─────────────────────
 
 def test_oblique_beam_focuses_at_split_focals():
+    """Tangential focus at f·cosα, sagittal at f/cosα.
+
+    Which of qx / qy carries which is a question about the FRAME, not about
+    the lens: since Step 2b, Q is expressed in the beam-local (s, p) basis of
+    ``jones.beam_local_sp``, not in the anchor's (axisY, axisZ). For a beam
+    tilted inside the x-y plane that basis comes out s = world +z, so the
+    plane of incidence lies along p -- and the TANGENTIAL focal therefore
+    lands on qy, the sagittal on qx. Asserting it the other way round (as this
+    test did before 2b) was asserting the frame conflation, not the optics.
+    """
     op = get_anchor_op("lens")
     f = 100.0
     alpha = math.radians(30)
     # Tilt in the x-y plane: θ_y = tanα, θ_z = 0.
-    ray = _collimated_ray(Vec3(math.cos(alpha), math.sin(alpha), 0.0))
+    direction = Vec3(math.cos(alpha), math.sin(alpha), 0.0)
+    ray = _collimated_ray(direction)
     [out] = op(ray, _ctx(f_mm=f))
+
+    s_beam, p_beam = beam_local_sp(direction)
+    # incidence plane = span(direction, lens axisX); both lie in x-y, so the
+    # in-plane transverse direction is p and the out-of-plane one is s.
+    assert abs(s_beam.z) == pytest.approx(1.0, abs=1e-12)
+    assert abs(p_beam.z) == pytest.approx(0.0, abs=1e-12)
+
     # Collimated ⇒ post-lens waist distance ≈ effective focal per axis.
-    assert -out.qx.real == pytest.approx(f * math.cos(alpha), rel=2e-3)
-    assert -out.qy.real == pytest.approx(f / math.cos(alpha), rel=2e-3)
+    assert -out.qx.real == pytest.approx(f / math.cos(alpha), rel=2e-3)  # sagittal
+    assert -out.qy.real == pytest.approx(f * math.cos(alpha), rel=2e-3)  # tangential
+    # The incidence plane is itself a principal axis here, so no cross term.
+    assert abs(out.qxy) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_oblique_beam_off_principal_azimuth_makes_a_cross_term():
+    """The term ``_tilt_astig_focals`` documents as dropped. Tilt the beam at
+    45 deg in azimuth so the incidence plane is aligned with neither principal
+    axis: Q must come out with a non-zero off-diagonal, and its principal axes
+    must be rotated away from the frame axes."""
+    op = get_anchor_op("lens")
+    f = 100.0
+    t = math.tan(math.radians(20)) / math.sqrt(2.0)
+    direction = Vec3(1.0, t, t).normalized()
+    [out] = op(_collimated_ray(direction), _ctx(f_mm=f))
+
+    assert abs(out.qxy) > 1e-6
+
+    # A thin lens cannot change the spot shape (Q'^-1 = Q^-1 - P with P real),
+    # and the input here is round, so the azimuth is degenerate AT the lens.
+    # The rotated astigmatism only becomes visible downstream.
+    downstream = q_matrix_after_abcd(
+        out.q_matrix, Mat2.identity(), Mat2.scalar(complex(60.0)),
+        Mat2.scalar(0j), Mat2.identity(),
+    )
+    major, minor, azim = q_matrix_principal_widths(downstream, 852.347)
+    assert major > minor > 0.0
+    assert math.degrees(abs(azim)) % 90.0 > 1.0
 
 
 def test_normal_incidence_stays_circular():

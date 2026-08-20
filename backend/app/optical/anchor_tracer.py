@@ -28,8 +28,14 @@ from app.optical.aperture import (
     gaussian_circular_aperture_fraction,
     gaussian_width_mm,
 )
-from app.optical.beam_ray import BeamRay, Vec3, vec3_distance
-from app.optical.jones import jones_body_to_lab, jones_lab_to_body
+from app.optical.beam_ray import BeamRay, QMatrix, Vec3, vec3_distance
+from app.optical.jones import (
+    jones_body_to_lab,
+    jones_lab_to_body,
+    sp_rotation_between_directions,
+    sp_rotation_body_to_lab,
+    sp_rotation_lab_to_body,
+)
 from app.optical.pose import (
     V3Pose, V3Transform, compose_transforms, pose_to_transform,
     point_body_to_lab_t, point_lab_to_body_t,
@@ -365,12 +371,20 @@ class LabSegment:
     qx_im_at_start: float = 0.0
     qy_re_at_start: float = 0.0
     qy_im_at_start: float = 0.0
+    # Off-diagonal of the transverse beam matrix Q at segment start. Non-zero
+    # once an element rolled about the optical axis has acted on the beam —
+    # i.e. astigmatism whose principal axes are not the frame axes.
+    qxy_re_at_start: float = 0.0
+    qxy_im_at_start: float = 0.0
     path_length_mm_at_start: float = 0.0
     freq_offset_hz_at_start: float = 0.0
     # Embedded-Gaussian width multiplier at segment start (M² + transverse
     # mode). Real width = (q-derived embedded width) × this. See BeamRay.
     width_mult_x_at_start: float = 1.0
     width_mult_y_at_start: float = 1.0
+    # Off-diagonals of the two readout tensors (Step 2c).
+    width_mult_xy_at_start: float = 0.0
+    m2_xy_at_start: float = 0.0
     # Per-axis M² at segment start (for the non-paraxial width correction).
     m2_x_at_start: float = 1.0
     m2_y_at_start: float = 1.0
@@ -455,11 +469,15 @@ def trace_ray_anchor_scene(
                 jones_re_x=ray.jones[0].real, jones_im_x=ray.jones[0].imag,
                 jones_re_y=ray.jones[1].real, jones_im_y=ray.jones[1].imag,
                 qx_re_at_start=ray.qx.real, qx_im_at_start=ray.qx.imag,
+                qxy_re_at_start=ray.qxy.real,
+                qxy_im_at_start=ray.qxy.imag,
                 qy_re_at_start=ray.qy.real, qy_im_at_start=ray.qy.imag,
                 path_length_mm_at_start=ray.path_length_mm,
                 freq_offset_hz_at_start=ray.freq_offset_hz,
                 width_mult_x_at_start=ray.width_mult_x,
                 width_mult_y_at_start=ray.width_mult_y,
+                width_mult_xy_at_start=ray.width_mult_xy,
+                m2_xy_at_start=ray.m2xy,
                 m2_x_at_start=ray.m2x, m2_y_at_start=ray.m2y,
             ))
             result.final_rays.append(ray)
@@ -484,11 +502,15 @@ def trace_ray_anchor_scene(
             jones_re_x=ray.jones[0].real, jones_im_x=ray.jones[0].imag,
             jones_re_y=ray.jones[1].real, jones_im_y=ray.jones[1].imag,
             qx_re_at_start=ray.qx.real, qx_im_at_start=ray.qx.imag,
+                qxy_re_at_start=ray.qxy.real,
+                qxy_im_at_start=ray.qxy.imag,
             qy_re_at_start=ray.qy.real, qy_im_at_start=ray.qy.imag,
             path_length_mm_at_start=ray.path_length_mm,
             freq_offset_hz_at_start=ray.freq_offset_hz,
             width_mult_x_at_start=ray.width_mult_x,
             width_mult_y_at_start=ray.width_mult_y,
+            width_mult_xy_at_start=ray.width_mult_xy,
+            m2_xy_at_start=ray.m2xy,
             m2_x_at_start=ray.m2x, m2_y_at_start=ray.m2y,
         )
         result.lab_segments.append(entry_seg)
@@ -506,7 +528,18 @@ def trace_ray_anchor_scene(
             ray.jones, ray.direction, dir_body,
             lambda v: dir_lab_to_body_t(v, slot.effective_transform),
         )
-        ray_at_anchor = ray.replaced(
+        # Free-space Gaussian propagation is Q' = Q + L*I: diagonal-only, so
+        # it commutes with the frame rotation that follows.
+        ray_gap = ray.replaced(
+            qx=complex(ray.qx.real + hit.t_lab, ray.qx.imag),
+            qy=complex(ray.qy.real + hit.t_lab, ray.qy.imag),
+        )
+        # ONE angle rotates Q and both readout tensors together.
+        ray_gap = ray_gap.rotated_frame(sp_rotation_lab_to_body(
+            ray.direction, dir_body,
+            lambda v: dir_lab_to_body_t(v, slot.effective_transform),
+        ))
+        ray_at_anchor = ray_gap.replaced(
             origin=hit.hit_point_body,
             direction=dir_body,
             jones=jones_body,
@@ -516,8 +549,6 @@ def trace_ray_anchor_scene(
             # L/n ("glass, never air"), so waist / focus were wrong. Each op
             # then adds its own slab on top of this incoming q. Mirrors the
             # legacy face tracer (ray_tracer.py).
-            qx=complex(ray.qx.real + hit.t_lab, ray.qx.imag),
-            qy=complex(ray.qy.real + hit.t_lab, ray.qy.imag),
             path_length_mm=ray.path_length_mm + hit.t_lab,
         )
 
@@ -561,6 +592,16 @@ def trace_ray_anchor_scene(
         # Transform each out ray back to lab + push to queue
         for out_body in out_rays_body:
             out_dir_lab = dir_body_to_lab_t(out_body.direction, slot.effective_transform)
+            # Any op that BENDS the beam (mirror, PBS reflection, AOM order,
+            # lens deflection) hands back its transverse state still expressed
+            # in the INCOMING beam-local frame. Re-express it once, here, so no
+            # op has to remember to — the Jones twin lives inside each op.
+            out_rot = out_body.rotated_frame(sp_rotation_between_directions(
+                ray_at_anchor.direction, out_body.direction,
+            )).rotated_frame(sp_rotation_body_to_lab(
+                out_body.direction, out_dir_lab,
+                lambda v: dir_body_to_lab_t(v, slot.effective_transform),
+            ))
             jones_lab = jones_body_to_lab(
                 out_body.jones, out_body.direction, out_dir_lab,
                 lambda v: dir_body_to_lab_t(v, slot.effective_transform),
@@ -569,6 +610,11 @@ def trace_ray_anchor_scene(
                 origin=point_body_to_lab_t(out_body.origin, slot.effective_transform),
                 direction=out_dir_lab,
                 jones=jones_lab,
+                qx=out_rot.qx, qy=out_rot.qy, qxy=out_rot.qxy,
+                width_mult_x=out_rot.width_mult_x,
+                width_mult_y=out_rot.width_mult_y,
+                width_mult_xy=out_rot.width_mult_xy,
+                m2x=out_rot.m2x, m2y=out_rot.m2y, m2xy=out_rot.m2xy,
                 exclude_face_key=f"{slot.scene_object_id}/{slot.binding_id}/{anchor.id}",
             )
             if out_lab.power_mw < options.power_threshold_mw:

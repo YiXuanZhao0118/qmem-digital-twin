@@ -28,11 +28,18 @@ from app.optical.anchor_tracer import (
 )
 from app.optical.beam_ray import (
     BeamRay,
+    QMatrix,
     Vec3,
     nonparaxial_fundamental_waist_mm,
     vec3_distance,
 )
-from app.optical.jones import beam_local_sp, jones_rotation_angle, rotate_jones
+from app.optical.jones import (
+    beam_local_sp,
+    jones_rotation_angle,
+    q_frame_angle_to_axis,
+    sp_rotation_between_directions,
+    rotate_jones,
+)
 
 
 def _slab_passthrough(ray_in: BeamRay, ctx: AnchorOpContext) -> BeamRay:
@@ -242,8 +249,21 @@ def _mode_match_eta(ray_in: BeamRay, ctx: AnchorOpContext) -> float:
     mode (≈1 µm × 3 µm ridge). Computed as the separable product of the two
     transverse 1-D overlaps — seed waist (from qx/qy) vs the kind's
     ``inputSpatialModeX/Y.waistUm``, with the lateral offset taken from the
-    anchor hit. Astigmatic axis alignment is approximated as seed-X ↔ mode-X.
-    Returns η ∈ [0, 1]; uncoupled field becomes radiation modes (lost)."""
+    anchor hit. Returns η ∈ [0, 1]; uncoupled field becomes radiation modes
+    (lost).
+
+    FRAME (Step 2b): the waveguide mode and the hit offsets live in the
+    anchor's (axisY, axisZ) basis while the ray carries Q in the beam-local
+    (s, p) one, so the seed is rotated into the anchor basis before the
+    overlap. Before 2b the two were silently identified — the "seed-X ↔
+    mode-X" approximation this docstring used to claim — which is wrong by
+    the roll angle between the emitter and the amplifier.
+
+    Remaining approximation: a seed whose astigmatism axes are rotated
+    relative to the mode (``q_seed.xy != 0``) is not separable, and only the
+    anchor-frame diagonal is used. Likewise ``m2x``/``m2y`` are scalar
+    per-axis and do not rotate (see the Step 2c note in optics.md); harmless
+    while the two axes share an M²."""
     p = ctx.params
     wl = float(p.get("centerWavelengthNm", ray_in.wavelength_nm or 780.0))
     mode_x = (p.get("inputSpatialModeX") or {})
@@ -256,10 +276,16 @@ def _mode_match_eta(ray_in: BeamRay, ctx: AnchorOpContext) -> float:
     # Real seed waist = non-paraxial fundamental width × transverse-mode
     # factor (mode_factor = width_mult / √M²). Non-paraxial so a high-NA seed
     # (tight TA facet / fiber-fed) couples with the correct, bounded spot.
-    mode_fac_x = ray_in.width_mult_x / math.sqrt(ray_in.m2x) if ray_in.m2x > 0 else ray_in.width_mult_x
-    mode_fac_y = ray_in.width_mult_y / math.sqrt(ray_in.m2y) if ray_in.m2y > 0 else ray_in.width_mult_y
-    w_seed_x = nonparaxial_fundamental_waist_mm(ray_in.qx.real, ray_in.qx.imag, ray_in.m2x, wl)[0] * mode_fac_x
-    w_seed_y = nonparaxial_fundamental_waist_mm(ray_in.qy.real, ray_in.qy.imag, ray_in.m2y, wl)[0] * mode_fac_y
+    # Rotate the WHOLE transverse state (Q + both readout tensors) into the
+    # anchor basis in one call, so the multipliers cannot end up scaling a
+    # different axis than the q they belong to.
+    seed = ray_in.rotated_frame(
+        q_frame_angle_to_axis(ctx.anchor.axis_y_body, ray_in.direction),
+    )
+    mode_fac_x = seed.width_mult_x / math.sqrt(seed.m2x) if seed.m2x > 0 else seed.width_mult_x
+    mode_fac_y = seed.width_mult_y / math.sqrt(seed.m2y) if seed.m2y > 0 else seed.width_mult_y
+    w_seed_x = nonparaxial_fundamental_waist_mm(seed.qx.real, seed.qx.imag, seed.m2x, wl)[0] * mode_fac_x
+    w_seed_y = nonparaxial_fundamental_waist_mm(seed.qy.real, seed.qy.imag, seed.m2y, wl)[0] * mode_fac_y
     _, off_y, _, off_z = beam_state_from_anchor_hit(ray_in, ctx.hit)
     eta = _overlap_1d(w_seed_x, wm_x, off_y) * _overlap_1d(w_seed_y, wm_y, off_z)
     return max(0.0, min(1.0, eta))
@@ -276,12 +302,23 @@ def _jones_in_axis_basis(
     return rotate_jones(ray_in.jones, phi)
 
 
-def _q_at_waist_mm(w0_um: float, wavelength_nm: float) -> complex:
+def _q_at_waist_mm(
+    w0_um: float, wavelength_nm: float, m2: float = 1.0, z_offset_mm: float = 0.0,
+) -> complex:
+    """Embedded-Gaussian q, same contract as ``emit_laser_source._q_at_waist_mm``.
+
+    z_R is reduced by M² (``zR = pi*w0^2/(M2*lam)``) so the EMBEDDED fundamental
+    Gaussian carried in q diverges at the real, M²-enhanced rate; the real width
+    is recovered at readout via ``BeamRay.width_mult_*``. ``Re(q) = -z_offset``
+    puts the waist ``z_offset`` mm downstream of the emit point, so a negative
+    offset describes a beam already past its (possibly virtual) waist.
+    """
     if w0_um <= 0.0 or wavelength_nm <= 0.0:
         return complex(0.0, 0.0)
     w0_mm = w0_um / 1000.0
     lam_mm = wavelength_nm * 1e-6
-    return complex(0.0, math.pi * w0_mm * w0_mm / lam_mm)
+    m2_eff = m2 if (m2 and m2 > 0.0) else 1.0
+    return complex(-z_offset_mm, math.pi * w0_mm * w0_mm / (m2_eff * lam_mm))
 
 
 def tapered_amplifier_anchor_op(
@@ -374,15 +411,50 @@ def tapered_amplifier_anchor_op(
     wl = float(p.get("centerWavelengthNm", ray_in.wavelength_nm or 780.0))
     out_mode_x = (p.get("outputSpatialModeX") or {})
     out_mode_y = (p.get("outputSpatialModeY") or {})
-    qx_out = out_ray.qx
-    qy_out = out_ray.qy
+    # All three GaussianMode fields matter: waistUm sizes the mode,
+    # waistZOffsetMm places the waist relative to intercept_out (a TA
+    # collimated on one axis only leaves the other with a VIRTUAL waist far
+    # off the facet), and mSquared sets both the divergence (via q's reduced
+    # z_R) and the readout width (via width_mult = sqrt(M2)). Dropping the
+    # latter two pinned every TA output to an M2=1 waist sitting exactly on
+    # the facet.
+    qx_out, qy_out = out_ray.qx, out_ray.qy
+    m2x_out, m2y_out = ray_in.m2x, ray_in.m2y
+    wmx_out, wmy_out = ray_in.width_mult_x, ray_in.width_mult_y
     if float(out_mode_x.get("waistUm", 0.0)) > 0.0:
-        qx_out = _q_at_waist_mm(float(out_mode_x["waistUm"]), wl)
+        m2x_out = float(out_mode_x.get("mSquared", 1.0) or 1.0)
+        qx_out = _q_at_waist_mm(
+            float(out_mode_x["waistUm"]), wl, m2x_out,
+            float(out_mode_x.get("waistZOffsetMm", 0.0)),
+        )
+        # TEM00 output facet: mode_factor = 1, so width_mult = sqrt(M2).
+        wmx_out = math.sqrt(m2x_out)
     if float(out_mode_y.get("waistUm", 0.0)) > 0.0:
-        qy_out = _q_at_waist_mm(float(out_mode_y["waistUm"]), wl)
+        m2y_out = float(out_mode_y.get("mSquared", 1.0) or 1.0)
+        qy_out = _q_at_waist_mm(
+            float(out_mode_y["waistUm"]), wl, m2y_out,
+            float(out_mode_y.get("waistZOffsetMm", 0.0)),
+        )
+        wmy_out = math.sqrt(m2y_out)
 
-    return [out_ray.replaced(
-        jones=out_jones, power_mw=p_out, qx=qx_out, qy=qy_out,
+    # outputSpatialModeX/Y are defined in the OUT anchor's (axisY, axisZ)
+    # basis -- and for e.g. the Sacher TA that anchor is perpendicular to the
+    # input one, so this is not academic. Build the whole transverse state
+    # there, then turn Q and both readout tensors together (Step 2c).
+    built = out_ray.replaced(
+        jones=out_jones, power_mw=p_out,
+        qx=qx_out, qy=qy_out, qxy=0j,
+        m2x=m2x_out, m2y=m2y_out, m2xy=0.0,
+        width_mult_x=wmx_out, width_mult_y=wmy_out, width_mult_xy=0.0,
+    )
+    # anchor basis -> the OUTGOING beam frame ...
+    built = built.rotated_frame(
+        -q_frame_angle_to_axis(gain_anchor.axis_y_body, out_ray.direction),
+    )
+    # ... then pre-undo the single bend rotation anchor_tracer applies to every
+    # op's output, so that pass lands the state exactly where it was built.
+    return [built.rotated_frame(
+        sp_rotation_between_directions(out_ray.direction, ray_in.direction),
     )]
 
 

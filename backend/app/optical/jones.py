@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import math
 
-from .beam_ray import Vec3
+from .beam_ray import QMatrix, Vec3, q_rotate
 
 
 GLOBAL_UP = Vec3(0.0, 0.0, 1.0)
@@ -101,17 +101,32 @@ def jones_intensity(jones: tuple[complex, complex]) -> float:
 from typing import Callable  # noqa: E402  (placed here to keep imports tight)
 
 
+def sp_rotation_lab_to_body(
+    dir_lab: Vec3, dir_body: Vec3, dir_to_body: Callable[[Vec3], Vec3],
+) -> float:
+    s_lab, _ = beam_local_sp(dir_lab)
+    s_body, _ = beam_local_sp(dir_body)
+    return jones_rotation_angle(dir_to_body(s_lab), s_body, dir_body)
+
+
+def sp_rotation_body_to_lab(
+    dir_body: Vec3, dir_lab: Vec3, dir_to_lab: Callable[[Vec3], Vec3],
+) -> float:
+    s_body, _ = beam_local_sp(dir_body)
+    s_lab, _ = beam_local_sp(dir_lab)
+    return jones_rotation_angle(dir_to_lab(s_body), s_lab, dir_lab)
+
+
 def jones_lab_to_body(
     jones: tuple[complex, complex],
     dir_lab: Vec3,
     dir_body: Vec3,
     dir_to_body: Callable[[Vec3], Vec3],
 ) -> tuple[complex, complex]:
-    s_lab, _ = beam_local_sp(dir_lab)
-    s_body, _ = beam_local_sp(dir_body)
-    s_lab_in_body = dir_to_body(s_lab)
-    phi = jones_rotation_angle(s_lab_in_body, s_body, dir_body)
-    return rotate_jones(jones, phi)
+    # Geometry lives in sp_rotation_lab_to_body so the Jones vector and the
+    # beam matrix Q can never be rotated by different angles.
+    return rotate_jones(
+        jones, sp_rotation_lab_to_body(dir_lab, dir_body, dir_to_body))
 
 
 def jones_body_to_lab(
@@ -120,11 +135,69 @@ def jones_body_to_lab(
     dir_lab: Vec3,
     dir_to_lab: Callable[[Vec3], Vec3],
 ) -> tuple[complex, complex]:
+    return rotate_jones(
+        jones, sp_rotation_body_to_lab(dir_body, dir_lab, dir_to_lab))
+
+
+# ---------------------------------------------------------------------------
+# Frame-change ANGLES, shared by every transverse quantity
+# ---------------------------------------------------------------------------
+# Q, the width-multiplier tensor and the M² tensor all live in the same
+# beam-local (s, p) basis as the Jones vector, so they all turn by the angles
+# below — the same ones the Jones helpers above use. These return the angle
+# rather than a rotated value on purpose: ``BeamRay.rotated_frame`` applies it
+# to all three at once (Step 2c), which is what stops them drifting apart.
+
+
+def sp_rotation_between_directions(
+    old_direction: Vec3, new_direction: Vec3,
+) -> float:
+    """Angle between the canonical (s, p) bases of two propagation
+    directions — the rotation a reflected / refracted / diffracted ray's
+    transverse quantities all need."""
+    s_old, _ = beam_local_sp(old_direction)
+    s_new, _ = beam_local_sp(new_direction)
+    return jones_rotation_angle(s_old, s_new, new_direction)
+
+
+def sp_rotation_axis_to_lab(
+    s_body: Vec3, dir_lab: Vec3, dir_to_lab: Callable[[Vec3], Vec3],
+) -> float:
+    """Angle taking a device's OWN transverse basis to the lab beam-local one
+    — the emitter counterpart of :func:`sp_rotation_body_to_lab`.
+
+    Used where a spatial mode is defined against the anchor (``spatialModeX``
+    along ``axisY``, ``spatialModeY`` along ``axisZ``) rather than against the
+    frame the ray carries its transverse state in. Returning the ANGLE rather
+    than a rotated Q is deliberate: Q, the width-multiplier tensor and the M²
+    tensor must all turn by it, and ``BeamRay.rotated_frame`` does the three
+    together (Step 2c) so they cannot come apart.
+    """
     s_lab, _ = beam_local_sp(dir_lab)
-    s_body, _ = beam_local_sp(dir_body)
-    s_body_in_lab = dir_to_lab(s_body)
-    phi = jones_rotation_angle(s_body_in_lab, s_lab, dir_lab)
-    return rotate_jones(jones, phi)
+    return jones_rotation_angle(dir_to_lab(s_body), s_lab, dir_lab)
+
+
+def q_axis_to_beam(q: QMatrix, axis_body: Vec3, direction: Vec3) -> QMatrix:
+    """Q given in an element's own transverse basis (axisY, axisZ) -> the
+    beam-local (s, p) basis the ray carries it in."""
+    return q_rotate(q, -q_frame_angle_to_axis(axis_body, direction))
+
+
+def q_beam_to_axis(q: QMatrix, axis_body: Vec3, direction: Vec3) -> QMatrix:
+    """Inverse of :func:`q_axis_to_beam` — the form an op needs before it
+    applies its own power tensor."""
+    return q_rotate(q, q_frame_angle_to_axis(axis_body, direction))
+
+
+def q_frame_angle_to_axis(axis_body: Vec3, direction: Vec3) -> float:
+    """Signed angle from the beam-local +s axis to ``axis_body`` about
+    ``direction`` — i.e. how far an element's own transverse reference
+    (an anchor's axisY) sits from the frame Q is expressed in."""
+    s_beam, _ = beam_local_sp(direction)
+    perp = axis_body - direction * axis_body.dot(direction)
+    if perp.length() < 1e-12:
+        return 0.0
+    return jones_rotation_angle(s_beam, perp.normalized(), direction)
 
 
 def jones_axis_to_lab(
