@@ -9,7 +9,10 @@ import math
 import pytest
 
 from app.optical import anchor_ops  # noqa: F401  (registers anchor ops)
-from app.optical.anchor_ops.lens import _tilt_astig_focals
+from app.optical.anchor_ops.lens import (
+    _tilt_astig_focals,
+    _tilt_astig_power_tensor,
+)
 from app.optical.anchor_tracer import (
     AnchorHit, AnchorOpContext, V3Anchor, V3AssetAnchorSnapshot, get_anchor_op,
 )
@@ -189,3 +192,52 @@ def test_centred_no_aperture_is_lossless_and_unchanged_focus():
     [out] = op(_collimated_ray(Vec3(1, 0, 0)), _ctx(f_mm=50.0))
     assert out.power_mw == pytest.approx(1.0, rel=1e-12)
     assert -out.qx.real == pytest.approx(50.0, rel=2e-3)
+
+
+# ── chief ray: the cross term of a tilted lens (Step 2d) ───────────────────
+
+def _slopes_on_anchor_axes(direction: Vec3) -> tuple[float, float]:
+    """(theta_y, theta_z) of a direction against the _anchor() frame."""
+    return direction.y / direction.x, direction.z / direction.x
+
+
+def test_chief_ray_takes_the_full_power_tensor_not_just_its_diagonal():
+    """A beam decentred along axisY, hitting a lens tilted at a 45 deg
+    AZIMUTH, must pick up a deflection in axisZ too: the kick is
+    ``theta' = theta - P.r`` and P is not diagonal there. Using only the
+    diagonal — what the op did before — left theta_z untouched."""
+    f = 100.0
+    t = math.tan(math.radians(20.0)) / math.sqrt(2.0)     # theta_y == theta_z
+    direction = Vec3(1.0, t, t).normalized()
+    off_y = 2.0
+
+    ray = _collimated_ray(direction)
+    [out] = get_anchor_op("lens")(ray, _ctx(f_mm=f, off_y=off_y))
+
+    ty_in, tz_in = _slopes_on_anchor_axes(direction)
+    ty_out, tz_out = _slopes_on_anchor_axes(out.direction)
+    p = _tilt_astig_power_tensor(f, ty_in, tz_in)
+    pxx, pyy, pxy = p.xx.real, p.yy.real, p.xy.real
+
+    assert abs(pxy) > 1e-6                                # P really is off-diagonal
+    assert ty_out == pytest.approx(ty_in - pxx * off_y, rel=1e-9)
+    assert tz_out == pytest.approx(tz_in - pxy * off_y, rel=1e-9)
+    # the part the old diagonal-only kick would have missed
+    assert abs(tz_out - tz_in) > 1e-6
+
+
+@pytest.mark.parametrize("theta_z", [0.0, 0.2])
+def test_chief_ray_unchanged_when_the_incidence_plane_is_a_principal_axis(theta_z):
+    """theta_z = 0 (tilt purely in the axisY plane) or theta_y = 0: P is
+    diagonal, so the new tensor kick must reproduce the old expression to the
+    last bit — this is what keeps every aligned scene unmoved."""
+    f, off_y, off_z = 100.0, 1.5, -0.75
+    direction = Vec3(1.0, 0.0, theta_z).normalized()
+    ray = _collimated_ray(direction)
+    [out] = get_anchor_op("lens")(ray, _ctx(f_mm=f, off_y=off_y, off_z=off_z))
+
+    ty_in, tz_in = _slopes_on_anchor_axes(direction)
+    f_y, f_z = _tilt_astig_focals(f, ty_in, tz_in)
+    ty_out, tz_out = _slopes_on_anchor_axes(out.direction)
+    assert ty_out == pytest.approx(ty_in - off_y / f_y, rel=1e-12)
+    assert tz_out == pytest.approx(tz_in - off_z / f_z, rel=1e-12)

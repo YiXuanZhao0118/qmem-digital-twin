@@ -438,14 +438,19 @@ export type V3LabSegment = {
   jones: [{ re: number; im: number }, { re: number; im: number }];
   qxAtStart: { re: number; im: number };
   qyAtStart: { re: number; im: number };
+  // Off-diagonal of the transverse beam matrix Q. qxAtStart/qyAtStart are its
+  // diagonal; this is non-zero once an element rolled about the optical axis
+  // has acted on the beam, i.e. astigmatism whose principal axes are not the
+  // frame axes. Absent on legacy payloads => 0 (orthogonal astigmatism).
+  qxyAtStart?: { re: number; im: number };
   // Per-axis embedded-Gaussian width multiplier (M² + transverse mode). Real
   // transverse width = (q-derived embedded width) × widthMult. Optional for
   // back-compat with cached/legacy payloads (treated as 1.0 when absent).
-  widthMultAtStart?: { x: number; y: number };
+  widthMultAtStart?: { x: number; y: number; xy?: number };
   // Per-axis M² at segment start, carried separately so the non-paraxial
   // width correction can recover the divergence param s = M²λ/(πw₀). Optional
   // (legacy payload → 1.0).
-  m2AtStart?: { x: number; y: number };
+  m2AtStart?: { x: number; y: number; xy?: number };
   pathLengthMmAtStart: number;
   // Accumulated optical-frequency offset (Hz) of the beam at segment start,
   // relative to the nominal wavelengthNm carrier. Nonzero downstream of an AOM

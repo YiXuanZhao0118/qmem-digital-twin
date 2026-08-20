@@ -116,13 +116,25 @@ function buildBeamTube(seg: LinkTraceSegment, colour: THREE.Color | string): THR
     };
   };
 
-  const yAxis = new THREE.Vector3(0, 1, 0);
+  // Transverse basis. The backend expresses the beam's transverse state in
+  // jones.beam_local_sp's frame: +s = the world UP direction projected
+  // perpendicular to the propagation axis, +p = d x s. rx comes from qx and
+  // therefore belongs on +s, ry from qy on +p.
+  //
+  // `sHat` below is built as d x up, i.e. PERPENDICULAR to up — that is the
+  // backend's +p, not its +s. Mapping rx onto it rendered every astigmatic
+  // beam's ellipse rotated by 90 degrees. `upHat` is the one lying in the
+  // (d, up) plane, so it is the backend's +s and is what rx must follow.
+  const yAxis = new THREE.Vector3(0, 1, 0);   // scene is Y-up; lab is Z-up
   const sHat = new THREE.Vector3().crossVectors(direction, yAxis);
   if (sHat.lengthSq() < 1e-9) {
     sHat.crossVectors(direction, new THREE.Vector3(1, 0, 0));
   }
   sHat.normalize();
-  const pHat = new THREE.Vector3().crossVectors(sHat, direction).normalize();
+  const upHat = new THREE.Vector3().crossVectors(sHat, direction).normalize();
+  // upHat x direction = -sHat, so the third column is negated to keep the
+  // basis right-handed — a reflection here would invert the tube's normals.
+  const minusSHat = sHat.clone().negate();
 
   const RING = 24;
   // Axial slices: one ring per slice so the hyperbolic taper / focus pinch is
@@ -161,7 +173,9 @@ function buildBeamTube(seg: LinkTraceSegment, colour: THREE.Color | string): THR
     }),
   );
   tube.position.copy(start).addScaledVector(direction, length / 2);
-  tube.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(sHat, direction, pHat));
+  tube.quaternion.setFromRotationMatrix(
+    new THREE.Matrix4().makeBasis(upHat, direction, minusSHat),
+  );
   // Skinny centreline so a near-focus pinch is still visible.
   const centreline = new THREE.Line(
     new THREE.BufferGeometry().setFromPoints([
