@@ -32,7 +32,7 @@ import {
   Trash2,
 } from "lucide-react";
 import * as React from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useSceneStore } from "../store/sceneStore";
 import type {
@@ -52,6 +52,7 @@ import {
 } from "../utils/visibility";
 
 const EXPANDED_COLLECTIONS_STORAGE_KEY = "qmem.outliner.expandedCollections";
+const MASTER_COLLAPSED_STORAGE_KEY = "qmem.outliner.masterCollapsed";
 
 function loadStringSet(storageKey: string): Set<string> {
   if (typeof window === "undefined") return new Set();
@@ -163,6 +164,7 @@ export function OutlinerPanel() {
   const toggleSessionHiddenObject = useSceneStore((state) => state.toggleSessionHiddenObject);
   const forceShowObject = useSceneStore((state) => state.forceShowObject);
   const deleteObject = useSceneStore((state) => state.deleteObject);
+  const deleteObjects = useSceneStore((state) => state.deleteObjects);
   const collectionTemplates = useSceneStore((state) => state.collectionTemplates);
   const loadCollectionTemplates = useSceneStore((state) => state.loadCollectionTemplates);
   const saveCollectionAsTemplate = useSceneStore((state) => state.saveCollectionAsTemplate);
@@ -175,9 +177,22 @@ export function OutlinerPanel() {
   const [expanded, setExpanded] = useState<Set<string>>(() =>
     loadStringSet(EXPANDED_COLLECTIONS_STORAGE_KEY),
   );
+  // Master lives outside `expanded` — it's the one collection that defaults to
+  // open, so we persist its collapsed flag instead of its expanded flag.
+  const [masterCollapsed, setMasterCollapsed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem(MASTER_COLLAPSED_STORAGE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+  // Collection queued for deletion — the confirm dialog offers two outcomes
+  // (keep the objects, or delete them too), which window.confirm can't express.
+  const [pendingDelete, setPendingDelete] = useState<Collection | null>(null);
   const [templatesOpen, setTemplatesOpen] = useState(false);
 
   // Lazy fetch: templates panel is collapsed by default, so the first time the
@@ -191,6 +206,15 @@ export function OutlinerPanel() {
   }, [templatesOpen, loadCollectionTemplates]);
 
   useEffect(() => {
+    if (!pendingDelete) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPendingDelete(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pendingDelete]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     try {
       window.localStorage.setItem(
@@ -201,6 +225,15 @@ export function OutlinerPanel() {
       /* ignore storage errors */
     }
   }, [expanded]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(MASTER_COLLAPSED_STORAGE_KEY, masterCollapsed ? "1" : "0");
+    } catch {
+      /* ignore storage errors */
+    }
+  }, [masterCollapsed]);
 
   const collections = useMemo(() => scene.collections ?? [], [scene.collections]);
   const collectionMembers = useMemo(
@@ -255,6 +288,55 @@ export function OutlinerPanel() {
     () => buildObjectsByCollection(visibleObjects, collectionMembers, masterCollectionId),
     [visibleObjects, collectionMembers, masterCollectionId],
   );
+
+  /** Reverse of `objectsByCollection`: the collection row each object is
+   *  drawn under, Master fallback included. */
+  const collectionIdByObjectId = useMemo(() => {
+    const out = new Map<string, string>();
+    for (const [collectionId, objects] of objectsByCollection) {
+      for (const object of objects) out.set(object.id, collectionId);
+    }
+    return out;
+  }, [objectsByCollection]);
+
+  // Selecting an object anywhere (3D view, marquee, another panel) reveals its
+  // row here: open every collection from Master down to the object's home, or
+  // the selection highlight sits inside a folder the user cannot see. Expand
+  // only — nothing the user opened by hand is ever closed, and the active
+  // collection is left alone (see the object-row onClick note below).
+  const autoExpandedForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!selectedObjectId) {
+      autoExpandedForRef.current = null;
+      return;
+    }
+    // Expand once per selection, not on every scene update: dragging the
+    // selected object rewrites `scene.objects` continuously, and without this
+    // a collection the user collapsed after selecting would pop back open on
+    // the next frame.
+    if (autoExpandedForRef.current === selectedObjectId) return;
+    const home = collectionIdByObjectId.get(selectedObjectId);
+    if (!home) return; // members not loaded yet — retry on the next update
+    autoExpandedForRef.current = selectedObjectId;
+    const parentById = new Map(collections.map((c) => [c.id, c.parentId]));
+    const chain = new Set<string>();
+    for (let id: string | null | undefined = home; id && !chain.has(id); id = parentById.get(id)) {
+      chain.add(id);
+    }
+    setExpanded((current) => {
+      const missing = [...chain].filter(
+        (id) => parentById.get(id) !== null && !current.has(id),
+      );
+      if (missing.length === 0) return current;
+      const next = new Set(current);
+      for (const id of missing) next.add(id);
+      return next;
+    });
+    // A parentless row renders as a "master" row (see `isMaster` below), and
+    // those read `masterCollapsed` instead of `expanded` — this scene has two
+    // of them, so match on the parent, not on `masterCollectionId`.
+    if ([...chain].some((id) => parentById.get(id) === null)) setMasterCollapsed(false);
+  }, [selectedObjectId, collectionIdByObjectId, collections]);
 
   /** All object IDs reachable from a collection, walking child collections
    * recursively. Used by double-click "select all in collection". */
@@ -376,19 +458,28 @@ export function OutlinerPanel() {
     [createCollection, setActiveCollection, startEditing],
   );
 
-  const handleDelete = useCallback(
-    async (collection: Collection) => {
-      if (collection.parentId === null) return;
-      const childCount = (childrenIndex.get(collection.id) ?? []).length;
-      const memberCount = (objectsByCollection.get(collection.id) ?? []).length;
-      const note =
-        childCount + memberCount > 0
-          ? `\n\nThis collection contains ${childCount} sub-collection${childCount === 1 ? "" : "s"} and ${memberCount} object${memberCount === 1 ? "" : "s"}. Sub-collections will be deleted.`
-          : "";
-      if (!window.confirm(`Delete collection "${collection.name}"?${note}`)) return;
+  const handleDelete = useCallback((collection: Collection) => {
+    if (collection.parentId === null) return;
+    setPendingDelete(collection);
+  }, []);
+
+  /** Runs the queued deletion. `withObjects` decides the fate of every object
+   *  under the subtree: delete them too, or leave them behind — the backend
+   *  cascade drops their `collection_members` row, so survivors reappear
+   *  under the Master Collection. Objects go first: deleting the collection
+   *  first would orphan them into Master and we'd lose the id list. */
+  const confirmDelete = useCallback(
+    async (collection: Collection, withObjects: boolean) => {
+      setPendingDelete(null);
+      if (withObjects) {
+        const ids = collectAllObjectIdsUnder(collection.id);
+        // Locked ids are skipped inside deleteObjects (silent no-op), so
+        // they survive and land in Master — the dialog says as much.
+        if (ids.length > 0) await deleteObjects(ids);
+      }
       await deleteCollection(collection.id);
     },
-    [childrenIndex, deleteCollection, objectsByCollection],
+    [collectAllObjectIdsUnder, deleteCollection, deleteObjects],
   );
 
   const handleSaveAsTemplate = useCallback(
@@ -519,7 +610,7 @@ export function OutlinerPanel() {
 
   const renderCollectionRow = (collection: Collection, depth: number) => {
     const isMaster = collection.parentId === null;
-    const isExpanded = isMaster || expanded.has(collection.id);
+    const isExpanded = isMaster ? !masterCollapsed : expanded.has(collection.id);
     const isActive = collection.id === activeCollectionId;
     const isOver = dragOverId === collection.id;
     const collectionVisible = isCollectionVisible(collection.id, visibilityCtx);
@@ -561,7 +652,8 @@ export function OutlinerPanel() {
             className="outliner-toggle"
             onClick={(event) => {
               event.stopPropagation();
-              if (!isMaster) toggleExpanded(collection.id);
+              if (isMaster) setMasterCollapsed((current) => !current);
+              else toggleExpanded(collection.id);
             }}
             aria-label={isExpanded ? "Collapse" : "Expand"}
             disabled={isMaster && childCollections.length === 0 && childObjects.length === 0}
@@ -733,7 +825,7 @@ export function OutlinerPanel() {
               title="Delete collection"
               onClick={(event) => {
                 event.stopPropagation();
-                void handleDelete(collection);
+                handleDelete(collection);
               }}
             >
               <Trash2 size={13} />
@@ -994,7 +1086,100 @@ export function OutlinerPanel() {
           )}
         </div>
       )}
+      {pendingDelete && (
+        <DeleteCollectionDialog
+          collection={pendingDelete}
+          subCollectionCount={countCollectionsUnder(childrenIndex, pendingDelete.id) - 1}
+          objectIds={collectAllObjectIdsUnder(pendingDelete.id)}
+          objectsById={objectsById}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={(withObjects) => void confirmDelete(pendingDelete, withObjects)}
+        />
+      )}
     </section>
+  );
+}
+
+/** Total collections in the subtree rooted at `rootId`, itself included. */
+function countCollectionsUnder(childrenIndex: ChildrenIndex, rootId: string): number {
+  let total = 1;
+  for (const child of childrenIndex.get(rootId) ?? []) {
+    total += countCollectionsUnder(childrenIndex, child.id);
+  }
+  return total;
+}
+
+/** Delete confirmation with two outcomes, because the objects inside a
+ *  collection can either follow it into the bin or stay in the scene. Sub-
+ *  collections have no such choice — the FK cascade always takes them. */
+function DeleteCollectionDialog({
+  collection,
+  subCollectionCount,
+  objectIds,
+  objectsById,
+  onCancel,
+  onConfirm,
+}: {
+  collection: Collection;
+  subCollectionCount: number;
+  objectIds: string[];
+  objectsById: Map<string, SceneObject>;
+  onCancel: () => void;
+  onConfirm: (withObjects: boolean) => void;
+}) {
+  const lockedCount = objectIds.filter((id) => objectsById.get(id)?.locked).length;
+  const objectCount = objectIds.length;
+  const plural = (count: number, word: string) =>
+    `${count} ${word}${count === 1 ? "" : "s"}`;
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div
+        className="modal-card outliner-delete-card"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="modal-header">
+          <h2>Delete "{collection.name}"</h2>
+        </div>
+        <div className="modal-body">
+          <p>
+            {subCollectionCount > 0
+              ? `This collection and its ${plural(subCollectionCount, "sub-collection")} will be deleted.`
+              : "This collection will be deleted."}
+          </p>
+          {objectCount > 0 ? (
+            <p>
+              It holds {plural(objectCount, "object")}. Choose what happens to them:
+              keeping them moves them back to the Master Collection.
+            </p>
+          ) : (
+            <p>It holds no objects.</p>
+          )}
+          {lockedCount > 0 && (
+            <p className="outliner-delete-note">
+              {plural(lockedCount, "object")} {lockedCount === 1 ? "is" : "are"} locked
+              and cannot be deleted — {lockedCount === 1 ? "it moves" : "they move"} to
+              the Master Collection either way.
+            </p>
+          )}
+        </div>
+        <div className="modal-footer">
+          <button type="button" className="secondary-button" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className="secondary-button" onClick={() => onConfirm(false)}>
+            Delete collection only
+          </button>
+          <button
+            type="button"
+            className="danger-button"
+            disabled={objectCount === 0}
+            onClick={() => onConfirm(true)}
+          >
+            Delete with {plural(objectCount, "object")}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

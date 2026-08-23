@@ -3,8 +3,13 @@
 Faraday rotator — single anchor, Jones rotation non-reciprocal in 5×5
 sense (axis-fixed rotationDeg regardless of beam direction).
 
-EOM — like waveplate but retardance from dynamic_sources.driveVoltageV
-(linear electro-optic effect).
+EOM — two regimes on one kind, picked by default_params.modulationKind:
+"phase" is a waveplate whose retardance comes from
+dynamic_sources.driveVoltageV (linear electro-optic effect), "amplitude"
+is a Mach-Zehnder whose drive + bias land on power instead. Orthogonally,
+default_params.fiberPigtailed says whether the output is re-emitted as the
+output pigtail's fundamental mode (guided) or propagated as a free-space
+slab.
 
 Tapered amplifier — single anchor on chip centre; gain on transmit,
 output beam with reshaped mode (default_params.outputSpatialModeX/Y).
@@ -93,18 +98,155 @@ register_anchor_op("faraday_rotator", faraday_anchor_op)
 
 # ── EOM ────────────────────────────────────────────────────────────────────
 
+def _eom_pigtail_out_ray(
+    ray_in: BeamRay, ctx: AnchorOpContext, out_anchor,
+) -> BeamRay:
+    """Output of a FIBRE-PIGTAILED modulator.
+
+    The light never crosses the package in free space — it is guided from
+    the input pigtail through the waveguide to the output pigtail. So the
+    exit is the pigtail's fundamental mode at ``intercept_out``: waist =
+    coreMfdUm/2 ON the exit face, direction = that anchor's axisX, and the
+    incoming tilt / offset erased. Same contract as ``fiber_anchor_op``.
+
+    A slab passthrough would instead diffract a ~5 µm mode across the whole
+    package (~100 mm for the EOSpace AZ) and deliver a metre-wide beam to
+    the output pigtail — i.e. essentially zero power downstream.
+    """
+    w0_um = float(ctx.params.get("coreMfdUm", 5.3)) / 2.0
+    q_out = _q_at_waist_mm(w0_um, ray_in.wavelength_nm)
+    return ray_in.replaced(
+        origin=out_anchor.position_body,
+        direction=out_anchor.axis_x_body,
+        qx=q_out, qy=q_out, qxy=0j,
+    )
+
+
+def _eom_mz_transmission(ctx: AnchorOpContext) -> float:
+    """Mach-Zehnder POWER transmission at the current drive + bias.
+
+        φ = π · (V_rf / Vπ_rf  +  V_bias / Vπ_bias)
+        T = (1 + m·cos φ) / (1 + m),   m = (r−1)/(r+1),   r = 10^(ER_dB/10)
+
+    Normalised on (1 + m) so T peaks at exactly 1 and bottoms out at 1/r.
+    That way the insertion loss the caller applies separately IS the
+    datasheet number (which is quoted at peak transmission), and the ratio
+    between the two extremes IS the datasheet extinction ratio.
+    """
+    v_pi = float(ctx.params.get("vPiV", 5.0))
+    v_pi_bias = float(ctx.params.get("biasVPiV", v_pi))
+    # ctx.params is {**asset.default_params, **dynamic_sources}: the asset
+    # carries the baseline, a per-instance knob overrides it.
+    phi = math.pi * (
+        float(ctx.params.get("driveVoltageV", 0.0)) / max(1e-9, v_pi)
+        + float(ctx.params.get("biasVoltageV", 0.0)) / max(1e-9, v_pi_bias)
+    )
+    r = 10.0 ** (float(ctx.params.get("extinctionRatioDb", 30.0)) / 10.0)
+    m = (r - 1.0) / (r + 1.0)
+    return (1.0 + m * math.cos(phi)) / (1.0 + m)
+
+
+def _eom_guided_polarization(
+    ray_in: BeamRay,
+    ctx: AnchorOpContext,
+    exit_anchor,
+    out_direction: Vec3,
+) -> tuple[tuple[complex, complex], float]:
+    """Single-polarization waveguide: keep the TM component, floor the rest.
+
+    The modulated axis is ``intercept_in``'s **axisY** (the kind marks that
+    role fastAxis, and a device authors it explicitly — body +Z for a z-cut
+    chip lying flat in its housing). The orthogonal component is not guided;
+    what survives of it is set by ``polarizationExtinctionRatioDb``, a POWER
+    ratio, hence 10^(-PER/20) on the field.
+
+    Returns the outgoing Jones **already in the exit ray's own s/p frame**
+    (the guided mode is linear on the exit anchor's axisY, which is not the
+    entry frame when the two ports differ) plus the power transmission
+    |E_out|²/|E_in|², the Malus factor the caller multiplies into power_mw.
+    """
+    per_db = float(ctx.params.get("polarizationExtinctionRatioDb", 20.0))
+    leak = 10.0 ** (-per_db / 20.0)
+
+    theta_in = q_frame_angle_to_axis(ctx.anchor.axis_y_body, ray_in.direction)
+    e_tm, e_te = rotate_jones(ray_in.jones, theta_in)
+    guided = (e_tm, e_te * leak)
+
+    mag_in = _jones_mag2(ray_in.jones)
+    transmission = (_jones_mag2(guided) / mag_in) if mag_in > 1e-30 else 0.0
+
+    theta_out = q_frame_angle_to_axis(exit_anchor.axis_y_body, out_direction)
+    return rotate_jones(guided, -theta_out), transmission
+
+
+def _eom_is_waveguide(ctx: AnchorOpContext) -> bool:
+    """Is this a guided modulator (→ single-polarization) or a bulk crystal?
+
+    A Mach-Zehnder is always a waveguide device, and so is anything with
+    pigtails. A bulk phase crystal in a mount is not: it is a retarder and
+    must not be polarization-filtered.
+    """
+    return (
+        str(ctx.params.get("modulationKind", "phase")) == "amplitude"
+        or bool(ctx.params.get("fiberPigtailed", False))
+    )
+
+
 def eom_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
     if ctx.anchor.id != "intercept_in":
         return [ray_in]
-    out_ray = _slab_passthrough(ray_in, ctx)
-    # Dynamic retardance from drive voltage (linear EO):
-    #   δ = π · V / V_pi
-    v_drive = float(ctx.dynamic.get("driveVoltageV", 0.0))
+
+    # Geometry — guided (pigtailed) or free-space slab. Independent of which
+    # modulation regime the part runs.
+    exit_anchor = ctx.anchor
+    if bool(ctx.params.get("fiberPigtailed", False)):
+        out_anchor = next(
+            (a for a in ctx.asset.anchors if a.id == "intercept_out"), None
+        )
+        if out_anchor is None:
+            return []          # pigtailed part with no exit port — malformed
+        out_ray = _eom_pigtail_out_ray(ray_in, ctx, out_anchor)
+        exit_anchor = out_anchor
+    else:
+        out_ray = _slab_passthrough(ray_in, ctx)
+
+    # Polarization. A guided modulator passes only its TM axis; a bulk
+    # crystal is a retarder and must not be filtered.
+    jones = ray_in.jones
+    pol_t = 1.0
+    if _eom_is_waveguide(ctx):
+        jones, pol_t = _eom_guided_polarization(
+            ray_in, ctx, exit_anchor, out_ray.direction,
+        )
+
+    # Insertion loss applies in every regime (kind default 0 dB).
+    loss = 10.0 ** (-float(ctx.params.get("insertionLossDb", 0.0)) / 10.0)
+
+    if str(ctx.params.get("modulationKind", "phase")) == "amplitude":
+        # Mach-Zehnder: the two arms have already interfered inside the
+        # device, so the drive lands on POWER, not on the Jones phase.
+        return [out_ray.replaced(
+            jones=jones,
+            power_mw=ray_in.power_mw * loss * pol_t * _eom_mz_transmission(ctx),
+        )]
+
+    # Phase modulation — dynamic retardance from the drive voltage (linear
+    # electro-optic effect):  δ = π · V / V_pi
+    v_drive = float(ctx.params.get("driveVoltageV", 0.0))
     v_pi = float(ctx.params.get("vPiV", 5.0))
     delta = math.pi * v_drive / max(1e-9, v_pi)
     phase = complex(math.cos(delta), math.sin(delta))
-    e_fast, e_slow = ray_in.jones
-    return [out_ray.replaced(jones=(e_fast, e_slow * phase))]
+    if _eom_is_waveguide(ctx):
+        # One guided mode only — the drive is a COMMON phase on it, not a
+        # retardance between two components (there is only one component).
+        jones = (jones[0] * phase, jones[1] * phase)
+    else:
+        e_fast, e_slow = jones
+        jones = (e_fast, e_slow * phase)
+    return [out_ray.replaced(
+        jones=jones,
+        power_mw=ray_in.power_mw * loss * pol_t,
+    )]
 
 
 register_anchor_op("eom", eom_anchor_op)

@@ -84,11 +84,21 @@ export type AnchorId =
   // the rotation axis pivot between the two PBS halves. Position only;
   // direction inferred from front_pbs → back_pbs vector.
   | "faraday_centre"
+  // Fibre bulkhead — the SOCKET on an instrument chassis that a patch cable
+  // plugs into (alembic 0133). Female by construction; carries `fc_*_female`.
+  // The only fibre anchor in `anchor_tracer.PRIMARY_ANCHOR_IDS`.
+  | "fiber_in"
   // Cable-connector geometry anchors (plan 2026-06-12, §3.2). A connector
-  // asset owns two: `connect_out` (origin, −X, the wire/spline junction)
-  // and `connect_in` (at tipMm, +X, the mating / ferrule end face). The
-  // cable-level intercept_in/out (optical) and rf_in/out (RF) port anchors
-  // derive from the end connectors' `connect_in`.
+  // asset owns two: the cable/spline junction (origin, −X) and the mating /
+  // ferrule end face (at tipMm, +X). The cable-level intercept_in/out
+  // (optical) and rf_in/out (RF) port anchors derive from the mating face.
+  //
+  // Fibre uses `fiber_root` / `fiber_out` (alembic 0135) so the vocabulary
+  // reads from the FIBRE's point of view — root, out of its connector, into
+  // an instrument. Coax keeps `connect_out` / `connect_in`; `fiber_*` would
+  // be a lie on an SMA. Both spellings are live, neither is primary.
+  | "fiber_root"
+  | "fiber_out"
   | "connect_in"
   | "connect_out"
   | "+x" | "-x" | "+y" | "-y" | "+z" | "-z";
@@ -111,6 +121,9 @@ export const EDITABLE_ANCHOR_IDS: AnchorId[] = [
   "ttl_in",
   "trigger_in",
   "aperture",
+  "fiber_in",
+  "fiber_out",
+  "fiber_root",
   "connect_in",
   "connect_out",
 ];

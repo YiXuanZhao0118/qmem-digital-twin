@@ -30,7 +30,7 @@ import {
   pointBodyToLab,
   pointLabToBody,
 } from "../optical/pose";
-import { FIBER_FERRULE_TIP_MM } from "./fiberAnchorResolver";
+import { FIBER_FERRULE_TIP_MM, FIBER_MATING_GAP_MM } from "./fiberAnchorResolver";
 
 export type Vec3Tuple = [number, number, number];
 
@@ -100,6 +100,82 @@ export interface FiberAlignmentCandidate extends FiberEndAlignmentResult {
   aomOrder?: number | null;
   branch?: string;
   wavelengthNm?: number;
+  /** Present only on candidates produced by
+   *  {@link findFiberPortAlignmentCandidates} — i.e. the end is being
+   *  plugged into a fibre receptacle rather than parked on a beam. The
+   *  store persists this as `SceneObject.properties.fiberEndpoints[end]`
+   *  so the end follows the instrument; a beam candidate has no `port`
+   *  and CLEARS any existing link (manual/beam align beats link). */
+  port?: FiberPortLink;
+}
+
+/** Identity of the fibre receptacle a candidate plugs into. Mirrors
+ *  `RfCableEndpointLink`'s payload. */
+export interface FiberPortLink {
+  targetObjectId: string;
+  targetAnchorId: string;
+  targetAnchorName: string;
+}
+
+/** One fibre receptacle in LAB frame, ready to snap onto. The optical twin
+ *  of `RfPortLab` in `rfCableAlignment.ts`. */
+export interface FiberPortLab extends FiberPortLink {
+  /** Lab position of the port's optical face (mm). */
+  labPosMm: Vec3Tuple;
+  /** Lab-frame axisX of the port anchor — for an optical anchor this is the
+   *  PROPAGATION direction, not a mechanical outward normal (anchors.md).
+   *  A fibre End A mates facing −axisX, End B facing +axisX. */
+  labAxisX: Vec3Tuple;
+  /** Owning SceneObject's display name, for the picker label. */
+  targetName: string;
+}
+
+/** True when an anchor's `connectorType` names a fibre bulkhead, i.e. the
+ *  anchor is a receptacle a patch cable can be plugged into rather than a
+ *  free-space optical face. Deliberately prefix-based like
+ *  `connectorFamilyFromAnchor` in `rfLinkPorts.ts`, so adding `sc_*` /
+ *  `lc_*` to the union needs no change here.
+ *
+ *  **Female only** (2026-08-23). A receptacle is a socket on a chassis; the
+ *  ferrule on the end of a patch cable or a pigtail is a PLUG and carries
+ *  `*_male`. This matters because `collectFiberPortsLab` filters on this
+ *  predicate alone and never looks at the anchor id — once cable ends
+ *  declare their connector, a gender-blind test would list every one of
+ *  them as a socket and let two patch cables be plugged into each other. */
+export function isFiberPortConnectorType(
+  connectorType: string | null | undefined,
+): boolean {
+  if (typeof connectorType !== "string") return false;
+  return /^(fc|sc|lc|st)_.*_female$/.test(connectorType);
+}
+
+/** Every optical anchor id that can carry light in or out of a part — the
+ *  set {@link isFiberReceptacleAnchor} is asked about. */
+export const OPTICAL_PORT_ANCHOR_IDS = [
+  "intercept_in", "intercept_out", "fiber_in",
+] as const;
+
+/** True when an anchor is somewhere a patch cable PLUGS IN rather than a
+ *  free-space face a beam can be flown onto.
+ *
+ *  Two ways to be one, and both are needed:
+ *    - `fiber_in` — a chassis socket by construction; that is what the id
+ *      means, so no connectorType test applies. It is the ONLY socket id:
+ *      `fiber_out` is a CONNECTOR's mating face (male) and `fiber_root` its
+ *      cable junction, neither of which anything plugs into.
+ *    - an `intercept_*` declaring a female fibre connector — the pre-0133
+ *      spelling, still the right answer for any part that has not moved.
+ *
+ *  Used by the Object panel to decide a part has nothing to align: light
+ *  reaches it down a cable, so translating the box onto a beam line is
+ *  meaningless. A part with BOTH a bulkhead and a bare face keeps Align for
+ *  the bare one, which is why this is per-anchor and the caller does the
+ *  `every`. */
+export function isFiberReceptacleAnchor(anchor: {
+  id: string;
+  connectorType?: string | null;
+}): boolean {
+  return anchor.id === "fiber_in" || isFiberPortConnectorType(anchor.connectorType);
 }
 
 function makePoseTransforms(pose: FiberAlignPose) {
@@ -336,6 +412,115 @@ export function findFiberEndAlignmentCandidates(opts: {
       aomOrder: seg.aomOrder ?? null,
       branch: seg.branch,
       wavelengthNm: seg.wavelengthNm,
+    });
+  }
+  results.sort((a, b) => a.distMm - b.distMm);
+  return results;
+}
+
+/** Snap a fibre end onto a fibre RECEPTACLE instead of onto a beam segment
+ *  — the optical twin of `findRfCableEndpointAlignmentCandidates`.
+ *
+ *  The mating rule is the same as coax: the end's optical face lands ON the
+ *  port and the fibre's outward becomes ANTI-parallel to the port's outward
+ *  (the ferrule slides into the receptacle facing it). Unlike the beam
+ *  version there is no projection — a port is a point, so `distMm` is just
+ *  how far the end currently is from it, used to rank and to reject beyond
+ *  `toleranceMm`.
+ *
+ *  `tipMm` is the junction→optical-face distance of THIS end's connector. It
+ *  defaults to the FC housing constant, but callers that know the bound
+ *  connector asset should pass `|connect_in − connect_out|` — the same value
+ *  the backend's `_connector_tip_and_aperture` uses to place the synthesized
+ *  `intercept_in/out`. Passing the wrong tip puts the optical face short of
+ *  (or past) the receptacle, which is exactly the ~10 mm overshoot the RF
+ *  side hit with its hard-coded family constants.
+ *
+ *  Results are shaped as `FiberAlignmentCandidate` so they merge into the
+ *  same picker list and flow through the same `applyFiberAlignmentCandidate`
+ *  as beam candidates; `port` is what tells the store to persist a link. */
+export function findFiberPortAlignmentCandidates(opts: {
+  end: "A" | "B";
+  nodes: FiberNodePersist[];
+  pose: FiberAlignPose;
+  ports: FiberPortLab[];
+  toleranceMm: number;
+  tipMm?: number;
+}): FiberAlignmentCandidate[] {
+  const { end, nodes, pose, ports, toleranceMm } = opts;
+  if (nodes.length < 2) return [];
+  const tipMm = opts.tipMm ?? FIBER_FERRULE_TIP_MM;
+  const { bodyToLab, labToBody, rotateLabDirToBody } = makePoseTransforms(pose);
+
+  const idx = end === "A" ? 0 : nodes.length - 1;
+  const neighbourIdx = end === "A" ? 1 : nodes.length - 2;
+  const epBody = nodes[idx].posMm;
+  const outwardBody = endpointOutwardBody(nodes, end);
+  // Where this end's optical face sits right now, in lab.
+  const faceLab = bodyToLab([
+    epBody[0] + outwardBody[0] * tipMm,
+    epBody[1] + outwardBody[1] * tipMm,
+    epBody[2] + outwardBody[2] * tipMm,
+  ]);
+
+  const oldNeighbour = nodes[neighbourIdx].posMm;
+  const segLen = Math.hypot(
+    oldNeighbour[0] - epBody[0],
+    oldNeighbour[1] - epBody[1],
+    oldNeighbour[2] - epBody[2],
+  );
+  const handleLen = Math.max(20, segLen * 0.33);
+
+  const results: FiberAlignmentCandidate[] = [];
+  for (const port of ports) {
+    const distMm = Math.hypot(
+      port.labPosMm[0] - faceLab[0],
+      port.labPosMm[1] - faceLab[1],
+      port.labPosMm[2] - faceLab[2],
+    );
+    if (distMm > toleranceMm) continue;
+
+    const m = Math.hypot(port.labAxisX[0], port.labAxisX[1], port.labAxisX[2]);
+    if (m < 1e-9) continue;
+    // Same rule as `resolveLinkedFiberEndpoint` — see the long note there.
+    // An optical anchor's axisX is the PROPAGATION direction, not a
+    // mechanical outward normal, so End A faces back up it and End B along
+    // it, exactly as the beam-align path does.
+    const sign = end === "A" ? -1 : 1;
+    const newOutwardLab: Vec3Tuple = [
+      (sign * port.labAxisX[0]) / m,
+      (sign * port.labAxisX[1]) / m,
+      (sign * port.labAxisX[2]) / m,
+    ];
+    const newOutwardBody = rotateLabDirToBody(newOutwardLab);
+    const portBody = labToBody(port.labPosMm);
+    const backOff = tipMm + FIBER_MATING_GAP_MM;
+    const newPosMmBody: Vec3Tuple = [
+      portBody[0] - newOutwardBody[0] * backOff,
+      portBody[1] - newOutwardBody[1] * backOff,
+      portBody[2] - newOutwardBody[2] * backOff,
+    ];
+    // The handle points INTO the cable body (opposite the outward), same
+    // convention `endpointOutwardBody` reads back out.
+    const newHandleMmBody: Vec3Tuple = [
+      -newOutwardBody[0] * handleLen,
+      -newOutwardBody[1] * handleLen,
+      -newOutwardBody[2] * handleLen,
+    ];
+
+    results.push({
+      beamId: `port:${port.targetObjectId}:${port.targetAnchorId}`,
+      distMm,
+      projectedPortLab: port.labPosMm,
+      newPosMmBody,
+      newHandleMmBody,
+      newOutwardBody,
+      displayLabel: `🔌 ${port.targetName} · ${port.targetAnchorName}`,
+      port: {
+        targetObjectId: port.targetObjectId,
+        targetAnchorId: port.targetAnchorId,
+        targetAnchorName: port.targetAnchorName,
+      },
     });
   }
   results.sort((a, b) => a.distMm - b.distMm);

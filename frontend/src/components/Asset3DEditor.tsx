@@ -2875,7 +2875,17 @@ function AssetEditForm({
         // gate axisY and aperture on the kind's declared needs.
         showAxisY: !isRf && fastAxis.has(anchorId),
         showAperture: !isRf && aperture.has(anchorId),
-        showConnector: isRf,
+        // RF anchors pick a coax family+gender; OPTICAL anchors pick a
+        // fibre bulkhead type, which is what promotes the face to a
+        // receptacle a patch cable can be plugged into (see
+        // `isFiberPortConnectorType`). Leave it blank on a free-space face.
+        showConnector: isRf || domain === "optical",
+        connectorOptions: isRf
+          ? (["sma_male", "sma_female", "bnc_male", "bnc_female"] as const)
+          : ([
+              "fc_pc_female", "fc_apc_female",   // bulkhead on a chassis
+              "fc_pc_male", "fc_apc_male",       // plug on a cable / pigtail
+            ] as const),
       };
     };
   }, [draft.kindId]);
@@ -3414,20 +3424,19 @@ function AssetEditForm({
               <td style={TD}>
                 <select
                   value={ff.showConnector ? anchor.connectorType : ""}
-                  // Editable on any RF anchor regardless of `inUse` — a row
-                  // that's truly frozen is `locked`, which makes the whole
-                  // form read-only via the wrapping pointerEvents:none. The
-                  // options are the four gendered values the `Anchor`
-                  // schema accepts (bare "sma"/"bnc" would 500 SceneOut).
+                  // Editable on any port anchor regardless of `inUse` — a
+                  // row that's truly frozen is `locked`, which makes the
+                  // whole form read-only via the wrapping pointerEvents:none.
+                  // The options are exactly the values the backend `Anchor`
+                  // schema's Literal accepts (a bare "sma" / "fc" would 422).
                   disabled={!ff.showConnector}
                   onChange={(event) => updateAnchor(index, { connectorType: event.target.value })}
                   style={ff.showConnector ? INPUT : INPUT_DISABLED}
                 >
                   <option value="">—</option>
-                  <option value="sma_male">sma_male</option>
-                  <option value="sma_female">sma_female</option>
-                  <option value="bnc_male">bnc_male</option>
-                  <option value="bnc_female">bnc_female</option>
+                  {ff.connectorOptions.map((opt) => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
                 </select>
               </td>
             </tr>
@@ -3730,6 +3739,11 @@ export function Asset3DEditor({
           .map((o) => o.id);
         if (affected.length > 0) {
           void store.resnapRfCablesLinkedTo(affected).catch(() => {});
+          // Editing an anchor MOVES the port, so anything plugged into it
+          // has to be re-derived — fibres included, where the persisted
+          // endpoint is what the solver couples through.
+          void store.resnapFibersLinkedTo(affected).catch(() => {});
+          void store.resnapPigtailsLinkedTo(affected).catch(() => {});
         }
       });
       const nextAnchorCount = updated.anchors?.length ?? 0;

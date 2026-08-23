@@ -18,6 +18,9 @@ dedicated dynamic_sources column the lookup moves there.
 
 from __future__ import annotations
 
+import dataclasses
+import math
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,6 +44,10 @@ from app.optical.pose import (
     V3Pose,
     binding_pose_to_transform,
     compose_transforms,
+    dir_body_to_lab_t,
+    dir_lab_to_body_t,
+    point_body_to_lab_t,
+    point_lab_to_body_t,
     pose_to_transform,
 )
 from app.optical.rf_resolve import hydrate_aom_rf_drive
@@ -271,6 +278,189 @@ def _ortho_basis(axis_x: Vec3) -> tuple[Vec3, Vec3]:
     return ay, az
 
 
+def _slow_axis_basis(outward: Vec3, slow_axis_deg: float) -> tuple[Vec3, Vec3]:
+    """(axisY, axisZ) for a fibre end, with **axisY on the PM slow axis**.
+
+    ``_ortho_basis`` gives a deterministic but otherwise arbitrary transverse
+    reference; the connector key angle (``endX.slowAxisDegInBodyFrame``, the
+    number the Object panel's per-end editor writes and the viewer draws the
+    key along) rotates axisY around the ferrule axis from it. The coupling
+    maths only ever used r = √(off_y²+off_z²), which is rotation-invariant —
+    so this changes no geometry, it only gives ``fiber_anchor_op`` an axis to
+    resolve polarization against.
+
+    Caveat: the ZERO of that angle is this function's ``_ortho_basis``
+    reference, which has not been reconciled with the frontend's ferrule
+    orientation. The angle BETWEEN two ends (the twist of a patch cord) and
+    the angle between an end and another element's axisY are therefore what
+    to trust; the absolute number against the drawn key mark is not verified.
+    """
+    ay0, az0 = _ortho_basis(outward)
+    a = math.radians(slow_axis_deg)
+    c, sn = math.cos(a), math.sin(a)
+    ay = Vec3(
+        ay0.x * c + az0.x * sn,
+        ay0.y * c + az0.y * sn,
+        ay0.z * c + az0.z * sn,
+    ).normalized()
+    return ay, _cross(outward, ay)
+
+
+# A cable-end connector owns two geometric anchors: the MATING FACE (the
+# ferrule / pin end that goes into a socket) and the CABLE ROOT (the spline
+# junction inside the jacket, where the endpoint node pins).
+#
+# Two spellings are live and both must be accepted (2026-08-23):
+#   * fibre  — ``fiber_out`` / ``fiber_root``, renamed by alembic 0135 so the
+#     whole fibre vocabulary reads from the FIBRE's point of view:
+#     ``fiber_in`` is where a fibre goes into an instrument, ``fiber_out``
+#     where it comes out of its own connector, ``fiber_root`` where it is
+#     anchored into the cable.
+#   * coax — ``connect_in`` / ``connect_out``, unchanged. The rename was
+#     deliberately scoped to fibre, and ``fiber_*`` would be a lie on an SMA.
+#
+# NOTE ``fiber_out`` is NOT in ``anchor_tracer.PRIMARY_ANCHOR_IDS`` — same as
+# ``connect_in`` never was. It belongs to the connector, which is passthrough;
+# the traced coupling happens on the SYNTHESIZED ``intercept_in/out`` that
+# ``_synth_fiber_slot`` derives from it. Making it primary would put two
+# hit-testable anchors at the same point.
+_MATING_FACE_IDS = ("fiber_out", "connect_in")
+_CABLE_ROOT_IDS = ("fiber_root", "connect_out")
+
+
+def _find_anchor(anchors, ids: tuple[str, ...]) -> dict | None:
+    for wanted in ids:
+        for a in anchors or []:
+            if isinstance(a, dict) and a.get("id") == wanted:
+                return a
+    return None
+
+
+async def _port_connector_anchors(
+    session: AsyncSession,
+    snap,
+    effective,
+    binding_rows: list,
+    binding_by_id: dict,
+    override_by_binding_id: dict,
+    memo: dict,
+    so_transform,
+):
+    """Re-seat a device's optical ports onto the FIBER CONNECTORS bound at them.
+
+    A pigtailed instrument (the EOSpace EOM is the first) does not really have
+    a bare optical face — it has an FC/APC bulkhead you mate a patch cord to.
+    Model that the way the hardware is built: bind a ``fiber_connector`` asset
+    at each port in the Component, tag the binding
+    ``properties.portAnchor = "intercept_in" | "intercept_out"``, and this
+    turns that connector's ``connect_in`` into the port.
+
+    Why it has to be a derivation and not just a rename: ``connect_in`` /
+    ``connect_out`` are NOT in ``anchor_tracer.PRIMARY_ANCHOR_IDS``, so the
+    tracer can never hit them — a port made only of connector anchors would
+    pass light straight through. ``exposedFaces`` cannot help either; it is
+    stored and drawn by the PHY Editor but no loader or tracer reads it. So
+    the physics anchor stays ``intercept_in`` / ``intercept_out`` on the body,
+    and the connector supplies its numbers. Same move ``_synth_fiber_slot``
+    makes for a patch cord, one level up.
+
+    What the connector defines, all of it live and per-binding:
+      * **position** — the port face lands exactly on ``connect_in``, so
+        rotating or sliding the connector binding moves the coupling face.
+      * **aperture** — ``connect_in.apertureMm``.
+      * **axisY** — the PM slow-axis key. For a pigtailed modulator that IS
+        the TM axis the waveguide guides (the factory aligns the pigtail's
+        PM axis to the crystal), so rotating the connector in its adapter
+        rotates what polarization the device accepts — which is the physical
+        adjustment, and now the modelled one.
+
+    What it deliberately does NOT define: the port's **direction**. axisX
+    keeps the sense the device authored (the connector's mating normal is
+    flipped to agree with it), because that is what the op reads to decide
+    which way light leaves — an input bulkhead faces backwards up the beam
+    and would otherwise reverse the exit. Scalars like ``coreMfdUm`` also
+    stay on the device: they describe its pigtail, and the two ports would
+    disagree.
+    """
+    ports: dict[str, tuple[object, Asset3D]] = {}
+    for b in binding_rows:
+        props = b.properties or {}
+        target = props.get("portAnchor")
+        if b.target_kind != "asset" or not isinstance(target, str):
+            continue
+        override = override_by_binding_id.get(b.id)
+        asset_id = (
+            override.asset_3d_id_override
+            if override is not None and override.asset_3d_id_override is not None
+            else b.asset_3d_id
+        )
+        if not asset_id:
+            continue
+        conn = await session.get(Asset3D, asset_id)
+        if conn is not None and conn.kind_id == "fiber_connector":
+            ports[target] = (b, conn)
+    if not ports:
+        return snap
+
+    rebuilt = []
+    for anchor in snap.anchors:
+        entry = ports.get(anchor.id)
+        if entry is None:
+            rebuilt.append(anchor)
+            continue
+        b, conn = entry
+        c_in = _find_anchor(conn.anchors, _MATING_FACE_IDS)
+        if c_in is None:
+            rebuilt.append(anchor)
+            continue
+        t_conn = compose_transforms(
+            so_transform,
+            _binding_tree_transform(
+                b, binding_by_id, override_by_binding_id, memo, set()
+            ),
+        )
+
+        def _v(raw, fallback: Vec3) -> Vec3:
+            if isinstance(raw, dict):
+                return Vec3(float(raw.get("x", 0.0)), float(raw.get("y", 0.0)),
+                            float(raw.get("z", 0.0)))
+            return fallback
+
+        # connector-local → lab → this device asset's own frame.
+        def _to_device_point(raw, fallback):
+            return point_lab_to_body_t(
+                point_body_to_lab_t(_v(raw, fallback), t_conn), effective
+            )
+
+        def _to_device_dir(raw, fallback):
+            return dir_lab_to_body_t(
+                dir_body_to_lab_t(_v(raw, fallback), t_conn), effective
+            ).normalized()
+
+        pos = _to_device_point(c_in.get("positionMmBodyLocal"), anchor.position_body)
+        ax = _to_device_dir(c_in.get("axisXBodyLocal"), anchor.axis_x_body)
+        ay = _to_device_dir(c_in.get("axisYBodyLocal"), anchor.axis_y_body)
+        # Keep the device's own sense of "which way is out" (see docstring).
+        if ax.dot(anchor.axis_x_body) < 0.0:
+            ax = ax * -1.0
+        # Gram-Schmidt: the mating normal and the key axis need not be exactly
+        # orthogonal once both have been through two frame hops.
+        ay = (ay - ax * ay.dot(ax))
+        ay = ay.normalized() if ay.length() > 1e-9 else _ortho_basis(ax)[0]
+        ap = c_in.get("apertureMm")
+        rebuilt.append(V3Anchor(
+            id=anchor.id,
+            position_body=pos,
+            axis_x_body=ax,
+            axis_y_body=ay,
+            axis_z_body=_cross(ax, ay),
+            aperture_mm=(float(ap) if isinstance(ap, (int, float)) and ap > 0
+                         else anchor.aperture_mm),
+            aperture_shape=anchor.aperture_shape,
+        ))
+    return dataclasses.replace(snap, anchors=rebuilt)
+
+
 def _connector_tip_and_aperture(
     connector_asset: Asset3D | None,
     fallback_tip_mm: float,
@@ -292,8 +482,8 @@ def _connector_tip_and_aperture(
     if connector_asset is None:
         return tip_mm, aperture_mm
     anchors = connector_asset.anchors or []
-    c_in = next((a for a in anchors if isinstance(a, dict) and a.get("id") == "connect_in"), None)
-    c_out = next((a for a in anchors if isinstance(a, dict) and a.get("id") == "connect_out"), None)
+    c_in = _find_anchor(anchors, _MATING_FACE_IDS)
+    c_out = _find_anchor(anchors, _CABLE_ROOT_IDS)
     if c_in is not None:
         ap = c_in.get("apertureMm")
         if isinstance(ap, (int, float)) and ap > 0:
@@ -389,7 +579,11 @@ async def _synth_fiber_slot(
             return None
         outward = tau.normalized() * -1.0   # ferrule faces away from wire
         tip = pos + outward * tip_mm        # junction → optical face (= connect_in)
-        ay, az = _ortho_basis(outward)
+        raw_slow = end.get("slowAxisDegInBodyFrame")
+        ay, az = _slow_axis_basis(
+            outward,
+            float(raw_slow) if isinstance(raw_slow, (int, float)) else 0.0,
+        )
         return V3Anchor(
             id=anchor_id,
             position_body=tip,
@@ -427,6 +621,12 @@ async def _synth_fiber_slot(
         "coreRefractiveIndex": float(end_a.get("glassIndexAtDesignLambda", 1.46)),
         "attenuationDbPerKm": atten_db_km,
         "lengthM": _spline_length_m(so.properties),
+        # Polarization: which axis pair the op resolves against is carried by
+        # the anchors' axisY above; these two say whether it should bother.
+        "fiberType": str(kp.get("fiberType", "single_mode")),
+        "polarizationExtinctionRatioDb": float(
+            kp.get("polarizationExtinctionRatioDb", 25.0)
+        ),
     }
 
     return V3AnchorBindingSlot(
@@ -635,6 +835,14 @@ async def load_anchor_scene_from_db(
             ov = dynamic_overrides.get(str(so.id))
             if ov:
                 dyn = {**(dyn or {}), **ov}
+            # A pigtailed device's ports are the fibre connectors bound at
+            # them (Component binding properties.portAnchor) — see
+            # _port_connector_anchors. No-op for everything else.
+            if snap.kind != "fiber_connector":
+                snap = await _port_connector_anchors(
+                    session, snap, effective, binding_rows, binding_by_id,
+                    override_by_binding_id, binding_transform_memo, so_transform,
+                )
             slots.append(V3AnchorBindingSlot(
                 scene_object_id=str(so.id),
                 binding_id=binding_id,

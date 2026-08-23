@@ -78,6 +78,10 @@ export type V3Asset = {
   name: string;
   assetType: string;
   filePath: string;
+  /** Mtime of the file on the server, stamped onto the viewer URL as `?v=`
+   *  (see `resolveAssetUrl`). Rebuilding a mesh in place leaves the row
+   *  untouched, so without it the browser keeps the cached copy. */
+  fileVersion?: number | null;
   unit: string;
   scaleFactor: number;
   /** Classification slug (alembic 0090). Pointer into the Kind registry. */
@@ -117,6 +121,10 @@ export type V3Asset = {
 export type V3AssetLod = {
   level: number;
   filePath: string;
+  /** Mtime of the file on the server, stamped onto the viewer URL as `?v=`
+   *  (see `resolveAssetUrl`). Rebuilding a mesh in place leaves the row
+   *  untouched, so without it the browser keeps the cached copy. */
+  fileVersion?: number | null;
   triCount: number;
   byteSize: number;
   errorMm: number;

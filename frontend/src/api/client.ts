@@ -1223,7 +1223,13 @@ export async function compileTimingProgramsApi(): Promise<TimingProgramCompile> 
   }
 }
 
-export function resolveAssetUrl(filePath: string): string {
+/** `fileVersion` is the asset file's mtime, served alongside `filePath`. It is
+ *  what makes a rebuilt mesh visible on a plain reload: the files sit on stable
+ *  paths and the backend's StaticFiles mount sends no `cache-control`, so
+ *  without a changing URL the browser serves the previous mesh out of its
+ *  heuristic cache and the model looks unchanged. Pass the version whenever the
+ *  caller has the asset (or LOD tier) in hand. */
+export function resolveAssetUrl(filePath: string, fileVersion?: number | null): string {
   const appendCacheBust = (url: string): string => {
     const normalizedPath = filePath
       .split("?")[0]
@@ -1233,7 +1239,7 @@ export function resolveAssetUrl(filePath: string): string {
       "files/stl/ad9959_pcbz.stl": "ad9959-bodyframe-20260601",
       "files/stl/ad9959_pcbz_lod1.stl": "ad9959-lod1-boardfix-20260601",
     };
-    const version = cacheBustByPath[normalizedPath];
+    const version = fileVersion != null ? String(fileVersion) : cacheBustByPath[normalizedPath];
     if (!version) return url;
     return `${url}${url.includes("?") ? "&" : "?"}v=${version}`;
   };

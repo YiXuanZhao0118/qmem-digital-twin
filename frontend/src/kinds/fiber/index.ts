@@ -3,8 +3,12 @@
  * procedurally from a Bezier spline (no static GLB/STL asset).
  *
  * Storage: anchors live on Component.properties.fiberAnchors[] (parallel
- * to Asset.anchors[]) because fiber has no Asset3D — each patch cable
- * is its own 1:1 Component template.
+ * to Asset.anchors[]) because fiber has no Asset3D. The spline itself is
+ * per-INSTANCE (`SceneObject.properties.fiberNodes` + the fibre PE's
+ * `kindParams.endA/endB`), so several patch cords may share one catalog
+ * Component — node editing is keyed on objectId (2026-08-21). It used to
+ * be keyed on componentId, which is why this comment previously demanded
+ * a 1:1 Component per cable.
  *
  * End A = first spline node; End B = last. Both ends carry an FC
  * connector whose ferrule points outward along the Bezier handle. The

@@ -15,6 +15,7 @@ import type {
   ResolvedBindingNode,
   ResolvedLocalTransform,
 } from "../../utils/componentBindings";
+import type { FiberNode } from "../loadAsset/fiber/types";
 import { applyBindingLocalTransform, buildBindingTreeObject } from "../bindingTreeObject";
 
 
@@ -224,5 +225,149 @@ describe("buildBindingTreeObject", () => {
     expect(pivotDir.y).toBeCloseTo(-Math.SQRT1_2, 5);
     expect(contentDir.x).toBeCloseTo(0, 5);
     expect(contentDir.y).toBeCloseTo(1, 5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-binding pigtails (properties.fiberNodes)
+// ---------------------------------------------------------------------------
+
+
+/** A binding carrying its own fibre run — the pigtail of a fibre-coupled
+ *  instrument. A `fiber` patch cable keeps ONE spline on the Component /
+ *  SceneObject, so a two-pigtail part (the EOSpace EOM) has nowhere to put
+ *  the second; per-binding splines lift that limit. */
+function withPigtail(
+  node: ResolvedBindingNode,
+  props: Record<string, unknown>,
+): ResolvedBindingNode {
+  return { ...node, binding: { ...node.binding, properties: props } };
+}
+
+const NODES_2 = [
+  { posMm: [0, 0, 0] },
+  { posMm: [100, 0, -20] },
+];
+
+function pigtailsOf(group: THREE.Object3D): THREE.Mesh[] {
+  const found: THREE.Mesh[] = [];
+  group.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh && o.userData.fiberRole === "pigtail") {
+      found.push(o as THREE.Mesh);
+    }
+  });
+  return found;
+}
+
+const stubLoader = async (node: ResolvedBindingNode) => {
+  const g = new THREE.Group();
+  g.name = node.binding.id;
+  return g;
+};
+
+
+describe("per-binding pigtail", () => {
+  it("renders a tube for a binding that declares fiberNodes", async () => {
+    const node = withPigtail(makeNode("port"), { fiberNodes: NODES_2 });
+    const result = await buildBindingTreeObject([node], stubLoader);
+    const tubes = pigtailsOf(result);
+    expect(tubes).toHaveLength(1);
+    expect(tubes[0].name).toBe("port__pigtail");
+    expect(tubes[0].userData.__bindingId).toBe("port");
+  });
+
+  it("renders nothing without at least two nodes", async () => {
+    for (const props of [{}, { fiberNodes: [] }, { fiberNodes: [NODES_2[0]] }]) {
+      const result = await buildBindingTreeObject(
+        [withPigtail(makeNode("port"), props)], stubLoader,
+      );
+      expect(pigtailsOf(result)).toHaveLength(0);
+    }
+  });
+
+  it("hangs the tube on the PARENT, not the binding pivot", async () => {
+    // The nodes are in the parent's frame, so the binding's own local
+    // transform must NOT be applied to them a second time.
+    const node = withPigtail(
+      makeNode("port", makeTransform({ xMm: 500, rzDeg: 90 })),
+      { fiberNodes: NODES_2 },
+    );
+    const result = await buildBindingTreeObject([node], stubLoader);
+    const tube = pigtailsOf(result)[0];
+    expect(tube.parent).toBe(result);
+    expect(tube.position.x).toBe(0);
+    expect(tube.quaternion.x).toBe(0);
+    expect(tube.quaternion.w).toBe(1);
+  });
+
+  it("lets ONE component carry several independent runs", async () => {
+    const result = await buildBindingTreeObject([
+      withPigtail(makeNode("in"), { fiberNodes: NODES_2 }),
+      withPigtail(makeNode("out"), { fiberNodes: NODES_2 }),
+      makeNode("body"),
+    ], stubLoader);
+    expect(pigtailsOf(result).map((t) => t.name).sort())
+      .toEqual(["in__pigtail", "out__pigtail"]);
+  });
+
+  it("colours the jacket from the bound connector's fiberType", async () => {
+    const pm = withPigtail(makeNode("pm"), { fiberNodes: NODES_2 });
+    (pm.target as { kind: "asset"; asset: { defaultParams?: unknown } }).asset
+      .defaultParams = { fiberType: "polarization_maintaining" };
+    const sm = withPigtail(makeNode("sm"), { fiberNodes: NODES_2 });
+    (sm.target as { kind: "asset"; asset: { defaultParams?: unknown } }).asset
+      .defaultParams = { fiberType: "single_mode" };
+    const result = await buildBindingTreeObject([pm, sm], stubLoader);
+    const [tubePm, tubeSm] = pigtailsOf(result);
+    const hex = (m: THREE.Mesh) =>
+      "#" + (m.material as THREE.MeshStandardMaterial).color.getHexString();
+    expect(hex(tubePm)).toBe("#1d4ed8");   // PM blue
+    expect(hex(tubeSm)).toBe("#facc15");   // SM yellow
+  });
+
+  it("prefers the per-instance override over the binding baseline", async () => {
+    // The binding row is the catalog baseline shared by every instance of
+    // the part; how THIS one is dressed lives on the SceneObject. Same
+    // layer split as SceneObject.properties.fiberNodes over
+    // Component.properties.fiberNodes for a patch cable.
+    const node = withPigtail(makeNode("port"), { fiberNodes: NODES_2 });
+    const override: FiberNode[] = [{ posMm: [0, 0, 0] }, { posMm: [0, 0, 300] }];
+    const result = await buildBindingTreeObject(
+      [node], stubLoader, (id) => (id === "port" ? override : undefined),
+    );
+    const tube = pigtailsOf(result)[0];
+    tube.geometry.computeBoundingBox();
+    // The baseline run ends at x=100; the override runs up z instead.
+    expect(tube.geometry.boundingBox!.max.z).toBeGreaterThan(2.0);
+    expect(tube.geometry.boundingBox!.max.x).toBeLessThan(0.5);
+  });
+
+  it("ignores an override with fewer than two nodes", async () => {
+    const node = withPigtail(makeNode("port"), { fiberNodes: NODES_2 });
+    const result = await buildBindingTreeObject(
+      [node], stubLoader, () => [{ posMm: [0, 0, 0] }] as FiberNode[],
+    );
+    const tube = pigtailsOf(result)[0];
+    tube.geometry.computeBoundingBox();
+    expect(tube.geometry.boundingBox!.max.x).toBeGreaterThan(0.5);   // baseline
+  });
+
+  it("exposes the resolved nodes on userData for the node-edit gizmo", async () => {
+    const node = withPigtail(makeNode("port"), { fiberNodes: NODES_2, fiberRadiusMm: 1.4 });
+    const override: FiberNode[] = [{ posMm: [0, 0, 0] }, { posMm: [0, 0, 300] }];
+    const tube = pigtailsOf(await buildBindingTreeObject(
+      [node], stubLoader, () => override,
+    ))[0];
+    expect(tube.userData.pigtailNodes).toEqual(override);
+    expect(tube.userData.pigtailRadiusMm).toBe(1.4);
+  });
+
+  it("honours an explicit fiberJacketColor override", async () => {
+    const node = withPigtail(makeNode("port"), {
+      fiberNodes: NODES_2, fiberJacketColor: "#ff0000",
+    });
+    const tube = pigtailsOf(await buildBindingTreeObject([node], stubLoader))[0];
+    expect("#" + (tube.material as THREE.MeshStandardMaterial).color.getHexString())
+      .toBe("#ff0000");
   });
 });

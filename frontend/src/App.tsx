@@ -31,7 +31,7 @@ import { useSceneStore } from "./store/sceneStore";
 import { useV3Catalog } from "./store/catalogStore";
 import { invalidateRfConnectorCache } from "./three/loadAsset/rf_cable/connectorModels";
 import { invalidateFiberConnectorCache } from "./three/loadAsset/fiber/fiberConnectorModels";
-import type { SceneEvent } from "./types/digitalTwin";
+import type { SceneEvent, SceneObject } from "./types/digitalTwin";
 import type { OverlayKind } from "./types/visibility";
 
 // Room dimensions live in app_settings.room_dimensions (alembic 0043),
@@ -143,6 +143,31 @@ export default function App() {
         state.selectedComponentId ??
         (objectId ? state.scene.objects.find((o) => o.id === objectId)?.componentId ?? null : null);
 
+      if (event.key === "Delete") {
+        // Multi-delete. `selectedObjectIds` always holds the full selection
+        // (a plain click leaves exactly one id in it), so one call covers
+        // both the single- and multi-object cases and goes through the same
+        // batch path the Outliner uses — locked members are skipped and
+        // cables / PPGs cascade with their peers. Deletes are NOT on the
+        // undo stack, hence the confirm. PHY Editor has its own selection
+        // model, so the key stays Lab-only.
+        if (state.editorMode !== "scene") return;
+        const objectsById = new Map(state.scene.objects.map((o) => [o.id, o]));
+        const doomed = state.selectedObjectIds
+          .map((id) => objectsById.get(id))
+          .filter((o): o is SceneObject => o !== undefined && !o.locked);
+        if (doomed.length === 0) return;
+        event.preventDefault();
+        const label = doomed.length === 1 ? `"${doomed[0].name}"` : `${doomed.length} objects`;
+        if (
+          window.confirm(
+            `Delete ${label} from the scene? This removes ${doomed.length === 1 ? "it" : "them"} from every collection and cannot be undone.`,
+          )
+        ) {
+          void state.deleteObjects(doomed.map((o) => o.id));
+        }
+        return;
+      }
       if (event.key === "h" || event.key === "H") {
         event.preventDefault();
         if (event.shiftKey && objectId) {

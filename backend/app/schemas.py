@@ -14,6 +14,7 @@ from pydantic import (
     model_validator,
 )
 
+from .config import settings
 from .pose_quantize import quantize_deg, quantize_mm
 
 
@@ -216,11 +217,39 @@ class AssetAnchor(CamelModel):
     aperture_shape: Literal["circle", "ellipse", "rectangle"] | None = None
     name: str | None = None
     type: str | None = None
-    # Physical coaxial connector at this anchor — gender + family.
-    # Only meaningful for RF / TTL / Trigger anchors (rf_in / rf_out / ttl_in / trigger_in);
-    # left null on optical anchors. Edited per-anchor in the PHY Editor
-    # RF / Components view.
-    connector_type: Literal["sma_male", "sma_female", "bnc_male", "bnc_female"] | None = None
+    # Physical connector at this anchor.
+    #
+    # RF / TTL / Trigger anchors (rf_in / rf_out / ttl_in / trigger_in) carry
+    # the coax family + gender: sma_male / sma_female / bnc_male / bnc_female.
+    #
+    # OPTICAL anchors carry a fibre connector instead, and it is GENDERED for
+    # exactly the reason coax is (2026-08-23, replacing the ungendered
+    # `fc_pc` / `fc_apc` of 2026-08-21):
+    #
+    #   * `*_female` is a BULKHEAD on a chassis — a receptacle a patch cable
+    #     plugs INTO. It lives on a `fiber_in` / `fiber_out` anchor, and it is
+    #     what makes that anchor a snap target for
+    #     `findFiberPortAlignmentCandidates` and what a fibre endpoint link
+    #     (`SceneObject.properties.fiberEndpoints`) points at.
+    #   * `*_male` is the PLUG terminating a cable or a pigtail. It lives on a
+    #     `fiber_connector` asset's `connect_in`, mates INTO a receptacle, and
+    #     is never itself a port — without the gender split every cable end
+    #     would advertise itself as a socket and two cables could be plugged
+    #     into each other.
+    #
+    # Same split as coax, where `sma_female` is the panel jack and `sma_male`
+    # the cable plug. Only FC is listed because every fibre asset in the
+    # catalog is FC; add sc_* / lc_* / st_* here (and to the frontend
+    # `AssetAnchor.connectorType` union + the Asset3DEditor dropdown) when a
+    # part needs one.
+    #
+    # Left null on an optical anchor that is a free-space face — a mirror or
+    # a lens has no connector, and a null here is what keeps it out of the
+    # fibre port list.
+    connector_type: Literal[
+        "sma_male", "sma_female", "bnc_male", "bnc_female",
+        "fc_pc_male", "fc_pc_female", "fc_apc_male", "fc_apc_female",
+    ] | None = None
     # Asset-level fast-axis angle (deg) for waveplates and similar
     # birefringent optics. PHY Editor → Optical → Components edits this on
     # the intercept_in anchor (gated by plugin needsFastAxis). Per-instance
@@ -255,6 +284,23 @@ class AssetAnchor(CamelModel):
         return out
 
 
+def asset_file_version(file_path: str) -> int | None:
+    """Mtime of an asset file, stamped onto its viewer URL as ``?v=``.
+
+    Rebuilding a GLB in place leaves the DB row untouched, so the browser
+    keeps serving the old mesh out of its heuristic cache (the files are on
+    stable paths and StaticFiles sends no ``cache-control``) and the model
+    looks unchanged until a hard reload. None for a remote/unreadable path,
+    which just means no cache-buster.
+    """
+    if file_path.startswith(("http://", "https://")):
+        return None
+    try:
+        return int((settings.asset_root / file_path).stat().st_mtime)
+    except OSError:
+        return None
+
+
 class Asset3DBase(CamelModel):
     name: str
     asset_type: str
@@ -287,6 +333,11 @@ class Asset3DBase(CamelModel):
     # PHY Editor; the API rejects writes that change any field but this one.
     locked: bool = False
 
+    @computed_field(alias="fileVersion")
+    @property
+    def file_version(self) -> int | None:
+        return asset_file_version(self.file_path)
+
 
 class AssetLodOut(CamelModel):
     """One LOD tier of an asset (alembic 0122). Read-only projection — tiers
@@ -306,6 +357,11 @@ class AssetLodOut(CamelModel):
     byte_size: int
     error_mm: float
     hints_digest: str | None = None
+
+    @computed_field(alias="fileVersion")
+    @property
+    def file_version(self) -> int | None:
+        return asset_file_version(self.file_path)
 
 
 class Asset3DCreate(Asset3DBase):

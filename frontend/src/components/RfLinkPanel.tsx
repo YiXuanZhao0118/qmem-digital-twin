@@ -57,7 +57,7 @@ import {
   buildRfPropagationSchedule,
   getRfSnapshotAt,
 } from "../utils/rfPropagationSchedule";
-import { primaryAsset } from "../utils/componentBindings";
+import { assetsInBindingTree, primaryAsset } from "../utils/componentBindings";
 import { cableSplineLengthMm } from "../three/loadAsset/fiber/curve";
 import type { FiberNode } from "../three/loadAsset/fiber/types";
 import { ppgAttachments } from "../utils/ppgAttachment";
@@ -248,8 +248,8 @@ function rfLinkPortsOf(
 }
 
 /** Fallback ports for an RF object with no resolvable Asset3D at all —
- *  neither a root `targetKind="asset"` ComponentBinding nor the legacy
- *  `component.asset3dId` field (see `assetByObjectId` → `primaryAsset`).
+ *  no `targetKind="asset"` binding anywhere in its tree, nor the legacy
+ *  `component.asset3dId` field (see `rfAnchorsByObjectId`).
  *  Synthesized from the kind's role contract via `rfLinkRoleAnchors` so the
  *  logical RF node still appears instead of being silently dropped.
  *  `connectorFamily` is null because connector types live on the (absent)
@@ -881,6 +881,35 @@ export function RfLinkPanel() {
     };
   }, [components, assets, componentBindings]);
 
+  /** Anchors an object's RF ports may be built from: EVERY asset in the
+   *  Component's binding tree, not just the main body. `primaryAsset`
+   *  answers null for a multi-root Component (EOM + its two FC/APC
+   *  connectors), which used to drop the modulator's `rf_in` on the floor
+   *  and leave the port stuck at "NO CONN" — undraggable, and rejected as
+   *  a drop target. Aggregating the tree keeps the panel honest for any
+   *  composite RF part. Anchors are deduped by `anchorId|anchorName` (the
+   *  port identity an RfLink stores), first occurrence winning, so two
+   *  copies of the same connector asset can't produce two
+   *  indistinguishable ports. */
+  const rfAnchorsByObjectId = useMemo(() => {
+    const compMap = new Map<string, ComponentItem>(components.map((c) => [c.id, c]));
+    return (obj: SceneObject): Anchor[] => {
+      const c = compMap.get(obj.componentId);
+      if (!c) return [];
+      const out: Anchor[] = [];
+      const seen = new Set<string>();
+      for (const asset of assetsInBindingTree(c, { componentBindings, assets, components })) {
+        for (const a of asset.anchors ?? []) {
+          const key = `${a.id}|${a.name ?? a.id}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push(a);
+        }
+      }
+      return out;
+    };
+  }, [components, assets, componentBindings]);
+
   const nodes = useMemo<RfNode[]>(() => {
     const list: RfNode[] = [];
     for (const obj of objects) {
@@ -889,12 +918,11 @@ export function RfLinkPanel() {
       // Plugin-driven gate — skips fiber / waveplate / lens / etc. even
       // if their asset row spuriously carries an rf_* anchor name.
       if (!kindParticipatesInRfLink(kind)) continue;
-      const asset = assetByObjectId(obj);
-      let ports = rfLinkPortsOf(asset?.anchors ?? [], kind);
+      let ports = rfLinkPortsOf(rfAnchorsByObjectId(obj), kind);
       if (ports.length === 0) {
-        // No resolvable Asset3D (no binding + no legacy field): fall back to
-        // the kind's declared RF role contract so the logical node still
-        // shows up instead of being silently dropped.
+        // No asset anywhere in the binding tree (and no legacy field): fall
+        // back to the kind's declared RF role contract so the logical node
+        // still shows up instead of being silently dropped.
         ports = rfLinkFallbackPorts(kind);
       }
       if (ports.length === 0) continue;
@@ -907,7 +935,7 @@ export function RfLinkPanel() {
       });
     }
     return list;
-  }, [objects, kindByObjectId, assetByObjectId, peByObjectId, timingPrograms]);
+  }, [objects, kindByObjectId, rfAnchorsByObjectId, peByObjectId, timingPrograms]);
 
   const { edges, dangling } = useMemo<{ edges: RfEdge[]; dangling: DanglingCable[] }>(() => {
     const edgesOut: RfEdge[] = [];

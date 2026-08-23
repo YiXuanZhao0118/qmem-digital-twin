@@ -269,6 +269,7 @@ const SHORTCUTS = `# Keyboard shortcuts
 
 | Key | Action |
 |---|---|
+| **Del** | Delete every selected object (asks first; locked objects are skipped, and this is *not* undoable) |
 | **Ctrl/Cmd + Z** | Undo (also the ↶ button in the top bar's Edit group, whose tooltip names the step it will reverse) |
 | **Ctrl/Cmd + Shift + Z** or **Ctrl/Cmd + Y** | Redo |
 | **Tab** (while dragging) | Cycle through snap candidates |

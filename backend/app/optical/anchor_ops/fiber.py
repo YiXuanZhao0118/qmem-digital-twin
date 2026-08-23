@@ -36,6 +36,7 @@ from app.optical.anchor_tracer import (
     V3Anchor,
 )
 from app.optical.beam_ray import BeamRay, Vec3
+from app.optical.jones import q_frame_angle_to_axis, rotate_jones
 
 
 def _other_tip(asset_anchors, hit_id: str) -> V3Anchor | None:
@@ -55,6 +56,54 @@ def _q_at_waist(w0_um: float, wavelength_nm: float) -> complex:
         return complex(0.0, 0.0)
     zR_um = math.pi * w0_um * w0_um / wavelength_nm * 1000.0  # convert λ nm → mm consistent units
     return complex(0.0, zR_um / 1000.0)  # back to mm
+
+
+def _pm_transfer(
+    jones: tuple[complex, complex],
+    in_anchor: V3Anchor,
+    in_direction: Vec3,
+    out_anchor: V3Anchor,
+    out_direction: Vec3,
+    per_db: float,
+) -> tuple[complex, complex]:
+    """Polarization through a PM (panda / bow-tie) patch cord.
+
+    A PM fibre is NOT a polarizer — it is a strongly birefringent guide with
+    two eigen-axes. Both components propagate; what the fibre gives you is
+    that a launch ON an axis STAYS on it. So:
+
+      * resolve the incoming Jones on the ENTRY end's slow axis (that end's
+        anchor axisY, which the loader put on ``slowAxisDegInBodyFrame``),
+      * apply the crosstalk floor: ``polarizationExtinctionRatioDb`` is
+        exactly "launch on one axis, this much power appears on the other",
+        modelled as a small UNITARY mixing angle ε = atan(10^(-PER/20)) —
+        a rotation, not an in-phase addition. A coherent addition would
+        create power on a two-axis launch (a 45° input came out 0.4 dB up);
+        a rotation is exactly power-preserving for every input and still
+        gives leak² on the orthogonal axis for a single-axis launch, which
+        is what the spec number means,
+      * re-express on the EXIT end's slow axis.
+
+    That last step is the point: a patch cord whose two connector keys are
+    twisted relative to each other ROTATES the polarization by that twist,
+    which is what a real one does and what makes the key angle worth setting.
+
+    NOT modelled: the differential phase between the two axes. Over a metre
+    of PM fibre with Δn≈5e-4 at 852 nm it is ~10⁶ rad — unresolvable, and
+    unstable against temperature, so a fitted number would be fiction. The
+    consequence is that an OFF-axis launch comes out with its ellipticity
+    unchanged here, where a real fibre would hand back something arbitrary.
+    Launch on an axis (the way PM fibre is meant to be used) and this is
+    exact; launch at 45° and only the power split is meaningful.
+    """
+    eps = math.atan(10.0 ** (-per_db / 20.0))
+    c, sn = math.cos(eps), math.sin(eps)
+
+    theta_in = q_frame_angle_to_axis(in_anchor.axis_y_body, in_direction)
+    e_slow, e_fast = rotate_jones(jones, theta_in)
+    mixed = (c * e_slow - sn * e_fast, sn * e_slow + c * e_fast)
+    theta_out = q_frame_angle_to_axis(out_anchor.axis_y_body, out_direction)
+    return rotate_jones(mixed, -theta_out)
 
 
 def fiber_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
@@ -113,10 +162,22 @@ def fiber_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
     out_dir = out_anchor.axis_x_body
     new_q = _q_at_waist(w0_um, ray_in.wavelength_nm)
 
+    # Polarization. PM fibre resolves the field on its two eigen-axes and
+    # carries the entry key's twist through to the exit key; SM / MM fibre
+    # scrambles it in reality, and v1 passes it through untouched rather than
+    # inventing a scramble the user cannot control.
+    jones_out = ray_in.jones
+    if str(ctx.params.get("fiberType", "")) == "polarization_maintaining":
+        jones_out = _pm_transfer(
+            ray_in.jones, ctx.anchor, ray_in.direction, out_anchor, out_dir,
+            float(ctx.params.get("polarizationExtinctionRatioDb", 25.0)),
+        )
+
     return [ray_in.replaced(
         origin=out_origin,
         direction=out_dir,
         power_mw=ray_in.power_mw * eta_total,
+        jones=jones_out,
         qx=new_q,
         qy=new_q,
         # The fibre mode is round, so it is the same in every transverse

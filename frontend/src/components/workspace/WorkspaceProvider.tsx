@@ -30,6 +30,10 @@ export type PanelLayout = {
   collapsed: boolean;
   z: number;
   dock: DockZone;
+  /** Share of the dock zone this panel takes when stacked with siblings —
+   *  a flex-grow weight, so 2 next to 1 means twice the height. Undefined =
+   *  1 (equal split); set by the splitter between two docked panels. */
+  dockWeight?: number;
 };
 
 export type PanelId =
@@ -165,6 +169,10 @@ function loadLayout(viewportWidth: number): LayoutMap {
           collapsed: stored.collapsed === true,
           z: typeof stored.z === "number" ? stored.z : fallback[def.id].z,
           dock: DOCK_ZONES.includes(stored.dock) ? stored.dock : fallback[def.id].dock,
+          dockWeight:
+            typeof stored.dockWeight === "number" && stored.dockWeight > 0
+              ? stored.dockWeight
+              : undefined,
         };
       } else {
         out[def.id] = fallback[def.id];

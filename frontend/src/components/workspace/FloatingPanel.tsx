@@ -38,6 +38,7 @@ export function FloatingPanel({ id, title, icon, children, badge }: Props) {
     togglePanelVisible,
     togglePanelCollapsed,
     setPanelDock,
+    setPanelLayout,
   } = useWorkspace();
   const layout = layouts[id];
   const isDocked = layout.dock !== "float";
@@ -53,6 +54,53 @@ export function FloatingPanel({ id, title, icon, children, badge }: Props) {
       layout.dock === "float" ? null : document.getElementById(`dock-${layout.dock}`);
     setDockNode((prev) => (prev === next ? prev : next));
   });
+
+  // Splitter on the bottom edge of a docked panel: drags the boundary between
+  // this panel and the next expanded one in the same zone. Docked heights are
+  // flex-grow weights, so the pixel delta is converted back into a re-split of
+  // the pair's combined weight — the other panels in the zone don't move.
+  const onSplitterPointerDown = useCallback(
+    (event: React.PointerEvent) => {
+      if (event.button !== 0) return;
+      const self = (event.currentTarget as HTMLElement).parentElement;
+      if (!self) return;
+      let next = self.nextElementSibling as HTMLElement | null;
+      while (next && next.classList.contains("collapsed")) {
+        next = next.nextElementSibling as HTMLElement | null;
+      }
+      const nextId = next?.dataset.panelId as PanelId | undefined;
+      if (!next || !nextId) return; // nothing resizable below — ignore the drag
+      event.preventDefault();
+      const startY = event.clientY;
+      const h1 = self.offsetHeight;
+      const h2 = next.offsetHeight;
+      const total = (layouts[id].dockWeight ?? 1) + (layouts[nextId].dockWeight ?? 1);
+      const grip = event.currentTarget as HTMLElement;
+      grip.setPointerCapture(event.pointerId);
+      document.body.classList.add("is-dock-resize");
+
+      const onMove = (e: PointerEvent) => {
+        const dy = Math.max(
+          MIN_H_EXPANDED - h1,
+          Math.min(h2 - MIN_H_EXPANDED, e.clientY - startY),
+        );
+        const share = (h1 + dy) / (h1 + h2);
+        setPanelLayout(id, { dockWeight: total * share });
+        setPanelLayout(nextId, { dockWeight: total * (1 - share) });
+      };
+      const onUp = (e: PointerEvent) => {
+        grip.releasePointerCapture(e.pointerId);
+        document.body.classList.remove("is-dock-resize");
+        grip.removeEventListener("pointermove", onMove);
+        grip.removeEventListener("pointerup", onUp);
+        grip.removeEventListener("pointercancel", onUp);
+      };
+      grip.addEventListener("pointermove", onMove);
+      grip.addEventListener("pointerup", onUp);
+      grip.addEventListener("pointercancel", onUp);
+    },
+    [id, layouts, setPanelLayout],
+  );
 
   // Re-dock target for a floating panel: its home dock, unless that's "float"
   // (transient panels), in which case wide ones go bottom, the rest right.
@@ -238,6 +286,7 @@ export function FloatingPanel({ id, title, icon, children, badge }: Props) {
       <section
         className={`docked-panel${layout.collapsed ? " collapsed" : ""}`}
         data-panel-id={id}
+        style={layout.collapsed ? undefined : { flexGrow: layout.dockWeight ?? 1 }}
       >
         <header
           className="docked-panel-header"
@@ -258,6 +307,14 @@ export function FloatingPanel({ id, title, icon, children, badge }: Props) {
           </span>
         </header>
         {!layout.collapsed && <div className="docked-panel-body">{children}</div>}
+        {!layout.collapsed && (
+          <div
+            className="docked-panel-resize"
+            aria-hidden
+            title="Drag to resize"
+            onPointerDown={onSplitterPointerDown}
+          />
+        )}
       </section>,
       dockNode,
     );

@@ -28,6 +28,7 @@ import type { Asset3D, SceneObject } from "../types/digitalTwin";
 import { anchorObjectLocalAxisX, anchorObjectLocalPos } from "../utils/anchorAccess";
 import { mmToThree } from "./frames";
 import { buildPolarizationMarkers } from "./polarizationMarker";
+import { findCableRootAnchor, findMatingFaceAnchor } from "../utils/connectorAnchors";
 
 /** Loose subset of `V3TraceSegment` the beam chain reads. */
 export type LinkTraceSegment = {
@@ -70,9 +71,16 @@ const DARK_POWER_FACTOR = 0.01;
  *  tracer hit-tests) plus the legacy `optical_anchor` alias — a marker claims
  *  "this is the surface the beam is acted on", so it must not appear anywhere
  *  the tracer would never intercept. */
-const PRIMARY_OPTICAL_ANCHOR_IDS = [
+export const PRIMARY_OPTICAL_ANCHOR_IDS = [
   "optical_center", "optical_anchor", "intercept_face",
   "interaction_center", "intercept_in", "intercept_out",
+  // A fibre bulkhead IS hit-tested (alembic 0133): the ~10 um mating-gap
+  // segment terminates on it, so it is a real coupling surface and belongs
+  // here. Missed when `fiber_in` was added backend-side, which silently cost
+  // the RXM15EF the marker it had as an `intercept_in`. `fiber_out` /
+  // `fiber_root` are deliberately absent — they live on the passthrough
+  // connector and the tracer never intercepts them.
+  "fiber_in",
 ];
 
 /** Diagonal of the box enclosing every segment endpoint (three units), floored
@@ -472,8 +480,8 @@ function connectorTipAndAperture(
   let tipMm = fallbackTipMm;
   let apertureMm = fallbackApertureMm;
   if (!connector) return { tipMm, apertureMm };
-  const cIn = (connector.anchors ?? []).find((a) => a.id === "connect_in");
-  const cOut = (connector.anchors ?? []).find((a) => a.id === "connect_out");
+  const cIn = findMatingFaceAnchor(connector.anchors);
+  const cOut = findCableRootAnchor(connector.anchors);
   if (!cIn) return { tipMm, apertureMm };
   if (typeof cIn.apertureMm === "number" && cIn.apertureMm > 0) apertureMm = cIn.apertureMm;
   if (cOut) {

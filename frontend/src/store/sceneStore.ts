@@ -74,6 +74,7 @@ import type {
   ConnectionItem,
   DeviceState,
   ElementKind,
+  FiberEndpointLink,
   PhysicsElement,
   OpticalLink,
   RelationType,
@@ -115,12 +116,30 @@ import { computeVisibleCollectionIds } from "../utils/visibility";
 import { quantizePosePatch } from "../optical/poseQuantize";
 import {
   findFiberEndAlignmentCandidates,
+  findFiberPortAlignmentCandidates,
+  isFiberPortConnectorType,
   withFiberPortLabPose,
   type BeamSegmentLab,
   type FiberAlignmentCandidate,
+  type FiberPortLab,
+  type FiberPortLink,
 } from "../utils/fiberAlignment";
 import {
+  bindingPoseDelta,
+  composeBindingPoses,
+  computeConnectorAlignPose,
+  connectorPortLab,
+  findPigtailBeamCandidates,
+  findPigtailPortCandidates,
+  matedFaceLab,
+  pigtailNodesFollowingConnector,
+  type PigtailAlignmentCandidate,
+} from "../utils/pigtailAlignment";
+import {
+  FIBER_FERRULE_TIP_MM,
+  fiberConnectorTipMmFromAnchors,
   resolveFiberEndKindParams,
+  resolveLinkedFiberEndpoint,
   syncFiberNodesFromKindParams,
 } from "../utils/fiberAnchorResolver";
 import {
@@ -131,7 +150,13 @@ import { expandPoseToRigidGroup, patchHasPoseChange } from "../utils/rigidGroup"
 import { anchorObjectLocalPrimaryDir } from "../utils/anchorAccess";
 import { isComponentLocked } from "../utils/components";
 import { capabilityProfile } from "../kinds/_capabilityProfile";
-import { deriveCablePropsFromConnectorBindings, primaryAsset } from "../utils/componentBindings";
+import {
+  anchorsInBindingTree,
+  deriveCablePropsFromConnectorBindings,
+  findAnchorInBindingTree,
+  pigtailPortBindings,
+  primaryAsset,
+} from "../utils/componentBindings";
 import { TABLE_TOP_HEIGHT_MM } from "../three/photoRoom";
 import { ppgsAttachedTo } from "../utils/ppgAttachment";
 import {
@@ -242,6 +267,187 @@ async function syncFiberEndpointToKindParams(
   };
   await upsertOpticalElement({ objectId: obj.id, elementKind: "fiber", kindParams: kp });
 }
+/** body→lab for one SceneObject pose (lab = pose + R_z · R_x · R_y · body).
+ *  Local copy so the fibre-port collector below doesn't have to reach into
+ *  the inline one inside `findRfCableAlignmentCandidates`. */
+function makeLabTransforms(pose: {
+  xMm: number; yMm: number; zMm: number;
+  rxDeg: number; ryDeg: number; rzDeg: number;
+}) {
+  const rxr = (pose.rxDeg * Math.PI) / 180;
+  const ryr = (pose.ryDeg * Math.PI) / 180;
+  const rzr = (pose.rzDeg * Math.PI) / 180;
+  const cx = Math.cos(rxr), sxr = Math.sin(rxr);
+  const cy = Math.cos(ryr), syr = Math.sin(ryr);
+  const cz = Math.cos(rzr), szr = Math.sin(rzr);
+  const rot = (v: [number, number, number]): [number, number, number] => {
+    const x1 = cy * v[0] + syr * v[2];
+    const y1 = v[1];
+    const z1 = -syr * v[0] + cy * v[2];
+    const y2 = cx * y1 - sxr * z1;
+    const z2 = sxr * y1 + cx * z1;
+    return [cz * x1 - szr * y2, szr * x1 + cz * y2, z2];
+  };
+  return {
+    bodyToLab: (v: [number, number, number]): [number, number, number] => {
+      const r = rot(v);
+      return [pose.xMm + r[0], pose.yMm + r[1], pose.zMm + r[2]];
+    },
+    bodyToLabDir: rot,
+  };
+}
+
+/** Beam segments in LAB mm, scraped off the live `__rayTraceDebug` the
+ *  viewer publishes (three.js world coords, units = 100 mm, y-up — the
+ *  inverse swap is `lab = three * 100`). Segments emitted BY
+ *  `excludeSourceObjectId` are skipped so a part never snaps to its own
+ *  output.
+ *
+ *  Each segment is tagged with `aomSideband.order` and a human-readable
+ *  label (emitter + source + order + wavelength) so AOM ±1 orders that share
+ *  an emitter stay DISTINCT, pickable candidates instead of collapsing onto
+ *  whichever one happens to be geometrically closest.
+ *
+ *  Shared by the fibre and pigtail align pickers — both ask the same
+ *  question ("which beams pass near this face?") and must answer it with the
+ *  same labels, or the two pickers disagree about what the user is looking
+ *  at. */
+function collectBeamSegmentsLab(
+  scene: SceneData,
+  excludeSourceObjectId: string | null,
+): BeamSegmentLab[] {
+  type TraceSeg = {
+    sourceObjectId?: string;
+    emitterObjectId?: string;
+    startThree?: { x: number; y: number; z: number };
+    endThree?: { x: number; y: number; z: number };
+    hitObjectId?: string | null;
+    wavelengthNm?: number;
+    branch?: string;
+    aomSideband?: { order?: number };
+  };
+  const traces: TraceSeg[] = ((typeof window !== "undefined"
+    ? (window as unknown as { __rayTraceDebug?: TraceSeg[] }).__rayTraceDebug
+    : undefined) ?? []) as TraceSeg[];
+  const threeToLab = (v: { x: number; y: number; z: number }): [number, number, number] =>
+    [v.x * 100, v.y * 100, v.z * 100];
+  const objectNameById = (id: string | undefined | null): string => {
+    if (!id) return "?";
+    const o = scene.objects.find((x) => x.id === id);
+    return o?.name ?? id.slice(0, 6);
+  };
+  const formatOrder = (order: number | undefined | null): string => {
+    if (order === undefined || order === null) return "";
+    if (order === 0) return " 0-order";
+    if (order > 0) return ` +${order}-order`;
+    return ` ${order}-order`;
+  };
+  const out: BeamSegmentLab[] = [];
+  for (const seg of traces) {
+    if (!seg.startThree || !seg.endThree) continue;
+    if (excludeSourceObjectId && seg.sourceObjectId === excludeSourceObjectId) continue;
+    const order = seg.aomSideband?.order;
+    const emitterName = objectNameById(seg.emitterObjectId);
+    const sourceName = objectNameById(seg.sourceObjectId);
+    const wavelengthStr =
+      typeof seg.wavelengthNm === "number" ? ` @ ${seg.wavelengthNm.toFixed(0)} nm` : "";
+    const sourcePart =
+      seg.sourceObjectId && seg.sourceObjectId !== seg.emitterObjectId
+        ? ` via ${sourceName}`
+        : "";
+    out.push({
+      beamId: `trace:${(seg.emitterObjectId ?? "?").slice(0, 8)}:o${order ?? "x"}:${(seg.sourceObjectId ?? "?").slice(0, 8)}`,
+      aMm: threeToLab(seg.startThree),
+      bMm: threeToLab(seg.endThree),
+      displayLabel: `${emitterName}${sourcePart}${formatOrder(order)}${wavelengthStr}`,
+      emitterObjectId: seg.emitterObjectId,
+      aomOrder: order ?? null,
+      branch: seg.branch,
+      wavelengthNm: seg.wavelengthNm,
+    });
+  }
+  return out;
+}
+
+/** Every fibre RECEPTACLE in the scene, in lab frame — an optical anchor
+ *  that declares a fibre `connectorType` (see `isFiberPortConnectorType`).
+ *  The optical twin of the `rf_in`/`rf_out` sweep in
+ *  `findRfCableAlignmentCandidates`, and it walks the whole binding tree for
+ *  the same reason: reading `asset3dId` misses every binding-backed object,
+ *  and `primaryAsset` still misses a multi-root one.
+ *
+ *  Direction comes from `anchorObjectLocalPrimaryDir` (axisX first) — a
+ *  device-materialised anchor carries only `axisXBodyLocal` and a naive read
+ *  of `directionBodyLocal` would silently default every port to +X. */
+function collectFiberPortsLab(
+  scene: SceneData,
+  excludeObjectId: string | null,
+  /** Restrict to ONE object's ports. Used by the instrument-side panel,
+   *  which asks "what receptacles do I have?" rather than the fibre-side
+   *  "what can this end reach?". */
+  onlyObjectId?: string,
+): FiberPortLab[] {
+  const ports: FiberPortLab[] = [];
+  for (const other of scene.objects) {
+    if (other.id === excludeObjectId) continue;
+    if (onlyObjectId && other.id !== onlyObjectId) continue;
+    const otherComp = scene.components.find((c) => c.id === other.componentId);
+    if (!otherComp) continue;
+    const { bodyToLab, bodyToLabDir } = makeLabTransforms(other);
+    for (const { asset, anchor: a } of anchorsInBindingTree(otherComp, scene)) {
+      if (!isFiberPortConnectorType(a.connectorType)) continue;
+      const primaryDir = anchorObjectLocalPrimaryDir(a, asset);
+      ports.push({
+        labPosMm: bodyToLab([
+          a.positionMmBodyLocal.x,
+          a.positionMmBodyLocal.y,
+          a.positionMmBodyLocal.z,
+        ]),
+        labAxisX: bodyToLabDir(
+          primaryDir ? [primaryDir.x, primaryDir.y, primaryDir.z] : [1, 0, 0],
+        ),
+        targetName: other.name,
+        targetObjectId: other.id,
+        targetAnchorName: a.name ?? a.id,
+        targetAnchorId: a.id,
+      });
+    }
+  }
+  return ports;
+}
+
+/** Junction → optical-face distance for one end of a fibre, read off that
+ *  end's bound connector asset. Same derivation the backend's
+ *  `_connector_tip_and_aperture` uses, so the face the frontend mates onto a
+ *  port is the face the solver couples through.
+ *
+ *  **Which binding is "this end" must match `_synth_fiber_slot._connector_asset`
+ *  exactly**, and that accepts EITHER key: `properties.splineEnd === "A"|"B"`
+ *  or `role === "end_a"|"end_b"`. Matching only on `role` silently falls back
+ *  to the 36.28 mm FC constant for the catalog fibres that use splineEnd
+ *  (`Fiber PM PC-APC` binds `pm_780_pc` / `pm_780_apc`, whose real tips are
+ *  59.5 / 59.3 mm) — a ~23 mm error between where the UI mates the face and
+ *  where the solver couples, i.e. a cable that looks plugged in and reads
+ *  nothing. Falls back to the FC housing constant only when neither key
+ *  resolves an asset. */
+function fiberEndConnectorTipMm(
+  scene: SceneData,
+  componentId: string | null | undefined,
+  end: "A" | "B",
+): number {
+  if (!componentId) return FIBER_FERRULE_TIP_MM;
+  const role = end === "A" ? "end_a" : "end_b";
+  const binding = (scene.componentBindings ?? []).find((b) => {
+    if (b.componentId !== componentId || b.targetKind !== "asset") return false;
+    const splineEnd = (b.properties as { splineEnd?: string } | undefined)?.splineEnd;
+    return splineEnd === end || b.role === role;
+  });
+  const asset = binding?.asset3dId
+    ? scene.assets.find((a) => a.id === binding.asset3dId)
+    : undefined;
+  return fiberConnectorTipMmFromAnchors(asset?.anchors);
+}
+
 export type TransformPivotMode = "median" | "individual" | "cursor";
 export type TransformAxis = "x" | "y" | "z";
 export type LabPoint = { x: number; y: number; z: number };
@@ -573,15 +779,23 @@ type SceneStore = {
     seed?: Record<string, unknown> & { zMm?: number },
   ) => Promise<ComponentItem>;
   /** When non-null, the viewer renders Bezier-style anchor + tangent-handle
-   *  gizmos for this fiber component, dims everything else, and routes
+   *  gizmos for this fiber SceneObject, dims everything else, and routes
    *  pointer events to the spline editor (drag anchor / drag handle tip /
-   *  double-click tube to insert / right-click anchor to delete). */
-  fiberEditingComponentId: string | null;
-  enterFiberEdit: (componentId: string) => void;
+   *  double-click tube to insert / right-click anchor to delete).
+   *
+   *  Keyed by objectId, NOT componentId (2026-08-21). It used to be the
+   *  component, and every fibre action resolved the target back with
+   *  `objects.find((o) => o.componentId === …)` — the FIRST match. Two
+   *  SceneObjects instantiated from one catalog fibre therefore shared a
+   *  single editable spline: the gizmo drew object #1's nodes no matter
+   *  which you selected, and every drag committed to object #1, so the
+   *  second cable could not be shaped at all. Same keying as rf_cable. */
+  fiberEditingObjectId: string | null;
+  enterFiberEdit: (objectId: string) => void;
   exitFiberEdit: () => void;
-  /** RF-cable equivalent of `fiberEditingComponentId`. Tracks which
+  /** RF-cable equivalent of `fiberEditingObjectId`. Tracks which
    *  rf_cable SceneObject's spline gizmo is currently active. Mutually
-   *  exclusive with `fiberEditingComponentId` — entering one clears the
+   *  exclusive with `fiberEditingObjectId` — entering one clears the
    *  other so the viewer only renders one cable's gizmo at a time. The
    *  ViewerDisplayMode "node-edit" flips this on whenever the user clicks
    *  an rf_cable in the 3D viewport. */
@@ -590,11 +804,44 @@ type SceneStore = {
   exitRfCableEdit: () => void;
   /** Replace the entire node array. Used during a single drag gesture: the
    *  viewer mutates locally for live feedback then commits via this action
-   *  on pointer-up. Stored on Component.properties (v1 — per-instance
-   *  overrides on SceneObject.properties is a follow-up). */
-  updateFiberNodes: (componentId: string, nodes: FiberNodePersist[]) => Promise<void>;
-  insertFiberNode: (componentId: string, index: number, node: FiberNodePersist) => Promise<void>;
-  removeFiberNode: (componentId: string, index: number) => Promise<void>;
+   *  on pointer-up. Written to `SceneObject.properties.fiberNodes` and keyed
+   *  by objectId, so two instances of one catalog fibre shape separately. */
+  updateFiberNodes: (
+    objectId: string,
+    nodes: FiberNodePersist[],
+    /** When set, also remove the matching link record from
+     *  `SceneObject.properties.fiberEndpoints`. Used by node-edit's
+     *  pointer-up so dragging an endpoint by hand escapes the "plugged
+     *  into a port" mode — manual override beats link, same rule the
+     *  rf_cable side follows. */
+    clearEndpointLink?: "A" | "B",
+  ) => Promise<void>;
+  insertFiberNode: (objectId: string, index: number, node: FiberNodePersist) => Promise<void>;
+  removeFiberNode: (objectId: string, index: number) => Promise<void>;
+  /** PIGTAIL spline of a fibre-coupled instrument — the run between the
+   *  device body and the connector one ComponentBinding places
+   *  (`ComponentBinding.properties.fiberNodes`, see
+   *  three/bindingTreeObject.ts).
+   *
+   *  Keyed by (objectId, bindingId) and written to
+   *  `SceneObject.properties.bindingFiberNodes[bindingId]`, NEVER back to
+   *  the binding row: that row is the catalog baseline shared by every
+   *  instance of the part, and writing a drag there is the exact
+   *  layer-confusion bug the 2026-05-11 fix in `updateFiberNodes` below
+   *  describes — one dressed pigtail would reshape every EOM in every
+   *  scene. `resetPigtailNodes` drops the override so the instance tracks
+   *  the catalog shape again.
+   *
+   *  Why per-binding and not the patch-cable mechanism: `kindParams` hangs
+   *  off a PhysicsElement and the loader keeps ONE per SceneObject (already
+   *  taken by the instrument's own kind), and `properties.fiberNodes` is a
+   *  single array — neither can hold a part's SECOND pigtail. */
+  updatePigtailNodes: (
+    objectId: string,
+    bindingId: string,
+    nodes: FiberNodePersist[],
+  ) => Promise<void>;
+  resetPigtailNodes: (objectId: string, bindingId: string) => Promise<void>;
   /** RF-cable analog of updateFiberNodes / insertFiberNode / removeFiberNode.
    *  All write through to `SceneObject.properties.rfCableNodes` (keyed by
    *  objectId since rf_cable geometry is always per-instance — no V1 catalog
@@ -624,7 +871,7 @@ type SceneStore = {
    *  internal nodes untouched. Returns the fiber-to-beam offset that
    *  was zeroed out (for UI feedback) or null if no beam in range. */
   alignFiberEndToBeam: (
-    componentId: string,
+    objectId: string,
     end: "A" | "B",
     toleranceMm?: number,
   ) => Promise<{ offsetMm: number; beamId: string } | null>;
@@ -636,17 +883,97 @@ type SceneStore = {
    *  other downstream of a Bragg cell, or beam-splitter R+T branches that
    *  both fall inside the 25 mm tolerance window. */
   findFiberAlignmentCandidates: (
-    componentId: string,
+    objectId: string,
     end: "A" | "B",
     toleranceMm?: number,
   ) => Promise<FiberAlignmentCandidate[]>;
   /** Phase B: apply a specific candidate (verbatim from
    *  `findFiberAlignmentCandidates`) to the fiber's endpoint node + handle. */
   applyFiberAlignmentCandidate: (
-    componentId: string,
+    objectId: string,
     end: "A" | "B",
     candidate: FiberAlignmentCandidate,
   ) => Promise<void>;
+  /** The fibre receptacles ONE object exposes — the instrument-side view of
+   *  the same ports `findFiberAlignmentCandidates` offers a cable. Drives the
+   *  Object panel's "Fibre ports" section, which is where you plug a cable in
+   *  from the part rather than from the cable. Synchronous: it is a read of
+   *  the current scene, no candidate maths. */
+  listFiberPortsOfObject: (objectId: string) => FiberPortLab[];
+  /** Which fibre END is currently plugged into a given port, if any. Scans
+   *  every fibre's `properties.fiberEndpoints` for a link pointing back here
+   *  — the link is stored on the CABLE, so the instrument has to look it up
+   *  in reverse. */
+  fiberPluggedIntoPort: (
+    objectId: string,
+    anchorId: string,
+    anchorName: string,
+  ) => { fiberObjectId: string; fiberName: string; end: "A" | "B" } | null;
+  /** Phase A of plugging in FROM the instrument: every fibre end within
+   *  `toleranceMm` of this port, closest first, each carrying the ready-made
+   *  candidate to hand to `applyFiberAlignmentCandidate`. The mirror image of
+   *  `findFiberAlignmentCandidates` — same maths, opposite starting point. */
+  findFiberEndsForPort: (
+    objectId: string,
+    anchorId: string,
+    anchorName: string,
+    toleranceMm?: number,
+  ) => Promise<Array<{
+    fiberObjectId: string;
+    fiberName: string;
+    end: "A" | "B";
+    distMm: number;
+    candidate: FiberAlignmentCandidate;
+  }>>;
+  /** Explicit "unplug": drop the link record for one fibre end WITHOUT
+   *  moving the spline. The end stays exactly where it is, it just stops
+   *  following the instrument. Unlike `clearRfCableEndpointLink` (which
+   *  deletes the whole cable) a patch cable survives being unplugged —
+   *  a dangling fibre on the bench is a real thing, a dangling coax was
+   *  judged to be only ever a mistake. */
+  clearFiberEndpointLink: (objectId: string, end: "A" | "B") => Promise<void>;
+  /** Write-through re-snap for fibres, the twin of
+   *  `resnapRfCablesLinkedTo` — but load-bearing rather than cosmetic.
+   *  RF propagation walks the link records, so a stale node is only a
+   *  drawing artefact; the OPTICAL solver reads the persisted endpoint
+   *  pose (`_synth_fiber_slot` reads `PE.kindParams.endA/endB`), so a
+   *  fibre whose instrument moved would keep coupling at the old place
+   *  until this runs. It re-derives every linked end that targets one of
+   *  `movedObjectIds` and persists it through
+   *  `applyFiberAlignmentCandidate` (nodes + kindParams double write). */
+  resnapFibersLinkedTo: (movedObjectIds: readonly string[]) => Promise<void>;
+  /** PIGTAIL-end align — the pigtailed-instrument twin of
+   *  `findFiberAlignmentCandidates` (End A = the `intercept_in` port
+   *  connector, End B = `intercept_out`).
+   *
+   *  What moves is the CONNECTOR, not the instrument: a pigtailed part's
+   *  optical port is the `fiber_connector` bound at it (the backend re-seats
+   *  intercept_in/out onto its `connect_in`), and the pigtail is flexible,
+   *  so plugging one end in must leave the box exactly where the user put
+   *  it. Same two target kinds as a patch cable — free-space beams and
+   *  fibre receptacles (prefixed 🔌, and they persist a link). */
+  findPigtailAlignmentCandidates: (
+    objectId: string,
+    end: "A" | "B",
+    toleranceMm?: number,
+  ) => Promise<PigtailAlignmentCandidate[]>;
+  /** Phase B: apply one candidate. Writes the connector's new pose as an
+   *  `ObjectBinding` per-axis delta (never back to the ComponentBinding —
+   *  that row is the catalog baseline shared by every instance), drags the
+   *  pigtail spline along, and sets or clears the endpoint link. */
+  applyPigtailAlignmentCandidate: (
+    objectId: string,
+    end: "A" | "B",
+    candidate: PigtailAlignmentCandidate,
+  ) => Promise<void>;
+  /** Explicit "unplug": drop one pigtail end's link record without moving
+   *  the connector. Mirrors `clearFiberEndpointLink`. */
+  clearPigtailEndpointLink: (objectId: string, end: "A" | "B") => Promise<void>;
+  /** Re-derive every pigtail end plugged into one of `movedObjectIds`, so a
+   *  receptacle dragged across the table carries what is plugged into it.
+   *  The pigtail twin of `resnapFibersLinkedTo`, and load-bearing for the
+   *  same reason: the solver reads the connector's persisted pose. */
+  resnapPigtailsLinkedTo: (movedObjectIds: readonly string[]) => Promise<void>;
   /** RF-cable equivalent: snap one end of an rf_cable to the closest
    *  rf_in / rf_out anchor on ANOTHER SceneObject within `toleranceMm`.
    *  Returns the snap distance + target name for UI feedback, or null
@@ -706,7 +1033,7 @@ type SceneStore = {
    *  x/y/z + rx/ry/rz inputs so the user can dial in port positions
    *  directly instead of going through the spline editor. */
   setFiberPortLabPose: (
-    componentId: string,
+    objectId: string,
     end: "A" | "B",
     targetPosLab: [number, number, number],
     targetOutwardLab: [number, number, number],
@@ -1090,11 +1417,22 @@ function nextObjectOffset(count: number): SceneObjectPatch {
   };
 }
 
+/** Spawn pose for a catalog placement: on the 3D transform cursor, with a
+ *  small per-placement fan so repeats do not land on the IDENTICAL point.
+ *
+ *  Until 2026-08-21 this spread `nextObjectOffset(count)` and then overwrote
+ *  its x/y/z with the raw cursor — computing the fan and throwing it away.
+ *  Placing six patch cables in a row from the parts library therefore put
+ *  all six on one coordinate, where they overlap perfectly and read as a
+ *  single cable ("the model doesn't show up"). The fan is at most ±80 mm,
+ *  far below the size of anything it places, so "it lands on my cursor"
+ *  still holds. */
 function cursorSpawnPatch(cursor: LabPoint, count: number): SceneObjectPatch {
+  const FAN_MM = 40;
   return {
     ...nextObjectOffset(count),
-    xMm: cursor.x,
-    yMm: cursor.y,
+    xMm: cursor.x + ((count % 5) - 2) * FAN_MM,
+    yMm: cursor.y + ((Math.floor(count / 5) % 5) - 2) * FAN_MM,
     zMm: cursor.z,
   };
 }
@@ -1698,7 +2036,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   undoStack: [],
   redoStack: [],
   undoRedoBusy: false,
-  fiberEditingComponentId: null,
+  fiberEditingObjectId: null,
   rfCableEditingObjectId: null,
   transformPivotMode: "median",
   transformCursorMm: loadTransformCursorMm(),
@@ -2587,48 +2925,190 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     return catalogComponent;
   },
 
-  enterFiberEdit(componentId) {
+  enterFiberEdit(objectId) {
     // Entering fiber edit clears any active rf_cable edit so only one
     // cable's gizmo is shown at a time (node-edit mode is single-target).
-    set({ fiberEditingComponentId: componentId, rfCableEditingObjectId: null });
+    set({ fiberEditingObjectId: objectId, rfCableEditingObjectId: null });
   },
   exitFiberEdit() {
-    set({ fiberEditingComponentId: null });
+    set({ fiberEditingObjectId: null });
   },
   enterRfCableEdit(objectId) {
     // Mirror of enterFiberEdit — clears fiber editing so only one cable's
     // gizmo is active at a time.
-    set({ rfCableEditingObjectId: objectId, fiberEditingComponentId: null });
+    set({ rfCableEditingObjectId: objectId, fiberEditingObjectId: null });
   },
   exitRfCableEdit() {
     set({ rfCableEditingObjectId: null });
   },
-  async updateFiberNodes(componentId, nodes) {
+  async updateFiberNodes(objectId, nodes, clearEndpointLink) {
     // V2 fix (2026-05-11): fiber spline geometry is per-instance, so the
     // node array lives on SceneObject.properties, NOT Component.properties.
     // The old write target (component.properties.fiberNodes) was a layer-
     // confusion bug — it mutated the catalog template, breaking all other
     // instances of the same fiber type AND leaving any per-instance face
     // anchors (output ports) un-synced because they live on the
-    // SceneObject. Resolve the component → its (first) SceneObject and
-    // write there. The type comment in types/digitalTwin.ts:369 already
-    // states this intent ("geometry on SceneObject.properties.fiberNodes");
-    // this is the implementation catching up.
+    // SceneObject. The type comment in types/digitalTwin.ts:369 already
+    // states this intent ("geometry on SceneObject.properties.fiberNodes").
+    //
+    // 2026-08-21: the caller now names the SceneObject directly. The old
+    // signature took a componentId and resolved it with
+    // `objects.find((o) => o.componentId === componentId)` — the FIRST
+    // match — which only finished the 2026-05-11 fix for the single-
+    // instance case: two cables off one catalog fibre still shared object
+    // #1's spline, so the second could not be shaped at all.
     const state = get();
-    const obj = state.scene.objects.find((o) => o.componentId === componentId);
+    const obj = state.scene.objects.find((o) => o.id === objectId);
     if (!obj) return;
-    const nextProps = { ...(obj.properties ?? {}), fiberNodes: nodes };
-    const updated = await updateObjectApi(obj.id, { properties: nextProps });
+    const baseProps = (obj.properties ?? {}) as Record<string, unknown> & {
+      fiberEndpoints?: { A?: unknown; B?: unknown };
+    };
+    // A hand-drag of an endpoint escapes the port link (manual override
+    // beats link) — same contract as updateRfCableNodes. Interior-node
+    // edits pass no `clearEndpointLink` and leave the links alone.
+    let nextEndpoints = baseProps.fiberEndpoints;
+    if (clearEndpointLink && nextEndpoints) {
+      nextEndpoints = { ...nextEndpoints };
+      delete nextEndpoints[clearEndpointLink];
+    }
+    const nextProps: Record<string, unknown> = { ...baseProps, fiberNodes: nodes };
+    if (nextEndpoints !== undefined) nextProps.fiberEndpoints = nextEndpoints;
+    const updated = await updateObjectApi(obj.id, {
+      properties: nextProps as SceneObject["properties"],
+    });
     set((s) => ({
       scene: { ...s.scene, objects: upsertById(s.scene.objects, updated) },
     }));
   },
-  async insertFiberNode(componentId, index, node) {
+  listFiberPortsOfObject(objectId) {
+    return collectFiberPortsLab(get().scene, null, objectId);
+  },
+
+  fiberPluggedIntoPort(objectId, anchorId, anchorName) {
+    for (const o of get().scene.objects) {
+      const links = (o.properties as
+        | { fiberEndpoints?: Partial<Record<"A" | "B", FiberEndpointLink>> }
+        | undefined)?.fiberEndpoints;
+      if (!links) continue;
+      for (const end of ["A", "B"] as const) {
+        const l = links[end];
+        if (
+          l
+          && l.targetObjectId === objectId
+          && l.targetAnchorId === anchorId
+          && l.targetAnchorName === anchorName
+        ) {
+          return { fiberObjectId: o.id, fiberName: o.name, end };
+        }
+      }
+    }
+    return null;
+  },
+
+  async findFiberEndsForPort(objectId, anchorId, anchorName, toleranceMm = 25) {
     const state = get();
-    const obj = state.scene.objects.find((o) => o.componentId === componentId);
+    const port = collectFiberPortsLab(state.scene, null, objectId).find(
+      (p) => p.targetAnchorId === anchorId && p.targetAnchorName === anchorName,
+    );
+    if (!port) return [];
+
+    const out: Array<{
+      fiberObjectId: string;
+      fiberName: string;
+      end: "A" | "B";
+      distMm: number;
+      candidate: FiberAlignmentCandidate;
+    }> = [];
+    for (const fiber of state.scene.objects) {
+      const comp = state.scene.components.find((c) => c.id === fiber.componentId);
+      if (comp?.kindId !== "fiber") continue;
+      const nodes = resolveEffectiveFiberNodes(fiber, comp, state.scene.physicsElements);
+      if (!nodes || nodes.length < 2) continue;
+      for (const end of ["A", "B"] as const) {
+        // One port, both ends — reusing the SAME helper the cable-side flow
+        // uses is the point: a port offered here and a port offered there
+        // must produce byte-identical geometry, or plugging in from the two
+        // surfaces would park the cable in two different places.
+        const [cand] = findFiberPortAlignmentCandidates({
+          end,
+          nodes,
+          pose: fiber,
+          ports: [port],
+          toleranceMm,
+          tipMm: fiberEndConnectorTipMm(state.scene, fiber.componentId, end),
+        });
+        if (!cand) continue;
+        out.push({
+          fiberObjectId: fiber.id,
+          fiberName: fiber.name,
+          end,
+          distMm: cand.distMm,
+          candidate: cand,
+        });
+      }
+    }
+    out.sort((a, b) => a.distMm - b.distMm);
+    return out;
+  },
+
+  async clearFiberEndpointLink(objectId, end) {
+    // Unplug in place: the spline is untouched, only the link record goes.
+    // Contrast clearRfCableEndpointLink, which deletes the cable outright
+    // — a coax with one free end was always a mistake, a patch cable
+    // dangling off a bulkhead is not.
+    const state = get();
+    const obj = state.scene.objects.find((o) => o.id === objectId);
+    if (!obj) return;
+    const baseProps = (obj.properties ?? {}) as Record<string, unknown> & {
+      fiberEndpoints?: { A?: unknown; B?: unknown };
+    };
+    if (!baseProps.fiberEndpoints?.[end]) return;
+    const nextEndpoints = { ...baseProps.fiberEndpoints };
+    delete nextEndpoints[end];
+    const updated = await updateObjectApi(obj.id, {
+      properties: { ...baseProps, fiberEndpoints: nextEndpoints } as SceneObject["properties"],
+    });
+    set((s) => ({
+      scene: { ...s.scene, objects: upsertById(s.scene.objects, updated) },
+    }));
+  },
+  async updatePigtailNodes(objectId, bindingId, nodes) {
+    const obj = get().scene.objects.find((o) => o.id === objectId);
+    if (!obj) return;
+    const props = (obj.properties ?? {}) as Record<string, unknown>;
+    const byBinding = {
+      ...((props.bindingFiberNodes as Record<string, unknown>) ?? {}),
+      [bindingId]: nodes,
+    };
+    const updated = await updateObjectApi(objectId, {
+      properties: { ...props, bindingFiberNodes: byBinding },
+    });
+    set((s) => ({
+      scene: { ...s.scene, objects: upsertById(s.scene.objects, updated) },
+    }));
+  },
+  async resetPigtailNodes(objectId, bindingId) {
+    const obj = get().scene.objects.find((o) => o.id === objectId);
+    if (!obj) return;
+    const props = (obj.properties ?? {}) as Record<string, unknown>;
+    const byBinding = {
+      ...((props.bindingFiberNodes as Record<string, unknown>) ?? {}),
+    };
+    if (!(bindingId in byBinding)) return;
+    delete byBinding[bindingId];
+    const updated = await updateObjectApi(objectId, {
+      properties: { ...props, bindingFiberNodes: byBinding },
+    });
+    set((s) => ({
+      scene: { ...s.scene, objects: upsertById(s.scene.objects, updated) },
+    }));
+  },
+  async insertFiberNode(objectId, index, node) {
+    const state = get();
+    const obj = state.scene.objects.find((o) => o.id === objectId);
     if (!obj) return;
     const objProps = obj.properties as { fiberNodes?: FiberNodePersist[] } | undefined;
-    const compProps = state.scene.components.find((c) => c.id === componentId)?.properties as
+    const compProps = state.scene.components.find((c) => c.id === obj.componentId)?.properties as
       { fiberNodes?: FiberNodePersist[] } | undefined;
     // Prefer the per-instance fiberNodes; fall back to the legacy
     // per-component value so users who already had nodes in the old
@@ -2636,20 +3116,20 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     const current = objProps?.fiberNodes ?? compProps?.fiberNodes ?? [];
     const clampedIndex = Math.max(1, Math.min(index, current.length - 1));
     const nextNodes = [...current.slice(0, clampedIndex), node, ...current.slice(clampedIndex)];
-    await get().updateFiberNodes(componentId, nextNodes);
+    await get().updateFiberNodes(objectId, nextNodes);
   },
-  async removeFiberNode(componentId, index) {
+  async removeFiberNode(objectId, index) {
     const state = get();
-    const obj = state.scene.objects.find((o) => o.componentId === componentId);
+    const obj = state.scene.objects.find((o) => o.id === objectId);
     if (!obj) return;
     const objProps = obj.properties as { fiberNodes?: FiberNodePersist[] } | undefined;
-    const compProps = state.scene.components.find((c) => c.id === componentId)?.properties as
+    const compProps = state.scene.components.find((c) => c.id === obj.componentId)?.properties as
       { fiberNodes?: FiberNodePersist[] } | undefined;
     const current = objProps?.fiberNodes ?? compProps?.fiberNodes ?? [];
     if (current.length <= 2) return; // Always keep two endpoints.
     if (index <= 0 || index >= current.length - 1) return; // Don't delete endpoints.
     const nextNodes = current.filter((_, i) => i !== index);
-    await get().updateFiberNodes(componentId, nextNodes);
+    await get().updateFiberNodes(objectId, nextNodes);
   },
   async updateRfCableNodes(objectId, nodes, clearEndpointLink) {
     // rf_cable geometry is always per-instance (no V1 catalog fallback), so
@@ -2720,116 +3200,72 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     const nextNodes = current.filter((_, i) => i !== index);
     await get().updateRfCableNodes(objectId, nextNodes);
   },
-  async alignFiberEndToBeam(componentId, end, toleranceMm = 25) {
+  async alignFiberEndToBeam(objectId, end, toleranceMm = 25) {
     // Back-compat shim: list candidates, apply the closest, return the
     // legacy {offsetMm, beamId} shape. New UI (FiberEditor) should call
     // findFiberAlignmentCandidates + applyFiberAlignmentCandidate so the
     // picker can disambiguate clustered AOM ±1 orders / beam-splitter
     // branches that all fall inside the 25 mm tolerance window.
-    const list = await get().findFiberAlignmentCandidates(componentId, end, toleranceMm);
+    const list = await get().findFiberAlignmentCandidates(objectId, end, toleranceMm);
     if (list.length === 0) return null;
     const top = list[0];
-    await get().applyFiberAlignmentCandidate(componentId, end, top);
+    await get().applyFiberAlignmentCandidate(objectId, end, top);
     return { offsetMm: top.distMm, beamId: top.beamId };
   },
 
-  async findFiberAlignmentCandidates(componentId, end, toleranceMm = 25) {
-    // Candidate beam segments in LAB mm, from the live __rayTraceDebug —
-    // three.js world coords (units = 100 mm, y-up). Inverse swap:
-    // lab_x = three.x*100, lab_y = -three.z*100, lab_z = three.y*100.
-    // Skip segments emitted by this fiber.
-    //
-    // For trace segments we additionally:
-    //   - Tag each with `aomSideband.order` so AOM ±1 orders that share
-    //     the same source/emitter still register as DISTINCT candidates
-    //     in the picker (otherwise the user can only land on whichever
-    //     order is geometrically closest — typically 0-order — even when
-    //     they want to align the fiber to +1 / −1).
-    //   - Build a human-readable `displayLabel` from emitter name +
-    //     source name + order + wavelength so the picker entries are
-    //     intelligible.
-    //   - Dedup by (emitterObjectId, aomOrder, branch) keeping the
-    //     CLOSEST segment of each logical beam chain — without this, a
-    //     long beam path through several optics shows up as many
-    //     near-identical picker entries.
+  async findFiberAlignmentCandidates(objectId, end, toleranceMm = 25) {
+    // Candidate beams come from `collectBeamSegmentsLab` (labels + AOM
+    // order tagging live there). What this action adds on top is the dedup
+    // by (emitterObjectId, aomOrder, branch), keeping the CLOSEST segment
+    // of each logical beam chain — without it a long path through several
+    // optics shows up as many near-identical picker entries.
     const state = get();
-    const obj = state.scene.objects.find((o) => o.componentId === componentId);
-    const component = state.scene.components.find((c) => c.id === componentId);
+    const obj = state.scene.objects.find((o) => o.id === objectId);
+    const component = state.scene.components.find((c) => c.id === obj?.componentId);
     // Shared resolver: connector-component fibers keep their endpoints on
     // PE.kindParams (no cached fiberNodes), so reconstruct rather than bail.
     const nodes = resolveEffectiveFiberNodes(obj, component, state.scene.physicsElements);
     if (!nodes || nodes.length < 2) return [];
 
-    const beamSegmentsLab: BeamSegmentLab[] = [];
+    const beamSegmentsLab = collectBeamSegmentsLab(state.scene, obj?.id ?? null);
 
-    type TraceSeg = {
-      sourceObjectId?: string;
-      emitterObjectId?: string;
-      startThree?: { x: number; y: number; z: number };
-      endThree?: { x: number; y: number; z: number };
-      hitObjectId?: string | null;
-      wavelengthNm?: number;
-      branch?: string;
-      aomSideband?: {
-        order?: number;
-      };
+    const alignPose = {
+      xMm: obj?.xMm ?? 0,
+      yMm: obj?.yMm ?? 0,
+      zMm: obj?.zMm ?? 0,
+      rxDeg: obj?.rxDeg ?? 0,
+      ryDeg: obj?.ryDeg ?? 0,
+      rzDeg: obj?.rzDeg ?? 0,
     };
-    const traces: TraceSeg[] = ((typeof window !== "undefined"
-      ? (window as unknown as { __rayTraceDebug?: TraceSeg[] }).__rayTraceDebug
-      : undefined) ?? []) as TraceSeg[];
-    const threeToLab = (v: { x: number; y: number; z: number }): [number, number, number] =>
-      [v.x * 100, v.y * 100, v.z * 100];
-    const objectNameById = (id: string | undefined | null): string => {
-      if (!id) return "?";
-      const o = state.scene.objects.find((x) => x.id === id);
-      return o?.name ?? id.slice(0, 6);
-    };
-    const formatOrder = (order: number | undefined | null): string => {
-      if (order === undefined || order === null) return "";
-      if (order === 0) return " 0-order";
-      if (order > 0) return ` +${order}-order`;
-      return ` ${order}-order`;
-    };
-    for (const seg of traces) {
-      if (!seg.startThree || !seg.endThree) continue;
-      if (obj && seg.sourceObjectId === obj.id) continue; // don't snap to own emission
-      const order = seg.aomSideband?.order;
-      const emitterName = objectNameById(seg.emitterObjectId);
-      const sourceName = objectNameById(seg.sourceObjectId);
-      const wavelengthStr =
-        typeof seg.wavelengthNm === "number" ? ` @ ${seg.wavelengthNm.toFixed(0)} nm` : "";
-      const sourcePart =
-        seg.sourceObjectId && seg.sourceObjectId !== seg.emitterObjectId
-          ? ` via ${sourceName}`
-          : "";
-      const displayLabel = `${emitterName}${sourcePart}${formatOrder(order)}${wavelengthStr}`;
-      const beamId = `trace:${(seg.emitterObjectId ?? "?").slice(0, 8)}:o${order ?? "x"}:${(seg.sourceObjectId ?? "?").slice(0, 8)}`;
-      beamSegmentsLab.push({
-        beamId,
-        aMm: threeToLab(seg.startThree),
-        bMm: threeToLab(seg.endThree),
-        displayLabel,
-        emitterObjectId: seg.emitterObjectId,
-        aomOrder: order ?? null,
-        branch: seg.branch,
-        wavelengthNm: seg.wavelengthNm,
-      });
-    }
+    // A fibre end has TWO kinds of target, and they answer different
+    // questions. A beam segment says "put the face where the light is" —
+    // free-space alignment, pinned to wherever the trace happened to be.
+    // A fibre PORT says "plug into this instrument" — pinned to the part,
+    // so it follows when the part moves. Both are offered in one picker
+    // (ports are prefixed 🔌) and both flow through
+    // `applyFiberAlignmentCandidate`; only a port candidate carries
+    // `port`, which is what makes the store persist a link.
+    const portCandidates = obj
+      ? findFiberPortAlignmentCandidates({
+          end,
+          nodes,
+          pose: alignPose,
+          ports: collectFiberPortsLab(state.scene, obj.id),
+          toleranceMm,
+          tipMm: fiberEndConnectorTipMm(state.scene, obj.componentId, end),
+        })
+      : [];
 
-    const all = findFiberEndAlignmentCandidates({
-      end,
-      nodes,
-      pose: {
-        xMm: obj?.xMm ?? 0,
-        yMm: obj?.yMm ?? 0,
-        zMm: obj?.zMm ?? 0,
-        rxDeg: obj?.rxDeg ?? 0,
-        ryDeg: obj?.ryDeg ?? 0,
-        rzDeg: obj?.rzDeg ?? 0,
-      },
-      beamSegmentsLab,
-      toleranceMm,
-    });
+    const all = [
+      ...findFiberEndAlignmentCandidates({
+        end,
+        nodes,
+        pose: alignPose,
+        beamSegmentsLab,
+        toleranceMm,
+      }),
+      ...portCandidates,
+    ];
 
     // Dedup by logical beam identity: a single chain through multiple
     // optics emits one segment per hop, all sharing
@@ -2844,14 +3280,14 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     return Array.from(byKey.values()).sort((a, b) => a.distMm - b.distMm);
   },
 
-  async applyFiberAlignmentCandidate(componentId, end, candidate) {
+  async applyFiberAlignmentCandidate(objectId, end, candidate) {
     // Phase B: stitch the precomputed candidate back into the fiber's
     // node array and write through `updateFiberNodes`. Only the touched
     // endpoint's posMm + the matching handle change; the other handle on
     // this node and all interior nodes are preserved.
     const state = get();
-    const obj = state.scene.objects.find((o) => o.componentId === componentId);
-    const component = state.scene.components.find((c) => c.id === componentId);
+    const obj = state.scene.objects.find((o) => o.id === objectId);
+    const component = state.scene.components.find((c) => c.id === obj?.componentId);
     // Shared resolver: a connector-component fiber has no cached fiberNodes
     // (endpoints live on PE.kindParams) — reconstruct them so the align
     // doesn't bail on an empty cache.
@@ -2875,10 +3311,35 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     };
     const nextNodes = [...nodes];
     nextNodes[idx] = newNode;
-    await get().updateFiberNodes(componentId, nextNodes);
+    // A port candidate SETS the link (so the end follows the instrument);
+    // a beam candidate CLEARS it, because parking the face on a beam is a
+    // free-space placement that should not keep tracking a part it is no
+    // longer plugged into.
+    await get().updateFiberNodes(
+      objectId,
+      nextNodes,
+      candidate.port ? undefined : end,
+    );
+    if (candidate.port) {
+      const cur = get().scene.objects.find((o) => o.id === objectId);
+      const baseProps = (cur?.properties ?? {}) as Record<string, unknown> & {
+        fiberEndpoints?: Record<string, unknown>;
+      };
+      const updated = await updateObjectApi(objectId, {
+        properties: {
+          ...baseProps,
+          fiberEndpoints: { ...(baseProps.fiberEndpoints ?? {}), [end]: candidate.port },
+        } as SceneObject["properties"],
+      });
+      set((st) => ({
+        scene: { ...st.scene, objects: upsertById(st.scene.objects, updated) },
+      }));
+    }
     // Persist the aligned endpoint to PE.kindParams.endA/endB (the
     // authoritative source) — mirrors setFiberPortLabPose. Without this the
-    // endpoint reverts on the next syncFiberNodesFromKindParams.
+    // endpoint reverts on the next syncFiberNodesFromKindParams. It is also
+    // what the BACKEND reads (`_synth_fiber_slot`), so a link that skipped
+    // this would look plugged in and trace unplugged.
     await syncFiberEndpointToKindParams(
       get().upsertOpticalElement,
       obj,
@@ -2886,6 +3347,242 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       nextNodes,
       state.scene.physicsElements,
     );
+  },
+
+  async resnapFibersLinkedTo(movedObjectIds) {
+    // Keep persisted endpoints equal to what the link implies. This is not
+    // cosmetic for fibres: the solver loads `PE.kindParams.endA/endB`, so a
+    // receiver dragged across the table would keep coupling at its old pose
+    // until this runs. (The RF twin only fixes a first-paint artefact.)
+    if (movedObjectIds.length === 0) return;
+    const moved = new Set(movedObjectIds);
+    const state = get();
+    for (const obj of state.scene.objects) {
+      const props = obj.properties as
+        | { fiberEndpoints?: Partial<Record<"A" | "B", FiberEndpointLink>> }
+        | undefined;
+      const links = props?.fiberEndpoints;
+      if (!links) continue;
+      const component = state.scene.components.find((c) => c.id === obj.componentId);
+      for (const end of ["A", "B"] as const) {
+        const link = links[end];
+        if (!link || !moved.has(link.targetObjectId)) continue;
+        const target = state.scene.objects.find((o) => o.id === link.targetObjectId);
+        const targetComp = target
+          ? state.scene.components.find((c) => c.id === target.componentId)
+          : undefined;
+        if (!target || !targetComp) continue;
+        const owned = anchorsInBindingTree(targetComp, state.scene).find(
+          ({ anchor }) =>
+            anchor.id === link.targetAnchorId &&
+            (anchor.name ?? anchor.id) === link.targetAnchorName,
+        );
+        if (!owned) continue;
+        const nodes = resolveEffectiveFiberNodes(obj, component, state.scene.physicsElements);
+        if (!nodes || nodes.length < 2) continue;
+        const dir = anchorObjectLocalPrimaryDir(owned.anchor, owned.asset);
+        const resolved = resolveLinkedFiberEndpoint({
+          endpoint: end,
+          fiberPose: obj,
+          targetPose: target,
+          targetAnchorPosBodyMm: [
+            owned.anchor.positionMmBodyLocal.x,
+            owned.anchor.positionMmBodyLocal.y,
+            owned.anchor.positionMmBodyLocal.z,
+          ],
+          targetAnchorDirBody: dir ? [dir.x, dir.y, dir.z] : [1, 0, 0],
+          tipMm: fiberEndConnectorTipMm(state.scene, obj.componentId, end),
+        });
+        if (!resolved) continue;
+        // Route through the normal apply path so the nodes + kindParams
+        // double write and the link record all stay in one code path.
+        await get().applyFiberAlignmentCandidate(obj.id, end, {
+          beamId: `port:${link.targetObjectId}:${link.targetAnchorId}`,
+          distMm: 0,
+          projectedPortLab: [0, 0, 0],
+          newPosMmBody: resolved.posMmBody,
+          newHandleMmBody: resolved.handleMmBody,
+          newOutwardBody: [0, 0, 0],
+          port: link,
+        });
+      }
+    }
+  },
+
+  async findPigtailAlignmentCandidates(objectId, end, toleranceMm = 25) {
+    // Phase A of the pigtail-end align. Same two target kinds and the same
+    // picker contract as the patch-cable version, but measured from the port
+    // CONNECTOR's `connect_in` — the face the backend re-seats the device's
+    // intercept_in/out onto — rather than from a spline endpoint.
+    const state = get();
+    const obj = state.scene.objects.find((o) => o.id === objectId);
+    const component = state.scene.components.find((c) => c.id === obj?.componentId);
+    if (!obj || !component) return [];
+    const ref = pigtailPortBindings(component, obj, state.scene)
+      .find((p) => p.end === end);
+    if (!ref) return [];
+    const portLab = connectorPortLab(
+      {
+        pose: ref.effectivePose,
+        parentPose: composeBindingPoses(ref.parentChain),
+        connectIn: ref.connectIn,
+      },
+      obj,
+    );
+    if (!portLab) return [];
+
+    const all = [
+      ...findPigtailBeamCandidates({
+        portLab,
+        beamSegmentsLab: collectBeamSegmentsLab(state.scene, obj.id),
+        toleranceMm,
+      }),
+      ...findPigtailPortCandidates({
+        end,
+        portLab,
+        ports: collectFiberPortsLab(state.scene, obj.id),
+        toleranceMm,
+      }),
+    ];
+    // One entry per logical beam chain (a path through several optics emits
+    // one segment per hop, all sharing emitter + order + branch) — same
+    // dedup `findFiberAlignmentCandidates` does, for the same reason.
+    const byKey = new Map<string, PigtailAlignmentCandidate>();
+    for (const c of all) {
+      const key = c.port
+        ? c.key
+        : `${c.emitterObjectId ?? "?"}:o${c.aomOrder ?? "x"}:${c.branch ?? ""}`;
+      const prev = byKey.get(key);
+      if (!prev || c.distMm < prev.distMm) byKey.set(key, c);
+    }
+    return Array.from(byKey.values()).sort((a, b) => a.distMm - b.distMm);
+  },
+
+  async applyPigtailAlignmentCandidate(objectId, end, candidate) {
+    const state = get();
+    const obj = state.scene.objects.find((o) => o.id === objectId);
+    const component = state.scene.components.find((c) => c.id === obj?.componentId);
+    if (!obj || !component) return;
+    const ref = pigtailPortBindings(component, obj, state.scene)
+      .find((p) => p.end === end);
+    if (!ref) return;
+    const newPose = computeConnectorAlignPose({
+      placement: {
+        pose: ref.effectivePose,
+        parentPose: composeBindingPoses(ref.parentChain),
+        connectIn: ref.connectIn,
+      },
+      objectPose: obj,
+      targetPosLab: candidate.targetPosLab,
+      targetAxisXLab: candidate.targetAxisXLab,
+    });
+    if (!newPose) return;
+
+    // The connector's move is a per-INSTANCE delta. Writing the pose back to
+    // the ComponentBinding would re-dress every EOM in every scene — the same
+    // layer split `updatePigtailNodes` keeps for the jacket. The other
+    // columns are carried through because an upsert replaces the whole row.
+    await get().upsertObjectBinding(objectId, {
+      componentBindingId: ref.binding.id,
+      ...bindingPoseDelta(newPose, ref.basePose),
+      asset3dIdOverride: ref.objectBinding?.asset3dIdOverride ?? null,
+      properties: ref.objectBinding?.properties ?? {},
+    });
+
+    // The pigtail hangs off the connector, so it has to come along. Both the
+    // spline override and the link record live on SceneObject.properties —
+    // written together so the second PUT can't race the first.
+    const props = (obj.properties ?? {}) as Record<string, unknown>;
+    const nextProps: Record<string, unknown> = { ...props };
+    const bindingProps = (ref.binding.properties ?? {}) as { fiberNodes?: FiberNodePersist[] };
+    const byBinding = (props.bindingFiberNodes as Record<string, FiberNodePersist[]>) ?? {};
+    const nodes = byBinding[ref.binding.id] ?? bindingProps.fiberNodes;
+    if (ref.connectOut && Array.isArray(nodes) && nodes.length >= 2) {
+      nextProps.bindingFiberNodes = {
+        ...byBinding,
+        [ref.binding.id]: pigtailNodesFollowingConnector({
+          nodes,
+          oldPose: ref.effectivePose,
+          newPose,
+          connectOutPosMm: [
+            ref.connectOut.positionMmBodyLocal.x,
+            ref.connectOut.positionMmBodyLocal.y,
+            ref.connectOut.positionMmBodyLocal.z,
+          ],
+        }),
+      };
+    }
+    // A receptacle candidate SETS the link (the end now follows that part);
+    // a beam candidate CLEARS it — parking a face on a beam is a free-space
+    // placement that should stop tracking whatever it used to be plugged
+    // into. Keyed by portAnchor, not by binding id: binding rows get
+    // recreated when a Component is re-authored (EOM0 still carries one
+    // orphaned `bindingFiberNodes` key from exactly that), a port anchor
+    // does not.
+    const links = { ...((props.pigtailEndpoints as Record<string, unknown>) ?? {}) };
+    if (candidate.port) links[ref.portAnchor] = candidate.port;
+    else delete links[ref.portAnchor];
+    nextProps.pigtailEndpoints = links;
+
+    const updated = await updateObjectApi(objectId, {
+      properties: nextProps as SceneObject["properties"],
+    });
+    set((s) => ({
+      scene: { ...s.scene, objects: upsertById(s.scene.objects, updated) },
+    }));
+  },
+
+  async clearPigtailEndpointLink(objectId, end) {
+    const state = get();
+    const obj = state.scene.objects.find((o) => o.id === objectId);
+    const component = state.scene.components.find((c) => c.id === obj?.componentId);
+    if (!obj || !component) return;
+    const ref = pigtailPortBindings(component, obj, state.scene)
+      .find((p) => p.end === end);
+    if (!ref) return;
+    const props = (obj.properties ?? {}) as Record<string, unknown>;
+    const links = { ...((props.pigtailEndpoints as Record<string, unknown>) ?? {}) };
+    if (!(ref.portAnchor in links)) return;
+    delete links[ref.portAnchor];
+    const updated = await updateObjectApi(objectId, {
+      properties: { ...props, pigtailEndpoints: links } as SceneObject["properties"],
+    });
+    set((s) => ({
+      scene: { ...s.scene, objects: upsertById(s.scene.objects, updated) },
+    }));
+  },
+
+  async resnapPigtailsLinkedTo(movedObjectIds) {
+    if (movedObjectIds.length === 0) return;
+    const moved = new Set(movedObjectIds);
+    const state = get();
+    // Every receptacle in the scene, resolved once — a resnap is rare and
+    // this walks the whole scene's binding trees.
+    const ports = collectFiberPortsLab(state.scene, null);
+    for (const obj of state.scene.objects) {
+      const links = (obj.properties as
+        { pigtailEndpoints?: Record<string, FiberPortLink> } | undefined)?.pigtailEndpoints;
+      if (!links) continue;
+      for (const [portAnchor, link] of Object.entries(links)) {
+        if (!link || !moved.has(link.targetObjectId)) continue;
+        const port = ports.find(
+          (p) => p.targetObjectId === link.targetObjectId
+            && p.targetAnchorId === link.targetAnchorId,
+        );
+        if (!port) continue;
+        const end = portAnchor === "intercept_out" ? "B" : "A";
+        const mated = matedFaceLab(port, end);
+        if (!mated) continue;
+        // Through the normal apply path so the ObjectBinding delta, the
+        // pigtail spline and the link record stay in one code path.
+        await get().applyPigtailAlignmentCandidate(obj.id, end, {
+          key: `port:${link.targetObjectId}:${link.targetAnchorId}`,
+          distMm: 0,
+          ...mated,
+          port: link,
+        });
+      }
+    }
   },
 
   async findRfCableAlignmentCandidates(objectId, end, toleranceMm = 25) {
@@ -2954,16 +3651,12 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       if (other.id === objectId) continue;
       const otherComp = state.scene.components.find((c) => c.id === other.componentId);
       if (!otherComp) continue;
-      // Binding-aware asset resolution (root targetKind="asset" binding,
-      // legacy asset3dId fallback). Reading asset3dId directly missed every
-      // binding-backed RF object, so a cable end found no ports to snap to.
-      const asset = primaryAsset(otherComp, {
-        componentBindings: state.scene.componentBindings,
-        assets: state.scene.assets,
-      });
-      if (!asset || !Array.isArray(asset.anchors)) continue;
+      // Whole binding tree, not just the "main" asset: reading asset3dId
+      // directly missed every binding-backed RF object, and `primaryAsset`
+      // still misses a multi-root one (EOM + its two FC/APC connectors),
+      // so a cable end found no port to snap to.
       const { bodyToLab, bodyToLabDir } = makeOwnerTransforms(other);
-      for (const a of asset.anchors) {
+      for (const { asset, anchor: a } of anchorsInBindingTree(otherComp, state.scene)) {
         if (a.id !== "rf_in" && a.id !== "rf_out") continue;
         const posBody: Vec3T = [
           a.positionMmBodyLocal.x,
@@ -3057,15 +3750,14 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         if (!targetObj) continue;
         const targetComp = state.scene.components.find((c) => c.id === targetObj.componentId);
         if (!targetComp) continue;
-        const asset = primaryAsset(targetComp, {
-          componentBindings: state.scene.componentBindings,
-          assets: state.scene.assets,
-        });
-        if (!asset || !Array.isArray(asset.anchors)) continue;
-        const anchor = asset.anchors.find(
-          (a) => a.id === link.targetAnchorId && (a.name ?? a.id) === link.targetAnchorName,
+        // Whole binding tree, not just the "main" asset — a multi-root
+        // Component (EOM + its two FC/APC connectors) keeps its rf_in on
+        // one of the roots, and `primaryAsset` answers null for those.
+        const owned = findAnchorInBindingTree(
+          targetComp, state.scene, link.targetAnchorId, link.targetAnchorName,
         );
-        if (!anchor) continue;
+        if (!owned) continue;
+        const { asset, anchor } = owned;
         const primaryDir = anchorObjectLocalPrimaryDir(anchor, asset);
         const connBinding = (state.scene.componentBindings ?? []).find(
           (b) => b.componentId === comp.id
@@ -3158,20 +3850,16 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       if (!obj) return null;
       const comp = state.scene.components.find((c) => c.id === obj.componentId);
       if (!comp) return null;
-      // Resolve the asset via the binding tree (root targetKind="asset"
-      // binding), falling back to the legacy `comp.asset3dId`. In
-      // binding-backed scenes asset3dId is null, so reading it directly
-      // here made resolvePort return null and the whole connect silently
-      // no-op — the panel showed the ports but no cable was ever created.
-      const asset = primaryAsset(comp, {
-        componentBindings: state.scene.componentBindings,
-        assets: state.scene.assets,
-      });
-      if (!asset || !Array.isArray(asset.anchors)) return null;
-      const anchor = asset.anchors.find(
-        (a) => a.id === anchorId && (a.name ?? a.id) === anchorName,
-      );
-      if (!anchor) return null;
+      // Resolve the anchor across the whole binding tree, not just the
+      // Component's "main" asset. In binding-backed scenes asset3dId is
+      // null, and `primaryAsset` additionally gives up on a MULTI-ROOT
+      // Component (the EOSpace EOM: modulator + two FC/APC connectors) —
+      // either way resolvePort returned null and the whole connect
+      // silently no-op'd, with the panel showing the ports and no cable
+      // ever being created.
+      const owned = findAnchorInBindingTree(comp, state.scene, anchorId, anchorName);
+      if (!owned) return null;
+      const { asset, anchor } = owned;
       const pe = state.scene.physicsElements.find((e) => e.objectId === objectId) ?? null;
       const kind = pe?.elementKind ?? null;
       const domain = resolveRfLinkPortDomain({ kind, anchorId });
@@ -3416,10 +4104,10 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     };
   },
 
-  async setFiberPortLabPose(componentId, end, targetPosLab, targetOutwardLab) {
+  async setFiberPortLabPose(objectId, end, targetPosLab, targetOutwardLab) {
     const state = get();
-    const obj = state.scene.objects.find((o) => o.componentId === componentId);
-    const component = state.scene.components.find((c) => c.id === componentId);
+    const obj = state.scene.objects.find((o) => o.id === objectId);
+    const component = state.scene.components.find((c) => c.id === obj?.componentId);
     // Resolve nodes through the shared resolver so a connector-component
     // fiber (no cached fiberNodes; endpoints only on PE.kindParams) is
     // editable too — not just legacy fibers with properties.fiberNodes.
@@ -3440,7 +4128,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       targetOutwardLab,
     });
     if (nextNodes === nodes) return;
-    await get().updateFiberNodes(componentId, nextNodes);
+    await get().updateFiberNodes(objectId, nextNodes);
     // Sync the touched endpoint into fiber PE.kindParams.endA/endB so the
     // renderer / ray tracer / anchor resolver (all read kindParams) stay
     // aligned with the edit. Writing only properties.fiberNodes is a dead
@@ -3673,6 +4361,12 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         void get()
           .resnapRfCablesLinkedTo(expansion.entries.map((e) => e.id))
           .catch(() => {});
+        void get()
+          .resnapFibersLinkedTo(expansion.entries.map((e) => e.id))
+          .catch(() => {});
+        void get()
+          .resnapPigtailsLinkedTo(expansion.entries.map((e) => e.id))
+          .catch(() => {});
         return;
       }
       // kind === "single": fall through to the regular single-object path.
@@ -3696,6 +4390,12 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     // F5 paints correctly on the first frame).
     if (patchHasPoseChange(safePatch)) {
       void get().resnapRfCablesLinkedTo([objectId]).catch(() => {});
+      // Fibres too — and for them the write-through is load-bearing, not a
+      // first-paint nicety: the solver reads the persisted endpoint pose.
+      void get().resnapFibersLinkedTo([objectId]).catch(() => {});
+      // …and pigtails plugged into a receptacle, for the same reason: the
+      // connector's persisted pose IS the port the solver re-seats.
+      void get().resnapPigtailsLinkedTo([objectId]).catch(() => {});
     }
     // PPG name is the single source of truth for its channel identity, and
     // Pulse & Timing renders it in the left column. Mirror it onto the bound
@@ -3812,6 +4512,8 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       .map((entry) => entry.objectId);
     if (poseChangedIds.length > 0) {
       void get().resnapRfCablesLinkedTo(poseChangedIds).catch(() => {});
+      void get().resnapFibersLinkedTo(poseChangedIds).catch(() => {});
+      void get().resnapPigtailsLinkedTo(poseChangedIds).catch(() => {});
     }
     const withInverse = snapshot.filter((s) => s.inverse !== null);
     if (opts?.recordHistory !== false && withInverse.length > 0) {

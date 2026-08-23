@@ -158,7 +158,27 @@ PRIMARY_ANCHOR_IDS = frozenset({
                                # PBS / beam_splitter)
     "interaction_center",      # AOM (synthesized at load from intercept_in/out midpoint)
     "optical_center",          # faraday_rotator (single-anchor non-reciprocal element)
+    "fiber_in",                # fibre BULKHEAD (socket) on a chassis
 })
+# Why the fibre bulkhead is PRIMARY: a socket is where a mating patch cable's
+# ferrule stops, and the coupling is traced as a real (~10 um) segment across
+# the mating gap — so something in PRIMARY_ANCHOR_IDS has to sit there to catch
+# it, or the beam sails through the instrument and the part reads nothing. It
+# dispatches through the owning kind's op like any other anchor (ops are
+# registered per KIND, not per anchor id), so `fiber_in` on a detector lands in
+# `_terminal_sink_op` with no extra wiring.
+#
+# `fiber_in` is the ONLY fibre anchor here, and deliberately so. The other two
+# in the vocabulary — `fiber_out` (a connector's mating face) and `fiber_root`
+# (its cable junction), plus their coax spellings `connect_in` / `connect_out`
+# — belong to the CONNECTOR asset, which is passthrough by design. The traced
+# coupling for a patch cable happens on the SYNTHESIZED `intercept_in/out` that
+# `_synth_fiber_slot` derives from `fiber_out`; making `fiber_out` primary too
+# would put two hit-testable anchors at the same point in space.
+#
+# Read the names from the FIBRE's point of view, not the light's: `fiber_in` is
+# where a fibre goes INTO an instrument, `fiber_out` where it comes OUT of its
+# own connector. Light direction is carried by each anchor's axisX.
 
 
 def nearest_anchor_hit(

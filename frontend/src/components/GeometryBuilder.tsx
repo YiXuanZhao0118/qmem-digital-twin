@@ -87,7 +87,7 @@ async function loadEditableAsset(asset: V3Asset): Promise<LoadedSubMesh[]> {
   if (!VIEWER_EXTS.has(ext)) {
     throw new Error(`"${asset.catalogId}" is .${ext} — only GLB/GLTF/OBJ/STL or procedural assets can be loaded.`);
   }
-  return loadAssetGeometry(resolveAssetUrl(asset.filePath), ext, { unit: asset.unit, scaleFactor: asset.scaleFactor });
+  return loadAssetGeometry(resolveAssetUrl(asset.filePath, asset.fileVersion), ext, { unit: asset.unit, scaleFactor: asset.scaleFactor });
 }
 
 type Status = "idle" | "parsing" | "ready" | "saving";

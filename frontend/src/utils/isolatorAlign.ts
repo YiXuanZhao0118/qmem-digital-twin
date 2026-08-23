@@ -273,11 +273,13 @@ export function computeTranslateOnlyPose(args: {
  *  Editor → Component) appear. Mirrors the per-kind `alignVariant !== "none"`
  *  set. Isolators (kindId "none") are detected separately via their
  *  binding-tree front/back composite roles. Fiber is excluded — it aligns
- *  per-end (Align A/B), which the single (point, direction) model doesn't fit. */
+ *  per-end (Align A/B), which the single (point, direction) model doesn't
+ *  fit. So is `eom`: a fibre-pigtailed modulator aligns per port connector
+ *  (`PigtailEndAlignControls`) for the same reason. */
 export const OPTICAL_ALIGN_KINDS = new Set<string>([
   "mirror", "dichroic_mirror", "beam_splitter",
   "lens_biconvex", "lens_plano_convex", "lens_cylindrical",
-  "fiber_coupler", "eom", "polarizer", "glan_polarizer", "waveplate",
+  "fiber_coupler", "polarizer", "glan_polarizer", "waveplate",
   "beam_dump", "detector", "camera", "spectrometer", "wavemeter",
   "saturable_absorber", "nonlinear_crystal", "aom", "tapered_amplifier",
 ]);

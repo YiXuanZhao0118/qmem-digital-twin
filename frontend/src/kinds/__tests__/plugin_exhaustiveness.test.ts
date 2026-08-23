@@ -181,14 +181,45 @@ describe("Plugin registry exhaustiveness", () => {
     }
   });
 
+  /** Kinds whose builds are mutually exclusive, so no single anchor is
+   *  guaranteed present even though the kind is alignable.
+   *
+   *  `detector` (2026-08-23): a free-space head aligns its `intercept_in`
+   *  onto a beam, a fibre-coupled receiver has no free-space face at all and
+   *  only has a `fiber_in` bulkhead. A build has one or the other, never
+   *  both, so both roles are `min: 0`. Nothing is lost — `canAlignToBeam`
+   *  already refuses to align a part whose every optical face is a
+   *  receptacle, so the align path never runs without its anchor.
+   *
+   *  Add to this only for a genuine one-of-N build split, never to quiet the
+   *  assertion for a kind that simply forgot to mark its anchor required. */
+  const ALIGNABLE_WITHOUT_REQUIRED_ANCHOR = new Set(["detector"]);
+
   it("kinds with alignVariant !== 'none' have at least one required anchor", () => {
     for (const p of PHYSICS_PLUGINS) {
+      if (ALIGNABLE_WITHOUT_REQUIRED_ANCHOR.has(p.id)) continue;
       if (p.physics.alignVariant !== "none") {
         expect(
           p.physics.anchors.required.length,
           `[${p.id}] alignVariant=${p.physics.alignVariant} but no required anchors`,
         ).toBeGreaterThan(0);
       }
+    }
+  });
+
+  it("every ALIGNABLE_WITHOUT_REQUIRED_ANCHOR entry is a real alignable kind", () => {
+    // Keeps the exemption list from outliving the exemption.
+    for (const id of ALIGNABLE_WITHOUT_REQUIRED_ANCHOR) {
+      const p = PHYSICS_PLUGINS.find((x) => x.id === id);
+      expect(p, `unknown kind in the exemption list: ${id}`).toBeDefined();
+      expect(
+        p!.physics.alignVariant,
+        `[${id}] is exempt but aligns to nothing — drop it from the list`,
+      ).not.toBe("none");
+      expect(
+        p!.physics.anchors.required.length,
+        `[${id}] now has required anchors — drop it from the list`,
+      ).toBe(0);
     }
   });
 });

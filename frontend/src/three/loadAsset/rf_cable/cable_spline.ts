@@ -2,6 +2,7 @@ import * as THREE from "three";
 
 import type { ComponentItem, DeviceState } from "../../../types/digitalTwin";
 import { getNumericProperty, mmToThree } from "../../transformUtils";
+import { syncWireframeShellGeometry } from "../../wireframeShell";
 import { ddsCableTanMat } from "../materials";
 import {
   buildFiberCurvePath,
@@ -166,6 +167,7 @@ export function refreshRfCableWrapperGeometry(
   const newGeom = new THREE.TubeGeometry(path, tubularSegments, mmToThree(1.6), 14, false);
   const old = (tubeMesh as THREE.Mesh).geometry;
   (tubeMesh as THREE.Mesh).geometry = newGeom;
+  syncWireframeShellGeometry(tubeMesh as THREE.Mesh);
   old.dispose();
 
   for (const { conn, endpoint } of connectors) {

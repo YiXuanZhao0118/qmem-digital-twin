@@ -276,7 +276,7 @@ export async function loadAssetObject(
     return createPrimitive(component, state, asset);
   }
 
-  const assetUrl = resolveAssetUrl(asset.filePath);
+  const assetUrl = resolveAssetUrl(asset.filePath, asset.fileVersion);
   const extension = asset.filePath.split("?")[0].split(".").pop()?.toLowerCase();
   if (!["glb", "gltf", "obj", "stl"].includes(extension ?? "")) {
     // Non-viewer-ready file (CAD source on disk, or a STEP->STL conversion
@@ -389,7 +389,7 @@ export async function loadAssetObject(
     const buildTier = async (level: number): Promise<THREE.Object3D> => {
       const tier = tiers.find((t) => t.level === level);
       // No row for the level => the asset's own file, which IS level 0.
-      const url = tier ? resolveAssetUrl(tier.filePath) : assetUrl;
+      const url = tier ? resolveAssetUrl(tier.filePath, tier.fileVersion) : assetUrl;
       const built = (await gltfLoader.loadAsync(url)).scene.clone(true);
       applyGlbSurfaceTreatment(built);
       return built;

@@ -36,7 +36,12 @@ import {
   buildSceneObjectFromBindings,
   shouldRenderViaBindings,
 } from "../three/bindingRendererGate";
-import { primaryAsset, resolveBindingTree, type ResolvedBindingNode } from "../utils/componentBindings";
+import {
+  findAnchorInBindingTree,
+  primaryAsset,
+  resolveBindingTree,
+  type ResolvedBindingNode,
+} from "../utils/componentBindings";
 import { ANNOTATION_KIND_IDS, instanceParamsKey } from "../utils/instanceParams";
 import { beamColorForSource } from "../three/opticalBeams";
 import {
@@ -70,6 +75,7 @@ import {
 import { opticalObjectIdSet } from "../utils/opticalDomain";
 import { disposeFarfieldLobe, makeFarfieldLobe } from "../three/hornFarfield";
 import { disposeRfBadgeSprite, makeRfBadgeSprite } from "../three/rfBadge";
+import { syncWireframeShellGeometry } from "../three/wireframeShell";
 import { computeWaveplateFastAxisDeg } from "../utils/waveplateAxis";
 import {
   buildRfPropagationSchedule,
@@ -111,6 +117,7 @@ import {
   isObjectVisible,
   makeRenderableContext,
 } from "../utils/visibility";
+import { CABLE_ROOT_ANCHOR_IDS, MATING_FACE_ANCHOR_IDS } from "../utils/connectorAnchors";
 
 type RoomDimensions = {
   widthMm: number;
@@ -247,29 +254,86 @@ function replaceMeshMaterial(mesh: THREE.Mesh, material: THREE.Material): void {
   disposeMaterial(previous);
 }
 
+/** The wireframe LINES of a wireframe-mode mesh, drawn as a child mesh that
+ *  SHARES the parent's geometry. The parent itself carries a faint
+ *  translucent face material, so a body reads as a see-through volume with
+ *  its wireframe on top instead of a bare line soup. Two objects are needed
+ *  because one Mesh can only hold one material per geometry group. */
+function makeWireframeShell(geometry: THREE.BufferGeometry, side: THREE.Side): THREE.Mesh {
+  const shell = new THREE.Mesh(
+    geometry,
+    new THREE.MeshBasicMaterial({
+      // Slate lines on a dark background — matches the optical-link view's
+      // wireframe palette (#94a3b8 @ 0.55).
+      color: "#94a3b8",
+      wireframe: true,
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false,
+      side,
+    }),
+  );
+  shell.name = "wireframe-shell";
+  shell.userData.isWireShell = true;
+  // Never a raycast target: pickObject / pickFeature read objectId off the
+  // hit mesh and measure geometry features on it, so a second coincident
+  // mesh would just duplicate every hit.
+  shell.raycast = () => {};
+  // Both the shell and the translucent faces are transparent + depthWrite:
+  // false, so only renderOrder decides who draws last. Lines last, or the
+  // faces wash them out.
+  shell.renderOrder = 2;
+  return shell;
+}
+
+/** Detach + free the shell added by `makeWireframeShell`. Disposes the
+ *  material only — the geometry belongs to the parent mesh. */
+function removeWireframeShell(mesh: THREE.Mesh): void {
+  const shell = mesh.children.find((child) => child.userData?.isWireShell) as THREE.Mesh | undefined;
+  if (!shell) return;
+  mesh.remove(shell);
+  disposeMaterial(shell.material);
+}
+
 /** Switch the viewer's component meshes between rendered + wireframe modes.
  *
- *  Wireframe mode swaps every Mesh's material for an unlit MeshBasicMaterial
- *  with `wireframe: true`. The original material is stashed on
+ *  Wireframe mode swaps every Mesh's material for an unlit, barely-there
+ *  translucent MeshBasicMaterial and hangs a `makeWireframeShell` child off
+ *  it for the lines. The original material is stashed on
  *  `mesh.userData.__rendered{Material,CastShadow,ReceiveShadow}` BEFORE
  *  the swap so we can hand it back when the user flips back to "rendered".
  *  Without that cache, switching back left the wireframe material in place
  *  (the original was disposed inside replaceMeshMaterial) — see the
  *  "wireframe sticks" bug.
  *
+ *  `solid` opts one object out of the wireframe treatment while the mode
+ *  stays wireframe: the face-touch tool marks its picked bodies solid so
+ *  they stand out against the translucent rest of the scene. It takes the
+ *  same path as "rendered", so the stash/restore stays symmetric.
+ *
  *  Re-runs of this function (e.g. wrapper cache hit + decoration rebuild)
  *  are idempotent: switching wireframe→wireframe doesn't re-stash, and
  *  switching rendered→rendered is a no-op.
  */
-function applyViewerDisplayMode(object: THREE.Object3D, mode: ViewerDisplayMode): void {
+function applyViewerDisplayMode(
+  object: THREE.Object3D,
+  mode: ViewerDisplayMode,
+  solid = false,
+): void {
+  const wantWireframe = mode === "wireframe" && !solid;
+  // Collect before mutating: the wireframe branch ADDS a child mesh, and
+  // traverse() would then walk straight into the shell we just created.
+  const meshes: THREE.Mesh[] = [];
   object.traverse((child) => {
-    if (!(child instanceof THREE.Mesh)) return;
+    if (child instanceof THREE.Mesh && !child.userData?.isWireShell) meshes.push(child);
+  });
 
+  for (const child of meshes) {
     const cached = child.userData.__renderedMaterial as THREE.Material | THREE.Material[] | undefined;
     const isCurrentlyWireframe = cached !== undefined;
 
-    if (mode === "wireframe") {
-      if (isCurrentlyWireframe) return;
+    if (wantWireframe) {
+      if (isCurrentlyWireframe) continue;
       // Stash originals; do NOT dispose — they have to survive the swap
       // so we can restore them on the way back.
       child.userData.__renderedMaterial = child.material;
@@ -277,24 +341,25 @@ function applyViewerDisplayMode(object: THREE.Object3D, mode: ViewerDisplayMode)
       child.userData.__renderedReceiveShadow = child.receiveShadow;
       const side = materialSide(child.material);
       child.material = new THREE.MeshBasicMaterial({
-        // Slate wireframe lines on a dark background — matches the optical-link
-        // view's wireframe palette (#94a3b8 @ 0.55). The original solid
-        // material is stashed and restored on the way back.
+        // Faint fill so bodies read as volumes; depthWrite stays off so the
+        // whole scene remains see-through, which is the point of the mode.
         color: "#94a3b8",
-        wireframe: true,
         transparent: true,
-        opacity: 0.55,
+        opacity: 0.12,
         depthWrite: false,
         side,
       });
+      child.add(makeWireframeShell(child.geometry, side));
       child.castShadow = false;
       child.receiveShadow = false;
-      return;
+      continue;
     }
 
-    // mode === "rendered"
-    if (!isCurrentlyWireframe) return;
-    // The current material is the wireframe MeshBasicMaterial we made
+    // "rendered" / "node-edit" / "optical-link", or a face-touch pick that
+    // is being shown solid inside wireframe mode.
+    if (!isCurrentlyWireframe) continue;
+    removeWireframeShell(child);
+    // The current material is the translucent MeshBasicMaterial we made
     // above; dispose it before swapping the cached original back in.
     disposeMaterial(child.material);
     child.material = cached;
@@ -303,7 +368,7 @@ function applyViewerDisplayMode(object: THREE.Object3D, mode: ViewerDisplayMode)
     delete child.userData.__renderedMaterial;
     delete child.userData.__renderedCastShadow;
     delete child.userData.__renderedReceiveShadow;
-  });
+  }
 }
 
 /** Ghost an object that is NOT part of the optical domain.
@@ -425,14 +490,18 @@ function addSelectionMarker(object: THREE.Object3D, container: THREE.Object3D): 
   object.add(marker);
 }
 
-/** Extract a connector asset's connect_out / connect_in anchor position (mm,
+/** Extract a connector asset's cable-root / mating-face anchor position (mm,
  *  body frame) so the connector bake can be driven by anchors instead of a
- *  bbox guess. Returns null when the anchor is absent. */
+ *  bbox guess. Takes the ids most-preferred first, since fibre and coax spell
+ *  the pair differently (`utils/connectorAnchors.ts`). Returns null when none
+ *  of them is present. */
 function connectorAnchorPos(
   anchors: readonly unknown[] | null | undefined,
-  id: string,
+  ...ids: readonly string[]
 ): { x: number; y: number; z: number } | null {
-  const a = (anchors ?? []).find((x) => (x as { id?: string }).id === id);
+  const a = ids
+    .map((id) => (anchors ?? []).find((x) => (x as { id?: string }).id === id))
+    .find(Boolean);
   const p = (a as { positionMmBodyLocal?: { x?: number; y?: number; z?: number } } | undefined)
     ?.positionMmBodyLocal; // raw-anchor-ok: returns the body-frame position by contract
   return p && typeof p.x === "number" && typeof p.y === "number" && typeof p.z === "number"
@@ -728,6 +797,9 @@ function addWireframeOutline(wrapper: THREE.Object3D): void {
   wrapper.traverse((child) => {
     if (!(child instanceof THREE.Mesh) || !child.geometry) return;
     if (child.userData?.isOutline) return;
+    // The wireframe shell shares its parent's geometry — outlining it would
+    // just draw every amber edge twice.
+    if (child.userData?.isWireShell) return;
     const edges = new THREE.EdgesGeometry(child.geometry, 30);
     const lines = new THREE.LineSegments(edges, lineMaterial);
     lines.userData.isOutline = true;
@@ -1534,10 +1606,11 @@ export function DigitalTwinViewer({
   const scrubTimeNs = useSceneStore((state) => state.scrubTimeNs);
   const rfChains = useSceneStore((state) => state.rfChains);
   const selectedComponentId = useSceneStore((state) => state.selectedComponentId);
-  const fiberEditingComponentId = useSceneStore((state) => state.fiberEditingComponentId);
+  const fiberEditingObjectId = useSceneStore((state) => state.fiberEditingObjectId);
   const enterFiberEdit = useSceneStore((state) => state.enterFiberEdit);
   const exitFiberEdit = useSceneStore((state) => state.exitFiberEdit);
   const updateFiberNodes = useSceneStore((state) => state.updateFiberNodes);
+  const updatePigtailNodes = useSceneStore((state) => state.updatePigtailNodes);
   const insertFiberNode = useSceneStore((state) => state.insertFiberNode);
   const removeFiberNode = useSceneStore((state) => state.removeFiberNode);
   const rfCableEditingObjectId = useSceneStore((state) => state.rfCableEditingObjectId);
@@ -1554,12 +1627,6 @@ export function DigitalTwinViewer({
   const selectObject = useSceneStore((state) => state.selectObject);
   const overlayFlags = useSceneStore((state) => state.overlayFlags);
   const session = useSceneStore((state) => state.session);
-  const toggleSessionHiddenObject = useSceneStore((state) => state.toggleSessionHiddenObject);
-  const updateSceneObject = useSceneStore((state) => state.updateSceneObject);
-  const toggleSoloObject = useSceneStore((state) => state.toggleSoloObject);
-  const showAllHidden = useSceneStore((state) => state.showAllHidden);
-  const deleteSceneObject = useSceneStore((state) => state.deleteObject);
-  const deleteSceneObjects = useSceneStore((state) => state.deleteObjects);
   const gizmoOrientation = useSceneStore((state) => state.gizmoOrientation);
   const gizmoMode = useSceneStore((state) => state.gizmoMode[panelKey]);
   const setGizmoModeRaw = useSceneStore((state) => state.setGizmoMode);
@@ -1573,10 +1640,30 @@ export function DigitalTwinViewer({
   const faceTouchDirection = useSceneStore((state) => state.faceTouchDirection);
   const setFaceTouchDirection = useSceneStore((state) => state.setFaceTouchDirection);
   const faceTouchPending = useSceneStore((state) => state.faceTouchPending);
+  const faceTouchPreview = useSceneStore((state) => state.faceTouchPreview);
   const faceTouchOp = useSceneStore((state) => state.faceTouchOp);
 
-  type CtxMenu = { x: number; y: number; objectId: string; componentId: string };
-  const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
+  // Objects the tools-pie (face-touch) flow has picked: A after the first
+  // click, then A + B once the second click produces a preview. In wireframe
+  // mode they render with their real materials while everything else stays
+  // translucent, so the two bodies being mated are unmistakable. The store
+  // already clears both fields on tool / op / direction change and when the
+  // panel applies or cancels, so nothing extra has to un-solid them.
+  const solidObjectIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (faceTouchPending) ids.add(faceTouchPending.objectId);
+    if (faceTouchPreview) {
+      ids.add(faceTouchPreview.a.objectId);
+      ids.add(faceTouchPreview.b.objectId);
+    }
+    return ids;
+  }, [faceTouchPending, faceTouchPreview]);
+  // Stable primitive for effect deps (a fresh Set every render would retrigger
+  // them constantly) + a ref for the long-lived LOD-tier callback.
+  const solidObjectIdsKey = [...solidObjectIds].sort().join("|");
+  const solidObjectIdsRef = useRef(solidObjectIds);
+  solidObjectIdsRef.current = solidObjectIds;
+
   // Overflow toggle for the consolidated viewer toolbar — gates the less-used
   // cursor (mm) editor so the corner stays uncluttered until needed.
   // displayMode is now a controlled prop (so each panel in dual-view holds
@@ -2064,7 +2151,7 @@ export function DigitalTwinViewer({
         const asset = useV3Catalog.getState().getAssetByCatalogId(cid);
         if (asset && !asset.filePath.startsWith("primitive://")) {
           return {
-            url: resolveAssetUrl(asset.filePath),
+            url: resolveAssetUrl(asset.filePath, asset.fileVersion),
             ext: asset.filePath.split("?")[0].split(".").pop()?.toLowerCase() ?? "",
             unit: asset.unit,
             scaleFactor: asset.scaleFactor,
@@ -2097,12 +2184,12 @@ export function DigitalTwinViewer({
       if (!match) return null;
       return {
         key: match.catalogId ?? match.filePath,
-        url: resolveAssetUrl(match.filePath),
+        url: resolveAssetUrl(match.filePath, match.fileVersion),
         ext: match.filePath.split("?")[0].split(".").pop()?.toLowerCase() ?? "",
         unit: match.unit,
         scaleFactor: match.scaleFactor,
-        connectOutMm: connectorAnchorPos(match.anchors, "connect_out"),
-        connectInMm: connectorAnchorPos(match.anchors, "connect_in"),
+        connectOutMm: connectorAnchorPos(match.anchors, ...CABLE_ROOT_ANCHOR_IDS),
+        connectInMm: connectorAnchorPos(match.anchors, ...MATING_FACE_ANCHOR_IDS),
       };
     });
     return () => setFiberConnectorAssetResolver(null);
@@ -2602,19 +2689,43 @@ export function DigitalTwinViewer({
         return !opticalOnly || opticalObjectIdsRef.current.has(String(item.object.userData.objectId));
       });
     };
+    /** Screen-space radius, in CSS px, within which a beam counts as clicked.
+     *
+     *  The centreline `THREE.Line` inside each tube is what makes a beam
+     *  pickable at all — the tube is drawn at physical size (a 1 mm beam is
+     *  1-2 px wide), so the mesh alone would demand pixel-perfect aim. But
+     *  three's `params.Line.threshold` is a WORLD-space tolerance: the default
+     *  1 unit = 100 mm here, so a beam 10 cm off the cursor still registered
+     *  and — being nearer the camera — could even outrank the beam actually
+     *  under the cursor. Keep that world threshold generous for gathering
+     *  candidates and reject on true screen distance instead, which is
+     *  depth-independent and is what the user is actually aiming with. */
+    const BEAM_PICK_PX = 8;
     const pickBeam = (event: { clientX: number; clientY: number }) => {
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
       const hits = raycaster.intersectObjects(beamGroupRef.current.children, true);
+      const projected = new THREE.Vector3();
+      // `hits` is sorted near-to-far, so the first survivor is the nearest
+      // beam whose drawn axis is genuinely under the cursor.
       return hits.find((item) => {
         let n: THREE.Object3D | null = item.object;
-        while (n) {
-          if (n.userData?.beamSegment) return true;
+        let onBeam = false;
+        while (n && !onBeam) {
+          if (n.userData?.beamSegment) onBeam = true;
           n = n.parent;
         }
-        return false;
+        if (!onBeam) return false;
+        // For a centreline hit three reports `point` on the SEGMENT (not on
+        // the ray), so projecting it measures how far the cursor really is
+        // from the drawn beam axis. For a tube-surface hit `point` lies on
+        // the ray and the distance comes out ~0, as it should.
+        projected.copy(item.point).project(camera);
+        const dx = ((projected.x + 1) / 2) * rect.width - (event.clientX - rect.left);
+        const dy = ((-projected.y + 1) / 2) * rect.height - (event.clientY - rect.top);
+        return dx * dx + dy * dy <= BEAM_PICK_PX * BEAM_PICK_PX;
       });
     };
     /** Pick a geometric feature on the mesh under the cursor, of the kind
@@ -3093,7 +3204,6 @@ export function DigitalTwinViewer({
       // LEFT (button 0) drives single-click object pick; MIDDLE (button 1)
       // drives marquee select. Right button is owned by OrbitControls (PAN).
       if (event.button !== 0 && event.button !== 1) return;
-      setCtxMenu(null);
       pendingPick = {
         pointerId: event.pointerId,
         startX: event.clientX,
@@ -3217,20 +3327,34 @@ export function DigitalTwinViewer({
         && dyFromLast < DOUBLE_CLICK_PX;
       lastClick = { t: now, x: event.clientX, y: event.clientY };
 
-      // Beam-segment probe. Runs on a double-click in every mode, and on a
-      // SINGLE click in optical-link mode — that mode exists to inspect the
-      // light path, so clicking a beam there should just work (it is what the
-      // old optical-link overlay's own click handler did).
+      // Beam-segment probe. Runs on a double-click, and on a SINGLE click in
+      // optical-link mode — that mode exists to inspect the light path, so
+      // clicking a beam there should just work (it is what the old
+      // optical-link overlay's own click handler did). Only the optical-link
+      // beam chain tags its tubes with `userData.beamSegment`, so in the other
+      // display modes the probe finds nothing and the click falls through to
+      // plain selection.
       //
-      // On a SINGLE click the optic wins, though: the beam tube runs through
-      // the middle of every element it hits, so probing first made the optics
-      // themselves hard to click — and selecting one is the only way to reach
-      // its Optical-setting panel. Double-click still probes first, so a probe
-      // right at an element's face stays reachable.
-      const opticFirst = !isDoubleClick && displayModeRef.current === "optical-link";
+      // On a SINGLE click the optic still wins where it sits IN FRONT of the
+      // beam: the beam runs through the middle of every element it hits, and
+      // selecting an optic is the only way to reach its Optical-setting panel.
+      // But only there — this used to suppress the probe on ANY optical hit
+      // along the ray, with no depth test, so an optic half a metre BEHIND the
+      // beam stole the click and most of a crowded bench was un-probeable.
+      // Double-click ignores the optic entirely, so a probe right at an
+      // element's face stays reachable.
+      const linkMode = displayModeRef.current === "optical-link";
+      const opticFirst = !isDoubleClick && linkMode;
       const opticFirstHit = opticFirst ? pickObject(event) : undefined;
-      if (!opticFirstHit && (isDoubleClick || displayModeRef.current === "optical-link")) {
-        const beamHit2 = pickBeam(event);
+      const beamHit2 = isDoubleClick || linkMode ? pickBeam(event) : undefined;
+      // Depth tie-break in three units (1 unit = 100 mm): the optic keeps the
+      // click when it is in front of the beam point, or at most 10 mm behind
+      // it — an optic's face and the beam axis crossing it lie within a few mm
+      // of each other, and there the optic must stay selectable.
+      const OPTIC_DEPTH_BIAS_THREE = 0.1;
+      const opticWins = opticFirstHit != null
+        && (!beamHit2 || opticFirstHit.distance <= beamHit2.distance + OPTIC_DEPTH_BIAS_THREE);
+      if (!opticWins) {
         if (beamHit2) {
           let n2: THREE.Object3D | null = beamHit2.object;
           let seg2: TraceSegment | null = null;
@@ -3318,26 +3442,10 @@ export function DigitalTwinViewer({
       if (!pendingPick || event.pointerId !== pendingPick.pointerId) return;
       pendingPick = null;
     };
+    // Right button is owned by OrbitControls (PAN); swallow the browser
+    // menu so panning never pops it.
     const handleContextMenu = (event: MouseEvent) => {
       event.preventDefault();
-      const hit = pickObject(event);
-      if (!hit) {
-        setCtxMenu(null);
-        return;
-      }
-      const objectId = String(hit.object.userData.objectId);
-      const componentId = String(hit.object.userData.componentId);
-      // Skip the optical_table — right-click is now used primarily for
-      // camera PAN, and the table fills most of the viewport so popping a
-      // Hide/Solo menu on every pan release is noisy. Other components
-      // still get the menu.
-      const stateNow = useSceneStore.getState();
-      const cmpType = stateNow.scene.components.find((c) => c.id === componentId)?.kindId;
-      if (cmpType === "optical_table") {
-        setCtxMenu(null);
-        return;
-      }
-      setCtxMenu({ x: event.clientX, y: event.clientY, objectId, componentId });
     };
     const handleAxisGizmoPointerDown = (event: PointerEvent) => {
       event.stopPropagation();
@@ -3396,7 +3504,7 @@ export function DigitalTwinViewer({
       });
       const mode = displayModeRef.current;
       applyOpticalLinkGhost(node, false);
-      applyViewerDisplayMode(node, mode);
+      applyViewerDisplayMode(node, mode, !!objectId && solidObjectIdsRef.current.has(objectId));
       applyOpticalLinkGhost(
         node,
         mode === "optical-link" && !!objectId && !opticalObjectIdsRef.current.has(objectId),
@@ -3684,7 +3792,7 @@ export function DigitalTwinViewer({
       const opticalIds = opticalObjectIdsRef.current;
       for (const [objectId, cached] of objectWrappersRef.current) {
         applyOpticalLinkGhost(cached.wrapper, false);
-        applyViewerDisplayMode(cached.wrapper, displayMode);
+        applyViewerDisplayMode(cached.wrapper, displayMode, solidObjectIds.has(objectId));
         applyOpticalLinkGhost(
           cached.wrapper,
           displayMode === "optical-link" && !opticalIds.has(objectId),
@@ -3719,7 +3827,11 @@ export function DigitalTwinViewer({
       // wireframe, where the photo-room floor is hidden.
       wireframeGridRef.current.visible = displayMode === "wireframe";
     }
-  }, [displayMode]);
+    // solidObjectIdsKey: a face-touch pick changes which wrappers must drop
+    // out of the wireframe treatment, and this loop is the one place that
+    // re-asserts materials on every wrapper. The rest of the body is
+    // displayMode-only but idempotent, so re-running it costs nothing.
+  }, [displayMode, solidObjectIdsKey]);
 
   // Node-edit mode driver: when `displayMode === "node-edit"`, auto-enter
   // the appropriate cable edit (fiber vs rf_cable) for whichever
@@ -3730,7 +3842,7 @@ export function DigitalTwinViewer({
   // but no edit gizmo appears — the user can switch to a cable any time.
   useEffect(() => {
     if (displayMode !== "node-edit") {
-      if (fiberEditingComponentId) exitFiberEdit();
+      if (fiberEditingObjectId) exitFiberEdit();
       if (rfCableEditingObjectId) exitRfCableEdit();
       return;
     }
@@ -3738,7 +3850,7 @@ export function DigitalTwinViewer({
       ? sceneData.objects.find((o) => o.id === selectedObjectId)
       : null;
     if (!selectedObj) {
-      if (fiberEditingComponentId) exitFiberEdit();
+      if (fiberEditingObjectId) exitFiberEdit();
       if (rfCableEditingObjectId) exitRfCableEdit();
       return;
     }
@@ -3746,13 +3858,15 @@ export function DigitalTwinViewer({
     if (!component) return;
     const ct = component.kindId;
     if (ct === "fiber") {
-      if (fiberEditingComponentId !== component.id) enterFiberEdit(component.id);
+      // Keyed on the SceneObject, exactly like rf_cable below: two cables
+      // instantiated from one catalog fibre must edit independently.
+      if (fiberEditingObjectId !== selectedObj.id) enterFiberEdit(selectedObj.id);
     } else if (ct === "rf_cable" || ct === "sma_cable") {
       if (rfCableEditingObjectId !== selectedObj.id) enterRfCableEdit(selectedObj.id);
     } else {
       // Selected something that isn't a cable — clear any active edit so
       // the gizmo doesn't linger on the wrong target.
-      if (fiberEditingComponentId) exitFiberEdit();
+      if (fiberEditingObjectId) exitFiberEdit();
       if (rfCableEditingObjectId) exitRfCableEdit();
     }
   }, [
@@ -3760,7 +3874,7 @@ export function DigitalTwinViewer({
     selectedObjectId,
     sceneData.objects,
     sceneData.components,
-    fiberEditingComponentId,
+    fiberEditingObjectId,
     rfCableEditingObjectId,
     enterFiberEdit,
     exitFiberEdit,
@@ -4042,21 +4156,17 @@ export function DigitalTwinViewer({
           if (!targetObj) return;
           const targetComp = sceneData.components.find((c) => c.id === targetObj.componentId);
           if (!targetComp) return;
-          // Binding-aware primary asset (single root targetKind="asset"
-          // binding, else legacy comp.asset3dId) — reading asset3dId
-          // directly returned null in binding-backed scenes, so this
-          // early-returned and cables never live re-snapped when their
-          // linked instrument moved (they froze at connect-time nodes).
-          const targetAsset = primaryAsset(targetComp, {
-            componentBindings: sceneData.componentBindings,
-            assets: sceneData.assets,
-          });
-          if (!targetAsset || !Array.isArray(targetAsset.anchors)) return;
-          const targetAnchor = targetAsset.anchors.find(
-            (a) => a.id === link.targetAnchorId
-              && (a.name ?? a.id) === link.targetAnchorName,
+          // Anchor resolved across the whole binding tree — reading
+          // asset3dId directly returned null in binding-backed scenes, and
+          // `primaryAsset` still answers null for a multi-root Component
+          // (EOM + its two FC/APC connectors), so this early-returned and
+          // cables never live re-snapped when their linked instrument moved
+          // (they froze at connect-time nodes).
+          const ownedTarget = findAnchorInBindingTree(
+            targetComp, sceneData, link.targetAnchorId, link.targetAnchorName,
           );
-          if (!targetAnchor) return;
+          if (!ownedTarget) return;
+          const { asset: targetAsset, anchor: targetAnchor } = ownedTarget;
           // Body-frame → object-local: target asset stores anchor in body
           // frame; resolveLinkedRfCableEndpoint expects object-local
           // coords (its bodyToLab is just object-pose without body-frame).
@@ -4281,9 +4391,24 @@ export function DigitalTwinViewer({
         // components (no binding rows) → no behaviour change for them.
         const componentBindingsRefKeyNow = (sceneData.componentBindings ?? [])
           .filter((b) => b.componentId === component.id)
-          .map((b) =>
-            `${b.id}:${b.parentBindingId ?? ""}:${b.targetKind}:${b.asset3dId ?? ""}:${b.subComponentId ?? ""}:${b.localXMm},${b.localYMm},${b.localZMm},${b.localRxDeg},${b.localRyDeg},${b.localRzDeg}:${b.sortOrder}`,
-          )
+          .map((b) => {
+            // A binding's PIGTAIL is geometry the walker draws
+            // (bindingTreeObject.buildBindingPigtail), and it lives in
+            // `properties` — which id + pose + target do not cover, so adding
+            // or dropping a jacket in the PHY editor left the cached mesh in
+            // place and the fibre simply never appeared (2026-08-21). Only
+            // the three fields the renderer actually reads are hashed;
+            // `portAnchor` is backend physics and changes nothing visual.
+            const p = b.properties as {
+              fiberNodes?: unknown;
+              fiberRadiusMm?: unknown;
+              fiberJacketColor?: unknown;
+            } | undefined;
+            const jacket = p?.fiberNodes
+              ? `${JSON.stringify(p.fiberNodes)}/${String(p.fiberRadiusMm ?? "")}/${String(p.fiberJacketColor ?? "")}`
+              : "";
+            return `${b.id}:${b.parentBindingId ?? ""}:${b.targetKind}:${b.asset3dId ?? ""}:${b.subComponentId ?? ""}:${b.localXMm},${b.localYMm},${b.localZMm},${b.localRxDeg},${b.localRyDeg},${b.localRzDeg}:${b.sortOrder}:${jacket}`;
+          })
           .sort()
           .join("|");
         // Per-instance rendering hint key (e.g. translucentHousing
@@ -4301,7 +4426,14 @@ export function DigitalTwinViewer({
           const dyn = ANNOTATION_KIND_IDS.has(component.kindId ?? "")
             ? instanceParamsKey(placement)
             : "";
-          return `tr=${p?.translucentHousing === true ? "1" : "0"}|dyn=${dyn}`;
+          // Per-instance PIGTAIL splines are geometry, so a drag has to
+          // invalidate the cached mesh — componentRef / assetRef are both
+          // still equal after one, exactly like the hint flip above.
+          const pg = (placement.properties as {
+            bindingFiberNodes?: unknown;
+          } | undefined)?.bindingFiberNodes;
+          const pgKey = pg ? JSON.stringify(pg) : "";
+          return `tr=${p?.translucentHousing === true ? "1" : "0"}|dyn=${dyn}|pg=${pgKey}`;
         })();
         const canReuse =
           cached !== undefined &&
@@ -4648,7 +4780,7 @@ export function DigitalTwinViewer({
         // finds when it swaps in the wireframe one, so it must never see a
         // ghosted clone.
         applyOpticalLinkGhost(wrapper, false);
-        applyViewerDisplayMode(wrapper, displayMode);
+        applyViewerDisplayMode(wrapper, displayMode, solidObjectIds.has(placement.id));
         applyOpticalLinkGhost(wrapper, opticalLinkMode && !opticalObjectIds.has(placement.id));
         applyVisibilityFlags(wrapper, visibleInView);
         // PPG mounts directly on its peer instrument's coax port (the
@@ -5086,7 +5218,7 @@ export function DigitalTwinViewer({
 
   // -----------------------------------------------------------------
   // Fiber Bezier-spline edit overlay. Active only when
-  // fiberEditingComponentId is non-null. Shows:
+  // fiberEditingObjectId is non-null. Shows:
   //   - One anchor sphere per node (yellow on endpoints A/B, orange on
   //     interior). Drag = move the anchor (its handles move with it as
   //     fixed offsets). Right-click on an interior anchor = delete.
@@ -5101,19 +5233,24 @@ export function DigitalTwinViewer({
   // new node array to the store, which triggers an STL-style rebuild.
   // -----------------------------------------------------------------
   useEffect(() => {
-    if (!fiberEditingComponentId) return;
+    if (!fiberEditingObjectId) return;
     const renderer = rendererRef.current;
     const camera = cameraRef.current;
     const componentGroup = componentGroupRef.current;
     const controls = controlsRef.current;
     if (!renderer || !camera || !componentGroup) return;
 
+    // Match on the SceneObject, not the Component: `fiberComponentId` is the
+    // same on every instance of one catalog fibre, so a componentId match
+    // returned whichever wrapper `traverse` reached first and the gizmo drew
+    // that cable's nodes no matter which one you had selected.
     let fiberWrapper: THREE.Object3D | null = null;
     let tubeMesh: THREE.Mesh | null = null;
     componentGroup.traverse((node) => {
       if (
         !fiberWrapper
-        && node.userData?.fiberComponentId === fiberEditingComponentId
+        && node.userData?.fiberComponentId !== undefined
+        && node.userData?.objectId === fiberEditingObjectId
         && node.userData?.fiberRole === undefined
       ) {
         fiberWrapper = node;
@@ -5122,21 +5259,21 @@ export function DigitalTwinViewer({
         !tubeMesh
         && (node as THREE.Mesh).isMesh
         && node.userData?.fiberRole === "tube"
-        && node.parent?.userData?.fiberComponentId === fiberEditingComponentId
+        && node.parent?.userData?.objectId === fiberEditingObjectId
       ) {
         tubeMesh = node as THREE.Mesh;
       }
     });
     if (!fiberWrapper || !tubeMesh) return;
 
-    const component = sceneData.components.find((c) => c.id === fiberEditingComponentId);
+    const editingObject = sceneData.objects.find((o) => o.id === fiberEditingObjectId);
+    const component = sceneData.components.find((c) => c.id === editingObject?.componentId);
     if (!component) return;
     // Per-instance fiberNodes / radiusMm live on the SceneObject's
     // properties (V2 layer separation; pre-2026-05-11 the values were
     // mutated on Component.properties, which incorrectly propagated edits
     // to all instances of the same fiber type). Prefer per-instance; fall
     // back to the catalog template for legacy data.
-    const editingObject = sceneData.objects.find((o) => o.componentId === fiberEditingComponentId);
     const objProps = (editingObject?.properties ?? {}) as {
       fiberNodes?: FiberNode[]; radiusMm?: number;
     };
@@ -5232,7 +5369,7 @@ export function DigitalTwinViewer({
       if (!mesh.isMesh || !mesh.material) return;
       let p: THREE.Object3D | null = mesh;
       while (p) {
-        if (p.userData?.fiberComponentId === fiberEditingComponentId) return;
+        if (p.userData?.objectId === fiberEditingObjectId) return;
         p = p.parent;
       }
       const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
@@ -5502,6 +5639,7 @@ export function DigitalTwinViewer({
       const newGeom = new THREE.TubeGeometry(path, tubularSegments, radiusMm / 100, 12, false);
       const old = (tubeMesh as THREE.Mesh).geometry;
       (tubeMesh as THREE.Mesh).geometry = newGeom;
+      syncWireframeShellGeometry(tubeMesh as THREE.Mesh);
       old.dispose();
       const wrapper = fiberWrapper as THREE.Object3D;
       for (const child of wrapper.children) {
@@ -5590,7 +5728,7 @@ export function DigitalTwinViewer({
           event.preventDefault();
           event.stopPropagation();
           if (idx > 0 && idx < nodes.length - 1) {
-            void removeFiberNode(fiberEditingComponentId, idx);
+            void removeFiberNode(fiberEditingObjectId, idx);
           }
         }
         return;
@@ -5767,7 +5905,7 @@ export function DigitalTwinViewer({
         // pick up the new pose.
         const storeState = useSceneStore.getState();
         const fiberObj = storeState.scene.objects.find(
-          (o) => o.componentId === fiberEditingComponentId,
+          (o) => o.id === fiberEditingObjectId,
         );
         if (!fiberObj) return;
         const fiberPe = storeState.scene.physicsElements.find(
@@ -5806,7 +5944,13 @@ export function DigitalTwinViewer({
             kp.endB as FiberEndKindParamsShape | null,
             existingNodes ?? undefined,
           );
-          await storeState.updateFiberNodes(fiberEditingComponentId, nextNodes);
+          // Dragging an endpoint by hand unplugs it: manual override beats
+          // link, the same rule the rf_cable node-edit commit follows.
+          await storeState.updateFiberNodes(
+            fiberEditingObjectId,
+            nextNodes,
+            finishedDrag.endRole,
+          );
         })();
         return;
       }
@@ -5821,7 +5965,7 @@ export function DigitalTwinViewer({
         if (!newBodyHandleMm) return;
         const storeState = useSceneStore.getState();
         const fiberObj = storeState.scene.objects.find(
-          (o) => o.componentId === fiberEditingComponentId,
+          (o) => o.id === fiberEditingObjectId,
         );
         if (!fiberObj) return;
         const fiberPe = storeState.scene.physicsElements.find(
@@ -5853,12 +5997,18 @@ export function DigitalTwinViewer({
             kp.endB as FiberEndKindParamsShape | null,
             existingNodes ?? undefined,
           );
-          await storeState.updateFiberNodes(fiberEditingComponentId, nextNodes);
+          // Dragging an endpoint by hand unplugs it: manual override beats
+          // link, the same rule the rf_cable node-edit commit follows.
+          await storeState.updateFiberNodes(
+            fiberEditingObjectId,
+            nextNodes,
+            finishedDrag.endRole,
+          );
         })();
         return;
       }
       void updateFiberNodes(
-        fiberEditingComponentId,
+        fiberEditingObjectId,
         nodes.map((n) => ({
           posMm: [n.posMm[0], n.posMm[1], n.posMm[2]],
           handleInMm: n.handleInMm
@@ -5924,7 +6074,7 @@ export function DigitalTwinViewer({
       ];
       event.preventDefault();
       event.stopPropagation();
-      void insertFiberNode(fiberEditingComponentId, bestSegment + 1, {
+      void insertFiberNode(fiberEditingObjectId, bestSegment + 1, {
         posMm: [labMm[0], labMm[1], labMm[2]],
         handleInMm: inOffset,
         handleOutMm: outOffset,
@@ -5973,13 +6123,311 @@ export function DigitalTwinViewer({
       }
     };
   }, [
-    fiberEditingComponentId,
+    fiberEditingObjectId,
     sceneData.components,
     componentsBuildVersion,
     insertFiberNode,
     removeFiberNode,
     updateFiberNodes,
   ]);
+
+  // -----------------------------------------------------------------
+  // PIGTAIL node-edit gizmo (2026-08-21).
+  //
+  // The fibre run between a fibre-coupled instrument's body and the
+  // connector one of its ComponentBindings places
+  // (`binding.properties.fiberNodes`, rendered by
+  // three/bindingTreeObject.ts::buildBindingPigtail).
+  //
+  // Deliberately NOT the fiber block above generalised. Two reasons:
+  //   * That effect keys everything on `fiberComponentId` + a single
+  //     spline per Component, and a part can have SEVERAL pigtails (the
+  //     EOSpace EOM has two) — so there is no "which one" to enter and
+  //     every pigtail of the selected object is editable at once.
+  //   * A pigtail's ENDPOINTS are structural: node 0 is welded to the
+  //     device's fibre exit, the last node to the connector's
+  //     `connect_out`. They must not move, which removes the endpoint /
+  //     Align machinery that makes the fiber block big. Their HANDLES
+  //     stay editable — that is what sets the angle the fibre leaves the
+  //     boot at.
+  //
+  // Commits land on `SceneObject.properties.bindingFiberNodes[bindingId]`
+  // via `updatePigtailNodes`, never on the binding row: that row is the
+  // catalog baseline shared by every instance of the part.
+  // -----------------------------------------------------------------
+  useEffect(() => {
+    if (displayMode !== "node-edit" || !selectedObjectId) return;
+    const renderer = rendererRef.current;
+    const camera = cameraRef.current;
+    const componentGroup = componentGroupRef.current;
+    const controls = controlsRef.current;
+    if (!renderer || !camera || !componentGroup) return;
+
+    type Pigtail = {
+      tube: THREE.Mesh;
+      host: THREE.Object3D;
+      bindingId: string;
+      nodes: FiberNode[];
+      radiusMm: number;
+    };
+    const pigtails: Pigtail[] = [];
+    componentGroup.traverse((o) => {
+      if (!(o as THREE.Mesh).isMesh || o.userData?.fiberRole !== "pigtail") return;
+      let walk: THREE.Object3D | null = o;
+      let objectId: string | undefined;
+      while (walk && !objectId) {
+        objectId = walk.userData?.objectId as string | undefined;
+        walk = walk.parent;
+      }
+      if (objectId !== selectedObjectId || !o.parent) return;
+      const src = o.userData.pigtailNodes as FiberNode[] | undefined;
+      if (!Array.isArray(src) || src.length < 2) return;
+      pigtails.push({
+        tube: o as THREE.Mesh,
+        host: o.parent,
+        bindingId: String(o.userData.__bindingId ?? ""),
+        // Deep clone: live drags mutate this, the store only sees pointer-up.
+        nodes: JSON.parse(JSON.stringify(src)) as FiberNode[],
+        radiusMm: Number(o.userData.pigtailRadiusMm) || 0.9,
+      });
+    });
+    if (pigtails.length === 0) return;
+
+    const MM = 100; // viewer units are mm/100
+    const anchorGeo = new THREE.SphereGeometry(2.6 / MM, 14, 10);
+    const lockedGeo = new THREE.SphereGeometry(2.0 / MM, 12, 8);
+    const tipGeo = new THREE.SphereGeometry(1.7 / MM, 10, 8);
+    const anchorMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b, depthTest: false });
+    const lockedMat = new THREE.MeshBasicMaterial({ color: 0x64748b, depthTest: false });
+    const tipMat = new THREE.MeshBasicMaterial({ color: 0x22d3ee, depthTest: false });
+    const lineMat = new THREE.LineBasicMaterial({ color: 0x22d3ee, depthTest: false });
+
+    type Widget = {
+      mesh: THREE.Mesh;
+      pigtail: Pigtail;
+      nodeIndex: number;
+      kind: "anchor" | "handle";
+      side?: "in" | "out";
+      line?: THREE.Line;
+    };
+    const widgets: Widget[] = [];
+    const spawned: THREE.Object3D[] = [];
+
+    const toLocal = (mm: [number, number, number]) =>
+      new THREE.Vector3(mm[0] / MM, mm[1] / MM, mm[2] / MM);
+
+    for (const pt of pigtails) {
+      for (let i = 0; i < pt.nodes.length; i += 1) {
+        const node = pt.nodes[i];
+        const locked = i === 0 || i === pt.nodes.length - 1;
+        const anchor = new THREE.Mesh(
+          locked ? lockedGeo : anchorGeo,
+          locked ? lockedMat : anchorMat,
+        );
+        anchor.position.copy(toLocal(node.posMm));
+        anchor.renderOrder = 999;
+        pt.host.add(anchor);
+        spawned.push(anchor);
+        if (!locked) widgets.push({ mesh: anchor, pigtail: pt, nodeIndex: i, kind: "anchor" });
+
+        for (const side of ["in", "out"] as const) {
+          const off = side === "in" ? node.handleInMm : node.handleOutMm;
+          if (!off) continue;
+          const tip = new THREE.Mesh(tipGeo, tipMat);
+          tip.position.copy(toLocal(node.posMm)).add(toLocal(off));
+          tip.renderOrder = 999;
+          const line = new THREE.Line(
+            new THREE.BufferGeometry().setFromPoints([
+              toLocal(node.posMm),
+              tip.position.clone(),
+            ]),
+            lineMat,
+          );
+          line.renderOrder = 998;
+          pt.host.add(tip);
+          pt.host.add(line);
+          spawned.push(tip, line);
+          widgets.push({ mesh: tip, pigtail: pt, nodeIndex: i, kind: "handle", side, line });
+        }
+      }
+    }
+
+    const refreshTube = (pt: Pigtail) => {
+      const next = new THREE.TubeGeometry(
+        buildFiberCurvePath(pt.nodes),
+        Math.max(64, (pt.nodes.length - 1) * 32),
+        pt.radiusMm / MM,
+        12,
+        false,
+      );
+      pt.tube.geometry.dispose();
+      pt.tube.geometry = next;
+      for (const w of widgets) {
+        if (w.pigtail !== pt) continue;
+        const node = pt.nodes[w.nodeIndex];
+        if (w.kind === "anchor") {
+          w.mesh.position.copy(toLocal(node.posMm));
+        } else {
+          const off = w.side === "in" ? node.handleInMm : node.handleOutMm;
+          w.mesh.position.copy(toLocal(node.posMm)).add(toLocal(off ?? [0, 0, 0]));
+        }
+        if (w.line) {
+          w.line.geometry.dispose();
+          w.line.geometry = new THREE.BufferGeometry().setFromPoints([
+            toLocal(node.posMm),
+            w.mesh.position.clone(),
+          ]);
+        }
+      }
+    };
+
+    const pointer = new THREE.Vector2();
+    const raycaster = new THREE.Raycaster();
+    let drag: { widget: Widget; plane: THREE.Plane } | null = null;
+
+    const updatePointer = (e: { clientX: number; clientY: number }) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+    };
+    const planeAt = (world: THREE.Vector3) => {
+      const dir = new THREE.Vector3();
+      camera.getWorldDirection(dir);
+      return new THREE.Plane(dir.clone().negate(), dir.clone().dot(world));
+    };
+    const hostPointMm = (
+      w: Widget,
+      plane: THREE.Plane,
+    ): [number, number, number] | null => {
+      const world = new THREE.Vector3();
+      if (!raycaster.ray.intersectPlane(plane, world)) return null;
+      const local = w.pigtail.host.worldToLocal(world);
+      return [local.x * MM, local.y * MM, local.z * MM];
+    };
+
+    const commit = (pt: Pigtail) => {
+      void updatePigtailNodes(
+        selectedObjectId,
+        pt.bindingId,
+        pt.nodes as unknown as FiberNodePersistent[],
+      );
+    };
+
+    const onContextMenu = (e: MouseEvent) => {
+      updatePointer(e);
+      const anchors = widgets.filter((w) => w.kind === "anchor").map((w) => w.mesh);
+      const hits = raycaster.intersectObjects(anchors, false);
+      if (hits.length === 0) return;
+      const w = widgets.find((x) => x.mesh === hits[0].object);
+      if (!w) return;
+      e.preventDefault();
+      e.stopPropagation();
+      // Endpoints never become anchor widgets, so any hit here is interior;
+      // keep the two structural nodes regardless.
+      if (w.pigtail.nodes.length <= 2) return;
+      w.pigtail.nodes.splice(w.nodeIndex, 1);
+      commit(w.pigtail);
+    };
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      updatePointer(e);
+      const hits = raycaster.intersectObjects(widgets.map((w) => w.mesh), false);
+      if (hits.length === 0) return;
+      const widget = widgets.find((w) => w.mesh === hits[0].object);
+      if (!widget) return;
+      e.preventDefault();
+      e.stopPropagation();
+      drag = { widget, plane: planeAt(widget.mesh.getWorldPosition(new THREE.Vector3())) };
+      if (controls) controls.enabled = false;
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (!drag) return;
+      updatePointer(e);
+      const mm = hostPointMm(drag.widget, drag.plane);
+      if (!mm) return;
+      const { widget } = drag;
+      const node = widget.pigtail.nodes[widget.nodeIndex];
+      if (widget.kind === "anchor") {
+        node.posMm = mm;
+      } else {
+        const delta: [number, number, number] = [
+          mm[0] - node.posMm[0],
+          mm[1] - node.posMm[1],
+          mm[2] - node.posMm[2],
+        ];
+        if (widget.side === "in") node.handleInMm = delta;
+        else node.handleOutMm = delta;
+      }
+      refreshTube(widget.pigtail);
+    };
+
+    const onPointerUp = () => {
+      if (!drag) return;
+      const pt = drag.widget.pigtail;
+      drag = null;
+      if (controls) controls.enabled = true;
+      commit(pt);
+    };
+
+    const onDoubleClick = (e: MouseEvent) => {
+      updatePointer(e);
+      const hits = raycaster.intersectObjects(pigtails.map((p) => p.tube), false);
+      if (hits.length === 0) return;
+      const pt = pigtails.find((p) => p.tube === hits[0].object);
+      if (!pt) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const local = pt.host.worldToLocal(hits[0].point.clone());
+      const posMm: [number, number, number] = [local.x * MM, local.y * MM, local.z * MM];
+      // Into whichever segment the click is nearest — never outside the two
+      // structural endpoints.
+      let best = 1;
+      let bestDist = Infinity;
+      for (let i = 0; i < pt.nodes.length - 1; i += 1) {
+        const a = pt.nodes[i].posMm;
+        const b = pt.nodes[i + 1].posMm;
+        const d =
+          ((a[0] + b[0]) / 2 - posMm[0]) ** 2
+          + ((a[1] + b[1]) / 2 - posMm[1]) ** 2
+          + ((a[2] + b[2]) / 2 - posMm[2]) ** 2;
+        if (d < bestDist) {
+          bestDist = d;
+          best = i + 1;
+        }
+      }
+      pt.nodes.splice(best, 0, { posMm });
+      commit(pt);
+    };
+
+    const el = renderer.domElement;
+    el.addEventListener("pointerdown", onPointerDown);
+    el.addEventListener("pointermove", onPointerMove);
+    el.addEventListener("pointerup", onPointerUp);
+    el.addEventListener("dblclick", onDoubleClick);
+    el.addEventListener("contextmenu", onContextMenu);
+    return () => {
+      el.removeEventListener("pointerdown", onPointerDown);
+      el.removeEventListener("pointermove", onPointerMove);
+      el.removeEventListener("pointerup", onPointerUp);
+      el.removeEventListener("dblclick", onDoubleClick);
+      el.removeEventListener("contextmenu", onContextMenu);
+      if (controls) controls.enabled = true;
+      for (const o of spawned) {
+        o.parent?.remove(o);
+        (o as THREE.Mesh | THREE.Line).geometry?.dispose();
+      }
+      anchorGeo.dispose();
+      lockedGeo.dispose();
+      tipGeo.dispose();
+      anchorMat.dispose();
+      lockedMat.dispose();
+      tipMat.dispose();
+      lineMat.dispose();
+    };
+  }, [displayMode, selectedObjectId, componentsBuildVersion, updatePigtailNodes]);
 
   // -----------------------------------------------------------------
   // RF-cable spline editing gizmo. Parallels the fiber edit block above
@@ -6167,6 +6615,7 @@ export function DigitalTwinViewer({
       const newGeom = new THREE.TubeGeometry(path, tubularSegments, radiusMm / 100, 14, false);
       const old = (tubeMesh as THREE.Mesh).geometry;
       (tubeMesh as THREE.Mesh).geometry = newGeom;
+      syncWireframeShellGeometry(tubeMesh as THREE.Mesh);
       old.dispose();
       const wrapper = cableWrapper as THREE.Object3D;
       for (const child of wrapper.children) {
@@ -6472,7 +6921,7 @@ export function DigitalTwinViewer({
           ? objProps.fiberNodes
           : compProps.fiberNodes;
       if (!nodes || nodes.length < 2) continue;
-      if (fiberEditingComponentId === component.id) continue;
+      if (fiberEditingObjectId === objectId) continue;
 
       let fiberGroup: THREE.Object3D | null = null;
       componentGroup.traverse((node) => {
@@ -6509,7 +6958,7 @@ export function DigitalTwinViewer({
     selectedObjectIds,
     sceneData.objects,
     sceneData.components,
-    fiberEditingComponentId,
+    fiberEditingObjectId,
     componentsBuildVersion,
   ]);
 
@@ -6610,9 +7059,6 @@ export function DigitalTwinViewer({
   useEffect(() => {
     requestRenderRef.current?.();
   });
-
-  const ctxObject = ctxMenu ? sceneData.objects.find((o) => o.id === ctxMenu.objectId) : null;
-  const ctxObjectName = ctxObject?.name ?? "Object";
 
   return (
     <div className="viewer-shell">
@@ -6724,91 +7170,6 @@ export function DigitalTwinViewer({
           setActiveTool={setActiveTool}
           setFaceTouchDirection={setFaceTouchDirection}
         />
-      )}
-      {ctxMenu && (
-        <div
-          className="viewer-context-menu"
-          style={{ position: "fixed", left: ctxMenu.x, top: ctxMenu.y }}
-          onMouseLeave={() => setCtxMenu(null)}
-        >
-          <div className="context-header">{ctxObjectName}</div>
-          <button
-            onClick={() => {
-              toggleSessionHiddenObject(ctxMenu.objectId);
-              setCtxMenu(null);
-            }}
-          >
-            Hide (session) <kbd>H</kbd>
-          </button>
-          <button
-            onClick={() => {
-              void updateSceneObject(ctxMenu.objectId, { visible: false });
-              setCtxMenu(null);
-            }}
-          >
-            Hide (permanent) <kbd>⇧H</kbd>
-          </button>
-          <button
-            onClick={() => {
-              toggleSoloObject(ctxMenu.objectId);
-              setCtxMenu(null);
-            }}
-          >
-            Solo / Toggle <kbd>S</kbd>
-          </button>
-          <div className="context-divider" />
-          <button
-            onClick={() => {
-              showAllHidden();
-              setCtxMenu(null);
-            }}
-          >
-            Show all hidden <kbd>Esc</kbd>
-          </button>
-          {(() => {
-            // Delete acts on the union of selectedObjectIds and the right-
-            // clicked object (Blender-style: right-click on something not in
-            // your selection still deletes it). Confirms with the user since
-            // DELETE /api/objects/{id} is a hard-delete and the row can't be
-            // restored without re-creating from scratch.
-            //
-            // Locked objects are filtered out — store.deleteObject silently
-            // no-ops on locked, but pre-filtering here lets the confirm
-            // dialog show the actual count and disables the button entirely
-            // when every candidate is locked.
-            const candidateIds = Array.from(new Set([...selectedObjectIds, ctxMenu.objectId]));
-            const objsById = new Map(sceneData.objects.map((o) => [o.id, o]));
-            const deletableIds = candidateIds.filter((id) => !objsById.get(id)?.locked);
-            const lockedCount = candidateIds.length - deletableIds.length;
-            const allLocked = deletableIds.length === 0;
-            const label = allLocked
-              ? `Locked (${candidateIds.length})`
-              : deletableIds.length > 1
-                ? `Delete selected (${deletableIds.length})${lockedCount > 0 ? ` · skip ${lockedCount} locked` : ""}`
-                : "Delete";
-            return (
-              <button
-                className="context-danger"
-                disabled={allLocked}
-                onClick={() => {
-                  setCtxMenu(null);
-                  if (allLocked) return;
-                  const msg = deletableIds.length > 1
-                    ? `Permanently delete ${deletableIds.length} objects${lockedCount > 0 ? ` (${lockedCount} locked will be skipped)` : ""}? This cannot be undone.`
-                    : `Permanently delete "${ctxObjectName}"? This cannot be undone.`;
-                  if (!window.confirm(msg)) return;
-                  // Batch delete → one state update for the whole set
-                  // (vs. the previous Promise.all over deleteObject,
-                  // which caused N re-renders so the user saw objects
-                  // disappear one-by-one when deleting 50 at a time).
-                  void deleteSceneObjects(deletableIds);
-                }}
-              >
-                {label} <kbd>Del</kbd>
-              </button>
-            );
-          })()}
-        </div>
       )}
     </div>
   );

@@ -232,6 +232,32 @@ The live op is `faraday_anchor_op` in `anchor_ops/misc_ops.py` (single anchor `o
 - **The matrix** (with the `rotate_jones(+θ)` convention): `E_s' = cosθ·E_s + sinθ·E_p`, `E_p' = −sinθ·E_s + cosθ·E_p`.
 - **Op level vs the whole chain**: a single op call only ever sees `±θ` (opposite signs forward and reverse); the full 2θ non-reciprocity only emerges once the tracer re-bases the Jones vector at the reflection. Op-level contract tests: `tests/optical/test_faraday_anchor_nonreciprocal.py`.
 
+## The EOM: phase retardance and Mach-Zehnder intensity (extended 2026-08-20)
+
+The live op is `eom_anchor_op` (`anchor_ops/misc_ops.py`), fired only by `intercept_in`. **Two axes that vary independently** — what the drive does, and where the light goes:
+
+| `modulationKind` | what the drive does |
+|---|---|
+| `phase` | Retardance `δ = π·V/Vπ` on the slow Jones component. Polarization changes, power does not (bar the insertion loss). |
+| `amplitude` | A Mach-Zehnder: the two arms have **already interfered inside the device**, so the drive lands on **power**, not on the Jones phase. `φ = π·(V_rf/Vπ_rf + V_bias/Vπ_bias)`, `T = IL·(1 + m·cos φ)/(1 + m)` with `m = (r−1)/(r+1)`, `r = 10^(extinctionRatioDb/10)`, `IL = 10^(−insertionLossDb/10)`. |
+
+The `(1+m)` normalisation is what makes the two params mean their datasheet meanings: **T peaks at exactly IL** (insertion loss is quoted at peak transmission) and bottoms out at **IL/r** (peak÷null is exactly `extinctionRatioDb`).
+
+**`driveVoltageV` / `biasVoltageV` are the kind's two `stateParamKeys` (2026-08-20)** — real params with a baseline on the asset, read through `ctx.params`, i.e. `{**asset.default_params, **dynamic_sources}`, so a per-instance value overrides the baseline under the normal ownership rule. Until then they were read from `ctx.dynamic` **only**, and since they were not `default_params` keys, `tunable_params` had nothing to point at and no UI could set either one — the Object panel simply had no field. Note they still do **not** come from the RF graph: the `rf_in` anchor the kind declares (optional, min 0) is cable-routing only, exactly like the AOM's.
+
+**Align: per END, not per body (2026-08-21).** `eom`'s `alignVariant` is now `"none"` and it is out of `OPTICAL_ALIGN_KINDS` — a pigtailed modulator's two ports are FC/APC connectors on flexible pigtails, so each is aligned on its own (Object panel → Align → **Align End A / End B**) while the housing stays bolted down. The mechanism, and why an ObjectBinding delta is the right place to persist it, is in [component.md](component.md); alembic `0132_eom_per_end_align` resyncs the kind row. `alignToleranceMm` stays 25 — the per-end UX uses the same field.
+
+**Polarization: a guided modulator is single-polarization (2026-08-20).** `_eom_guided_polarization` keeps only the component on `intercept_in`'s **axisY** — the TM / modulated axis, which the anchor's `fastAxis` role already reserved, and which for a pigtailed device is **derived from the PM key of the connector bound at that port** ([component.md](component.md)) — and floors the orthogonal one at `polarizationExtinctionRatioDb` (a POWER ratio, so 10^(−PER/20) on the field). The output is linear on that axis, re-expressed in the **exit** anchor's frame so a device whose two ports are not parallel still hands back a correct Jones vector; power is scaled by |E_out|²/|E_in|², the same Malus bookkeeping `polarizer_anchor_op` uses. The gate is `_eom_is_waveguide` = `modulationKind == "amplitude"` (an MZ always is a waveguide) **or** `fiberPigtailed`; a bulk crystal in a mount stays a pure retarder and is never filtered. In the waveguide **phase** case the drive becomes a **common** phase on the single guided mode rather than a retardance between two components — there is only one component left to retard.
+
+| `fiberPigtailed` | where the light goes |
+|---|---|
+| `false` | `_slab_passthrough` — the beam keeps its incoming tilt / offset and leaves from **`intercept_in`** with q advanced by `lengthMm/refractiveIndex`. The pre-2026-08-20 behaviour, unchanged. |
+| `true` | The light is **guided** across the package, so the output is re-emitted at **`intercept_out`** as the pigtail's fundamental mode: waist `coreMfdUm/2` **on** the exit face, direction = that anchor's axisX, incoming tilt erased, `qxy=0`. Same contract as `fiber_anchor_op`; a missing `intercept_out` returns `[]` (malformed asset) rather than silently emitting from the entry port. |
+
+**Why the pigtail branch had to exist at all**: the anchor tracer propagates `q += t_lab` across every gap, so a slab passthrough would have diffracted a ~5 µm mode across the whole 130 mm package and handed the output pigtail a metre-wide beam — i.e. the trace would report ≈0 power through a part whose real insertion loss is 3.5 dB. Note the corollary: **the guided path contributes no `path_length_mm`** in v1 (the free-space gap between the two anchors is not traversed either), so an interferometer built around a pigtailed part has no internal optical length yet.
+
+**What v1 does not model** (each would need a new param or a new op, none of them silently wrong — just absent): no Marcuse overlap at the modulator's own input face (the 0.125 mm anchor aperture gates a gross miss, and `insertionLossDb` is the fibre-to-fibre datasheet number that already contains the internal coupling); no RF bandwidth or transit-time rolloff (Vπ is the single quoted value, so the S21 curve on the label is not represented); no bias drift. Op-level tests: `tests/optical/test_eom_mz.py` (14 cases, including the polarization ones — note the fixture's anchor axisY is body +Z **because that is what the real device authors**, and for a +X beam that is exactly the beam-local s axis, so `make_beam_ray`'s default Jones launches on-axis).
+
 ## The RF tracer
 
 RF is **not** a ray tracer — there is no wavefront, Jones vector or q. It runs a **graph BFS** over a port adjacency graph, carrying `RfSignalState{frequencyMhz, vpp, cumulativeGainDb, saturated, …}`. Constants: `AD9959_VPP_FULL_SCALE=1.0V`, `RF_LOAD_Z=50Ω`, `P=Vpp²/(8Z)`. The AOM is a **hybrid** — simultaneously an optical component for the ray tracer and an RF sink for the RF tracer; RF reaches it through the BFS into `signalAtPort[(aom,"rf_in")]`, and the AOM's RF setting resolves in the priority order **dynamicSources (manual) > the RF tracer > defaultParams.centerFreqMhz**. The timing side of the RF chain (AD9959 channels, PPG) is in [timing.md](timing.md).

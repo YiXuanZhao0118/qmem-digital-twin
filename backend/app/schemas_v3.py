@@ -11,9 +11,9 @@ from __future__ import annotations
 import uuid
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
-from app.schemas import AssetLodOut, CamelModel
+from app.schemas import AssetLodOut, CamelModel, asset_file_version
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +172,11 @@ class Asset3DV3Out(CamelModel):
     # asset's tiers have been generated. Eager-loaded by the list route so a
     # single catalog fetch carries the whole manifest.
     lods: list[AssetLodOut] = []
+
+    @computed_field(alias="fileVersion")
+    @property
+    def file_version(self) -> int | None:
+        return asset_file_version(self.file_path)
 
 
 class Asset3DV3Update(CamelModel):

@@ -1,4 +1,4 @@
-import { Clock, Crosshair, Layers3, Lock, Move3D, Plus, RotateCw, SquareDashed, Trash2, Type, Unlock } from "lucide-react";
+import { Cable, Clock, Crosshair, Layers3, Lock, Move3D, Plus, RotateCw, SquareDashed, Trash2, Type, Unlock } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
@@ -7,6 +7,7 @@ import { isAd9959PcbAsset } from "../three/loadAsset/stl_builders";
 import {
   useSceneStore,
   resolveEffectiveFiberNodes,
+  type FiberNodePersist,
   type LabPoint,
   type TransformAxis,
 } from "../store/sceneStore";
@@ -18,7 +19,11 @@ import { getComponentName, isComponentLocked } from "../utils/components";
 import { effectiveInstanceParams } from "../utils/instanceParams";
 import { RECT_ANNOTATION_ASSET_FILEPATH } from "../three/loadAsset/passive/rect_annotation";
 import { TEXT_ANNOTATION_ASSET_FILEPATH } from "../three/loadAsset/passive/text_annotation";
-import { getFiberPortLabPose } from "../utils/fiberAlignment";
+import {
+  getFiberPortLabPose,
+  isFiberReceptacleAnchor,
+  OPTICAL_PORT_ANCHOR_IDS,
+} from "../utils/fiberAlignment";
 import { Ad9959ObjectControls } from "./Ad9959ObjectControls";
 import { DdsChassisObjectControls } from "./DdsChassisObjectControls";
 import { CollapsibleSection } from "./CollapsibleSection";
@@ -27,11 +32,13 @@ import { FloatingPanel } from "./workspace/FloatingPanel";
 import { useWorkspace } from "./workspace/WorkspaceProvider";
 import { CapabilityPills } from "./optical/CapabilityPills";
 import { AlignToBeamControls } from "./physics/AlignToBeamControls";
+import { PigtailEndAlignControls } from "./physics/PigtailEndAlignControls";
+import { BindingTreeAdjustControls } from "./BindingTreeAdjustControls";
 import { OPTICAL_ALIGN_KINDS } from "../utils/isolatorAlign";
 import { AlignPanel } from "./AlignPanel";
 import { NumberField } from "./NumberField";
 import { capabilityProfile } from "../kinds/_capabilityProfile";
-import { primaryAsset } from "../utils/componentBindings";
+import { anchorsInBindingTree, pigtailPortBindings, primaryAsset } from "../utils/componentBindings";
 import { sceneObjectEulerFromQuaternion, sceneObjectToQuaternion } from "../optical/frames";
 
 type DraftObject = Required<Omit<SceneObjectPatch, "name" | "properties" | "serialNumber" | "dynamicSources">> & {
@@ -885,19 +892,19 @@ function RectAnnotationEditor({ sceneObject }: { sceneObject: SceneObject | unde
 /** Fiber warnings: minimum bend radius (computed from spline curvature),
  *  wavelength out of operating range, input power above max. Read-only;
  *  surfaced in the FiberEditor section so the user sees them at a glance. */
-function FiberWarnings({ component }: { component: ComponentItem }) {
+function FiberWarnings({
+  component,
+  sceneObject,
+}: {
+  component: ComponentItem;
+  sceneObject: SceneObject | undefined;
+}) {
   const physicsElement = useSceneStore((state) =>
-    state.scene.physicsElements.find((e) => {
-      const obj = state.scene.objects.find((o) => o.id === e.objectId);
-      return obj?.componentId === component.id;
-    }),
+    state.scene.physicsElements.find((e) => e.objectId === sceneObject?.id),
   );
   // Per-instance fiberNodes live on SceneObject.properties (V2); fall back
   // to the catalog template (Component.properties) for legacy data.
-  const sceneObjectForFiber = useSceneStore((state) =>
-    state.scene.objects.find((o) => o.componentId === component.id),
-  );
-  const objProps = (sceneObjectForFiber?.properties ?? {}) as {
+  const objProps = (sceneObject?.properties ?? {}) as {
     fiberNodes?: { posMm: [number, number, number]; handleInMm?: [number, number, number]; handleOutMm?: [number, number, number] }[];
   };
   const compProps = (component.properties ?? {}) as {
@@ -987,19 +994,19 @@ function FiberWarnings({ component }: { component: ComponentItem }) {
  *  beam matched to the fiber's own MFD. This is a sanity-check / pedagogy
  *  display — once Phase H ray-tracer integration is live, the actual
  *  per-segment coupling will replace this with the real beam state. */
-function FiberEfficiencyDisplay({ component }: { component: ComponentItem }) {
+function FiberEfficiencyDisplay({
+  component,
+  sceneObject,
+}: {
+  component: ComponentItem;
+  sceneObject: SceneObject | undefined;
+}) {
   const physicsElement = useSceneStore((state) =>
-    state.scene.physicsElements.find((e) => {
-      const obj = state.scene.objects.find((o) => o.id === e.objectId);
-      return obj?.componentId === component.id;
-    }),
+    state.scene.physicsElements.find((e) => e.objectId === sceneObject?.id),
   );
   // Prefer per-instance fiberNodes (SceneObject.properties); fall back to
   // catalog template for legacy data. Same pattern as FiberWarnings above.
-  const sceneObjectForEff = useSceneStore((state) =>
-    state.scene.objects.find((o) => o.componentId === component.id),
-  );
-  const objProps = (sceneObjectForEff?.properties ?? {}) as { fiberNodes?: number[][] };
+  const objProps = (sceneObject?.properties ?? {}) as { fiberNodes?: number[][] };
   const compProps = (component.properties ?? {}) as { fiberNodes?: number[][] };
   if (!physicsElement || physicsElement.elementKind !== "fiber") {
     return (
@@ -1047,13 +1054,14 @@ function FiberEfficiencyDisplay({ component }: { component: ComponentItem }) {
  *  tolerance) and the layered-design rule says PhyEditor only writes Layer 2.
  *  Persists into PhysicsElement.kindParams.endA/B.slowAxisDegInBodyFrame.
  *  Disabled (with hint) for non-PM fibers since slow axis is undefined. */
-function FiberSlowAxisEditor({ component }: { component: ComponentItem }) {
+function FiberSlowAxisEditor({
+  sceneObject,
+}: {
+  sceneObject: SceneObject | undefined;
+}) {
   const upsertOpticalElement = useSceneStore((state) => state.upsertOpticalElement);
   const physicsElement = useSceneStore((state) =>
-    state.scene.physicsElements.find((e) => {
-      const obj = state.scene.objects.find((o) => o.id === e.objectId);
-      return obj?.componentId === component.id;
-    }),
+    state.scene.physicsElements.find((e) => e.objectId === sceneObject?.id),
   );
   type EndKp = {
     polish?: string;
@@ -1187,14 +1195,13 @@ function outwardLabToEulerDeg(
  *  endpoint snaps to the requested pose while interior nodes don't move. */
 function FiberPortPoseEditor({
   component,
+  sceneObject: fiberSceneObject,
   end,
 }: {
   component: ComponentItem;
+  sceneObject: SceneObject | undefined;
   end: "A" | "B";
 }) {
-  const fiberSceneObject = useSceneStore((state) =>
-    state.scene.objects.find((o) => o.componentId === component.id),
-  );
   const setFiberPortLabPose = useSceneStore((state) => state.setFiberPortLabPose);
   const physicsElements = useSceneStore((state) => state.scene.physicsElements);
   // Shared resolver: falls back to PE.kindParams.endA/endB so the port-pose
@@ -1228,7 +1235,7 @@ function FiberPortPoseEditor({
     else if (field === "ry") nextRy = value;
     else if (field === "rz") nextRz = value;
     const nextOutward = eulerDegToOutwardLab(nextRx, nextRy, nextRz);
-    void setFiberPortLabPose(component.id, end, nextPos, nextOutward);
+    void setFiberPortLabPose(fiberSceneObject.id, end, nextPos, nextOutward);
   };
 
   const portAnchorId = end === "A" ? "intercept_in" : "intercept_out";
@@ -1264,7 +1271,15 @@ function FiberPortPoseEditor({
   );
 }
 
-function FiberEditor({ component }: { component: ComponentItem }) {
+function FiberEditor({
+  component,
+  sceneObject,
+}: {
+  component: ComponentItem;
+  /** THIS instance. Every fibre action below is keyed by objectId — two
+   *  cables off one catalog fibre must edit independently (2026-08-21). */
+  sceneObject: SceneObject | undefined;
+}) {
   const findFiberAlignmentCandidates = useSceneStore(
     (state) => state.findFiberAlignmentCandidates,
   );
@@ -1290,14 +1305,34 @@ function FiberEditor({ component }: { component: ComponentItem }) {
     candidates: import("../utils/fiberAlignment").FiberAlignmentCandidate[];
   } | null>(null);
 
+  const clearFiberEndpointLink = useSceneStore(
+    (state) => state.clearFiberEndpointLink,
+  );
+  // Which ends are currently plugged into an instrument port. A linked end
+  // is not just "where it was aligned to once": it FOLLOWS that part, and
+  // the solver couples through the pose the link keeps writing — so it has
+  // to be visible, and unpluggable, without going into node-edit mode.
+  const fiberLinks =
+    ((sceneObject?.properties as {
+      fiberEndpoints?: Partial<Record<"A" | "B", { targetObjectId: string; targetAnchorName: string }>>;
+    } | undefined)?.fiberEndpoints) ?? {};
+  const objectNameById = (id: string): string =>
+    useSceneStore.getState().scene.objects.find((o) => o.id === id)?.name ?? id.slice(0, 6);
+
   const applyCandidate = async (
     end: "A" | "B",
     c: import("../utils/fiberAlignment").FiberAlignmentCandidate,
   ) => {
-    await applyFiberAlignmentCandidate(component.id, end, c);
+    if (!sceneObject) return;
+    await applyFiberAlignmentCandidate(sceneObject.id, end, c);
     const label = c.displayLabel ?? `beam ${c.beamId.slice(0, 6)}`;
+    // A port candidate also persists a link, so say so — the user needs to
+    // know this end now FOLLOWS that instrument rather than just sitting
+    // where it was put.
     setAlignFeedback(
-      `End ${end} → ${label} (was ${c.distMm.toFixed(2)} mm off, now 0).`,
+      c.port
+        ? `End ${end} plugged into ${label} (was ${c.distMm.toFixed(2)} mm off). It now follows that part.`
+        : `End ${end} → ${label} (was ${c.distMm.toFixed(2)} mm off, now 0).`,
     );
     setPicker(null);
   };
@@ -1305,9 +1340,12 @@ function FiberEditor({ component }: { component: ComponentItem }) {
   const onAlign = async (end: "A" | "B") => {
     setAlignFeedback(null);
     try {
-      const list = await findFiberAlignmentCandidates(component.id, end, 25);
+      if (!sceneObject) return;
+      const list = await findFiberAlignmentCandidates(sceneObject.id, end, 25);
       if (list.length === 0) {
-        setAlignFeedback(`End ${end}: no beam found within 25 mm — alignment skipped.`);
+        setAlignFeedback(
+          `End ${end}: no beam or fibre port within 25 mm — alignment skipped.`,
+        );
         setPicker(null);
         return;
       }
@@ -1327,9 +1365,7 @@ function FiberEditor({ component }: { component: ComponentItem }) {
   // SceneObject.properties), then catalog template as legacy fallback.
   // The jacket radius is NOT edited here — it is a Component-layer
   // appearance property (`cableAppearance.radiusMm`, ComponentsEditor).
-  const fiberSceneObject = useSceneStore((state) =>
-    state.scene.objects.find((o) => o.componentId === component.id),
-  );
+  const fiberSceneObject = sceneObject;
   // Shared resolver: falls back to PE.kindParams.endA/endB so a
   // connector-component fiber reports its real node count (not 0) and lists
   // any interior nodes — same source the Align buttons resolve from.
@@ -1361,7 +1397,9 @@ function FiberEditor({ component }: { component: ComponentItem }) {
     <section className="edit-section">
       <h3>Fiber</h3>
       <p style={{ fontSize: 12, opacity: 0.7, margin: "4px 0 8px", lineHeight: 1.5 }}>
-        Nodes: {nodeCount} (End A + End B{nodeCount > 2 ? ` + ${nodeCount - 2} interior` : ""})
+        Nodes: {nodeCount} (End A + End B{nodeCount > 2 ? ` + ${nodeCount - 2} interior` : ""}).
+        In the viewer's node-edit mode, double-click the fibre to add a node and
+        right-click an interior node to delete it. End A / End B cannot be removed.
       </p>
       {/* Explicit per-interior-node delete row. The two endpoint nodes
           (index 0 = End A, index N-1 = End B) are hidden because they
@@ -1400,7 +1438,7 @@ function FiberEditor({ component }: { component: ComponentItem }) {
                     title={`Remove interior node #${idx}. Endpoints (End A / End B) cannot be removed.`}
                     onClick={() => {
                       if (window.confirm(`Remove interior node #${idx}?`)) {
-                        void removeFiberNode(component.id, idx);
+                        if (sceneObject) void removeFiberNode(sceneObject.id, idx);
                       }
                     }}
                   >
@@ -1475,7 +1513,7 @@ function FiberEditor({ component }: { component: ComponentItem }) {
             onClick={() => void onAlign("A")}
             style={{ flex: 1 }}
           >
-            Align End A to beam
+            Align End A
           </button>
           <button
             type="button"
@@ -1483,10 +1521,39 @@ function FiberEditor({ component }: { component: ComponentItem }) {
             onClick={() => void onAlign("B")}
             style={{ flex: 1 }}
           >
-            Align End B to beam
+            Align End B
           </button>
         </div>
       )}
+      {(["A", "B"] as const)
+        .filter((end) => fiberLinks[end])
+        .map((end) => (
+          <div
+            key={`link-${end}`}
+            style={{
+              marginTop: 6,
+              fontSize: 11,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <span style={{ opacity: 0.85 }}>
+              🔌 End {end} → {objectNameById(fiberLinks[end]!.targetObjectId)} ·{" "}
+              {fiberLinks[end]!.targetAnchorName}
+            </span>
+            <button
+              type="button"
+              className="secondary-button"
+              style={{ fontSize: 10, padding: "1px 6px" }}
+              onClick={() => {
+                if (sceneObject) void clearFiberEndpointLink(sceneObject.id, end);
+              }}
+            >
+              Unplug
+            </button>
+          </div>
+        ))}
       {picker && (
         <div
           style={{
@@ -1497,7 +1564,9 @@ function FiberEditor({ component }: { component: ComponentItem }) {
           }}
         >
           <div style={{ fontSize: 12, marginBottom: 6 }}>
-            <strong>End {picker.end}: {picker.candidates.length} beams within 25 mm</strong>
+            <strong>
+              End {picker.end}: {picker.candidates.length} targets within 25 mm
+            </strong>
             <button
               type="button"
               onClick={() => setPicker(null)}
@@ -1540,11 +1609,11 @@ function FiberEditor({ component }: { component: ComponentItem }) {
       {alignFeedback && (
         <p style={{ fontSize: 11, opacity: 0.85, marginTop: 6 }}>{alignFeedback}</p>
       )}
-      <FiberPortPoseEditor component={component} end="A" />
-      <FiberPortPoseEditor component={component} end="B" />
-      <FiberSlowAxisEditor component={component} />
-      <FiberEfficiencyDisplay component={component} />
-      <FiberWarnings component={component} />
+      <FiberPortPoseEditor component={component} sceneObject={sceneObject} end="A" />
+      <FiberPortPoseEditor component={component} sceneObject={sceneObject} end="B" />
+      <FiberSlowAxisEditor sceneObject={sceneObject} />
+      <FiberEfficiencyDisplay component={component} sceneObject={sceneObject} />
+      <FiberWarnings component={component} sceneObject={sceneObject} />
     </section>
   );
 }
@@ -1715,6 +1784,8 @@ function RfCableEditor({ component }: { component: ComponentItem }) {
         <>
           <p style={{ fontSize: 12, opacity: 0.7, margin: "0 0 8px", lineHeight: 1.5 }}>
             Nodes: {nodeCount} (End A + End B{nodeCount > 2 ? ` + ${nodeCount - 2} interior` : ""}).
+            In the viewer's node-edit mode, double-click the cable to add a node and
+            right-click an interior node to delete it. End A / End B cannot be removed.
             Snap each end to the closest <code>rf_in</code> / <code>rf_out</code> anchor on
             another component (AOM RF input, AD9959 channel, etc.) within 25 mm. If multiple
             ports cluster within tolerance, a picker opens so you choose which socket.
@@ -1854,6 +1925,340 @@ function RfCableEditor({ component }: { component: ComponentItem }) {
   );
 }
 
+/** The INSTRUMENT side of the fibre endpoint link.
+ *
+ *  `FiberEditor` above answers "where does this cable go?" — you select the
+ *  patch cable and aim its end. This answers the question the user actually
+ *  has when they click the receiver: **"what is plugged into this box, and
+ *  can I plug something in from here?"** Same store, same candidate maths
+ *  (`findFiberEndsForPort` runs `findFiberPortAlignmentCandidates` against
+ *  the one port), so a cable connected from either surface lands in exactly
+ *  the same place — plugging in from two directions must not produce two
+ *  geometries.
+ *
+ *  Self-gating: renders null unless this object's binding tree exposes an
+ *  optical anchor that declares a fibre `connectorType`. So it appears on the
+ *  RXM15EF and stays out of the way everywhere else, with no per-kind list to
+ *  keep in sync — the receptacle declares itself.
+ *
+ *  Note the link is stored on the CABLE (`fiberEndpoints`), so "who is
+ *  plugged in here" is a reverse lookup (`fiberPluggedIntoPort`). That is
+ *  deliberate: a cable has two ends and one identity, a port has many
+ *  possible cables, and the cable is what moves. */
+/** Pigtail spline nodes of a fibre-coupled instrument (the EOSpace EOM is
+ *  the first). A part carries ONE run per port binding, so this lists a
+ *  block per pigtail instead of the single node array FiberEditor edits.
+ *
+ *  Only INTERIOR nodes get a Remove button: node 0 is welded to the device's
+ *  fibre exit and the last node to the connector's `connect_out`
+ *  (three/bindingTreeObject.ts::buildBindingPigtail), so every pigtail keeps
+ *  its two structural ends — the viewer's right-click delete refuses them for
+ *  the same reason. A freshly placed pigtail is exactly those two nodes, i.e.
+ *  nothing here is removable until one is added.
+ *
+ *  Removal writes the shortened array to
+ *  `SceneObject.properties.bindingFiberNodes[bindingId]` via
+ *  `updatePigtailNodes` — the same per-instance override a viewer drag
+ *  commits to, never back to the catalog binding row. */
+function PigtailNodesEditor({
+  component,
+  sceneObject,
+}: {
+  component: ComponentItem;
+  sceneObject: SceneObject;
+}) {
+  const scene = useSceneStore((state) => state.scene);
+  const updatePigtailNodes = useSceneStore((state) => state.updatePigtailNodes);
+  const ports = pigtailPortBindings(component, sceneObject, scene);
+  if (ports.length === 0) return null;
+
+  // Per-instance override first, catalog baseline second — the same
+  // resolution order the renderer uses (three/bindingRendererGate.ts).
+  const overrides =
+    ((sceneObject.properties as {
+      bindingFiberNodes?: Record<string, FiberNodePersist[]>;
+    } | undefined)?.bindingFiberNodes) ?? {};
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 4 }}>Pigtails</div>
+      <p style={{ fontSize: 11, opacity: 0.7, margin: "0 0 8px", lineHeight: 1.5 }}>
+        In the viewer's node-edit mode, double-click a pigtail to add a node and
+        right-click an interior node to delete it. The two ends of each pigtail are
+        welded to the device's fibre exit and to its connector, so they cannot be
+        removed.
+      </p>
+      {ports.map((port) => {
+        const override = overrides[port.binding.id];
+        const catalog = (port.binding.properties as { fiberNodes?: FiberNodePersist[] } | null)
+          ?.fiberNodes;
+        const nodes =
+          Array.isArray(override) && override.length >= 2
+            ? override
+            : Array.isArray(catalog) ? catalog : [];
+        return (
+          <div key={port.binding.id} style={{ marginBottom: 8 }}>
+            <div style={{ fontSize: 11, opacity: 0.8, marginBottom: 4 }}>
+              End {port.end} (<code>{port.portAnchor}</code>) — {nodes.length} nodes
+              {nodes.length > 2 ? `, ${nodes.length - 2} interior` : ", both ends fixed"}
+            </div>
+            {nodes.length > 2 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {nodes.map((n, idx) => {
+                  if (idx === 0 || idx === nodes.length - 1) return null; // welded ends
+                  const p = n.posMm;
+                  return (
+                    <div
+                      key={idx}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 6,
+                        fontSize: 11,
+                        padding: "3px 6px",
+                        background: "rgba(255,255,255,0.04)",
+                        borderRadius: 4,
+                      }}
+                    >
+                      <span style={{ fontFamily: "ui-monospace, SFMono-Regular, monospace" }}>
+                        #{idx}: ({p[0].toFixed(1)}, {p[1].toFixed(1)}, {p[2].toFixed(1)}) mm
+                      </span>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        style={{ padding: "2px 8px", fontSize: 11 }}
+                        title={`Remove interior node #${idx} of End ${port.end}. The two welded ends cannot be removed.`}
+                        onClick={() => {
+                          if (!window.confirm(`Remove interior node #${idx} of End ${port.end}?`)) return;
+                          void updatePigtailNodes(
+                            sceneObject.id,
+                            port.binding.id,
+                            nodes.filter((_, i) => i !== idx),
+                          );
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div style={{ fontSize: 11, opacity: 0.55 }}>
+                No interior node yet — double-click this pigtail in node-edit mode to add one.
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function FiberPortsEditor({ sceneObject }: { sceneObject: SceneObject | undefined }) {
+  const listFiberPortsOfObject = useSceneStore((state) => state.listFiberPortsOfObject);
+  const fiberPluggedIntoPort = useSceneStore((state) => state.fiberPluggedIntoPort);
+  const findFiberEndsForPort = useSceneStore((state) => state.findFiberEndsForPort);
+  const applyFiberAlignmentCandidate = useSceneStore(
+    (state) => state.applyFiberAlignmentCandidate,
+  );
+  const clearFiberEndpointLink = useSceneStore((state) => state.clearFiberEndpointLink);
+  const selectObject = useSceneStore((state) => state.selectObject);
+  // Subscribe to the slices the port list and the reverse lookup read, so
+  // plugging / unplugging / moving anything repaints this section.
+  const sceneObjects = useSceneStore((state) => state.scene.objects);
+  const sceneAssets = useSceneStore((state) => state.scene.assets);
+  const sceneBindings = useSceneStore((state) => state.scene.componentBindings);
+
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [picker, setPicker] = useState<{
+    anchorId: string;
+    anchorName: string;
+    candidates: Awaited<ReturnType<typeof findFiberEndsForPort>>;
+  } | null>(null);
+
+  const ports = useMemo(
+    () => (sceneObject ? listFiberPortsOfObject(sceneObject.id) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sceneObject?.id, sceneObjects, sceneAssets, sceneBindings, listFiberPortsOfObject],
+  );
+
+  if (!sceneObject || ports.length === 0) return null;
+
+  const plugIn = async (
+    anchorName: string,
+    entry: Awaited<ReturnType<typeof findFiberEndsForPort>>[number],
+  ) => {
+    await applyFiberAlignmentCandidate(entry.fiberObjectId, entry.end, entry.candidate);
+    setPicker(null);
+    setFeedback(
+      `${entry.fiberName} End ${entry.end} plugged into ${anchorName} `
+      + `(was ${entry.distMm.toFixed(2)} mm away). It now follows this part.`,
+    );
+  };
+
+  const onPlug = async (anchorId: string, anchorName: string) => {
+    setFeedback(null);
+    try {
+      const list = await findFiberEndsForPort(sceneObject.id, anchorId, anchorName, 25);
+      if (list.length === 0) {
+        setFeedback(
+          `${anchorName}: no fibre end within 25 mm — move a patch cable closer first.`,
+        );
+        setPicker(null);
+        return;
+      }
+      if (list.length === 1) {
+        await plugIn(anchorName, list[0]);
+        return;
+      }
+      setPicker({ anchorId, anchorName, candidates: list });
+    } catch (err) {
+      setFeedback(`Plug in failed: ${(err as Error).message}`);
+    }
+  };
+
+  return (
+    <section className="edit-section">
+      <h3>
+        <Cable size={17} />
+        Fibre ports
+      </h3>
+      <div style={{ display: "grid", gap: 6 }}>
+        {ports.map((port) => {
+          const linked = fiberPluggedIntoPort(
+            sceneObject.id,
+            port.targetAnchorId,
+            port.targetAnchorName,
+          );
+          return (
+            <div
+              key={`${port.targetAnchorId}/${port.targetAnchorName}`}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: 11,
+                flexWrap: "wrap",
+              }}
+            >
+              <span style={{ fontFamily: "ui-monospace, SFMono-Regular, monospace" }}>
+                🔌 {port.targetAnchorName}
+              </span>
+              {linked ? (
+                <>
+                  <span style={{ opacity: 0.85 }}>
+                    ←{" "}
+                    <button
+                      type="button"
+                      onClick={() => selectObject(linked.fiberObjectId)}
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        padding: 0,
+                        color: "inherit",
+                        textDecoration: "underline",
+                        cursor: "pointer",
+                        font: "inherit",
+                      }}
+                      title="Select this patch cable"
+                    >
+                      {linked.fiberName}
+                    </button>{" "}
+                    End {linked.end}
+                  </span>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    style={{ fontSize: 10, padding: "1px 6px" }}
+                    onClick={() => {
+                      void clearFiberEndpointLink(linked.fiberObjectId, linked.end);
+                      setFeedback(
+                        `${linked.fiberName} End ${linked.end} unplugged. `
+                        + `The cable stays where it is.`,
+                      );
+                    }}
+                  >
+                    Unplug
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span style={{ opacity: 0.6 }}>— not connected</span>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    style={{ fontSize: 10, padding: "1px 6px" }}
+                    onClick={() => void onPlug(port.targetAnchorId, port.targetAnchorName)}
+                  >
+                    Plug in…
+                  </button>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {picker && (
+        <div
+          style={{
+            marginTop: 8,
+            padding: 8,
+            background: "rgba(255,255,255,0.04)",
+            borderRadius: 4,
+          }}
+        >
+          <div style={{ fontSize: 12, marginBottom: 6 }}>
+            <strong>
+              {picker.anchorName}: {picker.candidates.length} fibre ends within 25 mm
+            </strong>
+            <button
+              type="button"
+              onClick={() => setPicker(null)}
+              style={{
+                float: "right",
+                background: "transparent",
+                border: "none",
+                color: "#aaa",
+                cursor: "pointer",
+                fontSize: 14,
+                padding: "0 4px",
+              }}
+              aria-label="Cancel picker"
+            >
+              ✕
+            </button>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            {picker.candidates.map((c, i) => (
+              <button
+                key={`${c.fiberObjectId}/${c.end}`}
+                type="button"
+                className="secondary-button"
+                onClick={() => void plugIn(picker.anchorName, c)}
+                style={{
+                  textAlign: "left",
+                  fontSize: 11,
+                  padding: "4px 8px",
+                  fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                }}
+              >
+                {i === 0 ? "★ " : "  "}
+                {c.fiberName} · End {c.end}{" "}
+                <span style={{ opacity: 0.6 }}>· {c.distMm.toFixed(2)} mm</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {feedback && (
+        <p style={{ fontSize: 11, opacity: 0.85, marginTop: 6 }}>{feedback}</p>
+      )}
+    </section>
+  );
+}
+
 export function ComponentPanel() {
   const scene = useSceneStore((state) => state.scene);
   const selectedComponentId = useSceneStore((state) => state.selectedComponentId);
@@ -1901,6 +2306,36 @@ export function ComponentPanel() {
   // they're detected by the binding tree's front + back polariser roles.
   const canAlignToBeam = useMemo(() => {
     if (!component) return false;
+    // A FIBRE-FED part has nothing to align to a free-space beam: light
+    // reaches it down a patch cable through a receptacle, so translating the
+    // box onto a beam line is meaningless and the button is a trap (the
+    // RXM15EF is `detector`, which is in OPTICAL_ALIGN_KINDS, so it would
+    // otherwise offer Align). The test is "every optical face this part
+    // exposes is a receptacle" — a part with BOTH a bulkhead and a bare face
+    // keeps Align for the bare one. Connect it in the Fibre ports section
+    // instead.
+    //
+    // `fiber_in` / `fiber_out` must be in BOTH lists (2026-08-23): a bulkhead
+    // now has its own anchor id, so a part built entirely of sockets has no
+    // `intercept_*` at all. Scanning only for intercepts made the filter come
+    // back EMPTY for the RXM15EF, which failed the `length > 0` test and
+    // handed the trap button straight back. A `fiber_*` anchor is a
+    // receptacle by construction — that is what the id means — so it needs no
+    // connectorType test of its own.
+    if (
+      selectedObject
+      && (() => {
+        const optical = anchorsInBindingTree(component, scene).filter(({ anchor }) =>
+          (OPTICAL_PORT_ANCHOR_IDS as readonly string[]).includes(anchor.id),
+        );
+        return (
+          optical.length > 0
+          && optical.every(({ anchor }) => isFiberReceptacleAnchor(anchor))
+        );
+      })()
+    ) {
+      return false;
+    }
     if (physicsElement && OPTICAL_ALIGN_KINDS.has(physicsElement.elementKind)) return true;
     // An explicit alignSpec (PHY Editor → Component) is on its own enough:
     // it is the FIRST thing AlignToBeamControls resolves, so gating on the
@@ -1925,7 +2360,16 @@ export function ComponentPanel() {
         ).toLowerCase(),
       );
     return roles.some((r) => r.includes("front")) && roles.some((r) => r.includes("back"));
-  }, [component, physicsElement, scene.componentBindings]);
+    // `scene` (not just componentBindings) because the fibre-fed guard walks
+    // the binding TREE, which reads assets + sub-components too.
+  }, [component, physicsElement, selectedObject, scene]);
+  // A fibre-pigtailed instrument aligns per END instead (or as well): each
+  // of its port connectors snaps to its own beam / receptacle. Detected from
+  // the binding data alone — see `pigtailPortBindings`.
+  const hasPigtailEnds = useMemo(
+    () => (component ? pigtailPortBindings(component, selectedObject, scene).length > 0 : false),
+    [component, selectedObject, scene],
+  );
   // Per-kind capability profile drives which sections of the Object
   // panel render. Default profile = show everything; cable / PPG / future
   // hidden-body kinds turn off individual capabilities through
@@ -1934,7 +2378,7 @@ export function ComponentPanel() {
   const asset = scene.assets.find((item) => item.id === component?.asset3dId);
   const modelViewerUrl =
     asset?.assetType === "edrawing_html" || asset?.filePath.toLowerCase().endsWith(".html")
-      ? resolveAssetUrl(asset.filePath)
+      ? resolveAssetUrl(asset.filePath, asset.fileVersion)
       : undefined;
   const selectedObjects = useMemo(() => {
     const selectedIdSet = new Set(selectedObjectIds);
@@ -2267,15 +2711,28 @@ export function ComponentPanel() {
               onto the beam. Defined at the Component / binding-tree layer
               (isolator has no ElementKind), surfaced here in the Object
               panel next to pose since it sets the object's pose. === */}
-          {placement && canAlignToBeam && (
+          {placement && (canAlignToBeam || hasPigtailEnds) && (
             <section className="edit-section">
               <h3>
                 <Move3D size={17} />
                 Align
               </h3>
-              <AlignToBeamControls sceneObject={placement} />
+              {/* A pigtailed part's ends move independently of its body, so
+                  its controls are the fiber-style per-end ones. A part can
+                  legitimately have both (a bulk optic that also carries a
+                  fibre port); the whole-object align comes first because it
+                  is what places the body. */}
+              {canAlignToBeam && <AlignToBeamControls sceneObject={placement} />}
+              {hasPigtailEnds && <PigtailEndAlignControls sceneObject={placement} />}
             </section>
           )}
+
+          {/* === Per-instance adjustments: binding-tree deltas (composite
+              front/back polariser Rz) + the see-through housing hint. Lives
+              here in the Object panel because it edits THIS instance's
+              geometry, alongside pose and Align. Self-gates (renders null when
+              the component's bindings declare no tunable axes). === */}
+          <BindingTreeAdjustControls component={component} />
 
           {/* === Content (text_annotation only) === */}
           {component.kindId === "text_annotation" && (
@@ -2292,21 +2749,35 @@ export function ComponentPanel() {
               same skeleton as everything else. */}
           {(component.kindId === "fiber"
             || component.kindId === "rf_cable"
-            || component.kindId === "sma_cable") && (
+            || component.kindId === "sma_cable"
+            || (hasPigtailEnds && placement)) && (
             <section className="edit-section">
               <h3>
                 <Layers3 size={17} />
                 Connections
               </h3>
               {component.kindId === "fiber" && (
-                <FiberEditor component={component} />
+                <FiberEditor component={component} sceneObject={placement} />
               )}
               {(component.kindId === "rf_cable"
                 || component.kindId === "sma_cable") && (
                 <RfCableEditor component={component} />
               )}
+              {/* A pigtailed instrument has no cable SceneObject of its own —
+                  its fibre runs are per-binding splines on THIS object, so its
+                  node list lives here beside the cable editors. */}
+              {hasPigtailEnds && placement && (
+                <PigtailNodesEditor component={component} sceneObject={placement} />
+              )}
             </section>
           )}
+
+          {/* === Fibre ports: the INSTRUMENT side of the same connection the
+              Connections section above edits from the cable side. Sits next
+              to it rather than inside it because it is gated on the object
+              having receptacles, not on its kind — see FiberPortsEditor. It
+              renders null for everything that has none. === */}
+          <FiberPortsEditor sceneObject={placement} />
 
           {/* === Optical physics (intrinsic spec + per-instance coefficients)
               moved OUT of the Object panel into the standalone Optical setting

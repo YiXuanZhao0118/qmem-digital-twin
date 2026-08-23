@@ -26,6 +26,7 @@
  * sites, and full-tree consumers should switch to rootBindingsOf().
  */
 import type {
+  Anchor,
   Asset3D,
   ComponentBinding,
   ComponentItem,
@@ -33,6 +34,8 @@ import type {
   SceneData,
   SceneObject,
 } from "../types/digitalTwin";
+import type { BindingPose } from "./portConnectorPlacement";
+import { findCableRootAnchor, findMatingFaceAnchor } from "./connectorAnchors";
 
 
 /** Group a flat binding list by componentId. Returns a Map for O(1)
@@ -256,6 +259,118 @@ export function resolveBindingTree(
 }
 
 
+/** Every Asset3D referenced anywhere in a Component's binding tree, in
+ *  tree order (roots by sortOrder, then depth-first through children and
+ *  sub-Components), deduped by asset id.
+ *
+ *  Where ``primaryAsset`` answers "what is the MAIN geometry" — and gives
+ *  up (null) the moment a Component has more than one root — this answers
+ *  "what geometry does this Component CONSIST OF", and never gives up.
+ *  Callers that aggregate per-asset data rather than pick a body should
+ *  use this one; anchors above all, since a composite Component spreads
+ *  its anchors across roots and asking primaryAsset for them silently
+ *  yields nothing (the EOSpace EOM, whose RF IN lives on the modulator
+ *  root while two FC/APC connectors sit alongside it, was exactly that).
+ *
+ *  Transform-free by construction: this is the "which assets" question,
+ *  so it walks the resolved tree and keeps only the targets. Callers that
+ *  need poses want ``resolveBindingTree`` directly.
+ */
+export function assetsInBindingTree(
+  component: ComponentItem,
+  scene: Pick<SceneData, "componentBindings" | "objectBindings" | "assets" | "components">,
+): Asset3D[] {
+  const out: Asset3D[] = [];
+  const seen = new Set<string>();
+  const visit = (nodes: ResolvedBindingNode[]): void => {
+    for (const node of nodes) {
+      if (node.target.kind === "asset" && !seen.has(node.target.asset.id)) {
+        seen.add(node.target.asset.id);
+        out.push(node.target.asset);
+      }
+      visit(node.children);
+    }
+  };
+  // sceneObject=null: per-instance pose overrides are irrelevant to a
+  // question about identity, and skipping them keeps the call sites free
+  // of an objectBindings dependency they would otherwise need.
+  visit(resolveBindingTree(component, null, scene));
+
+  // Legacy pre-binding Component: the asset hangs off the row itself.
+  if (out.length === 0 && component.asset3dId) {
+    const legacy = scene.assets.find((a) => a.id === component.asset3dId);
+    if (legacy) out.push(legacy);
+  }
+  return out;
+}
+
+
+/** One anchor of a Component, together with the Asset3D that owns it —
+ *  the pair every anchor consumer needs, since resolving an anchor's
+ *  frame (``anchorObjectLocalPos`` / ``anchorObjectLocalPrimaryDir``)
+ *  takes the owning asset. */
+export type OwnedAnchor = { asset: Asset3D; anchor: Anchor };
+
+
+/** Look up one anchor by the identity an RfLink stores — ``anchorId`` plus
+ *  the display ``anchorName`` (``anchor.name ?? anchor.id``) — anywhere in
+ *  a Component's binding tree.
+ *
+ *  The `primaryAsset(comp)?.anchors.find(...)` idiom this replaces returns
+ *  null for a multi-root Component (the EOSpace EOM: modulator root plus
+ *  two FC/APC connector roots), so its ``rf_in`` was invisible to every
+ *  caller even though the RF Link panel — which already aggregates the
+ *  tree — offered the port. Tree order, first match wins, matching the
+ *  panel's dedupe.
+ *
+ *  Caveat: the anchor is returned as stored, i.e. in ITS OWN asset's body
+ *  frame. That equals the Component body frame only for a root binding at
+ *  the identity transform, which is where the device-level ports
+ *  (rf_in / rf_out / intercept_*) live. A caller that resolves anchors on
+ *  transformed child bindings must fold in ``resolveBindingTree``'s pose
+ *  itself.
+ */
+export function findAnchorInBindingTree(
+  component: ComponentItem,
+  scene: Pick<SceneData, "componentBindings" | "objectBindings" | "assets" | "components">,
+  anchorId: string,
+  anchorName: string,
+): OwnedAnchor | null {
+  for (const asset of assetsInBindingTree(component, scene)) {
+    for (const anchor of asset.anchors ?? []) {
+      if (anchor.id === anchorId && (anchor.name ?? anchor.id) === anchorName) {
+        return { asset, anchor };
+      }
+    }
+  }
+  return null;
+}
+
+
+/** Every anchor in a Component's binding tree paired with its owning
+ *  asset, deduped by ``anchorId|anchorName`` (the port identity), first
+ *  occurrence winning. The list form of ``findAnchorInBindingTree`` — for
+ *  callers that scan for anchors by role rather than by name. Same body-frame
+ *  caveat applies.
+ */
+export function anchorsInBindingTree(
+  component: ComponentItem,
+  scene: Pick<SceneData, "componentBindings" | "objectBindings" | "assets" | "components">,
+): OwnedAnchor[] {
+  const out: OwnedAnchor[] = [];
+  const seen = new Set<string>();
+  for (const asset of assetsInBindingTree(component, scene)) {
+    for (const anchor of asset.anchors ?? []) {
+      const key = `${anchor.id}|${anchor.name ?? anchor.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ asset, anchor });
+    }
+  }
+  return out;
+}
+
+
 /** For a cable Component (kind_id 'fiber' / 'rf_cable') whose binding tree
  *  references two connector Asset3Ds (one per end), derive the
  *  spline-renderer properties so the spline draws the bound connector at
@@ -427,4 +542,109 @@ export function commonTunableAxes(
   const first = bindings[0].tunableAxes ?? {};
   const candidate = Object.keys(first);
   return candidate.filter((axis) => bindings.every((b) => (b.tunableAxes ?? {})[axis] !== undefined));
+}
+
+
+/** One fibre PORT of a pigtailed instrument: the `fiber_connector` binding
+ *  that stands in for the device's optical face, resolved down to everything
+ *  the align math needs. */
+export type PigtailPortBinding = {
+  /** End A dresses `intercept_in`, End B `intercept_out`. */
+  end: "A" | "B";
+  /** The device anchor this connector re-seats — `binding.properties.portAnchor`. */
+  portAnchor: "intercept_in" | "intercept_out";
+  binding: ComponentBinding;
+  connector: Asset3D;
+  connectIn: Anchor;
+  /** The wire junction the pigtail's last node is welded to. */
+  connectOut: Anchor | undefined;
+  /** Catalog baseline pose (what the ObjectBinding delta is measured from). */
+  basePose: BindingPose;
+  /** Baseline + this instance's ObjectBinding delta. */
+  effectivePose: BindingPose;
+  /** This instance's override row, when one exists. */
+  objectBinding: ObjectBinding | undefined;
+  /** Ancestor bindings' effective poses, outermost first. Empty for a root. */
+  parentChain: BindingPose[];
+};
+
+
+/** The port connectors of a pigtailed instrument, End A first.
+ *
+ *  A part opts in purely by DATA — binding a `fiber_connector` asset and
+ *  tagging the binding `properties.portAnchor` — which is the same signal
+ *  the backend's `db_scene_loader._port_connector_anchors` keys off, so the
+ *  ends the UI offers to align are exactly the ones whose port the solver
+ *  will re-seat. No per-kind code.
+ *
+ *  Poses are returned as (baseline, effective, parent chain) rather than one
+ *  composed matrix because aligning writes an ObjectBinding DELTA, which is
+ *  measured against the baseline and must not swallow the parent chain.
+ */
+export function pigtailPortBindings(
+  component: ComponentItem,
+  sceneObject: SceneObject | null | undefined,
+  scene: Pick<SceneData, "componentBindings" | "objectBindings" | "assets">,
+): PigtailPortBinding[] {
+  const assetById = new Map((scene.assets ?? []).map((a) => [a.id, a]));
+  const bindingById = new Map(
+    (scene.componentBindings ?? []).map((b) => [b.id, b]),
+  );
+  const overrides = new Map<string, ObjectBinding>();
+  for (const ob of scene.objectBindings ?? []) {
+    if (sceneObject && ob.objectId === sceneObject.id) {
+      overrides.set(ob.componentBindingId, ob);
+    }
+  }
+  const baseOf = (b: ComponentBinding): BindingPose => ({
+    localXMm: b.localXMm, localYMm: b.localYMm, localZMm: b.localZMm,
+    localRxDeg: b.localRxDeg, localRyDeg: b.localRyDeg, localRzDeg: b.localRzDeg,
+  });
+  const effectiveOf = (b: ComponentBinding): BindingPose => {
+    const t = _effectiveTransform(b, overrides.get(b.id));
+    return {
+      localXMm: t.xMm, localYMm: t.yMm, localZMm: t.zMm,
+      localRxDeg: t.rxDeg, localRyDeg: t.ryDeg, localRzDeg: t.rzDeg,
+    };
+  };
+
+  const out: PigtailPortBinding[] = [];
+  for (const binding of scene.componentBindings ?? []) {
+    if (binding.componentId !== component.id) continue;
+    if (binding.targetKind !== "asset" || !binding.asset3dId) continue;
+    const portAnchor = (binding.properties as { portAnchor?: unknown } | undefined)
+      ?.portAnchor;
+    if (portAnchor !== "intercept_in" && portAnchor !== "intercept_out") continue;
+    const connector = assetById.get(binding.asset3dId);
+    if (!connector || connector.kindId !== "fiber_connector") continue;
+    const connectIn = findMatingFaceAnchor(connector.anchors);
+    if (!connectIn) continue;
+
+    // Ancestors, outermost first. A cycle can only come from corrupt data;
+    // bail out of the walk rather than spin.
+    const parentChain: BindingPose[] = [];
+    const seen = new Set<string>([binding.id]);
+    let parentId = binding.parentBindingId;
+    while (parentId && !seen.has(parentId)) {
+      seen.add(parentId);
+      const parent = bindingById.get(parentId);
+      if (!parent) break;
+      parentChain.unshift(effectiveOf(parent));
+      parentId = parent.parentBindingId;
+    }
+
+    out.push({
+      end: portAnchor === "intercept_out" ? "B" : "A",
+      portAnchor,
+      binding,
+      connector,
+      connectIn,
+      connectOut: findCableRootAnchor(connector.anchors),
+      basePose: baseOf(binding),
+      effectivePose: effectiveOf(binding),
+      objectBinding: overrides.get(binding.id),
+      parentChain,
+    });
+  }
+  return out.sort((a, b) => a.end.localeCompare(b.end));
 }

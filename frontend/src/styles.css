@@ -246,7 +246,9 @@ body.is-dock-resize {
 .docked-panel {
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
+  /* Basis 0 + a per-panel flex-grow weight (inline style) = the stack splits
+     the zone by ratio, which the .docked-panel-resize grip drags. */
+  flex: 1 1 0;
   min-height: 120px;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
@@ -276,6 +278,24 @@ body.is-dock-resize {
   min-height: 0;
   overflow: auto;
   padding: 8px;
+}
+/* Grip straddling the divider to the next docked panel (hidden on the last
+   one, which has nothing below it to trade height with). */
+.docked-panel-resize {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 6px;
+  margin-bottom: -3px;
+  cursor: row-resize;
+  touch-action: none;
+  transition: background 120ms ease;
+}
+.docked-panel-resize:hover,
+.docked-panel-resize:active {
+  background: var(--accent-soft-strong);
+}
+.docked-panel:last-child .docked-panel-resize {
+  display: none;
 }
 
 /* Narrow viewports: collapse the side docks so the viewer keeps room. Users
@@ -4296,6 +4316,21 @@ input:disabled {
   flex-direction: column;
   gap: 14px;
 }
+/* Outliner "delete collection" confirm — narrower than the generic modal
+   card (it is prose + three buttons, not a form) and its warning line about
+   locked objects is muted so the two real choices stay dominant. */
+.outliner-delete-card {
+  width: min(460px, 92vw);
+}
+.outliner-delete-card .modal-body {
+  gap: 8px;
+  font-size: var(--fs-md);
+  line-height: 1.5;
+}
+.outliner-delete-note {
+  color: var(--warn);
+}
+
 .modal-footer {
   display: flex;
   justify-content: flex-end;
@@ -4397,65 +4432,6 @@ input:disabled {
   color: var(--danger);
   font-size: 12px;
   margin: 0;
-}
-
-/* =============================================================================
- * Visibility — Viewer context menu
- * ===========================================================================*/
-.viewer-context-menu {
-  background: var(--panel-strong);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
-  padding: 4px;
-  min-width: 200px;
-  z-index: 60;
-  display: flex;
-  flex-direction: column;
-}
-.viewer-context-menu .context-header {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  padding: 4px 8px;
-  border-bottom: 1px dashed var(--line);
-  margin-bottom: 2px;
-}
-.viewer-context-menu button {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 6px 8px;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  border: none;
-  color: var(--ink);
-  font-size: var(--fs-md);
-  text-align: left;
-}
-.viewer-context-menu button:hover {
-  background: rgba(15, 118, 110, 0.10);
-}
-.viewer-context-menu kbd {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  padding: 0 5px;
-  font-size: 10.5px;
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  color: var(--muted);
-}
-.viewer-context-menu .context-divider {
-  height: 1px;
-  background: var(--line);
-  margin: 4px 0;
-}
-.viewer-context-menu button.context-danger {
-  color: #dc2626;
-}
-.viewer-context-menu button.context-danger:hover {
-  background: rgba(220, 38, 38, 0.12);
 }
 
 .row-action.muted {

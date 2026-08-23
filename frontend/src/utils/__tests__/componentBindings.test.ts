@@ -16,8 +16,11 @@ import type {
   SceneObject,
 } from "../../types/digitalTwin";
 import {
+  anchorsInBindingTree,
+  assetsInBindingTree,
   bindingsFor,
   childrenOf,
+  findAnchorInBindingTree,
   primaryAsset,
   resolveBindingTree,
   rootBindingsOf,
@@ -376,5 +379,158 @@ describe("resolveBindingTree", () => {
     expect(tree[0].children).toHaveLength(1);
     expect(tree[0].children[0].binding.id).toBe("b_root");
     expect(tree[0].children[0].children).toEqual([]);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// assetsInBindingTree
+// ---------------------------------------------------------------------------
+
+
+describe("assetsInBindingTree", () => {
+  it("returns every root asset of a multi-root Component, in order", () => {
+    // The EOSpace EOM shape: modulator body + two FC/APC connectors, all
+    // three sitting at root. primaryAsset gives up here; this must not.
+    const body = asset("body");
+    const conn = asset("conn");
+    const c = component("c1");
+    const scene = {
+      componentBindings: [
+        binding({ id: "b0", componentId: "c1", asset3dId: body.id, sortOrder: 0 }),
+        binding({ id: "b1", componentId: "c1", asset3dId: conn.id, sortOrder: 1 }),
+        binding({ id: "b2", componentId: "c1", asset3dId: conn.id, sortOrder: 2 }),
+      ],
+      assets: [body, conn],
+      components: [c],
+    };
+    expect(primaryAsset(c, scene)).toBeNull();
+    expect(assetsInBindingTree(c, scene).map((a) => a.id)).toEqual(["body", "conn"]);
+  });
+
+  it("descends into child bindings and sub-Components", () => {
+    const body = asset("body");
+    const child = asset("child");
+    const subAsset = asset("sub_asset");
+    const sub = component("c2");
+    const c = component("c1");
+    const scene = {
+      componentBindings: [
+        binding({ id: "b0", componentId: "c1", asset3dId: body.id }),
+        binding({ id: "b1", componentId: "c1", parentBindingId: "b0", asset3dId: child.id }),
+        binding({
+          id: "b2",
+          componentId: "c1",
+          parentBindingId: "b0",
+          targetKind: "subcomponent",
+          subComponentId: sub.id,
+        }),
+        binding({ id: "b3", componentId: "c2", asset3dId: subAsset.id }),
+      ],
+      assets: [body, child, subAsset],
+      components: [c, sub],
+    };
+    expect(assetsInBindingTree(c, scene).map((a) => a.id)).toEqual([
+      "body",
+      "child",
+      "sub_asset",
+    ]);
+  });
+
+  it("matches primaryAsset on the single-root common case", () => {
+    const a = asset("a");
+    const c = component("c1");
+    const scene = {
+      componentBindings: [binding({ id: "b0", componentId: "c1", asset3dId: a.id })],
+      assets: [a],
+      components: [c],
+    };
+    expect(assetsInBindingTree(c, scene)).toEqual([primaryAsset(c, scene)]);
+  });
+
+  it("falls back to the legacy component.asset3dId when there are no bindings", () => {
+    const a = asset("a");
+    const c = component("c1", a.id);
+    const scene = { componentBindings: [], assets: [a], components: [c] };
+    expect(assetsInBindingTree(c, scene).map((x) => x.id)).toEqual(["a"]);
+  });
+
+  it("returns [] when the Component has neither bindings nor a legacy asset", () => {
+    const c = component("c1");
+    expect(
+      assetsInBindingTree(c, { componentBindings: [], assets: [], components: [c] }),
+    ).toEqual([]);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// findAnchorInBindingTree / anchorsInBindingTree
+// ---------------------------------------------------------------------------
+
+
+/** The EOSpace EOM shape that broke RF connect: the modulator body carries
+ *  the `rf_in` port, and two identical FC/APC connector assets sit alongside
+ *  it at root, so `primaryAsset` answers null and the port was invisible to
+ *  every caller that went through it. */
+function eomLikeScene() {
+  const body = asset("body");
+  body.anchors = [
+    { id: "intercept_in", positionMmBodyLocal: { x: 0, y: 0, z: 0 } },
+    { id: "rf_in", name: "RF IN", positionMmBodyLocal: { x: 40, y: 0, z: 13.5 } },
+  ];
+  const conn = asset("conn");
+  conn.anchors = [
+    { id: "connect_in", positionMmBodyLocal: { x: 0, y: 0, z: 0 } },
+    { id: "connect_out", positionMmBodyLocal: { x: 5, y: 0, z: 0 } },
+  ];
+  const c = component("c1");
+  const scene = {
+    componentBindings: [
+      binding({ id: "b0", componentId: "c1", asset3dId: body.id, sortOrder: 0 }),
+      binding({ id: "b1", componentId: "c1", asset3dId: conn.id, sortOrder: 3 }),
+      binding({ id: "b2", componentId: "c1", asset3dId: conn.id, sortOrder: 4 }),
+    ],
+    assets: [body, conn],
+    components: [c],
+  };
+  return { body, conn, c, scene };
+}
+
+
+describe("findAnchorInBindingTree", () => {
+  it("finds an anchor on a multi-root Component where primaryAsset gives up", () => {
+    const { body, c, scene } = eomLikeScene();
+    expect(primaryAsset(c, scene)).toBeNull();
+    const owned = findAnchorInBindingTree(c, scene, "rf_in", "RF IN");
+    expect(owned?.anchor.id).toBe("rf_in");
+    expect(owned?.asset.id).toBe(body.id);
+  });
+
+  it("matches on the anchor id when the anchor has no name", () => {
+    const { c, scene } = eomLikeScene();
+    expect(findAnchorInBindingTree(c, scene, "connect_out", "connect_out")?.anchor.id)
+      .toBe("connect_out");
+  });
+
+  it("returns null when the name doesn't match the stored one", () => {
+    const { c, scene } = eomLikeScene();
+    // "RFIN" is the panel's DISPLAY form; the stored identity is "RF IN".
+    expect(findAnchorInBindingTree(c, scene, "rf_in", "RFIN")).toBeNull();
+  });
+});
+
+
+describe("anchorsInBindingTree", () => {
+  it("aggregates every root's anchors, deduped by anchorId|anchorName", () => {
+    const { c, scene } = eomLikeScene();
+    // The connector asset is bound twice — its two anchors appear once.
+    expect(anchorsInBindingTree(c, scene).map(({ anchor: a }) => `${a.id}|${a.name ?? a.id}`))
+      .toEqual([
+        "intercept_in|intercept_in",
+        "rf_in|RF IN",
+        "connect_in|connect_in",
+        "connect_out|connect_out",
+      ]);
   });
 });

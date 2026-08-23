@@ -45,6 +45,7 @@
 - [Measured benchmark dataset · ../bench-dataset.md](../bench-dataset.md) — the measurement protocol behind O-4/F-2's "within <5% of measurement" and the list of 12 cases (0 measured values so far)
 - [float64 end-to-end audit · ../float64-audit.md](../float64-audit.md) — the anchor-pose precision audit (2026-08-17): the machine path is clean, the breach is the PHY Editor's authoring UI + the triangulation limit of face-picking
 - [AOM model · ../aom-model.md](../aom-model.md) + `../aom_align_*.png` / `../aom_align_*.py` (the AOM alignment plotting scripts and figures)
+- [Sacher TEC400 852 nm TA output mode · ../sacher-tec400-852nm-ta-output-mode.md](../sacher-tec400-852nm-ta-output-mode.md) + `../ta_out_m2.py` — the WFS wavefront data behind `outputSpatialModeX/Y`, why the stored values are wrong (the 3.5 mm pupil was inferred, not measured), and why `mSquared` stays 1.0
 - [Object Sense kinds · ../object-sense-kinds.md](../object-sense-kinds.md)
 
 ---

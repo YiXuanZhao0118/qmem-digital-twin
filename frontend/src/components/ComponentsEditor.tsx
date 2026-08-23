@@ -76,7 +76,19 @@ import {
 import type { FiberNode } from "../three/loadAsset/fiber";
 import { anchorObjectLocalAxisX, anchorObjectLocalPos } from "../utils/anchorAccess";
 import { deriveCablePropsFromConnectorBindings } from "../utils/componentBindings";
-import { readCableAppearance } from "../three/loadAsset/cableAppearance";
+import {
+  anchorPositionInComponentFrame,
+  buildPigtailNodes,
+  computePortConnectorPose,
+} from "../utils/portConnectorPlacement";
+import {
+  readCableAppearance,
+  type CableAppearance,
+} from "../three/loadAsset/cableAppearance";
+import {
+  PIGTAIL_DEFAULT_RADIUS_MM,
+  PIGTAIL_JACKET_COLOR,
+} from "../three/bindingTreeObject";
 import { CableAppearanceEditor } from "./CableAppearanceEditor";
 import { OPTICAL_ALIGN_KINDS } from "../utils/isolatorAlign";
 import { getNumericProperty } from "../three/transformUtils";
@@ -105,6 +117,7 @@ import {
   TD,
   TH,
 } from "./phyEditorTheme";
+import { CABLE_ROOT_ANCHOR_IDS, findCableRootAnchor, findMatingFaceAnchor, MATING_FACE_ANCHOR_IDS } from "../utils/connectorAnchors";
 
 export type ComposerDomain = "optical" | "rf" | "mechanical";
 
@@ -465,6 +478,409 @@ function computeProbeAnchorAim(
     pos: { x: origin.x, y: origin.y, z: origin.z },
     dir: { x: axis.x, y: axis.y, z: axis.z },
   };
+}
+
+/** The two device anchors a PIGTAIL can hang off, in display order.
+ *  `intercept_face` (mirrors) is deliberately absent — a reflective coating is
+ *  not somewhere a fibre comes out of.
+ *
+ *  These are `intercept_*` and NOT `fiber_in` / `fiber_out` on purpose, and
+ *  the distinction is the whole point of this section (2026-08-23):
+ *
+ *    - a **pigtail** is a jacketed fibre that comes OUT of the instrument and
+ *      ends in its own MALE connector. The instrument's optical face really is
+ *      where the light enters the box, so `intercept_in` / `intercept_out` is
+ *      the right anchor — the connector asset bound here just re-seats that
+ *      face onto the end of the fibre, which is why you can drag it away from
+ *      the body. The EOSpace EOM is the one part built this way.
+ *    - a **bulkhead** is a FEMALE socket in the chassis with nothing hanging
+ *      off it. It has its own anchor, `fiber_in` / `fiber_out`, is never bound
+ *      to a connector asset (the socket IS the chassis), and is plugged into
+ *      from the Object panel's Fibre ports section, not from here. The
+ *      RXM15EF is built that way.
+ *
+ *  Conflating the two is what this used to do under the name "Fiber ports". */
+const PIGTAIL_PORT_ANCHORS = [
+  { anchorId: "intercept_in", label: "Pigtail in", role: "port_in" },
+  { anchorId: "intercept_out", label: "Pigtail out", role: "port_out" },
+] as const;
+
+const CONNECTOR_KIND_IDS = new Set(["fiber_connector", "rf_cable_connector"]);
+
+function portAnchorOf(binding: ComponentBinding): string | undefined {
+  return (binding.properties as { portAnchor?: string } | undefined)?.portAnchor;
+}
+
+/**
+ * "Pigtail connectors" — pick the connector that terminates the fibre hanging
+ * off each optical port, the same gesture the `fiber` cable profile uses for
+ * End A / End B.
+ *
+ * A fibre-pigtailed instrument (the EOSpace EOM is the first) has no bare
+ * optical face: a jacketed fibre comes out of the box and ends in a male
+ * FC/APC plug, modelled as a `fiber_connector` binding tagged
+ * `properties.portAnchor`, from which `db_scene_loader._port_connector_anchors`
+ * re-seats the device's own `intercept_in` / `intercept_out`. Until now those
+ * bindings could only be hand-written (role + portAnchor + a solved pose),
+ * which is why the EOSpace was the only part that had them.
+ * See docs/introduce/component.md.
+ *
+ * NOT the same thing as a chassis bulkhead — that is `fiber_in` / `fiber_out`
+ * and is plugged into from the Object panel. See {@link PIGTAIL_PORT_ANCHORS}.
+ *
+ * Shown for any component whose device asset declares `intercept_in` /
+ * `intercept_out` — the question "does a fibre come out of this face?" is
+ * meaningful for all of them (fibre-coupled AOMs and TAs are real parts), and
+ * "— none —" is the correct, accurate answer for the ones that are bare.
+ */
+function PigtailConnectorsSection({
+  componentId,
+  bindings,
+  assets,
+  assetById,
+  locked,
+  onChanged,
+  onError,
+}: {
+  componentId: string;
+  bindings: ComponentBinding[];
+  assets: Asset3D[];
+  assetById: Map<string, Asset3D>;
+  locked: boolean;
+  onChanged: () => Promise<void>;
+  onError: (message: string) => void;
+}) {
+  const [busyAnchor, setBusyAnchor] = useState<string | null>(null);
+
+  const connectorAssets = useMemo(
+    () =>
+      assets
+        .filter((a) => a.kindId === "fiber_connector")
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [assets],
+  );
+
+  // The device binding is the non-connector one carrying the port anchors.
+  // Its own pose composes into every connector pose (both live in the same
+  // Component frame), so a device placed off-origin still seeds correctly.
+  const deviceBinding = useMemo(
+    () =>
+      bindings.find((b) => {
+        if (!b.asset3dId) return false;
+        const asset = assetById.get(b.asset3dId);
+        if (!asset || CONNECTOR_KIND_IDS.has(asset.kindId ?? "")) return false;
+        return (asset.anchors ?? []).some((a) =>
+          PIGTAIL_PORT_ANCHORS.some((p) => p.anchorId === a.id),
+        );
+      }) ?? null,
+    [bindings, assetById],
+  );
+
+  const deviceAsset = deviceBinding?.asset3dId
+    ? assetById.get(deviceBinding.asset3dId)
+    : undefined;
+
+  const ports = useMemo(() => {
+    const anchors = deviceAsset?.anchors ?? [];
+    return PIGTAIL_PORT_ANCHORS.map((p) => ({
+      ...p,
+      anchor: anchors.find((a) => a.id === p.anchorId),
+    })).filter((p) => p.anchor !== undefined);
+  }, [deviceAsset]);
+
+  // Connector bindings with no `portAnchor` are inert as far as the tracer is
+  // concerned (`connect_*` is not in PRIMARY_ANCHOR_IDS) — worth calling out,
+  // since hand-adding one via "+ Add binding" looks like it made a port, and
+  // the pickers below would otherwise add a THIRD connector beside them.
+  const untaggedConnectors = bindings.filter((b) => {
+    if (portAnchorOf(b) || !b.asset3dId) return false;
+    return assetById.get(b.asset3dId)?.kindId === "fiber_connector";
+  });
+
+  if (!deviceBinding || ports.length === 0) return null;
+
+  const setPortConnector = async (
+    port: (typeof ports)[number],
+    nextAssetId: string,
+  ): Promise<void> => {
+    const existing = bindings.find((b) => portAnchorOf(b) === port.anchorId);
+    // The backend treats a binding's target as immutable ("delete and
+    // recreate", schemas.ComponentBindingUpdate), so swapping the connector
+    // means a new binding id — and per-instance pigtail shapes are keyed by
+    // binding id in `SceneObject.properties.bindingFiberNodes`, so they do
+    // not survive it. Say so instead of silently dropping them.
+    if (existing) {
+      const ok = window.confirm(
+        nextAssetId
+          ? `Replace the connector on ${port.label}?\n\n`
+              + "The binding is recreated with a new id, so any per-instance "
+              + "pigtail shape dragged onto this port in the 3D viewer is "
+              + "discarded. Its pose and catalog pigtail are carried over."
+          : `Remove the connector on ${port.label}?\n\n`
+              + "The port reverts to the bare optical face the device asset "
+              + "declares, and this binding's pigtail — catalog and "
+              + "per-instance — goes with it.",
+      );
+      if (!ok) return;
+    }
+    setBusyAnchor(port.anchorId);
+    try {
+      if (existing) await deleteComponentBindingApi(existing.id);
+      if (nextAssetId) {
+        const connector = assetById.get(nextAssetId);
+        const connectIn = findMatingFaceAnchor(connector?.anchors);
+        // Keep the pose the user already dialled in when swapping; seed a
+        // fresh port so its connect_in lands exactly on the anchor it
+        // replaces (zero change to any traced number).
+        const seeded = connectIn
+          ? computePortConnectorPose(port.anchor as Anchor, connectIn, deviceBinding)
+          : null;
+        const pose = existing ?? seeded;
+        if (!existing && !seeded) {
+          onError(
+            `${connector?.name ?? "That connector"} has no usable fiber_out frame — `
+              + "the port was bound at the origin and must be posed by hand.",
+          );
+        }
+        await createComponentBindingApi(componentId, {
+          targetKind: "asset",
+          parentBindingId: null,
+          asset3dId: nextAssetId,
+          role: port.role,
+          localXMm: pose?.localXMm ?? 0,
+          localYMm: pose?.localYMm ?? 0,
+          localZMm: pose?.localZMm ?? 0,
+          localRxDeg: pose?.localRxDeg ?? 0,
+          localRyDeg: pose?.localRyDeg ?? 0,
+          localRzDeg: pose?.localRzDeg ?? 0,
+          sortOrder: existing?.sortOrder ?? bindings.length,
+          properties: {
+            ...((existing?.properties as Record<string, unknown>) ?? {}),
+            portAnchor: port.anchorId,
+          },
+        });
+      }
+      await onChanged();
+    } catch (e) {
+      onError(`Fiber port update failed: ${String(e)}`);
+    } finally {
+      setBusyAnchor(null);
+    }
+  };
+
+  /** Add or drop the JACKET — the run of fibre between the device body and
+   *  the back of the connector. Unlike swapping the connector this is a pure
+   *  `properties` patch, so the binding id survives and per-instance pigtail
+   *  shapes keyed on it are not disturbed. */
+  const setPortJacket = async (
+    port: (typeof ports)[number],
+    enabled: boolean,
+  ): Promise<void> => {
+    const bound = bindings.find((b) => portAnchorOf(b) === port.anchorId);
+    if (!bound) return;
+    const props = { ...((bound.properties as Record<string, unknown>) ?? {}) };
+    if (enabled) {
+      const connector = bound.asset3dId ? assetById.get(bound.asset3dId) : undefined;
+      const connectOut = findCableRootAnchor(connector?.anchors);
+      if (!connectOut) {
+        onError(
+          `${connector?.name ?? "That connector"} has no fiber_root anchor, `
+            + "so there is no wire junction to run a jacket to.",
+        );
+        return;
+      }
+      const nodes = buildPigtailNodes(
+        anchorPositionInComponentFrame(port.anchor as Anchor, deviceBinding),
+        anchorPositionInComponentFrame(connectOut, bound),
+      );
+      if (!nodes) {
+        onError(
+          `${port.label}'s connector sits on the device face — that is a bare `
+            + "bulkhead with no fibre showing. Move it off the body first, then "
+            + "add the jacket.",
+        );
+        return;
+      }
+      props.fiberNodes = nodes;
+    } else {
+      if (!window.confirm(`Remove ${port.label}'s jacket?`)) return;
+      delete props.fiberNodes;
+    }
+    setBusyAnchor(port.anchorId);
+    try {
+      await updateComponentBindingApi(bound.id, { properties: props });
+      await onChanged();
+    } catch (e) {
+      onError(`Jacket update failed: ${String(e)}`);
+    } finally {
+      setBusyAnchor(null);
+    }
+  };
+
+  /** Jacket colour + visual radius for one port's pigtail. Same two knobs a
+   *  cable Component gets, mapped onto the binding keys `buildBindingPigtail`
+   *  reads; clearing a key falls back to the connector's fiberType colour /
+   *  the renderer's default radius. */
+  const setPortAppearance = async (
+    port: (typeof ports)[number],
+    next: CableAppearance,
+  ): Promise<void> => {
+    const bound = bindings.find((b) => portAnchorOf(b) === port.anchorId);
+    if (!bound) return;
+    const props = { ...((bound.properties as Record<string, unknown>) ?? {}) };
+    if (next.jacketColorHex != null) props.fiberJacketColor = next.jacketColorHex;
+    else delete props.fiberJacketColor;
+    if (next.radiusMm != null) props.fiberRadiusMm = next.radiusMm;
+    else delete props.fiberRadiusMm;
+    try {
+      await updateComponentBindingApi(bound.id, { properties: props });
+      await onChanged();
+    } catch (e) {
+      onError(`Jacket appearance update failed: ${String(e)}`);
+    }
+  };
+
+  return (
+    <>
+      <div style={SECTION_LABEL}>Pigtail connectors</div>
+      <div
+        style={{
+          fontSize: 11,
+          border: "1px solid #e9ece9",
+          borderRadius: 2,
+          padding: "8px 10px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+        }}
+      >
+        <div style={{ fontSize: 10, color: "#6b7280", lineHeight: 1.5 }}>
+          For an instrument with a fibre hanging out of it. Bind the male FC
+          connector that terminates the pigtail and that connector&apos;s{" "}
+          <code>fiber_out</code> becomes the coupling face — position,
+          aperture and PM key. It is seeded so the face lands exactly where the
+          asset&apos;s anchor already is, so binding one changes no traced
+          number; drag it out afterwards to give the pigtail its length.
+          A chassis socket with nothing hanging off it is not this: give it a{" "}
+          <code>fiber_in</code> anchor with a <code>*_female</code> connector
+          type instead, and plug cables into it from the Object panel.
+        </div>
+        {ports.length > 0 && (
+          <div style={{ fontSize: 10, color: "#92400e", lineHeight: 1.5 }}>
+            ⓘ Once a port has a connector, the device&apos;s own{" "}
+            <code>{ports.map((p) => p.anchorId).join(" / ")}</code> reads two
+            ways. Its coordinate on the ASSET3D row is where the fibre leaves
+            the package — the pigtail is rooted there. The face the tracer
+            couples through is re-derived from the connector at load, so
+            editing that anchor in the ASSET3D tab does <b>not</b> move the
+            coupling face; it moves the pigtail&apos;s root. Move the coupling
+            face by posing the connector here instead.
+          </div>
+        )}
+        {connectorAssets.length === 0 && (
+          <div style={{ color: "#b91c1c" }}>
+            No <code>fiber_connector</code> assets exist yet — add one in the
+            ASSET3D tab first.
+          </div>
+        )}
+        {untaggedConnectors.length > 0 && (
+          <div style={{ color: "#92400e", lineHeight: 1.5 }}>
+            ⚠ {untaggedConnectors.length} connector binding
+            {untaggedConnectors.length === 1 ? " is" : "s are"} not assigned to a
+            port ({untaggedConnectors.map((b) => b.role || "—").join(", ")}).
+            Light passes straight through those — a connector only becomes a
+            port through <code>portAnchor</code>, which is what the pickers
+            below write. Remove them under Bindings, or leave them as decoration.
+          </div>
+        )}
+        {ports.map((port) => {
+          const bound = bindings.find((b) => portAnchorOf(b) === port.anchorId);
+          const boundAsset = bound?.asset3dId ? assetById.get(bound.asset3dId) : undefined;
+          const bindProps = (bound?.properties ?? {}) as {
+            fiberNodes?: unknown[];
+            fiberRadiusMm?: number;
+            fiberJacketColor?: string;
+          };
+          const pigtail = bindProps.fiberNodes;
+          const hasJacket = Array.isArray(pigtail) && pigtail.length >= 2;
+          // The colour the renderer would pick on its own, so the editor can
+          // show the real default behind an override (buildBindingPigtail
+          // keys it off the CONNECTOR's fiberType, not the device's).
+          const jacketDefaultColor =
+            PIGTAIL_JACKET_COLOR[
+              String(
+                (boundAsset?.defaultParams as { fiberType?: unknown } | undefined)
+                  ?.fiberType ?? "",
+              )
+            ] ?? PIGTAIL_JACKET_COLOR.polarization_maintaining;
+          return (
+            <div key={port.anchorId} style={{ display: "flex", flexDirection: "column" }}>
+            <label
+              style={{ display: "flex", gap: 8, alignItems: "center" }}
+            >
+              <span
+                style={{ fontWeight: 700, color: "#374151", width: 56, flexShrink: 0 }}
+              >
+                {port.label}
+              </span>
+              <code style={{ fontSize: 10, color: "#6b7280", width: 96, flexShrink: 0 }}>
+                {port.anchorId}
+              </code>
+              <select
+                value={bound?.asset3dId ?? ""}
+                disabled={locked || busyAnchor !== null || connectorAssets.length === 0}
+                onChange={(e) => void setPortConnector(port, e.target.value)}
+                style={{ ...inputStyle, flex: 1, minWidth: 0 }}
+              >
+                <option value="">— none (bare optical face) —</option>
+                {connectorAssets.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                    {a.catalogId ? ` (${a.catalogId})` : ""}
+                  </option>
+                ))}
+              </select>
+              <span style={{ fontSize: 10, color: "#9ca3af", width: 74, flexShrink: 0 }}>
+                {boundAsset && Array.isArray(pigtail) && pigtail.length >= 2
+                  ? `jacket ${pigtail.length} nodes`
+                  : boundAsset
+                    ? "no jacket"
+                    : ""}
+              </span>
+              {boundAsset && (
+                <button
+                  type="button"
+                  disabled={locked || busyAnchor !== null}
+                  onClick={() => void setPortJacket(port, !hasJacket)}
+                  style={{ ...btnPrimary, padding: "2px 8px", fontSize: 10, flexShrink: 0 }}
+                  title={
+                    hasJacket
+                      ? "Remove this port's fibre run; the connector stays as a bare bulkhead."
+                      : "Run a jacket from the device's fibre exit to the back of this connector. Drag its nodes in the viewer's node-edit mode."
+                  }
+                >
+                  {hasJacket ? "− jacket" : "+ jacket"}
+                </button>
+              )}
+            </label>
+            {hasJacket && !locked && (
+              // Same two knobs a cable Component gets, per port — a part's two
+              // pigtails are separate runs and may legitimately differ.
+              <CableAppearanceEditor
+                value={{
+                  jacketColorHex: bindProps.fiberJacketColor,
+                  radiusMm: bindProps.fiberRadiusMm,
+                }}
+                defaultColorHex={jacketDefaultColor}
+                onChange={(next) => void setPortAppearance(port, next)}
+              />
+            )}
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
 }
 
 export function ComponentsEditor({
@@ -1283,6 +1699,26 @@ export function ComponentsEditor({
             {(domainsOf(selected).includes("optical")
               || OPTICAL_ALIGN_KINDS.has(selected.kindId ?? "")) && !isCableComp && (
               <AlignSpecSection component={selected} onPatch={handlePatchComponent} />
+            )}
+
+            {!isCableComp && (
+              <PigtailConnectorsSection
+                componentId={selected.id}
+                bindings={childBindings}
+                assets={assets}
+                assetById={assetById}
+                locked={selected.locked === true}
+                // Also reload the SCENE, not just this pane's local binding
+                // list: the 3D viewer keys its wrapper cache on
+                // `useSceneStore.scene.componentBindings`, so without this a
+                // port or jacket added here stays invisible until a page
+                // reload. `handleCreateComponent` already does the same.
+                onChanged={async () => {
+                  await reloadBindings(selected.id);
+                  await loadScene();
+                }}
+                onError={setError}
+              />
             )}
 
             <div style={SECTION_LABEL}>3D preview</div>
@@ -2208,8 +2644,12 @@ function ComponentPreview3D({
           );
         });
       if (!match) return null;
-      const anchorPos = (id: string): { x: number; y: number; z: number } | null => {
-        const a = (match.anchors ?? []).find((x) => (x as { id?: string }).id === id);
+      const anchorPos = (
+        ...ids: readonly string[]
+      ): { x: number; y: number; z: number } | null => {
+        const a = ids
+          .map((id) => (match.anchors ?? []).find((x) => (x as { id?: string }).id === id))
+          .find(Boolean);
         const p = (a as { positionMmBodyLocal?: { x?: number; y?: number; z?: number } } | undefined)
           ?.positionMmBodyLocal;
         return p && typeof p.x === "number" && typeof p.y === "number" && typeof p.z === "number"
@@ -2218,12 +2658,12 @@ function ComponentPreview3D({
       };
       return {
         key: match.catalogId ?? match.filePath,
-        url: resolveAssetUrl(match.filePath),
+        url: resolveAssetUrl(match.filePath, match.fileVersion),
         ext: match.filePath.split("?")[0].split(".").pop()?.toLowerCase() ?? "",
         unit: match.unit,
         scaleFactor: match.scaleFactor,
-        connectOutMm: anchorPos("connect_out"),
-        connectInMm: anchorPos("connect_in"),
+        connectOutMm: anchorPos(...CABLE_ROOT_ANCHOR_IDS),
+        connectInMm: anchorPos(...MATING_FACE_ANCHOR_IDS),
       };
     });
     setRfConnectorAssetResolver((kind) => {
@@ -2243,7 +2683,7 @@ function ComponentPreview3D({
               : null;
           };
           return {
-            url: resolveAssetUrl(asset.filePath),
+            url: resolveAssetUrl(asset.filePath, asset.fileVersion),
             ext: asset.filePath.split("?")[0].split(".").pop()?.toLowerCase() ?? "",
             unit: asset.unit,
             scaleFactor: asset.scaleFactor,
@@ -2803,7 +3243,7 @@ function ComponentPreview3D({
         return pivot;
       }
       const ext = filePath.split("?")[0].split(".").pop()?.toLowerCase();
-      const url = resolveAssetUrl(filePath);
+      const url = resolveAssetUrl(filePath, asset.fileVersion);
       // Mesh placement MUST match the lab viewer (Object Sense) so a
       // composite Component (isolator etc.) reads identically in both
       // places. Asset meshes and anchors share the native CAD frame; the

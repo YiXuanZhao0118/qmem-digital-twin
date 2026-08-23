@@ -20,7 +20,6 @@ import {
 } from "../../utils/componentBindings";
 import { isEditableValue } from "../../utils/paramLeaves";
 import { InstanceDynamicSourcesEditor } from "./InstanceDynamicSourcesEditor";
-import { BindingTreeAdjustControls } from "../BindingTreeAdjustControls";
 import { IntrinsicSpecPanel } from "../IntrinsicSpecPanel";
 import { AlignToBeamSection } from "./_shared";
 
@@ -146,20 +145,6 @@ export function OpticalSettingPanel({ component, sceneObject }: Props) {
     }
   };
 
-  // Optical-ness derives from the KIND (not the stored physicsCapabilities,
-  // which no longer determines domain — 2026-06-10). True when: the
-  // component's own kind is optical (single optic like a mirror), OR any
-  // bound asset is optical (composite like the isolator, kindId="none").
-  const isOptical = useMemo(() => {
-    if (mappedKind != null && domainForElementKind(mappedKind) === "optical") return true;
-    return (scene.componentBindings ?? []).some((b) => {
-      if (b.componentId !== component.id || b.targetKind !== "asset" || !b.asset3dId) return false;
-      const a = scene.assets.find((x) => x.id === b.asset3dId);
-      const ek = a?.kindId ? kindIdToElementKind(a.kindId) : null;
-      return ek != null && domainForElementKind(ek) === "optical";
-    });
-  }, [component, mappedKind, scene.componentBindings, scene.assets]);
-
   return (
     <div className="physics-inspector">
       {sceneObject && <IntrinsicSpecPanel component={component} sceneObject={sceneObject} />}
@@ -192,7 +177,8 @@ export function OpticalSettingPanel({ component, sceneObject }: Props) {
       {/* Dedicated kind controls (laser / TA full editors; mirror pose nudge).
           Only render when a top-level PhysicsElement exists (single optics);
           composites carry no top-level element and edit via the per-slot
-          coefficient blocks + binding-tree adjustments below. */}
+          coefficient blocks below (binding-tree adjustments moved to the
+          Object panel). */}
       {existing && sceneObject && (
         <AdjustErrorBoundary key={sceneObject.id}>
           <AlignToBeamSection
@@ -231,12 +217,6 @@ export function OpticalSettingPanel({ component, sceneObject }: Props) {
           </p>
         </div>
       )}
-
-      {/* Geometric "optical setting" — per-instance binding-tree adjustments
-          (composite front/back polariser Rz, see-through). Self-gates (returns
-          null when there are no tunable binding axes), so this is a no-op for
-          plain single optics. */}
-      {isOptical && <BindingTreeAdjustControls component={component} />}
     </div>
   );
 }

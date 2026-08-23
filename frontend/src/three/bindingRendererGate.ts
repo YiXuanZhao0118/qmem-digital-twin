@@ -41,6 +41,11 @@ import {
 import { ANNOTATION_KIND_IDS, effectiveInstanceParams } from "../utils/instanceParams";
 import { loadAssetObject } from "./loadAsset";
 import { buildBindingTreeObject } from "./bindingTreeObject";
+import type { FiberNode } from "./loadAsset/fiber/types";
+import {
+  resolveFiberEndKindParams,
+  syncFiberNodesFromKindParams,
+} from "../utils/fiberAnchorResolver";
 import { GLAN_POLARIZER_PRISM_FILEPATH } from "./loadAsset/procedural/glan_polarizer_prism";
 
 
@@ -87,7 +92,8 @@ export function shouldRenderViaBindings(
 export async function buildSceneObjectFromBindings(
   component: ComponentItem,
   sceneObject: SceneObject | null,
-  scene: Pick<SceneData, "componentBindings" | "objectBindings" | "assets" | "components">,
+  scene: Pick<SceneData, "componentBindings" | "objectBindings" | "assets" | "components">
+    & { physicsElements?: SceneData["physicsElements"] },
   /** Opt in to distance-switched LOD (objectives.md §R-5). Only the live
    *  scene renderer should — see the ``enableLod`` note on ``loadAssetObject``
    *  for why this is opt-in rather than opt-out. */
@@ -105,9 +111,49 @@ export async function buildSceneObjectFromBindings(
     const loaderComponent = derived
       ? { ...component, properties: { ...(component.properties ?? {}), ...derived } }
       : component;
-    const objectProps = sceneObject?.properties as unknown as Parameters<
+    let objectProps = sceneObject?.properties as unknown as Parameters<
       typeof loadAssetObject
     >[3];
+
+    // A fibre whose spline was never cached must still be drawn where its
+    // ENDPOINTS are (2026-08-21).
+    //
+    // `createFiberSplineObject` reads only `SceneObject.properties.fiberNodes`
+    // then `Component.properties.fiberNodes`; with neither it falls back to a
+    // hard-coded 0→300 mm straight run. But a freshly instantiated fibre has
+    // its endpoints ONLY in the fibre PhysicsElement's `kindParams.endA/endB`
+    // (what Align End A/B writes, and what the backend's `_synth_fiber_slot`
+    // traces) — nothing writes `properties.fiberNodes` until someone edits a
+    // node. So the cable rendered a metre away from where it actually was,
+    // while the COMPONENT preview looked right because it deliberately draws
+    // the catalog shape. Rebuild from the PE, mirroring the precedence in
+    // `sceneStore.resolveEffectiveFiberNodes` (which every fibre-endpoint
+    // EDITOR already goes through — this is the render path catching up).
+    // Called through `utils/fiberAnchorResolver` rather than the store to
+    // keep `three/` from importing `store/`, which would close a cycle
+    // (`sceneStore` → `three/photoRoom`).
+    if (component.kindId === "fiber" && sceneObject) {
+      const cached = (objectProps as { fiberNodes?: unknown } | undefined)?.fiberNodes;
+      const catalogCached = (component.properties as { fiberNodes?: unknown } | undefined)
+        ?.fiberNodes;
+      const usable = (v: unknown) => Array.isArray(v) && v.length >= 2;
+      if (!usable(cached) && !usable(catalogCached)) {
+        const pe = (scene.physicsElements ?? []).find(
+          (e) => e.objectId === sceneObject.id && e.elementKind === "fiber",
+        );
+        const { endA, endB } = resolveFiberEndKindParams(pe);
+        if (endA || endB) {
+          const nodes = syncFiberNodesFromKindParams(endA, endB, undefined);
+          if (usable(nodes)) {
+            objectProps = {
+              ...((objectProps ?? {}) as Record<string, unknown>),
+              fiberNodes: nodes,
+            } as typeof objectProps;
+          }
+        }
+      }
+    }
+
     const content = await loadAssetObject(
       loaderComponent,
       undefined,
@@ -139,6 +185,17 @@ export async function buildSceneObjectFromBindings(
         translucentHousing: (sceneObject.properties as { translucentHousing?: unknown } | undefined)?.translucentHousing === true,
       }
     : null;
+  // Per-instance pigtail shapes (see bindingTreeObject.buildBindingPigtail).
+  // The binding row is the catalog baseline; how THIS instance's fibre is
+  // dressed lives on the SceneObject, keyed by binding id.
+  const instancePigtails = (sceneObject?.properties as {
+    bindingFiberNodes?: Record<string, unknown>;
+  } | undefined)?.bindingFiberNodes;
+  const pigtailNodesFor = (bindingId: string) => {
+    const v = instancePigtails?.[bindingId];
+    return Array.isArray(v) && v.length >= 2 ? (v as FiberNode[]) : undefined;
+  };
+
   const content = await buildBindingTreeObject(tree, async (node) => {
     if (node.target.kind === "missing") return null;
     if (node.target.kind === "subcomponent" || node.target.kind === "empty") {
@@ -194,7 +251,7 @@ export async function buildSceneObjectFromBindings(
       skipAutoCenter: true,
       enableLod: options?.enableLod === true,
     });
-  });
+  }, pigtailNodesFor);
   // CAD→three basis swap for the whole assembled tree.
   //
   // bindingTreeObject assembles in the component's CAD frame (Z-up, raw

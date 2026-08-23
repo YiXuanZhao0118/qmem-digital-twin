@@ -63,11 +63,30 @@ export type Anchor = {
    *  `SceneObject.properties.rfCableNodes`. See
    *  `utils/rfCableAnchorResolver.ts`. */
   derivedFromRfCableEndpoint?: "A" | "B";
-  /** Physical coaxial connector at this anchor — gender + family.
-   *  Only meaningful for RF / TTL anchors (rf_in / rf_out / ttl_in);
-   *  left undefined on optical anchors. Edited per-anchor in the
-   *  PHY Editor RF / Components view. */
-  connectorType?: "sma_male" | "sma_female" | "bnc_male" | "bnc_female";
+  /** Physical connector at this anchor.
+   *
+   *  RF / TTL anchors (rf_in / rf_out / ttl_in) carry the coax family +
+   *  gender. **Optical anchors carry a fibre bulkhead type** (2026-08-21):
+   *  an `intercept_in` / `intercept_out` that names one is a fibre
+   *  receptacle a patch cable can be plugged into, which is what makes it
+   *  a snap target for `findFiberPortAlignmentCandidates` and what a
+   *  {@link FiberEndpointLink} points at. Same pattern as RF, where a port
+   *  is just an rf_in/rf_out anchor that happens to declare a connector.
+   *
+   *  Left undefined on a free-space optical face — a mirror or a lens has
+   *  no connector, and that is what keeps it out of the fibre port list.
+   *  Only FC is listed because every fibre asset in the catalog is FC.
+   *  Edited per-anchor in the PHY Editor's ASSET3D anchor table.
+   *
+   *  Fibre values are GENDERED like the coax ones (2026-08-23): `*_female`
+   *  is a bulkhead on a chassis (a `fiber_in` / `fiber_out` receptacle — the
+   *  only thing {@link isFiberPortConnectorType} counts as a port), `*_male`
+   *  is the plug on a cable or pigtail end (a connector asset's
+   *  `connect_in`). Without the split, every cable end would advertise
+   *  itself as a socket and two cables could be plugged into each other. */
+  connectorType?:
+    | "sma_male" | "sma_female" | "bnc_male" | "bnc_female"
+    | "fc_pc_male" | "fc_pc_female" | "fc_apc_male" | "fc_apc_female";
   /** Fast-axis angle (degrees) of a waveplate's crystal cut, measured
    *  in body-local beam coordinates at the anchor. Asset-level fixed
    *  (PHY Editor → Optical → Components). The per-instance rotation
@@ -93,6 +112,37 @@ export type RfCableEndpointLink = {
   /** Asset anchor `name` field (e.g. "CH0"). Some targets (AD9959) have
    *  4 anchors all with id=`rf_out` distinguished by name, so name must
    *  pair with id to pinpoint which one. */
+  targetAnchorName: string;
+};
+
+/** Per-instance fibre endpoint link record — the optical twin of
+ *  {@link RfCableEndpointLink}. Persisted under
+ *  `SceneObject.properties.fiberEndpoints[A|B]` when the user aligns a
+ *  patch-cable end onto a **fibre port** (an optical anchor that declares a
+ *  fibre `connectorType`, e.g. the RXM15EF's FC/PC bulkhead).
+ *
+ *  Why fibre needs this and free-space alignment does not: aligning an end
+ *  onto a beam SEGMENT pins it to where the light happened to be at that
+ *  moment. A port link pins it to the INSTRUMENT, so moving the instrument
+ *  carries the fibre end with it — `resolveLinkedFiberEndpoint()` re-derives
+ *  the spline node from the target's live lab pose at draw time.
+ *
+ *  **It must also be written through to `PE.kindParams.endA/endB`**, unlike
+ *  the RF link. RF propagation is a BFS over these link records, so the
+ *  record alone is the connection; the optical solver instead reads the
+ *  persisted endpoint pose (`_synth_fiber_slot` in `db_scene_loader.py`), so
+ *  a link that only lives in `properties` would look connected and trace
+ *  disconnected. `sceneStore.resnapFibersLinkedTo` is what keeps the two in
+ *  step when the target moves.
+ *
+ *  Cleared the moment the user drags that endpoint by hand — manual
+ *  override beats link, same rule as RF. */
+export type FiberEndpointLink = {
+  targetObjectId: string;
+  /** `intercept_in` / `intercept_out` — anchor.id on the target asset. */
+  targetAnchorId: string;
+  /** Asset anchor `name` (e.g. "OPTICAL IN (FC/PC)"). Pairs with the id
+   *  because one asset may expose several ports sharing an id. */
   targetAnchorName: string;
 };
 
@@ -154,6 +204,10 @@ export type Asset3D = {
   name: string;
   assetType: string;
   filePath: string;
+  /** Mtime of the file on the server, stamped onto the viewer URL as `?v=`
+   *  (see `resolveAssetUrl`). Rebuilding a mesh in place leaves the row
+   *  untouched, so without it the browser keeps the cached copy. */
+  fileVersion?: number | null;
   source?: string | null;
   sourceUrl?: string | null;
   unit: "mm" | "m";
@@ -193,6 +247,10 @@ export type Asset3D = {
 export type AssetLod = {
   level: number;
   filePath: string;
+  /** Mtime of the file on the server, stamped onto the viewer URL as `?v=`
+   *  (see `resolveAssetUrl`). Rebuilding a mesh in place leaves the row
+   *  untouched, so without it the browser keeps the cached copy. */
+  fileVersion?: number | null;
   triCount: number;
   byteSize: number;
   errorMm: number;
