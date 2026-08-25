@@ -57,10 +57,6 @@ type BuildArgs = {
   componentBindings?: readonly ComponentBinding[];
   physicsElements: readonly PhysicsElement[];
   timingPrograms?: readonly TimingProgram[];
-  /** Forwarded to every snapshot — see `buildRfPropagation` for semantics.
-   *  Power state is a property of the scene, not of the scrub time, so it
-   *  applies uniformly to every section and to the rest snapshot. */
-  poweredOffObjectIds?: ReadonlySet<string>;
 };
 
 /** Collect every distinct boundary across the program intervals + 0. */

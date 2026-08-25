@@ -38,10 +38,6 @@ import { pluginForKind } from "../kinds/_plugins";
 import { primaryAsset } from "./componentBindings";
 import { PPG_ELEMENT_KIND, ppgAttachments } from "./ppgAttachment";
 
-/** Singleton empty set for the default "nothing powered off" case —
- *  avoids allocating a fresh Set per buildRfPropagation call. */
-const EMPTY_POWERED_OFF: ReadonlySet<string> = new Set<string>();
-
 /** AD9959 single-ended into 50 Ω at default Rset has ~1.0 Vpp full-scale. */
 export const AD9959_VPP_FULL_SCALE = 1.0;
 /** RF load impedance for Vpp ↔ W conversion (P = Vpp² / (8·Z)). */
@@ -266,11 +262,6 @@ type PassthroughTransfer = (args: {
    *  transfer can decide which throw is active without re-walking the
    *  graph. Other passthrough kinds ignore this field. */
   switchTtlStates: ReadonlyMap<string, "HIGH" | "LOW">;
-  /** Object ids whose Instrument Power toggle is OFF
-   *  (`device_states.state.power === false`). A transfer that finds its
-   *  own objectId here returns null to drop the signal — the physical
-   *  device has no DC bias and passes nothing. */
-  poweredOffObjectIds: ReadonlySet<string>;
 }) => Array<{ outputAnchorName: string; outgoing: RfSignalState }> | null;
 
 const rfAmplifierTransfer: PassthroughTransfer = ({
@@ -278,9 +269,7 @@ const rfAmplifierTransfer: PassthroughTransfer = ({
   kindParams,
   anchors,
   objectId,
-  poweredOffObjectIds,
 }) => {
-  if (poweredOffObjectIds.has(objectId)) return null;
   const params = kindParams as RfAmplifierParams;
   const outAnchor = findAnchorByRole(anchors, "rf_out");
   if (!outAnchor) return null;
@@ -322,9 +311,7 @@ const rfSwitchTransfer: PassthroughTransfer = ({
   anchors,
   objectId,
   switchTtlStates,
-  poweredOffObjectIds,
 }) => {
-  if (poweredOffObjectIds.has(objectId)) return null;
   const params = (kindParams as RfSwitchParamsShape) ?? {};
   const state = switchTtlStates.get(objectId) ?? params.ttlState ?? "LOW";
   const highThrowRaw = params.ttlActiveHighThrow;
@@ -405,11 +392,7 @@ function lookupPassthrough(elementKind: string): PassthroughTransfer | null {
   const plugin = pluginForKind(elementKind);
   if (plugin && isPhysicsPlugin(plugin) && plugin.physics.rfTransfer) {
     const tr = plugin.physics.rfTransfer;
-    return ({ inputAnchorName, incoming, kindParams, anchors, objectId, poweredOffObjectIds }) => {
-      // Power gate runs before the plugin's RF transfer: an unbiased
-      // passthrough produces no output regardless of what its own
-      // physics says.
-      if (poweredOffObjectIds.has(objectId)) return null;
+    return ({ inputAnchorName, incoming, kindParams, anchors, objectId }) => {
       const result = tr({
         inputAnchorName,
         incoming,
@@ -463,18 +446,12 @@ export function buildRfPropagation(args: {
    *  build the dedicated rest snapshot returned when the scrub-time
    *  bar is OFF. */
   idleRestMode?: boolean;
-  /** Object ids whose `device_states.state.power` is False (Instrument
-   *  Power panel toggle OFF). rf_source seeding is skipped for these,
-   *  and rf_amplifier / rf_switch transfers drop incoming signal. Pass
-   *  an empty set (or omit) when nothing is powered off. */
-  poweredOffObjectIds?: ReadonlySet<string>;
 }): RfPropagationResult {
   const { objects, components, assets, physicsElements } = args;
   const componentBindings = args.componentBindings ?? [];
   const timingPrograms = args.timingPrograms ?? [];
   const scrubTimeNs = args.scrubTimeNs ?? 0;
   const idleRestMode = args.idleRestMode === true;
-  const poweredOffObjectIds = args.poweredOffObjectIds ?? EMPTY_POWERED_OFF;
   const cables = [
     ...readCables(objects, physicsElements),
     ...readPpgAttachmentEdges(objects, physicsElements),
@@ -593,8 +570,6 @@ export function buildRfPropagation(args: {
   //   port emits a signal regardless of edit history.
   for (const pe of physicsElements) {
     if (pe.elementKind !== "rf_source") continue;
-    // Power gate: unbiased AD9959 / synth produces nothing on any anchor.
-    if (poweredOffObjectIds.has(pe.objectId)) continue;
     const params = pe.kindParams as RfSourceParams;
     // Full-scale Vpp is an ASSET coefficient (authoritative store), with an
     // optional per-instance override in dynamicSources (tunable). Falls back
@@ -693,7 +668,6 @@ export function buildRfPropagation(args: {
         anchors,
         objectId: peer.targetObjectId,
         switchTtlStates,
-        poweredOffObjectIds,
       });
       if (!outputs) continue;
       for (const out of outputs) {

@@ -10,7 +10,8 @@
  *    component library are added to it. It changes ONLY when a collection
  *    row is clicked (or a new collection is created) — never by selecting
  *    an object.
- *  - Drag a collection onto another to reparent it.
+ *  - Drag a collection onto the middle of another to reparent it, or onto a
+ *    row's top / bottom edge to reorder it among that row's siblings.
  *  - Drag an object onto a collection to move it.
  */
 
@@ -81,6 +82,13 @@ type DragPayload =
 
 const DRAG_MIME = "application/x-qmem-outliner";
 
+/** Drop position relative to the hovered collection row. */
+type DropZone = "before" | "inside" | "after";
+
+/** Fraction of the row height that counts as an "insert between siblings"
+ *  band at each edge. The middle 50% stays "drop into this collection". */
+const REORDER_EDGE = 0.25;
+
 type ChildrenIndex = Map<string | null, Collection[]>;
 
 type ObjectsByCollection = Map<string, SceneObject[]>;
@@ -92,7 +100,14 @@ function buildChildrenIndex(collections: Collection[]): ChildrenIndex {
     if (list) list.push(collection);
     else out.set(collection.parentId, [collection]);
   }
-  for (const [, list] of out) list.sort((a, b) => a.sortOrder - b.sortOrder);
+  // createdAt breaks sortOrder ties: fresh collections all default to 0, and
+  // the store's upsertById appends on every update, so without a stable
+  // secondary key an unrelated edit (rename, visibility) would bump a
+  // collection to the bottom of its sibling run.
+  for (const [, list] of out)
+    list.sort(
+      (a, b) => a.sortOrder - b.sortOrder || (a.createdAt ?? "").localeCompare(b.createdAt ?? ""),
+    );
   return out;
 }
 
@@ -190,6 +205,18 @@ export function OutlinerPanel() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+  // Where the drop lands relative to the hovered collection row: the middle
+  // band reparents (drop *into*), the top/bottom bands reorder among the
+  // target's siblings. Only ever leaves "inside" for collection drags.
+  const [dropZone, setDropZone] = useState<DropZone>("inside");
+  // The drop handler reads the zone from a ref, not from state: dragover and
+  // drop can land in the same task, and a state write from dragover isn't
+  // visible to the drop closure yet. State exists only to paint the line.
+  const dropZoneRef = useRef<DropZone>("inside");
+  // dataTransfer.getData() is blocked during dragover (drag-data protection
+  // mode), so the zone split needs the payload kind from somewhere else. The
+  // drag never leaves this document, so a ref set at dragstart is enough.
+  const dragPayloadRef = useRef<DragPayload | null>(null);
   // Collection queued for deletion — the confirm dialog offers two outcomes
   // (keep the objects, or delete them too), which window.confirm can't express.
   const [pendingDelete, setPendingDelete] = useState<Collection | null>(null);
@@ -521,6 +548,7 @@ export function OutlinerPanel() {
 
   const handleDragStart = useCallback(
     (event: React.DragEvent, payload: DragPayload) => {
+      dragPayloadRef.current = payload;
       try {
         event.dataTransfer.setData(DRAG_MIME, JSON.stringify(payload));
         event.dataTransfer.effectAllowed = "move";
@@ -544,6 +572,43 @@ export function OutlinerPanel() {
     [],
   );
 
+  /** Re-file `draggedId` next to `target` among the target's siblings and
+   *  renumber the whole sibling row 0..n-1. Sibling sortOrder starts out all
+   *  zero (the create API defaults it), so a partial write would leave the
+   *  order ambiguous — writing the full run is what makes the arrangement
+   *  stick across reloads. Only the rows whose number actually changes get a
+   *  PUT. */
+  const reorderCollection = useCallback(
+    async (draggedId: string, target: Collection, zone: "before" | "after") => {
+      const parentId = target.parentId;
+      // Master is the tree root: nothing can sit beside it.
+      if (parentId === null) return;
+      if (draggedId === target.id) return;
+      // Dropping a collection beside one of its own descendants would make it
+      // its own ancestor.
+      if (isAncestorOrSelf(collections, draggedId, parentId)) return;
+      const dragged = collections.find((c) => c.id === draggedId);
+      if (!dragged) return;
+      const siblings = (childrenIndex.get(parentId) ?? []).filter((c) => c.id !== draggedId);
+      const targetIndex = siblings.findIndex((c) => c.id === target.id);
+      if (targetIndex < 0) return;
+      const insertAt = zone === "before" ? targetIndex : targetIndex + 1;
+      const ordered = [...siblings];
+      ordered.splice(insertAt, 0, dragged);
+      // The dragged row goes through /move (its parent may be changing too);
+      // the rest only need their number rewritten.
+      await moveCollection(draggedId, { parentId, sortOrder: insertAt });
+      await Promise.all(
+        ordered.map((collection, index) =>
+          collection.id === draggedId || collection.sortOrder === index
+            ? null
+            : updateCollection(collection.id, { sortOrder: index }),
+        ),
+      );
+    },
+    [childrenIndex, collections, moveCollection, updateCollection],
+  );
+
   const handleDropOnCollection = useCallback(
     async (event: React.DragEvent, targetCollection: Collection) => {
       event.preventDefault();
@@ -557,9 +622,17 @@ export function OutlinerPanel() {
       // node under the cursor is the only legitimate drop target.
       event.stopPropagation();
       const payload = readDragPayload(event);
+      const zone = dropZoneRef.current;
+      dragPayloadRef.current = null;
       setDragOverId(null);
+      setDropZone("inside");
+      dropZoneRef.current = "inside";
       if (!payload) return;
       if (payload.kind === "collection") {
+        if (zone !== "inside") {
+          await reorderCollection(payload.collectionId, targetCollection, zone);
+          return;
+        }
         if (
           payload.collectionId === targetCollection.id ||
           isAncestorOrSelf(collections, payload.collectionId, targetCollection.id)
@@ -586,11 +659,11 @@ export function OutlinerPanel() {
         payload.objectIds.map((id) => moveObjectToCollection(targetCollection.id, id)),
       );
     },
-    [collections, moveCollection, moveObjectToCollection, readDragPayload],
+    [collections, moveCollection, moveObjectToCollection, readDragPayload, reorderCollection],
   );
 
   const handleDragOver = useCallback(
-    (event: React.DragEvent, targetId: string) => {
+    (event: React.DragEvent, target: Collection) => {
       if (event.dataTransfer.types.includes(DRAG_MIME)) {
         event.preventDefault();
         // Same nesting story as the drop handler: without this the ancestor
@@ -598,14 +671,45 @@ export function OutlinerPanel() {
         // (Master) node, so the highlight pointed at the wrong row.
         event.stopPropagation();
         event.dataTransfer.dropEffect = "move";
-        setDragOverId(targetId);
+        setDragOverId(target.id);
+        // Only a collection dragged next to a non-root row can reorder; an
+        // object drag always means "move into this collection". The node div
+        // wraps its children, so the bands are measured against the node's
+        // OWN row, not the whole subtree.
+        const dragged = dragPayloadRef.current;
+        const canReorder = dragged?.kind === "collection" && target.parentId !== null;
+        const row = canReorder
+          ? (event.currentTarget as HTMLElement).querySelector(":scope > .outliner-row")
+          : null;
+        let zone: DropZone = "inside";
+        if (row) {
+          const rect = row.getBoundingClientRect();
+          const offset = (event.clientY - rect.top) / (rect.height || 1);
+          zone =
+            offset < REORDER_EDGE ? "before" : offset > 1 - REORDER_EDGE ? "after" : "inside";
+        }
+        dropZoneRef.current = zone;
+        setDropZone(zone);
       }
     },
     [],
   );
 
   const handleDragLeave = useCallback((event: React.DragEvent) => {
-    if (event.currentTarget === event.target) setDragOverId(null);
+    if (event.currentTarget === event.target) {
+      setDragOverId(null);
+      setDropZone("inside");
+      dropZoneRef.current = "inside";
+    }
+  }, []);
+
+  /** Cancelled drag (Esc, drop outside the tree): clear the hover state so a
+   *  stale insertion line doesn't linger. */
+  const handleDragEnd = useCallback(() => {
+    dragPayloadRef.current = null;
+    setDragOverId(null);
+    setDropZone("inside");
+    dropZoneRef.current = "inside";
   }, []);
 
   const renderCollectionRow = (collection: Collection, depth: number) => {
@@ -613,6 +717,7 @@ export function OutlinerPanel() {
     const isExpanded = isMaster ? !masterCollapsed : expanded.has(collection.id);
     const isActive = collection.id === activeCollectionId;
     const isOver = dragOverId === collection.id;
+    const overZone = isOver ? dropZone : "inside";
     const collectionVisible = isCollectionVisible(collection.id, visibilityCtx);
     const collectionForced = sessionState.forceVisibleCollectionIds.has(collection.id);
     const childCollections = childrenIndex.get(collection.id) ?? [];
@@ -621,14 +726,17 @@ export function OutlinerPanel() {
     return (
       <div
         key={collection.id}
-        className={`outliner-node${isActive ? " active" : ""}${isOver ? " drop-target" : ""}`}
+        className={`outliner-node${isActive ? " active" : ""}${
+          isOver && overZone === "inside" ? " drop-target" : ""
+        }${isOver && overZone !== "inside" ? ` drop-${overZone}` : ""}`}
         draggable={!isMaster}
         onDragStart={
           isMaster
             ? undefined
             : (event) => handleDragStart(event, { kind: "collection", collectionId: collection.id })
         }
-        onDragOver={(event) => handleDragOver(event, collection.id)}
+        onDragEnd={handleDragEnd}
+        onDragOver={(event) => handleDragOver(event, collection)}
         onDragLeave={handleDragLeave}
         onDrop={(event) => handleDropOnCollection(event, collection)}
         style={{ paddingLeft: `${4 + depth * 14}px` }}
@@ -867,6 +975,7 @@ export function OutlinerPanel() {
                       sourceCollectionId: collection.id,
                     });
                   }}
+                  onDragEnd={handleDragEnd}
                   style={{ paddingLeft: `${22 + (depth + 1) * 14}px` }}
                   onClick={(event) => {
                     event.stopPropagation();

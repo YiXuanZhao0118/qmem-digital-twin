@@ -41,7 +41,7 @@ from app.kinds_manifest import (
     kind_rows_from_manifest,
     load_manifest,
 )
-from app.models import Kind
+from app.models import Kind, KindDeletion
 
 
 @pytest.fixture(autouse=True)
@@ -55,6 +55,18 @@ async def _reset_engine_pool():
 async def _kind_rows() -> dict[str, Kind]:
     async with AsyncSessionLocal() as session:
         return {row.name: row for row in (await session.scalars(select(Kind))).all()}
+
+
+async def _tombstoned() -> set[str]:
+    """Kind names the user deleted on purpose (alembic 0138).
+
+    A tombstoned kind is absent by intent, not by drift — the trigger on
+    ``kinds`` skips any migration that tries to insert it — so the
+    "every plugin has a row" invariant has to exclude them or it reports
+    a gap that nothing is allowed to close.
+    """
+    async with AsyncSessionLocal() as session:
+        return {row.name for row in (await session.scalars(select(KindDeletion))).all()}
 
 
 def _unbacked(rows: dict[str, Kind]) -> set[str]:
@@ -83,10 +95,12 @@ class TestKindsTableMatchesManifest:
         to an asset at all. ``fiber`` / ``fiber_coupler`` /
         ``glan_polarizer`` / ``rf_cable`` were in this state until 0126."""
         rows = await _kind_rows()
-        missing = sorted(set(kind_rows_from_manifest()) - set(rows))
+        missing = sorted(set(kind_rows_from_manifest()) - set(rows) - await _tombstoned())
         assert not missing, (
             f"physics plugins with no kinds row: {missing}. "
-            "Add them in a resync migration."
+            "Add them in a resync migration, or — if their absence is "
+            "deliberate — delete them through the Kinds editor so they get "
+            "a kind_deletions tombstone."
         )
 
     @pytest.mark.parametrize("column", MANIFEST_OWNED_KIND_COLUMNS)

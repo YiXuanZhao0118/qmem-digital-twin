@@ -36,6 +36,8 @@ import { PigtailEndAlignControls } from "./physics/PigtailEndAlignControls";
 import { BindingTreeAdjustControls } from "./BindingTreeAdjustControls";
 import { OPTICAL_ALIGN_KINDS } from "../utils/isolatorAlign";
 import { AlignPanel } from "./AlignPanel";
+import { MirrorCouplingLauncher } from "./optical/MirrorCouplingPanel";
+import { ModeMatchingLauncher } from "./optical/ModeMatchingPanel";
 import { NumberField } from "./NumberField";
 import { capabilityProfile } from "../kinds/_capabilityProfile";
 import { anchorsInBindingTree, pigtailPortBindings, primaryAsset } from "../utils/componentBindings";
@@ -2848,6 +2850,8 @@ export function ComponentPanel() {
       )}
 
       {profile.showAlignPanel && <AlignPanel />}
+      {profile.showAlignPanel && <MirrorCouplingLauncher />}
+      {profile.showAlignPanel && <ModeMatchingLauncher />}
       {isObjectSelection && component && <PulseTimingButton component={component} />}
       {isObjectSelection && selectedObject && (
         <ScrubTimeRfReadout sceneObjectId={selectedObject.id} />

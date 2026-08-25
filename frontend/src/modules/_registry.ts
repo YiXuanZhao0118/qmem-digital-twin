@@ -36,7 +36,7 @@ export const MODULES: ModuleDef[] = [
     id: "optics_seq",
     displayName: "Lab",
     description:
-      "Integrated 3D lab workspace — every device, beam path, fiber route, magnetics overlay, and PulseBlaster channel binding lives here. Other modules surface their inputs/results back into this scene via Linked Schematics.",
+      "Integrated 3D lab workspace — every device, beam path, fiber route, and PulseBlaster channel binding lives here. Other modules surface their inputs/results back into this scene via Linked Schematics.",
     status: "available",
     phase: "A",
     phaseLabel: "Integrated",

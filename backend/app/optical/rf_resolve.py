@@ -36,7 +36,6 @@ from app.models import (
     Asset3D,
     Component,
     ComponentBinding,
-    DeviceState,
     PhysicsElement,
     SceneObject,
 )
@@ -175,7 +174,6 @@ class RfInputs:
 
     nodes: tuple[RfNode, ...]
     programs_by_id: dict[str, list]
-    powered_off: frozenset[str]
     aoms: tuple[AomPort, ...] = field(default_factory=tuple)
 
 
@@ -252,10 +250,8 @@ def _build_adjacency(edges) -> dict[str, list[_CableEndpoint]]:
 
 def _rf_amplifier_transfer(
     *, incoming: RfSignalState, kind_params: dict, anchors, object_id: str,
-    switch_ttl_states, powered_off,
+    switch_ttl_states,
 ):
-    if object_id in powered_off:
-        return None
     out_anchor = _find_anchor_by_role(anchors, "rf_out")
     if out_anchor is None:
         return None
@@ -283,10 +279,8 @@ def _rf_amplifier_transfer(
 
 def _rf_switch_transfer(
     *, incoming: RfSignalState, kind_params: dict, anchors, object_id: str,
-    switch_ttl_states, powered_off,
+    switch_ttl_states,
 ):
-    if object_id in powered_off:
-        return None
     params = kind_params or {}
     state = switch_ttl_states.get(object_id) or params.get("ttlState") or "LOW"
     high_throw_raw = _opt_num(params.get("ttlActiveHighThrow"))
@@ -383,7 +377,6 @@ def build_rf_propagation(
     """
     scrub_t = scrub_time_ns if scrub_time_ns is not None else 0.0
     nodes = inputs.nodes
-    powered_off = inputs.powered_off
     programs_by_id = inputs.programs_by_id
 
     node_by_id = {n.object_id: n for n in nodes}
@@ -466,8 +459,6 @@ def build_rf_propagation(
     for node in nodes:
         if node.element_kind != "rf_source":
             continue
-        if node.object_id in powered_off:
-            continue
         params = node.kind_params or {}
         # Full-scale Vpp is an ASSET coefficient (the authoritative store), with
         # an optional per-instance override in dynamic_sources (tunable). Falls
@@ -549,7 +540,6 @@ def build_rf_propagation(
                 anchors=peer_node.anchors,
                 object_id=peer.target_object_id,
                 switch_ttl_states=switch_ttl_states,
-                powered_off=powered_off,
             )
             if not outputs:
                 continue
@@ -598,7 +588,6 @@ async def load_rf_inputs(session: AsyncSession) -> RfInputs:
     """
     so_rows = (await session.scalars(select(SceneObject))).all()
     pe_rows = (await session.scalars(select(PhysicsElement))).all()
-    ds_rows = (await session.scalars(select(DeviceState))).all()
     comp_rows = (await session.scalars(select(Component))).all()
     asset_rows = (await session.scalars(select(Asset3D))).all()
     cb_rows = (await session.scalars(select(ComponentBinding))).all()
@@ -610,10 +599,6 @@ async def load_rf_inputs(session: AsyncSession) -> RfInputs:
     bindings_by_comp: dict[object, list[ComponentBinding]] = {}
     for b in cb_rows:
         bindings_by_comp.setdefault(b.component_id, []).append(b)
-    powered_off = frozenset(
-        ds.object_id for ds in ds_rows
-        if isinstance(ds.state, dict) and ds.state.get("power") is False
-    )
     programs_by_id = {str(tp.id): list(tp.intervals or []) for tp in tp_rows}
 
     nodes: list[RfNode] = []
@@ -658,7 +643,6 @@ async def load_rf_inputs(session: AsyncSession) -> RfInputs:
     return RfInputs(
         nodes=tuple(nodes),
         programs_by_id=programs_by_id,
-        powered_off=powered_off,
         aoms=tuple(aoms),
     )
 

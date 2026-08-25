@@ -1011,6 +1011,157 @@ h3 {
   margin-top: 4px;
 }
 
+/* Mirror coupling panel — two-mirror 45/45 solve into a destination port.
+   The touch table is the precondition readout (both beams x both mirrors);
+   the readout table is before -> after for every number the solve fixes. */
+.mirror-coupling-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  font-size: 11.5px;
+}
+.mirror-coupling-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mirror-coupling-row > span {
+  flex: 0 0 84px;
+  color: #4b4f52;
+}
+.mirror-coupling-row select {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+}
+.mirror-coupling-touch,
+.mirror-coupling-readout {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+.mirror-coupling-touch th,
+.mirror-coupling-touch td,
+.mirror-coupling-readout th,
+.mirror-coupling-readout td {
+  padding: 3px 6px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+.mirror-coupling-touch th,
+.mirror-coupling-readout th {
+  font-weight: 500;
+  color: #4b4f52;
+  white-space: nowrap;
+}
+.mirror-coupling-touch td {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+.mirror-coupling-readout td {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  text-align: right;
+}
+.mirror-coupling-readout .mc-after {
+  color: var(--accent);
+}
+.mirror-coupling-touch .mc-ok {
+  color: #15803d;
+}
+.mirror-coupling-touch .mc-bad {
+  color: #b91c1c;
+}
+.mirror-coupling-dof {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px dashed rgba(99, 102, 241, 0.3);
+  border-radius: var(--radius-sm);
+}
+.mirror-coupling-dof label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mirror-coupling-dof label > span {
+  flex: 1;
+  color: #4b4f52;
+}
+.mirror-coupling-dof input[type="number"] {
+  width: 92px;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  text-align: right;
+}
+.mirror-coupling-passthrough {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mirror-coupling-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mirror-coupling-passthrough ul,
+.mirror-coupling-error ul {
+  margin: 0;
+  padding-left: 22px;
+  color: #686b6f;
+  line-height: 1.5;
+}
+.mirror-coupling-passthrough em {
+  color: #b91c1c;
+  font-style: normal;
+}
+.mirror-coupling-passthrough strong {
+  color: #b45309;
+  font-weight: 500;
+}
+.mirror-coupling-hint {
+  margin: 0;
+  color: #686b6f;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.mirror-coupling-error {
+  margin: 0;
+  padding: 7px 9px;
+  color: #7f1d1d;
+  background: rgba(185, 28, 28, 0.07);
+  border: 1px solid rgba(185, 28, 28, 0.25);
+  border-radius: var(--radius-sm);
+  line-height: 1.45;
+}
+.mirror-coupling-warn {
+  margin: 0;
+  padding: 7px 9px 7px 26px;
+  color: #7c4a03;
+  background: rgba(180, 83, 9, 0.07);
+  border: 1px solid rgba(180, 83, 9, 0.25);
+  border-radius: var(--radius-sm);
+  line-height: 1.45;
+}
+p.mirror-coupling-warn {
+  padding-left: 9px;
+}
+.mirror-coupling-feedback {
+  margin: 0;
+  color: var(--accent);
+  line-height: 1.45;
+}
+.mirror-coupling-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}
+
 /* Beam placement panel — unified Place along beam + Re-snap UI.
    2-column grid: label | control. Full-width rows span both columns
    via .bp-full. Visual rhythm: tight 6px row gap, wider 12px column gap. */
@@ -4529,6 +4680,29 @@ input:disabled {
   outline-offset: -2px;
 }
 
+/* Reorder drop: an insertion line on the edge the collection would land on
+   (drop into the middle band instead to reparent). */
+.outliner-node.drop-before > .outliner-row.collection-row,
+.outliner-node.drop-after > .outliner-row.collection-row {
+  position: relative;
+}
+.outliner-node.drop-before > .outliner-row.collection-row::after,
+.outliner-node.drop-after > .outliner-row.collection-row::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+.outliner-node.drop-before > .outliner-row.collection-row::after {
+  top: -1px;
+}
+.outliner-node.drop-after > .outliner-row.collection-row::after {
+  bottom: -1px;
+}
+
 .outliner-node.active > .outliner-row.collection-row {
   background: var(--accent-soft);
 }
@@ -6961,122 +7135,6 @@ body.is-timing-bar-drag * {
   background: rgba(248, 113, 113, 0.4);
 }
 
-/* ---- Magnetics overlay panel (Phase F+) ---- */
-
-.magnetics-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 8px 10px;
-  font-size: 12px;
-  height: 100%;
-  overflow-y: auto;
-}
-
-.magnetics-section {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.magnetics-section h3 {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: rgba(15, 23, 42, 0.55);
-  margin: 0;
-  padding-bottom: 3px;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
-}
-
-.magnetics-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.magnetics-coil-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 11px;
-}
-
-.magnetics-coil-list li {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 4px;
-  border-radius: 3px;
-}
-
-.magnetics-coil-list li:hover {
-  background: rgba(15, 23, 42, 0.04);
-}
-
-.magnetics-coil-list label {
-  flex: 1 1 auto;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-}
-
-.magnetics-coil-meta {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px;
-  color: rgba(15, 23, 42, 0.5);
-}
-
-.magnetics-region-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.magnetics-region-row {
-  display: grid;
-  grid-template-columns: 70px 1fr 1fr 1fr;
-  gap: 4px;
-  align-items: center;
-  font-size: 10px;
-}
-
-.magnetics-region-row label {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: rgba(15, 23, 42, 0.6);
-}
-
-.magnetics-region-row input {
-  padding: 2px 4px;
-  border: 1px solid rgba(15, 23, 42, 0.12);
-  border-radius: 3px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px;
-  width: 100%;
-}
-
-.magnetics-result-meta {
-  font-size: 11px;
-  color: rgba(15, 23, 42, 0.7);
-}
-
-.magnetics-stats {
-  font-size: 10px;
-  color: rgba(15, 23, 42, 0.65);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  padding: 4px 6px;
-  background: rgba(15, 23, 42, 0.03);
-  border-radius: 3px;
-  margin-top: 4px;
-  word-break: break-word;
-  line-height: 1.5;
-}
-
 /* PulseBlaster wiring panel — 24-row TTL channel binding grid */
 .pb-panel {
   display: flex;
@@ -7743,182 +7801,6 @@ body.is-timing-bar-drag * {
   cursor: pointer;
 }
 
-/* ---- Instrument Power panel ---- */
-
-.instrument-power {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-height: 0;
-}
-
-.instrument-power-empty {
-  padding: 12px;
-  font-size: var(--fs-sm);
-  color: var(--muted);
-  background: var(--panel);
-  border: 1px dashed var(--line);
-  border-radius: var(--radius-sm);
-  line-height: 1.45;
-}
-
-.instrument-power-note {
-  font-size: 10px;
-  color: var(--warn);
-  background: var(--warn-soft);
-  border-left: 2px solid var(--warn);
-  padding: 5px 8px;
-  border-radius: 3px;
-  line-height: 1.4;
-}
-
-.instrument-power-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--fs-sm);
-  table-layout: fixed;
-}
-
-.instrument-power-table thead th {
-  text-align: left;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-  position: sticky;
-  top: 0;
-  z-index: 1;
-}
-
-.instrument-power-table thead th:last-child {
-  text-align: right;
-  width: 64px;
-}
-
-.instrument-power-table thead th:nth-child(2) {
-  width: 110px;
-}
-
-.instrument-power-table tbody tr {
-  border-bottom: 1px solid var(--line);
-  transition: background-color 0.12s ease;
-}
-
-.instrument-power-table tbody tr:hover {
-  background: var(--accent-soft);
-}
-
-.instrument-power-table tbody tr.is-off {
-  opacity: 0.62;
-}
-
-.instrument-power-table td {
-  padding: 6px 8px;
-  vertical-align: middle;
-  overflow: hidden;
-}
-
-.instrument-power-table td:last-child {
-  text-align: right;
-}
-
-.instrument-power-table td strong {
-  display: block;
-  font-weight: 600;
-  font-size: var(--fs-sm);
-  color: var(--ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.instrument-power-comp {
-  display: block;
-  font-style: normal;
-  font-size: 10px;
-  color: var(--muted);
-  margin-top: 1px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.instrument-power-kind {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.instrument-power-toggle {
-  appearance: none;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  padding: 0 10px;
-  height: 22px;
-  min-width: 52px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  cursor: pointer;
-  transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
-}
-
-.instrument-power-toggle.on {
-  background: var(--accent);
-  color: #ffffff;
-  border-color: var(--accent-strong);
-}
-
-.instrument-power-toggle.on:hover {
-  background: var(--accent-strong);
-}
-
-.instrument-power-toggle.off {
-  background: var(--danger-soft);
-  color: var(--danger);
-  border-color: rgba(185, 28, 28, 0.32);
-}
-
-.instrument-power-toggle.off:hover {
-  background: rgba(185, 28, 28, 0.16);
-}
-
-.instrument-power-toggle:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.instrument-power-effect {
-  display: inline-block;
-  margin-left: 6px;
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  padding: 1px 5px;
-  border-radius: 3px;
-  vertical-align: middle;
-}
-
-.instrument-power-effect.wired {
-  color: var(--accent-strong);
-  background: var(--accent-soft);
-}
-
-.instrument-power-effect.unwired {
-  color: var(--warn);
-  background: var(--warn-soft);
-}
 
 /* ============================================================================
    AI Binding Panel — driven by AIBindingPanel.tsx, gated by VITE_ENABLE_AI_PANEL.

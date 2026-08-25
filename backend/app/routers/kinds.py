@@ -23,7 +23,7 @@ from app import schemas
 from app.db import get_session
 from app.lock_guard import assert_delete_allowed, assert_update_allowed
 from app.kinds_manifest import element_kinds, load_manifest
-from app.models import Asset3D, Kind
+from app.models import Asset3D, Kind, KindDeletion
 from app.optical.db_kinds import (
     remove_kind_cache_entry,
     set_kind_cache_entry,
@@ -107,6 +107,15 @@ async def create_kind(
                 f"{sorted(op_set_names)}."
             ),
         )
+    # Clear any tombstone first (alembic 0138): the BEFORE INSERT trigger
+    # silently skips inserts for a tombstoned name, so leaving it in place
+    # would turn this POST into a no-op that then 500s on refresh().
+    # Re-creating a deleted kind here is the tombstone's release valve.
+    tombstone = await session.get(KindDeletion, payload.name)
+    if tombstone is not None:
+        await session.delete(tombstone)
+        await session.flush()
+
     kind = Kind(**payload.model_dump())
     session.add(kind)
     try:
@@ -170,6 +179,11 @@ async def delete_kind(
         )
     deleted_name = kind.name
     await session.delete(kind)
+    # Tombstone (alembic 0138) — without it the next resync migration that
+    # inserts "whatever the manifest has and the table lacks" would put this
+    # row back on the following restart, which is exactly what 0126 / 0136
+    # did to the kinds deleted before them.
+    session.add(KindDeletion(name=deleted_name, note="deleted in the Kinds editor"))
     await session.commit()
     # Tracer cache (Phase 5): drop the entry so a later Asset3D using
     # the deleted name fails fast with a clear KeyError instead of

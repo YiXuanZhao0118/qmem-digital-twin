@@ -64,7 +64,7 @@ qmem-digital-twin/
 │   ├── optical/      # TS optics: jones, frames, pose, fiber/, the WIP v3 tracing island (see optics.md)
 │   ├── store/        # zustand: sceneStore, kindsStore, devicesStore, (v3)catalogStore
 │   ├── utils/        # (v2)bindings, anchorAccess, componentBindings, rfPropagation
-│   └── modules/      # the Lab workspace (the only tab) + the Magnetics overlay; the Optics/Electronics/EM tabs were fully removed on 2026-06-10 (folders deleted)
+│   └── modules/      # the Lab workspace (the only tab); the Magnetics overlay panel was removed on 2026-08-24 (magnetics_dc backend kept); the Optics/Electronics/EM tabs were fully removed on 2026-06-10 (folders deleted)
 ├── backend/
 │   ├── app/
 │   │   ├── main.py       # FastAPI entry point, ~40 routers mounted under /api/<resource>

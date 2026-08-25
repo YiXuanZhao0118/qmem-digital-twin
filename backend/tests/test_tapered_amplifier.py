@@ -44,7 +44,7 @@ def test_zero_input_gives_zero():
 
 # --- Unseeded ASE emission (decision 6b) -----------------------------------
 
-def _ta_slot(obj_id: str, anchors=None, powered_on: bool = True):
+def _ta_slot(obj_id: str, anchors=None):
     return SimpleNamespace(
         asset=SimpleNamespace(
             kind="tapered_amplifier",
@@ -54,7 +54,6 @@ def _ta_slot(obj_id: str, anchors=None, powered_on: bool = True):
         scene_object_id=obj_id,
         binding_id="binding",
         effective_transform=None,
-        powered_on=powered_on,
     )
 
 
@@ -111,7 +110,6 @@ def test_ase_emits_both_facets_from_nested_ase_powermw():
         scene_object_id="ta-nested",
         binding_id="b",
         effective_transform=_identity_transform(),
-        powered_on=True,
         emission_visuals=None,
     )
     rays = emit_ta_ase_rays(SimpleNamespace(slots=[slot]), set())
@@ -136,34 +134,12 @@ def test_flat_ase_keys_override_nested():
         scene_object_id="ta-flat",
         binding_id="b",
         effective_transform=_identity_transform(),
-        powered_on=True,
         emission_visuals=None,
     )
     rays = emit_ta_ase_rays(SimpleNamespace(slots=[slot]), set())
     assert len(rays) == 1                                   # backward suppressed
     assert rays[0][0].power_mw == 8.0
     assert round(rays[0][0].direction.z) == 1               # forward (+axisX) only
-
-
-# --- Instrument power gating -----------------------------------------------
-
-def test_ase_suppressed_when_ta_powered_off():
-    # Unseeded TA but device power is OFF → no ASE (anchor present so the only
-    # thing stopping emission is the power gate).
-    anchor = SimpleNamespace(id="intercept_in")
-    scene = SimpleNamespace(slots=[_ta_slot("ta-3", anchors=[anchor], powered_on=False)])
-    assert emit_ta_ase_rays(scene, set()) == []
-
-
-def test_powered_off_laser_emits_nothing():
-    from app.optical.anchor_ops.emit_laser_source import emit_anchor_source_rays
-    laser = SimpleNamespace(
-        asset=SimpleNamespace(kind="laser_source", default_params={}, anchors=[]),
-        scene_object_id="laser-1", binding_id="src",
-        effective_transform=None, powered_on=False, emission_visuals=None,
-    )
-    scene = SimpleNamespace(slots=[laser])
-    assert emit_anchor_source_rays(scene) == []
 
 
 def test_hidden_laser_emits_nothing():
@@ -176,7 +152,7 @@ def test_hidden_laser_emits_nothing():
             anchors=[_anchor("intercept_out", (0.0, 0.0, 0.0), (1.0, 0.0, 0.0))],
         ),
         scene_object_id="laser-1", binding_id="src",
-        effective_transform=_identity_transform(), powered_on=True,
+        effective_transform=_identity_transform(),
         dynamic_sources=None, emission_visuals={"main": {"visible": False}},
     )
     assert emit_anchor_source_rays(SimpleNamespace(slots=[laser])) == []
@@ -334,7 +310,7 @@ def test_ase_forward_emits_from_intercept_out():
             anchors=[in_a, out_a],
         ),
         scene_object_id="ta-2anchor", binding_id="b",
-        effective_transform=_identity_transform(), powered_on=True,
+        effective_transform=_identity_transform(),
         emission_visuals=None,
     )
     rays = emit_ta_ase_rays(SimpleNamespace(slots=[slot]), set())
@@ -365,7 +341,7 @@ def test_hidden_ase_facet_is_not_emitted():
             ],
         ),
         scene_object_id="ta-hidden", binding_id="b",
-        effective_transform=_identity_transform(), powered_on=True,
+        effective_transform=_identity_transform(),
         emission_visuals={"backward": {"visible": False}},
     )
     [(ray, _emitter, _source, key)] = emit_ta_ase_rays(
@@ -447,6 +423,109 @@ def test_output_mode_reproduces_measured_sacher_beam():
     assert wy == pytest.approx(3.5, abs=0.01)
 
 
+# --- Seeded backward re-emission (input facet) ------------------------------
+
+def _seeded_backward(params):
+    """Run the op on a two-anchor TA and return (forward, backward) rays."""
+    from app.optical.anchor_tracer import get_anchor_op
+    from app.optical import anchor_ops  # noqa: F401  (registers ops)
+
+    anchors = [
+        _anchor("intercept_in", (-80.0, 0.0, 0.0), (-1.0, 0.0, 0.0)),
+        _anchor("intercept_out", (60.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+    ]
+    rays = get_anchor_op("tapered_amplifier")(_seed_ray(), _op_ctx(anchors, params))
+    fwd = [r for r in rays if r.emission_key is None]
+    bwd = [r for r in rays if r.emission_key == "backward"]
+    return fwd, bwd
+
+
+def test_seeded_ta_emits_backward_from_input_facet():
+    """A seeded TA radiates from its INPUT facet too, back along the seed
+    path — power from gainSamples' backward column."""
+    fwd, bwd = _seeded_backward({
+        "smallSignalGainDb": 20.0, "saturationPowerMw": 50.0,
+        "driveCurrentMa": 2400.0,
+        "gainSamples": [
+            {"inputPowerMw": 1.0, "driveCurrentMa": 2400.0,
+             "forwardPowerMw": 1800.0, "backwardPowerMw": 80.0},
+        ],
+    })
+    assert len(fwd) == 1 and len(bwd) == 1
+    [back] = bwd
+    assert back.power_mw == pytest.approx(80.0)
+    # Leaves intercept_in along that anchor's outward normal (back at the seed).
+    assert back.origin.x == -80.0
+    assert round(back.direction.x) == -1
+    # …while the amplified beam still leaves the output facet forward.
+    assert fwd[0].origin.x == 60.0 and round(fwd[0].direction.x) == 1
+
+
+def test_no_backward_power_configured_emits_only_forward():
+    """No gainSamples and no ASE keys → nothing to radiate backward, so the
+    op's output is unchanged from before this feature."""
+    fwd, bwd = _seeded_backward(
+        {"smallSignalGainDb": 20.0, "saturationPowerMw": 50.0},
+    )
+    assert len(fwd) == 1 and bwd == []
+
+
+def test_backward_falls_back_to_unseeded_ase_power():
+    """With no gain table the input facet still radiates, using the same
+    backward-ASE ladder the unseeded emitter uses."""
+    _fwd, [back] = _seeded_backward({
+        "smallSignalGainDb": 20.0, "saturationPowerMw": 50.0,
+        "driveCurrentMa": 2000.0,
+        "aseSamples": [
+            {"driveCurrentMa": 0.0, "forwardPowerMw": 0.0, "backwardPowerMw": 0.0},
+            {"driveCurrentMa": 2000.0, "forwardPowerMw": 200.0, "backwardPowerMw": 80.0},
+        ],
+    })
+    assert back.power_mw == pytest.approx(80.0)
+
+
+def test_seeded_backward_profile_matches_unseeded_backward_ase():
+    """Item 1 == item 3: the backward beam a SEEDED chip emits carries the
+    same transverse profile as the backward ASE the same facet emits when
+    unseeded — both are inputSpatialModeX/Y, so mode-matching the input side
+    needs only one profile."""
+    mode = {
+        "inputSpatialModeX": {"waistUm": 1.0, "mSquared": 1.5},
+        "inputSpatialModeY": {"waistUm": 3.0, "mSquared": 2.0},
+        "centerWavelengthNm": 780.0,
+    }
+    _fwd, [seeded_back] = _seeded_backward({
+        **mode, "smallSignalGainDb": 20.0, "saturationPowerMw": 50.0,
+        "aseBackwardMw": 5.0,
+    })
+
+    slot = SimpleNamespace(
+        asset=SimpleNamespace(
+            kind="tapered_amplifier",
+            default_params={**mode, "aseBackwardMw": 5.0, "aseForwardMw": 0.0},
+            anchors=[
+                _anchor("intercept_in", (-80.0, 0.0, 0.0), (-1.0, 0.0, 0.0)),
+                _anchor("intercept_out", (60.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+            ],
+        ),
+        scene_object_id="ta-u", binding_id="b",
+        effective_transform=_identity_transform(),
+        emission_visuals=None,
+    )
+    [(unseeded_back, _e, _s, key)] = emit_ta_ase_rays(
+        SimpleNamespace(slots=[slot]), set(),
+    )
+    assert key == "backward"
+    # Same waist/M² state on both axes — the two backward beams are one profile.
+    assert seeded_back.qx == pytest.approx(unseeded_back.qx)
+    assert seeded_back.qy == pytest.approx(unseeded_back.qy)
+    assert (seeded_back.m2x, seeded_back.m2y) == (
+        unseeded_back.m2x, unseeded_back.m2y,
+    )
+    assert seeded_back.width_mult_x == pytest.approx(unseeded_back.width_mult_x)
+    assert seeded_back.width_mult_y == pytest.approx(unseeded_back.width_mult_y)
+
+
 # --- Emitter provenance: a seeded TA re-emits -------------------------------
 
 def test_amplified_beam_is_emitted_by_the_ta_not_the_seed_laser():
@@ -492,3 +571,45 @@ def test_amplified_beam_is_emitted_by_the_ta_not_the_seed_laser():
     assert amplified.source_scene_object_id == "ta-1"
     # …and it is the TA's FORWARD emission, so it takes that colour.
     assert amplified.emission_key == "forward"
+
+
+def test_seeded_backward_beam_is_tagged_backward_through_the_tracer():
+    """The seeded input-facet beam must reach the renderer as the TA's
+    BACKWARD emission — same key as the unseeded backward ASE — so the
+    frontend colours and hides it with that facet, not with the forward one."""
+    from app.optical import anchor_ops  # noqa: F401  (registers ops)
+    from app.optical.anchor_tracer import (
+        AnchorTraceOptions, V3AnchorBindingSlot, V3AnchorScene,
+        V3AssetAnchorSnapshot, trace_ray_anchor_scene,
+    )
+
+    slot = V3AnchorBindingSlot(
+        scene_object_id="ta-1", binding_id="b0",
+        asset=V3AssetAnchorSnapshot(
+            catalog_id="ta", kind="tapered_amplifier",
+            anchors=[
+                _anchor("intercept_in", (0.0, 0.0, 0.0), (-1.0, 0.0, 0.0),
+                        axis_y=(0.0, 0.0, 1.0)),
+                _anchor("intercept_out", (60.0, 0.0, 0.0), (1.0, 0.0, 0.0),
+                        axis_y=(0.0, 0.0, 1.0)),
+            ],
+            default_params={
+                "smallSignalGainDb": 20.0, "saturationPowerMw": 50.0,
+                "aseBackwardMw": 40.0,
+            },
+        ),
+        effective_transform=_identity_transform(),
+    )
+    res = trace_ray_anchor_scene(
+        _seed_ray(), V3AnchorScene(slots=[slot]), AnchorTraceOptions(),
+        emitter_scene_object_id="laser-1", source_scene_object_id="laser-1",
+        emission_key="main",
+    )
+    keys = {s.emission_key for s in res.lab_segments if s.is_terminal}
+    assert keys == {"forward", "backward"}
+    # The backward leg travels back along −x from the input facet, and the
+    # TA owns it.
+    back = next(s for s in res.lab_segments
+                if s.is_terminal and s.emission_key == "backward")
+    assert back.emitter_scene_object_id == "ta-1"
+    assert back.end.x < back.start.x

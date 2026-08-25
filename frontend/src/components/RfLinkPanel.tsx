@@ -1163,18 +1163,6 @@ export function RfLinkPanel() {
    *  Same map drives the AOM "incoming Vpp" badge AND the amplifier
    *  rf_in/rf_out transformation rows. */
   const scrubTimeNs = useSceneStore((s) => s.scrubTimeNs);
-  const deviceStates = useSceneStore((s) => s.scene.deviceStates);
-  // Instrument Power panel cascade — kept in sync with the viewer's
-  // identical computation (see DigitalTwinViewer.tsx). Powered-off RF
-  // sources / amps / switches are excluded from the propagation BFS.
-  const poweredOffObjectIds = useMemo(() => {
-    const out = new Set<string>();
-    for (const ds of deviceStates ?? []) {
-      const power = (ds.state as { power?: unknown } | undefined)?.power;
-      if (power === false) out.add(ds.objectId);
-    }
-    return out;
-  }, [deviceStates]);
   // Precompute one propagation snapshot per timing section (boundaries
   // = union of all program interval start/end times). The schedule only
   // depends on scene + programs, NOT on scrubTimeNs — so dragging the
@@ -1188,9 +1176,8 @@ export function RfLinkPanel() {
         componentBindings,
         physicsElements,
         timingPrograms,
-        poweredOffObjectIds,
       }),
-    [objects, components, assets, componentBindings, physicsElements, timingPrograms, poweredOffObjectIds],
+    [objects, components, assets, componentBindings, physicsElements, timingPrograms],
   );
   const rfPropagation = useMemo(
     () => getRfSnapshotAt(rfPropagationSchedule, scrubTimeNs),

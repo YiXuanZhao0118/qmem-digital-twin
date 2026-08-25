@@ -1596,6 +1596,10 @@ export function DigitalTwinViewer({
    *  at scopeProbe.pointThree so the user knows exactly which segment /
    *  position the BeamScopePanel is reading from. */
   const scopeProbeOverlayRef = useRef<THREE.Group | null>(null);
+  /** Overlay holding the Mirror coupling panel's dashed reverse reference
+   *  ray — the destination port's axis run backwards through both mirrors.
+   *  Lab-native (raw Z-up), so it lives under labRoot. */
+  const mirrorCouplingOverlayRef = useRef<THREE.Group | null>(null);
   /** Increments after every async renderComponents() finishes. The gizmo
    *  attach useEffect depends on this so it re-runs against the latest
    *  wrappers — without it, gizmo attaches to a wrapper that the next
@@ -1603,6 +1607,7 @@ export function DigitalTwinViewer({
   const [componentsBuildVersion, setComponentsBuildVersion] = useState(0);
   const sceneData = useSceneStore((state) => state.scene);
   const scopeProbe = useSceneStore((state) => state.scopeProbe);
+  const mirrorCouplingGhost = useSceneStore((state) => state.mirrorCouplingGhost);
   const scrubTimeNs = useSceneStore((state) => state.scrubTimeNs);
   const rfChains = useSceneStore((state) => state.rfChains);
   const selectedComponentId = useSceneStore((state) => state.selectedComponentId);
@@ -1723,12 +1728,6 @@ export function DigitalTwinViewer({
       // the signature and triggers a refetch. This map is NOT sent to the server.
       const aomOverrides: Record<string, Record<string, unknown>> = {};
       const compById = new Map(sceneData.components.map((c) => [c.id, c]));
-      const poweredOff = new Set<string>();
-      for (const ds of sceneData.deviceStates ?? []) {
-        if ((ds.state as { power?: unknown } | undefined)?.power === false) {
-          poweredOff.add(ds.objectId);
-        }
-      }
       const schedule = buildRfPropagationSchedule({
         objects: sceneData.objects,
         components: sceneData.components,
@@ -1736,7 +1735,6 @@ export function DigitalTwinViewer({
         componentBindings: sceneData.componentBindings ?? [],
         physicsElements: sceneData.physicsElements,
         timingPrograms: sceneData.timingPrograms ?? [],
-        poweredOffObjectIds: poweredOff,
       });
       const snapshot = getRfSnapshotAt(schedule, scrubTimeNs);
       for (const obj of sceneData.objects) {
@@ -1887,6 +1885,50 @@ export function DigitalTwinViewer({
       overlay.add(sphere);
     }
   }, [selectedObject, sceneData.physicsElements]);
+
+  // Mirror coupling reverse reference ray. The panel publishes a lab-mm
+  // polyline (destination port -> mirror B -> mirror A -> beyond); we draw it
+  // dashed so it reads as "this is where the beam WOULD come from", never as
+  // a traced beam. Content is lab-native, so it sits under labRoot and only
+  // needs the mm -> three unit scale.
+  useEffect(() => {
+    const overlay = mirrorCouplingOverlayRef.current;
+    if (!overlay) return;
+    while (overlay.children.length > 0) {
+      const child = overlay.children[0];
+      overlay.remove(child);
+      const line = child as THREE.Line;
+      line.geometry?.dispose();
+      const m = (line as { material?: THREE.Material | THREE.Material[] }).material;
+      if (Array.isArray(m)) m.forEach((mm) => mm.dispose());
+      else if (m) m.dispose();
+    }
+    const pts = mirrorCouplingGhost?.pointsLabMm ?? [];
+    if (pts.length < 2) {
+      requestRenderRef.current?.();
+      return;
+    }
+    const geo = new THREE.BufferGeometry().setFromPoints(
+      pts.map(([x, y, z]) => new THREE.Vector3(mmToThree(x), mmToThree(y), mmToThree(z))),
+    );
+    const line = new THREE.Line(
+      geo,
+      new THREE.LineDashedMaterial({
+        color: 0x22d3ee,
+        dashSize: mmToThree(6),
+        gapSize: mmToThree(4),
+        transparent: true,
+        opacity: 0.9,
+        depthTest: false,
+      }),
+    );
+    // LineDashedMaterial needs per-vertex line distances or the dashes do
+    // not appear at all.
+    line.computeLineDistances();
+    line.renderOrder = 1210;
+    overlay.add(line);
+    requestRenderRef.current?.();
+  }, [mirrorCouplingGhost]);
 
   // Beam-scope probe marker — when the user Alt+clicks a beam tube, draw a
   // small cyan ring + "src → hit" label at probe.pointThree so they can see
@@ -2078,24 +2120,6 @@ export function DigitalTwinViewer({
     () => makeRenderableContext(overlayFlags, session, sceneData),
     [overlayFlags, session, sceneData],
   );
-
-  // Power off set — object ids whose device_states.state.power === false.
-  // Lasers / TAs in this set don't emit a beam. RF sources / amps / switches
-  // in this set drop signal at the propagation BFS (so downstream AOMs see
-  // no upstream RF and the diffracted orders vanish). Default is ON
-  // (emitting / amplifying) until the user explicitly toggles OFF via the
-  // Instrument Power panel, so freshly seeded scenes still show beams and
-  // RF chains.
-  const poweredOffObjectIds = useMemo(() => {
-    const out = new Set<string>();
-    for (const ds of sceneData.deviceStates ?? []) {
-      const power = (ds.state as { power?: unknown } | undefined)?.power;
-      if (power === false) out.add(ds.objectId);
-    }
-    return out;
-  }, [sceneData.deviceStates]);
-  const poweredOffObjectIdsRef = useRef<Set<string>>(poweredOffObjectIds);
-  poweredOffObjectIdsRef.current = poweredOffObjectIds;
 
   // AOM RF gating over scrub time now lives in the beam-trace effect above
   // (it samples the RF schedule at scrubTimeNs and feeds gated AOMs 0 W). The
@@ -2625,6 +2649,10 @@ export function DigitalTwinViewer({
       scopeProbeOverlayRef.current = new THREE.Group();
       scopeProbeOverlayRef.current.name = "scope-probe-overlay";
     }
+    if (!mirrorCouplingOverlayRef.current) {
+      mirrorCouplingOverlayRef.current = new THREE.Group();
+      mirrorCouplingOverlayRef.current.name = "mirror-coupling-overlay";
+    }
     // labRoot carries the single world swap S = Rx(-90°). Lab-native,
     // Z-up-authored content goes UNDER it; three-WORLD content stays on scene.
     labRootRef.current.name = "lab-root";
@@ -2635,6 +2663,7 @@ export function DigitalTwinViewer({
       relationGroupRef.current,
       anchorDebugGroupRef.current,
       fastAxisOverlayRef.current,
+      mirrorCouplingOverlayRef.current,
     );
     scene.add(
       labRootRef.current,
@@ -5214,7 +5243,7 @@ export function DigitalTwinViewer({
   // changes, so dragging the slider stays at 60 fps.
   useEffect(() => {
     redrawBeamsRef.current?.();
-  }, [scrubTimeNs, sceneData.timingPrograms, aomFreqOverrideMhz, poweredOffObjectIds]);
+  }, [scrubTimeNs, sceneData.timingPrograms, aomFreqOverrideMhz]);
 
   // -----------------------------------------------------------------
   // Fiber Bezier-spline edit overlay. Active only when

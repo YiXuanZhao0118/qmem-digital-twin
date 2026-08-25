@@ -75,10 +75,6 @@ class V3AnchorBindingSlot:
     asset: V3AssetAnchorSnapshot
     effective_transform: V3Transform
     dynamic_sources: Optional[dict] = None
-    # Instrument power panel: False when the owning SceneObject's
-    # device_states.state.power is False. Emitters (laser_source, TA ASE) skip
-    # powered-off slots so the beam disappears on power-off.
-    powered_on: bool = True
     # `SceneObject.properties.emissionVisuals` verbatim — per-emission
     # presentation overrides keyed "main" / "forward" / "backward" (see
     # schemas.EmissionVisualOverride). Only `visible` is read here: an
@@ -661,6 +657,14 @@ def trace_ray_anchor_scene(
                 out_body.jones, out_body.direction, out_dir_lab,
                 lambda v: dir_body_to_lab_t(v, slot.effective_transform),
             )
+            # An op may tag an individual output ray with its own emission key
+            # (the seeded TA's backward re-emission is "backward" while the
+            # amplified forward beam is "forward"). Consume that one-shot hint
+            # here and clear it so only the trace queue carries the key onward.
+            this_emission_id = (
+                out_body.emission_key if out_body.emission_key is not None
+                else next_emission_id
+            )
             out_lab = out_body.replaced(
                 origin=point_body_to_lab_t(out_body.origin, slot.effective_transform),
                 direction=out_dir_lab,
@@ -671,13 +675,14 @@ def trace_ray_anchor_scene(
                 width_mult_xy=out_rot.width_mult_xy,
                 m2x=out_rot.m2x, m2y=out_rot.m2y, m2xy=out_rot.m2xy,
                 exclude_face_key=f"{slot.scene_object_id}/{slot.binding_id}/{anchor.id}",
+                emission_key=None,
             )
             if out_lab.power_mw < options.power_threshold_mw:
                 result.final_rays.append(out_lab)
             else:
                 queue.append((
                     out_lab, slot.scene_object_id, next_emitter_id,
-                    next_emission_id,
+                    this_emission_id,
                 ))
 
         total_steps += 1

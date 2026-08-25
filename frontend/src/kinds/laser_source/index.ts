@@ -57,6 +57,27 @@ export interface LaserSourceParams extends Record<string, unknown> {
 const LASER_SOURCE_ROLES: RolesMap = {
   out: { min: 0, domain: "optical", fastAxis: true },
   intercept_out: { min: 0, domain: "optical", fastAxis: true },
+  // The fibre BULKHEAD, for a fibre-coupled source: a female receptacle on
+  // the chassis (`connectorType: "fc_pc_female"` / `"fc_apc_female"`) that a
+  // patch cable's male ferrule mates into. Same role the `detector` kind
+  // gained in alembic 0133, and read the same way — the fibre vocabulary is
+  // named for where the FIBRE is, not which way light goes, so the socket on
+  // an EMITTER is still `fiber_in`. `min: 0`: the free-space build (a bare
+  // TOSA facet) has no socket at all.
+  //
+  // A fibre-coupled source carries this AND an `intercept_out` at the same
+  // point: `emit_anchor_source_rays` (backend
+  // `anchor_ops/emit_laser_source.py`) spawns its seed ray only from
+  // `intercept_out`, so a build with the bulkhead alone would emit nothing.
+  // The two being coincident is safe — a ray starting exactly on its own
+  // slot's `fiber_in` plane gives t = 0, below `intersect_anchor`'s
+  // `t_min = 1e-9`, so the emitter cannot hit its own socket.
+  //
+  // Direction is the PROPAGATION direction (out of the body, into the mating
+  // ferrule), per anchors.md. Aperture is the ferrule bore, not the emitting
+  // core: it only decides what counts as a hit, and a core-sized one would be
+  // unhittable by anything but a perfectly placed fibre.
+  fiber_in: { min: 0, domain: "optical", aperture: true, direction: true },
 };
 
 export const laserSourcePlugin = definePhysicsPlugin<LaserSourceParams>({

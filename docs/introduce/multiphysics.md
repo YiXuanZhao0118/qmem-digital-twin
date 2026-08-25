@@ -13,7 +13,9 @@
 | Module | Contents | Backend solver | Library |
 |---|---|---|---|
 | **Lab** (the only tab) | The main 3D optics lab (default) | `optics_seq` → v3 anchor tracer | — |
-| Magnetics (**an overlay panel inside Lab**, not its own tab) | DC coils / magnetic field | `magnetics_dc` | magpylib v5 Biot-Savart (Helmholtz verified) |
+| Magnetics (**backend-only since 2026-08-24** — the Lab overlay panel was removed) | DC coils / magnetic field | `magnetics_dc` | magpylib v5 Biot-Savart (Helmholtz verified) |
+
+> ⚠️ **Magnetics overlay frontend removed (2026-08-24)**: the `modules/magnetics/` panel (`MagneticsPanel` + `FieldViewer`), its `App.tsx` mount, the `magnetics` `WorkspaceProvider` panel def + Window-menu entry, the `Coil*` / `Magnetics*` types and `*CoilApi` / `*MagneticsProblemApi` client functions, and the `.magnetics-*` styles were all deleted. **Kept intact**: the `magnetics_dc` solver, the `/api/coils` + `/api/magnetics-problems` routes, the `coils` + `magnetics_problems` tables (0039), and the `magnetics_dc` value in the `SimulationModule` enum (backend-mirrored, asserted by `_registry.test.ts`). `EmFieldPayload` (EM section of `types/digitalTwin.ts`) was left in place.
 
 > ⚠️ **Removed modules (2026-06-10, deleted outright)**: the three tabs **Optics** (`optics_cavity` cavities + `optics_crystal` nonlinear crystals), **Electronics** (`spice` circuits/SPICE) and **EM** (`em_fem` electromagnetics/antennas) were removed wholesale — the frontend `modules/{optics_cavity,electronics,em}/` folders were deleted, the corresponding imports and branches in `_registry.ts` / `App.tsx` were deleted, the backend solvers (`optics_cavity` / `optics_crystal` / `spice` / `em_fem`) and routers (`/api/optics-cavity`, `/api/optics-crystal`, `/api/circuits`) were deleted, the `SimulationModule` enum is down to `optics_seq` / `optics_fdtd` / `magnetics_dc`, and the `circuits` table plus `rf_chain_nodes.linked_circuit_id` were dropped by **migration 0109** (which also purged the leftover `simulation_runs` rows). **Kept**: the `em_problems` / `meshes` / `touchstone` tables and routes, and the `SshWorkstationRunner` infrastructure (no module uses it today).
 

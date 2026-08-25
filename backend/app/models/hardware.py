@@ -408,6 +408,29 @@ class Kind(Base):
     )
 
 
+class KindDeletion(Base):
+    """Tombstone for a kind the user deleted (alembic 0138).
+
+    ``kinds`` is re-derivable from ``backend/data/kinds.json``, and the
+    resync migrations insert whatever the manifest has and the table lacks —
+    which is why a deleted plugin-backed kind used to reappear on the next
+    ``alembic upgrade head``. A row here records that the absence is
+    deliberate; a BEFORE INSERT trigger on ``kinds`` skips any insert whose
+    name is tombstoned, so no migration can resurrect it.
+
+    ``POST /api/kinds`` drops the tombstone first, so re-creating a deleted
+    kind in the editor works normally.
+    """
+
+    __tablename__ = "kind_deletions"
+
+    name: Mapped[str] = mapped_column(Text, primary_key=True)
+    deleted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    note: Mapped[str | None] = mapped_column(Text)
+
+
 class ComponentBinding(Base):
     """How a Component is composed from Asset3Ds and/or sub-Components.
 

@@ -510,8 +510,8 @@ The page is a single full-viewport `.workspace-shell` with three regions:
 │                                                                 │
 │   currentModule = "optics_seq"  →  <DualViewerSplit>            │
 │       + floating panels: catalog, outliner, component editor,   │
-│         pulse timing, instrument power, RF link, optical link,  │
-│         touch coincidence, magnetics, …                         │
+│         pulse timing, RF link, optical link,                    │
+│         touch coincidence, …                                    │
 │                                                                 │  (center)
 │   (Optics / Electronics / EM tabs removed 2026-06-10)          │
 │                                                                 │
@@ -547,12 +547,10 @@ Defaults (from `PANEL_DEFS` in `workspace/WorkspaceProvider.tsx`):
 | `outliner` | Outliner | 16, 552 (under Components, +16 px gap) | 300 × 320 | yes | 1 |
 | `object` | Object inspector | −340, 296 (top-right, below the XYZ gizmo + Tools pie) | 320 × 520 | yes | 1 |
 | `pulse-timing` | Pulse & Timing | 332, 480 | 760 × 380 | no | 2 |
-| `instrument-power` | Instrument Power | 332, 80 | 380 × 360 | no | 2 |
 | `beam-scope` | Beam scope | 332, 80 | 560 × 460 | no | 2 |
 | `touch-coincidence` | Touch coincidence | 332, 200 | 380 × 280 | no | 3 |
 | `optical-link-viewer` | Optical link viewer | 360, 80 | 640 × 780 | no | 2 |
 | `rf-link` | RF link | 360, 80 | 720 × 520 | no | 2 |
-| `magnetics` | Magnetics overlay | −340, 80 | 320 × 460 | no | 2 |
 | `ai-binding` | AI Binding | −340, 80 | 380 × 520 | no (open it from the Window menu after enabling `VITE_ENABLE_AI_PANEL=true`) | 3 |
 
 Layout rules:
@@ -599,7 +597,6 @@ Keyboard shortcuts:
 | Assembly | `TouchCoincidencePanel.tsx`, `AlignPanel.tsx`, `VisibilityControls.tsx` | Constraint solver UI + visibility kit |
 | Per-kind physics | `physics/PhysicsElementPanel.tsx`, `AomAdjustControls.tsx`, `TaperedAmplifierAdjustControls.tsx`, `_shared.tsx` | Kind-specific inspectors, extracted from a previously 4000-line monolith |
 | Binding-tree per-instance editor | `BindingTreeAdjustControls.tsx` (new, post-0076) | Generic slider panel for ANY composite component's binding tree. Reads `component.componentBindings`, groups them by `binding.properties.linkGroup`, then renders a numeric + range input per `commonTunableAxes(group)`. Writes go through `sceneStore.upsertObjectBinding` (one row per binding in the link group, so a single slider drag drives `front_glan_laser` + `front_piece` together). Dragging back to 0 with no other axis set deletes the row so the renderer reverts to the catalog baseline. New components opt in just by declaring `tunable_axes` on their bindings — no component-specific code. Mounted from `PhysicsElementPanel` for optical-domain elements. **Phase 2 addition**: a per-instance "See through" checkbox writes `sceneObject.properties.translucentHousing = true` so the renderer drops the isolator housing to 0.35 opacity for the selected instance (default is opaque metal); the legacy `opaqueHousing` key is cleaned up when the toggle is touched. Gated on `componentType === "isolator"` for now — generic enough to fan out by adding new keys to the same block |
-| Power & state | `InstrumentPowerPanel.tsx` | Enabled / temperature / pressure readouts |
 | DDS specifics | `DdsChassisObjectControls.tsx`, `Ad9959ObjectControls.tsx` | AD9959 chassis & per-chip UIs |
 | Toolbar | `SceneToolbar.tsx`, `ToolbarHint.tsx`, `NumberField.tsx`, `CollapsibleSection.tsx` | Initial Setup button, shortcut help, shared inputs |
 | AI binding (alpha) | `AIBindingPanel.tsx` | Drives the agent_orchestrator from the browser. Gated behind `VITE_ENABLE_AI_PANEL=true`. Three local states (`idle` / `running` / `terminal`) map to `agent_sessions.status`. 30 s heartbeat keeps the backend sweeper from auto-abandoning the session. Chat transcript is purely display state; the persisted source of truth for "what got created" is the `mutations` list from `GET /{id}`. **Phase 2 addition**: terminal panel now exposes an Unlock button (committed sessions only) wired to `unlockAgentSessionApi` → `POST /api/agent-sessions/{id}/unlock`; success renders a summary row with the count of unlocked assets / components; busy + idempotency-locked while in flight. Default layout flipped back to `visible: false` (the env flag is off by default; even if someone flips only the env var on, the panel stays closed until they open it from the Window menu — kept symmetric with the `App.tsx` and `TopBar.tsx` gates) |

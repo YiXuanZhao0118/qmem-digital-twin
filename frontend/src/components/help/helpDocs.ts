@@ -36,7 +36,10 @@ const GROUP_ORDER: { label: string; files: string[] }[] = [
   { label: "Rendering & optics", files: ["rendering.md", "kinds.md", "optics.md", "fiber.md"] },
   {
     label: "Multiphysics & time",
-    files: ["multiphysics.md", "timing.md", "rf.md", "cable.md", "placement.md"],
+    files: [
+      "multiphysics.md", "timing.md", "rf.md", "cable.md",
+      "placement.md", "mirror-coupling.md",
+    ],
   },
   {
     label: "Ops & reference",

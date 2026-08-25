@@ -16,6 +16,7 @@ from app.models.hardware import (  # noqa: F401
     ComponentBinding,
     Device,
     Kind,
+    KindDeletion,
 )
 from app.models.interaction import AssemblyRelation, Connection, OpticalLink, RfLink  # noqa: F401
 from app.models.modules.em import EmProblem, Mesh  # noqa: F401
@@ -49,6 +50,7 @@ __all__ = [
     "EmProblem",
     "Device",
     "Kind",
+    "KindDeletion",
     "MagneticsProblem",
     "Mesh",
     "ObjectBinding",

@@ -150,9 +150,9 @@ Rotate** · the **crosshair** switch · the **Home** controls.
 
 - Click a beam segment to inspect power, polarization and beam size in the
   **Beam scope** panel.
-- If a beam is missing or dies out, the usual causes are a component that isn't
-  aligned to its aperture, or an instrument that is powered off — check the
-  **Instrument Power** panel.
+- If a beam is missing or dies out, the usual cause is a component that isn't
+  aligned to its aperture, or an emission hidden on the object's Visualization
+  card.
 
 > **Key —** Beams are solved by the **backend** (\`/api/v3/solver\`) and
 > **re-trace automatically** whenever the scene changes. There is no
@@ -174,11 +174,9 @@ title bar to move, the bottom-right corner to resize.
 | **Outliner** | left, open | Scene object list: select / rename / hide / group (double-click a collection selects all of it) |
 | **Object** | right, open | Position, rotation and tunable physics params of the selection |
 | **Pulse & Timing** | bottom, closed | Sequences, pulse scheduling, scrub time |
-| **Instrument Power** | float, closed | Instrument on/off — powering off the laser cascades (TA gets no light, AD9959 no RF) |
 | **Beam scope** | float, closed | Power / polarization / beam profile at the clicked beam point |
 | **RF link** | float, closed | RF chain graph — drag a connection to create a cable |
 | **Touch coincidence** | float, closed | Face-touch / alignment helper |
-| **Magnetics overlay** | right, closed | Compute a B-field on top of the current optical scene |
 
 > **Beam scope** and **Touch coincidence** are **not** in the Window menu —
 > they open themselves when you act in the scene (click a beam, pick a face).

@@ -14,10 +14,11 @@ import { AIBindingPanel } from "./components/AIBindingPanel";
 import { ComponentPanel } from "./components/ComponentPanel";
 import { DualViewerSplit } from "./components/DualViewerSplit";
 import { PhyEditor } from "./components/PhyEditor";
-import { InstrumentPowerPanel } from "./components/InstrumentPowerPanel";
 import { PulseTimingPanel } from "./components/PulseTimingPanel";
 import { TouchCoincidencePanel } from "./components/TouchCoincidencePanel";
 import { RfLinkPanel } from "./components/RfLinkPanel";
+import { MirrorCouplingPanel } from "./components/optical/MirrorCouplingPanel";
+import { ModeMatchingPanel } from "./components/optical/ModeMatchingPanel";
 // BeamPlacementPanel + SuggestedLinksPanel removed — replaced with simpler
 // per-object "Snap to beam" action (in OE panel) plus aperture warnings.
 import { CursorMenu } from "./components/optical/CursorMenu";
@@ -26,7 +27,6 @@ import { DockZones } from "./components/workspace/DockZones";
 import { ScrubTimeBar } from "./components/workspace/ScrubTimeBar";
 import { TopBar } from "./components/workspace/TopBar";
 import { WorkspaceProvider } from "./components/workspace/WorkspaceProvider";
-import { MagneticsPanel } from "./modules/magnetics/MagneticsPanel";
 import { useSceneStore } from "./store/sceneStore";
 import { useV3Catalog } from "./store/catalogStore";
 import { invalidateRfConnectorCache } from "./three/loadAsset/rf_cable/connectorModels";
@@ -404,10 +404,10 @@ export default function App() {
               <OutlinerFloatingPanel />
               <ComponentPanel />
               <PulseTimingPanel />
-              <InstrumentPowerPanel />
               <RfLinkPanel />
               <TouchCoincidencePanel />
-              <MagneticsPanel />
+              <MirrorCouplingPanel />
+              <ModeMatchingPanel />
               {AI_PANEL_ENABLED && <AIBindingPanel />}
               <CursorMenu />
             </>

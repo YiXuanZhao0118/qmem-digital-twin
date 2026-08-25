@@ -41,11 +41,11 @@ export type PanelId =
   | "outliner"
   | "object"
   | "pulse-timing"
-  | "instrument-power"
   | "beam-scope"
   | "touch-coincidence"
+  | "mirror-coupling"
+  | "mode-matching"
   | "rf-link"
-  | "magnetics"
   | "ai-binding";
 
 const PANEL_DEFS: { id: PanelId; title: string; defaultLayout: PanelLayout }[] = [
@@ -77,11 +77,6 @@ const PANEL_DEFS: { id: PanelId; title: string; defaultLayout: PanelLayout }[] =
     defaultLayout: { x: 332, y: 480, w: 760, h: 380, visible: false, collapsed: false, z: 2, dock: "bottom" },
   },
   {
-    id: "instrument-power",
-    title: "Instrument Power",
-    defaultLayout: { x: 332, y: 80, w: 380, h: 360, visible: false, collapsed: false, z: 2, dock: "float" },
-  },
-  {
     id: "beam-scope",
     title: "Beam scope",
     defaultLayout: { x: 332, y: 80, w: 560, h: 460, visible: false, collapsed: false, z: 2, dock: "float" },
@@ -92,16 +87,19 @@ const PANEL_DEFS: { id: PanelId; title: string; defaultLayout: PanelLayout }[] =
     defaultLayout: { x: 332, y: 200, w: 380, h: 280, visible: false, collapsed: false, z: 3, dock: "float" },
   },
   {
+    id: "mirror-coupling",
+    title: "Mirror coupling",
+    defaultLayout: { x: 332, y: 200, w: 400, h: 560, visible: false, collapsed: false, z: 3, dock: "float" },
+  },
+  {
+    id: "mode-matching",
+    title: "Mode matching",
+    defaultLayout: { x: 332, y: 200, w: 420, h: 600, visible: false, collapsed: false, z: 3, dock: "float" },
+  },
+  {
     id: "rf-link",
     title: "RF link",
     defaultLayout: { x: 360, y: 80, w: 720, h: 520, visible: false, collapsed: false, z: 2, dock: "float" },
-  },
-  {
-    id: "magnetics",
-    title: "Magnetics overlay",
-    // Hidden by default; user opens via Window menu when they want to
-    // compute a B-field on top of the current Optics scene.
-    defaultLayout: { x: -340, y: 80, w: 320, h: 460, visible: false, collapsed: false, z: 2, dock: "right" },
   },
   {
     id: "ai-binding",

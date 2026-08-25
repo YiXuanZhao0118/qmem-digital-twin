@@ -256,3 +256,82 @@ async def aom_sidebands(req: AomSidebandRequest) -> dict:
         "phaseModDepth": v_depth,
         "sidebands": sidebands,
     }
+
+
+# ---------------------------------------------------------------------------
+# Mode matching — shape the DBR seed into the TA (POST /api/v3/solver/mode-match)
+# ---------------------------------------------------------------------------
+
+class ModeMatchRequest(CamelModel):
+    """Optimize the shaping lenses so the seed couples into the TA.
+
+    Object ids are SceneObject ids (str(uuid)). ``movableIds`` are the shaping
+    lenses in path order; ``endpointId`` (e.g. MIRROR5) is the section-end
+    mirror, locked by default. ``focalInventory`` maps an object id to the
+    focal lengths available for it (Stage-2 swap search)."""
+    seed_emitter_id: str
+    ta_object_id: str
+    movable_ids: list[str] = []
+    start_id: Optional[str] = None
+    endpoint_id: Optional[str] = None
+    endpoint_locked: bool = True
+    axial_mm: float = 20.0
+    # Transverse decenter is OFF by default — decentering a lens steers the
+    # chief ray (a pointing error the mode-overlap objective doesn't penalize).
+    # Opt in with decenter_mm > 0 only if you accept the beam walking off-centre.
+    decenter_mm: float = 0.0
+    roll_deg: float = 90.0
+    eta_target: Optional[float] = None
+    l_max_mm: Optional[float] = None
+    focal_inventory: Optional[dict[str, list[float]]] = None
+    wavelength_nm: float = 852.0
+    dynamic_overrides: Optional[dict] = None
+    scrub_time_ns: Optional[float] = None
+
+
+@router.post("/mode-match")
+async def mode_match(
+    request: ModeMatchRequest,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Load the DB scene, trace the seed once, and optimize the shaping lenses
+    to maximize seed→TA mode coupling under the length / η targets. Returns an
+    applyable plan (per-lens world-space move + focal, expected η, length,
+    feasibility) — see ``mode_match_service.run_mode_match``."""
+    from sqlalchemy import select
+
+    from app.optical import anchor_ops  # noqa: F401  (register ops)
+    from app.optical.db_scene_loader import load_anchor_scene_from_db
+    from app.optical.mode_match_service import run_mode_match
+    from app.optical.solver import solve_anchor_scene
+    from app.models.scene import SceneObject
+
+    scene = await load_anchor_scene_from_db(
+        session, request.dynamic_overrides, scrub_time_ns=request.scrub_time_ns,
+    )
+    forward = solve_anchor_scene(scene)
+    rows = (await session.execute(select(SceneObject.id, SceneObject.name))).all()
+    names = {str(i): n for i, n in rows}
+
+    try:
+        return run_mode_match(
+            scene, forward,
+            seed_emitter_id=request.seed_emitter_id,
+            ta_object_id=request.ta_object_id,
+            movable_ids=request.movable_ids,
+            start_id=request.start_id,
+            endpoint_id=request.endpoint_id,
+            endpoint_locked=request.endpoint_locked,
+            axial_mm=request.axial_mm,
+            decenter_mm=request.decenter_mm,
+            roll_deg=request.roll_deg,
+            eta_target=request.eta_target,
+            l_max_mm=request.l_max_mm,
+            focal_inventory=request.focal_inventory,
+            wavelength_nm=request.wavelength_nm,
+            object_names=names,
+        )
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        )

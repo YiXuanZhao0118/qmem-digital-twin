@@ -9,7 +9,7 @@
  *
  * Reciprocal at small signal; active throw decided at solve time from
  * TTL state on ttl_in (or kind-level TTL_GATE_KINDS picker if no cable).
- * Needs ±5 V supply (POWER_KINDS).
+ * Needs ±5 V supply.
  */
 import {
   anchorContractFromRoles,

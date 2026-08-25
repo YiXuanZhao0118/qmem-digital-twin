@@ -17,8 +17,14 @@ The stored pose is **quantized** — 1 nm for `x/y/z mm`, 1e-9° for `rx/ry/rz d
 
 `collection_members` 上有 `uq_collection_members_object_home` UNIQUE 約束：**每個 object 至多屬於一個 collection**。所以「搬家」是 UPDATE 既有那一列的 `collection_id`，而不是 delete-then-insert（asyncpg 的交易可見性會讓刪除列仍擋住 INSERT）——見 `backend/app/routers/collections.py:296` `move_object_to_collection`。物件建立時若沒帶 `collection_id`，後端塞進 Master（`backend/app/routers/objects.py:124`）。
 
-**Active collection**：新建的 object 一律進 `activeCollectionId`（store 裡所有 `createObjectApi` 呼叫點都帶這個值），而它會被寫進 localStorage、跨 reload 存活（`sceneStore.ts:4352` / `_persistence.ts:134`）。**它只有兩種方式會變：點 collection 列，或新建 collection**（`OutlinerPanel.tsx:531` / `:371`）。點 object 列**不會**改 active collection——這條 2026-08-18 才修好：以前點一下 Outliner 裡的任何一顆鏡子，之後每個新元件就都被默默丟進那顆鏡子的 collection，而且因為有持久化，重開也還在。
+**Active collection**：新建的 object 一律進 `activeCollectionId`（store 裡所有 `createObjectApi` 呼叫點都帶這個值），而它會被寫進 localStorage、跨 reload 存活（`sceneStore.ts:4352` / `_persistence.ts:134`）。**它只有兩種方式會變：點 collection 列，或新建 collection**（`OutlinerPanel.tsx:744` / `:471`）。點 object 列**不會**改 active collection——這條 2026-08-18 才修好：以前點一下 Outliner 裡的任何一顆鏡子，之後每個新元件就都被默默丟進那顆鏡子的 collection，而且因為有持久化，重開也還在。
 
-**Drop target = 游標底下最內層的那個節點**。invariant：`handleDropOnCollection` / `handleDragOver` 都必須 `event.stopPropagation()`（`OutlinerPanel.tsx:454` / `:490`）。理由：collection 節點是**巢狀**的（子節點畫在父節點的 div 裡面），所以丟在子 collection 上的 drop 會一路冒泡到每一層祖先，每一層都對同一個 object 各發一次 move POST；這些請求在同一列 home row 上互相競爭、最後 commit 的贏，於是「拖進去只有時候會成功」「一次拖多個只有一部分進得去」。Highlight 也一樣——沒有 stopPropagation 時祖先最後執行，`dragOverId` 永遠停在最外層的 Master。
+**Drop target = 游標底下最內層的那個節點**。invariant：`handleDropOnCollection` / `handleDragOver` 都必須 `event.stopPropagation()`（`OutlinerPanel.tsx:611` / `:664`）。理由：collection 節點是**巢狀**的（子節點畫在父節點的 div 裡面），所以丟在子 collection 上的 drop 會一路冒泡到每一層祖先，每一層都對同一個 object 各發一次 move POST；這些請求在同一列 home row 上互相競爭、最後 commit 的贏，於是「拖進去只有時候會成功」「一次拖多個只有一部分進得去」。Highlight 也一樣——沒有 stopPropagation 時祖先最後執行，`dragOverId` 永遠停在最外層的 Master。
 
-**還有一個合法的「拖了沒進去」**：locked object 在 dragstart 就被濾掉（`OutlinerPanel.tsx:743`），store 也會靜默 no-op，後端再回 409 當第三道防線。多選裡混了 locked 成員時，未鎖的會搬、鎖住的原地不動，而且沒有提示。
+**Collection 的排序自己排（2026-08-24）**：`collections.sort_order` 一直存在、`buildChildrenIndex` 也一直照它排，但 UI 沒有任何寫入口，所以整棵樹的 sibling 全是 0，順序只能靠 createdAt。現在拖 collection 時，落點依游標在**目標自己那一列**的高度分三段（`REORDER_EDGE = 0.25`）：上緣 25% = 插在它前面、下緣 25% = 插在它後面（兩者都是變成 target 的 sibling），中間 50% 維持原本的「丟進去變子 collection」。落點 zone 存在 `dropZoneRef`——dragover 與 drop 可能落在同一個 task，state 的寫入還看不到，drop closure 會讀到過期的值（`OutlinerPanel.tsx:664` / `:611`）。
+
+排序落地時 **整排 sibling 會重編號 0..n-1**（`reorderCollection`，`OutlinerPanel.tsx:580`）：被拖的那個走 `/move`（順便處理跨父層），其餘只改變號碼的才發 PUT。必須整排寫，因為既有資料的 sort_order 全是 0，只改一個的話順序仍然是未定義的。`buildChildrenIndex` 的第二排序鍵是 `createdAt`：sort_order 相同時，store 的 `upsertById` 每次更新都把該列 append 到陣列尾端，沒有穩定的次鍵時，改個名字或按一下眼睛就會讓那個 collection 掉到 sibling 最後面。
+
+Master 不能被排——它是樹根，前後沒有位置；把 collection 拖到自己子孫旁邊也會被 `isAncestorOrSelf` 擋掉。
+
+**還有一個合法的「拖了沒進去」**：locked object 在 dragstart 就被濾掉（`OutlinerPanel.tsx:957`），store 也會靜默 no-op，後端再回 409 當第三道防線。多選裡混了 locked 成員時，未鎖的會搬、鎖住的原地不動，而且沒有提示。

@@ -2301,19 +2301,12 @@ export function traceBeamsFromLasers(input: {
    *  scrubs the timeline. Absent objects use kindParams.centerFreqMhz
    *  as before. */
   aomFreqOverrideMhz?: Map<string, number>;
-  /** Object ids whose ``device_states.state.power === false`` — the
-   *  emitter (laser_source / tapered_amplifier) is treated as physically
-   *  off, so it doesn't emit any beam. For TAs this also blocks the
-   *  amplified output even if a seed beam arrives upstream (the device
-   *  acts as a beam dump when unpowered). */
-  poweredOffObjectIds?: Set<string>;
 }): TraceSegment[] {
   const { scene, componentGroup } = input;
   const maxLengthMm = input.options?.maxLengthMm ?? DEFAULT_MAX_LENGTH_MM;
   const maxBounces = input.options?.maxBounces ?? DEFAULT_MAX_BOUNCES;
   const gateOverrides = input.gateOverrides;
   const aomFreqOverrideMhz = input.aomFreqOverrideMhz;
-  const poweredOffObjectIds = input.poweredOffObjectIds;
 
   // CRITICAL: refresh world matrices on the entire group BEFORE any bbox /
   // raycast query. Per-mesh updateMatrixWorld(true) only works if the parent
@@ -2452,10 +2445,6 @@ export function traceBeamsFromLasers(input: {
       if (!getEmissionVisual(obj, "main").visible) {
         continue;
       }
-      // Power off (Instrument Power panel) — laser physically not emitting.
-      if (poweredOffObjectIds?.has(obj.id)) {
-        continue;
-      }
       // Phase PB.3: scrub-time gate cascade — when the user is sampling
       // a TimingProgram / PB channel sequence, gated-off emitters drop
       // their beam (so downstream PBS/lens/fiber receive nothing too).
@@ -2495,15 +2484,6 @@ export function traceBeamsFromLasers(input: {
     // within the acceptance radius. The coupled seed power is:
     //   raw PBSref power × spatial mode overlap × polarization overlap.
     // The amplified output exits the opposite (-X) aperture.
-    //
-    // Power off: the TA chip is unpowered, so neither the amplified output
-    // nor backward ASE leaves the device. Any seed beam arriving from
-    // upstream still hit the front face (those segments were already
-    // pushed by the laser-source loop) — they simply terminate there
-    // since we skip the output emission entirely.
-    if (poweredOffObjectIds?.has(obj.id)) {
-      continue;
-    }
     const taParams = (element.kindParams ?? {}) as {
       driveCurrentMa?: number;
       smallSignalGainDb?: number;

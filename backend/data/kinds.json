@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-23T01:40:26.474Z",
+  "generated_at": "2026-08-24T00:37:05.787Z",
   "component_type_to_kind": {
     "laser_source": "laser_source",
     "laser": "laser_source",
@@ -95,10 +95,15 @@
           "required": [],
           "optional": [
             "out",
-            "intercept_out"
+            "intercept_out",
+            "fiber_in"
           ],
-          "needs_direction": [],
-          "needs_aperture": []
+          "needs_direction": [
+            "fiber_in"
+          ],
+          "needs_aperture": [
+            "fiber_in"
+          ]
         },
         "align_variant": "none",
         "align_tolerance_mm": 0,
@@ -156,6 +161,13 @@
             "max": 1,
             "domain": "optical",
             "fast_axis": true
+          },
+          "fiber_in": {
+            "min": 0,
+            "max": 1,
+            "domain": "optical",
+            "direction": true,
+            "aperture": true
           }
         }
       }

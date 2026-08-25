@@ -489,6 +489,13 @@ class BeamRay:
     parent_id: Optional[str] = None
     exclude_face_key: Optional[str] = None
     is_ghost: bool = False
+    # One-shot emission-key hint for an op that returns MORE than one beam with
+    # different provenance (the seeded TA: its forward output vs. its backward
+    # re-emission). The tracer reads this on each op-output ray to tag that
+    # emission independently, then CLEARS it so it never rides downstream — the
+    # per-segment key is carried by the trace queue thereafter. None = inherit
+    # the op's default emission key.
+    emission_key: Optional[str] = None
 
     def replaced(self, **kwargs) -> "BeamRay":
         """Return a new BeamRay with fields overridden."""

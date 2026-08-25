@@ -12,15 +12,9 @@ import type {
   CancelResult,
   CommitResult,
   SessionMutation,
-  Coil,
-  CoilCreatePayload,
-  CoilUpdatePayload,
   EmProblem,
   EmProblemCreatePayload,
   EmProblemUpdatePayload,
-  MagneticsProblem,
-  MagneticsProblemCreatePayload,
-  MagneticsProblemUpdatePayload,
   Mesh,
   TimingProgramCompile,
   TimingProgramCreatePayload,
@@ -32,7 +26,6 @@ import type {
   CollectionTemplate,
   ComponentBinding,
   ComponentItem,
-  DeviceState,
   ElementKind,
   GeometrySelector,
   PhysicsElement,
@@ -537,6 +530,87 @@ export async function runV3SolverFromComponentApi(
   const response = await client.post<V3SolverResult>(
     "/api/v3/solver/run-from-component",
     { componentId, initialRays: [ray] },
+  );
+  return response.data;
+}
+
+
+// =============================================================================
+// Mode matching — shape the DBR seed into the TA (POST /api/v3/solver/mode-match)
+// =============================================================================
+
+export interface ModeMatchMove {
+  objectId: string;
+  name: string;
+  /** World-space (lab mm) translation to add to the object's position. */
+  translateWorldMm: { x: number; y: number; z: number };
+  /** Lab-space axis to roll the lens about (through its optical centre). */
+  rotateAxisWorld: { x: number; y: number; z: number };
+  rotateDeg: number;
+  /** Suggested focal length (mm) if the Stage-2 inventory swap chose one. */
+  focalMm: number | null;
+}
+
+export interface ModeMatchWidth {
+  xUm: number | null;
+  yUm: number | null;
+}
+
+/** One candidate placement the optimizer found. `column` groups it in the
+ *  panel: "range" (within Start→End) vs "free" (ignoring Start/End). */
+export interface ModeMatchSolution {
+  key: string;
+  label: string;
+  column: "range" | "free";
+  feasible: boolean;
+  eta: number;
+  etaBaseline: number;
+  bestAchievable: number;
+  etaTarget: number | null;
+  lengthMm: number;
+  reason: string | null;
+  endpointLocked: boolean;
+  moves: ModeMatchMove[];
+  diagnostic: { seedWidth: ModeMatchWidth; refWidthFinal: ModeMatchWidth };
+}
+
+export interface ModeMatchResult {
+  /** 1 = auto-detect lenses in range; 2 = use the selected lenses. */
+  mode: 1 | 2;
+  /** Names of the lenses auto-detected between Start and End (mode 1). */
+  detectedLenses: string[];
+  spanMm: number;
+  axis: { x: number; y: number; z: number };
+  solutions: ModeMatchSolution[];
+}
+
+/** Optimize the shaping lenses so the DBR seed couples into the TA, within a
+ *  Start→End range. Loads the live DB scene server-side, traces the seed once,
+ *  and returns candidate solutions (best-efficiency / shortest-footprint, and
+ *  for mode 2 also an ignore-range column). `movableIds` empty = Method 1
+ *  (auto-detect the lenses between Start and End). See
+ *  `docs/introduce/mode-matching.md`. */
+export async function runModeMatchApi(req: {
+  seedEmitterId: string;
+  taObjectId: string;
+  movableIds: string[];
+  startId?: string | null;
+  endpointId?: string | null;
+  endpointLocked?: boolean;
+  axialMm?: number;
+  decenterMm?: number;
+  rollDeg?: number;
+  etaTarget?: number | null;
+  lMaxMm?: number | null;
+  focalInventory?: Record<string, number[]>;
+  wavelengthNm?: number;
+}): Promise<ModeMatchResult> {
+  // The optimizer (Start→End range + shortest-footprint + focal search) can run
+  // over a minute — well past the client's default timeout — so give it its own.
+  const response = await client.post<ModeMatchResult>(
+    "/api/v3/solver/mode-match",
+    req,
+    { timeout: 180000 },
   );
   return response.data;
 }
@@ -1197,21 +1271,6 @@ export async function deleteTimingProgramApi(programId: string): Promise<void> {
   }
 }
 
-export async function updateDeviceStateApi(
-  objectId: string,
-  state: Record<string, unknown>,
-): Promise<DeviceState> {
-  try {
-    const response = await client.put<DeviceState>(
-      `/api/device-states/${objectId}`,
-      { state },
-    );
-    return response.data;
-  } catch (error) {
-    throw new Error(apiErrorMessage(error));
-  }
-}
-
 export async function compileTimingProgramsApi(): Promise<TimingProgramCompile> {
   try {
     const response = await client.get<TimingProgramCompile>(
@@ -1331,69 +1390,6 @@ export async function uploadMeshApi(file: File, name?: string): Promise<Mesh> {
 
 export async function deleteMeshApi(id: string): Promise<void> {
   await client.delete(`/api/meshes/${id}`);
-}
-
-// ---- Coils + Magnetics (Phase F+) ------------------------------------------
-
-export async function fetchCoilsApi(
-  limit = 200,
-  sceneObjectId?: string,
-): Promise<Coil[]> {
-  const params: Record<string, string | number> = { limit };
-  if (sceneObjectId) params.scene_object_id = sceneObjectId;
-  const response = await client.get<Coil[]>("/api/coils", { params });
-  return response.data;
-}
-
-export async function createCoilApi(payload: CoilCreatePayload): Promise<Coil> {
-  const response = await client.post<Coil>("/api/coils", payload);
-  return response.data;
-}
-
-export async function updateCoilApi(
-  id: string,
-  patch: CoilUpdatePayload,
-): Promise<Coil> {
-  const response = await client.patch<Coil>(`/api/coils/${id}`, patch);
-  return response.data;
-}
-
-export async function deleteCoilApi(id: string): Promise<void> {
-  await client.delete(`/api/coils/${id}`);
-}
-
-export async function fetchMagneticsProblemsApi(
-  limit = 100,
-): Promise<MagneticsProblem[]> {
-  const response = await client.get<MagneticsProblem[]>("/api/magnetics-problems", {
-    params: { limit },
-  });
-  return response.data;
-}
-
-export async function createMagneticsProblemApi(
-  payload: MagneticsProblemCreatePayload,
-): Promise<MagneticsProblem> {
-  const response = await client.post<MagneticsProblem>(
-    "/api/magnetics-problems",
-    payload,
-  );
-  return response.data;
-}
-
-export async function updateMagneticsProblemApi(
-  id: string,
-  patch: MagneticsProblemUpdatePayload,
-): Promise<MagneticsProblem> {
-  const response = await client.patch<MagneticsProblem>(
-    `/api/magnetics-problems/${id}`,
-    patch,
-  );
-  return response.data;
-}
-
-export async function deleteMagneticsProblemApi(id: string): Promise<void> {
-  await client.delete(`/api/magnetics-problems/${id}`);
 }
 
 // PulseBlaster channel endpoints removed (alembic 0046). channel_index +

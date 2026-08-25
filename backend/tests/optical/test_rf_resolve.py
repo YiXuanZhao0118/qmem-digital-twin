@@ -53,11 +53,10 @@ def _src(channels: list[dict] | None = None) -> RfNode:
     return RfNode("src", "rf_source", params, _SRC_ANCHORS)
 
 
-def _inputs(nodes, *, aoms=(), programs=None, powered_off=()) -> RfInputs:
+def _inputs(nodes, *, aoms=(), programs=None) -> RfInputs:
     return RfInputs(
         nodes=tuple(nodes),
         programs_by_id=programs or {},
-        powered_off=frozenset(powered_off),
         aoms=tuple(aoms),
     )
 
@@ -167,19 +166,6 @@ def test_amplifier_output_clamp_sets_saturated() -> None:
     assert sig.saturated is True
     # 30 dBm = 1 W -> Vpp = sqrt(8*50*1) ~= 20.0
     assert sig.vpp == pytest.approx(math.sqrt(8 * 50 * 1.0))
-
-
-def test_powered_off_source_emits_nothing() -> None:
-    src = _src([{"anchorName": "CH0", "frequencyMhz": 80.0, "amplitudeScale": 1.0}])
-    aom = RfNode("aom", "aom", {}, _AOM_ANCHORS)
-    cab = _cable("c", "src", "CH0", "aom", "rf_in")
-    inp = _inputs([src, aom, cab], aoms=[AomPort("aom", "rf_in", False)], powered_off=["src"])
-    res = build_rf_propagation(inp, scrub_time_ns=0.0)
-    assert port_key("aom", "rf_in") not in res.signal_at_port
-    # The AOM is still CABLED to the (dead) source, so the RF link stays the
-    # authority: 0 W -> no diffraction. Powering the source off must not hand
-    # the AOM back its rated operating point.
-    assert resolve_aom_rf_drive(inp, 0.0) == {"aom": {"rfDrivePowerW": 0.0}}
 
 
 def test_manual_mode_aom_is_skipped() -> None:

@@ -362,6 +362,32 @@ def ta_forward_power_mw(p_coupled_mw: float, params: dict) -> float:
     return ta_saturated_power_mw(p_coupled_mw, params)
 
 
+def ta_backward_power_mw(p_coupled_mw: float, params: dict) -> float:
+    """Backward (input-facet) power a SEEDED TA radiates back toward the seed
+    source. Prefers the measured ``gainSamples`` backward column (interpolated
+    at the coupled seed power and ``driveCurrentMa``); with no gain table it
+    falls back to the unseeded backward-ASE power so the input facet still
+    radiates — flat ``aseBackwardMw`` → ``aseSamples`` @ driveCurrentMa →
+    nested ``ase.powerMw``, the same ladder ``emit_ta_ase_rays`` uses for the
+    backward facet. Returns 0.0 when nothing configures a backward power."""
+    table = ta_gain_table_mw(
+        _samples(params, "gainSamples"),
+        p_coupled_mw,
+        float(params.get("driveCurrentMa", 0.0)),
+    )
+    if table is not None:
+        return max(0.0, table[1])
+    if isinstance(params.get("aseBackwardMw"), (int, float)):
+        return max(0.0, float(params["aseBackwardMw"]))
+    ase_table = ta_ase_table_mw(
+        _samples(params, "aseSamples"), float(params.get("driveCurrentMa", 0.0)),
+    )
+    if ase_table is not None:
+        return max(0.0, ase_table[1])
+    ase = params.get("ase") if isinstance(params.get("ase"), dict) else {}
+    return max(0.0, float(ase.get("powerMw", 0.0) or 0.0))
+
+
 def _gaussian_waist_mm(q: complex, wavelength_nm: float) -> float:
     """Beam radius w at the facet from the complex q-parameter:
     1/q = 1/R − iλ/(πw²)  ⇒  w² = λ·|q|² / (π·Im q). Returns +inf when the
@@ -486,8 +512,15 @@ def tapered_amplifier_anchor_op(
 
     Coupled seed power = ``P_in · frac_te · η``. The output is linearly
     polarized along the gain axis (axisY) with a finite extinction leak, and
-    its transverse mode is reshaped to ``outputSpatialModeX/Y``. A seeded TA
-    emits no ASE — unseeded ASE is injected separately (decision 6b).
+    its transverse mode is reshaped to ``outputSpatialModeX/Y``.
+
+    A seeded TA ALSO re-emits from its INPUT facet, back along the seed path
+    (``_backward_reemission``, tagged ``emission_key="backward"``): power from
+    the measured ``gainSamples`` backward column at the coupled seed power,
+    profile from ``inputSpatialModeX/Y`` — the same facet mode the unseeded
+    backward ASE carries. The *unseeded* both-facet ASE is still injected
+    separately by ``emit_ta_ase_rays`` (decision 6b), and remains suppressed
+    for a seeded chip, so exactly one backward beam exists either way.
 
     GEOMETRY: the amplified beam leaves from the ``intercept_out`` anchor
     along that anchor's outward normal (axisX) — the chip's waveguide sets the
@@ -595,9 +628,88 @@ def tapered_amplifier_anchor_op(
     )
     # ... then pre-undo the single bend rotation anchor_tracer applies to every
     # op's output, so that pass lands the state exactly where it was built.
-    return [built.rotated_frame(
+    out = [built.rotated_frame(
         sp_rotation_between_directions(out_ray.direction, ray_in.direction),
     )]
+
+    back = _backward_reemission(ray_in, ctx, p_coupled, wl)
+    if back is not None:
+        out.append(back)
+    return out
+
+
+def _backward_reemission(
+    ray_in: BeamRay, ctx: AnchorOpContext, p_coupled_mw: float, wl: float,
+) -> BeamRay | None:
+    """The seeded TA's INPUT-facet emission, radiated back along the seed path.
+
+    Power comes from the measured ``gainSamples`` backward column at the
+    coupled seed power (``ta_backward_power_mw``), so it tracks the seed and
+    the drive current. Everything else matches the UNSEEDED backward ASE the
+    same facet emits (``emit_ta_ase_rays``): it leaves ``intercept_in`` along
+    that anchor's outward axisX, is linearly polarized along the gain axis
+    (axisY), and carries the INPUT-facet mode ``inputSpatialModeX/Y`` — so
+    downstream mode-matching sees one backward profile whether the chip is
+    seeded or not. Returns None when no backward power is configured.
+    """
+    p_back = ta_backward_power_mw(p_coupled_mw, ctx.params)
+    if p_back <= 0.0:
+        return None
+
+    in_anchor = ctx.anchor
+    back_dir = in_anchor.axis_x_body        # outward normal, back toward the seed
+    p = ctx.params
+    in_mode_x = (p.get("inputSpatialModeX") or {})
+    in_mode_y = (p.get("inputSpatialModeY") or {})
+
+    # Same fallback ladder as ``emit_laser_source._facet_beam``: an axis with no
+    # usable waist drops back to the legacy circular guess, so the seeded and
+    # unseeded backward beams stay identical for assets declaring neither.
+    fallback_w0_um = float((p.get("spatialModeX") or {}).get("waistUm", 250.0))
+
+    def _axis(mode: dict) -> tuple[complex, float, float]:
+        w0 = float(mode.get("waistUm", 0.0) or 0.0)
+        if w0 <= 0.0:
+            return _q_at_waist_mm(fallback_w0_um, wl), 1.0, 1.0
+        m2 = float(mode.get("mSquared", 1.0) or 1.0)
+        q = _q_at_waist_mm(
+            w0, wl, m2, float(mode.get("waistZOffsetMm", 0.0) or 0.0),
+        )
+        return q, m2, math.sqrt(m2)
+
+    qx_b, m2x_b, wmx_b = _axis(in_mode_x)
+    qy_b, m2y_b, wmy_b = _axis(in_mode_y)
+
+    # Linearly polarized along the gain axis with the same extinction leak as
+    # the forward output, expressed in the BACKWARD ray's beam-local s/p frame.
+    leak = math.sqrt(10.0 ** (-float(p.get("polarizationExtinctionDb", 20.0)) / 10.0))
+    s_back, _ = beam_local_sp(back_dir)
+    phi_back = jones_rotation_angle(in_anchor.axis_y_body, s_back, back_dir)
+    back_jones = rotate_jones((complex(1.0, 0.0), complex(leak, 0.0)), phi_back)
+
+    built = ray_in.replaced(
+        origin=in_anchor.position_body,
+        direction=back_dir,
+        power_mw=p_back,
+        jones=back_jones,
+        qx=qx_b, qy=qy_b, qxy=0j,
+        m2x=m2x_b, m2y=m2y_b, m2xy=0.0,
+        width_mult_x=wmx_b, width_mult_y=wmy_b, width_mult_xy=0.0,
+        # Tag this one ray so the tracer attributes it to the TA's BACKWARD
+        # emission (the forward output keeps "forward"), matching the unseeded
+        # ASE facet keys — that is what lets the frontend colour and hide the
+        # two independently.
+        emission_key="backward",
+    )
+    # anchor basis -> the backward beam frame, then pre-undo the bend rotation
+    # anchor_tracer applies to every op output (same two-step as the forward
+    # beam above).
+    built = built.rotated_frame(
+        -q_frame_angle_to_axis(in_anchor.axis_y_body, back_dir),
+    )
+    return built.rotated_frame(
+        sp_rotation_between_directions(back_dir, ray_in.direction),
+    )
 
 
 register_anchor_op("tapered_amplifier", tapered_amplifier_anchor_op)

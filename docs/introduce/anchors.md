@@ -41,3 +41,32 @@ Frame math: frontend `optical/frames.ts`, `optical/pose.ts`, `utils/anchorAccess
 - Definitions + invariants: `frontend/src/optical/poseQuantize.ts` and `backend/app/pose_quantize.py` (mirrors — keep the two grids in step).
 - Enforced at the write choke points: the `PoseMm` / `PoseDeg` annotated types on `SceneObjectBase` / `SceneObjectUpdate` / `ComponentBindingBase` / `ComponentBindingUpdate` in `backend/app/schemas.py:33` (they run on the `…Out` models too, so even an un-scrubbed legacy row reads back clean), `assembly_solver.euler_from_matrix`, `frames.ts:sceneObjectEulerFromQuaternion`, `sceneStore.preparePatch` (lock filter → quantize, the single gate for object patches) and the PHY Editor's Alt+drag commit in `ComponentsEditor.tsx`.
 - Invariant: a value at or above the objectives' budget must survive untouched — only sub-grid dust may move.
+
+## Reading an anchor's pose in lab mm
+
+One helper, used by anything that solves against a real optical face:
+`utils/anchorPose.resolveAnchorPosesLab(component, sceneObject, scene)` (plus
+`resolveAnchorPoseLab` for a single id and `resolveObjectAnchorPosesLab` when
+you only have the SceneObject). It returns each anchor's origin and axisX in
+BOTH the Component CAD frame (`posCad` / `axisXCad`, what the align helpers
+take) and lab mm (`posLab` / `axisXLab`), plus the clear-aperture **radius**.
+
+It exists because `componentBindings.anchorsInBindingTree` answers a different
+question: it returns anchors in their owning ASSET's body frame, so a composite
+Component's binding transform is still missing. Before this helper each caller
+re-derived part of the walk and none composed nested bindings.
+
+Two conventions meet inside it and must not be swapped:
+
+- asset body -> Component CAD: the binding's **raw XYZ Euler**
+  (`bindingTreeObject.applyBindingLocalTransform`, mirrored by the backend's
+  `pose._binding_rotation_of`).
+- Component CAD -> lab: the SceneObject's **YXZ-remapped** convention
+  (`optical/frames.rotateLabDir` / `sceneObjectToQuaternion`).
+
+Invariant: the result must equal the backend's
+(`db_scene_loader._binding_tree_transform` composed with
+`pose.pose_to_transform`), or a pose solved from these numbers lands where the
+tracer disagrees. Pinned in `utils/__tests__/mirrorCoupling.test.ts` against
+MIRROR5's traced hit point and reflected direction (both backend outputs). See
+[mirror-coupling.md](mirror-coupling.md) for its first consumer.

@@ -41,7 +41,6 @@ import {
   updateTimingProgramApi,
   deleteTimingProgramApi,
   listTimingProgramsApi,
-  updateDeviceStateApi,
   updateAssemblyRelationApi,
   updateAssetApi,
   updateCollectionApi,
@@ -569,6 +568,14 @@ function writePersistedEditorState(state: PersistedEditorState): void {
 type SceneStore = {
   scene: SceneData;
   previewObjectTransforms: Record<string, Partial<Pick<SceneObject, "xMm" | "yMm" | "zMm" | "rxDeg" | "ryDeg" | "rzDeg">>>;
+  /** Dashed reference polyline the Mirror coupling panel asks the viewer to
+   *  draw (lab mm, one point per vertex). It is the REVERSE reference ray —
+   *  the destination port's own axis run backwards through both mirrors —
+   *  which is the thing you overlap with the seed on a real bench and the
+   *  thing the panel's precondition tests. Purely visual; null = draw
+   *  nothing. Kept in the store rather than passed down because the panel
+   *  and the viewer are siblings. */
+  mirrorCouplingGhost: { pointsLabMm: [number, number, number][] } | null;
   relationDraftTarget: RelationDraftTarget;
   loadStatus: LoadStatus;
   socketStatus: SocketStatus;
@@ -1315,14 +1322,6 @@ type SceneStore = {
     patch: TimingProgramUpdatePayload,
   ) => Promise<TimingProgram>;
   deleteTimingProgram: (programId: string) => Promise<void>;
-  /** Merge ``patch`` into a SceneObject's DeviceState.state JSONB and PUT
-   *  the whole row back (server replaces ``state`` atomically). Used by
-   *  the InstrumentPowerPanel + per-object power toggle to flip
-   *  ``state.power`` without clobbering co-existing keys. */
-  updateDeviceState: (
-    objectId: string,
-    patch: Record<string, unknown>,
-  ) => Promise<DeviceState>;
   selectComponent: (componentId: string | null) => void;
   selectObject: (objectId: string | null, options?: ObjectSelectionOptions) => void;
   /** Batch-set the selected object list. Used by marquee selection in the
@@ -1335,6 +1334,7 @@ type SceneStore = {
     transform: Partial<Pick<SceneObject, "xMm" | "yMm" | "zMm" | "rxDeg" | "ryDeg" | "rzDeg">>,
   ) => void;
   clearPreviewObjectTransform: (objectId?: string) => void;
+  setMirrorCouplingGhost: (ghost: { pointsLabMm: [number, number, number][] } | null) => void;
   setRelationDraftTarget: (target: RelationDraftTarget) => void;
   applyEvent: (event: SceneEvent) => void;
   /** Batch counterpart to `applyEvent` — folds a burst of broadcasts
@@ -2013,6 +2013,7 @@ function reduceSceneEvent(
 export const useSceneStore = create<SceneStore>((set, get) => ({
   scene: emptyScene,
   previewObjectTransforms: {},
+  mirrorCouplingGhost: null,
   relationDraftTarget: null,
   loadStatus: "idle",
   socketStatus: "idle",
@@ -5294,19 +5295,6 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     }));
   },
 
-  async updateDeviceState(objectId, patch) {
-    const existing = get().scene.deviceStates.find((d) => d.objectId === objectId);
-    const merged = { ...(existing?.state ?? {}), ...patch };
-    const updated = await updateDeviceStateApi(objectId, merged);
-    set((state) => ({
-      scene: {
-        ...state.scene,
-        deviceStates: upsertDeviceState(state.scene.deviceStates, updated),
-      },
-    }));
-    return updated;
-  },
-
   selectComponent(componentId) {
     // Selection is decoupled from visibility — Outliner / catalog / search
     // can pick anything regardless of whether it's currently rendered, the
@@ -5635,6 +5623,10 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       delete next[objectId];
       return { previewObjectTransforms: next };
     });
+  },
+
+  setMirrorCouplingGhost(mirrorCouplingGhost) {
+    set({ mirrorCouplingGhost });
   },
 
   setRelationDraftTarget(relationDraftTarget) {

@@ -28,7 +28,6 @@ from app.models import (
     Asset3D,
     Component,
     ComponentBinding,
-    DeviceState,
     ObjectBinding,
     PhysicsElement,
     SceneObject,
@@ -640,7 +639,6 @@ async def _synth_fiber_slot(
         ),
         effective_transform=so_transform,
         dynamic_sources=None,
-        powered_on=True,
     )
 
 
@@ -661,8 +659,7 @@ async def load_anchor_scene_from_component(
 
     Unlike ``load_anchor_scene_from_db`` there is no SceneObject, so: no
     ObjectBinding deltas, no per-instance dynamic_sources, no RF cable
-    resolution, no power-panel gating (everything powered on). The probe
-    ray is supplied by the caller as an initial ray.
+    resolution. The probe ray is supplied by the caller as an initial ray.
     """
     comp = await session.get(Component, component_id)
     if comp is None:
@@ -690,7 +687,6 @@ async def load_anchor_scene_from_component(
             asset=snap,
             effective_transform=effective,
             dynamic_sources=None,
-            powered_on=True,
         ))
     return V3AnchorScene(slots=slots)
 
@@ -728,14 +724,6 @@ async def load_anchor_scene_from_db(
     # SceneObject id; merged onto the AOM slot's dynamic below.
     rf_drive = await hydrate_aom_rf_drive(session, scrub_time_ns)
 
-    # Instrument power panel: objects whose device_states.state.power is False
-    # are powered off. Emitters skip those slots (no beam / no ASE on power-off).
-    ds_rows = (await session.scalars(select(DeviceState))).all()
-    powered_off_ids = {
-        ds.object_id for ds in ds_rows
-        if isinstance(ds.state, dict) and ds.state.get("power") is False
-    }
-
     for so in so_rows:
         if not so.component_id:
             continue
@@ -743,7 +731,6 @@ async def load_anchor_scene_from_db(
         if comp is None:
             continue
 
-        powered_on = so.id not in powered_off_ids
         # Per-emission presentation overrides (Visualization card). Only
         # `visible` is honoured server-side — a hidden emission is not emitted
         # at all, so downstream optics stop reflecting it.
@@ -849,7 +836,6 @@ async def load_anchor_scene_from_db(
                 asset=snap,
                 effective_transform=effective,
                 dynamic_sources=dyn,
-                powered_on=powered_on,
                 emission_visuals=(
                     emission_visuals if isinstance(emission_visuals, dict) else None
                 ),

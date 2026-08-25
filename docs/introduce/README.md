@@ -25,13 +25,15 @@
 - [Kind taxonomy · kinds.md](kinds.md) — 31 kinds + domain/category + the contract of each kind
 - [Optical physics model · optics.md](optics.md) — polarization, the solver, the RF tracer, the TA
 - [Fiber · fiber.md](fiber.md) — optical fibre: single object + spline, endpoint alignment, coupling physics
+- [Mode matching · mode-matching.md](mode-matching.md) — shaping the DBR seed into the TA: reverse-reference η, the lens optimizer, focal inventory
 
 ### Multiphysics and time
-- [Multiphysics modules · multiphysics.md](multiphysics.md) — only the Lab tab + the Magnetics overlay remain (Optics/Electronics/EM were removed)
+- [Multiphysics modules · multiphysics.md](multiphysics.md) — only the Lab tab remains (the Magnetics overlay panel was removed 2026-08-24, its backend kept; Optics/Electronics/EM were removed)
 - [Time-domain simulation · timing.md](timing.md) — Sequence, scrub time, AD9959, the RF chain
 - [RF subsystem overview · rf.md](rf.md) — the panoramic RF index: kinds/devices/panels/propagation BFS/cable, with current state and blind spots
 - [RF cable · cable.md](cable.md) — coax: single object + spline, endpoint linking, RF graph propagation
 - [Placement & snapping · placement.md](placement.md) — the placement and snapping engine
+- [Mirror coupling · mirror-coupling.md](mirror-coupling.md) — two 45° mirrors solved into a port: the closed form, the both-beams-touch-both-mirrors precondition, the free DOF on a U-turn
 
 ### Ops and reference
 - [Main API endpoints · api.md](api.md)

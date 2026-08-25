@@ -43,6 +43,25 @@ export function FloatingPanel({ id, title, icon, children, badge }: Props) {
   const layout = layouts[id];
   const isDocked = layout.dock !== "float";
 
+  // Docked panels split their zone by flex-grow weight over a 0 basis — but
+  // flex only fills the container when the weights SUM to at least 1. The
+  // splitter hands out fractional weights (0.45 / 0.55), so as soon as the
+  // partner collapses or closes, the survivor kept its 0.45 and the bottom
+  // half of the dock rendered as dead space. Normalizing the weight against
+  // the expanded panels currently sharing the zone keeps the ratio the
+  // splitter set while always summing to exactly 1.
+  const dockGrow = (() => {
+    if (!isDocked || layout.collapsed) return undefined;
+    let total = 0;
+    for (const other of Object.values(layouts)) {
+      if (other.visible && !other.collapsed && other.dock === layout.dock) {
+        total += other.dockWeight ?? 1;
+      }
+    }
+    const own = layout.dockWeight ?? 1;
+    return total > 0 ? own / total : 1;
+  })();
+
   // Resolve the dock-zone DOM node to portal into. Runs after every render
   // (no deps) so a panel that mounted before its zone existed — e.g. a panel
   // renders before roomDimensions loads the dock grid — picks the
@@ -286,7 +305,7 @@ export function FloatingPanel({ id, title, icon, children, badge }: Props) {
       <section
         className={`docked-panel${layout.collapsed ? " collapsed" : ""}`}
         data-panel-id={id}
-        style={layout.collapsed ? undefined : { flexGrow: layout.dockWeight ?? 1 }}
+        style={layout.collapsed ? undefined : { flexGrow: dockGrow }}
       >
         <header
           className="docked-panel-header"

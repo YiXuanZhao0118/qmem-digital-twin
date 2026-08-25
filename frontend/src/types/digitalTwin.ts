@@ -1215,28 +1215,10 @@ export type TimingProgramCompile = {
 };
 
 // =============================================================================
-// Kind capabilities (drives UI affordance: power switch / TTL gate / Trigger picker)
+// Kind capabilities (drives UI affordance: TTL gate / Trigger picker)
 // =============================================================================
 // Defaults; per-template Component.properties.hasTriggerInput / hasTtlGateInput
 // can override (e.g. an rf_source variant that does have a trigger input).
-
-export const POWER_KINDS: ReadonlySet<string> = new Set([
-  "laser_source",
-  "tapered_amplifier",
-  "rf_source",
-  // Phase RF.amp (2026-05-14): coaxial RF gain blocks (Mini-Circuits ZHL
-  // series) take +24 V DC bias on the feed-through posts. Membership
-  // here makes the InstrumentPowerPanel auto-attach a power toggle to
-  // each rf_amplifier object; the supply voltage / current spec lives
-  // in RfAmplifierParams (supplyVoltageV / supplyCurrentA).
-  "rf_amplifier",
-  "function_generator",
-  "rf_switch",
-  "detector",
-  "camera",
-  "spectrometer",
-  "wavemeter",
-]);
 
 export const TTL_GATE_KINDS: ReadonlySet<string> = new Set([
   "rf_switch",
@@ -1704,56 +1686,6 @@ export type EmProblemCreatePayload = {
 };
 
 export type EmProblemUpdatePayload = Partial<EmProblemCreatePayload>;
-
-// ---- Coils + Magnetics (Phase F+ Magnetics) -------------------------------
-
-export type CoilShape = "circular_loop" | "solenoid" | "polyline";
-
-export type Coil = {
-  id: string;
-  name: string;
-  shape: CoilShape;
-  /** shape-specific: {radiusMm, turns, lengthMm, axisBodyLocal,
-   *  positionMm (when not bound to SceneObject), pointsMm} */
-  params: Record<string, unknown>;
-  currentA: number;
-  sceneObjectId: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type CoilCreatePayload = {
-  name: string;
-  shape?: CoilShape;
-  params?: Record<string, unknown>;
-  currentA?: number;
-  sceneObjectId?: string | null;
-};
-
-export type CoilUpdatePayload = Partial<CoilCreatePayload>;
-
-export type MagneticsEvalRegion = {
-  centerMm: [number, number, number];
-  sizeMm: [number, number, number];
-  gridDim: [number, number, number];
-};
-
-export type MagneticsProblem = {
-  id: string;
-  name: string;
-  coilIds: string[];
-  evalRegion: MagneticsEvalRegion;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type MagneticsProblemCreatePayload = {
-  name: string;
-  coilIds?: string[];
-  evalRegion?: MagneticsEvalRegion;
-};
-
-export type MagneticsProblemUpdatePayload = Partial<MagneticsProblemCreatePayload>;
 
 // PulseBlasterChannel types removed in alembic 0046: channel_index + invert
 // are now inline on TimingProgram (see TimingProgram type above).

@@ -222,8 +222,6 @@ def emit_anchor_source_rays(
     for slot in scene.slots:
         if slot.asset.kind != "laser_source":
             continue
-        if not slot.powered_on:
-            continue  # instrument power off → no emission
         # Hidden by the user (Visualization card) — skip the whole emission,
         # so downstream optics stop reflecting it too. Same contract as the
         # TA's per-facet gate below.
@@ -275,8 +273,6 @@ def emit_ta_ase_rays(
     for slot in scene.slots:
         if slot.asset.kind != "tapered_amplifier":
             continue
-        if not slot.powered_on:
-            continue  # instrument power off → no ASE
         if slot.scene_object_id in seeded_object_ids:
             continue
         dp = slot.asset.default_params or {}
@@ -292,9 +288,11 @@ def emit_ta_ase_rays(
         # Per-facet emitter: (anchor, outward direction). With both anchors
         # present each facet emits from its own; with only intercept_in we keep
         # the legacy ±axisX pair off that single anchor.
-        # The 4th item is the mode prefix: forward ASE carries the OUTPUT
-        # facet mode (same profile an injected beam gets), backward the seed
-        # facet's own mode.
+        # The 4th item is the mode prefix: each facet's ASE carries the SAME
+        # profile as the seeded light through that same facet — forward ASE the
+        # OUTPUT facet mode (as an injected beam gets), backward ASE the INPUT
+        # facet mode — so mode-matching per facet sees one profile whether the
+        # chip is seeded or emitting ASE.
         facets = (
             [("aseForwardMw", out_anchor, out_anchor.axis_x_body, "output",
               "forward"),

@@ -111,7 +111,13 @@ def _anchors_camel(anchors: list[schemas.AssetAnchor]) -> list[dict]:
 async def create_asset(
     payload: schemas.Asset3DCreate, session: AsyncSession = Depends(get_session)
 ) -> Asset3D:
-    data = payload.model_dump()
+    # `file_version` is a COMPUTED field on Asset3DBase (mtime of file_path),
+    # and pydantic v2 emits computed fields from `model_dump()` — but it is
+    # derived, not a column, so `Asset3D(**data)` raised
+    # "'file_version' is an invalid keyword argument". Every call to this
+    # route 500'd; drop it here rather than moving the property, since the
+    # OUT schema legitimately serves it to clients.
+    data = payload.model_dump(exclude={"file_version"})
     data["anchors"] = _anchors_camel(payload.anchors)
     asset = Asset3D(**data)
     session.add(asset)
