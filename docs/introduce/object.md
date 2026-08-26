@@ -52,3 +52,10 @@ Master 不能被排——它是樹根，前後沒有位置；把 collection 拖�
 3. **Managed 區塊也吃同一個搜尋**（`visibleManagedObjects`，`OutlinerPanel.tsx:370`），所以 `matchingObjectIds` 是掃 `scene.objects` 而不是 `visibleObjects`——只濾樹、不濾 Managed 的話，過濾後畫面上還會剩七條無關的 rf_cable。
 
 搜尋期間 collection 的展開狀態被 override，使用者手動收合的節點不受影響（`expanded` 沒有被寫）；清空搜尋就回到原本的樹。
+
+**全部展開／全部收起（2026-08-26）**：標題列多一顆按鈕（`OutlinerPanel.tsx:1268`），一顆按鈕雙向——只要還有節點沒開就是全開，全開時才是全收（`toggleExpandAll`，`:592`）。兩個實作細節：
+
+1. **判斷「全開」的母體是 `expandableCollectionIds`（`:575`），不是 `collections`**：空的 collection 沒有展開器可按，把它算進去的話 `allExpanded` 永遠是 false，按鈕就再也切不回「收起」。
+2. **Master 不走 `expanded`**：它是唯一預設打開的 collection，所以持久化的是它的 collapsed flag（`MASTER_COLLAPSED_STORAGE_KEY`，`:64`）而不是 expanded flag，兩個 state 都要一起翻。
+
+展開狀態沿用既有的 localStorage 兩把 key，所以全開／全收跨 reload 存活。搜尋進行中按這顆按鈕仍會寫底層 state，但畫面看不出來——搜尋的強制展開優先，清掉搜尋才會顯現。

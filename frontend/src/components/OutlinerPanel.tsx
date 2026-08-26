@@ -19,6 +19,8 @@ import {
   Bookmark,
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Eye,
   EyeOff,
   FolderPlus,
@@ -566,6 +568,36 @@ export function OutlinerPanel() {
       return next;
     });
   }, []);
+
+  /** Collections whose expander actually does something: they hold a
+   *  sub-collection or an object. Master is excluded — it carries its own
+   *  collapsed flag, not an entry in `expanded`. */
+  const expandableCollectionIds = useMemo(() => {
+    const out: string[] = [];
+    for (const collection of collections) {
+      if (collection.parentId === null) continue;
+      const hasContents =
+        (childrenIndex.get(collection.id)?.length ?? 0) > 0 ||
+        (objectsByCollection.get(collection.id)?.length ?? 0) > 0;
+      if (hasContents) out.push(collection.id);
+    }
+    return out;
+  }, [collections, childrenIndex, objectsByCollection]);
+
+  const allExpanded =
+    !masterCollapsed && expandableCollectionIds.every((id) => expanded.has(id));
+
+  /** One button for both directions, Blender-style: anything still closed
+   *  means the next click opens everything; only a fully open tree collapses. */
+  const toggleExpandAll = useCallback(() => {
+    if (allExpanded) {
+      setExpanded(new Set());
+      setMasterCollapsed(true);
+    } else {
+      setExpanded(new Set(expandableCollectionIds));
+      setMasterCollapsed(false);
+    }
+  }, [allExpanded, expandableCollectionIds]);
 
   const startEditing = useCallback((collection: Collection) => {
     setEditingId(collection.id);
@@ -1228,6 +1260,15 @@ export function OutlinerPanel() {
       <div className="section-title">
         <span>Outliner</span>
         <small>active: {collections.find((c) => c.id === activeCollectionId)?.name ?? "—"}</small>
+        <button
+          type="button"
+          className="outliner-action"
+          title={allExpanded ? "Collapse all collections" : "Expand all collections"}
+          aria-label={allExpanded ? "Collapse all collections" : "Expand all collections"}
+          onClick={toggleExpandAll}
+        >
+          {allExpanded ? <ChevronsDownUp size={14} /> : <ChevronsUpDown size={14} />}
+        </button>
         <button
           type="button"
           className={`outliner-action${templatesOpen ? " active" : ""}`}
