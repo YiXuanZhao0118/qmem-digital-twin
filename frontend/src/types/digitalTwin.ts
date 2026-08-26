@@ -427,6 +427,11 @@ export type SceneObject = {
       colorHex?: string | null;
       visible?: boolean;
     }>>;
+    /** ComponentBinding ids this instance draws nothing for (a post mounted
+     *  without its clamping fork). Render-only — the binding row and this
+     *  instance's ObjectBinding deltas survive untouched. See
+     *  utils/componentBindings.hiddenBindingIds. */
+    hiddenBindings?: string[];
     [key: string]: unknown;
   };
   updatedAt?: string;

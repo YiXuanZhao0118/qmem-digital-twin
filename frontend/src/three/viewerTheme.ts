@@ -5,17 +5,12 @@
  * the 3D viewports "light" live here, in one place, to keep the four scenes
  * (main viewer, optical-link viewer, Asset3D preview, Component-binding
  * preview) consistent and easy to re-tune.
- *
- * The ONE exception is the `wireframe` display mode, which intentionally keeps
- * a dark backdrop so the slate wireframe lines read clearly — that value lives
- * here too (VIEWER_BG_WIRE) so the light/dark split is documented in one spot.
  */
 
-/** Non-wireframe scene background + fog — matches the app shell bg (#eef1ef). */
+/** Scene background + fog for every display mode — matches the app shell bg
+ *  (#eef1ef). The X-ray mode keeps this light backdrop too: it fades the
+ *  bodies rather than swapping the room out for a dark void. */
 export const VIEWER_BG_LIGHT = "#eef1ef";
-
-/** Wireframe display mode keeps its dark backdrop (unchanged). */
-export const VIEWER_BG_WIRE = "#0b1120";
 
 /** Reference-grid minor lines — muted grey, slightly darker than the bg so
  *  they're visible without dominating the wavelength-coloured beams. */

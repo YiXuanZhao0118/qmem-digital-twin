@@ -19,7 +19,7 @@ import * as THREE from "three";
 import { Sparkles, Loader2 } from "lucide-react";
 
 import { useSceneStore } from "../../store/sceneStore";
-import type { ComponentItem, SceneObject } from "../../types/digitalTwin";
+import type { ComponentItem, SceneData, SceneObject } from "../../types/digitalTwin";
 import {
   labDirToThreeLocal,
   sceneObjectEulerFromQuaternion,
@@ -44,8 +44,77 @@ const CENTRE_ANCHORS = ["optical_center", "intercept_in"];
 
 type Pose = Partial<Pick<SceneObject, "xMm" | "yMm" | "zMm" | "rxDeg" | "ryDeg" | "rzDeg">>;
 
+/** One object's absolute target pose, plus the along-beam coordinates the card
+ *  shows. The backend's moves are deltas from the geometry at solve time, so
+ *  they are resolved to absolute poses once, when the solve returns. Preview/
+ *  Apply then write the same place every time instead of stacking another delta
+ *  on each click (or on top of a manual nudge).
+ *
+ *  `sBeforeMm` / `sAfterMm` are the lens's optical centre projected on the beam
+ *  axis, measured from the Start element (Method 1/2's reference plane) — the
+ *  number you'd read off the rail — so two candidate columns are comparable by
+ *  position, not just by shift magnitude. */
+type PlannedMove = {
+  objectId: string; name: string; pose: Pose; focalMm: number | null;
+  rollDeg: number; sBeforeMm: number; sAfterMm: number; perpMm: number;
+};
+
 function parseFocals(text: string): number[] {
   return text.split(/[,\s]+/).map((t) => Number(t)).filter((n) => Number.isFinite(n) && n !== 0);
+}
+
+function pivotOf(scene: SceneData, obj: SceneObject): THREE.Vector3 {
+  const comp = scene.components.find((c) => c.id === obj.componentId) as ComponentItem | undefined;
+  if (comp) {
+    const anchors = resolveAnchorPosesLab(comp, obj, scene);
+    const centre = CENTRE_ANCHORS.map((id) => anchors.find((a) => a.anchorId === id)).find((a) => !!a) ?? anchors[0];
+    if (centre) return new THREE.Vector3(centre.posLab.x, centre.posLab.y, centre.posLab.z);
+  }
+  return new THREE.Vector3(obj.xMm, obj.yMm, obj.zMm);
+}
+
+function poseFromMove(obj: SceneObject, move: ModeMatchMove, pivot: THREE.Vector3): Pose {
+  const t = move.translateWorldMm;
+  const deg = move.rotateDeg ?? 0;
+  if (Math.abs(deg) < 1e-6) {
+    return { xMm: obj.xMm + t.x, yMm: obj.yMm + t.y, zMm: obj.zMm + t.z };
+  }
+  const rad = (deg * Math.PI) / 180;
+  const axisLab = new THREE.Vector3(move.rotateAxisWorld.x, move.rotateAxisWorld.y, move.rotateAxisWorld.z).normalize();
+  const rLab = new THREE.Quaternion().setFromAxisAngle(axisLab, rad);
+  const rel = new THREE.Vector3(obj.xMm - pivot.x, obj.yMm - pivot.y, obj.zMm - pivot.z).applyQuaternion(rLab);
+  const aLocal = labDirToThreeLocal(move.rotateAxisWorld).normalize();
+  const qDelta = new THREE.Quaternion().setFromAxisAngle(aLocal, rad);
+  const e = sceneObjectEulerFromQuaternion(qDelta.multiply(sceneObjectToQuaternion(obj)));
+  return {
+    xMm: pivot.x + rel.x + t.x, yMm: pivot.y + rel.y + t.y, zMm: pivot.z + rel.z + t.z,
+    rxDeg: e.rxDeg, ryDeg: e.ryDeg, rzDeg: e.rzDeg,
+  };
+}
+
+/** Resolve one solution's deltas against `scene` into absolute target poses,
+ *  with each lens's along-beam position measured from `ref`. */
+function planFromSolution(scene: SceneData, sol: ModeMatchSolution, ref: THREE.Vector3): PlannedMove[] {
+  return sol.moves.flatMap((move) => {
+    const obj = scene.objects.find((o) => o.id === move.objectId);
+    if (!obj) return [];
+    const pivot = pivotOf(scene, obj);
+    const axis = new THREE.Vector3(move.rotateAxisWorld.x, move.rotateAxisWorld.y, move.rotateAxisWorld.z).normalize();
+    const t = new THREE.Vector3(move.translateWorldMm.x, move.translateWorldMm.y, move.translateWorldMm.z);
+    const along = t.dot(axis);
+    // The roll pivots about the optical centre, so only the translation moves it.
+    const sBeforeMm = pivot.clone().sub(ref).dot(axis);
+    return [{
+      objectId: move.objectId,
+      name: move.name,
+      pose: poseFromMove(obj, move, pivot),
+      focalMm: move.focalMm ?? null,
+      rollDeg: move.rotateDeg ?? 0,
+      sBeforeMm,
+      sAfterMm: sBeforeMm + along,
+      perpMm: t.clone().addScaledVector(axis, -along).length(),
+    }];
+  });
 }
 
 export function ModeMatchingPanel() {
@@ -86,6 +155,9 @@ export function ModeMatchingPanel() {
   const [result, setResult] = useState<ModeMatchResult | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [previewKey, setPreviewKey] = useState<string | null>(null);
+  const [plans, setPlans] = useState<Record<string, PlannedMove[]>>({});
+  const [planRef, setPlanRef] = useState<string | null>(null);
+  const [appliedKey, setAppliedKey] = useState<string | null>(null);
 
   const seed = seedId ? sources.find((o) => o.id === seedId) : sources[0];
   const ta = taId ? tas.find((o) => o.id === taId) : tas[0];
@@ -96,40 +168,14 @@ export function ModeMatchingPanel() {
     setPreviewKey(null);
   }, [clearPreviewObjectTransform]);
 
-  const pivotOf = useCallback((obj: SceneObject): THREE.Vector3 => {
-    const comp = scene.components.find((c) => c.id === obj.componentId) as ComponentItem | undefined;
-    if (comp) {
-      const anchors = resolveAnchorPosesLab(comp, obj, scene);
-      const centre = CENTRE_ANCHORS.map((id) => anchors.find((a) => a.anchorId === id)).find((a) => !!a) ?? anchors[0];
-      if (centre) return new THREE.Vector3(centre.posLab.x, centre.posLab.y, centre.posLab.z);
-    }
-    return new THREE.Vector3(obj.xMm, obj.yMm, obj.zMm);
-  }, [scene]);
-
-  const poseFromMove = useCallback((obj: SceneObject, move: ModeMatchMove, pivot: THREE.Vector3): Pose => {
-    const t = move.translateWorldMm;
-    const deg = move.rotateDeg ?? 0;
-    if (Math.abs(deg) < 1e-6) {
-      return { xMm: obj.xMm + t.x, yMm: obj.yMm + t.y, zMm: obj.zMm + t.z };
-    }
-    const rad = (deg * Math.PI) / 180;
-    const axisLab = new THREE.Vector3(move.rotateAxisWorld.x, move.rotateAxisWorld.y, move.rotateAxisWorld.z).normalize();
-    const rLab = new THREE.Quaternion().setFromAxisAngle(axisLab, rad);
-    const rel = new THREE.Vector3(obj.xMm - pivot.x, obj.yMm - pivot.y, obj.zMm - pivot.z).applyQuaternion(rLab);
-    const aLocal = labDirToThreeLocal(move.rotateAxisWorld).normalize();
-    const qDelta = new THREE.Quaternion().setFromAxisAngle(aLocal, rad);
-    const e = sceneObjectEulerFromQuaternion(qDelta.multiply(sceneObjectToQuaternion(obj)));
-    return {
-      xMm: pivot.x + rel.x + t.x, yMm: pivot.y + rel.y + t.y, zMm: pivot.z + rel.z + t.z,
-      rxDeg: e.rxDeg, ryDeg: e.ryDeg, rzDeg: e.rzDeg,
-    };
-  }, []);
-
   const solve = useCallback(async () => {
     if (!seed || !ta) return;
     setBusy(true);
     setFeedback(null);
     setResult(null);
+    setPlans({});
+    setPlanRef(null);
+    setAppliedKey(null);
     clearPreview();
     try {
       const focalInventory: Record<string, number[]> = {};
@@ -148,6 +194,13 @@ export function ModeMatchingPanel() {
         etaTarget,
         focalInventory: Object.keys(focalInventory).length ? focalInventory : undefined,
       });
+      // Freeze the deltas against the scene as it stands now — the baseline the
+      // optimizer solved from — so each card holds absolute targets, not offsets.
+      const live = useSceneStore.getState().scene;
+      const refObj = live.objects.find((o) => o.id === (startId ?? seed.id)) ?? null;
+      const ref = refObj ? pivotOf(live, refObj) : new THREE.Vector3();
+      setPlanRef(refObj?.name ?? null);
+      setPlans(Object.fromEntries(res.solutions.map((s) => [s.key, planFromSolution(live, s, ref)])));
       setResult(res);
       setFeedback(res.solutions.length ? null : "No solution returned.");
     } catch (err) {
@@ -159,40 +212,43 @@ export function ModeMatchingPanel() {
 
   const previewSolution = useCallback((sol: ModeMatchSolution) => {
     clearPreviewObjectTransform();
-    for (const move of sol.moves) {
-      const obj = scene.objects.find((o) => o.id === move.objectId);
-      if (obj) previewObjectTransform(move.objectId, poseFromMove(obj, move, pivotOf(obj)));
-    }
+    for (const p of plans[sol.key] ?? []) previewObjectTransform(p.objectId, p.pose);
     setPreviewKey(sol.key);
-  }, [scene.objects, previewObjectTransform, clearPreviewObjectTransform, poseFromMove, pivotOf]);
+  }, [plans, previewObjectTransform, clearPreviewObjectTransform]);
 
   const applySolution = useCallback(async (sol: ModeMatchSolution) => {
+    const plan = plans[sol.key] ?? [];
+    if (!plan.length) return;
     setBusy(true);
     try {
       clearPreview();
-      await updateSceneObjects(sol.moves.map((move) => {
-        const obj = scene.objects.find((o) => o.id === move.objectId)!;
-        const pose = poseFromMove(obj, move, pivotOf(obj));
-        const patch: Record<string, unknown> = { ...pose };
-        if (move.focalMm != null) {
-          patch.dynamicSources = { ...((obj.dynamicSources ?? {}) as Record<string, unknown>), focalLengthMm: move.focalMm };
+      const objects = useSceneStore.getState().scene.objects;
+      await updateSceneObjects(plan.map((p) => {
+        const patch: Record<string, unknown> = { ...p.pose };
+        if (p.focalMm != null) {
+          const obj = objects.find((o) => o.id === p.objectId);
+          patch.dynamicSources = { ...((obj?.dynamicSources ?? {}) as Record<string, unknown>), focalLengthMm: p.focalMm };
         }
-        return { objectId: move.objectId, patch: patch as never };
+        return { objectId: p.objectId, patch: patch as never };
       }));
-      setFeedback(`Applied “${sol.label}” — ${sol.moves.length} move${sol.moves.length === 1 ? "" : "s"} (undo restores all).`);
+      setAppliedKey(sol.key);
+      setFeedback(`Applied “${sol.label}” — ${plan.length} move${plan.length === 1 ? "" : "s"} (undo restores all). Re-solve to plan from here.`);
     } catch (err) {
       setFeedback(`Apply failed: ${(err as Error).message}`);
     } finally {
       setBusy(false);
     }
-  }, [scene.objects, updateSceneObjects, poseFromMove, pivotOf, clearPreview]);
+  }, [plans, updateSceneObjects, clearPreview]);
 
   const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+  const signed = (d: number) => `${d >= 0 ? "+" : "−"}${Math.abs(d).toFixed(1)}`;
   const row: React.CSSProperties = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, margin: "4px 0" };
   const rangeSol = result?.solutions.filter((s) => s.column === "range") ?? [];
   const freeSol = result?.solutions.filter((s) => s.column === "free") ?? [];
 
-  const card = (sol: ModeMatchSolution) => (
+  const card = (sol: ModeMatchSolution) => {
+    const plan = plans[sol.key] ?? [];
+    return (
     <div key={sol.key} style={{ border: "1px solid #3a3a3a", borderRadius: 6, padding: 8, marginBottom: 8, fontSize: 12 }}>
       <div style={{ fontWeight: 600, marginBottom: 4 }}>{sol.label}</div>
       <div>η {pct(sol.etaBaseline)} → <b>{pct(sol.eta)}</b></div>
@@ -200,28 +256,36 @@ export function ModeMatchingPanel() {
       <div style={{ color: sol.feasible ? "#4caf50" : "#e57373" }}>{sol.feasible ? "✓ meets target" : "✗ below target"}</div>
       {sol.reason && <div style={{ color: "#e0a060" }}>{sol.reason}</div>}
       <div style={{ margin: "4px 0" }}>
-        {sol.moves.map((m) => {
-          const t = m.translateWorldMm;
-          const sh = Math.hypot(t.x, t.y, t.z);
-          return (
-            <div key={m.objectId}>
-              {m.name}: {sh.toFixed(1)}mm
-              {Math.abs(m.rotateDeg) > 1e-3 && `, roll ${m.rotateDeg.toFixed(1)}°`}
+        {plan.length > 0 && planRef && (
+          <div style={{ opacity: 0.6, fontSize: 11 }}>position along beam from {planRef}</div>
+        )}
+        {plan.map((m) => (
+          <div key={m.objectId} style={{ marginTop: 2 }}>
+            <div>
+              {m.name}
+              {Math.abs(m.rollDeg) > 1e-3 && `, roll ${m.rollDeg.toFixed(1)}°`}
               {m.focalMm != null && `, f→${m.focalMm}`}
             </div>
-          );
-        })}
+            <div style={{ paddingLeft: 8, opacity: 0.8, fontVariantNumeric: "tabular-nums" }}>
+              {m.sBeforeMm.toFixed(1)} → <b>{m.sAfterMm.toFixed(1)}</b> mm ({signed(m.sAfterMm - m.sBeforeMm)})
+              {m.perpMm > 0.05 && `, ⊥ ${m.perpMm.toFixed(1)}`}
+            </div>
+          </div>
+        ))}
       </div>
       <div style={{ display: "flex", gap: 6 }}>
-        <button type="button" style={{ flex: 1 }} disabled={!sol.moves.length}
+        <button type="button" style={{ flex: 1 }} disabled={!plan.length}
           onClick={() => (previewKey === sol.key ? clearPreview() : previewSolution(sol))}>
           {previewKey === sol.key ? "Clear" : "Preview"}
         </button>
-        <button type="button" className="primary-button" style={{ flex: 1 }} disabled={busy || !sol.moves.length}
-          onClick={() => applySolution(sol)}>Apply</button>
+        <button type="button" className="primary-button" style={{ flex: 1 }}
+          disabled={busy || !plan.length || appliedKey !== null}
+          title={appliedKey !== null ? "Already applied — re-solve to plan from the new positions." : undefined}
+          onClick={() => applySolution(sol)}>{appliedKey === sol.key ? "Applied" : "Apply"}</button>
       </div>
     </div>
-  );
+    );
+  };
 
   return (
     <FloatingPanel id="mode-matching" title="Mode matching" icon={<Sparkles size={15} />}

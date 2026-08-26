@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeftRight, Bookmark, BookmarkX, Crosshair, Grid3x3, Move, RotateCw, Sparkles, Spline, Target, Waypoints } from "lucide-react";
+import { ArrowLeftRight, Blend, Bookmark, BookmarkX, Crosshair, Move, RotateCw, Ruler, Sparkles, Spline, Target, Waypoints } from "lucide-react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
@@ -29,7 +29,7 @@ import { capabilityProfile } from "../kinds/_capabilityProfile";
 import { OpticalLinkViewerContent } from "./optical/OpticalLinkViewerPanel";
 import type { RfCableEndpointLink } from "../types/digitalTwin";
 
-import { useSceneStore, TOUCH_OPS, TOUCH_OP_BY_ID, type FeatureKind, type TouchOp } from "../store/sceneStore";
+import { useSceneStore, TOUCH_OPS, TOUCH_OP_BY_ID, type FeatureKind, type MeasurePick, type TouchOp } from "../store/sceneStore";
 import { disposeObject, loadAssetObject } from "../three/loadAsset";
 import { createLodUpdaterState, updateSceneLod } from "../three/lod/lodUpdater";
 import {
@@ -38,12 +38,15 @@ import {
 } from "../three/bindingRendererGate";
 import {
   findAnchorInBindingTree,
+  hiddenBindingIds,
   primaryAsset,
   resolveBindingTree,
   type ResolvedBindingNode,
 } from "../utils/componentBindings";
 import { ANNOTATION_KIND_IDS, instanceParamsKey } from "../utils/instanceParams";
 import { beamColorForSource } from "../three/opticalBeams";
+import { beamKey, isBeamVisible } from "../utils/beamVisibility";
+import type { EmissionKey } from "../utils/emissionVisuals";
 import {
   type DebugLabSegment,
   type DebugTraceSegment,
@@ -75,7 +78,6 @@ import {
 import { opticalObjectIdSet } from "../utils/opticalDomain";
 import { disposeFarfieldLobe, makeFarfieldLobe } from "../three/hornFarfield";
 import { disposeRfBadgeSprite, makeRfBadgeSprite } from "../three/rfBadge";
-import { syncWireframeShellGeometry } from "../three/wireframeShell";
 import { computeWaveplateFastAxisDeg } from "../utils/waveplateAxis";
 import {
   buildRfPropagationSchedule,
@@ -106,7 +108,7 @@ THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
 // sampling is needed again.
 
 import { createLabPhotoRoom } from "../three/photoRoom";
-import { VIEWER_BG_LIGHT, VIEWER_BG_WIRE } from "../three/viewerTheme";
+import { VIEWER_BG_LIGHT } from "../three/viewerTheme";
 import { applyObjectGeometryOffset, applyObjectTransform, mmToThree } from "../three/transformUtils";
 import { assetAnchorWorld, relationTarget, worldAnchor } from "../utils/relationAnchors";
 import { anchorObjectLocalAxisY, anchorObjectLocalPos, anchorObjectLocalPrimaryDir } from "../utils/anchorAccess";
@@ -125,7 +127,7 @@ type RoomDimensions = {
   heightMm: number;
 };
 
-type ViewerDisplayMode = "wireframe" | "rendered" | "node-edit" | "optical-link";
+type ViewerDisplayMode = "xray" | "rendered" | "node-edit" | "optical-link";
 type AxisView = "xPos" | "xNeg" | "yPos" | "yNeg" | "zPos" | "zNeg";
 type AxisViewTarget = AxisView | "home";
 
@@ -152,9 +154,9 @@ const WORLD_UP = new THREE.Vector3(0, 0, 1);
 const DISPLAY_MODE_OPTIONS: Array<{
   mode: ViewerDisplayMode;
   title: string;
-  Icon: typeof Grid3x3;
+  Icon: typeof Blend;
 }> = [
-  { mode: "wireframe", title: "Wireframe display", Icon: Grid3x3 },
+  { mode: "xray", title: "X-ray display — every body semi-transparent, keeping its own colour", Icon: Blend },
   { mode: "rendered", title: "Rendered display", Icon: Sparkles },
   // Node-edit mode: click any cable (fiber or rf_cable) to bring up its
   // Bezier spline gizmo; drag the anchor / handle spheres to reshape the
@@ -254,65 +256,46 @@ function replaceMeshMaterial(mesh: THREE.Mesh, material: THREE.Material): void {
   disposeMaterial(previous);
 }
 
-/** The wireframe LINES of a wireframe-mode mesh, drawn as a child mesh that
- *  SHARES the parent's geometry. The parent itself carries a faint
- *  translucent face material, so a body reads as a see-through volume with
- *  its wireframe on top instead of a bare line soup. Two objects are needed
- *  because one Mesh can only hold one material per geometry group. */
-function makeWireframeShell(geometry: THREE.BufferGeometry, side: THREE.Side): THREE.Mesh {
-  const shell = new THREE.Mesh(
-    geometry,
-    new THREE.MeshBasicMaterial({
-      // Slate lines on a dark background — matches the optical-link view's
-      // wireframe palette (#94a3b8 @ 0.55).
-      color: "#94a3b8",
-      wireframe: true,
-      transparent: true,
-      opacity: 0.55,
-      depthWrite: false,
-      side,
-    }),
+/** Clone a material and knock it down to a translucent, see-through version
+ *  of itself — the shared primitive behind both the X-ray display mode and
+ *  the optical-link ghost. Always CLONES because loaders may share one
+ *  material across instances of the same asset; mutating in place would
+ *  fade every copy. `depthWrite` goes off so bodies behind it stay visible,
+ *  which is the whole point of a see-through pass. */
+function dimMaterialClone(material: THREE.Material, maxOpacity: number): THREE.Material {
+  const clone = material.clone();
+  clone.transparent = true;
+  clone.opacity = Math.min(
+    "opacity" in material ? (material as THREE.MeshBasicMaterial).opacity : 1,
+    maxOpacity,
   );
-  shell.name = "wireframe-shell";
-  shell.userData.isWireShell = true;
-  // Never a raycast target: pickObject / pickFeature read objectId off the
-  // hit mesh and measure geometry features on it, so a second coincident
-  // mesh would just duplicate every hit.
-  shell.raycast = () => {};
-  // Both the shell and the translucent faces are transparent + depthWrite:
-  // false, so only renderOrder decides who draws last. Lines last, or the
-  // faces wash them out.
-  shell.renderOrder = 2;
-  return shell;
+  clone.depthWrite = false;
+  return clone;
 }
 
-/** Detach + free the shell added by `makeWireframeShell`. Disposes the
- *  material only — the geometry belongs to the parent mesh. */
-function removeWireframeShell(mesh: THREE.Mesh): void {
-  const shell = mesh.children.find((child) => child.userData?.isWireShell) as THREE.Mesh | undefined;
-  if (!shell) return;
-  mesh.remove(shell);
-  disposeMaterial(shell.material);
-}
+/** How see-through the X-ray display mode makes each body. Higher than the
+ *  optical-link ghost (0.16) because here EVERY object is dimmed — nothing
+ *  is left at full strength to read against. */
+const XRAY_OPACITY = 0.25;
 
-/** Switch the viewer's component meshes between rendered + wireframe modes.
+/** Switch the viewer's component meshes between rendered + X-ray modes.
  *
- *  Wireframe mode swaps every Mesh's material for an unlit, barely-there
- *  translucent MeshBasicMaterial and hangs a `makeWireframeShell` child off
- *  it for the lines. The original material is stashed on
+ *  X-ray mode keeps each mesh's own material — and therefore its colour, so
+ *  components stay identifiable — and swaps in a `dimMaterialClone` of it.
+ *  The original is stashed on
  *  `mesh.userData.__rendered{Material,CastShadow,ReceiveShadow}` BEFORE
  *  the swap so we can hand it back when the user flips back to "rendered".
- *  Without that cache, switching back left the wireframe material in place
+ *  Without that cache, switching back left the X-ray material in place
  *  (the original was disposed inside replaceMeshMaterial) — see the
  *  "wireframe sticks" bug.
  *
- *  `solid` opts one object out of the wireframe treatment while the mode
- *  stays wireframe: the face-touch tool marks its picked bodies solid so
+ *  `solid` opts one object out of the X-ray treatment while the mode
+ *  stays xray: the face-touch tool marks its picked bodies solid so
  *  they stand out against the translucent rest of the scene. It takes the
  *  same path as "rendered", so the stash/restore stays symmetric.
  *
  *  Re-runs of this function (e.g. wrapper cache hit + decoration rebuild)
- *  are idempotent: switching wireframe→wireframe doesn't re-stash, and
+ *  are idempotent: switching xray→xray doesn't re-stash, and
  *  switching rendered→rendered is a no-op.
  */
 function applyViewerDisplayMode(
@@ -320,47 +303,36 @@ function applyViewerDisplayMode(
   mode: ViewerDisplayMode,
   solid = false,
 ): void {
-  const wantWireframe = mode === "wireframe" && !solid;
-  // Collect before mutating: the wireframe branch ADDS a child mesh, and
-  // traverse() would then walk straight into the shell we just created.
+  const wantXray = mode === "xray" && !solid;
   const meshes: THREE.Mesh[] = [];
   object.traverse((child) => {
-    if (child instanceof THREE.Mesh && !child.userData?.isWireShell) meshes.push(child);
+    if (child instanceof THREE.Mesh) meshes.push(child);
   });
 
   for (const child of meshes) {
     const cached = child.userData.__renderedMaterial as THREE.Material | THREE.Material[] | undefined;
-    const isCurrentlyWireframe = cached !== undefined;
+    const isCurrentlyXray = cached !== undefined;
 
-    if (wantWireframe) {
-      if (isCurrentlyWireframe) continue;
+    if (wantXray) {
+      if (isCurrentlyXray) continue;
       // Stash originals; do NOT dispose — they have to survive the swap
       // so we can restore them on the way back.
       child.userData.__renderedMaterial = child.material;
       child.userData.__renderedCastShadow = child.castShadow;
       child.userData.__renderedReceiveShadow = child.receiveShadow;
-      const side = materialSide(child.material);
-      child.material = new THREE.MeshBasicMaterial({
-        // Faint fill so bodies read as volumes; depthWrite stays off so the
-        // whole scene remains see-through, which is the point of the mode.
-        color: "#94a3b8",
-        transparent: true,
-        opacity: 0.12,
-        depthWrite: false,
-        side,
-      });
-      child.add(makeWireframeShell(child.geometry, side));
+      child.material = Array.isArray(child.material)
+        ? child.material.map((item) => dimMaterialClone(item, XRAY_OPACITY))
+        : dimMaterialClone(child.material, XRAY_OPACITY);
       child.castShadow = false;
       child.receiveShadow = false;
       continue;
     }
 
     // "rendered" / "node-edit" / "optical-link", or a face-touch pick that
-    // is being shown solid inside wireframe mode.
-    if (!isCurrentlyWireframe) continue;
-    removeWireframeShell(child);
-    // The current material is the translucent MeshBasicMaterial we made
-    // above; dispose it before swapping the cached original back in.
+    // is being shown solid inside X-ray mode.
+    if (!isCurrentlyXray) continue;
+    // The current material is the dimmed clone we made above; dispose it
+    // before swapping the cached original back in.
     disposeMaterial(child.material);
     child.material = cached;
     child.castShadow = (child.userData.__renderedCastShadow as boolean | undefined) ?? true;
@@ -379,10 +351,9 @@ function applyViewerDisplayMode(
  *  translucent shell so the beam chain and the optics themselves read clearly.
  *
  *  The original material is stashed on `mesh.userData.__opaqueMaterial` and a
- *  CLONE is dimmed, because loaders may share one material across instances of
- *  the same asset — mutating it in place would ghost every copy. Idempotent in
- *  both directions; the caller must un-ghost BEFORE `applyViewerDisplayMode`
- *  so the wireframe swap never caches a ghosted material. */
+ *  `dimMaterialClone` takes its place. Idempotent in both directions; the
+ *  caller must un-ghost BEFORE `applyViewerDisplayMode` so the X-ray swap
+ *  never caches a ghosted material. */
 function applyOpticalLinkGhost(object: THREE.Object3D, ghost: boolean): void {
   object.traverse((child) => {
     if (!(child instanceof THREE.Mesh)) return;
@@ -390,38 +361,15 @@ function applyOpticalLinkGhost(object: THREE.Object3D, ghost: boolean): void {
     if (ghost) {
       if (stashed !== undefined) return;
       child.userData.__opaqueMaterial = child.material;
-      const dim = (material: THREE.Material): THREE.Material => {
-        const clone = material.clone();
-        clone.transparent = true;
-        clone.opacity = Math.min(
-          "opacity" in material ? (material as THREE.MeshBasicMaterial).opacity : 1,
-          0.16,
-        );
-        clone.depthWrite = false;
-        return clone;
-      };
       child.material = Array.isArray(child.material)
-        ? child.material.map(dim)
-        : dim(child.material);
+        ? child.material.map((item) => dimMaterialClone(item, 0.16))
+        : dimMaterialClone(child.material, 0.16);
       return;
     }
     if (stashed === undefined) return;
     disposeMaterial(child.material); // the clone made above
     child.material = stashed;
     delete child.userData.__opaqueMaterial;
-  });
-}
-
-function applyEnvironmentDisplayMode(object: THREE.Object3D, mode: ViewerDisplayMode): void {
-  object.traverse((child) => {
-    if (!(child instanceof THREE.Mesh)) return;
-    const materials = Array.isArray(child.material) ? child.material : [child.material];
-    for (const material of materials) {
-      if ("wireframe" in material) {
-        (material as THREE.MeshBasicMaterial | THREE.MeshStandardMaterial).wireframe = mode === "wireframe";
-        material.needsUpdate = true;
-      }
-    }
   });
 }
 
@@ -797,9 +745,6 @@ function addWireframeOutline(wrapper: THREE.Object3D): void {
   wrapper.traverse((child) => {
     if (!(child instanceof THREE.Mesh) || !child.geometry) return;
     if (child.userData?.isOutline) return;
-    // The wireframe shell shares its parent's geometry — outlining it would
-    // just draw every amber edge twice.
-    if (child.userData?.isWireShell) return;
     const edges = new THREE.EdgesGeometry(child.geometry, 30);
     const lines = new THREE.LineSegments(edges, lineMaterial);
     lines.userData.isOutline = true;
@@ -1231,19 +1176,72 @@ type DigitalTwinViewerProps = {
    *  panel-keyed slices of zustand state (transformCursorMm, gizmoMode).
    *  In single-view there is only "left". */
   panelKey: "left" | "right";
-  /** Display mode for THIS viewer instance (Render vs Wireframe). Controlled
+  /** Display mode for THIS viewer instance (Rendered vs X-ray). Controlled
    *  by the parent so each panel in dual-view can hold its own value while
    *  sharing every other piece of scene state via zustand. */
   displayMode: ViewerDisplayMode;
   onDisplayModeChange: (mode: ViewerDisplayMode) => void;
 };
 
+/** Wedge geometry shared by the two pie overlays: an annulus slice from
+ *  `startDeg` spanning `spanDeg`, in the 120×120 viewBox both pies use.
+ *  Angles are SVG-convention (0° = +x, growing clockwise on screen). */
+const PIE_CX = 60;
+const PIE_CY = 60;
+const PIE_R_OUTER = 56;
+const PIE_R_INNER = 22;
+
+function pieWedgePath(startDeg: number, spanDeg: number): string {
+  const a0 = (startDeg * Math.PI) / 180;
+  const a1 = ((startDeg + spanDeg) * Math.PI) / 180;
+  const at = (r: number, a: number) => ({ x: PIE_CX + r * Math.cos(a), y: PIE_CY + r * Math.sin(a) });
+  const o0 = at(PIE_R_OUTER, a0);
+  const o1 = at(PIE_R_OUTER, a1);
+  const i0 = at(PIE_R_INNER, a0);
+  const i1 = at(PIE_R_INNER, a1);
+  // large-arc flag: a wedge wider than a half-turn needs it. The 60° and
+  // 120° wedges in use never do, but keeping it derived stops a future
+  // 2-wedge pie from silently drawing the short way round.
+  const large = spanDeg > 180 ? 1 : 0;
+  return [
+    `M ${o0.x.toFixed(2)} ${o0.y.toFixed(2)}`,
+    `A ${PIE_R_OUTER} ${PIE_R_OUTER} 0 ${large} 1 ${o1.x.toFixed(2)} ${o1.y.toFixed(2)}`,
+    `L ${i1.x.toFixed(2)} ${i1.y.toFixed(2)}`,
+    `A ${PIE_R_INNER} ${PIE_R_INNER} 0 ${large} 0 ${i0.x.toFixed(2)} ${i0.y.toFixed(2)}`,
+    "Z",
+  ].join(" ");
+}
+
+/** Centre of a wedge, where its glyphs go. */
+function pieWedgeCenter(startDeg: number, spanDeg: number): { x: number; y: number } {
+  const mid = ((startDeg + spanDeg / 2) * Math.PI) / 180;
+  const r = (PIE_R_INNER + PIE_R_OUTER) / 2;
+  return { x: PIE_CX + r * Math.cos(mid), y: PIE_CY + r * Math.sin(mid) };
+}
+
+/** One feature-kind glyph — a dot for a vertex, a bar for an edge, a square
+ *  for a face. Shared by the touch pie and the measure pie so the same shape
+ *  always means the same kind of pick. */
+function featureGlyph(kind: FeatureKind, px: number, py: number): JSX.Element {
+  if (kind === "vertex") return <circle cx={px} cy={py} r={2.6} fill="currentColor" />;
+  if (kind === "edge") return (
+    <line
+      x1={px - 5} y1={py} x2={px + 5} y2={py}
+      stroke="currentColor" strokeWidth={2.2} strokeLinecap="round"
+    />
+  );
+  return (
+    <rect x={px - 4.5} y={py - 4.5} width={9} height={9} rx={1}
+      fill="none" stroke="currentColor" strokeWidth={1.6} />
+  );
+}
+
 /** Pie-chart overlay for the 6 face-touch ops with this fixed wedge order
  *  (per user request "top 1 2 3 / bottom 1 2 3"):
  *    Top half left→right    : V·E (upper-left), V·F (top), E·F (upper-right)
  *    Bottom half left→right : V·V (lower-left), E·E (bottom), F·F (lower-right)
  *  Centre button toggles the snap direction (A→B / B→A). Only visible when
- *  the scene is in wireframe display mode. */
+ *  the scene is in X-ray display mode. */
 function ToolsPie({
   activeTool,
   faceTouchOp,
@@ -1263,54 +1261,12 @@ function ToolsPie({
   //   0 upper-left, 1 top, 2 upper-right,
   //   3 lower-right, 4 bottom, 5 lower-left
   const wedgeOps: TouchOp["id"][] = ["ve", "vf", "ef", "ff", "ee", "vv"];
-  const cx = 60;
-  const cy = 60;
-  const rOuter = 56;
-  const rInner = 22;
-  // Wedge i goes from (-180 + i*60) to (-180 + (i+1)*60). Mid is at the
-  // wedge centre.
-  const wedgePath = (i: number): string => {
-    const startDeg = -180 + i * 60;
-    const endDeg = startDeg + 60;
-    const a0 = (startDeg * Math.PI) / 180;
-    const a1 = (endDeg * Math.PI) / 180;
-    const x0o = cx + rOuter * Math.cos(a0);
-    const y0o = cy + rOuter * Math.sin(a0);
-    const x1o = cx + rOuter * Math.cos(a1);
-    const y1o = cy + rOuter * Math.sin(a1);
-    const x0i = cx + rInner * Math.cos(a0);
-    const y0i = cy + rInner * Math.sin(a0);
-    const x1i = cx + rInner * Math.cos(a1);
-    const y1i = cy + rInner * Math.sin(a1);
-    return [
-      `M ${x0o.toFixed(2)} ${y0o.toFixed(2)}`,
-      `A ${rOuter} ${rOuter} 0 0 1 ${x1o.toFixed(2)} ${y1o.toFixed(2)}`,
-      `L ${x1i.toFixed(2)} ${y1i.toFixed(2)}`,
-      `A ${rInner} ${rInner} 0 0 0 ${x0i.toFixed(2)} ${y0i.toFixed(2)}`,
-      "Z",
-    ].join(" ");
-  };
-  const iconCenter = (i: number): { x: number; y: number } => {
-    const midDeg = -180 + i * 60 + 30;
-    const r = (rInner + rOuter) / 2;
-    return {
-      x: cx + r * Math.cos((midDeg * Math.PI) / 180),
-      y: cy + r * Math.sin((midDeg * Math.PI) / 180),
-    };
-  };
-  const featureGlyph = (kind: "vertex" | "edge" | "face", px: number, py: number): JSX.Element => {
-    if (kind === "vertex") return <circle cx={px} cy={py} r={2.6} fill="currentColor" />;
-    if (kind === "edge") return (
-      <line
-        x1={px - 5} y1={py} x2={px + 5} y2={py}
-        stroke="currentColor" strokeWidth={2.2} strokeLinecap="round"
-      />
-    );
-    return (
-      <rect x={px - 4.5} y={py - 4.5} width={9} height={9} rx={1}
-        fill="none" stroke="currentColor" strokeWidth={1.6} />
-    );
-  };
+  const cx = PIE_CX;
+  const cy = PIE_CY;
+  const rInner = PIE_R_INNER;
+  // Wedge i goes from (-180 + i*60) to (-180 + (i+1)*60).
+  const wedgePath = (i: number): string => pieWedgePath(-180 + i * 60, 60);
+  const iconCenter = (i: number): { x: number; y: number } => pieWedgeCenter(-180 + i * 60, 60);
   return (
     <div className="viewer-tools-pie" role="group" aria-label="Face-touch tools">
       <svg width={120} height={120} viewBox="0 0 120 120">
@@ -1352,6 +1308,132 @@ function ToolsPie({
           </text>
         </g>
       </svg>
+    </div>
+  );
+}
+
+/** The three feature kinds the measure tool can snap to, in wedge order —
+ *  vertex on top, then edge and face across the bottom. Same glyph
+ *  vocabulary as the touch pie, so a dot always means "vertex". */
+const MEASURE_KINDS: Array<{ kind: FeatureKind; label: string; hint: string }> = [
+  { kind: "vertex", label: "Vertex → vertex", hint: "distance between two mesh corners" },
+  { kind: "edge", label: "Edge → edge", hint: "distance between two edge midpoints" },
+  { kind: "face", label: "Face → face", hint: "distance between two clicked surface points" },
+];
+
+/** Straight-line distance between two picks, plus its per-axis components,
+ *  all in lab mm. Kept next to the pie rather than in the store because it
+ *  is pure derivation — `measureResult` holds the two picks and nothing
+ *  else, so there is no second copy to fall out of sync. */
+function measureDeltas(a: MeasurePick, b: MeasurePick) {
+  const dx = b.pointMm.x - a.pointMm.x;
+  const dy = b.pointMm.y - a.pointMm.y;
+  const dz = b.pointMm.z - a.pointMm.z;
+  return { dx, dy, dz, distance: Math.hypot(dx, dy, dz) };
+}
+
+/** Pie overlay for the measure tool — the touch pie's sibling, sitting
+ *  directly below it. Three wedges pick which feature kind BOTH clicks snap
+ *  to (a measurement is always like-to-like); the centre button clears the
+ *  current measurement. Like the touch pie it only exists in X-ray mode,
+ *  where you can see through the bodies you are measuring across. */
+function MeasurePie({
+  activeTool,
+  measureKind,
+  hasMeasurement,
+  setMeasureKind,
+  setActiveTool,
+  clearMeasure,
+}: {
+  activeTool: string;
+  measureKind: FeatureKind;
+  hasMeasurement: boolean;
+  setMeasureKind: (kind: FeatureKind) => void;
+  setActiveTool: (tool: "select" | "face-touch" | "measure") => void;
+  clearMeasure: () => void;
+}) {
+  // Wedge i spans 120° from (-150 + i*120): vertex on top, edge lower-right,
+  // face lower-left.
+  const wedgeStart = (i: number) => -150 + i * 120;
+  return (
+    <div className="viewer-measure-pie" role="group" aria-label="Measure distance">
+      <svg width={120} height={120} viewBox="0 0 120 120">
+        {MEASURE_KINDS.map(({ kind, label, hint }, i) => {
+          const isActive = activeTool === "measure" && measureKind === kind;
+          const c = pieWedgeCenter(wedgeStart(i), 120);
+          return (
+            <g
+              key={kind}
+              className={`tools-pie-wedge${isActive ? " active" : ""}`}
+              onClick={() => {
+                if (isActive) setActiveTool("select");
+                else {
+                  setMeasureKind(kind);
+                  setActiveTool("measure");
+                }
+              }}
+            >
+              <path d={pieWedgePath(wedgeStart(i), 120)} />
+              <title>{`${label} — ${hint}${isActive ? " (Esc to cancel)" : ""}`}</title>
+              {/* Two like glyphs with the measured span drawn between them. */}
+              <line
+                x1={c.x - 8} y1={c.y} x2={c.x + 8} y2={c.y}
+                stroke="currentColor" strokeWidth={1} strokeDasharray="2 2" opacity={0.75}
+              />
+              {featureGlyph(kind, c.x - 9, c.y)}
+              {featureGlyph(kind, c.x + 9, c.y)}
+            </g>
+          );
+        })}
+        <g
+          className={`tools-pie-centre${hasMeasurement ? "" : " inert"}`}
+          onClick={() => hasMeasurement && clearMeasure()}
+        >
+          <circle cx={PIE_CX} cy={PIE_CY} r={PIE_R_INNER - 2} />
+          <title>{hasMeasurement ? "Clear the measurement" : "No measurement yet — pick two features"}</title>
+          <text x={PIE_CX} y={PIE_CY + 4} textAnchor="middle" fontSize={11} fontWeight={600}>
+            {hasMeasurement ? "Clear" : "mm"}
+          </text>
+        </g>
+      </svg>
+    </div>
+  );
+}
+
+/** Numeric readout for the measure tool, under its pie. Shows the straight
+ *  line distance plus the per-axis components, because "how far apart" and
+ *  "how far along X" are both things you want off the same two clicks. */
+function MeasureReadout({
+  pending,
+  result,
+  error,
+}: {
+  pending: MeasurePick | null;
+  result: { a: MeasurePick; b: MeasurePick } | null;
+  error: string | null;
+}) {
+  if (error) {
+    return (
+      <div className="viewer-measure-readout error" role="status">{error}</div>
+    );
+  }
+  if (!result) {
+    return (
+      <div className="viewer-measure-readout hint" role="status">
+        {pending ? "Click the second feature" : "Click the first feature"}
+      </div>
+    );
+  }
+  const { dx, dy, dz, distance } = measureDeltas(result.a, result.b);
+  // Round-to-zero BEFORE formatting: a delta of -1e-13 renders as "-0.00",
+  // which reads as a real negative offset when it is just float noise.
+  const mm = (v: number) => (Math.abs(v) < 0.005 ? "0.00" : v.toFixed(2));
+  return (
+    <div className="viewer-measure-readout" role="status">
+      <span className="measure-distance">{mm(distance)}<span className="measure-unit"> mm</span></span>
+      <span className="measure-axis axis-x">ΔX {mm(dx)}</span>
+      <span className="measure-axis axis-y">ΔY {mm(dy)}</span>
+      <span className="measure-axis axis-z">ΔZ {mm(dz)}</span>
     </div>
   );
 }
@@ -1476,9 +1558,6 @@ export function DigitalTwinViewer({
   const orientationRendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const environmentGroupRef = useRef<THREE.Group | null>(null);
-  // Reference grid shown only in wireframe mode (the photo-room floor is
-  // hidden there, so the bench would otherwise float in the dark void).
-  const wireframeGridRef = useRef<THREE.GridHelper | null>(null);
   const componentGroupRef = useRef<THREE.Group>(new THREE.Group());
   // Per-objectId cache of loaded asset wrappers, used by the rebuild useEffect
   // to avoid re-loading STL / GLB geometry on every dep change. Cache hit when
@@ -1580,6 +1659,18 @@ export function DigitalTwinViewer({
   // each fetch; renderRayTraces reads .current and is invoked via
   // redrawBeamsRef when the fetch resolves.
   const v3LabSegmentsRef = useRef<V3LabSegment[]>([]);
+  // Per-emission draw filter (Display popover → Beams). Display-only: the
+  // hidden emissions' segments are never added to beamGroup, so they also
+  // drop out of the beam raycast (scope probe / snap-to-beam). Read through
+  // a ref so toggling one beam triggers a beam-only redraw (the effect next
+  // to the scrub-time one) instead of a full scene rebuild.
+  const hiddenBeamKeys = useSceneStore((state) => state.hiddenBeamKeys);
+  const hiddenBeamKeysRef = useRef<Set<string>>(hiddenBeamKeys);
+  hiddenBeamKeysRef.current = hiddenBeamKeys;
+  // Beam solo — an allow-list that wins over the hidden set while non-null.
+  const soloBeamKeys = useSceneStore((state) => state.soloBeamKeys);
+  const soloBeamKeysRef = useRef<Set<string> | null>(soloBeamKeys);
+  soloBeamKeysRef.current = soloBeamKeys;
   // Phase 7.2 — full V3SolverResult cached so renderRayTraces can run
   // the v3 → TraceSegment adapter, used to populate the legacy
   // `window.__rayTraceDebug` contract that downstream panels read.
@@ -1588,6 +1679,8 @@ export function DigitalTwinViewer({
   const snapOverlayRef = useRef<SnapOverlay | null>(null);
   const faceHighlightRef = useRef<THREE.Group | null>(null);
   const hoverHighlightRef = useRef<THREE.Group | null>(null);
+  // Measure tool overlay: a dot per pick plus the dashed span between them.
+  const measureOverlayRef = useRef<THREE.Group | null>(null);
   /** Overlay holding the fast-axis indicator drawn on the selected
    *  waveplate. Populated by an effect below; cleared when the selection
    *  changes or the selected object isn't a waveplate. */
@@ -1647,9 +1740,15 @@ export function DigitalTwinViewer({
   const faceTouchPending = useSceneStore((state) => state.faceTouchPending);
   const faceTouchPreview = useSceneStore((state) => state.faceTouchPreview);
   const faceTouchOp = useSceneStore((state) => state.faceTouchOp);
+  const measureKind = useSceneStore((state) => state.measureKind);
+  const setMeasureKind = useSceneStore((state) => state.setMeasureKind);
+  const measurePending = useSceneStore((state) => state.measurePending);
+  const measureResult = useSceneStore((state) => state.measureResult);
+  const measureError = useSceneStore((state) => state.measureError);
+  const clearMeasure = useSceneStore((state) => state.clearMeasure);
 
   // Objects the tools-pie (face-touch) flow has picked: A after the first
-  // click, then A + B once the second click produces a preview. In wireframe
+  // click, then A + B once the second click produces a preview. In X-ray
   // mode they render with their real materials while everything else stays
   // translucent, so the two bodies being mated are unmistakable. The store
   // already clears both fields on tool / op / direction change and when the
@@ -2248,9 +2347,8 @@ export function DigitalTwinViewer({
     if (!mount) return;
 
     const scene = new THREE.Scene();
-    // Initial colors: light by default; the displayMode effect below swaps to
-    // the dark wireframe backdrop (VIEWER_BG_WIRE) only when the user enters
-    // wireframe mode, so the slate wireframe lines stay readable.
+    // One light palette in every display mode: X-ray keeps the photo-room and
+    // just fades the bodies, so there is no dark backdrop to swap to.
     scene.background = new THREE.Color(VIEWER_BG_LIGHT);
     scene.fog = new THREE.Fog(VIEWER_BG_LIGHT, 45, 90);
     sceneRef.current = scene;
@@ -2485,6 +2583,51 @@ export function DigitalTwinViewer({
     scene.add(hoverHighlight);
     hoverHighlightRef.current = hoverHighlight;
 
+    // Measure overlay — ROSE, a third colour so it can never be confused
+    // with the touch tool's cyan pick or yellow hover. Everything here is
+    // depthTest:false: a measurement across the far side of the bench is
+    // exactly the case you need to see, and X-ray mode already committed to
+    // showing what is behind a body.
+    const measureOverlay = new THREE.Group();
+    const measureRose = 0xf43f5e;
+    const measureDot = (name: string) => {
+      const dot = new THREE.Mesh(
+        new THREE.SphereGeometry(0.003, 18, 18), // 0.3 mm
+        new THREE.MeshBasicMaterial({
+          color: measureRose,
+          transparent: true,
+          opacity: 0.95,
+          depthWrite: false,
+          depthTest: false,
+        }),
+      );
+      dot.name = name;
+      dot.visible = false;
+      dot.renderOrder = 993;
+      return dot;
+    };
+    measureOverlay.add(measureDot("measure-dot-a"), measureDot("measure-dot-b"));
+    const measureSpanGeom = new THREE.BufferGeometry();
+    measureSpanGeom.setAttribute("position", new THREE.BufferAttribute(new Float32Array(6), 3));
+    const measureSpan = new THREE.Line(
+      measureSpanGeom,
+      new THREE.LineDashedMaterial({
+        color: measureRose,
+        transparent: true,
+        opacity: 1,
+        depthTest: false,
+        dashSize: 0.06,
+        gapSize: 0.04,
+      }),
+    );
+    measureSpan.name = "measure-span";
+    measureSpan.visible = false;
+    measureSpan.renderOrder = 992;
+    measureOverlay.add(measureSpan);
+    measureOverlay.visible = false;
+    scene.add(measureOverlay);
+    measureOverlayRef.current = measureOverlay;
+
     const placementGizmo = new PlacementGizmo({
       camera,
       domElement: renderer.domElement,
@@ -2618,23 +2761,8 @@ export function DigitalTwinViewer({
     // whole furniture group by Rx(+90°) — the inverse of the removed labRoot
     // swap — to stand it up along +Z. Floor lands on the world XY-plane.
     environmentGroup.rotation.x = Math.PI / 2;
-    applyEnvironmentDisplayMode(environmentGroup, displayMode);
     environmentGroupRef.current = environmentGroup;
     scene.add(environmentGroup, ambient, key);
-
-    // Wireframe reference grid: on the lab X-Y plane (rotated +90° about X like
-    // the floor, since the world is Z-up). Slate lines tuned for the dark
-    // wireframe backdrop; the fog (matched to the bg) fades distant lines so it
-    // reads as depth, not clutter. Shown only in wireframe — rendered mode has
-    // the photo-room floor instead.
-    const wireframeGrid = new THREE.GridHelper(60, 60, "#5b6675", "#39414f");
-    wireframeGrid.rotation.x = Math.PI / 2;
-    const wfGridMat = wireframeGrid.material as THREE.LineBasicMaterial;
-    wfGridMat.transparent = true;
-    wfGridMat.opacity = 0.6;
-    wireframeGrid.visible = displayMode === "wireframe";
-    wireframeGridRef.current = wireframeGrid;
-    scene.add(wireframeGrid);
 
     componentGroupRef.current.name = "components";
     beamGroupRef.current.name = "beam-paths";
@@ -2917,14 +3045,17 @@ export function DigitalTwinViewer({
       hasPending ? op.secondKind : op.firstKind;
     const updateHoverHighlight = (event: { clientX: number; clientY: number }) => {
       const state = useSceneStore.getState();
-      if (state.activeTool !== "face-touch") {
+      if (state.activeTool === "select") {
         clearHoverHighlight();
         return;
       }
       const grp = hoverHighlightRef.current;
       if (!grp) return;
-      const op = TOUCH_OP_BY_ID[state.faceTouchOp];
-      const kind = expectedNextKind(op, !!state.faceTouchPending);
+      // Measure snaps both clicks to the same kind; face-touch alternates
+      // between the op's first and second kind.
+      const kind = state.activeTool === "measure"
+        ? state.measureKind
+        : expectedNextKind(TOUCH_OP_BY_ID[state.faceTouchOp], !!state.faceTouchPending);
       const hit = pickFeature(event, kind);
       if (!hit) {
         clearHoverHighlight();
@@ -2986,6 +3117,36 @@ export function DigitalTwinViewer({
       grp.visible = true;
     };
 
+    /** Measure tool: two clicks on the same kind of feature, and the pair
+     *  becomes a distance. A third click starts over from that click, so the
+     *  tool stays armed for repeated measurements without a reset step.
+     *  Unlike face-touch this never moves anything and never rejects a pick
+     *  on the same object — measuring across one body is a legitimate use. */
+    const handleMeasureClick = (event: { clientX: number; clientY: number }) => {
+      const state = useSceneStore.getState();
+      const hit = pickFeature(event, state.measureKind);
+      if (!hit) {
+        state.setMeasureError("Click hit empty space — try again on a body");
+        window.setTimeout(() => useSceneStore.getState().setMeasureError(null), 2500);
+        return;
+      }
+      const pick: MeasurePick = {
+        kind: hit.kind,
+        objectId: hit.objectId,
+        pointMm: hit.pointMm,
+      };
+      state.setMeasureError(null);
+      // Start a new measurement whenever there is no pick in flight — either
+      // the very first click, or the click after a completed pair.
+      if (!state.measurePending) {
+        state.setMeasureResult(null);
+        state.setMeasurePending(pick);
+        return;
+      }
+      state.setMeasureResult({ a: state.measurePending, b: pick });
+      state.setMeasurePending(null);
+    };
+
     const handleFaceTouchClick = (event: { clientX: number; clientY: number }) => {
       const state = useSceneStore.getState();
       const op = TOUCH_OP_BY_ID[state.faceTouchOp];
@@ -2994,7 +3155,7 @@ export function DigitalTwinViewer({
       const kind = pending ? op.secondKind : op.firstKind;
       const hit = pickFeature(event, kind);
       if (!hit) {
-        state.setFaceTouchError("Click hit empty space — try again on a wireframe");
+        state.setFaceTouchError("Click hit empty space — try again on a body");
         window.setTimeout(() => useSceneStore.getState().setFaceTouchError(null), 2500);
         return;
       }
@@ -3252,11 +3413,12 @@ export function DigitalTwinViewer({
       if (dx * dx + dy * dy > DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
         pendingPick.dragged = true;
         // Marquee overlay only fires for MIDDLE-button drags now. LEFT
-        // drags are owned by OrbitControls (ROTATE); face-touch tool also
-        // suppresses it because that tool owns the click + hover flow.
-        const isFaceTouch = useSceneStore.getState().activeTool === "face-touch";
+        // drags are owned by OrbitControls (ROTATE); the picking tools
+        // (face-touch, measure) also suppress it because they own the
+        // click + hover flow.
+        const toolOwnsClick = useSceneStore.getState().activeTool !== "select";
         const marquee = marqueeRef.current;
-        if (marquee && pendingPick.button === 1 && !isFaceTouch) {
+        if (marquee && pendingPick.button === 1 && !toolOwnsClick) {
           const canvasRect = renderer.domElement.getBoundingClientRect();
           const x0 = Math.min(pendingPick.startX, event.clientX) - canvasRect.left;
           const y0 = Math.min(pendingPick.startY, event.clientY) - canvasRect.top;
@@ -3287,9 +3449,9 @@ export function DigitalTwinViewer({
         if (marquee) marquee.style.display = "none";
         // Marquee select fires on MIDDLE-button drags only. LEFT-button
         // drags are camera rotates owned by OrbitControls — don't touch
-        // selection. Face-touch tool intercepts everything.
-        const isFaceTouch = useSceneStore.getState().activeTool === "face-touch";
-        if (button !== 1 || isFaceTouch) return;
+        // selection. The picking tools intercept everything.
+        const toolOwnsClick = useSceneStore.getState().activeTool !== "select";
+        if (button !== 1 || toolOwnsClick) return;
         const canvasRect = renderer.domElement.getBoundingClientRect();
         const x0 = Math.min(startX, event.clientX);
         const x1 = Math.max(startX, event.clientX);
@@ -3338,9 +3500,14 @@ export function DigitalTwinViewer({
       // selection / beam scope; MIDDLE clicks (without drag) are no-ops.
       if (button !== 0) return;
 
-      // Face-touch tool intercepts clicks before normal selection.
-      if (useSceneStore.getState().activeTool === "face-touch") {
+      // The picking tools intercept clicks before normal selection.
+      const activeToolNow = useSceneStore.getState().activeTool;
+      if (activeToolNow === "face-touch") {
         handleFaceTouchClick(event);
+        return;
+      }
+      if (activeToolNow === "measure") {
+        handleMeasureClick(event);
         return;
       }
 
@@ -3496,7 +3663,7 @@ export function DigitalTwinViewer({
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       const state = useSceneStore.getState();
-      if (state.activeTool === "face-touch") {
+      if (state.activeTool !== "select") {
         state.setActiveTool("select");
       }
     };
@@ -3518,9 +3685,9 @@ export function DigitalTwinViewer({
      *      the hit mesh itself, so without the stamp the object silently stops
      *      being clickable after it switches tier.
      *    - the display-mode material — the tier arrives with its authored
-     *      solid material, which in wireframe mode shows up as one solid body
-     *      among wireframes ("MECHANICAL0 goes solid after I move it"), and in
-     *      optical-link mode un-ghosts a non-optical part.
+     *      solid material, which in X-ray mode shows up as one opaque body
+     *      among translucent ones ("MECHANICAL0 goes solid after I move it"),
+     *      and in optical-link mode un-ghosts a non-optical part.
      *    - the selection wireframe outline — see below.
      *  All three are idempotent, and the node keeps its own stamps (it was
      *  part of the original wrapper), so we copy them down. */
@@ -3684,11 +3851,10 @@ export function DigitalTwinViewer({
         disposeObject(environmentGroupRef.current);
         environmentGroupRef.current = null;
       }
-      if (wireframeGridRef.current) {
-        scene.remove(wireframeGridRef.current);
-        wireframeGridRef.current.geometry.dispose();
-        (wireframeGridRef.current.material as THREE.Material).dispose();
-        wireframeGridRef.current = null;
+      if (measureOverlayRef.current) {
+        scene.remove(measureOverlayRef.current);
+        disposeObject(measureOverlayRef.current);
+        measureOverlayRef.current = null;
       }
       controls.dispose();
       renderer.dispose();
@@ -3807,9 +3973,6 @@ export function DigitalTwinViewer({
   }, [selectedObjectId, selectedObjectIds, sceneData.objects, gizmoOrientation, gizmoMode, componentsBuildVersion, displayMode]);
 
   useEffect(() => {
-    if (environmentGroupRef.current) {
-      applyEnvironmentDisplayMode(environmentGroupRef.current, displayMode);
-    }
     // Re-assert the per-mesh materials for the new mode on every wrapper,
     // synchronously. The scene-rebuild effect normally does this per object,
     // but its async run can be cancelled mid-loop (two store updates landing
@@ -3829,35 +3992,8 @@ export function DigitalTwinViewer({
       }
       requestRenderRef.current?.();
     }
-    // Dark background ONLY in wireframe mode (VIEWER_BG_WIRE) so the slate
-    // wireframe lines read clearly; the light palette (VIEWER_BG_LIGHT)
-    // everywhere else. The photo-room walls are hidden in wireframe mode so
-    // the flat dark bg shows through; in the light modes the already-light
-    // photo-room (#dad8c8) is the visible backdrop and the bg/fog just fill
-    // the void around it.
-    const scene = sceneRef.current;
-    const envGroup = environmentGroupRef.current;
-    if (scene) {
-      const bg = displayMode === "wireframe" ? VIEWER_BG_WIRE : VIEWER_BG_LIGHT;
-      scene.background = new THREE.Color(bg);
-      if (scene.fog instanceof THREE.Fog) {
-        scene.fog.color = new THREE.Color(bg);
-      }
-    }
-    if (envGroup) {
-      // Hide the photo-studio walls + floor + ceiling in wireframe mode
-      // so the flat dark bg is visible; show them again in rendered mode.
-      // The optical table is added separately as a SceneObject, not part
-      // of `environmentGroup`, so this only toggles the surrounding room.
-      envGroup.visible = displayMode !== "wireframe";
-    }
-    if (wireframeGridRef.current) {
-      // Inverse of the room: the reference grid grounds the bench only in
-      // wireframe, where the photo-room floor is hidden.
-      wireframeGridRef.current.visible = displayMode === "wireframe";
-    }
     // solidObjectIdsKey: a face-touch pick changes which wrappers must drop
-    // out of the wireframe treatment, and this loop is the one place that
+    // out of the X-ray treatment, and this loop is the one place that
     // re-asserts materials on every wrapper. The rest of the body is
     // displayMode-only but idempotent, so re-running it costs nothing.
   }, [displayMode, solidObjectIdsKey]);
@@ -3969,15 +4105,61 @@ export function DigitalTwinViewer({
     }
   }, [faceTouchPending]);
 
-  // Clear the yellow hover preview whenever the touch tool turns off or
-  // the user switches op — otherwise a stale highlight (wrong kind/shape)
-  // hangs around until the next pointermove.
+  // Drive the rose measure overlay off the store. One dot after the first
+  // pick; both dots plus the dashed span once the pair is complete.
+  useEffect(() => {
+    const group = measureOverlayRef.current;
+    if (!group) return;
+    const dotA = group.getObjectByName("measure-dot-a") as THREE.Mesh | null;
+    const dotB = group.getObjectByName("measure-dot-b") as THREE.Mesh | null;
+    const span = group.getObjectByName("measure-span") as THREE.Line | null;
+    const labToThree = (mm: { x: number; y: number; z: number }) =>
+      new THREE.Vector3(mm.x / 100, mm.y / 100, mm.z / 100);
+
+    // A finished measurement wins over a fresh pending pick: picking a third
+    // feature clears the result in the same store update that sets pending,
+    // so the two are never both live.
+    const a = measureResult ? measureResult.a : measurePending;
+    const b = measureResult ? measureResult.b : null;
+    if (dotA) {
+      if (a) dotA.position.copy(labToThree(a.pointMm));
+      dotA.visible = Boolean(a);
+    }
+    if (dotB) {
+      if (b) dotB.position.copy(labToThree(b.pointMm));
+      dotB.visible = Boolean(b);
+    }
+    if (span) {
+      if (a && b) {
+        const pa = labToThree(a.pointMm);
+        const pb = labToThree(b.pointMm);
+        const positions = span.geometry.getAttribute("position") as THREE.BufferAttribute;
+        positions.setXYZ(0, pa.x, pa.y, pa.z);
+        positions.setXYZ(1, pb.x, pb.y, pb.z);
+        positions.needsUpdate = true;
+        span.geometry.computeBoundingSphere();
+        // LineDashedMaterial reads the per-vertex `lineDistance` attribute —
+        // without recomputing it after moving the endpoints the span draws
+        // solid (or with the previous measurement's dash phase).
+        span.computeLineDistances();
+        span.visible = true;
+      } else {
+        span.visible = false;
+      }
+    }
+    group.visible = Boolean(a);
+    requestRenderRef.current?.();
+  }, [measurePending, measureResult]);
+
+  // Clear the yellow hover preview whenever a picking tool turns off or the
+  // user switches what it snaps to — otherwise a stale highlight (wrong
+  // kind/shape) hangs around until the next pointermove.
   useEffect(() => {
     const grp = hoverHighlightRef.current;
     if (!grp) return;
     grp.children.forEach((child) => (child.visible = false));
     grp.visible = false;
-  }, [activeTool, faceTouchOp]);
+  }, [activeTool, faceTouchOp, measureKind]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4462,7 +4644,11 @@ export function DigitalTwinViewer({
             bindingFiberNodes?: unknown;
           } | undefined)?.bindingFiberNodes;
           const pgKey = pg ? JSON.stringify(pg) : "";
-          return `tr=${p?.translucentHousing === true ? "1" : "0"}|dyn=${dyn}|pg=${pgKey}`;
+          // Hidden parts remove geometry from the tree, so a toggle has to
+          // invalidate the cached mesh for the same reason the hint flip
+          // above does — componentRef / assetRef never change.
+          const hb = [...hiddenBindingIds(placement)].sort().join(",");
+          return `tr=${p?.translucentHousing === true ? "1" : "0"}|dyn=${dyn}|pg=${pgKey}|hb=${hb}`;
         })();
         const canReuse =
           cached !== undefined &&
@@ -5056,6 +5242,19 @@ export function DigitalTwinViewer({
         beamGroup,
       });
       if (!renderCtx.overlayFlags.beam_segments) return;
+      // Per-emission hide (Display popover → Beams). Keyed on the EMITTER +
+      // emission, the same pair that colours the beam, so hiding "TA output"
+      // drops every segment downstream of the TA — not just its first hop.
+      // The debug bridge above is published UNFILTERED: hiding is a draw
+      // filter, so panels reading window.__qmemDebug still see the physics.
+      const hidden = hiddenBeamKeysRef.current;
+      const solo = soloBeamKeysRef.current;
+      const isBeamHidden = (
+        emitterId: string | null | undefined,
+        emissionKey: EmissionKey | null | undefined,
+      ) =>
+        !!emitterId
+        && !isBeamVisible(beamKey(emitterId, emissionKey ?? "main"), hidden, solo);
       if (opticalLinkMode) {
         // Optical-link mode: the full beam-chain visualisation — an elliptical
         // Gaussian tube per segment (sampling the true q-parameter width, so a
@@ -5064,10 +5263,14 @@ export function DigitalTwinViewer({
         // mini scene; it now lives here so the orientation gizmo, selection and
         // every component behave exactly as in rendered mode.
         const objectById = new Map(sceneData.objects.map((object) => [object.id, object]));
-        beamGroup.add(buildBeamChainGroup(adaptedTraces, objectById));
+        beamGroup.add(buildBeamChainGroup(
+          adaptedTraces.filter((seg) => !isBeamHidden(seg.emitterObjectId, seg.emissionKey)),
+          objectById,
+        ));
         return;
       }
       for (const seg of labSegments) {
+        if (isBeamHidden(seg.emitterSceneObjectId, seg.emissionKey)) continue;
         const startThree = new THREE.Vector3(
           mmToThree(seg.start.x),
           mmToThree(seg.start.y),
@@ -5243,7 +5446,7 @@ export function DigitalTwinViewer({
   // changes, so dragging the slider stays at 60 fps.
   useEffect(() => {
     redrawBeamsRef.current?.();
-  }, [scrubTimeNs, sceneData.timingPrograms, aomFreqOverrideMhz]);
+  }, [scrubTimeNs, sceneData.timingPrograms, aomFreqOverrideMhz, hiddenBeamKeys, soloBeamKeys]);
 
   // -----------------------------------------------------------------
   // Fiber Bezier-spline edit overlay. Active only when
@@ -5668,7 +5871,6 @@ export function DigitalTwinViewer({
       const newGeom = new THREE.TubeGeometry(path, tubularSegments, radiusMm / 100, 12, false);
       const old = (tubeMesh as THREE.Mesh).geometry;
       (tubeMesh as THREE.Mesh).geometry = newGeom;
-      syncWireframeShellGeometry(tubeMesh as THREE.Mesh);
       old.dispose();
       const wrapper = fiberWrapper as THREE.Object3D;
       for (const child of wrapper.children) {
@@ -6644,7 +6846,6 @@ export function DigitalTwinViewer({
       const newGeom = new THREE.TubeGeometry(path, tubularSegments, radiusMm / 100, 14, false);
       const old = (tubeMesh as THREE.Mesh).geometry;
       (tubeMesh as THREE.Mesh).geometry = newGeom;
-      syncWireframeShellGeometry(tubeMesh as THREE.Mesh);
       old.dispose();
       const wrapper = cableWrapper as THREE.Object3D;
       for (const child of wrapper.children) {
@@ -7187,7 +7388,7 @@ export function DigitalTwinViewer({
           )}
         </div>
       </div>
-      {displayMode === "wireframe" && (
+      {displayMode === "xray" && (
         <ToolsPie
           activeTool={activeTool}
           faceTouchOp={faceTouchOp}
@@ -7199,6 +7400,25 @@ export function DigitalTwinViewer({
           setActiveTool={setActiveTool}
           setFaceTouchDirection={setFaceTouchDirection}
         />
+      )}
+      {displayMode === "xray" && (
+        <>
+          <MeasurePie
+            activeTool={activeTool}
+            measureKind={measureKind}
+            hasMeasurement={Boolean(measurePending || measureResult)}
+            setMeasureKind={setMeasureKind}
+            setActiveTool={setActiveTool}
+            clearMeasure={clearMeasure}
+          />
+          {activeTool === "measure" && (
+            <MeasureReadout
+              pending={measurePending}
+              result={measureResult}
+              error={measureError}
+            />
+          )}
+        </>
       )}
     </div>
   );

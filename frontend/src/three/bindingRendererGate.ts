@@ -36,6 +36,7 @@ import type {
 } from "../types/digitalTwin";
 import {
   deriveCablePropsFromConnectorBindings,
+  hiddenBindingIds,
   resolveBindingTree,
 } from "../utils/componentBindings";
 import { ANNOTATION_KIND_IDS, effectiveInstanceParams } from "../utils/instanceParams";
@@ -196,8 +197,16 @@ export async function buildSceneObjectFromBindings(
     return Array.isArray(v) && v.length >= 2 ? (v as FiberNode[]) : undefined;
   };
 
+  // Parts this instance is not wearing (Object panel → Parts). Returning
+  // null skips the node AND its subtree — the loader contract — which is
+  // what "the fork isn't on this post" means for anything bolted to it.
+  // The binding rows and the RZ deltas above stay exactly as they are, so
+  // unchecking the box restores the part in its calibrated pose.
+  const hidden = hiddenBindingIds(sceneObject);
+
   const content = await buildBindingTreeObject(tree, async (node) => {
     if (node.target.kind === "missing") return null;
+    if (hidden.has(node.binding.id)) return null;
     if (node.target.kind === "subcomponent" || node.target.kind === "empty") {
       // subcomponent: logical container that recurses into the
       // sub-Component's own root bindings (resolveBindingTree splices

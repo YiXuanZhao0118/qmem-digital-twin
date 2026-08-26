@@ -80,7 +80,7 @@ const LAB = `# Working in the Lab scene
 
 - Selecting an object gives you the **Translate** gizmo; the buttons at the top
   left of the viewport switch it to **Rotate**.
-- The viewport also carries **Wireframe / Rendered** display modes (top left)
+- The viewport also carries **X-ray / Rendered** display modes (top left)
   and the XYZ axis gizmo plus the face-touch **Tools pie** (top right).
 - For exact values, type into the Object panel. **Number fields accept
   expressions**, not just numbers: \`+50\`, \`*2\`, \`@200\`, \`mid(A,B)\`.
@@ -135,7 +135,7 @@ Press **Shift+S** to open the cursor menu at the pointer:
 
 ## The viewport strip (top left)
 
-Left to right: **display modes** (Wireframe / Rendered / …) · **Translate /
+Left to right: **display modes** (X-ray / Rendered / …) · **Translate /
 Rotate** · the **crosshair** switch · the **Home** controls.
 
 - **Crosshair** — one switch for the whole 3D-cursor feature: it shows the

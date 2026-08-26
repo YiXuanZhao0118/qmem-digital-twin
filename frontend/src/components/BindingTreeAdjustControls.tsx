@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useSceneStore } from "../store/sceneStore";
 import type { ComponentBinding, ComponentItem } from "../types/digitalTwin";
@@ -6,6 +6,7 @@ import { cleanNumber } from "../utils/numberFormat";
 import {
   commonTunableAxes,
   groupBindingsByLink,
+  hiddenBindingIds,
 } from "../utils/componentBindings";
 
 /** Generic per-instance override editor for a composite component's
@@ -22,6 +23,9 @@ import {
  *      DELTA on top of the binding's calibrated baseline. The render
  *      pipeline (resolveBindingTree → _effectiveTransform) adds these
  *      deltas at draw time.
+ *    - `sceneObject.properties.hiddenBindings[]`: parts THIS instance
+ *      isn't wearing (the Parts list). Render-only — see
+ *      `hiddenBindingIds`.
  *
  *  Works for ANY composite component (isolator, mirror_mount, future
  *  decompositions) — no component-specific code. New components opt in
@@ -37,6 +41,11 @@ const AXIS_KEY_TO_FIELD: Record<string, "xMm" | "yMm" | "zMm" | "rxDeg" | "ryDeg
   localXMm: "xMm", localYMm: "yMm", localZMm: "zMm",
   localRxDeg: "rxDeg", localRyDeg: "ryDeg", localRzDeg: "rzDeg",
 };
+
+/** Floor on how often a slider drag is allowed to hit the API. One
+ *  write re-runs the viewer's whole placement pass, so 60 fps of them
+ *  is what made the knob stutter on a busy scene. */
+const COMMIT_MIN_MS = 120;
 
 function axisLabel(axisKey: string): string {
   const field = AXIS_KEY_TO_FIELD[axisKey];
@@ -106,6 +115,49 @@ export function BindingTreeAdjustControls({ component }: { component: ComponentI
 
   const groups = useMemo(() => groupBindingsByLink(componentBindings), [componentBindings]);
 
+  // The component's own binding rows in tree order, indented by depth —
+  // the same tree the PHY editor's COMPONENT tab shows, listed here so an
+  // instance can drop a part it isn't wearing. Sub-component bindings are
+  // NOT spliced in: those rows belong to another Component and hiding one
+  // would mean hiding it everywhere it is used.
+  const partRows = useMemo(() => {
+    const byParent = new Map<string, ComponentBinding[]>();
+    for (const b of componentBindings) {
+      const key = b.parentBindingId ?? "";
+      const list = byParent.get(key);
+      if (list) list.push(b);
+      else byParent.set(key, [b]);
+    }
+    for (const list of byParent.values()) list.sort((a, b) => a.sortOrder - b.sortOrder);
+    const out: { binding: ComponentBinding; label: string; depth: number }[] = [];
+    const walk = (parentKey: string, depth: number) => {
+      for (const b of byParent.get(parentKey) ?? []) {
+        const roleLabel = (b.properties as { role_label?: unknown } | null)?.role_label;
+        out.push({
+          binding: b,
+          label: (typeof roleLabel === "string" && roleLabel) || b.role || b.id,
+          depth,
+        });
+        walk(b.id, depth + 1);
+      }
+    };
+    walk("", 0);
+    return out;
+  }, [componentBindings]);
+
+  const hidden = useMemo(() => hiddenBindingIds(sceneObject), [sceneObject]);
+
+  const setBindingHidden = async (bindingId: string, next: boolean) => {
+    if (!sceneObject) return;
+    const ids = new Set(hidden);
+    if (next) ids.add(bindingId);
+    else ids.delete(bindingId);
+    const props = { ...((sceneObject.properties ?? {}) as Record<string, unknown>) };
+    if (ids.size > 0) props.hiddenBindings = [...ids];
+    else delete props.hiddenBindings;
+    await updateSceneObject(sceneObject.id, { properties: props });
+  };
+
   // Drop any group whose bindings share no tunable axis (nothing the
   // user can adjust uniformly across the group).
   const tunableGroups = useMemo(() => {
@@ -119,7 +171,96 @@ export function BindingTreeAdjustControls({ component }: { component: ComponentI
     return out;
   }, [groups]);
 
-  if (tunableGroups.length === 0) return null;
+  // ---- Write pacing for the knobs -----------------------------------
+  // A drag used to POST every intermediate value and await the
+  // round-trip before the store — and with it the 3D scene — moved, so
+  // the knob could never render ahead of the network: one write per
+  // binding per pixel dragged, each one re-running the viewer's
+  // placement pass over the whole scene.
+  //
+  // The knob now renders from `drafts` (local, instant) while the
+  // writes are paced: only the LATEST value per knob is kept, one
+  // commit is in flight at a time, and they are no closer together than
+  // COMMIT_MIN_MS. Letting go flushes immediately, so what is persisted
+  // is always the value the user stopped on.
+  const [drafts, setDrafts] = useState<Record<string, number>>({});
+  const pendingRef = useRef(new Map<string, () => Promise<void>>());
+  const drainRef = useRef<Promise<void> | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastCommitRef = useRef(0);
+
+  const drain = useCallback(() => {
+    if (drainRef.current) return drainRef.current;
+    const run = (async () => {
+      while (pendingRef.current.size > 0) {
+        const entry = pendingRef.current.entries().next().value as
+          | [string, () => Promise<void>]
+          | undefined;
+        if (!entry) break;
+        pendingRef.current.delete(entry[0]);
+        await entry[1]();
+        lastCommitRef.current = Date.now();
+      }
+    })().finally(() => {
+      drainRef.current = null;
+    });
+    drainRef.current = run;
+    return run;
+  }, []);
+
+  const schedule = useCallback(
+    (key: string, job: () => Promise<void>) => {
+      // Same knob queued twice before it drained → the newer value wins.
+      pendingRef.current.set(key, job);
+      if (timerRef.current) return;
+      const wait = Math.max(0, COMMIT_MIN_MS - (Date.now() - lastCommitRef.current));
+      if (wait === 0) {
+        void drain();
+        return;
+      }
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        void drain();
+      }, wait);
+    },
+    [drain],
+  );
+
+  /** Send whatever is still queued, then hand the knob back to the store
+   *  value. Called when the user stops moving it (pointer-up / blur). */
+  const flush = useCallback(
+    async (key: string) => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      await drain();
+      setDrafts((d) => {
+        if (!(key in d)) return d;
+        const next = { ...d };
+        delete next[key];
+        return next;
+      });
+    },
+    [drain],
+  );
+
+  // Panel closed mid-drag: cancel the timer, but still run the queue so
+  // the last value isn't dropped on the floor.
+  useEffect(
+    () => () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      void drain();
+    },
+    [drain],
+  );
+
+  // A single-root component has exactly one part, and hiding it is what
+  // the object's own "Visible" checkbox already does — only offer the
+  // list once there is something to pick apart.
+  const showParts = partRows.length > 1;
+
+  if (tunableGroups.length === 0 && !showParts) return null;
 
   const hasInstance = sceneObject != null;
 
@@ -165,6 +306,16 @@ export function BindingTreeAdjustControls({ component }: { component: ComponentI
         });
       }),
     );
+  };
+
+  const setKnob = (
+    key: string,
+    bindings: ComponentBinding[],
+    axisField: Exclude<ReturnType<typeof axisToField>, null>,
+    value: number,
+  ) => {
+    setDrafts((d) => ({ ...d, [key]: value }));
+    schedule(key, () => writeOverride(bindings, axisField, value));
   };
 
   // Per-instance rendering hint: "See through" toggle. Lives on
@@ -216,6 +367,40 @@ export function BindingTreeAdjustControls({ component }: { component: ComponentI
           <span>See through</span>
         </label>
       )}
+      {showParts && (
+        <>
+          <div className="physics-panel-kind-params-header" style={{ marginTop: 2 }}>
+            Parts
+          </div>
+          <div style={{ paddingBottom: 4 }}>
+            {partRows.map(({ binding, label, depth }) => (
+              <label
+                key={binding.id}
+                className="physics-panel-kind-params-field"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  paddingLeft: 12 * depth,
+                }}
+                title={
+                  hidden.has(binding.id)
+                    ? `${label} is hidden on this instance. The part and its pose (including any RZ adjustment) are kept — untick to bring it back.`
+                    : `Untick to hide ${label} on this instance only. Nothing is deleted.`
+                }
+              >
+                <input
+                  type="checkbox"
+                  disabled={!hasInstance}
+                  checked={!hidden.has(binding.id)}
+                  onChange={(e) => void setBindingHidden(binding.id, !e.target.checked)}
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
+        </>
+      )}
       <div className="physics-panel-kind-params-grid">
         {tunableGroups.map(({ name, bindings, axes }) =>
           axes.map((axisKey) => {
@@ -226,7 +411,10 @@ export function BindingTreeAdjustControls({ component }: { component: ComponentI
             const min = typeof spec.min === "number" ? spec.min : fallback.min;
             const max = typeof spec.max === "number" ? spec.max : fallback.max;
             const step = fallback.step;
-            const value = readOverride(bindings[0].id, axisField);
+            // Draft (mid-drag) wins over the stored value; `??` so a
+            // dragged-to-zero draft still shows as 0.
+            const knobKey = `${sceneObject?.id ?? ""}|${bindings[0].id}|${axisField}`;
+            const value = drafts[knobKey] ?? readOverride(bindings[0].id, axisField);
             const showLabel = axes.length > 1
               ? `${name} · ${axisLabel(axisKey)}`
               : `${name}`;
@@ -244,8 +432,9 @@ export function BindingTreeAdjustControls({ component }: { component: ComponentI
                     onChange={(e) => {
                       const v = Number(e.target.value);
                       if (!Number.isFinite(v)) return;
-                      void writeOverride(bindings, axisField, v);
+                      setKnob(knobKey, bindings, axisField, v);
                     }}
+                    onBlur={() => void flush(knobKey)}
                     style={{ width: 64 }}
                   />
                   <input
@@ -255,7 +444,10 @@ export function BindingTreeAdjustControls({ component }: { component: ComponentI
                     step={step}
                     disabled={!hasInstance}
                     value={cleanNumber(value)}
-                    onChange={(e) => void writeOverride(bindings, axisField, Number(e.target.value))}
+                    onChange={(e) => setKnob(knobKey, bindings, axisField, Number(e.target.value))}
+                    onPointerUp={() => void flush(knobKey)}
+                    onKeyUp={() => void flush(knobKey)}
+                    onBlur={() => void flush(knobKey)}
                     style={{ flex: 1 }}
                   />
                 </div>

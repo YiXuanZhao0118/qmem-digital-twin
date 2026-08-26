@@ -1,7 +1,6 @@
 import * as THREE from "three";
 
 import type { ComponentItem } from "../../../types/digitalTwin";
-import { syncWireframeShellGeometry } from "../../wireframeShell";
 import {
   applyEulerXYZQuat,
   applyFiberConnectorTransform,
@@ -104,7 +103,6 @@ export function refreshFiberWrapperGeometry(
   );
   const old = (tubeMesh as THREE.Mesh).geometry;
   (tubeMesh as THREE.Mesh).geometry = newGeom;
-  syncWireframeShellGeometry(tubeMesh as THREE.Mesh);
   old.dispose();
 
   for (const { conn, endpoint } of connectors) {

@@ -1822,6 +1822,110 @@ p.mirror-coupling-warn {
   user-select: none;
 }
 
+/* Measure pie — the touch pie's sibling, stacked directly below it
+   (tools pie top:162 + height 120 + 12 gap = 294). Shares the
+   .tools-pie-* wedge/centre styling so the two read as one tool family;
+   only the active fill differs (rose, matching the 3D overlay's rose
+   span, vs the touch tool's teal). */
+.viewer-measure-pie {
+  position: absolute;
+  top: 294px;
+  right: 14px;
+  z-index: 4;
+  width: 120px;
+  height: 120px;
+  filter: drop-shadow(0 10px 26px rgba(0, 0, 0, 0.28));
+}
+.viewer-measure-pie .tools-pie-wedge {
+  cursor: pointer;
+  color: rgba(36, 39, 38, 0.85);
+}
+.viewer-measure-pie .tools-pie-wedge path {
+  fill: rgba(251, 251, 248, 0.74);
+  stroke: rgba(15, 23, 42, 0.18);
+  stroke-width: 1;
+  transition: fill 120ms ease;
+}
+.viewer-measure-pie .tools-pie-wedge:hover path {
+  fill: rgba(190, 18, 60, 0.45);
+}
+.viewer-measure-pie .tools-pie-wedge.active path {
+  fill: rgba(244, 63, 94, 0.6);
+  stroke: rgba(253, 164, 175, 0.6);
+}
+.viewer-measure-pie .tools-pie-centre {
+  cursor: pointer;
+}
+.viewer-measure-pie .tools-pie-centre.inert {
+  cursor: default;
+  opacity: 0.55;
+}
+.viewer-measure-pie .tools-pie-centre circle {
+  fill: rgba(251, 251, 248, 0.92);
+  stroke: rgba(253, 164, 175, 0.5);
+  stroke-width: 1.2;
+  transition: fill 120ms ease;
+}
+.viewer-measure-pie .tools-pie-centre:not(.inert):hover circle {
+  fill: rgba(190, 18, 60, 0.5);
+}
+.viewer-measure-pie .tools-pie-centre text {
+  fill: rgba(15, 23, 42, 0.92);
+  font-family: system-ui, sans-serif;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Numeric readout, under the measure pie (294 + 120 + 8). Right-anchored
+   like the pies, and pointer-transparent so it never eats a canvas click. */
+.viewer-measure-readout {
+  position: absolute;
+  top: 422px;
+  right: 14px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 7px 10px;
+  border: 1px solid rgba(15, 23, 42, 0.16);
+  border-radius: 10px;
+  background: rgba(251, 251, 248, 0.86);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(10px);
+  pointer-events: none;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  color: rgba(15, 23, 42, 0.9);
+  white-space: nowrap;
+}
+.viewer-measure-readout.hint,
+.viewer-measure-readout.error {
+  font-family: system-ui, sans-serif;
+  font-size: 11.5px;
+  max-width: 190px;
+  white-space: normal;
+  text-align: right;
+}
+.viewer-measure-readout.error {
+  color: rgba(190, 18, 60, 0.95);
+  border-color: rgba(190, 18, 60, 0.35);
+}
+.viewer-measure-readout .measure-distance {
+  font-size: 15px;
+  font-weight: 700;
+  color: rgba(190, 18, 60, 0.95);
+}
+.viewer-measure-readout .measure-unit {
+  font-size: 10px;
+  font-weight: 500;
+  opacity: 0.7;
+}
+.viewer-measure-readout .measure-axis {
+  opacity: 0.85;
+}
+
 .viewer-mode-button {
   display: inline-flex;
   align-items: center;
@@ -3144,6 +3248,16 @@ input:disabled {
     right: 10px;
     left: auto;
   }
+  .viewer-measure-pie {
+    top: 294px;
+    right: 10px;
+    left: auto;
+  }
+  .viewer-measure-readout {
+    top: 422px;
+    right: 10px;
+    left: auto;
+  }
 
   .viewer-mode-button {
     width: 32px;
@@ -4427,6 +4541,81 @@ input:disabled {
   margin: 0 1px;
 }
 
+/* Per-beam show/hide rows inside the Display popover. The eye button reuses
+   .overlay-toggle's look; .beam-emit is the physical emission gate. */
+.display-group-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.beam-bulk {
+  display: flex;
+  gap: 6px;
+}
+.beam-bulk-button {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  cursor: pointer;
+}
+.beam-bulk-button:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+.beam-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.beam-toggle {
+  flex: 1;
+  min-width: 0;
+}
+.beam-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.beam-emission {
+  color: var(--muted);
+  font-weight: 400;
+}
+.beam-solo {
+  display: flex;
+  align-items: center;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+}
+.beam-solo:hover {
+  color: var(--ink);
+}
+.beam-solo.active {
+  background: rgba(15, 118, 110, 0.12);
+  border-color: var(--accent);
+  color: var(--ink);
+}
+.beam-emit {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.beam-hint {
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
 /* =============================================================================
  * Visibility — Modal editor
  * ===========================================================================*/
@@ -4600,6 +4789,26 @@ input:disabled {
 
 .outliner-section {
   min-width: 0;
+  /* Width-driven type + spacing. The panel is user-resizable, so every size in
+     the tree below is a fraction of the section's own inline size (cqi) with a
+     px floor/ceiling instead of a fixed px step — widening the panel grows the
+     labels AND the indentation/row height together. The middle term is
+     calibrated on the default 300 px left dock (268 px content box), so at the
+     default width the tree renders exactly as it did with the old fixed px:
+     4.478cqi = 12px, 4.104cqi = 11px, 8.955cqi = 24px.
+     Type is capped at 12px (the collection row) — the tree never grows past
+     today's size, it only shrinks in a narrow panel — while the spacing keeps
+     scaling a little past that so wide panels stay airy instead of cramped. */
+  container-type: inline-size;
+  --otl-fs-row: clamp(10px, 4.478cqi, 12px);
+  --otl-fs-obj: clamp(9px, 4.104cqi, 11px);
+  --otl-fs-meta: clamp(8px, 3.731cqi, 10px);
+  --otl-gap: clamp(2px, 1.493cqi, 6px);
+  --otl-row-h: clamp(18px, 8.955cqi, 28px);
+  --otl-icon: clamp(11px, 5.224cqi, 16px);
+  --otl-toggle: clamp(13px, 6.716cqi, 22px);
+  --otl-action: clamp(14px, 6.716cqi, 22px);
+  --otl-swatch: clamp(7px, 3.731cqi, 12px);
   /* Grey divider sits at the section's natural bottom — i.e. just under
      the marquee gutter (which itself sits below the last collection row).
      Section is a flex column with `flex: 1` so it stretches to fill the
@@ -4620,6 +4829,18 @@ input:disabled {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+}
+
+/* Search box — same chrome as the Components catalog filter, but it has to
+   keep its height while the tree below it scrolls. */
+.outliner-search {
+  flex: 0 0 auto;
+  margin: 6px 0 4px;
+}
+.outliner-search input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
 }
 
 .outliner-section .section-title {
@@ -4645,7 +4866,7 @@ input:disabled {
   flex-direction: column;
   gap: 1px;
   min-width: 0;
-  font-size: var(--fs-sm);
+  font-size: var(--otl-fs-row);
 }
 .marquee-host {
   position: relative;
@@ -4710,21 +4931,52 @@ input:disabled {
 .outliner-row {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--otl-gap);
   min-width: 0;
-  min-height: 24px;
-  padding-right: 4px;
+  min-height: var(--otl-row-h);
+  padding-right: var(--otl-gap);
   border-radius: var(--radius-sm);
   transition: background 120ms ease;
   cursor: pointer;
+}
+
+/* Nesting is read from COLOUR, not indentation — every row starts at the same
+   x. Each row wears its collection's hue as a left rail plus a tint band that
+   fades with depth (--otl-hue / --otl-tint / --otl-tint-obj are set per
+   collection node in OutlinerPanel.tsx). Objects take the weaker band of the
+   collection they belong to, so a collection and its contents read as one
+   stripe of colour.
+   These two rules MUST stay above `.outliner-row:hover` — they have the same
+   specificity as it, so only source order keeps hover/selection visible. */
+.outliner-row.collection-row,
+.outliner-row.object-row {
+  border-left: 3px solid var(--otl-hue, transparent);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.outliner-row.collection-row {
+  background: var(--otl-tint, transparent);
+}
+.outliner-row.object-row {
+  background: var(--otl-tint-obj, transparent);
+  /* Constant offset (no depth term) so object icons line up under the
+     collection swatches instead of under the collapse toggles. */
+  padding-left: calc(var(--otl-toggle) + var(--otl-gap));
 }
 
 .outliner-row:hover {
   background: rgba(0, 0, 0, 0.04);
 }
 
+/* The lucide icons ship fixed width/height attributes (size={14} etc.); CSS
+   beats those, which is what keeps them in step with the scaled rows. */
+.outliner-section svg {
+  width: var(--otl-icon);
+  height: var(--otl-icon);
+  flex: 0 0 auto;
+}
+
 .outliner-row.object-row {
-  font-size: var(--fs-xs);
+  font-size: var(--otl-fs-obj);
   color: var(--ink);
 }
 
@@ -4734,8 +4986,8 @@ input:disabled {
 }
 
 .outliner-toggle {
-  width: 18px;
-  height: 18px;
+  width: var(--otl-toggle);
+  height: var(--otl-toggle);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4757,8 +5009,8 @@ input:disabled {
 }
 
 .outliner-swatch {
-  width: 10px;
-  height: 10px;
+  width: var(--otl-swatch);
+  height: var(--otl-swatch);
   border-radius: 2px;
   border: 1px solid rgba(0, 0, 0, 0.12);
   flex: 0 0 auto;
@@ -4769,7 +5021,7 @@ input:disabled {
   min-width: 0;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: calc(var(--otl-gap) * 1.5);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4777,7 +5029,7 @@ input:disabled {
 
 .outliner-name small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--otl-fs-meta);
 }
 
 .outliner-name-input {
@@ -4792,15 +5044,15 @@ input:disabled {
 
 .outliner-count {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--otl-fs-meta);
   font-variant-numeric: tabular-nums;
-  min-width: 14px;
+  min-width: calc(var(--otl-fs-meta) * 1.4);
   text-align: right;
 }
 
 .outliner-action {
-  width: 22px;
-  height: 22px;
+  width: var(--otl-action);
+  height: var(--otl-action);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4810,6 +5062,32 @@ input:disabled {
   color: var(--muted);
   flex: 0 0 auto;
   transition: background 120ms ease, color 120ms ease;
+}
+
+/* Status icons (visibility, lock, rigid) are always on — they report state.
+   The rare commands (add / template / rename / delete) collapse to zero width
+   until the row is hovered or something inside it takes keyboard focus, so a
+   resting row spends its width on the NAME instead. Width + negative margin
+   rather than `display: none` keeps them tab-reachable. */
+.outliner-action.is-command {
+  width: 0;
+  /* Three things each keep a "0-width" button from actually being 0: the
+     flex min-content floor, the icon overflowing, and — since the button is
+     border-box — the UA's 6px horizontal padding. */
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  margin-inline-start: calc(var(--otl-gap) * -1);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.outliner-row:hover > .is-command,
+.outliner-row:focus-within > .is-command {
+  width: var(--otl-action);
+  margin-inline-start: 0;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .outliner-action:hover {

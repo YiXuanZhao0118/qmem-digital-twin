@@ -252,7 +252,7 @@ export function SceneToolbar({ roomDimensions, onRoomDimensionsChange }: SceneTo
       </div>
 
       {/* Transform (Translate / Rotate) and Tools (face-touch ops) groups
-          relocated into the 3D viewport overlay alongside the Wireframe /
+          relocated into the 3D viewport overlay alongside the X-ray /
           Rendered display-mode buttons — see DigitalTwinViewer's
           `viewer-transform-modes` and `viewer-tools-pie` overlays. */}
 

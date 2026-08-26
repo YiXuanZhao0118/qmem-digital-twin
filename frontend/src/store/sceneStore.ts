@@ -106,6 +106,12 @@ import {
   loadOverlayFlagsFromStorage,
   saveOverlayFlagsToStorage,
 } from "../utils/visibilityStorage";
+import {
+  loadHiddenBeamKeys,
+  loadSoloBeamKeys,
+  saveHiddenBeamKeys,
+  saveSoloBeamKeys,
+} from "../utils/beamVisibility";
 // Visibility helpers are no longer used here directly — selection is decoupled
 // from visibility (see selectComponent/selectObject). EXCEPTION:
 // `toggleSessionHiddenObject` reads the live collection cascade so it can
@@ -458,7 +464,7 @@ export type LabPoint = { x: number; y: number; z: number };
 export { TOUCH_OPS, TOUCH_OP_BY_ID } from "./_constants";
 export type { TouchOp, TouchOpId, FeatureKind } from "./_constants";
 import { emptyScene } from "./_constants";
-import type { TouchOpId } from "./_constants";
+import type { FeatureKind, TouchOpId } from "./_constants";
 
 // localStorage adapters split out to `./_persistence` so the wrappers
 // (try/catch + SSR guards) live next to each other and are unit-testable.
@@ -564,6 +570,17 @@ function writePersistedEditorState(state: PersistedEditorState): void {
     /* ignore */
   }
 }
+
+/** One click of the measure tool: a feature snapped out of the mesh under
+ *  the cursor, reduced to the single lab-mm point the distance is measured
+ *  from. `pointMm` is the vertex position / edge midpoint / face hit-point,
+ *  exactly as `pickFeature` reports it; `objectId` + `kind` are carried only
+ *  so the readout can name what was picked. */
+export type MeasurePick = {
+  kind: FeatureKind;
+  objectId: string;
+  pointMm: { x: number; y: number; z: number };
+};
 
 type SceneStore = {
   scene: SceneData;
@@ -713,6 +730,20 @@ type SceneStore = {
   setOverlayFlags: (next: Partial<OverlayFlags>) => void;
   toggleOverlayFlag: (kind: OverlayKind) => void;
   resetOverlayFlags: () => void;
+  /** Emissions whose beam is hidden from the 3D draw, keyed
+   *  `<sceneObjectId>:<emissionKey>` (utils/beamVisibility.ts). Display-only:
+   *  the renderer skips those segments (so they're unpickable too) while the
+   *  physics stays untouched. Persisted to localStorage like overlayFlags. */
+  hiddenBeamKeys: Set<string>;
+  /** Beam solo — an allow-list that overrides `hiddenBeamKeys` while it is
+   *  non-null, same shape and toggle semantics as `session.soloObjectIds`.
+   *  `null` = not soloing; it never holds an empty set. Combined with the
+   *  hidden set by `beamVisibility.isBeamVisible`. */
+  soloBeamKeys: Set<string> | null;
+  setBeamHidden: (key: string, hidden: boolean) => void;
+  setBeamsHidden: (keys: string[], hidden: boolean) => void;
+  toggleBeamSolo: (key: string) => void;
+  exitBeamSolo: () => void;
   // Visibility is per-instance only. Component-level catalog rows that need
   // to hide/solo "this component" should expand to its objects in the panel
   // and call the object-level actions below.
@@ -1175,16 +1206,16 @@ type SceneStore = {
   /** Per-panel display mode. In single view, only `left` is used.
    *  `node-edit` puts the viewer into fiber/RF-cable node editing mode
    *  (DigitalTwinViewer's ViewerDisplayMode); the toolbar exposes a
-   *  third button alongside Wireframe/Rendered. */
+   *  third button alongside X-ray/Rendered. */
   displayMode: {
-    left: "wireframe" | "rendered" | "node-edit" | "optical-link";
-    right: "wireframe" | "rendered" | "node-edit" | "optical-link";
+    left: "xray" | "rendered" | "node-edit" | "optical-link";
+    right: "xray" | "rendered" | "node-edit" | "optical-link";
   };
   setDisplayMode: (
     panel: "left" | "right",
-    mode: "wireframe" | "rendered" | "node-edit" | "optical-link",
+    mode: "xray" | "rendered" | "node-edit" | "optical-link",
   ) => void;
-  activeTool: "select" | "face-touch";
+  activeTool: "select" | "face-touch" | "measure";
   /** Which of the 6 touch operations is active. Each op specifies what kind
    *  of feature the user picks first and second:
    *    vv = vertex → vertex
@@ -1263,7 +1294,22 @@ type SceneStore = {
         dv: number;
       }
     | null;
-  setActiveTool: (tool: "select" | "face-touch") => void;
+  /** Which feature kind the measure tool snaps each click to — the measure
+   *  pie's three wedges. Unlike a touch op, both picks are the SAME kind:
+   *  a measurement is a distance between two like features. */
+  measureKind: FeatureKind;
+  /** First measure pick, waiting for the second click. */
+  measurePending: MeasurePick | null;
+  /** A completed measurement. The distance and its per-axis components are
+   *  derived from a/b by the consumer — storing only the two picks keeps
+   *  this the single source of truth. Picking a third feature starts a new
+   *  measurement (a = the new pick), so there is never a stale result and a
+   *  live one at once. Both picks MAY be on the same object: measuring the
+   *  span of one body is as valid as measuring the gap between two. */
+  measureResult: { a: MeasurePick; b: MeasurePick } | null;
+  /** Transient toast when a measure click misses geometry. */
+  measureError: string | null;
+  setActiveTool: (tool: "select" | "face-touch" | "measure") => void;
   setFaceTouchOp: (op: TouchOpId) => void;
   setFaceTouchDirection: (dir: "a-to-b" | "b-to-a") => void;
   setFaceTouchPending: (pending: SceneStore["faceTouchPending"]) => void;
@@ -1271,6 +1317,13 @@ type SceneStore = {
   /** Update only the du/dv fields of the current preview (live slider). */
   setFaceTouchPreviewDof: (du: number, dv: number) => void;
   setFaceTouchError: (msg: string | null) => void;
+  setMeasureKind: (kind: FeatureKind) => void;
+  setMeasurePending: (pending: MeasurePick | null) => void;
+  setMeasureResult: (result: SceneStore["measureResult"]) => void;
+  setMeasureError: (msg: string | null) => void;
+  /** Drop the in-progress pick AND the finished measurement (the measure
+   *  pie's centre button, and every path that leaves the tool). */
+  clearMeasure: () => void;
   // beamPlacementPreview removed — Beam Placement panel is gone. Per-object
   // "Snap to beam" runs synchronously off a button click; no preview state.
   setGizmoOrientation: (orientation: "global" | "local" | "beam") => void;
@@ -2044,6 +2097,8 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   transformCursorHidden: loadTransformCursorHidden(),
   homeView: loadHomeView(),
   overlayFlags: loadOverlayFlagsFromStorage(),
+  hiddenBeamKeys: loadHiddenBeamKeys(),
+  soloBeamKeys: loadSoloBeamKeys(),
   session: freshSession(),
   activeCollectionId: loadActiveCollectionId(),
 
@@ -2304,6 +2359,51 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     set(() => {
       saveOverlayFlagsToStorage(DEFAULT_OVERLAY_FLAGS);
       return { overlayFlags: { ...DEFAULT_OVERLAY_FLAGS } };
+    });
+  },
+
+  setBeamHidden(key, hidden) {
+    get().setBeamsHidden([key], hidden);
+  },
+
+  setBeamsHidden(keys, hidden) {
+    set((state) => {
+      const next = new Set(state.hiddenBeamKeys);
+      for (const key of keys) {
+        if (hidden) next.add(key);
+        else next.delete(key);
+      }
+      saveHiddenBeamKeys(next);
+      return { hiddenBeamKeys: next };
+    });
+  },
+
+  // Same toggle semantics as toggleSoloObject: soloing the only soloed beam
+  // exits solo, and emptying the set drops back to null rather than leaving
+  // an allow-list that hides everything.
+  toggleBeamSolo(key) {
+    set((state) => {
+      const current = state.soloBeamKeys;
+      let next: Set<string> | null;
+      if (current && current.has(key) && current.size === 1) {
+        next = null;
+      } else if (current) {
+        const updated = new Set(current);
+        if (updated.has(key)) updated.delete(key);
+        else updated.add(key);
+        next = updated.size === 0 ? null : updated;
+      } else {
+        next = new Set([key]);
+      }
+      saveSoloBeamKeys(next);
+      return { soloBeamKeys: next };
+    });
+  },
+
+  exitBeamSolo() {
+    set(() => {
+      saveSoloBeamKeys(null);
+      return { soloBeamKeys: null };
     });
   },
 
@@ -5001,18 +5101,23 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   setViewMode(mode) {
     set({ viewMode: mode });
   },
-  displayMode: { left: "rendered", right: "wireframe" },
+  displayMode: { left: "rendered", right: "xray" },
   setDisplayMode(panel, mode) {
-    // Switching the changed panel out of wireframe cancels any in-flight
-    // face-touch operation that was being driven from a wireframe canvas.
+    // Switching the changed panel out of X-ray cancels any in-flight
+    // face-touch / measure operation that was being driven from that canvas —
+    // both pies only exist in X-ray mode, so the tool would otherwise stay
+    // armed with no way to see or finish it.
     set((state) => ({
       displayMode: { ...state.displayMode, [panel]: mode },
-      ...(mode !== "wireframe" && state.activeTool === "face-touch"
+      ...(mode !== "xray" && state.activeTool !== "select"
         ? {
             activeTool: "select" as const,
             faceTouchPending: null,
             faceTouchPreview: null,
             faceTouchError: null,
+            measurePending: null,
+            measureResult: null,
+            measureError: null,
           }
         : {}),
     }));
@@ -5023,12 +5128,22 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   faceTouchPending: null,
   faceTouchPreview: null,
   faceTouchError: null,
+  measureKind: "vertex",
+  measurePending: null,
+  measureResult: null,
+  measureError: null,
   setActiveTool(tool) {
+    // Switching tools abandons whatever the previous one had in flight —
+    // face-touch and measure both own the click, so leaving one mid-pick
+    // must not leave a half-finished operation armed behind the other.
     set({
       activeTool: tool,
       faceTouchPending: null,
       faceTouchPreview: null,
       faceTouchError: null,
+      measurePending: null,
+      measureResult: null,
+      measureError: null,
     });
   },
   setFaceTouchOp(op) {
@@ -5063,6 +5178,23 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   },
   setFaceTouchError(msg) {
     set({ faceTouchError: msg });
+  },
+  setMeasureKind(kind) {
+    // Switching kind restarts the measurement — a distance between a vertex
+    // and a face midpoint is not a thing this tool reports.
+    set({ measureKind: kind, measurePending: null, measureResult: null, measureError: null });
+  },
+  setMeasurePending(pending) {
+    set({ measurePending: pending });
+  },
+  setMeasureResult(result) {
+    set({ measureResult: result });
+  },
+  setMeasureError(msg) {
+    set({ measureError: msg });
+  },
+  clearMeasure() {
+    set({ measurePending: null, measureResult: null, measureError: null });
   },
   setLastPlacementResult(result) {
     set({ lastPlacementResult: result });

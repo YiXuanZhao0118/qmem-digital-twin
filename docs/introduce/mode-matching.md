@@ -128,7 +128,27 @@ max length / endpoint mirror + lock; a **Lock element angles** checkbox (default
 in one `updateSceneObjects` undo step. A plan move → pose: translate the object
 by `translateWorldMm` and roll it about the lens's optical-centre anchor
 (`resolveAnchorPosesLab`) — the same rigid transform the backend applied to
-`effective_transform`. Browser-verified: panel renders with live scene data,
+`effective_transform`.
+
+**A move is a DELTA from the geometry at solve time, so the panel resolves it to
+an ABSOLUTE pose once** (`planFromSolution`, `ModeMatchingPanel.tsx:87`), when the
+solve returns, against `useSceneStore.getState().scene`. Preview and Apply both
+write that stored pose, never `obj.xMm + t.x` recomputed at click time. Invariant:
+Apply is idempotent — clicking it twice, or after a manual nudge, lands on the
+same place instead of stacking another delta (before 2026-08-26 it re-added the
+offset on every click, so the lenses walked away from the optimizer's η). Belt
+and braces: once any card is applied, `appliedKey` disables Apply on *all* cards
+in that result — the other cards' targets were planned from the pre-Apply
+baseline, so you re-solve to plan from where the scene now is.
+
+Each card lists, per lens, its **position along the beam** rather than a bare
+shift magnitude: the optical centre projected on the plan's beam axis
+(`move.rotateAxisWorld`), measured from the Start element (the seed when Start is
+`(none)`), as `before → after mm (±delta)` — plus `⊥` when decenter is on. Two
+candidate columns are then comparable by where the lenses END UP, which a
+`|translate|` per row cannot show (two very different layouts can list similar
+shift magnitudes). The numbers are frozen in the same snapshot as the poses, so
+they keep describing the plan after it is applied. Browser-verified: panel renders with live scene data,
 detects LASER_SOURCE1 / TAPERED_AMPLIFIER0, lists the 4 lenses, and POSTs to the
 endpoint.
 

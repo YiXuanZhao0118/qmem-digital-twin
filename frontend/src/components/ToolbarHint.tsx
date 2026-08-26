@@ -50,7 +50,7 @@ type ToolbarHintProps = {
   // displayMode + gizmoMode are supplied by the parent viewer instance —
   // each panel in dual-view holds its own values, so the hint text
   // ("Drag X/Y/Z arrows…" vs "Drag rings…") stays accurate per panel.
-  displayMode?: "wireframe" | "rendered" | "node-edit" | "optical-link";
+  displayMode?: "xray" | "rendered" | "node-edit" | "optical-link";
   gizmoMode?: "translate" | "rotate" | "scale";
 };
 
@@ -60,6 +60,10 @@ export function ToolbarHint({ displayMode = "rendered", gizmoMode = "translate" 
   const faceTouchOp = useSceneStore((state) => state.faceTouchOp);
   const faceTouchPending = useSceneStore((state) => state.faceTouchPending);
   const faceTouchError = useSceneStore((state) => state.faceTouchError);
+  const measureKind = useSceneStore((state) => state.measureKind);
+  const measurePending = useSceneStore((state) => state.measurePending);
+  const measureResult = useSceneStore((state) => state.measureResult);
+  const measureError = useSceneStore((state) => state.measureError);
 
   // Render tip + optional one-shot extra tip.
   const { primary, tipKey, extra, tone } = (() => {
@@ -76,7 +80,7 @@ export function ToolbarHint({ displayMode = "rendered", gizmoMode = "translate" 
       }
       if (!faceTouchPending) {
         return {
-          primary: `${op.label} · hover to preview (yellow), click the FIRST ${KIND_LABEL_LOWER[op.firstKind].toUpperCase()} on any wireframe (Esc to cancel)`,
+          primary: `${op.label} · hover to preview (yellow), click the FIRST ${KIND_LABEL_LOWER[op.firstKind].toUpperCase()} on any body (Esc to cancel)`,
           tipKey: `face-touch-step1-${op.id}`,
           extra: KIND_HOVER_HINT[op.firstKind],
           tone: "tool" as const,
@@ -106,6 +110,35 @@ export function ToolbarHint({ displayMode = "rendered", gizmoMode = "translate" 
         tone: "tool" as const,
       };
     }
+    // Measure tool — same priority as the touch tool; the two are mutually
+    // exclusive (one `activeTool`).
+    if (activeTool === "measure") {
+      if (measureError) {
+        return {
+          primary: `⚠ ${measureError}`,
+          tipKey: null as string | null,
+          extra: null as string | null,
+          tone: "warn" as const,
+        };
+      }
+      const kindWord = KIND_LABEL_LOWER[measureKind].toUpperCase();
+      if (measurePending) {
+        return {
+          primary: `Measure · now click the SECOND ${kindWord} — same object is fine (Esc to cancel)`,
+          tipKey: `measure-step2-${measureKind}`,
+          extra: KIND_HOVER_HINT[measureKind],
+          tone: "tool" as const,
+        };
+      }
+      return {
+        primary: measureResult
+          ? `Measure · click a ${kindWord} to start a new measurement (Esc to cancel)`
+          : `Measure · hover to preview (yellow), click the FIRST ${kindWord} on any body (Esc to cancel)`,
+        tipKey: `measure-step1-${measureKind}`,
+        extra: "Nothing moves — the pie's centre button clears the measurement.",
+        tone: "tool" as const,
+      };
+    }
     if (selectedObjectIds.length > 1) {
       return {
         primary: `${selectedObjectIds.length} objects selected — gizmo translates all by the same delta. Edit absolute values in 'Group centre' panel.`,
@@ -116,7 +149,7 @@ export function ToolbarHint({ displayMode = "rendered", gizmoMode = "translate" 
     }
     if (selectedObjectIds.length === 1) {
       const modeText = gizmoMode === "translate" ? "Drag X/Y/Z arrows to move" : gizmoMode === "rotate" ? "Drag rings to rotate — sticky at every 45°, hold Shift for free rotation" : "Drag handles to scale";
-      const wireText = displayMode === "wireframe" ? "  ·  Touch tool available in toolbar" : "";
+      const wireText = displayMode === "xray" ? "  ·  Touch tool available in toolbar" : "";
       return {
         primary: `${modeText}${wireText}`,
         tipKey: "single-select",

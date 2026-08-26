@@ -29,8 +29,10 @@ import {
   Lock,
   LockOpen,
   Pencil,
+  Search,
   Stamp,
   Trash2,
+  X,
 } from "lucide-react";
 import * as React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -43,7 +45,11 @@ import type {
   ComponentItem,
   SceneObject,
 } from "../types/digitalTwin";
-import { getComponentName } from "../utils/components";
+import {
+  getComponentName,
+  normalizeSearchText,
+  objectSearchHaystack,
+} from "../utils/components";
 import { computeRigidCollectionIds } from "../utils/rigidGroup";
 import { capabilityProfile } from "../kinds/_capabilityProfile";
 import {
@@ -54,6 +60,47 @@ import {
 
 const EXPANDED_COLLECTIONS_STORAGE_KEY = "qmem.outliner.expandedCollections";
 const MASTER_COLLAPSED_STORAGE_KEY = "qmem.outliner.masterCollapsed";
+
+/** Nesting is shown by COLOUR, not by indentation — every row starts at the
+ *  same x and wears a left rail + tint band instead (see styles.css). Each
+ *  top-level branch under Master owns a hue; depth fades the band.
+ *
+ *  Collection.color exists in the model but nothing ever writes it — the API
+ *  default is a single teal for every collection, so the swatch carried no
+ *  information. A branch still sitting on that default is therefore given a
+ *  palette hue by its position under Master; a colour that was explicitly set
+ *  to anything else always wins and cascades to that branch's sub-tree. */
+const DEFAULT_COLLECTION_COLOR = "#0f766e";
+const BRANCH_PALETTE = [
+  "#0f766e", // teal
+  "#1d4ed8", // blue
+  "#b45309", // amber
+  "#be123c", // rose
+  "#6d28d9", // violet
+  "#4d7c0f", // olive
+  "#0891b2", // cyan
+  "#475569", // slate
+];
+
+/** Band opacity for a collection row at `depth` (Master = 0). Objects use a
+ *  weaker share of their collection's band so they read as its contents. */
+function bandAlpha(depth: number): number {
+  return 0.2 * Math.pow(0.72, depth);
+}
+
+function withAlpha(hex: string, alpha: number): string {
+  const raw = hex.replace("#", "");
+  const full =
+    raw.length === 3
+      ? raw
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : raw;
+  const int = Number.parseInt(full, 16);
+  if (full.length !== 6 || Number.isNaN(int)) return `rgba(15, 118, 110, ${alpha})`;
+  return `rgba(${(int >> 16) & 255}, ${(int >> 8) & 255}, ${int & 255}, ${alpha})`;
+}
 
 function loadStringSet(storageKey: string): Set<string> {
   if (typeof window === "undefined") return new Set();
@@ -221,6 +268,7 @@ export function OutlinerPanel() {
   // (keep the objects, or delete them too), which window.confirm can't express.
   const [pendingDelete, setPendingDelete] = useState<Collection | null>(null);
   const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [filter, setFilter] = useState("");
 
   // Lazy fetch: templates panel is collapsed by default, so the first time the
   // user opens it (or this panel mounts after a saved template event) we pull
@@ -325,6 +373,48 @@ export function OutlinerPanel() {
     }
     return out;
   }, [objectsByCollection]);
+
+  // --- Search -----------------------------------------------------------
+  // `null` means "no filter"; an empty Set means "filter matched nothing".
+  // The two have to stay distinguishable or a blank box would hide the tree.
+  const searchNeedle = normalizeSearchText(filter);
+  const matchingObjectIds = useMemo(() => {
+    if (!searchNeedle) return null;
+    const out = new Set<string>();
+    // Every scene object, not just the tree ones — the Managed section below
+    // answers the same search and its rows are exactly the ones missing here.
+    for (const object of scene.objects) {
+      const haystack = objectSearchHaystack(object, componentById.get(object.componentId));
+      if (haystack.includes(searchNeedle)) out.add(object.id);
+    }
+    return out;
+  }, [searchNeedle, scene.objects, componentById]);
+
+  // Collections kept on screen while filtering: every collection holding a
+  // match plus its ancestors, so a hit is never orphaned from Master.
+  const matchingCollectionIds = useMemo(() => {
+    if (!matchingObjectIds) return null;
+    const parentById = new Map(collections.map((c) => [c.id, c.parentId]));
+    const out = new Set<string>();
+    for (const objectId of matchingObjectIds) {
+      const home = collectionIdByObjectId.get(objectId);
+      for (let id: string | null | undefined = home; id && !out.has(id); id = parentById.get(id)) {
+        out.add(id);
+      }
+    }
+    return out;
+  }, [matchingObjectIds, collectionIdByObjectId, collections]);
+
+  // The Managed section is outside the tree but still lists objects, so it
+  // has to answer the same search — leaving seven unrelated cables on screen
+  // under a filter that matched none of them just reads as broken.
+  const visibleManagedObjects = useMemo(
+    () =>
+      matchingObjectIds === null
+        ? managedObjects
+        : managedObjects.filter((entry) => matchingObjectIds.has(entry.object.id)),
+    [managedObjects, matchingObjectIds],
+  );
 
   // Selecting an object anywhere (3D view, marquee, another panel) reveals its
   // row here: open every collection from Master down to the object's home, or
@@ -441,6 +531,32 @@ export function OutlinerPanel() {
     () => collections.find((collection) => collection.parentId === null) ?? null,
     [collections],
   );
+
+  /** collectionId → the hue its row (and its objects) are banded with.
+   *  Built off the UNFILTERED tree so the colours don't shuffle while the
+   *  search box is narrowing the list. */
+  const branchHues = useMemo(() => {
+    const hues = new Map<string, string>();
+    if (!masterCollection) return hues;
+    hues.set(masterCollection.id, masterCollection.color);
+    const walk = (parentId: string, inherited: string) => {
+      (childrenIndex.get(parentId) ?? []).forEach((child, index) => {
+        const explicit =
+          child.color && child.color.toLowerCase() !== DEFAULT_COLLECTION_COLOR
+            ? child.color
+            : null;
+        const hue =
+          explicit ??
+          (parentId === masterCollection.id
+            ? BRANCH_PALETTE[index % BRANCH_PALETTE.length]
+            : inherited);
+        hues.set(child.id, hue);
+        walk(child.id, hue);
+      });
+    };
+    walk(masterCollection.id, masterCollection.color);
+    return hues;
+  }, [childrenIndex, masterCollection]);
 
   const toggleExpanded = useCallback((id: string) => {
     setExpanded((current) => {
@@ -714,15 +830,23 @@ export function OutlinerPanel() {
 
   const renderCollectionRow = (collection: Collection, depth: number) => {
     const isMaster = collection.parentId === null;
-    const isExpanded = isMaster ? !masterCollapsed : expanded.has(collection.id);
+    // While a search is active every surviving branch is forced open —
+    // same rule the Components catalog uses for its own filter.
+    const isExpanded =
+      matchingCollectionIds !== null || (isMaster ? !masterCollapsed : expanded.has(collection.id));
     const isActive = collection.id === activeCollectionId;
     const isOver = dragOverId === collection.id;
     const overZone = isOver ? dropZone : "inside";
     const collectionVisible = isCollectionVisible(collection.id, visibilityCtx);
     const collectionForced = sessionState.forceVisibleCollectionIds.has(collection.id);
-    const childCollections = childrenIndex.get(collection.id) ?? [];
-    const childObjects = objectsByCollection.get(collection.id) ?? [];
+    const childCollections = (childrenIndex.get(collection.id) ?? []).filter(
+      (child) => matchingCollectionIds === null || matchingCollectionIds.has(child.id),
+    );
+    const childObjects = (objectsByCollection.get(collection.id) ?? []).filter(
+      (object) => matchingObjectIds === null || matchingObjectIds.has(object.id),
+    );
     const totalCount = childCollections.length + childObjects.length;
+    const hue = branchHues.get(collection.id) ?? collection.color;
     return (
       <div
         key={collection.id}
@@ -733,13 +857,33 @@ export function OutlinerPanel() {
         onDragStart={
           isMaster
             ? undefined
-            : (event) => handleDragStart(event, { kind: "collection", collectionId: collection.id })
+            : (event) => {
+                // Collection nodes are NESTED and `dragstart` bubbles, so the
+                // ancestor node's handler ran last and overwrote dataTransfer
+                // with ITS id: grabbing a sub-collection actually dragged the
+                // whole outer branch. Dropping "Mirror and Mount" onto another
+                // collection therefore moved its parent "Repumping" — with
+                // every sibling and object under it — instead. The object rows
+                // already stop propagation here for the same reason; the
+                // drop/dragover handlers do it on their side.
+                event.stopPropagation();
+                handleDragStart(event, { kind: "collection", collectionId: collection.id });
+              }
         }
         onDragEnd={handleDragEnd}
         onDragOver={(event) => handleDragOver(event, collection)}
         onDragLeave={handleDragLeave}
         onDrop={(event) => handleDropOnCollection(event, collection)}
-        style={{ paddingLeft: `${4 + depth * 14}px` }}
+        // No indentation: depth is carried by the colour band. The three
+        // custom properties cascade to this collection's own row AND to the
+        // object rows nested under it.
+        style={
+          {
+            "--otl-hue": hue,
+            "--otl-tint": withAlpha(hue, bandAlpha(depth)),
+            "--otl-tint-obj": withAlpha(hue, bandAlpha(depth) * 0.45),
+          } as React.CSSProperties
+        }
         onClick={(event) => {
           event.stopPropagation();
           setActiveCollection(collection.id);
@@ -776,8 +920,8 @@ export function OutlinerPanel() {
           </button>
           <span
             className="outliner-swatch"
-            style={{ background: collection.color }}
-            title={isMaster ? "Master Collection" : `Color: ${collection.color}`}
+            style={{ background: hue }}
+            title={isMaster ? "Master Collection" : `Color: ${hue}`}
           />
           {editingId === collection.id ? (
             <input
@@ -893,7 +1037,7 @@ export function OutlinerPanel() {
           })()}
           <button
             type="button"
-            className="outliner-action"
+            className="outliner-action is-command"
             title="Add sub-collection"
             onClick={(event) => {
               event.stopPropagation();
@@ -904,7 +1048,7 @@ export function OutlinerPanel() {
           </button>
           <button
             type="button"
-            className="outliner-action"
+            className="outliner-action is-command"
             title="Save as template (Collection Drift) — captures structure, sub-collections and relative poses"
             onClick={(event) => {
               event.stopPropagation();
@@ -916,7 +1060,7 @@ export function OutlinerPanel() {
           {!isMaster && editingId !== collection.id && (
             <button
               type="button"
-              className="outliner-action"
+              className="outliner-action is-command"
               title="Rename"
               onClick={(event) => {
                 event.stopPropagation();
@@ -929,7 +1073,7 @@ export function OutlinerPanel() {
           {!isMaster && (
             <button
               type="button"
-              className="outliner-action danger-action"
+              className="outliner-action danger-action is-command"
               title="Delete collection"
               onClick={(event) => {
                 event.stopPropagation();
@@ -976,7 +1120,6 @@ export function OutlinerPanel() {
                     });
                   }}
                   onDragEnd={handleDragEnd}
-                  style={{ paddingLeft: `${22 + (depth + 1) * 14}px` }}
                   onClick={(event) => {
                     event.stopPropagation();
                     selectObject(object.id, {
@@ -1042,7 +1185,7 @@ export function OutlinerPanel() {
                   </button>
                   <button
                     type="button"
-                    className="outliner-action danger-action"
+                    className="outliner-action danger-action is-command"
                     title={object.locked ? "Locked — unlock to delete" : "Delete object"}
                     disabled={object.locked}
                     onClick={(event) => {
@@ -1106,12 +1249,38 @@ export function OutlinerPanel() {
           <FolderPlus size={14} />
         </button>
       </div>
+      {/* Objects are matched on their Component's identity as well as their
+          own name (see objectSearchHaystack) — the thing a user is looking
+          for is the part ("Post Spacer 2.0 mm"), which is what the catalog
+          calls it, not the name the placed instance happens to carry. */}
+      <div className="search-row outliner-search">
+        <Search size={14} />
+        <input
+          value={filter}
+          onChange={(event) => setFilter(event.target.value)}
+          placeholder="Search objects / components"
+        />
+        {matchingObjectIds && <span className="outliner-count">{matchingObjectIds.size}</span>}
+        {filter.length > 0 && (
+          <button
+            type="button"
+            className="outliner-action"
+            title="Clear search"
+            onClick={() => setFilter("")}
+          >
+            <X size={13} />
+          </button>
+        )}
+      </div>
       <MarqueeTree
         objects={visibleObjects}
         selectedObjectIds={selectedObjectIds}
         setSelectedObjects={setSelectedObjects}
       >
         {renderCollectionRow(masterCollection, 0)}
+        {matchingObjectIds?.size === 0 && (
+          <p className="outliner-empty">No object matches "{filter.trim()}".</p>
+        )}
       </MarqueeTree>
       {/* Managed objects — the kinds deliberately kept out of the tree above
           (`capabilityProfile.outlinerVisible === false`: rf_cable, PPG). They
@@ -1121,13 +1290,13 @@ export function OutlinerPanel() {
           the 3D viewer now ignores invisible objects, so without a row here a
           permanently-hidden cable would be unreachable from every surface at
           once. Hence eye-only — no drag, no lock, no delete. */}
-      {managedObjects.length > 0 && (
+      {visibleManagedObjects.length > 0 && (
         <div className="outliner-managed">
           <div className="outliner-managed-header">
             <span>Managed</span>
             <small>RF Link / Pulse &amp; Timing owns these — visibility only</small>
           </div>
-          {managedObjects.map(({ object, kindLabel }) => (
+          {visibleManagedObjects.map(({ object, kindLabel }) => (
             <div key={object.id} className="outliner-row object-row" title={object.name}>
               <Layers3 size={14} />
               <span className="outliner-name">

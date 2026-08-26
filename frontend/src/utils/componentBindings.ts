@@ -498,6 +498,37 @@ export function bindingLinkGroup(binding: ComponentBinding): string | null {
 }
 
 
+/** Binding ids this INSTANCE draws nothing for.
+ *
+ *  A composite is often bought as one part but not always mounted whole —
+ *  "Mech Post 1 inch" is an RS1P post with a CF125C_M clamping fork bound
+ *  under it, and a post standing in a mounting hole has no fork on it. The
+ *  fork must still exist: it is the same catalog Component, and the
+ *  binding carries the calibrated pose (and the tunable RZ the Object
+ *  panel adjusts) that the instances which DO wear one depend on.
+ *
+ *  So hiding is per-instance and render-only:
+ *  ``SceneObject.properties.hiddenBindings: string[]``. Nothing is
+ *  deleted — the ComponentBinding row, its `local_rz_deg` baseline and
+ *  this instance's ObjectBinding RZ delta are all untouched, and
+ *  unhiding puts the part back exactly where it was. Same layer split as
+ *  ``bindingFiberNodes`` / ``translucentHousing``: the binding row is the
+ *  shared catalog baseline, how THIS one is dressed lives on the object.
+ *
+ *  Read by ``buildSceneObjectFromBindings``, which returns `null` from the
+ *  binding loader for a hidden node — the documented "skip this node and
+ *  its subtree" contract, so hiding a part also hides whatever is mounted
+ *  on it. Purely visual: the backend loader and tracer never read it. */
+export function hiddenBindingIds(
+  sceneObject: SceneObject | null | undefined,
+): Set<string> {
+  const v = (sceneObject?.properties as { hiddenBindings?: unknown } | undefined)
+    ?.hiddenBindings;
+  if (!Array.isArray(v)) return new Set();
+  return new Set(v.filter((id): id is string => typeof id === "string"));
+}
+
+
 /** Group a component's bindings by their declared linkGroup. Bindings
  *  without a linkGroup land in their own single-entry group (keyed by
  *  the binding's role_label, or its id as a last resort).
