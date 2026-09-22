@@ -40,7 +40,9 @@ from app.routers import (
     touchstone,
     v3_align,
     v3_catalog,
+    v3_ppg,
     v3_rf,
+    v3_rf_cables,
     v3_solver,
 )
 from app.routers.collections import get_master_collection
@@ -73,6 +75,8 @@ app.include_router(v3_catalog.router, prefix="/api")
 app.include_router(v3_solver.router, prefix="/api")
 app.include_router(v3_rf.router, prefix="/api")
 app.include_router(v3_align.router, prefix="/api")
+app.include_router(v3_rf_cables.router, prefix="/api")
+app.include_router(v3_ppg.router, prefix="/api")
 app.include_router(pop.router, prefix="/api")
 app.include_router(
     component_bindings.component_scoped,

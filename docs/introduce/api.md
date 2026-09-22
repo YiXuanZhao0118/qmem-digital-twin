@@ -13,6 +13,7 @@
 - `/api/timing-programs`, `/api/rf-chains/nodes`, `/api/coils`, `/api/magnetics-problems`, `/api/simulation-runs`, `/api/touchstone/parse`, `/api/app-settings/{key}`
 - `POST /api/v3/rf/propagation` — the RF readout at one scrub time (compute-only, see below)
 - `POST /api/v3/align/mirror-coupling`, `/api/v3/align/isolator`, `/api/v3/align/aom-bragg` — proposed poses from the align solvers (compute-only, see below)
+- `POST /api/v3/rf-cables/connect`, `/resnap`, `/{id}/disconnect`, `/{id}/align-candidates`, `/{id}/align` and `POST /api/v3/ppg/attach`, `/{id}/detach` — the web's RF-cable / PPG store flows, served to a second client (these WRITE; see the last section)
 - Static: `/assets/files/...`; Swagger: `/docs`; WebSocket: `/ws/scene`
 - Conventions: every persisted id is a UUIDv7; CamelModel (DB snake_case ↔ API camelCase).
 
@@ -174,3 +175,134 @@ Defaults, as `AomBraggSection` resolves them: `order` ← `dynamicSources.diffra
 ```
 
 `readout` measures the CURRENT pose, `readoutAfter` the proposed one (so `readoutAfter.matchedOrder` shows the CONV-2 flip when the cell runs reversed). Order 0 returns no `pose` and `"error": "Order 0 is the undiffracted beam — …"`. A primary asset that is not an `aom`, or one with no intercept pair / acoustic direction, is 422.
+
+## Write endpoints for a second client: RF cables and PPGs
+
+Backend ports of the web app's coax-cable and Programmable Pulse Generator flows (`store/sceneStore.ts` and the utils they call), served so the qmem-blender add-on does not grow a third copy. Routers `backend/app/routers/v3_rf_cables.py` / `v3_ppg.py`; pure plans `backend/app/optical/rf_cables/flows.py`; DB side `rf_cables/service.py`. The web app itself still runs its TypeScript; the two are **pinned to each other by golden fixtures the real TypeScript writes** (`frontend/src/utils/__tests__/rfCableParity.test.ts` → `backend/tests/fixtures/rf_cables/{pure,flows}.json`, asserted by `backend/tests/optical/test_rf_cables_parity.py`: 1e-9 on poses / nodes, exact on the cable variant, the PPG component, rule rejections and delete sets). Behaviour and the TS quirks carried over are in [rf.md](rf.md) §7 and [cable.md](cable.md).
+
+Common to all of them:
+
+- **Unlike the section above, these write.** Each request is ONE transaction, committed once, then the same `/ws/scene` events the generic routers send (`object.updated`, `collection_member.updated`, `physics_element.updated`, `timing_program.updated`, `object.deleted`, `physics_element.updated {deleted: true}`, `timing_program.deleted`). Where the web issues several requests (create the cable, PUT end A, PUT end B), the endpoint writes their final state in one go, so a failure leaves nothing behind. Rows are created through the same code as `POST /api/objects` (`routers/objects.py` `insert_scene_object`: unique name, else `<KIND><n>`; the master collection unless `collectionId` names one; the auto-created PhysicsElement) and deleted through the same code as `DELETE /api/objects/{id}` (`remove_scene_object`: the PhysicsElement, and a PPG's TimingProgram).
+- **A port** is `{"objectId": "<uuid>", "anchorName": "CH0", "anchorId": "rf_out"}` — `anchorName` is `anchor.name ?? anchor.id` (`CH0`, `RF1`, `RF IN`, `rf_in`); `anchorId` is optional and only needed when two of the object's ports share a name. A port must be one the RF Link panel offers: an `rf_in` / `rf_out` / `ttl_*` / `trigger_*` anchor anywhere in the object's binding tree (multi-root Components like the EOM included) on an object whose PhysicsElement kind takes part in RF Link.
+- **Errors**: 4xx with `{"detail": "<code>: <message>"}`; clients may branch on the code.
+
+  | code | status | when |
+  |---|---|---|
+  | `object_not_found` | 404 | an id names no SceneObject |
+  | `port_not_found` / `ambiguous_port` | 422 | the object offers no such port / two, and no `anchorId` given |
+  | `same_object`, `role_mismatch`, `connector_undefined`, `domain_mismatch` | 422 | connect: the RF Link panel's drop rules (an output joins an input; both SMA/BNC; the SAME signal domain) |
+  | `port_busy` | 409 | a cable end or PPG already claims that port (either port, for a connect) |
+  | `no_cable_component` / `no_ppg_component` | 422 | no rf_cable / no usable PPG catalog Component |
+  | `not_an_rf_cable`, `not_a_ppg`, `not_a_gate_input` | 422 | the id / port is the wrong kind of thing |
+  | `target_not_in_range` | 422 | align: that port is not a candidate within `toleranceMm` |
+  | `locked` | 409 | a delete would remove a `locked` SceneObject (refused whole) |
+
+  A name clash on the new PPG (`CH<n>` taken) is the plain 409 of `POST /api/objects`.
+- **Locks**: SceneObject `locked` means what it does on `PUT / DELETE /api/objects` — pose frozen, row undeletable, `properties` writable. So re-snapping / aligning a locked cable rewrites its nodes (as the web does), a locked PPG is not re-mounted, and a delete that reaches a locked object is refused whole. No flow writes a Kind / Asset3D / Device / Component row.
+
+### `POST /api/v3/rf-cables/connect`
+
+`createRfCableBetweenPorts` behind the panel's drop gate (`flows.plan_connect`, `flows.py:160`). Request order does not matter — the OUT port is the source.
+
+```json
+{ "a": { "objectId": "<dds>", "anchorName": "CH1" },
+  "b": { "objectId": "<amp>", "anchorName": "rf_in" },
+  "collectionId": null }
+```
+
+Response `{"object": SceneObjectOut}` — the new cable (`RF_CABLE<n>`, identity rotation, at the two ports' midpoint) whose properties carry both links and the mated spline:
+
+```json
+{ "object": { "id": "...", "name": "RF_CABLE7", "componentId": "<RF cable SMA>",
+  "xMm": -1225.129, "yMm": 754.872, "zMm": 725.9465, "rxDeg": 0, "ryDeg": 0, "rzDeg": 0,
+  "properties": {
+    "rfCableEndpoints": {
+      "A": { "targetObjectId": "<dds>", "targetAnchorId": "rf_out", "targetAnchorName": "CH1" },
+      "B": { "targetObjectId": "<amp>", "targetAnchorId": "rf_in", "targetAnchorName": "rf_in" } },
+    "rfCableNodes": [
+      { "posMm": [321.63, 37.322, -16.7015], "handleOutMm": [0, 30, 0] },
+      { "posMm": [-296.18, 12.128, 26.7015], "handleInMm": [30, 0, 0] } ] },
+  "...": "the rest of SceneObjectOut" } }
+```
+
+The cable Component is the first catalog `rf_cable` whose end A / B connector families (from its `end_a` / `end_b` connector assets) match source / target, else one matching the other way round (its end A then goes on the TARGET), else the first `rf_cable`. Each node sits the bound connector's `|connect_in − connect_out|` behind its port along the port's outward axis, handle 30 mm, so the connector's mating face is ON the port.
+
+### `POST /api/v3/rf-cables/{id}/disconnect`
+
+The web's cable-end unlink (`clearRfCableEndpointLink`): a cable either joins two ports or does not exist, so unlinking either end **deletes the cable**, through the web's delete cascade (`flows.plan_delete_objects`, `flows.py:389`: objects linked to a doomed one, PPGs plugged into one, legacy PPGs wired only through doomed cables). An end with no link is a no-op — a destructive action only on a fact positively established ([rf.md](rf.md) §7).
+
+```json
+{ "end": "A" }
+```
+
+```json
+{ "object": null, "deletedObjectIds": ["<cable>"], "deletedTimingProgramIds": [] }
+```
+
+On a no-op, `object` is the untouched cable and both lists are empty.
+
+### `POST /api/v3/rf-cables/resnap`
+
+`resnapRfCablesLinkedTo` (`flows.py:240`), called after objects moved: every cable end linked to a moved object is re-mated (same math as connect), and — a backend addition the web does not need, since it re-derives the mount at render time — every PPG plugged into a moved object (or moved itself) is re-mounted, so its STORED pose stays on its port (`flows.plan_ppg_mounts`, `:295`).
+
+```json
+{ "movedObjectIds": ["<amp>"] }
+```
+
+```json
+{ "updated": [ { "id": "<cable>", "properties": { "rfCableNodes": ["..."], "rfCableEndpoints": {} }, "...": "" } ] }
+```
+
+Only rows that actually change are written and returned; a second call is `{"updated": []}`.
+
+### `POST /api/v3/rf-cables/{id}/align-candidates` (compute-only)
+
+`findRfCableAlignmentCandidates` (`flows.py:322`): every `rf_in` / `rf_out` anchor on any other object within `toleranceMm` (default 25) of this end, nearest first.
+
+```json
+{ "end": "B", "toleranceMm": 100 }
+```
+
+```json
+{ "candidates": [
+  { "distMm": 54.522, "newPosMmBody": [-331.456, 723.0, -398.335], "newHandleMmBody": [30, 0, 0],
+    "targetName": "RF_AMPLIFIER0", "targetObjectId": "<amp>", "targetAnchorName": "rf_in", "targetAnchorId": "rf_in" },
+  { "distMm": 59.312, "...": "the amp's rf_out, then the next ports out to 100 mm" } ] }
+```
+
+### `POST /api/v3/rf-cables/{id}/align`
+
+`applyRfCableAlignmentCandidate` on the candidate for `target` (the nearest, if two share a name and no `anchorId` is given); writes the end's node + handle and its link.
+
+```json
+{ "end": "B", "target": { "objectId": "<amp>", "anchorName": "rf_in" }, "toleranceMm": 25 }
+```
+
+Response `{"object": SceneObjectOut}` (the cable).
+
+### `POST /api/v3/ppg/attach`
+
+`createPpgAtPort` + `createProgrammablePulseGenerator` behind the panel's `canSpawnPpgHere` (`flows.plan_ppg_attach`, `flows.py:523`): the target must be an empty `ttl_in` / `trigger_in` with an SMA/BNC connector. The PPG Component is the first `programmable_pulse_generator` whose `properties.connectorType` equals the port's family and whose primary asset carries `rf_out`.
+
+```json
+{ "target": { "objectId": "<switch>", "anchorName": "ttl_in" }, "collectionId": null }
+```
+
+```json
+{ "object": { "id": "<ppg>", "name": "CH2", "componentId": "<PPG BNC MALE>",
+    "xMm": -1273.376, "yMm": 770.745, "zMm": 699.415, "rxDeg": 0, "ryDeg": -90, "rzDeg": 0,
+    "properties": { "ppgAttachment": { "targetObjectId": "<switch>", "targetAnchorId": "ttl_in", "targetAnchorName": "ttl_in" } },
+    "...": "" },
+  "timingProgram": { "id": "<program>", "name": "CH2", "intervals": [], "...": "" },
+  "mounted": true }
+```
+
+Written in one transaction: the TimingProgram (`CH<number of PPGs>`, empty), the object (same name), its PhysicsElement (`kindParams` as the web writes them, normalised by the same schema → `{"timingProgramId", "restState": "LOW", "outputDomain": "rfout"}`) and the attachment. The pose is the **mounted** pose (`utils/ppgMounting.ts`, ported as `rf_cables/ppg_mount.py`: `rf_out` mated onto the port, backed off by the asset's `matingProtrusionMm`), where the web stores its 3D-cursor spawn pose and draws the mount live. `mounted: false` when the mount does not resolve (the port is not on the target's primary asset — a multi-root instrument); the PPG then stands at the target object's pose.
+
+### `POST /api/v3/ppg/{id}/detach`
+
+The panel's "Disconnect" on a PPG — the only sanctioned way to remove one: the PPG is deleted through the web's delete cascade and its TimingProgram with it. No body.
+
+```json
+{ "deletedObjectIds": ["<ppg>"], "deletedTimingProgramIds": ["<program>"] }
+```
