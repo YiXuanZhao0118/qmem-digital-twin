@@ -4,16 +4,18 @@
 //
 // What "align" means for a fiber:
 //   1. The optical PORT (intercept_in for End A / intercept_out for End B,
-//      at the ferrule tip = node + outward · FIBER_FERRULE_TIP_MM) is the
-//      thing the user wants on the beam — NOT the spline node, which sits
-//      36.28 mm behind the port along the outward direction.
+//      at the ferrule tip = node + outward · tip) is the thing the user
+//      wants on the beam — NOT the spline node, which sits `tip` behind the
+//      port along the outward direction. `tip` is the bound connector's
+//      mating-face length (the store passes it; 36.28 mm, the FC housing,
+//      when no connector is bound).
 //   2. Project the current port lab position onto every supplied beam
 //      segment, keep the closest if it's within `toleranceMm`.
 //   3. Back-derive the new spline node so the port lands exactly on the
 //      projected point with the new outward direction:
 //        End A entry: outward_new = −beam_tangent (face opposes beam)
 //        End B exit:  outward_new = +beam_tangent (face goes with beam)
-//      node_new = projected_port − outward_new · FIBER_FERRULE_TIP_MM
+//      node_new = projected_port − outward_new · tip
 //   4. Set the matching handle so the spline tangent at the endpoint
 //      matches the beam direction: handleOut_A = +beam_tangent,
 //      handleIn_B = −beam_tangent. Handle MAGNITUDE is preserved from the
@@ -290,6 +292,7 @@ export function computeFiberEndAlignment(opts: {
   pose: FiberAlignPose;
   beamSegmentsLab: BeamSegmentLab[];
   toleranceMm: number;
+  tipMm?: number;
 }): FiberEndAlignmentResult | null {
   const list = findFiberEndAlignmentCandidates(opts);
   if (list.length === 0) return null;
@@ -319,16 +322,26 @@ export function computeFiberEndAlignment(opts: {
  *
  *  Optional `BeamSegmentLab.displayLabel / emitterObjectId / aomOrder /
  *  branch / wavelengthNm` are surfaced verbatim on the result so the
- *  caller can label each candidate without re-deriving them. */
+ *  caller can label each candidate without re-deriving them.
+ *
+ *  `tipMm` is the junction→optical-face distance of THIS end's connector, as
+ *  for `findFiberPortAlignmentCandidates`: pass the bound connector asset's
+ *  `|mating face − cable root|` (`sceneStore.fiberEndConnectorTipMm`), the
+ *  length the backend's `_synth_fiber_slot` puts the traced face at. It
+ *  defaults to the FC housing constant, which is right only for a fibre with
+ *  no bound connector — with one, the traced face would land `tip − 36.28`
+ *  mm along the beam from the picked point (≈23 mm for the PM connectors). */
 export function findFiberEndAlignmentCandidates(opts: {
   end: "A" | "B";
   nodes: FiberNodePersist[];
   pose: FiberAlignPose;
   beamSegmentsLab: BeamSegmentLab[];
   toleranceMm: number;
+  tipMm?: number;
 }): FiberAlignmentCandidate[] {
   const { end, nodes, pose, beamSegmentsLab, toleranceMm } = opts;
   if (nodes.length < 2) return [];
+  const tipMm = opts.tipMm ?? FIBER_FERRULE_TIP_MM;
   const idx = end === "A" ? 0 : nodes.length - 1;
   const neighbourIdx = end === "A" ? 1 : nodes.length - 2;
   const epBody = nodes[idx].posMm;
@@ -338,9 +351,9 @@ export function findFiberEndAlignmentCandidates(opts: {
   // Current port lab position = node + outward · TIP, then bodyToLab.
   const outwardBody = endpointOutwardBody(nodes, end);
   const anchorBody: Vec3Tuple = [
-    epBody[0] + outwardBody[0] * FIBER_FERRULE_TIP_MM,
-    epBody[1] + outwardBody[1] * FIBER_FERRULE_TIP_MM,
-    epBody[2] + outwardBody[2] * FIBER_FERRULE_TIP_MM,
+    epBody[0] + outwardBody[0] * tipMm,
+    epBody[1] + outwardBody[1] * tipMm,
+    epBody[2] + outwardBody[2] * tipMm,
   ];
   const anchorLab = bodyToLab(anchorBody);
 
@@ -390,9 +403,9 @@ export function findFiberEndAlignmentCandidates(opts: {
         ? [-tanBody[0], -tanBody[1], -tanBody[2]]
         : [tanBody[0], tanBody[1], tanBody[2]];
     const newPosMmBody: Vec3Tuple = [
-      projectedAnchorBody[0] - newOutwardBody[0] * FIBER_FERRULE_TIP_MM,
-      projectedAnchorBody[1] - newOutwardBody[1] * FIBER_FERRULE_TIP_MM,
-      projectedAnchorBody[2] - newOutwardBody[2] * FIBER_FERRULE_TIP_MM,
+      projectedAnchorBody[0] - newOutwardBody[0] * tipMm,
+      projectedAnchorBody[1] - newOutwardBody[1] * tipMm,
+      projectedAnchorBody[2] - newOutwardBody[2] * tipMm,
     ];
     const newHandleMmBody: Vec3Tuple = [
       handleSign * tanBody[0] * handleLen,

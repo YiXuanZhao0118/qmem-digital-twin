@@ -253,6 +253,7 @@ def test_fiber_beam_candidates(case) -> None:
     got = find_fiber_end_alignment_candidates(
         end=i["end"], nodes=i["nodes"], pose=_pose(i["pose"]),
         beam_segments=i["beamSegmentsLab"], tolerance_mm=i["toleranceMm"],
+        **({"tip_mm": i["tipMm"]} if "tipMm" in i else {}),
     )
     assert_close(_json(got), case["output"])
 

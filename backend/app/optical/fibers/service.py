@@ -149,16 +149,20 @@ def fiber_candidates(
     if not nodes or len(nodes) < 2:
         return []
     pose = object_pose(obj)
+    # One tip for both finders: the bound connector's, where the solver puts
+    # the traced face.
+    tip = fiber_end_tip_mm(scene, obj, end)
     ports = find_fiber_port_alignment_candidates(
         end=end, nodes=nodes, pose=pose,
         ports=collect_fiber_ports_lab(scene, obj.id),
         tolerance_mm=tolerance_mm,
-        tip_mm=fiber_end_tip_mm(scene, obj, end),
+        tip_mm=tip,
     )
     beams = find_fiber_end_alignment_candidates(
         end=end, nodes=nodes, pose=pose,
         beam_segments=_beams_excluding(beam_segments or [], obj.id),
         tolerance_mm=tolerance_mm,
+        tip_mm=tip,
     )
     return dedup_fiber_candidates(beams + ports)
 
@@ -548,6 +552,7 @@ def fiber_target_candidate(
     or ``{"beam": BeamSegmentLab}``."""
     obj, nodes = require_fiber(scene, object_id)
     pose = object_pose(obj)
+    tip = fiber_end_tip_mm(scene, obj, end)
     if "beam" in target:
         seg = target["beam"]
         if seg.get("sourceObjectId") == obj.id:
@@ -555,13 +560,12 @@ def fiber_target_candidate(
 
         def run(tol: float | None) -> list[dict]:
             return find_fiber_end_alignment_candidates(
-                end=end, nodes=nodes, pose=pose, beam_segments=[seg], tolerance_mm=tol,
+                end=end, nodes=nodes, pose=pose, beam_segments=[seg], tolerance_mm=tol, tip_mm=tip,
             )
         return _one_candidate(run(tolerance_mm), run(None), f"Beam {seg.get('beamId')!r}", tolerance_mm)
     port = resolve_port_target(
         scene, obj.id, target["objectId"], target["anchorName"], target.get("anchorId"),
     )
-    tip = fiber_end_tip_mm(scene, obj, end)
 
     def run_port(tol: float | None) -> list[dict]:
         return find_fiber_port_alignment_candidates(

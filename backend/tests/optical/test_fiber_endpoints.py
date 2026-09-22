@@ -294,6 +294,11 @@ async def test_a_beam_placement_clears_the_link_and_lands_on_the_line(bench) -> 
     off_line = rel - d * rel.dot(d)
     assert off_line.length() < 1e-9
     assert facing.dot(d) == pytest.approx(-1.0, abs=1e-12)  # End A looks back up the beam
+    # … and ON the picked point: the node is backed out by the bound
+    # connector's own tip (59.33 mm here), the length the loader puts the
+    # traced face at — not the 36.28 mm FC constant.
+    picked = Vec3(*r.json()["candidate"]["projectedPortLab"])
+    assert _dist(face, picked) < TOL
 
 
 async def test_candidates_list_ports_and_write_nothing(bench) -> None:

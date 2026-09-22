@@ -183,7 +183,7 @@ function buildGeometry(): Json {
 
   // Beam candidates: the unit-test geometry, then random fibres / poses /
   // beams (some within tolerance, one degenerate, some clamped).
-  type BeamIn = { end: "A" | "B"; nodes: FiberNodePersist[]; pose: Pose; beamSegmentsLab: BeamSegmentLab[]; toleranceMm: number };
+  type BeamIn = { end: "A" | "B"; nodes: FiberNodePersist[]; pose: Pose; beamSegmentsLab: BeamSegmentLab[]; toleranceMm: number; tipMm?: number };
   const beamInputs: BeamIn[] = [
     {
       end: "A",
@@ -221,7 +221,11 @@ function buildGeometry(): Json {
       }
       segs.push(seg);
     }
-    beamInputs.push({ end: r.pick(["A", "B"] as const), nodes, pose, beamSegmentsLab: segs, toleranceMm: r.pick([25, 400, 2000]) });
+    beamInputs.push({
+      end: r.pick(["A", "B"] as const), nodes, pose, beamSegmentsLab: segs, toleranceMm: r.pick([25, 400, 2000]),
+      // Half the cases carry a bound connector's own tip length.
+      ...(i % 2 === 0 ? { tipMm: r.uni(10, 70) } : {}),
+    });
   }
   const beam = beamInputs.map((input) => ({ input: plain(input), output: plain(findFiberEndAlignmentCandidates(input)) }));
 

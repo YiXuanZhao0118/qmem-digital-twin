@@ -3328,12 +3328,17 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       : [];
 
     const all = [
+      // The same connector tip the port finder uses: the traced face is
+      // `node + outward · tip` of the BOUND connector (`_synth_fiber_slot`),
+      // so backing the node out by the FC constant parked a PM fibre's face
+      // ~23 mm along the beam from the point picked.
       ...findFiberEndAlignmentCandidates({
         end,
         nodes,
         pose: alignPose,
         beamSegmentsLab,
         toleranceMm,
+        tipMm: obj ? fiberEndConnectorTipMm(state.scene, obj.componentId, end) : undefined,
       }),
       ...portCandidates,
     ];

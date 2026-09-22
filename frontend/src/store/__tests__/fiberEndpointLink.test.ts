@@ -356,6 +356,42 @@ describe("resnapFibersLinkedTo", () => {
   });
 });
 
+describe("a beam placement uses the bound connector's tip too (2026-09-22)", () => {
+  // The traced face of a connector-bound fibre is node + outward · tip, with
+  // tip = the connector's own |mating face − cable root| (the backend's
+  // _synth_fiber_slot). A beam placement must back the node out by that same
+  // tip or the face lands `tip − 36.28` mm along the beam from the picked
+  // point — it used to back out by the FC constant regardless.
+  const beamAlongX = (y: number) => [{
+    startThree: { x: 3, y: y / 100, z: 0 },
+    endThree: { x: 6, y: y / 100, z: 0 },
+    emitterObjectId: "src", sourceObjectId: "src",
+  }];
+
+  it.each([
+    ["with a PM connector bound", "role" as const, CONNECTOR_TIP_MM],
+    ["with no connector bound", undefined, 36.28],
+  ])("puts the traced face on the picked point, %s", async (_label, key, tip) => {
+    seed({ fiberNodes: straight(0, 400), endBBindingKey: key });
+    (globalThis as { window?: unknown }).window = { __rayTraceDebug: beamAlongX(5) };
+    try {
+      const store = useSceneStore.getState();
+      const cand = (await store.findFiberAlignmentCandidates(FIBER_ID, "B", 25)).find((c) => !c.port);
+      expect(cand).toBeDefined();
+      // Measured from the REAL current face (x = 400 + tip), 5 mm off the line.
+      expect(cand!.distMm).toBeCloseTo(5, 9);
+      expect(cand!.projectedPortLab[0]).toBeCloseTo(400 + tip, 9);
+      await store.applyFiberAlignmentCandidate(FIBER_ID, "B", cand!);
+      const n = nodesOf()![1];
+      const outward = new THREE.Vector3(...n.handleInMm!).normalize().negate();
+      const face = new THREE.Vector3(...n.posMm).addScaledVector(outward, tip);
+      expect(face.distanceTo(new THREE.Vector3(...cand!.projectedPortLab))).toBeLessThan(1e-9);
+    } finally {
+      delete (globalThis as { window?: unknown }).window;
+    }
+  });
+});
+
 describe("a tilted receiver bound through a rotated binding (2026-09-22)", () => {
   // The port must land where the TRACER hit-tests it: the port anchor lifted
   // by its binding (raw XYZ Euler, as the backend's _binding_tree_transform)

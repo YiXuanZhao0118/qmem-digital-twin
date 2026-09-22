@@ -171,9 +171,11 @@ def find_fiber_end_alignment_candidates(
     the new body-local node + handle. ``tolerance_mm=None`` (a caller that
     named one segment) skips the distance filter.
 
-    ``tip_mm`` is always the FC constant in the web app — its beam finder
-    never looks up the bound connector (only the port finder does) — so it
-    defaults to that; it is a parameter only so the constant has one home.
+    ``tip_mm`` is the end's connector length — the flows pass
+    ``scene.fiber_end_tip_mm``, as the web store does since 2026-09-22 — so
+    the traced face (``node + outward·tip``, ``_synth_fiber_slot``) lands on
+    the projected point. The FC-constant default is right only for a fibre
+    with no bound connector.
     """
     if len(nodes) < 2:
         return []
