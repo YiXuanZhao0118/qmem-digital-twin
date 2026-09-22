@@ -22,17 +22,13 @@
  *     TypeScript produces, so a TS change cannot land without regenerating
  *     them — which then fails the Python side until it is ported too.
  *
- * One deliberate gap, and why the store scenes are shaped around it: the
- * store's fibre-port sweep (`collectFiberPortsLab`) and linked-end resolver
- * (`resolveLinkedFiberEndpoint`) lift a port into lab with a local copy of
- * the SceneObject rotation convention that was retired on 2026-06-01, and
- * without the port's binding transform. The backend uses the tracer's chain
- * instead (a port has to land where the tracer hit-tests it). The two agree
- * when the port's binding is the identity and the objects involved are
- * rotated about Z by 0 or ±180° only — every fibre port in the live scene —
- * so the STORE scenes below stay inside that set, while the pure helpers
- * (which use the correct convention) are exercised at arbitrary rotations.
- * See docs/introduce/fiber.md ("The backend port").
+ * Every scene here is posed ARBITRARILY — tilted instruments, rotated and
+ * nested port bindings, per-instance ObjectBinding deltas, a port reached
+ * through a sub-Component. Both copies place a port through the tracer's chain
+ * (`anchorPose.resolveAnchorPosesLab` / `anchor_poses.resolve_anchor_poses_lab`,
+ * themselves pinned by `alignParity.test.ts`); until 2026-09-22 the store
+ * used a retired rotation convention for fibre ports and these scenes had to
+ * stay flat. See docs/introduce/fiber.md ("The backend port").
  *
  * Regenerate after an intentional change:
  *
@@ -46,7 +42,8 @@ import { fileURLToPath } from "node:url";
 
 import { describe, it, vi } from "vitest";
 
-import { pointBodyToLab, type V3Pose } from "../../optical/pose";
+import { pointBodyToLab, pointLabToBody, type V3Pose } from "../../optical/pose";
+import { resolveAnchorPosesLab } from "../anchorPose";
 import { pigtailPortBindings } from "../componentBindings";
 import {
   endpointOutwardBody,
@@ -127,17 +124,11 @@ function makeRng(seed: number) {
     xMm: uni(-500, 500), yMm: uni(-500, 500), zMm: uni(0, 1000),
     rxDeg: angle(), ryDeg: uni(-89, 89), rzDeg: angle(),
   });
-  /** A pose inside the set where the store's legacy port convention agrees
-   *  with the tracer's: no tilt, and a Z turn of 0 or ±180 deg only. */
-  const flatPose = (): Pose => ({
-    xMm: uni(-500, 500), yMm: uni(-500, 500), zMm: uni(0, 1000),
-    rxDeg: 0, ryDeg: 0, rzDeg: pick([0, 180, -180]),
-  });
   const bindingPose = (s = 100): BindingPose => ({
     localXMm: uni(-s, s), localYMm: uni(-s, s), localZMm: uni(-s, s),
     localRxDeg: angle(), localRyDeg: uni(-89, 89), localRzDeg: angle(),
   });
-  return { next, uni, t3, unit, pick, angle, pose, flatPose, bindingPose };
+  return { next, uni, t3, unit, pick, angle, pose, bindingPose };
 }
 type Rng = ReturnType<typeof makeRng>;
 
@@ -266,30 +257,29 @@ function buildGeometry(): Json {
   }
   const port = portInputs.map((input) => ({ input: plain(input), output: plain(findFiberPortAlignmentCandidates(input)) }));
 
-  // The linked-end resolver — only in the pose set where its local rotation
-  // copy agrees with the tracer's (see the file header). The Python takes
-  // the port already in lab, lifted by the tracer's own pose.
+  // The linked-end resolver: the port comes in already in lab, the fibre is
+  // posed anywhere.
   type LinkIn = {
-    endpoint: "A" | "B"; fiberPose: Pose; targetPose: Pose; targetAnchorPosBodyMm: T3;
-    targetAnchorDirBody: T3; tipMm?: number; handleMagnitudeMm?: number;
+    endpoint: "A" | "B"; fiberPose: Pose; portLabMm: T3; portAxisXLab: T3;
+    tipMm?: number; handleMagnitudeMm?: number;
   };
   const linkInputs: LinkIn[] = [
-    { endpoint: "B", fiberPose: IDENTITY, targetPose: IDENTITY, targetAnchorPosBodyMm: [500, 0, 0], targetAnchorDirBody: [-1, 0, 0], tipMm: 59.333 },
-    { endpoint: "B", fiberPose: IDENTITY, targetPose: IDENTITY, targetAnchorPosBodyMm: [500, 0, 0], targetAnchorDirBody: [0, 0, 0] },
-    { endpoint: "A", fiberPose: IDENTITY, targetPose: { ...IDENTITY, rzDeg: 180 }, targetAnchorPosBodyMm: [0, 0, 13], targetAnchorDirBody: [1, 0, 0] },
+    { endpoint: "B", fiberPose: IDENTITY, portLabMm: [500, 0, 0], portAxisXLab: [-1, 0, 0], tipMm: 59.333 },
+    { endpoint: "B", fiberPose: IDENTITY, portLabMm: [500, 0, 0], portAxisXLab: [0, 0, 0] },
+    { endpoint: "B", fiberPose: { ...IDENTITY, ryDeg: 90 }, portLabMm: [500, 0, 0], portAxisXLab: [-1, 0, 0] },
+    { endpoint: "A", fiberPose: { ...IDENTITY, rzDeg: 180 }, portLabMm: [0, 0, 13], portAxisXLab: [1, 0, 0] },
   ];
   for (let i = 0; i < 16; i += 1) {
     linkInputs.push({
       endpoint: r.pick(["A", "B"] as const),
-      fiberPose: r.flatPose(),
-      targetPose: r.flatPose(),
-      targetAnchorPosBodyMm: r.t3(60),
-      targetAnchorDirBody: scale3(r.unit(), r.uni(0.3, 2)),
+      fiberPose: r.pose(),
+      portLabMm: r.t3(600),
+      portAxisXLab: scale3(r.unit(), r.uni(0.3, 2)),
       ...(r.next() < 0.6 ? { tipMm: r.uni(10, 70) } : {}),
       ...(r.next() < 0.3 ? { handleMagnitudeMm: r.uni(5, 60) } : {}),
     });
   }
-  const linked = linkInputs.map((input) => ({ input: plain(input), output: plain(resolveLinkedFiberEndpoint({ ...input, endpoint: input.endpoint })) }));
+  const linked = linkInputs.map((input) => ({ input: plain(input), output: plain(resolveLinkedFiberEndpoint(input)) }));
 
   const syncInputs: { endA: unknown; endB: unknown }[] = [
     { endA: { posMm: [1, 2, 3], tensionHandleMm: [10, 0, 0] }, endB: { posMm: [300, 5, 6], tensionHandleMm: [-10, 1, 0] } },
@@ -494,14 +484,14 @@ const asset = (id: string, kindId: string, anchors: unknown[]) => ({ id, name: i
 const component = (id: string, kindId: string, extra: Record<string, unknown> = {}) => ({ id, name: id, kindId, asset3dId: null, properties: {}, ...extra });
 const bindingRow = (p: {
   id: string; componentId: string; asset?: string | null; parent?: string | null; kind?: "asset" | "empty";
-  role?: string; pose?: BindingPose; properties?: Record<string, unknown>; sortOrder?: number;
+  sub?: string; role?: string; pose?: BindingPose; properties?: Record<string, unknown>; sortOrder?: number;
 }) => ({
   id: p.id,
   componentId: p.componentId,
   parentBindingId: p.parent ?? null,
-  targetKind: p.kind ?? "asset",
+  targetKind: p.sub ? "subcomponent" : p.kind ?? "asset",
   asset3dId: p.asset ?? null,
-  subComponentId: null,
+  subComponentId: p.sub ?? null,
   role: p.role ?? p.id,
   ...(p.pose ?? { localXMm: 0, localYMm: 0, localZMm: 0, localRxDeg: 0, localRyDeg: 0, localRzDeg: 0 }),
   tunableAxes: {},
@@ -605,7 +595,13 @@ function snapshot(): Json {
 
 type Op =
   | { op: "find"; kind: "fiber" | "pigtail"; objectId: string; end: "A" | "B"; toleranceMm: number }
-  | { op: "apply"; kind: "fiber" | "pigtail"; objectId: string; end: "A" | "B"; toleranceMm: number; index: number; pick?: "port" | "beam" }
+  | {
+    op: "apply"; kind: "fiber" | "pigtail"; objectId: string; end: "A" | "B"; toleranceMm: number; index: number;
+    /** Narrow to receptacle / beam candidates before indexing … */
+    pick?: "port" | "beam";
+    /** … and to the receptacles of one object. */
+    portObjectId?: string;
+  }
   | { op: "clear"; kind: "fiber" | "pigtail"; objectId: string; end: "A" | "B" }
   | { op: "move"; objectId: string; pose: Pose }
   | { op: "resnap"; kind: "fiber" | "pigtail"; movedObjectIds: string[] };
@@ -627,8 +623,9 @@ async function runFlow(name: string, scene: Scene, traces: TraceSeg[], ops: Op[]
       steps.push({ ...op, candidates: plain(await findCandidates(op.kind, op.objectId, op.end, op.toleranceMm)) });
     } else if (op.op === "apply") {
       const all = await findCandidates(op.kind, op.objectId, op.end, op.toleranceMm);
-      // `pick` narrows to receptacle / beam candidates before indexing.
-      const list = op.pick === undefined ? all : all.filter((c) => (op.pick === "port") === Boolean(c.port));
+      const list = all
+        .filter((c) => op.pick === undefined || (op.pick === "port") === Boolean(c.port))
+        .filter((c) => op.portObjectId === undefined || c.port?.targetObjectId === op.portObjectId);
       const cand = list[op.index];
       if (!cand) throw new Error(`${name}: no candidate ${op.index} for ${op.objectId}/${op.end}`);
       if (op.kind === "fiber") await store.applyFiberAlignmentCandidate(op.objectId, op.end, cand as never);
@@ -664,18 +661,34 @@ const CONN_COAX_SPELLING = asset("a-conn-legacy", "fiber_connector", [
   anchor("connect_in", [0.001, 0, 56.891], [0, 0, 1], { connectorType: "fc_pc_male" }),
 ]);
 
-/** A port's lab position under a flat pose (the set the scenes stay in). */
+/** A SceneObject-body point in lab. */
 function labOf(pose: Pose, body: T3): T3 {
   const p = pointBodyToLab(xyz(body), pose);
   return [p.x, p.y, p.z];
 }
 
+/** A lab point in a SceneObject's body frame. */
+function bodyOf(pose: Pose, lab: T3): T3 {
+  const p = pointLabToBody(xyz(lab), pose);
+  return [p.x, p.y, p.z];
+}
+
+/** An anchor of a scene object, in lab — through its binding tree, the
+ *  chain the store places ports with. */
+function anchorLab(scene: Scene, objectId: string, anchorId: string): T3 {
+  const obj = scene.objects.find((o) => o.id === objectId)!;
+  const comp = scene.components.find((c) => c.id === obj.componentId)!;
+  const a = resolveAnchorPosesLab(comp as never, obj as never, scene as never).find((x) => x.anchorId === anchorId)!;
+  return [a.posLab.x, a.posLab.y, a.posLab.z];
+}
+
 function buildFiberFlow(seed: number, name: string): Promise<Json> {
   const r = makeRng(seed);
-  const detPose = r.flatPose();
-  const det2Pose = r.flatPose();
-  const srcPose = r.flatPose();
-  const oldPose = r.flatPose();
+  const detPose = r.pose();
+  const det2Pose = r.pose();
+  const srcPose = r.pose();
+  const oldPose = r.pose();
+  const rackPose = r.pose();
   const detPort: T3 = [-4, 10.258, 17.584];
   const srcPort: T3 = [0, 0, 13];
   const oldPort: T3 = [3, -2, 1];
@@ -709,36 +722,35 @@ function buildFiberFlow(seed: number, name: string): Promise<Json> {
     component("c-fib-none", "fiber", {
       properties: { fiberNodes: [{ posMm: [0, 0, 0], handleOutMm: [20, 0, 0] }, { posMm: [250, 0, 0], handleInMm: [-20, 0, 0] }] },
     }),
+    // A rack carrying a receiver as a sub-Component: its port is reached
+    // through two binding levels.
+    component("c-rack", "mechanical"),
   ];
   const componentBindings = [
-    bindingRow({ id: "b-det", componentId: "c-det", asset: "a-det" }),
-    // A transformed non-port binding in the same Component: must not disturb the port.
+    // The receiver's port is bound through a ROTATED binding …
+    bindingRow({ id: "b-det", componentId: "c-det", asset: "a-det", pose: r.bindingPose(40) }),
+    // … next to a transformed non-port binding that must not disturb it.
     bindingRow({ id: "b-det-mount", componentId: "c-det", asset: "a-nonport-mount", pose: { localXMm: 5, localYMm: 6, localZMm: 7, localRxDeg: 10, localRyDeg: 20, localRzDeg: 30 }, sortOrder: 1 }),
-    bindingRow({ id: "b-src", componentId: "c-src", asset: "a-src" }),
+    bindingRow({ id: "b-src", componentId: "c-src", asset: "a-src", pose: r.bindingPose(20) }),
     bindingRow({ id: "b-mir", componentId: "c-mir", asset: "a-mir" }),
     bindingRow({ id: "b-plug", componentId: "c-plug", asset: "a-plug" }),
     bindingRow({ id: "b-fr-a", componentId: "c-fib-role", asset: "a-conn-pm", role: "end_a" }),
     bindingRow({ id: "b-fr-b", componentId: "c-fib-role", asset: "a-conn-pm", role: "end_b", sortOrder: 1 }),
     bindingRow({ id: "b-fs-b", componentId: "c-fib-spline", asset: "a-conn-pm", role: "pm_780_apc", properties: { splineEnd: "B" } }),
     bindingRow({ id: "b-fs-a", componentId: "c-fib-spline", asset: "a-conn-legacy", role: "pm_780_pc", properties: { splineEnd: "A" }, sortOrder: 1 }),
+    bindingRow({ id: "b-rack-shelf", componentId: "c-rack", kind: "empty", role: "shelf", pose: r.bindingPose(60) }),
+    bindingRow({ id: "b-rack-det", componentId: "c-rack", parent: "b-rack-shelf", sub: "c-det", role: "receiver", pose: r.bindingPose(60) }),
   ];
-  const detLab = labOf(detPose, detPort);
-  const srcLab = labOf(srcPose, srcPort);
-  // Fibres parked near the ports (their faces within a few cm), flat poses.
-  const fib0Pose: Pose = { ...r.flatPose(), rzDeg: 0 };
-  const fib1Pose: Pose = { ...r.flatPose(), rzDeg: 180 };
-  const toBody = (pose: Pose, lab: T3): T3 => {
-    // Flat poses only: rz ∈ {0, ±180} ⇒ x,y flip with the turn.
-    const c = Math.round(Math.cos((pose.rzDeg * Math.PI) / 180));
-    return [(lab[0] - pose.xMm) * c, (lab[1] - pose.yMm) * c, lab[2] - pose.zMm];
-  };
-  const fib0Nodes: FiberNodePersist[] = [
-    { posMm: add3(toBody(fib0Pose, srcLab), [60, 8, -5]), handleOutMm: [30, 0, 0] },
-    { posMm: add3(toBody(fib0Pose, srcLab), [200, 40, -20]), handleInMm: [-15, 5, 0], handleOutMm: [15, -5, 0] },
-    { posMm: add3(toBody(fib0Pose, detLab), [70, -9, 4]), handleInMm: [-30, 0, 0] },
-  ];
-  const fib1EndA = add3(toBody(fib1Pose, detLab), [-50, 12, 3]);
-  const fib1EndB = add3(toBody(fib1Pose, labOf(det2Pose, detPort)), [45, 5, -8]);
+  // This instance of the receiver carries a per-instance delta on its port
+  // binding — the tracer composes it, so the port sweep must too.
+  const objectBindings = [{
+    id: "ob-det0", objectId: "det0", componentBindingId: "b-det",
+    localXMmDelta: 1.5, localYMmDelta: null, localZMmDelta: -2.25,
+    localRxDegDelta: null, localRyDegDelta: 7.5, localRzDegDelta: 12,
+    asset3dIdOverride: null, properties: {},
+  }];
+  const fib0Pose = r.pose();
+  const fib1Pose = r.pose();
   const objects: Obj[] = [
     sceneObject("det0", "c-det", detPose),
     sceneObject("det1", "c-det", det2Pose),
@@ -746,16 +758,30 @@ function buildFiberFlow(seed: number, name: string): Promise<Json> {
     sceneObject("old0", "c-old", oldPose),
     sceneObject("mir0", "c-mir", { ...detPose, xMm: detPose.xMm + 3 }),
     sceneObject("plug0", "c-plug", { ...srcPose, yMm: srcPose.yMm + 2 }),
+    sceneObject("rack0", "c-rack", rackPose),
+  ];
+  const scene: Scene = { objects, components, componentBindings, objectBindings, assets, physicsElements: [] };
+  // Fibres parked near the ports (their faces within a few cm), in each
+  // fibre's own — arbitrarily rotated — body frame.
+  const detLab = anchorLab(scene, "det0", "fiber_in");
+  const srcLab = anchorLab(scene, "src0", "fiber_in");
+  const fib0Nodes: FiberNodePersist[] = [
+    { posMm: add3(bodyOf(fib0Pose, srcLab), [60, 8, -5]), handleOutMm: [30, 0, 0] },
+    { posMm: add3(bodyOf(fib0Pose, srcLab), [200, 40, -20]), handleInMm: [-15, 5, 0], handleOutMm: [15, -5, 0] },
+    { posMm: add3(bodyOf(fib0Pose, detLab), [70, -9, 4]), handleInMm: [-30, 0, 0] },
+  ];
+  const fib1EndA = add3(bodyOf(fib1Pose, detLab), [-50, 12, 3]);
+  const fib1EndB = add3(bodyOf(fib1Pose, anchorLab(scene, "rack0", "fiber_in")), [45, 5, -8]);
+  objects.push(
     sceneObject("fib0", "c-fib-role", fib0Pose, { fiberNodes: fib0Nodes, keepMe: { a: 1 } }),
     sceneObject("fib1", "c-fib-spline", fib1Pose, { fiberEndpoints: null }),
-    sceneObject("fib2", "c-fib-none", { ...r.flatPose(), rzDeg: 180 }),
-  ];
-  const physicsElements = [
+    sceneObject("fib2", "c-fib-none", r.pose()),
+  );
+  scene.physicsElements = [
     { objectId: "fib0", elementKind: "fiber", kindParams: { fiberType: "polarization_maintaining", endA: { numericalAperture: 0.12 }, endB: { posMm: [0, 0, 0], slowAxisDegInBodyFrame: 90 } } },
     { objectId: "fib1", elementKind: "fiber", kindParams: { endA: { posMm: fib1EndA, tensionHandleMm: [-10, 0, 0] }, endB: { posMm: fib1EndB, tensionHandleMm: [10, 2, 0] } } },
     { objectId: "det0", elementKind: "detector", kindParams: {} },
   ];
-  const scene: Scene = { objects, components, componentBindings, objectBindings: [], assets, physicsElements };
 
   // Beams around fib0's End A face: one chain in two hops (collapses), its
   // ±1 AOM orders, a reflected branch, a segment emitted BY fib0 (skipped)
@@ -772,8 +798,9 @@ function buildFiberFlow(seed: number, name: string): Promise<Json> {
     traceSeg(faceA, faceA, { emitterObjectId: "src0", sourceObjectId: "src0" }),
   ];
 
-  const detMoved: Pose = { ...detPose, xMm: detPose.xMm + 37.5, yMm: detPose.yMm - 12.25, rzDeg: detPose.rzDeg === 0 ? 180 : 0 };
-  const srcMoved: Pose = { ...srcPose, zMm: srcPose.zMm + 3 };
+  // Moves that turn as well as slide — a re-snap has to follow both.
+  const detMoved: Pose = { ...detPose, xMm: detPose.xMm + 37.5, yMm: detPose.yMm - 12.25, rxDeg: detPose.rxDeg + 25, rzDeg: detPose.rzDeg - 40 };
+  const srcMoved: Pose = { ...srcPose, zMm: srcPose.zMm + 3, ryDeg: srcPose.ryDeg / 2 };
   const ops: Op[] = [
     { op: "find", kind: "fiber", objectId: "fib0", end: "A", toleranceMm: 400 },
     { op: "find", kind: "fiber", objectId: "fib0", end: "B", toleranceMm: 400 },
@@ -795,10 +822,13 @@ function buildFiberFlow(seed: number, name: string): Promise<Json> {
     { op: "clear", kind: "fiber", objectId: "fib2", end: "B" },
     { op: "clear", kind: "fiber", objectId: "fib2", end: "A" },
     { op: "apply", kind: "fiber", objectId: "fib2", end: "A", toleranceMm: 5000, index: 2 },
+    // A port reached through the rack's sub-Component.
+    { op: "apply", kind: "fiber", objectId: "fib1", end: "B", toleranceMm: 5000, index: 0, pick: "port", portObjectId: "rack0" },
     { op: "move", objectId: "det0", pose: detMoved },
     { op: "move", objectId: "src0", pose: srcMoved },
-    { op: "move", objectId: "old0", pose: { ...oldPose, xMm: oldPose.xMm - 20, rzDeg: oldPose.rzDeg === 0 ? -180 : 0 } },
-    { op: "resnap", kind: "fiber", movedObjectIds: ["det0", "src0", "old0", "nope"] },
+    { op: "move", objectId: "old0", pose: { ...oldPose, xMm: oldPose.xMm - 20, rzDeg: oldPose.rzDeg + 90 } },
+    { op: "move", objectId: "rack0", pose: { ...rackPose, yMm: rackPose.yMm + 15, rxDeg: rackPose.rxDeg - 30 } },
+    { op: "resnap", kind: "fiber", movedObjectIds: ["det0", "src0", "old0", "rack0", "nope"] },
     { op: "resnap", kind: "fiber", movedObjectIds: ["mir0"] },
     { op: "resnap", kind: "fiber", movedObjectIds: [] },
   ];
@@ -844,23 +874,28 @@ function buildPigtailFlow(seed: number, name: string): Promise<Json> {
     bindingRow({ id: "n-loose", componentId: "c-eom-nested", asset: "a-fc", role: "spare", pose: PORT_OUT_POSE, sortOrder: 4 }),
     bindingRow({ id: "x-mod", componentId: "c-eom-bad", asset: "a-eom", role: "modulator" }),
     bindingRow({ id: "x-in", componentId: "c-eom-bad", asset: "a-fc-noaxis", role: "port_in", properties: { portAnchor: "intercept_in" }, sortOrder: 1 }),
-    bindingRow({ id: "b-det", componentId: "c-det", asset: "a-det" }),
-    bindingRow({ id: "b-src", componentId: "c-src", asset: "a-src" }),
+    // The receptacles sit behind rotated bindings.
+    bindingRow({ id: "b-det", componentId: "c-det", asset: "a-det", pose: r.bindingPose(30) }),
+    bindingRow({ id: "b-src", componentId: "c-src", asset: "a-src", pose: r.bindingPose(30) }),
   ];
   const eom0Pose = EOM0_POSE;
   const eom1Pose = r.pose();
-  // Put a receptacle ~1 cm from each EOM0 port face, on flat poses.
-  const place = (face: T3, port: T3, rz: number, jitter: T3): Pose => {
-    const c = Math.round(Math.cos((rz * Math.PI) / 180));
+  const base: Scene = { objects: [], components, componentBindings, objectBindings: [], assets, physicsElements: [] };
+  // Put a receptacle ~1 cm from a port face: an arbitrarily rotated object
+  // whose port — through its binding — lands at `face + jitter`.
+  const place = (componentId: string, face: T3, jitter: T3): Pose => {
+    const rot = r.pose();
+    const probe = { ...rot, xMm: 0, yMm: 0, zMm: 0 };
+    const at = anchorLab({ ...base, objects: [sceneObject("probe", componentId, probe)] }, "probe", "fiber_in");
     const want = add3(face, jitter);
-    return { xMm: want[0] - c * port[0], yMm: want[1] - c * port[1], zMm: want[2] - port[2], rxDeg: 0, ryDeg: 0, rzDeg: rz };
+    return { ...probe, xMm: want[0] - at[0], yMm: want[1] - at[1], zMm: want[2] - at[2] };
   };
   const outFace = connectorPortLab({ pose: PORT_OUT_POSE, parentPose: null, connectIn: FC_FACE }, eom0Pose)!.posMm;
   const inFace = connectorPortLab({ pose: PORT_IN_POSE, parentPose: null, connectIn: FC_FACE }, eom0Pose)!.posMm;
-  const detPose = place(outFace, detPort, 180, [6, -4, 3]);
-  const srcPose = place(inFace, srcPort, 0, [-5, 7, -2]);
+  const detPose = place("c-det", outFace, [6, -4, 3]);
+  const srcPose = place("c-src", inFace, [-5, 7, -2]);
   const eom1In = connectorPortLab({ pose: { ...PORT_IN_POSE, localXMm: PORT_IN_POSE.localXMm + 2, localRzDeg: PORT_IN_POSE.localRzDeg + 15 }, parentPose: { localXMm: 5, localYMm: -3, localZMm: 2, localRxDeg: 10, localRyDeg: 20, localRzDeg: 30 }, connectIn: FC_FACE }, eom1Pose)!.posMm;
-  const det1Pose = place(eom1In, detPort, -180, [3, 3, 3]);
+  const det1Pose = place("c-det", eom1In, [3, 3, 3]);
   const objects: Obj[] = [
     sceneObject("eom0", "c-eom", eom0Pose, { bindingFiberNodes: { "orphan-binding": [{ posMm: [0, 0, 0] }] } }),
     sceneObject("eom1", "c-eom-nested", eom1Pose, { bindingFiberNodes: { "n-in": PORT_IN_NODES.map((n) => ({ ...n, posMm: add3(n.posMm, [0, 1, 0]) })) }, pigtailEndpoints: { intercept_out: { targetObjectId: "gone", targetAnchorId: "fiber_in", targetAnchorName: "x" } } }),
@@ -901,9 +936,9 @@ function buildPigtailFlow(seed: number, name: string): Promise<Json> {
     { op: "apply", kind: "pigtail", objectId: "eom0", end: "B", toleranceMm: 1000, index: 0, pick: "port" },
     { op: "apply", kind: "pigtail", objectId: "eom0", end: "A", toleranceMm: 1000, index: 0, pick: "beam" },
     { op: "apply", kind: "pigtail", objectId: "eom0", end: "A", toleranceMm: 1000, index: 0, pick: "port" },
-    { op: "move", objectId: "src0", pose: { ...srcPose, yMm: srcPose.yMm - 8, rzDeg: 180 } },
-    { op: "move", objectId: "det0", pose: { ...detPose, xMm: detPose.xMm + 12.5, zMm: detPose.zMm - 4, rzDeg: 0 } },
-    { op: "move", objectId: "det1", pose: { ...det1Pose, yMm: det1Pose.yMm + 30 } },
+    { op: "move", objectId: "src0", pose: { ...srcPose, yMm: srcPose.yMm - 8, rzDeg: srcPose.rzDeg + 35 } },
+    { op: "move", objectId: "det0", pose: { ...detPose, xMm: detPose.xMm + 12.5, zMm: detPose.zMm - 4, rxDeg: detPose.rxDeg - 20 } },
+    { op: "move", objectId: "det1", pose: { ...det1Pose, yMm: det1Pose.yMm + 30, ryDeg: det1Pose.ryDeg / 3 } },
     { op: "resnap", kind: "pigtail", movedObjectIds: ["det0", "det1", "src0"] },
     { op: "resnap", kind: "pigtail", movedObjectIds: ["src0-not-linked"] },
   ];

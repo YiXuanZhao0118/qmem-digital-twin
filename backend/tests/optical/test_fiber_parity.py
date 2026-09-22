@@ -12,10 +12,11 @@ compared modulo 360 deg, and near gimbal lock (|cos ry| < 1e-6), where rx and
 rz are individually meaningless, a binding pose is compared as the rotation
 it denotes.
 
-The store scenes stay inside the pose set where the store's port sweep
-agrees with the tracer (see the fixture generator's header and
-``docs/introduce/fiber.md``); ``test_fiber_endpoints.py`` pins the backend's
-behaviour outside it against the tracer itself.
+Every scene is posed arbitrarily (tilted instruments, rotated and nested
+port bindings, ObjectBinding deltas, a port inside a sub-Component): both
+copies place a port through the tracer's chain since 2026-09-22.
+``test_fiber_endpoints.py`` additionally pins the backend against the
+tracer's own loader.
 """
 
 from __future__ import annotations
@@ -27,7 +28,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.optical.beam_ray import Vec3
 from app.optical.fibers.geometry import (
     endpoint_outward_body,
     find_fiber_end_alignment_candidates,
@@ -63,7 +63,7 @@ from app.optical.fibers.service import (
     pigtail_clear_link,
     pigtail_resnap,
 )
-from app.optical.pose import V3Pose, dir_body_to_lab, point_body_to_lab
+from app.optical.pose import V3Pose
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "fibers"
 TOL = 1e-9
@@ -269,12 +269,7 @@ def test_fiber_port_candidates(case) -> None:
 
 @pytest.mark.parametrize("case", _cases(GEOMETRY, "linked"))
 def test_resolve_linked_fiber_endpoint(case) -> None:
-    """The port is lifted into lab by the TRACER's pose here; the fixture
-    poses are in the set where the TS's local copy agrees."""
     i = case["input"]
-    target = _pose(i["targetPose"])
-    p = point_body_to_lab(Vec3(*i["targetAnchorPosBodyMm"]), target)
-    d = dir_body_to_lab(Vec3(*i["targetAnchorDirBody"]), target)
     kwargs = {}
     if "tipMm" in i:
         kwargs["tip_mm"] = i["tipMm"]
@@ -282,7 +277,7 @@ def test_resolve_linked_fiber_endpoint(case) -> None:
         kwargs["handle_magnitude_mm"] = i["handleMagnitudeMm"]
     got = resolve_linked_fiber_endpoint(
         end=i["endpoint"], fiber_pose=_pose(i["fiberPose"]),
-        port_lab=(p.x, p.y, p.z), port_axis_lab=(d.x, d.y, d.z), **kwargs,
+        port_lab=tuple(i["portLabMm"]), port_axis_lab=tuple(i["portAxisXLab"]), **kwargs,
     )
     expected = case["output"]
     if expected is None:
@@ -456,7 +451,9 @@ def test_store_flow(flow) -> None:
         if step["op"] == "apply":
             every = _find(scene, step, beams)
             pick = step.get("pick")
-            listed = every if pick is None else [c for c in every if (pick == "port") == bool(c.get("port"))]
+            listed = [c for c in every if pick is None or (pick == "port") == bool(c.get("port"))]
+            if "portObjectId" in step:
+                listed = [c for c in listed if (c.get("port") or {}).get("targetObjectId") == step["portObjectId"]]
             cand = listed[step["index"]]
             assert_close(_json(cand), step["candidate"], f"{where}.candidate")
             apply = fiber_apply_candidate if step["kind"] == "fiber" else pigtail_apply_candidate

@@ -249,7 +249,7 @@ def fiber_resnap(scene: FiberScene, writes: Writes, moved_object_ids: list[str])
             owned = find_owned_anchor(
                 scene, target, link.get("targetAnchorId"), link.get("targetAnchorName"),
             )
-            if owned is None:
+            if owned is None or owned.axis_x_lab is None:
                 continue
             nodes = resolve_effective_fiber_nodes(scene, obj)
             if not nodes or len(nodes) < 2:
@@ -258,7 +258,7 @@ def fiber_resnap(scene: FiberScene, writes: Writes, moved_object_ids: list[str])
                 end=end,
                 fiber_pose=object_pose(obj),
                 port_lab=tuple(owned.pos_lab),
-                port_axis_lab=tuple(owned.axis_lab),
+                port_axis_lab=tuple(owned.axis_x_lab),
                 tip_mm=fiber_end_tip_mm(scene, obj, end),
             )
             if resolved is None:

@@ -354,12 +354,11 @@ def resolve_linked_fiber_endpoint(
     when the instrument moves. Returns ``(posMmBody, handleMmBody)``, or None
     on a degenerate port direction.
 
-    Takes the port already in lab (the TS takes it in the target's body frame
-    and lifts it itself — with a pre-2026-06-01 rotation convention and no
-    binding transform; here the caller supplies the tracer's pose, see the
-    module note in ``app/optical/fibers/__init__.py``). The handle is a fixed
-    ``handle_magnitude_mm`` (30), NOT the aligner's ``max(20, 0.33·seg)`` —
-    a re-snap therefore re-lengthens the handle, exactly as the web does."""
+    Takes the port already in lab, as the TS does since 2026-09-22 — the
+    caller resolves it through the target's binding tree and pose. The handle
+    is a fixed ``handle_magnitude_mm`` (30), NOT the aligner's
+    ``max(20, 0.33·seg)`` — a re-snap therefore re-lengthens the handle,
+    exactly as the web does."""
     m = math.hypot(port_axis_lab[0], port_axis_lab[1], port_axis_lab[2])
     if m < 1e-9:
         return None

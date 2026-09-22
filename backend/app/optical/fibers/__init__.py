@@ -19,8 +19,9 @@ optics, so they are computed here rather than re-written in that client:
 
 Parity with the TypeScript is pinned by golden fixtures the real TypeScript
 writes (``frontend/src/utils/__tests__/fiberParity.test.ts`` ->
-``backend/tests/fixtures/fibers/``). One deliberate difference: every lab pose
-here comes from the TRACER's transform chain, where the web's fibre-port
-sweep and linked-end resolver still use a pre-2026-06-01 rotation convention
-and skip the binding transform — see ``docs/introduce/fiber.md``.
+``backend/tests/fixtures/fibers/``), at arbitrary object rotations and
+binding poses. Both copies place a port through the tracer's chain (the
+binding tree + the SceneObject pose, ``anchor_poses.resolve_anchor_poses_lab``
+here, ``anchorPose.resolveAnchorPosesLab`` there) — see
+``docs/introduce/fiber.md``.
 """

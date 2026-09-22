@@ -12,8 +12,9 @@ Lookups ported here, each from the web store:
 * :func:`fiber_end_tip_mm` — ``sceneStore.fiberEndConnectorTipMm``, but
   measured with the loader's own ``_connector_tip_and_aperture`` so the face
   mated here is the face the solver couples through.
-* :func:`collect_fiber_ports_lab` — ``sceneStore.collectFiberPortsLab``, with
-  the TRACER's transform chain (see the note on that function).
+* :func:`collect_fiber_ports_lab` — ``sceneStore.collectFiberPortsLab``: the
+  binding tree + the SceneObject pose, the chain the tracer places a port
+  with (on both sides since 2026-09-22).
 * :func:`pigtail_port_bindings` — ``componentBindings.pigtailPortBindings``.
 """
 
@@ -38,14 +39,9 @@ from app.models import (
 )
 from app.optical.align.anchor_poses import (
     AlignScene,
-    BindingNode,
-    anchor_display_name,
-    object_pose,
-    resolve_binding_tree,
+    AnchorPoseLab,
+    resolve_anchor_poses_lab,
 )
-from app.optical.align.frames import cad_to_lab, rotate_lab_dir
-from app.optical.align.ts_compat import V, read_xyz
-from app.optical.beam_ray import Vec3
 from app.optical.db_scene_loader import _connector_tip_and_aperture
 from app.optical.fibers.geometry import (
     FIBER_FERRULE_TIP_MM,
@@ -53,7 +49,6 @@ from app.optical.fibers.geometry import (
     sync_fiber_nodes_from_kind_params,
 )
 from app.optical.fibers.pigtail import BindingPose, compose_binding_poses
-from app.optical.pose import dir_body_to_lab_t, point_body_to_lab_t
 
 # ``utils/connectorAnchors`` — both spellings of a connector's two anchors, the
 # fibre one (alembic 0135) preferred BY ID. Same tuples as the loader's
@@ -241,105 +236,37 @@ def fiber_end_tip_mm(scene: FiberScene, obj: Any, end: str) -> float:
 
 # ─── anchors in lab, through the tracer's chain ────────────────────────────
 
-@dataclass(frozen=True)
-class OwnedAnchorLab:
-    """One anchor of an object's binding tree, placed in lab by the tracer's
-    chain (SceneObject pose ∘ binding tree incl. ObjectBinding deltas).
-    ``axis_lab`` is the lab image of axisX (else the legacy
-    ``directionBodyLocal``, else +X) — NOT normalised, as the TS port sweep
-    leaves it."""
-
-    anchor: dict
-    asset_id: str
-    pos_lab: V
-    axis_lab: V
-
-
-def owned_anchors_lab(scene: FiberScene, obj: Any) -> list[OwnedAnchorLab]:
-    """``anchorsInBindingTree(component)`` — assets in tree order (pre-order,
-    a sub-Component's roots spliced in, each asset once), their anchors
-    deduped by ``id|name`` first-wins, the legacy ``component.asset3dId``
-    when the tree holds no asset — each placed in lab.
-
-    Where this and the TS part ways: ``anchorsInBindingTree`` returns anchors
-    in their OWN asset's frame and ``collectFiberPortsLab`` lifts them with
-    the SceneObject pose alone, through a local copy of a rotation convention
-    retired on 2026-06-01. This goes through
-    ``app.optical.align.anchor_poses.resolve_binding_tree`` (pinned to the
-    TS ``resolveAnchorPosesLab``) and the SceneObject pose the tracer uses,
-    so a port lands where the tracer hit-tests it. The two agree whenever the
-    port's binding is at the identity and the object is rotated only about Z
-    by 0 or 180 deg — every fibre port in the live scene today."""
+def owned_anchors_lab(scene: FiberScene, obj: Any) -> list[AnchorPoseLab]:
+    """Every anchor of ``obj``'s binding tree placed in lab —
+    ``anchor_poses.resolve_anchor_poses_lab``, the backend twin of the TS
+    ``anchorPose.resolveAnchorPosesLab`` (which ``collectFiberPortsLab`` and
+    ``resnapFibersLinkedTo`` use since 2026-09-22): the binding chain with
+    this instance's ObjectBinding deltas, then the SceneObject pose — the
+    chain the tracer places the port with. ``axis_x_lab`` is unit, or None
+    when the anchor declares no direction."""
     comp = scene.component_of(obj)
     if comp is None:
         return []
-    pose = object_pose(obj)
-    out: list[OwnedAnchorLab] = []
-    seen_assets: set[str] = set()
-    seen_keys: set[str] = set()
-
-    def place(asset: Any, transform: Any | None) -> None:
-        for anchor in asset.anchors or []:
-            if not isinstance(anchor, dict):
-                continue
-            key = f"{anchor.get('id')}|{anchor_display_name(anchor)}"
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
-            p = read_xyz(anchor.get("positionMmBodyLocal"))
-            if p is None:
-                continue
-            d = (
-                read_xyz(anchor.get("axisXBodyLocal"))
-                or read_xyz(anchor.get("directionBodyLocal"))
-                or V(1.0, 0.0, 0.0)
-            )
-            if transform is not None:
-                pc = point_body_to_lab_t(Vec3(p.x, p.y, p.z), transform)
-                dc = dir_body_to_lab_t(Vec3(d.x, d.y, d.z), transform)
-                p, d = V(pc.x, pc.y, pc.z), V(dc.x, dc.y, dc.z)
-            out.append(OwnedAnchorLab(
-                anchor=anchor,
-                asset_id=str(asset.id),
-                pos_lab=cad_to_lab(p, pose),
-                axis_lab=rotate_lab_dir(d, pose),
-            ))
-
-    def walk(nodes: list[BindingNode]) -> None:
-        for node in nodes:
-            if node.target_kind == "asset" and str(node.asset.id) not in seen_assets:
-                seen_assets.add(str(node.asset.id))
-                place(node.asset, node.transform)
-            if node.children:
-                walk(node.children)
-
-    walk(resolve_binding_tree(scene, comp, obj.id))
-    if not seen_assets and comp.asset_3d_id:
-        legacy = scene.assets.get(str(comp.asset_3d_id))
-        if legacy is not None:
-            place(legacy, None)
-    return out
+    return resolve_anchor_poses_lab(scene, comp, obj)
 
 
-def _port_of(obj: Any, owned: OwnedAnchorLab) -> dict:
-    a = owned.anchor
+def _port_of(obj: Any, a: AnchorPoseLab) -> dict:
     return {
-        "labPosMm": [owned.pos_lab.x, owned.pos_lab.y, owned.pos_lab.z],
-        "labAxisX": [owned.axis_lab.x, owned.axis_lab.y, owned.axis_lab.z],
+        "labPosMm": [a.pos_lab.x, a.pos_lab.y, a.pos_lab.z],
+        "labAxisX": [a.axis_x_lab.x, a.axis_x_lab.y, a.axis_x_lab.z],
         "targetName": obj.name,
         "targetObjectId": obj.id,
-        "targetAnchorName": anchor_display_name(a),
-        "targetAnchorId": str(a.get("id")),
+        "targetAnchorName": a.anchor_name,
+        "targetAnchorId": a.anchor_id,
     }
 
 
 def collect_fiber_ports_lab(
     scene: FiberScene, exclude_object_id: str | None, only_object_id: str | None = None,
 ) -> list[dict]:
-    """``collectFiberPortsLab``: every fibre RECEPTACLE (an anchor declaring a
-    female fibre ``connectorType``) of every object but ``exclude_object_id``,
-    in scene order, as ``FiberPortLab`` dicts. See :func:`owned_anchors_lab`
-    for how (and why) the lab pose differs from the TS in general."""
+    """``collectFiberPortsLab``: every fibre RECEPTACLE — an anchor declaring
+    a female fibre ``connectorType`` AND a mating axis — of every object but
+    ``exclude_object_id``, in scene order, as ``FiberPortLab`` dicts."""
     ports: list[dict] = []
     for oid in scene.object_order:
         obj = scene.objects[oid]
@@ -347,20 +274,19 @@ def collect_fiber_ports_lab(
             continue
         if only_object_id is not None and oid != only_object_id:
             continue
-        for owned in owned_anchors_lab(scene, obj):
-            if is_fiber_port_connector_type(owned.anchor.get("connectorType")):
-                ports.append(_port_of(obj, owned))
+        for a in owned_anchors_lab(scene, obj):
+            if is_fiber_port_connector_type(a.anchor.get("connectorType")) and a.axis_x_lab is not None:
+                ports.append(_port_of(obj, a))
     return ports
 
 
-def find_owned_anchor(scene: FiberScene, obj: Any, anchor_id: str, anchor_name: str) -> OwnedAnchorLab | None:
+def find_owned_anchor(scene: FiberScene, obj: Any, anchor_id: str, anchor_name: str) -> AnchorPoseLab | None:
     """The anchor a fibre link names (id AND ``name ?? id``), first in tree
     order — the ``resnapFibersLinkedTo`` lookup, which does not re-check the
     connector type."""
-    for owned in owned_anchors_lab(scene, obj):
-        a = owned.anchor
-        if a.get("id") == anchor_id and anchor_display_name(a) == anchor_name:
-            return owned
+    for a in owned_anchors_lab(scene, obj):
+        if a.anchor_id == anchor_id and a.anchor_name == anchor_name:
+            return a
     return None
 
 
