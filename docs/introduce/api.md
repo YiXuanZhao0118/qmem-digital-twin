@@ -8,7 +8,7 @@
 - `POST /api/v3/solver/run-from-db` — run the optical trace over the persisted scene (produces beam segments: dir, pol, hit face)
 - `POST /api/v3/pop` — **on-demand** physical-optics diffraction: given the beam radius at the lens plus aperture and focal length, returns the focal-plane Airy intensity grid (diffraction rings). Never part of the live trace. See the POP field channel in [optics.md](optics.md)
 - `GET /api/v3/catalog/...`, `/api/v3/assets3d`, `/api/v3/components`
-- `GET/POST/PATCH/DELETE /api/kinds` — the Kind registry; `GET /api/kinds/op-sets` lists every op-set name a Kind row may reference (exactly what `POST /api/kinds` validates against, so the KIND editor's dropdown can offer code-side op sets that have no Kind row yet)
+- `GET/POST/PATCH/DELETE /api/kinds` — the Kind registry; `GET /api/kinds/op-sets` lists every op-set name a Kind row may reference (exactly what `POST /api/kinds` validates against, so the KIND editor's dropdown can offer code-side op sets that have no Kind row yet); `GET /api/kinds/roles` — every physics kind's port contract from the manifest (see below)
 - `GET/POST/PATCH/DELETE /api/devices` — the device registry (alembic 0123; previously TypeScript files under `frontend/src/devices/`). `GET /api/devices/behavioral-kinds` lists the ElementKinds a device may pin itself to. `slug` is create-only, a `locked` row rejects edits with 422, and DELETE is refused with 409 while an Asset3D still references the slug
 - `/api/timing-programs` (`POST` and `PUT` both reject an unordered / overlapping `intervals` list with 422, see [timing.md](timing.md)), `/api/rf-chains/nodes`, `/api/coils`, `/api/magnetics-problems`, `/api/simulation-runs`, `/api/touchstone/parse`, `/api/app-settings/{key}`
 - `POST /api/v3/rf/propagation` — the RF readout at one scrub time (compute-only, see below)
@@ -60,6 +60,32 @@ Response:
 - `connectedPorts` (sorted) is topology — every port with a cable or a PPG attachment, whether or not a carrier arrives.
 - `aomDrives` is passed through verbatim from the resolver the solver uses, so it equals what the trace merged onto each AOM at this time. An AOM in manual mode (`properties.aomRfDriveMode == "manual"`) or with nothing plugged into `rf_in` is **absent** (it keeps its own / rated drive); a wired AOM that no carrier reaches at this instant gets `{"rfDrivePowerW": 0.0}` with no frequency key.
 - `sectionStartsNs` (sorted) is every block boundary across all TimingPrograms, plus 0.
+
+### `GET /api/kinds/roles`
+
+The port roles and signal domains of every **physics** kind, straight from the kinds manifest (`backend/data/kinds.json` via `kinds_manifest.load_manifest`, i.e. the export of `frontend/src/kinds/<kind>/index.ts`), in plugin registration order (= `element_kinds`). Router: `backend/app/routers/kinds.py:113`. No DB read. So a client reads the contract instead of copying `kinds.json` (the qmem-blender RF graph did). Passive (mechanical) plugins have no ports and are not listed, and neither are DB-only `kinds` rows (`isolator`, `mechanical`, `unclassified`, …), which have no plugin.
+
+```json
+[
+  {
+    "kind": "rf_switch",
+    "primaryDomain": "rf",
+    "defaultPhysics": ["rf"],
+    "requiredAnchors": ["rf_in", "rf_out", "ttl_in"],
+    "optionalAnchors": [],
+    "portDomains": { "rf_in": "rf", "rf_out": "rf", "ttl_in": "ttl" },
+    "roles": {
+      "rf_in":  { "min": 1, "max": 1,    "domain": "rf",  "direction": true, "aperture": false, "fastAxis": false },
+      "rf_out": { "min": 1, "max": null, "domain": "rf",  "direction": true, "aperture": false, "fastAxis": false },
+      "ttl_in": { "min": 1, "max": 1,    "domain": "ttl", "direction": true, "aperture": false, "fastAxis": false }
+    }
+  }
+]
+```
+
+- `roles[*]` is the TS `RoleSpec` (`kinds/_plugin.ts`): `min` 0 = optional, ≥ 1 = required; `max` 1 = single port, N = bounded, **`null` = unbounded multiport** (a DDS's `rf_out`, a switch's throws). The three flags are always present (the manifest omits a false one). `roles` is `null` for a kind that authors no roles map (none today).
+- `portDomains` is the plugin's **explicit** map only; an anchor id missing from it takes the caller's heuristic, as in the web app (`rfLinkPorts.resolveRfLinkPortDomain`). Note the PPG: its `rf_out` declares `ttl`, and the web app treats it as `rfout` ([rf.md](rf.md) §1).
+- The manifest carries **no connector types**: a port's `connectorType` (`sma_female`, `fc_apc_female`, …) lives on each asset's anchor, not on the kind.
 
 ### The align endpoints — `POST /api/v3/align/*`
 
