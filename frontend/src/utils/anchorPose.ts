@@ -23,6 +23,8 @@
  * `pose.pose_to_transform`), or anything that solves a pose from these
  * numbers lands where the ray tracer disagrees. Pinned end-to-end in
  * `utils/__tests__/mirrorCoupling.test.ts` against a traced hit point.
+ * The same goes for WHICH asset's anchors: a per-instance
+ * `ObjectBinding.asset3dIdOverride` is honoured, as the loader honours it.
  */
 import * as THREE from "three";
 
@@ -145,7 +147,9 @@ export function resolveAnchorPosesLab(
 ): AnchorPoseLab[] {
   const collected: Collected[] = [];
   walk(
-    resolveBindingTree(component, sceneObject, scene),
+    // Per-instance asset swaps count, as they do in the tracer's loader:
+    // the anchors posed here must be the ones the trace hits.
+    resolveBindingTree(component, sceneObject, scene, { honourAssetOverride: true }),
     new THREE.Vector3(),
     new THREE.Quaternion(),
     new Set<string>(),

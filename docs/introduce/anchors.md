@@ -72,8 +72,8 @@ MIRROR5's traced hit point and reflected direction (both backend outputs). See
 [mirror-coupling.md](mirror-coupling.md) for its first consumer.
 
 **The backend has the same helper (2026-09-22)**:
-`backend/app/optical/align/anchor_poses.py` — `resolve_binding_tree` (:127)
-and `resolve_anchor_poses_lab` (:182), used by the `/api/v3/align/*`
+`backend/app/optical/align/anchor_poses.py` — `resolve_binding_tree` (:160)
+and `resolve_anchor_poses_lab` (:223), used by the `/api/v3/align/*`
 endpoints ([api.md](api.md)). Its walk is the TS walk (roots in stored order,
 a node's own anchors before its children, a sub-Component's roots spliced in
 with no per-instance deltas, `id|name` dedupe first-wins, the legacy
@@ -84,11 +84,30 @@ by `backend/tests/fixtures/align/anchor_poses.json`, generated from
 [mirror-coupling.md](mirror-coupling.md#the-backend-port-and-its-parity-pin)),
 and agreed within 1e-9 on all 73 objects of the live scene.
 
-⚠️ **Open: `ObjectBinding.asset_3d_id_override`.** `resolveBindingTree`
-resolves `binding.asset3dId` and ignores a per-instance asset override, and
-the backend helper mirrors that so both clients align identically — but the
-tracer's loader (`load_anchor_scene_from_db`) DOES honour the override. For a
-binding that carries one, both align helpers read the catalog asset's anchors
-while the trace uses the override's. No live object is affected today (the
-override is rare); if one becomes so, fix the TS and Python walks together and
-regenerate the fixtures.
+**`ObjectBinding.asset_3d_id_override` is honoured (2026-09-22)**, the way the
+tracer's loader honours it (`db_scene_loader.load_anchor_scene_from_db`): an
+**asset** binding of the object's **own** Component resolves to the instance's
+override when one is set, else to its own `asset3dId`
+(`componentBindings.effectiveBindingAssetId` / `anchor_poses.effective_asset_id`).
+Never on an `empty` / `subcomponent` binding, never inside a spliced
+sub-Component (the loader does not walk sub-Components at all), never on a
+binding-less legacy Component; an override onto an asset that does not exist
+is **missing**, not the catalog asset. Where it applies:
+
+- `resolveAnchorPosesLab` / `resolve_anchor_poses_lab` — always (they must pose
+  the anchors the trace hits).
+- `resolveBindingTree(…, { honourAssetOverride: true })` /
+  `resolve_binding_tree(…, honour_asset_override=True)` — opt-in, **off by
+  default**, so the renderer and the Object-panel trees keep drawing the
+  catalog asset (the render path has never swapped assets; see
+  [rendering.md](rendering.md)).
+- `componentBindings.primaryAssetForObject` / `AlignScene.primary_asset(comp,
+  object_id)` — the override-aware "main asset" the align paths use
+  (`AlignToBeamControls`' primary-anchor fallback, the AOM check and Bragg
+  frame; `service.resolve_align_point_dir` / `aom_bragg_align`). Plain
+  `primaryAsset` / `rf_resolve._primary_asset_id` stay override-blind on
+  purpose — the RF BFS parity rule in [rf.md](rf.md) §4.
+
+Pinned by the `asset-override` scene of `anchor_poses.json` (anchors and
+`primaryAssetId` per object) and by
+`test_align_endpoints.py::test_align_follows_the_instance_asset_swap`.

@@ -332,7 +332,9 @@ def resolve_align_point_dir(scene: AlignScene, comp: Any, so: Any) -> AlignPoint
         return AlignPointDir(spec_point, spec_dir, "alignSpec")
 
     centres: list[RoleCentre] = []
-    collect_role_centres(resolve_binding_tree(scene, comp, str(so.id)), centres)
+    collect_role_centres(
+        resolve_binding_tree(scene, comp, str(so.id), honour_asset_override=True), centres,
+    )
     front = pick_polariser_centre(centres, "front")
     back = pick_polariser_centre(centres, "back")
     if front is not None and back is not None:
@@ -340,7 +342,7 @@ def resolve_align_point_dir(scene: AlignScene, comp: Any, so: Any) -> AlignPoint
             front, V(back.x - front.x, back.y - front.y, back.z - front.z), "polariserCentres",
         )
 
-    asset = scene.primary_asset(comp)
+    asset = scene.primary_asset(comp, str(so.id))
     anchors = [a for a in ((asset.anchors or []) if asset is not None else []) if isinstance(a, dict)]
     anchor = None
     for aid in PRIMARY_ALIGN_ANCHOR_IDS:
@@ -440,7 +442,7 @@ def aom_bragg_align(
     """
     so = _object(scene, object_id)
     comp = _component(scene, so)
-    asset = scene.primary_asset(comp)
+    asset = scene.primary_asset(comp, str(so.id))
     if asset is None or asset.kind_id != "aom":
         raise AlignError(422, f"{so.name} is not an AOM (its primary asset is not of kind `aom`).")
     frame = resolve_aom_bragg_frame(asset.anchors, asset.default_params)

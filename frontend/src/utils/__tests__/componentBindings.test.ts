@@ -20,8 +20,10 @@ import {
   assetsInBindingTree,
   bindingsFor,
   childrenOf,
+  effectiveBindingAssetId,
   findAnchorInBindingTree,
   primaryAsset,
+  primaryAssetForObject,
   resolveBindingTree,
   rootBindingsOf,
 } from "../componentBindings";
@@ -211,6 +213,55 @@ describe("primaryAsset", () => {
     expect(
       primaryAsset(c, { componentBindings: [r1, r2], assets: [a, b] }),
     ).toBeNull();
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Per-instance asset swaps (ObjectBinding.asset3dIdOverride)
+// ---------------------------------------------------------------------------
+
+
+describe("asset3dIdOverride — honoured where the tracer's loader honours it", () => {
+  const catalog = asset("catalog");
+  const swapped = asset("swapped");
+  const c = component("c");
+  const root = binding({ id: "r", componentId: c.id, asset3dId: catalog.id });
+  const obj = sceneObject(c.id);
+  const swap = { ...objectBinding(obj.id, root.id), asset3dIdOverride: swapped.id };
+  const scene = {
+    componentBindings: [root],
+    objectBindings: [swap],
+    assets: [catalog, swapped],
+    components: [c],
+  };
+
+  it("primaryAssetForObject takes the instance's override; primaryAsset stays blind (RF parity)", () => {
+    expect(primaryAssetForObject(c, obj, scene)).toBe(swapped);
+    expect(primaryAsset(c, scene)).toBe(catalog);
+    // Another instance of the same Component keeps the catalog asset.
+    expect(primaryAssetForObject(c, { ...obj, id: "obj_2" }, scene)).toBe(catalog);
+  });
+
+  it("resolveBindingTree swaps only when asked (the renderer does not ask)", () => {
+    const plain = resolveBindingTree(c, obj, scene);
+    expect(plain[0].target).toEqual({ kind: "asset", asset: catalog });
+    const traced = resolveBindingTree(c, obj, scene, { honourAssetOverride: true });
+    expect(traced[0].target).toEqual({ kind: "asset", asset: swapped });
+  });
+
+  it("an override onto an asset the scene lacks is missing, not the catalog asset", () => {
+    const gone = { ...scene, objectBindings: [{ ...swap, asset3dIdOverride: "nope" }] };
+    expect(primaryAssetForObject(c, obj, gone)).toBeNull();
+    const tree = resolveBindingTree(c, obj, gone, { honourAssetOverride: true });
+    expect(tree[0].target).toEqual({ kind: "missing", reason: "asset" });
+  });
+
+  it("effectiveBindingAssetId: override, else the binding's own, else null", () => {
+    expect(effectiveBindingAssetId(root, swap)).toBe(swapped.id);
+    expect(effectiveBindingAssetId(root, { ...swap, asset3dIdOverride: null })).toBe(catalog.id);
+    expect(effectiveBindingAssetId(root, undefined)).toBe(catalog.id);
+    expect(effectiveBindingAssetId({ ...root, asset3dId: null }, undefined)).toBeNull();
   });
 });
 

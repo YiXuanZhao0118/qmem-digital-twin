@@ -48,7 +48,7 @@ import {
   resolveAomBraggFrame,
   type AomBraggFrame,
 } from "../aomAlign";
-import { resolveBindingTree } from "../componentBindings";
+import { primaryAssetForObject, resolveBindingTree } from "../componentBindings";
 import {
   collectRoleCentres,
   computeIsolatorAlignPose,
@@ -179,12 +179,12 @@ function binding(p: {
 function objectBinding(id: string, objectId: string, componentBindingId: string, d: Partial<Record<
   "localXMmDelta" | "localYMmDelta" | "localZMmDelta" | "localRxDegDelta" | "localRyDegDelta" | "localRzDegDelta",
   number | null
->>): ObjectBinding {
+>>, asset3dIdOverride: string | null = null): ObjectBinding {
   return {
     id, objectId, componentBindingId,
     localXMmDelta: null, localYMmDelta: null, localZMmDelta: null,
     localRxDegDelta: null, localRyDegDelta: null, localRzDegDelta: null,
-    asset3dIdOverride: null,
+    asset3dIdOverride,
     ...d,
   } as unknown as ObjectBinding;
 }
@@ -357,6 +357,67 @@ function buildAnchorPoses(): Json {
     scenes.push({ name: `random-${s}`, scene: { components, componentBindings, objectBindings, assets }, objects });
   }
 
+  // Scene 5: per-instance asset swaps (ObjectBinding.asset3dIdOverride),
+  // honoured the way the tracer's loader honours them: on an asset binding of
+  // the object's own Component, and nowhere else — not on an empty binding,
+  // not inside a spliced sub-Component, not on a binding-less legacy
+  // Component. Also an override onto an asset the scene lacks (-> missing),
+  // one on a binding with no asset of its own, and deltas without a swap.
+  // Added after the random scenes so their seeded draws are unchanged.
+  {
+    const assets = [
+      asset("ov-lens", "lens_biconvex", [
+        anchor("intercept_in", v(0, 0, -3), { axisXBodyLocal: v(0, 0, -1), apertureMm: 6 }),
+        anchor("intercept_out", v(0, 0, 3), { axisXBodyLocal: v(0, 0, 1), apertureMm: 6 }),
+      ]),
+      asset("ov-aom", "aom", [
+        anchor("intercept_in", v(0, -11.2, -1.2), { axisXBodyLocal: v(0, -1, 0), apertureMm: 1.5 }),
+        anchor("intercept_out", v(0, 11.2, -1.2), { axisXBodyLocal: v(0, 1, 0), apertureMm: 1.5 }),
+        anchor("acoustic_axis", v(0, 0, -1.2), { axisXBodyLocal: v(-1, 0, 0) }),
+      ]),
+      asset("ov-glan", "beam_splitter", [
+        anchor("intercept_face", v(0.3, 0.1, 0), { axisXBodyLocal: v(0.6, 0, 0.8), apertureMm: 5 }),
+      ]),
+      asset("ov-piece", "mechanical", [
+        anchor("mount_point", v(2, -1, 4)),
+      ]),
+    ];
+    const components = [
+      component("ov-single", "lens_biconvex"),
+      component("ov-composite", null),
+      component("ov-legacy", "mechanical", { asset3dId: "ov-piece" }),
+    ];
+    const componentBindings = [
+      binding({ id: "ovs-root", componentId: "ov-single", kind: "asset", asset: "ov-lens", role: "lens", pos: [0, 0, 1], rot: [0, 90, 0] }),
+      binding({ id: "ovc-body", componentId: "ov-composite", kind: "asset", asset: "ov-lens", role: "body", pos: [1, -2, 3], rot: [10, -20, 30] }),
+      binding({ id: "ovc-child", componentId: "ov-composite", parent: "ovc-body", kind: "asset", asset: "ov-glan", role: "front", pos: [0, 4, 0], rot: [0, 0, 45] }),
+      binding({ id: "ovc-empty", componentId: "ov-composite", parent: "ovc-body", kind: "empty", role: "mount", pos: [0, 0, -6], sortOrder: 1 }),
+      binding({ id: "ovc-null", componentId: "ov-composite", parent: "ovc-body", kind: "asset", asset: null, role: "slot", pos: [5, 0, 0], rot: [90, 0, 0], sortOrder: 2 }),
+      binding({ id: "ovc-sub", componentId: "ov-composite", kind: "subcomponent", sub: "ov-single", role: "back", pos: [0, 0, 20], rot: [180, 0, 0], sortOrder: 1 }),
+    ];
+    const objects = [
+      sceneObject("ov-plain", "ov-single", { xMm: 10, yMm: 20, zMm: 30, rxDeg: 0, ryDeg: 45, rzDeg: 0 }),
+      sceneObject("ov-swap", "ov-single", { xMm: -40, yMm: 5, zMm: 900, rxDeg: 12, ryDeg: -30, rzDeg: 45 }),
+      sceneObject("ov-missing", "ov-single", { xMm: 1, yMm: 2, zMm: 3 }),
+      sceneObject("ov-comp-1", "ov-composite", { xMm: 100, yMm: -50, zMm: 910, rxDeg: -90, ryDeg: 20, rzDeg: 5 }),
+      sceneObject("ov-comp-2", "ov-composite", { xMm: 3, yMm: -4, zMm: 5, rxDeg: 135, ryDeg: -60, rzDeg: 0 }),
+      sceneObject("ov-legacy-1", "ov-legacy", { xMm: 7, yMm: 8, zMm: 9, rxDeg: 0, ryDeg: 0, rzDeg: 90 }),
+    ];
+    const objectBindings = [
+      objectBinding("ob-swap", "ov-swap", "ovs-root", { localRzDegDelta: 2 }, "ov-aom"),
+      objectBinding("ob-missing", "ov-missing", "ovs-root", {}, "no-such-asset"),
+      objectBinding("ob-c1-body", "ov-comp-1", "ovc-body", { localXMmDelta: 0.5, localRyDegDelta: -3 }, "ov-aom"),
+      objectBinding("ob-c1-child", "ov-comp-1", "ovc-child", {}, "ov-piece"),
+      objectBinding("ob-c1-empty", "ov-comp-1", "ovc-empty", {}, "ov-glan"),
+      objectBinding("ob-c1-null", "ov-comp-1", "ovc-null", {}, "ov-glan"),
+      // Keyed to the SUB-Component's binding: never applied (no per-instance
+      // state below the object's own Component, in the loader or the walk).
+      objectBinding("ob-c1-sub", "ov-comp-1", "ovs-root", {}, "ov-aom"),
+      objectBinding("ob-c2-body", "ov-comp-2", "ovc-body", { localZMmDelta: 1.25, localRxDegDelta: 4 }),
+    ];
+    scenes.push({ name: "asset-override", scene: { components, componentBindings, objectBindings, assets }, objects });
+  }
+
   // Resolve every object of every scene with the real TS.
   return scenes.map((entry) => {
     const { name, scene, objects } = entry as {
@@ -384,6 +445,8 @@ function buildAnchorPoses(): Json {
         roleCentres: roleCentresJson(centres),
         front: vecJson(pickPolariserCentre(centres, "front")),
         back: vecJson(pickPolariserCentre(centres, "back")),
+        // The align paths' "main asset" (AlignToBeamControls): override-aware.
+        primaryAssetId: primaryAssetForObject(comp, obj, scene)?.id ?? null,
       };
     });
     return plain({ name, scene, objects, results });

@@ -142,8 +142,8 @@ The align solvers used to live only in the web app. A second client of the backe
 |---|---|---|
 | `utils/mirrorCoupling.ts` + `MirrorCouplingPanel.tsx`'s face / target / pass-through picks | `mirror_coupling.py` + `service.mirror_coupling_align` (`service.py:220`) | `POST /api/v3/align/mirror-coupling` |
 | `utils/isolatorAlign.ts` + `AlignToBeamControls.resolved` | `point_dir.py` + `service.resolve_align_point_dir` (`service.py:323`) | `POST /api/v3/align/isolator` |
-| `utils/aomAlign.ts` + `AomBraggSection`'s parameter picks | `aom_bragg.py` + `service.aom_bragg_align` (`service.py:413`) | `POST /api/v3/align/aom-bragg` |
-| `utils/anchorPose.ts` + `componentBindings.resolveBindingTree` | `anchor_poses.py` (on `db_scene_loader._binding_tree_transform`) | — (shared by all three) |
+| `utils/aomAlign.ts` + `AomBraggSection`'s parameter picks | `aom_bragg.py` + `service.aom_bragg_align` (`service.py:415`) | `POST /api/v3/align/aom-bragg` |
+| `utils/anchorPose.ts` + `componentBindings.resolveBindingTree` / `primaryAssetForObject` (per-instance asset swaps honoured as the loader does, see [anchors.md](anchors.md)) | `anchor_poses.py` (on `db_scene_loader._binding_tree_transform`) | — (shared by all three) |
 
 **Invariant: the TS and Python copies are pinned to each other by golden fixtures, and neither may change alone.** `frontend/src/utils/__tests__/alignParity.test.ts` runs the real TypeScript over every case the unit tests pin plus seeded-random ones (both solve branches, exact and near anti-parallel lines, ry = ±90° gimbal poses, anti-parallel `setFromUnitVectors` flips, the warning strings) and writes inputs + outputs to `backend/tests/fixtures/align/*.json`; `backend/tests/optical/test_align_parity.py` feeds the same inputs to the Python and requires equality within **1e-9** (measured: 1.8e-12 mm worst case, Euler angles bit-identical). The vitest side **fails when the committed fixtures are stale**, so a TS change cannot land without regenerating them (`UPDATE_ALIGN_FIXTURES=1 npx vitest run src/utils/__tests__/alignParity.test.ts`), which then fails pytest until the Python follows.
 

@@ -36,7 +36,7 @@ import * as THREE from "three";
 import { useSceneStore } from "../../store/sceneStore";
 import type { SceneObject } from "../../types/digitalTwin";
 import { threeToLabPointMm } from "../../optical/frames";
-import { primaryAsset, resolveBindingTree } from "../../utils/componentBindings";
+import { primaryAssetForObject, resolveBindingTree } from "../../utils/componentBindings";
 import { anchorObjectLocalPos, anchorObjectLocalPrimaryDir } from "../../utils/anchorAccess";
 import {
   cadToLab,
@@ -125,7 +125,7 @@ export function AlignToBeamControls({
       return { point: specPoint, dir: specDir };
     }
 
-    const tree = resolveBindingTree(component, sceneObject, scene);
+    const tree = resolveBindingTree(component, sceneObject, scene, { honourAssetOverride: true });
     const centres: RoleCentre[] = [];
     collectRoleCentres(tree, new THREE.Vector3(), new THREE.Quaternion(), centres);
     const front = pickPolariserCentre(centres, "front");
@@ -137,7 +137,7 @@ export function AlignToBeamControls({
       };
     }
 
-    const asset = primaryAsset(component, scene) ?? null;
+    const asset = primaryAssetForObject(component, sceneObject, scene);
     const anchors = asset?.anchors ?? [];
     const anchor =
       PRIMARY_ANCHOR_IDS.map((id) => anchors.find((x) => x.id === id)).find(Boolean) ?? null;
@@ -235,8 +235,8 @@ export function AlignToBeamControls({
   // AOMs need the extra Bragg tilt on top of the generic align.
   const isAom = useMemo(() => {
     const component = scene.components.find((c) => c.id === sceneObject.componentId);
-    return component ? primaryAsset(component, scene)?.kindId === "aom" : false;
-  }, [scene, sceneObject.componentId]);
+    return component ? primaryAssetForObject(component, sceneObject, scene)?.kindId === "aom" : false;
+  }, [scene, sceneObject]);
 
   const align = async () => {
     setBusy(true);
@@ -381,8 +381,8 @@ function AomBraggSection({
 
   const asset = useMemo(() => {
     const component = scene.components.find((c) => c.id === sceneObject.componentId);
-    return component ? primaryAsset(component, scene) ?? null : null;
-  }, [scene, sceneObject.componentId]);
+    return component ? primaryAssetForObject(component, sceneObject, scene) : null;
+  }, [scene, sceneObject]);
   const frame = useMemo(() => resolveAomBraggFrame(asset), [asset]);
 
   const params = (asset?.defaultParams ?? {}) as Record<string, unknown>;

@@ -123,6 +123,51 @@ export function primaryAsset(
 }
 
 
+/** The asset a binding resolves to for ONE instance, the way the tracer's
+ *  loader picks it (`db_scene_loader.load_anchor_scene_from_db`): the
+ *  instance's `ObjectBinding.asset3dIdOverride` when set, else the binding's
+ *  own `asset3dId`. Only meaningful for `targetKind === "asset"`; the loader
+ *  ignores an override on any other target, and so do the callers here. */
+export function effectiveBindingAssetId(
+  binding: ComponentBinding,
+  objectBinding: ObjectBinding | null | undefined,
+): string | null {
+  return objectBinding?.asset3dIdOverride ?? binding.asset3dId ?? null;
+}
+
+
+/** ``primaryAsset`` for one placed instance: the single root asset
+ *  binding's asset with the instance's ``asset3dIdOverride`` applied, as the
+ *  tracer's loader resolves it; else the legacy ``component.asset3dId``
+ *  (which has no binding to override).
+ *
+ *  For the align paths, which must pose against the asset the trace uses.
+ *  ``primaryAsset`` itself stays override-blind on purpose: the RF BFS calls
+ *  it and the backend RF resolver mirrors that (docs/introduce/rf.md §4). */
+export function primaryAssetForObject(
+  component: ComponentItem,
+  sceneObject: SceneObject,
+  scene: {
+    componentBindings?: readonly ComponentBinding[];
+    objectBindings?: readonly ObjectBinding[];
+    assets: readonly Asset3D[];
+  },
+): Asset3D | null {
+  const roots = rootBindingsOf(component.id, scene);
+  if (roots.length === 1 && roots[0].targetKind === "asset") {
+    const ob = (scene.objectBindings ?? []).find(
+      (o) => o.objectId === sceneObject.id && o.componentBindingId === roots[0].id,
+    );
+    const id = effectiveBindingAssetId(roots[0], ob);
+    if (id) return scene.assets.find((a) => a.id === id) ?? null;
+  }
+  if (component.asset3dId) {
+    return scene.assets.find((a) => a.id === component.asset3dId) ?? null;
+  }
+  return null;
+}
+
+
 /** Resolved local transform for a binding after per-instance overrides
  *  have been applied. All six axes are non-optional so renderers can
  *  consume the same shape without per-axis presence checks. */
@@ -197,10 +242,11 @@ function _effectiveTransform(
 function _resolveTarget(
   binding: ComponentBinding,
   scene: Pick<SceneData, "assets" | "components">,
+  assetId: string | null,
 ): ResolvedBindingTarget {
   if (binding.targetKind === "asset") {
-    if (!binding.asset3dId) return { kind: "missing", reason: "asset" };
-    const asset = scene.assets.find((a) => a.id === binding.asset3dId);
+    if (!assetId) return { kind: "missing", reason: "asset" };
+    const asset = scene.assets.find((a) => a.id === assetId);
     return asset
       ? { kind: "asset", asset }
       : { kind: "missing", reason: "asset" };
@@ -232,11 +278,19 @@ function _resolveTarget(
  *  catalog-side). If a sub-Component has its own composite tree, the
  *  walker descends through it; the result is a flattened renderer
  *  payload that captures the full assembly geometry.
+ *
+ *  ``options.honourAssetOverride`` also swaps each asset binding's target
+ *  for the instance's ``ObjectBinding.asset3dIdOverride``, exactly as the
+ *  tracer's loader does (``effectiveBindingAssetId``). Off by default, so
+ *  the renderer and the panels keep drawing the catalog asset; the anchor
+ *  pose walk (``anchorPose.resolveAnchorPosesLab``) and the align paths
+ *  turn it on, because they must pose against the anchors the trace uses.
  */
 export function resolveBindingTree(
   component: ComponentItem,
   sceneObject: SceneObject | null,
   scene: Pick<SceneData, "componentBindings" | "objectBindings" | "assets" | "components">,
+  options: { honourAssetOverride?: boolean } = {},
 ): ResolvedBindingNode[] {
   // Build a Map<componentBindingId, ObjectBinding> filtered to this
   // sceneObject — the renderer composes baseline + delta per binding
@@ -255,6 +309,7 @@ export function resolveBindingTree(
     overrides,
     scene,
     new Set([component.id]),
+    options.honourAssetOverride === true,
   );
 }
 
@@ -436,11 +491,18 @@ function _resolveLevel(
   overrides: Map<string, ObjectBinding>,
   scene: Pick<SceneData, "componentBindings" | "assets" | "components">,
   visited: Set<string>,
+  honourAssetOverride: boolean,
 ): ResolvedBindingNode[] {
   const out: ResolvedBindingNode[] = [];
   for (const binding of bindings) {
-    const target = _resolveTarget(binding, scene);
     const objectBinding = overrides.get(binding.id);
+    const target = _resolveTarget(
+      binding,
+      scene,
+      honourAssetOverride
+        ? effectiveBindingAssetId(binding, objectBinding)
+        : binding.asset3dId ?? null,
+    );
     const localTransform = _effectiveTransform(binding, objectBinding);
 
     // Recurse into THIS Component's children of the current binding...
@@ -451,6 +513,7 @@ function _resolveLevel(
       overrides,
       scene,
       visited,
+      honourAssetOverride,
     );
 
     // ...AND when this binding points at a sub-Component, splice its
@@ -461,12 +524,15 @@ function _resolveLevel(
       const nextVisited = new Set(visited);
       nextVisited.add(target.component.id);
       const subRoots = rootBindingsOf(target.component.id, scene);
+      // (No overrides down here, so honouring them is a no-op — the
+      // tracer's loader never walks into sub-Components either.)
       const subChildren = _resolveLevel(
         subRoots,
         target.component.id,
         new Map(),
         scene,
         nextVisited,
+        honourAssetOverride,
       );
       children = [...children, ...subChildren];
     }

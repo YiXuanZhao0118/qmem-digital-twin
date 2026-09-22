@@ -16,10 +16,14 @@ SceneObject pose) — which is what the tracer places anchors with and what
 Rows are duck-typed (ORM rows in the service, ``SimpleNamespace`` in tests),
 so everything here is pure.
 
-Known, deliberate gap (shared with the TS): ``ObjectBinding.asset_3d_id_override``
-is NOT honoured — ``resolveBindingTree`` resolves ``binding.asset3dId`` and
-this mirrors it, whereas the tracer's loader does honour the override. See
-the open question in ``docs/introduce/anchors.md``.
+``ObjectBinding.asset_3d_id_override`` (a per-instance asset swap) is honoured
+where the tracer's loader honours it — an asset binding of the object's own
+Component resolves to the override when one is set (``effective_asset_id``) —
+by ``resolve_anchor_poses_lab`` and by ``AlignScene.primary_asset`` given an
+``object_id``, mirroring ``resolveAnchorPosesLab`` / ``primaryAssetForObject``.
+``resolve_binding_tree`` takes it as an opt-in, like its TS twin. The RF
+resolver's ``_primary_asset_id`` deliberately stays override-blind
+(``docs/introduce/rf.md`` §4).
 """
 
 from __future__ import annotations
@@ -61,14 +65,35 @@ class AlignScene:
     def component_of(self, scene_object: Any) -> Any | None:
         return self.components.get(str(scene_object.component_id))
 
-    def primary_asset(self, component: Any) -> Any | None:
+    def primary_asset(self, component: Any, object_id: str | None = None) -> Any | None:
         """TS ``componentBindings.primaryAsset`` — one root asset binding, else
         the legacy ``component.asset_3d_id`` (``rf_resolve._primary_asset_id``,
-        the RF BFS's port of the same function)."""
-        asset_id = _primary_asset_id(
-            component, self.bindings_by_component.get(str(component.id), []),
-        )
-        return self.assets.get(str(asset_id)) if asset_id else None
+        the RF BFS's port of the same function).
+
+        With ``object_id`` it is ``primaryAssetForObject`` instead: the root
+        binding's asset is that instance's ``asset_3d_id_override`` when set,
+        as the tracer's loader resolves it."""
+        bindings = self.bindings_by_component.get(str(component.id), [])
+        if object_id is None:
+            asset_id = _primary_asset_id(component, bindings)
+            return self.assets.get(str(asset_id)) if asset_id else None
+        roots = [b for b in bindings if b.parent_binding_id is None]
+        if len(roots) == 1 and roots[0].target_kind == "asset":
+            asset_id = effective_asset_id(
+                roots[0], self.object_bindings.get(str(object_id), {}).get(roots[0].id),
+            )
+            if asset_id:
+                return self.assets.get(str(asset_id))
+        return self.assets.get(str(component.asset_3d_id)) if component.asset_3d_id else None
+
+
+def effective_asset_id(binding: Any, object_binding: Any | None) -> Any | None:
+    """The asset an asset binding resolves to for one instance — the override
+    when set, else the binding's own — exactly the loader's rule
+    (``db_scene_loader.load_anchor_scene_from_db``); TS
+    ``effectiveBindingAssetId``."""
+    override = getattr(object_binding, "asset_3d_id_override", None) if object_binding else None
+    return override if override is not None else binding.asset_3d_id
 
 
 @dataclass
@@ -83,9 +108,11 @@ class BindingNode:
     children: list[BindingNode] = field(default_factory=list)
 
 
-def _resolve_target(scene: AlignScene, b: Any) -> tuple[str, Any | None, Any | None]:
+def _resolve_target(
+    scene: AlignScene, b: Any, asset_id: Any | None,
+) -> tuple[str, Any | None, Any | None]:
     if b.target_kind == "asset":
-        asset = scene.assets.get(str(b.asset_3d_id)) if b.asset_3d_id else None
+        asset = scene.assets.get(str(asset_id)) if asset_id else None
         return ("asset", asset, None) if asset is not None else ("missing", None, None)
     if b.target_kind == "empty":
         return "empty", None, None
@@ -101,17 +128,22 @@ def _resolve_level(
     offset: V3Transform | None,
     visited: frozenset[str],
     memo: dict,
+    honour_asset_override: bool,
 ) -> list[BindingNode]:
     binding_by_id = {b.id: b for b in owner_bindings}
     out: list[BindingNode] = []
     for b in bindings:
-        kind, asset, sub = _resolve_target(scene, b)
+        asset_id = (
+            effective_asset_id(b, overrides.get(b.id))
+            if honour_asset_override else b.asset_3d_id
+        )
+        kind, asset, sub = _resolve_target(scene, b, asset_id)
         chain = _binding_tree_transform(b, binding_by_id, overrides, memo, set())
         transform = chain if offset is None else compose_transforms(offset, chain)
         children = _resolve_level(
             scene,
             [c for c in owner_bindings if c.parent_binding_id == b.id],
-            owner_bindings, overrides, offset, visited, memo,
+            owner_bindings, overrides, offset, visited, memo, honour_asset_override,
         )
         if kind == "subcomponent" and str(sub.id) not in visited:
             sub_bindings = scene.bindings_by_component.get(str(sub.id), [])
@@ -119,22 +151,31 @@ def _resolve_level(
                 scene,
                 [c for c in sub_bindings if c.parent_binding_id is None],
                 sub_bindings, {}, transform, visited | {str(sub.id)}, {},
+                honour_asset_override,
             )
         out.append(BindingNode(b, kind, asset, transform, children))
     return out
 
 
 def resolve_binding_tree(
-    scene: AlignScene, component: Any, object_id: str | None,
+    scene: AlignScene,
+    component: Any,
+    object_id: str | None,
+    *,
+    honour_asset_override: bool = False,
 ) -> list[BindingNode]:
-    """TS ``resolveBindingTree(component, sceneObject, scene)``. ``object_id``
-    selects the per-instance ``ObjectBinding`` deltas (``None`` = catalog)."""
+    """TS ``resolveBindingTree(component, sceneObject, scene, options)``.
+    ``object_id`` selects the per-instance ``ObjectBinding`` deltas (``None``
+    = catalog); ``honour_asset_override`` also swaps each asset binding's
+    target for that instance's ``asset_3d_id_override`` (the loader's rule),
+    off by default like the TS option."""
     owner = scene.bindings_by_component.get(str(component.id), [])
     overrides = scene.object_bindings.get(object_id, {}) if object_id else {}
     return _resolve_level(
         scene,
         [b for b in owner if b.parent_binding_id is None],
         owner, overrides, None, frozenset({str(component.id)}), {},
+        honour_asset_override,
     )
 
 
@@ -210,7 +251,10 @@ def resolve_anchor_poses_lab(
             if node.children:
                 walk(node.children)
 
-    walk(resolve_binding_tree(scene, component, str(scene_object.id)))
+    # Per-instance asset swaps count, as they do in the tracer's loader.
+    walk(resolve_binding_tree(
+        scene, component, str(scene_object.id), honour_asset_override=True,
+    ))
 
     if not collected and component.asset_3d_id:
         asset = scene.assets.get(str(component.asset_3d_id))

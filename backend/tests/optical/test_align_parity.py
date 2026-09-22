@@ -220,6 +220,11 @@ def test_anchor_poses_and_role_centres(entry) -> None:
         assert_close(to_json(pick_polariser_centre(centres, "front")), result["front"], "front")
         assert_close(to_json(pick_polariser_centre(centres, "back")), result["back"], "back")
 
+        # ``primaryAssetForObject``: the align paths' main asset, override-aware.
+        primary = scene.primary_asset(comp, so.id)
+        assert (str(primary.id) if primary is not None else None) == result["primaryAssetId"], \
+            f"{entry['name']}/{so.id}.primaryAssetId"
+
 
 # ─── mirror coupling ───────────────────────────────────────────────────────
 
