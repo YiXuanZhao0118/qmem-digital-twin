@@ -39,6 +39,7 @@ from app.routers import (
     timing_programs,
     touchstone,
     v3_align,
+    v3_anchors,
     v3_catalog,
     v3_rf,
     v3_solver,
@@ -73,6 +74,7 @@ app.include_router(v3_catalog.router, prefix="/api")
 app.include_router(v3_solver.router, prefix="/api")
 app.include_router(v3_rf.router, prefix="/api")
 app.include_router(v3_align.router, prefix="/api")
+app.include_router(v3_anchors.router, prefix="/api")
 app.include_router(pop.router, prefix="/api")
 app.include_router(
     component_bindings.component_scoped,

@@ -81,7 +81,7 @@ Commits go to **`SceneObject.properties.bindingFiberNodes[bindingId]`**, never b
 | reader | value | what it means |
 |---|---|---|
 | `buildPigtailNodes` (`utils/portConnectorPlacement.ts:199`, via `ComponentsEditor.setPortJacket`) | the **authored** coordinate on the `Asset3D` row | where the fibre leaves the package — the pigtail's root, welded to node 0 |
-| the tracer, after `db_scene_loader._port_connector_anchors` | **re-seated** onto the bound connector's `fiber_out` | the coupling face |
+| the tracer, after `db_scene_loader._port_connector_anchors` (served to other clients by `POST /api/v3/anchors/traced`, [api.md](api.md)) | **re-seated** onto the bound connector's `fiber_out` | the coupling face |
 
 For the authored EOSpace run those are **91.236 mm apart** (`intercept_in` at the body origin; the `port_in` connector binding dragged to local x = −91.236). This is deliberate, not drift: on a pigtailed part the optical face and the fibre exit ARE the same point on the package, so one anchor carries one physical meaning and the re-seat models the fibre carrying light out to the connector. Splitting them into two anchors would mean authoring the same coordinates twice with an invisible "these must stay equal" rule between them — a worse invariant than one anchor with a documented derivation.
 

@@ -56,6 +56,13 @@ class V3Anchor:
     axis_z_body: Vec3                  # transverse 2 (= axisX × axisY)
     aperture_mm: float
     aperture_shape: str = "circle"
+    # Identity metadata, never read by the trace: the stored anchor's display
+    # ``name`` (``anchor.name ?? anchor.id`` is the port identity), and
+    # whether the loader made this anchor up rather than reading it off an
+    # asset (the AOM's derived ``interaction_center``, a synthesized fibre
+    # slot's ports). Reported by ``POST /api/v3/anchors/traced``.
+    name: str | None = None
+    synthesized: bool = False
 
 
 @dataclass(frozen=True)

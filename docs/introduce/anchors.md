@@ -111,3 +111,20 @@ is **missing**, not the catalog asset. Where it applies:
 Pinned by the `asset-override` scene of `anchor_poses.json` (anchors and
 `primaryAssetId` per object) and by
 `test_align_endpoints.py::test_align_follows_the_instance_asset_swap`.
+
+## The poses the tracer actually receives
+
+The helpers above pose the **stored** anchors. The tracer's loader
+(`db_scene_loader.load_anchor_scene_from_db`) rewrites a few before tracing:
+a pigtail's ports move onto the fibre connector bound at them
+(`_port_connector_anchors`), an AOM with no stored `interaction_center` gets
+one at the midpoint of its faces, a connector fibre's coupling ports are
+synthesized from its `kindParams.endA/endB`, and nothing inside a spliced
+sub-Component is loaded at all. `POST /api/v3/anchors/traced`
+(`routers/v3_anchors.py`, shape in [api.md](api.md)) returns that loaded
+scene's anchors in lab mm, each with the slot's `bindingId` (what trace
+segments report) and a `synthesized` flag — for a client that must draw the
+faces the trace hits. The runtime `V3Anchor` carries the stored `name` and
+that flag as metadata for this (`anchor_tracer.py:50`); the trace reads
+neither. Pinned against the loader by
+`backend/tests/optical/test_anchors_traced.py`.

@@ -13,6 +13,7 @@
 - `/api/timing-programs` (`POST` and `PUT` both reject an unordered / overlapping `intervals` list with 422, see [timing.md](timing.md)), `/api/rf-chains/nodes`, `/api/coils`, `/api/magnetics-problems`, `/api/simulation-runs`, `/api/touchstone/parse`, `/api/app-settings/{key}`
 - `POST /api/v3/rf/propagation` — the RF readout at one scrub time (compute-only, see below)
 - `POST /api/v3/align/mirror-coupling`, `/api/v3/align/isolator`, `/api/v3/align/aom-bragg` — proposed poses from the align solvers (compute-only, see below)
+- `POST /api/v3/anchors/traced` — every anchor pose exactly as the tracer receives it (compute-only, see below)
 - Static: `/assets/files/...`; Swagger: `/docs`; WebSocket: `/ws/scene`
 - Conventions: every persisted id is a UUIDv7; CamelModel (DB snake_case ↔ API camelCase).
 
@@ -61,6 +62,31 @@ Response:
 - `aomDrives` is passed through verbatim from the resolver the solver uses, so it equals what the trace merged onto each AOM at this time. An AOM in manual mode (`properties.aomRfDriveMode == "manual"`) or with nothing plugged into `rf_in` is **absent** (it keeps its own / rated drive); a wired AOM that no carrier reaches at this instant gets `{"rfDrivePowerW": 0.0}` with no frequency key.
 - `aomDrives[*].eta` (2026-09-22) is the **on-Bragg first-order efficiency** the tracer's AOM op applies with that drive: the op's own `on_bragg_first_order_efficiency` (`anchor_ops/aom.py:139`, `η = baseEfficiency·sin²((π/2)√(P/P_peak(λ)))·G(f)`), over the AOM slot exactly as `load_anchor_scene_from_db` hands it to the tracer at this `scrubTimeNs` (asset `default_params` + the slot's dynamic sources, the drive merged in). The op takes λ per ray; the readout takes the scene's emitter wavelength — the single wavelength the laser sources emit (as the tracer emits them: hidden emissions skipped, dynamic sources over the asset), a TA's own wavelength only when there is no laser emission, else **780 nm** (`aom_readout.scene_emitter_wavelength_nm`, [rf.md](rf.md) §3). Per-order angle detune is NOT in it (that depends on the beam's incidence, which only a trace knows). Absent only for an AOM the tracer has no slot for (an asset with no anchors).
 - `sectionStartsNs` (sorted) is every block boundary across all TimingPrograms, plus 0.
+
+### `POST /api/v3/anchors/traced`
+
+Every anchor in lab mm **exactly as the tracer's loader hands it to the tracer** — `db_scene_loader.load_anchor_scene_from_db` (`:701`), the same `V3AnchorScene` `/api/v3/solver/run-from-db` traces, projected through each slot's `effective_transform`. Router: `backend/app/routers/v3_anchors.py:91`. No request body (poses do not depend on the scrub time).
+
+```json
+[
+  {
+    "objectId": "<objectId>", "anchorId": "intercept_in", "anchorName": "OPT IN", "bindingId": "modulator",
+    "posLab": {"x": 368.0, "y": 0.0, "z": 910.0},
+    "axisXLab": {"x": -1.0, "y": 0.0, "z": 0.0}, "axisYLab": {"x": 0.0, "y": 1.0, "z": 0.0},
+    "apertureMm": 0.0025, "synthesized": false
+  },
+  {
+    "objectId": "<aomId>", "anchorId": "interaction_center", "anchorName": "interaction_center", "bindingId": "body",
+    "posLab": {"...": ""}, "axisXLab": {"...": ""}, "axisYLab": {"...": ""},
+    "apertureMm": 1.5, "synthesized": true
+  }
+]
+```
+
+- Where it differs from the stored anchors run through the binding chain — i.e. what [anchors.md](anchors.md)'s `resolveAnchorPosesLab` / `anchor_poses.py` give — is exactly where the loader rewrites: a **pigtail's ports re-seated onto the fibre connector** bound at them (`_port_connector_anchors`, `:341`: position, axisY and aperture from the connector's mating face; axisX keeps the device's sense; the anchor keeps its id and name, `synthesized: false`), the **AOM's `interaction_center`** derived as the midpoint of its faces when the asset stores none (`synthesized: true`), a **connector fibre's coupling ports** built from its PhysicsElement `kindParams.endA/endB` into a slot of their own (`_synth_fiber_slot`, `:530`, `bindingId: "fiber_body"`, `synthesized: true`) — see [fiber.md](fiber.md). (Per-instance asset swaps are no difference: both honour them.) And where the loader leaves things out: non-`asset` bindings, hence **everything inside a spliced sub-Component** (the align walk does include those), and assets whose anchors lack the tri-axis frame.
+- `anchorName` = the stored `name ?? id` (the identity cables and fibre links store). `bindingId` is the slot's binding id **as every trace segment reports it** (`bindingId` in `run-from-db`'s `labSegments`): the ComponentBinding's `role`, else its UUID, so a client can join the two.
+- `apertureMm` is the clear-aperture **radius** the hit test clips at (`0` = none declared). A `fiber_connector` slot's own anchors (`fiber_out` / `fiber_root`, `connect_*`) are listed too — they are in the scene but never hit (not in `PRIMARY_ANCHOR_IDS`).
+- Order: the loader's (objects, then each object's asset bindings, then each asset's anchors; a synthesized fibre slot after its object's bindings).
 
 ### `GET /api/kinds/roles`
 
