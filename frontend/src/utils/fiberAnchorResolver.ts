@@ -16,6 +16,7 @@
 // `positionMmBodyLocal` / `directionBodyLocal` — same behaviour as
 // before kindParams existed.
 
+import { dirLabToBody, pointLabToBody, type V3Pose } from "../optical/pose";
 import type { Anchor } from "../types/digitalTwin";
 import { findCableRootAnchor, findMatingFaceAnchor } from "./connectorAnchors";
 
@@ -204,77 +205,38 @@ export function resolveFiberNodes(
 
 type Vec3T = [number, number, number];
 
-type LinkPose = {
-  xMm: number; yMm: number; zMm: number;
-  rxDeg: number; ryDeg: number; rzDeg: number;
-};
-
-/** body↔lab for one SceneObject pose. Same convention as everywhere else
- *  in the store: lab = pose + R_z · R_x · R_y · body. Kept local (rather
- *  than importing `optical/pose`) so this module stays dependency-light,
- *  matching `rfCableAnchorResolver`'s own copy. */
-function makeLinkTransforms(pose: LinkPose) {
-  const rxr = (pose.rxDeg * Math.PI) / 180;
-  const ryr = (pose.ryDeg * Math.PI) / 180;
-  const rzr = (pose.rzDeg * Math.PI) / 180;
-  const cx = Math.cos(rxr), sxr = Math.sin(rxr);
-  const cy = Math.cos(ryr), syr = Math.sin(ryr);
-  const cz = Math.cos(rzr), szr = Math.sin(rzr);
-  const rot = (v: Vec3T): Vec3T => {
-    const x1 = cy * v[0] + syr * v[2];
-    const y1 = v[1];
-    const z1 = -syr * v[0] + cy * v[2];
-    const y2 = cx * y1 - sxr * z1;
-    const z2 = sxr * y1 + cx * z1;
-    return [cz * x1 - szr * y2, szr * x1 + cz * y2, z2];
-  };
-  const invRot = (v: Vec3T): Vec3T => {
-    const x2 = cz * v[0] + szr * v[1];
-    const y2 = -szr * v[0] + cz * v[1];
-    const z2 = v[2];
-    const y1 = cx * y2 + sxr * z2;
-    const z1 = -sxr * y2 + cx * z2;
-    return [cy * x2 - syr * z1, y1, syr * x2 + cy * z1];
-  };
-  return {
-    bodyToLab: (v: Vec3T): Vec3T => {
-      const r = rot(v);
-      return [pose.xMm + r[0], pose.yMm + r[1], pose.zMm + r[2]];
-    },
-    bodyToLabDir: rot,
-    labToBody: (v: Vec3T): Vec3T =>
-      invRot([v[0] - pose.xMm, v[1] - pose.yMm, v[2] - pose.zMm]),
-    labToBodyDir: invRot,
-  };
-}
-
 /** Re-derive one fibre end's spline node + handle from the LIVE pose of the
  *  port it is linked to — the optical twin of `resolveLinkedRfCableEndpoint`.
  *
- *  This is what makes a plugged-in patch cable follow its instrument: the
- *  stored node is only a fallback, and the viewer calls this every draw so
- *  dragging the receiver carries the fibre end along without a re-align.
+ *  This is what makes a plugged-in patch cable follow its instrument:
+ *  `sceneStore.resnapFibersLinkedTo` persists the result whenever the
+ *  instrument's pose change commits.
  *
- *  The mating invariant is "coincident faces, opposite directions": the
- *  fibre's optical face lands ON the port and its outward is anti-parallel
- *  to the port's outward. `tipMm` is the junction→face distance for THIS
- *  end's connector — pass the bound connector asset's
- *  `|connect_in − connect_out|` so the face lands exactly where the backend
- *  puts the synthesized `intercept_in/out`.
+ *  The port comes in already in LAB — resolve it with
+ *  `anchorPose.resolveAnchorPosesLab`, i.e. through the target's binding tree
+ *  and its SceneObject pose, the chain the tracer places the port with. (Until
+ *  2026-09-22 this took the anchor in the target asset's own frame and lifted
+ *  it with a local copy of the SceneObject rotation retired on 2026-06-01,
+ *  ignoring the binding transform: fine for an identity-bound port on a part
+ *  turned about Z by 0 or 180 deg, centimetres off on anything tilted — a
+ *  cable that looked plugged in and traced unplugged.) The fibre's own frame
+ *  is `optical/pose`, the same convention.
+ *
+ *  `tipMm` is the junction→face distance for THIS end's connector — pass the
+ *  bound connector asset's `|connect_in − connect_out|` so the face lands
+ *  exactly where the backend puts the synthesized `intercept_in/out`.
  *
  *  Returns null when the link can't be resolved (degenerate port direction);
  *  the caller then keeps the stored nodes so the fibre still renders. */
 export function resolveLinkedFiberEndpoint(args: {
   endpoint: "A" | "B";
   /** The fibre SceneObject's live pose. */
-  fiberPose: LinkPose;
-  /** The linked instrument's live pose. */
-  targetPose: LinkPose;
-  /** Port anchor's body-local position on the target asset (mm). */
-  targetAnchorPosBodyMm: Vec3T;
-  /** Port anchor's body-local outward direction (the receptacle's face
-   *  normal). Need not be normalised. */
-  targetAnchorDirBody: Vec3T;
+  fiberPose: V3Pose;
+  /** The port anchor's origin in lab mm. */
+  portLabMm: Vec3T;
+  /** The port anchor's axisX in lab — its PROPAGATION direction. Need not
+   *  be normalised. */
+  portAxisXLab: Vec3T;
   /** Junction → optical-face distance of this fibre end's connector.
    *  Defaults to the FC 30126A9 housing length. */
   tipMm?: number;
@@ -283,11 +245,8 @@ export function resolveLinkedFiberEndpoint(args: {
   handleMagnitudeMm?: number;
 }): { posMmBody: Vec3T; handleMmBody: Vec3T } | null {
   const tipMm = args.tipMm ?? FIBER_FERRULE_TIP_MM;
-  const targetT = makeLinkTransforms(args.targetPose);
-  const fiberT = makeLinkTransforms(args.fiberPose);
-
-  const portLab = targetT.bodyToLab(args.targetAnchorPosBodyMm);
-  const axLab = targetT.bodyToLabDir(args.targetAnchorDirBody);
+  const portLab = args.portLabMm;
+  const axLab = args.portAxisXLab;
   const m = Math.hypot(axLab[0], axLab[1], axLab[2]);
   if (m < 1e-9) return null;
   // NOT the RF anti-parallel rule. An RF port's direction is a mechanical
@@ -314,11 +273,16 @@ export function resolveLinkedFiberEndpoint(args: {
     portLab[1] - newOutwardLab[1] * backOff,
     portLab[2] - newOutwardLab[2] * backOff,
   ];
-  const posMmBody = fiberT.labToBody(newNodeLab);
-  const newOutwardBody = fiberT.labToBodyDir(newOutwardLab);
+  const nodeBody = pointLabToBody(
+    { x: newNodeLab[0], y: newNodeLab[1], z: newNodeLab[2] }, args.fiberPose,
+  );
+  const outBody = dirLabToBody(
+    { x: newOutwardLab[0], y: newOutwardLab[1], z: newOutwardLab[2] }, args.fiberPose,
+  );
+  const newOutwardBody: Vec3T = [outBody.x, outBody.y, outBody.z];
   const mag = args.handleMagnitudeMm ?? 30;
   return {
-    posMmBody,
+    posMmBody: [nodeBody.x, nodeBody.y, nodeBody.z],
     // Handle points into the cable body — the sign `endpointOutwardBody`
     // expects when it reads the outward back out.
     handleMmBody: [

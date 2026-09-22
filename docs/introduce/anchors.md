@@ -69,7 +69,10 @@ Invariant: the result must equal the backend's
 `pose.pose_to_transform`), or a pose solved from these numbers lands where the
 tracer disagrees. Pinned in `utils/__tests__/mirrorCoupling.test.ts` against
 MIRROR5's traced hit point and reflected direction (both backend outputs). See
-[mirror-coupling.md](mirror-coupling.md) for its first consumer.
+[mirror-coupling.md](mirror-coupling.md) for its first consumer. Since
+2026-09-22 the fibre-port sweep (`sceneStore.collectFiberPortsLab`) and the
+plugged-end re-snap (`resnapFibersLinkedTo`) use it too, instead of a local
+rotation copy that skipped the binding transform ([fiber.md](fiber.md#the-backend-port-2026-09-22)).
 
 **The backend has the same helper (2026-09-22)**:
 `backend/app/optical/align/anchor_poses.py` — `resolve_binding_tree` (:127)

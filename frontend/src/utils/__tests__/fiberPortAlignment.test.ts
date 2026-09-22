@@ -142,9 +142,8 @@ describe("resolveLinkedFiberEndpoint", () => {
     const r = resolveLinkedFiberEndpoint({
       endpoint: "B",
       fiberPose: IDENTITY,
-      targetPose: IDENTITY,
-      targetAnchorPosBodyMm: [500, 0, 0],
-      targetAnchorDirBody: [-1, 0, 0],
+      portLabMm: [500, 0, 0],
+      portAxisXLab: [-1, 0, 0],
       tipMm: TIP,
     });
     expect(r).not.toBeNull();
@@ -155,24 +154,27 @@ describe("resolveLinkedFiberEndpoint", () => {
     expect(r!.posMmBody[2]).toBeCloseTo(c.newPosMmBody[2], 9);
   });
 
-  it("follows the target through a rotation", () => {
-    // Same port, but the instrument is yawed 90° about Y: its local −X
-    // becomes lab −Z under lab = R_z·R_x·R_y·body.
+  it("expresses the node in the FIBRE's frame, with the SceneObject convention", () => {
+    // The port is already in lab (resolveAnchorPosesLab put it there); what
+    // this resolver adds is the fibre's own frame. Under `optical/pose`,
+    // ryDeg = +90 maps body +Z to lab −X, so body −Z is lab +X: the node that
+    // sits at lab x = 500 + tip + gap is body z = −(500 + tip + gap). The
+    // retired local copy of the rotation (R_z·R_x·R_y) got this sign wrong.
     const r = resolveLinkedFiberEndpoint({
       endpoint: "B",
-      fiberPose: IDENTITY,
-      targetPose: { ...IDENTITY, ryDeg: 90 },
-      targetAnchorPosBodyMm: [500, 0, 0],
-      targetAnchorDirBody: [-1, 0, 0],
+      fiberPose: { ...IDENTITY, ryDeg: 90 },
+      portLabMm: [500, 0, 0],
+      portAxisXLab: [-1, 0, 0],
       tipMm: TIP,
     });
     expect(r).not.toBeNull();
-    // Port lab position: R_y(90)·(500,0,0) = (0,0,-500).
-    // Outward = that same rotated axisX = (0,0,500)/|..| = +Z.
-    // node = port − outward·(tip+gap) → z = −500 − (tip+gap).
-    expect(r!.posMmBody[0]).toBeCloseTo(0, 6);
-    expect(r!.posMmBody[1]).toBeCloseTo(0, 6);
-    expect(r!.posMmBody[2]).toBeCloseTo(-500 - (TIP + FIBER_MATING_GAP_MM), 6);
+    expect(r!.posMmBody[0]).toBeCloseTo(0, 9);
+    expect(r!.posMmBody[1]).toBeCloseTo(0, 9);
+    expect(r!.posMmBody[2]).toBeCloseTo(-500 - (TIP + FIBER_MATING_GAP_MM), 9);
+    // End B faces along the port axis (lab −X = body +Z); the handle points
+    // back into the cable, 30 mm long.
+    expect(r!.handleMmBody[0]).toBeCloseTo(0, 9);
+    expect(r!.handleMmBody[2]).toBeCloseTo(-30, 9);
   });
 
   it("returns null on a degenerate port direction", () => {
@@ -180,9 +182,8 @@ describe("resolveLinkedFiberEndpoint", () => {
       resolveLinkedFiberEndpoint({
         endpoint: "B",
         fiberPose: IDENTITY,
-        targetPose: IDENTITY,
-        targetAnchorPosBodyMm: [500, 0, 0],
-        targetAnchorDirBody: [0, 0, 0],
+        portLabMm: [500, 0, 0],
+        portAxisXLab: [0, 0, 0],
       }),
     ).toBeNull();
   });

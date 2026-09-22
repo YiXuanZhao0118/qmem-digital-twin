@@ -17,7 +17,11 @@
  *   - `resnapFibersLinkedTo` moves a plugged end when its target moves.
  */
 
+import * as THREE from "three";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { dirBodyToLab, pointBodyToLab } from "../../optical/pose";
+import { FIBER_MATING_GAP_MM } from "../../utils/fiberAnchorResolver";
 
 const updateObjectApiMock = vi.fn();
 const upsertOpticalElementMock = vi.fn();
@@ -42,6 +46,10 @@ const DET_ID = "det-1";
 const DET_COMP = "comp-det";
 const MIRROR_ID = "mirror-1";
 const MIRROR_COMP = "comp-mirror";
+
+const IDENTITY_BINDING_POSE = {
+  localXMm: 0, localYMm: 0, localZMm: 0, localRxDeg: 0, localRyDeg: 0, localRzDeg: 0,
+};
 
 const pose = (x = 0, y = 0, z = 0) => ({
   xMm: x, yMm: y, zMm: z, rxDeg: 0, ryDeg: 0, rzDeg: 0,
@@ -115,9 +123,10 @@ function seed(opts: {
       componentBindings: [
         // `parentBindingId: null` is what makes these ROOT bindings —
         // `rootBindingsOf` filters on `=== null`, so leaving it undefined
-        // yields an empty tree and no ports at all.
-        { id: "b-det", componentId: DET_COMP, parentBindingId: null, sortOrder: 0, role: "root", targetKind: "asset", asset3dId: "a-det" },
-        { id: "b-mir", componentId: MIRROR_COMP, parentBindingId: null, sortOrder: 0, role: "root", targetKind: "asset", asset3dId: "a-mir" },
+        // yields an empty tree and no ports at all. The local pose is part of
+        // the row (the columns are NOT NULL): ports are placed through it.
+        { id: "b-det", componentId: DET_COMP, parentBindingId: null, sortOrder: 0, role: "root", targetKind: "asset", asset3dId: "a-det", ...IDENTITY_BINDING_POSE },
+        { id: "b-mir", componentId: MIRROR_COMP, parentBindingId: null, sortOrder: 0, role: "root", targetKind: "asset", asset3dId: "a-mir", ...IDENTITY_BINDING_POSE },
         ...(opts.endBBindingKey
           ? [
               {
@@ -130,6 +139,7 @@ function seed(opts: {
                 role: opts.endBBindingKey === "role" ? "end_b" : "pm_780_apc",
                 properties:
                   opts.endBBindingKey === "splineEnd" ? { splineEnd: "B" } : {},
+                ...IDENTITY_BINDING_POSE,
               },
             ]
           : []),
@@ -343,5 +353,109 @@ describe("resnapFibersLinkedTo", () => {
     const before = nodesOf()![1].posMm[0];
     await useSceneStore.getState().resnapFibersLinkedTo([MIRROR_ID]);
     expect(nodesOf()![1].posMm[0]).toBe(before);
+  });
+});
+
+describe("a beam placement uses the bound connector's tip too (2026-09-22)", () => {
+  // The traced face of a connector-bound fibre is node + outward · tip, with
+  // tip = the connector's own |mating face − cable root| (the backend's
+  // _synth_fiber_slot). A beam placement must back the node out by that same
+  // tip or the face lands `tip − 36.28` mm along the beam from the picked
+  // point — it used to back out by the FC constant regardless.
+  const beamAlongX = (y: number) => [{
+    startThree: { x: 3, y: y / 100, z: 0 },
+    endThree: { x: 6, y: y / 100, z: 0 },
+    emitterObjectId: "src", sourceObjectId: "src",
+  }];
+
+  it.each([
+    ["with a PM connector bound", "role" as const, CONNECTOR_TIP_MM],
+    ["with no connector bound", undefined, 36.28],
+  ])("puts the traced face on the picked point, %s", async (_label, key, tip) => {
+    seed({ fiberNodes: straight(0, 400), endBBindingKey: key });
+    (globalThis as { window?: unknown }).window = { __rayTraceDebug: beamAlongX(5) };
+    try {
+      const store = useSceneStore.getState();
+      const cand = (await store.findFiberAlignmentCandidates(FIBER_ID, "B", 25)).find((c) => !c.port);
+      expect(cand).toBeDefined();
+      // Measured from the REAL current face (x = 400 + tip), 5 mm off the line.
+      expect(cand!.distMm).toBeCloseTo(5, 9);
+      expect(cand!.projectedPortLab[0]).toBeCloseTo(400 + tip, 9);
+      await store.applyFiberAlignmentCandidate(FIBER_ID, "B", cand!);
+      const n = nodesOf()![1];
+      const outward = new THREE.Vector3(...n.handleInMm!).normalize().negate();
+      const face = new THREE.Vector3(...n.posMm).addScaledVector(outward, tip);
+      expect(face.distanceTo(new THREE.Vector3(...cand!.projectedPortLab))).toBeLessThan(1e-9);
+    } finally {
+      delete (globalThis as { window?: unknown }).window;
+    }
+  });
+});
+
+describe("a tilted receiver bound through a rotated binding (2026-09-22)", () => {
+  // The port must land where the TRACER hit-tests it: the port anchor lifted
+  // by its binding (raw XYZ Euler, as the backend's _binding_tree_transform)
+  // and then by the SceneObject pose (optical/pose, the backend's
+  // pose._rotation_of). The retired local rotation copy the store used to
+  // place ports with missed this receiver by centimetres.
+  const DET_POSE = { xMm: 400, yMm: 50, zMm: 900, rxDeg: 135, ryDeg: 10, rzDeg: 30 };
+  const BIND = { x: 3, y: -2, z: 5, rx: 20, ry: -35, rz: 60 };
+
+  const portLab = (detPose: typeof DET_POSE) => {
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+      THREE.MathUtils.degToRad(BIND.rx), THREE.MathUtils.degToRad(BIND.ry),
+      THREE.MathUtils.degToRad(BIND.rz), "XYZ",
+    ));
+    const pComp = new THREE.Vector3(BIND.x, BIND.y, BIND.z); // anchor at the asset origin
+    const aComp = new THREE.Vector3(-1, 0, 0).applyQuaternion(q);
+    const p = pointBodyToLab({ x: pComp.x, y: pComp.y, z: pComp.z }, detPose);
+    const a = dirBodyToLab({ x: aComp.x, y: aComp.y, z: aComp.z }, detPose);
+    return { p: new THREE.Vector3(p.x, p.y, p.z), a: new THREE.Vector3(a.x, a.y, a.z).normalize() };
+  };
+
+  const tilt = (detPose: typeof DET_POSE) =>
+    useSceneStore.setState((s) => ({
+      scene: {
+        ...s.scene,
+        objects: s.scene.objects.map((o) => (o.id === DET_ID ? { ...o, ...detPose } : o)) as never,
+        componentBindings: (s.scene.componentBindings ?? []).map((b) =>
+          b.id === "b-det"
+            ? { ...b, localXMm: BIND.x, localYMm: BIND.y, localZMm: BIND.z, localRxDeg: BIND.rx, localRyDeg: BIND.ry, localRzDeg: BIND.rz }
+            : b,
+        ) as never,
+      },
+    }));
+
+  /** End B's optical face in lab (the fibre sits at the identity pose, and
+   *  no connector is bound, so the FC constant is its tip). */
+  const faceBLab = () => {
+    const nodes = nodesOf()!;
+    const n = nodes[nodes.length - 1];
+    const outward = new THREE.Vector3(...n.handleInMm!).normalize().negate();
+    return new THREE.Vector3(...n.posMm).addScaledVector(outward, 36.28);
+  };
+
+  it("mates End B one gap short of where the tracer has the port", async () => {
+    seed({ fiberNodes: straight(0, 400) });
+    tilt(DET_POSE);
+    const { p, a } = portLab(DET_POSE);
+    const store = useSceneStore.getState();
+    const cand = (await store.findFiberAlignmentCandidates(FIBER_ID, "B", 5000)).find((c) => c.port);
+    expect(cand?.port?.targetObjectId).toBe(DET_ID);
+    await store.applyFiberAlignmentCandidate(FIBER_ID, "B", cand!);
+    expect(faceBLab().distanceTo(p.clone().addScaledVector(a, -FIBER_MATING_GAP_MM))).toBeLessThan(1e-9);
+  });
+
+  it("follows it through a re-snap", async () => {
+    seed({ fiberNodes: straight(0, 400) });
+    tilt(DET_POSE);
+    const store = useSceneStore.getState();
+    const cand = (await store.findFiberAlignmentCandidates(FIBER_ID, "B", 5000)).find((c) => c.port);
+    await store.applyFiberAlignmentCandidate(FIBER_ID, "B", cand!);
+    const moved = { ...DET_POSE, xMm: 425.5, rzDeg: 70 };
+    tilt(moved);
+    await useSceneStore.getState().resnapFibersLinkedTo([DET_ID]);
+    const { p, a } = portLab(moved);
+    expect(faceBLab().distanceTo(p.clone().addScaledVector(a, -FIBER_MATING_GAP_MM))).toBeLessThan(1e-9);
   });
 });

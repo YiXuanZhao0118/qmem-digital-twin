@@ -154,6 +154,7 @@ import {
 } from "../utils/beamPlacement";
 import { expandPoseToRigidGroup, patchHasPoseChange } from "../utils/rigidGroup";
 import { anchorObjectLocalPrimaryDir } from "../utils/anchorAccess";
+import { resolveAnchorPosesLab } from "../utils/anchorPose";
 import { isComponentLocked } from "../utils/components";
 import { capabilityProfile } from "../kinds/_capabilityProfile";
 import {
@@ -273,36 +274,6 @@ async function syncFiberEndpointToKindParams(
   };
   await upsertOpticalElement({ objectId: obj.id, elementKind: "fiber", kindParams: kp });
 }
-/** body→lab for one SceneObject pose (lab = pose + R_z · R_x · R_y · body).
- *  Local copy so the fibre-port collector below doesn't have to reach into
- *  the inline one inside `findRfCableAlignmentCandidates`. */
-function makeLabTransforms(pose: {
-  xMm: number; yMm: number; zMm: number;
-  rxDeg: number; ryDeg: number; rzDeg: number;
-}) {
-  const rxr = (pose.rxDeg * Math.PI) / 180;
-  const ryr = (pose.ryDeg * Math.PI) / 180;
-  const rzr = (pose.rzDeg * Math.PI) / 180;
-  const cx = Math.cos(rxr), sxr = Math.sin(rxr);
-  const cy = Math.cos(ryr), syr = Math.sin(ryr);
-  const cz = Math.cos(rzr), szr = Math.sin(rzr);
-  const rot = (v: [number, number, number]): [number, number, number] => {
-    const x1 = cy * v[0] + syr * v[2];
-    const y1 = v[1];
-    const z1 = -syr * v[0] + cy * v[2];
-    const y2 = cx * y1 - sxr * z1;
-    const z2 = sxr * y1 + cx * z1;
-    return [cz * x1 - szr * y2, szr * x1 + cz * y2, z2];
-  };
-  return {
-    bodyToLab: (v: [number, number, number]): [number, number, number] => {
-      const r = rot(v);
-      return [pose.xMm + r[0], pose.yMm + r[1], pose.zMm + r[2]];
-    },
-    bodyToLabDir: rot,
-  };
-}
-
 /** Beam segments in LAB mm, scraped off the live `__rayTraceDebug` the
  *  viewer publishes (three.js world coords, units = 100 mm, y-up — the
  *  inverse swap is `lab = three * 100`). Segments emitted BY
@@ -382,9 +353,16 @@ function collectBeamSegmentsLab(
  *  the same reason: reading `asset3dId` misses every binding-backed object,
  *  and `primaryAsset` still misses a multi-root one.
  *
- *  Direction comes from `anchorObjectLocalPrimaryDir` (axisX first) — a
- *  device-materialised anchor carries only `axisXBodyLocal` and a naive read
- *  of `directionBodyLocal` would silently default every port to +X. */
+ *  Placed with `anchorPose.resolveAnchorPosesLab` — the binding tree (incl.
+ *  this instance's ObjectBinding deltas) and the SceneObject pose, i.e. the
+ *  chain the tracer hit-tests the port with (backend twin:
+ *  `app/optical/fibers/scene.collect_fiber_ports_lab`, pinned by
+ *  `utils/__tests__/fiberParity.test.ts`). Until 2026-09-22 this lifted the
+ *  anchor with a local copy of the SceneObject rotation retired on
+ *  2026-06-01 and without its binding transform, which put the port
+ *  centimetres off on any tilted part. An anchor declaring no direction at
+ *  all (no axisX, no legacy `directionBodyLocal`) is not offered: a
+ *  receptacle needs a mating axis. */
 function collectFiberPortsLab(
   scene: SceneData,
   excludeObjectId: string | null,
@@ -399,23 +377,15 @@ function collectFiberPortsLab(
     if (onlyObjectId && other.id !== onlyObjectId) continue;
     const otherComp = scene.components.find((c) => c.id === other.componentId);
     if (!otherComp) continue;
-    const { bodyToLab, bodyToLabDir } = makeLabTransforms(other);
-    for (const { asset, anchor: a } of anchorsInBindingTree(otherComp, scene)) {
-      if (!isFiberPortConnectorType(a.connectorType)) continue;
-      const primaryDir = anchorObjectLocalPrimaryDir(a, asset);
+    for (const a of resolveAnchorPosesLab(otherComp, other, scene)) {
+      if (!isFiberPortConnectorType(a.anchor.connectorType) || !a.axisXLab) continue;
       ports.push({
-        labPosMm: bodyToLab([
-          a.positionMmBodyLocal.x,
-          a.positionMmBodyLocal.y,
-          a.positionMmBodyLocal.z,
-        ]),
-        labAxisX: bodyToLabDir(
-          primaryDir ? [primaryDir.x, primaryDir.y, primaryDir.z] : [1, 0, 0],
-        ),
+        labPosMm: [a.posLab.x, a.posLab.y, a.posLab.z],
+        labAxisX: [a.axisXLab.x, a.axisXLab.y, a.axisXLab.z],
         targetName: other.name,
         targetObjectId: other.id,
-        targetAnchorName: a.name ?? a.id,
-        targetAnchorId: a.id,
+        targetAnchorName: a.anchorName,
+        targetAnchorId: a.anchorId,
       });
     }
   }
@@ -3367,12 +3337,17 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       : [];
 
     const all = [
+      // The same connector tip the port finder uses: the traced face is
+      // `node + outward · tip` of the BOUND connector (`_synth_fiber_slot`),
+      // so backing the node out by the FC constant parked a PM fibre's face
+      // ~23 mm along the beam from the point picked.
       ...findFiberEndAlignmentCandidates({
         end,
         nodes,
         pose: alignPose,
         beamSegmentsLab,
         toleranceMm,
+        tipMm: obj ? fiberEndConnectorTipMm(state.scene, obj.componentId, end) : undefined,
       }),
       ...portCandidates,
     ];
@@ -3482,25 +3457,19 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
           ? state.scene.components.find((c) => c.id === target.componentId)
           : undefined;
         if (!target || !targetComp) continue;
-        const owned = anchorsInBindingTree(targetComp, state.scene).find(
-          ({ anchor }) =>
-            anchor.id === link.targetAnchorId &&
-            (anchor.name ?? anchor.id) === link.targetAnchorName,
+        // The port's LIVE lab pose, through the target's binding tree — the
+        // chain the tracer uses (see collectFiberPortsLab).
+        const owned = resolveAnchorPosesLab(targetComp, target, state.scene).find(
+          (a) => a.anchorId === link.targetAnchorId && a.anchorName === link.targetAnchorName,
         );
-        if (!owned) continue;
+        if (!owned || !owned.axisXLab) continue;
         const nodes = resolveEffectiveFiberNodes(obj, component, state.scene.physicsElements);
         if (!nodes || nodes.length < 2) continue;
-        const dir = anchorObjectLocalPrimaryDir(owned.anchor, owned.asset);
         const resolved = resolveLinkedFiberEndpoint({
           endpoint: end,
           fiberPose: obj,
-          targetPose: target,
-          targetAnchorPosBodyMm: [
-            owned.anchor.positionMmBodyLocal.x,
-            owned.anchor.positionMmBodyLocal.y,
-            owned.anchor.positionMmBodyLocal.z,
-          ],
-          targetAnchorDirBody: dir ? [dir.x, dir.y, dir.z] : [1, 0, 0],
+          portLabMm: [owned.posLab.x, owned.posLab.y, owned.posLab.z],
+          portAxisXLab: [owned.axisXLab.x, owned.axisXLab.y, owned.axisXLab.z],
           tipMm: fiberEndConnectorTipMm(state.scene, obj.componentId, end),
         });
         if (!resolved) continue;
