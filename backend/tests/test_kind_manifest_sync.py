@@ -165,10 +165,13 @@ class TestKindsTableMatchesManifest:
             NOT NULL placeholders ``assets_3d.kind_id`` falls back to.
             ``op_set_name='none'``; the tracer runs no op for them.
 
-        ``isolator``
-            Hand-authored through the Kinds editor — it is in no migration
-            and no commit. ``locked``, ``domains=['mechanical']``,
-            ``op_set_name='none'``, and its own description: "Composite
+        ``isolator`` (row inserted by 0140 when missing)
+            Hand-authored through the Kinds editor, and for a long time in
+            no migration at all. That is why a DB built from migrations
+            (CI) failed this test until alembic 0140 inserted the same row,
+            which it does only when the row is missing. ``locked``,
+            ``domains=['mechanical']``, ``op_set_name='none'``, and its own
+            description: "Composite
             isolator housing — sub-components (faraday + polarizers) carry
             the physics. This kind is a mechanical wrapper; no anchors
             needed." That is accurate: the isolator IS a Component

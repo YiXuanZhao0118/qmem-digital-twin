@@ -128,7 +128,7 @@ function outerMatrix(placement: ConnectorPlacement, objectPose: V3Pose): THREE.M
 function anchorMatrix(anchor: AnchorFrameLike): THREE.Matrix4 | null {
   const basis = basisOf(anchor);
   if (!basis) return null;
-  const p = anchor.positionMmBodyLocal;
+  const p = anchor.positionMmBodyLocal; /* raw-anchor-ok: connector-asset frame; composed with the binding pose, then the SceneObject pose */
   return basis.setPosition(p?.x ?? 0, p?.y ?? 0, p?.z ?? 0);
 }
 

@@ -77,8 +77,8 @@ function vec(v: Vec3Like | null | undefined): THREE.Vector3 | null {
  *  anchor doesn't carry a usable one. axisZ is derived when absent; a
  *  non-orthogonal axisY is re-squared against axisX rather than trusted. */
 export function basisOf(anchor: AnchorFrameLike): THREE.Matrix4 | null {
-  const x = vec(anchor.axisXBodyLocal);
-  const y = vec(anchor.axisYBodyLocal);
+  const x = vec(anchor.axisXBodyLocal); /* raw-anchor-ok: asset-frame triad; callers compose it with ComponentBinding poses, not a SceneObject pose */
+  const y = vec(anchor.axisYBodyLocal); /* raw-anchor-ok: asset-frame triad; callers compose it with ComponentBinding poses, not a SceneObject pose */
   if (!x || !y || x.lengthSq() < 1e-12 || y.lengthSq() < 1e-12) return null;
   x.normalize();
   const z = new THREE.Vector3().crossVectors(x, y);
@@ -122,8 +122,8 @@ export function computePortConnectorPose(
   const connectorBasis = basisOf(connectorConnectIn);
   if (!anchorBasis || !connectorBasis) return null;
 
-  const anchorPos = vec(deviceAnchor.positionMmBodyLocal) ?? new THREE.Vector3();
-  const connectPos = vec(connectorConnectIn.positionMmBodyLocal) ?? new THREE.Vector3();
+  const anchorPos = vec(deviceAnchor.positionMmBodyLocal) ?? new THREE.Vector3(); /* raw-anchor-ok: device-asset frame; devicePose lifts it into the Component frame below */
+  const connectPos = vec(connectorConnectIn.positionMmBodyLocal) ?? new THREE.Vector3(); /* raw-anchor-ok: connector-asset frame; the binding pose being solved maps it */
 
   // Lift the device anchor out of the device asset's body frame into the
   // Component frame the binding columns live in.
@@ -250,7 +250,7 @@ export function anchorPositionInComponentFrame(
   anchor: AnchorFrameLike,
   bindingPose: BindingPose | null,
 ): [number, number, number] {
-  const p = vec(anchor.positionMmBodyLocal) ?? new THREE.Vector3();
+  const p = vec(anchor.positionMmBodyLocal) ?? new THREE.Vector3(); /* raw-anchor-ok: asset frame; bindingPose lifts it into the Component frame */
   if (bindingPose) p.applyMatrix4(poseToMatrix(bindingPose));
   return [p.x, p.y, p.z];
 }
