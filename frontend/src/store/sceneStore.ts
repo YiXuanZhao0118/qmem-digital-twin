@@ -153,14 +153,11 @@ import {
   validateOpticalLink,
 } from "../utils/beamPlacement";
 import { expandPoseToRigidGroup, patchHasPoseChange } from "../utils/rigidGroup";
-import { anchorObjectLocalPrimaryDir } from "../utils/anchorAccess";
 import { resolveAnchorPosesLab } from "../utils/anchorPose";
 import { isComponentLocked } from "../utils/components";
 import { capabilityProfile } from "../kinds/_capabilityProfile";
 import {
-  anchorsInBindingTree,
   deriveCablePropsFromConnectorBindings,
-  findAnchorInBindingTree,
   pigtailPortBindings,
   primaryAsset,
 } from "../utils/componentBindings";
@@ -3713,6 +3710,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     });
 
     const ports: import("../utils/rfCableAlignment").RfPortLab[] = [];
+    const { rfPortPoses } = await import("../utils/rfCableAnchorResolver");
     for (const other of state.scene.objects) {
       if (other.id === objectId) continue;
       const otherComp = state.scene.components.find((c) => c.id === other.componentId);
@@ -3720,29 +3718,19 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       // Whole binding tree, not just the "main" asset: reading asset3dId
       // directly missed every binding-backed RF object, and `primaryAsset`
       // still misses a multi-root one (EOM + its two FC/APC connectors),
-      // so a cable end found no port to snap to.
+      // so a cable end found no port to snap to. Each port is posed through
+      // its binding chain (`rfPortPoses`) — axisX-first, so a port whose
+      // face normal isn't +X still snaps the end to its real outward.
       const { bodyToLab, bodyToLabDir } = makeOwnerTransforms(other);
-      for (const { asset, anchor: a } of anchorsInBindingTree(otherComp, state.scene)) {
-        if (a.id !== "rf_in" && a.id !== "rf_out") continue;
-        const posBody: Vec3T = [
-          a.positionMmBodyLocal.x,
-          a.positionMmBodyLocal.y,
-          a.positionMmBodyLocal.z,
-        ];
-        // axisXBodyLocal-first (see resolvePort note) so a port whose face
-        // normal isn't +X still snaps the cable end to the correct outward
-        // direction instead of defaulting to +X.
-        const primaryDir = anchorObjectLocalPrimaryDir(a, asset);
-        const dirBody: Vec3T = primaryDir
-          ? [primaryDir.x, primaryDir.y, primaryDir.z]
-          : [1, 0, 0];
+      for (const p of rfPortPoses(otherComp, other, state.scene)) {
+        if (p.anchorId !== "rf_in" && p.anchorId !== "rf_out") continue;
         ports.push({
-          labPosMm: bodyToLab(posBody),
-          labDirOutward: bodyToLabDir(dirBody),
+          labPosMm: bodyToLab([p.posCad.x, p.posCad.y, p.posCad.z]),
+          labDirOutward: bodyToLabDir([p.dirCad.x, p.dirCad.y, p.dirCad.z]),
           targetName: other.name,
           targetObjectId: other.id,
-          targetAnchorName: a.name ?? a.id,
-          targetAnchorId: a.id,
+          targetAnchorName: p.anchorName,
+          targetAnchorId: p.anchorId,
         });
       }
     }
@@ -3810,7 +3798,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     if (moved.size === 0) return;
     const state = get();
     const nextPropsByCable = new Map<string, SceneObject["properties"]>();
-    const { resolveLinkedRfCableEndpoint, connectorTipMmFromAnchors } =
+    const { resolveLinkedRfCableEndpoint, connectorTipMmFromAnchors, resolveRfPortPose } =
       await import("../utils/rfCableAnchorResolver");
     for (const cable of state.scene.objects) {
       const comp = state.scene.components.find((c) => c.id === cable.componentId);
@@ -3832,13 +3820,12 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         if (!targetComp) continue;
         // Whole binding tree, not just the "main" asset — a multi-root
         // Component (EOM + its two FC/APC connectors) keeps its rf_in on
-        // one of the roots, and `primaryAsset` answers null for those.
-        const owned = findAnchorInBindingTree(
-          targetComp, state.scene, link.targetAnchorId, link.targetAnchorName,
+        // one of the roots, and `primaryAsset` answers null for those —
+        // posed through the port's binding chain (`resolveRfPortPose`).
+        const port = resolveRfPortPose(
+          targetComp, targetObj, state.scene, link.targetAnchorId, link.targetAnchorName,
         );
-        if (!owned) continue;
-        const { asset, anchor } = owned;
-        const primaryDir = anchorObjectLocalPrimaryDir(anchor, asset);
+        if (!port) continue;
         const connBinding = (state.scene.componentBindings ?? []).find(
           (b) => b.componentId === comp.id
             && b.role === (end === "A" ? "end_a" : "end_b")
@@ -3857,14 +3844,8 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
             xMm: targetObj.xMm, yMm: targetObj.yMm, zMm: targetObj.zMm,
             rxDeg: targetObj.rxDeg, ryDeg: targetObj.ryDeg, rzDeg: targetObj.rzDeg,
           },
-          targetAnchorPosBodyMm: [
-            anchor.positionMmBodyLocal.x,
-            anchor.positionMmBodyLocal.y,
-            anchor.positionMmBodyLocal.z,
-          ],
-          targetAnchorDirBody: primaryDir
-            ? [primaryDir.x, primaryDir.y, primaryDir.z]
-            : [1, 0, 0],
+          targetAnchorPosBodyMm: [port.posCad.x, port.posCad.y, port.posCad.z],
+          targetAnchorDirBody: [port.dirCad.x, port.dirCad.y, port.dirCad.z],
           connectorTipMm: connectorTipMmFromAnchors(connAsset?.anchors, null),
         });
         if (!resolved) continue;
@@ -3902,6 +3883,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     const { srcObjectId, srcAnchorId, srcAnchorName, tgtObjectId, tgtAnchorId, tgtAnchorName } = args;
     const state = get();
     if (srcObjectId === tgtObjectId) return null;
+    const { resolveRfPortPose } = await import("../utils/rfCableAnchorResolver");
 
     // 2. Resolve each endpoint's port lab position so the new SceneObject
     //    can land at the midpoint (the spline nodes will then be re-derived
@@ -3937,27 +3919,23 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       // either way resolvePort returned null and the whole connect
       // silently no-op'd, with the panel showing the ports and no cable
       // ever being created.
-      const owned = findAnchorInBindingTree(comp, state.scene, anchorId, anchorName);
-      if (!owned) return null;
-      const { asset, anchor } = owned;
+      //
+      // Posed through the port's binding chain (`resolveRfPortPose`: the
+      // binding transforms, this instance's ObjectBinding deltas and asset
+      // swaps — the tracer's chain). It used to take the anchor in its own
+      // asset's frame, exact only on an identity root binding. Primary
+      // direction = axisX first (device-materialized anchors carry ONLY
+      // axisX; reading the legacy directionBodyLocal alone defaulted every
+      // RF port to +X — the connector then aligned 90° off whenever the
+      // real face normal wasn't +X, e.g. ad9959 CH0 faces +Z).
+      const port = resolveRfPortPose(comp, obj, state.scene, anchorId, anchorName);
+      if (!port) return null;
+      const { anchor } = port;
       const pe = state.scene.physicsElements.find((e) => e.objectId === objectId) ?? null;
       const kind = pe?.elementKind ?? null;
       const domain = resolveRfLinkPortDomain({ kind, anchorId });
-      const anchorPosBody: Vec3 = [
-        anchor.positionMmBodyLocal.x,
-        anchor.positionMmBodyLocal.y,
-        anchor.positionMmBodyLocal.z,
-      ];
-      // Primary direction = axisXBodyLocal (tri-axis schema), legacy
-      // directionBodyLocal as fallback. Device-materialized anchors carry
-      // ONLY axisX (directionBodyLocal is null), so reading the legacy field
-      // directly defaulted every RF port to +X — the connector then aligned
-      // 90° off whenever the real port face normal wasn't +X (e.g. ad9959
-      // CH0 faces +Z). Mirror the renderer/debug overlay's resolver.
-      const primaryDir = anchorObjectLocalPrimaryDir(anchor, asset);
-      const anchorDirBody: Vec3 = primaryDir
-        ? [primaryDir.x, primaryDir.y, primaryDir.z]
-        : [1, 0, 0];
+      const anchorPosBody: Vec3 = [port.posCad.x, port.posCad.y, port.posCad.z];
+      const anchorDirBody: Vec3 = [port.dirCad.x, port.dirCad.y, port.dirCad.z];
       const connectorFamily = connectorFamilyFromAnchor(anchor);
       // Body → lab through the owner's REAL rotation (`optical/pose`), as
       // in findRfCableAlignmentCandidates — an inline `Rz·Rx·Ry` used to

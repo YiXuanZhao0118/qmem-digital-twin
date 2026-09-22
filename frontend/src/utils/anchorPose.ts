@@ -31,7 +31,7 @@ import * as THREE from "three";
 import type { Anchor, Asset3D, ComponentItem, SceneData, SceneObject } from "../types/digitalTwin";
 import { rotateLabDir } from "../optical/frames";
 import type { Vec3 } from "./anchorAccess";
-import { anchorObjectLocalPos, anchorObjectLocalPrimaryDir } from "./anchorAccess";
+import { anchorObjectLocalAxisY, anchorObjectLocalPos, anchorObjectLocalPrimaryDir } from "./anchorAccess";
 import { resolveBindingTree, type ResolvedBindingNode } from "./componentBindings";
 
 export type AnchorPoseLab = {
@@ -46,6 +46,12 @@ export type AnchorPoseLab = {
   /** Primary direction (axisX, else legacy directionBodyLocal) in the
    *  Component CAD frame, unit. null when the anchor declares none. */
   axisXCad: Vec3 | null;
+  /** axisY (the transverse reference) in the Component CAD frame, unit.
+   *  null when the anchor declares none. TS-only: the backend twin does not
+   *  carry it — its one reader is the RF connector side basis
+   *  (`rfCableAnchorResolver.resolveLinkedRfCableEndpoint` /
+   *  `ppgMounting`), a nudge the backend ports do not have. */
+  axisYCad: Vec3 | null;
   /** Anchor origin in lab mm. */
   posLab: Vec3;
   /** Primary direction in lab, unit. null when the anchor declares none. */
@@ -60,7 +66,13 @@ type SceneSlice = Pick<
   "componentBindings" | "objectBindings" | "assets" | "components"
 >;
 
-type Collected = { asset: Asset3D; anchor: Anchor; posCad: Vec3; axisXCad: Vec3 | null };
+type Collected = {
+  asset: Asset3D;
+  anchor: Anchor;
+  posCad: Vec3;
+  axisXCad: Vec3 | null;
+  axisYCad: Vec3 | null;
+};
 
 function unit(v: Vec3): Vec3 | null {
   const m = Math.hypot(v.x, v.y, v.z);
@@ -111,18 +123,17 @@ function walk(
         const posCad = new THREE.Vector3(p.x, p.y, p.z)
           .applyQuaternion(worldQuat)
           .add(worldPos);
-        const dirLocal = anchorObjectLocalPrimaryDir(anchor, asset);
-        let axisXCad: Vec3 | null = null;
-        if (dirLocal) {
-          const d = new THREE.Vector3(dirLocal.x, dirLocal.y, dirLocal.z)
-            .applyQuaternion(worldQuat);
-          axisXCad = unit({ x: d.x, y: d.y, z: d.z });
-        }
+        const toCad = (v: Vec3 | null): Vec3 | null => {
+          if (!v) return null;
+          const d = new THREE.Vector3(v.x, v.y, v.z).applyQuaternion(worldQuat);
+          return unit({ x: d.x, y: d.y, z: d.z });
+        };
         out.push({
           asset,
           anchor,
           posCad: { x: posCad.x, y: posCad.y, z: posCad.z },
-          axisXCad,
+          axisXCad: toCad(anchorObjectLocalPrimaryDir(anchor, asset)),
+          axisYCad: toCad(anchorObjectLocalAxisY(anchor, asset)),
         });
       }
     }
@@ -161,23 +172,26 @@ export function resolveAnchorPosesLab(
     if (asset) {
       for (const anchor of asset.anchors ?? []) {
         const dir = anchorObjectLocalPrimaryDir(anchor, asset);
+        const axisY = anchorObjectLocalAxisY(anchor, asset);
         collected.push({
           asset,
           anchor,
           posCad: anchorObjectLocalPos(anchor, asset),
           axisXCad: dir ? unit(dir) : null,
+          axisYCad: axisY ? unit(axisY) : null,
         });
       }
     }
   }
 
-  return collected.map(({ asset, anchor, posCad, axisXCad }) => ({
+  return collected.map(({ asset, anchor, posCad, axisXCad, axisYCad }) => ({
     anchorId: anchor.id,
     anchorName: anchor.name ?? anchor.id,
     asset,
     anchor,
     posCad,
     axisXCad,
+    axisYCad,
     posLab: cadPointToLab(posCad, sceneObject),
     axisXLab: axisXCad ? unit(rotateLabDir(axisXCad, sceneObject)) : null,
     apertureMm:

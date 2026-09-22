@@ -20,6 +20,10 @@
  *       (case-insensitively, as the backend's unique name check). The bare
  *       count collided once a PPG other than the last was deleted, and the
  *       create failed with a 409.
+ *   R5. Connect, resnap and align pose a port through its BINDING CHAIN
+ *       (`rfCableAnchorResolver.rfPortPoses`): nested / rotated / offset
+ *       bindings and ObjectBinding deltas. They read the anchor in its own
+ *       asset's frame, exact only on an identity root binding.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -215,6 +219,98 @@ describe("R2: the align picker uses the end's bound connector length", () => {
     const props = updateObjectApiMock.mock.calls[0][1].properties as { rfCableNodes: Node[] };
     const mated = face({ x: 0, y: 0, z: 0 }, props.rfCableNodes[1], "B", SMA_TIP);
     expect(dist(mated.pos, port.pos)).toBeLessThan(1e-9);
+  });
+});
+
+
+describe("R5: RF ports are posed through their binding chain", () => {
+  /** `seed()` plus an amplifier whose ports sit on a NESTED binding
+   *  (rotated + offset under a body root) with an ObjectBinding delta on
+   *  top, on a tilted object. Every RF port lookup used to read the anchor
+   *  in its own asset's frame — exact only on an identity root binding. */
+  function seedNested(cable?: { nodes: Node[]; endpoints?: Record<string, unknown> }): SceneData {
+    const base = seed();
+    const scene = {
+      ...base,
+      objects: [
+        ...base.objects,
+        obj("nest", "c-nest", { xMm: -1400, yMm: 450, zMm: 760, rxDeg: 10, ryDeg: 30, rzDeg: 15 }),
+        ...(cable
+          ? [obj("cable", "c-cable", {}, { rfCableNodes: cable.nodes, ...(cable.endpoints ? { rfCableEndpoints: cable.endpoints } : {}) })]
+          : []),
+      ],
+      components: [...base.components, { id: "c-nest", name: "NEST", kindId: "rf_amplifier", asset3dId: null, properties: {} }],
+      componentBindings: [
+        ...(base.componentBindings ?? []),
+        { id: "b-nest-body", componentId: "c-nest", parentBindingId: null, sortOrder: 0, role: "body", targetKind: "asset", asset3dId: "a-nest-body", localXMm: 0, localYMm: 0, localZMm: 0, localRxDeg: 0, localRyDeg: 0, localRzDeg: 0 },
+        { id: "b-nest-ports", componentId: "c-nest", parentBindingId: "b-nest-body", sortOrder: 1, role: "ports", targetKind: "asset", asset3dId: "a-amp", localXMm: 12, localYMm: -7, localZMm: 25, localRxDeg: 30, localRyDeg: -60, localRzDeg: 45 },
+      ],
+      objectBindings: [{
+        id: "ob-nest", objectId: "nest", componentBindingId: "b-nest-ports",
+        localXMmDelta: 4, localYMmDelta: null, localZMmDelta: null,
+        localRxDegDelta: null, localRyDegDelta: -20, localRzDegDelta: null, asset3dIdOverride: null,
+      }],
+      assets: [...base.assets, { id: "a-nest-body", name: "nest body", kindId: "rf_amplifier", anchors: [] }],
+      physicsElements: [
+        ...base.physicsElements,
+        { id: "pe-nest", objectId: "nest", elementKind: "rf_amplifier", kindParams: {} },
+        ...(cable ? [{ id: "pe-cable", objectId: "cable", elementKind: "rf_cable", kindParams: {} }] : []),
+      ],
+    } as unknown as SceneData;
+    useSceneStore.setState({ scene, activeCollectionId: null } as never);
+    return scene;
+  }
+
+  it("connect mates both ends onto the real ports", async () => {
+    const scene = seedNested();
+    await useSceneStore.getState().createRfCableBetweenPorts({
+      srcObjectId: "dds", srcAnchorId: "rf_out", srcAnchorName: "CH2",
+      tgtObjectId: "nest", tgtAnchorId: "rf_in", tgtAnchorName: "rf_in",
+    });
+    const payload = createObjectApiMock.mock.calls[0][0] as { xMm: number; yMm: number; zMm: number };
+    const pose = { x: payload.xMm, y: payload.yMm, z: payload.zMm };
+    const calls = updateObjectApiMock.mock.calls;
+    const last = calls[calls.length - 1][1].properties as { rfCableNodes: Node[] };
+    const nodes = last.rfCableNodes;
+    const src = realPort(scene, "dds", "CH2");
+    const tgt = realPort(scene, "nest", "rf_in");
+    expect(dist(face(pose, nodes[0], "A", 15.5).pos, src.pos)).toBeLessThan(1e-9);
+    const b = face(pose, nodes[nodes.length - 1], "B", 15.5);
+    expect(dist(b.pos, tgt.pos)).toBeLessThan(1e-9);
+    expect(dist(b.out, { x: -tgt.axis.x, y: -tgt.axis.y, z: -tgt.axis.z })).toBeLessThan(1e-12);
+    // The midpoint is between the REAL ports too.
+    expect(dist(pose, { x: (src.pos.x + tgt.pos.x) / 2, y: (src.pos.y + tgt.pos.y) / 2, z: (src.pos.z + tgt.pos.z) / 2 }))
+      .toBeLessThan(1e-9);
+  });
+
+  it("resnap puts a linked end back on the real port", async () => {
+    const scene = seedNested({
+      nodes: [{ posMm: [0, 0, 0], handleOutMm: [30, 0, 0] }, { posMm: [100, 0, 0], handleInMm: [-30, 0, 0] }],
+      endpoints: { B: { targetObjectId: "nest", targetAnchorId: "rf_out", targetAnchorName: "rf_out" } },
+    });
+    await useSceneStore.getState().resnapRfCablesLinkedTo(["nest"]);
+    const props = updateObjectApiMock.mock.calls[0][1].properties as { rfCableNodes: Node[] };
+    const port = realPort(scene, "nest", "rf_out");
+    const b = face({ x: 0, y: 0, z: 0 }, props.rfCableNodes[1], "B", 15.5);
+    expect(dist(b.pos, port.pos)).toBeLessThan(1e-9);
+    expect(dist(b.out, { x: -port.axis.x, y: -port.axis.y, z: -port.axis.z })).toBeLessThan(1e-12);
+  });
+
+  it("align offers the real port and mates onto it", async () => {
+    const port = realPort(seedNested(), "nest", "rf_out");
+    const k = 3 + 15.5;
+    const nodeB: Node = {
+      posMm: [port.pos.x + port.axis.x * k, port.pos.y + port.axis.y * k, port.pos.z + port.axis.z * k],
+      handleInMm: [port.axis.x * 30, port.axis.y * 30, port.axis.z * 30],
+    };
+    seedNested({ nodes: [{ posMm: [nodeB.posMm[0] + 200, nodeB.posMm[1], nodeB.posMm[2]], handleOutMm: [-30, 0, 0] }, nodeB] });
+    const list = await useSceneStore.getState().findRfCableAlignmentCandidates("cable", "B", 25);
+    const cand = list.find((c) => c.targetObjectId === "nest" && c.targetAnchorName === "rf_out");
+    expect(cand).toBeDefined();
+    expect(cand!.distMm).toBeCloseTo(3, 9);
+    await useSceneStore.getState().applyRfCableAlignmentCandidate("cable", "B", cand!);
+    const props = updateObjectApiMock.mock.calls[0][1].properties as { rfCableNodes: Node[] };
+    expect(dist(face({ x: 0, y: 0, z: 0 }, props.rfCableNodes[1], "B", 15.5).pos, port.pos)).toBeLessThan(1e-9);
   });
 });
 

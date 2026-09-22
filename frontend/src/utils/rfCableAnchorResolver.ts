@@ -19,13 +19,16 @@
 // coupling barrel + PTFE + pin in `createSmaShortCable`), vs the FC
 // connector's 36.28 mm ferrule for fiber.
 
-import type { Anchor } from "../types/digitalTwin";
+import type { Anchor, Asset3D, ComponentItem, SceneData, SceneObject } from "../types/digitalTwin";
 import {
   dirBodyToLab,
   dirLabToBody,
   pointBodyToLab,
   pointLabToBody,
 } from "../optical/pose";
+import type { Vec3 } from "./anchorAccess";
+import { anchorObjectLocalPrimaryDir } from "./anchorAccess";
+import { resolveAnchorPosesLab, type AnchorPoseLab } from "./anchorPose";
 
 export type RfCableNodePersistent = {
   posMm: [number, number, number];
@@ -79,6 +82,81 @@ export function connectorTipMmFromAnchors(
     if (d > 1e-6) return d;
   }
   return connectorTipMmForFamily(family);
+}
+
+// ── RF ports, posed through the binding tree ─────────────────────────────
+
+/** One anchor of a SceneObject, posed as an RF port (`rf_in` / `rf_out` /
+ *  `ttl_*` / `trigger_*`) in its Component CAD frame — the SceneObject's
+ *  body frame, i.e. what `resolveLinkedRfCableEndpoint` takes as
+ *  `targetAnchor*Body` under `targetPose` = the object's pose. */
+export type RfPortPose = {
+  anchorId: string;
+  /** `anchor.name ?? anchor.id` — the identity links store. */
+  anchorName: string;
+  /** The asset that owns the anchor (a per-instance swap honoured). */
+  asset: Asset3D;
+  anchor: Anchor;
+  /** Port origin, Component CAD frame (mm). */
+  posCad: Vec3;
+  /** Outward direction, Component CAD frame: the anchor's primary direction
+   *  (axisX, else legacy directionBodyLocal) through the binding chain.
+   *  An anchor declaring no direction faces the CAD frame's +X (the old
+   *  asset-frame default, which it equals on an identity root binding); one
+   *  declaring a zero vector stays zero, i.e. degenerate, as before. Every
+   *  live RF port declares one. */
+  dirCad: Vec3;
+  /** axisY through the chain (the connector side basis), null if none. */
+  axisYCad: Vec3 | null;
+};
+
+function rfPortPoseOf(p: AnchorPoseLab): RfPortPose {
+  const dirCad = p.axisXCad
+    ?? (anchorObjectLocalPrimaryDir(p.anchor, p.asset) ? { x: 0, y: 0, z: 0 } : { x: 1, y: 0, z: 0 });
+  return {
+    anchorId: p.anchorId,
+    anchorName: p.anchorName,
+    asset: p.asset,
+    anchor: p.anchor,
+    posCad: p.posCad,
+    dirCad,
+    axisYCad: p.axisYCad,
+  };
+}
+
+type PortSceneSlice = Pick<SceneData, "componentBindings" | "objectBindings" | "assets" | "components">;
+
+/** Every anchor in `sceneObject`'s binding tree, posed as an RF port.
+ *
+ *  Placed with `anchorPose.resolveAnchorPosesLab` — the binding transforms
+ *  (nested ones composed), this instance's ObjectBinding deltas and asset
+ *  swaps, i.e. the chain the tracer places anchors with (backend twin:
+ *  `app/optical/rf_cables/ports.port_poses`). Until 2026-09-22 every RF
+ *  port lookup took the anchor in ITS OWN asset's frame
+ *  (`findAnchorInBindingTree`), exact only for a port on an identity root
+ *  binding — every live RF port, so nothing in the live scene moves. Tree
+ *  order, first `id|name` wins, as the RF Link panel's port list. */
+export function rfPortPoses(
+  component: ComponentItem,
+  sceneObject: SceneObject,
+  scene: PortSceneSlice,
+): RfPortPose[] {
+  return resolveAnchorPosesLab(component, sceneObject, scene).map(rfPortPoseOf);
+}
+
+/** One port by the identity an RF link stores (`anchorId` plus
+ *  `anchor.name ?? anchor.id`), or null — including when a per-instance
+ *  asset swap took the anchor away (the RF Link panel, which lists the
+ *  CATALOG tree, may still offer it). */
+export function resolveRfPortPose(
+  component: ComponentItem,
+  sceneObject: SceneObject,
+  scene: PortSceneSlice,
+  anchorId: string,
+  anchorName: string,
+): RfPortPose | null {
+  return rfPortPoses(component, sceneObject, scene)
+    .find((p) => p.anchorId === anchorId && p.anchorName === anchorName) ?? null;
 }
 
 function endpointIndex(end: "A" | "B", nodes: RfCableNodePersistent[]): number {
@@ -250,9 +328,11 @@ export function resolveLinkedRfCableEndpoint(args: {
   cablePose: CablePose;
   /** Target SceneObject's live pose. */
   targetPose: CablePose;
-  /** Target asset anchor's body-local position (mm). */
+  /** Target port's position in the target's body frame (mm) — its
+   *  Component CAD frame, i.e. `RfPortPose.posCad` (the anchor through its
+   *  binding chain), NOT the anchor as stored in its asset. */
   targetAnchorPosBodyMm: Vec3T;
-  /** Target asset anchor's body-local outward direction unit vector. */
+  /** Target port's outward direction in the same frame (`RfPortPose.dirCad`). */
   targetAnchorDirBody: Vec3T;
   /** Magnitude of the handle vector to set on the linked endpoint
    *  (preserves manual handle when caller passes the existing magnitude;
@@ -269,7 +349,7 @@ export function resolveLinkedRfCableEndpoint(args: {
    *  caller keys these per cable + end so each connector can be tuned
    *  independently (see the offset table in DigitalTwinViewer). */
   nodeOffset?: { depthMm?: number; sideXMm?: number; sideYMm?: number };
-  /** Target anchor's body-local axisY. When supplied, the side (sideX /
+  /** Target port's axisY in the same frame (`RfPortPose.axisYCad`). When supplied, the side (sideX /
    *  sideY) basis is built from it (transformed to lab) so the perpendicular
    *  plane co-moves with the target instrument — the same offset looks
    *  identical at any orientation. Falls back to an arbitrary perpendicular

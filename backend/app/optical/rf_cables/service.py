@@ -34,6 +34,7 @@ from app.models import (
     Asset3D,
     Component,
     ComponentBinding,
+    ObjectBinding,
     PhysicsElement,
     SceneObject,
     TimingProgram,
@@ -59,7 +60,8 @@ async def load_rf_scene(session: AsyncSession) -> RfScene:
     """One read of the scene slice (SELECTs only), in ``GET /api/scene``
     order — objects and components unordered like the snapshot the web app
     iterates, archived Components left out, bindings by (component,
-    sort_order, created_at)."""
+    sort_order, created_at), plus every ObjectBinding (the per-instance
+    deltas / asset swaps a port is posed through)."""
     objects = (await session.scalars(select(SceneObject))).all()
     components = (await session.scalars(
         select(Component).where(Component.archived_at.is_(None))
@@ -71,11 +73,12 @@ async def load_rf_scene(session: AsyncSession) -> RfScene:
             ComponentBinding.created_at,
         )
     )).all()
+    object_bindings = (await session.scalars(select(ObjectBinding))).all()
     assets = (await session.scalars(select(Asset3D))).all()
     pes = (await session.scalars(select(PhysicsElement))).all()
     return RfScene(
         objects=list(objects), components=list(components), bindings=list(bindings),
-        assets=list(assets), physics_elements=list(pes),
+        assets=list(assets), physics_elements=list(pes), object_bindings=list(object_bindings),
     )
 
 

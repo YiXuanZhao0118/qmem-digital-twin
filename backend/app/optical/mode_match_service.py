@@ -91,18 +91,19 @@ def _section_axis(forward_result, seed_emitter_id: str, ref_id: str) -> Optional
 
 
 def _range_specs(
-    movable_ids, hits, lo_axial, hi_axial, decenter_mm, roll_deg,
+    movable_ids, hits, lo_axial, hi_axial, decenter_mm, roll_deg, axial_mm,
 ) -> dict[str, DOFSpec]:
     """Per-lens axial bounds that keep each lens's beam-hit within
     ``[lo_axial + margin, hi_axial - margin]`` (bounds are on d_axial, the delta
-    from the lens's current position)."""
+    from the lens's current position). A lens the seed does not reach has no
+    hit to bound, so it gets the plain ``±axial_mm`` travel."""
     m = _RANGE_MARGIN_MM
     base = default_lens_dof(0.0, decenter_mm, roll_deg)  # borrow decenter/roll
     specs: dict[str, DOFSpec] = {}
     for oid in movable_ids:
         p = hits.get(oid)
         if p is None:
-            axial = (-20.0, 20.0)
+            axial = (-axial_mm, axial_mm)
         else:
             a, b = (lo_axial + m) - p, (hi_axial - m) - p
             axial = (min(a, b), max(a, b))
@@ -198,8 +199,22 @@ def run_mode_match(
     """Build the problem, optimize, and shape a JSON plan.
 
     ``movable_ids`` are the shaping lenses in path order. ``endpoint_id`` (e.g.
-    MIRROR5) is added to the movable set as an axial-only endpoint; frozen
-    unless ``endpoint_locked`` is False.
+    MIRROR5) is the End element, added to the movable set as an axial-only
+    endpoint. The three length knobs (defaults = frozen End, no cap — what
+    the web panel, which sends none of them, gets):
+
+    * ``endpoint_locked`` — ``False`` lets the End slide along the section
+      axis in the two best-efficiency cards: ``[0, +axial_mm]`` (away from
+      Start only) in the range column, whose lenses must stay between Start
+      and the End's current position, ``±axial_mm`` in the free column. The
+      shortest-footprint card always keeps it where it is.
+    * ``axial_mm`` — that travel, and the ``±`` travel of a lens the seed does
+      not reach (no hit for the range to bound).
+    * ``l_max_mm`` — caps the Start→End section length (Start, else the
+      comparison plane, to the End's seed hit, plus the End's move): the End's
+      upward travel is clamped to it, a section already over it is
+      infeasible when the End cannot move back far enough (always, when it is
+      locked), and every card echoes it. No effect without an End.
     """
     names = object_names or {}
     kinds = _kind_map(scene)
@@ -253,6 +268,24 @@ def run_mode_match(
     span = (end_axial - lo_axial) if end_axial is not None else 0.0
     baseline = problem.evaluate({})
 
+    # The End element's DOF in the best-efficiency cards: frozen unless
+    # unlocked. Moving it by +d along the axis lengthens the section by d (the
+    # optimizer's length convention), which holds only with the End
+    # downstream of Start.
+    end_free = bool(endpoint_id) and not endpoint_locked and axial_mm > 0
+    if end_free and span < 0:
+        raise ValueError(
+            "The End element must be downstream of Start along the beam to unlock it."
+        )
+
+    def end_spec(column: str) -> DOFSpec:
+        if not end_free:
+            return DOFSpec()
+        # In the range column every lens stays between Start and the End's
+        # CURRENT position, so the End may only move away from Start there;
+        # the free column ignores the range, so it may move both ways.
+        return DOFSpec(axial=(0.0 if column == "range" else -axial_mm, axial_mm))
+
     def shape(res, key, label, col, tgt, lmax, ep_locked):
         return _shape_plan(problem, res, baseline, axis, e2, e3, names, wavelength_nm,
                            key=key, label=label, column=col, eta_target=tgt,
@@ -263,13 +296,14 @@ def run_mode_match(
 
     # ── in-range best-efficiency ────────────────────────────────────────────
     if end_axial is not None:
-        range_specs = _range_specs(movable_ids, hits, lo_axial, end_axial, decenter_mm, roll_deg)
+        range_specs = _range_specs(movable_ids, hits, lo_axial, end_axial, decenter_mm, roll_deg, axial_mm)
         if endpoint_id:
-            range_specs[endpoint_id] = DOFSpec()  # End fixed for max-η
+            range_specs[endpoint_id] = end_spec("range")
         r = optimize(problem, specs=range_specs, current_length_mm=abs(span),
-                     eta_target=eta_target, endpoint_id=endpoint_id,
-                     endpoint_locked=True, focal_inventory=focal_inventory)
-        solutions.append(shape(r, "range_maxeff", "In range · Max efficiency", "range", eta_target, None, True))
+                     eta_target=eta_target, l_max_mm=l_max_mm, endpoint_id=endpoint_id,
+                     endpoint_locked=not end_free, focal_inventory=focal_inventory)
+        solutions.append(shape(r, "range_maxeff", "In range · Max efficiency", "range",
+                               eta_target, l_max_mm, not end_free))
 
         # ── shortest lens footprint (Start → last lens) meeting the target ──
         # MIRROR5 stays put (moving a fold mirror is awkward); instead we pack
@@ -279,14 +313,18 @@ def run_mode_match(
         tgt = eta_target if eta_target is not None else max(0.0, r.eta * 0.98)
         best_focal = {oid: c.focal_mm for oid, c in r.config.items() if c.focal_mm is not None}
         best_short, best_cand = None, None
-        if r.eta >= tgt - 1e-3:  # only worth shrinking if the target is reachable at all
+        # Only worth shrinking if the target is reachable at all — and not when
+        # the (fixed) section already breaks the length limit: this card never
+        # moves the End, so it could not be feasible.
+        over_limit = l_max_mm is not None and abs(span) > l_max_mm + 1e-6
+        if r.eta >= tgt - 1e-3 and not over_limit:
             for frac in (0.8, 0.6, 0.45, 0.3):
                 cand = abs(span) * frac
-                sspecs = _range_specs(movable_ids, hits, lo_axial, lo_axial + cand, decenter_mm, roll_deg)
+                sspecs = _range_specs(movable_ids, hits, lo_axial, lo_axial + cand, decenter_mm, roll_deg, axial_mm)
                 if endpoint_id:
                     sspecs[endpoint_id] = DOFSpec()  # End FIXED
                 sr = optimize(problem, specs=sspecs, current_length_mm=abs(span),
-                              eta_target=tgt, endpoint_id=endpoint_id,
+                              eta_target=tgt, l_max_mm=l_max_mm, endpoint_id=endpoint_id,
                               endpoint_locked=True, fixed_focal=best_focal or None,
                               warm_config=r.config, n_restarts=1)
                 if sr.eta >= tgt - 1e-3:
@@ -294,7 +332,7 @@ def run_mode_match(
                 else:
                     break
         if best_short is not None:
-            plan = shape(best_short, "range_shortest", "In range · Shortest footprint", "range", tgt, None, True)
+            plan = shape(best_short, "range_shortest", "In range · Shortest footprint", "range", tgt, l_max_mm, True)
             plan["lengthMm"] = float(best_cand)  # lens footprint span (Start → last lens)
             solutions.append(plan)
 
@@ -303,11 +341,12 @@ def run_mode_match(
         wide = max(50.0, abs(span))
         free_specs = {oid: default_lens_dof(wide, decenter_mm, roll_deg) for oid in movable_ids}
         if endpoint_id:
-            free_specs[endpoint_id] = DOFSpec()
+            free_specs[endpoint_id] = end_spec("free")
         fr = optimize(problem, specs=free_specs, current_length_mm=abs(span),
-                      eta_target=eta_target, endpoint_id=endpoint_id,
-                      endpoint_locked=True, focal_inventory=focal_inventory)
-        solutions.append(shape(fr, "free_maxeff", "Ignore range · Max efficiency", "free", eta_target, None, True))
+                      eta_target=eta_target, l_max_mm=l_max_mm, endpoint_id=endpoint_id,
+                      endpoint_locked=not end_free, focal_inventory=focal_inventory)
+        solutions.append(shape(fr, "free_maxeff", "Ignore range · Max efficiency", "free",
+                               eta_target, l_max_mm, not end_free))
 
     return {
         "mode": method,

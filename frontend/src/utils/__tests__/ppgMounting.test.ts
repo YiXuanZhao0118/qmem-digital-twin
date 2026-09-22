@@ -13,15 +13,19 @@
  *       that made the PPG float at its spawn point in every binding-backed
  *       scene.
  *   M4. No connecting cable / unresolvable peer → null (caller falls back).
- *   M7. The target port is found ANYWHERE in the binding tree
- *       (`findAnchorInBindingTree`), so a multi-root instrument — the EOSpace
- *       EOM: modulator + two FC/APC connectors — mounts its PPG too.
- *       `primaryAsset` answered null there until 2026-09-22.
+ *   M7. The target port is found ANYWHERE in the binding tree, so a
+ *       multi-root instrument — the EOSpace EOM: modulator + two FC/APC
+ *       connectors — mounts its PPG too. `primaryAsset` answered null there
+ *       until 2026-09-22.
+ *   M8. Both plugs — the target port and the PPG's own rf_out — are posed
+ *       through their binding chains (`rfCableAnchorResolver.rfPortPoses`,
+ *       i.e. `resolveAnchorPosesLab`), not read in their own asset's frame.
  */
 
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
 
+import { resolveAnchorPosesLab } from "../anchorPose";
 import { computePpgMountedThreePose } from "../ppgMounting";
 import type {
   Anchor,
@@ -58,14 +62,23 @@ function component(id: string, assetId: string | null): ComponentItem {
   return { id, name: `comp-${id}`, asset3dId: assetId, properties: {} } as unknown as ComponentItem;
 }
 
-function binding(componentId: string, asset3dId: string): ComponentBinding {
+function binding(
+  componentId: string,
+  asset3dId: string,
+  pose: { pos?: [number, number, number]; rot?: [number, number, number]; parent?: string; id?: string } = {},
+): ComponentBinding {
+  const [x, y, z] = pose.pos ?? [0, 0, 0];
+  const [rx, ry, rz] = pose.rot ?? [0, 0, 0];
   return {
-    id: `bind-${componentId}`,
+    id: pose.id ?? `bind-${componentId}`,
     componentId,
-    parentBindingId: null,
+    parentBindingId: pose.parent ?? null,
     targetKind: "asset",
     asset3dId,
     role: "root",
+    // NOT NULL columns: the port is posed through them (M8).
+    localXMm: x, localYMm: y, localZMm: z,
+    localRxDeg: rx, localRyDeg: ry, localRzDeg: rz,
   } as unknown as ComponentBinding;
 }
 
@@ -258,5 +271,65 @@ describe("computePpgMountedThreePose", () => {
     expect(pose).not.toBeNull();
     expect(matedRfOutThree(pose!, [5, 0, 0]).x).toBeCloseTo(0.8, 6);
     void ppgObject;
+  });
+
+  it("poses both plugs through their binding chains (M8)", () => {
+    // The target port sits on a NESTED, rotated + offset binding of a tilted
+    // instrument, with an ObjectBinding delta on top; the PPG's own rf_out
+    // sits on a rotated + offset root binding. Until 2026-09-22 both were
+    // read in their own asset's frame (exact only on an identity root
+    // binding), so the plug landed centimetres off the port here.
+    const hostBody = asset("host-body", []);
+    const hostPorts = asset("host-ports", [anchor("ttl_in", [-20, 0, 0], [-1, 0, 0])]);
+    const ppgAsset = asset("ppg", [anchor("rf_out", [5, 0, 0], [1, 0, 0])]);
+    const hostComponent = component("comp-host", null);
+    const ppgComponent = component("comp-ppg", null);
+    const hostObject = object("host", hostComponent.id, {
+      xMm: 100, yMm: 40, zMm: 900, rxDeg: 20, ryDeg: -35, rzDeg: 70,
+    });
+    const ppgObject = object("ppg", ppgComponent.id, {
+      xMm: -500, yMm: 300,
+      properties: { ppgAttachment: { targetObjectId: "host", targetAnchorId: "ttl_in", targetAnchorName: "ttl_in" } },
+    });
+    const ppgBinding = { pos: [3, 4, 5] as [number, number, number], rot: [90, 0, 45] as [number, number, number] };
+    const sceneData = {
+      objects: [hostObject, ppgObject],
+      components: [hostComponent, ppgComponent],
+      assets: [hostBody, hostPorts, ppgAsset],
+      componentBindings: [
+        binding("comp-host", "host-body", { id: "bind-host-body" }),
+        binding("comp-host", "host-ports", {
+          id: "bind-host-ports", parent: "bind-host-body", pos: [10, -5, 30], rot: [0, 90, 30],
+        }),
+        binding("comp-ppg", "ppg", ppgBinding),
+      ],
+      objectBindings: [{
+        id: "ob-host-ports", objectId: "host", componentBindingId: "bind-host-ports",
+        localXMmDelta: null, localYMmDelta: null, localZMmDelta: 7,
+        localRxDegDelta: null, localRyDegDelta: null, localRzDegDelta: 15,
+        asset3dIdOverride: null,
+      }],
+      physicsElements: [pe("host", "rf_switch"), pe("ppg", "programmable_pulse_generator")],
+    } as unknown as SceneData;
+
+    const port = resolveAnchorPosesLab(hostComponent, hostObject, sceneData).find((p) => p.anchorId === "ttl_in")!;
+    const pose = computePpgMountedThreePose(sceneData, ppgObject, ppgComponent, ppgAsset);
+    expect(pose).not.toBeNull();
+
+    // Where the renderer draws the PPG's rf_out: the wrapper (this pose)
+    // over the PPG's root binding (raw XYZ Euler), over the anchor.
+    const bq = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+      THREE.MathUtils.degToRad(ppgBinding.rot[0]),
+      THREE.MathUtils.degToRad(ppgBinding.rot[1]),
+      THREE.MathUtils.degToRad(ppgBinding.rot[2]),
+      "XYZ",
+    ));
+    const rfOutCad = new THREE.Vector3(5, 0, 0).applyQuaternion(bq).add(new THREE.Vector3(...ppgBinding.pos));
+    const rfOut = rfOutCad.multiplyScalar(1 / 100).applyQuaternion(pose!.quaternion).add(pose!.positionThree);
+    expect(rfOut.distanceTo(new THREE.Vector3(port.posLab.x, port.posLab.y, port.posLab.z).multiplyScalar(1 / 100)))
+      .toBeLessThan(1e-12);
+    // ... and faces into the port.
+    const facing = new THREE.Vector3(1, 0, 0).applyQuaternion(bq).applyQuaternion(pose!.quaternion);
+    expect(facing.dot(new THREE.Vector3(port.axisXLab!.x, port.axisXLab!.y, port.axisXLab!.z))).toBeCloseTo(-1, 12);
   });
 });
