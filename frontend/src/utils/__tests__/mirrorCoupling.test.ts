@@ -46,6 +46,11 @@ import {
 
 const ROOT2 = Math.SQRT1_2;
 
+/** Written out rather than imported: the point of the branch tests is that a
+ *  solved mirror lands somewhere a mount could physically go, and 5 m is
+ *  already generous for a room, let alone a table. */
+const MAX_BENCH_SPAN_MM = 5_000;
+
 function mirrorAsset(id = "asset-mirror"): Asset3D {
   return {
     id,
@@ -252,6 +257,63 @@ describe("solveCouplingGeometry", () => {
     expect(g.legLengthMm).toBeCloseTo(30, 9);
     expect(g.centreA).toEqual(expect.objectContaining({ z: 0 }));
     expect(g.centreB.z).toBeCloseTo(30, 9);
+    expect(aoi(v(1, 0, 0), g.normalA)).toBeCloseTo(45, 9);
+    expect(aoi(g.d1, g.normalB)).toBeCloseTo(45, 9);
+  });
+
+  it("takes the free-DOF branch when the exact solve runs off the bench", () => {
+    // The live DBR -> TA path on 2026-08-27. A decentred LENS_BICONVEX0
+    // upstream leaves the seed 0.00196 deg off -Y while the TA's port axis
+    // is exactly +Y, so |d0 x dT| = 3.42e-5 — 34x COLLINEAR_SIN_EPS, but
+    // 1 - c^2 is 1.17e-9. Branching on the raw sine put the two centres
+    // 1.46 KM up the beam and 4.8 nm apart, and the solve then refused with
+    // "the two mirror centres come out on top of each other".
+    const pIn = v(-237.43771492340383, -462.4784510765962, 908.83165);
+    const g = solveCouplingGeometry({
+      inRay: { origin: pIn, dir: v(-0.00003422430668179471, -0.9999999994143485, 0) },
+      targetRay: { origin: v(-187.480474, -379.409561, 908.83165), dir: v(0, 1, 0) },
+      currentA: v(-237.462383, -512.476504, 910.799999), // MIRROR7 face centre
+      currentB: v(-187.480474, -512.476504, 910.799999), // MIRROR8 face centre
+    });
+    if (isSolveError(g)) throw new Error(g.error);
+
+    expect(g.freeDof).toBe(true);
+    expect(g.legLengthMm).toBeCloseTo(49.9544, 3);
+    // On the bench, next to the mirrors they replace — not kilometres away.
+    // 1.7 um apart in y, not equal: the leg carries the residual tilt.
+    expect(g.centreA.y).toBeCloseTo(-512.4756, 3);
+    expect(g.centreB.y).toBeCloseTo(-512.4774, 3);
+    expect(Math.abs(g.foldMm)).toBeLessThan(MAX_BENCH_SPAN_MM);
+    // 45 deg is exact on A (d1 is built perpendicular to d0) and carries the
+    // residual on B, where the beam is handed to the port's own axis.
+    expect(aoi(v(-0.00003422430668179471, -0.9999999994143485, 0), g.normalA))
+      .toBeCloseTo(45, 9);
+    // B carries the whole residual, and carries exactly half of it.
+    expect(aoi(g.d1, g.normalB)).toBeCloseTo(44.99902, 5);
+    const out = reflect(g.d1, g.normalB);
+    expect(out.x).toBeCloseTo(0, 9);
+    expect(out.y).toBeCloseTo(1, 9);
+    // The cost of the branch is stated, in mm, not swallowed.
+    expect(g.warnings.join(" ")).toMatch(/0\.0020 deg off the destination axis/);
+    expect(g.warnings.join(" ")).toMatch(/arrive 0\.005 mm off the port axis/);
+  });
+
+  it("keeps the exact answer when it is on the bench, however shallow", () => {
+    // 1 deg crossing, offsets of a few hundred mm: ill-conditioned enough to
+    // be interesting, but the unique solve still lands where a mount could
+    // go, so it must NOT be waved into the collinear branch.
+    const rad = (1 * Math.PI) / 180;
+    const g = solveCouplingGeometry({
+      inRay: { origin: v(0, 0, 0), dir: v(1, 0, 0) },
+      targetRay: { origin: v(300, 0, 40), dir: { x: Math.cos(rad), y: Math.sin(rad), z: 0 } },
+      currentA: v(0, 0, 0),
+      currentB: v(0, 0, 0),
+    });
+    if (isSolveError(g)) throw new Error(g.error);
+
+    expect(g.freeDof).toBe(false);
+    expect(Math.abs(g.foldMm)).toBeLessThan(MAX_BENCH_SPAN_MM);
+    expect(g.warnings.join(" ")).not.toMatch(/off the destination axis/);
     expect(aoi(v(1, 0, 0), g.normalA)).toBeCloseTo(45, 9);
     expect(aoi(g.d1, g.normalB)).toBeCloseTo(45, 9);
   });

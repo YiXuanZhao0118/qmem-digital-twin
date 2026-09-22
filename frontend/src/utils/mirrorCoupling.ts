@@ -76,6 +76,20 @@ export const DEFAULT_MIRROR_APERTURE_MM = 6.35;
  *  1e-6 is ~0.00006 deg — far below any pose the authoring UI can express. */
 const COLLINEAR_SIN_EPS = 1e-6;
 
+/** How far from the input origin / destination port the unique branch may
+ *  place a mirror before its answer is treated as numerically dead.
+ *
+ *  A raw sine threshold is not enough to pick the branch: the unique solve
+ *  divides by `1 - c^2` (which IS sin^2), so its conditioning degrades long
+ *  before `sinTheta` reaches any sane epsilon. 0.002 deg of residual pointing
+ *  — what a beam picks up from one slightly decentred lens — already puts the
+ *  exact 45/45 answer 1.5 km up the beam, where the two centres then collapse
+ *  onto each other and the solve refuses. Nothing on an optical table is 5 m
+ *  from anything, so a solve that reaches out this far means "these two lines
+ *  are collinear in every sense that matters", and the free-DOF branch is the
+ *  one that answers the user's actual question. */
+const MAX_SOLVE_SPAN_MM = 5_000;
+
 /** A perpendicular offset smaller than this makes the two collinear lines
  *  effectively coincident, and d1 undefined. */
 const MIN_PERP_OFFSET_MM = 1e-3;
@@ -307,9 +321,10 @@ export type CouplingGeometry = {
   normalA: Vec3;
   normalB: Vec3;
   legLengthMm: number;
-  /** True when L_in and L_tgt are collinear, so `foldMm` is a real degree of
-   *  freedom the caller may sweep. False when the solution is unique and
-   *  `foldMm` is merely reported. */
+  /** True when L_in and L_tgt are collinear — or near enough that the exact
+   *  solve ran off the bench — so `foldMm` is a real degree of freedom the
+   *  caller may sweep. False when the solution is unique and `foldMm` is
+   *  merely reported. The near-collinear case says so in `warnings`. */
   freeDof: boolean;
   /** Signed distance of centreA from the input ray's origin, along d0. Also
    *  the free parameter in the collinear branch. */
@@ -363,25 +378,37 @@ export function solveCouplingGeometry(args: {
   let centreA: Vec3;
   let centreB: Vec3;
   let freeDof: boolean;
+  const warnings: string[] = [];
 
+  // Unique branch, solved first but accepted only if it lands on the bench.
+  // C_B - C_A must be perpendicular to BOTH d0 and dT (that is exactly
+  // "45 deg at each mirror"), which is two linear equations in the two line
+  // parameters:
+  //     (C_B - C_A) . d0 = 0
+  //     (C_B - C_A) . dT = 0
+  // `uniqueSpanMm` stays infinite when the lines are collinear enough that
+  // the branch is not attempted at all.
+  let uniqueSpanMm = Number.POSITIVE_INFINITY;
+  let uniqueS = 0;
+  let uniqueU = 0;
   if (sinTheta > COLLINEAR_SIN_EPS) {
-    // Unique branch. C_B - C_A must be perpendicular to BOTH d0 and dT
-    // (that is exactly "45 deg at each mirror"), which is two linear
-    // equations in the two line parameters:
-    //     (C_B - C_A) . d0 = 0
-    //     (C_B - C_A) . dT = 0
     const c = dot(d0, dT);
     const a = dot(w, d0);
     const b = dot(w, dT);
     const den = 1 - c * c; // = |d0 x dT|^2, non-zero here
-    const s = (a - c * b) / den;
-    const u = (c * a - b) / den;
-    centreA = add(pIn, mul(d0, s));
-    centreB = add(pT, mul(dT, u));
+    uniqueS = (a - c * b) / den;
+    uniqueU = (c * a - b) / den;
+    uniqueSpanMm = Math.max(Math.abs(uniqueS), Math.abs(uniqueU));
+  }
+
+  if (uniqueSpanMm <= MAX_SOLVE_SPAN_MM) {
+    centreA = add(pIn, mul(d0, uniqueS));
+    centreB = add(pT, mul(dT, uniqueU));
     freeDof = false;
   } else {
     // Collinear branch: L_in and L_tgt are parallel (a U-turn when
-    // dT = -d0, a periscope when dT = +d0). d1 is still pinned to the
+    // dT = -d0, a periscope when dT = +d0), or near enough that the exact
+    // answer above ran off the table. d1 is still pinned to the
     // perpendicular offset between the lines, but the pair may slide along
     // d0 together.
     const wPerp = sub(w, mul(d0, dot(w, d0)));
@@ -402,6 +429,24 @@ export function solveCouplingGeometry(args: {
     centreA = add(pIn, mul(d0, f));
     centreB = add(centreA, wPerp);
     freeDof = true;
+
+    if (Number.isFinite(uniqueSpanMm)) {
+      // Near-collinear, not collinear: the pair still turns the beam onto
+      // the port's axis DIRECTION exactly (normalB is built from dT), but
+      // C_B sits on L_in's perpendicular rather than on L_tgt, so the beam
+      // arrives on a parallel line this far off the port. Quantify it — it
+      // is the whole cost of taking this branch, and the user is the one who
+      // decides whether µm matter.
+      const toPort = sub(centreB, pT);
+      const offAxisMm = len(sub(toPort, mul(dT, dot(toPort, dT))));
+      warnings.push(
+        `The input beam is ${(Math.asin(Math.min(1, sinTheta)) * 180 / Math.PI).toFixed(4)} deg `
+        + "off the destination axis, so no 45/45 pair meets it exactly on the bench "
+        + `(that solve lands ${(uniqueSpanMm / 1000).toFixed(1)} m away). Solved as the `
+        + `collinear case: the beam will arrive ${offAxisMm.toFixed(3)} mm off the port axis. `
+        + "Straighten the upstream beam to remove the residual.",
+      );
+    }
   }
 
   const legVec = sub(centreB, centreA);
@@ -423,7 +468,6 @@ export function solveCouplingGeometry(args: {
   const foldMm = dot(sub(centreA, pIn), d0);
   const targetStandoffMm = dot(sub(centreB, pT), dT);
 
-  const warnings: string[] = [];
   if (foldMm <= 0) {
     warnings.push(
       `Mirror A lands ${Math.abs(foldMm).toFixed(1)} mm UPSTREAM of where the input `

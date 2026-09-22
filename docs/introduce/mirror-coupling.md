@@ -38,6 +38,7 @@ nA = unit(d1 − d0)        nB = unit(dT − d1)
 |---|---|
 | `\|d0 × dT\| > 0` (generic) | `d1 = unit(d0 × dT)`; `C_A`, `C_B` from a 2×2 solve. **Unique.** |
 | `dT = ±d0` (collinear) | A U-turn or a periscope. `d1` is still pinned — it must be the perpendicular offset `Δ⊥` between the two parallel lines — but the pair can **slide along `d0` together**. **One free DOF**, surfaced as the *Fold position* field and defaulted to least total travel. |
+| **near**-collinear (the unique answer exists but sits off the bench) | Same free-DOF branch, plus a warning quantifying what that costs. See [Why the branch is picked on distance, not angle](#why-the-branch-is-picked-on-distance-not-angle). |
 | collinear and `Δ⊥ = 0` | The lines coincide; two mirrors have nothing to correct. Refused. |
 
 The 2×2 solve, with `w = P_tgt − P_in`, `a = w·d0`, `b = w·dT`, `c = d0·dT`:
@@ -48,6 +49,25 @@ u = (c·a − b) / (1 − c²)        C_B = P_tgt + u·dT
 ```
 
 ⚠️ **The bench's common case is the DEGENERATE one.** The live DBR → TA path has `d0 = −y` and `dT = +y` — exactly anti-parallel — so the free-DOF branch is not an edge case to bolt on later; it is the branch that runs. Any change here must keep it.
+
+## Why the branch is picked on distance, not angle
+
+`1 − c²` **is** `sin²θ`, so the unique branch's conditioning dies long before `sinTheta` reaches any epsilon you would call "collinear". A sine threshold alone therefore picks the wrong branch over a wide band — and the bench lives in that band, because a beam only has to clip one decentred lens to pick up a few thousandths of a degree.
+
+That is what happened to the live DBR → TA path on 2026-08-27 (it had worked on 2026-08-24). A decentred `LENS_BICONVEX0` in the telescope ahead of MIRROR5 left the seed **0.00196°** off −y while the TA's port axis was still exactly +y:
+
+```
+|d0 × dT| = 3.42e-5      34x COLLINEAR_SIN_EPS (1e-6)  ->  "not collinear"
+1 - c²    = 1.17e-9      s = -1_459_701 mm, u = +1_459_618 mm
+                         both centres 1.46 KM up the beam, 4.8 nm apart
+                         -> "the two mirror centres come out on top of each other"
+```
+
+Both answers are correct; only one is on a table. So the branch is chosen by **where the answer lands**, not by the angle ([`mirrorCoupling.ts:404`](../../frontend/src/utils/mirrorCoupling.ts#L404)): solve the unique branch first, and if either line parameter exceeds `MAX_SOLVE_SPAN_MM` (5 m, [`mirrorCoupling.ts:91`](../../frontend/src/utils/mirrorCoupling.ts#L91)) fall through to the free-DOF branch. `COLLINEAR_SIN_EPS` still guards the division itself.
+
+What the fallback costs, and why it is stated rather than swallowed: `C_B = C_A + Δ⊥` puts `C_B` on the perpendicular to `L_in`, not on `L_tgt`, so with `d0` and `dT` not quite anti-parallel the beam reaches the port on a line **parallel to** its axis, offset by the residual. The outgoing *direction* is still exactly `dT` (`normalB = unit(dT − d1)` reflects `d1` onto `dT` for any `d1`), 45° stays exact on A, and B absorbs half the residual (44.99902° in the live case). The warning names the residual angle and the miss in mm — 0.005 mm here — because whether µm matter is the user's call, not the solver's. Pinned by *takes the free-DOF branch when the exact solve runs off the bench* and *keeps the exact answer when it is on the bench, however shallow* in [`mirrorCoupling.test.ts`](../../frontend/src/utils/__tests__/mirrorCoupling.test.ts).
+
+The real fix for that scene is upstream: centre `LENS_BICONVEX0` and the lens inside MECHANICAL19, and `sinTheta` drops back to 1e-16 where the exact collinear branch runs.
 
 ## The precondition: both beams touch both mirrors
 
@@ -112,6 +132,7 @@ target      TAPERED_AMPLIFIER0 · intercept_in at (−261.4350, −363.3235, 908
 - **`anchorPose.resolveAnchorPosesLab` must agree with the backend.** Asset body → Component CAD uses the binding's raw **XYZ** Euler (`bindingTreeObject.applyBindingLocalTransform`); Component CAD → lab uses the SceneObject's **YXZ-remapped** convention (`optical/frames.rotateLabDir`). Mixing them up puts every solved pose somewhere the tracer disagrees with. Pinned in `utils/__tests__/mirrorCoupling.test.ts` against MIRROR5's traced hit point and reflection — both backend outputs.
 - **`apertureMm` is a RADIUS**, matching `anchor_tracer.intersect_anchor`.
 - **The free-DOF default must stay least-travel.** It is the only thing keeping a U-turn solve from sliding the pair an arbitrary distance down the beam.
+- **Never pick the branch on `sinTheta` alone.** It is `1 − c²` that the solve divides by, and a scene only needs a few thousandths of a degree of stray pointing to land in the band where the "unique" answer is real, useless, and self-refuting. Distance decides; see the section above.
 
 ## Related
 
