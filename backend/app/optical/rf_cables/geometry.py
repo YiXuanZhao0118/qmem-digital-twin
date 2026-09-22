@@ -6,21 +6,11 @@
 Line-for-line transcriptions, not re-derivations: the fixtures in
 ``backend/tests/fixtures/rf_cables/pure.json`` pin them at 1e-9.
 
-Two SceneObject rotation conventions meet here, and must not be "fixed" on
-one side only:
-
-* The canonical one (``app.optical.pose``, TS ``optical/pose.ts``) — what the
-  tracer and the renderer use. ``resolve_linked_rf_cable_endpoint`` and
-  ``find_rf_cable_endpoint_alignment_candidates`` place the CABLE's node with
-  it.
-* The store's inline ``lab = pose + Rz·Rx·Ry·body`` (:func:`store_body_to_lab`)
-  — ``createRfCableBetweenPorts.resolvePort`` (the new cable's midpoint) and
-  ``findRfCableAlignmentCandidates`` (the lab position of every candidate
-  PORT) use it. It is NOT the canonical rotation (it is the mirror image, in
-  a different order), so for a rotated instrument the align-candidate port
-  positions differ from where the tracer / renderer put that port. That is
-  the TypeScript's behaviour and is ported as-is; see
-  ``docs/introduce/rf.md`` §7.
+Every point / direction is placed under a SceneObject pose with the canonical
+rotation (``app.optical.pose``, TS ``optical/pose.ts``) — what the tracer and
+the renderer use. The web store placed candidate PORTS with an inline
+``Rz·Rx·Ry`` until 2026-09-22, which put every port of an instrument rotated
+about x or y in the wrong place; fixed on both sides together (``rf.md`` §7).
 """
 
 from __future__ import annotations
@@ -167,26 +157,14 @@ def cable_nodes(object_properties: Any, component_properties: Any) -> list[dict]
     return default_cable_nodes(component_properties)
 
 
-# ─── the store's inline rotation (see the module docstring) ────────────────
+def body_to_lab(v: T3, pose: V3Pose) -> T3:
+    """A body-frame point in lab mm under ``pose`` (``pointBodyToLab``)."""
+    return _tup(point_body_to_lab(_vec(v), pose))
 
-def store_body_to_lab(v: T3, pose: V3Pose, include_translation: bool = True) -> T3:
-    """``lab = pose + Rz·Rx·Ry·body`` — the inline transform in
-    ``createRfCableBetweenPorts.resolvePort`` and
-    ``findRfCableAlignmentCandidates.makeOwnerTransforms``
-    (``sceneStore.ts``). Not the canonical SceneObject rotation."""
-    rxr = (pose.rx_deg * math.pi) / 180
-    ryr = (pose.ry_deg * math.pi) / 180
-    rzr = (pose.rz_deg * math.pi) / 180
-    cx, sxr = math.cos(rxr), math.sin(rxr)
-    cy, syr = math.cos(ryr), math.sin(ryr)
-    cz, szr = math.cos(rzr), math.sin(rzr)
-    x1 = cy * v[0] + syr * v[2]
-    y1 = v[1]
-    z1 = -syr * v[0] + cy * v[2]
-    y2 = cx * y1 - sxr * z1
-    z2 = sxr * y1 + cx * z1
-    tx, ty, tz = (pose.x_mm, pose.y_mm, pose.z_mm) if include_translation else (0.0, 0.0, 0.0)
-    return (tx + cz * x1 - szr * y2, ty + szr * x1 + cz * y2, tz + z2)
+
+def body_dir_to_lab(v: T3, pose: V3Pose) -> T3:
+    """A body-frame direction in the lab frame (``dirBodyToLab``)."""
+    return _tup(dir_body_to_lab(_vec(v), pose))
 
 
 # ─── resolveLinkedRfCableEndpoint ───────────────────────────────────────────

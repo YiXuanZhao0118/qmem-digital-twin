@@ -362,36 +362,39 @@ async def test_resnap_follows_a_moved_instrument_then_is_a_no_op(lab, events):
     assert again.json() == {"updated": []}
 
 
-async def test_align_candidates_then_align_links_a_loose_end(lab):
+@pytest.mark.parametrize(("loose_end", "key", "name"), [
+    ("B", "amp", "rf_in"),   # amp at rx 90 / ry -180
+    ("A", "dds", "CH0"),     # dds at rx -90 / rz 180 — rotated about x, like the live bench
+])
+async def test_align_candidates_then_align_links_a_loose_end(lab, loose_end, key, name):
+    kept = "A" if loose_end == "B" else "B"
     async with _client() as c:
         cable = (await c.post("/api/v3/rf-cables/connect", json={
             "a": _port(lab, "dds", "CH0"), "b": _port(lab, "amp", "rf_in"),
         })).json()["object"]
-        # Loosen end B: drop its link, leave the node where it was.
+        # Loosen one end: drop its link, leave the node where it was.
         props = dict(cable["properties"])
-        props["rfCableEndpoints"] = {"A": props["rfCableEndpoints"]["A"]}
+        props["rfCableEndpoints"] = {kept: props["rfCableEndpoints"][kept]}
         await c.put(f"/api/objects/{cable['id']}", json={"properties": props})
-        r = await c.post(f"/api/v3/rf-cables/{cable['id']}/align-candidates", json={"end": "B"})
+        r = await c.post(f"/api/v3/rf-cables/{cable['id']}/align-candidates", json={"end": loose_end})
         assert r.status_code == 200, r.text
         cands = r.json()["candidates"]
-        assert cands and cands[0]["targetObjectId"] == str(lab.obj["amp"])
-        assert cands[0]["targetAnchorName"] == "rf_in"
+        assert cands and cands[0]["targetObjectId"] == str(lab.obj[key])
+        assert cands[0]["targetAnchorName"] == name
         # The TS measures from / mates to the PROCEDURAL 15.5 mm tip, not the
         # bound connector's 25.45: the current face is ~9.95 mm off the port.
         assert abs(cands[0]["distMm"] - (SMA_TIP - 15.5)) < 1e-6
         a = await c.post(f"/api/v3/rf-cables/{cable['id']}/align", json={
-            "end": "B", "target": {"objectId": str(lab.obj["amp"]), "anchorName": "rf_in"},
+            "end": loose_end, "target": {"objectId": str(lab.obj[key]), "anchorName": name},
         })
         miss = await c.post(f"/api/v3/rf-cables/{cable['id']}/align", json={
-            "end": "B", "target": _port(lab, "switch", "RF1"),
+            "end": loose_end, "target": _port(lab, "switch", "RF1"),
         })
     assert a.status_code == 200, a.text
     aligned = a.json()["object"]
-    assert aligned["properties"]["rfCableEndpoints"]["B"]["targetAnchorName"] == "rf_in"
-    # On the port only because the amp's pose (rx 90, ry -180) is one where
-    # the align's store-inline rotation equals the canonical one — see
-    # geometry.store_body_to_lab.
-    _assert_on_port(*_mating_face(aligned, "B", 15.5), lab.port_lab("amp", "rf_in"))
+    assert aligned["properties"]["rfCableEndpoints"][loose_end]["targetAnchorName"] == name
+    # The port is where the tracer puts it, whatever the instrument's rotation.
+    _assert_on_port(*_mating_face(aligned, loose_end, 15.5), lab.port_lab(key, name))
     assert miss.status_code == 422 and miss.json()["detail"].startswith("target_not_in_range: ")
 
 

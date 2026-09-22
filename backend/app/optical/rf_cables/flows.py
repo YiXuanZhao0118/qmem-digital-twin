@@ -34,6 +34,8 @@ from app.optical.rf_cables.geometry import (
     AlignmentCandidate,
     RfPortLab,
     T3,
+    body_dir_to_lab,
+    body_to_lab,
     build_rf_cable_alignment_props,
     cable_nodes,
     connector_tip_mm_from_anchors,
@@ -41,7 +43,6 @@ from app.optical.rf_cables.geometry import (
     js_truthy,
     pose_of,
     resolve_linked_rf_cable_endpoint,
-    store_body_to_lab,
 )
 from app.optical.rf_cables.ports import (
     PPG_KIND,
@@ -200,8 +201,8 @@ def plan_connect(scene: RfScene, a: PortRef, b: PortRef) -> ConnectPlan:
         pick = (fallback, False)
     cable_comp, swapped = pick
 
-    src_lab = store_body_to_lab(src_pos, pose_of(src_obj))
-    tgt_lab = store_body_to_lab(tgt_pos, pose_of(tgt_obj))
+    src_lab = body_to_lab(src_pos, pose_of(src_obj))
+    tgt_lab = body_to_lab(tgt_pos, pose_of(tgt_obj))
     cable_pose = V3Pose(
         x_mm=(src_lab[0] + tgt_lab[0]) / 2,
         y_mm=(src_lab[1] + tgt_lab[1]) / 2,
@@ -341,8 +342,8 @@ def align_candidates(scene: RfScene, cable_id: str, end: str, tolerance_mm: floa
                 continue
             d = primary_dir(a)
             ports.append(RfPortLab(
-                lab_pos_mm=store_body_to_lab(_v3(pos), pose),
-                lab_dir_outward=store_body_to_lab(_v3(d) if d is not None else (1.0, 0.0, 0.0), pose, False),
+                lab_pos_mm=body_to_lab(_v3(pos), pose),
+                lab_dir_outward=body_dir_to_lab(_v3(d) if d is not None else (1.0, 0.0, 0.0), pose),
                 target_name=other.name,
                 target_object_id=str(other.id),
                 target_anchor_name=anchor_name(a),

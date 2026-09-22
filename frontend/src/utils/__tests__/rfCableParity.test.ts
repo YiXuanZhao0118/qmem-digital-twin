@@ -61,6 +61,7 @@ import type {
 } from "../../types/digitalTwin";
 import { PHYSICS_PLUGINS } from "../../kinds/_plugins";
 import { sceneObjectEulerFromQuaternion, threeToLabMm } from "../../optical/frames";
+import { dirBodyToLab, pointBodyToLab } from "../../optical/pose";
 import { anchorsInBindingTree, primaryAsset } from "../componentBindings";
 import { computePpgMountedThreePose } from "../ppgMounting";
 import { ppgAttachments } from "../ppgAttachment";
@@ -692,6 +693,32 @@ function labScene(opts: { cables?: "all" | "smaOnly" | "none" } = {}): SceneJson
       },
     }));
     s.physicsElements.push(pe("cable0", "rf_cable", { lengthMm: 152 }));
+    // Two unlinked cables whose end B is parked 3 mm in front of a port
+    // (face = node + outward × the 15.5 mm procedural tip) on an
+    // instrument rotated about x (dds CH2) / about y (amp2 rf_out). The port
+    // is placed with the real SceneObject rotation (`optical/pose`).
+    const park = (id: string, objectId: string, anchorName: string, origin: V3): void => {
+      const obj = s.objects.find((o) => o.id === objectId)!;
+      const comp = s.components.find((c) => c.id === obj.componentId)!;
+      const assetId = s.componentBindings.find((b) => b.componentId === comp.id)!.asset3dId!;
+      const a = s.assets.find((x) => x.id === assetId)!.anchors.find((x) => (x.name ?? x.id) === anchorName)!;
+      const port = pointBodyToLab(a.positionMmBodyLocal, obj);
+      const out = dirBodyToLab(a.axisXBodyLocal!, obj);
+      const k = 3 + 15.5;
+      const nodeB: Tuple3 = [port.x + out.x * k - origin.x, port.y + out.y * k - origin.y, port.z + out.z * k - origin.z];
+      s.objects.push(sceneObject(id, "c-cable-sma", { xMm: origin.x, yMm: origin.y, zMm: origin.z }, {
+        properties: {
+          rfCableEndpoints: {},
+          rfCableNodes: [
+            { posMm: [nodeB[0] + 200, nodeB[1], nodeB[2]], handleOutMm: [-30, 0, 0] },
+            { posMm: nodeB, handleInMm: [out.x * 30, out.y * 30, out.z * 30] },
+          ],
+        },
+      }));
+      s.physicsElements.push(pe(id, "rf_cable"));
+    };
+    park("loose-dds", "dds", "CH2", v(-800, 600, 800));
+    park("loose-amp2", "amp2", "rf_out", v(-1400, 450, 750));
   }
   // PPG CH0 plugged into the AOM's trigger_in, its program bound.
   s.objects.push(sceneObject("ppg0", "c-ppg-bnc", { xMm: -777.171, yMm: 108.736, zMm: 954.982 }, {
@@ -1178,6 +1205,20 @@ async function buildFlows(): Promise<Json> {
         expected: await runAlign(lab, "cable0", end, tol, 0),
       });
     }
+  }
+  // Loose cable ends parked 3 mm off a port of an instrument rotated about x
+  // (the DDS at rx −90 / rz 180, like the live bench) and one rotated about
+  // y (amp2, ry 30 / rz 15), placed through the REAL SceneObject rotation.
+  // With the mirror-image rotation the store used to have, neither port is
+  // inside the 25 mm window.
+  for (const [cableId, axis] of [["loose-dds", "x"], ["loose-amp2", "y"]] as const) {
+    const expected = await runAlign(lab, cableId, "B", 25, 0) as { candidates: unknown[] };
+    if (expected.candidates.length === 0) throw new Error(`${cableId}: the parked port must be a candidate`);
+    cases.push({
+      label: `align candidates ${cableId}: port on an instrument rotated about ${axis}`,
+      scene: iLab, op: "align", request: { cableId, end: "B", toleranceMm: 25, pickIndex: 0 },
+      expected,
+    });
   }
   cases.push({ label: "disconnect A", scene: iLab, op: "disconnect", request: { cableId: "cable0", end: "A" }, expected: await runDisconnect(lab, "cable0", "A") });
   cases.push({ label: "detach PPG", scene: iLab, op: "ppgDetach", request: { ppgId: "ppg0" }, expected: await runDetach(lab, "ppg0") });

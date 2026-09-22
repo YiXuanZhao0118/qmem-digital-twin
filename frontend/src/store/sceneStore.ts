@@ -119,6 +119,7 @@ import {
 // force-showing an object whose collection is hidden".
 import { computeVisibleCollectionIds } from "../utils/visibility";
 import { quantizePosePatch } from "../optical/poseQuantize";
+import { dirBodyToLab, pointBodyToLab } from "../optical/pose";
 import {
   findFiberEndAlignmentCandidates,
   findFiberPortAlignmentCandidates,
@@ -3715,37 +3716,24 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
           ];
 
     type Vec3T = [number, number, number];
-    const makeOwnerTransforms = (ownerPose: { xMm: number; yMm: number; zMm: number; rxDeg: number; ryDeg: number; rzDeg: number }) => {
-      const rxr = (ownerPose.rxDeg * Math.PI) / 180;
-      const ryr = (ownerPose.ryDeg * Math.PI) / 180;
-      const rzr = (ownerPose.rzDeg * Math.PI) / 180;
-      const cx = Math.cos(rxr), sxr = Math.sin(rxr);
-      const cy = Math.cos(ryr), syr = Math.sin(ryr);
-      const cz = Math.cos(rzr), szr = Math.sin(rzr);
-      const bodyToLab = (v: Vec3T): Vec3T => {
-        const x1 = cy * v[0] + syr * v[2];
-        const y1 = v[1];
-        const z1 = -syr * v[0] + cy * v[2];
-        const x2 = x1;
-        const y2 = cx * y1 - sxr * z1;
-        const z2 = sxr * y1 + cx * z1;
-        return [
-          ownerPose.xMm + cz * x2 - szr * y2,
-          ownerPose.yMm + szr * x2 + cz * y2,
-          ownerPose.zMm + z2,
-        ];
-      };
-      const bodyToLabDir = (v: Vec3T): Vec3T => {
-        const x1 = cy * v[0] + syr * v[2];
-        const y1 = v[1];
-        const z1 = -syr * v[0] + cy * v[2];
-        const x2 = x1;
-        const y2 = cx * y1 - sxr * z1;
-        const z2 = sxr * y1 + cx * z1;
-        return [cz * x2 - szr * y2, szr * x2 + cz * y2, z2];
-      };
-      return { bodyToLab, bodyToLabDir };
-    };
+    // Port body -> lab through the SceneObject's REAL rotation
+    // (`optical/pose`, the transform the tracer, the renderer and
+    // `resolveLinkedRfCableEndpoint` use). This used to be an inline
+    // `Rz·Rx·Ry` with positive angles, which is not the SceneObject
+    // convention (it is its mirror image, in another order): every port of
+    // an instrument rotated about x or y — the DDS and switches at rx −90 —
+    // was placed wrong, so the candidate list measured to, and mated onto,
+    // a point where the port is not.
+    const makeOwnerTransforms = (ownerPose: { xMm: number; yMm: number; zMm: number; rxDeg: number; ryDeg: number; rzDeg: number }) => ({
+      bodyToLab: (v: Vec3T): Vec3T => {
+        const p = pointBodyToLab({ x: v[0], y: v[1], z: v[2] }, ownerPose);
+        return [p.x, p.y, p.z];
+      },
+      bodyToLabDir: (v: Vec3T): Vec3T => {
+        const d = dirBodyToLab({ x: v[0], y: v[1], z: v[2] }, ownerPose);
+        return [d.x, d.y, d.z];
+      },
+    });
 
     const ports: import("../utils/rfCableAlignment").RfPortLab[] = [];
     for (const other of state.scene.objects) {
@@ -3980,29 +3968,15 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
         ? [primaryDir.x, primaryDir.y, primaryDir.z]
         : [1, 0, 0];
       const connectorFamily = connectorFamilyFromAnchor(anchor);
-      // Body → lab using the owner's pose (Euler XYZ). Mirrors the
-      // `makeOwnerTransforms` block in findRfCableAlignmentCandidates.
-      const rxr = (obj.rxDeg * Math.PI) / 180;
-      const ryr = (obj.ryDeg * Math.PI) / 180;
-      const rzr = (obj.rzDeg * Math.PI) / 180;
-      const cx = Math.cos(rxr), sxr = Math.sin(rxr);
-      const cy = Math.cos(ryr), syr = Math.sin(ryr);
-      const cz = Math.cos(rzr), szr = Math.sin(rzr);
-      const apply = (v: Vec3, includeTranslation: boolean): Vec3 => {
-        const x1 = cy * v[0] + syr * v[2];
-        const y1 = v[1];
-        const z1 = -syr * v[0] + cy * v[2];
-        const y2 = cx * y1 - sxr * z1;
-        const z2 = sxr * y1 + cx * z1;
-        return [
-          (includeTranslation ? obj.xMm : 0) + cz * x1 - szr * y2,
-          (includeTranslation ? obj.yMm : 0) + szr * x1 + cz * y2,
-          (includeTranslation ? obj.zMm : 0) + z2,
-        ];
-      };
+      // Body → lab through the owner's REAL rotation (`optical/pose`), as
+      // in findRfCableAlignmentCandidates — an inline `Rz·Rx·Ry` used to
+      // put the new cable's midpoint in the wrong place for an instrument
+      // rotated about x or y.
+      const labPos = pointBodyToLab({ x: anchorPosBody[0], y: anchorPosBody[1], z: anchorPosBody[2] }, obj);
+      const labDir = dirBodyToLab({ x: anchorDirBody[0], y: anchorDirBody[1], z: anchorDirBody[2] }, obj);
       return {
-        labPos: apply(anchorPosBody, true),
-        labDir: apply(anchorDirBody, false),
+        labPos: [labPos.x, labPos.y, labPos.z] as Vec3,
+        labDir: [labDir.x, labDir.y, labDir.z] as Vec3,
         anchorPosBody,
         anchorDirBody,
         targetName: obj.name,

@@ -214,14 +214,14 @@ Response `{"object": SceneObjectOut}` — the new cable (`RF_CABLE<n>`, identity
 
 ```json
 { "object": { "id": "...", "name": "RF_CABLE7", "componentId": "<RF cable SMA>",
-  "xMm": -1225.129, "yMm": 754.872, "zMm": 725.9465, "rxDeg": 0, "ryDeg": 0, "rzDeg": 0,
+  "xMm": -1225.129, "yMm": 766.872, "zMm": 730.9465, "rxDeg": 0, "ryDeg": 0, "rzDeg": 0,
   "properties": {
     "rfCableEndpoints": {
       "A": { "targetObjectId": "<dds>", "targetAnchorId": "rf_out", "targetAnchorName": "CH1" },
       "B": { "targetObjectId": "<amp>", "targetAnchorId": "rf_in", "targetAnchorName": "rf_in" } },
     "rfCableNodes": [
-      { "posMm": [321.63, 37.322, -16.7015], "handleOutMm": [0, 30, 0] },
-      { "posMm": [-296.18, 12.128, 26.7015], "handleInMm": [30, 0, 0] } ] },
+      { "posMm": [321.63, 25.322, -21.7015], "handleOutMm": [0, 30, 0] },
+      { "posMm": [-296.18, 0.128, 21.7015], "handleInMm": [30, 0, 0] } ] },
   "...": "the rest of SceneObjectOut" } }
 ```
 
