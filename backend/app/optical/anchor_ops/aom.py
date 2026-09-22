@@ -136,6 +136,47 @@ def _bragg_angle_rad(
     return math.asin(arg)
 
 
+def on_bragg_first_order_efficiency(params: dict, dynamic: dict, wavelength_nm: float) -> float:
+    """The on-Bragg first-order efficiency this op applies to a ray of
+    ``wavelength_nm`` — ``aom_physics.first_order_efficiency`` fed from the
+    op's own parameter resolution: ``params`` = ``{**default_params,
+    **dynamic}`` and ``dynamic`` = the slot's dynamic sources (where the
+    loader puts the RF-link drive), exactly the ``AnchorOpContext`` pair.
+
+    The single place that resolution lives: ``aom_anchor_op`` calls it per
+    ray, and the RF readout (``POST /api/v3/rf/propagation``'s
+    ``aomDrives[*].eta``) calls it for the scene's emitter wavelength, so the
+    two cannot drift. Per-order angle detune is applied on top by the op.
+    """
+    # RF frequency via the shared reader (dynamic aomFreqMhz wins, then the
+    # asset's centerFreqMhz, then the 80 MHz rated default) so the anchor op,
+    # the v3 op, and the panel all agree on the operating point — the AOM shows
+    # its rated diffraction even before an RF link is wired up. "Off" is the
+    # requiresRfDrive gate, not a 0 Hz default.
+    freq_mhz = read_rf_frequency_mhz(params, dynamic)
+    # baseEfficiency = the datasheet PEAK first-order efficiency (η at the rated
+    # drive); the model scales it by sin²((π/2)√(P/P_peak)) and the carrier-freq
+    # factor (see first_order_efficiency).
+    peak_eff_raw = params.get("baseEfficiency")
+    peak_efficiency = float(peak_eff_raw) if isinstance(peak_eff_raw, (int, float)) else 0.85
+
+    def _float_param(key: str, default: float) -> float:
+        v = params.get(key, default)
+        return float(v) if isinstance(v, (int, float)) and v > 0 else default
+
+    return first_order_efficiency(
+        wavelength_nm=wavelength_nm,
+        freq_mhz=float(freq_mhz),
+        rf_power_w=read_rf_drive_power_w(params, dynamic),
+        peak_efficiency=peak_efficiency,
+        rf_power_for_peak_w=_float_param("rfPowerForPeakW", 2.2),
+        peak_ref_wavelength_nm=_float_param("peakRefWavelengthNm", 1100.0),
+        center_freq_mhz=_float_param("centerFreqMhz", 80.0),
+        freq_shift_bandwidth_mhz=_float_param("freqShiftBandwidthMhz", 15.0),
+        requires_rf_drive=params.get("requiresRfDrive") is True,
+    )
+
+
 def aom_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
     if ctx.anchor.id != "interaction_center":
         return [ray_in]
@@ -145,27 +186,13 @@ def aom_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
     n = float(ctx.params.get("refractiveIndex", 2.2))
     L_over_n = L / n
 
-    # RF frequency via the shared reader (dynamic aomFreqMhz wins, then the
-    # asset's centerFreqMhz, then the 80 MHz rated default) so the anchor op,
-    # the v3 op, and the panel all agree on the operating point — the AOM shows
-    # its rated diffraction even before an RF link is wired up. "Off" is the
-    # requiresRfDrive gate, not a 0 Hz default.
     freq_mhz = read_rf_frequency_mhz(ctx.params, ctx.dynamic)
     v_ac = float(ctx.params.get("acousticVelocityMps", 4200.0))
-    # baseEfficiency = the datasheet PEAK first-order efficiency (η at the rated
-    # drive); the model scales it by sin²((π/2)√(P/P_peak)) and the carrier-freq
-    # factor (see first_order_efficiency).
-    peak_eff_raw = ctx.params.get("baseEfficiency")
-    peak_efficiency = float(peak_eff_raw) if isinstance(peak_eff_raw, (int, float)) else 0.85
 
     def _int_param(key: str, default: int, lo: int, hi: int) -> int:
         v = ctx.params.get(key, default)
         v = int(v) if isinstance(v, (int, float)) else default
         return max(lo, min(hi, v))
-
-    def _float_param(key: str, default: float) -> float:
-        v = ctx.params.get(key, default)
-        return float(v) if isinstance(v, (int, float)) and v > 0 else default
 
     selected_order = _int_param("diffractionOrder", 1, -1, 1)
     max_order = _int_param("maxDiffractionOrder", 3, 1, 10)
@@ -178,18 +205,7 @@ def aom_anchor_op(ray_in: BeamRay, ctx: AnchorOpContext) -> list[BeamRay]:
     # On-Bragg first-order efficiency from the RF drive (power + carrier freq).
     # The per-order angle detune (below) then scales each diffracted order by
     # how far the cell is from ITS Bragg-matched tilt.
-    rf_power_w = read_rf_drive_power_w(ctx.params, ctx.dynamic)
-    eta_peak = first_order_efficiency(
-        wavelength_nm=ray_in.wavelength_nm,
-        freq_mhz=float(freq_mhz),
-        rf_power_w=rf_power_w,
-        peak_efficiency=peak_efficiency,
-        rf_power_for_peak_w=_float_param("rfPowerForPeakW", 2.2),
-        peak_ref_wavelength_nm=_float_param("peakRefWavelengthNm", 1100.0),
-        center_freq_mhz=_float_param("centerFreqMhz", 80.0),
-        freq_shift_bandwidth_mhz=_float_param("freqShiftBandwidthMhz", 15.0),
-        requires_rf_drive=ctx.params.get("requiresRfDrive") is True,
-    )
+    eta_peak = on_bragg_first_order_efficiency(ctx.params, ctx.dynamic, ray_in.wavelength_nm)
     # Signed incidence about the acoustic axis — the only angle the Bragg
     # condition constrains. Order m is matched at theta_in = -m·theta_B, so
     # +1 and -1 peak at opposite tilts (2·theta_B apart) and "rotate the AOM

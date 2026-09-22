@@ -22,7 +22,7 @@ The web app computes some things in the browser that another client (the qmem-bl
 
 ### `POST /api/v3/rf/propagation`
 
-The backend's RF BFS (`rf_resolve.py`) at one scrub time. Router: `backend/app/routers/v3_rf.py:101`. Detail and invariants in [rf.md](rf.md) §4.
+The backend's RF BFS (`rf_resolve.py`) at one scrub time. Router: `backend/app/routers/v3_rf.py:109`. Detail and invariants in [rf.md](rf.md) §4.
 
 Request (the body is optional; no body = `{"scrubTimeNs": null}`):
 
@@ -48,8 +48,8 @@ Response:
   "connectedPorts": ["<objectId>|<anchorName>", "..."],
   "ppgGateHighObjectIds": ["<ppgObjectId>"],
   "aomDrives": {
-    "<aomObjectId>": { "aomFreqMhz": 80.0, "rfDrivePowerW": 0.0496 },
-    "<gatedOffAomId>": { "rfDrivePowerW": 0.0 }
+    "<aomObjectId>": { "aomFreqMhz": 80.0, "rfDrivePowerW": 0.0496, "eta": 0.0764 },
+    "<gatedOffAomId>": { "rfDrivePowerW": 0.0, "eta": 0.0 }
   },
   "sectionStartsNs": [0.0, 1000.0, 2000.0]
 }
@@ -59,6 +59,7 @@ Response:
 - `powerW = vpp² / (8·50 Ω)`, the conversion the AOM drive uses.
 - `connectedPorts` (sorted) is topology — every port with a cable or a PPG attachment, whether or not a carrier arrives.
 - `aomDrives` is passed through verbatim from the resolver the solver uses, so it equals what the trace merged onto each AOM at this time. An AOM in manual mode (`properties.aomRfDriveMode == "manual"`) or with nothing plugged into `rf_in` is **absent** (it keeps its own / rated drive); a wired AOM that no carrier reaches at this instant gets `{"rfDrivePowerW": 0.0}` with no frequency key.
+- `aomDrives[*].eta` (2026-09-22) is the **on-Bragg first-order efficiency** the tracer's AOM op applies with that drive: the op's own `on_bragg_first_order_efficiency` (`anchor_ops/aom.py:139`, `η = baseEfficiency·sin²((π/2)√(P/P_peak(λ)))·G(f)`), over the AOM slot exactly as `load_anchor_scene_from_db` hands it to the tracer at this `scrubTimeNs` (asset `default_params` + the slot's dynamic sources, the drive merged in). The op takes λ per ray; the readout takes the scene's emitter wavelength — the single wavelength the laser sources emit (as the tracer emits them: hidden emissions skipped, dynamic sources over the asset), a TA's own wavelength only when there is no laser emission, else **780 nm** (`aom_readout.scene_emitter_wavelength_nm`, [rf.md](rf.md) §3). Per-order angle detune is NOT in it (that depends on the beam's incidence, which only a trace knows). Absent only for an AOM the tracer has no slot for (an asset with no anchors).
 - `sectionStartsNs` (sorted) is every block boundary across all TimingPrograms, plus 0.
 
 ### `GET /api/kinds/roles`

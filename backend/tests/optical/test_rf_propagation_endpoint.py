@@ -26,6 +26,15 @@ from fastapi.testclient import TestClient
 from app.db import get_session
 from app.main import app
 from app.optical import rf_resolve
+from app.optical.anchor_ops.aom import on_bragg_first_order_efficiency
+from app.optical.anchor_tracer import (
+    V3Anchor,
+    V3AnchorBindingSlot,
+    V3AnchorScene,
+    V3AssetAnchorSnapshot,
+)
+from app.optical.beam_ray import Vec3
+from app.optical.pose import V3Pose, pose_to_transform
 from app.optical.rf_resolve import (
     AomPort,
     RfInputs,
@@ -96,6 +105,42 @@ def _scene(rest_state: str = "LOW") -> RfInputs:
     )
 
 
+_X = (Vec3(1.0, 0.0, 0.0), Vec3(0.0, 1.0, 0.0), Vec3(0.0, 0.0, 1.0))
+LASER_NM = 852.347
+# The live MT80's asset params that the op reads (the rest default).
+AOM_PARAMS = {"baseEfficiency": 0.85, "rfPowerMaxW": 2.0}
+
+
+def _v3_anchor(aid: str, x: float = 0.0) -> V3Anchor:
+    ax, ay, az = _X
+    return V3Anchor(id=aid, position_body=Vec3(x, 0.0, 0.0), axis_x_body=ax,
+                    axis_y_body=ay, axis_z_body=az, aperture_mm=2.0)
+
+
+def _slot(oid: str, kind: str, anchors: list[V3Anchor], params: dict, dyn: dict | None) -> V3AnchorBindingSlot:
+    return V3AnchorBindingSlot(
+        scene_object_id=oid, binding_id="body",
+        asset=V3AssetAnchorSnapshot(catalog_id=f"{kind}-{oid}", kind=kind,
+                                    anchors=anchors, default_params=params),
+        effective_transform=pose_to_transform(V3Pose()), dynamic_sources=dyn,
+    )
+
+
+def _anchor_scene(drives: dict[str, dict], laser_nm: float | None = LASER_NM) -> V3AnchorScene:
+    """What ``load_anchor_scene_from_db`` would hand the tracer for ``_scene``:
+    one laser, and an AOM slot per AOM object with the RF drive merged onto
+    its dynamic sources (the loader's ``rf`` merge)."""
+    slots = []
+    if laser_nm is not None:
+        slots.append(_slot("laser", "laser_source", [_v3_anchor("intercept_out")],
+                           {"centerWavelengthNm": laser_nm}, None))
+    for oid in ("aomA", "aomB", "aomC", "aomM"):
+        slots.append(_slot(oid, "aom",
+                           [_v3_anchor("intercept_in", 99.0), _v3_anchor("intercept_out", 101.0)],
+                           AOM_PARAMS, drives.get(oid)))
+    return V3AnchorScene(slots=slots)
+
+
 @pytest.fixture
 def client(monkeypatch):
     """TestClient whose DB session is a dummy and whose scene is ``_scene``.
@@ -103,18 +148,25 @@ def client(monkeypatch):
     ``load_rf_inputs`` is patched in BOTH modules: the router's import (what
     the endpoint calls) and ``rf_resolve``'s own (what the solver path's
     ``hydrate_aom_rf_drive`` calls), so the equality test below compares the
-    two real call paths over one scene.
+    two real call paths over one scene. ``load_anchor_scene_from_db`` (what
+    ``eta`` is computed over) is patched to build its AOM slots from that
+    same ``hydrate_aom_rf_drive``, as the real loader does.
     """
-    state = {"inputs": _scene()}
+    state = {"inputs": _scene(), "laser_nm": LASER_NM}
 
     async def _fake_load(_session):
         return state["inputs"]
+
+    async def _fake_anchor_scene(session, scrub_time_ns=None):
+        drives = await rf_resolve.hydrate_aom_rf_drive(session, scrub_time_ns)
+        return _anchor_scene(drives, state["laser_nm"])
 
     async def _fake_get_session():
         yield object()
 
     monkeypatch.setattr(v3_rf, "load_rf_inputs", _fake_load)
     monkeypatch.setattr(rf_resolve, "load_rf_inputs", _fake_load)
+    monkeypatch.setattr(v3_rf, "load_anchor_scene_from_db", _fake_anchor_scene)
     app.dependency_overrides[get_session] = _fake_get_session
     try:
         c = TestClient(app)
@@ -200,11 +252,43 @@ def test_aom_drive_rules(client) -> None:
     # Carrier arrives: freq + power (5 Vpp - 1 dB).
     assert drives["aomA"]["aomFreqMhz"] == pytest.approx(80.0)
     assert drives["aomA"]["rfDrivePowerW"] > 0.0
-    # Wired, gated off: 0 W and no frequency key.
-    assert drives["aomB"] == {"rfDrivePowerW": 0.0}
+    assert set(drives["aomA"]) == {"aomFreqMhz", "rfDrivePowerW", "eta"}
+    # Wired, gated off: 0 W, no frequency key — and no diffraction.
+    assert drives["aomB"] == {"rfDrivePowerW": 0.0, "eta": 0.0}
     # Unwired and manual AOMs keep their own drive: absent.
     assert "aomC" not in drives
     assert "aomM" not in drives
+
+
+def _without_eta(drives: dict) -> dict:
+    return {k: {kk: vv for kk, vv in d.items() if kk != "eta"} for k, d in drives.items()}
+
+
+@pytest.mark.parametrize("t", [None, 500.0, 1500.0])
+def test_eta_is_the_ops_efficiency_for_that_drive(client, t) -> None:
+    """``eta`` = the AOM op's own function over the slot the loader built
+    (asset params + the merged drive), at the scene's single laser
+    wavelength. Here 4.456 Vpp into the MT80 at 852.347 nm: P = 0.0496 W
+    against P_peak = 1.32 W, so eta is small but not zero."""
+    out = _post(client, {"scrubTimeNs": t})
+    for oid, drive in out["aomDrives"].items():
+        dyn = _without_eta(out["aomDrives"])[oid]
+        expected = on_bragg_first_order_efficiency({**AOM_PARAMS, **dyn}, dyn, LASER_NM)
+        assert drive["eta"] == expected
+    driven = next(d for d in out["aomDrives"].values() if d["rfDrivePowerW"] > 0)
+    assert 0.0 < driven["eta"] < 0.85
+    # The wavelength matters (P_peak ~ lambda^2): at 780 nm it would differ.
+    dyn = {k: v for k, v in driven.items() if k != "eta"}
+    assert driven["eta"] != on_bragg_first_order_efficiency({**AOM_PARAMS, **dyn}, dyn, 780.0)
+
+
+def test_eta_falls_back_to_780_nm_without_one_emitter_wavelength(client) -> None:
+    client.state["laser_nm"] = None  # type: ignore[attr-defined]
+    out = _post(client, {"scrubTimeNs": 500})
+    dyn = _without_eta(out["aomDrives"])["aomA"]
+    assert out["aomDrives"]["aomA"]["eta"] == on_bragg_first_order_efficiency(
+        {**AOM_PARAMS, **dyn}, dyn, 780.0,
+    )
 
 
 @pytest.mark.parametrize("t", [None, -10.0, 0.0, 500.0, 1000.0, 1500.0, 1999.999, 2000.0, 1e9])
@@ -216,7 +300,9 @@ def test_aom_drives_equal_the_solver_path(client, t, rest_state) -> None:
     client.state["inputs"] = _scene(rest_state=rest_state)  # type: ignore[attr-defined]
     out = _post(client, {"scrubTimeNs": t})
     solver = asyncio.run(rf_resolve.hydrate_aom_rf_drive(object(), t))
-    assert out["aomDrives"] == solver
+    # Every drive key verbatim; ``eta`` is the one key the readout adds.
+    assert _without_eta(out["aomDrives"]) == solver
+    assert all("eta" in d for d in out["aomDrives"].values())
     # ... and the pure pair agrees with the pure solver resolver too.
     inputs = client.state["inputs"]  # type: ignore[attr-defined]
     assert rf_readout_at(inputs, t).aom_drives == resolve_aom_rf_drive(inputs, t)
