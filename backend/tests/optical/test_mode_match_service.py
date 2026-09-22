@@ -266,6 +266,48 @@ def test_an_unlocked_end_shortens_the_section_only_where_the_range_allows():
     assert -20.0 - 1e-9 <= m5["translateWorldMm"]["z"] <= -10.0 + 1e-9
 
 
+# ── a plan never places a lens outside its bounds (2026-09-22) ──────────────
+# Seed hits along +z: Start (bs) −30, lens0 0, End (m5) +60; keep-off margin 6.
+START_Z, LENS_HIT_Z, END_Z, MARGIN = -30.0, 0.0, 60.0, 6.0
+
+
+@pytest.mark.parametrize("eta_target", [None, 0.3])
+def test_every_card_keeps_its_lens_inside_its_bounds(eta_target):
+    """The shortest-footprint search shrinks the range toward Start, so the
+    lens's current pose (30 mm from Start) falls outside it; the search used
+    to start there unclamped and could return it untouched — a 27 mm
+    footprint card with no move and its lens 30 mm from Start. Every card
+    must now keep the lens in its range: [Start + 6, End − 6] in range
+    max-η, [Start + 6, Start + footprint − 6] in shortest footprint (or not
+    offer the card)."""
+    out = run_mode_match(_scene(), _forward(), movable_ids=["lens0"], start_id="bs",
+                         endpoint_id="m5", eta_target=eta_target, **_kw())
+    by_key = {s["key"]: s for s in out["solutions"]}
+    assert "range_shortest" in by_key  # the target is reachable in a shorter footprint
+
+    def lens_z(card):
+        moved = [m for m in card["moves"] if m["objectId"] == "lens0"]
+        return LENS_HIT_Z + (moved[0]["translateWorldMm"]["z"] if moved else 0.0)
+
+    z = lens_z(by_key["range_maxeff"])
+    assert START_Z + MARGIN - 1e-9 <= z <= END_Z - MARGIN + 1e-9
+    short = by_key["range_shortest"]
+    z = lens_z(short)
+    assert START_Z + MARGIN - 1e-9 <= z <= START_Z + short["lengthMm"] - MARGIN + 1e-9
+    assert short["feasible"] and short["eta"] >= (eta_target or 0.0) - 1e-3
+
+
+def test_a_range_narrower_than_the_margins_stays_inside_it():
+    # A 4 mm range: the two 6 mm margins used to flip it to [−2, +6], i.e.
+    # up to 2 mm before its start; now they meet in the middle.
+    specs = _range_specs(["l"], {"l": 3.0}, 0.0, 4.0, 0.0, 0.0, 20.0)
+    lo, hi = specs["l"].axial
+    assert 0.0 <= 3.0 + lo <= 3.0 + hi <= 4.0
+    assert (3.0 + lo, 3.0 + hi) == (2.0, 2.0)
+    # Wide enough: unchanged.
+    assert _range_specs(["l"], {"l": 3.0}, 0.0, 40.0, 0.0, 0.0, 20.0)["l"].axial == (3.0, 31.0)
+
+
 def test_axial_mm_is_the_travel_of_a_lens_the_seed_misses():
     specs = _range_specs(["hit", "missed"], {"hit": 10.0}, -30.0, 60.0, 0.0, 0.0, 7.5)
     assert specs["missed"].axial == (-7.5, 7.5)

@@ -196,9 +196,9 @@ the traced slots).
   a length cap), fitted to the range model. Defaults (`true`, 20, none) are
   exactly the old behaviour, and the web panel sends none of them, so **the
   web is unchanged** (seven default-knob plans compared bit for bit against
-  the old code). `run_mode_match` (`mode_match_service.py:179`):
+  the old code). `run_mode_match` (`mode_match_service.py:184`):
   - `endpointLocked=false` lets the End slide along the section axis in the
-    two **best-efficiency** cards (`end_spec`, `:281`): in the **range**
+    two **best-efficiency** cards (`end_spec`, `:286`): in the **range**
     column only AWAY from Start (`[0, +axialMm]`) — its lenses are bounded by
     the End's current position, and a box-bounded search cannot keep them
     clear of an End that moves in; in the **free** column, which ignores the
@@ -225,27 +225,54 @@ the traced slots).
     section under it (e.g. always in the range column, which cannot shorten)
     ⇒ infeasible up front too (`:209`). The shortest-footprint card is
     skipped when the section is over the limit (it never moves the End, so it
-    could not fit, `over_limit`, `:319`). No End ⇒ no section ⇒ no effect.
-  - An unlocked End starts its search at the nearest pose inside its travel,
-    not at 0 (`optimize._start`, `:272`): the search keeps the best point it
-    evaluated, the start included, so a start outside the bounds could come
-    back as the answer — with a limit that forces shortening it did.
+    could not fit, `over_limit`, `:324`). No End ⇒ no section ⇒ no effect.
   - Pinned by `test_mode_match_optimize.py` (the cap, shortening to meet it,
     a limit out of reach), `test_mode_match_service.py` (defaults unchanged,
     each column's End travel and limit reaching `optimize`, a limit below a
     frozen section, shortening only in the free column, `axialMm` on a missed
     lens, an End upstream of Start) and `test_mode_match_endpoint.py` (the
     knobs pass through; negative `axialMm` / non-positive `lMaxMm` are 422).
-- ⚠️ **Open (found 2026-09-22): a lens can come back outside its range.** The
-  same start-point effect applies to LENSES, and it is not fixed (that would
-  change what the web gets): each lens's search starts at its current pose
-  (0), and when its bounds exclude 0 the untouched start can win. It does in
-  the shortest-footprint search, whose ranges shrink toward Start: on the
-  service tests' synthetic scene the `range_shortest` card reports a 27 mm
-  footprint (Start → last lens) with **no move**, while its lens sits 30 mm
-  from Start. A lens starting inside the 6 mm keep-off margin of Start / End
-  can stay there the same way. The fix is to start every search inside its
-  bounds (`np.clip` of the start, what `_start` does for the End).
+- **A plan never places an element outside its own bounds (fixed
+  2026-09-22, commit "Mode match: start every search inside its bounds, so no plan breaks its own range").** Invariant: every point the search
+  evaluates is inside the bounds, so the point it returns is too. Every
+  search now STARTS there — each element's current pose (0) clamped into its
+  bounds (`optimize._start`, `mode_match_optimize.py:272`); the coordinate
+  descent only steps inside the bounds and Powell keeps an inside start
+  inside. Until then the start was 0 unclamped, and because the search keeps
+  the best point it evaluated, the start included, an element whose bounds
+  excluded its current pose could come back untouched: a lens in the 6 mm
+  keep-off margin of Start / End, a lens outside the shrunk range of the
+  shortest-footprint search, an End a length limit must move. On the service
+  tests' synthetic scene the `range_shortest` card reported a **27 mm**
+  footprint (Start → last lens) with **no move** while its lens sat **30 mm**
+  from Start. Also, a range narrower than the two margins (12 mm) no longer
+  flips them into an interval that reaches past Start or past a footprint —
+  they meet in its middle (`_range_specs`, `mode_match_service.py:105`).
+  - **What changes for web users**: only a card whose lens started outside
+    its range — in practice the **In range · Shortest footprint** card. It
+    now either moves the lens into the footprint it claims (lower η than the
+    old, impossible card claimed, still meeting the target) or, when that
+    footprint can no longer meet the target, stops at a longer footprint /
+    is not offered. The best-efficiency cards change only for a lens that
+    starts inside a keep-off margin or outside Start–End (it is now moved
+    in). On the synthetic scene, with the web's default knobs: of seven
+    request shapes (Methods 1 / 2, η target 0.5 / 0.3 / none, a focal
+    inventory, no Start, no End), three are unchanged (η 0.5: no shortest
+    card either way; the focal inventory; no End) and in the other four only
+    `range_shortest` moves — η target 0.3 (Methods 1 and 2, and with no
+    Start): 27 mm, lens not moved, η 0.3266 → 27 mm, lens moved −9 mm to
+    the footprint's edge, η 0.3178; no η target (the target is then 98 % of
+    the best, 0.3205): 27 mm, η 0.3266 → **40.5 mm**, lens moved −1.55 mm,
+    η 0.3270. The live scene is untouched: it has one lens-kind object
+    (`LENS_PLANO_CONVEX2`, right after the laser) and every web-style
+    request on it — Method 1 BS2 → MIRROR5 at roll 0 / 90, Method 2 on that
+    lens with and without Start — stops before the optimizer ("No lenses
+    found between Start and Endpoint." / "no upstream segment feeds first
+    lens"), checked read-only 2026-09-22.
+  - Pinned by `test_mode_match_optimize.py::test_the_search_never_returns_a_point_outside_its_bounds`,
+    `test_mode_match_service.py::test_every_card_keeps_its_lens_inside_its_bounds`
+    (the 27 mm case) and `::test_a_range_narrower_than_the_margins_stays_inside_it`
+    — each fails on the old code.
 - **Decenter is OFF by default.** Transverse decenter improves the mode-shape
   overlap but steers the chief ray off the lens centre (a pointing error the
   objective does not penalize), which shows up as a deflected beam in the twin.
@@ -287,8 +314,8 @@ were computed against the un-conjugated, opposite-sign reference and the older
 
 Tests: `backend/tests/optical/test_mode_overlap.py`,
 `test_mode_match_model.py`, `test_mode_match_optimize.py`,
-`test_mode_match_service.py`, `test_mode_match_endpoint.py` (45 as of
-2026-09-22, after the length knobs; all DB-free). Endpoint verified live in-process (2026-08).
+`test_mode_match_service.py`, `test_mode_match_endpoint.py` (49 as of
+2026-09-22, after the length knobs and the bounds fix; all DB-free). Endpoint verified live in-process (2026-08).
 
 ## Frontend
 

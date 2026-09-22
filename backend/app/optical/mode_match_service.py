@@ -96,8 +96,13 @@ def _range_specs(
     """Per-lens axial bounds that keep each lens's beam-hit within
     ``[lo_axial + margin, hi_axial - margin]`` (bounds are on d_axial, the delta
     from the lens's current position). A lens the seed does not reach has no
-    hit to bound, so it gets the plain ``±axial_mm`` travel."""
-    m = _RANGE_MARGIN_MM
+    hit to bound, so it gets the plain ``±axial_mm`` travel.
+
+    A range narrower than the two margins shrinks them to meet in its middle
+    rather than flipping the interval (which put a lens outside
+    ``[lo_axial, hi_axial]`` — before Start, or past a shortest-footprint
+    card's footprint)."""
+    m = min(_RANGE_MARGIN_MM, abs(hi_axial - lo_axial) / 2.0)
     base = default_lens_dof(0.0, decenter_mm, roll_deg)  # borrow decenter/roll
     specs: dict[str, DOFSpec] = {}
     for oid in movable_ids:
