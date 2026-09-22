@@ -12,7 +12,11 @@ import {
   refreshRfCableWrapperGeometry,
   type FiberNode,
 } from "../three/loadAsset";
-import { connectorTipMmFromAnchors, resolveLinkedRfCableEndpoint } from "../utils/rfCableAnchorResolver";
+import {
+  connectorTipMmFromAnchors,
+  resolveLinkedRfCableEndpoint,
+  resolveRfPortPose,
+} from "../utils/rfCableAnchorResolver";
 import {
   bodyHandleToTensionHandle,
   FIBER_END_CONNECTOR_LENGTH_MM,
@@ -37,7 +41,6 @@ import {
   shouldRenderViaBindings,
 } from "../three/bindingRendererGate";
 import {
-  findAnchorInBindingTree,
   hiddenBindingIds,
   primaryAsset,
   resolveBindingTree,
@@ -111,7 +114,7 @@ import { createLabPhotoRoom } from "../three/photoRoom";
 import { VIEWER_BG_LIGHT } from "../three/viewerTheme";
 import { applyObjectGeometryOffset, applyObjectTransform, mmToThree } from "../three/transformUtils";
 import { assetAnchorWorld, relationTarget, worldAnchor } from "../utils/relationAnchors";
-import { anchorObjectLocalAxisY, anchorObjectLocalPos, anchorObjectLocalPrimaryDir } from "../utils/anchorAccess";
+import { anchorObjectLocalPos, anchorObjectLocalPrimaryDir } from "../utils/anchorAccess";
 import { computeBraggTiltAxisFromRfDirectionBodyLocal } from "../optical/kinds/aom/physics";
 import type { Anchor, Asset3D, ComponentItem, DeviceState, PhysicsElement, SceneObject } from "../types/digitalTwin";
 import {
@@ -4373,21 +4376,18 @@ export function DigitalTwinViewer({
           // (EOM + its two FC/APC connectors), so this early-returned and
           // cables never live re-snapped when their linked instrument moved
           // (they froze at connect-time nodes).
-          const ownedTarget = findAnchorInBindingTree(
-            targetComp, sceneData, link.targetAnchorId, link.targetAnchorName,
+          //
+          // Posed in the target's CAD (= object body) frame through the
+          // port's binding chain — what resolveLinkedRfCableEndpoint's
+          // `targetAnchor*Body` means under `targetPose` = the object pose,
+          // and the chain the store's resnap and the tracer use. It used to
+          // take the anchor in its own asset's frame, exact only on an
+          // identity root binding. axisX first (legacy directionBodyLocal is
+          // null on modern anchors, which once flipped −X ports like amp rf_in).
+          const port = resolveRfPortPose(
+            targetComp, targetObj, sceneData, link.targetAnchorId, link.targetAnchorName,
           );
-          if (!ownedTarget) return;
-          const { asset: targetAsset, anchor: targetAnchor } = ownedTarget;
-          // Body-frame → object-local: target asset stores anchor in body
-          // frame; resolveLinkedRfCableEndpoint expects object-local
-          // coords (its bodyToLab is just object-pose without body-frame).
-          const anchorPosLocal = anchorObjectLocalPos(targetAnchor, targetAsset);
-          // axisX (Phase 9.1) first; legacy directionBodyLocal is null on
-          // modern anchors (rf_out/rf_in/ttl_in carry axisXBodyLocal), which
-          // previously defaulted the target dir to [1,0,0] — fine for ports
-          // that happen to face +X (e.g. switch RF2) but flipped for −X ports
-          // (amp rf_in), throwing that cable end far off.
-          const anchorDirLocal = anchorObjectLocalPrimaryDir(targetAnchor, targetAsset);
+          if (!port) return;
           // Connector tip length depends on THIS cable end's connector
           // family (SMA 15.5 / BNC 27 mm), so a bnc-ended cable backs its
           // node off the port by the longer BNC stack instead of the SMA
@@ -4427,7 +4427,6 @@ export function DigitalTwinViewer({
           // Target anchor axisY → stable side basis (co-moves with the
           // instrument), so nodeOffset's sideX/sideY mean the same thing at
           // any target orientation.
-          const anchorAxisYLocal = anchorObjectLocalAxisY(targetAnchor, targetAsset);
           const resolved = resolveLinkedRfCableEndpoint({
             endpoint: end,
             cablePose,
@@ -4435,14 +4434,12 @@ export function DigitalTwinViewer({
               xMm: targetObj.xMm, yMm: targetObj.yMm, zMm: targetObj.zMm,
               rxDeg: targetObj.rxDeg, ryDeg: targetObj.ryDeg, rzDeg: targetObj.rzDeg,
             },
-            targetAnchorPosBodyMm: [anchorPosLocal.x, anchorPosLocal.y, anchorPosLocal.z],
-            targetAnchorDirBody: anchorDirLocal
-              ? [anchorDirLocal.x, anchorDirLocal.y, anchorDirLocal.z]
-              : [1, 0, 0],
+            targetAnchorPosBodyMm: [port.posCad.x, port.posCad.y, port.posCad.z],
+            targetAnchorDirBody: [port.dirCad.x, port.dirCad.y, port.dirCad.z],
             connectorTipMm: connectorTipMmFromAnchors(connAsset?.anchors, endFamily),
             nodeOffset,
-            targetAnchorAxisYBody: anchorAxisYLocal
-              ? [anchorAxisYLocal.x, anchorAxisYLocal.y, anchorAxisYLocal.z]
+            targetAnchorAxisYBody: port.axisYCad
+              ? [port.axisYCad.x, port.axisYCad.y, port.axisYCad.z]
               : undefined,
           });
           if (!resolved) return;
@@ -4459,10 +4456,12 @@ export function DigitalTwinViewer({
                 : stored[idx].handleOutMm,
           };
           // Cache-invalidation digest — value is hashed, never composed
-          // with pose. Any change in the raw field flips the key, which
-          // is the intent.
-          watchKeyParts.push( // raw-anchor-ok: digest of stored body-frame value
-            `${end}:${link.targetObjectId}:${link.targetAnchorId}:${link.targetAnchorName}:${targetObj.xMm.toFixed(3)},${targetObj.yMm.toFixed(3)},${targetObj.zMm.toFixed(3)},${targetObj.rxDeg.toFixed(3)},${targetObj.ryDeg.toFixed(3)},${targetObj.rzDeg.toFixed(3)}:${targetAnchor.positionMmBodyLocal.x},${targetAnchor.positionMmBodyLocal.y},${targetAnchor.positionMmBodyLocal.z}`,
+          // with pose. Keyed on the port as POSED (through its binding
+          // chain), so a binding edit or an ObjectBinding delta on the
+          // target flips it too, not only the stored anchor.
+          const { posCad: pc, dirCad: dc } = port;
+          watchKeyParts.push(
+            `${end}:${link.targetObjectId}:${link.targetAnchorId}:${link.targetAnchorName}:${targetObj.xMm.toFixed(3)},${targetObj.yMm.toFixed(3)},${targetObj.zMm.toFixed(3)},${targetObj.rxDeg.toFixed(3)},${targetObj.ryDeg.toFixed(3)},${targetObj.rzDeg.toFixed(3)}:${pc.x},${pc.y},${pc.z}:${dc.x},${dc.y},${dc.z}`,
           );
         };
         if (props.rfCableEndpoints?.A) applyLink("A", props.rfCableEndpoints.A);

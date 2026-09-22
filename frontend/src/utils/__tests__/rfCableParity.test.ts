@@ -33,10 +33,21 @@
  * the real helpers (`resolveRfLinkPortDomain`, `connectorFamilyFromAnchor`,
  * `kindParticipatesInRfLink`, `anchorsInBindingTree`, `ppgAttachments`) and
  * are written out below as `panelPortsOf` / `occupiedPortKeys` /
- * `connectGate` / `ppgGate`, each citing the panel lines it copies. One
- * deliberate tightening: the endpoint also rejects a BUSY SOURCE port — the
+ * `connectGate` / `ppgGate`, each citing the panel lines it copies. Two
+ * deliberate tightenings: the endpoint also rejects a BUSY SOURCE port — the
  * panel only checks the drop target (its cursor already marks a busy source
- * "not-allowed", but `onPointerDown` does not enforce it).
+ * "not-allowed", but `onPointerDown` does not enforce it) — and a port this
+ * INSTANCE's binding tree no longer holds (`port_unplaceable`: the panel
+ * lists the catalog tree, so a per-instance asset swap that removed the
+ * anchor still offers it; the store then creates no cable, or an unmounted
+ * PPG).
+ *
+ * Every port is posed through its binding chain
+ * (`rfCableAnchorResolver.rfPortPoses` → `anchorPose.resolveAnchorPosesLab`,
+ * backend `ports.port_poses` → `anchor_poses.resolve_anchor_poses_lab`), so
+ * the scenes put ports on rotated / offset / nested bindings with
+ * ObjectBinding deltas and asset swaps (`lab-bindings`, the random scenes'
+ * deltas, the rotated mount scenes).
  *
  * Regenerate after an intentional change:
  *
@@ -55,6 +66,7 @@ import type {
   Asset3D,
   ComponentBinding,
   ComponentItem,
+  ObjectBinding,
   PhysicsElement,
   SceneData,
   SceneObject,
@@ -62,6 +74,7 @@ import type {
 import { PHYSICS_PLUGINS } from "../../kinds/_plugins";
 import { sceneObjectEulerFromQuaternion, threeToLabMm } from "../../optical/frames";
 import { dirBodyToLab, pointBodyToLab } from "../../optical/pose";
+import { resolveAnchorPosesLab } from "../anchorPose";
 import { anchorsInBindingTree, primaryAsset } from "../componentBindings";
 import { computePpgMountedThreePose } from "../ppgMounting";
 import { ppgAttachments } from "../ppgAttachment";
@@ -75,6 +88,7 @@ import {
 import {
   connectorTipMmFromAnchors,
   resolveLinkedRfCableEndpoint,
+  resolveRfPortPose,
 } from "../rfCableAnchorResolver";
 import { findRfCableEndpointAlignmentCandidates } from "../rfCableAlignment";
 
@@ -200,7 +214,7 @@ type SceneJson = {
   objects: SceneObject[];
   components: ComponentItem[];
   componentBindings: ComponentBinding[];
-  objectBindings: [];
+  objectBindings: ObjectBinding[];
   assets: Asset3D[];
   physicsElements: PhysicsElement[];
   timingPrograms: { id: string; name: string; intervals: [] }[];
@@ -247,6 +261,26 @@ function binding(p: {
     sortOrder: p.sortOrder ?? 0,
     properties: p.properties ?? {},
   } as unknown as ComponentBinding;
+}
+
+/** A per-instance ObjectBinding: transform deltas (null = none on that
+ *  axis) and an optional asset swap. */
+function objectBinding(
+  objectId: string,
+  componentBindingId: string,
+  d: { pos?: [number | null, number | null, number | null]; rot?: [number | null, number | null, number | null]; asset?: string } = {},
+): ObjectBinding {
+  const [x, y, z] = d.pos ?? [null, null, null];
+  const [rx, ry, rz] = d.rot ?? [null, null, null];
+  return {
+    id: `ob-${objectId}-${componentBindingId}`,
+    objectId,
+    componentBindingId,
+    localXMmDelta: x, localYMmDelta: y, localZMmDelta: z,
+    localRxDegDelta: rx, localRyDegDelta: ry, localRzDegDelta: rz,
+    asset3dIdOverride: d.asset ?? null,
+    properties: {},
+  };
 }
 
 function sceneObject(
@@ -382,6 +416,15 @@ function findPort(scene: SceneData, ref: PortRef): PanelPort | { code: string } 
 const busy = (occ: Set<string>, p: PanelPort): boolean =>
   occ.has(`${p.objectId}|${p.anchorId}|${p.anchorName}`);
 
+/** The endpoint's tightening (see the header): the port must resolve
+ *  through this instance's binding chain — the lookup the store poses it
+ *  with (`resolveRfPortPose`). */
+function placeable(scene: SceneData, p: PanelPort): boolean {
+  const o = scene.objects.find((x) => x.id === p.objectId)!;
+  const c = scene.components.find((x) => x.id === o.componentId);
+  return c !== undefined && resolveRfPortPose(c, o, scene, p.anchorId, p.anchorName) !== null;
+}
+
 /** `RfLinkPanel` pointer-up (:1525-1534), in the endpoint's order. */
 function connectGate(scene: SceneData, a: PortRef, b: PortRef): { code: string } | { src: PanelPort; tgt: PanelPort } {
   const pa = findPort(scene, a);
@@ -394,6 +437,7 @@ function connectGate(scene: SceneData, a: PortRef, b: PortRef): { code: string }
   if (pa.domain !== pb.domain) return { code: "domain_mismatch" };
   const occ = occupiedPortKeys(scene);
   if (busy(occ, pa) || busy(occ, pb)) return { code: "port_busy" };
+  if (!placeable(scene, pa) || !placeable(scene, pb)) return { code: "port_unplaceable" };
   // The panel hands the store the OUT port as src (:1535).
   return pa.role === "out" ? { src: pa, tgt: pb } : { src: pb, tgt: pa };
 }
@@ -405,6 +449,7 @@ function ppgGate(scene: SceneData, ref: PortRef): { code: string } | PanelPort {
   if (p.role !== "in" || (p.domain !== "ttl" && p.domain !== "trigger")) return { code: "not_a_gate_input" };
   if (!p.connectorFamily) return { code: "connector_undefined" };
   if (busy(occupiedPortKeys(scene), p)) return { code: "port_busy" };
+  if (!placeable(scene, p)) return { code: "port_unplaceable" };
   return p;
 }
 
@@ -734,6 +779,131 @@ function labScene(opts: { cables?: "all" | "smaOnly" | "none" } = {}): SceneJson
   return s;
 }
 
+/** The lab scene with RF ports OFF identity root bindings — which the live
+ *  scene does not have (every live RF port sits on an identity root
+ *  binding), and which every RF port lookup got wrong until 2026-09-22 (it
+ *  read the anchor in its own asset's frame):
+ *
+ *  - amp3: ports on a CHILD binding, rotated + offset under a body root,
+ *    with an ObjectBinding delta on top, on a tilted object;
+ *  - switch2: ports on a rotated + offset ROOT binding;
+ *  - amp6: ports inside a spliced SUB-COMPONENT;
+ *  - amp4 / amp5 / switch3: per-instance asset swaps — onto a variant whose
+ *    ports sit elsewhere (the pose follows the swap, as the tracer does), and
+ *    onto variants missing `rf_in` / `ttl_in` (`port_unplaceable`);
+ *  - the BNC PPG's own plug on a rotated + offset root binding, and ppg0
+ *    with an ObjectBinding delta on it.
+ */
+function labBindingsScene(): SceneJson {
+  const s = labScene();
+  const switchAnchors = (withTtl: boolean): Anchor[] => [
+    anchor("rf_in", v(0, -12.5, 9), { axisXBodyLocal: v(0, -1, 0), connectorType: "bnc_female" }),
+    anchor("rf_out", v(-9, 12.5, 9), { name: "RF1", axisXBodyLocal: v(0, 1, 0), connectorType: "sma_female" }),
+    anchor("rf_out", v(9, 12.5, 9), { name: "RF2", axisXBodyLocal: v(0, 1, 0), connectorType: "sma_female" }),
+    ...(withTtl ? [anchor("ttl_in", v(20, 0, 9), { axisXBodyLocal: v(1, 0, 0), connectorType: "bnc_female" })] : []),
+  ];
+  s.assets.push(
+    asset("a-amp-body", "rf_amplifier", []),
+    asset("a-amp-alt", "rf_amplifier", [
+      anchor("rf_in", v(-40, 10, 5), { axisXBodyLocal: v(-0.8, 0.6, 0), connectorType: "sma_female" }),
+      anchor("rf_out", v(40, 10, 5), { axisXBodyLocal: v(1, 0, 0), connectorType: "sma_female" }),
+    ]),
+    asset("a-amp-outonly", "rf_amplifier", [
+      anchor("rf_out", v(55.5, 0, 0), { axisXBodyLocal: v(1, 0, 0), connectorType: "sma_female" }),
+    ]),
+    asset("a-switch-nottl", "rf_switch", switchAnchors(false)),
+  );
+  // Ports on a rotated + offset CHILD binding under a body root.
+  s.components.push(component("c-amp-nested", "rf_amplifier"));
+  s.componentBindings.push(
+    binding({ id: "c-amp-nested-body", componentId: "c-amp-nested", asset: "a-amp-body", role: "body" }),
+    binding({
+      id: "c-amp-nested-ports", componentId: "c-amp-nested", parent: "c-amp-nested-body", asset: "a-amp",
+      role: "ports", pos: [12, -7, 25], rot: [30, -60, 45], sortOrder: 1,
+    }),
+  );
+  // Ports on a rotated + offset ROOT binding.
+  s.components.push(component("c-switch-rot", "rf_switch"));
+  s.componentBindings.push(binding({
+    id: "c-switch-rot-root", componentId: "c-switch-rot", asset: "a-switch", role: "root", pos: [5, -3, 8], rot: [0, 0, 90],
+  }));
+  // Ports inside a spliced sub-Component.
+  s.components.push(component("c-amp-core", "rf_amplifier"), component("c-amp-sub", "rf_amplifier"));
+  s.componentBindings.push(
+    binding({ id: "c-amp-core-root", componentId: "c-amp-core", asset: "a-amp", role: "root", pos: [0, 5, 0], rot: [0, 0, 90] }),
+    binding({
+      id: "c-amp-sub-core", componentId: "c-amp-sub", kind: "subcomponent", sub: "c-amp-core", role: "core",
+      pos: [-10, 0, 3], rot: [90, 0, 0],
+    }),
+  );
+  // The BNC PPG's own plug on a rotated + offset root binding.
+  const ppgRoot = s.componentBindings.find((b) => b.id === "c-ppg-bnc-root")!;
+  Object.assign(ppgRoot, { localXMm: 1.5, localYMm: -2, localZMm: 3, localRxDeg: 0, localRyDeg: 90, localRzDeg: 30 });
+
+  const place = (id: string, cid: string, kind: string, pose: Pose): void => {
+    s.objects.push(sceneObject(id, cid, pose));
+    s.physicsElements.push(pe(id, kind));
+  };
+  place("amp3", "c-amp-nested", "rf_amplifier", { xMm: -1300, yMm: 300, zMm: 800, rxDeg: 15, ryDeg: -40, rzDeg: 120 });
+  place("switch2", "c-switch-rot", "rf_switch", { xMm: -1100, yMm: 650, zMm: 720, rxDeg: -90, ryDeg: 0, rzDeg: 180 });
+  place("amp4", "c-amp", "rf_amplifier", { xMm: -1700, yMm: 200, zMm: 690, rxDeg: 0, ryDeg: 0, rzDeg: 45 });
+  place("amp5", "c-amp", "rf_amplifier", { xMm: -1750, yMm: 100, zMm: 690, rxDeg: 0, ryDeg: 0, rzDeg: 0 });
+  place("switch3", "c-switch", "rf_switch", { xMm: -1200, yMm: 100, zMm: 700, rxDeg: 0, ryDeg: 0, rzDeg: 0 });
+  place("amp6", "c-amp-sub", "rf_amplifier", { xMm: -1650, yMm: 350, zMm: 710, rxDeg: 0, ryDeg: 20, rzDeg: -30 });
+  s.objectBindings.push(
+    objectBinding("amp3", "c-amp-nested-ports", { pos: [4, null, null], rot: [null, -20, 7] }),
+    objectBinding("amp4", "c-amp-root", { pos: [2, 0, 1], asset: "a-amp-alt" }),
+    objectBinding("amp5", "c-amp-root", { asset: "a-amp-outonly" }),
+    objectBinding("switch3", "c-switch-root", { asset: "a-switch-nottl" }),
+    objectBinding("ppg0", "c-ppg-bnc-root", { pos: [null, null, 2], rot: [10, null, null] }),
+  );
+
+  // Linked cables with stale nodes (resnap), and loose ends parked 3 mm off
+  // a port placed through its chain (align).
+  const linked = (id: string, a: [string, string, string], b: [string, string, string], origin: V3): void => {
+    s.objects.push(sceneObject(id, "c-cable-sma", { xMm: origin.x, yMm: origin.y, zMm: origin.z }, {
+      properties: {
+        rfCableEndpoints: {
+          A: { targetObjectId: a[0], targetAnchorId: a[1], targetAnchorName: a[2] },
+          B: { targetObjectId: b[0], targetAnchorId: b[1], targetAnchorName: b[2] },
+        },
+        rfCableNodes: [
+          { posMm: [10, -20, 5], handleOutMm: [0, 30, 0] },
+          { posMm: [-200, 40, -60], handleInMm: [30, 0, 0] },
+        ],
+      },
+    }));
+    s.physicsElements.push(pe(id, "rf_cable"));
+  };
+  linked("cable-nest", ["amp3", "rf_out", "rf_out"], ["amp1", "rf_in", "rf_in"], v(-1300, 500, 900));
+  linked("cable-swap", ["amp4", "rf_out", "rf_out"], ["amp6", "rf_in", "rf_in"], v(-1650, 250, 800));
+  const store = toStoreScene(s);
+  const parkAt = (id: string, objectId: string, anchorId: string, origin: V3): void => {
+    const obj = store.objects.find((o) => o.id === objectId)!;
+    const comp = store.components.find((c) => c.id === obj.componentId)!;
+    const port = resolveAnchorPosesLab(comp, obj, store).find((a) => a.anchorId === anchorId)!;
+    const out = port.axisXLab!;
+    // The bound SMA connector's face sits 25.45 mm past the node.
+    const k = 3 + 25.45;
+    const nodeB: Tuple3 = [
+      port.posLab.x + out.x * k - origin.x, port.posLab.y + out.y * k - origin.y, port.posLab.z + out.z * k - origin.z,
+    ];
+    s.objects.push(sceneObject(id, "c-cable-sma", { xMm: origin.x, yMm: origin.y, zMm: origin.z }, {
+      properties: {
+        rfCableEndpoints: {},
+        rfCableNodes: [
+          { posMm: [nodeB[0] + 200, nodeB[1], nodeB[2]], handleOutMm: [-30, 0, 0] },
+          { posMm: nodeB, handleInMm: [out.x * 30, out.y * 30, out.z * 30] },
+        ],
+      },
+    }));
+    s.physicsElements.push(pe(id, "rf_cable"));
+  };
+  parkAt("loose-nest", "amp3", "rf_in", v(-1250, 350, 850));
+  parkAt("loose-sub", "amp6", "rf_out", v(-1600, 300, 750));
+  return s;
+}
+
 // ─── random scenes ─────────────────────────────────────────────────────────
 
 const RF_KINDS = ["rf_source", "rf_amplifier", "rf_switch", "aom", "eom", "detector", "horn_antenna"] as const;
@@ -944,6 +1114,19 @@ function randomScene(r: Rng, tag: string): RandomScene {
     cableIds.push(oid);
   }
 
+  // Per-instance ObjectBinding deltas on a third of the instruments and PPGs
+  // (a side generator, so the scene the main one draws is unchanged): the
+  // ports are posed through them.
+  const ro = makeRng([...tag].reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) >>> 0, 0x0b1d));
+  for (const o of s.objects) {
+    if (!instIds.includes(o.id) && !ppgIds.includes(o.id)) continue;
+    const own = s.componentBindings.filter((b) => b.componentId === o.componentId);
+    if (own.length === 0 || !ro.chance(0.35)) continue;
+    const target = ro.pick(own);
+    const d = (scale: number): number | null => (ro.chance(0.7) ? ro.uni(-scale, scale) : null);
+    s.objectBindings.push(objectBinding(o.id, target.id, { pos: [d(15), d(15), d(15)], rot: [d(40), d(40), d(40)] }));
+  }
+
   // Scene order is DB heap order in the real app; shuffle so nothing relies
   // on instruments preceding cables.
   for (let i = s.objects.length - 1; i > 0; i -= 1) {
@@ -1065,13 +1248,17 @@ function buildPure(): Json {
     const shape = r.next();
     s.assets.push(asset("tgt-asset", targetKind, targetAnchors));
     s.components.push(component("tgt-comp", targetKind));
-    if (shape < 0.6) s.componentBindings.push(binding({ id: "tgt-root", componentId: "tgt-comp", asset: "tgt-asset" }));
+    // Half the port / plug bindings are rotated + offset: both plugs are
+    // posed through their binding chains.
+    const tgtPose = r.chance(0.5) ? { pos: t3(r.vec(30)), rot: [r.uni(-180, 180), r.uni(-89, 89), r.uni(-180, 180)] as Tuple3 } : {};
+    const ppgPose = r.chance(0.5) ? { pos: t3(r.vec(10)), rot: [r.uni(-180, 180), r.uni(-89, 89), r.uni(-180, 180)] as Tuple3 } : {};
+    if (shape < 0.6) s.componentBindings.push(binding({ id: "tgt-root", componentId: "tgt-comp", asset: "tgt-asset", ...tgtPose }));
     else if (shape < 0.8) (s.components[0] as unknown as { asset3dId: string }).asset3dId = "tgt-asset";
     else {
       // Multi-root: primaryAsset gives up → the mount does not resolve.
       s.assets.push(asset("tgt-conn", "fiber_connector", [randomAnchor(r, "fiber_out")]));
       s.componentBindings.push(
-        binding({ id: "tgt-r0", componentId: "tgt-comp", asset: "tgt-asset" }),
+        binding({ id: "tgt-r0", componentId: "tgt-comp", asset: "tgt-asset", ...tgtPose }),
         binding({ id: "tgt-r1", componentId: "tgt-comp", asset: "tgt-conn", sortOrder: 1 }),
       );
     }
@@ -1084,7 +1271,7 @@ function buildPure(): Json {
       randomAnchor(r, "rf_out", "second"),
     ], dp));
     s.components.push(component("ppg-comp", "programmable_pulse_generator", { properties: { connectorType: "bnc" } }));
-    s.componentBindings.push(binding({ id: "ppg-root", componentId: "ppg-comp", asset: "ppg-asset" }));
+    s.componentBindings.push(binding({ id: "ppg-root", componentId: "ppg-comp", asset: "ppg-asset", ...ppgPose }));
     s.objects.push(sceneObject("tgt", "tgt-comp", randomPose(r)));
     s.physicsElements.push(pe("tgt", targetKind));
     const which = r.pick(targetAnchors);
@@ -1259,6 +1446,49 @@ async function buildFlows(): Promise<Json> {
     scene: iSmaTtl, op: "ppgAttach", request: { target: P("switch", "ttl_in") },
     expected: await runPpgAttach(labSmaTtl, P("switch", "ttl_in")),
   });
+
+  // Ports off identity root bindings (see labBindingsScene): every flow poses
+  // them through their binding chain.
+  const bound = labBindingsScene();
+  const iBound = addScene("lab-bindings", bound);
+  const boundConnects: [string, PortRef, PortRef][] = [
+    ["port on a rotated child binding + ObjectBinding delta", P("dds", "CH2"), P("amp3", "rf_in")],
+    ["rotated root binding → rotated child binding", P("switch2", "RF1"), P("amp3", "rf_in")],
+    ["port inside a sub-Component", P("amp6", "rf_out"), P("amp2", "rf_in")],
+    ["asset swap: the port on the swapped asset", P("dds", "CH1"), P("amp4", "rf_in")],
+    ["asset swap removed the port", P("dds", "CH1"), P("amp5", "rf_in")],
+  ];
+  for (const [label, a, b] of boundConnects) {
+    cases.push({ label, scene: iBound, op: "connect", request: { a, b }, expected: await runConnect(bound, a, b) });
+  }
+  for (const [label, moved] of [
+    ["resnap: nested + delta end", ["amp3"]],
+    ["resnap: swapped end + sub-Component end", ["amp4", "amp6"]],
+    ["resnap aom: PPG plug on a rotated binding + delta", ["aom"]],
+    ["resnap: the PPG moved itself", ["ppg0"]],
+  ] as [string, string[]][]) {
+    cases.push({ label, scene: iBound, op: "resnap", request: { movedObjectIds: moved }, expected: await runResnap(bound, moved) });
+  }
+  for (const cableId of ["loose-nest", "loose-sub"]) {
+    const expected = await runAlign(bound, cableId, "B", 25, 0) as { candidates: unknown[] };
+    if (expected.candidates.length === 0) throw new Error(`${cableId}: the parked port must be a candidate`);
+    cases.push({
+      label: `align candidates ${cableId}: port posed through its binding chain`,
+      scene: iBound, op: "align", request: { cableId, end: "B", toleranceMm: 25, pickIndex: 0 },
+      expected,
+    });
+  }
+  cases.push({
+    label: "align candidates cable-nest A tol 2000",
+    scene: iBound, op: "align", request: { cableId: "cable-nest", end: "A", toleranceMm: 2000, pickIndex: 1 },
+    expected: await runAlign(bound, "cable-nest", "A", 2000, 1),
+  });
+  for (const [label, ref] of [
+    ["gate on a rotated root binding, PPG plug on a rotated binding", P("switch2", "ttl_in")],
+    ["asset swap removed the gate", P("switch3", "ttl_in")],
+  ] as [string, PortRef][]) {
+    cases.push({ label, scene: iBound, op: "ppgAttach", request: { target: ref }, expected: await runPpgAttach(bound, ref) });
+  }
 
   // Random scenes.
   const r = makeRng(0xcab1e5);

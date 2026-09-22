@@ -3,12 +3,16 @@
 Ports of the read side the web flows stand on:
 
 * binding-tree anchors — ``componentBindings.assetsInBindingTree`` /
-  ``anchorsInBindingTree`` / ``findAnchorInBindingTree`` / ``primaryAsset`` /
+  ``anchorsInBindingTree`` / ``primaryAsset`` /
   ``deriveCablePropsFromConnectorBindings``. The walk is the backend's own
   port of ``resolveBindingTree`` (``app.optical.align.anchor_poses``); like
-  the TS these return anchors in their OWNING ASSET's frame (the caveat on
-  ``findAnchorInBindingTree``: exact only for a root binding at identity,
-  which is where device-level RF ports live);
+  the TS these answer IDENTITY questions (which ports exist) and return
+  anchors in their owning asset's frame;
+* port POSES — ``rfCableAnchorResolver.rfPortPoses`` /
+  ``resolveRfPortPose``: every port placed through its binding chain by
+  ``anchor_poses.resolve_anchor_poses_lab`` (the pinned twin of
+  ``anchorPose.resolveAnchorPosesLab``), which is how connect, resnap, align
+  and the PPG mount place a port since 2026-09-22;
 * port domains — ``rfLinkPorts.ts`` (``resolveRfLinkPortDomain``,
   ``kindParticipatesInRfLink``, ``rfLinkRoleAnchors``,
   ``connectorFamilyFromAnchor``), read from the kinds manifest
@@ -29,10 +33,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import lru_cache
+from types import SimpleNamespace
 from typing import Any
 
 from app.kinds_manifest import load_manifest
-from app.optical.align.anchor_poses import AlignScene, resolve_binding_tree
+from app.optical.align.anchor_poses import (
+    AlignScene,
+    AnchorPoseLab,
+    resolve_anchor_poses_lab,
+    resolve_binding_tree,
+)
 from app.optical.align.ts_compat import V, read_xyz
 from app.optical.rf_cables.geometry import js_truthy
 from app.optical.rf_resolve import _primary_asset_id
@@ -49,13 +59,15 @@ class RfScene:
 
     ``components`` excludes archived rows (as the scene snapshot does);
     ``bindings`` is every ComponentBinding in (component, sort_order,
-    created_at) order."""
+    created_at) order; ``object_bindings`` every ObjectBinding (the
+    per-instance deltas and asset swaps a port is posed through)."""
 
     objects: list[Any]
     components: list[Any]
     bindings: list[Any]
     assets: list[Any]
     physics_elements: list[Any]
+    object_bindings: list[Any] = field(default_factory=list)
     object_by_id: dict[str, Any] = field(init=False)
     component_by_id: dict[str, Any] = field(init=False)
     asset_by_id: dict[str, Any] = field(init=False)
@@ -73,11 +85,14 @@ class RfScene:
         by_component: dict[str, list[Any]] = {}
         for b in self.bindings:
             by_component.setdefault(str(b.component_id), []).append(b)
+        ob_by_object: dict[str, dict[Any, Any]] = {}
+        for ob in self.object_bindings:
+            ob_by_object.setdefault(str(ob.object_id), {})[ob.component_binding_id] = ob
         self.align = AlignScene(
             objects=self.object_by_id,
             components=self.component_by_id,
             bindings_by_component=by_component,
-            object_bindings={},
+            object_bindings=ob_by_object,
             assets=self.asset_by_id,
         )
 
@@ -105,10 +120,6 @@ def primary_dir(anchor: dict) -> V | None:
     directionBodyLocal."""
     axis = read_xyz(anchor.get("axisXBodyLocal"))
     return axis if axis is not None else read_xyz(anchor.get("directionBodyLocal"))
-
-
-def anchor_pos(anchor: dict) -> V | None:
-    return read_xyz(anchor.get("positionMmBodyLocal"))
 
 
 # ─── binding-tree lookups (componentBindings.ts) ───────────────────────────
@@ -161,15 +172,63 @@ def anchors_in_binding_tree(scene: RfScene, component: Any) -> list[tuple[Any, d
     return out
 
 
-def find_anchor_in_binding_tree(
-    scene: RfScene, component: Any, anchor_id: Any, name: Any,
-) -> tuple[Any, dict] | None:
-    """``findAnchorInBindingTree``: first anchor anywhere in the tree whose
-    ``id`` and ``name ?? id`` both match."""
-    for asset in assets_in_binding_tree(scene, component):
-        for a in _anchors(asset):
-            if a.get("id") == anchor_id and anchor_name(a) == name:
-                return asset, a
+# ─── port poses, through the binding chain (rfCableAnchorResolver.ts) ──────
+
+@dataclass(frozen=True)
+class PortPose:
+    """``RfPortPose`` minus the TS-only axisY: one anchor posed as an RF port
+    in its owner's Component CAD frame — the SceneObject's body frame, what
+    :func:`geometry.resolve_linked_rf_cable_endpoint` takes as
+    ``target_anchor_*_body`` under the object's pose."""
+
+    anchor_id: str
+    anchor_name: str
+    asset_id: str
+    anchor: dict
+    pos_cad: V
+    # The primary direction through the chain; the CAD frame's +X when the
+    # anchor declares none, zero (degenerate) when it declares a zero vector.
+    dir_cad: V
+
+
+def _port_pose_of(p: AnchorPoseLab) -> PortPose:
+    if p.axis_x_cad is not None:
+        d = p.axis_x_cad
+    else:
+        d = V(0.0, 0.0, 0.0) if primary_dir(p.anchor) is not None else V(1.0, 0.0, 0.0)
+    return PortPose(
+        anchor_id=p.anchor_id, anchor_name=p.anchor_name, asset_id=p.asset_id,
+        anchor=p.anchor, pos_cad=p.pos_cad, dir_cad=d,
+    )
+
+
+# The instance a catalog-time question poses against (the PPG attach mounts a
+# PPG before its object exists): no id, so no ObjectBinding applies.
+_CATALOG_INSTANCE = SimpleNamespace(id="", x_mm=0.0, y_mm=0.0, z_mm=0.0, rx_deg=0.0, ry_deg=0.0, rz_deg=0.0)
+
+
+def port_poses(scene: RfScene, component: Any, obj: Any | None) -> list[PortPose]:
+    """``rfPortPoses``: every anchor of ``component``'s binding tree posed
+    through its binding chain for the instance ``obj`` (``None`` = the
+    catalog) — ``anchor_poses.resolve_anchor_poses_lab``: binding transforms
+    (nested ones composed), the instance's ObjectBinding deltas and asset
+    swaps, i.e. the chain the tracer places anchors with. Tree order, first
+    ``id|name`` wins."""
+    inst = obj if obj is not None else _CATALOG_INSTANCE
+    return [_port_pose_of(p) for p in resolve_anchor_poses_lab(scene.align, component, inst)]
+
+
+def find_port_pose(scene: RfScene, obj: Any, anchor_id: Any, name: Any) -> PortPose | None:
+    """``resolveRfPortPose``: the port an RF link names (``anchorId`` and
+    ``name ?? id``) on ``obj``, posed, or ``None`` — also when a per-instance
+    asset swap took it away (the panel, which lists the CATALOG tree, may
+    still offer it)."""
+    comp = scene.component_of(obj)
+    if comp is None:
+        return None
+    for p in port_poses(scene, comp, obj):
+        if p.anchor_id == anchor_id and p.anchor_name == name:
+            return p
     return None
 
 

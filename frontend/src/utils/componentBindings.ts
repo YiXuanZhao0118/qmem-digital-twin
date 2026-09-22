@@ -367,46 +367,17 @@ export function assetsInBindingTree(
 export type OwnedAnchor = { asset: Asset3D; anchor: Anchor };
 
 
-/** Look up one anchor by the identity an RfLink stores — ``anchorId`` plus
- *  the display ``anchorName`` (``anchor.name ?? anchor.id``) — anywhere in
- *  a Component's binding tree.
- *
- *  The `primaryAsset(comp)?.anchors.find(...)` idiom this replaces returns
- *  null for a multi-root Component (the EOSpace EOM: modulator root plus
- *  two FC/APC connector roots), so its ``rf_in`` was invisible to every
- *  caller even though the RF Link panel — which already aggregates the
- *  tree — offered the port. Tree order, first match wins, matching the
- *  panel's dedupe.
- *
- *  Caveat: the anchor is returned as stored, i.e. in ITS OWN asset's body
- *  frame. That equals the Component body frame only for a root binding at
- *  the identity transform, which is where the device-level ports
- *  (rf_in / rf_out / intercept_*) live. A caller that resolves anchors on
- *  transformed child bindings must fold in ``resolveBindingTree``'s pose
- *  itself.
- */
-export function findAnchorInBindingTree(
-  component: ComponentItem,
-  scene: Pick<SceneData, "componentBindings" | "objectBindings" | "assets" | "components">,
-  anchorId: string,
-  anchorName: string,
-): OwnedAnchor | null {
-  for (const asset of assetsInBindingTree(component, scene)) {
-    for (const anchor of asset.anchors ?? []) {
-      if (anchor.id === anchorId && (anchor.name ?? anchor.id) === anchorName) {
-        return { asset, anchor };
-      }
-    }
-  }
-  return null;
-}
-
-
 /** Every anchor in a Component's binding tree paired with its owning
  *  asset, deduped by ``anchorId|anchorName`` (the port identity), first
- *  occurrence winning. The list form of ``findAnchorInBindingTree`` — for
- *  callers that scan for anchors by role rather than by name. Same body-frame
- *  caveat applies.
+ *  occurrence winning — the IDENTITY question ("which ports exist", what the
+ *  RF Link panel lists). The anchors come as stored, i.e. in their own
+ *  asset's body frame, which is the Component frame only for a root binding
+ *  at identity: a caller that needs WHERE a port is poses it through the
+ *  binding chain instead (``anchorPose.resolveAnchorPosesLab``; the RF
+ *  lookups via ``rfCableAnchorResolver.rfPortPoses``). The single-anchor
+ *  form, ``findAnchorInBindingTree``, was retired on 2026-09-22 when its
+ *  last callers (the RF connect / resnap / align / PPG-mount lookups) moved
+ *  to ``resolveRfPortPose``.
  */
 export function anchorsInBindingTree(
   component: ComponentItem,

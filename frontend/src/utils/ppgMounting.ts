@@ -30,32 +30,32 @@ import {
   labMmToThreeLocal,
   sceneObjectToQuaternion,
 } from "../optical/frames";
-import { anchorObjectLocalAxisY, anchorObjectLocalPos, anchorObjectLocalPrimaryDir } from "./anchorAccess";
-import { findAnchorInBindingTree } from "./componentBindings";
 import { ppgAttachmentOf } from "./ppgAttachment";
+import { resolveRfPortPose, rfPortPoses, type RfPortPose } from "./rfCableAnchorResolver";
 
 type RfCableEndpoints = {
   A?: { targetObjectId: string; targetAnchorId: string; targetAnchorName: string };
   B?: { targetObjectId: string; targetAnchorId: string; targetAnchorName: string };
 };
 
-function anchorPosThree(anchor: Anchor, asset: Asset3D | null | undefined): THREE.Vector3 {
-  // Asset anchors live in body frame — convert to object-local CAD frame
-  // before treating as an offset from the SceneObject's pose. Raw Z-up
-  // (labRoot supplies the swap), so M rotates it as a Z-up offset.
-  const p = anchorObjectLocalPos(anchor, asset);
-  return labMmToThreeLocal({ xMm: p.x, yMm: p.y, zMm: p.z });
+// Both ports — the target's and the PPG's own `rf_out` — come in POSED in
+// their owner's Component CAD frame (`RfPortPose`: the anchor through its
+// binding chain), i.e. the object-local frame the SceneObject rotation M
+// applies to. Until 2026-09-22 they were the anchors as stored in their own
+// asset, exact only on an identity root binding (every live RF port and PPG).
+function portPosThree(port: RfPortPose): THREE.Vector3 {
+  // Raw Z-up (labRoot supplies the swap), so M rotates it as a Z-up offset.
+  return labMmToThreeLocal({ xMm: port.posCad.x, yMm: port.posCad.y, zMm: port.posCad.z });
 }
 
-function anchorDirThree(anchor: Anchor, asset: Asset3D | null | undefined): THREE.Vector3 {
-  // axisX (Phase 9.1 primary direction) first; fall back to the legacy
-  // directionBodyLocal only for pre-tri-axis anchors. Reading the legacy
-  // field alone returned null for modern anchors (rf_out / ttl_in carry
-  // axisXBodyLocal, not directionBodyLocal), silently defaulting both the
-  // PPG and target directions to (1,0,0) → wrong mating, and the mount
-  // flipping when the target's RZ changed.
-  const d = anchorObjectLocalPrimaryDir(anchor, asset) ?? { x: 1, y: 0, z: 0 };
-  return labDirToThreeLocal(d).normalize();
+function portDirThree(port: RfPortPose): THREE.Vector3 {
+  // axisX (Phase 9.1 primary direction) first, legacy directionBodyLocal
+  // after, +X when the anchor declares neither (`RfPortPose.dirCad`).
+  // Reading the legacy field alone returned null for modern anchors (rf_out
+  // / ttl_in carry axisXBodyLocal), silently defaulting both the PPG and
+  // target directions to (1,0,0) → wrong mating, and the mount flipping
+  // when the target's RZ changed.
+  return labDirToThreeLocal(port.dirCad).normalize();
 }
 
 /** Which port this PPG is plugged into.
@@ -98,12 +98,11 @@ function findConnectingCable(scene: SceneData, ppgObjectId: string): {
   return null;
 }
 
-/** Lab-frame anchor pose (in three.js units / quaternion) for a given
- *  asset anchor on a given SceneObject. Position = object.pose ∘ anchor.body. */
+/** Lab-frame pose (in three.js units / quaternion) of a port on a given
+ *  SceneObject. Position = object.pose ∘ port (Component CAD frame). */
 function targetAnchorLabPose(
   targetObj: SceneObject,
-  anchor: Anchor,
-  targetAsset: Asset3D | null | undefined,
+  port: RfPortPose,
 ): { posThree: THREE.Vector3; dirThree: THREE.Vector3; axisYThree: THREE.Vector3 | null } {
   const targetThreePos = labMmToThreeLocal({
     xMm: targetObj.xMm,
@@ -111,51 +110,47 @@ function targetAnchorLabPose(
     zMm: targetObj.zMm,
   });
   const targetQuat = sceneObjectToQuaternion(targetObj);
-  const posBodyThree = anchorPosThree(anchor, targetAsset);
-  const dirBodyThree = anchorDirThree(anchor, targetAsset);
-  const posLabThree = posBodyThree.clone().applyQuaternion(targetQuat).add(targetThreePos);
-  const dirLabThree = dirBodyThree.clone().applyQuaternion(targetQuat).normalize();
-  // Target anchor's axisY in lab — used to build a stable side basis for
+  const posLabThree = portPosThree(port).applyQuaternion(targetQuat).add(targetThreePos);
+  const dirLabThree = portDirThree(port).applyQuaternion(targetQuat).normalize();
+  // Target port's axisY in lab — used to build a stable side basis for
   // any manual nudge so it co-moves with the instrument. Null when the
   // anchor doesn't declare axisY.
-  const axisYBody = anchorObjectLocalAxisY(anchor, targetAsset);
-  const axisYThree = axisYBody
-    ? labDirToThreeLocal(axisYBody).applyQuaternion(targetQuat).normalize()
+  const axisYThree = port.axisYCad
+    ? labDirToThreeLocal(port.axisYCad).applyQuaternion(targetQuat).normalize()
     : null;
   return { posThree: posLabThree, dirThree: dirLabThree, axisYThree };
 }
 
-/** Look up an anchor on the SceneObject by id + display name (the same
- *  matching rule the propagation map + cable resolver use). */
+function sceneSlice(scene: SceneData) {
+  return {
+    componentBindings: scene.componentBindings ?? [],
+    objectBindings: scene.objectBindings ?? [],
+    assets: scene.assets,
+    components: scene.components,
+  };
+}
+
+/** Look up a port on the SceneObject by id + display name (the same
+ *  matching rule the propagation map + cable resolver use), posed through
+ *  its binding chain. */
 function findAnchor(
   scene: SceneData,
   objectId: string,
   anchorId: string,
   anchorName: string,
-): { obj: SceneObject; anchor: Anchor; asset: Asset3D } | null {
+): { obj: SceneObject; port: RfPortPose } | null {
   const obj = scene.objects.find((o) => o.id === objectId);
   if (!obj) return null;
   const comp = scene.components.find((c) => c.id === obj.componentId);
   if (!comp) return null;
   // The whole binding tree, as the cable connect / align / resnap paths
-  // resolve a port (`findAnchorInBindingTree`). Reading `comp.asset3dId`
-  // missed every binding-backed instrument; `primaryAsset`, which replaced
-  // it, still answers null for a MULTI-ROOT Component (the EOSpace EOM:
+  // resolve a port (`resolveRfPortPose`). Reading `comp.asset3dId` missed
+  // every binding-backed instrument; `primaryAsset`, which replaced it,
+  // still answers null for a MULTI-ROOT Component (the EOSpace EOM:
   // modulator + two FC/APC connectors), so a PPG plugged into such an
   // instrument's port was left at its spawn pose instead of on the port.
-  const owned = findAnchorInBindingTree(
-    comp,
-    {
-      componentBindings: scene.componentBindings ?? [],
-      objectBindings: scene.objectBindings ?? [],
-      assets: scene.assets,
-      components: scene.components,
-    },
-    anchorId,
-    anchorName,
-  );
-  if (!owned) return null;
-  return { obj, anchor: owned.anchor, asset: owned.asset };
+  const port = resolveRfPortPose(comp, obj, sceneSlice(scene), anchorId, anchorName);
+  return port ? { obj, port } : null;
 }
 
 /** Distance (mm) the PPG's own plug protrudes past its `rf_out` anchor,
@@ -173,9 +168,8 @@ export function matingProtrusionMm(ppgAsset: Asset3D | null | undefined): number
   return typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? raw : 0;
 }
 
-/** Resolve the PPG's own rf_out anchor from its asset. The body-local
- *  position + direction here, combined with the mating target's lab pose,
- *  drive the placement math below. */
+/** Resolve the PPG's own rf_out anchor from its asset — only WHICH anchor;
+ *  its pose comes through the PPG's binding chain below. */
 function findPpgRfOutAnchor(
   ppgObject: SceneObject,
   ppgComponent: ComponentItem | undefined,
@@ -206,7 +200,16 @@ export function computePpgMountedThreePose(
   ppgAsset: Asset3D | undefined,
 ): { positionThree: THREE.Vector3; quaternion: THREE.Quaternion } | null {
   const ppgAnchor = findPpgRfOutAnchor(ppgObject, ppgComponent, ppgAsset);
-  if (!ppgAnchor) return null;
+  if (!ppgAnchor || !ppgAsset || !ppgComponent) return null;
+  // The PPG's own plug, posed in ITS Component CAD frame through its binding
+  // chain — the frame the renderer draws the PPG's tree in, under the
+  // wrapper this pose is written to. Null when this instance's tree no
+  // longer holds that anchor of that asset (a per-instance asset swap).
+  const ppgAnchorName = ppgAnchor.name ?? ppgAnchor.id;
+  const ppgPort = rfPortPoses(ppgComponent, ppgObject, sceneSlice(scene)).find(
+    (p) => p.asset.id === ppgAsset.id && p.anchorId === ppgAnchor.id && p.anchorName === ppgAnchorName,
+  );
+  if (!ppgPort) return null;
 
   const peer = findMatingPort(scene, ppgObject.id);
   if (!peer) return null;
@@ -219,13 +222,13 @@ export function computePpgMountedThreePose(
   );
   if (!resolved) return null;
 
-  const target = targetAnchorLabPose(resolved.obj, resolved.anchor, resolved.asset);
+  const target = targetAnchorLabPose(resolved.obj, resolved.port);
   // Mating: PPG.rf_out should face the OPPOSITE of the target port's
   // outward normal so the two coax connector faces meet.
   const matingDir = target.dirThree.clone().negate().normalize();
 
-  const ppgAnchorBodyPos = anchorPosThree(ppgAnchor, ppgAsset);
-  const ppgAnchorBodyDir = anchorDirThree(ppgAnchor, ppgAsset);
+  const ppgAnchorBodyPos = portPosThree(ppgPort);
+  const ppgAnchorBodyDir = portDirThree(ppgPort);
 
   const quaternion = new THREE.Quaternion().setFromUnitVectors(
     ppgAnchorBodyDir,

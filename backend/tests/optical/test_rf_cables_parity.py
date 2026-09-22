@@ -153,6 +153,16 @@ def rf_scene(d: dict) -> RfScene:
             SimpleNamespace(object_id=p["objectId"], element_kind=p["elementKind"], kind_params=p.get("kindParams") or {})
             for p in d["physicsElements"]
         ],
+        object_bindings=[
+            SimpleNamespace(
+                id=ob["id"], object_id=ob["objectId"], component_binding_id=ob["componentBindingId"],
+                local_x_mm_delta=ob["localXMmDelta"], local_y_mm_delta=ob["localYMmDelta"],
+                local_z_mm_delta=ob["localZMmDelta"], local_rx_deg_delta=ob["localRxDegDelta"],
+                local_ry_deg_delta=ob["localRyDegDelta"], local_rz_deg_delta=ob["localRzDegDelta"],
+                asset_3d_id_override=ob.get("asset3dIdOverride"),
+            )
+            for ob in d.get("objectBindings") or []
+        ],
     )
 
 
@@ -310,10 +320,27 @@ def test_fixtures_cover_every_outcome():
             seen.add((c["op"], "cascade"))
     for code in (
         "ok", "object_not_found", "port_not_found", "same_object", "role_mismatch",
-        "connector_undefined", "domain_mismatch", "port_busy", "no_cable_component",
+        "connector_undefined", "domain_mismatch", "port_busy", "no_cable_component", "port_unplaceable",
     ):
         assert ("connect", code) in seen, code
-    for code in ("ok", "not_a_gate_input", "connector_undefined", "port_busy", "no_ppg_component"):
+    for code in ("ok", "not_a_gate_input", "connector_undefined", "port_busy", "no_ppg_component", "port_unplaceable"):
         assert ("ppgAttach", code) in seen, code
     for key in (("resnap", "patched"), ("align", "applied"), ("disconnect", "cascade"), ("ppgDetach", "cascade")):
         assert key in seen, key
+
+
+def test_fixtures_pose_ports_off_identity_bindings():
+    """The fixtures must keep exercising the binding chain: ports on
+    rotated / offset / nested bindings, ObjectBinding deltas and asset
+    swaps (``lab-bindings`` + the random scenes' deltas + rotated mounts) —
+    a regeneration that fell back to identity-only bindings would prove
+    nothing about it."""
+    def non_identity(b: dict) -> bool:
+        return any(b[k] for k in ("localXMm", "localYMm", "localZMm", "localRxDeg", "localRyDeg", "localRzDeg"))
+
+    scenes = [s["scene"] for s in FLOWS["scenes"]]
+    assert sum(len(s.get("objectBindings") or []) for s in scenes) >= 10
+    assert any(ob.get("asset3dIdOverride") for s in scenes for ob in s.get("objectBindings") or [])
+    assert any(b["parentBindingId"] and non_identity(b) for s in scenes for b in s["componentBindings"])
+    assert any(b["targetKind"] == "subcomponent" for s in scenes for b in s["componentBindings"])
+    assert sum(non_identity(b) for m in PURE["ppgMount"] for b in m["scene"]["componentBindings"]) >= 10

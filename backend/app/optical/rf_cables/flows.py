@@ -47,18 +47,16 @@ from app.optical.rf_cables.geometry import (
 from app.optical.rf_cables.ports import (
     PPG_KIND,
     PanelPort,
+    PortPose,
     RfScene,
-    anchor_name,
-    anchor_pos,
-    anchors_in_binding_tree,
     cable_end_connector_asset,
     cable_end_family,
-    find_anchor_in_binding_tree,
+    find_port_pose,
     occupied_port_keys,
     panel_ports_of,
+    port_poses,
     ppg_attachments,
     primary_asset,
-    primary_dir,
     props_of,
 )
 from app.optical.rf_cables.ppg_mount import compute_ppg_mounted_pose
@@ -122,6 +120,23 @@ def _busy_error(scene: RfScene, port: PanelPort) -> RuleError:
     return RuleError("port_busy", f"{name} · {port.anchor_name} already has a cable or PPG on it.", 409)
 
 
+def _placed(scene: RfScene, port: PanelPort) -> PortPose:
+    """The panel port posed through its object's binding chain. The panel
+    lists the CATALOG tree; a per-instance asset swap
+    (``ObjectBinding.asset_3d_id_override``) that took the anchor away leaves
+    it offered but with nowhere to put a plug — the web then creates nothing
+    (connect) or an unmounted PPG (attach); this refuses it (422)."""
+    placed = find_port_pose(scene, scene.object_by_id[port.object_id], port.anchor_id, port.anchor_name)
+    if placed is None:
+        name = scene.object_by_id[port.object_id].name
+        raise RuleError(
+            "port_unplaceable",
+            f"{name} · {port.anchor_name} is not in this instance's binding tree "
+            "(an ObjectBinding asset swap removed it); there is nowhere to plug in.",
+        )
+    return placed
+
+
 # ─── connect ────────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
@@ -155,6 +170,8 @@ def connect_gate(scene: RfScene, a: PortRef, b: PortRef) -> tuple[PanelPort, Pan
     for p in (pa, pb):
         if p.key in occupied:
             raise _busy_error(scene, p)
+    for p in (pa, pb):
+        _placed(scene, p)
     return (pa, pb) if pa.role == "out" else (pb, pa)
 
 
@@ -162,21 +179,16 @@ def plan_connect(scene: RfScene, a: PortRef, b: PortRef) -> ConnectPlan:
     """``createRfCableBetweenPorts``: pick the catalog cable whose end A / B
     connector families match (direct, else A/B swapped, else the first
     rf_cable), place it at the two ports' midpoint with identity rotation,
-    and mate each end's connector face onto its port."""
+    and mate each end's connector face onto its port. Each port is posed
+    through its binding chain (:func:`ports.find_port_pose`)."""
     src, tgt = connect_gate(scene, a, b)
 
-    def resolve(port: PanelPort) -> tuple[Any, dict, T3]:
-        obj = scene.object_by_id[port.object_id]
-        comp = scene.component_of(obj)
-        owned = find_anchor_in_binding_tree(scene, comp, port.anchor_id, port.anchor_name)
-        assert owned is not None, "a panel port is always in its own binding tree"
-        _, anchor = owned
-        pos = anchor_pos(anchor)
-        pos_body: T3 = _v3(pos) if pos is not None else (0.0, 0.0, 0.0)
-        return obj, anchor, pos_body
+    def resolve(port: PanelPort) -> tuple[Any, T3, T3]:
+        placed = _placed(scene, port)  # the gate has checked it
+        return scene.object_by_id[port.object_id], _v3(placed.pos_cad), _v3(placed.dir_cad)
 
-    src_obj, src_anchor, src_pos = resolve(src)
-    tgt_obj, tgt_anchor, tgt_pos = resolve(tgt)
+    src_obj, src_pos, src_dir = resolve(src)
+    tgt_obj, tgt_pos, tgt_dir = resolve(tgt)
 
     rf_cables = [c for c in scene.components if c.kind_id in CABLE_KIND_IDS and not getattr(c, "archived_at", None)]
     s_fam, t_fam = src.connector_family, tgt.connector_family
@@ -214,15 +226,14 @@ def plan_connect(scene: RfScene, a: PortRef, b: PortRef) -> ConnectPlan:
         return connector_tip_mm_from_anchors(conn.anchors if conn is not None else None, None)
 
     properties: dict = {}
-    ends = (("A", tgt, tgt_obj, tgt_anchor, tgt_pos), ("B", src, src_obj, src_anchor, src_pos)) if swapped else (
-        ("A", src, src_obj, src_anchor, src_pos), ("B", tgt, tgt_obj, tgt_anchor, tgt_pos))
-    for end, port, obj, anchor, pos in ends:
-        d = primary_dir(anchor)
+    ends = (("A", tgt, tgt_obj, tgt_pos, tgt_dir), ("B", src, src_obj, src_pos, src_dir)) if swapped else (
+        ("A", src, src_obj, src_pos, src_dir), ("B", tgt, tgt_obj, tgt_pos, tgt_dir))
+    for end, port, obj, pos, direction in ends:
         linked = resolve_linked_rf_cable_endpoint(
             cable_pose=cable_pose,
             target_pose=pose_of(obj),
             target_anchor_pos_body_mm=pos,
-            target_anchor_dir_body=_v3(d) if d is not None else (1.0, 0.0, 0.0),
+            target_anchor_dir_body=direction,
             connector_tip_mm=tip(end),
         )
         if linked is None:
@@ -241,9 +252,9 @@ def plan_connect(scene: RfScene, a: PortRef, b: PortRef) -> ConnectPlan:
 def plan_resnap(scene: RfScene, moved_object_ids: list[str]) -> dict[str, dict]:
     """``resnapRfCablesLinkedTo``: for every cable end linked to a moved
     object, the re-mated node (the connect math, with the bound connector's
-    own tip), folded into one properties dict per cable. ``{cable id:
-    properties}`` in scene order; ends whose link no longer resolves are
-    left alone."""
+    own tip, the port posed through its binding chain), folded into one
+    properties dict per cable. ``{cable id: properties}`` in scene order;
+    ends whose link no longer resolves are left alone."""
     moved = set(moved_object_ids)
     out: dict[str, dict] = {}
     if not moved:
@@ -262,23 +273,15 @@ def plan_resnap(scene: RfScene, moved_object_ids: list[str]) -> dict[str, dict]:
             target = scene.object_by_id.get(str(link["targetObjectId"]))
             if target is None:
                 continue
-            target_comp = scene.component_of(target)
-            if target_comp is None:
+            placed = find_port_pose(scene, target, link.get("targetAnchorId"), link.get("targetAnchorName"))
+            if placed is None:
                 continue
-            owned = find_anchor_in_binding_tree(
-                scene, target_comp, link.get("targetAnchorId"), link.get("targetAnchorName"),
-            )
-            if owned is None:
-                continue
-            _, anchor = owned
-            d = primary_dir(anchor)
-            pos = anchor_pos(anchor)
             conn = cable_end_connector_asset(scene, str(comp.id), end)
             linked = resolve_linked_rf_cable_endpoint(
                 cable_pose=pose_of(cable),
                 target_pose=pose_of(target),
-                target_anchor_pos_body_mm=_v3(pos) if pos is not None else (0.0, 0.0, 0.0),
-                target_anchor_dir_body=_v3(d) if d is not None else (1.0, 0.0, 0.0),
+                target_anchor_pos_body_mm=_v3(placed.pos_cad),
+                target_anchor_dir_body=_v3(placed.dir_cad),
                 connector_tip_mm=connector_tip_mm_from_anchors(conn.anchors if conn is not None else None, None),
             )
             if linked is None:
@@ -323,8 +326,8 @@ def cable_row(scene: RfScene, cable_id: str) -> tuple[Any, Any]:
 def align_candidates(scene: RfScene, cable_id: str, end: str, tolerance_mm: float) -> list[AlignmentCandidate]:
     """``findRfCableAlignmentCandidates``: every ``rf_in`` / ``rf_out`` anchor
     on any OTHER object's binding tree within ``tolerance_mm`` of this end,
-    nearest first, measured and mated with the end's bound connector length
-    (as connect and resnap)."""
+    posed through its binding chain, nearest first, measured and mated with
+    the end's bound connector length (as connect and resnap)."""
     cable, comp = cable_row(scene, cable_id)
     nodes = cable_nodes(cable.properties, comp.properties)
     ports: list[RfPortLab] = []
@@ -335,20 +338,16 @@ def align_candidates(scene: RfScene, cable_id: str, end: str, tolerance_mm: floa
         if other_comp is None:
             continue
         pose = pose_of(other)
-        for _, a in anchors_in_binding_tree(scene, other_comp):
-            if a.get("id") not in ("rf_in", "rf_out"):
+        for p in port_poses(scene, other_comp, other):
+            if p.anchor_id not in ("rf_in", "rf_out"):
                 continue
-            pos = anchor_pos(a)
-            if pos is None:
-                continue
-            d = primary_dir(a)
             ports.append(RfPortLab(
-                lab_pos_mm=body_to_lab(_v3(pos), pose),
-                lab_dir_outward=body_dir_to_lab(_v3(d) if d is not None else (1.0, 0.0, 0.0), pose),
+                lab_pos_mm=body_to_lab(_v3(p.pos_cad), pose),
+                lab_dir_outward=body_dir_to_lab(_v3(p.dir_cad), pose),
                 target_name=other.name,
                 target_object_id=str(other.id),
-                target_anchor_name=anchor_name(a),
-                target_anchor_id=a["id"],
+                target_anchor_name=p.anchor_name,
+                target_anchor_id=p.anchor_id,
             ))
     if not ports:
         return []
@@ -498,7 +497,8 @@ class PpgAttachPlan:
 
 def ppg_gate(scene: RfScene, ref: PortRef) -> PanelPort:
     """``RfLinkPanel.canSpawnPpgHere`` (:1910): an empty ``ttl_in`` /
-    ``trigger_in`` with a defined SMA/BNC connector."""
+    ``trigger_in`` with a defined SMA/BNC connector — that this instance's
+    binding tree still holds (:func:`_placed`)."""
     port = find_port(scene, ref)
     if port.role != "in" or port.domain not in ("ttl", "trigger"):
         raise RuleError(
@@ -512,6 +512,7 @@ def ppg_gate(scene: RfScene, ref: PortRef) -> PanelPort:
         )
     if port.key in occupied_port_keys(scene):
         raise _busy_error(scene, port)
+    _placed(scene, port)
     return port
 
 
@@ -564,8 +565,9 @@ def plan_ppg_attach(scene: RfScene, ref: PortRef) -> PpgAttachPlan:
         "targetAnchorName": port.anchor_name,
     }
     mounted = compute_ppg_mounted_pose(scene, None, component, peer=attachment)
-    # The gate found this port in the target's binding tree and the component
-    # has an rf_out on its primary asset: the mount resolves the same anchor.
+    # The gate placed this port through the target's binding chain and the
+    # component has an rf_out on its primary asset, which a catalog-time
+    # (no ObjectBinding) walk always reaches: the mount resolves.
     assert mounted is not None
     return PpgAttachPlan(
         component_id=str(component.id), name=name, program_name=name, connector_type=family,

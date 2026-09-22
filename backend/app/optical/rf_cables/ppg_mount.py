@@ -5,7 +5,10 @@ port of ``frontend/src/utils/ppgMounting.ts``
 A PPG plugs straight into an instrument's coax port: its own ``rf_out``
 anchor lands on the target anchor, facing into it, then backs off by the
 PPG's plug protrusion (``defaultParams.matingProtrusionMm``) so the plug's
-TIP, not the anchor, meets the port face.
+TIP, not the anchor, meets the port face. Both plugs are posed through their
+binding chains (:func:`ports.port_poses`) — each in its owner's Component
+CAD frame — not read in their own asset's frame (exact only on an identity
+root binding; until 2026-09-22).
 
 The web app re-derives this pose at render time and never stores it; the
 backend stores it as the PPG's SceneObject pose (on attach and on a resnap),
@@ -24,16 +27,17 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from app.optical.align.anchor_poses import anchor_display_name
 from app.optical.align.frames import AlignPose, scene_object_euler_from_quaternion, scene_object_to_quaternion
 from app.optical.align.ts_compat import V, q_from_unit_vectors, v3_apply_quaternion, v3_normalize
 from app.optical.rf_cables.geometry import js_truthy, pose_of
 from app.optical.rf_cables.ports import (
+    PortPose,
     RfScene,
-    anchor_pos,
-    find_anchor_in_binding_tree,
+    find_port_pose,
+    port_poses,
     ppg_attachment_of,
     primary_asset,
-    primary_dir,
     props_of,
 )
 
@@ -49,15 +53,15 @@ def mating_protrusion_mm(asset: Any) -> float:
     return float(raw) if math.isfinite(raw) and raw > 0 else 0.0
 
 
-def _three_pos(anchor: dict) -> V:
-    """``anchorPosThree``: CAD mm -> three units (``mmToThree`` = /100)."""
-    p = anchor_pos(anchor) or V(0.0, 0.0, 0.0)
+def _three_pos(port: PortPose) -> V:
+    """``portPosThree``: CAD mm -> three units (``mmToThree`` = /100)."""
+    p = port.pos_cad
     return V(p.x / MM_PER_THREE_UNIT, p.y / MM_PER_THREE_UNIT, p.z / MM_PER_THREE_UNIT)
 
 
-def _three_dir(anchor: dict) -> V:
-    """``anchorDirThree``: primary direction (else +X), normalised."""
-    return v3_normalize(primary_dir(anchor) or V(1.0, 0.0, 0.0))
+def _three_dir(port: PortPose) -> V:
+    """``portDirThree``: the posed outward direction, normalised."""
+    return v3_normalize(port.dir_cad)
 
 
 def _mating_peer(scene: RfScene, ppg: Any) -> dict | None:
@@ -81,18 +85,15 @@ def _mating_peer(scene: RfScene, ppg: Any) -> dict | None:
     return None
 
 
-def _target_anchor(scene: RfScene, peer: dict) -> tuple[Any, dict] | None:
-    """``ppgMounting.findAnchor``: the target's anchor anywhere in its
-    binding tree (``findAnchorInBindingTree``), so a multi-root instrument
-    such as the EOM mounts its PPG too."""
+def _target_anchor(scene: RfScene, peer: dict) -> tuple[Any, PortPose] | None:
+    """``ppgMounting.findAnchor``: the target's port anywhere in its binding
+    tree, so a multi-root instrument such as the EOM mounts its PPG too,
+    posed through its binding chain (``resolveRfPortPose``)."""
     obj = scene.object_by_id.get(str(peer.get("targetObjectId")))
     if obj is None:
         return None
-    comp = scene.component_of(obj)
-    if comp is None:
-        return None
-    owned = find_anchor_in_binding_tree(scene, comp, peer.get("targetAnchorId"), peer.get("targetAnchorName"))
-    return (obj, owned[1]) if owned is not None else None
+    placed = find_port_pose(scene, obj, peer.get("targetAnchorId"), peer.get("targetAnchorName"))
+    return (obj, placed) if placed is not None else None
 
 
 def compute_ppg_mounted_pose(
@@ -108,6 +109,20 @@ def compute_ppg_mounted_pose(
         return None
     ppg_anchor = next((a for a in ppg_asset.anchors if isinstance(a, dict) and a.get("id") == "rf_out"), None)
     if ppg_anchor is None:
+        return None
+    # The PPG's own plug, posed in ITS Component CAD frame through its binding
+    # chain (the instance's, or the catalog's before the row exists) — the
+    # frame the PPG's tree is drawn and traced in under this pose. None when
+    # the instance's tree no longer holds that anchor of that asset (a swap).
+    ppg_name = anchor_display_name(ppg_anchor)
+    ppg_port = next(
+        (
+            p for p in port_poses(scene, ppg_component, ppg)
+            if p.asset_id == str(ppg_asset.id) and p.anchor_id == "rf_out" and p.anchor_name == ppg_name
+        ),
+        None,
+    )
+    if ppg_port is None:
         return None
     if peer is None:
         peer = _mating_peer(scene, ppg)
@@ -130,9 +145,9 @@ def compute_ppg_mounted_pose(
     dir_lab = v3_normalize(v3_apply_quaternion(_three_dir(target_anchor), q_target))
 
     mating = v3_normalize(V(-dir_lab.x, -dir_lab.y, -dir_lab.z))
-    quat = q_from_unit_vectors(_three_dir(ppg_anchor), mating)
+    quat = q_from_unit_vectors(_three_dir(ppg_port), mating)
     back = mating_protrusion_mm(ppg_asset) / MM_PER_THREE_UNIT
-    r = v3_apply_quaternion(_three_pos(ppg_anchor), quat)
+    r = v3_apply_quaternion(_three_pos(ppg_port), quat)
     position = V(
         (pos_lab.x - r.x) - mating.x * back,
         (pos_lab.y - r.y) - mating.y * back,

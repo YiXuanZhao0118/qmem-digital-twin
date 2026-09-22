@@ -21,7 +21,6 @@ import {
   bindingsFor,
   childrenOf,
   effectiveBindingAssetId,
-  findAnchorInBindingTree,
   primaryAsset,
   primaryAssetForObject,
   resolveBindingTree,
@@ -516,7 +515,8 @@ describe("assetsInBindingTree", () => {
 
 
 // ---------------------------------------------------------------------------
-// findAnchorInBindingTree / anchorsInBindingTree
+// anchorsInBindingTree (the single-anchor lookup moved to
+// rfCableAnchorResolver.resolveRfPortPose, see rfCableAnchorResolver.test.ts)
 // ---------------------------------------------------------------------------
 
 
@@ -547,29 +547,6 @@ function eomLikeScene() {
   };
   return { body, conn, c, scene };
 }
-
-
-describe("findAnchorInBindingTree", () => {
-  it("finds an anchor on a multi-root Component where primaryAsset gives up", () => {
-    const { body, c, scene } = eomLikeScene();
-    expect(primaryAsset(c, scene)).toBeNull();
-    const owned = findAnchorInBindingTree(c, scene, "rf_in", "RF IN");
-    expect(owned?.anchor.id).toBe("rf_in");
-    expect(owned?.asset.id).toBe(body.id);
-  });
-
-  it("matches on the anchor id when the anchor has no name", () => {
-    const { c, scene } = eomLikeScene();
-    expect(findAnchorInBindingTree(c, scene, "connect_out", "connect_out")?.anchor.id)
-      .toBe("connect_out");
-  });
-
-  it("returns null when the name doesn't match the stored one", () => {
-    const { c, scene } = eomLikeScene();
-    // "RFIN" is the panel's DISPLAY form; the stored identity is "RF IN".
-    expect(findAnchorInBindingTree(c, scene, "rf_in", "RFIN")).toBeNull();
-  });
-});
 
 
 describe("anchorsInBindingTree", () => {

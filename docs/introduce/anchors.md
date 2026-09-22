@@ -66,7 +66,10 @@ One helper, used by anything that solves against a real optical face:
 `resolveAnchorPoseLab` for a single id and `resolveObjectAnchorPosesLab` when
 you only have the SceneObject). It returns each anchor's origin and axisX in
 BOTH the Component CAD frame (`posCad` / `axisXCad`, what the align helpers
-take) and lab mm (`posLab` / `axisXLab`), plus the clear-aperture **radius**.
+take) and lab mm (`posLab` / `axisXLab`), plus the clear-aperture **radius**
+and, TS-only (2026-09-22), `axisYCad` — axisY through the same chain, read by
+the RF connector side basis (`resolveLinkedRfCableEndpoint` / `ppgMounting`),
+which the backend ports do not carry.
 
 It exists because `componentBindings.anchorsInBindingTree` answers a different
 question: it returns anchors in their owning ASSET's body frame, so a composite
@@ -89,7 +92,12 @@ MIRROR5's traced hit point and reflected direction (both backend outputs). See
 [mirror-coupling.md](mirror-coupling.md) for its first consumer. Since
 2026-09-22 the fibre-port sweep (`sceneStore.collectFiberPortsLab`) and the
 plugged-end re-snap (`resnapFibersLinkedTo`) use it too, instead of a local
-rotation copy that skipped the binding transform ([fiber.md](fiber.md#the-backend-port-2026-09-22)).
+rotation copy that skipped the binding transform ([fiber.md](fiber.md#the-backend-port-2026-09-22)),
+and so does every RF port lookup — connect, resnap, align candidates, the PPG
+mount (both plugs) and the viewer's cable re-derive — through
+`rfCableAnchorResolver.rfPortPoses` / `resolveRfPortPose` (backend
+`rf_cables/ports.port_poses`), instead of the anchor in its own asset's frame
+([rf.md](rf.md) §7 item 5).
 
 **The backend has the same helper (2026-09-22)**:
 `backend/app/optical/align/anchor_poses.py` — `resolve_binding_tree` (:160)

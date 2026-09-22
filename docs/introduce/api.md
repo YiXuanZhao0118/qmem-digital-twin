@@ -238,7 +238,7 @@ Backend ports of the web app's coax-cable and Programmable Pulse Generator flows
 Common to all of them:
 
 - **Unlike the section above, these write.** Each request is ONE transaction, committed once, then the same `/ws/scene` events the generic routers send (`object.updated`, `collection_member.updated`, `physics_element.updated`, `timing_program.updated`, `object.deleted`, `physics_element.updated {deleted: true}`, `timing_program.deleted`). Where the web issues several requests (create the cable, PUT end A, PUT end B), the endpoint writes their final state in one go, so a failure leaves nothing behind. Rows are created through the same code as `POST /api/objects` (`routers/objects.py` `insert_scene_object`: unique name, else `<KIND><n>`; the master collection unless `collectionId` names one; the auto-created PhysicsElement) and deleted through the same code as `DELETE /api/objects/{id}` (`remove_scene_object`: the PhysicsElement, and a PPG's TimingProgram).
-- **A port** is `{"objectId": "<uuid>", "anchorName": "CH0", "anchorId": "rf_out"}` — `anchorName` is `anchor.name ?? anchor.id` (`CH0`, `RF1`, `RF IN`, `rf_in`); `anchorId` is optional and only needed when two of the object's ports share a name. A port must be one the RF Link panel offers: an `rf_in` / `rf_out` / `ttl_*` / `trigger_*` anchor anywhere in the object's binding tree (multi-root Components like the EOM included) on an object whose PhysicsElement kind takes part in RF Link.
+- **A port** is `{"objectId": "<uuid>", "anchorName": "CH0", "anchorId": "rf_out"}` — `anchorName` is `anchor.name ?? anchor.id` (`CH0`, `RF1`, `RF IN`, `rf_in`); `anchorId` is optional and only needed when two of the object's ports share a name. A port must be one the RF Link panel offers: an `rf_in` / `rf_out` / `ttl_*` / `trigger_*` anchor anywhere in the object's binding tree (multi-root Components like the EOM included) on an object whose PhysicsElement kind takes part in RF Link. **Every port is posed through its binding chain** (`ports.port_poses`, `backend/app/optical/rf_cables/ports.py:226`: binding transforms, the instance's `ObjectBinding` deltas and asset swaps) — the pose `POST /api/v3/anchors/traced` reports for it (since 2026-09-22; before, the anchor in its own asset's frame, exact only on an identity root binding — [rf.md](rf.md) §7 item 5).
 - **Errors**: 4xx with `{"detail": "<code>: <message>"}`; clients may branch on the code.
 
   | code | status | when |
@@ -249,6 +249,7 @@ Common to all of them:
   | `port_busy` | 409 | a cable end or PPG already claims that port (either port, for a connect) |
   | `no_cable_component` / `no_ppg_component` | 422 | no rf_cable / no usable PPG catalog Component |
   | `not_an_rf_cable`, `not_a_ppg`, `not_a_gate_input` | 422 | the id / port is the wrong kind of thing |
+  | `port_unplaceable` | 422 | connect / attach: the panel offers the port (catalog tree) but this instance's asset swap removed it, so it has no pose (`flows._placed`, `flows.py:123`) |
   | `target_not_in_range` | 422 | align: that port is not a candidate within `toleranceMm` |
   | `locked` | 409 | a delete would remove a `locked` SceneObject (refused whole) |
 
@@ -256,7 +257,7 @@ Common to all of them:
 
 ### `POST /api/v3/rf-cables/connect`
 
-`createRfCableBetweenPorts` behind the panel's drop gate (`flows.plan_connect`, `flows.py:161`). Request order does not matter — the OUT port is the source.
+`createRfCableBetweenPorts` behind the panel's drop gate (`flows.plan_connect`, `flows.py:178`). Request order does not matter — the OUT port is the source.
 
 ```json
 { "a": { "objectId": "<dds>", "anchorName": "CH1" },
@@ -297,7 +298,7 @@ On a no-op, `object` is the untouched cable and both lists are empty.
 
 ### `POST /api/v3/rf-cables/resnap`
 
-`resnapRfCablesLinkedTo` (`flows.py:241`), called after objects moved: every cable end linked to a moved object is re-mated (same math as connect), and — a backend addition the web does not need, since it re-derives the mount at render time — every PPG plugged into a moved object (or moved itself) is re-mounted, so its STORED pose stays on its port (`flows.plan_ppg_mounts`, `:296`).
+`resnapRfCablesLinkedTo` (`flows.py:252`), called after objects moved: every cable end linked to a moved object is re-mated (same math as connect), and — a backend addition the web does not need, since it re-derives the mount at render time — every PPG plugged into a moved object (or moved itself) is re-mounted, so its STORED pose stays on its port (`flows.plan_ppg_mounts`, `:299`).
 
 ```json
 { "movedObjectIds": ["<amp>"] }
@@ -311,7 +312,7 @@ Only rows that actually change are written and returned; a second call is `{"upd
 
 ### `POST /api/v3/rf-cables/{id}/align-candidates` (compute-only)
 
-`findRfCableAlignmentCandidates` (`flows.py:323`): every `rf_in` / `rf_out` anchor on any other object within `toleranceMm` (default 25) of this end, nearest first. Distances are measured from the end's current connector mating face, and `newPosMmBody` / `newHandleMmBody` mate that face onto the port, both with the end's bound connector length (the SMA's 25.45 mm), as connect and resnap do.
+`findRfCableAlignmentCandidates` (`flows.py:326`): every `rf_in` / `rf_out` anchor on any other object within `toleranceMm` (default 25) of this end, nearest first. Distances are measured from the end's current connector mating face, and `newPosMmBody` / `newHandleMmBody` mate that face onto the port, both with the end's bound connector length (the SMA's 25.45 mm), as connect and resnap do.
 
 ```json
 { "end": "B", "toleranceMm": 100 }
@@ -336,7 +337,7 @@ Response `{"object": SceneObjectOut}` (the cable).
 
 ### `POST /api/v3/ppg/attach`
 
-`createPpgAtPort` + `createProgrammablePulseGenerator` behind the panel's `canSpawnPpgHere` (`flows.plan_ppg_attach`, `flows.py:539`): the target must be an empty `ttl_in` / `trigger_in` with an SMA/BNC connector. The PPG Component is the first `programmable_pulse_generator` whose `properties.connectorType` equals the port's family and whose primary asset carries `rf_out`.
+`createPpgAtPort` + `createProgrammablePulseGenerator` behind the panel's `canSpawnPpgHere` (`flows.plan_ppg_attach`, `flows.py:540`): the target must be an empty `ttl_in` / `trigger_in` with an SMA/BNC connector. The PPG Component is the first `programmable_pulse_generator` whose `properties.connectorType` equals the port's family and whose primary asset carries `rf_out`.
 
 ```json
 { "target": { "objectId": "<switch>", "anchorName": "ttl_in" }, "collectionId": null }
