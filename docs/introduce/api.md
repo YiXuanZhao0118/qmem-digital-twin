@@ -12,6 +12,7 @@
 - `GET/POST/PATCH/DELETE /api/devices` — the device registry (alembic 0123; previously TypeScript files under `frontend/src/devices/`). `GET /api/devices/behavioral-kinds` lists the ElementKinds a device may pin itself to. `slug` is create-only, a `locked` row rejects edits with 422, and DELETE is refused with 409 while an Asset3D still references the slug
 - `/api/timing-programs`, `/api/rf-chains/nodes`, `/api/coils`, `/api/magnetics-problems`, `/api/simulation-runs`, `/api/touchstone/parse`, `/api/app-settings/{key}`
 - `POST /api/v3/rf/propagation` — the RF readout at one scrub time (compute-only, see below)
+- `POST /api/v3/align/mirror-coupling`, `/api/v3/align/isolator`, `/api/v3/align/aom-bragg` — proposed poses from the align solvers (compute-only, see below)
 - Static: `/assets/files/...`; Swagger: `/docs`; WebSocket: `/ws/scene`
 - Conventions: every persisted id is a UUIDv7; CamelModel (DB snake_case ↔ API camelCase).
 
@@ -59,3 +60,117 @@ Response:
 - `connectedPorts` (sorted) is topology — every port with a cable or a PPG attachment, whether or not a carrier arrives.
 - `aomDrives` is passed through verbatim from the resolver the solver uses, so it equals what the trace merged onto each AOM at this time. An AOM in manual mode (`properties.aomRfDriveMode == "manual"`) or with nothing plugged into `rf_in` is **absent** (it keeps its own / rated drive); a wired AOM that no carrier reaches at this instant gets `{"rfDrivePowerW": 0.0}` with no frequency key.
 - `sectionStartsNs` (sorted) is every block boundary across all TimingPrograms, plus 0.
+
+### The align endpoints — `POST /api/v3/align/*`
+
+Backend ports of the web app's align solvers: `utils/mirrorCoupling.ts`, `utils/isolatorAlign.ts`, `utils/aomAlign.ts`, plus the React call-site logic around them (which anchor, which point, which order / frequency — `MirrorCouplingPanel.tsx`, `AlignToBeamControls.tsx`). Router `backend/app/routers/v3_align.py`; solvers `backend/app/optical/align/` (pure modules + `service.py`, which loads the scene and follows the React call sites). The web app itself still runs its TypeScript copies; the two copies are **pinned to each other at 1e-9 by golden fixtures** — see [mirror-coupling.md](mirror-coupling.md#the-backend-port-and-its-parity-pin).
+
+Common to all three:
+
+- Every pose is a proposed **SceneObject pose**: `{"xMm", "yMm", "zMm", "rxDeg", "ryDeg", "rzDeg"}` in lab mm / deg, angles already on the 1e-9° storage grid. Nothing is written — apply it with `PATCH /api/objects/{id}`. The response echoes the object's `locked` flag; the web app refuses to move a locked object and so should any caller.
+- Anchor poses come from the backend's own transform chain (`db_scene_loader._binding_tree_transform` ∘ `pose.pose_to_transform`) through `optical/align/anchor_poses.py`, which walks the binding tree exactly as `utils/anchorPose.resolveAnchorPosesLab` does ([anchors.md](anchors.md#reading-an-anchors-pose-in-lab-mm)).
+- A vector is `{"x", "y", "z"}`; a direction must be non-zero (422 otherwise). An unknown object id is 404; a request the solver cannot answer (no mirror face, no align point, not an AOM, …) is 422 with the reason in `detail`. A geometry that simply has **no solution** is not an error: it comes back 200 with `"error": "..."` and a null pose/plan.
+- A beam is `{"dir": vec, "ref": vec}` — the propagation direction and any point on the line (e.g. a traced segment's `end − start` and `start`). Picking WHICH beam (the web app clusters trace segments near the align point) is the caller's choice, as it is the user's in the web app.
+
+#### `POST /api/v3/align/mirror-coupling`
+
+Two 45° steering mirrors that land the seed on a port's own axis ([mirror-coupling.md](mirror-coupling.md)).
+
+```json
+{
+  "mirrorAId": "<the mirror the seed reaches first>",
+  "mirrorBId": "<the other one>",
+  "inRay": { "origin": {"x": 0, "y": 0, "z": 0}, "dir": {"x": 0, "y": -1, "z": 0} },
+  "target": { "objectId": "<port object>", "anchorId": "intercept_in", "anchorName": null },
+  "foldMm": null,
+  "passThroughObjectIds": ["<optic between B and the port>"]
+}
+```
+
+- `inRay` is the traced segment that ends on mirror A (`origin` = its start). A/B order is the trace's, not click order (rule R2).
+- `target.anchorId` ∈ `intercept_in` / `fiber_in` / `seed` (R4) on a third object; light enters it along **−axisX**. `anchorName` picks among anchors sharing an id.
+- `foldMm` is the free DOF of the collinear (U-turn / periscope) branch, mm along the seed from `inRay.origin`; `null` = least total travel. Ignored when the answer is unique.
+- `passThroughObjectIds` are re-centred onto the port axis, translate only (the panel's "Also centre pass-through optics"), at `alignSpec.pointMm`, else `intercept_in`, else `intercept_face`, else the first anchor. Locked ones are skipped.
+
+```json
+{
+  "mirrorA": { "objectId": "A", "name": "MIRROR5", "locked": false,
+               "centreCad": {...}, "normalCad": {...}, "centreLab": {...}, "normalLab": {...}, "apertureMm": 12.7 },
+  "mirrorB": { "...": "same shape" },
+  "inRay": { "origin": {...}, "dir": {...} },
+  "targetRay": { "origin": {"x": 40, "y": 0, "z": 0}, "dir": {"x": 0, "y": 1, "z": 0} },
+  "touch": {
+    "seedOnA":   { "pointLab": {...}, "decentreMm": 2.30, "tMm": 99.5, "inAperture": true, "frontSide": true, "aoiDeg": 45.0 },
+    "seedOnB":   { "...": "SpotHit or null" }, "targetOnB": { "...": "" }, "targetOnA": { "...": "" },
+    "ok": true, "failures": []
+  },
+  "plan": {
+    "geometry": { "d1": {...}, "centreA": {...}, "centreB": {...}, "normalA": {...}, "normalB": {...},
+                  "legLengthMm": 40.0, "freeDof": true, "foldMm": 100.1, "targetStandoffMm": -100.1, "warnings": [] },
+    "moveA": { "objectId": "A", "name": "MIRROR5", "pose": { "xMm": 0, "yMm": -100.1, "zMm": 0, "rxDeg": -45, "ryDeg": -90, "rzDeg": 0 },
+               "travelMm": 1.967, "rotationDeg": 0.0 },
+    "moveB": { "...": "same shape" },
+    "beforeDecentreAMm": 2.30, "beforeDecentreBMm": 0.42, "beforeTargetMissMm": 0.10
+  },
+  "error": null,
+  "passThroughMoves": [ { "objectId": "L", "name": "LENS", "pose": {...} } ],
+  "passThroughSkipped": [ { "objectId": "L2", "reason": "locked" } ]
+}
+```
+
+`touch` is the 2×2 precondition at the mirrors' CURRENT poses; the web app refuses to apply unless `touch.ok` (R6), and so should a caller. `plan` is computed regardless (null with `error` when no pair exists, e.g. the seed already lies on the port axis). `failures` and `warnings` are the TS strings verbatim.
+
+#### `POST /api/v3/align/isolator`
+
+"Align to beam" — a point on the beam, a direction along it — as the Object panel runs it for an isolator and for every other pass-through optic.
+
+```json
+{ "objectId": "<id>", "beam": { "dir": {...}, "ref": {...} }, "reverse": null, "rollDeg": null }
+```
+
+`reverse` (direction along −beam) and `rollDeg` (clockwise about the beam, looking along the direction) default to the object's stored `properties.alignReverse` / `alignRollDeg`. The (point, direction) is resolved in the web app's order (`AlignToBeamControls.resolved`): the Component's `alignSpec` (`pointMm` + non-zero `directionMm`), else the binding tree's front / back polariser centres (`pickPolariserCentre`), else the primary asset's entry anchor with direction −axisX; none of them → 422.
+
+```json
+{
+  "objectId": "<id>", "name": "ISOLATOR0", "locked": false,
+  "alignSource": "alignSpec | polariserCentres | primaryAnchor",
+  "pointCadMm": {"x": 0, "y": 0, "z": -13}, "dirCadMm": {"x": 0, "y": 0, "z": 26},
+  "reverse": true, "rollDeg": 0.0,
+  "pose": { "xMm": 0.714, "yMm": 0.143, "zMm": 3.0, "rxDeg": -90.0, "ryDeg": 78.690068, "rzDeg": 78.690068 },
+  "error": null
+}
+```
+
+#### `POST /api/v3/align/aom-bragg`
+
+The AOM's two-stage Bragg align ([../aom-model.md](../aom-model.md)): interaction centre on the beam, D1 along ±beam, then `+m·θ_B` (+ fine tune) about D3.
+
+```json
+{
+  "objectId": "<AOM id>",
+  "beam": { "dir": {...}, "ref": {...}, "wavelengthNm": 852.347 },
+  "order": null, "fineTuneMrad": null, "reverse": null, "rollDeg": null,
+  "freqMhz": null, "scrubTimeNs": null,
+  "nudgeMrad": null
+}
+```
+
+Defaults, as `AomBraggSection` resolves them: `order` ← `dynamicSources.diffractionOrder` ← the asset's `diffractionOrder` ← 1; `fineTuneMrad` ← `properties.aomBraggFineTuneMrad` ← 0; `wavelengthNm` ← 780; v / n / L from the asset's `default_params` (4200 m/s, 2.26, 22.4 mm). **`freqMhz`** ← the carrier at the AOM's `rf_in` in the RF snapshot the trace uses at `scrubTimeNs` (`null` = rest; manual-mode AOMs skip this) ← `dynamicSources.aomFreqMhz` ← the asset's `centerFreqMhz` ← 80; `freqSource` says which. `nudgeMrad` additionally returns the rotation-stage nudge of the CURRENT pose (the panel's fine-tune commit sends `new − old`).
+
+```json
+{
+  "objectId": "<id>", "name": "AOM0", "locked": false,
+  "frame": { "D1": {"x": 0, "y": 1, "z": 0}, "D2": {"x": -1, "y": 0, "z": 0}, "D3": {"x": 0, "y": 0, "z": 1}, "centreMm": {...} },
+  "order": 1, "fineTuneMrad": 0.0, "reverse": false, "rollDeg": 0.0,
+  "wavelengthNm": 780, "freqMhz": 95.0, "freqSource": "request | rfLink | dynamicSources | asset | default",
+  "acousticVelocityMps": 4200.0, "refractiveIndex": 2.26, "crystalLengthMm": 22.4,
+  "thetaBRad": 0.008822, "tiltRad": 0.008822,
+  "readout":      { "thetaInRad": -1.2217, "matchedOrder": 138, "orders": [ { "order": 1, "mismatchRad": -1.2129, "phaseMatch": 0.0 }, { "order": -1, "...": "" } ] },
+  "pose":         { "xMm": 13.0, "yMm": 0.0, "zMm": 50.0, "rxDeg": 0.0, "ryDeg": 0.0, "rzDeg": 89.494563 },
+  "readoutAfter": { "thetaInRad": -0.008822, "matchedOrder": 1, "orders": [ { "order": 1, "mismatchRad": 0.0, "phaseMatch": 1.0 }, { "...": "" } ] },
+  "nudgePose": null,
+  "error": null
+}
+```
+
+`readout` measures the CURRENT pose, `readoutAfter` the proposed one (so `readoutAfter.matchedOrder` shows the CONV-2 flip when the cell runs reversed). Order 0 returns no `pose` and `"error": "Order 0 is the undiffracted beam — …"`. A primary asset that is not an `aom`, or one with no intercept pair / acoustic direction, is 422.

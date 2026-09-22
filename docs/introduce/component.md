@@ -20,6 +20,8 @@ A binding's `role` (or `properties.role_label`, which wins when set) is **matche
 
 **The Object-panel Align gate mirrors the resolver, in this order**: the object's PhysicsElement kind ∈ `OPTICAL_ALIGN_KINDS` → an explicit `component.properties.alignSpec` with a non-zero `directionMm` → the front/back roles above. The alignSpec branch matters because `AlignToBeamControls` resolves alignSpec *first* (`AlignToBeamControls.tsx:121`); without it in the gate, a composite whose roles are named anything else would have a perfectly usable align spec and no button to press.
 
+**The same resolution runs on the backend (2026-09-22)**: `POST /api/v3/align/isolator` resolves (point, direction) in the same order — alignSpec, then the front/back polariser centres, then the primary asset's entry anchor with direction −axisX — in `backend/app/optical/align/service.py:323` (`resolve_align_point_dir`), with `pickPolariserCentre` ported as `optical/align/point_dir.py:81` and the pose solve as `compute_point_dir_align_pose` (:135). It reports which branch won as `alignSource`. Pinned to `utils/isolatorAlign.ts` by golden fixtures ([mirror-coupling.md](mirror-coupling.md#the-backend-port-and-its-parity-pin)); shapes in [api.md](api.md). The role-spelling invariant above therefore binds both copies.
+
 ### `properties.portAnchor` — a binding that DEFINES an optical port (2026-08-20)
 
 A pigtailed instrument does not have a bare optical face; it has an FC/APC bulkhead you mate a patch cord to. Model it as the hardware is built: bind a `fiber_connector` asset at each port and tag that binding

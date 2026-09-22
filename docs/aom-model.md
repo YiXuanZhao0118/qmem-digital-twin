@@ -80,6 +80,25 @@ against `D1`; `D3 = D1 × D2`. MT80: `D1 = +Y`, `D2 = −X`, `D3 = +Z`.
   `alignReverse` (beam through the cell backwards) that same tilt Bragg-matches
   order **−m** — physically what a reversed cell does. The panel reports
   `matchedOrder` and warns when it differs from the selected order.
+- **Backend port (2026-09-22)**: the same two-stage align is served as
+  `POST /api/v3/align/aom-bragg` (`backend/app/optical/align/aom_bragg.py` +
+  `service.aom_bragg_align`) for clients other than the web app, pinned to
+  `utils/aomAlign.ts` at 1e-9 by golden fixtures (see
+  [introduce/mirror-coupling.md](introduce/mirror-coupling.md#the-backend-port-and-its-parity-pin);
+  shapes in [introduce/api.md](introduce/api.md)). Its readout uses the backend's
+  own `aom_physics` (the functions the AOM op runs). **One deliberate
+  difference — the RF frequency**: `AomBraggSection` takes it from
+  `utils/aomRfDrive.resolveAomRfDriveFromScene`, a legacy resolver that reads
+  `comp.asset3dId` and therefore returns nothing in a binding-backed scene (so
+  the panel falls through to `dynamicSources.aomFreqMhz` / the asset's
+  `centerFreqMhz`); the endpoint instead takes the carrier arriving at `rf_in`
+  in the RF snapshot the trace itself uses (`rf_resolve.rf_snapshot_at`) and
+  reports which source won in `freqSource`. The two agree whenever no carrier
+  reaches the AOM's `rf_in`; when one does, the endpoint's θ_B follows the RF
+  link — the frequency the trace actually diffracts with — while the web panel
+  still computes θ_B from the stored value. Moving the panel onto
+  `rf_resolve`'s answer is left for the step that rewires the web app onto
+  these endpoints.
 
 ## Efficiency
 
