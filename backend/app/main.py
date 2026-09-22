@@ -39,6 +39,7 @@ from app.routers import (
     timing_programs,
     touchstone,
     v3_catalog,
+    v3_rf,
     v3_solver,
 )
 from app.routers.collections import get_master_collection
@@ -69,6 +70,7 @@ app.include_router(kinds.router, prefix="/api/kinds", tags=["kinds"])
 app.include_router(devices.router, prefix="/api/devices", tags=["devices"])
 app.include_router(v3_catalog.router, prefix="/api")
 app.include_router(v3_solver.router, prefix="/api")
+app.include_router(v3_rf.router, prefix="/api")
 app.include_router(pop.router, prefix="/api")
 app.include_router(
     component_bindings.component_scoped,

@@ -671,6 +671,27 @@ def _snapshot_at(
     return snapshots[lo]
 
 
+def rf_snapshot_at(
+    inputs: RfInputs, scrub_time_ns: float | None,
+) -> tuple[list[float], RfPropagationResult]:
+    """``(section_starts_ns, snapshot)`` — THE snapshot rule for a scrub time.
+
+    One snapshot per timing-section start (active scrub, PPG intervals XOR
+    rest level) plus the dedicated rest snapshot (``idle_rest_mode``) that
+    ``scrub_time_ns=None`` selects. Both the solver's AOM drive
+    (:func:`resolve_aom_rf_drive`) and the RF readout endpoint
+    (``POST /api/v3/rf/propagation``, :func:`rf_readout_at`) pick their
+    snapshot here, so what the panel shows is what the trace used.
+    """
+    starts = collect_section_starts(inputs.programs_by_id)
+    snapshots = [
+        build_rf_propagation(inputs, scrub_time_ns=s, idle_rest_mode=False)
+        for s in starts
+    ]
+    rest = build_rf_propagation(inputs, scrub_time_ns=0.0, idle_rest_mode=True)
+    return starts, _snapshot_at(starts, snapshots, rest, scrub_time_ns)
+
+
 def resolve_aom_rf_drive(inputs: RfInputs, scrub_time_ns: float | None) -> dict[str, dict]:
     """Pure resolver: ``{aom_object_id: {aomFreqMhz, rfDrivePowerW}}``.
 
@@ -686,14 +707,16 @@ def resolve_aom_rf_drive(inputs: RfInputs, scrub_time_ns: float | None) -> dict[
     fell back to the rated drive and kept diffracting a full sideband fan with
     no RF anywhere in the chain.
     """
-    starts = collect_section_starts(inputs.programs_by_id)
-    snapshots = [
-        build_rf_propagation(inputs, scrub_time_ns=s, idle_rest_mode=False)
-        for s in starts
-    ]
-    rest = build_rf_propagation(inputs, scrub_time_ns=0.0, idle_rest_mode=True)
-    snapshot = _snapshot_at(starts, snapshots, rest, scrub_time_ns)
+    _, snapshot = rf_snapshot_at(inputs, scrub_time_ns)
+    return aom_drives_from_snapshot(inputs, snapshot)
 
+
+def aom_drives_from_snapshot(
+    inputs: RfInputs, snapshot: RfPropagationResult,
+) -> dict[str, dict]:
+    """The per-AOM drive dict of :func:`resolve_aom_rf_drive`, for an already
+    selected snapshot (see its docstring for the manual / unwired / gated-off
+    rules)."""
     out: dict[str, dict] = {}
     for aom in inputs.aoms:
         if aom.manual:
@@ -711,6 +734,31 @@ def resolve_aom_rf_drive(inputs: RfInputs, scrub_time_ns: float | None) -> dict[
             # Gated OFF at this instant -> no RF -> eta = 0 (beam passes through).
             out[aom.object_id] = {"rfDrivePowerW": 0.0}
     return out
+
+
+@dataclass(frozen=True)
+class RfReadout:
+    """Everything ``POST /api/v3/rf/propagation`` reports for one scrub time."""
+
+    section_starts_ns: list[float]
+    snapshot: RfPropagationResult
+    aom_drives: dict[str, dict]
+
+
+def rf_readout_at(inputs: RfInputs, scrub_time_ns: float | None) -> RfReadout:
+    """The RF readout at ``scrub_time_ns`` (``None`` = the rest snapshot).
+
+    Same snapshot rule (:func:`rf_snapshot_at`) and the same AOM-drive rule
+    (:func:`aom_drives_from_snapshot`) as :func:`resolve_aom_rf_drive`, which
+    is what the solver's ``hydrate_aom_rf_drive`` runs — so ``aom_drives``
+    here is, key for key, the drive the trace used at that instant.
+    """
+    starts, snapshot = rf_snapshot_at(inputs, scrub_time_ns)
+    return RfReadout(
+        section_starts_ns=starts,
+        snapshot=snapshot,
+        aom_drives=aom_drives_from_snapshot(inputs, snapshot),
+    )
 
 
 async def hydrate_aom_rf_drive(
