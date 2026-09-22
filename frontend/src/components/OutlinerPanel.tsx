@@ -64,33 +64,43 @@ const EXPANDED_COLLECTIONS_STORAGE_KEY = "qmem.outliner.expandedCollections";
 const MASTER_COLLAPSED_STORAGE_KEY = "qmem.outliner.masterCollapsed";
 
 /** Nesting is shown by COLOUR, not by indentation — every row starts at the
- *  same x and wears a left rail + tint band instead (see styles.css). Each
- *  top-level branch under Master owns a hue; depth fades the band.
+ *  same x and wears a left rail + tint band instead (see styles.css).
  *
- *  Collection.color exists in the model but nothing ever writes it — the API
- *  default is a single teal for every collection, so the swatch carried no
- *  information. A branch still sitting on that default is therefore given a
- *  palette hue by its position under Master; a colour that was explicitly set
- *  to anything else always wins and cascades to that branch's sub-tree. */
+ *  One hue per LEVEL: red for the first level under Master, yellow for the
+ *  second, and so on down the ladder. Within a level every row is a step
+ *  lighter than the one above it, so a long run of siblings still separates
+ *  without adding a third colour. Two facts therefore read straight off a row:
+ *  its hue = how deep it sits, its lightness = roughly where it is in the list.
+ *
+ *  Collection.color exists in the model but nothing ever writes it (the API
+ *  default is one teal for every collection, which is why the swatch used to
+ *  carry no information). A colour explicitly set to anything else still wins
+ *  for that one collection. */
 const DEFAULT_COLLECTION_COLOR = "#0f766e";
-const BRANCH_PALETTE = [
-  "#0f766e", // teal
-  "#1d4ed8", // blue
-  "#b45309", // amber
-  "#be123c", // rose
-  "#6d28d9", // violet
-  "#4d7c0f", // olive
-  "#0891b2", // cyan
-  "#475569", // slate
+
+/** Level 1..n. Chosen for a light panel: mid-dark, clearly separated hues that
+ *  survive both the 3px rail and the ~15% background tint. Wraps if anyone
+ *  nests deeper than six. */
+const LEVEL_HUES = [
+  "#dc2626", // 1 — red
+  "#ca8a04", // 2 — yellow
+  "#16a34a", // 3 — green
+  "#2563eb", // 4 — blue
+  "#7c3aed", // 5 — violet
+  "#0891b2", // 6 — cyan
 ];
+/** Master sits above the ladder, so it gets a neutral instead of a hue. */
+const MASTER_HUE = "#475569";
+/** How far the LAST row of a level travels toward white. Past ~0.6 the pale
+ *  end stops registering as a colour on the light panel. */
+const LEVEL_FADE = 0.55;
 
-/** Band opacity for a collection row at `depth` (Master = 0). Objects use a
- *  weaker share of their collection's band so they read as its contents. */
-function bandAlpha(depth: number): number {
-  return 0.2 * Math.pow(0.72, depth);
-}
+/** Collection rows carry the band at full strength; their objects take a
+ *  weaker share of the same colour so they read as that row's contents. */
+const BAND_ALPHA = 0.16;
+const OBJECT_BAND_ALPHA = 0.07;
 
-function withAlpha(hex: string, alpha: number): string {
+function parseHex(hex: string): [number, number, number] {
   const raw = hex.replace("#", "");
   const full =
     raw.length === 3
@@ -100,8 +110,24 @@ function withAlpha(hex: string, alpha: number): string {
           .join("")
       : raw;
   const int = Number.parseInt(full, 16);
-  if (full.length !== 6 || Number.isNaN(int)) return `rgba(15, 118, 110, ${alpha})`;
-  return `rgba(${(int >> 16) & 255}, ${(int >> 8) & 255}, ${int & 255}, ${alpha})`;
+  if (full.length !== 6 || Number.isNaN(int)) return [15, 118, 110];
+  return [(int >> 16) & 255, (int >> 8) & 255, int & 255];
+}
+
+/** Mix `hex` `t` of the way toward white (t = 0 → unchanged). */
+function lighten(hex: string, t: number): string {
+  return `#${parseHex(hex)
+    .map((c) =>
+      Math.round(c + (255 - c) * t)
+        .toString(16)
+        .padStart(2, "0"),
+    )
+    .join("")}`;
+}
+
+function withAlpha(hex: string, alpha: number): string {
+  const [r, g, b] = parseHex(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 function loadStringSet(storageKey: string): Set<string> {
@@ -534,29 +560,45 @@ export function OutlinerPanel() {
     [collections],
   );
 
-  /** collectionId → the hue its row (and its objects) are banded with.
-   *  Built off the UNFILTERED tree so the colours don't shuffle while the
-   *  search box is narrowing the list. */
-  const branchHues = useMemo(() => {
+  /** collectionId → the hue its row (and its objects) are banded with: the
+   *  level's colour, lightened by how far down that level the row sits. Built
+   *  off the UNFILTERED tree in render order, so the colours stay put while
+   *  the search box narrows the list or a branch is collapsed. */
+  const collectionHues = useMemo(() => {
     const hues = new Map<string, string>();
     if (!masterCollection) return hues;
-    hues.set(masterCollection.id, masterCollection.color);
-    const walk = (parentId: string, inherited: string) => {
-      (childrenIndex.get(parentId) ?? []).forEach((child, index) => {
-        const explicit =
-          child.color && child.color.toLowerCase() !== DEFAULT_COLLECTION_COLOR
-            ? child.color
-            : null;
-        const hue =
-          explicit ??
-          (parentId === masterCollection.id
-            ? BRANCH_PALETTE[index % BRANCH_PALETTE.length]
-            : inherited);
-        hues.set(child.id, hue);
-        walk(child.id, hue);
-      });
+    hues.set(masterCollection.id, MASTER_HUE);
+
+    // Pass 1 — depth-first, i.e. exactly the order the rows are drawn in.
+    const ordered: { id: string; depth: number; explicit: string | null }[] = [];
+    const walk = (parentId: string, depth: number) => {
+      for (const child of childrenIndex.get(parentId) ?? []) {
+        ordered.push({
+          id: child.id,
+          depth,
+          explicit:
+            child.color && child.color.toLowerCase() !== DEFAULT_COLLECTION_COLOR
+              ? child.color
+              : null,
+        });
+        walk(child.id, depth + 1);
+      }
     };
-    walk(masterCollection.id, masterCollection.color);
+    walk(masterCollection.id, 1);
+
+    // Pass 2 — the fade needs each level's total before it can place a row on
+    // the ramp, so the colours can only be handed out once the walk is done.
+    const totals = new Map<number, number>();
+    for (const row of ordered) totals.set(row.depth, (totals.get(row.depth) ?? 0) + 1);
+    const seen = new Map<number, number>();
+    for (const row of ordered) {
+      const index = seen.get(row.depth) ?? 0;
+      seen.set(row.depth, index + 1);
+      const total = totals.get(row.depth) ?? 1;
+      const base = LEVEL_HUES[(row.depth - 1) % LEVEL_HUES.length];
+      const fade = total > 1 ? (index / (total - 1)) * LEVEL_FADE : 0;
+      hues.set(row.id, row.explicit ?? lighten(base, fade));
+    }
     return hues;
   }, [childrenIndex, masterCollection]);
 
@@ -878,7 +920,7 @@ export function OutlinerPanel() {
       (object) => matchingObjectIds === null || matchingObjectIds.has(object.id),
     );
     const totalCount = childCollections.length + childObjects.length;
-    const hue = branchHues.get(collection.id) ?? collection.color;
+    const hue = collectionHues.get(collection.id) ?? collection.color;
     return (
       <div
         key={collection.id}
@@ -912,8 +954,8 @@ export function OutlinerPanel() {
         style={
           {
             "--otl-hue": hue,
-            "--otl-tint": withAlpha(hue, bandAlpha(depth)),
-            "--otl-tint-obj": withAlpha(hue, bandAlpha(depth) * 0.45),
+            "--otl-tint": withAlpha(hue, BAND_ALPHA),
+            "--otl-tint-obj": withAlpha(hue, OBJECT_BAND_ALPHA),
           } as React.CSSProperties
         }
         onClick={(event) => {
