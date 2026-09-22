@@ -270,18 +270,18 @@ def optimize(
         return objective
 
     def _start(vars_used: list[_Var]) -> np.ndarray:
-        """Where a search starts: every element where it is (0) — except an
-        unlocked End, which starts at the nearest pose inside its travel,
-        because a length limit can exclude 0 (the section must shorten, or
-        lengthen). The search keeps the best point it EVALUATED, the start
-        included, so a start outside the bounds can be returned as is. Lenses
-        still start at 0 even when their range excludes it (an open finding,
-        ``docs/introduce/mode-matching.md``); with the End locked this is 0
-        everywhere, as before."""
-        return np.array([
-            min(max(0.0, v.lo), v.hi) if v.object_id == endpoint_id else 0.0
-            for v in vars_used
-        ])
+        """Where a search starts: every element where it is (0), clamped into
+        its bounds. Invariant: every point the search evaluates — and so the
+        point it returns, the best one it EVALUATED, the start included — is
+        inside the bounds. (The coordinate descent only steps inside them and
+        Powell keeps a start that is inside them inside.) Until 2026-09-22
+        the start was 0 unclamped, and when an element's bounds excluded its
+        current pose — a lens in a Start / End keep-off margin, a range that
+        shrinks toward Start in the shortest-footprint search, an End a
+        length limit must move — the untouched start could win and come back
+        as a plan that broke its own constraint. When 0 is inside the bounds
+        (every free-column lens, every in-range lens) nothing changes."""
+        return np.array([min(max(0.0, v.lo), v.hi) for v in vars_used])
 
     def _solve(focal_override: dict[str, float], restarts: int):
         """Full position search (all DOF, Powell polish) for fixed focals."""

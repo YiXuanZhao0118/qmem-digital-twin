@@ -12,7 +12,7 @@ from app.optical.anchor_tracer import (
 )
 from app.optical.beam_ray import BeamRay, QMatrix, Vec3
 from app.optical.mode_match import time_reversed_target
-from app.optical.mode_match_model import ModeMatchProblem, MovableLens
+from app.optical.mode_match_model import LensConfig, ModeMatchProblem, MovableLens
 from app.optical.mode_match_optimize import DOFSpec, optimize
 from app.optical.pose import V3Transform
 
@@ -107,6 +107,21 @@ def test_length_locked_too_long_is_infeasible():
     assert not r.feasible
     assert "locked" in r.reason.lower()
     assert r.n_evals == 0  # bailed before any trace
+
+
+def test_the_search_never_returns_a_point_outside_its_bounds():
+    """Bounds that exclude the element's current pose (0), where η is better
+    than anywhere inside them (the optimum is at +15). The search used to
+    start at 0 unclamped and keep it as the best point it had evaluated, so
+    it returned d = 0 — a plan outside its own bounds. It must start inside
+    and return the best point inside: the edge nearest the optimum."""
+    prob = _problem()
+    assert prob.evaluate({}).eta > prob.evaluate({"lens0": LensConfig(d_axial=-20.0)}).eta
+    r = optimize(prob, specs={"lens0": DOFSpec(axial=(-25.0, -20.0))},
+                 current_length_mm=50.0, n_restarts=1)
+    d = r.config["lens0"].d_axial
+    assert -25.0 <= d <= -20.0
+    assert d == pytest.approx(-20.0, abs=0.05)
 
 
 # ── an unlocked End element under a length limit (2026-09-22) ──────────────
