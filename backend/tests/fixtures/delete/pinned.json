@@ -1,0 +1,2658 @@
+{
+ "scenes": [
+  {
+   "objects": [
+    {
+     "id": "de1e0001-0000-4000-8000-000000000001",
+     "name": "TABLE",
+     "locked": true,
+     "properties": {}
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-000000000002",
+     "name": "DDS0",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-000000000003",
+     "name": "DDS1",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-000000000004",
+     "name": "SW0",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-000000000005",
+     "name": "SW1",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-000000000006",
+     "name": "AMP0",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-000000000007",
+     "name": "AMP1",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-000000000008",
+     "name": "AOM0",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-000000000009",
+     "name": "AOM1",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-00000000000a",
+     "name": "DET0",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-00000000000b",
+     "name": "EOM0",
+     "locked": false,
+     "properties": {
+      "pigtailEndpoints": {
+       "intercept_out": {
+        "targetObjectId": "de1e0001-0000-4000-8000-00000000000a",
+        "targetAnchorId": "fiber_in",
+        "targetAnchorName": "OPTICAL IN (FC/PC)"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-00000000000c",
+     "name": "MIRROR0",
+     "locked": true,
+     "properties": {}
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-00000000000d",
+     "name": "MECH0",
+     "locked": true,
+     "properties": {}
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-00000000000e",
+     "name": "FIBER0",
+     "locked": false,
+     "properties": {
+      "fiberEndpoints": {
+       "B": {
+        "targetObjectId": "de1e0001-0000-4000-8000-00000000000a",
+        "targetAnchorId": "fiber_in",
+        "targetAnchorName": "OPTICAL IN (FC/PC)"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-00000000000f",
+     "name": "RF_CABLE0",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0001-0000-4000-8000-000000000002",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "CH0"
+       },
+       "B": {
+        "targetObjectId": "de1e0001-0000-4000-8000-00000000000b",
+        "targetAnchorId": "rf_in",
+        "targetAnchorName": "rf_in"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-000000000010",
+     "name": "RF_CABLE1",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0001-0000-4000-8000-000000000004",
+        "targetAnchorId": "rf_in",
+        "targetAnchorName": "rf_in"
+       },
+       "B": {
+        "targetObjectId": "de1e0001-0000-4000-8000-000000000003",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "CH0"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-000000000011",
+     "name": "RF_CABLE2",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0001-0000-4000-8000-000000000005",
+        "targetAnchorId": "rf_in",
+        "targetAnchorName": "rf_in"
+       },
+       "B": {
+        "targetObjectId": "de1e0001-0000-4000-8000-000000000003",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "CH1"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-000000000012",
+     "name": "RF_CABLE3",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0001-0000-4000-8000-000000000004",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "RF1"
+       },
+       "B": {
+        "targetObjectId": "de1e0001-0000-4000-8000-000000000006",
+        "targetAnchorId": "rf_in",
+        "targetAnchorName": "rf_in"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-000000000013",
+     "name": "RF_CABLE5",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0001-0000-4000-8000-000000000005",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "RF1"
+       },
+       "B": {
+        "targetObjectId": "de1e0001-0000-4000-8000-000000000007",
+        "targetAnchorId": "rf_in",
+        "targetAnchorName": "rf_in"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-000000000014",
+     "name": "RF_CABLE4",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0001-0000-4000-8000-000000000006",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "rf_out"
+       },
+       "B": {
+        "targetObjectId": "de1e0001-0000-4000-8000-000000000008",
+        "targetAnchorId": "rf_in",
+        "targetAnchorName": "rf_in"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-000000000015",
+     "name": "RF_CABLE6",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0001-0000-4000-8000-000000000007",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "rf_out"
+       },
+       "B": {
+        "targetObjectId": "de1e0001-0000-4000-8000-000000000009",
+        "targetAnchorId": "rf_in",
+        "targetAnchorName": "rf_in"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-000000000016",
+     "name": "CH0",
+     "locked": false,
+     "properties": {
+      "ppgAttachment": {
+       "targetObjectId": "de1e0001-0000-4000-8000-000000000004",
+       "targetAnchorId": "ttl_in",
+       "targetAnchorName": "TTL"
+      }
+     }
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-000000000017",
+     "name": "CH1",
+     "locked": false,
+     "properties": {
+      "ppgAttachment": {
+       "targetObjectId": "de1e0001-0000-4000-8000-000000000005",
+       "targetAnchorId": "ttl_in",
+       "targetAnchorName": "TTL"
+      }
+     }
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-000000000018",
+     "name": "CH2",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-000000000019",
+     "name": "LEGACY_CABLE0",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0001-0000-4000-8000-000000000018",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "rf_out"
+       },
+       "B": {
+        "targetObjectId": "de1e0001-0000-4000-8000-000000000009",
+        "targetAnchorId": "trigger_in",
+        "targetAnchorName": "trigger_in"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-00000000001a",
+     "name": "CH3",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-00000000001b",
+     "name": "LEGACY_CABLE1",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0001-0000-4000-8000-00000000001a",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "rf_out"
+       },
+       "B": {
+        "targetObjectId": "de1e0001-0000-4000-8000-000000000008",
+        "targetAnchorId": "trigger_in",
+        "targetAnchorName": "trigger_in"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0001-0000-4000-8000-00000000001c",
+     "name": "LEGACY_CABLE2",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0001-0000-4000-8000-00000000001a",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "rf_out"
+       },
+       "B": {
+        "targetObjectId": "de1e0001-0000-4000-8000-00000000000b",
+        "targetAnchorId": "trigger_in",
+        "targetAnchorName": "trigger_in"
+       }
+      }
+     }
+    }
+   ],
+   "physicsElements": [
+    {
+     "objectId": "de1e0001-0000-4000-8000-000000000002",
+     "elementKind": "rf_source",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-000000000003",
+     "elementKind": "rf_source",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-000000000004",
+     "elementKind": "rf_switch",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-000000000005",
+     "elementKind": "rf_switch",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-000000000006",
+     "elementKind": "rf_amplifier",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-000000000007",
+     "elementKind": "rf_amplifier",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-000000000008",
+     "elementKind": "aom",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-000000000009",
+     "elementKind": "aom",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-00000000000a",
+     "elementKind": "detector",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-00000000000b",
+     "elementKind": "eom",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-00000000000c",
+     "elementKind": "mirror",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-00000000000e",
+     "elementKind": "fiber",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-00000000000f",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-000000000010",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-000000000011",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-000000000012",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-000000000013",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-000000000014",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-000000000015",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-000000000016",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {
+      "timingProgramId": "de1e0001-0000-4000-9000-000000000001"
+     }
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-000000000017",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {
+      "timingProgramId": "de1e0001-0000-4000-9000-000000000002"
+     }
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-000000000018",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {
+      "timingProgramId": "de1e0001-0000-4000-9000-000000000003"
+     }
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-000000000019",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-00000000001a",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {
+      "timingProgramId": "de1e0001-0000-4000-9000-000000000004"
+     }
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-00000000001b",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0001-0000-4000-8000-00000000001c",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    }
+   ],
+   "timingPrograms": [
+    {
+     "id": "de1e0001-0000-4000-9000-000000000001",
+     "name": "CH0"
+    },
+    {
+     "id": "de1e0001-0000-4000-9000-000000000002",
+     "name": "CH1"
+    },
+    {
+     "id": "de1e0001-0000-4000-9000-000000000003",
+     "name": "CH2"
+    },
+    {
+     "id": "de1e0001-0000-4000-9000-000000000004",
+     "name": "CH3"
+    },
+    {
+     "id": "de1e0001-0000-4000-9000-000000000005",
+     "name": "UNUSED"
+    }
+   ]
+  },
+  {
+   "objects": [
+    {
+     "id": "de1e0002-0000-4000-8000-000000000002",
+     "name": "p1",
+     "locked": false,
+     "properties": {
+      "ppgAttachment": {
+       "targetObjectId": "de1e0002-0000-4000-8000-000000000001",
+       "targetAnchorId": "ttl_in",
+       "targetAnchorName": "TTL"
+      }
+     }
+    },
+    {
+     "id": "de1e0002-0000-4000-8000-000000000003",
+     "name": "p2",
+     "locked": false,
+     "properties": {
+      "ppgAttachment": {
+       "targetObjectId": "de1e0002-0000-4000-a000-000000000001",
+       "targetAnchorId": "ttl_in",
+       "targetAnchorName": "TTL"
+      }
+     }
+    },
+    {
+     "id": "de1e0002-0000-4000-8000-000000000001",
+     "name": "host",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0002-0000-4000-8000-000000000004",
+     "name": "unrelated",
+     "locked": false,
+     "properties": {}
+    }
+   ],
+   "physicsElements": [
+    {
+     "objectId": "de1e0002-0000-4000-8000-000000000002",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {
+      "timingProgramId": "de1e0002-0000-4000-9000-000000000001"
+     }
+    },
+    {
+     "objectId": "de1e0002-0000-4000-8000-000000000003",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0002-0000-4000-8000-000000000001",
+     "elementKind": "rf_switch",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0002-0000-4000-8000-000000000004",
+     "elementKind": "mirror",
+     "kindParams": {}
+    }
+   ],
+   "timingPrograms": [
+    {
+     "id": "de1e0002-0000-4000-9000-000000000001",
+     "name": "p1"
+    }
+   ]
+  },
+  {
+   "objects": [
+    {
+     "id": "de1e0003-0000-4000-8000-000000000001",
+     "name": "host",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0003-0000-4000-8000-000000000002",
+     "name": "attached",
+     "locked": false,
+     "properties": {
+      "ppgAttachment": {
+       "targetObjectId": "de1e0003-0000-4000-8000-000000000001",
+       "targetAnchorId": "ttl_in",
+       "targetAnchorName": "TTL"
+      }
+     }
+    },
+    {
+     "id": "de1e0003-0000-4000-8000-000000000003",
+     "name": "loose",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0003-0000-4000-8000-000000000004",
+     "name": "other",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0003-0000-4000-8000-000000000005",
+     "name": "dds",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0003-0000-4000-8000-000000000006",
+     "name": "cable",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0003-0000-4000-8000-000000000005",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "CH0"
+       },
+       "B": {
+        "targetObjectId": "de1e0003-0000-4000-8000-000000000004",
+        "targetAnchorId": "rf_in",
+        "targetAnchorName": "rf_in"
+       }
+      }
+     }
+    }
+   ],
+   "physicsElements": [
+    {
+     "objectId": "de1e0003-0000-4000-8000-000000000001",
+     "elementKind": "rf_switch",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0003-0000-4000-8000-000000000002",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {
+      "timingProgramId": "de1e0003-0000-4000-9000-000000000001"
+     }
+    },
+    {
+     "objectId": "de1e0003-0000-4000-8000-000000000003",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {
+      "timingProgramId": "de1e0003-0000-4000-9000-000000000002"
+     }
+    },
+    {
+     "objectId": "de1e0003-0000-4000-8000-000000000004",
+     "elementKind": "rf_amplifier",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0003-0000-4000-8000-000000000005",
+     "elementKind": "rf_source",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0003-0000-4000-8000-000000000006",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    }
+   ],
+   "timingPrograms": [
+    {
+     "id": "de1e0003-0000-4000-9000-000000000001",
+     "name": "attached"
+    },
+    {
+     "id": "de1e0003-0000-4000-9000-000000000002",
+     "name": "loose"
+    }
+   ]
+  },
+  {
+   "objects": [
+    {
+     "id": "de1e0004-0000-4000-8000-000000000001",
+     "name": "aomA",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0004-0000-4000-8000-000000000002",
+     "name": "aomB",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0004-0000-4000-8000-000000000003",
+     "name": "one",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0004-0000-4000-8000-000000000004",
+     "name": "c1",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0004-0000-4000-8000-000000000003",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "rf_out"
+       },
+       "B": {
+        "targetObjectId": "de1e0004-0000-4000-8000-000000000001",
+        "targetAnchorId": "trigger_in",
+        "targetAnchorName": "trigger_in"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0004-0000-4000-8000-000000000005",
+     "name": "two",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0004-0000-4000-8000-000000000006",
+     "name": "c2",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0004-0000-4000-8000-000000000005",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "rf_out"
+       },
+       "B": {
+        "targetObjectId": "de1e0004-0000-4000-8000-000000000001",
+        "targetAnchorId": "trigger_in",
+        "targetAnchorName": "trigger_in"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0004-0000-4000-8000-000000000007",
+     "name": "c3",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0004-0000-4000-8000-000000000002",
+        "targetAnchorId": "trigger_in",
+        "targetAnchorName": "trigger_in"
+       },
+       "B": {
+        "targetObjectId": "de1e0004-0000-4000-8000-000000000005",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "rf_out"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0004-0000-4000-8000-000000000008",
+     "name": "bothEnds",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0004-0000-4000-8000-000000000009",
+     "name": "c4",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0004-0000-4000-8000-000000000008",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "rf_out"
+       },
+       "B": {
+        "targetObjectId": "de1e0004-0000-4000-8000-000000000008",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "rf_out"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0004-0000-4000-8000-00000000000a",
+     "name": "ghost",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0004-0000-4000-8000-00000000000b",
+     "name": "noPe",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0004-0000-4000-8000-00000000000a",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "rf_out"
+       },
+       "B": {
+        "targetObjectId": "de1e0004-0000-4000-8000-000000000002",
+        "targetAnchorId": "trigger_in",
+        "targetAnchorName": "trigger_in"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0004-0000-4000-8000-00000000000c",
+     "name": "mirrorish",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0004-0000-4000-8000-00000000000a",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "rf_out"
+       },
+       "B": {
+        "targetObjectId": "de1e0004-0000-4000-8000-000000000002",
+        "targetAnchorId": "trigger_in",
+        "targetAnchorName": "trigger_in"
+       }
+      }
+     }
+    }
+   ],
+   "physicsElements": [
+    {
+     "objectId": "de1e0004-0000-4000-8000-000000000001",
+     "elementKind": "aom",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0004-0000-4000-8000-000000000002",
+     "elementKind": "aom",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0004-0000-4000-8000-000000000003",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {
+      "timingProgramId": "de1e0004-0000-4000-9000-000000000001"
+     }
+    },
+    {
+     "objectId": "de1e0004-0000-4000-8000-000000000004",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0004-0000-4000-8000-000000000005",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {
+      "timingProgramId": "de1e0004-0000-4000-9000-000000000002"
+     }
+    },
+    {
+     "objectId": "de1e0004-0000-4000-8000-000000000006",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0004-0000-4000-8000-000000000007",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0004-0000-4000-8000-000000000008",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {
+      "timingProgramId": "de1e0004-0000-4000-9000-000000000003"
+     }
+    },
+    {
+     "objectId": "de1e0004-0000-4000-8000-000000000009",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0004-0000-4000-8000-00000000000a",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {
+      "timingProgramId": "de1e0004-0000-4000-9000-000000000004"
+     }
+    },
+    {
+     "objectId": "de1e0004-0000-4000-8000-00000000000c",
+     "elementKind": "mirror",
+     "kindParams": {}
+    }
+   ],
+   "timingPrograms": [
+    {
+     "id": "de1e0004-0000-4000-9000-000000000001",
+     "name": "one"
+    },
+    {
+     "id": "de1e0004-0000-4000-9000-000000000002",
+     "name": "two"
+    },
+    {
+     "id": "de1e0004-0000-4000-9000-000000000003",
+     "name": "bothEnds"
+    },
+    {
+     "id": "de1e0004-0000-4000-9000-000000000004",
+     "name": "ghost"
+    }
+   ]
+  },
+  {
+   "objects": [
+    {
+     "id": "de1e0005-0000-4000-8000-000000000001",
+     "name": "host",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0005-0000-4000-8000-000000000002",
+     "name": "dds",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0005-0000-4000-8000-000000000003",
+     "name": "lockedCable",
+     "locked": true,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0005-0000-4000-8000-000000000002",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "CH0"
+       },
+       "B": {
+        "targetObjectId": "de1e0005-0000-4000-8000-000000000001",
+        "targetAnchorId": "rf_in",
+        "targetAnchorName": "rf_in"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0005-0000-4000-8000-000000000004",
+     "name": "lockedPpg",
+     "locked": true,
+     "properties": {
+      "ppgAttachment": {
+       "targetObjectId": "de1e0005-0000-4000-8000-000000000001",
+       "targetAnchorId": "ttl_in",
+       "targetAnchorName": "TTL"
+      }
+     }
+    },
+    {
+     "id": "de1e0005-0000-4000-8000-000000000005",
+     "name": "amp",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0005-0000-4000-8000-000000000006",
+     "name": "cable",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0005-0000-4000-8000-000000000002",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "CH1"
+       },
+       "B": {
+        "targetObjectId": "de1e0005-0000-4000-8000-000000000005",
+        "targetAnchorId": "rf_in",
+        "targetAnchorName": "rf_in"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0005-0000-4000-8000-000000000007",
+     "name": "lockedAmp",
+     "locked": true,
+     "properties": {}
+    },
+    {
+     "id": "de1e0005-0000-4000-8000-000000000008",
+     "name": "toLocked",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0005-0000-4000-8000-000000000002",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "CH2"
+       },
+       "B": {
+        "targetObjectId": "de1e0005-0000-4000-8000-000000000007",
+        "targetAnchorId": "rf_in",
+        "targetAnchorName": "rf_in"
+       }
+      }
+     }
+    }
+   ],
+   "physicsElements": [
+    {
+     "objectId": "de1e0005-0000-4000-8000-000000000001",
+     "elementKind": "rf_switch",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0005-0000-4000-8000-000000000002",
+     "elementKind": "rf_source",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0005-0000-4000-8000-000000000003",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0005-0000-4000-8000-000000000004",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {
+      "timingProgramId": "de1e0005-0000-4000-9000-000000000001"
+     }
+    },
+    {
+     "objectId": "de1e0005-0000-4000-8000-000000000005",
+     "elementKind": "rf_amplifier",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0005-0000-4000-8000-000000000006",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0005-0000-4000-8000-000000000007",
+     "elementKind": "rf_amplifier",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0005-0000-4000-8000-000000000008",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    }
+   ],
+   "timingPrograms": [
+    {
+     "id": "de1e0005-0000-4000-9000-000000000001",
+     "name": "lockedPpg"
+    }
+   ]
+  },
+  {
+   "objects": [
+    {
+     "id": "de1e0006-0000-4000-8000-000000000001",
+     "name": "host",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0006-0000-4000-8000-000000000002",
+     "name": "aom",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0006-0000-4000-8000-000000000003",
+     "name": "ppg",
+     "locked": false,
+     "properties": {
+      "ppgAttachment": {
+       "targetObjectId": "de1e0006-0000-4000-8000-000000000001",
+       "targetAnchorId": "ttl_in",
+       "targetAnchorName": "TTL"
+      }
+     }
+    },
+    {
+     "id": "de1e0006-0000-4000-8000-000000000004",
+     "name": "cableOnPpg",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0006-0000-4000-8000-000000000003",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "rf_out"
+       },
+       "B": {
+        "targetObjectId": "de1e0006-0000-4000-8000-000000000002",
+        "targetAnchorId": "trigger_in",
+        "targetAnchorName": "trigger_in"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0006-0000-4000-8000-000000000005",
+     "name": "dds",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0006-0000-4000-8000-000000000006",
+     "name": "first",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0006-0000-4000-8000-000000000005",
+        "targetAnchorId": "rf_out",
+        "targetAnchorName": "CH0"
+       },
+       "B": {
+        "targetObjectId": "de1e0006-0000-4000-8000-000000000002",
+        "targetAnchorId": "rf_in",
+        "targetAnchorName": "rf_in"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0006-0000-4000-8000-000000000007",
+     "name": "second",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0006-0000-4000-8000-000000000006",
+        "targetAnchorId": "connect_in",
+        "targetAnchorName": "connect_in"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0006-0000-4000-8000-000000000008",
+     "name": "third",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0006-0000-4000-8000-000000000007",
+        "targetAnchorId": "connect_in",
+        "targetAnchorName": "connect_in"
+       }
+      }
+     }
+    }
+   ],
+   "physicsElements": [
+    {
+     "objectId": "de1e0006-0000-4000-8000-000000000001",
+     "elementKind": "rf_switch",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0006-0000-4000-8000-000000000002",
+     "elementKind": "aom",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0006-0000-4000-8000-000000000003",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {
+      "timingProgramId": "de1e0006-0000-4000-9000-000000000001"
+     }
+    },
+    {
+     "objectId": "de1e0006-0000-4000-8000-000000000004",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0006-0000-4000-8000-000000000005",
+     "elementKind": "rf_source",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0006-0000-4000-8000-000000000006",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0006-0000-4000-8000-000000000007",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0006-0000-4000-8000-000000000008",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    }
+   ],
+   "timingPrograms": [
+    {
+     "id": "de1e0006-0000-4000-9000-000000000001",
+     "name": "ppg"
+    }
+   ]
+  },
+  {
+   "objects": [
+    {
+     "id": "de1e0007-0000-4000-8000-000000000001",
+     "name": "host",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0007-0000-4000-8000-000000000002",
+     "name": "s1",
+     "locked": false,
+     "properties": {
+      "ppgAttachment": {
+       "targetObjectId": "de1e0007-0000-4000-8000-000000000001",
+       "targetAnchorId": "ttl_in",
+       "targetAnchorName": "TTL"
+      }
+     }
+    },
+    {
+     "id": "de1e0007-0000-4000-8000-000000000003",
+     "name": "s2",
+     "locked": false,
+     "properties": {
+      "ppgAttachment": {
+       "targetObjectId": "de1e0007-0000-4000-8000-000000000001",
+       "targetAnchorId": "ttl_in",
+       "targetAnchorName": "TTL"
+      }
+     }
+    },
+    {
+     "id": "de1e0007-0000-4000-8000-000000000004",
+     "name": "missing",
+     "locked": false,
+     "properties": {
+      "ppgAttachment": {
+       "targetObjectId": "de1e0007-0000-4000-8000-000000000001",
+       "targetAnchorId": "ttl_in",
+       "targetAnchorName": "TTL"
+      }
+     }
+    },
+    {
+     "id": "de1e0007-0000-4000-8000-000000000005",
+     "name": "numeric",
+     "locked": false,
+     "properties": {
+      "ppgAttachment": {
+       "targetObjectId": "de1e0007-0000-4000-8000-000000000001",
+       "targetAnchorId": "ttl_in",
+       "targetAnchorName": "TTL"
+      }
+     }
+    },
+    {
+     "id": "de1e0007-0000-4000-8000-000000000006",
+     "name": "empty",
+     "locked": false,
+     "properties": {
+      "ppgAttachment": {
+       "targetObjectId": "de1e0007-0000-4000-8000-000000000001",
+       "targetAnchorId": "ttl_in",
+       "targetAnchorName": "TTL"
+      }
+     }
+    },
+    {
+     "id": "de1e0007-0000-4000-8000-000000000007",
+     "name": "none",
+     "locked": false,
+     "properties": {
+      "ppgAttachment": {
+       "targetObjectId": "de1e0007-0000-4000-8000-000000000001",
+       "targetAnchorId": "ttl_in",
+       "targetAnchorName": "TTL"
+      }
+     }
+    },
+    {
+     "id": "de1e0007-0000-4000-8000-000000000008",
+     "name": "own",
+     "locked": false,
+     "properties": {
+      "ppgAttachment": {
+       "targetObjectId": "de1e0007-0000-4000-8000-000000000001",
+       "targetAnchorId": "ttl_in",
+       "targetAnchorName": "TTL"
+      }
+     }
+    }
+   ],
+   "physicsElements": [
+    {
+     "objectId": "de1e0007-0000-4000-8000-000000000001",
+     "elementKind": "rf_switch",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0007-0000-4000-8000-000000000002",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {
+      "timingProgramId": "de1e0007-0000-4000-9000-000000000001"
+     }
+    },
+    {
+     "objectId": "de1e0007-0000-4000-8000-000000000003",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {
+      "timingProgramId": "de1e0007-0000-4000-9000-000000000001"
+     }
+    },
+    {
+     "objectId": "de1e0007-0000-4000-8000-000000000004",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {
+      "timingProgramId": "de1e0007-0000-4000-9000-000000000002"
+     }
+    },
+    {
+     "objectId": "de1e0007-0000-4000-8000-000000000005",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {
+      "timingProgramId": 7
+     }
+    },
+    {
+     "objectId": "de1e0007-0000-4000-8000-000000000006",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {
+      "timingProgramId": ""
+     }
+    },
+    {
+     "objectId": "de1e0007-0000-4000-8000-000000000007",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0007-0000-4000-8000-000000000008",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {
+      "timingProgramId": "de1e0007-0000-4000-9000-000000000003"
+     }
+    }
+   ],
+   "timingPrograms": [
+    {
+     "id": "de1e0007-0000-4000-9000-000000000001",
+     "name": "shared"
+    },
+    {
+     "id": "de1e0007-0000-4000-9000-000000000003",
+     "name": "own"
+    }
+   ]
+  },
+  {
+   "objects": [
+    {
+     "id": "de1e0008-0000-4000-8000-000000000001",
+     "name": "host",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0008-0000-4000-8000-000000000002",
+     "name": "endpointsString",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": "host"
+     }
+    },
+    {
+     "id": "de1e0008-0000-4000-8000-000000000003",
+     "name": "endpointsNull",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": null
+     }
+    },
+    {
+     "id": "de1e0008-0000-4000-8000-000000000004",
+     "name": "endpointsArray",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": [
+       {
+        "targetObjectId": "de1e0008-0000-4000-8000-000000000001",
+        "targetAnchorId": "rf_in",
+        "targetAnchorName": "rf_in"
+       }
+      ]
+     }
+    },
+    {
+     "id": "de1e0008-0000-4000-8000-000000000005",
+     "name": "endNull",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": null,
+       "B": {
+        "targetObjectId": "de1e0008-0000-4000-8000-000000000001",
+        "targetAnchorId": "rf_in",
+        "targetAnchorName": "rf_in"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0008-0000-4000-8000-000000000006",
+     "name": "endString",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": "de1e0008-0000-4000-8000-000000000001"
+      }
+     }
+    },
+    {
+     "id": "de1e0008-0000-4000-8000-000000000007",
+     "name": "targetNumber",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": 5
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0008-0000-4000-8000-000000000008",
+     "name": "targetEmpty",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": ""
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0008-0000-4000-8000-000000000009",
+     "name": "targetObject",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "A": {
+        "targetObjectId": {
+         "id": "de1e0008-0000-4000-8000-000000000001"
+        }
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0008-0000-4000-8000-00000000000a",
+     "name": "targetOnly",
+     "locked": false,
+     "properties": {
+      "rfCableEndpoints": {
+       "B": {
+        "targetObjectId": "de1e0008-0000-4000-8000-000000000001"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0008-0000-4000-8000-00000000000b",
+     "name": "partialAttach",
+     "locked": false,
+     "properties": {
+      "ppgAttachment": {
+       "targetObjectId": "de1e0008-0000-4000-8000-000000000001",
+       "targetAnchorId": "ttl_in"
+      }
+     }
+    },
+    {
+     "id": "de1e0008-0000-4000-8000-00000000000c",
+     "name": "emptyNameAttach",
+     "locked": false,
+     "properties": {
+      "ppgAttachment": {
+       "targetObjectId": "de1e0008-0000-4000-8000-000000000001",
+       "targetAnchorId": "ttl_in",
+       "targetAnchorName": ""
+      }
+     }
+    },
+    {
+     "id": "de1e0008-0000-4000-8000-00000000000d",
+     "name": "stringAttach",
+     "locked": false,
+     "properties": {
+      "ppgAttachment": "de1e0008-0000-4000-8000-000000000001"
+     }
+    },
+    {
+     "id": "de1e0008-0000-4000-8000-00000000000e",
+     "name": "notAPpgAttach",
+     "locked": false,
+     "properties": {
+      "ppgAttachment": {
+       "targetObjectId": "de1e0008-0000-4000-8000-000000000001",
+       "targetAnchorId": "ttl_in",
+       "targetAnchorName": "TTL"
+      }
+     }
+    }
+   ],
+   "physicsElements": [
+    {
+     "objectId": "de1e0008-0000-4000-8000-000000000001",
+     "elementKind": "rf_switch",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0008-0000-4000-8000-000000000002",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0008-0000-4000-8000-000000000003",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0008-0000-4000-8000-000000000004",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0008-0000-4000-8000-000000000005",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0008-0000-4000-8000-000000000006",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0008-0000-4000-8000-000000000007",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0008-0000-4000-8000-000000000008",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0008-0000-4000-8000-000000000009",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0008-0000-4000-8000-00000000000a",
+     "elementKind": "rf_cable",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0008-0000-4000-8000-00000000000b",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0008-0000-4000-8000-00000000000c",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0008-0000-4000-8000-00000000000d",
+     "elementKind": "programmable_pulse_generator",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0008-0000-4000-8000-00000000000e",
+     "elementKind": "rf_amplifier",
+     "kindParams": {}
+    }
+   ],
+   "timingPrograms": []
+  },
+  {
+   "objects": [
+    {
+     "id": "de1e0009-0000-4000-8000-000000000001",
+     "name": "det",
+     "locked": false,
+     "properties": {}
+    },
+    {
+     "id": "de1e0009-0000-4000-8000-000000000002",
+     "name": "fiber",
+     "locked": false,
+     "properties": {
+      "fiberEndpoints": {
+       "A": {
+        "targetObjectId": "de1e0009-0000-4000-8000-000000000001",
+        "targetAnchorId": "fiber_in",
+        "targetAnchorName": "IN"
+       }
+      }
+     }
+    },
+    {
+     "id": "de1e0009-0000-4000-8000-000000000003",
+     "name": "eom",
+     "locked": false,
+     "properties": {
+      "pigtailEndpoints": {
+       "intercept_out": {
+        "targetObjectId": "de1e0009-0000-4000-8000-000000000001",
+        "targetAnchorId": "fiber_in",
+        "targetAnchorName": "IN"
+       }
+      }
+     }
+    }
+   ],
+   "physicsElements": [
+    {
+     "objectId": "de1e0009-0000-4000-8000-000000000001",
+     "elementKind": "detector",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0009-0000-4000-8000-000000000002",
+     "elementKind": "fiber",
+     "kindParams": {}
+    },
+    {
+     "objectId": "de1e0009-0000-4000-8000-000000000003",
+     "elementKind": "eom",
+     "kindParams": {}
+    }
+   ],
+   "timingPrograms": []
+  }
+ ],
+ "cases": [
+  {
+   "name": "lab: only TABLE",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000001"
+   ],
+   "orderIndependent": true,
+   "deleted": [],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: only DDS0",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000002"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000002",
+    "de1e0001-0000-4000-8000-00000000000f"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: only DDS1",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000003"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000003",
+    "de1e0001-0000-4000-8000-000000000010",
+    "de1e0001-0000-4000-8000-000000000011"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: only SW0",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000004"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000004",
+    "de1e0001-0000-4000-8000-000000000010",
+    "de1e0001-0000-4000-8000-000000000012",
+    "de1e0001-0000-4000-8000-000000000016"
+   ],
+   "deletedPrograms": [
+    "de1e0001-0000-4000-9000-000000000001"
+   ]
+  },
+  {
+   "name": "lab: only SW1",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000005"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000005",
+    "de1e0001-0000-4000-8000-000000000011",
+    "de1e0001-0000-4000-8000-000000000013",
+    "de1e0001-0000-4000-8000-000000000017"
+   ],
+   "deletedPrograms": [
+    "de1e0001-0000-4000-9000-000000000002"
+   ]
+  },
+  {
+   "name": "lab: only AMP0",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000006"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000006",
+    "de1e0001-0000-4000-8000-000000000012",
+    "de1e0001-0000-4000-8000-000000000014"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: only AMP1",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000007"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000007",
+    "de1e0001-0000-4000-8000-000000000013",
+    "de1e0001-0000-4000-8000-000000000015"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: only AOM0",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000008"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000008",
+    "de1e0001-0000-4000-8000-000000000014",
+    "de1e0001-0000-4000-8000-00000000001b"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: only AOM1",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000009"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000009",
+    "de1e0001-0000-4000-8000-000000000015",
+    "de1e0001-0000-4000-8000-000000000019",
+    "de1e0001-0000-4000-8000-000000000018"
+   ],
+   "deletedPrograms": [
+    "de1e0001-0000-4000-9000-000000000003"
+   ]
+  },
+  {
+   "name": "lab: only DET0",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-00000000000a"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-00000000000a"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: only EOM0",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-00000000000b"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-00000000000b",
+    "de1e0001-0000-4000-8000-00000000000f",
+    "de1e0001-0000-4000-8000-00000000001c"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: only MIRROR0",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-00000000000c"
+   ],
+   "orderIndependent": true,
+   "deleted": [],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: only MECH0",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-00000000000d"
+   ],
+   "orderIndependent": true,
+   "deleted": [],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: only FIBER0",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-00000000000e"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-00000000000e"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: only RF_CABLE0",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-00000000000f"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-00000000000f"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: only RF_CABLE1",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000010"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000010"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: only RF_CABLE2",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000011"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000011"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: only RF_CABLE3",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000012"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000012"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: only RF_CABLE5",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000013"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000013"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: only RF_CABLE4",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000014"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000014"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: only RF_CABLE6",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000015"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000015"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: only CH0",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000016"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000016"
+   ],
+   "deletedPrograms": [
+    "de1e0001-0000-4000-9000-000000000001"
+   ]
+  },
+  {
+   "name": "lab: only CH1",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000017"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000017"
+   ],
+   "deletedPrograms": [
+    "de1e0001-0000-4000-9000-000000000002"
+   ]
+  },
+  {
+   "name": "lab: only CH2",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000018"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000018",
+    "de1e0001-0000-4000-8000-000000000019"
+   ],
+   "deletedPrograms": [
+    "de1e0001-0000-4000-9000-000000000003"
+   ]
+  },
+  {
+   "name": "lab: only LEGACY_CABLE0",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000019"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000019",
+    "de1e0001-0000-4000-8000-000000000018"
+   ],
+   "deletedPrograms": [
+    "de1e0001-0000-4000-9000-000000000003"
+   ]
+  },
+  {
+   "name": "lab: only CH3",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-00000000001a"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-00000000001a",
+    "de1e0001-0000-4000-8000-00000000001b",
+    "de1e0001-0000-4000-8000-00000000001c"
+   ],
+   "deletedPrograms": [
+    "de1e0001-0000-4000-9000-000000000004"
+   ]
+  },
+  {
+   "name": "lab: only LEGACY_CABLE1",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-00000000001b"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-00000000001b"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: only LEGACY_CABLE2",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-00000000001c"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-00000000001c"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: both switches",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000004",
+    "de1e0001-0000-4000-8000-000000000005"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000004",
+    "de1e0001-0000-4000-8000-000000000005",
+    "de1e0001-0000-4000-8000-000000000010",
+    "de1e0001-0000-4000-8000-000000000011",
+    "de1e0001-0000-4000-8000-000000000012",
+    "de1e0001-0000-4000-8000-000000000013",
+    "de1e0001-0000-4000-8000-000000000016",
+    "de1e0001-0000-4000-8000-000000000017"
+   ],
+   "deletedPrograms": [
+    "de1e0001-0000-4000-9000-000000000001",
+    "de1e0001-0000-4000-9000-000000000002"
+   ]
+  },
+  {
+   "name": "lab: an amplifier and its AOM",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000006",
+    "de1e0001-0000-4000-8000-000000000008"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000006",
+    "de1e0001-0000-4000-8000-000000000008",
+    "de1e0001-0000-4000-8000-000000000012",
+    "de1e0001-0000-4000-8000-000000000014",
+    "de1e0001-0000-4000-8000-00000000001b"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: both legacy-PPG sinks",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000008",
+    "de1e0001-0000-4000-8000-00000000000b"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000008",
+    "de1e0001-0000-4000-8000-00000000000b",
+    "de1e0001-0000-4000-8000-00000000000f",
+    "de1e0001-0000-4000-8000-000000000014",
+    "de1e0001-0000-4000-8000-00000000001b",
+    "de1e0001-0000-4000-8000-00000000001c",
+    "de1e0001-0000-4000-8000-00000000001a"
+   ],
+   "deletedPrograms": [
+    "de1e0001-0000-4000-9000-000000000004"
+   ]
+  },
+  {
+   "name": "lab: one of CH3's two cables",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-00000000001b"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-00000000001b"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: both of CH3's cables",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-00000000001b",
+    "de1e0001-0000-4000-8000-00000000001c"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-00000000001b",
+    "de1e0001-0000-4000-8000-00000000001c",
+    "de1e0001-0000-4000-8000-00000000001a"
+   ],
+   "deletedPrograms": [
+    "de1e0001-0000-4000-9000-000000000004"
+   ]
+  },
+  {
+   "name": "lab: a locked object alone (skipped)",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-00000000000c"
+   ],
+   "orderIndependent": true,
+   "deleted": [],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: locked and unlocked together",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-00000000000c",
+    "de1e0001-0000-4000-8000-000000000004",
+    "de1e0001-0000-4000-8000-00000000000d"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000004",
+    "de1e0001-0000-4000-8000-000000000010",
+    "de1e0001-0000-4000-8000-000000000012",
+    "de1e0001-0000-4000-8000-000000000016"
+   ],
+   "deletedPrograms": [
+    "de1e0001-0000-4000-9000-000000000001"
+   ]
+  },
+  {
+   "name": "lab: duplicates",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000004",
+    "de1e0001-0000-4000-8000-000000000004",
+    "de1e0001-0000-4000-8000-000000000006"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000004",
+    "de1e0001-0000-4000-8000-000000000006",
+    "de1e0001-0000-4000-8000-000000000010",
+    "de1e0001-0000-4000-8000-000000000012",
+    "de1e0001-0000-4000-8000-000000000014",
+    "de1e0001-0000-4000-8000-000000000016"
+   ],
+   "deletedPrograms": [
+    "de1e0001-0000-4000-9000-000000000001"
+   ]
+  },
+  {
+   "name": "lab: an unknown id",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-a000-000000000001"
+   ],
+   "orderIndependent": true,
+   "deleted": [],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: an unknown id with a real one",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-a000-000000000002",
+    "de1e0001-0000-4000-8000-000000000003"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000003",
+    "de1e0001-0000-4000-8000-000000000010",
+    "de1e0001-0000-4000-8000-000000000011"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: nothing",
+   "scene": 0,
+   "request": [],
+   "orderIndependent": true,
+   "deleted": [],
+   "deletedPrograms": []
+  },
+  {
+   "name": "lab: everything",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-000000000001",
+    "de1e0001-0000-4000-8000-000000000002",
+    "de1e0001-0000-4000-8000-000000000003",
+    "de1e0001-0000-4000-8000-000000000004",
+    "de1e0001-0000-4000-8000-000000000005",
+    "de1e0001-0000-4000-8000-000000000006",
+    "de1e0001-0000-4000-8000-000000000007",
+    "de1e0001-0000-4000-8000-000000000008",
+    "de1e0001-0000-4000-8000-000000000009",
+    "de1e0001-0000-4000-8000-00000000000a",
+    "de1e0001-0000-4000-8000-00000000000b",
+    "de1e0001-0000-4000-8000-00000000000c",
+    "de1e0001-0000-4000-8000-00000000000d",
+    "de1e0001-0000-4000-8000-00000000000e",
+    "de1e0001-0000-4000-8000-00000000000f",
+    "de1e0001-0000-4000-8000-000000000010",
+    "de1e0001-0000-4000-8000-000000000011",
+    "de1e0001-0000-4000-8000-000000000012",
+    "de1e0001-0000-4000-8000-000000000013",
+    "de1e0001-0000-4000-8000-000000000014",
+    "de1e0001-0000-4000-8000-000000000015",
+    "de1e0001-0000-4000-8000-000000000016",
+    "de1e0001-0000-4000-8000-000000000017",
+    "de1e0001-0000-4000-8000-000000000018",
+    "de1e0001-0000-4000-8000-000000000019",
+    "de1e0001-0000-4000-8000-00000000001a",
+    "de1e0001-0000-4000-8000-00000000001b",
+    "de1e0001-0000-4000-8000-00000000001c"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-000000000002",
+    "de1e0001-0000-4000-8000-000000000003",
+    "de1e0001-0000-4000-8000-000000000004",
+    "de1e0001-0000-4000-8000-000000000005",
+    "de1e0001-0000-4000-8000-000000000006",
+    "de1e0001-0000-4000-8000-000000000007",
+    "de1e0001-0000-4000-8000-000000000008",
+    "de1e0001-0000-4000-8000-000000000009",
+    "de1e0001-0000-4000-8000-00000000000a",
+    "de1e0001-0000-4000-8000-00000000000b",
+    "de1e0001-0000-4000-8000-00000000000e",
+    "de1e0001-0000-4000-8000-00000000000f",
+    "de1e0001-0000-4000-8000-000000000010",
+    "de1e0001-0000-4000-8000-000000000011",
+    "de1e0001-0000-4000-8000-000000000012",
+    "de1e0001-0000-4000-8000-000000000013",
+    "de1e0001-0000-4000-8000-000000000014",
+    "de1e0001-0000-4000-8000-000000000015",
+    "de1e0001-0000-4000-8000-000000000016",
+    "de1e0001-0000-4000-8000-000000000017",
+    "de1e0001-0000-4000-8000-000000000018",
+    "de1e0001-0000-4000-8000-000000000019",
+    "de1e0001-0000-4000-8000-00000000001a",
+    "de1e0001-0000-4000-8000-00000000001b",
+    "de1e0001-0000-4000-8000-00000000001c"
+   ],
+   "deletedPrograms": [
+    "de1e0001-0000-4000-9000-000000000001",
+    "de1e0001-0000-4000-9000-000000000002",
+    "de1e0001-0000-4000-9000-000000000003",
+    "de1e0001-0000-4000-9000-000000000004"
+   ]
+  },
+  {
+   "name": "lab: everything, reversed",
+   "scene": 0,
+   "request": [
+    "de1e0001-0000-4000-8000-00000000001c",
+    "de1e0001-0000-4000-8000-00000000001b",
+    "de1e0001-0000-4000-8000-00000000001a",
+    "de1e0001-0000-4000-8000-000000000019",
+    "de1e0001-0000-4000-8000-000000000018",
+    "de1e0001-0000-4000-8000-000000000017",
+    "de1e0001-0000-4000-8000-000000000016",
+    "de1e0001-0000-4000-8000-000000000015",
+    "de1e0001-0000-4000-8000-000000000014",
+    "de1e0001-0000-4000-8000-000000000013",
+    "de1e0001-0000-4000-8000-000000000012",
+    "de1e0001-0000-4000-8000-000000000011",
+    "de1e0001-0000-4000-8000-000000000010",
+    "de1e0001-0000-4000-8000-00000000000f",
+    "de1e0001-0000-4000-8000-00000000000e",
+    "de1e0001-0000-4000-8000-00000000000d",
+    "de1e0001-0000-4000-8000-00000000000c",
+    "de1e0001-0000-4000-8000-00000000000b",
+    "de1e0001-0000-4000-8000-00000000000a",
+    "de1e0001-0000-4000-8000-000000000009",
+    "de1e0001-0000-4000-8000-000000000008",
+    "de1e0001-0000-4000-8000-000000000007",
+    "de1e0001-0000-4000-8000-000000000006",
+    "de1e0001-0000-4000-8000-000000000005",
+    "de1e0001-0000-4000-8000-000000000004",
+    "de1e0001-0000-4000-8000-000000000003",
+    "de1e0001-0000-4000-8000-000000000002",
+    "de1e0001-0000-4000-8000-000000000001"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0001-0000-4000-8000-00000000001c",
+    "de1e0001-0000-4000-8000-00000000001b",
+    "de1e0001-0000-4000-8000-00000000001a",
+    "de1e0001-0000-4000-8000-000000000019",
+    "de1e0001-0000-4000-8000-000000000018",
+    "de1e0001-0000-4000-8000-000000000017",
+    "de1e0001-0000-4000-8000-000000000016",
+    "de1e0001-0000-4000-8000-000000000015",
+    "de1e0001-0000-4000-8000-000000000014",
+    "de1e0001-0000-4000-8000-000000000013",
+    "de1e0001-0000-4000-8000-000000000012",
+    "de1e0001-0000-4000-8000-000000000011",
+    "de1e0001-0000-4000-8000-000000000010",
+    "de1e0001-0000-4000-8000-00000000000f",
+    "de1e0001-0000-4000-8000-00000000000e",
+    "de1e0001-0000-4000-8000-00000000000b",
+    "de1e0001-0000-4000-8000-00000000000a",
+    "de1e0001-0000-4000-8000-000000000009",
+    "de1e0001-0000-4000-8000-000000000008",
+    "de1e0001-0000-4000-8000-000000000007",
+    "de1e0001-0000-4000-8000-000000000006",
+    "de1e0001-0000-4000-8000-000000000005",
+    "de1e0001-0000-4000-8000-000000000004",
+    "de1e0001-0000-4000-8000-000000000003",
+    "de1e0001-0000-4000-8000-000000000002"
+   ],
+   "deletedPrograms": [
+    "de1e0001-0000-4000-9000-000000000001",
+    "de1e0001-0000-4000-9000-000000000002",
+    "de1e0001-0000-4000-9000-000000000003",
+    "de1e0001-0000-4000-9000-000000000004"
+   ]
+  },
+  {
+   "name": "ppgAttachment A2: the host",
+   "scene": 1,
+   "request": [
+    "de1e0002-0000-4000-8000-000000000001"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0002-0000-4000-8000-000000000001",
+    "de1e0002-0000-4000-8000-000000000002"
+   ],
+   "deletedPrograms": [
+    "de1e0002-0000-4000-9000-000000000001"
+   ]
+  },
+  {
+   "name": "ppgAttachment A2: an unrelated object",
+   "scene": 1,
+   "request": [
+    "de1e0002-0000-4000-8000-000000000004"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0002-0000-4000-8000-000000000004"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "cables.length === 0 guard: an unrelated instrument",
+   "scene": 2,
+   "request": [
+    "de1e0003-0000-4000-8000-000000000004"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0003-0000-4000-8000-000000000004",
+    "de1e0003-0000-4000-8000-000000000006"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "cables.length === 0 guard: an unrelated cable",
+   "scene": 2,
+   "request": [
+    "de1e0003-0000-4000-8000-000000000006"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0003-0000-4000-8000-000000000006"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "cables.length === 0 guard: the host",
+   "scene": 2,
+   "request": [
+    "de1e0003-0000-4000-8000-000000000001"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0003-0000-4000-8000-000000000001",
+    "de1e0003-0000-4000-8000-000000000002"
+   ],
+   "deletedPrograms": [
+    "de1e0003-0000-4000-9000-000000000001"
+   ]
+  },
+  {
+   "name": "legacy PPG orphan rule: aomA (one of two's cables)",
+   "scene": 3,
+   "request": [
+    "de1e0004-0000-4000-8000-000000000001"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0004-0000-4000-8000-000000000001",
+    "de1e0004-0000-4000-8000-000000000004",
+    "de1e0004-0000-4000-8000-000000000006",
+    "de1e0004-0000-4000-8000-000000000003"
+   ],
+   "deletedPrograms": [
+    "de1e0004-0000-4000-9000-000000000001"
+   ]
+  },
+  {
+   "name": "legacy PPG orphan rule: aomB",
+   "scene": 3,
+   "request": [
+    "de1e0004-0000-4000-8000-000000000002"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0004-0000-4000-8000-000000000002",
+    "de1e0004-0000-4000-8000-000000000007",
+    "de1e0004-0000-4000-8000-00000000000b",
+    "de1e0004-0000-4000-8000-00000000000c"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "legacy PPG orphan rule: both AOMs",
+   "scene": 3,
+   "request": [
+    "de1e0004-0000-4000-8000-000000000001",
+    "de1e0004-0000-4000-8000-000000000002"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0004-0000-4000-8000-000000000001",
+    "de1e0004-0000-4000-8000-000000000002",
+    "de1e0004-0000-4000-8000-000000000004",
+    "de1e0004-0000-4000-8000-000000000006",
+    "de1e0004-0000-4000-8000-000000000007",
+    "de1e0004-0000-4000-8000-00000000000b",
+    "de1e0004-0000-4000-8000-00000000000c",
+    "de1e0004-0000-4000-8000-000000000003",
+    "de1e0004-0000-4000-8000-000000000005"
+   ],
+   "deletedPrograms": [
+    "de1e0004-0000-4000-9000-000000000001",
+    "de1e0004-0000-4000-9000-000000000002"
+   ]
+  },
+  {
+   "name": "legacy PPG orphan rule: a cable on a PPG directly",
+   "scene": 3,
+   "request": [
+    "de1e0004-0000-4000-8000-000000000004"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0004-0000-4000-8000-000000000004",
+    "de1e0004-0000-4000-8000-000000000003"
+   ],
+   "deletedPrograms": [
+    "de1e0004-0000-4000-9000-000000000001"
+   ]
+  },
+  {
+   "name": "legacy PPG orphan rule: a cable to itself",
+   "scene": 3,
+   "request": [
+    "de1e0004-0000-4000-8000-000000000009"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0004-0000-4000-8000-000000000009",
+    "de1e0004-0000-4000-8000-000000000008"
+   ],
+   "deletedPrograms": [
+    "de1e0004-0000-4000-9000-000000000003"
+   ]
+  },
+  {
+   "name": "legacy PPG orphan rule: the PPG with a self-loop cable",
+   "scene": 3,
+   "request": [
+    "de1e0004-0000-4000-8000-000000000008"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0004-0000-4000-8000-000000000008",
+    "de1e0004-0000-4000-8000-000000000009"
+   ],
+   "deletedPrograms": [
+    "de1e0004-0000-4000-9000-000000000003"
+   ]
+  },
+  {
+   "name": "locks: the host (cascade reaches a locked cable and PPG)",
+   "scene": 4,
+   "request": [
+    "de1e0005-0000-4000-8000-000000000001"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0005-0000-4000-8000-000000000001",
+    "de1e0005-0000-4000-8000-000000000003",
+    "de1e0005-0000-4000-8000-000000000004"
+   ],
+   "deletedPrograms": [
+    "de1e0005-0000-4000-9000-000000000001"
+   ]
+  },
+  {
+   "name": "locks: the locked cable itself",
+   "scene": 4,
+   "request": [
+    "de1e0005-0000-4000-8000-000000000003"
+   ],
+   "orderIndependent": true,
+   "deleted": [],
+   "deletedPrograms": []
+  },
+  {
+   "name": "locks: the locked cable and its host",
+   "scene": 4,
+   "request": [
+    "de1e0005-0000-4000-8000-000000000003",
+    "de1e0005-0000-4000-8000-000000000001"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0005-0000-4000-8000-000000000001",
+    "de1e0005-0000-4000-8000-000000000003",
+    "de1e0005-0000-4000-8000-000000000004"
+   ],
+   "deletedPrograms": [
+    "de1e0005-0000-4000-9000-000000000001"
+   ]
+  },
+  {
+   "name": "locks: the dds (cascade reaches a locked cable)",
+   "scene": 4,
+   "request": [
+    "de1e0005-0000-4000-8000-000000000002"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0005-0000-4000-8000-000000000002",
+    "de1e0005-0000-4000-8000-000000000003",
+    "de1e0005-0000-4000-8000-000000000006",
+    "de1e0005-0000-4000-8000-000000000008"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "locks: the amp",
+   "scene": 4,
+   "request": [
+    "de1e0005-0000-4000-8000-000000000005"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0005-0000-4000-8000-000000000005",
+    "de1e0005-0000-4000-8000-000000000006"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "locks: a locked amp (skipped, so its cable stays)",
+   "scene": 4,
+   "request": [
+    "de1e0005-0000-4000-8000-000000000007"
+   ],
+   "orderIndependent": true,
+   "deleted": [],
+   "deletedPrograms": []
+  },
+  {
+   "name": "quirks: the host of a cabled PPG",
+   "scene": 5,
+   "request": [
+    "de1e0006-0000-4000-8000-000000000001"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0006-0000-4000-8000-000000000001",
+    "de1e0006-0000-4000-8000-000000000003"
+   ],
+   "deletedPrograms": [
+    "de1e0006-0000-4000-9000-000000000001"
+   ]
+  },
+  {
+   "name": "quirks: the dds (cable-to-cable chain)",
+   "scene": 5,
+   "request": [
+    "de1e0006-0000-4000-8000-000000000005"
+   ],
+   "orderIndependent": false,
+   "deleted": [
+    "de1e0006-0000-4000-8000-000000000005",
+    "de1e0006-0000-4000-8000-000000000006",
+    "de1e0006-0000-4000-8000-000000000007",
+    "de1e0006-0000-4000-8000-000000000008"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "timing programs: the host",
+   "scene": 6,
+   "request": [
+    "de1e0007-0000-4000-8000-000000000001"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0007-0000-4000-8000-000000000001",
+    "de1e0007-0000-4000-8000-000000000002",
+    "de1e0007-0000-4000-8000-000000000003",
+    "de1e0007-0000-4000-8000-000000000004",
+    "de1e0007-0000-4000-8000-000000000005",
+    "de1e0007-0000-4000-8000-000000000006",
+    "de1e0007-0000-4000-8000-000000000007",
+    "de1e0007-0000-4000-8000-000000000008"
+   ],
+   "deletedPrograms": [
+    "de1e0007-0000-4000-9000-000000000001",
+    "de1e0007-0000-4000-9000-000000000003"
+   ]
+  },
+  {
+   "name": "malformed links: the host",
+   "scene": 7,
+   "request": [
+    "de1e0008-0000-4000-8000-000000000001"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0008-0000-4000-8000-000000000001",
+    "de1e0008-0000-4000-8000-000000000005",
+    "de1e0008-0000-4000-8000-00000000000a"
+   ],
+   "deletedPrograms": []
+  },
+  {
+   "name": "fibres and pigtails: the detector",
+   "scene": 8,
+   "request": [
+    "de1e0009-0000-4000-8000-000000000001"
+   ],
+   "orderIndependent": true,
+   "deleted": [
+    "de1e0009-0000-4000-8000-000000000001"
+   ],
+   "deletedPrograms": []
+  }
+ ]
+}
