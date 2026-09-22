@@ -31,7 +31,7 @@ The stored pose is **quantized** — 1 nm for `x/y/z mm`, 1e-9° for `rx/ry/rz d
 
 ## Collection 歸屬與 Outliner（一個 object 只有一個家）
 
-`collection_members` 上有 `uq_collection_members_object_home` UNIQUE 約束：**每個 object 至多屬於一個 collection**。所以「搬家」是 UPDATE 既有那一列的 `collection_id`，而不是 delete-then-insert（asyncpg 的交易可見性會讓刪除列仍擋住 INSERT）——見 `backend/app/routers/collections.py:296` `move_object_to_collection`。物件建立時若沒帶 `collection_id`，後端塞進 Master（`backend/app/routers/objects.py:124`）。
+`collection_members` 上有 `uq_collection_members_object_home` UNIQUE 約束：**每個 object 至多屬於一個 collection**。所以「搬家」是 UPDATE 既有那一列的 `collection_id`，而不是 delete-then-insert（asyncpg 的交易可見性會讓刪除列仍擋住 INSERT）——見 `backend/app/routers/collections.py:296` `move_object_to_collection`。物件建立時若沒帶 `collection_id`，後端塞進 Master（`backend/app/routers/objects.py:139`，`insert_scene_object`——`POST /api/objects` 與 `/api/v3/rf-cables/connect`、`/api/v3/ppg/attach` 共用同一段）。
 
 **Active collection**：新建的 object 一律進 `activeCollectionId`（store 裡所有 `createObjectApi` 呼叫點都帶這個值），而它會被寫進 localStorage、跨 reload 存活（`sceneStore.ts:4352` / `_persistence.ts:134`）。**它只有兩種方式會變：點 collection 列，或新建 collection**（`OutlinerPanel.tsx:801` / `:519`）。點 object 列**不會**改 active collection——這條 2026-08-18 才修好：以前點一下 Outliner 裡的任何一顆鏡子，之後每個新元件就都被默默丟進那顆鏡子的 collection，而且因為有持久化，重開也還在。
 

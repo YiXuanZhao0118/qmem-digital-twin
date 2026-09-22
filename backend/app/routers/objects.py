@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, select
@@ -98,16 +99,26 @@ async def list_objects(session: AsyncSession = Depends(get_session)) -> list[Sce
     return await crud.list_all(session, SceneObject)
 
 
-@router.post("", response_model=schemas.SceneObjectOut, status_code=status.HTTP_201_CREATED)
-async def create_object(
-    payload: schemas.SceneObjectCreate,
-    session: AsyncSession = Depends(get_session),
-) -> SceneObject:
+@dataclass
+class InsertedObject:
+    """What :func:`insert_scene_object` added: the row, the collection it was
+    filed under and the PhysicsElement auto-created for it (if any)."""
+
+    scene_object: SceneObject
+    collection_id: uuid.UUID
+    physics_element: PhysicsElement | None
+
+
+async def insert_scene_object(
+    session: AsyncSession, payload: schemas.SceneObjectCreate
+) -> InsertedObject:
+    """Everything ``POST /api/objects`` writes — the row (unique name, or the
+    next ``<KIND><n>``), its collection membership (the master collection
+    unless one is named) and the per-object PhysicsElement — flushed but NOT
+    committed, so a caller composing several writes commits once. Broadcast
+    with :func:`broadcast_inserted_object` after the commit."""
     # Lazy import avoids a circular components ↔ objects router dependency.
-    from app.routers.components import (
-        auto_create_physics_element_for_object,
-        physics_element_payload,
-    )
+    from app.routers.components import auto_create_physics_element_for_object
 
     component = await crud.get_or_404(session, Component, payload.component_id)
     values = payload.model_dump()
@@ -136,26 +147,44 @@ async def create_object(
     physics_element = await auto_create_physics_element_for_object(
         session, scene_object, component
     )
+    return InsertedObject(scene_object, target_id, physics_element)
 
-    await session.commit()
-    await session.refresh(scene_object)
-    if physics_element is not None:
-        await session.refresh(physics_element)
+
+async def broadcast_inserted_object(inserted: InsertedObject) -> None:
+    """The ``/ws/scene`` events of an object creation (after the commit)."""
+    from app.routers.components import physics_element_payload
+
+    scene_object = inserted.scene_object
     await manager.broadcast("object.updated", object_payload(scene_object))
     await manager.broadcast(
         "collection_member.updated",
         {
-            "collectionId": str(target_id),
+            "collectionId": str(inserted.collection_id),
             "objectId": str(scene_object.id),
             "sortOrder": 0,
         },
     )
-    if physics_element is not None:
-        await manager.broadcast("physics_element.updated", physics_element_payload(physics_element))
+    if inserted.physics_element is not None:
+        await manager.broadcast(
+            "physics_element.updated", physics_element_payload(inserted.physics_element)
+        )
         # alembic 0056 (2026-05-17) removed the paired-fiber_end auto-
         # spawn: a fiber is a single SceneObject again. No paired-end
         # broadcasts needed.
-    return scene_object
+
+
+@router.post("", response_model=schemas.SceneObjectOut, status_code=status.HTTP_201_CREATED)
+async def create_object(
+    payload: schemas.SceneObjectCreate,
+    session: AsyncSession = Depends(get_session),
+) -> SceneObject:
+    inserted = await insert_scene_object(session, payload)
+    await session.commit()
+    await session.refresh(inserted.scene_object)
+    if inserted.physics_element is not None:
+        await session.refresh(inserted.physics_element)
+    await broadcast_inserted_object(inserted)
+    return inserted.scene_object
 
 
 @router.put("/{object_id}", response_model=schemas.SceneObjectOut)
@@ -189,22 +218,26 @@ async def update_object(
     return scene_object
 
 
-@router.delete("/{object_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_object(
-    object_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
-) -> Response:
-    scene_object = await crud.get_or_404(session, SceneObject, object_id)
-    # Locked objects are protected from removal — same lock that blocks pose
-    # mutation in strip_locked_transform_updates above. The frontend filters
-    # locked ids out of multi-select delete before sending; this 409 is
-    # defense-in-depth for direct API hits and any code path that misses the
-    # pre-filter.
-    if scene_object.locked:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Object is locked. Unlock it before deleting.",
-        )
+@dataclass
+class RemovedObject:
+    """What :func:`remove_scene_object` deleted, for the broadcasts."""
+
+    object_id: uuid.UUID
+    had_physics_element: bool
+    # The PPG's bound TimingProgram id when the object was a PPG naming one
+    # (broadcast as deleted whether or not the row still existed, as this
+    # route always has).
+    cascaded_program_id: uuid.UUID | None
+    program_deleted: bool
+
+
+async def remove_scene_object(session: AsyncSession, scene_object: SceneObject) -> RemovedObject:
+    """Delete one SceneObject and what it takes with it — its PhysicsElement
+    (FK cascade) and, for a Programmable Pulse Generator, its bound
+    TimingProgram — WITHOUT the lock check or the commit, so a caller
+    deleting several objects checks every lock first and commits once.
+    Broadcast with :func:`broadcast_removed_object` after the commit."""
+    object_id = scene_object.id
     # PPG ↔ TimingProgram are 1:1 — deleting a PPG cascades to deleting its
     # bound TimingProgram so the Pulse & Timing catalog stays in sync with
     # the RF Link graph.
@@ -223,26 +256,54 @@ async def delete_object(
             except (TypeError, ValueError):
                 cascaded_program_id = None
     await session.delete(scene_object)
+    program_deleted = False
     if cascaded_program_id is not None:
         program = await session.get(TimingProgram, cascaded_program_id)
         if program is not None:
             await session.delete(program)
-    await session.commit()
+            program_deleted = True
+    return RemovedObject(object_id, had_physics_element, cascaded_program_id, program_deleted)
+
+
+async def broadcast_removed_object(removed: RemovedObject) -> None:
+    """The ``/ws/scene`` events of an object deletion (after the commit)."""
+    object_id = removed.object_id
     await manager.broadcast("object.deleted", {"id": str(object_id), "objectId": str(object_id)})
     # Surface the cascade-deleted PhysicsElement to every connected client.
     # The DB FK already drops the row, but without this event scene.
     # physicsElements stays stale on the frontend until the next /api/scene
     # GET — long enough that RF Link / Pulse & Timing show ghost entries
     # until the user clicks around.
-    if had_physics_element:
+    if removed.had_physics_element:
         await manager.broadcast(
             "physics_element.updated",
             {"objectId": str(object_id), "deleted": True},
         )
-    if cascaded_program_id is not None:
+    if removed.cascaded_program_id is not None:
         await manager.broadcast(
-            "timing_program.deleted", {"id": str(cascaded_program_id)}
+            "timing_program.deleted", {"id": str(removed.cascaded_program_id)}
         )
+
+
+@router.delete("/{object_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_object(
+    object_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    scene_object = await crud.get_or_404(session, SceneObject, object_id)
+    # Locked objects are protected from removal — same lock that blocks pose
+    # mutation in strip_locked_transform_updates above. The frontend filters
+    # locked ids out of multi-select delete before sending; this 409 is
+    # defense-in-depth for direct API hits and any code path that misses the
+    # pre-filter.
+    if scene_object.locked:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Object is locked. Unlock it before deleting.",
+        )
+    removed = await remove_scene_object(session, scene_object)
+    await session.commit()
+    await broadcast_removed_object(removed)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
