@@ -323,7 +323,8 @@ def cable_row(scene: RfScene, cable_id: str) -> tuple[Any, Any]:
 def align_candidates(scene: RfScene, cable_id: str, end: str, tolerance_mm: float) -> list[AlignmentCandidate]:
     """``findRfCableAlignmentCandidates``: every ``rf_in`` / ``rf_out`` anchor
     on any OTHER object's binding tree within ``tolerance_mm`` of this end,
-    nearest first."""
+    nearest first, measured and mated with the end's bound connector length
+    (as connect and resnap)."""
     cable, comp = cable_row(scene, cable_id)
     nodes = cable_nodes(cable.properties, comp.properties)
     ports: list[RfPortLab] = []
@@ -351,8 +352,10 @@ def align_candidates(scene: RfScene, cable_id: str, end: str, tolerance_mm: floa
             ))
     if not ports:
         return []
+    conn = cable_end_connector_asset(scene, str(comp.id), end)
     return find_rf_cable_endpoint_alignment_candidates(
         endpoint=end, cable_pose=pose_of(cable), cable_nodes=nodes, ports=ports, tolerance_mm=tolerance_mm,
+        connector_tip_mm=connector_tip_mm_from_anchors(conn.anchors if conn is not None else None, None),
     )
 
 

@@ -381,9 +381,10 @@ async def test_align_candidates_then_align_links_a_loose_end(lab, loose_end, key
         cands = r.json()["candidates"]
         assert cands and cands[0]["targetObjectId"] == str(lab.obj[key])
         assert cands[0]["targetAnchorName"] == name
-        # The TS measures from / mates to the PROCEDURAL 15.5 mm tip, not the
-        # bound connector's 25.45: the current face is ~9.95 mm off the port.
-        assert abs(cands[0]["distMm"] - (SMA_TIP - 15.5)) < 1e-6
+        # Measured with the end's bound connector (the SMA's 25.45 mm, as
+        # connect mated it): the loosened end is still ON its port. Until
+        # 2026-09-22 the procedural 15.5 mm read it as 9.95 mm off.
+        assert cands[0]["distMm"] < 1e-6
         a = await c.post(f"/api/v3/rf-cables/{cable['id']}/align", json={
             "end": loose_end, "target": {"objectId": str(lab.obj[key]), "anchorName": name},
         })
@@ -394,7 +395,7 @@ async def test_align_candidates_then_align_links_a_loose_end(lab, loose_end, key
     aligned = a.json()["object"]
     assert aligned["properties"]["rfCableEndpoints"][loose_end]["targetAnchorName"] == name
     # The port is where the tracer puts it, whatever the instrument's rotation.
-    _assert_on_port(*_mating_face(aligned, loose_end, 15.5), lab.port_lab(key, name))
+    _assert_on_port(*_mating_face(aligned, loose_end, SMA_TIP), lab.port_lab(key, name))
     assert miss.status_code == 422 and miss.json()["detail"].startswith("target_not_in_range: ")
 
 

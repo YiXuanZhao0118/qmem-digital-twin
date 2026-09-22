@@ -7,7 +7,10 @@
 //
 // What "align" means for an rf_cable:
 //   1. The mating face (port) at endpoint A or B is `node + outward ·
-//      RF_CONNECTOR_TIP_MM` — same offset trick as fiber's ferrule tip.
+//      connectorTipMm` — same offset trick as fiber's ferrule tip. The
+//      caller passes this end's bound connector's own length
+//      (`connectorTipMmFromAnchors`); `RF_CONNECTOR_TIP_MM` (the procedural
+//      connector) is only the default.
 //   2. Find the closest RF port anchor in `ports` (already converted to
 //      lab frame) within `toleranceMm` of the current cable port.
 //   3. Move the cable node so its port lands AT the target port, with
@@ -190,8 +193,13 @@ export function findRfCableEndpointAlignmentCandidates(args: {
   /** Magnitude (mm) of the handle vector to set on the aligned endpoint.
    *  Falls back to the existing handle's magnitude if present, else 30. */
   handleMagnitudeMm?: number;
+  /** Spline node → connector mating face for THIS end, i.e. its bound
+   *  connector asset's |connect_in − connect_out| — the length connect and
+   *  resnap mate with. Defaults to the procedural SMA's 15.5 mm. */
+  connectorTipMm?: number;
 }): RfCableAlignmentResult[] {
   const { endpoint, cablePose, cableNodes, ports, toleranceMm } = args;
+  const tipMm = args.connectorTipMm ?? RF_CONNECTOR_TIP_MM;
   if (cableNodes.length < 2) return [];
   const { bodyToLab, bodyToLabDir, labToBody, labToBodyDir } = makePoseTransforms(cablePose);
 
@@ -201,9 +209,9 @@ export function findRfCableEndpointAlignmentCandidates(args: {
   const outwardLab = bodyToLabDir(outwardBody);
   const nodeLab = bodyToLab(node.posMm);
   const portLab: Vec3Tuple = [
-    nodeLab[0] + outwardLab[0] * RF_CONNECTOR_TIP_MM,
-    nodeLab[1] + outwardLab[1] * RF_CONNECTOR_TIP_MM,
-    nodeLab[2] + outwardLab[2] * RF_CONNECTOR_TIP_MM,
+    nodeLab[0] + outwardLab[0] * tipMm,
+    nodeLab[1] + outwardLab[1] * tipMm,
+    nodeLab[2] + outwardLab[2] * tipMm,
   ];
 
   const existingHandle = endpoint === "A" ? node.handleOutMm : node.handleInMm;
@@ -225,9 +233,9 @@ export function findRfCableEndpointAlignmentCandidates(args: {
       -targetOutwardLab[0], -targetOutwardLab[1], -targetOutwardLab[2],
     ];
     const newNodeLab: Vec3Tuple = [
-      p.labPosMm[0] - newOutwardLab[0] * RF_CONNECTOR_TIP_MM,
-      p.labPosMm[1] - newOutwardLab[1] * RF_CONNECTOR_TIP_MM,
-      p.labPosMm[2] - newOutwardLab[2] * RF_CONNECTOR_TIP_MM,
+      p.labPosMm[0] - newOutwardLab[0] * tipMm,
+      p.labPosMm[1] - newOutwardLab[1] * tipMm,
+      p.labPosMm[2] - newOutwardLab[2] * tipMm,
     ];
     const newPosMmBody = labToBody(newNodeLab);
     const newOutwardBody = labToBodyDir(newOutwardLab);

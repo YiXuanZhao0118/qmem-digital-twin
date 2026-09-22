@@ -3771,6 +3771,19 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     }
     if (ports.length === 0) return [];
 
+    // This end's connector length = its bound connector asset's own
+    // |connect_in − connect_out|, the same lookup connect and resnap use —
+    // not the procedural 15.5 mm, which made an aligned SMA end's mating
+    // face overshoot its port by 9.95 mm (25.45 − 15.5).
+    const { connectorTipMmFromAnchors } = await import("../utils/rfCableAnchorResolver");
+    const connBinding = (state.scene.componentBindings ?? []).find(
+      (b) => b.componentId === component.id
+        && b.role === (end === "A" ? "end_a" : "end_b")
+        && b.targetKind === "asset",
+    );
+    const connAsset = connBinding?.asset3dId
+      ? state.scene.assets.find((a) => a.id === connBinding.asset3dId)
+      : undefined;
     const { findRfCableEndpointAlignmentCandidates } = await import("../utils/rfCableAlignment");
     return findRfCableEndpointAlignmentCandidates({
       endpoint: end,
@@ -3781,6 +3794,7 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
       cableNodes: nodes,
       ports,
       toleranceMm,
+      connectorTipMm: connectorTipMmFromAnchors(connAsset?.anchors, null),
     });
   },
 

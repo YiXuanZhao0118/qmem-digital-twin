@@ -261,11 +261,14 @@ def find_rf_cable_endpoint_alignment_candidates(
     ports: list[RfPortLab],
     tolerance_mm: float,
     handle_magnitude_mm: float | None = None,
+    connector_tip_mm: float | None = None,
 ) -> list[AlignmentCandidate]:
     """``findRfCableEndpointAlignmentCandidates``: every port within
-    ``tolerance_mm`` of this end's CURRENT mating face (node + outward x the
-    procedural 15.5 mm tip, as the TS has it), nearest first, each with the
-    node + handle that would mate it."""
+    ``tolerance_mm`` of this end's CURRENT mating face (node + outward x
+    ``connector_tip_mm`` — the end's bound connector length; the procedural
+    15.5 mm when not given), nearest first, each with the node + handle that
+    would mate it."""
+    tip = RF_CONNECTOR_TIP_MM if connector_tip_mm is None else connector_tip_mm
     if len(cable_nodes) < 2:
         return []
     idx = 0 if endpoint == "A" else len(cable_nodes) - 1
@@ -274,9 +277,9 @@ def find_rf_cable_endpoint_alignment_candidates(
     outward_lab = _tup(dir_body_to_lab(_vec(outward_body), cable_pose))
     node_lab = _tup(point_body_to_lab(_vec(_t3(node["posMm"])), cable_pose))
     port_lab = (
-        node_lab[0] + outward_lab[0] * RF_CONNECTOR_TIP_MM,
-        node_lab[1] + outward_lab[1] * RF_CONNECTOR_TIP_MM,
-        node_lab[2] + outward_lab[2] * RF_CONNECTOR_TIP_MM,
+        node_lab[0] + outward_lab[0] * tip,
+        node_lab[1] + outward_lab[1] * tip,
+        node_lab[2] + outward_lab[2] * tip,
     )
     existing = node.get("handleOutMm") if endpoint == "A" else node.get("handleInMm")
     existing_mag = math.hypot(existing[0], existing[1], existing[2]) if js_truthy(existing) else 0.0
@@ -297,9 +300,9 @@ def find_rf_cable_endpoint_alignment_candidates(
         target_outward = _normalise(p.lab_dir_outward)
         new_outward_lab = (-target_outward[0], -target_outward[1], -target_outward[2])
         new_node_lab = (
-            p.lab_pos_mm[0] - new_outward_lab[0] * RF_CONNECTOR_TIP_MM,
-            p.lab_pos_mm[1] - new_outward_lab[1] * RF_CONNECTOR_TIP_MM,
-            p.lab_pos_mm[2] - new_outward_lab[2] * RF_CONNECTOR_TIP_MM,
+            p.lab_pos_mm[0] - new_outward_lab[0] * tip,
+            p.lab_pos_mm[1] - new_outward_lab[1] * tip,
+            p.lab_pos_mm[2] - new_outward_lab[2] * tip,
         )
         new_pos_body = _tup(point_lab_to_body(_vec(new_node_lab), cable_pose))
         new_outward_body = _tup(dir_lab_to_body(_vec(new_outward_lab), cable_pose))

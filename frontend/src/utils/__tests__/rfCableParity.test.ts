@@ -1017,6 +1017,9 @@ function buildPure(): Json {
       ports,
       toleranceMm: r.pick([25, 400, 2000, 1e6]),
       ...(r.chance(0.2) ? { handleMagnitudeMm: r.uni(1, 80) } : {}),
+      // Most calls pass the bound connector's own length; some rely on the
+      // procedural default.
+      ...(i % 4 !== 3 ? { connectorTipMm: r.pick([25.45, 43.5, r.uni(5, 60)]) } : {}),
     };
     cands.push({ input: plain(input), output: plain(findRfCableEndpointAlignmentCandidates(input)) });
   }

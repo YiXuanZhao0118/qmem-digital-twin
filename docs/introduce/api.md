@@ -202,7 +202,7 @@ Common to all of them:
 
 ### `POST /api/v3/rf-cables/connect`
 
-`createRfCableBetweenPorts` behind the panel's drop gate (`flows.plan_connect`, `flows.py:160`). Request order does not matter — the OUT port is the source.
+`createRfCableBetweenPorts` behind the panel's drop gate (`flows.plan_connect`, `flows.py:161`). Request order does not matter — the OUT port is the source.
 
 ```json
 { "a": { "objectId": "<dds>", "anchorName": "CH1" },
@@ -229,7 +229,7 @@ The cable Component is the first catalog `rf_cable` whose end A / B connector fa
 
 ### `POST /api/v3/rf-cables/{id}/disconnect`
 
-The web's cable-end unlink (`clearRfCableEndpointLink`): a cable either joins two ports or does not exist, so unlinking either end **deletes the cable**, through the web's delete cascade (`flows.plan_delete_objects`, `flows.py:389`: objects linked to a doomed one, PPGs plugged into one, legacy PPGs wired only through doomed cables). An end with no link is a no-op — a destructive action only on a fact positively established ([rf.md](rf.md) §7).
+The web's cable-end unlink (`clearRfCableEndpointLink`): a cable either joins two ports or does not exist, so unlinking either end **deletes the cable**, through the web's delete cascade (`flows.plan_delete_objects`, `flows.py:393`: objects linked to a doomed one, PPGs plugged into one, legacy PPGs wired only through doomed cables). An end with no link is a no-op — a destructive action only on a fact positively established ([rf.md](rf.md) §7).
 
 ```json
 { "end": "A" }
@@ -243,7 +243,7 @@ On a no-op, `object` is the untouched cable and both lists are empty.
 
 ### `POST /api/v3/rf-cables/resnap`
 
-`resnapRfCablesLinkedTo` (`flows.py:240`), called after objects moved: every cable end linked to a moved object is re-mated (same math as connect), and — a backend addition the web does not need, since it re-derives the mount at render time — every PPG plugged into a moved object (or moved itself) is re-mounted, so its STORED pose stays on its port (`flows.plan_ppg_mounts`, `:295`).
+`resnapRfCablesLinkedTo` (`flows.py:241`), called after objects moved: every cable end linked to a moved object is re-mated (same math as connect), and — a backend addition the web does not need, since it re-derives the mount at render time — every PPG plugged into a moved object (or moved itself) is re-mounted, so its STORED pose stays on its port (`flows.plan_ppg_mounts`, `:296`).
 
 ```json
 { "movedObjectIds": ["<amp>"] }
@@ -257,7 +257,7 @@ Only rows that actually change are written and returned; a second call is `{"upd
 
 ### `POST /api/v3/rf-cables/{id}/align-candidates` (compute-only)
 
-`findRfCableAlignmentCandidates` (`flows.py:322`): every `rf_in` / `rf_out` anchor on any other object within `toleranceMm` (default 25) of this end, nearest first.
+`findRfCableAlignmentCandidates` (`flows.py:323`): every `rf_in` / `rf_out` anchor on any other object within `toleranceMm` (default 25) of this end, nearest first. Distances are measured from the end's current connector mating face, and `newPosMmBody` / `newHandleMmBody` mate that face onto the port, both with the end's bound connector length (the SMA's 25.45 mm), as connect and resnap do.
 
 ```json
 { "end": "B", "toleranceMm": 100 }
@@ -265,9 +265,9 @@ Only rows that actually change are written and returned; a second call is `{"upd
 
 ```json
 { "candidates": [
-  { "distMm": 54.522, "newPosMmBody": [-331.456, 723.0, -398.335], "newHandleMmBody": [30, 0, 0],
+  { "distMm": 57.623, "newPosMmBody": [-321.506, 723.0, -398.335], "newHandleMmBody": [30, 0, 0],
     "targetName": "RF_AMPLIFIER0", "targetObjectId": "<amp>", "targetAnchorName": "rf_in", "targetAnchorId": "rf_in" },
-  { "distMm": 59.312, "...": "the amp's rf_out, then the next ports out to 100 mm" } ] }
+  { "distMm": 62.175, "...": "the amp's rf_out, then the next ports out to 100 mm" } ] }
 ```
 
 ### `POST /api/v3/rf-cables/{id}/align`
@@ -282,7 +282,7 @@ Response `{"object": SceneObjectOut}` (the cable).
 
 ### `POST /api/v3/ppg/attach`
 
-`createPpgAtPort` + `createProgrammablePulseGenerator` behind the panel's `canSpawnPpgHere` (`flows.plan_ppg_attach`, `flows.py:523`): the target must be an empty `ttl_in` / `trigger_in` with an SMA/BNC connector. The PPG Component is the first `programmable_pulse_generator` whose `properties.connectorType` equals the port's family and whose primary asset carries `rf_out`.
+`createPpgAtPort` + `createProgrammablePulseGenerator` behind the panel's `canSpawnPpgHere` (`flows.plan_ppg_attach`, `flows.py:527`): the target must be an empty `ttl_in` / `trigger_in` with an SMA/BNC connector. The PPG Component is the first `programmable_pulse_generator` whose `properties.connectorType` equals the port's family and whose primary asset carries `rf_out`.
 
 ```json
 { "target": { "objectId": "<switch>", "anchorName": "ttl_in" }, "collectionId": null }

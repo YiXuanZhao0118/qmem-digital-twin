@@ -195,6 +195,7 @@ def test_find_alignment_candidates(case):
     out = find_rf_cable_endpoint_alignment_candidates(
         endpoint=i["endpoint"], cable_pose=_pose(i["cablePose"]), cable_nodes=i["cableNodes"],
         ports=ports, tolerance_mm=i["toleranceMm"], handle_magnitude_mm=i.get("handleMagnitudeMm"),
+        connector_tip_mm=i.get("connectorTipMm"),
     )
     assert_close([c.as_json() for c in out], case["output"])
 
