@@ -4,8 +4,28 @@
 > 你在 09-08 15:10 填了答案（**Q0 = yes**），當天寫入完畢：`device_id IS NULL` 從 9 降到 2，剩下的 2 筆是 Q2 拍板永久留 NULL 的 annotation。
 > **所有題目都已執行完畢**（含 Q4b 刪除孤兒 device `mm_pc_780`）。
 > **第 8 次 2026-09-09 複查：狀態不變，沒有新缺口，且最後一項 ⚠️ 也在本次用查詢關掉了**（見下一節）。
-> **第 9 次 2026-09-10 ~ 第 21 次 2026-09-22 複查：同樣無事可補**（見下一節）。**這份文件已無待辦，不需要你回答任何東西。**
+> **第 9 次 2026-09-10 ~ 第 22 次 2026-09-23 複查：同樣無事可補**（見下一節）。**這份文件已無待辦，不需要你回答任何東西。**
 > 相關規則：[CLAUDE.md 的 locked rows 條款](../CLAUDE.md)、[docs/introduce/asset.md](introduce/asset.md)、[docs/introduce/kinds.md](introduce/kinds.md)。
+
+---
+
+## 第 22 次（2026-09-23）複查：**與第 21 次相同，無事可補**
+
+直接對 DB 查（`localhost:55432/qmem_twin`，唯讀）＋ API（`/api/v3/assets3d`、`/api/devices`）交叉核對：
+
+| 檢查 | 結果 |
+|---|---|
+| `assets_3d.device_id` NULL 或只有空白 | **2** —— `Rect Annotation`（`rect_annotation`, primitive, locked）/ `Text Annotation`（`text_annotation`, primitive, locked），Q2 拍板永久 NULL |
+| 懸空 `device_id`（指不到 `devices.slug`） | **0** |
+| 一個 device 被兩個以上 asset 共用 | **0** |
+| 孤兒 device | **3** —— `dg4202` / `horn_wr90` / `rg316_sma`（刻意留） |
+| 總數 | asset **64**、device **65**、`locked` asset **60** |
+| alembic head | **`0140_isolator_kind_row`**（上次是 `0139`；0140 只補 `isolator` kind 列，與 device 無關） |
+| 最新 asset / device | `02BCF-4(M)`（2026-08-26）/ `sm_apc_30126a9`（2026-09-08）—— 之後沒有新列 |
+
+`information_schema.columns`：整個 schema 裡帶 device 字樣的欄位仍然只有 **`assets_3d.device_id`** 一處。
+
+**本次不寫 DB、不新增提問。**
 
 ---
 
