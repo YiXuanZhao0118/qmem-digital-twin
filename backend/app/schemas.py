@@ -444,6 +444,10 @@ class ComponentUpdate(CamelModel):
     properties: JsonDict | None = None
     physics_capabilities: list[PhysicsCapability] | None = None
     notes: str | None = None
+    # Same type as on create (ComponentBase). Omitted = untouched; null
+    # clears it. It used to be missing here, so a PUT carrying it answered
+    # 200 and silently dropped it (pydantic ignores unknown keys).
+    exposed_faces: JsonList | None = None
     locked: bool | None = None
 
 

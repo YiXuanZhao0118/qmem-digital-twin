@@ -13,6 +13,20 @@ Bindings live under two URL spaces:
   (``target_kind`` + ``asset_3d_id`` / ``sub_component_id``); to retarget,
   delete and recreate. Keeps the cycle check simple.
 
+Locks
+-----
+A binding row is part of its Component's definition, so every write here
+(create / update / delete) is refused with the Component's own 422 while
+the Component that OWNS the row (``component_id``) is ``locked`` — the
+same ``lock_guard`` rule ``PUT /api/components/{id}`` applies, reported as
+changes to its ``bindings``. Unlocking stays a Component-level action
+(``PUT /api/components/{id} {"locked": false}``). The lock is per row and
+not transitive, as everywhere else: a locked Component does not freeze
+the Asset3D rows it binds (they carry their own lock), nor a Component it
+uses as a sub-component — that one's bindings belong to it and follow its
+own lock. Adding / removing a sub-component binding changes only the
+container, so only the container's lock counts.
+
 Cycle protection
 ----------------
 When creating a binding with ``target_kind='subcomponent'`` we walk the
@@ -32,6 +46,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import crud, schemas
 from app.db import get_session
+from app.lock_guard import assert_update_allowed
 from app.models import Asset3D, Component, ComponentBinding
 from app.websocket import manager
 
@@ -48,6 +63,17 @@ def binding_payload(binding: ComponentBinding) -> dict[str, object]:
 # Two routers — one nested under /components, one top-level for /{binding_id}.
 component_scoped = APIRouter()
 binding_scoped = APIRouter()
+
+
+def assert_bindings_editable(component: Component, changed: list[str] | None = None) -> None:
+    """422 while ``component`` is locked: its binding rows are part of it
+    (see "Locks" above). ``changed`` names the binding fields a PUT sets;
+    a create / delete changes the ``bindings`` list itself."""
+    assert_update_allowed(
+        locked=component.locked,
+        changed_fields=[f"bindings.{f}" for f in changed] if changed is not None else ["bindings"],
+        label=f"Component {component.name!r}",
+    )
 
 
 async def _has_subcomponent_cycle(
@@ -138,7 +164,8 @@ async def create_binding(
     payload: schemas.ComponentBindingCreate,
     session: AsyncSession = Depends(get_session),
 ) -> ComponentBinding:
-    await crud.get_or_404(session, Component, component_id)
+    component = await crud.get_or_404(session, Component, component_id)
+    assert_bindings_editable(component)
 
     # FK existence checks at app layer so we return clean 400s instead of
     # IntegrityError bubbling out of the DB layer.
@@ -194,6 +221,9 @@ async def update_binding(
 ) -> ComponentBinding:
     binding = await crud.get_or_404(session, ComponentBinding, binding_id)
     updates = payload.model_dump(exclude_unset=True)
+    assert_bindings_editable(
+        await crud.get_or_404(session, Component, binding.component_id), list(updates)
+    )
 
     if "parent_binding_id" in updates:
         new_parent = updates["parent_binding_id"]
@@ -215,6 +245,7 @@ async def delete_binding(
     binding_id: uuid.UUID, session: AsyncSession = Depends(get_session)
 ) -> Response:
     binding = await crud.get_or_404(session, ComponentBinding, binding_id)
+    assert_bindings_editable(await crud.get_or_404(session, Component, binding.component_id))
     await session.delete(binding)
     await session.commit()
     await manager.broadcast(

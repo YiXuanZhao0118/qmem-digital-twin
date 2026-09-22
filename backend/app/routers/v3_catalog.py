@@ -39,6 +39,7 @@ from app.schemas_v3 import (
 )
 from app.config import settings
 from app.routers.assets import safe_upload_name
+from app.routers.component_bindings import assert_bindings_editable
 from app.services.asset_converter import (
     CAD_SOURCE_EXTENSIONS,
     SUPPORTED_ASSET_EXTENSIONS,
@@ -666,6 +667,12 @@ async def delete_asset3d_by_catalog_id(
     bindings = (await session.execute(
         select(ComponentBinding).where(ComponentBinding.asset_3d_id == row.id)
     )).scalars().all()
+    # A binding row is part of its Component: never cut one out of a locked
+    # Component behind its back (the rule of DELETE /api/component-bindings).
+    for b in bindings:
+        owner = await session.get(Component, b.component_id)
+        if owner is not None:
+            assert_bindings_editable(owner)
     for b in bindings:
         await session.delete(b)
     await session.delete(row)
