@@ -42,9 +42,9 @@ couple. Sibling: [`optics.md`](optics.md) (the q-tracer this rides on),
   (`misc_ops._mode_match_eta`, reported on the trace as
   `labSegments[*].taSeedCoupling.etaMode` since 2026-09-22 — see
   [optics.md](optics.md)), so the panel's η and the traced amplified power
-  agree; the BeamScope panel's client-side "TA eta: mode" readout
-  (`rayTrace.ts::taSeedModeOverlap`) applies the same per-axis rule to its own
-  beam states.
+  agree. (The BeamScope panel's client-side "TA eta: mode" readout
+  (`rayTrace.ts::taSeedModeOverlap`) belongs to the legacy in-browser tracer;
+  `v3TraceAdapter` never fills it, so it does not show on the v3 trace.)
 
 The overlap is the general-astigmatism power coupling of two Gaussian beam
 matrices (`mode_match.py`):
@@ -91,7 +91,7 @@ axis — so a cylindrical lens's roll is a real degree of freedom.
 - `POST /api/v3/solver/mode-match` (`routers/v3_solver.py`) — loads the DB
   scene, traces the seed once, calls `run_mode_match`, returns the plan.
   **The solve runs on a worker thread** (`run_in_threadpool`, 2026-09-22):
-  the DB reads (scene + object names) happen first, on the event loop; the
+  the DB reads (scene + object names and poses) happen first, on the event loop; the
   forward trace and the optimizer then run off it, touching only the loaded
   scene — never the `AsyncSession`, which is bound to the loop. Until then the
   optimizer ran synchronously inside the `async` handler and every other
@@ -185,10 +185,17 @@ the traced slots).
 
 ## Constraints & feasibility
 
-- `l_max_mm` bounds the BS2→MIRROR5 section length. MIRROR5 is a movable
-  endpoint with an axial-only DOF, **locked by default**; unlocked, its axial
-  bound is clamped so length ≤ `l_max_mm`. Locked and already too long ⇒
-  immediate infeasible with that reason.
+- `l_max_mm` bounds the BS2→MIRROR5 section length **in `optimize()`**
+  (`mode_match_optimize.py:159`): MIRROR5 is a movable endpoint with an
+  axial-only DOF, locked by default; unlocked, its axial bound is clamped so
+  length ≤ `l_max_mm`; locked and already too long ⇒ immediate infeasible with
+  that reason. ⚠️ **`run_mode_match` does not use any of it** (checked
+  2026-09-22): since the Start/range rewrite (2026-08-25) every `optimize` call
+  it makes passes the endpoint as a frozen `DOFSpec()` with
+  `endpoint_locked=True` and no `l_max_mm`, and each card echoes `lMaxMm: null`
+  / `endpointLocked: true`. The request's `lMaxMm`, `endpointLocked` and
+  `axialMm` are accepted and ignored — the End element always stays put and
+  the length is bounded only by the Start→End range.
 - **Decenter is OFF by default.** Transverse decenter improves the mode-shape
   overlap but steers the chief ray off the lens centre (a pointing error the
   objective does not penalize), which shows up as a deflected beam in the twin.
@@ -199,13 +206,27 @@ the traced slots).
   report `feasible` + `best_achievable` + a human `reason` naming which limit
   bit.
 
-## The live scene (2026-08-24)
+## The live scene (re-read 2026-09-22)
 
-Path `BEAM_SPLITTER2 → LENS_CYLINDRICAL3 → (BEAM_SPLITTER1) → LENS_CYLINDRICAL0
-→ LENS_BICONVEX0 → MECHANICAL19 → MIRROR5` carries only the DBR seed
-(`LASER_SOURCE1`, 852 nm) on its way into `TAPERED_AMPLIFIER0`. Shaping lenses:
-CYL3 f=−24.88, CYL0 f=+40 (cyl, power axis body-y), BICONVEX0 f=−25, MECH19 f=+35
-thick. TA input mode (asset `default_params`, **re-fitted 2026-09-02** from the
+**There are no shaping lenses on the seed path any more.** The DBR seed
+(`LASER_SOURCE1`, 852.347 nm) runs `LENS_PLANO_CONVEX2` (the A230TM-B
+collimating asphere, f = 4.51 mm, right after the laser — upstream of any
+Start one would pick) → `MIRROR6` → `WAVEPLATE3` → `ISOLATOR0` → `ISOLATOR1` →
+`WAVEPLATE0` → `BEAM_SPLITTER2` → `MIRROR5` → `MIRROR7` →
+`TAPERED_AMPLIFIER0` (read off a compute-only `run-from-db` trace; BS2 → MIRROR5
+60.6 mm, MIRROR5 → MIRROR7 149.8 mm, MIRROR7 → TA 50 mm). The 2026-08-24 set —
+`LENS_CYLINDRICAL3` (f=−24.88), `LENS_CYLINDRICAL0` (f=+40, cyl), `LENS_BICONVEX0`
+(f=−25), `MECHANICAL19` (f=+35 thick), with `BEAM_SPLITTER1` in the path — is
+no longer in the scene (`BEAM_SPLITTER1` still is, on another branch). So a
+Method-1 solve on BS2 → MIRROR5 today answers "No lenses found between Start
+and Endpoint."; the MIRROR5 / MIRROR7 pair is steered by
+[mirror coupling](mirror-coupling.md) instead.
+
+(Superseded 2026-08-24 path, kept for the η history below:
+`BEAM_SPLITTER2 → LENS_CYLINDRICAL3 → (BEAM_SPLITTER1) → LENS_CYLINDRICAL0 →
+LENS_BICONVEX0 → MECHANICAL19 → MIRROR5`.)
+
+TA input mode (asset `default_params`, unchanged; **re-fitted 2026-09-02** from the
 TA's own back-emission at 25 mm — see `kinds.md` and `docs/ta_seed_modes_0902.md`):
 `inputSpatialModeX` (vertical) 80.5 µm @ +266.5 mm, `inputSpatialModeY`
 (horizontal) 441 µm @ +1283 mm — the emitted beam converges toward the seed, so
@@ -216,18 +237,29 @@ were computed against the un-conjugated, opposite-sign reference and the older
 
 Tests: `backend/tests/optical/test_mode_overlap.py`,
 `test_mode_match_model.py`, `test_mode_match_optimize.py`,
-`test_mode_match_service.py` (21, DB-free). Endpoint verified live in-process.
+`test_mode_match_service.py`, `test_mode_match_endpoint.py` (35 as of
+2026-09-22, all DB-free). Endpoint verified live in-process (2026-08).
 
 ## Frontend
 
 `frontend/src/components/optical/ModeMatchingPanel.tsx` (+ `ModeMatchingLauncher`
 in `ComponentPanel`, panel registered in `WorkspaceProvider` / rendered in
 `App`). Auto-detects the seed (`laser_source`) + TA (`tapered_amplifier`), takes
-the SELECTED shaping lenses (each with a focal-inventory input), plus η target /
-max length / endpoint mirror + lock; a **Lock element angles** checkbox (default ON) sends `rollDeg=0` so the optimizer only slides lenses along the beam + swaps focal, never rotating a mount (η ~0.87 vs ~0.93 with roll). Solve → `runModeMatchApi`
+the SELECTED shaping lenses (each with a focal-inventory input; none selected =
+Method 1), a Start and an End element, and an η target. **That is all it
+sends** (`ModeMatchingPanel.tsx` `solve`): `seedEmitterId`, `taObjectId`,
+`movableIds`, `startId`, `endpointId`, `etaTarget`, `focalInventory`, `rollDeg`
+— no max length and no endpoint lock (the request type still declares
+`lMaxMm` / `endpointLocked`, but the panel never sets them, and the service
+ignores them anyway — see Constraints). A **Lock element angles** checkbox (default ON) sends `rollDeg=0` so the optimizer only slides lenses along the beam + swaps focal, never rotating a mount (η ~0.87 vs ~0.93 with roll; `rollDeg=90` when unchecked). Solve → `runModeMatchApi`
 (`api/client.ts`); preview applies each move as a ghost via
 `previewObjectTransform`; Apply writes SceneObject poses (+ `dynamicSources.focalLengthMm`)
-in one `updateSceneObjects` undo step. A plan move → pose: translate the object
+in one `updateSceneObjects` undo step. ⚠️ **The focal half of Apply does not
+reach the trace**: the loader keeps a per-instance key that is also an asset
+`default_params` key only if the asset lists it in `tunable_params`, and no
+lens asset does (0 of 12, all 12 locked — checked 2026-09-22). So a focal swap
+the optimizer scored is dropped on load and the traced η after Apply is the
+original focal's; changing a lens is really changing its asset. A plan move → pose: translate the object
 by `translateWorldMm` and roll it about the lens's optical-centre anchor
 (`resolveAnchorPosesLab`) — the same rigid transform the backend applied to
 `effective_transform` (the same pivot since 2026-09-22, see
