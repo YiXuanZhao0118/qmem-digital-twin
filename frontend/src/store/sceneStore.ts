@@ -2816,7 +2816,15 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     const ppgCount = state.scene.physicsElements.filter(
       (pe) => pe.elementKind === "programmable_pulse_generator",
     ).length;
-    const programName = `CH${ppgCount}`;
+    // `CH<number of PPGs>`, stepped past any name already taken. Object names
+    // are unique case-insensitively (the backend compares lower()), and the
+    // count alone collides as soon as a PPG other than the last is deleted
+    // ({CH0, CH1} minus CH0 → count 1 → "CH1" again): the create then failed
+    // with a 409 and no PPG was made.
+    const takenNames = new Set(state.scene.objects.map((o) => o.name.toLowerCase()));
+    let channel = ppgCount;
+    while (takenNames.has(`ch${channel}`)) channel += 1;
+    const programName = `CH${channel}`;
 
     // Pick a PPG catalog component matching the requested connector family
     // AND that actually has a usable asset (primary Asset3D with an rf_out

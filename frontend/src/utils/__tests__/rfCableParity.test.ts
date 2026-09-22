@@ -1237,6 +1237,18 @@ async function buildFlows(): Promise<Json> {
   for (const [label, ref] of ppgRefs) {
     cases.push({ label, scene: iLab, op: "ppgAttach", request: { target: ref }, expected: await runPpgAttach(lab, ref) });
   }
+  // PPG naming: the only PPG is CH1 (CH0 was deleted) and another object is
+  // named "ch2" — names are unique case-insensitively. The new PPG must be
+  // CH3, not the colliding CH1 that `CH<count>` gave.
+  const labNames = labScene();
+  labNames.objects.find((o) => o.id === "ppg0")!.name = "CH1";
+  labNames.objects.find((o) => o.id === "amp2")!.name = "ch2";
+  const iNames = addScene("lab-ppg-names-taken", labNames);
+  cases.push({
+    label: "PPG name steps past taken CH<n>",
+    scene: iNames, op: "ppgAttach", request: { target: P("switch", "ttl_in") },
+    expected: await runPpgAttach(labNames, P("switch", "ttl_in")),
+  });
   // An SMA gate input: only the shell / port-less SMA PPGs exist → rejected.
   const labSmaTtl = labScene();
   (labSmaTtl.assets.find((a) => a.id === "a-switch")!.anchors.find((a) => a.id === "ttl_in") as unknown as { connectorType: string })

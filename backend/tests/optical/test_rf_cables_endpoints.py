@@ -261,12 +261,16 @@ async def _count(model) -> int:
 
 
 async def _next_ppg_name() -> str:
-    """``CH<number of PPGs in the scene>`` — the name the attach will pick."""
+    """The name the attach will pick: ``CH<number of PPGs>``, stepped past
+    any object name already taken (case-insensitively)."""
     async with AsyncSessionLocal() as db:
         n = await db.scalar(
             select(func.count()).select_from(PhysicsElement)
             .where(PhysicsElement.element_kind == "programmable_pulse_generator")
         )
+        taken = {name.lower() for name in (await db.scalars(select(SceneObject.name))).all()}
+    while f"ch{n}" in taken:
+        n += 1
     return f"CH{n}"
 
 
@@ -486,15 +490,37 @@ async def test_ppg_attach_plugs_a_new_ppg_into_the_gate_input(lab, events, key):
     assert {"object.updated", "collection_member.updated", "physics_element.updated"} <= set(kinds)
 
 
-async def test_ppg_attach_rolls_back_whole_on_a_name_clash(lab):
+async def test_ppg_attach_steps_past_a_taken_name(lab):
+    """The web named a PPG ``CH<number of PPGs>`` and 409'd when an object
+    already had that name (e.g. CH0 deleted out of {CH0, CH1} → "CH1"
+    again). Both clients now take the next free ``CH<n>``."""
     name = await _next_ppg_name()
+    n = int(name[2:])
     async with _client() as c:
-        # Take the name the new PPG would get (the web names by count).
-        await c.put(f"/api/objects/{lab.obj['amp']}", json={"name": name})
-        programs = await _count(TimingProgram)
-        objects = await _count(SceneObject)
+        # Take that name, in lower case: names are unique case-insensitively.
+        await c.put(f"/api/objects/{lab.obj['amp']}", json={"name": name.lower()})
         r = await c.post("/api/v3/ppg/attach", json={"target": _port(lab, "switch", "ttl_in")})
-    assert r.status_code == 409
+    assert r.status_code == 200, r.text
+    assert r.json()["object"]["name"] == r.json()["timingProgram"]["name"] == f"CH{n + 1}"
+
+
+async def test_ppg_attach_rolls_back_whole_when_a_step_fails(lab, monkeypatch):
+    """The program and the object are flushed before the PhysicsElement is
+    written; a failure there must leave neither behind (the rollback the web
+    does by hand in createPpgAtPort is the transaction's)."""
+    from fastapi import HTTPException
+
+    from app.optical.rf_cables import service
+
+    async def fail(*_args, **_kwargs):
+        raise HTTPException(status_code=400, detail="PPG timingProgramId does not exist")
+
+    monkeypatch.setattr(service, "_write_ppg_element", fail)
+    programs = await _count(TimingProgram)
+    objects = await _count(SceneObject)
+    async with _client() as c:
+        r = await c.post("/api/v3/ppg/attach", json={"target": _port(lab, "switch", "ttl_in")})
+    assert r.status_code == 400
     assert await _count(TimingProgram) == programs
     assert await _count(SceneObject) == objects
 

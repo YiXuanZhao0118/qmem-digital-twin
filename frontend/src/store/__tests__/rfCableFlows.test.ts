@@ -16,6 +16,10 @@
  *       connector length (`connectorTipMmFromAnchors`, as connect and resnap
  *       do). It used the procedural 15.5 mm, so an aligned SMA end (25.45 mm)
  *       overshot its port by 9.95 mm.
+ *   R4. A new PPG is named `CH<number of PPGs>` stepped past any name taken
+ *       (case-insensitively, as the backend's unique name check). The bare
+ *       count collided once a PPG other than the last was deleted, and the
+ *       create failed with a 409.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,11 +29,16 @@ import type { SceneData } from "../../types/digitalTwin";
 
 const updateObjectApiMock = vi.fn();
 const createObjectApiMock = vi.fn();
+const createTimingProgramApiMock = vi.fn();
 
 vi.mock("../../api/client", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   updateObjectApi: (id: string, patch: Record<string, unknown>) => updateObjectApiMock(id, patch),
   createObjectApi: (payload: Record<string, unknown>) => createObjectApiMock(payload),
+  createTimingProgramApi: (payload: Record<string, unknown>) => createTimingProgramApiMock(payload),
+  updateOpticalElementApi: async (objectId: string, patch: Record<string, unknown>) => ({
+    id: `pe-${objectId}`, objectId, ...patch,
+  }),
 }));
 
 const { useSceneStore } = await import("../sceneStore");
@@ -206,5 +215,49 @@ describe("R2: the align picker uses the end's bound connector length", () => {
     const props = updateObjectApiMock.mock.calls[0][1].properties as { rfCableNodes: Node[] };
     const mated = face({ x: 0, y: 0, z: 0 }, props.rfCableNodes[1], "B", SMA_TIP);
     expect(dist(mated.pos, port.pos)).toBeLessThan(1e-9);
+  });
+});
+
+
+describe("R4: a new PPG takes the next free CH<n>", () => {
+  it.each([
+    // [existing PPG names, other object names, expected]
+    [["CH0", "CH1"], [], "CH2"],        // unchanged when nothing collides
+    [["CH1"], [], "CH2"],               // CH0 deleted out of {CH0, CH1}: was CH1 → 409
+    [["CH1"], ["ch2"], "CH3"],          // case-insensitive, and steps more than once
+  ])("PPGs %j + objects %j → %s", async (ppgNames, otherNames, expected) => {
+    const base = seed();
+    const ppgs = (ppgNames as string[]).map((name, i) => ({ ...obj(`ppg${i}`, "c-ppg", {}), name }));
+    const others = (otherNames as string[]).map((name, i) => ({ ...obj(`other${i}`, "c-amp", {}), name }));
+    useSceneStore.setState({
+      scene: {
+        ...base,
+        objects: [...base.objects, ...ppgs, ...others],
+        components: [
+          ...base.components,
+          { id: "c-ppg", name: "PPG BNC MALE", kindId: "programmable_pulse_generator", asset3dId: null, properties: { connectorType: "bnc" } },
+        ],
+        componentBindings: [
+          ...(base.componentBindings ?? []),
+          { id: "b-ppg", componentId: "c-ppg", parentBindingId: null, sortOrder: 0, role: "root", targetKind: "asset", asset3dId: "a-ppg" },
+        ],
+        assets: [
+          ...base.assets,
+          { id: "a-ppg", name: "ppg", kindId: "programmable_pulse_generator", anchors: [anchor("rf_out", [0, 0, 4.8], [0, 0, 1], { connectorType: "bnc_male" })] },
+        ],
+        physicsElements: [
+          ...base.physicsElements,
+          ...ppgs.map((o) => ({ id: `pe-${o.id}`, objectId: o.id, elementKind: "programmable_pulse_generator", kindParams: {} })),
+        ],
+        timingPrograms: [],
+      } as unknown as SceneData,
+    } as never);
+    createTimingProgramApiMock.mockReset();
+    createTimingProgramApiMock.mockImplementation(async (payload: Record<string, unknown>) => ({ id: "tp-new", intervals: [], ...payload }));
+
+    const created = await useSceneStore.getState().createProgrammablePulseGenerator({ connectorType: "bnc" });
+    expect(created).not.toBeNull();
+    expect(createTimingProgramApiMock.mock.calls[0][0].name).toBe(expected);
+    expect(createObjectApiMock.mock.calls[0][0].name).toBe(expected);
   });
 });

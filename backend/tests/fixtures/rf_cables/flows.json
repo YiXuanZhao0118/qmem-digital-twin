@@ -3452,6 +3452,1297 @@
    }
   },
   {
+   "name": "lab-ppg-names-taken",
+   "scene": {
+    "objects": [
+     {
+      "id": "dds",
+      "name": "DDS",
+      "componentId": "c-dds",
+      "xMm": -910.099,
+      "yMm": 754.744,
+      "zMm": 704.245,
+      "rxDeg": -90,
+      "ryDeg": 0,
+      "rzDeg": 180,
+      "visible": true,
+      "locked": false,
+      "properties": {},
+      "dynamicSources": null
+     },
+     {
+      "id": "switch",
+      "name": "SWITCH",
+      "componentId": "c-switch",
+      "xMm": -1239.576,
+      "yMm": 761.745,
+      "zMm": 699.415,
+      "rxDeg": -90,
+      "ryDeg": 0,
+      "rzDeg": 180,
+      "visible": true,
+      "locked": false,
+      "properties": {},
+      "dynamicSources": null
+     },
+     {
+      "id": "amp0",
+      "name": "AMP0",
+      "componentId": "c-amp",
+      "xMm": -1602.456,
+      "yMm": 767,
+      "zMm": 689.665,
+      "rxDeg": -90,
+      "ryDeg": 0,
+      "rzDeg": 180,
+      "visible": true,
+      "locked": false,
+      "properties": {},
+      "dynamicSources": null
+     },
+     {
+      "id": "amp1",
+      "name": "AMP1",
+      "componentId": "c-amp",
+      "xMm": -1602.259,
+      "yMm": 767,
+      "zMm": 752.648,
+      "rxDeg": 90,
+      "ryDeg": -180,
+      "rzDeg": 0,
+      "visible": true,
+      "locked": false,
+      "properties": {},
+      "dynamicSources": null
+     },
+     {
+      "id": "aom",
+      "name": "AOM",
+      "componentId": "c-aom",
+      "xMm": -441.212,
+      "yMm": -211.749,
+      "zMm": 905.233,
+      "rxDeg": 0,
+      "ryDeg": 0,
+      "rzDeg": -179.535,
+      "visible": true,
+      "locked": false,
+      "properties": {},
+      "dynamicSources": null
+     },
+     {
+      "id": "eom",
+      "name": "EOM",
+      "componentId": "c-eom",
+      "xMm": -1100,
+      "yMm": -308.229,
+      "zMm": 992.989,
+      "rxDeg": 0,
+      "ryDeg": 0,
+      "rzDeg": 180,
+      "visible": true,
+      "locked": false,
+      "properties": {},
+      "dynamicSources": null
+     },
+     {
+      "id": "det",
+      "name": "DET",
+      "componentId": "c-det",
+      "xMm": -904.02,
+      "yMm": -127.12,
+      "zMm": 962.463,
+      "rxDeg": 0,
+      "ryDeg": 0,
+      "rzDeg": -180,
+      "visible": true,
+      "locked": false,
+      "properties": {},
+      "dynamicSources": null
+     },
+     {
+      "id": "amp2",
+      "name": "ch2",
+      "componentId": "c-amp",
+      "xMm": -1500,
+      "yMm": 500,
+      "zMm": 700,
+      "rxDeg": 0,
+      "ryDeg": 30,
+      "rzDeg": 15,
+      "visible": true,
+      "locked": true,
+      "properties": {},
+      "dynamicSources": null
+     },
+     {
+      "id": "cable0",
+      "name": "CABLE0",
+      "componentId": "c-cable-sma",
+      "xMm": -1200,
+      "yMm": 44,
+      "zMm": 1088,
+      "rxDeg": 0,
+      "ryDeg": 0,
+      "rzDeg": 0,
+      "visible": true,
+      "locked": false,
+      "properties": {
+       "rfCableEndpoints": {
+        "A": {
+         "targetObjectId": "dds",
+         "targetAnchorId": "rf_out",
+         "targetAnchorName": "CH0"
+        },
+        "B": {
+         "targetObjectId": "amp0",
+         "targetAnchorId": "rf_in",
+         "targetAnchorName": "rf_in"
+        }
+       },
+       "rfCableNodes": [
+        {
+         "posMm": [
+          300,
+          -700,
+          -380
+         ],
+         "handleOutMm": [
+          0,
+          30,
+          0
+         ]
+        },
+        {
+         "posMm": [
+          0,
+          0,
+          0
+         ],
+         "handleInMm": [
+          -20,
+          0,
+          0
+         ],
+         "handleOutMm": [
+          20,
+          0,
+          0
+         ]
+        },
+        {
+         "posMm": [
+          -400,
+          720,
+          -400
+         ],
+         "handleInMm": [
+          0,
+          -30,
+          0
+         ]
+        }
+       ]
+      },
+      "dynamicSources": null
+     },
+     {
+      "id": "loose-dds",
+      "name": "LOOSE-DDS",
+      "componentId": "c-cable-sma",
+      "xMm": -800,
+      "yMm": 600,
+      "zMm": 800,
+      "rxDeg": 0,
+      "ryDeg": 0,
+      "rzDeg": 0,
+      "visible": true,
+      "locked": false,
+      "properties": {
+       "rfCableEndpoints": {},
+       "rfCableNodes": [
+        {
+         "posMm": [
+          83.101,
+          185.24400000000003,
+          -90.755
+         ],
+         "handleOutMm": [
+          -30,
+          0,
+          0
+         ]
+        },
+        {
+         "posMm": [
+          -116.899,
+          185.24400000000003,
+          -90.755
+         ],
+         "handleInMm": [
+          -3.673940397442059e-15,
+          30,
+          6.661338147750939e-15
+         ]
+        }
+       ]
+      },
+      "dynamicSources": null
+     },
+     {
+      "id": "loose-amp2",
+      "name": "LOOSE-AMP2",
+      "componentId": "c-cable-sma",
+      "xMm": -1400,
+      "yMm": 450,
+      "zMm": 750,
+      "rxDeg": 0,
+      "ryDeg": 0,
+      "rzDeg": 0,
+      "visible": true,
+      "locked": false,
+      "properties": {
+       "rfCableEndpoints": {},
+       "rfCableNodes": [
+        {
+         "posMm": [
+          161.9022064765977,
+          33.41335376489104,
+          -13
+         ],
+         "handleOutMm": [
+          -30,
+          0,
+          0
+         ]
+        },
+        {
+         "posMm": [
+          -38.09779352340229,
+          33.41335376489104,
+          -13
+         ],
+         "handleInMm": [
+          25.095489112134242,
+          -6.7243160412604,
+          15
+         ]
+        }
+       ]
+      },
+      "dynamicSources": null
+     },
+     {
+      "id": "ppg0",
+      "name": "CH1",
+      "componentId": "c-ppg-bnc",
+      "xMm": -777.171,
+      "yMm": 108.736,
+      "zMm": 954.982,
+      "rxDeg": 0,
+      "ryDeg": 0,
+      "rzDeg": 0,
+      "visible": true,
+      "locked": false,
+      "properties": {
+       "ppgAttachment": {
+        "targetObjectId": "aom",
+        "targetAnchorId": "trigger_in",
+        "targetAnchorName": "trigger_in"
+       }
+      },
+      "dynamicSources": null
+     }
+    ],
+    "components": [
+     {
+      "id": "c-cable-sma",
+      "name": "RF cable SMA",
+      "kindId": "rf_cable",
+      "asset3dId": null,
+      "properties": {
+       "category": "electronics"
+      }
+     },
+     {
+      "id": "c-cable-bnc-sma",
+      "name": "RF cable BNC SMA",
+      "kindId": "rf_cable",
+      "asset3dId": null,
+      "properties": {
+       "category": "electronics"
+      }
+     },
+     {
+      "id": "c-cable-bnc",
+      "name": "RF Cable BNC",
+      "kindId": "rf_cable",
+      "asset3dId": null,
+      "properties": {
+       "category": "electronics"
+      }
+     },
+     {
+      "id": "c-dds",
+      "name": "c-dds",
+      "kindId": "rf_source",
+      "asset3dId": null,
+      "properties": {}
+     },
+     {
+      "id": "c-switch",
+      "name": "c-switch",
+      "kindId": "rf_switch",
+      "asset3dId": null,
+      "properties": {}
+     },
+     {
+      "id": "c-amp",
+      "name": "c-amp",
+      "kindId": "rf_amplifier",
+      "asset3dId": null,
+      "properties": {}
+     },
+     {
+      "id": "c-aom",
+      "name": "c-aom",
+      "kindId": "aom",
+      "asset3dId": null,
+      "properties": {}
+     },
+     {
+      "id": "c-det",
+      "name": "c-det",
+      "kindId": "detector",
+      "asset3dId": null,
+      "properties": {}
+     },
+     {
+      "id": "c-eom",
+      "name": "c-eom",
+      "kindId": "eom",
+      "asset3dId": null,
+      "properties": {}
+     },
+     {
+      "id": "c-ppg-sma-shell",
+      "name": "c-ppg-sma-shell",
+      "kindId": "programmable_pulse_generator",
+      "asset3dId": null,
+      "properties": {
+       "connectorType": "sma"
+      }
+     },
+     {
+      "id": "c-ppg-sma-noport",
+      "name": "c-ppg-sma-noport",
+      "kindId": "programmable_pulse_generator",
+      "asset3dId": null,
+      "properties": {
+       "connectorType": "sma"
+      }
+     },
+     {
+      "id": "c-ppg-bnc",
+      "name": "c-ppg-bnc",
+      "kindId": "programmable_pulse_generator",
+      "asset3dId": null,
+      "properties": {
+       "category": "electronics",
+       "connectorType": "bnc"
+      }
+     }
+    ],
+    "componentBindings": [
+     {
+      "id": "c-cable-sma-a",
+      "componentId": "c-cable-sma",
+      "parentBindingId": null,
+      "targetKind": "asset",
+      "asset3dId": "a-sma-male",
+      "subComponentId": null,
+      "role": "end_a",
+      "localXMm": 0,
+      "localYMm": 0,
+      "localZMm": 0,
+      "localRxDeg": 0,
+      "localRyDeg": 0,
+      "localRzDeg": 0,
+      "tunableAxes": {},
+      "sortOrder": 0,
+      "properties": {
+       "splineEnd": "A"
+      }
+     },
+     {
+      "id": "c-cable-sma-b",
+      "componentId": "c-cable-sma",
+      "parentBindingId": null,
+      "targetKind": "asset",
+      "asset3dId": "a-sma-male",
+      "subComponentId": null,
+      "role": "end_b",
+      "localXMm": 0,
+      "localYMm": 0,
+      "localZMm": 0,
+      "localRxDeg": 0,
+      "localRyDeg": 0,
+      "localRzDeg": 0,
+      "tunableAxes": {},
+      "sortOrder": 0,
+      "properties": {
+       "splineEnd": "B"
+      }
+     },
+     {
+      "id": "c-cable-bnc-sma-a",
+      "componentId": "c-cable-bnc-sma",
+      "parentBindingId": null,
+      "targetKind": "asset",
+      "asset3dId": "a-bnc-male",
+      "subComponentId": null,
+      "role": "end_a",
+      "localXMm": 0,
+      "localYMm": 0,
+      "localZMm": 0,
+      "localRxDeg": 0,
+      "localRyDeg": 0,
+      "localRzDeg": 0,
+      "tunableAxes": {},
+      "sortOrder": 0,
+      "properties": {
+       "splineEnd": "A"
+      }
+     },
+     {
+      "id": "c-cable-bnc-sma-b",
+      "componentId": "c-cable-bnc-sma",
+      "parentBindingId": null,
+      "targetKind": "asset",
+      "asset3dId": "a-sma-male",
+      "subComponentId": null,
+      "role": "end_b",
+      "localXMm": 0,
+      "localYMm": 0,
+      "localZMm": 0,
+      "localRxDeg": 0,
+      "localRyDeg": 0,
+      "localRzDeg": 0,
+      "tunableAxes": {},
+      "sortOrder": 0,
+      "properties": {
+       "splineEnd": "B"
+      }
+     },
+     {
+      "id": "c-cable-bnc-a",
+      "componentId": "c-cable-bnc",
+      "parentBindingId": null,
+      "targetKind": "asset",
+      "asset3dId": "a-bnc-male",
+      "subComponentId": null,
+      "role": "end_a",
+      "localXMm": 0,
+      "localYMm": 0,
+      "localZMm": 0,
+      "localRxDeg": 0,
+      "localRyDeg": 0,
+      "localRzDeg": 0,
+      "tunableAxes": {},
+      "sortOrder": 0,
+      "properties": {
+       "splineEnd": "A"
+      }
+     },
+     {
+      "id": "c-cable-bnc-b",
+      "componentId": "c-cable-bnc",
+      "parentBindingId": null,
+      "targetKind": "asset",
+      "asset3dId": "a-bnc-male",
+      "subComponentId": null,
+      "role": "end_b",
+      "localXMm": 0,
+      "localYMm": 0,
+      "localZMm": 0,
+      "localRxDeg": 0,
+      "localRyDeg": 0,
+      "localRzDeg": 0,
+      "tunableAxes": {},
+      "sortOrder": 0,
+      "properties": {
+       "splineEnd": "B"
+      }
+     },
+     {
+      "id": "c-dds-root",
+      "componentId": "c-dds",
+      "parentBindingId": null,
+      "targetKind": "asset",
+      "asset3dId": "a-dds",
+      "subComponentId": null,
+      "role": "root",
+      "localXMm": 0,
+      "localYMm": 0,
+      "localZMm": 0,
+      "localRxDeg": 0,
+      "localRyDeg": 0,
+      "localRzDeg": 0,
+      "tunableAxes": {},
+      "sortOrder": 0,
+      "properties": {}
+     },
+     {
+      "id": "c-switch-root",
+      "componentId": "c-switch",
+      "parentBindingId": null,
+      "targetKind": "asset",
+      "asset3dId": "a-switch",
+      "subComponentId": null,
+      "role": "root",
+      "localXMm": 0,
+      "localYMm": 0,
+      "localZMm": 0,
+      "localRxDeg": 0,
+      "localRyDeg": 0,
+      "localRzDeg": 0,
+      "tunableAxes": {},
+      "sortOrder": 0,
+      "properties": {}
+     },
+     {
+      "id": "c-amp-root",
+      "componentId": "c-amp",
+      "parentBindingId": null,
+      "targetKind": "asset",
+      "asset3dId": "a-amp",
+      "subComponentId": null,
+      "role": "root",
+      "localXMm": 0,
+      "localYMm": 0,
+      "localZMm": 0,
+      "localRxDeg": 0,
+      "localRyDeg": 0,
+      "localRzDeg": 0,
+      "tunableAxes": {},
+      "sortOrder": 0,
+      "properties": {}
+     },
+     {
+      "id": "c-aom-root",
+      "componentId": "c-aom",
+      "parentBindingId": null,
+      "targetKind": "asset",
+      "asset3dId": "a-aom",
+      "subComponentId": null,
+      "role": "root",
+      "localXMm": 0,
+      "localYMm": 0,
+      "localZMm": 0,
+      "localRxDeg": 0,
+      "localRyDeg": 0,
+      "localRzDeg": 0,
+      "tunableAxes": {},
+      "sortOrder": 0,
+      "properties": {}
+     },
+     {
+      "id": "c-det-root",
+      "componentId": "c-det",
+      "parentBindingId": null,
+      "targetKind": "asset",
+      "asset3dId": "a-det",
+      "subComponentId": null,
+      "role": "root",
+      "localXMm": 0,
+      "localYMm": 0,
+      "localZMm": 0,
+      "localRxDeg": 0,
+      "localRyDeg": 0,
+      "localRzDeg": 0,
+      "tunableAxes": {},
+      "sortOrder": 0,
+      "properties": {}
+     },
+     {
+      "id": "c-eom-mod",
+      "componentId": "c-eom",
+      "parentBindingId": null,
+      "targetKind": "asset",
+      "asset3dId": "a-eom-mod",
+      "subComponentId": null,
+      "role": "modulator",
+      "localXMm": 0,
+      "localYMm": 0,
+      "localZMm": 0,
+      "localRxDeg": 0,
+      "localRyDeg": 0,
+      "localRzDeg": 0,
+      "tunableAxes": {},
+      "sortOrder": 0,
+      "properties": {}
+     },
+     {
+      "id": "c-eom-fa",
+      "componentId": "c-eom",
+      "parentBindingId": null,
+      "targetKind": "asset",
+      "asset3dId": "a-fc-apc",
+      "subComponentId": null,
+      "role": "port_a",
+      "localXMm": -80,
+      "localYMm": 0,
+      "localZMm": 0,
+      "localRxDeg": 0,
+      "localRyDeg": 0,
+      "localRzDeg": 0,
+      "tunableAxes": {},
+      "sortOrder": 1,
+      "properties": {}
+     },
+     {
+      "id": "c-eom-fb",
+      "componentId": "c-eom",
+      "parentBindingId": null,
+      "targetKind": "asset",
+      "asset3dId": "a-fc-apc",
+      "subComponentId": null,
+      "role": "port_b",
+      "localXMm": 80,
+      "localYMm": 0,
+      "localZMm": 0,
+      "localRxDeg": 0,
+      "localRyDeg": 0,
+      "localRzDeg": 0,
+      "tunableAxes": {},
+      "sortOrder": 2,
+      "properties": {}
+     },
+     {
+      "id": "c-ppg-sma-noport-root",
+      "componentId": "c-ppg-sma-noport",
+      "parentBindingId": null,
+      "targetKind": "asset",
+      "asset3dId": "a-ppg-sma-noport",
+      "subComponentId": null,
+      "role": "c-ppg-sma-noport-root",
+      "localXMm": 0,
+      "localYMm": 0,
+      "localZMm": 0,
+      "localRxDeg": 0,
+      "localRyDeg": 0,
+      "localRzDeg": 0,
+      "tunableAxes": {},
+      "sortOrder": 0,
+      "properties": {}
+     },
+     {
+      "id": "c-ppg-bnc-root",
+      "componentId": "c-ppg-bnc",
+      "parentBindingId": null,
+      "targetKind": "asset",
+      "asset3dId": "a-ppg-bnc",
+      "subComponentId": null,
+      "role": "PPG BNC Male",
+      "localXMm": 0,
+      "localYMm": 0,
+      "localZMm": 0,
+      "localRxDeg": 0,
+      "localRyDeg": 0,
+      "localRzDeg": 0,
+      "tunableAxes": {},
+      "sortOrder": 0,
+      "properties": {}
+     }
+    ],
+    "objectBindings": [],
+    "assets": [
+     {
+      "id": "a-sma-male",
+      "name": "a-sma-male",
+      "kindId": "rf_cable_connector",
+      "filePath": "a-sma-male.glb",
+      "anchors": [
+       {
+        "id": "connect_out",
+        "positionMmBodyLocal": {
+         "x": -4,
+         "y": 0,
+         "z": 0
+        },
+        "axisXBodyLocal": {
+         "x": 1,
+         "y": 0,
+         "z": 0
+        }
+       },
+       {
+        "id": "connect_in",
+        "positionMmBodyLocal": {
+         "x": -29.45,
+         "y": 0,
+         "z": 0
+        },
+        "axisXBodyLocal": {
+         "x": -1,
+         "y": 0,
+         "z": 0
+        }
+       }
+      ],
+      "defaultParams": {
+       "family": "sma",
+       "gender": "male"
+      }
+     },
+     {
+      "id": "a-bnc-male",
+      "name": "a-bnc-male",
+      "kindId": "rf_cable_connector",
+      "filePath": "a-bnc-male.glb",
+      "anchors": [
+       {
+        "id": "connect_out",
+        "positionMmBodyLocal": {
+         "x": 0,
+         "y": 0,
+         "z": -29.7
+        },
+        "axisXBodyLocal": {
+         "x": 0,
+         "y": 0,
+         "z": -1
+        }
+       },
+       {
+        "id": "connect_in",
+        "positionMmBodyLocal": {
+         "x": 0,
+         "y": 0,
+         "z": 13.8
+        },
+        "axisXBodyLocal": {
+         "x": 0,
+         "y": 0,
+         "z": 1
+        }
+       }
+      ],
+      "defaultParams": {
+       "family": "bnc",
+       "gender": "male"
+      }
+     },
+     {
+      "id": "a-dds",
+      "name": "a-dds",
+      "kindId": "rf_source",
+      "filePath": "a-dds.glb",
+      "anchors": [
+       {
+        "id": "rf_out",
+        "positionMmBodyLocal": {
+         "x": -20,
+         "y": 5,
+         "z": 12
+        },
+        "name": "CH0",
+        "axisXBodyLocal": {
+         "x": 0,
+         "y": 0,
+         "z": 1
+        },
+        "connectorType": "sma_female"
+       },
+       {
+        "id": "rf_out",
+        "positionMmBodyLocal": {
+         "x": -6.6,
+         "y": 5,
+         "z": 12
+        },
+        "name": "CH1",
+        "axisXBodyLocal": {
+         "x": 0,
+         "y": 0,
+         "z": 1
+        },
+        "connectorType": "sma_female"
+       },
+       {
+        "id": "rf_out",
+        "positionMmBodyLocal": {
+         "x": 6.800000000000001,
+         "y": 5,
+         "z": 12
+        },
+        "name": "CH2",
+        "axisXBodyLocal": {
+         "x": 0,
+         "y": 0,
+         "z": 1
+        },
+        "connectorType": "sma_female"
+       },
+       {
+        "id": "rf_out",
+        "positionMmBodyLocal": {
+         "x": 20.200000000000003,
+         "y": 5,
+         "z": 12
+        },
+        "name": "CH3",
+        "axisXBodyLocal": {
+         "x": 0,
+         "y": 0,
+         "z": 1
+        },
+        "connectorType": "sma_female"
+       }
+      ],
+      "defaultParams": {}
+     },
+     {
+      "id": "a-switch",
+      "name": "a-switch",
+      "kindId": "rf_switch",
+      "filePath": "a-switch.glb",
+      "anchors": [
+       {
+        "id": "rf_in",
+        "positionMmBodyLocal": {
+         "x": 0,
+         "y": -12.5,
+         "z": 9
+        },
+        "axisXBodyLocal": {
+         "x": 0,
+         "y": -1,
+         "z": 0
+        },
+        "connectorType": "bnc_female"
+       },
+       {
+        "id": "rf_out",
+        "positionMmBodyLocal": {
+         "x": -9,
+         "y": 12.5,
+         "z": 9
+        },
+        "name": "RF1",
+        "axisXBodyLocal": {
+         "x": 0,
+         "y": 1,
+         "z": 0
+        },
+        "connectorType": "sma_female"
+       },
+       {
+        "id": "rf_out",
+        "positionMmBodyLocal": {
+         "x": 9,
+         "y": 12.5,
+         "z": 9
+        },
+        "name": "RF2",
+        "axisXBodyLocal": {
+         "x": 0,
+         "y": 1,
+         "z": 0
+        },
+        "connectorType": "sma_female"
+       },
+       {
+        "id": "ttl_in",
+        "positionMmBodyLocal": {
+         "x": 20,
+         "y": 0,
+         "z": 9
+        },
+        "axisXBodyLocal": {
+         "x": 1,
+         "y": 0,
+         "z": 0
+        },
+        "connectorType": "bnc_female"
+       }
+      ],
+      "defaultParams": {}
+     },
+     {
+      "id": "a-amp",
+      "name": "a-amp",
+      "kindId": "rf_amplifier",
+      "filePath": "a-amp.glb",
+      "anchors": [
+       {
+        "id": "rf_in",
+        "positionMmBodyLocal": {
+         "x": -55.5,
+         "y": 0,
+         "z": 0
+        },
+        "axisXBodyLocal": {
+         "x": -1,
+         "y": 0,
+         "z": 0
+        },
+        "connectorType": "sma_female"
+       },
+       {
+        "id": "rf_out",
+        "positionMmBodyLocal": {
+         "x": 55.5,
+         "y": 0,
+         "z": 0
+        },
+        "axisXBodyLocal": {
+         "x": 1,
+         "y": 0,
+         "z": 0
+        },
+        "connectorType": "sma_female"
+       }
+      ],
+      "defaultParams": {}
+     },
+     {
+      "id": "a-aom",
+      "name": "a-aom",
+      "kindId": "aom",
+      "filePath": "a-aom.glb",
+      "anchors": [
+       {
+        "id": "intercept_in",
+        "positionMmBodyLocal": {
+         "x": -10,
+         "y": 0,
+         "z": -1.2265
+        },
+        "axisXBodyLocal": {
+         "x": 1,
+         "y": 0,
+         "z": 0
+        },
+        "apertureMm": 1.5
+       },
+       {
+        "id": "intercept_out",
+        "positionMmBodyLocal": {
+         "x": 10,
+         "y": 0,
+         "z": -1.2265
+        },
+        "axisXBodyLocal": {
+         "x": 1,
+         "y": 0,
+         "z": 0
+        },
+        "apertureMm": 1.5
+       },
+       {
+        "id": "acoustic_axis",
+        "positionMmBodyLocal": {
+         "x": 0,
+         "y": 0,
+         "z": 0
+        },
+        "axisXBodyLocal": {
+         "x": 0,
+         "y": 0,
+         "z": 1
+        }
+       },
+       {
+        "id": "rf_in",
+        "positionMmBodyLocal": {
+         "x": 45.5,
+         "y": 0,
+         "z": -1.2265
+        },
+        "axisXBodyLocal": {
+         "x": 1,
+         "y": 0,
+         "z": 0
+        },
+        "connectorType": "sma_female"
+       },
+       {
+        "id": "trigger_in",
+        "positionMmBodyLocal": {
+         "x": 30,
+         "y": 10,
+         "z": 0
+        },
+        "directionBodyLocal": {
+         "x": 0,
+         "y": 2,
+         "z": 0
+        },
+        "connectorType": "bnc_female"
+       }
+      ],
+      "defaultParams": {}
+     },
+     {
+      "id": "a-eom-mod",
+      "name": "a-eom-mod",
+      "kindId": "eom",
+      "filePath": "a-eom-mod.glb",
+      "anchors": [
+       {
+        "id": "intercept_in",
+        "positionMmBodyLocal": {
+         "x": -40,
+         "y": 0,
+         "z": 0
+        },
+        "axisXBodyLocal": {
+         "x": 1,
+         "y": 0,
+         "z": 0
+        }
+       },
+       {
+        "id": "rf_in",
+        "positionMmBodyLocal": {
+         "x": 0,
+         "y": 8,
+         "z": 6
+        },
+        "name": "RF IN",
+        "axisXBodyLocal": {
+         "x": 0,
+         "y": 0,
+         "z": 1
+        },
+        "connectorType": "sma_female"
+       },
+       {
+        "id": "ttl_in",
+        "positionMmBodyLocal": {
+         "x": 10,
+         "y": -8,
+         "z": 6
+        },
+        "name": "BIAS TTL",
+        "axisXBodyLocal": {
+         "x": 0,
+         "y": -1,
+         "z": 0
+        },
+        "connectorType": "bnc_female"
+       }
+      ],
+      "defaultParams": {}
+     },
+     {
+      "id": "a-fc-apc",
+      "name": "a-fc-apc",
+      "kindId": "fiber_connector",
+      "filePath": "a-fc-apc.glb",
+      "anchors": [
+       {
+        "id": "fiber_root",
+        "positionMmBodyLocal": {
+         "x": 0,
+         "y": 0,
+         "z": 0
+        }
+       },
+       {
+        "id": "fiber_out",
+        "positionMmBodyLocal": {
+         "x": 0,
+         "y": 0,
+         "z": 20
+        },
+        "axisXBodyLocal": {
+         "x": 0,
+         "y": 0,
+         "z": 1
+        },
+        "connectorType": "fc_apc_male"
+       }
+      ],
+      "defaultParams": {}
+     },
+     {
+      "id": "a-det",
+      "name": "a-det",
+      "kindId": "detector",
+      "filePath": "a-det.glb",
+      "anchors": [
+       {
+        "id": "fiber_in",
+        "positionMmBodyLocal": {
+         "x": 0,
+         "y": 0,
+         "z": 0
+        },
+        "axisXBodyLocal": {
+         "x": -1,
+         "y": 0,
+         "z": 0
+        },
+        "connectorType": "fc_pc_female"
+       },
+       {
+        "id": "rf_out",
+        "positionMmBodyLocal": {
+         "x": 12,
+         "y": 0,
+         "z": 3
+        },
+        "axisXBodyLocal": {
+         "x": 1,
+         "y": 0,
+         "z": 0
+        }
+       }
+      ],
+      "defaultParams": {}
+     },
+     {
+      "id": "a-ppg-bnc",
+      "name": "a-ppg-bnc",
+      "kindId": "programmable_pulse_generator",
+      "filePath": "a-ppg-bnc.glb",
+      "anchors": [
+       {
+        "id": "rf_out",
+        "positionMmBodyLocal": {
+         "x": 0,
+         "y": 0,
+         "z": 4.8
+        },
+        "axisXBodyLocal": {
+         "x": 0,
+         "y": 0,
+         "z": 1
+        },
+        "connectorType": "bnc_male"
+       }
+      ],
+      "defaultParams": {
+       "matingProtrusionMm": 9
+      }
+     },
+     {
+      "id": "a-ppg-sma-noport",
+      "name": "a-ppg-sma-noport",
+      "kindId": "programmable_pulse_generator",
+      "filePath": "a-ppg-sma-noport.glb",
+      "anchors": [
+       {
+        "id": "trigger_out",
+        "positionMmBodyLocal": {
+         "x": 0,
+         "y": 0,
+         "z": 4
+        },
+        "axisXBodyLocal": {
+         "x": 0,
+         "y": 0,
+         "z": 1
+        },
+        "connectorType": "sma_male"
+       }
+      ],
+      "defaultParams": {}
+     }
+    ],
+    "physicsElements": [
+     {
+      "id": "pe-dds",
+      "objectId": "dds",
+      "elementKind": "rf_source",
+      "kindParams": {}
+     },
+     {
+      "id": "pe-switch",
+      "objectId": "switch",
+      "elementKind": "rf_switch",
+      "kindParams": {}
+     },
+     {
+      "id": "pe-amp0",
+      "objectId": "amp0",
+      "elementKind": "rf_amplifier",
+      "kindParams": {}
+     },
+     {
+      "id": "pe-amp1",
+      "objectId": "amp1",
+      "elementKind": "rf_amplifier",
+      "kindParams": {}
+     },
+     {
+      "id": "pe-aom",
+      "objectId": "aom",
+      "elementKind": "aom",
+      "kindParams": {}
+     },
+     {
+      "id": "pe-eom",
+      "objectId": "eom",
+      "elementKind": "eom",
+      "kindParams": {}
+     },
+     {
+      "id": "pe-det",
+      "objectId": "det",
+      "elementKind": "detector",
+      "kindParams": {}
+     },
+     {
+      "id": "pe-amp2",
+      "objectId": "amp2",
+      "elementKind": "rf_amplifier",
+      "kindParams": {}
+     },
+     {
+      "id": "pe-cable0",
+      "objectId": "cable0",
+      "elementKind": "rf_cable",
+      "kindParams": {
+       "lengthMm": 152
+      }
+     },
+     {
+      "id": "pe-loose-dds",
+      "objectId": "loose-dds",
+      "elementKind": "rf_cable",
+      "kindParams": {}
+     },
+     {
+      "id": "pe-loose-amp2",
+      "objectId": "loose-amp2",
+      "elementKind": "rf_cable",
+      "kindParams": {}
+     },
+     {
+      "id": "pe-ppg0",
+      "objectId": "ppg0",
+      "elementKind": "programmable_pulse_generator",
+      "kindParams": {
+       "connectorType": "bnc",
+       "timingProgramId": "tp-0",
+       "outputDomain": "rfout",
+       "highVoltageV": 3.2
+      }
+     }
+    ],
+    "timingPrograms": [
+     {
+      "id": "tp-0",
+      "name": "CH0",
+      "intervals": []
+     }
+    ]
+   }
+  },
+  {
    "name": "lab-sma-ttl",
    "scene": {
     "objects": [
@@ -23721,8 +25012,45 @@
    }
   },
   {
-   "label": "SMA ttl_in: no usable SMA PPG",
+   "label": "PPG name steps past taken CH<n>",
    "scene": 3,
+   "op": "ppgAttach",
+   "request": {
+    "target": {
+     "objectId": "switch",
+     "anchorName": "ttl_in"
+    }
+   },
+   "expected": {
+    "ok": true,
+    "componentId": "c-ppg-bnc",
+    "name": "CH3",
+    "programName": "CH3",
+    "programIntervals": [],
+    "elementKind": "programmable_pulse_generator",
+    "kindParams": {
+     "connectorType": "bnc",
+     "outputDomain": "rfout",
+     "highVoltageV": 3.2
+    },
+    "attachment": {
+     "targetObjectId": "switch",
+     "targetAnchorId": "ttl_in",
+     "targetAnchorName": "ttl_in"
+    },
+    "mountedPose": {
+     "xMm": -1273.376,
+     "yMm": 770.745,
+     "zMm": 699.415,
+     "rxDeg": 0,
+     "ryDeg": -90,
+     "rzDeg": 0
+    }
+   }
+  },
+  {
+   "label": "SMA ttl_in: no usable SMA PPG",
+   "scene": 4,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -23737,7 +25065,7 @@
   },
   {
    "label": "random connect 0.0",
-   "scene": 4,
+   "scene": 5,
    "op": "connect",
    "request": {
     "a": {
@@ -23805,7 +25133,7 @@
   },
   {
    "label": "random connect 0.1",
-   "scene": 4,
+   "scene": 5,
    "op": "connect",
    "request": {
     "a": {
@@ -23872,7 +25200,7 @@
   },
   {
    "label": "random connect 0.2",
-   "scene": 4,
+   "scene": 5,
    "op": "connect",
    "request": {
     "a": {
@@ -23892,7 +25220,7 @@
   },
   {
    "label": "random connect 0.3",
-   "scene": 4,
+   "scene": 5,
    "op": "connect",
    "request": {
     "a": {
@@ -23960,7 +25288,7 @@
   },
   {
    "label": "random connect 0.4",
-   "scene": 4,
+   "scene": 5,
    "op": "connect",
    "request": {
     "a": {
@@ -23981,7 +25309,7 @@
   },
   {
    "label": "random connect 0.5",
-   "scene": 4,
+   "scene": 5,
    "op": "connect",
    "request": {
     "a": {
@@ -24049,7 +25377,7 @@
   },
   {
    "label": "random connect 0.6",
-   "scene": 4,
+   "scene": 5,
    "op": "connect",
    "request": {
     "a": {
@@ -24117,7 +25445,7 @@
   },
   {
    "label": "random connect 0.7",
-   "scene": 4,
+   "scene": 5,
    "op": "connect",
    "request": {
     "a": {
@@ -24138,7 +25466,7 @@
   },
   {
    "label": "random connect 0.8",
-   "scene": 4,
+   "scene": 5,
    "op": "connect",
    "request": {
     "a": {
@@ -24206,7 +25534,7 @@
   },
   {
    "label": "random connect 0.9",
-   "scene": 4,
+   "scene": 5,
    "op": "connect",
    "request": {
     "a": {
@@ -24226,7 +25554,7 @@
   },
   {
    "label": "random connect 0.10",
-   "scene": 4,
+   "scene": 5,
    "op": "connect",
    "request": {
     "a": {
@@ -24295,7 +25623,7 @@
   },
   {
    "label": "random connect 0.11",
-   "scene": 4,
+   "scene": 5,
    "op": "connect",
    "request": {
     "a": {
@@ -24362,7 +25690,7 @@
   },
   {
    "label": "random connect 0.12",
-   "scene": 4,
+   "scene": 5,
    "op": "connect",
    "request": {
     "a": {
@@ -24382,7 +25710,7 @@
   },
   {
    "label": "random connect 0.13",
-   "scene": 4,
+   "scene": 5,
    "op": "connect",
    "request": {
     "a": {
@@ -24402,7 +25730,7 @@
   },
   {
    "label": "random resnap 0.0",
-   "scene": 4,
+   "scene": 5,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -24455,7 +25783,7 @@
   },
   {
    "label": "random resnap 0.1",
-   "scene": 4,
+   "scene": 5,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -24471,7 +25799,7 @@
   },
   {
    "label": "random resnap 0.2",
-   "scene": 4,
+   "scene": 5,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -24529,7 +25857,7 @@
   },
   {
    "label": "random align 0 r0-cable0 A",
-   "scene": 4,
+   "scene": 5,
    "op": "align",
    "request": {
     "cableId": "r0-cable0",
@@ -24543,7 +25871,7 @@
   },
   {
    "label": "random align 0 r0-cable0 B",
-   "scene": 4,
+   "scene": 5,
    "op": "align",
    "request": {
     "cableId": "r0-cable0",
@@ -24557,7 +25885,7 @@
   },
   {
    "label": "random disconnect 0 r0-cable0",
-   "scene": 4,
+   "scene": 5,
    "op": "disconnect",
    "request": {
     "cableId": "r0-cable0",
@@ -24570,7 +25898,7 @@
   },
   {
    "label": "random align 0 r0-cable1 A",
-   "scene": 4,
+   "scene": 5,
    "op": "align",
    "request": {
     "cableId": "r0-cable1",
@@ -24761,7 +26089,7 @@
   },
   {
    "label": "random align 0 r0-cable1 B",
-   "scene": 4,
+   "scene": 5,
    "op": "align",
    "request": {
     "cableId": "r0-cable1",
@@ -24775,7 +26103,7 @@
   },
   {
    "label": "random disconnect 0 r0-cable1",
-   "scene": 4,
+   "scene": 5,
    "op": "disconnect",
    "request": {
     "cableId": "r0-cable1",
@@ -24790,7 +26118,7 @@
   },
   {
    "label": "random ppg attach 0.0",
-   "scene": 4,
+   "scene": 5,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -24805,7 +26133,7 @@
   },
   {
    "label": "random ppg attach 0.1",
-   "scene": 4,
+   "scene": 5,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -24821,7 +26149,7 @@
   },
   {
    "label": "random ppg attach 0.2",
-   "scene": 4,
+   "scene": 5,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -24837,7 +26165,7 @@
   },
   {
    "label": "random ppg attach 0.3",
-   "scene": 4,
+   "scene": 5,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -24852,7 +26180,7 @@
   },
   {
    "label": "random ppg attach 0.4",
-   "scene": 4,
+   "scene": 5,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -24867,7 +26195,7 @@
   },
   {
    "label": "random connect 1.0",
-   "scene": 5,
+   "scene": 6,
    "op": "connect",
    "request": {
     "a": {
@@ -24887,7 +26215,7 @@
   },
   {
    "label": "random connect 1.1",
-   "scene": 5,
+   "scene": 6,
    "op": "connect",
    "request": {
     "a": {
@@ -24907,7 +26235,7 @@
   },
   {
    "label": "random connect 1.2",
-   "scene": 5,
+   "scene": 6,
    "op": "connect",
    "request": {
     "a": {
@@ -24926,7 +26254,7 @@
   },
   {
    "label": "random connect 1.3",
-   "scene": 5,
+   "scene": 6,
    "op": "connect",
    "request": {
     "a": {
@@ -24945,7 +26273,7 @@
   },
   {
    "label": "random connect 1.4",
-   "scene": 5,
+   "scene": 6,
    "op": "connect",
    "request": {
     "a": {
@@ -24966,7 +26294,7 @@
   },
   {
    "label": "random connect 1.5",
-   "scene": 5,
+   "scene": 6,
    "op": "connect",
    "request": {
     "a": {
@@ -24986,7 +26314,7 @@
   },
   {
    "label": "random connect 1.6",
-   "scene": 5,
+   "scene": 6,
    "op": "connect",
    "request": {
     "a": {
@@ -25006,7 +26334,7 @@
   },
   {
    "label": "random connect 1.7",
-   "scene": 5,
+   "scene": 6,
    "op": "connect",
    "request": {
     "a": {
@@ -25027,7 +26355,7 @@
   },
   {
    "label": "random connect 1.8",
-   "scene": 5,
+   "scene": 6,
    "op": "connect",
    "request": {
     "a": {
@@ -25047,7 +26375,7 @@
   },
   {
    "label": "random connect 1.9",
-   "scene": 5,
+   "scene": 6,
    "op": "connect",
    "request": {
     "a": {
@@ -25066,7 +26394,7 @@
   },
   {
    "label": "random connect 1.10",
-   "scene": 5,
+   "scene": 6,
    "op": "connect",
    "request": {
     "a": {
@@ -25086,7 +26414,7 @@
   },
   {
    "label": "random connect 1.11",
-   "scene": 5,
+   "scene": 6,
    "op": "connect",
    "request": {
     "a": {
@@ -25106,7 +26434,7 @@
   },
   {
    "label": "random connect 1.12",
-   "scene": 5,
+   "scene": 6,
    "op": "connect",
    "request": {
     "a": {
@@ -25127,7 +26455,7 @@
   },
   {
    "label": "random connect 1.13",
-   "scene": 5,
+   "scene": 6,
    "op": "connect",
    "request": {
     "a": {
@@ -25147,7 +26475,7 @@
   },
   {
    "label": "random resnap 1.0",
-   "scene": 5,
+   "scene": 6,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -25285,7 +26613,7 @@
   },
   {
    "label": "random resnap 1.1",
-   "scene": 5,
+   "scene": 6,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -25311,7 +26639,7 @@
   },
   {
    "label": "random resnap 1.2",
-   "scene": 5,
+   "scene": 6,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -25453,7 +26781,7 @@
   },
   {
    "label": "random align 1 r1-cable0 A",
-   "scene": 5,
+   "scene": 6,
    "op": "align",
    "request": {
     "cableId": "r1-cable0",
@@ -25467,7 +26795,7 @@
   },
   {
    "label": "random align 1 r1-cable0 B",
-   "scene": 5,
+   "scene": 6,
    "op": "align",
    "request": {
     "cableId": "r1-cable0",
@@ -25481,7 +26809,7 @@
   },
   {
    "label": "random disconnect 1 r1-cable0",
-   "scene": 5,
+   "scene": 6,
    "op": "disconnect",
    "request": {
     "cableId": "r1-cable0",
@@ -25494,7 +26822,7 @@
   },
   {
    "label": "random align 1 r1-cable1 A",
-   "scene": 5,
+   "scene": 6,
    "op": "align",
    "request": {
     "cableId": "r1-cable1",
@@ -25673,7 +27001,7 @@
   },
   {
    "label": "random align 1 r1-cable1 B",
-   "scene": 5,
+   "scene": 6,
    "op": "align",
    "request": {
     "cableId": "r1-cable1",
@@ -25687,7 +27015,7 @@
   },
   {
    "label": "random disconnect 1 r1-cable1",
-   "scene": 5,
+   "scene": 6,
    "op": "disconnect",
    "request": {
     "cableId": "r1-cable1",
@@ -25702,7 +27030,7 @@
   },
   {
    "label": "random detach 1 r1-ppg0",
-   "scene": 5,
+   "scene": 6,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r1-ppg0"
@@ -25719,7 +27047,7 @@
   },
   {
    "label": "random detach 1 r1-ppg1",
-   "scene": 5,
+   "scene": 6,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r1-ppg1"
@@ -25735,7 +27063,7 @@
   },
   {
    "label": "random ppg attach 1.0",
-   "scene": 5,
+   "scene": 6,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -25750,7 +27078,7 @@
   },
   {
    "label": "random ppg attach 1.1",
-   "scene": 5,
+   "scene": 6,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -25765,7 +27093,7 @@
   },
   {
    "label": "random ppg attach 1.2",
-   "scene": 5,
+   "scene": 6,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -25781,7 +27109,7 @@
   },
   {
    "label": "random ppg attach 1.3",
-   "scene": 5,
+   "scene": 6,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -25797,7 +27125,7 @@
   },
   {
    "label": "random ppg attach 1.4",
-   "scene": 5,
+   "scene": 6,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -25812,7 +27140,7 @@
   },
   {
    "label": "random connect 2.0",
-   "scene": 6,
+   "scene": 7,
    "op": "connect",
    "request": {
     "a": {
@@ -25832,7 +27160,7 @@
   },
   {
    "label": "random connect 2.1",
-   "scene": 6,
+   "scene": 7,
    "op": "connect",
    "request": {
     "a": {
@@ -25853,7 +27181,7 @@
   },
   {
    "label": "random connect 2.2",
-   "scene": 6,
+   "scene": 7,
    "op": "connect",
    "request": {
     "a": {
@@ -25874,7 +27202,7 @@
   },
   {
    "label": "random connect 2.3",
-   "scene": 6,
+   "scene": 7,
    "op": "connect",
    "request": {
     "a": {
@@ -25894,7 +27222,7 @@
   },
   {
    "label": "random connect 2.4",
-   "scene": 6,
+   "scene": 7,
    "op": "connect",
    "request": {
     "a": {
@@ -25914,7 +27242,7 @@
   },
   {
    "label": "random connect 2.5",
-   "scene": 6,
+   "scene": 7,
    "op": "connect",
    "request": {
     "a": {
@@ -25934,7 +27262,7 @@
   },
   {
    "label": "random connect 2.6",
-   "scene": 6,
+   "scene": 7,
    "op": "connect",
    "request": {
     "a": {
@@ -25954,7 +27282,7 @@
   },
   {
    "label": "random connect 2.7",
-   "scene": 6,
+   "scene": 7,
    "op": "connect",
    "request": {
     "a": {
@@ -25973,7 +27301,7 @@
   },
   {
    "label": "random connect 2.8",
-   "scene": 6,
+   "scene": 7,
    "op": "connect",
    "request": {
     "a": {
@@ -25994,7 +27322,7 @@
   },
   {
    "label": "random connect 2.9",
-   "scene": 6,
+   "scene": 7,
    "op": "connect",
    "request": {
     "a": {
@@ -26013,7 +27341,7 @@
   },
   {
    "label": "random connect 2.10",
-   "scene": 6,
+   "scene": 7,
    "op": "connect",
    "request": {
     "a": {
@@ -26033,7 +27361,7 @@
   },
   {
    "label": "random connect 2.11",
-   "scene": 6,
+   "scene": 7,
    "op": "connect",
    "request": {
     "a": {
@@ -26054,7 +27382,7 @@
   },
   {
    "label": "random connect 2.12",
-   "scene": 6,
+   "scene": 7,
    "op": "connect",
    "request": {
     "a": {
@@ -26074,7 +27402,7 @@
   },
   {
    "label": "random connect 2.13",
-   "scene": 6,
+   "scene": 7,
    "op": "connect",
    "request": {
     "a": {
@@ -26095,7 +27423,7 @@
   },
   {
    "label": "random resnap 2.0",
-   "scene": 6,
+   "scene": 7,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -26109,7 +27437,7 @@
   },
   {
    "label": "random resnap 2.1",
-   "scene": 6,
+   "scene": 7,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -26134,7 +27462,7 @@
   },
   {
    "label": "random resnap 2.2",
-   "scene": 6,
+   "scene": 7,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -26161,7 +27489,7 @@
   },
   {
    "label": "random detach 2 r2-ppg0",
-   "scene": 6,
+   "scene": 7,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r2-ppg0"
@@ -26177,7 +27505,7 @@
   },
   {
    "label": "random detach 2 r2-ppg1",
-   "scene": 6,
+   "scene": 7,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r2-ppg1"
@@ -26193,7 +27521,7 @@
   },
   {
    "label": "random ppg attach 2.0",
-   "scene": 6,
+   "scene": 7,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -26208,7 +27536,7 @@
   },
   {
    "label": "random ppg attach 2.1",
-   "scene": 6,
+   "scene": 7,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -26223,7 +27551,7 @@
   },
   {
    "label": "random ppg attach 2.2",
-   "scene": 6,
+   "scene": 7,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -26239,7 +27567,7 @@
   },
   {
    "label": "random ppg attach 2.3",
-   "scene": 6,
+   "scene": 7,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -26254,7 +27582,7 @@
   },
   {
    "label": "random ppg attach 2.4",
-   "scene": 6,
+   "scene": 7,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -26269,7 +27597,7 @@
   },
   {
    "label": "random connect 3.0",
-   "scene": 7,
+   "scene": 8,
    "op": "connect",
    "request": {
     "a": {
@@ -26289,7 +27617,7 @@
   },
   {
    "label": "random connect 3.1",
-   "scene": 7,
+   "scene": 8,
    "op": "connect",
    "request": {
     "a": {
@@ -26309,7 +27637,7 @@
   },
   {
    "label": "random connect 3.2",
-   "scene": 7,
+   "scene": 8,
    "op": "connect",
    "request": {
     "a": {
@@ -26328,7 +27656,7 @@
   },
   {
    "label": "random connect 3.3",
-   "scene": 7,
+   "scene": 8,
    "op": "connect",
    "request": {
     "a": {
@@ -26347,7 +27675,7 @@
   },
   {
    "label": "random connect 3.4",
-   "scene": 7,
+   "scene": 8,
    "op": "connect",
    "request": {
     "a": {
@@ -26368,7 +27696,7 @@
   },
   {
    "label": "random connect 3.5",
-   "scene": 7,
+   "scene": 8,
    "op": "connect",
    "request": {
     "a": {
@@ -26388,7 +27716,7 @@
   },
   {
    "label": "random connect 3.6",
-   "scene": 7,
+   "scene": 8,
    "op": "connect",
    "request": {
     "a": {
@@ -26408,7 +27736,7 @@
   },
   {
    "label": "random connect 3.7",
-   "scene": 7,
+   "scene": 8,
    "op": "connect",
    "request": {
     "a": {
@@ -26427,7 +27755,7 @@
   },
   {
    "label": "random connect 3.8",
-   "scene": 7,
+   "scene": 8,
    "op": "connect",
    "request": {
     "a": {
@@ -26446,7 +27774,7 @@
   },
   {
    "label": "random connect 3.9",
-   "scene": 7,
+   "scene": 8,
    "op": "connect",
    "request": {
     "a": {
@@ -26466,7 +27794,7 @@
   },
   {
    "label": "random connect 3.10",
-   "scene": 7,
+   "scene": 8,
    "op": "connect",
    "request": {
     "a": {
@@ -26486,7 +27814,7 @@
   },
   {
    "label": "random connect 3.11",
-   "scene": 7,
+   "scene": 8,
    "op": "connect",
    "request": {
     "a": {
@@ -26506,7 +27834,7 @@
   },
   {
    "label": "random connect 3.12",
-   "scene": 7,
+   "scene": 8,
    "op": "connect",
    "request": {
     "a": {
@@ -26525,7 +27853,7 @@
   },
   {
    "label": "random connect 3.13",
-   "scene": 7,
+   "scene": 8,
    "op": "connect",
    "request": {
     "a": {
@@ -26545,7 +27873,7 @@
   },
   {
    "label": "random resnap 3.0",
-   "scene": 7,
+   "scene": 8,
    "op": "resnap",
    "request": {
     "movedObjectIds": []
@@ -26557,7 +27885,7 @@
   },
   {
    "label": "random resnap 3.1",
-   "scene": 7,
+   "scene": 8,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -26582,7 +27910,7 @@
   },
   {
    "label": "random resnap 3.2",
-   "scene": 7,
+   "scene": 8,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -26606,7 +27934,7 @@
   },
   {
    "label": "random detach 3 r3-ppg0",
-   "scene": 7,
+   "scene": 8,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r3-ppg0"
@@ -26622,7 +27950,7 @@
   },
   {
    "label": "random detach 3 r3-ppg1",
-   "scene": 7,
+   "scene": 8,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r3-ppg1"
@@ -26638,7 +27966,7 @@
   },
   {
    "label": "random ppg attach 3.0",
-   "scene": 7,
+   "scene": 8,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -26653,7 +27981,7 @@
   },
   {
    "label": "random ppg attach 3.1",
-   "scene": 7,
+   "scene": 8,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -26668,7 +27996,7 @@
   },
   {
    "label": "random ppg attach 3.2",
-   "scene": 7,
+   "scene": 8,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -26684,7 +28012,7 @@
   },
   {
    "label": "random ppg attach 3.3",
-   "scene": 7,
+   "scene": 8,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -26699,7 +28027,7 @@
   },
   {
    "label": "random ppg attach 3.4",
-   "scene": 7,
+   "scene": 8,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -26714,7 +28042,7 @@
   },
   {
    "label": "random connect 4.0",
-   "scene": 8,
+   "scene": 9,
    "op": "connect",
    "request": {
     "a": {
@@ -26734,7 +28062,7 @@
   },
   {
    "label": "random connect 4.1",
-   "scene": 8,
+   "scene": 9,
    "op": "connect",
    "request": {
     "a": {
@@ -26754,7 +28082,7 @@
   },
   {
    "label": "random connect 4.2",
-   "scene": 8,
+   "scene": 9,
    "op": "connect",
    "request": {
     "a": {
@@ -26774,7 +28102,7 @@
   },
   {
    "label": "random connect 4.3",
-   "scene": 8,
+   "scene": 9,
    "op": "connect",
    "request": {
     "a": {
@@ -26794,7 +28122,7 @@
   },
   {
    "label": "random connect 4.4",
-   "scene": 8,
+   "scene": 9,
    "op": "connect",
    "request": {
     "a": {
@@ -26813,7 +28141,7 @@
   },
   {
    "label": "random connect 4.5",
-   "scene": 8,
+   "scene": 9,
    "op": "connect",
    "request": {
     "a": {
@@ -26834,7 +28162,7 @@
   },
   {
    "label": "random connect 4.6",
-   "scene": 8,
+   "scene": 9,
    "op": "connect",
    "request": {
     "a": {
@@ -26853,7 +28181,7 @@
   },
   {
    "label": "random connect 4.7",
-   "scene": 8,
+   "scene": 9,
    "op": "connect",
    "request": {
     "a": {
@@ -26874,7 +28202,7 @@
   },
   {
    "label": "random connect 4.8",
-   "scene": 8,
+   "scene": 9,
    "op": "connect",
    "request": {
     "a": {
@@ -26894,7 +28222,7 @@
   },
   {
    "label": "random connect 4.9",
-   "scene": 8,
+   "scene": 9,
    "op": "connect",
    "request": {
     "a": {
@@ -26913,7 +28241,7 @@
   },
   {
    "label": "random connect 4.10",
-   "scene": 8,
+   "scene": 9,
    "op": "connect",
    "request": {
     "a": {
@@ -26934,7 +28262,7 @@
   },
   {
    "label": "random connect 4.11",
-   "scene": 8,
+   "scene": 9,
    "op": "connect",
    "request": {
     "a": {
@@ -26953,7 +28281,7 @@
   },
   {
    "label": "random connect 4.12",
-   "scene": 8,
+   "scene": 9,
    "op": "connect",
    "request": {
     "a": {
@@ -26972,7 +28300,7 @@
   },
   {
    "label": "random connect 4.13",
-   "scene": 8,
+   "scene": 9,
    "op": "connect",
    "request": {
     "a": {
@@ -26992,7 +28320,7 @@
   },
   {
    "label": "random resnap 4.0",
-   "scene": 8,
+   "scene": 9,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -27007,7 +28335,7 @@
   },
   {
    "label": "random resnap 4.1",
-   "scene": 8,
+   "scene": 9,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -27022,7 +28350,7 @@
   },
   {
    "label": "random resnap 4.2",
-   "scene": 8,
+   "scene": 9,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -27039,7 +28367,7 @@
   },
   {
    "label": "random ppg attach 4.0",
-   "scene": 8,
+   "scene": 9,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -27077,7 +28405,7 @@
   },
   {
    "label": "random ppg attach 4.1",
-   "scene": 8,
+   "scene": 9,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -27114,7 +28442,7 @@
   },
   {
    "label": "random ppg attach 4.2",
-   "scene": 8,
+   "scene": 9,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -27152,7 +28480,7 @@
   },
   {
    "label": "random ppg attach 4.3",
-   "scene": 8,
+   "scene": 9,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -27189,7 +28517,7 @@
   },
   {
    "label": "random ppg attach 4.4",
-   "scene": 8,
+   "scene": 9,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -27226,7 +28554,7 @@
   },
   {
    "label": "random connect 5.0",
-   "scene": 9,
+   "scene": 10,
    "op": "connect",
    "request": {
     "a": {
@@ -27247,7 +28575,7 @@
   },
   {
    "label": "random connect 5.1",
-   "scene": 9,
+   "scene": 10,
    "op": "connect",
    "request": {
     "a": {
@@ -27267,7 +28595,7 @@
   },
   {
    "label": "random connect 5.2",
-   "scene": 9,
+   "scene": 10,
    "op": "connect",
    "request": {
     "a": {
@@ -27286,7 +28614,7 @@
   },
   {
    "label": "random connect 5.3",
-   "scene": 9,
+   "scene": 10,
    "op": "connect",
    "request": {
     "a": {
@@ -27306,7 +28634,7 @@
   },
   {
    "label": "random connect 5.4",
-   "scene": 9,
+   "scene": 10,
    "op": "connect",
    "request": {
     "a": {
@@ -27327,7 +28655,7 @@
   },
   {
    "label": "random connect 5.5",
-   "scene": 9,
+   "scene": 10,
    "op": "connect",
    "request": {
     "a": {
@@ -27347,7 +28675,7 @@
   },
   {
    "label": "random connect 5.6",
-   "scene": 9,
+   "scene": 10,
    "op": "connect",
    "request": {
     "a": {
@@ -27367,7 +28695,7 @@
   },
   {
    "label": "random connect 5.7",
-   "scene": 9,
+   "scene": 10,
    "op": "connect",
    "request": {
     "a": {
@@ -27387,7 +28715,7 @@
   },
   {
    "label": "random connect 5.8",
-   "scene": 9,
+   "scene": 10,
    "op": "connect",
    "request": {
     "a": {
@@ -27408,7 +28736,7 @@
   },
   {
    "label": "random connect 5.9",
-   "scene": 9,
+   "scene": 10,
    "op": "connect",
    "request": {
     "a": {
@@ -27428,7 +28756,7 @@
   },
   {
    "label": "random connect 5.10",
-   "scene": 9,
+   "scene": 10,
    "op": "connect",
    "request": {
     "a": {
@@ -27447,7 +28775,7 @@
   },
   {
    "label": "random connect 5.11",
-   "scene": 9,
+   "scene": 10,
    "op": "connect",
    "request": {
     "a": {
@@ -27467,7 +28795,7 @@
   },
   {
    "label": "random connect 5.12",
-   "scene": 9,
+   "scene": 10,
    "op": "connect",
    "request": {
     "a": {
@@ -27486,7 +28814,7 @@
   },
   {
    "label": "random connect 5.13",
-   "scene": 9,
+   "scene": 10,
    "op": "connect",
    "request": {
     "a": {
@@ -27506,7 +28834,7 @@
   },
   {
    "label": "random resnap 5.0",
-   "scene": 9,
+   "scene": 10,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -27541,7 +28869,7 @@
   },
   {
    "label": "random resnap 5.1",
-   "scene": 9,
+   "scene": 10,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -27564,7 +28892,7 @@
   },
   {
    "label": "random resnap 5.2",
-   "scene": 9,
+   "scene": 10,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -27598,7 +28926,7 @@
   },
   {
    "label": "random detach 5 r5-ppg0",
-   "scene": 9,
+   "scene": 10,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r5-ppg0"
@@ -27614,7 +28942,7 @@
   },
   {
    "label": "random detach 5 r5-ppg1",
-   "scene": 9,
+   "scene": 10,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r5-ppg1"
@@ -27630,7 +28958,7 @@
   },
   {
    "label": "random ppg attach 5.0",
-   "scene": 9,
+   "scene": 10,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -27667,7 +28995,7 @@
   },
   {
    "label": "random ppg attach 5.1",
-   "scene": 9,
+   "scene": 10,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -27682,7 +29010,7 @@
   },
   {
    "label": "random ppg attach 5.2",
-   "scene": 9,
+   "scene": 10,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -27697,7 +29025,7 @@
   },
   {
    "label": "random ppg attach 5.3",
-   "scene": 9,
+   "scene": 10,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -27734,7 +29062,7 @@
   },
   {
    "label": "random ppg attach 5.4",
-   "scene": 9,
+   "scene": 10,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -27772,7 +29100,7 @@
   },
   {
    "label": "random connect 6.0",
-   "scene": 10,
+   "scene": 11,
    "op": "connect",
    "request": {
     "a": {
@@ -27792,7 +29120,7 @@
   },
   {
    "label": "random connect 6.1",
-   "scene": 10,
+   "scene": 11,
    "op": "connect",
    "request": {
     "a": {
@@ -27811,7 +29139,7 @@
   },
   {
    "label": "random connect 6.2",
-   "scene": 10,
+   "scene": 11,
    "op": "connect",
    "request": {
     "a": {
@@ -27831,7 +29159,7 @@
   },
   {
    "label": "random connect 6.3",
-   "scene": 10,
+   "scene": 11,
    "op": "connect",
    "request": {
     "a": {
@@ -27851,7 +29179,7 @@
   },
   {
    "label": "random connect 6.4",
-   "scene": 10,
+   "scene": 11,
    "op": "connect",
    "request": {
     "a": {
@@ -27871,7 +29199,7 @@
   },
   {
    "label": "random connect 6.5",
-   "scene": 10,
+   "scene": 11,
    "op": "connect",
    "request": {
     "a": {
@@ -27891,7 +29219,7 @@
   },
   {
    "label": "random connect 6.6",
-   "scene": 10,
+   "scene": 11,
    "op": "connect",
    "request": {
     "a": {
@@ -27910,7 +29238,7 @@
   },
   {
    "label": "random connect 6.7",
-   "scene": 10,
+   "scene": 11,
    "op": "connect",
    "request": {
     "a": {
@@ -27931,7 +29259,7 @@
   },
   {
    "label": "random connect 6.8",
-   "scene": 10,
+   "scene": 11,
    "op": "connect",
    "request": {
     "a": {
@@ -27950,7 +29278,7 @@
   },
   {
    "label": "random connect 6.9",
-   "scene": 10,
+   "scene": 11,
    "op": "connect",
    "request": {
     "a": {
@@ -27970,7 +29298,7 @@
   },
   {
    "label": "random connect 6.10",
-   "scene": 10,
+   "scene": 11,
    "op": "connect",
    "request": {
     "a": {
@@ -27989,7 +29317,7 @@
   },
   {
    "label": "random connect 6.11",
-   "scene": 10,
+   "scene": 11,
    "op": "connect",
    "request": {
     "a": {
@@ -28009,7 +29337,7 @@
   },
   {
    "label": "random connect 6.12",
-   "scene": 10,
+   "scene": 11,
    "op": "connect",
    "request": {
     "a": {
@@ -28028,7 +29356,7 @@
   },
   {
    "label": "random connect 6.13",
-   "scene": 10,
+   "scene": 11,
    "op": "connect",
    "request": {
     "a": {
@@ -28048,7 +29376,7 @@
   },
   {
    "label": "random resnap 6.0",
-   "scene": 10,
+   "scene": 11,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -28074,7 +29402,7 @@
   },
   {
    "label": "random resnap 6.1",
-   "scene": 10,
+   "scene": 11,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -28099,7 +29427,7 @@
   },
   {
    "label": "random resnap 6.2",
-   "scene": 10,
+   "scene": 11,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -28123,7 +29451,7 @@
   },
   {
    "label": "random detach 6 r6-ppg0",
-   "scene": 10,
+   "scene": 11,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r6-ppg0"
@@ -28139,7 +29467,7 @@
   },
   {
    "label": "random detach 6 r6-ppg1",
-   "scene": 10,
+   "scene": 11,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r6-ppg1"
@@ -28155,7 +29483,7 @@
   },
   {
    "label": "random ppg attach 6.0",
-   "scene": 10,
+   "scene": 11,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -28192,7 +29520,7 @@
   },
   {
    "label": "random ppg attach 6.1",
-   "scene": 10,
+   "scene": 11,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -28229,7 +29557,7 @@
   },
   {
    "label": "random ppg attach 6.2",
-   "scene": 10,
+   "scene": 11,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -28266,7 +29594,7 @@
   },
   {
    "label": "random ppg attach 6.3",
-   "scene": 10,
+   "scene": 11,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -28303,7 +29631,7 @@
   },
   {
    "label": "random ppg attach 6.4",
-   "scene": 10,
+   "scene": 11,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -28340,7 +29668,7 @@
   },
   {
    "label": "random connect 7.0",
-   "scene": 11,
+   "scene": 12,
    "op": "connect",
    "request": {
     "a": {
@@ -28361,7 +29689,7 @@
   },
   {
    "label": "random connect 7.1",
-   "scene": 11,
+   "scene": 12,
    "op": "connect",
    "request": {
     "a": {
@@ -28381,7 +29709,7 @@
   },
   {
    "label": "random connect 7.2",
-   "scene": 11,
+   "scene": 12,
    "op": "connect",
    "request": {
     "a": {
@@ -28449,7 +29777,7 @@
   },
   {
    "label": "random connect 7.3",
-   "scene": 11,
+   "scene": 12,
    "op": "connect",
    "request": {
     "a": {
@@ -28468,7 +29796,7 @@
   },
   {
    "label": "random connect 7.4",
-   "scene": 11,
+   "scene": 12,
    "op": "connect",
    "request": {
     "a": {
@@ -28488,7 +29816,7 @@
   },
   {
    "label": "random connect 7.5",
-   "scene": 11,
+   "scene": 12,
    "op": "connect",
    "request": {
     "a": {
@@ -28547,7 +29875,7 @@
   },
   {
    "label": "random connect 7.6",
-   "scene": 11,
+   "scene": 12,
    "op": "connect",
    "request": {
     "a": {
@@ -28567,7 +29895,7 @@
   },
   {
    "label": "random connect 7.7",
-   "scene": 11,
+   "scene": 12,
    "op": "connect",
    "request": {
     "a": {
@@ -28586,7 +29914,7 @@
   },
   {
    "label": "random connect 7.8",
-   "scene": 11,
+   "scene": 12,
    "op": "connect",
    "request": {
     "a": {
@@ -28607,7 +29935,7 @@
   },
   {
    "label": "random connect 7.9",
-   "scene": 11,
+   "scene": 12,
    "op": "connect",
    "request": {
     "a": {
@@ -28626,7 +29954,7 @@
   },
   {
    "label": "random connect 7.10",
-   "scene": 11,
+   "scene": 12,
    "op": "connect",
    "request": {
     "a": {
@@ -28647,7 +29975,7 @@
   },
   {
    "label": "random connect 7.11",
-   "scene": 11,
+   "scene": 12,
    "op": "connect",
    "request": {
     "a": {
@@ -28704,7 +30032,7 @@
   },
   {
    "label": "random connect 7.12",
-   "scene": 11,
+   "scene": 12,
    "op": "connect",
    "request": {
     "a": {
@@ -28724,7 +30052,7 @@
   },
   {
    "label": "random connect 7.13",
-   "scene": 11,
+   "scene": 12,
    "op": "connect",
    "request": {
     "a": {
@@ -28743,7 +30071,7 @@
   },
   {
    "label": "random resnap 7.0",
-   "scene": 11,
+   "scene": 12,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -28918,7 +30246,7 @@
   },
   {
    "label": "random resnap 7.1",
-   "scene": 11,
+   "scene": 12,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -29051,7 +30379,7 @@
   },
   {
    "label": "random resnap 7.2",
-   "scene": 11,
+   "scene": 12,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -29228,7 +30556,7 @@
   },
   {
    "label": "random align 7 r7-cable0 A",
-   "scene": 11,
+   "scene": 12,
    "op": "align",
    "request": {
     "cableId": "r7-cable0",
@@ -29436,7 +30764,7 @@
   },
   {
    "label": "random align 7 r7-cable0 B",
-   "scene": 11,
+   "scene": 12,
    "op": "align",
    "request": {
     "cableId": "r7-cable0",
@@ -29644,7 +30972,7 @@
   },
   {
    "label": "random disconnect 7 r7-cable0",
-   "scene": 11,
+   "scene": 12,
    "op": "disconnect",
    "request": {
     "cableId": "r7-cable0",
@@ -29659,7 +30987,7 @@
   },
   {
    "label": "random align 7 r7-cable1 A",
-   "scene": 11,
+   "scene": 12,
    "op": "align",
    "request": {
     "cableId": "r7-cable1",
@@ -29673,7 +31001,7 @@
   },
   {
    "label": "random align 7 r7-cable1 B",
-   "scene": 11,
+   "scene": 12,
    "op": "align",
    "request": {
     "cableId": "r7-cable1",
@@ -29687,7 +31015,7 @@
   },
   {
    "label": "random disconnect 7 r7-cable1",
-   "scene": 11,
+   "scene": 12,
    "op": "disconnect",
    "request": {
     "cableId": "r7-cable1",
@@ -29705,7 +31033,7 @@
   },
   {
    "label": "random align 7 r7-cable2 A",
-   "scene": 11,
+   "scene": 12,
    "op": "align",
    "request": {
     "cableId": "r7-cable2",
@@ -29719,7 +31047,7 @@
   },
   {
    "label": "random align 7 r7-cable2 B",
-   "scene": 11,
+   "scene": 12,
    "op": "align",
    "request": {
     "cableId": "r7-cable2",
@@ -29835,7 +31163,7 @@
   },
   {
    "label": "random disconnect 7 r7-cable2",
-   "scene": 11,
+   "scene": 12,
    "op": "disconnect",
    "request": {
     "cableId": "r7-cable2",
@@ -29850,7 +31178,7 @@
   },
   {
    "label": "random detach 7 r7-ppg0",
-   "scene": 11,
+   "scene": 12,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r7-ppg0"
@@ -29867,7 +31195,7 @@
   },
   {
    "label": "random ppg attach 7.0",
-   "scene": 11,
+   "scene": 12,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -29882,7 +31210,7 @@
   },
   {
    "label": "random ppg attach 7.1",
-   "scene": 11,
+   "scene": 12,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -29919,7 +31247,7 @@
   },
   {
    "label": "random ppg attach 7.2",
-   "scene": 11,
+   "scene": 12,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -29956,7 +31284,7 @@
   },
   {
    "label": "random ppg attach 7.3",
-   "scene": 11,
+   "scene": 12,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -29971,7 +31299,7 @@
   },
   {
    "label": "random ppg attach 7.4",
-   "scene": 11,
+   "scene": 12,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -29986,7 +31314,7 @@
   },
   {
    "label": "random connect 8.0",
-   "scene": 12,
+   "scene": 13,
    "op": "connect",
    "request": {
     "a": {
@@ -30005,7 +31333,7 @@
   },
   {
    "label": "random connect 8.1",
-   "scene": 12,
+   "scene": 13,
    "op": "connect",
    "request": {
     "a": {
@@ -30024,7 +31352,7 @@
   },
   {
    "label": "random connect 8.2",
-   "scene": 12,
+   "scene": 13,
    "op": "connect",
    "request": {
     "a": {
@@ -30044,7 +31372,7 @@
   },
   {
    "label": "random connect 8.3",
-   "scene": 12,
+   "scene": 13,
    "op": "connect",
    "request": {
     "a": {
@@ -30065,7 +31393,7 @@
   },
   {
    "label": "random connect 8.4",
-   "scene": 12,
+   "scene": 13,
    "op": "connect",
    "request": {
     "a": {
@@ -30085,7 +31413,7 @@
   },
   {
    "label": "random connect 8.5",
-   "scene": 12,
+   "scene": 13,
    "op": "connect",
    "request": {
     "a": {
@@ -30104,7 +31432,7 @@
   },
   {
    "label": "random connect 8.6",
-   "scene": 12,
+   "scene": 13,
    "op": "connect",
    "request": {
     "a": {
@@ -30124,7 +31452,7 @@
   },
   {
    "label": "random connect 8.7",
-   "scene": 12,
+   "scene": 13,
    "op": "connect",
    "request": {
     "a": {
@@ -30144,7 +31472,7 @@
   },
   {
    "label": "random connect 8.8",
-   "scene": 12,
+   "scene": 13,
    "op": "connect",
    "request": {
     "a": {
@@ -30164,7 +31492,7 @@
   },
   {
    "label": "random connect 8.9",
-   "scene": 12,
+   "scene": 13,
    "op": "connect",
    "request": {
     "a": {
@@ -30184,7 +31512,7 @@
   },
   {
    "label": "random connect 8.10",
-   "scene": 12,
+   "scene": 13,
    "op": "connect",
    "request": {
     "a": {
@@ -30205,7 +31533,7 @@
   },
   {
    "label": "random connect 8.11",
-   "scene": 12,
+   "scene": 13,
    "op": "connect",
    "request": {
     "a": {
@@ -30224,7 +31552,7 @@
   },
   {
    "label": "random connect 8.12",
-   "scene": 12,
+   "scene": 13,
    "op": "connect",
    "request": {
     "a": {
@@ -30245,7 +31573,7 @@
   },
   {
    "label": "random connect 8.13",
-   "scene": 12,
+   "scene": 13,
    "op": "connect",
    "request": {
     "a": {
@@ -30265,7 +31593,7 @@
   },
   {
    "label": "random resnap 8.0",
-   "scene": 12,
+   "scene": 13,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -30395,7 +31723,7 @@
   },
   {
    "label": "random resnap 8.1",
-   "scene": 12,
+   "scene": 13,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -30467,7 +31795,7 @@
   },
   {
    "label": "random resnap 8.2",
-   "scene": 12,
+   "scene": 13,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -30482,7 +31810,7 @@
   },
   {
    "label": "random align 8 r8-cable0 A",
-   "scene": 12,
+   "scene": 13,
    "op": "align",
    "request": {
     "cableId": "r8-cable0",
@@ -30496,7 +31824,7 @@
   },
   {
    "label": "random align 8 r8-cable0 B",
-   "scene": 12,
+   "scene": 13,
    "op": "align",
    "request": {
     "cableId": "r8-cable0",
@@ -30510,7 +31838,7 @@
   },
   {
    "label": "random disconnect 8 r8-cable0",
-   "scene": 12,
+   "scene": 13,
    "op": "disconnect",
    "request": {
     "cableId": "r8-cable0",
@@ -30523,7 +31851,7 @@
   },
   {
    "label": "random align 8 r8-cable1 A",
-   "scene": 12,
+   "scene": 13,
    "op": "align",
    "request": {
     "cableId": "r8-cable1",
@@ -30680,7 +32008,7 @@
   },
   {
    "label": "random align 8 r8-cable1 B",
-   "scene": 12,
+   "scene": 13,
    "op": "align",
    "request": {
     "cableId": "r8-cable1",
@@ -30837,7 +32165,7 @@
   },
   {
    "label": "random disconnect 8 r8-cable1",
-   "scene": 12,
+   "scene": 13,
    "op": "disconnect",
    "request": {
     "cableId": "r8-cable1",
@@ -30850,7 +32178,7 @@
   },
   {
    "label": "random align 8 r8-cable2 A",
-   "scene": 12,
+   "scene": 13,
    "op": "align",
    "request": {
     "cableId": "r8-cable2",
@@ -30864,7 +32192,7 @@
   },
   {
    "label": "random align 8 r8-cable2 B",
-   "scene": 12,
+   "scene": 13,
    "op": "align",
    "request": {
     "cableId": "r8-cable2",
@@ -30878,7 +32206,7 @@
   },
   {
    "label": "random disconnect 8 r8-cable2",
-   "scene": 12,
+   "scene": 13,
    "op": "disconnect",
    "request": {
     "cableId": "r8-cable2",
@@ -30893,7 +32221,7 @@
   },
   {
    "label": "random detach 8 r8-ppg0",
-   "scene": 12,
+   "scene": 13,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r8-ppg0"
@@ -30909,7 +32237,7 @@
   },
   {
    "label": "random ppg attach 8.0",
-   "scene": 12,
+   "scene": 13,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -30924,7 +32252,7 @@
   },
   {
    "label": "random ppg attach 8.1",
-   "scene": 12,
+   "scene": 13,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -30939,7 +32267,7 @@
   },
   {
    "label": "random ppg attach 8.2",
-   "scene": 12,
+   "scene": 13,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -30955,7 +32283,7 @@
   },
   {
    "label": "random ppg attach 8.3",
-   "scene": 12,
+   "scene": 13,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -30971,7 +32299,7 @@
   },
   {
    "label": "random ppg attach 8.4",
-   "scene": 12,
+   "scene": 13,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -30987,7 +32315,7 @@
   },
   {
    "label": "random connect 9.0",
-   "scene": 13,
+   "scene": 14,
    "op": "connect",
    "request": {
     "a": {
@@ -31006,7 +32334,7 @@
   },
   {
    "label": "random connect 9.1",
-   "scene": 13,
+   "scene": 14,
    "op": "connect",
    "request": {
     "a": {
@@ -31075,7 +32403,7 @@
   },
   {
    "label": "random connect 9.2",
-   "scene": 13,
+   "scene": 14,
    "op": "connect",
    "request": {
     "a": {
@@ -31096,7 +32424,7 @@
   },
   {
    "label": "random connect 9.3",
-   "scene": 13,
+   "scene": 14,
    "op": "connect",
    "request": {
     "a": {
@@ -31164,7 +32492,7 @@
   },
   {
    "label": "random connect 9.4",
-   "scene": 13,
+   "scene": 14,
    "op": "connect",
    "request": {
     "a": {
@@ -31231,7 +32559,7 @@
   },
   {
    "label": "random connect 9.5",
-   "scene": 13,
+   "scene": 14,
    "op": "connect",
    "request": {
     "a": {
@@ -31300,7 +32628,7 @@
   },
   {
    "label": "random connect 9.6",
-   "scene": 13,
+   "scene": 14,
    "op": "connect",
    "request": {
     "a": {
@@ -31321,7 +32649,7 @@
   },
   {
    "label": "random connect 9.7",
-   "scene": 13,
+   "scene": 14,
    "op": "connect",
    "request": {
     "a": {
@@ -31389,7 +32717,7 @@
   },
   {
    "label": "random connect 9.8",
-   "scene": 13,
+   "scene": 14,
    "op": "connect",
    "request": {
     "a": {
@@ -31458,7 +32786,7 @@
   },
   {
    "label": "random connect 9.9",
-   "scene": 13,
+   "scene": 14,
    "op": "connect",
    "request": {
     "a": {
@@ -31525,7 +32853,7 @@
   },
   {
    "label": "random connect 9.10",
-   "scene": 13,
+   "scene": 14,
    "op": "connect",
    "request": {
     "a": {
@@ -31594,7 +32922,7 @@
   },
   {
    "label": "random connect 9.11",
-   "scene": 13,
+   "scene": 14,
    "op": "connect",
    "request": {
     "a": {
@@ -31663,7 +32991,7 @@
   },
   {
    "label": "random connect 9.12",
-   "scene": 13,
+   "scene": 14,
    "op": "connect",
    "request": {
     "a": {
@@ -31682,7 +33010,7 @@
   },
   {
    "label": "random connect 9.13",
-   "scene": 13,
+   "scene": 14,
    "op": "connect",
    "request": {
     "a": {
@@ -31702,7 +33030,7 @@
   },
   {
    "label": "random resnap 9.0",
-   "scene": 13,
+   "scene": 14,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -31716,7 +33044,7 @@
   },
   {
    "label": "random resnap 9.1",
-   "scene": 13,
+   "scene": 14,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -31731,7 +33059,7 @@
   },
   {
    "label": "random resnap 9.2",
-   "scene": 13,
+   "scene": 14,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -31748,7 +33076,7 @@
   },
   {
    "label": "random ppg attach 9.0",
-   "scene": 13,
+   "scene": 14,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -31764,7 +33092,7 @@
   },
   {
    "label": "random ppg attach 9.1",
-   "scene": 13,
+   "scene": 14,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -31780,7 +33108,7 @@
   },
   {
    "label": "random ppg attach 9.2",
-   "scene": 13,
+   "scene": 14,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -31795,7 +33123,7 @@
   },
   {
    "label": "random ppg attach 9.3",
-   "scene": 13,
+   "scene": 14,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -31810,7 +33138,7 @@
   },
   {
    "label": "random ppg attach 9.4",
-   "scene": 13,
+   "scene": 14,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -31826,7 +33154,7 @@
   },
   {
    "label": "random connect 10.0",
-   "scene": 14,
+   "scene": 15,
    "op": "connect",
    "request": {
     "a": {
@@ -31846,7 +33174,7 @@
   },
   {
    "label": "random connect 10.1",
-   "scene": 14,
+   "scene": 15,
    "op": "connect",
    "request": {
     "a": {
@@ -31865,7 +33193,7 @@
   },
   {
    "label": "random connect 10.2",
-   "scene": 14,
+   "scene": 15,
    "op": "connect",
    "request": {
     "a": {
@@ -31886,7 +33214,7 @@
   },
   {
    "label": "random connect 10.3",
-   "scene": 14,
+   "scene": 15,
    "op": "connect",
    "request": {
     "a": {
@@ -31906,7 +33234,7 @@
   },
   {
    "label": "random connect 10.4",
-   "scene": 14,
+   "scene": 15,
    "op": "connect",
    "request": {
     "a": {
@@ -31927,7 +33255,7 @@
   },
   {
    "label": "random connect 10.5",
-   "scene": 14,
+   "scene": 15,
    "op": "connect",
    "request": {
     "a": {
@@ -31946,7 +33274,7 @@
   },
   {
    "label": "random connect 10.6",
-   "scene": 14,
+   "scene": 15,
    "op": "connect",
    "request": {
     "a": {
@@ -31966,7 +33294,7 @@
   },
   {
    "label": "random connect 10.7",
-   "scene": 14,
+   "scene": 15,
    "op": "connect",
    "request": {
     "a": {
@@ -31985,7 +33313,7 @@
   },
   {
    "label": "random connect 10.8",
-   "scene": 14,
+   "scene": 15,
    "op": "connect",
    "request": {
     "a": {
@@ -32006,7 +33334,7 @@
   },
   {
    "label": "random connect 10.9",
-   "scene": 14,
+   "scene": 15,
    "op": "connect",
    "request": {
     "a": {
@@ -32025,7 +33353,7 @@
   },
   {
    "label": "random connect 10.10",
-   "scene": 14,
+   "scene": 15,
    "op": "connect",
    "request": {
     "a": {
@@ -32044,7 +33372,7 @@
   },
   {
    "label": "random connect 10.11",
-   "scene": 14,
+   "scene": 15,
    "op": "connect",
    "request": {
     "a": {
@@ -32064,7 +33392,7 @@
   },
   {
    "label": "random connect 10.12",
-   "scene": 14,
+   "scene": 15,
    "op": "connect",
    "request": {
     "a": {
@@ -32084,7 +33412,7 @@
   },
   {
    "label": "random connect 10.13",
-   "scene": 14,
+   "scene": 15,
    "op": "connect",
    "request": {
     "a": {
@@ -32104,7 +33432,7 @@
   },
   {
    "label": "random resnap 10.0",
-   "scene": 14,
+   "scene": 15,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -32118,7 +33446,7 @@
   },
   {
    "label": "random resnap 10.1",
-   "scene": 14,
+   "scene": 15,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -32187,7 +33515,7 @@
   },
   {
    "label": "random resnap 10.2",
-   "scene": 14,
+   "scene": 15,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -32201,7 +33529,7 @@
   },
   {
    "label": "random align 10 r10-cable0 A",
-   "scene": 14,
+   "scene": 15,
    "op": "align",
    "request": {
     "cableId": "r10-cable0",
@@ -32302,7 +33630,7 @@
   },
   {
    "label": "random align 10 r10-cable0 B",
-   "scene": 14,
+   "scene": 15,
    "op": "align",
    "request": {
     "cableId": "r10-cable0",
@@ -32316,7 +33644,7 @@
   },
   {
    "label": "random disconnect 10 r10-cable0",
-   "scene": 14,
+   "scene": 15,
    "op": "disconnect",
    "request": {
     "cableId": "r10-cable0",
@@ -32329,7 +33657,7 @@
   },
   {
    "label": "random align 10 r10-cable1 A",
-   "scene": 14,
+   "scene": 15,
    "op": "align",
    "request": {
     "cableId": "r10-cable1",
@@ -32343,7 +33671,7 @@
   },
   {
    "label": "random align 10 r10-cable1 B",
-   "scene": 14,
+   "scene": 15,
    "op": "align",
    "request": {
     "cableId": "r10-cable1",
@@ -32357,7 +33685,7 @@
   },
   {
    "label": "random disconnect 10 r10-cable1",
-   "scene": 14,
+   "scene": 15,
    "op": "disconnect",
    "request": {
     "cableId": "r10-cable1",
@@ -32372,7 +33700,7 @@
   },
   {
    "label": "random align 10 r10-cable2 A",
-   "scene": 14,
+   "scene": 15,
    "op": "align",
    "request": {
     "cableId": "r10-cable2",
@@ -32386,7 +33714,7 @@
   },
   {
    "label": "random align 10 r10-cable2 B",
-   "scene": 14,
+   "scene": 15,
    "op": "align",
    "request": {
     "cableId": "r10-cable2",
@@ -32400,7 +33728,7 @@
   },
   {
    "label": "random disconnect 10 r10-cable2",
-   "scene": 14,
+   "scene": 15,
    "op": "disconnect",
    "request": {
     "cableId": "r10-cable2",
@@ -32413,7 +33741,7 @@
   },
   {
    "label": "random ppg attach 10.0",
-   "scene": 14,
+   "scene": 15,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -32428,7 +33756,7 @@
   },
   {
    "label": "random ppg attach 10.1",
-   "scene": 14,
+   "scene": 15,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -32443,7 +33771,7 @@
   },
   {
    "label": "random ppg attach 10.2",
-   "scene": 14,
+   "scene": 15,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -32458,7 +33786,7 @@
   },
   {
    "label": "random ppg attach 10.3",
-   "scene": 14,
+   "scene": 15,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -32473,7 +33801,7 @@
   },
   {
    "label": "random ppg attach 10.4",
-   "scene": 14,
+   "scene": 15,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -32489,7 +33817,7 @@
   },
   {
    "label": "random connect 11.0",
-   "scene": 15,
+   "scene": 16,
    "op": "connect",
    "request": {
     "a": {
@@ -32510,7 +33838,7 @@
   },
   {
    "label": "random connect 11.1",
-   "scene": 15,
+   "scene": 16,
    "op": "connect",
    "request": {
     "a": {
@@ -32529,7 +33857,7 @@
   },
   {
    "label": "random connect 11.2",
-   "scene": 15,
+   "scene": 16,
    "op": "connect",
    "request": {
     "a": {
@@ -32549,7 +33877,7 @@
   },
   {
    "label": "random connect 11.3",
-   "scene": 15,
+   "scene": 16,
    "op": "connect",
    "request": {
     "a": {
@@ -32570,7 +33898,7 @@
   },
   {
    "label": "random connect 11.4",
-   "scene": 15,
+   "scene": 16,
    "op": "connect",
    "request": {
     "a": {
@@ -32590,7 +33918,7 @@
   },
   {
    "label": "random connect 11.5",
-   "scene": 15,
+   "scene": 16,
    "op": "connect",
    "request": {
     "a": {
@@ -32609,7 +33937,7 @@
   },
   {
    "label": "random connect 11.6",
-   "scene": 15,
+   "scene": 16,
    "op": "connect",
    "request": {
     "a": {
@@ -32629,7 +33957,7 @@
   },
   {
    "label": "random connect 11.7",
-   "scene": 15,
+   "scene": 16,
    "op": "connect",
    "request": {
     "a": {
@@ -32649,7 +33977,7 @@
   },
   {
    "label": "random connect 11.8",
-   "scene": 15,
+   "scene": 16,
    "op": "connect",
    "request": {
     "a": {
@@ -32669,7 +33997,7 @@
   },
   {
    "label": "random connect 11.9",
-   "scene": 15,
+   "scene": 16,
    "op": "connect",
    "request": {
     "a": {
@@ -32689,7 +34017,7 @@
   },
   {
    "label": "random connect 11.10",
-   "scene": 15,
+   "scene": 16,
    "op": "connect",
    "request": {
     "a": {
@@ -32709,7 +34037,7 @@
   },
   {
    "label": "random connect 11.11",
-   "scene": 15,
+   "scene": 16,
    "op": "connect",
    "request": {
     "a": {
@@ -32728,7 +34056,7 @@
   },
   {
    "label": "random connect 11.12",
-   "scene": 15,
+   "scene": 16,
    "op": "connect",
    "request": {
     "a": {
@@ -32749,7 +34077,7 @@
   },
   {
    "label": "random connect 11.13",
-   "scene": 15,
+   "scene": 16,
    "op": "connect",
    "request": {
     "a": {
@@ -32769,7 +34097,7 @@
   },
   {
    "label": "random resnap 11.0",
-   "scene": 15,
+   "scene": 16,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -32786,7 +34114,7 @@
   },
   {
    "label": "random resnap 11.1",
-   "scene": 15,
+   "scene": 16,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -32802,7 +34130,7 @@
   },
   {
    "label": "random resnap 11.2",
-   "scene": 15,
+   "scene": 16,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -32817,7 +34145,7 @@
   },
   {
    "label": "random detach 11 r11-ppg0",
-   "scene": 15,
+   "scene": 16,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r11-ppg0"
@@ -32833,7 +34161,7 @@
   },
   {
    "label": "random ppg attach 11.0",
-   "scene": 15,
+   "scene": 16,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -32849,7 +34177,7 @@
   },
   {
    "label": "random ppg attach 11.1",
-   "scene": 15,
+   "scene": 16,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -32864,7 +34192,7 @@
   },
   {
    "label": "random ppg attach 11.2",
-   "scene": 15,
+   "scene": 16,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -32879,7 +34207,7 @@
   },
   {
    "label": "random ppg attach 11.3",
-   "scene": 15,
+   "scene": 16,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -32894,7 +34222,7 @@
   },
   {
    "label": "random ppg attach 11.4",
-   "scene": 15,
+   "scene": 16,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -32909,7 +34237,7 @@
   },
   {
    "label": "random connect 12.0",
-   "scene": 16,
+   "scene": 17,
    "op": "connect",
    "request": {
     "a": {
@@ -32977,7 +34305,7 @@
   },
   {
    "label": "random connect 12.1",
-   "scene": 16,
+   "scene": 17,
    "op": "connect",
    "request": {
     "a": {
@@ -33045,7 +34373,7 @@
   },
   {
    "label": "random connect 12.2",
-   "scene": 16,
+   "scene": 17,
    "op": "connect",
    "request": {
     "a": {
@@ -33104,7 +34432,7 @@
   },
   {
    "label": "random connect 12.3",
-   "scene": 16,
+   "scene": 17,
    "op": "connect",
    "request": {
     "a": {
@@ -33162,7 +34490,7 @@
   },
   {
    "label": "random connect 12.4",
-   "scene": 16,
+   "scene": 17,
    "op": "connect",
    "request": {
     "a": {
@@ -33181,7 +34509,7 @@
   },
   {
    "label": "random connect 12.5",
-   "scene": 16,
+   "scene": 17,
    "op": "connect",
    "request": {
     "a": {
@@ -33239,7 +34567,7 @@
   },
   {
    "label": "random connect 12.6",
-   "scene": 16,
+   "scene": 17,
    "op": "connect",
    "request": {
     "a": {
@@ -33260,7 +34588,7 @@
   },
   {
    "label": "random connect 12.7",
-   "scene": 16,
+   "scene": 17,
    "op": "connect",
    "request": {
     "a": {
@@ -33279,7 +34607,7 @@
   },
   {
    "label": "random connect 12.8",
-   "scene": 16,
+   "scene": 17,
    "op": "connect",
    "request": {
     "a": {
@@ -33298,7 +34626,7 @@
   },
   {
    "label": "random connect 12.9",
-   "scene": 16,
+   "scene": 17,
    "op": "connect",
    "request": {
     "a": {
@@ -33367,7 +34695,7 @@
   },
   {
    "label": "random connect 12.10",
-   "scene": 16,
+   "scene": 17,
    "op": "connect",
    "request": {
     "a": {
@@ -33434,7 +34762,7 @@
   },
   {
    "label": "random connect 12.11",
-   "scene": 16,
+   "scene": 17,
    "op": "connect",
    "request": {
     "a": {
@@ -33493,7 +34821,7 @@
   },
   {
    "label": "random connect 12.12",
-   "scene": 16,
+   "scene": 17,
    "op": "connect",
    "request": {
     "a": {
@@ -33562,7 +34890,7 @@
   },
   {
    "label": "random connect 12.13",
-   "scene": 16,
+   "scene": 17,
    "op": "connect",
    "request": {
     "a": {
@@ -33581,7 +34909,7 @@
   },
   {
    "label": "random resnap 12.0",
-   "scene": 16,
+   "scene": 17,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -33595,7 +34923,7 @@
   },
   {
    "label": "random resnap 12.1",
-   "scene": 16,
+   "scene": 17,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -33612,7 +34940,7 @@
   },
   {
    "label": "random resnap 12.2",
-   "scene": 16,
+   "scene": 17,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -33626,7 +34954,7 @@
   },
   {
    "label": "random ppg attach 12.0",
-   "scene": 16,
+   "scene": 17,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -33642,7 +34970,7 @@
   },
   {
    "label": "random ppg attach 12.1",
-   "scene": 16,
+   "scene": 17,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -33657,7 +34985,7 @@
   },
   {
    "label": "random ppg attach 12.2",
-   "scene": 16,
+   "scene": 17,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -33673,7 +35001,7 @@
   },
   {
    "label": "random ppg attach 12.3",
-   "scene": 16,
+   "scene": 17,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -33689,7 +35017,7 @@
   },
   {
    "label": "random ppg attach 12.4",
-   "scene": 16,
+   "scene": 17,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -33705,7 +35033,7 @@
   },
   {
    "label": "random connect 13.0",
-   "scene": 17,
+   "scene": 18,
    "op": "connect",
    "request": {
     "a": {
@@ -33725,7 +35053,7 @@
   },
   {
    "label": "random connect 13.1",
-   "scene": 17,
+   "scene": 18,
    "op": "connect",
    "request": {
     "a": {
@@ -33745,7 +35073,7 @@
   },
   {
    "label": "random connect 13.2",
-   "scene": 17,
+   "scene": 18,
    "op": "connect",
    "request": {
     "a": {
@@ -33765,7 +35093,7 @@
   },
   {
    "label": "random connect 13.3",
-   "scene": 17,
+   "scene": 18,
    "op": "connect",
    "request": {
     "a": {
@@ -33784,7 +35112,7 @@
   },
   {
    "label": "random connect 13.4",
-   "scene": 17,
+   "scene": 18,
    "op": "connect",
    "request": {
     "a": {
@@ -33803,7 +35131,7 @@
   },
   {
    "label": "random connect 13.5",
-   "scene": 17,
+   "scene": 18,
    "op": "connect",
    "request": {
     "a": {
@@ -33823,7 +35151,7 @@
   },
   {
    "label": "random connect 13.6",
-   "scene": 17,
+   "scene": 18,
    "op": "connect",
    "request": {
     "a": {
@@ -33843,7 +35171,7 @@
   },
   {
    "label": "random connect 13.7",
-   "scene": 17,
+   "scene": 18,
    "op": "connect",
    "request": {
     "a": {
@@ -33864,7 +35192,7 @@
   },
   {
    "label": "random connect 13.8",
-   "scene": 17,
+   "scene": 18,
    "op": "connect",
    "request": {
     "a": {
@@ -33885,7 +35213,7 @@
   },
   {
    "label": "random connect 13.9",
-   "scene": 17,
+   "scene": 18,
    "op": "connect",
    "request": {
     "a": {
@@ -33905,7 +35233,7 @@
   },
   {
    "label": "random connect 13.10",
-   "scene": 17,
+   "scene": 18,
    "op": "connect",
    "request": {
     "a": {
@@ -33926,7 +35254,7 @@
   },
   {
    "label": "random connect 13.11",
-   "scene": 17,
+   "scene": 18,
    "op": "connect",
    "request": {
     "a": {
@@ -33946,7 +35274,7 @@
   },
   {
    "label": "random connect 13.12",
-   "scene": 17,
+   "scene": 18,
    "op": "connect",
    "request": {
     "a": {
@@ -33965,7 +35293,7 @@
   },
   {
    "label": "random connect 13.13",
-   "scene": 17,
+   "scene": 18,
    "op": "connect",
    "request": {
     "a": {
@@ -33986,7 +35314,7 @@
   },
   {
    "label": "random resnap 13.0",
-   "scene": 17,
+   "scene": 18,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -34051,7 +35379,7 @@
   },
   {
    "label": "random resnap 13.1",
-   "scene": 17,
+   "scene": 18,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -34116,7 +35444,7 @@
   },
   {
    "label": "random resnap 13.2",
-   "scene": 17,
+   "scene": 18,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -34149,7 +35477,7 @@
   },
   {
    "label": "random align 13 r13-cable0 A",
-   "scene": 17,
+   "scene": 18,
    "op": "align",
    "request": {
     "cableId": "r13-cable0",
@@ -34163,7 +35491,7 @@
   },
   {
    "label": "random align 13 r13-cable0 B",
-   "scene": 17,
+   "scene": 18,
    "op": "align",
    "request": {
     "cableId": "r13-cable0",
@@ -34177,7 +35505,7 @@
   },
   {
    "label": "random disconnect 13 r13-cable0",
-   "scene": 17,
+   "scene": 18,
    "op": "disconnect",
    "request": {
     "cableId": "r13-cable0",
@@ -34192,7 +35520,7 @@
   },
   {
    "label": "random detach 13 r13-ppg0",
-   "scene": 17,
+   "scene": 18,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r13-ppg0"
@@ -34208,7 +35536,7 @@
   },
   {
    "label": "random detach 13 r13-ppg1",
-   "scene": 17,
+   "scene": 18,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r13-ppg1"
@@ -34224,7 +35552,7 @@
   },
   {
    "label": "random ppg attach 13.0",
-   "scene": 17,
+   "scene": 18,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -34240,7 +35568,7 @@
   },
   {
    "label": "random ppg attach 13.1",
-   "scene": 17,
+   "scene": 18,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -34256,7 +35584,7 @@
   },
   {
    "label": "random ppg attach 13.2",
-   "scene": 17,
+   "scene": 18,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -34272,7 +35600,7 @@
   },
   {
    "label": "random ppg attach 13.3",
-   "scene": 17,
+   "scene": 18,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -34287,7 +35615,7 @@
   },
   {
    "label": "random ppg attach 13.4",
-   "scene": 17,
+   "scene": 18,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -34303,7 +35631,7 @@
   },
   {
    "label": "random connect 14.0",
-   "scene": 18,
+   "scene": 19,
    "op": "connect",
    "request": {
     "a": {
@@ -34324,7 +35652,7 @@
   },
   {
    "label": "random connect 14.1",
-   "scene": 18,
+   "scene": 19,
    "op": "connect",
    "request": {
     "a": {
@@ -34345,7 +35673,7 @@
   },
   {
    "label": "random connect 14.2",
-   "scene": 18,
+   "scene": 19,
    "op": "connect",
    "request": {
     "a": {
@@ -34365,7 +35693,7 @@
   },
   {
    "label": "random connect 14.3",
-   "scene": 18,
+   "scene": 19,
    "op": "connect",
    "request": {
     "a": {
@@ -34385,7 +35713,7 @@
   },
   {
    "label": "random connect 14.4",
-   "scene": 18,
+   "scene": 19,
    "op": "connect",
    "request": {
     "a": {
@@ -34406,7 +35734,7 @@
   },
   {
    "label": "random connect 14.5",
-   "scene": 18,
+   "scene": 19,
    "op": "connect",
    "request": {
     "a": {
@@ -34426,7 +35754,7 @@
   },
   {
    "label": "random connect 14.6",
-   "scene": 18,
+   "scene": 19,
    "op": "connect",
    "request": {
     "a": {
@@ -34445,7 +35773,7 @@
   },
   {
    "label": "random connect 14.7",
-   "scene": 18,
+   "scene": 19,
    "op": "connect",
    "request": {
     "a": {
@@ -34465,7 +35793,7 @@
   },
   {
    "label": "random connect 14.8",
-   "scene": 18,
+   "scene": 19,
    "op": "connect",
    "request": {
     "a": {
@@ -34485,7 +35813,7 @@
   },
   {
    "label": "random connect 14.9",
-   "scene": 18,
+   "scene": 19,
    "op": "connect",
    "request": {
     "a": {
@@ -34506,7 +35834,7 @@
   },
   {
    "label": "random connect 14.10",
-   "scene": 18,
+   "scene": 19,
    "op": "connect",
    "request": {
     "a": {
@@ -34525,7 +35853,7 @@
   },
   {
    "label": "random connect 14.11",
-   "scene": 18,
+   "scene": 19,
    "op": "connect",
    "request": {
     "a": {
@@ -34545,7 +35873,7 @@
   },
   {
    "label": "random connect 14.12",
-   "scene": 18,
+   "scene": 19,
    "op": "connect",
    "request": {
     "a": {
@@ -34565,7 +35893,7 @@
   },
   {
    "label": "random connect 14.13",
-   "scene": 18,
+   "scene": 19,
    "op": "connect",
    "request": {
     "a": {
@@ -34586,7 +35914,7 @@
   },
   {
    "label": "random resnap 14.0",
-   "scene": 18,
+   "scene": 19,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -34651,7 +35979,7 @@
   },
   {
    "label": "random resnap 14.1",
-   "scene": 18,
+   "scene": 19,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -34719,7 +36047,7 @@
   },
   {
    "label": "random resnap 14.2",
-   "scene": 18,
+   "scene": 19,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -34787,7 +36115,7 @@
   },
   {
    "label": "random align 14 r14-cable0 A",
-   "scene": 18,
+   "scene": 19,
    "op": "align",
    "request": {
     "cableId": "r14-cable0",
@@ -34908,7 +36236,7 @@
   },
   {
    "label": "random align 14 r14-cable0 B",
-   "scene": 18,
+   "scene": 19,
    "op": "align",
    "request": {
     "cableId": "r14-cable0",
@@ -34922,7 +36250,7 @@
   },
   {
    "label": "random disconnect 14 r14-cable0",
-   "scene": 18,
+   "scene": 19,
    "op": "disconnect",
    "request": {
     "cableId": "r14-cable0",
@@ -34937,7 +36265,7 @@
   },
   {
    "label": "random align 14 r14-cable1 A",
-   "scene": 18,
+   "scene": 19,
    "op": "align",
    "request": {
     "cableId": "r14-cable1",
@@ -35043,7 +36371,7 @@
   },
   {
    "label": "random align 14 r14-cable1 B",
-   "scene": 18,
+   "scene": 19,
    "op": "align",
    "request": {
     "cableId": "r14-cable1",
@@ -35149,7 +36477,7 @@
   },
   {
    "label": "random disconnect 14 r14-cable1",
-   "scene": 18,
+   "scene": 19,
    "op": "disconnect",
    "request": {
     "cableId": "r14-cable1",
@@ -35167,7 +36495,7 @@
   },
   {
    "label": "random detach 14 r14-ppg0",
-   "scene": 18,
+   "scene": 19,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r14-ppg0"
@@ -35184,7 +36512,7 @@
   },
   {
    "label": "random ppg attach 14.0",
-   "scene": 18,
+   "scene": 19,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -35200,7 +36528,7 @@
   },
   {
    "label": "random ppg attach 14.1",
-   "scene": 18,
+   "scene": 19,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -35215,7 +36543,7 @@
   },
   {
    "label": "random ppg attach 14.2",
-   "scene": 18,
+   "scene": 19,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -35230,7 +36558,7 @@
   },
   {
    "label": "random ppg attach 14.3",
-   "scene": 18,
+   "scene": 19,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -35245,7 +36573,7 @@
   },
   {
    "label": "random ppg attach 14.4",
-   "scene": 18,
+   "scene": 19,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -35260,7 +36588,7 @@
   },
   {
    "label": "random connect 15.0",
-   "scene": 19,
+   "scene": 20,
    "op": "connect",
    "request": {
     "a": {
@@ -35280,7 +36608,7 @@
   },
   {
    "label": "random connect 15.1",
-   "scene": 19,
+   "scene": 20,
    "op": "connect",
    "request": {
     "a": {
@@ -35348,7 +36676,7 @@
   },
   {
    "label": "random connect 15.2",
-   "scene": 19,
+   "scene": 20,
    "op": "connect",
    "request": {
     "a": {
@@ -35416,7 +36744,7 @@
   },
   {
    "label": "random connect 15.3",
-   "scene": 19,
+   "scene": 20,
    "op": "connect",
    "request": {
     "a": {
@@ -35436,7 +36764,7 @@
   },
   {
    "label": "random connect 15.4",
-   "scene": 19,
+   "scene": 20,
    "op": "connect",
    "request": {
     "a": {
@@ -35456,7 +36784,7 @@
   },
   {
    "label": "random connect 15.5",
-   "scene": 19,
+   "scene": 20,
    "op": "connect",
    "request": {
     "a": {
@@ -35477,7 +36805,7 @@
   },
   {
    "label": "random connect 15.6",
-   "scene": 19,
+   "scene": 20,
    "op": "connect",
    "request": {
     "a": {
@@ -35498,7 +36826,7 @@
   },
   {
    "label": "random connect 15.7",
-   "scene": 19,
+   "scene": 20,
    "op": "connect",
    "request": {
     "a": {
@@ -35565,7 +36893,7 @@
   },
   {
    "label": "random connect 15.8",
-   "scene": 19,
+   "scene": 20,
    "op": "connect",
    "request": {
     "a": {
@@ -35586,7 +36914,7 @@
   },
   {
    "label": "random connect 15.9",
-   "scene": 19,
+   "scene": 20,
    "op": "connect",
    "request": {
     "a": {
@@ -35606,7 +36934,7 @@
   },
   {
    "label": "random connect 15.10",
-   "scene": 19,
+   "scene": 20,
    "op": "connect",
    "request": {
     "a": {
@@ -35673,7 +37001,7 @@
   },
   {
    "label": "random connect 15.11",
-   "scene": 19,
+   "scene": 20,
    "op": "connect",
    "request": {
     "a": {
@@ -35693,7 +37021,7 @@
   },
   {
    "label": "random connect 15.12",
-   "scene": 19,
+   "scene": 20,
    "op": "connect",
    "request": {
     "a": {
@@ -35713,7 +37041,7 @@
   },
   {
    "label": "random connect 15.13",
-   "scene": 19,
+   "scene": 20,
    "op": "connect",
    "request": {
     "a": {
@@ -35732,7 +37060,7 @@
   },
   {
    "label": "random resnap 15.0",
-   "scene": 19,
+   "scene": 20,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -35838,7 +37166,7 @@
   },
   {
    "label": "random resnap 15.1",
-   "scene": 19,
+   "scene": 20,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -35944,7 +37272,7 @@
   },
   {
    "label": "random resnap 15.2",
-   "scene": 19,
+   "scene": 20,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -35958,7 +37286,7 @@
   },
   {
    "label": "random align 15 r15-cable0 A",
-   "scene": 19,
+   "scene": 20,
    "op": "align",
    "request": {
     "cableId": "r15-cable0",
@@ -35972,7 +37300,7 @@
   },
   {
    "label": "random align 15 r15-cable0 B",
-   "scene": 19,
+   "scene": 20,
    "op": "align",
    "request": {
     "cableId": "r15-cable0",
@@ -35986,7 +37314,7 @@
   },
   {
    "label": "random disconnect 15 r15-cable0",
-   "scene": 19,
+   "scene": 20,
    "op": "disconnect",
    "request": {
     "cableId": "r15-cable0",
@@ -36001,7 +37329,7 @@
   },
   {
    "label": "random align 15 r15-cable1 A",
-   "scene": 19,
+   "scene": 20,
    "op": "align",
    "request": {
     "cableId": "r15-cable1",
@@ -36015,7 +37343,7 @@
   },
   {
    "label": "random align 15 r15-cable1 B",
-   "scene": 19,
+   "scene": 20,
    "op": "align",
    "request": {
     "cableId": "r15-cable1",
@@ -36217,7 +37545,7 @@
   },
   {
    "label": "random disconnect 15 r15-cable1",
-   "scene": 19,
+   "scene": 20,
    "op": "disconnect",
    "request": {
     "cableId": "r15-cable1",
@@ -36230,7 +37558,7 @@
   },
   {
    "label": "random detach 15 r15-ppg0",
-   "scene": 19,
+   "scene": 20,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r15-ppg0"
@@ -36246,7 +37574,7 @@
   },
   {
    "label": "random detach 15 r15-ppg1",
-   "scene": 19,
+   "scene": 20,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r15-ppg1"
@@ -36263,7 +37591,7 @@
   },
   {
    "label": "random ppg attach 15.0",
-   "scene": 19,
+   "scene": 20,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -36278,7 +37606,7 @@
   },
   {
    "label": "random ppg attach 15.1",
-   "scene": 19,
+   "scene": 20,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -36294,7 +37622,7 @@
   },
   {
    "label": "random ppg attach 15.2",
-   "scene": 19,
+   "scene": 20,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -36309,7 +37637,7 @@
   },
   {
    "label": "random ppg attach 15.3",
-   "scene": 19,
+   "scene": 20,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -36324,7 +37652,7 @@
   },
   {
    "label": "random ppg attach 15.4",
-   "scene": 19,
+   "scene": 20,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -36339,7 +37667,7 @@
   },
   {
    "label": "random connect 16.0",
-   "scene": 20,
+   "scene": 21,
    "op": "connect",
    "request": {
     "a": {
@@ -36358,7 +37686,7 @@
   },
   {
    "label": "random connect 16.1",
-   "scene": 20,
+   "scene": 21,
    "op": "connect",
    "request": {
     "a": {
@@ -36378,7 +37706,7 @@
   },
   {
    "label": "random connect 16.2",
-   "scene": 20,
+   "scene": 21,
    "op": "connect",
    "request": {
     "a": {
@@ -36398,7 +37726,7 @@
   },
   {
    "label": "random connect 16.3",
-   "scene": 20,
+   "scene": 21,
    "op": "connect",
    "request": {
     "a": {
@@ -36418,7 +37746,7 @@
   },
   {
    "label": "random connect 16.4",
-   "scene": 20,
+   "scene": 21,
    "op": "connect",
    "request": {
     "a": {
@@ -36438,7 +37766,7 @@
   },
   {
    "label": "random connect 16.5",
-   "scene": 20,
+   "scene": 21,
    "op": "connect",
    "request": {
     "a": {
@@ -36458,7 +37786,7 @@
   },
   {
    "label": "random connect 16.6",
-   "scene": 20,
+   "scene": 21,
    "op": "connect",
    "request": {
     "a": {
@@ -36479,7 +37807,7 @@
   },
   {
    "label": "random connect 16.7",
-   "scene": 20,
+   "scene": 21,
    "op": "connect",
    "request": {
     "a": {
@@ -36500,7 +37828,7 @@
   },
   {
    "label": "random connect 16.8",
-   "scene": 20,
+   "scene": 21,
    "op": "connect",
    "request": {
     "a": {
@@ -36519,7 +37847,7 @@
   },
   {
    "label": "random connect 16.9",
-   "scene": 20,
+   "scene": 21,
    "op": "connect",
    "request": {
     "a": {
@@ -36540,7 +37868,7 @@
   },
   {
    "label": "random connect 16.10",
-   "scene": 20,
+   "scene": 21,
    "op": "connect",
    "request": {
     "a": {
@@ -36559,7 +37887,7 @@
   },
   {
    "label": "random connect 16.11",
-   "scene": 20,
+   "scene": 21,
    "op": "connect",
    "request": {
     "a": {
@@ -36579,7 +37907,7 @@
   },
   {
    "label": "random connect 16.12",
-   "scene": 20,
+   "scene": 21,
    "op": "connect",
    "request": {
     "a": {
@@ -36598,7 +37926,7 @@
   },
   {
    "label": "random connect 16.13",
-   "scene": 20,
+   "scene": 21,
    "op": "connect",
    "request": {
     "a": {
@@ -36618,7 +37946,7 @@
   },
   {
    "label": "random resnap 16.0",
-   "scene": 20,
+   "scene": 21,
    "op": "resnap",
    "request": {
     "movedObjectIds": []
@@ -36630,7 +37958,7 @@
   },
   {
    "label": "random resnap 16.1",
-   "scene": 20,
+   "scene": 21,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -36654,7 +37982,7 @@
   },
   {
    "label": "random resnap 16.2",
-   "scene": 20,
+   "scene": 21,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -36680,7 +38008,7 @@
   },
   {
    "label": "random detach 16 r16-ppg0",
-   "scene": 20,
+   "scene": 21,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r16-ppg0"
@@ -36696,7 +38024,7 @@
   },
   {
    "label": "random ppg attach 16.0",
-   "scene": 20,
+   "scene": 21,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -36711,7 +38039,7 @@
   },
   {
    "label": "random ppg attach 16.1",
-   "scene": 20,
+   "scene": 21,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -36726,7 +38054,7 @@
   },
   {
    "label": "random ppg attach 16.2",
-   "scene": 20,
+   "scene": 21,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -36742,7 +38070,7 @@
   },
   {
    "label": "random ppg attach 16.3",
-   "scene": 20,
+   "scene": 21,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -36757,7 +38085,7 @@
   },
   {
    "label": "random ppg attach 16.4",
-   "scene": 20,
+   "scene": 21,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -36773,7 +38101,7 @@
   },
   {
    "label": "random connect 17.0",
-   "scene": 21,
+   "scene": 22,
    "op": "connect",
    "request": {
     "a": {
@@ -36840,7 +38168,7 @@
   },
   {
    "label": "random connect 17.1",
-   "scene": 21,
+   "scene": 22,
    "op": "connect",
    "request": {
     "a": {
@@ -36860,7 +38188,7 @@
   },
   {
    "label": "random connect 17.2",
-   "scene": 21,
+   "scene": 22,
    "op": "connect",
    "request": {
     "a": {
@@ -36880,7 +38208,7 @@
   },
   {
    "label": "random connect 17.3",
-   "scene": 21,
+   "scene": 22,
    "op": "connect",
    "request": {
     "a": {
@@ -36900,7 +38228,7 @@
   },
   {
    "label": "random connect 17.4",
-   "scene": 21,
+   "scene": 22,
    "op": "connect",
    "request": {
     "a": {
@@ -36920,7 +38248,7 @@
   },
   {
    "label": "random connect 17.5",
-   "scene": 21,
+   "scene": 22,
    "op": "connect",
    "request": {
     "a": {
@@ -36939,7 +38267,7 @@
   },
   {
    "label": "random connect 17.6",
-   "scene": 21,
+   "scene": 22,
    "op": "connect",
    "request": {
     "a": {
@@ -36959,7 +38287,7 @@
   },
   {
    "label": "random connect 17.7",
-   "scene": 21,
+   "scene": 22,
    "op": "connect",
    "request": {
     "a": {
@@ -36979,7 +38307,7 @@
   },
   {
    "label": "random connect 17.8",
-   "scene": 21,
+   "scene": 22,
    "op": "connect",
    "request": {
     "a": {
@@ -37048,7 +38376,7 @@
   },
   {
    "label": "random connect 17.9",
-   "scene": 21,
+   "scene": 22,
    "op": "connect",
    "request": {
     "a": {
@@ -37117,7 +38445,7 @@
   },
   {
    "label": "random connect 17.10",
-   "scene": 21,
+   "scene": 22,
    "op": "connect",
    "request": {
     "a": {
@@ -37136,7 +38464,7 @@
   },
   {
    "label": "random connect 17.11",
-   "scene": 21,
+   "scene": 22,
    "op": "connect",
    "request": {
     "a": {
@@ -37204,7 +38532,7 @@
   },
   {
    "label": "random connect 17.12",
-   "scene": 21,
+   "scene": 22,
    "op": "connect",
    "request": {
     "a": {
@@ -37272,7 +38600,7 @@
   },
   {
    "label": "random connect 17.13",
-   "scene": 21,
+   "scene": 22,
    "op": "connect",
    "request": {
     "a": {
@@ -37291,7 +38619,7 @@
   },
   {
    "label": "random resnap 17.0",
-   "scene": 21,
+   "scene": 22,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -37306,7 +38634,7 @@
   },
   {
    "label": "random resnap 17.1",
-   "scene": 21,
+   "scene": 22,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -37360,7 +38688,7 @@
   },
   {
    "label": "random resnap 17.2",
-   "scene": 21,
+   "scene": 22,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -37378,7 +38706,7 @@
   },
   {
    "label": "random align 17 r17-cable0 A",
-   "scene": 21,
+   "scene": 22,
    "op": "align",
    "request": {
     "cableId": "r17-cable0",
@@ -37410,7 +38738,7 @@
   },
   {
    "label": "random align 17 r17-cable0 B",
-   "scene": 21,
+   "scene": 22,
    "op": "align",
    "request": {
     "cableId": "r17-cable0",
@@ -37567,7 +38895,7 @@
   },
   {
    "label": "random disconnect 17 r17-cable0",
-   "scene": 21,
+   "scene": 22,
    "op": "disconnect",
    "request": {
     "cableId": "r17-cable0",
@@ -37583,7 +38911,7 @@
   },
   {
    "label": "random align 17 r17-cable1 A",
-   "scene": 21,
+   "scene": 22,
    "op": "align",
    "request": {
     "cableId": "r17-cable1",
@@ -37655,7 +38983,7 @@
   },
   {
    "label": "random align 17 r17-cable1 B",
-   "scene": 21,
+   "scene": 22,
    "op": "align",
    "request": {
     "cableId": "r17-cable1",
@@ -37772,7 +39100,7 @@
   },
   {
    "label": "random disconnect 17 r17-cable1",
-   "scene": 21,
+   "scene": 22,
    "op": "disconnect",
    "request": {
     "cableId": "r17-cable1",
@@ -37785,7 +39113,7 @@
   },
   {
    "label": "random align 17 r17-cable2 A",
-   "scene": 21,
+   "scene": 22,
    "op": "align",
    "request": {
     "cableId": "r17-cable2",
@@ -37799,7 +39127,7 @@
   },
   {
    "label": "random align 17 r17-cable2 B",
-   "scene": 21,
+   "scene": 22,
    "op": "align",
    "request": {
     "cableId": "r17-cable2",
@@ -37813,7 +39141,7 @@
   },
   {
    "label": "random disconnect 17 r17-cable2",
-   "scene": 21,
+   "scene": 22,
    "op": "disconnect",
    "request": {
     "cableId": "r17-cable2",
@@ -37828,7 +39156,7 @@
   },
   {
    "label": "random detach 17 r17-ppg0",
-   "scene": 21,
+   "scene": 22,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r17-ppg0"
@@ -37840,7 +39168,7 @@
   },
   {
    "label": "random ppg attach 17.0",
-   "scene": 21,
+   "scene": 22,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -37855,7 +39183,7 @@
   },
   {
    "label": "random ppg attach 17.1",
-   "scene": 21,
+   "scene": 22,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -37870,7 +39198,7 @@
   },
   {
    "label": "random ppg attach 17.2",
-   "scene": 21,
+   "scene": 22,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -37885,7 +39213,7 @@
   },
   {
    "label": "random ppg attach 17.3",
-   "scene": 21,
+   "scene": 22,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -37900,7 +39228,7 @@
   },
   {
    "label": "random ppg attach 17.4",
-   "scene": 21,
+   "scene": 22,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -37916,7 +39244,7 @@
   },
   {
    "label": "random connect 18.0",
-   "scene": 22,
+   "scene": 23,
    "op": "connect",
    "request": {
     "a": {
@@ -37937,7 +39265,7 @@
   },
   {
    "label": "random connect 18.1",
-   "scene": 22,
+   "scene": 23,
    "op": "connect",
    "request": {
     "a": {
@@ -37995,7 +39323,7 @@
   },
   {
    "label": "random connect 18.2",
-   "scene": 22,
+   "scene": 23,
    "op": "connect",
    "request": {
     "a": {
@@ -38015,7 +39343,7 @@
   },
   {
    "label": "random connect 18.3",
-   "scene": 22,
+   "scene": 23,
    "op": "connect",
    "request": {
     "a": {
@@ -38073,7 +39401,7 @@
   },
   {
    "label": "random connect 18.4",
-   "scene": 22,
+   "scene": 23,
    "op": "connect",
    "request": {
     "a": {
@@ -38092,7 +39420,7 @@
   },
   {
    "label": "random connect 18.5",
-   "scene": 22,
+   "scene": 23,
    "op": "connect",
    "request": {
     "a": {
@@ -38150,7 +39478,7 @@
   },
   {
    "label": "random connect 18.6",
-   "scene": 22,
+   "scene": 23,
    "op": "connect",
    "request": {
     "a": {
@@ -38207,7 +39535,7 @@
   },
   {
    "label": "random connect 18.7",
-   "scene": 22,
+   "scene": 23,
    "op": "connect",
    "request": {
     "a": {
@@ -38265,7 +39593,7 @@
   },
   {
    "label": "random connect 18.8",
-   "scene": 22,
+   "scene": 23,
    "op": "connect",
    "request": {
     "a": {
@@ -38323,7 +39651,7 @@
   },
   {
    "label": "random connect 18.9",
-   "scene": 22,
+   "scene": 23,
    "op": "connect",
    "request": {
     "a": {
@@ -38381,7 +39709,7 @@
   },
   {
    "label": "random connect 18.10",
-   "scene": 22,
+   "scene": 23,
    "op": "connect",
    "request": {
     "a": {
@@ -38439,7 +39767,7 @@
   },
   {
    "label": "random connect 18.11",
-   "scene": 22,
+   "scene": 23,
    "op": "connect",
    "request": {
     "a": {
@@ -38497,7 +39825,7 @@
   },
   {
    "label": "random connect 18.12",
-   "scene": 22,
+   "scene": 23,
    "op": "connect",
    "request": {
     "a": {
@@ -38517,7 +39845,7 @@
   },
   {
    "label": "random connect 18.13",
-   "scene": 22,
+   "scene": 23,
    "op": "connect",
    "request": {
     "a": {
@@ -38575,7 +39903,7 @@
   },
   {
    "label": "random resnap 18.0",
-   "scene": 22,
+   "scene": 23,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -38590,7 +39918,7 @@
   },
   {
    "label": "random resnap 18.1",
-   "scene": 22,
+   "scene": 23,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -38604,7 +39932,7 @@
   },
   {
    "label": "random resnap 18.2",
-   "scene": 22,
+   "scene": 23,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -38656,7 +39984,7 @@
   },
   {
    "label": "random align 18 r18-cable0 A",
-   "scene": 22,
+   "scene": 23,
    "op": "align",
    "request": {
     "cableId": "r18-cable0",
@@ -38773,7 +40101,7 @@
   },
   {
    "label": "random align 18 r18-cable0 B",
-   "scene": 22,
+   "scene": 23,
    "op": "align",
    "request": {
     "cableId": "r18-cable0",
@@ -38930,7 +40258,7 @@
   },
   {
    "label": "random disconnect 18 r18-cable0",
-   "scene": 22,
+   "scene": 23,
    "op": "disconnect",
    "request": {
     "cableId": "r18-cable0",
@@ -38945,7 +40273,7 @@
   },
   {
    "label": "random align 18 r18-cable1 A",
-   "scene": 22,
+   "scene": 23,
    "op": "align",
    "request": {
     "cableId": "r18-cable1",
@@ -38977,7 +40305,7 @@
   },
   {
    "label": "random align 18 r18-cable1 B",
-   "scene": 22,
+   "scene": 23,
    "op": "align",
    "request": {
     "cableId": "r18-cable1",
@@ -39094,7 +40422,7 @@
   },
   {
    "label": "random disconnect 18 r18-cable1",
-   "scene": 22,
+   "scene": 23,
    "op": "disconnect",
    "request": {
     "cableId": "r18-cable1",
@@ -39107,7 +40435,7 @@
   },
   {
    "label": "random align 18 r18-cable2 A",
-   "scene": 22,
+   "scene": 23,
    "op": "align",
    "request": {
     "cableId": "r18-cable2",
@@ -39121,7 +40449,7 @@
   },
   {
    "label": "random align 18 r18-cable2 B",
-   "scene": 22,
+   "scene": 23,
    "op": "align",
    "request": {
     "cableId": "r18-cable2",
@@ -39135,7 +40463,7 @@
   },
   {
    "label": "random disconnect 18 r18-cable2",
-   "scene": 22,
+   "scene": 23,
    "op": "disconnect",
    "request": {
     "cableId": "r18-cable2",
@@ -39148,7 +40476,7 @@
   },
   {
    "label": "random detach 18 r18-ppg0",
-   "scene": 22,
+   "scene": 23,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r18-ppg0"
@@ -39164,7 +40492,7 @@
   },
   {
    "label": "random ppg attach 18.0",
-   "scene": 22,
+   "scene": 23,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -39179,7 +40507,7 @@
   },
   {
    "label": "random ppg attach 18.1",
-   "scene": 22,
+   "scene": 23,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -39194,7 +40522,7 @@
   },
   {
    "label": "random ppg attach 18.2",
-   "scene": 22,
+   "scene": 23,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -39209,7 +40537,7 @@
   },
   {
    "label": "random ppg attach 18.3",
-   "scene": 22,
+   "scene": 23,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -39224,7 +40552,7 @@
   },
   {
    "label": "random ppg attach 18.4",
-   "scene": 22,
+   "scene": 23,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -39240,7 +40568,7 @@
   },
   {
    "label": "random connect 19.0",
-   "scene": 23,
+   "scene": 24,
    "op": "connect",
    "request": {
     "a": {
@@ -39308,7 +40636,7 @@
   },
   {
    "label": "random connect 19.1",
-   "scene": 23,
+   "scene": 24,
    "op": "connect",
    "request": {
     "a": {
@@ -39376,7 +40704,7 @@
   },
   {
    "label": "random connect 19.2",
-   "scene": 23,
+   "scene": 24,
    "op": "connect",
    "request": {
     "a": {
@@ -39395,7 +40723,7 @@
   },
   {
    "label": "random connect 19.3",
-   "scene": 23,
+   "scene": 24,
    "op": "connect",
    "request": {
     "a": {
@@ -39415,7 +40743,7 @@
   },
   {
    "label": "random connect 19.4",
-   "scene": 23,
+   "scene": 24,
    "op": "connect",
    "request": {
     "a": {
@@ -39435,7 +40763,7 @@
   },
   {
    "label": "random connect 19.5",
-   "scene": 23,
+   "scene": 24,
    "op": "connect",
    "request": {
     "a": {
@@ -39503,7 +40831,7 @@
   },
   {
    "label": "random connect 19.6",
-   "scene": 23,
+   "scene": 24,
    "op": "connect",
    "request": {
     "a": {
@@ -39523,7 +40851,7 @@
   },
   {
    "label": "random connect 19.7",
-   "scene": 23,
+   "scene": 24,
    "op": "connect",
    "request": {
     "a": {
@@ -39592,7 +40920,7 @@
   },
   {
    "label": "random connect 19.8",
-   "scene": 23,
+   "scene": 24,
    "op": "connect",
    "request": {
     "a": {
@@ -39613,7 +40941,7 @@
   },
   {
    "label": "random connect 19.9",
-   "scene": 23,
+   "scene": 24,
    "op": "connect",
    "request": {
     "a": {
@@ -39633,7 +40961,7 @@
   },
   {
    "label": "random connect 19.10",
-   "scene": 23,
+   "scene": 24,
    "op": "connect",
    "request": {
     "a": {
@@ -39652,7 +40980,7 @@
   },
   {
    "label": "random connect 19.11",
-   "scene": 23,
+   "scene": 24,
    "op": "connect",
    "request": {
     "a": {
@@ -39721,7 +41049,7 @@
   },
   {
    "label": "random connect 19.12",
-   "scene": 23,
+   "scene": 24,
    "op": "connect",
    "request": {
     "a": {
@@ -39740,7 +41068,7 @@
   },
   {
    "label": "random connect 19.13",
-   "scene": 23,
+   "scene": 24,
    "op": "connect",
    "request": {
     "a": {
@@ -39760,7 +41088,7 @@
   },
   {
    "label": "random resnap 19.0",
-   "scene": 23,
+   "scene": 24,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -39832,7 +41160,7 @@
   },
   {
    "label": "random resnap 19.1",
-   "scene": 23,
+   "scene": 24,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -39855,7 +41183,7 @@
   },
   {
    "label": "random resnap 19.2",
-   "scene": 23,
+   "scene": 24,
    "op": "resnap",
    "request": {
     "movedObjectIds": [
@@ -40002,7 +41330,7 @@
   },
   {
    "label": "random align 19 r19-cable0 A",
-   "scene": 23,
+   "scene": 24,
    "op": "align",
    "request": {
     "cableId": "r19-cable0",
@@ -40016,7 +41344,7 @@
   },
   {
    "label": "random align 19 r19-cable0 B",
-   "scene": 23,
+   "scene": 24,
    "op": "align",
    "request": {
     "cableId": "r19-cable0",
@@ -40030,7 +41358,7 @@
   },
   {
    "label": "random disconnect 19 r19-cable0",
-   "scene": 23,
+   "scene": 24,
    "op": "disconnect",
    "request": {
     "cableId": "r19-cable0",
@@ -40043,7 +41371,7 @@
   },
   {
    "label": "random align 19 r19-cable1 A",
-   "scene": 23,
+   "scene": 24,
    "op": "align",
    "request": {
     "cableId": "r19-cable1",
@@ -40057,7 +41385,7 @@
   },
   {
    "label": "random align 19 r19-cable1 B",
-   "scene": 23,
+   "scene": 24,
    "op": "align",
    "request": {
     "cableId": "r19-cable1",
@@ -40246,7 +41574,7 @@
   },
   {
    "label": "random disconnect 19 r19-cable1",
-   "scene": 23,
+   "scene": 24,
    "op": "disconnect",
    "request": {
     "cableId": "r19-cable1",
@@ -40261,7 +41589,7 @@
   },
   {
    "label": "random detach 19 r19-ppg0",
-   "scene": 23,
+   "scene": 24,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r19-ppg0"
@@ -40277,7 +41605,7 @@
   },
   {
    "label": "random detach 19 r19-ppg1",
-   "scene": 23,
+   "scene": 24,
    "op": "ppgDetach",
    "request": {
     "ppgId": "r19-ppg1"
@@ -40293,7 +41621,7 @@
   },
   {
    "label": "random ppg attach 19.0",
-   "scene": 23,
+   "scene": 24,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -40308,7 +41636,7 @@
   },
   {
    "label": "random ppg attach 19.1",
-   "scene": 23,
+   "scene": 24,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -40324,7 +41652,7 @@
   },
   {
    "label": "random ppg attach 19.2",
-   "scene": 23,
+   "scene": 24,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -40340,7 +41668,7 @@
   },
   {
    "label": "random ppg attach 19.3",
-   "scene": 23,
+   "scene": 24,
    "op": "ppgAttach",
    "request": {
     "target": {
@@ -40355,7 +41683,7 @@
   },
   {
    "label": "random ppg attach 19.4",
-   "scene": 23,
+   "scene": 24,
    "op": "ppgAttach",
    "request": {
     "target": {

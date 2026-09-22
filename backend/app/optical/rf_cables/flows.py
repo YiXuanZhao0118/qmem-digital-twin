@@ -524,15 +524,27 @@ def ppg_has_usable_asset(scene: RfScene, component: Any) -> bool:
     )
 
 
+def next_ppg_name(scene: RfScene) -> str:
+    """``CH<number of PPGs>``, stepped past any name already taken — object
+    names are unique case-insensitively (``routers/objects`` compares
+    ``lower()``). The count alone collided as soon as a PPG other than the
+    last was deleted, and the create failed with a 409."""
+    taken = {str(o.name).lower() for o in scene.objects}
+    n = sum(1 for pe in scene.physics_elements if pe.element_kind == PPG_KIND)
+    while f"ch{n}" in taken:
+        n += 1
+    return f"CH{n}"
+
+
 def plan_ppg_attach(scene: RfScene, ref: PortRef) -> PpgAttachPlan:
     """``createPpgAtPort`` + ``createProgrammablePulseGenerator``: the first
     PPG catalog Component whose ``connectorType`` equals the port's family
-    and that has a usable asset, named ``CH<number of PPGs>`` (object and
-    TimingProgram alike), attached to the port, at its mounted pose."""
+    and that has a usable asset, named ``CH<n>`` (object and TimingProgram
+    alike; :func:`next_ppg_name`), attached to the port, at its mounted
+    pose."""
     port = ppg_gate(scene, ref)
     family = port.connector_family
-    ppg_count = sum(1 for pe in scene.physics_elements if pe.element_kind == PPG_KIND)
-    name = f"CH{ppg_count}"
+    name = next_ppg_name(scene)
     component = next(
         (
             c for c in scene.components

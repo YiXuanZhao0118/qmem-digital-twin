@@ -197,7 +197,6 @@ Common to all of them:
   | `target_not_in_range` | 422 | align: that port is not a candidate within `toleranceMm` |
   | `locked` | 409 | a delete would remove a `locked` SceneObject (refused whole) |
 
-  A name clash on the new PPG (`CH<n>` taken) is the plain 409 of `POST /api/objects`.
 - **Locks**: SceneObject `locked` means what it does on `PUT / DELETE /api/objects` — pose frozen, row undeletable, `properties` writable. So re-snapping / aligning a locked cable rewrites its nodes (as the web does), a locked PPG is not re-mounted, and a delete that reaches a locked object is refused whole. No flow writes a Kind / Asset3D / Device / Component row.
 
 ### `POST /api/v3/rf-cables/connect`
@@ -282,7 +281,7 @@ Response `{"object": SceneObjectOut}` (the cable).
 
 ### `POST /api/v3/ppg/attach`
 
-`createPpgAtPort` + `createProgrammablePulseGenerator` behind the panel's `canSpawnPpgHere` (`flows.plan_ppg_attach`, `flows.py:527`): the target must be an empty `ttl_in` / `trigger_in` with an SMA/BNC connector. The PPG Component is the first `programmable_pulse_generator` whose `properties.connectorType` equals the port's family and whose primary asset carries `rf_out`.
+`createPpgAtPort` + `createProgrammablePulseGenerator` behind the panel's `canSpawnPpgHere` (`flows.plan_ppg_attach`, `flows.py:539`): the target must be an empty `ttl_in` / `trigger_in` with an SMA/BNC connector. The PPG Component is the first `programmable_pulse_generator` whose `properties.connectorType` equals the port's family and whose primary asset carries `rf_out`.
 
 ```json
 { "target": { "objectId": "<switch>", "anchorName": "ttl_in" }, "collectionId": null }
@@ -296,7 +295,7 @@ Response `{"object": SceneObjectOut}` (the cable).
   "timingProgram": { "id": "<program>", "name": "CH2", "intervals": [], "...": "" } }
 ```
 
-Written in one transaction: the TimingProgram (`CH<number of PPGs>`, empty), the object (same name), its PhysicsElement (`kindParams` as the web writes them, normalised by the same schema → `{"timingProgramId", "restState": "LOW", "outputDomain": "rfout"}`) and the attachment. The pose is the **mounted** pose (`utils/ppgMounting.ts`, ported as `rf_cables/ppg_mount.py`: `rf_out` mated onto the port, backed off by the asset's `matingProtrusionMm`), where the web stores its 3D-cursor spawn pose and draws the mount live. The port is resolved anywhere in the target's binding tree, so a multi-root instrument (the EOM) mounts its PPG like any other.
+Written in one transaction: the TimingProgram (named `CH<number of PPGs>`, stepped past any object name already taken — names are unique case-insensitively — and empty), the object (same name), its PhysicsElement (`kindParams` as the web writes them, normalised by the same schema → `{"timingProgramId", "restState": "LOW", "outputDomain": "rfout"}`) and the attachment. The pose is the **mounted** pose (`utils/ppgMounting.ts`, ported as `rf_cables/ppg_mount.py`: `rf_out` mated onto the port, backed off by the asset's `matingProtrusionMm`), where the web stores its 3D-cursor spawn pose and draws the mount live. The port is resolved anywhere in the target's binding tree, so a multi-root instrument (the EOM) mounts its PPG like any other.
 
 ### `POST /api/v3/ppg/{id}/detach`
 
