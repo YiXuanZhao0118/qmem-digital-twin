@@ -13,6 +13,7 @@
 - `/api/timing-programs`, `/api/rf-chains/nodes`, `/api/coils`, `/api/magnetics-problems`, `/api/simulation-runs`, `/api/touchstone/parse`, `/api/app-settings/{key}`
 - `POST /api/v3/rf/propagation` — the RF readout at one scrub time (compute-only, see below)
 - `POST /api/v3/align/mirror-coupling`, `/api/v3/align/isolator`, `/api/v3/align/aom-bragg` — proposed poses from the align solvers (compute-only, see below)
+- `POST /api/v3/fibers/{id}/{candidates,connect,apply,disconnect}`, `POST /api/v3/fibers/resnap`, `POST /api/v3/pigtails/{id}/{candidates,apply,disconnect}`, `POST /api/v3/pigtails/resnap` — patch-cable and pigtail ends: plug in, park on a beam, unplug, follow a moved instrument (these WRITE, see below)
 - Static: `/assets/files/...`; Swagger: `/docs`; WebSocket: `/ws/scene`
 - Conventions: every persisted id is a UUIDv7; CamelModel (DB snake_case ↔ API camelCase).
 
@@ -174,3 +175,116 @@ Defaults, as `AomBraggSection` resolves them: `order` ← `dynamicSources.diffra
 ```
 
 `readout` measures the CURRENT pose, `readoutAfter` the proposed one (so `readoutAfter.matchedOrder` shows the CONV-2 flip when the cell runs reversed). Order 0 returns no `pose` and `"error": "Order 0 is the undiffracted beam — …"`. A primary asset that is not an `aom`, or one with no intercept pair / acoustic direction, is 422.
+
+## Fibre and pigtail ends — `POST /api/v3/fibers/*`, `/api/v3/pigtails/*` (these WRITE)
+
+Backend ports of the web store's fibre-end and pigtail-end flows (`store/sceneStore.ts`: `findFiberAlignmentCandidates` / `applyFiberAlignmentCandidate` / `clearFiberEndpointLink` / `resnapFibersLinkedTo`, and the `…Pigtail…` four), so a second client plugs cables in and re-snaps them without a third copy. Routers `backend/app/routers/v3_fibers.py` / `v3_pigtails.py`; flows `backend/app/optical/fibers/service.py`; what they mean physically, and the one deliberate difference from the web (lab poses come from the TRACER's chain), in [fiber.md](fiber.md#the-backend-port-2026-09-22) and [component.md](component.md). Pinned to the TypeScript by golden fixtures (`frontend/src/utils/__tests__/fiberParity.test.ts` → `backend/tests/fixtures/fibers/`, 1e-9).
+
+Common to all of them:
+
+- **One transaction per call**, then the `/ws/scene` events the ordinary routers send for the same rows: `object.updated` (SceneObject `properties`), `physics_element.updated` (the fibre PE's `kindParams`), `object_binding.created` / `.updated`. Writes go through the same schemas those routes use (`OpticalElementBase` normalises fibre kindParams via `FiberParams`; `ObjectBindingCreate`), in `optical/fibers/persist.py:73`. A write the schemas refuse is 422 and nothing is committed.
+- **What is never written**: any SceneObject pose (so a `locked` object — which freezes the pose — is respected by construction; a locked object's fibre END or pigtail connector still moves, exactly as in the web store), and any Kind / Asset3D / Device / Component row (so `lock_guard` has nothing to guard).
+- `end` is `"A"` or `"B"`. For a fibre, End A is spline node 0 (`kindParams.endA`); for a pigtailed instrument, End A is the `intercept_in` port connector and End B `intercept_out`.
+- A **port target** is `{"objectId", "anchorName", "anchorId"?}` — a fibre RECEPTACLE, i.e. an anchor declaring a female fibre `connectorType` (`isFiberPortConnectorType`), matched on `anchor.name ?? anchor.id` (+ `anchorId` when two share a name). A **beam target** is `{"beam": BeamSegment}`. Exactly one of the two.
+- A **BeamSegment** is the web's `BeamSegmentLab`, in lab mm, from the caller's own trace (which beam a face goes onto is the user's pick, as for `/api/v3/align/*`):
+
+  ```json
+  { "beamId": "trace:<emitter8>:o<order|x>:<source8>", "aMm": [0, 0, 880], "bMm": [400, 0, 880],
+    "displayLabel": "TA0 +1-order @ 852 nm", "emitterObjectId": "<id>", "aomOrder": 1,
+    "branch": "main", "wavelengthNm": 852.3, "sourceObjectId": "<id>" }
+  ```
+
+  Only `beamId`, `aMm`, `bMm` are required. `beamId` is the dedup identity — every `trace:…` segment sharing `emitterObjectId` + `aomOrder` + `branch` is one beam chain and collapses to its closest hop, exactly as the web picker does. A segment whose `sourceObjectId` is the object being aligned is skipped (a part never snaps to its own output).
+- `toleranceMm`: on `candidates`, default **25** (the web's window), `null` = unlimited. On `connect` / `apply`, default `null` — the caller named the target, so no distance check; pass a number to refuse a far one (422 with the distance).
+- 404 unknown object; 422 with the reason in `detail` for: no fibre spline (no `fiberNodes`, no Component `fiberNodes`, no fibre PE `endA/endB`), no pigtail connector for that end, a target that is not a fibre port (the message lists the object's ports), a part's own port, a zero-length segment, beyond `toleranceMm`.
+- **Re-snaps never unlink.** A link whose target object or anchor cannot be resolved is skipped and left exactly as it is (the rule from [rf.md](rf.md) §7). Only `disconnect` and a beam placement drop a link.
+
+### Fibres
+
+`POST /api/v3/fibers/{id}/candidates` — compute-only, the picker (`findFiberAlignmentCandidates`, `service.py:135`):
+
+```json
+{ "end": "B", "toleranceMm": 25, "beamSegments": [ { "beamId": "trace:…", "aMm": [..], "bMm": [..] } ] }
+```
+
+```json
+{
+  "objectId": "<fibre>", "name": "FIBER0", "locked": false, "end": "B", "toleranceMm": 25,
+  "candidates": [
+    { "beamId": "port:<det>:fiber_in", "distMm": 7.81,
+      "projectedPortLab": [-900.02, -137.38, 980.05],
+      "newPosMmBody": [..], "newHandleMmBody": [..], "newOutwardBody": [..],
+      "displayLabel": "🔌 DETECTOR0 · OPTICAL IN (FC/PC)",
+      "port": { "targetObjectId": "<det>", "targetAnchorId": "fiber_in", "targetAnchorName": "OPTICAL IN (FC/PC)" } },
+    { "beamId": "trace:…", "distMm": 12.4, "projectedPortLab": [..],
+      "newPosMmBody": [..], "newHandleMmBody": [..], "newOutwardBody": [..],
+      "aomOrder": null, "displayLabel": "…", "emitterObjectId": "…", "branch": "main", "wavelengthNm": 852.3 }
+  ]
+}
+```
+
+Closest first. `projectedPortLab` is where the optical face lands; `newPosMmBody` / `newHandleMmBody` the endpoint node and its body-side handle (fibre body frame). A beam candidate always has `aomOrder` (possibly `null`) and carries the segment's label fields; a port candidate has `port` and no `aomOrder`.
+
+`POST /api/v3/fibers/{id}/connect` — plug one end into a receptacle (the contract's name for `apply` with a port target):
+
+```json
+{ "end": "B", "target": { "objectId": "<det>", "anchorName": "OPTICAL IN (FC/PC)", "anchorId": null }, "toleranceMm": null }
+```
+
+`POST /api/v3/fibers/{id}/apply` — the same for a port **or** a beam: `{ "end", "target": {port} | {"beam": BeamSegment}, "toleranceMm"? }`. Both return:
+
+```json
+{ "object": { "...SceneObjectOut": "", "properties": { "fiberNodes": [..], "fiberEndpoints": { "B": { "targetObjectId": "<det>", "targetAnchorId": "fiber_in", "targetAnchorName": "OPTICAL IN (FC/PC)" } } } },
+  "physicsElement": { "...OpticalElementOut": "", "kindParams": { "endB": { "posMm": [..], "tensionHandleMm": [..], "...": "" } } },
+  "candidate": { "...the candidate applied, shaped as in candidates": "" } }
+```
+
+What it writes (`service.py:166`, = `applyFiberAlignmentCandidate`): the whole `properties.fiberNodes` array (materialised from the Component's / the PE's endpoints if the object had none) with the touched endpoint's `posMm` and body-side handle replaced; `properties.fiberEndpoints[end]` set to the port (port target) or **removed** (beam target — a free-space placement is not a connection); and the fibre PE's `kindParams.endA|endB.posMm` + `tensionHandleMm` — **the write the solver reads** (`_synth_fiber_slot`); `physicsElement` is `null` when the object has no fibre PE. A port lands one `FIBER_MATING_GAP_MM` (0.01 mm) short of the port plane, End A facing −axisX, End B +axisX.
+
+`POST /api/v3/fibers/{id}/disconnect` — `{ "end": "A" }` → `{ "object": SceneObjectOut, "changed": true }`. Drops `fiberEndpoints[end]` only; the cable stays where it is (a dangling patch cable is a real bench state — unlike a coax, it is not deleted). `changed: false` and nothing written when that end had no link.
+
+`POST /api/v3/fibers/resnap` — `{ "movedObjectIds": ["<det>", "..."] }` (`resnapFibersLinkedTo`, `service.py:227`):
+
+```json
+{ "resnapped": [ { "objectId": "<fibre>", "end": "B", "targetObjectId": "<det>", "targetAnchorId": "fiber_in", "targetAnchorName": "OPTICAL IN (FC/PC)" } ],
+  "updated": [ SceneObjectOut ], "physicsElements": [ OpticalElementOut ] }
+```
+
+Every linked end whose target is in `movedObjectIds` is re-derived from the port's LIVE pose (handle magnitude 30 mm, as the web's `resolveLinkedFiberEndpoint`) and written through the apply path; idempotent. Call it after committing a pose change, as the web does on every committed move.
+
+### Pigtails
+
+`POST /api/v3/pigtails/{id}/candidates` — `{ "end", "toleranceMm"?, "beamSegments"? }` (`findPigtailAlignmentCandidates`, `service.py:303`):
+
+```json
+{
+  "objectId": "<eom>", "name": "EOM0", "locked": false, "end": "B", "portAnchor": "intercept_out",
+  "bindingId": "<the port_out ComponentBinding>", "toleranceMm": 25,
+  "portLab": { "posMm": [-1332.343, -308.2286, 994.5095], "axisXMm": [..] },
+  "candidates": [
+    { "key": "port:<det>:fiber_in", "distMm": 7.81, "targetPosLab": [..], "targetAxisXLab": [..],
+      "displayLabel": "🔌 DETECTOR0 · OPTICAL IN (FC/PC)", "port": { "targetObjectId": "<det>", "targetAnchorId": "fiber_in", "targetAnchorName": "OPTICAL IN (FC/PC)" } },
+    { "key": "trace:…", "distMm": 12.0, "targetPosLab": [..], "targetAxisXLab": [..], "aomOrder": null, "...label fields": "" }
+  ]
+}
+```
+
+`portLab` is the connector's mating face now — the face the loader re-seats the device's port onto. `targetPosLab` / `targetAxisXLab` are where it will land and look.
+
+`POST /api/v3/pigtails/{id}/apply` — `{ "end", "target": {port} | {"beam": BeamSegment}, "toleranceMm"? }` (`applyPigtailAlignmentCandidate`, `service.py:337`):
+
+```json
+{ "object": { "...SceneObjectOut": "", "properties": { "bindingFiberNodes": { "<bindingId>": [..] }, "pigtailEndpoints": { "intercept_out": { "targetObjectId": "<det>", "targetAnchorId": "fiber_in", "targetAnchorName": "OPTICAL IN (FC/PC)" } } } },
+  "objectBinding": { "componentBindingId": "<bindingId>", "localXMmDelta": -410.1, "localYMmDelta": -170.85, "localZMmDelta": -11.42,
+                     "localRxDegDelta": -180.0, "localRyDegDelta": -164.0, "localRzDegDelta": -180.0,
+                     "asset3dIdOverride": null, "properties": {}, "id": "…", "objectId": "<eom>", "createdAt": "…", "updatedAt": "…" },
+  "candidate": { "...": "" } }
+```
+
+The CONNECTOR moves, as an `ObjectBinding` delta on its binding (`effective = baseline + delta`, all six axes written, angles wrapped to (−180, 180]; the row's `asset3dIdOverride` / `properties` are carried over); the instrument's pose does not change. The pigtail's last node is re-welded to the connector's cable root in `properties.bindingFiberNodes[bindingId]` when the binding (or the instance) has a jacket. `pigtailEndpoints[portAnchor]` is set (port) or removed (beam). A receptacle mate lands one mating gap downstream (End A) / upstream (End B) of the port plane.
+
+`POST /api/v3/pigtails/{id}/disconnect` — `{ "end" }` → `{ "object", "changed" }`; the connector stays put.
+
+`POST /api/v3/pigtails/resnap` — `{ "movedObjectIds" }` → `{ "resnapped": [ { "objectId", "end", "portAnchor", "targetObjectId", "targetAnchorId", "targetAnchorName" } ], "updated": [SceneObjectOut], "objectBindings": [ObjectBindingOut] }`.
+
+There is **no `/api/v3/fibers/connect-ports`**: the web app has no flow that creates a patch cable between two ports (a cable is placed from the parts library, then each end is plugged in), so there is nothing to port.

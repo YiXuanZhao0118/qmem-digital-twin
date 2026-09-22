@@ -1,0 +1,346 @@
+[
+ {
+  "flow": "pigtail-a",
+  "objectId": "eom0",
+  "ports": [
+   {
+    "end": "A",
+    "portAnchor": "intercept_in",
+    "bindingId": "e-in",
+    "connectorId": "a-fc",
+    "connectInId": "fiber_out",
+    "connectOutId": "fiber_root",
+    "basePose": {
+     "localXMm": -91.2362,
+     "localYMm": 0,
+     "localZMm": 0,
+     "localRxDeg": 0,
+     "localRyDeg": -82.000011642,
+     "localRzDeg": -90.00011058
+    },
+    "effectivePose": {
+     "localXMm": -91.2362,
+     "localYMm": 0,
+     "localZMm": 0,
+     "localRxDeg": 0,
+     "localRyDeg": -82.000011642,
+     "localRzDeg": -90.00011058
+    },
+    "objectBindingId": null,
+    "parentChain": []
+   },
+   {
+    "end": "B",
+    "portAnchor": "intercept_out",
+    "bindingId": "e-out",
+    "connectorId": "a-fc",
+    "connectInId": "fiber_out",
+    "connectOutId": "fiber_root",
+    "basePose": {
+     "localXMm": 221.2362,
+     "localYMm": 0,
+     "localZMm": 0,
+     "localRxDeg": 0,
+     "localRyDeg": 82.000011642,
+     "localRzDeg": 89.99988942
+    },
+    "effectivePose": {
+     "localXMm": 221.2362,
+     "localYMm": 0,
+     "localZMm": 0,
+     "localRxDeg": 0,
+     "localRyDeg": 82.000011642,
+     "localRzDeg": 89.99988942
+    },
+    "objectBindingId": null,
+    "parentChain": []
+   }
+  ]
+ },
+ {
+  "flow": "pigtail-a",
+  "objectId": "eom1",
+  "ports": [
+   {
+    "end": "A",
+    "portAnchor": "intercept_in",
+    "bindingId": "n-in",
+    "connectorId": "a-fc-legacy",
+    "connectInId": "connect_in",
+    "connectOutId": "connect_out",
+    "basePose": {
+     "localXMm": -91.2362,
+     "localYMm": 0,
+     "localZMm": 0,
+     "localRxDeg": 0,
+     "localRyDeg": -82.000011642,
+     "localRzDeg": -90.00011058
+    },
+    "effectivePose": {
+     "localXMm": -89.2362,
+     "localYMm": 0,
+     "localZMm": 0,
+     "localRxDeg": 0,
+     "localRyDeg": -82.000011642,
+     "localRzDeg": -75.00011058
+    },
+    "objectBindingId": "ob-existing",
+    "parentChain": [
+     {
+      "localXMm": 5,
+      "localYMm": -3,
+      "localZMm": 2,
+      "localRxDeg": 10,
+      "localRyDeg": 20,
+      "localRzDeg": 30
+     }
+    ]
+   },
+   {
+    "end": "B",
+    "portAnchor": "intercept_out",
+    "bindingId": "n-out",
+    "connectorId": "a-fc",
+    "connectInId": "fiber_out",
+    "connectOutId": "fiber_root",
+    "basePose": {
+     "localXMm": 221.2362,
+     "localYMm": 0,
+     "localZMm": 0,
+     "localRxDeg": 0,
+     "localRyDeg": 82.000011642,
+     "localRzDeg": 89.99988942
+    },
+    "effectivePose": {
+     "localXMm": 221.2362,
+     "localYMm": 0,
+     "localZMm": 0,
+     "localRxDeg": 0,
+     "localRyDeg": 82.000011642,
+     "localRzDeg": 89.99988942
+    },
+    "objectBindingId": null,
+    "parentChain": []
+   }
+  ]
+ },
+ {
+  "flow": "pigtail-a",
+  "objectId": "eomx",
+  "ports": [
+   {
+    "end": "A",
+    "portAnchor": "intercept_in",
+    "bindingId": "x-in",
+    "connectorId": "a-fc-noaxis",
+    "connectInId": "fiber_out",
+    "connectOutId": "fiber_root",
+    "basePose": {
+     "localXMm": 0,
+     "localYMm": 0,
+     "localZMm": 0,
+     "localRxDeg": 0,
+     "localRyDeg": 0,
+     "localRzDeg": 0
+    },
+    "effectivePose": {
+     "localXMm": 0,
+     "localYMm": 0,
+     "localZMm": 0,
+     "localRxDeg": 0,
+     "localRyDeg": 0,
+     "localRzDeg": 0
+    },
+    "objectBindingId": null,
+    "parentChain": []
+   }
+  ]
+ },
+ {
+  "flow": "pigtail-a",
+  "objectId": "det0",
+  "ports": []
+ },
+ {
+  "flow": "pigtail-a",
+  "objectId": "src0",
+  "ports": []
+ },
+ {
+  "flow": "pigtail-a",
+  "objectId": "det1",
+  "ports": []
+ },
+ {
+  "flow": "pigtail-b",
+  "objectId": "eom0",
+  "ports": [
+   {
+    "end": "A",
+    "portAnchor": "intercept_in",
+    "bindingId": "e-in",
+    "connectorId": "a-fc",
+    "connectInId": "fiber_out",
+    "connectOutId": "fiber_root",
+    "basePose": {
+     "localXMm": -91.2362,
+     "localYMm": 0,
+     "localZMm": 0,
+     "localRxDeg": 0,
+     "localRyDeg": -82.000011642,
+     "localRzDeg": -90.00011058
+    },
+    "effectivePose": {
+     "localXMm": -91.2362,
+     "localYMm": 0,
+     "localZMm": 0,
+     "localRxDeg": 0,
+     "localRyDeg": -82.000011642,
+     "localRzDeg": -90.00011058
+    },
+    "objectBindingId": null,
+    "parentChain": []
+   },
+   {
+    "end": "B",
+    "portAnchor": "intercept_out",
+    "bindingId": "e-out",
+    "connectorId": "a-fc",
+    "connectInId": "fiber_out",
+    "connectOutId": "fiber_root",
+    "basePose": {
+     "localXMm": 221.2362,
+     "localYMm": 0,
+     "localZMm": 0,
+     "localRxDeg": 0,
+     "localRyDeg": 82.000011642,
+     "localRzDeg": 89.99988942
+    },
+    "effectivePose": {
+     "localXMm": 221.2362,
+     "localYMm": 0,
+     "localZMm": 0,
+     "localRxDeg": 0,
+     "localRyDeg": 82.000011642,
+     "localRzDeg": 89.99988942
+    },
+    "objectBindingId": null,
+    "parentChain": []
+   }
+  ]
+ },
+ {
+  "flow": "pigtail-b",
+  "objectId": "eom1",
+  "ports": [
+   {
+    "end": "A",
+    "portAnchor": "intercept_in",
+    "bindingId": "n-in",
+    "connectorId": "a-fc-legacy",
+    "connectInId": "connect_in",
+    "connectOutId": "connect_out",
+    "basePose": {
+     "localXMm": -91.2362,
+     "localYMm": 0,
+     "localZMm": 0,
+     "localRxDeg": 0,
+     "localRyDeg": -82.000011642,
+     "localRzDeg": -90.00011058
+    },
+    "effectivePose": {
+     "localXMm": -89.2362,
+     "localYMm": 0,
+     "localZMm": 0,
+     "localRxDeg": 0,
+     "localRyDeg": -82.000011642,
+     "localRzDeg": -75.00011058
+    },
+    "objectBindingId": "ob-existing",
+    "parentChain": [
+     {
+      "localXMm": 5,
+      "localYMm": -3,
+      "localZMm": 2,
+      "localRxDeg": 10,
+      "localRyDeg": 20,
+      "localRzDeg": 30
+     }
+    ]
+   },
+   {
+    "end": "B",
+    "portAnchor": "intercept_out",
+    "bindingId": "n-out",
+    "connectorId": "a-fc",
+    "connectInId": "fiber_out",
+    "connectOutId": "fiber_root",
+    "basePose": {
+     "localXMm": 221.2362,
+     "localYMm": 0,
+     "localZMm": 0,
+     "localRxDeg": 0,
+     "localRyDeg": 82.000011642,
+     "localRzDeg": 89.99988942
+    },
+    "effectivePose": {
+     "localXMm": 221.2362,
+     "localYMm": 0,
+     "localZMm": 0,
+     "localRxDeg": 0,
+     "localRyDeg": 82.000011642,
+     "localRzDeg": 89.99988942
+    },
+    "objectBindingId": null,
+    "parentChain": []
+   }
+  ]
+ },
+ {
+  "flow": "pigtail-b",
+  "objectId": "eomx",
+  "ports": [
+   {
+    "end": "A",
+    "portAnchor": "intercept_in",
+    "bindingId": "x-in",
+    "connectorId": "a-fc-noaxis",
+    "connectInId": "fiber_out",
+    "connectOutId": "fiber_root",
+    "basePose": {
+     "localXMm": 0,
+     "localYMm": 0,
+     "localZMm": 0,
+     "localRxDeg": 0,
+     "localRyDeg": 0,
+     "localRzDeg": 0
+    },
+    "effectivePose": {
+     "localXMm": 0,
+     "localYMm": 0,
+     "localZMm": 0,
+     "localRxDeg": 0,
+     "localRyDeg": 0,
+     "localRzDeg": 0
+    },
+    "objectBindingId": null,
+    "parentChain": []
+   }
+  ]
+ },
+ {
+  "flow": "pigtail-b",
+  "objectId": "det0",
+  "ports": []
+ },
+ {
+  "flow": "pigtail-b",
+  "objectId": "src0",
+  "ports": []
+ },
+ {
+  "flow": "pigtail-b",
+  "objectId": "det1",
+  "ports": []
+ }
+]
