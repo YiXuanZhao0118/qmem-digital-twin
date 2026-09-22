@@ -82,6 +82,14 @@ axis — so a cylindrical lens's roll is a real degree of freedom.
   frontend applies to the SceneObject pose, MirrorCoupling-style).
 - `POST /api/v3/solver/mode-match` (`routers/v3_solver.py`) — loads the DB
   scene, traces the seed once, calls `run_mode_match`, returns the plan.
+  **The solve runs on a worker thread** (`run_in_threadpool`, 2026-09-22):
+  the DB reads (scene + object names) happen first, on the event loop; the
+  forward trace and the optimizer then run off it, touching only the loaded
+  scene — never the `AsyncSession`, which is bound to the loop. Until then the
+  optimizer ran synchronously inside the `async` handler and every other
+  request and `/ws/scene` broadcast stalled for the whole solve. Pinned by
+  `backend/tests/optical/test_mode_match_endpoint.py` (a request is answered
+  while a deliberately blocked solve is still running).
 
 ## Start / range / methods (2026-08-25)
 
@@ -177,5 +185,7 @@ endpoint.
 ## TODO
 
 - UX: the solve is multi-second (~11 s repositioning, ~27 s with a focal
-  inventory) — the Solve button shows a spinner; consider a fully non-blocking
-  run for very large inventories.
+  inventory) — the Solve button shows a spinner. The server no longer blocks
+  while it runs (worker thread, see Files), but the request itself still
+  waits for the whole solve; a job/poll API would be the next step for very
+  large inventories. Two concurrent solves each take a threadpool worker.
