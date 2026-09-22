@@ -10,7 +10,8 @@ the only write path.
 The IRON RULE from the original design still holds: the dependency runs
 ``device -> behavioural kind``, never the reverse. ``behavioral_kind``
 must be an ElementKind the solver already dispatches on (validated below
-against the same manifest set ``kinds.py`` uses), or NULL for render-only
+against the same manifest set ``kinds.py`` uses) or an existing ``kinds``
+row (the DB-only kinds such as ``isolator``), or NULL for render-only
 mechanical fixtures.
 
 See docs/introduce/asset.md and docs/introduce/rf.md.
@@ -29,19 +30,25 @@ from app import schemas
 from app.db import get_session
 from app.kinds_manifest import element_kinds, load_manifest
 from app.lock_guard import assert_delete_allowed, assert_update_allowed
-from app.models import Asset3D, Device
+from app.models import Asset3D, Device, Kind
 
 
 router = APIRouter()
 
 
-def _behavioral_kind_choices() -> set[str]:
-    """ElementKinds a device may pin itself to.
+async def _behavioral_kind_choices(session: AsyncSession) -> set[str]:
+    """Kinds a device may pin itself to.
 
     Physics kinds come from the manifest's ``element_kinds``; passive
     plugin ids are included because the render-only mechanical fixtures
-    (posts / clamps / chassis) are catalogued the same way. Mirrors
-    ``kinds._registered_op_set_names``.
+    (posts / clamps / chassis) are catalogued the same way (mirrors
+    ``kinds._registered_op_set_names``). **Plus every existing ``kinds``
+    row**: the DB-only kinds that have no plugin — ``isolator`` (alembic
+    0140), ``mechanical`` (0121), ``unclassified`` (0110), and any user
+    kind — are real kinds an Asset3D can carry, and the four 0123-seeded
+    isolator devices pin ``isolator``. Without the rows, every save of one
+    of those devices in the DEVICE editor (which always sends
+    ``behavioralKind``) was a 400.
     """
     manifest = load_manifest()
     passive_ids = {
@@ -49,19 +56,20 @@ def _behavioral_kind_choices() -> set[str]:
         for plugin in manifest.get("passive_plugins", [])
         if isinstance(plugin, dict) and isinstance(plugin.get("id"), str)
     }
-    return set(element_kinds()) | passive_ids
+    kind_rows = set((await session.scalars(select(Kind.name))).all())
+    return set(element_kinds()) | passive_ids | kind_rows
 
 
-def _assert_behavioral_kind(behavioral_kind: str | None) -> None:
+async def _assert_behavioral_kind(session: AsyncSession, behavioral_kind: str | None) -> None:
     if behavioral_kind is None:
         return
-    choices = _behavioral_kind_choices()
+    choices = await _behavioral_kind_choices(session)
     if behavioral_kind not in choices:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"behavioral_kind {behavioral_kind!r} is not a registered "
-                "ElementKind. Pick one of: "
+                f"behavioral_kind {behavioral_kind!r} is neither a registered "
+                "ElementKind nor an existing kinds row. Pick one of: "
                 f"{sorted(choices)}, or null for a render-only device."
             ),
         )
@@ -105,13 +113,17 @@ async def list_devices(
 
 
 @router.get("/behavioral-kinds", response_model=list[str])
-async def list_behavioral_kinds() -> list[str]:
-    """Every ElementKind a device may pin itself to.
+async def list_behavioral_kinds(
+    session: AsyncSession = Depends(get_session),
+) -> list[str]:
+    """Every kind a device may pin itself to — exactly the set create /
+    update validate against, so the DEVICE editor's picker offers the
+    DB-only kinds (``isolator`` …) too.
 
     Declared BEFORE ``/{device_id}`` so FastAPI matches the literal path
     first — ``device_id`` is a UUID and would otherwise 422 here.
     """
-    return sorted(_behavioral_kind_choices())
+    return sorted(await _behavioral_kind_choices(session))
 
 
 @router.get("/{device_id}", response_model=schemas.DeviceOut)
@@ -130,7 +142,7 @@ async def create_device(
     payload: schemas.DeviceCreate,
     session: AsyncSession = Depends(get_session),
 ) -> schemas.DeviceOut:
-    _assert_behavioral_kind(payload.behavioral_kind)
+    await _assert_behavioral_kind(session, payload.behavioral_kind)
     data = payload.model_dump()
     data["anchors"] = [
         a.model_dump(by_alias=False, exclude_none=True) for a in payload.anchors
@@ -168,7 +180,7 @@ async def update_device(
         label=f"Device {device.slug!r}",
     )
     if "behavioral_kind" in updates:
-        _assert_behavioral_kind(updates["behavioral_kind"])
+        await _assert_behavioral_kind(session, updates["behavioral_kind"])
     if "anchors" in updates and payload.anchors is not None:
         # Whole-list overwrite — the editor always sends the full layout.
         # Stored in the snake_case shape `device_seed` reads.
