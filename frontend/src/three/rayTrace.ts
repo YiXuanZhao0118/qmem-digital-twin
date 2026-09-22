@@ -906,12 +906,39 @@ function taInputSpatialMode(element: PhysicsElement): BeamState {
   };
 }
 
-function circularModeOverlap(seedRadiusUm: number, targetRadiusUm: number): number {
-  if (seedRadiusUm <= 0 || targetRadiusUm <= 0) return 0;
-  const numerator = 2 * seedRadiusUm * targetRadiusUm;
-  const denominator = seedRadiusUm * seedRadiusUm + targetRadiusUm * targetRadiusUm;
-  const fieldOverlap = numerator / Math.max(denominator, 1e-30);
-  return Math.max(0, Math.min(1, fieldOverlap * fieldOverlap));
+/** 1-D Gaussian power overlap of two beams given as q = (z − z_w) + i·z_R
+ *  (any common length unit): η = 2·√(Im P₁·Im P₂) / |P₁* − P₂|, P = 1/q. */
+function gaussianOverlap1D(q1Re: number, q1Im: number, q2Re: number, q2Im: number): number {
+  const n1 = q1Re * q1Re + q1Im * q1Im;
+  const n2 = q2Re * q2Re + q2Im * q2Im;
+  if (n1 <= 0 || n2 <= 0) return 0;
+  // P = 1/q = (re − i·im)/|q|²
+  const p1Re = q1Re / n1, p1Im = -q1Im / n1;
+  const p2Re = q2Re / n2, p2Im = -q2Im / n2;
+  if (p1Im >= 0 || p2Im >= 0) return 0;
+  // P₁* − P₂ = (p1Re − p2Re) + i(−p1Im − p2Im)
+  const dRe = p1Re - p2Re, dIm = -p1Im - p2Im;
+  const denom = Math.hypot(dRe, dIm);
+  if (denom <= 0) return 0;
+  return Math.max(0, Math.min(1, (2 * Math.sqrt(p1Im * p2Im)) / denom));
+}
+
+/** Seed → TA input coupling at the facet, per axis, from the beams' q.
+ *  `inputMode` is the beam the input facet EMITS (waistZUm outward, the same
+ *  `inputSpatialModeX/Y` the backend's backward emission uses); the seed
+ *  couples fully when it is that beam's TIME REVERSE at the facet — same
+ *  spot, curvature flipped — so the target q is +waistZUm + i·z_R (a seed
+ *  diverging from a waist waistZUm behind the facet). Mirrors
+ *  `misc_ops._mode_match_eta` / `mode_match.time_reversed_target`; before
+ *  2026-09-02 this compared two circularly averaged spot radii only. */
+function taSeedModeOverlap(seedZUm: number, seed: BeamState, inputMode: BeamState): number {
+  const axisEta = (s: BeamAxisState, t: BeamAxisState, wl: number): number => {
+    const zRs = rayleighRangeAxisUm(s, wl);
+    const zRt = rayleighRangeAxisUm(t, inputMode.wavelengthNm);
+    if (zRs <= 0 || zRt <= 0) return 0;
+    return gaussianOverlap1D(seedZUm - s.waistZUm, zRs, t.waistZUm, zRt);
+  };
+  return axisEta(seed.x, inputMode.x, seed.wavelengthNm) * axisEta(seed.y, inputMode.y, seed.wavelengthNm);
 }
 
 function interpolateTaGain(
@@ -980,9 +1007,7 @@ function bestTaSeedCoupling(
     const rawSeedPowerMw = Math.max(0, seg.nominalPowerMwAtSource * seg.powerFactorAtStart);
     if (rawSeedPowerMw <= 0) continue;
     const seedEndZUm = (seg.pathLengthFromSourceMmAtStart + seg.lengthMm) * 1000;
-    const seedRadiusUm = gaussianWaistAtZ(seedEndZUm, seg.beamMode);
-    const targetRadiusUm = gaussianWaistAtZ(0, inputMode);
-    const modeOverlap = circularModeOverlap(seedRadiusUm, targetRadiusUm);
+    const modeOverlap = taSeedModeOverlap(seedEndZUm, seg.beamMode, inputMode);
     const polarizationOverlap = jonesOverlap(seg.polarizationAtStart, inputPol);
     const effectiveSeedPowerMw = rawSeedPowerMw * modeOverlap * polarizationOverlap;
     const candidate = {

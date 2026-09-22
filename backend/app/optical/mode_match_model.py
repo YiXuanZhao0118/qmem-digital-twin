@@ -14,13 +14,19 @@ How this file computes the coupling η, and why it is cheap enough to optimize:
   optimizer touches. One forward trace gives it, once.
 * The **reverse reference** is a virtual beam launched at the TA input facet
   carrying the TA's declared ``inputSpatialModeX/Y``, propagating back OUT
-  along −(the seed's inbound direction). It passes back through the very
-  lenses we are optimizing.
-* By reversibility, η between the fixed forward seed and the back-propagated
-  reference, evaluated at that single upstream plane, **equals the power
-  coupled into the TA**; η = 1 ⇔ the two profiles coincide at every plane in
-  between. So the optimizer needs ONE reverse trace per evaluation, not a
-  scan of the whole section.
+  along −(the seed's inbound direction). It is built by the SAME
+  ``_facet_beam`` the tracer uses for the TA's real backward emission, so the
+  optimizer targets exactly the beam a wavefront sensor sees coming out of
+  the TA (``waistZOffsetMm`` measured OUTWARD along the anchor's axisX). It
+  passes back through the very lenses we are optimizing.
+* The seed must be that beam's **time reverse** (phase conjugate): same spot
+  sizes, every curvature flipped (``mode_match.time_reversed_target`` — in
+  WFS terms M and J0 change sign, J45 keeps it). By reciprocity, η between
+  the fixed forward seed and the conjugated back-propagated reference,
+  evaluated at that single upstream plane, **equals the power coupled into
+  the TA**; η = 1 ⇔ the two profiles coincide at every plane in between. So
+  the optimizer needs ONE reverse trace per evaluation, not a scan of the
+  whole section.
 
 Re-posing without the DB: ``load_anchor_scene_from_db``'s ``dynamic_overrides``
 can override an object's params (``focalLengthMm``) but cannot move it — pose
@@ -48,8 +54,10 @@ from app.optical.anchor_tracer import (
     V3AnchorScene,
     trace_ray_anchor_scene,
 )
+from app.optical.anchor_ops.emit_laser_source import _facet_beam
 from app.optical.beam_ray import BeamRay, QMatrix, Vec3
-from app.optical.mode_match import gaussian_mode_overlap
+from app.optical.jones import q_frame_angle_to_axis
+from app.optical.mode_match import gaussian_mode_overlap, time_reversed_target
 from app.optical.pose import V3Transform
 
 # Cylindrical lens kinds roll matters for; spherical kinds it does not (used
@@ -83,11 +91,6 @@ def _q_of_segment(ls: LabSegment) -> QMatrix:
 def _prop_q_freespace(q: QMatrix, d_mm: float) -> QMatrix:
     """Free-space propagate a beam matrix by ``d_mm`` (Q' = Q + d·I)."""
     return QMatrix(q.xx + d_mm, q.yy + d_mm, q.xy)
-
-
-def _zr_mm(waist_um: float, wavelength_nm: float) -> float:
-    w_mm = waist_um / 1000.0
-    return math.pi * w_mm * w_mm / (wavelength_nm * 1e-6)
 
 
 # ── per-lens configuration (the optimizer's variables) ─────────────────────
@@ -261,8 +264,12 @@ class ModeMatchProblem:
         ref_q = self._ref_q_at_compare(trace.lab_segments)
         if ref_q is None:
             return EvalResult(0.0, self.seed_q, self.seed_q, reached=False)
-        eta = gaussian_mode_overlap(self.seed_q, ref_q)
-        return EvalResult(eta, self.seed_q, ref_q, reached=True)
+        # The reverse beam runs along −axis; the seed must be its time
+        # reverse at this plane (same widths, opposite curvatures, frame
+        # mirrored) — not the reverse beam itself.
+        target_q = time_reversed_target(ref_q)
+        eta = gaussian_mode_overlap(self.seed_q, target_q)
+        return EvalResult(eta, self.seed_q, target_q, reached=True)
 
 
 # ── builder from a loaded scene ─────────────────────────────────────────────
@@ -347,7 +354,7 @@ def build_problem(
     inbound = _unit(_np(ta_seg.end) - _np(ta_seg.start))
 
     ta_slot = slot_by_id[ta_object_id]
-    dp = ta_slot.asset.default_params
+    dp = {**ta_slot.asset.default_params, **(ta_slot.dynamic_sources or {})}
     mode_x = dp.get("inputSpatialModeX")
     mode_y = dp.get("inputSpatialModeY")
     if not mode_x or not mode_y:
@@ -355,25 +362,40 @@ def build_problem(
             f"TA {ta_object_id!r} declares no inputSpatialModeX/Y "
             "(needed as the mode-match target)"
         )
-    # Reverse beam: waist real-part flips sign vs the input-beam convention
-    # (`laser_source._q_from_mode` uses q_re = -waistZOffset for the +inbound
-    # beam; reversing propagation negates that, so q_re = +waistZOffset).
-    qx = complex(
-        float(mode_x["waistZOffsetMm"]),
-        _zr_mm(float(mode_x["waistUm"]), wavelength_nm),
+    # Reverse beam = the TA's input-facet emission, built exactly as the
+    # tracer builds the real backward ASE / re-emission: ``waistZOffsetMm`` is
+    # measured OUTWARD along the anchor's axisX (Re q = −offset at the facet),
+    # so a mode fitted from a WFS capture of the back-emission reproduces that
+    # capture here. (Until 2026-09-02 this launched with the opposite sign and
+    # the comparison skipped the time reversal — see ``evaluate``.)
+    qx, qy, m2x, m2y, wmx, wmy = _facet_beam(
+        mode_x, mode_y, wavelength_nm,
+        float((dp.get("spatialModeX") or {}).get("waistUm", 250.0)),
     )
-    qy = complex(
-        float(mode_y["waistZOffsetMm"]),
-        _zr_mm(float(mode_y["waistUm"]), wavelength_nm),
-    )
+    back_dir = _v(-inbound)
     reverse_ray = BeamRay(
         origin=ta_seg.start,
-        direction=_v(-inbound),
+        direction=back_dir,
         qx=qx,
         qy=qy,
+        m2x=m2x,
+        m2y=m2y,
+        width_mult_x=wmx,
+        width_mult_y=wmy,
         wavelength_nm=wavelength_nm,
         power_mw=1.0,
         jones=(complex(1.0, 0.0), complex(0.0, 0.0)),
+    )
+    # The mode is declared in the anchor's (axisY, axisZ) basis; the ray
+    # carries Q in the beam-local (s, p) frame of ``back_dir``. Same rotation
+    # the TA op applies to its backward emission.
+    anchor = next(
+        (a for a in ta_slot.asset.anchors if a.id == ta_seg.anchor_id),
+        ta_slot.asset.anchors[0],
+    )
+    axis_y_lab = _v(ta_slot.effective_transform.rotation.apply(_np(anchor.axis_y_body)))
+    reverse_ray = reverse_ray.rotated_frame(
+        -q_frame_angle_to_axis(axis_y_lab, back_dir)
     )
 
     # Prune the scene to just the objects the reverse ray actually visits

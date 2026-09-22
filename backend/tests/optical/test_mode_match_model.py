@@ -3,7 +3,8 @@ reference readout, checked against hand-computed ABCD on a synthetic scene.
 
 No DB. One thin spherical lens on the +z axis; a reverse Gaussian launched
 back through it; the comparison plane just past the lens. The forward "seed"
-target is set to the baseline reverse q so a perfect baseline reads η=1, and
+target is set to the TIME REVERSE of the baseline reverse q (same widths,
+opposite curvatures) so a perfect baseline reads η=1, and
 every re-posed configuration is checked against an independent free-space +
 thin-lens computation.
 """
@@ -17,7 +18,7 @@ from app.optical.anchor_tracer import (
     V3Anchor, V3AnchorBindingSlot, V3AnchorScene, V3AssetAnchorSnapshot,
 )
 from app.optical.beam_ray import BeamRay, QMatrix, Vec3
-from app.optical.mode_match import gaussian_mode_overlap
+from app.optical.mode_match import gaussian_mode_overlap, time_reversed_target
 from app.optical.mode_match_model import (
     LensConfig, ModeMatchProblem, MovableLens,
 )
@@ -75,7 +76,9 @@ def _make_problem(kind: str = "lens") -> tuple[ModeMatchProblem, complex]:
         qx=q0, qy=q0, wavelength_nm=WL, power_mw=1.0,
         jones=(complex(1, 0), complex(0, 0)),
     )
-    seed_q = QMatrix(_reverse_q3(q0, F, 0.0), _reverse_q3(q0, F, 0.0))
+    seed_q = time_reversed_target(
+        QMatrix(_reverse_q3(q0, F, 0.0), _reverse_q3(q0, F, 0.0))
+    )
     lens = MovableLens(
         scene_object_id="lens0", name="lens0", kind=kind,
         base_transform=slot.effective_transform, base_focal_mm=F,
@@ -101,7 +104,7 @@ def test_axial_move_matches_analytic_abcd(d_axial):
     prob, q0 = _make_problem()
     r = prob.evaluate({"lens0": LensConfig(d_axial=d_axial)})
     q3 = _reverse_q3(q0, F, d_axial)
-    expected = gaussian_mode_overlap(prob.seed_q, QMatrix(q3, q3))
+    expected = gaussian_mode_overlap(prob.seed_q, time_reversed_target(QMatrix(q3, q3)))
     assert r.reached
     assert r.eta == pytest.approx(expected, rel=1e-6, abs=1e-6)
     assert r.eta < 1.0  # moved off the perfect point
@@ -112,7 +115,7 @@ def test_focal_override_matches_analytic():
     f2 = 75.0
     r = prob.evaluate({"lens0": LensConfig(focal_mm=f2)})
     q3 = _reverse_q3(q0, f2, 0.0)
-    expected = gaussian_mode_overlap(prob.seed_q, QMatrix(q3, q3))
+    expected = gaussian_mode_overlap(prob.seed_q, time_reversed_target(QMatrix(q3, q3)))
     assert r.eta == pytest.approx(expected, rel=1e-6, abs=1e-6)
 
 
@@ -124,3 +127,21 @@ def test_spherical_roll_is_invariant():
     for roll in (17.0, 90.0, 133.0):
         assert prob.evaluate({"lens0": LensConfig(roll_deg=roll)}).eta == \
             pytest.approx(base, abs=1e-9)
+
+
+def test_seed_equal_to_reverse_beam_is_not_a_match():
+    """The reverse reference is curved at the comparison plane (it is 10 mm
+    past a lens, far from its waist). A seed IDENTICAL to it — same widths AND
+    same curvature sign — is not mode-matched: the seed has to be its time
+    reverse. Guards the 2026-09-02 fix (the model used to compare the two
+    beams directly)."""
+    prob, q0 = _make_problem()
+    q3 = _reverse_q3(q0, F, 0.0)
+    assert abs(q3.real) > 1.0                        # curved, so conjugation matters
+    same = ModeMatchProblem(
+        scene=prob.scene, lenses=prob.lenses, reverse_ray=prob.reverse_ray,
+        seed_q=QMatrix(q3, q3), compare_point=prob.compare_point, axis=prob.axis,
+        e2=prob.e2, e3=prob.e3, wavelength_nm=WL,
+    )
+    assert same.evaluate({}).eta < 0.99
+    assert prob.evaluate({}).eta == pytest.approx(1.0, abs=1e-6)

@@ -35,7 +35,6 @@ from app.optical.beam_ray import (
     BeamRay,
     QMatrix,
     Vec3,
-    nonparaxial_fundamental_waist_mm,
     vec3_distance,
 )
 from app.optical.jones import (
@@ -45,6 +44,7 @@ from app.optical.jones import (
     sp_rotation_between_directions,
     rotate_jones,
 )
+from app.optical.mode_match import gaussian_mode_overlap, time_reversed_target
 
 
 def _slab_passthrough(ray_in: BeamRay, ctx: AnchorOpContext) -> BeamRay:
@@ -399,63 +399,77 @@ def _gaussian_waist_mm(q: complex, wavelength_nm: float) -> float:
     return math.sqrt(lam_mm * (q.real * q.real + im * im) / (math.pi * im))
 
 
-def _overlap_1d(w_seed: float, w_mode: float, offset_mm: float) -> float:
-    """Power coupling between two 1-D Gaussians of waists ``w_seed`` /
-    ``w_mode`` with a transverse ``offset``:
-        η = [2·w1·w2/(w1²+w2²)] · exp(−2·d²/(w1²+w2²)).
-    Captures waist mismatch (focus / divergence) and lateral misalignment —
-    the two dominant terms in the TA-input overlap integral."""
+def _lateral_offset_factor(w_seed: float, w_mode: float, offset_mm: float) -> float:
+    """Lateral-misalignment factor of two 1-D Gaussians of radii ``w_seed`` /
+    ``w_mode`` AT THE FACET, offset by ``offset_mm``:
+    ``exp(−2·d²/(w1²+w2²))`` — exact for matched wavefronts, which is the
+    regime a mode-matched seed is in."""
     if not math.isfinite(w_seed) or w_seed <= 0.0 or w_mode <= 0.0:
         return 0.0
-    sum_sq = w_seed * w_seed + w_mode * w_mode
-    match = 2.0 * w_seed * w_mode / sum_sq
-    return match * math.exp(-2.0 * offset_mm * offset_mm / sum_sq)
+    return math.exp(-2.0 * offset_mm * offset_mm / (w_seed * w_seed + w_mode * w_mode))
+
+
+def _radius_mm(q: complex, wavelength_nm: float, width_mult: float) -> float:
+    """Real 1/e² radius of an embedded-Gaussian q (``width_mult`` = √M²)."""
+    inv_im = (1.0 / q).imag if q != 0 else 0.0
+    if inv_im >= 0.0:
+        return 0.0
+    return math.sqrt(-(wavelength_nm * 1e-6) / (math.pi * inv_im)) * width_mult
 
 
 def _mode_match_eta(ray_in: BeamRay, ctx: AnchorOpContext) -> float:
-    """Overlap integral η between the seed beam and the TA input waveguide
-    mode (≈1 µm × 3 µm ridge). Computed as the separable product of the two
-    transverse 1-D overlaps — seed waist (from qx/qy) vs the kind's
-    ``inputSpatialModeX/Y.waistUm``, with the lateral offset taken from the
-    anchor hit. Returns η ∈ [0, 1]; uncoupled field becomes radiation modes
-    (lost).
+    """Overlap integral η between the seed beam and the TA input mode.
+
+    The TA's input mode is what its input facet EMITS — ``inputSpatialModeX/Y``
+    describe the backward beam leaving ``intercept_in`` along the anchor's
+    outward axisX (the same ``_facet_beam`` used for backward ASE and the
+    seeded re-emission, and for the mode-matching optimizer's reverse
+    reference). A seed couples perfectly when it is that beam's TIME REVERSE
+    at the facet: same spot, opposite wavefront curvature
+    (``mode_match.time_reversed_target``). η is therefore the general Gaussian
+    power overlap of the seed's q with the conjugated facet mode — waist size,
+    waist location AND wavefront curvature all count, which is what makes the
+    traced coupled power agree with the mode-matching panel's η — times a
+    lateral-offset factor from the anchor hit. Until 2026-09-02 this compared
+    only the two WAIST sizes (curvature and waist position ignored).
 
     FRAME (Step 2b): the waveguide mode and the hit offsets live in the
     anchor's (axisY, axisZ) basis while the ray carries Q in the beam-local
     (s, p) one, so the seed is rotated into the anchor basis before the
-    overlap. Before 2b the two were silently identified — the "seed-X ↔
-    mode-X" approximation this docstring used to claim — which is wrong by
-    the roll angle between the emitter and the amplifier.
-
-    Remaining approximation: a seed whose astigmatism axes are rotated
-    relative to the mode (``q_seed.xy != 0``) is not separable, and only the
-    anchor-frame diagonal is used. Likewise ``m2x``/``m2y`` are scalar
-    per-axis and do not rotate (see the Step 2c note in optics.md); harmless
-    while the two axes share an M²."""
+    overlap. Remaining approximation: ``m2x``/``m2y`` are scalar per-axis and
+    do not rotate (see the Step 2c note in optics.md); harmless while the two
+    axes share an M².
+    """
     p = ctx.params
     wl = float(p.get("centerWavelengthNm", ray_in.wavelength_nm or 780.0))
     mode_x = (p.get("inputSpatialModeX") or {})
     mode_y = (p.get("inputSpatialModeY") or {})
-    wm_x = float(mode_x.get("waistUm", 0.0)) / 1000.0
-    wm_y = float(mode_y.get("waistUm", 0.0)) / 1000.0
-    if wm_x <= 0.0 or wm_y <= 0.0:
+    if float(mode_x.get("waistUm", 0.0) or 0.0) <= 0.0 or             float(mode_y.get("waistUm", 0.0) or 0.0) <= 0.0:
         return 1.0  # mode unspecified — skip the penalty rather than zero out
 
-    # Real seed waist = non-paraxial fundamental width × transverse-mode
-    # factor (mode_factor = width_mult / √M²). Non-paraxial so a high-NA seed
-    # (tight TA facet / fiber-fed) couples with the correct, bounded spot.
     # Rotate the WHOLE transverse state (Q + both readout tensors) into the
     # anchor basis in one call, so the multipliers cannot end up scaling a
     # different axis than the q they belong to.
     seed = ray_in.rotated_frame(
         q_frame_angle_to_axis(ctx.anchor.axis_y_body, ray_in.direction),
     )
-    mode_fac_x = seed.width_mult_x / math.sqrt(seed.m2x) if seed.m2x > 0 else seed.width_mult_x
-    mode_fac_y = seed.width_mult_y / math.sqrt(seed.m2y) if seed.m2y > 0 else seed.width_mult_y
-    w_seed_x = nonparaxial_fundamental_waist_mm(seed.qx.real, seed.qx.imag, seed.m2x, wl)[0] * mode_fac_x
-    w_seed_y = nonparaxial_fundamental_waist_mm(seed.qy.real, seed.qy.imag, seed.m2y, wl)[0] * mode_fac_y
-    _, off_y, _, off_z = beam_state_from_anchor_hit(ray_in, ctx.hit)
-    eta = _overlap_1d(w_seed_x, wm_x, off_y) * _overlap_1d(w_seed_y, wm_y, off_z)
+    # Facet mode as EMITTED (outward), then time-reversed into the seed's
+    # inbound frame. The mode's own xy is 0, so the frame mirror only
+    # matters for the seed, whose Q is already in the anchor basis.
+    # Local import: emit_laser_source imports this module's ASE tables.
+    from app.optical.anchor_ops.emit_laser_source import _facet_beam
+    qx_out, qy_out, _m2x, _m2y, wmx, wmy = _facet_beam(mode_x, mode_y, wl, 0.0)
+    target = time_reversed_target(QMatrix(qx_out, qy_out, 0j))
+    eta = gaussian_mode_overlap(seed.q_matrix, target)
+
+    # (y, θy, z, θz) — the OFFSETS are elements 0 and 2. The pre-2026-09-02
+    # code unpacked the slopes here, so the lateral penalty never fired.
+    off_y, _, off_z, _ = beam_state_from_anchor_hit(ray_in, ctx.hit)
+    eta *= _lateral_offset_factor(
+        _radius_mm(seed.qx, wl, seed.width_mult_x), _radius_mm(target.xx, wl, wmx), off_y,
+    ) * _lateral_offset_factor(
+        _radius_mm(seed.qy, wl, seed.width_mult_y), _radius_mm(target.yy, wl, wmy), off_z,
+    )
     return max(0.0, min(1.0, eta))
 
 

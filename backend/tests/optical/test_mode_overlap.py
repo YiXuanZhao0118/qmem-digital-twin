@@ -102,3 +102,36 @@ def test_degenerate_beam_returns_zero():
     good = QMatrix(_q_waist(0.5), _q_waist(0.5))
     degenerate = QMatrix(0j, 0j)
     assert gaussian_mode_overlap(good, degenerate) == 0.0
+
+
+# ── time_reversed_target ─────────────────────────────────────────────────────
+
+def test_time_reversed_target_flips_curvature_keeps_width():
+    from app.optical.mode_match import time_reversed_target
+    q = QMatrix(complex(120.0, 300.0), complex(-40.0, 180.0), complex(5.0, -2.0))
+    t = time_reversed_target(q)
+    # diagonal: −q*  (waist position mirrored, same z_R); xy: +q* (frame mirror
+    # AND conjugation → real part kept, imaginary flipped)
+    assert t.xx == complex(-120.0, 300.0)
+    assert t.yy == complex(40.0, 180.0)
+    assert t.xy == complex(5.0, 2.0)
+    # involution
+    tt = time_reversed_target(t)
+    assert (tt.xx, tt.yy, tt.xy) == (q.xx, q.yy, q.xy)
+
+
+def test_time_reversed_target_is_identity_at_a_waist():
+    from app.optical.mode_match import time_reversed_target
+    q = QMatrix(complex(0.0, 300.0), complex(0.0, 180.0), 0j)
+    t = time_reversed_target(q)
+    assert (t.xx, t.yy, t.xy) == (q.xx, q.yy, q.xy)
+
+
+def test_curved_beam_couples_into_its_time_reverse_not_itself():
+    """A converging back-emission must be met by a DIVERGING seed of the same
+    spot: η(seed = −q*) = 1, while η(seed = q) < 1 by the curvature mismatch."""
+    from app.optical.mode_match import time_reversed_target
+    q = QMatrix(complex(-241.5, 23.9), complex(-1258.0, 717.0), 0j)   # TA back-emission, 25 mm out
+    assert gaussian_mode_overlap(time_reversed_target(q), q) < 0.5
+    t = time_reversed_target(q)
+    assert gaussian_mode_overlap(t, time_reversed_target(q)) == pytest.approx(1.0)

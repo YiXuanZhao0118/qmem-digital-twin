@@ -17,14 +17,32 @@ couple. Sibling: [`optics.md`](optics.md) (the q-tracer this rides on),
   touches. One forward trace captures it.
 - **Reverse reference**: a virtual beam launched at the TA input facet carrying
   the TA asset's declared `inputSpatialModeX/Y`, propagating back OUT along −(the
-  seed's inbound direction), through the very lenses under optimization. Its
-  real part flips sign vs the input-beam convention (`laser_source._q_from_mode`
-  uses `q_re = −waistZOffset`; reversing propagation negates it → `q_re =
-  +waistZOffset`).
-- By reversibility, η between the fixed forward seed and the back-propagated
-  reference at that one upstream plane **equals the power coupled into the TA**;
-  η = 1 ⇔ profiles coincide at every plane between. So each score is ONE reverse
-  trace, not a scan.
+  seed's inbound direction), through the very lenses under optimization. It is
+  built by the same `_facet_beam` the tracer uses for the TA's real backward
+  emission: `inputSpatialModeX/Y` describe the beam the input facet **emits**,
+  with `waistZOffsetMm` measured OUTWARD along the anchor's axisX (`Re q =
+  −offset` at the facet). So a mode fitted from a WFS capture of the TA's
+  back-emission reproduces that capture in the twin and is, unchanged, the
+  optimizer's target. (Mode X is the anchor's axisY — for
+  `sacher_tec400_852nm_ta`'s `intercept_in` that is body +z, **vertical**.)
+- **The seed must be the time reverse of that beam** (bench derivation,
+  2026-09-02): same spot sizes, every wavefront curvature flipped. In the
+  tracer's frames the reverse segment shares `s` with the forward one and flips
+  `p`, so `mode_match.time_reversed_target` maps the reverse Q at the compare
+  plane to the required forward Q as `(xx, yy, xy) → (−xx*, −yy*, +xy*)` — in
+  WFS language M and J0 change sign, J45 keeps it. η is the overlap of the seed
+  with **that** target; comparing the seed with the reverse beam itself (what
+  the model did before 2026-09-02, together with the opposite launch sign)
+  rewarded a seed *diverging* where it should converge.
+- By reciprocity, η between the fixed forward seed and the conjugated
+  back-propagated reference at that one upstream plane **equals the power
+  coupled into the TA**; η = 1 ⇔ profiles coincide at every plane between. So
+  each score is ONE reverse trace, not a scan. The tracer's TA op computes the
+  coupled seed power with the same overlap at the facet
+  (`misc_ops._mode_match_eta`), so the panel's η and the traced amplified power
+  agree; the BeamScope panel's client-side "TA eta: mode" readout
+  (`rayTrace.ts::taSeedModeOverlap`) applies the same per-axis rule to its own
+  beam states.
 
 The overlap is the general-astigmatism power coupling of two Gaussian beam
 matrices (`mode_match.py`):
@@ -37,7 +55,8 @@ axis — so a cylindrical lens's roll is a real degree of freedom.
 
 ## Files
 
-- `backend/app/optical/mode_match.py` — `gaussian_mode_overlap(Q1, Q2)`.
+- `backend/app/optical/mode_match.py` — `gaussian_mode_overlap(Q1, Q2)` and
+  `time_reversed_target(Q)` (the phase-conjugate / frame-mirror map above).
 - `backend/app/optical/mode_match_model.py` — `build_problem(...)` +
   `ModeMatchProblem.evaluate(config)`. Re-poses lenses **in-memory** (rebuild
   the frozen `V3AnchorBindingSlot` with a shifted `effective_transform`; roll =
@@ -106,11 +125,14 @@ Path `BEAM_SPLITTER2 → LENS_CYLINDRICAL3 → (BEAM_SPLITTER1) → LENS_CYLINDR
 → LENS_BICONVEX0 → MECHANICAL19 → MIRROR5` carries only the DBR seed
 (`LASER_SOURCE1`, 852 nm) on its way into `TAPERED_AMPLIFIER0`. Shaping lenses:
 CYL3 f=−24.88, CYL0 f=+40 (cyl, power axis body-y), BICONVEX0 f=−25, MECH19 f=+35
-thick. TA input mode (asset `default_params`): `inputSpatialModeX` 278.4 µm @
-−986 mm, `inputSpatialModeY` 314.9 µm @ +1102 mm — strongly astigmatic. Current coupling **η ≈ 0.08**; repositioning alone reaches **≈ 0.70** (the
-astigmatism is extreme), and the focal inventory is the lever beyond — a live
-end-to-end run with CYL3/CYL0 focal inventories reached **η = 0.877** (Stage 2
-picked CYL3 −40, CYL0 +60) in ~27 s / ~6.9k evals. Section length ≈ 134 mm.
+thick. TA input mode (asset `default_params`, **re-fitted 2026-09-02** from the
+TA's own back-emission at 25 mm — see `kinds.md` and `docs/ta_seed_modes_0902.md`):
+`inputSpatialModeX` (vertical) 80.5 µm @ +266.5 mm, `inputSpatialModeY`
+(horizontal) 441 µm @ +1283 mm — the emitted beam converges toward the seed, so
+the seed must arrive diverging from virtual waists 266.5 / 1283 mm upstream of
+the facet. The η figures quoted before this date (0.08 → 0.70 → 0.877 → 0.93)
+were computed against the un-conjugated, opposite-sign reference and the older
+`IN_1505` mode; they are not comparable with the corrected model.
 
 Tests: `backend/tests/optical/test_mode_overlap.py`,
 `test_mode_match_model.py`, `test_mode_match_optimize.py`,

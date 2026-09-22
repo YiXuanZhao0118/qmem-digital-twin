@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import math
+
 import pytest
 
 from app.optical.anchor_ops.emit_laser_source import emit_ta_ase_rays
@@ -613,3 +615,62 @@ def test_seeded_backward_beam_is_tagged_backward_through_the_tracer():
                 if s.is_terminal and s.emission_key == "backward")
     assert back.emitter_scene_object_id == "ta-1"
     assert back.end.x < back.start.x
+
+
+# --- Input-side mode matching: the seed must be the facet emission's time reverse
+
+def _eta_for_seed_q(q_seed, mode):
+    import math  # noqa: F811
+    from app.optical.anchor_ops.misc_ops import _mode_match_eta
+    anchors = [
+        _anchor("intercept_in", (-80.0, 0.0, 0.0), (-1.0, 0.0, 0.0)),
+        _anchor("intercept_out", (60.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+    ]
+    ray = _seed_ray().replaced(qx=q_seed, qy=q_seed)
+    return _mode_match_eta(ray, _op_ctx(anchors, {
+        "smallSignalGainDb": 20.0, "saturationPowerMw": 50.0,
+        "centerWavelengthNm": 780.0, **mode,
+    }))
+
+
+def test_input_mode_match_wants_the_time_reverse_of_the_facet_emission():
+    """``inputSpatialModeX/Y`` describe the beam the input facet EMITS
+    (waist ``waistZOffsetMm`` OUTWARD of the facet). A seed couples fully when
+    it is that beam's time reverse at the facet — same spot, curvature flipped
+    — and not when it merely copies the emitted beam's q. Bench derivation of
+    2026-09-02 (WFS: M, J0 change sign, J45 keeps it)."""
+    w0_mm, z_off = 0.0805, 266.5                       # 09-02 TA vertical mode
+    zr = math.pi * w0_mm * w0_mm / (780.0 * 1e-6)
+    mode = {
+        "inputSpatialModeX": {"waistUm": w0_mm * 1e3, "waistZOffsetMm": z_off},
+        "inputSpatialModeY": {"waistUm": w0_mm * 1e3, "waistZOffsetMm": z_off},
+    }
+    emitted_at_facet = complex(-z_off, zr)             # Re q = −offset, outward
+    conjugate_seed = complex(+z_off, zr)               # diverging inbound seed
+    assert _eta_for_seed_q(conjugate_seed, mode) == pytest.approx(1.0, abs=1e-9)
+    assert _eta_for_seed_q(emitted_at_facet, mode) < 0.2
+    # Right size at the facet but a flat wavefront: still a poor match.
+    w_facet = w0_mm * math.sqrt(1.0 + (z_off / zr) ** 2)
+    flat = complex(0.0, math.pi * w_facet * w_facet / (780.0 * 1e-6))
+    assert _eta_for_seed_q(flat, mode) < 0.2
+
+
+def test_input_mode_match_lateral_offset_penalty():
+    import dataclasses
+    import math
+    from app.optical.anchor_ops.misc_ops import _mode_match_eta
+    zr = math.pi * 0.3 * 0.3 / (780.0 * 1e-6)
+    mode = {
+        "inputSpatialModeX": {"waistUm": 300.0}, "inputSpatialModeY": {"waistUm": 300.0},
+        "centerWavelengthNm": 780.0, "smallSignalGainDb": 20.0, "saturationPowerMw": 50.0,
+    }
+    anchors = [
+        _anchor("intercept_in", (-80.0, 0.0, 0.0), (-1.0, 0.0, 0.0)),
+        _anchor("intercept_out", (60.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+    ]
+    ray = _seed_ray().replaced(qx=complex(0.0, zr), qy=complex(0.0, zr))
+    ctx = _op_ctx(anchors, mode)
+    assert _mode_match_eta(ray, ctx) == pytest.approx(1.0, abs=1e-9)
+    hit_off = dataclasses.replace(ctx.hit, offset_y_body=0.3)   # one waist off-axis
+    ctx_off = dataclasses.replace(ctx, hit=hit_off)
+    assert _mode_match_eta(ray, ctx_off) == pytest.approx(math.exp(-2 * 0.09 / 0.18), rel=1e-6)

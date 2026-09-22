@@ -11,6 +11,7 @@ from app.optical.anchor_tracer import (
     V3Anchor, V3AnchorBindingSlot, V3AnchorScene, V3AssetAnchorSnapshot,
 )
 from app.optical.beam_ray import BeamRay, QMatrix, Vec3
+from app.optical.mode_match import time_reversed_target
 from app.optical.mode_match_model import ModeMatchProblem, MovableLens
 from app.optical.mode_match_optimize import DOFSpec, optimize
 from app.optical.pose import V3Transform
@@ -57,9 +58,10 @@ def _problem():
         qx=q0, qy=q0, wavelength_nm=WL, power_mw=1.0,
         jones=(complex(1, 0), complex(0, 0)),
     )
-    # Target is the reverse q with the lens shifted by TRUE_D ⇒ optimum at +TRUE_D.
+    # Target is the time reverse of the reverse q with the lens shifted by
+    # TRUE_D ⇒ optimum at +TRUE_D.
     q3 = _reverse_q3(q0, TRUE_D)
-    seed_q = QMatrix(q3, q3)
+    seed_q = time_reversed_target(QMatrix(q3, q3))
     lens = MovableLens(
         scene_object_id="lens0", name="lens0", kind="lens",
         base_transform=slot.effective_transform, base_focal_mm=F,

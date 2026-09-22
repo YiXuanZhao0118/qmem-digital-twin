@@ -92,3 +92,30 @@ def gaussian_mode_overlap(q1: QMatrix, q2: QMatrix) -> float:
     eta = 4.0 * (det_im1 * det_im2) ** 0.5 / denom
     # Clamp rounding excursions just past 1.0 at perfect match.
     return min(eta, 1.0)
+
+
+def time_reversed_target(q_reverse: QMatrix) -> QMatrix:
+    """The beam matrix a FORWARD beam must have to couple perfectly into the
+    mode whose REVERSE (outward-propagating) beam has ``q_reverse`` at the same
+    plane — the seed target derived from a back-emission measurement.
+
+    Two steps, both fixed by the tracer's conventions (``beam_local_sp``):
+
+    1. **Frame.** The reverse beam travels along −d. ``beam_local_sp(−d)`` keeps
+       the same ``s`` axis and flips ``p`` (p = d × s), so re-expressing the
+       reverse Q in the forward frame is the mirror y → −y: ``xy`` changes
+       sign, the diagonal does not.
+    2. **Time reversal.** Running the field backwards conjugates it,
+       ``E(r) ~ exp(−i k rᵀ P r / 2)`` → ``exp(+i k rᵀ P* r / 2)``; read as a
+       forward beam that is ``P → −P*``: every curvature flips sign, every
+       width is kept. ``Q = P⁻¹`` transforms the same way, ``Q → −Q*``.
+
+    Together: ``(xx, yy, xy) → (−xx*, −yy*, +xy*)``. In WFS language (the 2026-09
+    bench derivation): mean power M and 0/90° astigmatism J0 change sign, the
+    45° astigmatism J45 keeps its sign, spot sizes are unchanged.
+    """
+    return QMatrix(
+        -q_reverse.xx.conjugate(),
+        -q_reverse.yy.conjugate(),
+        q_reverse.xy.conjugate(),
+    )
