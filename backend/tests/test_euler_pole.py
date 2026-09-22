@@ -93,17 +93,20 @@ def _mirror2_quaternion(flip: float, roll_deg: float):
 
 def test_the_old_decomposition_did_not() -> None:
     """The before half of the comparison. On the synthetic pole set the old
-    code already misses the 1e-9 rad objective; on the rotation the align
-    solver really builds for MIRROR2 it misses by 1e-4 rad (the direction
-    error the endpoint then returned), while the new one recomposes it to
-    rounding."""
+    code misses the 1e-9 rad objective, while the new one recomposes the
+    rotation the align solver really builds for MIRROR2 to rounding.
+
+    How far the old code misses on the MIRROR2 rotation itself depends on
+    how the platform's ``asin`` rounds a value one ulp from 1: on Windows it
+    lands on the noisy branch (~1e-4 rad, the error the endpoint returned),
+    on CI's Linux libm on the exact one. So that magnitude is not asserted;
+    the synthetic set (many near-pole cases) misses on every platform."""
     synthetic = max(
         np.abs(_matrix_rad(*_old_decomposition(p.values[0])) - _matrix_of_q(p.values[0])).max()
         for p in _pole_quaternions()
     )
     assert synthetic > 1e-9
     q = _mirror2_quaternion(1.0, 90.0)
-    assert np.abs(_matrix_rad(*_old_decomposition(q)) - _matrix_of_q(q)).max() > 1e-4
     assert np.abs(_matrix_rad(*scene_object_euler_rad_from_quaternion(q)) - _matrix_of_q(q)).max() <= 2e-15
 
 
