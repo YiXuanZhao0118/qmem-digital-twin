@@ -6,7 +6,7 @@
 
 - `GET /api/health` → `{"ok": true}`; `GET /api/scene` — scene snapshot
 - `POST /api/v3/solver/run-from-db` — run the optical trace over the persisted scene (produces beam segments: dir, pol, hit face)
-- `POST /api/v3/solver/mode-match` — the seed→TA mode-matching optimizer; seconds long, run on a worker thread so the server keeps answering meanwhile ([mode-matching.md](mode-matching.md))
+- `POST /api/v3/solver/mode-match` — the seed→TA mode-matching optimizer; seconds long, run on a worker thread so the server keeps answering meanwhile. Each move carries its roll pivot and absolute target `pose` (shape in [mode-matching.md](mode-matching.md#the-plans-moves))
 - `POST /api/v3/pop` — **on-demand** physical-optics diffraction: given the beam radius at the lens plus aperture and focal length, returns the focal-plane Airy intensity grid (diffraction rings). Never part of the live trace. See the POP field channel in [optics.md](optics.md)
 - `GET /api/v3/catalog/...`, `/api/v3/assets3d`, `/api/v3/components`
 - `GET/POST/PATCH/DELETE /api/kinds` — the Kind registry; `GET /api/kinds/op-sets` lists every op-set name a Kind row may reference (exactly what `POST /api/kinds` validates against, so the KIND editor's dropdown can offer code-side op sets that have no Kind row yet); `GET /api/kinds/roles` — every physics kind's port contract from the manifest (see below)

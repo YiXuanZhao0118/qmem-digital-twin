@@ -58,7 +58,7 @@ from app.optical.anchor_ops.emit_laser_source import _facet_beam
 from app.optical.beam_ray import BeamRay, QMatrix, Vec3
 from app.optical.jones import q_frame_angle_to_axis
 from app.optical.mode_match import gaussian_mode_overlap, time_reversed_target
-from app.optical.pose import V3Transform
+from app.optical.pose import V3Transform, point_body_to_lab_t
 
 # Cylindrical lens kinds roll matters for; spherical kinds it does not (used
 # only to flag DOF in the returned metadata — the tracer handles the physics).
@@ -101,8 +101,9 @@ class LensConfig:
 
     ``d_axial`` slides along the section axis; ``d_e2``/``d_e3`` decenter in the
     transverse plane; ``roll_deg`` rotates about the section axis through the
-    lens centre (only meaningful for a cylindrical lens). ``focal_mm`` overrides
-    ``focalLengthMm`` (Stage-2 inventory search); ``None`` keeps the asset's.
+    lens's optical centre (``MovableLens.pivot``; only meaningful for a
+    cylindrical lens). ``focal_mm`` overrides ``focalLengthMm`` (Stage-2
+    inventory search); ``None`` keeps the asset's.
     """
 
     d_axial: float = 0.0
@@ -119,10 +120,70 @@ class MovableLens:
     kind: str
     base_transform: V3Transform
     base_focal_mm: Optional[float]
+    # Lab point the roll turns about: the optical centre the tracer hits (see
+    # ``optical_centre_lab``). ``None`` = the slot's transform origin — what
+    # the model used before 2026-09-22, identical whenever the lens asset's
+    # entry anchor sits at its body origin.
+    pivot: Optional[Vec3] = None
 
     @property
     def is_cylindrical(self) -> bool:
         return self.kind in _CYLINDRICAL_KINDS
+
+
+# Which anchor is a movable element's "optical centre" — the roll pivot. The
+# same precedence as the web panel's ``ModeMatchingPanel.pivotOf``
+# (``CENTRE_ANCHORS``), so the two sides turn a lens about the same point.
+CENTRE_ANCHOR_IDS = ("optical_center", "intercept_in")
+
+
+def optical_centre_lab(slots) -> Vec3:
+    """The roll pivot of one scene object, from the slots the tracer sees:
+    its ``optical_center`` anchor, else its ``intercept_in`` (a lens's entry
+    face, on its optical axis), else its first anchor, else the first slot's
+    origin — each placed through the slot's ``effective_transform``.
+
+    Why an anchor and not the transform origin: the tracer hit-tests the
+    anchor, so turning about a line through it (parallel to the beam) is a
+    pure roll — the lens stays where the beam crosses it. Turning about an
+    asset origin that is off the optical axis would also carry the lens
+    sideways: a hidden decenter the optimizer never meant to make (decenter
+    is OFF by default)."""
+    for aid in CENTRE_ANCHOR_IDS:
+        for slot in slots:
+            for a in slot.asset.anchors:
+                if a.id == aid:
+                    return point_body_to_lab_t(a.position_body, slot.effective_transform)
+    for slot in slots:
+        if slot.asset.anchors:
+            return point_body_to_lab_t(slot.asset.anchors[0].position_body, slot.effective_transform)
+    return slots[0].effective_transform.origin
+
+
+def rigid_motion(
+    config: "LensConfig", axis: np.ndarray, e2: np.ndarray, e3: np.ndarray,
+) -> tuple[Optional[Rotation], np.ndarray]:
+    """The world-space motion one ``LensConfig`` stands for (about a pivot
+    the caller supplies to :func:`move_transform`),
+    ``x -> R·(x − pivot) + pivot + t``: ``(R or None for no roll, t)``."""
+    t = config.d_axial * axis + config.d_e2 * e2 + config.d_e3 * e3
+    if not config.roll_deg:
+        return None, t
+    return Rotation.from_rotvec(axis * math.radians(config.roll_deg)), t
+
+
+def move_transform(
+    transform: V3Transform, roll: Optional[Rotation], t: np.ndarray, pivot: np.ndarray,
+) -> V3Transform:
+    """Apply a :func:`rigid_motion` to a transform (a slot's, or a
+    SceneObject's — the motion is rigid, so moving the object moves every slot
+    under it by exactly this)."""
+    origin = _np(transform.origin)
+    rotation = transform.rotation
+    if roll is not None:
+        origin = pivot + roll.apply(origin - pivot)
+        rotation = roll * rotation
+    return V3Transform(origin=_v(origin + t), rotation=rotation)
 
 
 @dataclass(frozen=True)
@@ -173,7 +234,12 @@ class ModeMatchProblem:
         self._other_slots = [
             s for s in scene.slots if s.scene_object_id not in self._movable_ids
         ]
-        self._slot_by_id = {s.scene_object_id: s for s in scene.slots}
+        # EVERY slot of a movable object moves with it (a composite object —
+        # a lens plus a traced mount — is one rigid body). Keeping only one
+        # slot per object, as this used to, dropped the others from the trace.
+        self._slots_by_id: dict[str, list] = {}
+        for s in scene.slots:
+            self._slots_by_id.setdefault(s.scene_object_id, []).append(s)
         self._axis_np = _np(axis)
         self._e2_np = _np(e2)
         self._e3_np = _np(e3)
@@ -185,35 +251,30 @@ class ModeMatchProblem:
         slots = list(self._other_slots)
         for ln in self.lenses:
             c = config.get(ln.scene_object_id, LensConfig())
-            base = ln.base_transform
-            origin = (
-                _np(base.origin)
-                + c.d_axial * self._axis_np
-                + c.d_e2 * self._e2_np
-                + c.d_e3 * self._e3_np
-            )
-            rot = base.rotation
-            if c.roll_deg:
-                # Roll about the section axis THROUGH the lens centre. The lens
-                # centre is its transform origin (the intercept anchor sits at
-                # body 0), so the origin is unchanged and we only premultiply.
-                rot = Rotation.from_rotvec(
-                    self._axis_np * math.radians(c.roll_deg)
-                ) * rot
-            slot = self._slot_by_id[ln.scene_object_id]
-            dynamic = dict(slot.dynamic_sources or {})
-            if c.focal_mm is not None:
-                dynamic["focalLengthMm"] = c.focal_mm
-            slots.append(
-                dataclasses.replace(
-                    slot,
-                    effective_transform=V3Transform(
-                        origin=_v(origin), rotation=rot
-                    ),
-                    dynamic_sources=dynamic,
+            # One rigid world motion per object: the translation, plus a roll
+            # about the section axis through the lens's optical centre. The
+            # same motion, applied to the SceneObject pose, is what
+            # ``mode_match_service`` returns as the move's absolute ``pose``.
+            pivot = self.pivot_of(ln)
+            roll, t = rigid_motion(c, self._axis_np, self._e2_np, self._e3_np)
+            for slot in self._slots_by_id[ln.scene_object_id]:
+                dynamic = dict(slot.dynamic_sources or {})
+                if c.focal_mm is not None:
+                    dynamic["focalLengthMm"] = c.focal_mm
+                slots.append(
+                    dataclasses.replace(
+                        slot,
+                        effective_transform=move_transform(
+                            slot.effective_transform, roll, t, pivot,
+                        ),
+                        dynamic_sources=dynamic,
+                    )
                 )
-            )
         return V3AnchorScene(slots=slots)
+
+    def pivot_of(self, lens: MovableLens) -> np.ndarray:
+        """The lab point ``lens`` rolls about (see :class:`MovableLens`)."""
+        return _np(lens.pivot if lens.pivot is not None else lens.base_transform.origin)
 
     # -- reverse readout -----------------------------------------------------
 
@@ -424,6 +485,9 @@ def build_problem(
                 base_transform=slot.effective_transform,
                 base_focal_mm=(
                     slot.asset.default_params.get("focalLengthMm")
+                ),
+                pivot=optical_centre_lab(
+                    [s for s in scene.slots if s.scene_object_id == oid]
                 ),
             )
         )

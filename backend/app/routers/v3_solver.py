@@ -305,14 +305,22 @@ async def mode_match(
     from app.optical import mode_match_service
     from app.optical import solver as solver_module
     from app.optical.db_scene_loader import load_anchor_scene_from_db
+    from app.optical.pose import V3Pose
     from app.models.scene import SceneObject
 
     # Every DB read happens here, on the event loop, BEFORE the solve.
     scene = await load_anchor_scene_from_db(
         session, request.dynamic_overrides, scrub_time_ns=request.scrub_time_ns,
     )
-    rows = (await session.execute(select(SceneObject.id, SceneObject.name))).all()
-    names = {str(i): n for i, n in rows}
+    rows = (await session.execute(select(
+        SceneObject.id, SceneObject.name,
+        SceneObject.x_mm, SceneObject.y_mm, SceneObject.z_mm,
+        SceneObject.rx_deg, SceneObject.ry_deg, SceneObject.rz_deg,
+    ))).all()
+    names = {str(r[0]): r[1] for r in rows}
+    # The poses the solve starts from — each move's absolute target is
+    # computed against these (the same rows the scene was just loaded from).
+    poses = {str(r[0]): V3Pose(*(float(v) for v in r[2:8])) for r in rows}
 
     def _solve() -> dict:
         # Pure CPU from here on: the loaded scene and plain dicts only —
@@ -335,6 +343,7 @@ async def mode_match(
             focal_inventory=request.focal_inventory,
             wavelength_nm=request.wavelength_nm,
             object_names=names,
+            object_poses=poses,
         )
 
     try:

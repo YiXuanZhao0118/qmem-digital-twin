@@ -6,10 +6,13 @@ DB-independent on purpose (takes an already-loaded ``scene`` + one
 the loading and calls :func:`run_mode_match`.
 
 The plan reports each moved element as a WORLD-space delta — a translation plus
-an optional roll about the section axis through the element's centre — because
-that is what the frontend applies to the SceneObject pose (translating /
-rotating an object root moves its whole binding subtree rigidly, exactly like
-``MirrorCouplingPanel`` does). Focal swaps ride along as ``focalMm``.
+an optional roll about the section axis through the element's optical centre
+(``pivotWorldMm``) — because that is what the frontend applies to the
+SceneObject pose (translating / rotating an object root moves its whole
+binding subtree rigidly, exactly like ``MirrorCouplingPanel`` does), and ALSO
+as the absolute SceneObject ``pose`` that delta lands on, computed here with
+the same motion the model evaluated, so a client never has to guess the
+rotation point. Focal swaps ride along as ``focalMm``.
 """
 
 from __future__ import annotations
@@ -18,12 +21,18 @@ from typing import Optional
 
 import numpy as np
 
+from app.optical.align.frames import scene_object_euler_from_quaternion
+from app.optical.align.ts_compat import q_from_rotation_matrix
 from app.optical.aperture import gaussian_width_mm
 from app.optical.beam_ray import QMatrix
-from app.optical.mode_match_model import ModeMatchProblem, build_problem
+from app.optical.mode_match_model import (
+    ModeMatchProblem, build_problem, move_transform, rigid_motion,
+)
 from app.optical.mode_match_optimize import (
     DOFSpec, OptimizeResult, default_lens_dof, optimize,
 )
+from app.optical.pose import V3Pose, pose_to_transform
+from app.pose_quantize import quantize_mm
 
 
 def _w_um(q: complex, wavelength_nm: float) -> Optional[float]:
@@ -101,18 +110,42 @@ def _range_specs(
     return specs
 
 
+def absolute_pose(so_pose: V3Pose, roll, translate: np.ndarray, pivot: np.ndarray) -> dict:
+    """The SceneObject pose a move lands on: the model's rigid motion
+    (``mode_match_model.move_transform`` — the very motion ``evaluate`` applied
+    to the object's slots) applied to the object's current pose, in the
+    backend's pose convention (``pose._rotation_of``), decomposed back to
+    Euler the way the align endpoints do (``align.frames``, on the 1e-9°
+    grid). A pure translation keeps the stored angles verbatim."""
+    moved = move_transform(pose_to_transform(so_pose), roll, translate, pivot)
+    if roll is None:
+        rx, ry, rz = so_pose.rx_deg, so_pose.ry_deg, so_pose.rz_deg
+    else:
+        rx, ry, rz = scene_object_euler_from_quaternion(
+            q_from_rotation_matrix(*moved.rotation.as_matrix().flatten())
+        )
+    return {
+        "xMm": quantize_mm(moved.origin.x), "yMm": quantize_mm(moved.origin.y),
+        "zMm": quantize_mm(moved.origin.z),
+        "rxDeg": rx, "ryDeg": ry, "rzDeg": rz,
+    }
+
+
 def _shape_plan(
     problem, result, baseline, axis, e2, e3, names, wavelength_nm,
-    *, key, label, column, eta_target, l_max_mm, endpoint_locked,
+    *, key, label, column, eta_target, l_max_mm, endpoint_locked, object_poses,
 ) -> dict:
     """Turn one OptimizeResult into a JSON solution card."""
     final = problem.evaluate(result.config) if result.config else baseline
+    lens_by_id = {ln.scene_object_id: ln for ln in problem.lenses}
     moves = []
     for oid, c in result.config.items():
-        translate = c.d_axial * axis + c.d_e2 * e2 + c.d_e3 * e3
+        roll, translate = rigid_motion(c, axis, e2, e3)
         if not (abs(c.d_axial) + abs(c.d_e2) + abs(c.d_e3) + abs(c.roll_deg) > 1e-9
                 or c.focal_mm is not None):
             continue
+        pivot = problem.pivot_of(lens_by_id[oid])
+        so_pose = object_poses.get(oid)
         moves.append({
             "objectId": oid,
             "name": names.get(oid, oid),
@@ -120,6 +153,13 @@ def _shape_plan(
             "rotateAxisWorld": {"x": float(axis[0]), "y": float(axis[1]), "z": float(axis[2])},
             "rotateDeg": float(c.roll_deg),
             "focalMm": c.focal_mm,
+            # The roll turns about this lab point (the optical centre, see
+            # ``mode_match_model.optical_centre_lab``) ...
+            "pivotWorldMm": {"x": float(pivot[0]), "y": float(pivot[1]), "z": float(pivot[2])},
+            # ... and this is where the SceneObject ends up: the absolute
+            # target, ready for PATCH /api/objects/{id}. None when the caller
+            # passed no pose for the object.
+            "pose": absolute_pose(so_pose, roll, translate, pivot) if so_pose is not None else None,
         })
     return {
         "key": key, "label": label, "column": column,
@@ -153,6 +193,7 @@ def run_mode_match(
     focal_inventory: Optional[dict[str, list[float]]] = None,
     wavelength_nm: float = 852.0,
     object_names: Optional[dict[str, str]] = None,
+    object_poses: Optional[dict[str, V3Pose]] = None,
 ) -> dict:
     """Build the problem, optimize, and shape a JSON plan.
 
@@ -215,7 +256,8 @@ def run_mode_match(
     def shape(res, key, label, col, tgt, lmax, ep_locked):
         return _shape_plan(problem, res, baseline, axis, e2, e3, names, wavelength_nm,
                            key=key, label=label, column=col, eta_target=tgt,
-                           l_max_mm=lmax, endpoint_locked=ep_locked)
+                           l_max_mm=lmax, endpoint_locked=ep_locked,
+                           object_poses=object_poses or {})
 
     solutions: list[dict] = []
 

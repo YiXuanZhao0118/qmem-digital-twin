@@ -59,8 +59,11 @@ axis — so a cylindrical lens's roll is a real degree of freedom.
   `time_reversed_target(Q)` (the phase-conjugate / frame-mirror map above).
 - `backend/app/optical/mode_match_model.py` — `build_problem(...)` +
   `ModeMatchProblem.evaluate(config)`. Re-poses lenses **in-memory** (rebuild
-  the frozen `V3AnchorBindingSlot` with a shifted `effective_transform`; roll =
-  premultiply `Rotation.from_rotvec(axis·θ)` about the lens centre; focal via
+  the frozen `V3AnchorBindingSlot`s with a moved `effective_transform`: one
+  rigid world motion per object, `x → R·(x − pivot) + pivot + t`, applied to
+  **every** slot of that object — `rigid_motion` + `move_transform`; roll =
+  `Rotation.from_rotvec(axis·θ)` about the lens's **optical centre**, see
+  [The roll pivot](#the-roll-pivot); focal via
   `dynamic_sources['focalLengthMm']`) and re-runs the exact `trace_ray_anchor_scene`
   on the reverse ray only — no analytic lens model to drift from the
   authoritative physics, no DB round-trip. `dynamic_overrides` cannot move an
@@ -79,7 +82,10 @@ axis — so a cylindrical lens's roll is a real degree of freedom.
   forward_result, …)`: DB-independent glue that builds the problem, computes the
   section length, optimizes, and shapes a JSON plan whose per-element move is a
   WORLD-space translation + roll-about-the-section-axis + focal (what the
-  frontend applies to the SceneObject pose, MirrorCoupling-style).
+  frontend applies to the SceneObject pose, MirrorCoupling-style) **plus, since
+  2026-09-22, the roll pivot and the absolute SceneObject `pose` the move lands
+  on** (`absolute_pose`), so a client never has to reconstruct the rotation
+  point. Shape under [The plan's moves](#the-plans-moves).
 - `POST /api/v3/solver/mode-match` (`routers/v3_solver.py`) — loads the DB
   scene, traces the seed once, calls `run_mode_match`, returns the plan.
   **The solve runs on a worker thread** (`run_in_threadpool`, 2026-09-22):
@@ -110,6 +116,70 @@ fixed_focal=…)`), reporting the smallest span the lenses can occupy while stil
 meeting η. `run_mode_match` returns `{mode, detectedLenses, spanMm, solutions:[
 {key,label,column,eta,lengthMm,feasible,reason,moves,…}]}`; the panel renders the
 columns side by side with a Preview/Apply per card.
+
+## The plan's moves
+
+Each solution's `moves[]` (router `routers/v3_solver.py`, shaped by
+`mode_match_service._shape_plan`):
+
+```json
+{
+  "objectId": "lens0", "name": "LENS0",
+  "translateWorldMm": {"x": 0.0, "y": 0.0, "z": -1.5522350119376385},
+  "rotateAxisWorld": {"x": 0.0, "y": 0.0, "z": 1.0},
+  "rotateDeg": 27.219526706406157,
+  "focalMm": null,
+  "pivotWorldMm": {"x": 0.0, "y": 0.0, "z": 0.0},
+  "pose": {"xMm": 0.0, "yMm": 0.0, "zMm": -1.552235, "rxDeg": 0.0, "ryDeg": 0.0, "rzDeg": -27.219526706}
+}
+```
+
+(A real move from `test_mode_match_service.py`'s synthetic scene, lens at the
+origin with a zero pose. Note `rzDeg` comes out **negative** for a positive
+roll about +z — the SceneObject Euler convention maps rz = +90° to +X → −Y
+([anchors.md](anchors.md)) — which is exactly the kind of thing a client should
+not have to re-derive.)
+
+- The first five fields are unchanged (the web panel reads only those): a
+  world translation `t`, a roll of `rotateDeg` about `rotateAxisWorld` (the
+  section axis), an optional focal swap.
+- `pivotWorldMm` (new) is the lab point the roll turns about; `pose` (new) is
+  the SceneObject pose that results — `x → R·(x − pivot) + pivot + t` applied
+  to the object's pose at solve time, in the backend pose convention
+  (`pose._rotation_of`), angles decomposed as the align endpoints do
+  (`align.frames`, 1e-9° grid; a pure translation keeps the stored angles
+  verbatim), position on the 1 nm grid. It is exactly the motion
+  `ModeMatchProblem` applied while scoring, so `PATCH /api/objects/{id}` with it
+  reproduces the reported η. Pinned by
+  `test_mode_match_service.py::test_absolute_pose_lands_every_slot_where_the_model_put_it`.
+  Like the panel's own resolution, it is absolute against the scene the solve
+  read — apply it to that scene, not after further edits.
+
+## The roll pivot
+
+The web panel rolled a lens about its **optical-centre anchor**
+(`ModeMatchingPanel.pivotOf`: `optical_center`, else `intercept_in`); the
+model rolled the slot about its **transform origin** (the lens asset's CAD
+origin under the binding chain). Settled 2026-09-22: **the optical-centre
+anchor is right for the tracer**, and the model now uses it
+(`mode_match_model.optical_centre_lab`, same precedence as the panel, read off
+the traced slots).
+
+- The tracer hit-tests the anchor. Turning about a line through it parallel to
+  the beam is a pure roll: the lens stays where the beam crosses it. Turning
+  about an asset origin that is off the optical axis also carries the lens
+  sideways — a hidden decenter, while decenter is OFF by default.
+- That hidden decenter does not show in η (a thin lens's decenter tilts the
+  chief ray, it does not change q — the pointing error the objective does not
+  penalize, see above), so the old model would report a good η and the twin
+  would draw a steered beam after Apply. Pinned by
+  `test_mode_match_model.py::test_roll_turns_about_the_optical_centre`.
+- For every lens in the scene until now the two points coincide (the entry
+  anchor sits at the asset origin — checked on the live `A230TM-B`), so no
+  earlier result changes; the difference is for the next asset whose CAD
+  origin is off-axis.
+- The same change makes the model move **every** traced slot of a moved
+  object; it used to re-add only one and drop the rest from the trace.
 
 ## Constraints & feasibility
 
@@ -158,7 +228,10 @@ max length / endpoint mirror + lock; a **Lock element angles** checkbox (default
 in one `updateSceneObjects` undo step. A plan move → pose: translate the object
 by `translateWorldMm` and roll it about the lens's optical-centre anchor
 (`resolveAnchorPosesLab`) — the same rigid transform the backend applied to
-`effective_transform`.
+`effective_transform` (the same pivot since 2026-09-22, see
+[The roll pivot](#the-roll-pivot); before, the two agreed only because every
+lens's entry anchor sat at its asset origin). The panel does not read the
+move's `pose` / `pivotWorldMm`; they are for other clients.
 
 **A move is a DELTA from the geometry at solve time, so the panel resolves it to
 an ABSOLUTE pose once** (`planFromSolution`, `ModeMatchingPanel.tsx:87`), when the

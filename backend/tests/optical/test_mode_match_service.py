@@ -8,7 +8,9 @@ auto-detection, and the multi-solution output without touching the DB.
 import math
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
+from scipy.spatial.transform import Rotation
 
 from app.optical import anchor_ops  # noqa: F401
 from app.optical.anchor_tracer import (
@@ -16,8 +18,9 @@ from app.optical.anchor_tracer import (
     V3AssetAnchorSnapshot,
 )
 from app.optical.beam_ray import Vec3
-from app.optical.mode_match_service import run_mode_match
-from app.optical.pose import V3Transform
+from app.optical.mode_match_model import LensConfig, move_transform, rigid_motion
+from app.optical.mode_match_service import absolute_pose, run_mode_match
+from app.optical.pose import V3Pose, V3Transform, compose_transforms, pose_to_transform
 
 WL = 852.0
 LENS_Z = 0.0
@@ -105,3 +108,63 @@ def test_method1_requires_both_endpoints():
     with pytest.raises(ValueError):
         run_mode_match(_scene(), _forward(), movable_ids=[], start_id="bs",
                        endpoint_id=None, eta_target=0.5, **_kw())
+
+
+# ── absolute target poses (2026-09-22) ──────────────────────────────────────
+
+def _close_transform(a: V3Transform, b: V3Transform) -> None:
+    assert (a.origin.x, a.origin.y, a.origin.z) == pytest.approx(
+        (b.origin.x, b.origin.y, b.origin.z), abs=2e-6)  # 1 nm storage grid
+    assert np.abs(a.rotation.as_matrix() - b.rotation.as_matrix()).max() < 1e-9
+
+
+@pytest.mark.parametrize("roll_deg", [0.0, 37.0, -90.0])
+def test_absolute_pose_lands_every_slot_where_the_model_put_it(roll_deg):
+    """The returned pose, re-read through the tracer's own chain
+    (SceneObject pose ∘ binding transform), puts the lens slot exactly where
+    ``ModeMatchProblem`` moved it while scoring — whatever the object's
+    rotation, the binding offset, or the roll."""
+    so = V3Pose(x_mm=-120.5, y_mm=44.25, z_mm=908.8, rx_deg=12.0, ry_deg=-30.0, rz_deg=45.0)
+    binding = V3Transform(origin=Vec3(3.0, -7.5, 11.0),
+                          rotation=Rotation.from_euler("xyz", [10, -20, 30], degrees=True))
+    slot_t = compose_transforms(pose_to_transform(so), binding)
+    axis = np.array([0.6, 0.0, 0.8])
+    e2 = np.array([0.0, 1.0, 0.0])
+    e3 = np.cross(axis, e2)
+    pivot = np.array([-118.0, 40.0, 915.0])  # the optical centre, off the origins
+    cfg = LensConfig(d_axial=4.25, d_e2=-0.5, d_e3=0.125, roll_deg=roll_deg)
+    roll, t = rigid_motion(cfg, axis, e2, e3)
+
+    pose = absolute_pose(so, roll, t, pivot)
+    got = compose_transforms(pose_to_transform(V3Pose(
+        pose["xMm"], pose["yMm"], pose["zMm"], pose["rxDeg"], pose["ryDeg"], pose["rzDeg"])), binding)
+    _close_transform(got, move_transform(slot_t, roll, t, pivot))
+    if roll_deg == 0.0:  # a pure translation keeps the stored angles verbatim
+        assert (pose["rxDeg"], pose["ryDeg"], pose["rzDeg"]) == (12.0, -30.0, 45.0)
+
+
+def test_moves_carry_pivot_and_absolute_pose():
+    poses = {"lens0": V3Pose(z_mm=LENS_Z), "m5": V3Pose(z_mm=200.0)}
+    out = run_mode_match(_scene(), _forward(), movable_ids=["lens0"], start_id="bs",
+                         endpoint_id="m5", eta_target=0.5, object_poses=poses, **_kw())
+    moves = [m for s in out["solutions"] for m in s["moves"]]
+    assert moves, "the optimizer moved nothing — the test would prove nothing"
+    for m in moves:
+        # The lens's intercept_in sits at its body origin here, so the pivot
+        # is the lens's own position on the axis.
+        assert m["pivotWorldMm"] == pytest.approx({"x": 0.0, "y": 0.0, "z": LENS_Z})
+        # The pose is the move's own fields applied to the current pose:
+        # rotate about the pivot, then translate — what a client would do.
+        t = m["translateWorldMm"]
+        roll = (Rotation.from_rotvec(np.array(list(m["rotateAxisWorld"].values()))
+                                     * np.radians(m["rotateDeg"])) if m["rotateDeg"] else None)
+        expected = move_transform(pose_to_transform(poses[m["objectId"]]), roll,
+                                  np.array([t["x"], t["y"], t["z"]]),
+                                  np.array(list(m["pivotWorldMm"].values())))
+        p = m["pose"]
+        _close_transform(pose_to_transform(V3Pose(
+            p["xMm"], p["yMm"], p["zMm"], p["rxDeg"], p["ryDeg"], p["rzDeg"])), expected)
+    # Without poses the delta fields are all there is (the web's contract).
+    bare = run_mode_match(_scene(), _forward(), movable_ids=["lens0"], start_id="bs",
+                          endpoint_id="m5", eta_target=0.5, **_kw())
+    assert all(m["pose"] is None for s in bare["solutions"] for m in s["moves"])

@@ -16,13 +16,14 @@ import pytest
 from app.optical import anchor_ops  # noqa: F401  (register ops)
 from app.optical.anchor_tracer import (
     V3Anchor, V3AnchorBindingSlot, V3AnchorScene, V3AssetAnchorSnapshot,
+    trace_ray_anchor_scene,
 )
 from app.optical.beam_ray import BeamRay, QMatrix, Vec3
 from app.optical.mode_match import gaussian_mode_overlap, time_reversed_target
 from app.optical.mode_match_model import (
-    LensConfig, ModeMatchProblem, MovableLens,
+    LensConfig, ModeMatchProblem, MovableLens, optical_centre_lab,
 )
-from app.optical.pose import V3Transform
+from app.optical.pose import V3Transform, point_body_to_lab_t
 
 WL = 852.0
 F = 100.0
@@ -145,3 +146,110 @@ def test_seed_equal_to_reverse_beam_is_not_a_match():
     )
     assert same.evaluate({}).eta < 0.99
     assert prob.evaluate({}).eta == pytest.approx(1.0, abs=1e-6)
+
+
+# ── the roll pivot (2026-09-22) ─────────────────────────────────────────────
+
+def _off_origin_problem(pivot_from_anchor: bool) -> ModeMatchProblem:
+    """The same thin lens, but its asset origin sits 8 mm off the optical
+    axis (the anchor is at body y=+8, the slot origin at lab y=-8, so the
+    anchor — where the tracer hits — is still on the beam)."""
+    anchor = V3Anchor(
+        id="intercept_in", position_body=Vec3(0, 8, 0), axis_x_body=Vec3(0, 0, 1),
+        axis_y_body=Vec3(0, 1, 0), axis_z_body=Vec3(1, 0, 0), aperture_mm=25.4,
+    )
+    slot = V3AnchorBindingSlot(
+        scene_object_id="lens0", binding_id="b0",
+        asset=V3AssetAnchorSnapshot(
+            catalog_id="off_origin_lens", kind="lens", anchors=[anchor],
+            default_params={"focalLengthMm": F, "transmittance": 1.0},
+        ),
+        effective_transform=V3Transform(origin=Vec3(0, -8, 0)),
+    )
+    base, _ = _make_problem()
+    lens = MovableLens(
+        scene_object_id="lens0", name="lens0", kind="lens",
+        base_transform=slot.effective_transform, base_focal_mm=F,
+        pivot=optical_centre_lab([slot]) if pivot_from_anchor else None,
+    )
+    return ModeMatchProblem(
+        scene=V3AnchorScene(slots=[slot]), lenses=[lens],
+        reverse_ray=base.reverse_ray, seed_q=base.seed_q,
+        compare_point=base.compare_point, axis=base.axis, e2=base.e2, e3=base.e3,
+        wavelength_nm=WL,
+    )
+
+
+def test_optical_centre_is_the_hit_anchor_not_the_asset_origin():
+    prob = _off_origin_problem(pivot_from_anchor=True)
+    c = prob.lenses[0].pivot
+    assert (c.x, c.y, c.z) == pytest.approx((0.0, 0.0, 0.0), abs=1e-12)
+
+
+def _anchor_and_exit_dir(prob: ModeMatchProblem, config: dict):
+    """Where the lens's hit anchor sits after ``config``, and which way the
+    reverse beam leaves the lens."""
+    scene = prob._build_scene(config)
+    slot = next(s for s in scene.slots if s.scene_object_id == "lens0")
+    a = point_body_to_lab_t(slot.asset.anchors[0].position_body, slot.effective_transform)
+    trace = trace_ray_anchor_scene(prob.reverse_ray, scene, prob.trace_options)
+    # The leg that starts at the lens (z = 0) — the one the lens op emitted.
+    out = next(s for s in trace.lab_segments if abs(s.start.z) < 1e-6)
+    d = Vec3(out.end.x - out.start.x, out.end.y - out.start.y, out.end.z - out.start.z).normalized()
+    return a, d
+
+
+def test_roll_turns_about_the_optical_centre():
+    """A roll must be a pure roll: the anchor the tracer hits stays on the
+    beam, the beam is not steered, and a spherical lens stays matched.
+
+    Turning about the asset origin instead (the model before 2026-09-22)
+    carries the lens 11.3 mm sideways — a decenter nobody asked for — and the
+    reverse beam leaves the lens steered by ~decenter/f. The overlap eta does
+    NOT see that (a thin lens's decenter tilts the chief ray, it does not
+    change q; mode-matching.md: a pointing error the objective does not
+    penalize), so the optimizer would have reported a fine eta while the twin
+    drew a deflected beam after Apply."""
+    prob = _off_origin_problem(pivot_from_anchor=True)
+    assert prob.evaluate({}).eta == pytest.approx(1.0, abs=1e-6)
+    for roll in (17.0, 90.0, 133.0):
+        cfg = {"lens0": LensConfig(roll_deg=roll)}
+        assert prob.evaluate(cfg).eta == pytest.approx(1.0, abs=1e-6)
+        a, d = _anchor_and_exit_dir(prob, cfg)
+        assert (a.x, a.y, a.z) == pytest.approx((0.0, 0.0, 0.0), abs=1e-9)
+        assert (d.x, d.y, d.z) == pytest.approx((0.0, 0.0, -1.0), abs=1e-9)
+
+    old = _off_origin_problem(pivot_from_anchor=False)
+    a, d = _anchor_and_exit_dir(old, {"lens0": LensConfig(roll_deg=90.0)})
+    assert math.hypot(a.x, a.y) == pytest.approx(8.0 * math.sqrt(2.0), abs=1e-9)
+    assert math.hypot(d.x, d.y) > 0.05  # ~11.3 mm / 100 mm of steer
+
+
+def test_every_slot_of_a_moved_object_moves_rigidly():
+    """A movable object with two traced slots (a lens and a traced mount)
+    moves as one body; the model used to keep only one of them."""
+    prob, _ = _make_problem()
+    mount = V3AnchorBindingSlot(
+        scene_object_id="lens0", binding_id="mount",
+        asset=V3AssetAnchorSnapshot(
+            catalog_id="mount", kind="beam_dump",
+            anchors=[V3Anchor(id="intercept_in", position_body=Vec3(0, 0, 0),
+                              axis_x_body=Vec3(0, 0, 1), axis_y_body=Vec3(0, 1, 0),
+                              axis_z_body=Vec3(1, 0, 0), aperture_mm=1.0)],
+        ),
+        effective_transform=V3Transform(origin=Vec3(0, 30, 0)),
+    )
+    two = ModeMatchProblem(
+        scene=V3AnchorScene(slots=[*prob.scene.slots, mount]), lenses=prob.lenses,
+        reverse_ray=prob.reverse_ray, seed_q=prob.seed_q, compare_point=prob.compare_point,
+        axis=prob.axis, e2=prob.e2, e3=prob.e3, wavelength_nm=WL,
+    )
+    moved = two._build_scene({"lens0": LensConfig(d_axial=3.0, roll_deg=90.0)}).slots
+    by_binding = {s.binding_id: s.effective_transform for s in moved if s.scene_object_id == "lens0"}
+    assert set(by_binding) == {"b0", "mount"}
+    # Pivot = the lens slot origin here (MovableLens.pivot unset, the lens
+    # anchor is at body 0); axis +z, +90 deg: (0, 30, 0) -> (-30, 0, 3).
+    o = by_binding["mount"].origin
+    assert (o.x, o.y, o.z) == pytest.approx((-30.0, 0.0, 3.0), abs=1e-9)
+    o = by_binding["b0"].origin
+    assert (o.x, o.y, o.z) == pytest.approx((0.0, 0.0, 3.0), abs=1e-12)

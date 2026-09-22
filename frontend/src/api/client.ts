@@ -549,6 +549,14 @@ export interface ModeMatchMove {
   rotateDeg: number;
   /** Suggested focal length (mm) if the Stage-2 inventory swap chose one. */
   focalMm: number | null;
+  /** The lab point the roll turns about: the lens's optical centre
+   *  (`optical_center`, else `intercept_in`) — the same point
+   *  `ModeMatchingPanel.pivotOf` picks. */
+  pivotWorldMm?: { x: number; y: number; z: number };
+  /** The absolute SceneObject pose the move lands on, computed by the backend
+   *  with the motion it scored (2026-09-22). The panel still derives its own
+   *  from the deltas above; the two agree. */
+  pose?: { xMm: number; yMm: number; zMm: number; rxDeg: number; ryDeg: number; rzDeg: number } | null;
 }
 
 export interface ModeMatchWidth {
