@@ -126,3 +126,5 @@ Which ends a part offers comes from `componentBindings.pigtailPortBindings` — 
 ## exposedFaces
 
 Through `exposedFaces` a Component maps outward semantic ports (e.g. `optical_in`) onto `assetBindingId + anchorId`, so a composite exposes only semantic optical ports to the outside (faces are retired → anchors, see [anchors.md](anchors.md)).
+
+**Writing it**: `POST /api/components` and `PUT /api/components/{id}` both take `exposedFaces` as a JSON list (`schemas.ComponentBase.exposed_faces` / `ComponentUpdate.exposed_faces`, `backend/app/schemas.py:426` / `:450`). On a PUT, omitted = untouched and `null` clears it; a `locked` Component refuses it with 422 like any other field. Until 2026-09-22 `ComponentUpdate` did not declare the field, so a PUT carrying it answered 200 and dropped it silently (pydantic ignores undeclared keys) — pinned by `backend/tests/test_component_exposed_faces.py`. The web's COMPONENT editor does not edit `exposedFaces` yet (`ComponentsEditor.tsx:24`, "re-defined later"); it only reads them for the preview, so the fix mattered to the second client (qmem-blender's PHY component editor), not to a web flow.
