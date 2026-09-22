@@ -11,7 +11,9 @@ The snapshot rule is the solver's: ``load_rf_inputs`` +
 ``/api/v3/solver/run-from-db`` merges onto each AOM slot). So for the same
 ``scrubTimeNs`` the ``aomDrives`` returned here are exactly the drives the
 trace used — including ``scrubTimeNs = null`` = the "scrub stopped" rest
-snapshot, where each PPG sits at its ``restState``.
+snapshot, where each PPG sits at its ``restState``. Each drive also carries
+``eta``, the first-order efficiency the tracer's AOM op applies with it,
+computed over the loader's own AOM slots (``app/optical/aom_readout.py``).
 """
 
 from __future__ import annotations
@@ -22,6 +24,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
+from app.optical.aom_readout import aom_drive_efficiencies
+from app.optical.db_scene_loader import load_anchor_scene_from_db
 from app.optical.rf_resolve import (
     RfReadout,
     load_rf_inputs,
@@ -68,7 +72,10 @@ class RfPropagationOut(CamelModel):
     # {"rfDrivePowerW": 0.0} when wired but gated off. Manual-mode and
     # unwired AOMs are absent (they keep their own / rated drive). Passed
     # through verbatim from ``aom_drives_from_snapshot`` so the keys cannot
-    # drift from what the trace reads.
+    # drift from what the trace reads — plus "eta", the on-Bragg first-order
+    # efficiency the tracer's AOM op applies with that drive at the scene's
+    # emitter wavelength (``aom_readout``); absent only for an AOM the tracer
+    # has no slot for.
     aom_drives: dict[str, dict[str, float]]
     # Every timing-section boundary across all programs, plus 0 (sorted).
     section_starts_ns: list[float]
@@ -104,6 +111,19 @@ async def rf_propagation(
     session: AsyncSession = Depends(get_session),
 ) -> RfPropagationOut:
     """The RF signal at every port for one scrub time, plus the per-AOM drive
-    the optical trace uses at that instant. See the module docstring."""
+    the optical trace uses at that instant and the first-order efficiency
+    that drive buys (``eta``). See the module docstring."""
     inputs = await load_rf_inputs(session)
-    return readout_to_out(rf_readout_at(inputs, request.scrub_time_ns), request.scrub_time_ns)
+    readout = rf_readout_at(inputs, request.scrub_time_ns)
+    out = readout_to_out(readout, request.scrub_time_ns)
+    if readout.aom_drives:
+        # The AOM slots exactly as the tracer receives them at this time (the
+        # loader merges this same drive onto them), so eta is the value the
+        # op applies — see ``aom_readout``.
+        scene = await load_anchor_scene_from_db(session, scrub_time_ns=request.scrub_time_ns)
+        etas = aom_drive_efficiencies(scene, readout.aom_drives)
+        out.aom_drives = {
+            oid: {**drive, **({"eta": etas[oid]} if oid in etas else {})}
+            for oid, drive in readout.aom_drives.items()
+        }
+    return out

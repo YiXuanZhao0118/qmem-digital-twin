@@ -23,6 +23,7 @@ import {
   labMmToThree,
   MM_PER_THREE_UNIT,
   sceneObjectEulerFromQuaternion,
+  sceneObjectEulerRadFromQuaternion,
   sceneObjectToQuaternion,
   threeDirToLab,
   threeToLabMm,
@@ -221,6 +222,49 @@ describe("sceneObjectEulerFromQuaternion", () => {
       expect(out.ryDeg).toBeCloseTo(input.ryDeg, 9);
       expect(out.rzDeg).toBeCloseTo(input.rzDeg, 9);
     }
+  });
+
+  // The gimbal pole (2026-09-22). ry = asin(r20) + a fixed 1e-8 cut read
+  // rounding noise there; see docs/introduce/anchors.md, Pose quantization.
+  const matrixOf = (q: THREE.Quaternion): number[] =>
+    new THREE.Matrix4().makeRotationFromQuaternion(q.clone().normalize()).elements;
+  const matrixRad = (a: number, b: number, g: number): number[] => {
+    const q = sceneObjectToQuaternion(fakeSceneObject(
+      THREE.MathUtils.radToDeg(a), THREE.MathUtils.radToDeg(b), THREE.MathUtils.radToDeg(g),
+    ));
+    return matrixOf(q);
+  };
+  const maxDiff = (x: number[], y: number[]) => Math.max(...x.map((v, i) => Math.abs(v - y[i])));
+
+  it("recomposes to rounding at and near ry = ±90°", () => {
+    let worst = 0;
+    for (const sign of [1, -1]) {
+      for (const off of [0, 1e-9, 1e-7, 1e-5, 1e-3]) {
+        for (const [rx, rz] of [[0, 0], [12.5, -30.25], [-135, 0], [179.9, 45], [-0.4634, 88.123456789]]) {
+          const q = sceneObjectToQuaternion(fakeSceneObject(rx, sign * (90 - off), rz));
+          const { alpha, beta, gamma } = sceneObjectEulerRadFromQuaternion(q);
+          worst = Math.max(worst, maxDiff(matrixRad(alpha, beta, gamma), matrixOf(q)));
+        }
+      }
+    }
+    // (The deg<->rad hop in matrixRad costs a few ulp of its own.)
+    expect(worst).toBeLessThan(4e-15);
+  });
+
+  it("puts MIRROR2's roll-90 align exactly on the pole and its direction on the beam", () => {
+    // Live MIRROR2: alignSpec direction +y, rolled 90° onto a beam 8.1 mrad off
+    // the y axis. The old decomposition returned ry 8.5e-7° short of -90 and a
+    // pose whose +y was 2.75e-4 rad off the beam.
+    const beam = new THREE.Vector3(0.008087770214956286, 0.999967293451616, 0).normalize();
+    const q = new THREE.Quaternion().setFromAxisAngle(beam, Math.PI / 2)
+      .multiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), beam));
+    const e = sceneObjectEulerFromQuaternion(q);
+    expect(Math.abs(e.ryDeg)).toBe(90);
+    const d = new THREE.Vector3(0, 1, 0).applyQuaternion(
+      sceneObjectToQuaternion(fakeSceneObject(e.rxDeg, e.ryDeg, e.rzDeg)),
+    );
+    expect(d.clone().cross(beam).length()).toBeLessThan(1e-9);
+    expect(d.dot(beam)).toBeGreaterThan(0);
   });
 });
 

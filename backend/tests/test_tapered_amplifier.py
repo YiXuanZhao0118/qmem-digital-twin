@@ -674,3 +674,57 @@ def test_input_mode_match_lateral_offset_penalty():
     hit_off = dataclasses.replace(ctx.hit, offset_y_body=0.3)   # one waist off-axis
     ctx_off = dataclasses.replace(ctx, hit=hit_off)
     assert _mode_match_eta(ray, ctx_off) == pytest.approx(math.exp(-2 * 0.09 / 0.18), rel=1e-6)
+
+
+# --- The seed coupling is reported on the trace (2026-09-22) ----------------
+
+def test_seed_coupling_is_on_the_segment_that_ends_on_the_facet():
+    """``labSegments[*].taSeedCoupling``: the polarization overlap and the
+    mode overlap the TA op multiplies the seed by, on the one segment that
+    ends on the TA's intercept_in — and the reported coupled power IS the
+    power the op amplified (the output equals the gain model applied to it)."""
+    from app.optical import anchor_ops  # noqa: F401  (registers ops)
+    from app.optical.anchor_ops.misc_ops import ta_forward_power_mw
+    from app.optical.anchor_tracer import (
+        AnchorTraceOptions, V3AnchorBindingSlot, V3AnchorScene, V3AssetAnchorSnapshot,
+    )
+    from app.optical.solver import solve_anchor_scene
+
+    params = {
+        "smallSignalGainDb": 20.0, "saturationPowerMw": 50.0, "centerWavelengthNm": 780.0,
+        "inputSpatialModeX": {"waistUm": 300.0}, "inputSpatialModeY": {"waistUm": 300.0},
+    }
+    slot = V3AnchorBindingSlot(
+        scene_object_id="ta-1", binding_id="b0",
+        asset=V3AssetAnchorSnapshot(
+            catalog_id="ta", kind="tapered_amplifier",
+            anchors=[
+                _anchor("intercept_in", (0.0, 0.0, 0.0), (-1.0, 0.0, 0.0), axis_y=(0.0, 0.0, 1.0)),
+                _anchor("intercept_out", (60.0, 0.0, 0.0), (1.0, 0.0, 0.0), axis_y=(0.0, 0.0, 1.0)),
+            ],
+            default_params=params,
+        ),
+        effective_transform=_identity_transform(),
+    )
+    theta = math.radians(30.0)
+    zr = math.pi * 0.5 * 0.5 / (780.0 * 1e-6)            # a 0.5 mm seed into a 0.3 mm mode
+    seed = _seed_ray().replaced(
+        jones=(complex(math.cos(theta), 0.0), complex(math.sin(theta), 0.0)),
+        qx=complex(0.0, zr), qy=complex(0.0, zr), power_mw=2.0,
+    )
+    out = solve_anchor_scene(V3AnchorScene(slots=[slot]), [seed], AnchorTraceOptions()).to_dict()
+
+    carrying = [s for s in out["labSegments"] if s["taSeedCoupling"] is not None]
+    assert len(carrying) == 1
+    seg = carrying[0]
+    assert (seg["sceneObjectId"], seg["faceInId"], seg["isTerminal"]) == ("ta-1", "intercept_in", False)
+    c = seg["taSeedCoupling"]
+    assert set(c) == {"etaMode", "polarizationOverlap", "coupledFraction", "seedPowerMw", "coupledPowerMw"}
+    assert c["polarizationOverlap"] == pytest.approx(math.cos(theta) ** 2, abs=1e-12)
+    assert 0.3 < c["etaMode"] < 0.99                       # a real, partial mismatch
+    assert c["coupledFraction"] == pytest.approx(c["etaMode"] * c["polarizationOverlap"], rel=1e-15)
+    assert c["seedPowerMw"] == pytest.approx(2.0)
+    assert c["coupledPowerMw"] == pytest.approx(2.0 * c["coupledFraction"], rel=1e-15)
+    # The op amplified exactly that power: forward output = gain(coupled).
+    forward = next(s for s in out["labSegments"] if s["isTerminal"] and s["emissionKey"] == "forward")
+    assert forward["powerMw"] == ta_forward_power_mw(c["coupledPowerMw"], params)

@@ -52,6 +52,7 @@ from app.optical.align.point_dir import (
     compute_translate_only_pose,
     pick_polariser_centre,
 )
+from app.optical.align.frames import scene_object_euler_from_quaternion
 from app.optical.align.service import mirror_facts_from_object
 from app.optical.align.ts_compat import to_json, v_from_json
 from app.optical.kinds.aom.physics import bragg_angle_rad
@@ -220,6 +221,11 @@ def test_anchor_poses_and_role_centres(entry) -> None:
         assert_close(to_json(pick_polariser_centre(centres, "front")), result["front"], "front")
         assert_close(to_json(pick_polariser_centre(centres, "back")), result["back"], "back")
 
+        # ``primaryAssetForObject``: the align paths' main asset, override-aware.
+        primary = scene.primary_asset(comp, so.id)
+        assert (str(primary.id) if primary is not None else None) == result["primaryAssetId"], \
+            f"{entry['name']}/{so.id}.primaryAssetId"
+
 
 # ─── mirror coupling ───────────────────────────────────────────────────────
 
@@ -360,8 +366,24 @@ def test_aom_bragg_readout(case) -> None:
     assert_close(to_json(got), case["output"])
 
 
+# ─── pose decomposition near the gimbal pole ───────────────────────────────
+
+EULER = _load("euler.json")
+
+
+@pytest.mark.parametrize("case", _cases(EULER, "cases"))
+def test_scene_object_euler_from_quaternion(case) -> None:
+    """``frames.sceneObjectEulerFromQuaternion``, including ry within
+    1e-3 ... 1e-9 deg of +-90 and exactly at it (compared as a rotation there,
+    where only rx +- rz is defined)."""
+    q = case["input"]["q"]
+    rx, ry, rz = scene_object_euler_from_quaternion((q["x"], q["y"], q["z"], q["w"]))
+    assert_close({"xMm": 0, "yMm": 0, "zMm": 0, "rxDeg": rx, "ryDeg": ry, "rzDeg": rz}, case["output"])
+
+
 def test_every_fixture_case_is_exercised() -> None:
     """A fixture section the Python never reads would be a silent hole."""
     assert set(MIRROR) == {"scene", "facts", "solve", "pairs", "pose"}
     assert set(POINT_DIR) == {"pointDir", "isolator", "translateOnly", "pick"}
     assert set(AOM) == {"frame", "thetaB", "align", "nudge", "readout"}
+    assert set(EULER) == {"cases"}

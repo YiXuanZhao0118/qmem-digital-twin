@@ -6,15 +6,17 @@
 
 - `GET /api/health` → `{"ok": true}`; `GET /api/scene` — scene snapshot
 - `POST /api/v3/solver/run-from-db` — run the optical trace over the persisted scene (produces beam segments: dir, pol, hit face)
+- `POST /api/v3/solver/mode-match` — the seed→TA mode-matching optimizer; seconds long, run on a worker thread so the server keeps answering meanwhile. Each move carries its roll pivot and absolute target `pose` (shape in [mode-matching.md](mode-matching.md#the-plans-moves))
 - `POST /api/v3/pop` — **on-demand** physical-optics diffraction: given the beam radius at the lens plus aperture and focal length, returns the focal-plane Airy intensity grid (diffraction rings). Never part of the live trace. See the POP field channel in [optics.md](optics.md)
 - `GET /api/v3/catalog/...`, `/api/v3/assets3d`, `/api/v3/components`
-- `GET/POST/PATCH/DELETE /api/kinds` — the Kind registry; `GET /api/kinds/op-sets` lists every op-set name a Kind row may reference (exactly what `POST /api/kinds` validates against, so the KIND editor's dropdown can offer code-side op sets that have no Kind row yet)
-- `GET/POST/PATCH/DELETE /api/devices` — the device registry (alembic 0123; previously TypeScript files under `frontend/src/devices/`). `GET /api/devices/behavioral-kinds` lists the ElementKinds a device may pin itself to. `slug` is create-only, a `locked` row rejects edits with 422, and DELETE is refused with 409 while an Asset3D still references the slug
-- `/api/timing-programs`, `/api/rf-chains/nodes`, `/api/coils`, `/api/magnetics-problems`, `/api/simulation-runs`, `/api/touchstone/parse`, `/api/app-settings/{key}`
+- `GET/POST/PATCH/DELETE /api/kinds` — the Kind registry; `GET /api/kinds/op-sets` lists every op-set name a Kind row may reference (exactly what `POST /api/kinds` validates against, so the KIND editor's dropdown can offer code-side op sets that have no Kind row yet); `GET /api/kinds/roles` — every physics kind's port contract from the manifest (see below)
+- `GET/POST/PATCH/DELETE /api/devices` — the device registry (alembic 0123; previously TypeScript files under `frontend/src/devices/`). `GET /api/devices/behavioral-kinds` lists the kinds a device may pin itself to — the manifest's ElementKinds and passive plugin ids **plus every existing `kinds` row** (`isolator`, `mechanical`, `unclassified`, user kinds); `POST` / `PATCH` validate `behavioralKind` against exactly that set (400 otherwise, `routers/devices.py:39`). `slug` is create-only, a `locked` row rejects edits with 422, and DELETE is refused with 409 while an Asset3D still references the slug
+- `/api/timing-programs` (`POST` and `PUT` both reject an unordered / overlapping `intervals` list with 422, see [timing.md](timing.md)), `/api/rf-chains/nodes`, `/api/coils`, `/api/magnetics-problems`, `/api/simulation-runs`, `/api/touchstone/parse`, `/api/app-settings/{key}`
 - `POST /api/v3/rf/propagation` — the RF readout at one scrub time (compute-only, see below)
 - `POST /api/v3/align/mirror-coupling`, `/api/v3/align/isolator`, `/api/v3/align/aom-bragg` — proposed poses from the align solvers (compute-only, see below)
 - `POST /api/v3/rf-cables/connect`, `/resnap`, `/{id}/disconnect`, `/{id}/align-candidates`, `/{id}/align` and `POST /api/v3/ppg/attach`, `/{id}/detach` — the web's RF-cable / PPG store flows, served to a second client (these WRITE; see the last section)
 - `POST /api/v3/fibers/{id}/{candidates,connect,apply,disconnect}`, `POST /api/v3/fibers/resnap`, `POST /api/v3/pigtails/{id}/{candidates,apply,disconnect}`, `POST /api/v3/pigtails/resnap` — patch-cable and pigtail ends: plug in, park on a beam, unplug, follow a moved instrument (these WRITE, see below)
+- `POST /api/v3/anchors/traced` — every anchor pose exactly as the tracer receives it (compute-only, see below)
 - Static: `/assets/files/...`; Swagger: `/docs`; WebSocket: `/ws/scene`
 - Conventions: every persisted id is a UUIDv7; CamelModel (DB snake_case ↔ API camelCase).
 
@@ -24,7 +26,7 @@ The web app computes some things in the browser that another client (the qmem-bl
 
 ### `POST /api/v3/rf/propagation`
 
-The backend's RF BFS (`rf_resolve.py`) at one scrub time. Router: `backend/app/routers/v3_rf.py:101`. Detail and invariants in [rf.md](rf.md) §4.
+The backend's RF BFS (`rf_resolve.py`) at one scrub time. Router: `backend/app/routers/v3_rf.py:109`. Detail and invariants in [rf.md](rf.md) §4.
 
 Request (the body is optional; no body = `{"scrubTimeNs": null}`):
 
@@ -50,8 +52,8 @@ Response:
   "connectedPorts": ["<objectId>|<anchorName>", "..."],
   "ppgGateHighObjectIds": ["<ppgObjectId>"],
   "aomDrives": {
-    "<aomObjectId>": { "aomFreqMhz": 80.0, "rfDrivePowerW": 0.0496 },
-    "<gatedOffAomId>": { "rfDrivePowerW": 0.0 }
+    "<aomObjectId>": { "aomFreqMhz": 80.0, "rfDrivePowerW": 0.0496, "eta": 0.0764 },
+    "<gatedOffAomId>": { "rfDrivePowerW": 0.0, "eta": 0.0 }
   },
   "sectionStartsNs": [0.0, 1000.0, 2000.0]
 }
@@ -61,7 +63,59 @@ Response:
 - `powerW = vpp² / (8·50 Ω)`, the conversion the AOM drive uses.
 - `connectedPorts` (sorted) is topology — every port with a cable or a PPG attachment, whether or not a carrier arrives.
 - `aomDrives` is passed through verbatim from the resolver the solver uses, so it equals what the trace merged onto each AOM at this time. An AOM in manual mode (`properties.aomRfDriveMode == "manual"`) or with nothing plugged into `rf_in` is **absent** (it keeps its own / rated drive); a wired AOM that no carrier reaches at this instant gets `{"rfDrivePowerW": 0.0}` with no frequency key.
+- `aomDrives[*].eta` (2026-09-22) is the **on-Bragg first-order efficiency** the tracer's AOM op applies with that drive: the op's own `on_bragg_first_order_efficiency` (`anchor_ops/aom.py:139`, `η = baseEfficiency·sin²((π/2)√(P/P_peak(λ)))·G(f)`), over the AOM slot exactly as `load_anchor_scene_from_db` hands it to the tracer at this `scrubTimeNs` (asset `default_params` + the slot's dynamic sources, the drive merged in). The op takes λ per ray; the readout takes the scene's emitter wavelength — the single wavelength the laser sources emit (as the tracer emits them: hidden emissions skipped, dynamic sources over the asset), a TA's own wavelength only when there is no laser emission, else **780 nm** (`aom_readout.scene_emitter_wavelength_nm`, [rf.md](rf.md) §3). Per-order angle detune is NOT in it (that depends on the beam's incidence, which only a trace knows). Absent only for an AOM the tracer has no slot for (an asset with no anchors).
 - `sectionStartsNs` (sorted) is every block boundary across all TimingPrograms, plus 0.
+
+### `POST /api/v3/anchors/traced`
+
+Every anchor in lab mm **exactly as the tracer's loader hands it to the tracer** — `db_scene_loader.load_anchor_scene_from_db` (`:701`), the same `V3AnchorScene` `/api/v3/solver/run-from-db` traces, projected through each slot's `effective_transform`. Router: `backend/app/routers/v3_anchors.py:91`. No request body (poses do not depend on the scrub time).
+
+```json
+[
+  {
+    "objectId": "<objectId>", "anchorId": "intercept_in", "anchorName": "OPT IN", "bindingId": "modulator",
+    "posLab": {"x": 368.0, "y": 0.0, "z": 910.0},
+    "axisXLab": {"x": -1.0, "y": 0.0, "z": 0.0}, "axisYLab": {"x": 0.0, "y": 1.0, "z": 0.0},
+    "apertureMm": 0.0025, "synthesized": false
+  },
+  {
+    "objectId": "<aomId>", "anchorId": "interaction_center", "anchorName": "interaction_center", "bindingId": "body",
+    "posLab": {"...": ""}, "axisXLab": {"...": ""}, "axisYLab": {"...": ""},
+    "apertureMm": 1.5, "synthesized": true
+  }
+]
+```
+
+- Where it differs from the stored anchors run through the binding chain — i.e. what [anchors.md](anchors.md)'s `resolveAnchorPosesLab` / `anchor_poses.py` give — is exactly where the loader rewrites: a **pigtail's ports re-seated onto the fibre connector** bound at them (`_port_connector_anchors`, `:341`: position, axisY and aperture from the connector's mating face; axisX keeps the device's sense; the anchor keeps its id and name, `synthesized: false`), the **AOM's `interaction_center`** derived as the midpoint of its faces when the asset stores none (`synthesized: true`), a **connector fibre's coupling ports** built from its PhysicsElement `kindParams.endA/endB` into a slot of their own (`_synth_fiber_slot`, `:530`, `bindingId: "fiber_body"`, `synthesized: true`) — see [fiber.md](fiber.md). (Per-instance asset swaps are no difference: both honour them.) And where the loader leaves things out: non-`asset` bindings, hence **everything inside a spliced sub-Component** (the align walk does include those), and assets whose anchors lack the tri-axis frame.
+- `anchorName` = the stored `name ?? id` (the identity cables and fibre links store). `bindingId` is the slot's binding id **as every trace segment reports it** (`bindingId` in `run-from-db`'s `labSegments`): the ComponentBinding's `role`, else its UUID, so a client can join the two.
+- `apertureMm` is the clear-aperture **radius** the hit test clips at (`0` = none declared). A `fiber_connector` slot's own anchors (`fiber_out` / `fiber_root`, `connect_*`) are listed too — they are in the scene but never hit (not in `PRIMARY_ANCHOR_IDS`).
+- Order: the loader's (objects, then each object's asset bindings, then each asset's anchors; a synthesized fibre slot after its object's bindings).
+
+### `GET /api/kinds/roles`
+
+The port roles and signal domains of every **physics** kind, straight from the kinds manifest (`backend/data/kinds.json` via `kinds_manifest.load_manifest`, i.e. the export of `frontend/src/kinds/<kind>/index.ts`), in plugin registration order (= `element_kinds`). Router: `backend/app/routers/kinds.py:113`. No DB read. So a client reads the contract instead of copying `kinds.json` (the qmem-blender RF graph did). Passive (mechanical) plugins have no ports and are not listed, and neither are DB-only `kinds` rows (`isolator`, `mechanical`, `unclassified`, …), which have no plugin.
+
+```json
+[
+  {
+    "kind": "rf_switch",
+    "primaryDomain": "rf",
+    "defaultPhysics": ["rf"],
+    "requiredAnchors": ["rf_in", "rf_out", "ttl_in"],
+    "optionalAnchors": [],
+    "portDomains": { "rf_in": "rf", "rf_out": "rf", "ttl_in": "ttl" },
+    "roles": {
+      "rf_in":  { "min": 1, "max": 1,    "domain": "rf",  "direction": true, "aperture": false, "fastAxis": false },
+      "rf_out": { "min": 1, "max": null, "domain": "rf",  "direction": true, "aperture": false, "fastAxis": false },
+      "ttl_in": { "min": 1, "max": 1,    "domain": "ttl", "direction": true, "aperture": false, "fastAxis": false }
+    }
+  }
+]
+```
+
+- `roles[*]` is the TS `RoleSpec` (`kinds/_plugin.ts`): `min` 0 = optional, ≥ 1 = required; `max` 1 = single port, N = bounded, **`null` = unbounded multiport** (a DDS's `rf_out`, a switch's throws). The three flags are always present (the manifest omits a false one). `roles` is `null` for a kind that authors no roles map (none today).
+- `portDomains` is the plugin's **explicit** map only; an anchor id missing from it takes the caller's heuristic, as in the web app (`rfLinkPorts.resolveRfLinkPortDomain`). Note the PPG: its `rf_out` declares `ttl`, and the web app treats it as `rfout` ([rf.md](rf.md) §1).
+- The manifest carries **no connector types**: a port's `connectorType` (`sma_female`, `fc_apc_female`, …) lives on each asset's anchor, not on the kind.
 
 ### The align endpoints — `POST /api/v3/align/*`
 
@@ -70,7 +124,7 @@ Backend ports of the web app's align solvers: `utils/mirrorCoupling.ts`, `utils/
 Common to all three:
 
 - Every pose is a proposed **SceneObject pose**: `{"xMm", "yMm", "zMm", "rxDeg", "ryDeg", "rzDeg"}` in lab mm / deg, angles already on the 1e-9° storage grid. Nothing is written — apply it with `PATCH /api/objects/{id}`. The response echoes the object's `locked` flag; the web app refuses to move a locked object and so should any caller.
-- Anchor poses come from the backend's own transform chain (`db_scene_loader._binding_tree_transform` ∘ `pose.pose_to_transform`) through `optical/align/anchor_poses.py`, which walks the binding tree exactly as `utils/anchorPose.resolveAnchorPosesLab` does ([anchors.md](anchors.md#reading-an-anchors-pose-in-lab-mm)).
+- Anchor poses come from the backend's own transform chain (`db_scene_loader._binding_tree_transform` ∘ `pose.pose_to_transform`) through `optical/align/anchor_poses.py`, which walks the binding tree exactly as `utils/anchorPose.resolveAnchorPosesLab` does ([anchors.md](anchors.md#reading-an-anchors-pose-in-lab-mm)) — including a per-instance asset swap (`ObjectBinding.asset3dIdOverride`), which both honour the way the tracer's loader does.
 - A vector is `{"x", "y", "z"}`; a direction must be non-zero (422 otherwise). An unknown object id is 404; a request the solver cannot answer (no mirror face, no align point, not an AOM, …) is 422 with the reason in `detail`. A geometry that simply has **no solution** is not an error: it comes back 200 with `"error": "..."` and a null pose/plan.
 - A beam is `{"dir": vec, "ref": vec}` — the propagation direction and any point on the line (e.g. a traced segment's `end − start` and `start`). Picking WHICH beam (the web app clusters trace segments near the align point) is the caller's choice, as it is the user's in the web app.
 

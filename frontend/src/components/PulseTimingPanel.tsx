@@ -22,11 +22,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { compileTimingProgramsApi } from "../api/client";
 import { useSceneStore } from "../store/sceneStore";
 import type {
+  PhysicsElement,
   ProgrammablePulseGeneratorParams,
+  SceneObject,
   TimingInterval,
   TimingProgram,
   TimingProgramCompile,
 } from "../types/digitalTwin";
+import { ppgRestStatePatch, resolvePpgRestState } from "../utils/ppgRestState";
 import { FloatingPanel } from "./workspace/FloatingPanel";
 
 const TIMING_RESOLUTION_NS = 10;
@@ -75,42 +78,47 @@ export function PulseTimingPanel() {
   const effectiveNameOf = (program: TimingProgram): string =>
     ppgObjectForProgram.get(program.id)?.name ?? program.name ?? "";
 
-  const upsertOpticalElement = useSceneStore((s) => s.upsertOpticalElement);
+  const components = useSceneStore((s) => s.scene.components);
+  const assets = useSceneStore((s) => s.scene.assets);
+  const componentBindings = useSceneStore((s) => s.scene.componentBindings);
 
-  /** PhysicsElement (and its kind_params) for the PPG bound to a given
-   *  program. Used to read & write the PPG's `restState`. Returns null
-   *  for orphan programs (no PPG cabled to a ttl_in / trigger_in port). */
-  const ppgPhysicsForProgram = useMemo(() => {
-    const out = new Map<string, { objectId: string; params: ProgrammablePulseGeneratorParams }>();
+  /** The PPG (SceneObject + PhysicsElement) bound to a given program. Used
+   *  to read & write its `restState`. Absent for orphan programs (no PPG
+   *  plugged into a ttl_in / trigger_in port). */
+  const ppgForProgram = useMemo(() => {
+    const objById = new Map(objects.map((o) => [o.id, o]));
+    const out = new Map<string, { object: SceneObject; pe: PhysicsElement }>();
     for (const pe of physicsElements) {
       if (pe.elementKind !== "programmable_pulse_generator") continue;
       const params = pe.kindParams as ProgrammablePulseGeneratorParams;
       if (typeof params.timingProgramId !== "string" || !params.timingProgramId) continue;
-      out.set(params.timingProgramId, { objectId: pe.objectId, params });
+      const object = objById.get(pe.objectId);
+      if (!object) continue;
+      out.set(params.timingProgramId, { object, pe });
     }
     return out;
-  }, [physicsElements]);
+  }, [objects, physicsElements]);
 
-  /** Resolve the rest level the channel sits at OUTSIDE any interval.
-   *  Falls back to "LOW" for orphan programs so the rest-pill toggle
-   *  stays hidden / inert without a PPG to write to. */
+  /** The rest level the channel sits at OUTSIDE any interval, resolved
+   *  through the same ownership chain the RF BFS gates on (`dynamicSources`
+   *  > asset `defaultParams` > `kindParams`, see `utils/ppgRestState.ts`).
+   *  Reading `kindParams` alone let an asset / per-instance value shadow
+   *  the pill. "LOW" for orphan programs (no PPG to write to). */
   const restStateOf = (program: TimingProgram): "HIGH" | "LOW" => {
-    const ppg = ppgPhysicsForProgram.get(program.id);
-    return ppg?.params.restState === "HIGH" ? "HIGH" : "LOW";
+    const ppg = ppgForProgram.get(program.id);
+    if (!ppg) return "LOW";
+    return resolvePpgRestState(ppg.object, ppg.pe, { components, assets, componentBindings });
   };
 
-  /** Commit a new rest state to the bound PPG's kind_params. The XOR
-   *  in `rfPropagation.ppgChannelIsHighAt` picks the change up live —
-   *  no extra invalidation needed. */
+  /** Commit a new rest state to the bound PPG's per-instance
+   *  `dynamicSources` (other keys kept) — the top of the chain, so the value
+   *  written is the value the gate reads. The XOR in the RF BFS's gate
+   *  pre-pass picks the change up live — no extra invalidation needed. */
   const toggleRestState = (program: TimingProgram, next: "HIGH" | "LOW"): void => {
-    const ppg = ppgPhysicsForProgram.get(program.id);
+    const ppg = ppgForProgram.get(program.id);
     if (!ppg) return;
     setError(null);
-    void upsertOpticalElement({
-      objectId: ppg.objectId,
-      elementKind: "programmable_pulse_generator",
-      kindParams: { ...ppg.params, restState: next },
-    }).catch((err) => {
+    void updateSceneObject(ppg.object.id, ppgRestStatePatch(ppg.object, next)).catch((err) => {
       setError(err instanceof Error ? err.message : String(err));
     });
   };
@@ -438,11 +446,12 @@ function MultiChannelTimeline({
   nameOf: (program: TimingProgram) => string;
   /** Per-program resting/default level (the level the channel sits at
    *  OUTSIDE any HIGH interval and at scrub-stop). Resolved from the
-   *  bound PPG's `kindParams.restState`; orphan programs always read
-   *  as "LOW". */
+   *  bound PPG through the ownership chain the RF BFS reads
+   *  (`utils/ppgRestState.ts`); orphan programs always read as "LOW". */
   restStateOf: (program: TimingProgram) => "HIGH" | "LOW";
-  /** Flip the bound PPG's rest_state. Orphan programs (no PPG) are
-   *  no-op — the panel hides / disables the pill for those rows. */
+  /** Flip the bound PPG's rest_state (written to its `dynamicSources`).
+   *  Orphan programs (no PPG) are no-op — the panel hides / disables the
+   *  pill for those rows. */
   onToggleRestState: (program: TimingProgram, next: "HIGH" | "LOW") => void;
   /** Right edge of the timeline (ns). Always >= the largest interval
    *  end so HIGH blocks never get clipped. */

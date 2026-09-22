@@ -24,7 +24,7 @@ import uuid
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from app import schemas
 from app.components.anchor_contracts import (
@@ -32,8 +32,13 @@ from app.components.anchor_contracts import (
     get_anchor_contract,
 )
 from app.db import AsyncSessionLocal
-from app.models import Asset3D, Device
-from app.routers.devices import create_device, delete_device, update_device
+from app.models import Asset3D, Device, Kind
+from app.routers.devices import (
+    create_device,
+    delete_device,
+    list_behavioral_kinds,
+    update_device,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -122,6 +127,59 @@ async def test_create_rejects_unregistered_behavioral_kind():
     async with AsyncSessionLocal() as db:
         with pytest.raises(HTTPException) as exc:
             await create_device(_device(behavioral_kind="not_a_real_kind"), db)
+        assert exc.value.status_code == 400
+
+
+async def test_isolator_devices_can_be_created_and_edited():
+    """``isolator`` is a real, locked kinds row (alembic 0140) with no plugin,
+    so it is not in the manifest — and the four 0123-seeded isolator devices
+    pin it. The DEVICE editor re-sends ``behavioralKind`` on every save, which
+    therefore 400'd for all four. Any existing kinds row is accepted now."""
+    async with AsyncSessionLocal() as db:
+        assert await db.scalar(select(Kind.name).where(Kind.name == "isolator")) == "isolator"
+        assert "isolator" in await list_behavioral_kinds(db)
+
+        payload = _device(behavioral_kind="isolator", component_type="isolator")
+        created = await create_device(payload, db)
+        try:
+            assert created.behavioral_kind == "isolator"
+            # The editor's full-form PATCH: every field, the kind unchanged.
+            edited = await update_device(
+                created.id,
+                schemas.DeviceUpdate(
+                    display_name="Edited isolator",
+                    behavioral_kind="isolator",
+                    component_type="isolator",
+                    mesh="test.stl",
+                    anchors=[],
+                    default_params={},
+                ),
+                db,
+            )
+            assert edited.display_name == "Edited isolator"
+        finally:
+            await _drop([payload.slug])
+
+
+async def test_any_existing_kinds_row_is_accepted():
+    """Generic: a user-created kind with no plugin behind it (op set
+    ``none``) is a legal pin as long as its row exists — and stops being one
+    once the row is gone."""
+    name = f"test_kind_{uuid.uuid4().hex[:8]}"
+    async with AsyncSessionLocal() as db:
+        db.add(Kind(name=name, display_name=name, domains=["mechanical"], op_set_name="none"))
+        await db.commit()
+        payload = _device(behavioral_kind=name, component_type="mechanical")
+        try:
+            assert name in await list_behavioral_kinds(db)
+            created = await create_device(payload, db)
+            assert created.behavioral_kind == name
+        finally:
+            await _drop([payload.slug])
+            await db.execute(delete(Kind).where(Kind.name == name))
+            await db.commit()
+        with pytest.raises(HTTPException) as exc:
+            await create_device(_device(behavioral_kind=name), db)
         assert exc.value.status_code == 400
 
 

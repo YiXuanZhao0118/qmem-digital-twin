@@ -42,6 +42,23 @@ Frame math: frontend `optical/frames.ts`, `optical/pose.ts`, `utils/anchorAccess
 - Enforced at the write choke points: the `PoseMm` / `PoseDeg` annotated types on `SceneObjectBase` / `SceneObjectUpdate` / `ComponentBindingBase` / `ComponentBindingUpdate` in `backend/app/schemas.py:33` (they run on the `…Out` models too, so even an un-scrubbed legacy row reads back clean), `assembly_solver.euler_from_matrix`, `frames.ts:sceneObjectEulerFromQuaternion`, `sceneStore.preparePatch` (lock filter → quantize, the single gate for object patches) and the PHY Editor's Alt+drag commit in `ComponentsEditor.tsx`.
 - Invariant: a value at or above the objectives' budget must survive untouched — only sub-grid dust may move.
 
+**The decomposition itself is conditioned at the gimbal pole (2026-09-22).** Quantizing only works if the Euler angles being quantized are right, and at ry = ±90° they were not. `frames.sceneObjectEulerFromQuaternion` (and its port `align/frames.scene_object_euler_from_quaternion`) took `ry = asin(r20)` and cut to the gimbal branch at a fixed `|cos ry| ≤ 1e-8`. asin is flat at ±1, so an `r20` rounded one ulp short of 1 read as ry = 90° − 1.5e-8 rad. That cleared the cut, and rx / rz then came from `atan2` of entries that are pure rounding noise at the pole. For the live MIRROR2 (roll 90° onto a beam 8.1 mrad off the y axis) "Align to beam" returned ry 8.5e-7° short of −90 and a pose whose align direction was **2.75e-4 rad** off the beam. On the mirror-coupling U-turn fixture a planned mirror normal came out **45°** wrong. The objective is 0.1 µrad ([objectives.md](../objectives.md)).
+
+Now, in `frames.sceneObjectEulerRadFromQuaternion` (`frontend/src/optical/frames.ts`) and its Python port:
+
+- `ry = atan2(r20, hypot(r00, r10))`, well-conditioned everywhere.
+- `rz = atan2(−r10, r00)` from the entries of size cos ry. It is pinned to 0, the old convention at the pole, below `GIMBAL_COS_TOL = 4·ε`. That tolerance is tied to the conditioning: pinning moves the orientation by at most π·tol ≈ 3e-15 rad.
+- `rx` comes from the O(1) entries **given** rz, through the exact identities `sin rx = sin rz·r02 + cos rz·r12` and `cos rx = sin rz·r01 + cos rz·r11`. rx therefore absorbs whatever rz cannot resolve (at the pole only rx ± rz is defined), and the recomposed rotation equals the input to rounding (< 4e-15, with ry 1e-3° … 1e-9° from ±90° and exactly at it).
+
+Measured afterwards: MIRROR2's pose sits exactly on ry = −90°, and its direction is 1.3e-12 rad off the beam, the 1e-9° grid on rx.
+
+`assembly_solver.euler_from_matrix` (the relation solver's `Rz·Rx·Ry`, pole at rx = ±90°, fixed cut 1e-7) gets the same treatment. Quantization is unchanged: each angle is still snapped to the grid afterwards.
+
+Pinned by:
+
+- `frontend/src/optical/frames.test.ts` and `backend/tests/test_euler_pole.py`, independently on each side.
+- `backend/tests/fixtures/align/euler.json` plus the MIRROR2 cases in `point_dir.json`, for TS↔Python parity at 1e-9 (see [mirror-coupling.md](mirror-coupling.md#the-backend-port-and-its-parity-pin)).
+
 ## Reading an anchor's pose in lab mm
 
 One helper, used by anything that solves against a real optical face:
@@ -75,8 +92,8 @@ plugged-end re-snap (`resnapFibersLinkedTo`) use it too, instead of a local
 rotation copy that skipped the binding transform ([fiber.md](fiber.md#the-backend-port-2026-09-22)).
 
 **The backend has the same helper (2026-09-22)**:
-`backend/app/optical/align/anchor_poses.py` — `resolve_binding_tree` (:127)
-and `resolve_anchor_poses_lab` (:182), used by the `/api/v3/align/*`
+`backend/app/optical/align/anchor_poses.py` — `resolve_binding_tree` (:160)
+and `resolve_anchor_poses_lab` (:223), used by the `/api/v3/align/*`
 endpoints ([api.md](api.md)). Its walk is the TS walk (roots in stored order,
 a node's own anchors before its children, a sub-Component's roots spliced in
 with no per-instance deltas, `id|name` dedupe first-wins, the legacy
@@ -87,11 +104,47 @@ by `backend/tests/fixtures/align/anchor_poses.json`, generated from
 [mirror-coupling.md](mirror-coupling.md#the-backend-port-and-its-parity-pin)),
 and agreed within 1e-9 on all 73 objects of the live scene.
 
-⚠️ **Open: `ObjectBinding.asset_3d_id_override`.** `resolveBindingTree`
-resolves `binding.asset3dId` and ignores a per-instance asset override, and
-the backend helper mirrors that so both clients align identically — but the
-tracer's loader (`load_anchor_scene_from_db`) DOES honour the override. For a
-binding that carries one, both align helpers read the catalog asset's anchors
-while the trace uses the override's. No live object is affected today (the
-override is rare); if one becomes so, fix the TS and Python walks together and
-regenerate the fixtures.
+**`ObjectBinding.asset_3d_id_override` is honoured (2026-09-22)**, the way the
+tracer's loader honours it (`db_scene_loader.load_anchor_scene_from_db`): an
+**asset** binding of the object's **own** Component resolves to the instance's
+override when one is set, else to its own `asset3dId`
+(`componentBindings.effectiveBindingAssetId` / `anchor_poses.effective_asset_id`).
+Never on an `empty` / `subcomponent` binding, never inside a spliced
+sub-Component (the loader does not walk sub-Components at all), never on a
+binding-less legacy Component; an override onto an asset that does not exist
+is **missing**, not the catalog asset. Where it applies:
+
+- `resolveAnchorPosesLab` / `resolve_anchor_poses_lab` — always (they must pose
+  the anchors the trace hits).
+- `resolveBindingTree(…, { honourAssetOverride: true })` /
+  `resolve_binding_tree(…, honour_asset_override=True)` — opt-in, **off by
+  default**, so the renderer and the Object-panel trees keep drawing the
+  catalog asset (the render path has never swapped assets; see
+  [rendering.md](rendering.md)).
+- `componentBindings.primaryAssetForObject` / `AlignScene.primary_asset(comp,
+  object_id)` — the override-aware "main asset" the align paths use
+  (`AlignToBeamControls`' primary-anchor fallback, the AOM check and Bragg
+  frame; `service.resolve_align_point_dir` / `aom_bragg_align`). Plain
+  `primaryAsset` / `rf_resolve._primary_asset_id` stay override-blind on
+  purpose — the RF BFS parity rule in [rf.md](rf.md) §4.
+
+Pinned by the `asset-override` scene of `anchor_poses.json` (anchors and
+`primaryAssetId` per object) and by
+`test_align_endpoints.py::test_align_follows_the_instance_asset_swap`.
+
+## The poses the tracer actually receives
+
+The helpers above pose the **stored** anchors. The tracer's loader
+(`db_scene_loader.load_anchor_scene_from_db`) rewrites a few before tracing:
+a pigtail's ports move onto the fibre connector bound at them
+(`_port_connector_anchors`), an AOM with no stored `interaction_center` gets
+one at the midpoint of its faces, a connector fibre's coupling ports are
+synthesized from its `kindParams.endA/endB`, and nothing inside a spliced
+sub-Component is loaded at all. `POST /api/v3/anchors/traced`
+(`routers/v3_anchors.py`, shape in [api.md](api.md)) returns that loaded
+scene's anchors in lab mm, each with the slot's `bindingId` (what trace
+segments report) and a `synthesized` flag — for a client that must draw the
+faces the trace hits. The runtime `V3Anchor` carries the stored `name` and
+that flag as metadata for this (`anchor_tracer.py:50`); the trace reads
+neither. Pinned against the loader by
+`backend/tests/optical/test_anchors_traced.py`.

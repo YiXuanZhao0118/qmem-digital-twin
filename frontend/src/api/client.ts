@@ -475,6 +475,19 @@ export type V3LabSegment = {
     combinedFraction: number;
     focalLengthMm: number;
   } | null;
+  // Seed coupling into a tapered amplifier, on the segment that ends on its
+  // intercept_in — the values the TA op multiplies the seed by
+  // (`misc_ops.ta_seed_coupling`). Null/absent on every other segment.
+  // NOT the legacy `TraceSegment.taSeedCoupling` (rayTrace.ts, a different
+  // shape on the TA's OUTPUT segments); v3TraceAdapter does not map this
+  // onto it, so BeamScope's "TA eta" block is unchanged.
+  taSeedCoupling?: {
+    etaMode: number;
+    polarizationOverlap: number;
+    coupledFraction: number;
+    seedPowerMw: number;
+    coupledPowerMw: number;
+  } | null;
 };
 
 export type V3SolverResult = {
@@ -549,6 +562,14 @@ export interface ModeMatchMove {
   rotateDeg: number;
   /** Suggested focal length (mm) if the Stage-2 inventory swap chose one. */
   focalMm: number | null;
+  /** The lab point the roll turns about: the lens's optical centre
+   *  (`optical_center`, else `intercept_in`) — the same point
+   *  `ModeMatchingPanel.pivotOf` picks. */
+  pivotWorldMm?: { x: number; y: number; z: number };
+  /** The absolute SceneObject pose the move lands on, computed by the backend
+   *  with the motion it scored (2026-09-22). The panel still derives its own
+   *  from the deltas above; the two agree. */
+  pose?: { xMm: number; yMm: number; zMm: number; rxDeg: number; ryDeg: number; rzDeg: number } | null;
 }
 
 export interface ModeMatchWidth {

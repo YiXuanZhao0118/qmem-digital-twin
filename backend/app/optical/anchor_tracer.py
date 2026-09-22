@@ -56,6 +56,13 @@ class V3Anchor:
     axis_z_body: Vec3                  # transverse 2 (= axisX × axisY)
     aperture_mm: float
     aperture_shape: str = "circle"
+    # Identity metadata, never read by the trace: the stored anchor's display
+    # ``name`` (``anchor.name ?? anchor.id`` is the port identity), and
+    # whether the loader made this anchor up rather than reading it off an
+    # asset (the AOM's derived ``interaction_center``, a synthesized fibre
+    # slot's ports). Reported by ``POST /api/v3/anchors/traced``.
+    name: str | None = None
+    synthesized: bool = False
 
 
 @dataclass(frozen=True)
@@ -419,6 +426,11 @@ class LabSegment:
     # None when the end optic has no finite aperture / isn't a lens. Keys:
     # apertureMm, wEffMm, transmittedFraction, transmittance, combinedFraction.
     aperture_truncation: Optional[dict] = None
+    # Seed coupling at this segment's END, when it ends on a
+    # tapered_amplifier's intercept_in (``misc_ops.ta_seed_coupling``): keys
+    # etaMode, polarizationOverlap, coupledFraction, seedPowerMw,
+    # coupledPowerMw. None everywhere else.
+    ta_seed_coupling: Optional[dict] = None
 
 
 @dataclass
@@ -619,6 +631,15 @@ def trace_ray_anchor_scene(
                 # pattern (POP) for this lens via /api/v3/pop.
                 "focalLengthMm": float(merged_params.get("focalLengthMm", 0.0)),
             }
+
+        # How much of the seed couples into a TA — polarization overlap x
+        # mode overlap — on the segment that ends on the input facet. The very
+        # function the TA op computes its coupled power with, on the same
+        # (ray, ctx), so the reported value is the one applied. Local import:
+        # misc_ops imports this module.
+        if slot.asset.kind == "tapered_amplifier" and anchor.id == "intercept_in":
+            from app.optical.anchor_ops.misc_ops import ta_seed_coupling
+            entry_seg.ta_seed_coupling = ta_seed_coupling(ray_at_anchor, ctx)
 
         out_rays_body = op(ray_at_anchor, ctx)
 

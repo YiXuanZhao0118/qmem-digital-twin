@@ -299,22 +299,35 @@ async def mode_match(
     applyable plan (per-lens world-space move + focal, expected η, length,
     feasibility) — see ``mode_match_service.run_mode_match``."""
     from sqlalchemy import select
+    from starlette.concurrency import run_in_threadpool
 
     from app.optical import anchor_ops  # noqa: F401  (register ops)
+    from app.optical import mode_match_service
+    from app.optical import solver as solver_module
     from app.optical.db_scene_loader import load_anchor_scene_from_db
-    from app.optical.mode_match_service import run_mode_match
-    from app.optical.solver import solve_anchor_scene
+    from app.optical.pose import V3Pose
     from app.models.scene import SceneObject
 
+    # Every DB read happens here, on the event loop, BEFORE the solve.
     scene = await load_anchor_scene_from_db(
         session, request.dynamic_overrides, scrub_time_ns=request.scrub_time_ns,
     )
-    forward = solve_anchor_scene(scene)
-    rows = (await session.execute(select(SceneObject.id, SceneObject.name))).all()
-    names = {str(i): n for i, n in rows}
+    rows = (await session.execute(select(
+        SceneObject.id, SceneObject.name,
+        SceneObject.x_mm, SceneObject.y_mm, SceneObject.z_mm,
+        SceneObject.rx_deg, SceneObject.ry_deg, SceneObject.rz_deg,
+    ))).all()
+    names = {str(r[0]): r[1] for r in rows}
+    # The poses the solve starts from — each move's absolute target is
+    # computed against these (the same rows the scene was just loaded from).
+    poses = {str(r[0]): V3Pose(*(float(v) for v in r[2:8])) for r in rows}
 
-    try:
-        return run_mode_match(
+    def _solve() -> dict:
+        # Pure CPU from here on: the loaded scene and plain dicts only —
+        # nothing in here may touch ``session`` (an AsyncSession is bound to
+        # the event loop, and this runs on a worker thread).
+        forward = solver_module.solve_anchor_scene(scene)
+        return mode_match_service.run_mode_match(
             scene, forward,
             seed_emitter_id=request.seed_emitter_id,
             ta_object_id=request.ta_object_id,
@@ -330,7 +343,15 @@ async def mode_match(
             focal_inventory=request.focal_inventory,
             wavelength_nm=request.wavelength_nm,
             object_names=names,
+            object_poses=poses,
         )
+
+    try:
+        # The optimizer runs for seconds (~11 s repositioning, ~27 s with a
+        # focal inventory). Run synchronously in this ``async`` handler, it
+        # held the event loop the whole time: every other request and every
+        # ``/ws/scene`` broadcast stalled until it finished.
+        return await run_in_threadpool(_solve)
     except (ValueError, KeyError) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)

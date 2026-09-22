@@ -173,6 +173,7 @@ def _binding_tree_transform(
 
 
 def _anchor_from_dict(d: dict) -> V3Anchor:
+    name = d.get("name")
     return V3Anchor(
         id=d["id"],
         position_body=_vec3(d["positionMmBodyLocal"]),
@@ -181,6 +182,7 @@ def _anchor_from_dict(d: dict) -> V3Anchor:
         axis_z_body=_vec3(d["axisZBodyLocal"]),
         aperture_mm=float(d.get("apertureMm", 0)),
         aperture_shape=d.get("apertureShape", "circle"),
+        name=name if isinstance(name, str) else None,
     )
 
 
@@ -232,6 +234,7 @@ def anchor_asset_to_snapshot(asset: Asset3D) -> V3AssetAnchorSnapshot | None:
     # anchors (intercept_in / etc. without tri-axis) are ignored.
     if not isinstance(anchors[0], dict) or "axisXBodyLocal" not in anchors[0]:
         return None
+    built = [_anchor_from_dict(a) for a in anchors]
     # AOM: derive interaction_center from intercept_in/out midpoint when
     # missing. The stored data only carries the boundary faces; the
     # tracer's primary-anchor hit test needs interaction_center to fire
@@ -241,11 +244,11 @@ def anchor_asset_to_snapshot(asset: Asset3D) -> V3AssetAnchorSnapshot | None:
     ):
         synth = _derive_aom_interaction_center(anchors)
         if synth is not None:
-            anchors.append(synth)
+            built.append(dataclasses.replace(_anchor_from_dict(synth), synthesized=True))
     return V3AssetAnchorSnapshot(
         catalog_id=asset.catalog_id or asset.name,
         kind=asset.kind_id,
-        anchors=[_anchor_from_dict(a) for a in anchors],
+        anchors=built,
         default_params=asset.default_params or {},
     )
 
@@ -456,6 +459,9 @@ async def _port_connector_anchors(
             aperture_mm=(float(ap) if isinstance(ap, (int, float)) and ap > 0
                          else anchor.aperture_mm),
             aperture_shape=anchor.aperture_shape,
+            # Still the device's own port, just re-seated: same identity.
+            name=anchor.name,
+            synthesized=anchor.synthesized,
         ))
     return dataclasses.replace(snap, anchors=rebuilt)
 
@@ -591,6 +597,7 @@ async def _synth_fiber_slot(
             axis_z_body=az,
             aperture_mm=ap_mm,
             aperture_shape="circle",
+            synthesized=True,  # no asset carries it; built from kindParams
         )
 
     tip_a, ap_a = _connector_tip_and_aperture(

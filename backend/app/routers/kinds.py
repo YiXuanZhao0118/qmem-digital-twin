@@ -82,6 +82,71 @@ async def list_op_sets() -> list[str]:
     return sorted(_registered_op_set_names())
 
 
+class RoleSpecOut(schemas.CamelModel):
+    """One port role of a kind (TS ``kinds/_plugin.ts`` ``RoleSpec``)."""
+
+    min: int  # 0 = optional anchor, >= 1 = required
+    max: int | None  # 1 = single port, N = bounded, None = unbounded multiport
+    domain: str  # the port's signal domain (optical / rf / ttl / ...)
+    direction: bool  # direction, not just position, matters for align
+    aperture: bool  # apertureMm must be set
+    fast_axis: bool  # an asset-level fast-axis angle applies
+
+
+class KindRolesOut(schemas.CamelModel):
+    """The port contract of one physics kind, as ``backend/data/kinds.json``
+    (the export of ``frontend/src/kinds/<kind>/index.ts``) states it."""
+
+    kind: str
+    primary_domain: str
+    default_physics: list[str]
+    required_anchors: list[str]
+    optional_anchors: list[str]
+    # The plugin's explicit anchor-id -> signal-domain map; ids not in it
+    # fall back to the caller's own heuristic, as the web app's do.
+    port_domains: dict[str, str]
+    # Per-role spec; null for a kind that authors no ``roles`` map.
+    roles: dict[str, RoleSpecOut] | None
+
+
+@router.get("/roles", response_model=list[KindRolesOut])
+async def list_kind_roles() -> list[KindRolesOut]:
+    """Every physics kind's port roles and domains, straight from the kinds
+    manifest (``load_manifest``), in plugin registration order.
+
+    Compute-only; no DB. It exists so a second client (the qmem-blender
+    add-on's RF graph) reads the contract instead of copying ``kinds.json``.
+    Passive (mechanical) plugins carry no ports and are not listed; neither
+    are DB-only kinds rows (``isolator``, ``mechanical``, ...), which have no
+    plugin. Declared BEFORE ``/{kind_id}`` so the literal path wins.
+    """
+    out: list[KindRolesOut] = []
+    for plugin in load_manifest()["physics_plugins"]:
+        physics = plugin["physics"]
+        anchors = physics.get("anchors") or {}
+        roles = physics.get("roles")
+        out.append(KindRolesOut(
+            kind=physics["element_kind"],
+            primary_domain=physics["primary_domain"],
+            default_physics=list(physics.get("default_physics") or []),
+            required_anchors=list(anchors.get("required") or []),
+            optional_anchors=list(anchors.get("optional") or []),
+            port_domains=dict(physics.get("port_domains") or {}),
+            roles=None if roles is None else {
+                role: RoleSpecOut(
+                    min=spec["min"],
+                    max=spec["max"],  # always emitted; null means unbounded
+                    domain=spec["domain"],
+                    direction=spec.get("direction") is True,
+                    aperture=spec.get("aperture") is True,
+                    fast_axis=spec.get("fast_axis") is True,
+                )
+                for role, spec in roles.items()
+            },
+        ))
+    return out
+
+
 @router.get("/{kind_id}", response_model=schemas.KindOut)
 async def get_kind(
     kind_id: uuid.UUID, session: AsyncSession = Depends(get_session)

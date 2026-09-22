@@ -39,10 +39,12 @@ couple. Sibling: [`optics.md`](optics.md) (the q-tracer this rides on),
   coupled into the TA**; η = 1 ⇔ profiles coincide at every plane between. So
   each score is ONE reverse trace, not a scan. The tracer's TA op computes the
   coupled seed power with the same overlap at the facet
-  (`misc_ops._mode_match_eta`), so the panel's η and the traced amplified power
-  agree; the BeamScope panel's client-side "TA eta: mode" readout
-  (`rayTrace.ts::taSeedModeOverlap`) applies the same per-axis rule to its own
-  beam states.
+  (`misc_ops._mode_match_eta`, reported on the trace as
+  `labSegments[*].taSeedCoupling.etaMode` since 2026-09-22 — see
+  [optics.md](optics.md)), so the panel's η and the traced amplified power
+  agree. (The BeamScope panel's client-side "TA eta: mode" readout
+  (`rayTrace.ts::taSeedModeOverlap`) belongs to the legacy in-browser tracer;
+  `v3TraceAdapter` never fills it, so it does not show on the v3 trace.)
 
 The overlap is the general-astigmatism power coupling of two Gaussian beam
 matrices (`mode_match.py`):
@@ -59,8 +61,11 @@ axis — so a cylindrical lens's roll is a real degree of freedom.
   `time_reversed_target(Q)` (the phase-conjugate / frame-mirror map above).
 - `backend/app/optical/mode_match_model.py` — `build_problem(...)` +
   `ModeMatchProblem.evaluate(config)`. Re-poses lenses **in-memory** (rebuild
-  the frozen `V3AnchorBindingSlot` with a shifted `effective_transform`; roll =
-  premultiply `Rotation.from_rotvec(axis·θ)` about the lens centre; focal via
+  the frozen `V3AnchorBindingSlot`s with a moved `effective_transform`: one
+  rigid world motion per object, `x → R·(x − pivot) + pivot + t`, applied to
+  **every** slot of that object — `rigid_motion` + `move_transform`; roll =
+  `Rotation.from_rotvec(axis·θ)` about the lens's **optical centre**, see
+  [The roll pivot](#the-roll-pivot); focal via
   `dynamic_sources['focalLengthMm']`) and re-runs the exact `trace_ray_anchor_scene`
   on the reverse ray only — no analytic lens model to drift from the
   authoritative physics, no DB round-trip. `dynamic_overrides` cannot move an
@@ -79,9 +84,20 @@ axis — so a cylindrical lens's roll is a real degree of freedom.
   forward_result, …)`: DB-independent glue that builds the problem, computes the
   section length, optimizes, and shapes a JSON plan whose per-element move is a
   WORLD-space translation + roll-about-the-section-axis + focal (what the
-  frontend applies to the SceneObject pose, MirrorCoupling-style).
+  frontend applies to the SceneObject pose, MirrorCoupling-style) **plus, since
+  2026-09-22, the roll pivot and the absolute SceneObject `pose` the move lands
+  on** (`absolute_pose`), so a client never has to reconstruct the rotation
+  point. Shape under [The plan's moves](#the-plans-moves).
 - `POST /api/v3/solver/mode-match` (`routers/v3_solver.py`) — loads the DB
   scene, traces the seed once, calls `run_mode_match`, returns the plan.
+  **The solve runs on a worker thread** (`run_in_threadpool`, 2026-09-22):
+  the DB reads (scene + object names and poses) happen first, on the event loop; the
+  forward trace and the optimizer then run off it, touching only the loaded
+  scene — never the `AsyncSession`, which is bound to the loop. Until then the
+  optimizer ran synchronously inside the `async` handler and every other
+  request and `/ws/scene` broadcast stalled for the whole solve. Pinned by
+  `backend/tests/optical/test_mode_match_endpoint.py` (a request is answered
+  while a deliberately blocked solve is still running).
 
 ## Start / range / methods (2026-08-25)
 
@@ -103,12 +119,83 @@ meeting η. `run_mode_match` returns `{mode, detectedLenses, spanMm, solutions:[
 {key,label,column,eta,lengthMm,feasible,reason,moves,…}]}`; the panel renders the
 columns side by side with a Preview/Apply per card.
 
+## The plan's moves
+
+Each solution's `moves[]` (router `routers/v3_solver.py`, shaped by
+`mode_match_service._shape_plan`):
+
+```json
+{
+  "objectId": "lens0", "name": "LENS0",
+  "translateWorldMm": {"x": 0.0, "y": 0.0, "z": -1.5522350119376385},
+  "rotateAxisWorld": {"x": 0.0, "y": 0.0, "z": 1.0},
+  "rotateDeg": 27.219526706406157,
+  "focalMm": null,
+  "pivotWorldMm": {"x": 0.0, "y": 0.0, "z": 0.0},
+  "pose": {"xMm": 0.0, "yMm": 0.0, "zMm": -1.552235, "rxDeg": 0.0, "ryDeg": 0.0, "rzDeg": -27.219526706}
+}
+```
+
+(A real move from `test_mode_match_service.py`'s synthetic scene, lens at the
+origin with a zero pose. Note `rzDeg` comes out **negative** for a positive
+roll about +z — the SceneObject Euler convention maps rz = +90° to +X → −Y
+([anchors.md](anchors.md)) — which is exactly the kind of thing a client should
+not have to re-derive.)
+
+- The first five fields are unchanged (the web panel reads only those): a
+  world translation `t`, a roll of `rotateDeg` about `rotateAxisWorld` (the
+  section axis), an optional focal swap.
+- `pivotWorldMm` (new) is the lab point the roll turns about; `pose` (new) is
+  the SceneObject pose that results — `x → R·(x − pivot) + pivot + t` applied
+  to the object's pose at solve time, in the backend pose convention
+  (`pose._rotation_of`), angles decomposed as the align endpoints do
+  (`align.frames`, 1e-9° grid; a pure translation keeps the stored angles
+  verbatim), position on the 1 nm grid. It is exactly the motion
+  `ModeMatchProblem` applied while scoring, so `PATCH /api/objects/{id}` with it
+  reproduces the reported η. Pinned by
+  `test_mode_match_service.py::test_absolute_pose_lands_every_slot_where_the_model_put_it`.
+  Like the panel's own resolution, it is absolute against the scene the solve
+  read — apply it to that scene, not after further edits.
+
+## The roll pivot
+
+The web panel rolled a lens about its **optical-centre anchor**
+(`ModeMatchingPanel.pivotOf`: `optical_center`, else `intercept_in`); the
+model rolled the slot about its **transform origin** (the lens asset's CAD
+origin under the binding chain). Settled 2026-09-22: **the optical-centre
+anchor is right for the tracer**, and the model now uses it
+(`mode_match_model.optical_centre_lab`, same precedence as the panel, read off
+the traced slots).
+
+- The tracer hit-tests the anchor. Turning about a line through it parallel to
+  the beam is a pure roll: the lens stays where the beam crosses it. Turning
+  about an asset origin that is off the optical axis also carries the lens
+  sideways — a hidden decenter, while decenter is OFF by default.
+- That hidden decenter does not show in η (a thin lens's decenter tilts the
+  chief ray, it does not change q — the pointing error the objective does not
+  penalize, see above), so the old model would report a good η and the twin
+  would draw a steered beam after Apply. Pinned by
+  `test_mode_match_model.py::test_roll_turns_about_the_optical_centre`.
+- For every lens in the scene until now the two points coincide (the entry
+  anchor sits at the asset origin — checked on the live `A230TM-B`), so no
+  earlier result changes; the difference is for the next asset whose CAD
+  origin is off-axis.
+- The same change makes the model move **every** traced slot of a moved
+  object; it used to re-add only one and drop the rest from the trace.
+
 ## Constraints & feasibility
 
-- `l_max_mm` bounds the BS2→MIRROR5 section length. MIRROR5 is a movable
-  endpoint with an axial-only DOF, **locked by default**; unlocked, its axial
-  bound is clamped so length ≤ `l_max_mm`. Locked and already too long ⇒
-  immediate infeasible with that reason.
+- `l_max_mm` bounds the BS2→MIRROR5 section length **in `optimize()`**
+  (`mode_match_optimize.py:159`): MIRROR5 is a movable endpoint with an
+  axial-only DOF, locked by default; unlocked, its axial bound is clamped so
+  length ≤ `l_max_mm`; locked and already too long ⇒ immediate infeasible with
+  that reason. ⚠️ **`run_mode_match` does not use any of it** (checked
+  2026-09-22): since the Start/range rewrite (2026-08-25) every `optimize` call
+  it makes passes the endpoint as a frozen `DOFSpec()` with
+  `endpoint_locked=True` and no `l_max_mm`, and each card echoes `lMaxMm: null`
+  / `endpointLocked: true`. The request's `lMaxMm`, `endpointLocked` and
+  `axialMm` are accepted and ignored — the End element always stays put and
+  the length is bounded only by the Start→End range.
 - **Decenter is OFF by default.** Transverse decenter improves the mode-shape
   overlap but steers the chief ray off the lens centre (a pointing error the
   objective does not penalize), which shows up as a deflected beam in the twin.
@@ -119,13 +206,27 @@ columns side by side with a Preview/Apply per card.
   report `feasible` + `best_achievable` + a human `reason` naming which limit
   bit.
 
-## The live scene (2026-08-24)
+## The live scene (re-read 2026-09-22)
 
-Path `BEAM_SPLITTER2 → LENS_CYLINDRICAL3 → (BEAM_SPLITTER1) → LENS_CYLINDRICAL0
-→ LENS_BICONVEX0 → MECHANICAL19 → MIRROR5` carries only the DBR seed
-(`LASER_SOURCE1`, 852 nm) on its way into `TAPERED_AMPLIFIER0`. Shaping lenses:
-CYL3 f=−24.88, CYL0 f=+40 (cyl, power axis body-y), BICONVEX0 f=−25, MECH19 f=+35
-thick. TA input mode (asset `default_params`, **re-fitted 2026-09-02** from the
+**There are no shaping lenses on the seed path any more.** The DBR seed
+(`LASER_SOURCE1`, 852.347 nm) runs `LENS_PLANO_CONVEX2` (the A230TM-B
+collimating asphere, f = 4.51 mm, right after the laser — upstream of any
+Start one would pick) → `MIRROR6` → `WAVEPLATE3` → `ISOLATOR0` → `ISOLATOR1` →
+`WAVEPLATE0` → `BEAM_SPLITTER2` → `MIRROR5` → `MIRROR7` →
+`TAPERED_AMPLIFIER0` (read off a compute-only `run-from-db` trace; BS2 → MIRROR5
+60.6 mm, MIRROR5 → MIRROR7 149.8 mm, MIRROR7 → TA 50 mm). The 2026-08-24 set —
+`LENS_CYLINDRICAL3` (f=−24.88), `LENS_CYLINDRICAL0` (f=+40, cyl), `LENS_BICONVEX0`
+(f=−25), `MECHANICAL19` (f=+35 thick), with `BEAM_SPLITTER1` in the path — is
+no longer in the scene (`BEAM_SPLITTER1` still is, on another branch). So a
+Method-1 solve on BS2 → MIRROR5 today answers "No lenses found between Start
+and Endpoint."; the MIRROR5 / MIRROR7 pair is steered by
+[mirror coupling](mirror-coupling.md) instead.
+
+(Superseded 2026-08-24 path, kept for the η history below:
+`BEAM_SPLITTER2 → LENS_CYLINDRICAL3 → (BEAM_SPLITTER1) → LENS_CYLINDRICAL0 →
+LENS_BICONVEX0 → MECHANICAL19 → MIRROR5`.)
+
+TA input mode (asset `default_params`, unchanged; **re-fitted 2026-09-02** from the
 TA's own back-emission at 25 mm — see `kinds.md` and `docs/ta_seed_modes_0902.md`):
 `inputSpatialModeX` (vertical) 80.5 µm @ +266.5 mm, `inputSpatialModeY`
 (horizontal) 441 µm @ +1283 mm — the emitted beam converges toward the seed, so
@@ -136,21 +237,35 @@ were computed against the un-conjugated, opposite-sign reference and the older
 
 Tests: `backend/tests/optical/test_mode_overlap.py`,
 `test_mode_match_model.py`, `test_mode_match_optimize.py`,
-`test_mode_match_service.py` (21, DB-free). Endpoint verified live in-process.
+`test_mode_match_service.py`, `test_mode_match_endpoint.py` (35 as of
+2026-09-22, all DB-free). Endpoint verified live in-process (2026-08).
 
 ## Frontend
 
 `frontend/src/components/optical/ModeMatchingPanel.tsx` (+ `ModeMatchingLauncher`
 in `ComponentPanel`, panel registered in `WorkspaceProvider` / rendered in
 `App`). Auto-detects the seed (`laser_source`) + TA (`tapered_amplifier`), takes
-the SELECTED shaping lenses (each with a focal-inventory input), plus η target /
-max length / endpoint mirror + lock; a **Lock element angles** checkbox (default ON) sends `rollDeg=0` so the optimizer only slides lenses along the beam + swaps focal, never rotating a mount (η ~0.87 vs ~0.93 with roll). Solve → `runModeMatchApi`
+the SELECTED shaping lenses (each with a focal-inventory input; none selected =
+Method 1), a Start and an End element, and an η target. **That is all it
+sends** (`ModeMatchingPanel.tsx` `solve`): `seedEmitterId`, `taObjectId`,
+`movableIds`, `startId`, `endpointId`, `etaTarget`, `focalInventory`, `rollDeg`
+— no max length and no endpoint lock (the request type still declares
+`lMaxMm` / `endpointLocked`, but the panel never sets them, and the service
+ignores them anyway — see Constraints). A **Lock element angles** checkbox (default ON) sends `rollDeg=0` so the optimizer only slides lenses along the beam + swaps focal, never rotating a mount (η ~0.87 vs ~0.93 with roll; `rollDeg=90` when unchecked). Solve → `runModeMatchApi`
 (`api/client.ts`); preview applies each move as a ghost via
 `previewObjectTransform`; Apply writes SceneObject poses (+ `dynamicSources.focalLengthMm`)
-in one `updateSceneObjects` undo step. A plan move → pose: translate the object
+in one `updateSceneObjects` undo step. ⚠️ **The focal half of Apply does not
+reach the trace**: the loader keeps a per-instance key that is also an asset
+`default_params` key only if the asset lists it in `tunable_params`, and no
+lens asset does (0 of 12, all 12 locked — checked 2026-09-22). So a focal swap
+the optimizer scored is dropped on load and the traced η after Apply is the
+original focal's; changing a lens is really changing its asset. A plan move → pose: translate the object
 by `translateWorldMm` and roll it about the lens's optical-centre anchor
 (`resolveAnchorPosesLab`) — the same rigid transform the backend applied to
-`effective_transform`.
+`effective_transform` (the same pivot since 2026-09-22, see
+[The roll pivot](#the-roll-pivot); before, the two agreed only because every
+lens's entry anchor sat at its asset origin). The panel does not read the
+move's `pose` / `pivotWorldMm`; they are for other clients.
 
 **A move is a DELTA from the geometry at solve time, so the panel resolves it to
 an ABSOLUTE pose once** (`planFromSolution`, `ModeMatchingPanel.tsx:87`), when the
@@ -177,5 +292,7 @@ endpoint.
 ## TODO
 
 - UX: the solve is multi-second (~11 s repositioning, ~27 s with a focal
-  inventory) — the Solve button shows a spinner; consider a fully non-blocking
-  run for very large inventories.
+  inventory) — the Solve button shows a spinner. The server no longer blocks
+  while it runs (worker thread, see Files), but the request itself still
+  waits for the whole solve; a job/poll API would be the next step for very
+  large inventories. Two concurrent solves each take a threadpool worker.

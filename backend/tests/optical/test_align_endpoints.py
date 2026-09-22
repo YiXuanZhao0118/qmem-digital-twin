@@ -396,6 +396,62 @@ def test_aom_rejects_a_non_aom(client) -> None:
     assert "is not an AOM" in res.json()["detail"]
 
 
+# ─── per-instance asset swaps (ObjectBinding.asset_3d_id_override) ─────────
+
+def _override(scene: AlignScene, object_id: str, binding_id: str, asset_id: str | None) -> None:
+    scene.object_bindings.setdefault(object_id, {})[binding_id] = SimpleNamespace(
+        local_x_mm_delta=None, local_y_mm_delta=None, local_z_mm_delta=None,
+        local_rx_deg_delta=None, local_ry_deg_delta=None, local_rz_deg_delta=None,
+        asset_3d_id_override=asset_id,
+    )
+
+
+def test_align_follows_the_instance_asset_swap(client) -> None:
+    """The tracer's loader traces an instance's override asset, so align must
+    pose against it too: the primary-anchor fallback, the AOM check and the
+    Bragg frame all read the swapped asset, for THAT instance only."""
+    scene = client.state["scene"]  # type: ignore[attr-defined]
+    # LENS wears the Glan asset instead of the lens: its entry anchor is the
+    # Glan's intercept_in at z = -5, not the lens's at z = -2.
+    _override(scene, "LENS", "b-lens", "a-glan")
+    lens = client.post("/api/v3/align/isolator", json={"objectId": "LENS", "beam": BEAM}).json()
+    assert lens["alignSource"] == "primaryAnchor"
+    assert lens["pointCadMm"] == _xyz(0, 0, -5)
+    # The other instance of the same Component is untouched.
+    other = client.post("/api/v3/align/isolator", json={"objectId": "LOCKED_LENS", "beam": BEAM}).json()
+    assert other["pointCadMm"] == _xyz(0, 0, -2)
+
+    # A lens instance swapped to the AOM asset IS an AOM to the tracer ...
+    _override(scene, "LENS", "b-lens", "a-aom")
+    out = client.post("/api/v3/align/aom-bragg", json={"objectId": "LENS", "beam": AOM_BEAM, "order": 1})
+    assert out.status_code == 200, out.text
+    assert out.json()["frame"]["D1"] == _xyz(0, 1, 0)
+    # ... and an AOM instance swapped to a lens is not.
+    _override(scene, "AOM", "b-aom", "a-lens")
+    res = client.post("/api/v3/align/aom-bragg", json={"objectId": "AOM", "beam": AOM_BEAM})
+    assert res.status_code == 422
+    # A null override is no swap.
+    _override(scene, "AOM", "b-aom", None)
+    assert client.post("/api/v3/align/aom-bragg", json={"objectId": "AOM", "beam": AOM_BEAM}).status_code == 200
+
+
+def test_mirror_face_follows_the_instance_asset_swap(client) -> None:
+    """Mirror coupling reads the face through ``resolve_anchor_poses_lab``:
+    swapping MIRROR A's asset for one whose face sits 3 mm off the body
+    origin moves the face the plan starts from by exactly that."""
+    scene = client.state["scene"]  # type: ignore[attr-defined]
+    scene.assets["a-mirror-off"] = _asset("a-mirror-off", "mirror", [
+        _anchor("intercept_face", (0, 0, 3), (0, 0, 1), apertureMm=12.7),
+    ])
+    before = client.post("/api/v3/align/mirror-coupling", json=MIRROR_BODY).json()["mirrorA"]
+    _override(scene, "A", "b-mirror", "a-mirror-off")
+    after = client.post("/api/v3/align/mirror-coupling", json=MIRROR_BODY).json()["mirrorA"]
+    assert before["centreCad"]["y"] == pytest.approx(0, abs=1e-12)
+    # b-mirror is rotated rx = -90, so body +z lands on CAD +y.
+    assert after["centreCad"]["y"] == pytest.approx(3, abs=1e-12)
+    assert after["normalCad"] == before["normalCad"]
+
+
 def test_align_endpoints_write_nothing(client) -> None:
     """Compute-only: the scene the routes read is untouched afterwards."""
     scene = client.state["scene"]  # type: ignore[attr-defined]

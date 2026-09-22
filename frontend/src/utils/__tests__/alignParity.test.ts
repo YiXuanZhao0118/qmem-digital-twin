@@ -38,6 +38,7 @@ import type {
   SceneData,
   SceneObject,
 } from "../../types/digitalTwin";
+import { sceneObjectEulerFromQuaternion, sceneObjectToQuaternion } from "../../optical/frames";
 import { braggAngleRad } from "../../optical/kinds/aom/physics";
 import { resolveAnchorPosesLab } from "../anchorPose";
 import {
@@ -48,7 +49,7 @@ import {
   resolveAomBraggFrame,
   type AomBraggFrame,
 } from "../aomAlign";
-import { resolveBindingTree } from "../componentBindings";
+import { primaryAssetForObject, resolveBindingTree } from "../componentBindings";
 import {
   collectRoleCentres,
   computeIsolatorAlignPose,
@@ -179,12 +180,12 @@ function binding(p: {
 function objectBinding(id: string, objectId: string, componentBindingId: string, d: Partial<Record<
   "localXMmDelta" | "localYMmDelta" | "localZMmDelta" | "localRxDegDelta" | "localRyDegDelta" | "localRzDegDelta",
   number | null
->>): ObjectBinding {
+>>, asset3dIdOverride: string | null = null): ObjectBinding {
   return {
     id, objectId, componentBindingId,
     localXMmDelta: null, localYMmDelta: null, localZMmDelta: null,
     localRxDegDelta: null, localRyDegDelta: null, localRzDegDelta: null,
-    asset3dIdOverride: null,
+    asset3dIdOverride,
     ...d,
   } as unknown as ObjectBinding;
 }
@@ -357,6 +358,67 @@ function buildAnchorPoses(): Json {
     scenes.push({ name: `random-${s}`, scene: { components, componentBindings, objectBindings, assets }, objects });
   }
 
+  // Scene 5: per-instance asset swaps (ObjectBinding.asset3dIdOverride),
+  // honoured the way the tracer's loader honours them: on an asset binding of
+  // the object's own Component, and nowhere else — not on an empty binding,
+  // not inside a spliced sub-Component, not on a binding-less legacy
+  // Component. Also an override onto an asset the scene lacks (-> missing),
+  // one on a binding with no asset of its own, and deltas without a swap.
+  // Added after the random scenes so their seeded draws are unchanged.
+  {
+    const assets = [
+      asset("ov-lens", "lens_biconvex", [
+        anchor("intercept_in", v(0, 0, -3), { axisXBodyLocal: v(0, 0, -1), apertureMm: 6 }),
+        anchor("intercept_out", v(0, 0, 3), { axisXBodyLocal: v(0, 0, 1), apertureMm: 6 }),
+      ]),
+      asset("ov-aom", "aom", [
+        anchor("intercept_in", v(0, -11.2, -1.2), { axisXBodyLocal: v(0, -1, 0), apertureMm: 1.5 }),
+        anchor("intercept_out", v(0, 11.2, -1.2), { axisXBodyLocal: v(0, 1, 0), apertureMm: 1.5 }),
+        anchor("acoustic_axis", v(0, 0, -1.2), { axisXBodyLocal: v(-1, 0, 0) }),
+      ]),
+      asset("ov-glan", "beam_splitter", [
+        anchor("intercept_face", v(0.3, 0.1, 0), { axisXBodyLocal: v(0.6, 0, 0.8), apertureMm: 5 }),
+      ]),
+      asset("ov-piece", "mechanical", [
+        anchor("mount_point", v(2, -1, 4)),
+      ]),
+    ];
+    const components = [
+      component("ov-single", "lens_biconvex"),
+      component("ov-composite", null),
+      component("ov-legacy", "mechanical", { asset3dId: "ov-piece" }),
+    ];
+    const componentBindings = [
+      binding({ id: "ovs-root", componentId: "ov-single", kind: "asset", asset: "ov-lens", role: "lens", pos: [0, 0, 1], rot: [0, 90, 0] }),
+      binding({ id: "ovc-body", componentId: "ov-composite", kind: "asset", asset: "ov-lens", role: "body", pos: [1, -2, 3], rot: [10, -20, 30] }),
+      binding({ id: "ovc-child", componentId: "ov-composite", parent: "ovc-body", kind: "asset", asset: "ov-glan", role: "front", pos: [0, 4, 0], rot: [0, 0, 45] }),
+      binding({ id: "ovc-empty", componentId: "ov-composite", parent: "ovc-body", kind: "empty", role: "mount", pos: [0, 0, -6], sortOrder: 1 }),
+      binding({ id: "ovc-null", componentId: "ov-composite", parent: "ovc-body", kind: "asset", asset: null, role: "slot", pos: [5, 0, 0], rot: [90, 0, 0], sortOrder: 2 }),
+      binding({ id: "ovc-sub", componentId: "ov-composite", kind: "subcomponent", sub: "ov-single", role: "back", pos: [0, 0, 20], rot: [180, 0, 0], sortOrder: 1 }),
+    ];
+    const objects = [
+      sceneObject("ov-plain", "ov-single", { xMm: 10, yMm: 20, zMm: 30, rxDeg: 0, ryDeg: 45, rzDeg: 0 }),
+      sceneObject("ov-swap", "ov-single", { xMm: -40, yMm: 5, zMm: 900, rxDeg: 12, ryDeg: -30, rzDeg: 45 }),
+      sceneObject("ov-missing", "ov-single", { xMm: 1, yMm: 2, zMm: 3 }),
+      sceneObject("ov-comp-1", "ov-composite", { xMm: 100, yMm: -50, zMm: 910, rxDeg: -90, ryDeg: 20, rzDeg: 5 }),
+      sceneObject("ov-comp-2", "ov-composite", { xMm: 3, yMm: -4, zMm: 5, rxDeg: 135, ryDeg: -60, rzDeg: 0 }),
+      sceneObject("ov-legacy-1", "ov-legacy", { xMm: 7, yMm: 8, zMm: 9, rxDeg: 0, ryDeg: 0, rzDeg: 90 }),
+    ];
+    const objectBindings = [
+      objectBinding("ob-swap", "ov-swap", "ovs-root", { localRzDegDelta: 2 }, "ov-aom"),
+      objectBinding("ob-missing", "ov-missing", "ovs-root", {}, "no-such-asset"),
+      objectBinding("ob-c1-body", "ov-comp-1", "ovc-body", { localXMmDelta: 0.5, localRyDegDelta: -3 }, "ov-aom"),
+      objectBinding("ob-c1-child", "ov-comp-1", "ovc-child", {}, "ov-piece"),
+      objectBinding("ob-c1-empty", "ov-comp-1", "ovc-empty", {}, "ov-glan"),
+      objectBinding("ob-c1-null", "ov-comp-1", "ovc-null", {}, "ov-glan"),
+      // Keyed to the SUB-Component's binding: never applied (no per-instance
+      // state below the object's own Component, in the loader or the walk).
+      objectBinding("ob-c1-sub", "ov-comp-1", "ovs-root", {}, "ov-aom"),
+      objectBinding("ob-c2-body", "ov-comp-2", "ovc-body", { localZMmDelta: 1.25, localRxDegDelta: 4 }),
+    ];
+    scenes.push({ name: "asset-override", scene: { components, componentBindings, objectBindings, assets }, objects });
+  }
+
   // Resolve every object of every scene with the real TS.
   return scenes.map((entry) => {
     const { name, scene, objects } = entry as {
@@ -384,6 +446,8 @@ function buildAnchorPoses(): Json {
         roleCentres: roleCentresJson(centres),
         front: vecJson(pickPolariserCentre(centres, "front")),
         back: vecJson(pickPolariserCentre(centres, "back")),
+        // The align paths' "main asset" (AlignToBeamControls): override-aware.
+        primaryAssetId: primaryAssetForObject(comp, obj, scene)?.id ?? null,
       };
     });
     return plain({ name, scene, objects, results });
@@ -603,6 +667,37 @@ function buildMirrorCoupling(): Json {
 
 // ─── point + direction align (isolatorAlign.ts) ────────────────────────────
 
+/** MIRROR2 (live scene, 2026-09-22) and its near-pole variants — see the
+ *  call site in `buildPointDir`. */
+function mirror2PoleCases() {
+  const mirror2: Pose = {
+    xMm: -492.654465, yMm: -537.195519, zMm: 910.799999, rxDeg: -135, ryDeg: -90, rzDeg: 0,
+  };
+  const ref = v(-387.3906559182327, -537.2652968730044, 908.83165);
+  const sx = 0.008087770214956286;
+  const cy = 0.999967293451616;
+  const out: {
+    pointCadMm: Vec3; dirCadMm: Vec3; sceneObject: Pose; beamDir: Vec3; beamRef: Vec3;
+    reverse?: boolean; rollDeg?: number;
+  }[] = [];
+  for (const flip of [1, -1]) {
+    for (const rollDeg of [90, -90]) {
+      for (const reverse of [false, true]) {
+        out.push({ pointCadMm: v(0, 0, 0), dirCadMm: v(0, 1, 0), sceneObject: mirror2,
+          beamDir: v(flip * sx, flip * cy, 0), beamRef: ref, reverse, rollDeg });
+      }
+    }
+  }
+  for (const offDeg of [1e-3, 1e-5, 1e-7, 1e-9]) {
+    const t = (offDeg * Math.PI) / 180;
+    for (const rollDeg of [90, -90]) {
+      out.push({ pointCadMm: v(0, 0, 0), dirCadMm: v(0, 1, 0), sceneObject: mirror2,
+        beamDir: v(sx * Math.cos(t), cy * Math.cos(t), Math.sin(t)), beamRef: ref, rollDeg });
+    }
+  }
+  return out;
+}
+
 function buildPointDir(): Json {
   const r = makeRng(0x150);
   const so = (pose: Partial<Pose>) => sceneObject("obj", "comp", pose);
@@ -625,6 +720,13 @@ function buildPointDir(): Json {
     { pointCadMm: v(1, 2, 3), dirCadMm: v(0, 0, 2), sceneObject: poseOf(so({ zMm: 7 })), beamDir: v(0, 0, 1), beamRef: v(0, 5, 5), reverse: true },
     // Degenerate direction -> null.
     { pointCadMm: v(1, 2, 3), dirCadMm: v(0, 0, 1e-7), sceneObject: poseOf(so({})), beamDir: v(1, 0, 0), beamRef: v(0, 0, 0) },
+    // The gimbal pole (2026-09-22). MIRROR2 of the live scene (alignSpec
+    // point 0, direction +y) rolled 90° onto a beam 8.1 mrad off the y axis:
+    // the resulting pose sits exactly at ry = ±90°, where the old
+    // decomposition read noise and put the align direction 2.75e-4 rad off the
+    // beam (ry 8.5e-7° short of 90). Then the same beam tilted out of the
+    // plane by 1e-3° … 1e-9°, so ry lands that close to the pole.
+    ...mirror2PoleCases(),
   ];
   for (let i = 0; i < 40; i += 1) {
     pd.push({
@@ -856,6 +958,41 @@ function buildAomBragg(): Json {
   };
 }
 
+// ─── pose decomposition near the pole (frames.sceneObjectEulerFromQuaternion)
+
+/** Every align pose goes through `sceneObjectEulerFromQuaternion`; these pin
+ *  its pole handling directly: ry within 1e-3° … 1e-9° of ±90° (and exactly
+ *  at it), several rx / rz splits, plus random rotations. The output is a
+ *  pose dict so the Python side compares it as a pose (as a rotation matrix
+ *  near the pole, where only rx ± rz is defined). */
+function buildEuler(): Json {
+  const r = makeRng(0xe0e0);
+  const toPose = (e: { rxDeg: number; ryDeg: number; rzDeg: number }): Pose => ({
+    xMm: 0, yMm: 0, zMm: 0, rxDeg: e.rxDeg, ryDeg: e.ryDeg, rzDeg: e.rzDeg,
+  });
+  const qs: THREE.Quaternion[] = [];
+  for (const sign of [1, -1]) {
+    for (const offDeg of [0, 1e-9, 1e-7, 1e-5, 1e-3]) {
+      for (const [rx, rz] of [[0, 0], [12.5, -30.25], [-135, 0], [179.9, 45], [-0.4634, 88.123456789]]) {
+        qs.push(sceneObjectToQuaternion(
+          sceneObject("e", "c", { rxDeg: rx, ryDeg: sign * (90 - offDeg), rzDeg: rz }),
+        ));
+      }
+    }
+  }
+  for (let i = 0; i < 30; i += 1) {
+    qs.push(sceneObjectToQuaternion(sceneObject("e", "c", {
+      rxDeg: r.angle(), ryDeg: i % 3 === 0 ? r.pick([-1, 1]) * (90 - r.uni(0, 1e-4)) : r.uni(-90, 90), rzDeg: r.angle(),
+    })));
+  }
+  return {
+    cases: qs.map((q) => ({
+      input: { q: { x: q.x, y: q.y, z: q.z, w: q.w } },
+      output: toPose(sceneObjectEulerFromQuaternion(q)),
+    })),
+  };
+}
+
 // ─── write / compare ───────────────────────────────────────────────────────
 
 const BUILDERS: Record<string, () => Json> = {
@@ -863,6 +1000,7 @@ const BUILDERS: Record<string, () => Json> = {
   "mirror_coupling.json": buildMirrorCoupling,
   "point_dir.json": buildPointDir,
   "aom_bragg.json": buildAomBragg,
+  "euler.json": buildEuler,
 };
 
 /** Equal up to 1e-12 on numbers (V8's Math is deterministic, but a Node
