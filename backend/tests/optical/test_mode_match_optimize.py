@@ -107,3 +107,55 @@ def test_length_locked_too_long_is_infeasible():
     assert not r.feasible
     assert "locked" in r.reason.lower()
     assert r.n_evals == 0  # bailed before any trace
+
+
+# ── an unlocked End element under a length limit (2026-09-22) ──────────────
+# ``lens0`` stands in for the End: its axial variable is what moves the End,
+# and the section length is ``current_length_mm + d``. The η optimum sits at
+# d = +TRUE_D (15 mm).
+
+def test_unlocked_endpoint_is_capped_by_the_length_limit():
+    prob = _problem()
+    r = optimize(
+        prob, specs={"lens0": DOFSpec(axial=(-25.0, 25.0))},
+        current_length_mm=50.0, l_max_mm=60.0,
+        endpoint_id="lens0", endpoint_locked=False, n_restarts=1,
+    )
+    d = r.config["lens0"].d_axial
+    # The optimum (+15) is past the cap (+10): the End stops at the cap.
+    assert d <= 10.0 + 1e-9
+    assert d == pytest.approx(10.0, abs=0.05)
+    assert r.length_mm == pytest.approx(50.0 + d)
+    assert r.length_mm <= 60.0 + 1e-9
+    assert r.feasible
+    # Without the limit it goes all the way to the optimum.
+    free = optimize(
+        prob, specs={"lens0": DOFSpec(axial=(-25.0, 25.0))},
+        current_length_mm=50.0, endpoint_id="lens0", endpoint_locked=False, n_restarts=1,
+    )
+    assert free.config["lens0"].d_axial == pytest.approx(TRUE_D, abs=0.5)
+    assert free.eta > r.eta
+
+
+def test_unlocked_endpoint_shortens_the_section_to_meet_the_limit():
+    prob = _problem()
+    r = optimize(
+        prob, specs={"lens0": DOFSpec(axial=(-25.0, 25.0))},
+        current_length_mm=70.0, l_max_mm=60.0,
+        endpoint_id="lens0", endpoint_locked=False, n_restarts=1,
+    )
+    assert r.config["lens0"].d_axial <= -10.0 + 1e-9
+    assert r.length_mm <= 60.0 + 1e-9
+    assert r.feasible
+
+
+def test_unlocked_endpoint_that_cannot_reach_the_limit_is_infeasible():
+    prob = _problem()
+    r = optimize(
+        prob, specs={"lens0": DOFSpec(axial=(-25.0, 25.0))},
+        current_length_mm=100.0, l_max_mm=60.0,
+        endpoint_id="lens0", endpoint_locked=False,
+    )
+    assert not r.feasible
+    assert r.n_evals == 0  # bailed before any trace
+    assert "-40.0 mm" in r.reason and "-25.0..+25.0" in r.reason

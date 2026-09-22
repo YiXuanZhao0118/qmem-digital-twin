@@ -18,8 +18,10 @@ from app.optical.anchor_tracer import (
     V3AssetAnchorSnapshot,
 )
 from app.optical.beam_ray import Vec3
+from app.optical import mode_match_service
 from app.optical.mode_match_model import LensConfig, move_transform, rigid_motion
-from app.optical.mode_match_service import absolute_pose, run_mode_match
+from app.optical.mode_match_optimize import DOFSpec
+from app.optical.mode_match_service import _range_specs, absolute_pose, run_mode_match
 from app.optical.pose import V3Pose, V3Transform, compose_transforms, pose_to_transform
 
 WL = 852.0
@@ -168,3 +170,111 @@ def test_moves_carry_pivot_and_absolute_pose():
     bare = run_mode_match(_scene(), _forward(), movable_ids=["lens0"], start_id="bs",
                           endpoint_id="m5", eta_target=0.5, **_kw())
     assert all(m["pose"] is None for s in bare["solutions"] for m in s["moves"])
+
+
+# ── the length knobs: endpointLocked / axialMm / lMaxMm (2026-09-22) ─────────
+# Accepted and ignored from the Start/range rewrite (2026-08-25) until now.
+# Here Start (bs) is hit at z = −30 and the End (m5) at z = +60: a 90 mm
+# section. m5's slot sits off the reverse path, so moving it costs no η —
+# which isolates what the knobs themselves do.
+
+SPAN = 90.0
+
+
+@pytest.fixture
+def optimize_calls(monkeypatch):
+    """Every ``optimize`` call ``run_mode_match`` makes, as (specs, kwargs)."""
+    calls: list[tuple[dict, dict]] = []
+    real = mode_match_service.optimize
+
+    def spy(problem, *, specs, **kw):
+        calls.append((dict(specs), kw))
+        return real(problem, specs=specs, **kw)
+
+    monkeypatch.setattr(mode_match_service, "optimize", spy)
+    return calls
+
+
+def _run(**knobs):
+    return run_mode_match(_scene(), _forward(), movable_ids=["lens0"], start_id="bs",
+                          endpoint_id="m5", eta_target=0.3, **knobs, **_kw())
+
+
+def test_default_knobs_keep_the_end_frozen_and_the_length_uncapped(optimize_calls):
+    """What the web panel (which sends none of the knobs) gets: unchanged."""
+    out = _run()
+    assert [s["key"] for s in out["solutions"]] == ["range_maxeff", "range_shortest", "free_maxeff"]
+    for s in out["solutions"]:
+        assert s["endpointLocked"] is True and s["lMaxMm"] is None
+        assert all(m["objectId"] != "m5" for m in s["moves"])
+    for specs, kw in optimize_calls:
+        assert specs["m5"] == DOFSpec()
+        assert kw["endpoint_locked"] is True and kw["l_max_mm"] is None
+    assert _run(endpoint_locked=True, axial_mm=20.0, l_max_mm=None) == out
+
+
+def test_unlocked_end_gets_its_travel_and_the_length_limit(optimize_calls):
+    out = _run(endpoint_locked=False, axial_mm=7.0, l_max_mm=SPAN + 5.0)
+    by_key = {s["key"]: s for s in out["solutions"]}
+    assert list(by_key) == ["range_maxeff", "range_shortest", "free_maxeff"]
+    # Range column: the lenses stay between Start and the End's current
+    # position, so the End may only move AWAY from Start (and optimize()
+    # caps that at the limit: +5 of the +7).
+    specs, kw = optimize_calls[0]
+    assert specs["m5"] == DOFSpec(axial=(0.0, 7.0))
+    assert kw["endpoint_locked"] is False and kw["l_max_mm"] == SPAN + 5.0
+    # Free column: both ways.
+    specs, kw = optimize_calls[-1]
+    assert specs["m5"] == DOFSpec(axial=(-7.0, 7.0))
+    assert kw["endpoint_locked"] is False and kw["l_max_mm"] == SPAN + 5.0
+    # The shortest-footprint searches keep the End where it is.
+    for specs, kw in optimize_calls[1:-1]:
+        assert specs["m5"] == DOFSpec() and kw["endpoint_locked"] is True
+    assert by_key["range_maxeff"]["endpointLocked"] is False
+    assert by_key["free_maxeff"]["endpointLocked"] is False
+    assert by_key["range_shortest"]["endpointLocked"] is True
+    for key in ("range_maxeff", "free_maxeff"):
+        s = by_key[key]
+        assert s["lMaxMm"] == SPAN + 5.0
+        assert s["lengthMm"] <= SPAN + 5.0 + 1e-6
+        m5 = [m for m in s["moves"] if m["objectId"] == "m5"]
+        d = m5[0]["translateWorldMm"]["z"] if m5 else 0.0
+        assert s["lengthMm"] == pytest.approx(SPAN + d)
+        assert (0.0 if key == "range_maxeff" else -7.0) - 1e-9 <= d <= 5.0 + 1e-9
+
+
+def test_a_limit_below_the_frozen_section_makes_every_card_infeasible():
+    out = _run(l_max_mm=SPAN - 10.0)
+    # No shortest-footprint card: it keeps the End put, so it could not fit.
+    assert [s["key"] for s in out["solutions"]] == ["range_maxeff", "free_maxeff"]
+    for s in out["solutions"]:
+        assert not s["feasible"]
+        assert "80.0 mm" in s["reason"] and "locked" in s["reason"]
+        assert s["moves"] == [] and s["lMaxMm"] == SPAN - 10.0
+
+
+def test_an_unlocked_end_shortens_the_section_only_where_the_range_allows():
+    out = _run(endpoint_locked=False, axial_mm=20.0, l_max_mm=SPAN - 10.0)
+    by_key = {s["key"]: s for s in out["solutions"]}
+    # The range column's End may not come back towards Start.
+    assert not by_key["range_maxeff"]["feasible"]
+    assert "outside its +0.0..+20.0 mm travel" in by_key["range_maxeff"]["reason"]
+    # The free column's may: it moves at least 10 mm back and fits.
+    free = by_key["free_maxeff"]
+    assert free["feasible"] and free["lengthMm"] <= SPAN - 10.0 + 1e-6
+    (m5,) = [m for m in free["moves"] if m["objectId"] == "m5"]
+    assert -20.0 - 1e-9 <= m5["translateWorldMm"]["z"] <= -10.0 + 1e-9
+
+
+def test_axial_mm_is_the_travel_of_a_lens_the_seed_misses():
+    specs = _range_specs(["hit", "missed"], {"hit": 10.0}, -30.0, 60.0, 0.0, 0.0, 7.5)
+    assert specs["missed"].axial == (-7.5, 7.5)
+    assert specs["hit"].axial == (-30.0 + 6.0 - 10.0, 60.0 - 6.0 - 10.0)  # the range sets it
+
+
+def test_unlocking_an_end_upstream_of_start_is_refused():
+    # Start = the TA (z = 80), End = m5 (z = 60): the End is upstream.
+    kw = dict(movable_ids=["lens0"], start_id="ta", endpoint_id="m5", **_kw())
+    run_mode_match(_scene(), _forward(), **kw)  # locked: allowed, as before
+    with pytest.raises(ValueError, match="downstream of Start"):
+        run_mode_match(_scene(), _forward(), endpoint_locked=False, **kw)

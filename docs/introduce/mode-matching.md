@@ -185,17 +185,67 @@ the traced slots).
 
 ## Constraints & feasibility
 
-- `l_max_mm` bounds the BS2→MIRROR5 section length **in `optimize()`**
-  (`mode_match_optimize.py:159`): MIRROR5 is a movable endpoint with an
-  axial-only DOF, locked by default; unlocked, its axial bound is clamped so
-  length ≤ `l_max_mm`; locked and already too long ⇒ immediate infeasible with
-  that reason. ⚠️ **`run_mode_match` does not use any of it** (checked
-  2026-09-22): since the Start/range rewrite (2026-08-25) every `optimize` call
-  it makes passes the endpoint as a frozen `DOFSpec()` with
-  `endpoint_locked=True` and no `l_max_mm`, and each card echoes `lMaxMm: null`
-  / `endpointLocked: true`. The request's `lMaxMm`, `endpointLocked` and
-  `axialMm` are accepted and ignored — the End element always stays put and
-  the length is bounded only by the Start→End range.
+- **The three length knobs — `endpointLocked`, `axialMm`, `lMaxMm` — work
+  again (fixed 2026-09-22, commit "Mode match: make endpointLocked / axialMm / lMaxMm do what they are documented to do").** From the Start/range rewrite
+  (2026-08-25) until then `run_mode_match` accepted them and ignored them:
+  every `optimize` call passed the End as a frozen `DOFSpec()` with
+  `endpoint_locked=True` and no `l_max_mm`, and every card echoed
+  `lMaxMm: null` / `endpointLocked: true`. Their meaning is the original one
+  (the End element — MIRROR5 in the original bench — is an axial-only
+  endpoint, locked by default, whose travel trades section length for η under
+  a length cap), fitted to the range model. Defaults (`true`, 20, none) are
+  exactly the old behaviour, and the web panel sends none of them, so **the
+  web is unchanged** (seven default-knob plans compared bit for bit against
+  the old code). `run_mode_match` (`mode_match_service.py:179`):
+  - `endpointLocked=false` lets the End slide along the section axis in the
+    two **best-efficiency** cards (`end_spec`, `:281`): in the **range**
+    column only AWAY from Start (`[0, +axialMm]`) — its lenses are bounded by
+    the End's current position, and a box-bounded search cannot keep them
+    clear of an End that moves in; in the **free** column, which ignores the
+    range, both ways (`±axialMm`). The **shortest-footprint** card always
+    keeps the End put. A moved End is a move like any other in the plan
+    (`moves[]`, with its absolute `pose`); each card echoes whether ITS End
+    could move (`endpointLocked`). Needs the End downstream of Start
+    (`ValueError` → 400 otherwise, since `+d` must lengthen the section).
+    ⚠️ Physically this moves the End mirror along the INCOMING beam, which
+    walks the leg after it sideways by the same amount; η is scored on path
+    length and does not see that walk — re-steer the downstream leg after
+    applying (see [mirror-coupling.md](mirror-coupling.md)). It is opt-in for
+    the same reason decenter is.
+  - `axialMm` (default 20, ≥ 0) is that travel, and the `±` travel of a
+    selected lens the seed does not reach (it has no hit for the range to
+    bound — `_range_specs`, `:93`, where the old hard-coded ±20 was).
+  - `lMaxMm` (default none, > 0) caps the **section length**: Start (else the
+    comparison plane) to the End's seed hit, plus the End's move — what each
+    best-efficiency card reports as `lengthMm`. It reaches every `optimize`
+    call and every card echoes it. In `optimize()` (`mode_match_optimize.py:161`):
+    a locked End with the section already over the limit ⇒ infeasible up
+    front (no trace), with that reason; an unlocked End has its upper travel
+    clamped to the limit, and when even its lower travel cannot bring the
+    section under it (e.g. always in the range column, which cannot shorten)
+    ⇒ infeasible up front too (`:209`). The shortest-footprint card is
+    skipped when the section is over the limit (it never moves the End, so it
+    could not fit, `over_limit`, `:319`). No End ⇒ no section ⇒ no effect.
+  - An unlocked End starts its search at the nearest pose inside its travel,
+    not at 0 (`optimize._start`, `:272`): the search keeps the best point it
+    evaluated, the start included, so a start outside the bounds could come
+    back as the answer — with a limit that forces shortening it did.
+  - Pinned by `test_mode_match_optimize.py` (the cap, shortening to meet it,
+    a limit out of reach), `test_mode_match_service.py` (defaults unchanged,
+    each column's End travel and limit reaching `optimize`, a limit below a
+    frozen section, shortening only in the free column, `axialMm` on a missed
+    lens, an End upstream of Start) and `test_mode_match_endpoint.py` (the
+    knobs pass through; negative `axialMm` / non-positive `lMaxMm` are 422).
+- ⚠️ **Open (found 2026-09-22): a lens can come back outside its range.** The
+  same start-point effect applies to LENSES, and it is not fixed (that would
+  change what the web gets): each lens's search starts at its current pose
+  (0), and when its bounds exclude 0 the untouched start can win. It does in
+  the shortest-footprint search, whose ranges shrink toward Start: on the
+  service tests' synthetic scene the `range_shortest` card reports a 27 mm
+  footprint (Start → last lens) with **no move**, while its lens sits 30 mm
+  from Start. A lens starting inside the 6 mm keep-off margin of Start / End
+  can stay there the same way. The fix is to start every search inside its
+  bounds (`np.clip` of the start, what `_start` does for the End).
 - **Decenter is OFF by default.** Transverse decenter improves the mode-shape
   overlap but steers the chief ray off the lens centre (a pointing error the
   objective does not penalize), which shows up as a deflected beam in the twin.
@@ -237,8 +287,8 @@ were computed against the un-conjugated, opposite-sign reference and the older
 
 Tests: `backend/tests/optical/test_mode_overlap.py`,
 `test_mode_match_model.py`, `test_mode_match_optimize.py`,
-`test_mode_match_service.py`, `test_mode_match_endpoint.py` (35 as of
-2026-09-22, all DB-free). Endpoint verified live in-process (2026-08).
+`test_mode_match_service.py`, `test_mode_match_endpoint.py` (45 as of
+2026-09-22, after the length knobs; all DB-free). Endpoint verified live in-process (2026-08).
 
 ## Frontend
 
@@ -249,9 +299,10 @@ the SELECTED shaping lenses (each with a focal-inventory input; none selected =
 Method 1), a Start and an End element, and an η target. **That is all it
 sends** (`ModeMatchingPanel.tsx` `solve`): `seedEmitterId`, `taObjectId`,
 `movableIds`, `startId`, `endpointId`, `etaTarget`, `focalInventory`, `rollDeg`
-— no max length and no endpoint lock (the request type still declares
-`lMaxMm` / `endpointLocked`, but the panel never sets them, and the service
-ignores them anyway — see Constraints). A **Lock element angles** checkbox (default ON) sends `rollDeg=0` so the optimizer only slides lenses along the beam + swaps focal, never rotating a mount (η ~0.87 vs ~0.93 with roll; `rollDeg=90` when unchecked). Solve → `runModeMatchApi`
+— no max length and no endpoint lock (the request type declares
+`lMaxMm` / `endpointLocked` / `axialMm`, but the panel never sets them, so it
+gets a frozen End and no length cap; a second client can send them — see
+Constraints). A **Lock element angles** checkbox (default ON) sends `rollDeg=0` so the optimizer only slides lenses along the beam + swaps focal, never rotating a mount (η ~0.87 vs ~0.93 with roll; `rollDeg=90` when unchecked). Solve → `runModeMatchApi`
 (`api/client.ts`); preview applies each move as a ghost via
 `previewObjectTransform`; Apply writes SceneObject poses (+ `dynamicSources.focalLengthMm`)
 in one `updateSceneObjects` undo step. ⚠️ **The focal half of Apply does not

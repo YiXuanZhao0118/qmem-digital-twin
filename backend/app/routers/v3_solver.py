@@ -268,21 +268,28 @@ class ModeMatchRequest(CamelModel):
     Object ids are SceneObject ids (str(uuid)). ``movableIds`` are the shaping
     lenses in path order; ``endpointId`` (e.g. MIRROR5) is the section-end
     mirror, locked by default. ``focalInventory`` maps an object id to the
-    focal lengths available for it (Stage-2 swap search)."""
+    focal lengths available for it (Stage-2 swap search).
+
+    ``endpointLocked=false`` lets the End slide along the section axis in the
+    best-efficiency cards (``axialMm`` of travel: away from Start in the range
+    column, both ways in the free column); ``axialMm`` is also the travel of
+    a lens the seed does not reach; ``lMaxMm`` caps the Start→End section
+    length. Defaults = a frozen End and no cap (what the web panel gets).
+    Semantics: ``mode_match_service.run_mode_match``."""
     seed_emitter_id: str
     ta_object_id: str
     movable_ids: list[str] = []
     start_id: Optional[str] = None
     endpoint_id: Optional[str] = None
     endpoint_locked: bool = True
-    axial_mm: float = 20.0
+    axial_mm: float = Field(20.0, ge=0)
     # Transverse decenter is OFF by default — decentering a lens steers the
     # chief ray (a pointing error the mode-overlap objective doesn't penalize).
     # Opt in with decenter_mm > 0 only if you accept the beam walking off-centre.
     decenter_mm: float = 0.0
     roll_deg: float = 90.0
     eta_target: Optional[float] = None
-    l_max_mm: Optional[float] = None
+    l_max_mm: Optional[float] = Field(None, gt=0)
     focal_inventory: Optional[dict[str, list[float]]] = None
     wavelength_nm: float = 852.0
     dynamic_overrides: Optional[dict] = None

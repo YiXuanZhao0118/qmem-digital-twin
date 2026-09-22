@@ -14,11 +14,13 @@ shallow local optima the astigmatic cross-terms create. Every evaluation is a
 single reverse trace (~40 ms), so the whole solve is a few seconds.
 
 Constraints:
-  * ``l_max_mm`` bounds the BS2→MIRROR5 section length. The endpoint mirror's
-    axial DOF (when unlocked) is what trades length for η; its bound is derived
-    from ``l_max_mm`` so the search cannot exceed it. When the mirror is locked
-    the length is fixed — if it already exceeds ``l_max_mm`` the problem is
-    reported infeasible with that reason.
+  * ``l_max_mm`` bounds the section length (Start → End, e.g. BS2 → MIRROR5).
+    The End element's axial DOF (when unlocked) is what trades length for η;
+    its upper bound is clamped to ``l_max_mm`` so the search cannot exceed it,
+    and when even its lowest bound cannot bring the section under the limit
+    the problem is reported infeasible before any trace. When the End is
+    locked the length is fixed — if it already exceeds ``l_max_mm`` the
+    problem is reported infeasible with that reason.
   * ``eta_target`` is a success threshold, not a search constraint: we maximize
     η and then report whether the best reached it.
 
@@ -174,9 +176,11 @@ def optimize(
 ) -> OptimizeResult:
     """Maximize η over the unfrozen DOF; report feasibility vs eta_target/l_max.
 
-    ``current_length_mm`` is the present BS2→MIRROR5 length. ``endpoint_id`` is
-    the section-end mirror; when unlocked, its axial DOF (in ``specs``) trades
-    length for η and its bounds are clamped so the length stays ≤ ``l_max_mm``.
+    ``current_length_mm`` is the present Start→End section length; the End
+    element (``endpoint_id``) moving by ``+d`` along the section axis makes it
+    ``current_length_mm + d``. When unlocked, its axial DOF (in ``specs``)
+    trades length for η and its upper bound is clamped so the length stays ≤
+    ``l_max_mm``; a limit its lower bound cannot reach is infeasible up front.
     """
     # Length feasibility when the endpoint is locked and already too long.
     if l_max_mm is not None and (endpoint_locked or endpoint_id is None):
@@ -187,8 +191,8 @@ def optimize(
                 config={},
                 reason=(
                     f"Section is {current_length_mm:.1f} mm but the limit is "
-                    f"{l_max_mm:.1f} mm, and MIRROR5 is locked. Unlock the "
-                    "endpoint or raise the length limit."
+                    f"{l_max_mm:.1f} mm, and the End element is locked. Unlock "
+                    "it (endpointLocked=false) or raise the length limit."
                 ),
             )
 
@@ -202,6 +206,18 @@ def optimize(
     ):
         lo, hi = specs[endpoint_id].axial
         hi = min(hi, l_max_mm - current_length_mm)
+        if hi < lo:
+            # Even the End's lowest bound leaves the section over the limit.
+            return OptimizeResult(
+                feasible=False, eta=0.0, best_achievable=0.0,
+                length_mm=current_length_mm, config={},
+                reason=(
+                    f"Section is {current_length_mm:.1f} mm; the "
+                    f"{l_max_mm:.1f} mm limit needs the End element to move "
+                    f"{l_max_mm - current_length_mm:+.1f} mm, outside its "
+                    f"{lo:+.1f}..{specs[endpoint_id].axial[1]:+.1f} mm travel."
+                ),
+            )
         specs[endpoint_id] = DOFSpec(
             axial=(lo, hi),
             decenter=specs[endpoint_id].decenter,
@@ -253,10 +269,24 @@ def optimize(
             return 1.0 - problem.evaluate(cfg).eta
         return objective
 
+    def _start(vars_used: list[_Var]) -> np.ndarray:
+        """Where a search starts: every element where it is (0) — except an
+        unlocked End, which starts at the nearest pose inside its travel,
+        because a length limit can exclude 0 (the section must shorten, or
+        lengthen). The search keeps the best point it EVALUATED, the start
+        included, so a start outside the bounds can be returned as is. Lenses
+        still start at 0 even when their range excludes it (an open finding,
+        ``docs/introduce/mode-matching.md``); with the End locked this is 0
+        everywhere, as before."""
+        return np.array([
+            min(max(0.0, v.lo), v.hi) if v.object_id == endpoint_id else 0.0
+            for v in vars_used
+        ])
+
     def _solve(focal_override: dict[str, float], restarts: int):
         """Full position search (all DOF, Powell polish) for fixed focals."""
         obj = _objective(variables, focal_override)
-        bx = np.zeros(len(variables))
+        bx = _start(variables)
         bv = obj(bx)
         starts = [bx.copy()]
         if warm_x is not None:
@@ -280,10 +310,10 @@ def optimize(
         """Cheap score for a focal combo: coarse axial-only descent, no polish.
         Used only to rank inventory picks before a full re-solve."""
         if not axial_vars:
-            return _objective(variables, focal_override)(np.zeros(len(variables)))
+            return _objective(variables, focal_override)(_start(variables))
         obj = _objective(axial_vars, focal_override)
         _, v = _coordinate_descent(
-            obj, np.zeros(len(axial_vars)), axial_vars,
+            obj, _start(axial_vars), axial_vars,
             steps=(6.0, 1.5), sweeps=2,
         )
         return v
@@ -338,8 +368,8 @@ def optimize(
         )
         if l_max_mm is not None and (endpoint_locked or endpoint_id is None):
             reason += (
-                " The section length is fixed (MIRROR5 locked); unlocking it "
-                "may allow a better match."
+                " The section length is fixed (the End element is locked); "
+                "unlocking it may allow a better match."
             )
     if l_max_mm is not None and length_mm > l_max_mm + 1e-6:
         feasible = False

@@ -113,3 +113,28 @@ async def test_a_solver_error_is_still_a_400(fakes, monkeypatch) -> None:
         res = await client.post("/api/v3/solver/mode-match", json=BODY)
     assert res.status_code == 400
     assert "Pick a Start" in res.json()["detail"]
+
+
+async def test_the_length_knobs_reach_the_service(fakes, monkeypatch) -> None:
+    """``endpointLocked`` / ``axialMm`` / ``lMaxMm`` are passed through (their
+    semantics: ``test_mode_match_service.py``); absent, the service gets its
+    defaults — a frozen End, 20 mm, no cap — which is what the web sends."""
+    got: list[dict] = []
+
+    def _record(scene, forward, **kw):
+        got.append({k: kw[k] for k in ("endpoint_locked", "axial_mm", "l_max_mm")})
+        return {}
+
+    monkeypatch.setattr(mode_match_service, "run_mode_match", _record)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        assert (await client.post("/api/v3/solver/mode-match", json=BODY)).status_code == 200
+        knobs = {**BODY, "endpointLocked": False, "axialMm": 7.5, "lMaxMm": 95.0}
+        assert (await client.post("/api/v3/solver/mode-match", json=knobs)).status_code == 200
+        for bad in ({"axialMm": -1.0}, {"lMaxMm": 0.0}):
+            res = await client.post("/api/v3/solver/mode-match", json={**BODY, **bad})
+            assert res.status_code == 422, bad
+    assert got == [
+        {"endpoint_locked": True, "axial_mm": 20.0, "l_max_mm": None},
+        {"endpoint_locked": False, "axial_mm": 7.5, "l_max_mm": 95.0},
+    ]
