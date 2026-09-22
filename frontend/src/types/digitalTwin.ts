@@ -1000,7 +1000,10 @@ export type ProgrammablePulseGeneratorParams = {
    *  (omitted on un-migrated rows is treated as "LOW" so existing-scene
    *  behaviour is preserved). When the user sets "HIGH" the program's
    *  intervals become LOW pulses (negative-logic). Also the steady-state
-   *  level seen by downstream switches when scrub is stopped. */
+   *  level seen by downstream switches when scrub is stopped.
+   *  Resolved `dynamicSources` > asset `defaultParams` > this field; the
+   *  Pulse & Timing pill writes `dynamicSources.restState`
+   *  (`utils/ppgRestState.ts`), so this is only the legacy floor. */
   restState?: "HIGH" | "LOW";
 };
 
