@@ -2421,21 +2421,29 @@ class IntervalBase(CamelModel):
         return self
 
 
+def _assert_ordered_non_overlapping(intervals: list[IntervalBase]) -> None:
+    """The one interval-list rule, shared by create, update and read-back:
+    ascending and non-overlapping (touching is allowed — ``[a, b)`` then
+    ``[b, c)``). The RF gate's ``inInterval`` test and the SpinCore compile
+    both assume it."""
+    prev_end = -1.0
+    for i, iv in enumerate(intervals):
+        if iv.spin_core_start_ns < prev_end:
+            raise ValueError(
+                f"intervals must be ordered and non-overlapping; "
+                f"interval[{i}].spin_core_start_ns ({iv.spin_core_start_ns}) "
+                f"is before prior end ({prev_end})."
+            )
+        prev_end = iv.spin_core_end_ns
+
+
 class TimingProgramBase(CamelModel):
     name: str | None = None
     intervals: list[IntervalBase] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _check_ordered_non_overlapping(self) -> "TimingProgramBase":
-        prev_end = -1.0
-        for i, iv in enumerate(self.intervals):
-            if iv.spin_core_start_ns < prev_end:
-                raise ValueError(
-                    f"intervals must be ordered and non-overlapping; "
-                    f"interval[{i}].spin_core_start_ns ({iv.spin_core_start_ns}) "
-                    f"is before prior end ({prev_end})."
-                )
-            prev_end = iv.spin_core_end_ns
+        _assert_ordered_non_overlapping(self.intervals)
         return self
 
 
@@ -2446,6 +2454,16 @@ class TimingProgramCreate(TimingProgramBase):
 class TimingProgramUpdate(CamelModel):
     name: str | None = None
     intervals: list[IntervalBase] | None = None
+
+    # Same rule as create. Without it a PUT stored an overlapping list, and
+    # because ``TimingProgramOut`` re-runs the create validator on the way
+    # out, that very PUT answered 500 after committing — and every later
+    # GET of the program (and ``GET /api/scene``) failed with it.
+    @model_validator(mode="after")
+    def _check_ordered_non_overlapping(self) -> "TimingProgramUpdate":
+        if self.intervals is not None:
+            _assert_ordered_non_overlapping(self.intervals)
+        return self
 
 
 class TimingProgramOut(TimingProgramBase):
