@@ -85,28 +85,46 @@ def scene_object_to_quaternion(pose: V3Pose) -> Quat:
     )
 
 
-def scene_object_euler_from_quaternion(q: Quat) -> tuple[float, float, float]:
-    """``frames.sceneObjectEulerFromQuaternion`` -> quantized
-    ``(rx_deg, ry_deg, rz_deg)``, including its ``|cos beta| > 1e-8`` gimbal
-    branch."""
+# ``frames.GIMBAL_COS_TOL``: below this |cos ry| the matrix does not say how
+# the pole's free angle splits between rx and rz, so rz is pinned to 0 (moves
+# the orientation by at most pi*tol ~ 3e-15 rad).
+GIMBAL_COS_TOL = 4 * 2.0 ** -52
+
+
+def scene_object_euler_rad_from_quaternion(q: Quat) -> tuple[float, float, float]:
+    """``frames.sceneObjectEulerRadFromQuaternion``: ``(alpha, beta, gamma)``
+    in radians, unquantized, conditioned for the pole.
+
+    ``beta = atan2(r20, hypot(r00, r10))`` is well-conditioned everywhere
+    (``asin(r20)``, used until 2026-09-22, lost half the digits at +-90 deg);
+    ``gamma`` comes from the entries of size cos(beta), pinned to 0 at the
+    pole; ``alpha`` from the O(1) entries GIVEN gamma, through the exact
+    identities ``sin a = sin g*r02 + cos g*r12`` and ``cos a = sin g*r01 +
+    cos g*r11`` — so it absorbs whatever gamma cannot resolve and the
+    recomposed rotation equals the input to rounding."""
     te = m4_rotation_elements(q_normalize(q))
     r00 = te[0]
     r10 = te[1]
     r20 = te[2]
     r01 = te[4]
+    r11 = te[5]
     r02 = te[8]
-    r21 = te[6]
-    r22 = te[10]
+    r12 = te[9]
 
-    beta = math.asin(max(-1.0, min(1.0, r20)))
-    cb = math.cos(beta)
-    if abs(cb) > 1e-8:
-        alpha = math.atan2(-r21, r22)
-        gamma = math.atan2(-r10, r00)
-    else:
-        gamma = 0.0
-        alpha = math.atan2(r01, -r02) if r20 > 0 else math.atan2(-r01, r02)
+    cb = math.hypot(r00, r10)
+    beta = math.atan2(r20, cb)
+    gamma = math.atan2(-r10, r00) if cb > GIMBAL_COS_TOL else 0.0
+    sg = math.sin(gamma)
+    cg = math.cos(gamma)
+    alpha = math.atan2(sg * r02 + cg * r12, sg * r01 + cg * r11)
+    return alpha, beta, gamma
 
+
+def scene_object_euler_from_quaternion(q: Quat) -> tuple[float, float, float]:
+    """``frames.sceneObjectEulerFromQuaternion`` -> quantized
+    ``(rx_deg, ry_deg, rz_deg)`` (see
+    :func:`scene_object_euler_rad_from_quaternion` for the pole)."""
+    alpha, beta, gamma = scene_object_euler_rad_from_quaternion(q)
     return (
         quantize_deg(alpha * RAD2DEG),
         quantize_deg(beta * RAD2DEG),

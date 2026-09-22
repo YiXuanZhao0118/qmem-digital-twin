@@ -218,36 +218,60 @@ export function sceneObjectToQuaternion(sceneObject: SceneObject): THREE.Quatern
   return qLab;
 }
 
-/** Decompose a quaternion back to the SceneObject rx/ry/rz convention.
- *
- * This is the inverse of `sceneObjectToQuaternion` for the documented matrix:
- *   R_col = transpose(Rx(rx) * Ry(ry) * Rz(rz))
- */
-export function sceneObjectEulerFromQuaternion(q: THREE.Quaternion): SceneObjectEulerDeg {
+/** Below this |cos ry| the matrix no longer says how the pole's one free
+ *  angle splits between rx and rz — the two entries that would (`r00`, `r10`,
+ *  both `cos ry` × something) are rounding noise — so rz is pinned to 0, the
+ *  convention this function has always used exactly at the pole. Tied to the
+ *  conditioning, not an arbitrary cut: pinning moves the orientation by at
+ *  most π·tol ≈ 3e-15 rad, i.e. never measurably. */
+export const GIMBAL_COS_TOL = 4 * Number.EPSILON;
+
+/** `sceneObjectEulerFromQuaternion` before quantization, in radians — split
+ *  out so the conditioning can be tested on its own (the recomposed matrix
+ *  equals the input to rounding, which the 1e-9° grid would hide). */
+export function sceneObjectEulerRadFromQuaternion(
+  q: THREE.Quaternion,
+): { alpha: number; beta: number; gamma: number } {
   const m = new THREE.Matrix4().makeRotationFromQuaternion(q.clone().normalize());
   const te = m.elements;
   const r00 = te[0];
   const r10 = te[1];
   const r20 = te[2];
   const r01 = te[4];
+  const r11 = te[5];
   const r02 = te[8];
-  const r21 = te[6];
-  const r22 = te[10];
+  const r12 = te[9];
 
-  const beta = Math.asin(THREE.MathUtils.clamp(r20, -1, 1));
-  const cb = Math.cos(beta);
-  let alpha: number;
-  let gamma: number;
+  // Well-conditioned everywhere, the pole included. The previous
+  // `asin(r20)` loses half the digits there (sin is flat at ±90°): r20
+  // rounded 1 ulp short of 1 read as ry = 90° − 1.5e-8 rad, cos ry = 1.5e-8
+  // cleared the old 1e-8 gimbal cut, and rx / rz came from atan2 of entries
+  // that are pure rounding noise at the pole — the orientation could be off
+  // by 1e-4 rad and more (docs/introduce/anchors.md, Pose quantization).
+  const cb = Math.hypot(r00, r10);
+  const beta = Math.atan2(r20, cb);
+  // rz from the entries that carry it (size cos ry): noise-limited near the
+  // pole, pinned to 0 at it ...
+  const gamma = cb > GIMBAL_COS_TOL ? Math.atan2(-r10, r00) : 0;
+  // ... and rx from the O(1) entries GIVEN that rz. Exact identities of the
+  // documented matrix, for every ry:
+  //   sin rx = sin rz·r02 + cos rz·r12,   cos rx = sin rz·r01 + cos rz·r11.
+  // So whatever error rz carries, rx absorbs exactly the part the matrix
+  // cannot tell apart (at the pole only rx ± rz is defined), and the
+  // recomposed rotation equals the input to rounding.
+  const sg = Math.sin(gamma);
+  const cg = Math.cos(gamma);
+  const alpha = Math.atan2(sg * r02 + cg * r12, sg * r01 + cg * r11);
+  return { alpha, beta, gamma };
+}
 
-  if (Math.abs(cb) > 1e-8) {
-    alpha = Math.atan2(-r21, r22);
-    gamma = Math.atan2(-r10, r00);
-  } else {
-    gamma = 0;
-    alpha = r20 > 0
-      ? Math.atan2(r01, -r02)
-      : Math.atan2(-r01, r02);
-  }
+/** Decompose a quaternion back to the SceneObject rx/ry/rz convention.
+ *
+ * This is the inverse of `sceneObjectToQuaternion` for the documented matrix:
+ *   R_col = transpose(Rx(rx) * Ry(ry) * Rz(rz))
+ */
+export function sceneObjectEulerFromQuaternion(q: THREE.Quaternion): SceneObjectEulerDeg {
+  const { alpha, beta, gamma } = sceneObjectEulerRadFromQuaternion(q);
 
   // Quantized: atan2/asin of an off-diagonal term that is mathematically
   // zero returns ~1e-15 rad of double dust, which would otherwise be stored

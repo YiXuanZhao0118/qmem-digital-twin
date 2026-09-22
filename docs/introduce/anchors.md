@@ -42,6 +42,23 @@ Frame math: frontend `optical/frames.ts`, `optical/pose.ts`, `utils/anchorAccess
 - Enforced at the write choke points: the `PoseMm` / `PoseDeg` annotated types on `SceneObjectBase` / `SceneObjectUpdate` / `ComponentBindingBase` / `ComponentBindingUpdate` in `backend/app/schemas.py:33` (they run on the `…Out` models too, so even an un-scrubbed legacy row reads back clean), `assembly_solver.euler_from_matrix`, `frames.ts:sceneObjectEulerFromQuaternion`, `sceneStore.preparePatch` (lock filter → quantize, the single gate for object patches) and the PHY Editor's Alt+drag commit in `ComponentsEditor.tsx`.
 - Invariant: a value at or above the objectives' budget must survive untouched — only sub-grid dust may move.
 
+**The decomposition itself is conditioned at the gimbal pole (2026-09-22).** Quantizing only works if the Euler angles being quantized are right, and at ry = ±90° they were not. `frames.sceneObjectEulerFromQuaternion` (and its port `align/frames.scene_object_euler_from_quaternion`) took `ry = asin(r20)` and cut to the gimbal branch at a fixed `|cos ry| ≤ 1e-8`. asin is flat at ±1, so an `r20` rounded one ulp short of 1 read as ry = 90° − 1.5e-8 rad. That cleared the cut, and rx / rz then came from `atan2` of entries that are pure rounding noise at the pole. For the live MIRROR2 (roll 90° onto a beam 8.1 mrad off the y axis) "Align to beam" returned ry 8.5e-7° short of −90 and a pose whose align direction was **2.75e-4 rad** off the beam. On the mirror-coupling U-turn fixture a planned mirror normal came out **45°** wrong. The objective is 0.1 µrad ([objectives.md](../objectives.md)).
+
+Now, in `frames.sceneObjectEulerRadFromQuaternion` (`frontend/src/optical/frames.ts`) and its Python port:
+
+- `ry = atan2(r20, hypot(r00, r10))`, well-conditioned everywhere.
+- `rz = atan2(−r10, r00)` from the entries of size cos ry. It is pinned to 0, the old convention at the pole, below `GIMBAL_COS_TOL = 4·ε`. That tolerance is tied to the conditioning: pinning moves the orientation by at most π·tol ≈ 3e-15 rad.
+- `rx` comes from the O(1) entries **given** rz, through the exact identities `sin rx = sin rz·r02 + cos rz·r12` and `cos rx = sin rz·r01 + cos rz·r11`. rx therefore absorbs whatever rz cannot resolve (at the pole only rx ± rz is defined), and the recomposed rotation equals the input to rounding (< 4e-15, with ry 1e-3° … 1e-9° from ±90° and exactly at it).
+
+Measured afterwards: MIRROR2's pose sits exactly on ry = −90°, and its direction is 1.3e-12 rad off the beam, the 1e-9° grid on rx.
+
+`assembly_solver.euler_from_matrix` (the relation solver's `Rz·Rx·Ry`, pole at rx = ±90°, fixed cut 1e-7) gets the same treatment. Quantization is unchanged: each angle is still snapped to the grid afterwards.
+
+Pinned by:
+
+- `frontend/src/optical/frames.test.ts` and `backend/tests/test_euler_pole.py`, independently on each side.
+- `backend/tests/fixtures/align/euler.json` plus the MIRROR2 cases in `point_dir.json`, for TS↔Python parity at 1e-9 (see [mirror-coupling.md](mirror-coupling.md#the-backend-port-and-its-parity-pin)).
+
 ## Reading an anchor's pose in lab mm
 
 One helper, used by anything that solves against a real optical face:

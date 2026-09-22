@@ -155,18 +155,25 @@ def euler_from_matrix(m: Matrix) -> tuple[float, float, float]:
 
     Decomposes ``R = Rz(rz) · Rx(rx) · Ry(ry)`` where ``sin(rx) = R[2][1]``.
     Handles the gimbal-lock case ``rx = ±90°`` by collapsing ry into rz.
+
+    Conditioned for the pole (2026-09-22), the same way as
+    ``align.frames.scene_object_euler_rad_from_quaternion`` (see there and
+    ``docs/introduce/anchors.md``): ``rx = asin(R[2][1])`` with a fixed
+    ``cos rx > 1e-7`` cut lost half the digits at ±90° and took ry / rz from
+    entries that are rounding noise just above the cut. Now rx comes from
+    ``atan2(R[2][1], hypot(R[2][0], R[2][2]))``, ry from the entries of size
+    cos(rx) (pinned to 0 at the pole), and rz from the O(1) entries given ry
+    via the exact identities ``cos rz = R00·cos ry + R02·sin ry`` and
+    ``sin rz = R10·cos ry + R12·sin ry`` — so rz absorbs what ry cannot
+    resolve and the recomposed matrix equals the input to rounding.
     """
 
-    sx = max(-1.0, min(1.0, m[2][1]))
-    rx = math.asin(sx)
-    cx = math.sqrt(max(0.0, 1.0 - sx * sx))
-    if cx > 1e-7:
-        ry = math.atan2(-m[2][0], m[2][2])
-        rz = math.atan2(-m[0][1], m[1][1])
-    else:
-        # Gimbal lock: cos(rx) = 0 ⇒ Ry and Rz axes coincide.
-        ry = 0.0
-        rz = math.atan2(m[1][0], m[0][0])
+    cx = math.hypot(m[2][0], m[2][2])
+    rx = math.atan2(m[2][1], cx)
+    # Pinning ry = 0 below this moves the orientation by at most pi*tol.
+    ry = math.atan2(-m[2][0], m[2][2]) if cx > 4 * 2.0 ** -52 else 0.0
+    cy, sy = math.cos(ry), math.sin(ry)
+    rz = math.atan2(m[1][0] * cy + m[1][2] * sy, m[0][0] * cy + m[0][2] * sy)
     # Quantized: asin/atan2 of a matrix entry that is mathematically zero
     # returns ~1e-15 rad of double dust, and the relation solver writes this
     # tuple straight onto SceneObject.{rx,ry,rz}_deg — without the snap a

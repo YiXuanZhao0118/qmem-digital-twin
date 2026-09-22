@@ -38,6 +38,7 @@ import type {
   SceneData,
   SceneObject,
 } from "../../types/digitalTwin";
+import { sceneObjectEulerFromQuaternion, sceneObjectToQuaternion } from "../../optical/frames";
 import { braggAngleRad } from "../../optical/kinds/aom/physics";
 import { resolveAnchorPosesLab } from "../anchorPose";
 import {
@@ -666,6 +667,37 @@ function buildMirrorCoupling(): Json {
 
 // ─── point + direction align (isolatorAlign.ts) ────────────────────────────
 
+/** MIRROR2 (live scene, 2026-09-22) and its near-pole variants — see the
+ *  call site in `buildPointDir`. */
+function mirror2PoleCases() {
+  const mirror2: Pose = {
+    xMm: -492.654465, yMm: -537.195519, zMm: 910.799999, rxDeg: -135, ryDeg: -90, rzDeg: 0,
+  };
+  const ref = v(-387.3906559182327, -537.2652968730044, 908.83165);
+  const sx = 0.008087770214956286;
+  const cy = 0.999967293451616;
+  const out: {
+    pointCadMm: Vec3; dirCadMm: Vec3; sceneObject: Pose; beamDir: Vec3; beamRef: Vec3;
+    reverse?: boolean; rollDeg?: number;
+  }[] = [];
+  for (const flip of [1, -1]) {
+    for (const rollDeg of [90, -90]) {
+      for (const reverse of [false, true]) {
+        out.push({ pointCadMm: v(0, 0, 0), dirCadMm: v(0, 1, 0), sceneObject: mirror2,
+          beamDir: v(flip * sx, flip * cy, 0), beamRef: ref, reverse, rollDeg });
+      }
+    }
+  }
+  for (const offDeg of [1e-3, 1e-5, 1e-7, 1e-9]) {
+    const t = (offDeg * Math.PI) / 180;
+    for (const rollDeg of [90, -90]) {
+      out.push({ pointCadMm: v(0, 0, 0), dirCadMm: v(0, 1, 0), sceneObject: mirror2,
+        beamDir: v(sx * Math.cos(t), cy * Math.cos(t), Math.sin(t)), beamRef: ref, rollDeg });
+    }
+  }
+  return out;
+}
+
 function buildPointDir(): Json {
   const r = makeRng(0x150);
   const so = (pose: Partial<Pose>) => sceneObject("obj", "comp", pose);
@@ -688,6 +720,13 @@ function buildPointDir(): Json {
     { pointCadMm: v(1, 2, 3), dirCadMm: v(0, 0, 2), sceneObject: poseOf(so({ zMm: 7 })), beamDir: v(0, 0, 1), beamRef: v(0, 5, 5), reverse: true },
     // Degenerate direction -> null.
     { pointCadMm: v(1, 2, 3), dirCadMm: v(0, 0, 1e-7), sceneObject: poseOf(so({})), beamDir: v(1, 0, 0), beamRef: v(0, 0, 0) },
+    // The gimbal pole (2026-09-22). MIRROR2 of the live scene (alignSpec
+    // point 0, direction +y) rolled 90° onto a beam 8.1 mrad off the y axis:
+    // the resulting pose sits exactly at ry = ±90°, where the old
+    // decomposition read noise and put the align direction 2.75e-4 rad off the
+    // beam (ry 8.5e-7° short of 90). Then the same beam tilted out of the
+    // plane by 1e-3° … 1e-9°, so ry lands that close to the pole.
+    ...mirror2PoleCases(),
   ];
   for (let i = 0; i < 40; i += 1) {
     pd.push({
@@ -919,6 +958,41 @@ function buildAomBragg(): Json {
   };
 }
 
+// ─── pose decomposition near the pole (frames.sceneObjectEulerFromQuaternion)
+
+/** Every align pose goes through `sceneObjectEulerFromQuaternion`; these pin
+ *  its pole handling directly: ry within 1e-3° … 1e-9° of ±90° (and exactly
+ *  at it), several rx / rz splits, plus random rotations. The output is a
+ *  pose dict so the Python side compares it as a pose (as a rotation matrix
+ *  near the pole, where only rx ± rz is defined). */
+function buildEuler(): Json {
+  const r = makeRng(0xe0e0);
+  const toPose = (e: { rxDeg: number; ryDeg: number; rzDeg: number }): Pose => ({
+    xMm: 0, yMm: 0, zMm: 0, rxDeg: e.rxDeg, ryDeg: e.ryDeg, rzDeg: e.rzDeg,
+  });
+  const qs: THREE.Quaternion[] = [];
+  for (const sign of [1, -1]) {
+    for (const offDeg of [0, 1e-9, 1e-7, 1e-5, 1e-3]) {
+      for (const [rx, rz] of [[0, 0], [12.5, -30.25], [-135, 0], [179.9, 45], [-0.4634, 88.123456789]]) {
+        qs.push(sceneObjectToQuaternion(
+          sceneObject("e", "c", { rxDeg: rx, ryDeg: sign * (90 - offDeg), rzDeg: rz }),
+        ));
+      }
+    }
+  }
+  for (let i = 0; i < 30; i += 1) {
+    qs.push(sceneObjectToQuaternion(sceneObject("e", "c", {
+      rxDeg: r.angle(), ryDeg: i % 3 === 0 ? r.pick([-1, 1]) * (90 - r.uni(0, 1e-4)) : r.uni(-90, 90), rzDeg: r.angle(),
+    })));
+  }
+  return {
+    cases: qs.map((q) => ({
+      input: { q: { x: q.x, y: q.y, z: q.z, w: q.w } },
+      output: toPose(sceneObjectEulerFromQuaternion(q)),
+    })),
+  };
+}
+
 // ─── write / compare ───────────────────────────────────────────────────────
 
 const BUILDERS: Record<string, () => Json> = {
@@ -926,6 +1000,7 @@ const BUILDERS: Record<string, () => Json> = {
   "mirror_coupling.json": buildMirrorCoupling,
   "point_dir.json": buildPointDir,
   "aom_bragg.json": buildAomBragg,
+  "euler.json": buildEuler,
 };
 
 /** Equal up to 1e-12 on numbers (V8's Math is deterministic, but a Node
