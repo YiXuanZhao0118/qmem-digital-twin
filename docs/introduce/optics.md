@@ -275,6 +275,18 @@ A semiconductor gain chip amplifying a seed. Locked decisions: forward A→B onl
 
 New parameters: `polarizationExtinctionDb`, `driverQualityFactor` (a frontend interface plus kind defaultParams; the op defaults gracefully for older assets). Known bug: the op reads `smallSignalGainDb` while older assets store `gainLinear`; still to be unified.
 
+**The seed coupling is on the trace (2026-09-22).** Factors 1 and 3 are one function, `misc_ops.ta_seed_coupling(ray, ctx)`, which the op uses to compute its coupled power. The tracer calls it on the same `(ray, ctx)` just before the op (`anchor_tracer.py`, beside the lens `aperture_truncation` record) and stores the result on the segment that **ends on the TA's `intercept_in`**: `LabSegment.ta_seed_coupling` → `labSegments[*].taSeedCoupling` in the solver output, `null` on every other segment:
+
+```json
+"taSeedCoupling": { "etaMode": 0.7785051989402161, "polarizationOverlap": 0.7500000000000001,
+                    "coupledFraction": 0.5838788992051621, "seedPowerMw": 2.0,
+                    "coupledPowerMw": 1.1677577984103242 }
+```
+
+(The test's case: a 2 mW seed, 0.5 mm waist, polarized 30° off the gain axis, into a 0.3 mm input mode.)
+
+`polarizationOverlap` is `frac_TE`, `etaMode` is `_mode_match_eta` (1.0 when the asset declares no input mode), `coupledPowerMw` is exactly the power the gain model then amplified — the amplified output equals `ta_forward_power_mw(coupledPowerMw) · driverQualityFactor` (pinned by `tests/test_tapered_amplifier.py::test_seed_coupling_is_on_the_segment_that_ends_on_the_facet`). The web's `v3TraceAdapter` does **not** map it onto the legacy `TraceSegment.taSeedCoupling` (a different, client-side shape on the TA's output segments that BeamScope reads), so the web UI is unchanged; clients reading `labSegments` directly get it.
+
 **Output geometry comes from `intercept_out` (2026-08-18).** The op used to build its outgoing ray with `_slab_passthrough`, i.e. from **`intercept_in`**, advanced by `lengthMm/n` along the *incoming* direction — `intercept_out` was never read, so the amplified beam started inside the chip and sailed on through the housing (the anchor tracer has no solid geometry to stop it). Now `tapered_amplifier_anchor_op` (`anchor_ops/misc_ops.py:196`) looks up `intercept_out` on `ctx.asset.anchors` and emits from that anchor's **position** along its **axisX** (the outward face normal), adding the facet-to-facet separation to `path_length_mm`. Invariants:
 
 - The waveguide sets the exit direction, so the seed's incidence does **not** steer it — a side-output / shaped TA whose two facets sit at any angle works correctly.

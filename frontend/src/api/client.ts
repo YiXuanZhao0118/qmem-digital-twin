@@ -475,6 +475,19 @@ export type V3LabSegment = {
     combinedFraction: number;
     focalLengthMm: number;
   } | null;
+  // Seed coupling into a tapered amplifier, on the segment that ends on its
+  // intercept_in — the values the TA op multiplies the seed by
+  // (`misc_ops.ta_seed_coupling`). Null/absent on every other segment.
+  // NOT the legacy `TraceSegment.taSeedCoupling` (rayTrace.ts, a different
+  // shape on the TA's OUTPUT segments); v3TraceAdapter does not map this
+  // onto it, so BeamScope's "TA eta" block is unchanged.
+  taSeedCoupling?: {
+    etaMode: number;
+    polarizationOverlap: number;
+    coupledFraction: number;
+    seedPowerMw: number;
+    coupledPowerMw: number;
+  } | null;
 };
 
 export type V3SolverResult = {

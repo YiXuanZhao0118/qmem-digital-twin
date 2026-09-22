@@ -473,6 +473,37 @@ def _mode_match_eta(ray_in: BeamRay, ctx: AnchorOpContext) -> float:
     return max(0.0, min(1.0, eta))
 
 
+def ta_seed_coupling(ray_in: BeamRay, ctx: AnchorOpContext) -> dict:
+    """How much of a seed arriving at a TA's ``intercept_in`` couples in —
+    the single computation ``tapered_amplifier_anchor_op`` uses, which the
+    tracer also calls to report it on the trace segment that ends on the
+    facet (``LabSegment.ta_seed_coupling`` → ``labSegments[*].taSeedCoupling``).
+
+    * ``polarizationOverlap`` — the TE fraction ``|E_axisY|² / |E|²``: only
+      the seed component along the gain axis (anchor axisY) is amplified.
+    * ``etaMode`` — the spatial overlap with the conjugated input-facet mode,
+      lateral offset included (:func:`_mode_match_eta`; 1.0 when the asset
+      declares no ``inputSpatialModeX/Y``).
+    * ``coupledFraction`` = their product; ``coupledPowerMw`` = seed power ×
+      it, the power the gain model then amplifies.
+    """
+    jones_local = _jones_in_axis_basis(ray_in, ctx.anchor.axis_y_body, ray_in.direction)
+    mag_in = _jones_mag2(ray_in.jones)
+    e_te = jones_local[0]
+    frac_te = (
+        (e_te.real * e_te.real + e_te.imag * e_te.imag) / mag_in
+        if mag_in > 1e-30 else 0.0
+    )
+    eta_mode = _mode_match_eta(ray_in, ctx)
+    return {
+        "etaMode": eta_mode,
+        "polarizationOverlap": frac_te,
+        "coupledFraction": frac_te * eta_mode,
+        "seedPowerMw": ray_in.power_mw,
+        "coupledPowerMw": ray_in.power_mw * frac_te * eta_mode,
+    }
+
+
 def _jones_in_axis_basis(
     ray_in: BeamRay, axis_y: Vec3, dir_body: Vec3,
 ) -> tuple[complex, complex]:
@@ -567,21 +598,11 @@ def tapered_amplifier_anchor_op(
         )
         gain_anchor = out_anchor
 
-    # (1) Polarization: TE = axisY component of the seed.
-    jones_local = _jones_in_axis_basis(ray_in, ctx.anchor.axis_y_body, ray_in.direction)
-    mag_in = _jones_mag2(ray_in.jones)
-    e_te = jones_local[0]
-    frac_te = (
-        (e_te.real * e_te.real + e_te.imag * e_te.imag) / mag_in
-        if mag_in > 1e-30 else 0.0
-    )
-
-    # (3) Mode matching: seed↔waveguide overlap integral.
-    eta_mode = _mode_match_eta(ray_in, ctx)
+    # (1) Polarization + (3) mode matching -> the coupled seed power.
+    p_coupled = ta_seed_coupling(ray_in, ctx)["coupledPowerMw"]
 
     # (2) Gain saturation on the coupled seed power — from the measured
     #     gainSamples table when the asset carries one, else closed-form.
-    p_coupled = ray_in.power_mw * frac_te * eta_mode
     p_out = ta_forward_power_mw(p_coupled, p)
 
     # (4) Current-driver quality: steady-state extraction-efficiency penalty.

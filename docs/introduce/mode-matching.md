@@ -39,7 +39,9 @@ couple. Sibling: [`optics.md`](optics.md) (the q-tracer this rides on),
   coupled into the TA**; η = 1 ⇔ profiles coincide at every plane between. So
   each score is ONE reverse trace, not a scan. The tracer's TA op computes the
   coupled seed power with the same overlap at the facet
-  (`misc_ops._mode_match_eta`), so the panel's η and the traced amplified power
+  (`misc_ops._mode_match_eta`, reported on the trace as
+  `labSegments[*].taSeedCoupling.etaMode` since 2026-09-22 — see
+  [optics.md](optics.md)), so the panel's η and the traced amplified power
   agree; the BeamScope panel's client-side "TA eta: mode" readout
   (`rayTrace.ts::taSeedModeOverlap`) applies the same per-axis rule to its own
   beam states.
