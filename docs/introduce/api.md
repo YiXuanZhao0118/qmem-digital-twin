@@ -293,11 +293,10 @@ Response `{"object": SceneObjectOut}` (the cable).
     "xMm": -1273.376, "yMm": 770.745, "zMm": 699.415, "rxDeg": 0, "ryDeg": -90, "rzDeg": 0,
     "properties": { "ppgAttachment": { "targetObjectId": "<switch>", "targetAnchorId": "ttl_in", "targetAnchorName": "ttl_in" } },
     "...": "" },
-  "timingProgram": { "id": "<program>", "name": "CH2", "intervals": [], "...": "" },
-  "mounted": true }
+  "timingProgram": { "id": "<program>", "name": "CH2", "intervals": [], "...": "" } }
 ```
 
-Written in one transaction: the TimingProgram (`CH<number of PPGs>`, empty), the object (same name), its PhysicsElement (`kindParams` as the web writes them, normalised by the same schema → `{"timingProgramId", "restState": "LOW", "outputDomain": "rfout"}`) and the attachment. The pose is the **mounted** pose (`utils/ppgMounting.ts`, ported as `rf_cables/ppg_mount.py`: `rf_out` mated onto the port, backed off by the asset's `matingProtrusionMm`), where the web stores its 3D-cursor spawn pose and draws the mount live. `mounted: false` when the mount does not resolve (the port is not on the target's primary asset — a multi-root instrument); the PPG then stands at the target object's pose.
+Written in one transaction: the TimingProgram (`CH<number of PPGs>`, empty), the object (same name), its PhysicsElement (`kindParams` as the web writes them, normalised by the same schema → `{"timingProgramId", "restState": "LOW", "outputDomain": "rfout"}`) and the attachment. The pose is the **mounted** pose (`utils/ppgMounting.ts`, ported as `rf_cables/ppg_mount.py`: `rf_out` mated onto the port, backed off by the asset's `matingProtrusionMm`), where the web stores its 3D-cursor spawn pose and draws the mount live. The port is resolved anywhere in the target's binding tree, so a multi-root instrument (the EOM) mounts its PPG like any other.
 
 ### `POST /api/v3/ppg/{id}/detach`
 

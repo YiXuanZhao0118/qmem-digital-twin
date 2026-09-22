@@ -31,7 +31,7 @@ import {
   sceneObjectToQuaternion,
 } from "../optical/frames";
 import { anchorObjectLocalAxisY, anchorObjectLocalPos, anchorObjectLocalPrimaryDir } from "./anchorAccess";
-import { primaryAsset } from "./componentBindings";
+import { findAnchorInBindingTree } from "./componentBindings";
 import { ppgAttachmentOf } from "./ppgAttachment";
 
 type RfCableEndpoints = {
@@ -125,8 +125,8 @@ function targetAnchorLabPose(
   return { posThree: posLabThree, dirThree: dirLabThree, axisYThree };
 }
 
-/** Look up an anchor on the SceneObject's asset by id + display name (the
- *  same matching rule the propagation map + cable resolver use). */
+/** Look up an anchor on the SceneObject by id + display name (the same
+ *  matching rule the propagation map + cable resolver use). */
 function findAnchor(
   scene: SceneData,
   objectId: string,
@@ -137,24 +137,25 @@ function findAnchor(
   if (!obj) return null;
   const comp = scene.components.find((c) => c.id === obj.componentId);
   if (!comp) return null;
-  // Binding-aware: the mating target's device asset is the component's
-  // PRIMARY asset (single root `targetKind="asset"` binding, else the
-  // legacy `component.asset3dId`) — the same helper the RF BFS, the RF
-  // Link panel and the cable resolver use. Reading `comp.asset3dId`
-  // alone returned null on every binding-backed instrument (switch, AOM,
-  // amp), so this whole function bailed and the caller fell back to the
-  // PPG's raw spawn pose — the PPG floated at the 3D cursor instead of
-  // sitting on the port it is plugged into.
-  const asset = primaryAsset(comp, {
-    componentBindings: scene.componentBindings ?? [],
-    assets: scene.assets,
-  });
-  if (!asset || !Array.isArray(asset.anchors)) return null;
-  const anchor = asset.anchors.find(
-    (a) => a.id === anchorId && (a.name ?? a.id) === anchorName,
+  // The whole binding tree, as the cable connect / align / resnap paths
+  // resolve a port (`findAnchorInBindingTree`). Reading `comp.asset3dId`
+  // missed every binding-backed instrument; `primaryAsset`, which replaced
+  // it, still answers null for a MULTI-ROOT Component (the EOSpace EOM:
+  // modulator + two FC/APC connectors), so a PPG plugged into such an
+  // instrument's port was left at its spawn pose instead of on the port.
+  const owned = findAnchorInBindingTree(
+    comp,
+    {
+      componentBindings: scene.componentBindings ?? [],
+      objectBindings: scene.objectBindings ?? [],
+      assets: scene.assets,
+      components: scene.components,
+    },
+    anchorId,
+    anchorName,
   );
-  if (!anchor) return null;
-  return { obj, anchor, asset };
+  if (!owned) return null;
+  return { obj, anchor: owned.anchor, asset: owned.asset };
 }
 
 /** Distance (mm) the PPG's own plug protrudes past its `rf_out` anchor,

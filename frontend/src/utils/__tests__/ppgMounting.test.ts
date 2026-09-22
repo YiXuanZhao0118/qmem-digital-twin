@@ -9,10 +9,14 @@
  *   M1. The mated pose puts the PPG's rf_out exactly on the target anchor.
  *   M2. The PPG's rf_out faces anti-parallel to the target's outward normal.
  *   M3. The target instrument's asset resolves through the ComponentBinding
- *       tree (`primaryAsset`), not the legacy `component.asset3dId`. This is
- *       the regression that made the PPG float at its spawn point in every
- *       binding-backed scene.
+ *       tree, not the legacy `component.asset3dId`. This is the regression
+ *       that made the PPG float at its spawn point in every binding-backed
+ *       scene.
  *   M4. No connecting cable / unresolvable peer → null (caller falls back).
+ *   M7. The target port is found ANYWHERE in the binding tree
+ *       (`findAnchorInBindingTree`), so a multi-root instrument — the EOSpace
+ *       EOM: modulator + two FC/APC connectors — mounts its PPG too.
+ *       `primaryAsset` answered null there until 2026-09-22.
  */
 
 import { describe, expect, it } from "vitest";
@@ -227,5 +231,32 @@ describe("computePpgMountedThreePose", () => {
     const { sceneData, ppgObject, ppgComponent } = scene(true);
     const noPort = asset("ppg", [anchor("trigger_in", [0, 0, 0], [1, 0, 0])]);
     expect(computePpgMountedThreePose(sceneData, ppgObject, ppgComponent, noPort)).toBeNull();
+  });
+
+  it("mounts onto a port of a MULTI-ROOT instrument (M7)", () => {
+    // The host's ports sit on one root; a second root carries a connector
+    // asset, so `primaryAsset(host)` is null. The mount must still resolve.
+    const { sceneData, ppgObject, ppgComponent, ppgAsset } = scene(true);
+    const connector = asset("fc-conn", [anchor("fiber_out", [0, 0, 20], [0, 0, 1])]);
+    const multiRoot = {
+      ...sceneData,
+      assets: [...sceneData.assets, connector],
+      componentBindings: [
+        ...(sceneData.componentBindings ?? []),
+        { ...binding("comp-host", "fc-conn"), id: "bind-host-conn", role: "port_a" },
+      ],
+      objects: sceneData.objects
+        .filter((o) => o.id !== "cable")
+        .map((o) =>
+          o.id === "ppg"
+            ? { ...o, properties: { ppgAttachment: { targetObjectId: "host", targetAnchorId: "ttl_in", targetAnchorName: "ttl_in" } } }
+            : o,
+        ),
+    } as SceneData;
+    const attachedPpg = multiRoot.objects.find((o) => o.id === "ppg")!;
+    const pose = computePpgMountedThreePose(multiRoot, attachedPpg, ppgComponent, ppgAsset);
+    expect(pose).not.toBeNull();
+    expect(matedRfOutThree(pose!, [5, 0, 0]).x).toBeCloseTo(0.8, 6);
+    void ppgObject;
   });
 });

@@ -1066,6 +1066,21 @@
          "z": 1
         },
         "connectorType": "sma_female"
+       },
+       {
+        "id": "ttl_in",
+        "positionMmBodyLocal": {
+         "x": 10,
+         "y": -8,
+         "z": 6
+        },
+        "name": "BIAS TTL",
+        "axisXBodyLocal": {
+         "x": 0,
+         "y": -1,
+         "z": 0
+        },
+        "connectorType": "bnc_female"
        }
       ],
       "defaultParams": {}
@@ -2244,6 +2259,21 @@
          "z": 1
         },
         "connectorType": "sma_female"
+       },
+       {
+        "id": "ttl_in",
+        "positionMmBodyLocal": {
+         "x": 10,
+         "y": -8,
+         "z": 6
+        },
+        "name": "BIAS TTL",
+        "axisXBodyLocal": {
+         "x": 0,
+         "y": -1,
+         "z": 0
+        },
+        "connectorType": "bnc_female"
        }
       ],
       "defaultParams": {}
@@ -3216,6 +3246,21 @@
          "z": 1
         },
         "connectorType": "sma_female"
+       },
+       {
+        "id": "ttl_in",
+        "positionMmBodyLocal": {
+         "x": 10,
+         "y": -8,
+         "z": 6
+        },
+        "name": "BIAS TTL",
+        "axisXBodyLocal": {
+         "x": 0,
+         "y": -1,
+         "z": 0
+        },
+        "connectorType": "bnc_female"
        }
       ],
       "defaultParams": {}
@@ -4472,6 +4517,21 @@
          "z": 1
         },
         "connectorType": "sma_female"
+       },
+       {
+        "id": "ttl_in",
+        "positionMmBodyLocal": {
+         "x": 10,
+         "y": -8,
+         "z": 6
+        },
+        "name": "BIAS TTL",
+        "axisXBodyLocal": {
+         "x": 0,
+         "y": -1,
+         "z": 0
+        },
+        "connectorType": "bnc_female"
        }
       ],
       "defaultParams": {}
@@ -23579,6 +23639,43 @@
    }
   },
   {
+   "label": "gate input on the multi-root EOM mounts",
+   "scene": 0,
+   "op": "ppgAttach",
+   "request": {
+    "target": {
+     "objectId": "eom",
+     "anchorName": "BIAS TTL"
+    }
+   },
+   "expected": {
+    "ok": true,
+    "componentId": "c-ppg-bnc",
+    "name": "CH1",
+    "programName": "CH1",
+    "programIntervals": [],
+    "elementKind": "programmable_pulse_generator",
+    "kindParams": {
+     "connectorType": "bnc",
+     "outputDomain": "rfout",
+     "highVoltageV": 3.2
+    },
+    "attachment": {
+     "targetObjectId": "eom",
+     "targetAnchorId": "ttl_in",
+     "targetAnchorName": "BIAS TTL"
+    },
+    "mountedPose": {
+     "xMm": -1110,
+     "yMm": -286.429,
+     "zMm": 998.989,
+     "rxDeg": -90,
+     "ryDeg": 0,
+     "rzDeg": 0
+    }
+   }
+  },
+  {
    "label": "trigger_in already has a PPG",
    "scene": 0,
    "op": "ppgAttach",
@@ -26968,7 +27065,14 @@
      "targetAnchorId": "trigger_in",
      "targetAnchorName": "trigger_in"
     },
-    "mountedPose": null
+    "mountedPose": {
+     "xMm": 75.97628689519883,
+     "yMm": 312.96420082935714,
+     "zMm": 823.9711535904212,
+     "rxDeg": -0.263052127,
+     "ryDeg": 36.679922,
+     "rzDeg": 0.793527904
+    }
    }
   },
   {
@@ -26998,7 +27102,14 @@
      "targetAnchorId": "trigger_in",
      "targetAnchorName": "trigger_in"
     },
-    "mountedPose": null
+    "mountedPose": {
+     "xMm": 75.97628689519883,
+     "yMm": 312.96420082935714,
+     "zMm": 823.9711535904212,
+     "rxDeg": -0.263052127,
+     "ryDeg": 36.679922,
+     "rzDeg": 0.793527904
+    }
    }
   },
   {
@@ -27029,7 +27140,14 @@
      "targetAnchorId": "trigger_in",
      "targetAnchorName": "trigger_in"
     },
-    "mountedPose": null
+    "mountedPose": {
+     "xMm": 75.97628689519883,
+     "yMm": 312.96420082935714,
+     "zMm": 823.9711535904212,
+     "rxDeg": -0.263052127,
+     "ryDeg": 36.679922,
+     "rzDeg": 0.793527904
+    }
    }
   },
   {
@@ -27059,7 +27177,14 @@
      "targetAnchorId": "trigger_in",
      "targetAnchorName": "trigger_in"
     },
-    "mountedPose": null
+    "mountedPose": {
+     "xMm": 75.97628689519883,
+     "yMm": 312.96420082935714,
+     "zMm": 823.9711535904212,
+     "rxDeg": -0.263052127,
+     "ryDeg": 36.679922,
+     "rzDeg": 0.793527904
+    }
    }
   },
   {
@@ -27089,7 +27214,14 @@
      "targetAnchorId": "trigger_in",
      "targetAnchorName": "trigger_in"
     },
-    "mountedPose": null
+    "mountedPose": {
+     "xMm": 75.97628689519883,
+     "yMm": 312.96420082935714,
+     "zMm": 823.9711535904212,
+     "rxDeg": -0.263052127,
+     "ryDeg": 36.679922,
+     "rzDeg": 0.793527904
+    }
    }
   },
   {
@@ -27628,7 +27760,14 @@
      "targetAnchorId": "ttl_in",
      "targetAnchorName": "ttl_in"
     },
-    "mountedPose": null
+    "mountedPose": {
+     "xMm": 504.4477570549125,
+     "yMm": -575.7491740642663,
+     "zMm": 1067.4276775747687,
+     "rxDeg": 0,
+     "ryDeg": 0,
+     "rzDeg": 0
+    }
    }
   },
   {
@@ -28041,7 +28180,14 @@
      "targetAnchorId": "trigger_in",
      "targetAnchorName": "trigger_in"
     },
-    "mountedPose": null
+    "mountedPose": {
+     "xMm": 50.320743768561606,
+     "yMm": 410.13139997689956,
+     "zMm": 728.5553867611184,
+     "rxDeg": 4.255024451,
+     "ryDeg": 7.102336043,
+     "rzDeg": -61.810314026
+    }
    }
   },
   {
@@ -28071,7 +28217,14 @@
      "targetAnchorId": "trigger_in",
      "targetAnchorName": "trigger_in"
     },
-    "mountedPose": null
+    "mountedPose": {
+     "xMm": 50.320743768561606,
+     "yMm": 410.13139997689956,
+     "zMm": 728.5553867611184,
+     "rxDeg": 4.255024451,
+     "ryDeg": 7.102336043,
+     "rzDeg": -61.810314026
+    }
    }
   },
   {
@@ -28101,7 +28254,14 @@
      "targetAnchorId": "trigger_in",
      "targetAnchorName": "trigger_in"
     },
-    "mountedPose": null
+    "mountedPose": {
+     "xMm": 50.320743768561606,
+     "yMm": 410.13139997689956,
+     "zMm": 728.5553867611184,
+     "rxDeg": 4.255024451,
+     "ryDeg": 7.102336043,
+     "rzDeg": -61.810314026
+    }
    }
   },
   {
@@ -28131,7 +28291,14 @@
      "targetAnchorId": "trigger_in",
      "targetAnchorName": "trigger_in"
     },
-    "mountedPose": null
+    "mountedPose": {
+     "xMm": 50.320743768561606,
+     "yMm": 410.13139997689956,
+     "zMm": 728.5553867611184,
+     "rxDeg": 4.255024451,
+     "ryDeg": 7.102336043,
+     "rzDeg": -61.810314026
+    }
    }
   },
   {
@@ -28161,7 +28328,14 @@
      "targetAnchorId": "trigger_in",
      "targetAnchorName": "trigger_in"
     },
-    "mountedPose": null
+    "mountedPose": {
+     "xMm": 50.320743768561606,
+     "yMm": 410.13139997689956,
+     "zMm": 728.5553867611184,
+     "rxDeg": 4.255024451,
+     "ryDeg": 7.102336043,
+     "rzDeg": -61.810314026
+    }
    }
   },
   {
@@ -28731,7 +28905,14 @@
      }
     },
     "ppgMounts": {
-     "r7-ppg0": null
+     "r7-ppg0": {
+      "xMm": 485.85465448847265,
+      "yMm": 565.8545556870724,
+      "zMm": 878.1341330752547,
+      "rxDeg": -36.218132372,
+      "ryDeg": -51.930544381,
+      "rzDeg": -29.000609913
+     }
     }
    }
   },
@@ -28857,7 +29038,14 @@
      }
     },
     "ppgMounts": {
-     "r7-ppg0": null
+     "r7-ppg0": {
+      "xMm": 485.85465448847265,
+      "yMm": 565.8545556870724,
+      "zMm": 878.1341330752547,
+      "rxDeg": -36.218132372,
+      "ryDeg": -51.930544381,
+      "rzDeg": -29.000609913
+     }
     }
    }
   },
@@ -29027,7 +29215,14 @@
      }
     },
     "ppgMounts": {
-     "r7-ppg0": null
+     "r7-ppg0": {
+      "xMm": 485.85465448847265,
+      "yMm": 565.8545556870724,
+      "zMm": 878.1341330752547,
+      "rxDeg": -36.218132372,
+      "ryDeg": -51.930544381,
+      "rzDeg": -29.000609913
+     }
     }
    }
   },
@@ -29712,7 +29907,14 @@
      "targetAnchorId": "ttl_in",
      "targetAnchorName": "ttl_in"
     },
-    "mountedPose": null
+    "mountedPose": {
+     "xMm": -612.9925863773248,
+     "yMm": 94.97447316788018,
+     "zMm": 881.3867889147348,
+     "rxDeg": 29.393163214,
+     "ryDeg": 8.018668395,
+     "rzDeg": 163.714678418
+    }
    }
   },
   {
@@ -29742,7 +29944,14 @@
      "targetAnchorId": "ttl_in",
      "targetAnchorName": "ttl_in"
     },
-    "mountedPose": null
+    "mountedPose": {
+     "xMm": -612.9925863773248,
+     "yMm": 94.97447316788018,
+     "zMm": 881.3867889147348,
+     "rxDeg": 29.393163214,
+     "ryDeg": 8.018668395,
+     "rzDeg": 163.714678418
+    }
    }
   },
   {
@@ -30173,7 +30382,14 @@
      }
     },
     "ppgMounts": {
-     "r8-ppg0": null
+     "r8-ppg0": {
+      "xMm": -353.89593716728376,
+      "yMm": -189.78387455346027,
+      "zMm": 1037.3653298498405,
+      "rxDeg": -35.561059882,
+      "ryDeg": -23.727569381,
+      "rzDeg": -63.106315012
+     }
     }
    }
   },
@@ -33814,8 +34030,22 @@
      }
     },
     "ppgMounts": {
-     "r13-ppg1": null,
-     "r13-ppg0": null
+     "r13-ppg1": {
+      "xMm": -45.04972655018826,
+      "yMm": -25.12326719499106,
+      "zMm": 872.4928483192243,
+      "rxDeg": -109.989006745,
+      "ryDeg": 35.42813069,
+      "rzDeg": 143.75712613
+     },
+     "r13-ppg0": {
+      "xMm": -97.12428653371089,
+      "yMm": -29.46493189835577,
+      "zMm": 887.8879981911435,
+      "rxDeg": -58.507563604,
+      "ryDeg": -30.244417123,
+      "rzDeg": -50.169959166
+     }
     }
    }
   },
@@ -33865,8 +34095,22 @@
      }
     },
     "ppgMounts": {
-     "r13-ppg1": null,
-     "r13-ppg0": null
+     "r13-ppg1": {
+      "xMm": -45.04972655018826,
+      "yMm": -25.12326719499106,
+      "zMm": 872.4928483192243,
+      "rxDeg": -109.989006745,
+      "ryDeg": 35.42813069,
+      "rzDeg": 143.75712613
+     },
+     "r13-ppg0": {
+      "xMm": -97.12428653371089,
+      "yMm": -29.46493189835577,
+      "zMm": 887.8879981911435,
+      "rxDeg": -58.507563604,
+      "ryDeg": -30.244417123,
+      "rzDeg": -50.169959166
+     }
     }
    }
   },
@@ -33884,8 +34128,22 @@
    "expected": {
     "patches": {},
     "ppgMounts": {
-     "r13-ppg1": null,
-     "r13-ppg0": null
+     "r13-ppg1": {
+      "xMm": -45.04972655018826,
+      "yMm": -25.12326719499106,
+      "zMm": 872.4928483192243,
+      "rxDeg": -109.989006745,
+      "ryDeg": 35.42813069,
+      "rzDeg": 143.75712613
+     },
+     "r13-ppg0": {
+      "xMm": -97.12428653371089,
+      "yMm": -29.46493189835577,
+      "zMm": 887.8879981911435,
+      "rxDeg": -58.507563604,
+      "ryDeg": -30.244417123,
+      "rzDeg": -50.169959166
+     }
     }
    }
   },
@@ -36383,7 +36641,14 @@
    "expected": {
     "patches": {},
     "ppgMounts": {
-     "r16-ppg0": null
+     "r16-ppg0": {
+      "xMm": -701.4486903464087,
+      "yMm": -349.00463731010126,
+      "zMm": 900.2892400499029,
+      "rxDeg": -16.599146578,
+      "ryDeg": -1.41896623,
+      "rzDeg": -25.446979422
+     }
     }
    }
   },
@@ -36402,7 +36667,14 @@
    "expected": {
     "patches": {},
     "ppgMounts": {
-     "r16-ppg0": null
+     "r16-ppg0": {
+      "xMm": -701.4486903464087,
+      "yMm": -349.00463731010126,
+      "zMm": 900.2892400499029,
+      "rxDeg": -16.599146578,
+      "ryDeg": -1.41896623,
+      "rzDeg": -25.446979422
+     }
     }
    }
   },
@@ -39570,7 +39842,14 @@
    "expected": {
     "patches": {},
     "ppgMounts": {
-     "r19-ppg1": null
+     "r19-ppg1": {
+      "xMm": 210.46047025720344,
+      "yMm": 640.3626968065387,
+      "zMm": 635.8289167435245,
+      "rxDeg": 10.117859683,
+      "ryDeg": 77.947784694,
+      "rzDeg": -14.422521545
+     }
     }
    }
   },
@@ -39702,8 +39981,22 @@
      }
     },
     "ppgMounts": {
-     "r19-ppg0": null,
-     "r19-ppg1": null
+     "r19-ppg0": {
+      "xMm": 645.8665744728906,
+      "yMm": -310.21576368890925,
+      "zMm": 1096.979062637419,
+      "rxDeg": -75.619674221,
+      "ryDeg": -58.850385013,
+      "rzDeg": -36.346490872
+     },
+     "r19-ppg1": {
+      "xMm": 210.46047025720344,
+      "yMm": 640.3626968065387,
+      "zMm": 635.8289167435245,
+      "rxDeg": 10.117859683,
+      "ryDeg": 77.947784694,
+      "rzDeg": -14.422521545
+     }
     }
    }
   },

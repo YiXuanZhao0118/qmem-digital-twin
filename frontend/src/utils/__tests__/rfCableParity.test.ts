@@ -607,6 +607,8 @@ function labScene(opts: { cables?: "all" | "smaOnly" | "none" } = {}): SceneJson
     asset("a-eom-mod", "eom", [
       anchor("intercept_in", v(-40, 0, 0), { axisXBodyLocal: v(1, 0, 0) }),
       anchor("rf_in", v(0, 8, 6), { name: "RF IN", axisXBodyLocal: v(0, 0, 1), connectorType: "sma_female" }),
+      // A gate input on the multi-root EOM: its PPG must mount (M7).
+      anchor("ttl_in", v(10, -8, 6), { name: "BIAS TTL", axisXBodyLocal: v(0, -1, 0), connectorType: "bnc_female" }),
     ]),
     asset("a-fc-apc", "fiber_connector", [
       anchor("fiber_root", v(0, 0, 0)),
@@ -1227,6 +1229,7 @@ async function buildFlows(): Promise<Json> {
   cases.push({ label: "detach PPG", scene: iLab, op: "ppgDetach", request: { ppgId: "ppg0" }, expected: await runDetach(lab, "ppg0") });
   const ppgRefs: [string, PortRef][] = [
     ["BNC ttl_in on the switch", P("switch", "ttl_in")],
+    ["gate input on the multi-root EOM mounts", P("eom", "BIAS TTL")],
     ["trigger_in already has a PPG", P("aom", "trigger_in")],
     ["rf_in is not a gate input", P("amp1", "rf_in")],
     ["output port", P("dds", "CH1")],

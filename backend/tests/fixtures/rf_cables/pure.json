@@ -7073,7 +7073,14 @@
     "timingPrograms": []
    },
    "ppgObjectId": "ppg",
-   "output": null
+   "output": {
+    "xMm": 149.6804213124225,
+    "yMm": 442.5344432468524,
+    "zMm": 787.8807668035837,
+    "rxDeg": -105.397688042,
+    "ryDeg": 10.831289136,
+    "rzDeg": 56.026065791
+   }
   },
   {
    "scene": {
@@ -8393,7 +8400,14 @@
     "timingPrograms": []
    },
    "ppgObjectId": "ppg",
-   "output": null
+   "output": {
+    "xMm": 533.4384987904624,
+    "yMm": 123.17428865939286,
+    "zMm": 1128.8987868384368,
+    "rxDeg": -27.159152976,
+    "ryDeg": 57.217538853,
+    "rzDeg": 106.966609031
+   }
   },
   {
    "scene": {
@@ -8651,7 +8665,14 @@
     "timingPrograms": []
    },
    "ppgObjectId": "ppg",
-   "output": null
+   "output": {
+    "xMm": -137.53302668411234,
+    "yMm": 215.68527227679118,
+    "zMm": 1174.6795693214042,
+    "rxDeg": -1.143984627,
+    "ryDeg": -29.606348921,
+    "rzDeg": -85.414704146
+   }
   },
   {
    "scene": {
@@ -10715,7 +10736,14 @@
     "timingPrograms": []
    },
    "ppgObjectId": "ppg",
-   "output": null
+   "output": {
+    "xMm": -516.6992901665134,
+    "yMm": 575.0778427945673,
+    "zMm": 708.2635382181242,
+    "rxDeg": 41.243263638,
+    "ryDeg": -62.121831559,
+    "rzDeg": 25.540937951
+   }
   },
   {
    "scene": {
@@ -10950,7 +10978,14 @@
     "timingPrograms": []
    },
    "ppgObjectId": "ppg",
-   "output": null
+   "output": {
+    "xMm": 91.74585925544095,
+    "yMm": -101.57093690005897,
+    "zMm": 1042.6300353910347,
+    "rxDeg": 0,
+    "ryDeg": 0,
+    "rzDeg": 0
+   }
   },
   {
    "scene": {
@@ -11623,7 +11658,14 @@
     "timingPrograms": []
    },
    "ppgObjectId": "ppg",
-   "output": null
+   "output": {
+    "xMm": -329.8569931106948,
+    "yMm": -489.86081032986124,
+    "zMm": 641.6013194810881,
+    "rxDeg": -4.987782748,
+    "ryDeg": -23.689584642,
+    "rzDeg": -23.463789479
+   }
   },
   {
    "scene": {
@@ -12953,7 +12995,14 @@
     "timingPrograms": []
    },
    "ppgObjectId": "ppg",
-   "output": null
+   "output": {
+    "xMm": -636.6366358778262,
+    "yMm": -367.4429426694512,
+    "zMm": 887.310000575462,
+    "rxDeg": 10.439764229,
+    "ryDeg": -47.541354932,
+    "rzDeg": 23.436421431
+   }
   },
   {
    "scene": {

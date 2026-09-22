@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,7 +38,6 @@ from app.models import (
     SceneObject,
     TimingProgram,
 )
-from app.optical.align.frames import AlignPose
 from app.optical.rf_cables import flows
 from app.optical.rf_cables.flows import PortRef, RuleError
 from app.optical.rf_cables.geometry import AlignmentCandidate
@@ -250,15 +248,12 @@ async def _write_ppg_element(
 class Attached:
     scene_object: SceneObject
     timing_program: TimingProgram
-    mounted: bool
 
 
 async def ppg_attach(session: AsyncSession, target: PortRef, collection_id: uuid.UUID | None) -> Attached:
     """``createPpgAtPort``: a new PPG (``CH<n>``) with its own TimingProgram,
-    plugged into ``target`` and standing at its mounted pose. When the mount
-    does not resolve (the target's port is not on its primary asset — a
-    multi-root instrument), the PPG stands at the target object's pose and
-    ``mounted`` is false; the web would leave it at the 3D cursor."""
+    plugged into ``target`` and standing at its mounted pose (where the web
+    stores its 3D-cursor spawn pose and draws the mount live)."""
     await get_master_collection(session)  # see connect()
     scene = await load_rf_scene(session)
     plan = flows.plan_ppg_attach(scene, target)
@@ -266,13 +261,7 @@ async def ppg_attach(session: AsyncSession, target: PortRef, collection_id: uuid
     session.add(program)
     await session.flush()
 
-    pose: Any = plan.mounted_pose
-    if pose is None:
-        target_obj = scene.object_by_id[plan.attachment["targetObjectId"]]
-        pose = AlignPose(
-            x_mm=target_obj.x_mm, y_mm=target_obj.y_mm, z_mm=target_obj.z_mm,
-            rx_deg=target_obj.rx_deg, ry_deg=target_obj.ry_deg, rz_deg=target_obj.rz_deg,
-        )
+    pose = plan.mounted_pose
     inserted = await insert_scene_object(session, schemas.SceneObjectCreate(
         name=plan.name,
         component_id=uuid.UUID(plan.component_id),
@@ -295,7 +284,7 @@ async def ppg_attach(session: AsyncSession, target: PortRef, collection_id: uuid
         schemas.TimingProgramOut.model_validate(program).model_dump(mode="json", by_alias=True),
     )
     await broadcast_inserted_object(InsertedObject(inserted.scene_object, inserted.collection_id, element))
-    return Attached(inserted.scene_object, program, plan.mounted_pose is not None)
+    return Attached(inserted.scene_object, program)
 
 
 async def ppg_detach(session: AsyncSession, ppg_id: str) -> Deleted:

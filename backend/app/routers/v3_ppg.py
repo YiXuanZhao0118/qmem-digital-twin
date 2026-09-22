@@ -44,9 +44,6 @@ class PpgAttachRequest(CamelModel):
 class PpgAttachResponse(CamelModel):
     object: schemas.SceneObjectOut
     timing_program: schemas.TimingProgramOut
-    # False when the mount did not resolve (the target port is not on its
-    # object's primary asset); the PPG then stands at the target's pose.
-    mounted: bool
 
 
 class PpgDetachResponse(CamelModel):
@@ -64,7 +61,6 @@ async def attach(request: PpgAttachRequest, session: AsyncSession = Depends(get_
     return PpgAttachResponse(
         object=schemas.SceneObjectOut.model_validate(attached.scene_object),
         timing_program=schemas.TimingProgramOut.model_validate(attached.timing_program),
-        mounted=attached.mounted,
     )
 
 

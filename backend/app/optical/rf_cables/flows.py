@@ -493,7 +493,7 @@ class PpgAttachPlan:
     program_name: str
     connector_type: str
     attachment: dict
-    mounted_pose: AlignPose | None
+    mounted_pose: AlignPose
 
 
 def ppg_gate(scene: RfScene, ref: PortRef) -> PanelPort:
@@ -552,6 +552,9 @@ def plan_ppg_attach(scene: RfScene, ref: PortRef) -> PpgAttachPlan:
         "targetAnchorName": port.anchor_name,
     }
     mounted = compute_ppg_mounted_pose(scene, None, component, peer=attachment)
+    # The gate found this port in the target's binding tree and the component
+    # has an rf_out on its primary asset: the mount resolves the same anchor.
+    assert mounted is not None
     return PpgAttachPlan(
         component_id=str(component.id), name=name, program_name=name, connector_type=family,
         attachment=attachment, mounted_pose=mounted,

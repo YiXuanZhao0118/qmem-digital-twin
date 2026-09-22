@@ -29,8 +29,8 @@ from app.optical.align.ts_compat import V, q_from_unit_vectors, v3_apply_quatern
 from app.optical.rf_cables.geometry import js_truthy, pose_of
 from app.optical.rf_cables.ports import (
     RfScene,
-    anchor_name,
     anchor_pos,
+    find_anchor_in_binding_tree,
     ppg_attachment_of,
     primary_asset,
     primary_dir,
@@ -82,22 +82,17 @@ def _mating_peer(scene: RfScene, ppg: Any) -> dict | None:
 
 
 def _target_anchor(scene: RfScene, peer: dict) -> tuple[Any, dict] | None:
-    """``ppgMounting.findAnchor``: the target's anchor on its PRIMARY asset
-    (not the whole tree — a multi-root target does not resolve, as in the
-    TS)."""
+    """``ppgMounting.findAnchor``: the target's anchor anywhere in its
+    binding tree (``findAnchorInBindingTree``), so a multi-root instrument
+    such as the EOM mounts its PPG too."""
     obj = scene.object_by_id.get(str(peer.get("targetObjectId")))
     if obj is None:
         return None
     comp = scene.component_of(obj)
     if comp is None:
         return None
-    asset = primary_asset(scene, comp)
-    if asset is None or not isinstance(asset.anchors, list):
-        return None
-    for a in asset.anchors:
-        if isinstance(a, dict) and a.get("id") == peer.get("targetAnchorId") and anchor_name(a) == peer.get("targetAnchorName"):
-            return obj, a
-    return None
+    owned = find_anchor_in_binding_tree(scene, comp, peer.get("targetAnchorId"), peer.get("targetAnchorName"))
+    return (obj, owned[1]) if owned is not None else None
 
 
 def compute_ppg_mounted_pose(

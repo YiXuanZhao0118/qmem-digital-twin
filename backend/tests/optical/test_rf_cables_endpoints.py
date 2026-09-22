@@ -137,6 +137,9 @@ class Lab:
                 "switch": component("switch", "rf_switch"),
                 "amp": component("amp", "rf_amplifier"),
                 "ppg": component("ppg", "programmable_pulse_generator", {"connectorType": "bnc"}),
+                # Multi-root, like the EOM: the switch body plus a connector
+                # asset as a second root (primaryAsset gives up on it).
+                "switch_mr": component("switch_mr", "rf_switch"),
             }
             await db.flush()
             self.comp = {k: c.id for k, c in comps.items()}
@@ -156,6 +159,9 @@ class Lab:
             bind("switch", switch, "root")
             bind("amp", amp, "root")
             bind("ppg", ppg, "root")
+            bind("switch_mr", switch, "body")
+            bind("switch_mr", sma, "spare_connector", sort=1)
+            self.anchors["switch_mr"] = self.anchors["switch"]
 
             def place(key, comp_key, kind, pose: V3Pose):
                 row = SceneObject(
@@ -171,12 +177,13 @@ class Lab:
                 place("dds", "dds", "rf_source", V3Pose(-910.099, 754.744, 704.245, -90, 0, 180)),
                 place("switch", "switch", "rf_switch", V3Pose(-1239.576, 761.745, 699.415, -90, 0, 180)),
                 place("amp", "amp", "rf_amplifier", V3Pose(-1602.259, 767.0, 752.648, 90, -180, 0)),
+                place("switch_mr", "switch_mr", "rf_switch", V3Pose(-1239.79, 761.745, 742.393, -90, 0, 180)),
             ]
             await db.flush()
             for row, kind in rows:
                 db.add(PhysicsElement(object_id=row.id, element_kind=kind, kind_params={}))
             await db.commit()
-            self.obj = {k: r.id for k, (r, _) in zip(("dds", "switch", "amp"), rows)}
+            self.obj = {k: r.id for k, (r, _) in zip(("dds", "switch", "amp", "switch_mr"), rows)}
 
     async def cleanup(self) -> None:
         async with AsyncSessionLocal() as db:
@@ -441,19 +448,20 @@ def _ppg_rf_out_lab(ppg: dict) -> tuple[list[float], list[float]]:
     return [p.x, p.y, p.z], [d.x, d.y, d.z]
 
 
-async def test_ppg_attach_plugs_a_new_ppg_into_the_gate_input(lab, events):
+@pytest.mark.parametrize("key", ["switch", "switch_mr"])
+async def test_ppg_attach_plugs_a_new_ppg_into_the_gate_input(lab, events, key):
+    """``switch_mr`` is multi-root: its PPG mounts too (fixed 2026-09-22)."""
     name = await _next_ppg_name()
     async with _client() as c:
-        r = await c.post("/api/v3/ppg/attach", json={"target": _port(lab, "switch", "ttl_in")})
+        r = await c.post("/api/v3/ppg/attach", json={"target": _port(lab, key, "ttl_in")})
     assert r.status_code == 200, r.text
     body = r.json()
     ppg, program = body["object"], body["timingProgram"]
-    assert body["mounted"] is True
     assert ppg["componentId"] == str(lab.comp["ppg"])
     assert ppg["name"] == program["name"] == name
     assert program["intervals"] == []
     assert ppg["properties"] == {"ppgAttachment": {
-        "targetObjectId": str(lab.obj["switch"]), "targetAnchorId": "ttl_in", "targetAnchorName": "ttl_in",
+        "targetObjectId": str(lab.obj[key]), "targetAnchorId": "ttl_in", "targetAnchorName": "ttl_in",
     }}
     async with AsyncSessionLocal() as db:
         pe = await db.scalar(select(PhysicsElement).where(PhysicsElement.object_id == uuid.UUID(ppg["id"])))
@@ -468,7 +476,7 @@ async def test_ppg_attach_plugs_a_new_ppg_into_the_gate_input(lab, events):
     # Mounted: the plug TIP (rf_out + 9 mm protrusion along it) on the port,
     # the plug facing into it. 1e-6: the stored pose is on the 1 nm grid.
     rf_out, facing = _ppg_rf_out_lab(ppg)
-    port, axis = lab.port_lab("switch", "ttl_in")
+    port, axis = lab.port_lab(key, "ttl_in")
     tip = [rf_out[i] + facing[i] * 9.0 for i in range(3)]
     assert math.dist(tip, [port.x, port.y, port.z]) < 1e-5
     assert math.dist(facing, [-axis.x, -axis.y, -axis.z]) < 1e-8
