@@ -47,6 +47,7 @@ from app.routers import (
     v3_solver,
 )
 from app.routers import v3_fibers, v3_pigtails
+from app.routers import v3_objects
 from app.routers.collections import get_master_collection
 from app.services.agent_session import scan_for_abandoned
 from app.websocket import router as websocket_router
@@ -82,6 +83,7 @@ app.include_router(v3_ppg.router, prefix="/api")
 app.include_router(v3_fibers.router, prefix="/api")
 app.include_router(v3_pigtails.router, prefix="/api")
 app.include_router(v3_anchors.router, prefix="/api")
+app.include_router(v3_objects.router, prefix="/api")
 app.include_router(pop.router, prefix="/api")
 app.include_router(
     component_bindings.component_scoped,

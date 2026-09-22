@@ -16,6 +16,7 @@
 - `POST /api/v3/align/mirror-coupling`, `/api/v3/align/isolator`, `/api/v3/align/aom-bragg` — proposed poses from the align solvers (compute-only, see below)
 - `POST /api/v3/rf-cables/connect`, `/resnap`, `/{id}/disconnect`, `/{id}/align-candidates`, `/{id}/align` and `POST /api/v3/ppg/attach`, `/{id}/detach` — the web's RF-cable / PPG store flows, served to a second client (these WRITE; see the last section)
 - `POST /api/v3/fibers/{id}/{candidates,connect,apply,disconnect}`, `POST /api/v3/fibers/resnap`, `POST /api/v3/pigtails/{id}/{candidates,apply,disconnect}`, `POST /api/v3/pigtails/resnap` — patch-cable and pigtail ends: plug in, park on a beam, unplug, follow a moved instrument (these WRITE, see below)
+- `POST /api/v3/objects/delete` — delete objects together with the web's cascade (linked rf_cables, plugged-in PPGs, orphaned legacy PPGs, their TimingPrograms) in one transaction; `dryRun` answers without deleting (this WRITES, see below)
 - `POST /api/v3/anchors/traced` — every anchor pose exactly as the tracer receives it (compute-only, see below)
 - Static: `/assets/files/...`; Swagger: `/docs`; WebSocket: `/ws/scene`
 - Conventions: every persisted id is a UUIDv7; CamelModel (DB snake_case ↔ API camelCase).
@@ -359,6 +360,43 @@ The panel's "Disconnect" on a PPG — the only sanctioned way to remove one: the
 ```json
 { "deletedObjectIds": ["<ppg>"], "deletedTimingProgramIds": ["<program>"] }
 ```
+
+## Deleting objects — `POST /api/v3/objects/delete` (this WRITES)
+
+The web store's `deleteObjects` (`frontend/src/store/sceneStore.ts:4615`) served to a second client: delete a set of SceneObjects with everything the web's cascade takes along, in ONE transaction. Router `backend/app/routers/v3_objects.py:55`; plan `backend/app/services/object_delete.py:89` (`plan_delete`, on top of `rf_cables/flows.py:393` `plan_delete_objects` — the one Python port of the cascade, which `/rf-cables/{id}/disconnect` and `/ppg/{id}/detach` use too); DB side `object_delete.py:122`.
+
+```json
+{ "objectIds": ["<RF_SWITCH0>", "<MIRROR4, locked>", "<an id already deleted>"], "dryRun": false }
+```
+
+`dryRun` is optional (default `false`). Response 200:
+
+```json
+{ "deletedObjectIds": ["<RF_SWITCH0>", "<RF_CABLE3>", "<RF_CABLE1>", "<CH0>", "<an id already deleted>"],
+  "deletedTimingProgramIds": ["<CH0's TimingProgram>"],
+  "refused": [ { "objectId": "<MIRROR4, locked>", "reason": "locked" } ] }
+```
+
+**The cascade**, exactly the web's, in the order the web issues its DELETEs (which is the order of `deletedObjectIds`):
+
+1. the requested objects, de-duplicated, minus the `locked` ones — the web skips those silently; here they come back in `refused` (`reason` is always `"locked"` today);
+2. every object whose `properties.rfCableEndpoints.A` or `.B` names a doomed object — ONE pass in scene order. A cable is **deleted**, never unlinked (a coax either joins two ports or does not exist, [rf.md](rf.md) §7);
+3. every PPG plugged into a doomed object (`properties.ppgAttachment`, `ppgsAttachedTo`, evaluated once);
+4. every LEGACY PPG (still wired through rf_cables) whose rf_cables are all doomed — and never one with no rf_cable at all (the `cables.length === 0` guard, `sceneStore.ts:4698`: a cable-less PPG lives by its attachment);
+5. per row, what `DELETE /api/objects/{id}` removes (`routers/objects.py:250` `remove_scene_object`): the PhysicsElement, and a PPG's bound TimingProgram (`kindParams.timingProgramId`, `bound_timing_program_id`, `:234`); the FK cascades take the object's ObjectBindings, collection membership, assembly relations, device state and connection / optical / RF link rows.
+
+**Not touched**, as in the web: fibres and pigtails linked to a doomed object keep their now-dangling `fiberEndpoints` / `pigtailEndpoints` link (a loose patch cable is a real bench state; `POST /api/v3/fibers/{id}/disconnect` unlinks one if wanted). Nothing is gated by kind: the web hides rf_cables and PPGs from the Outliner ("Managed", `capabilityProfile`) but its store — and its Delete key on a viewer selection — deletes them, so this does too. Rigid groups only move together; they do not delete together. Deleting a collection is `DELETE /api/collections/{id}` (the Outliner first deletes the objects under it, through `deleteObjects`, when asked to).
+
+- `deletedTimingProgramIds`: the programs those rows took along, each once, only rows that existed.
+- **Locked**: a cascade that reaches a `locked` object (step 2–4; a requested locked object is only skipped) is refused whole — `409 {"detail": "locked: deleting these would also delete locked object(s) RF_CABLE3 (<id>); unlock them first."}` — and nothing is deleted. `dryRun` answers the same 409.
+- **Already gone**: a requested id with no row counts as deleted (the web treats a 404 as the outcome it wanted). It is listed at the end of `deletedObjectIds`; nothing cascades from it, and nothing is broadcast for it (whoever deleted it did).
+- **Events**, after the one commit, per deleted row in `deletedObjectIds` order — exactly those of `DELETE /api/objects/{id}` (`objects.py:277`): `object.deleted {id, objectId}`, `physics_element.updated {objectId, deleted: true}` when it had one, `timing_program.deleted {id}` for a PPG naming a program.
+- `dryRun: true` returns exactly what the real call would (409 included) and writes and broadcasts nothing — for a confirmation dialog.
+- 422 when `objectIds` is missing or an id is not a UUID. An empty list is a 200 with three empty lists.
+
+**Where it departs from the web**, both because it is one transaction: the web DELETEs a locked cascaded object and gets a 409 for that row while the rest go through (in parallel), so the request half-happens and the store's own update is skipped (only the websocket events reconcile it); here the request is refused before anything is written. And the web can only count as "already gone" an object its snapshot still holds (then it also cascades from it); the backend's scene is the database, so an id with no row cascades nothing.
+
+**Parity**: `frontend/src/store/__tests__/deleteParity.test.ts` runs the real `deleteObjects` against a recording fake of `api/client` and writes `backend/tests/fixtures/delete/{pinned,random}.json` (63 hand-picked requests — the unit-test pins, a live-shaped bench, locks, malformed links, the TS quirks — and 255 on 120 seeded-random scenes), failing when they go stale (`UPDATE_DELETE_FIXTURES=1` regenerates). `backend/tests/test_objects_delete_parity.py` asserts the Python plan issues the same deletes in the same order; `test_objects_delete_endpoint.py` inserts every scene as real rows and replays each request whose outcome does not depend on scene order (306 of 318) through the endpoint — dry run, then for real — and checks the rows, plus dryRun / 409 / one-transaction / event tests. Cross-checked once on the live snapshot (2026-09-22: 73 single-object deletes and delete-all): identical.
 
 ## Fibre and pigtail ends — `POST /api/v3/fibers/*`, `/api/v3/pigtails/*` (these WRITE)
 

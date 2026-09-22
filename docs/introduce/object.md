@@ -59,3 +59,17 @@ Master 不能被排——它是樹根，前後沒有位置；把 collection 拖�
 2. **Master 不走 `expanded`**：它是唯一預設打開的 collection，所以持久化的是它的 collapsed flag（`MASTER_COLLAPSED_STORAGE_KEY`，`:64`）而不是 expanded flag，兩個 state 都要一起翻。
 
 展開狀態沿用既有的 localStorage 兩把 key，所以全開／全收跨 reload 存活。搜尋進行中按這顆按鈕仍會寫底層 state，但畫面看不出來——搜尋的強制展開優先，清掉搜尋才會顯現。
+
+## Deleting objects (the cascade)
+
+The web never deletes one row on its own. Every delete a user asks for — the Delete key on a Lab selection (`App.tsx:146`), the Outliner row and "delete collection with its objects", the Object panel's Remove, RF Link's Disconnect — goes through `sceneStore.deleteObjects` (`frontend/src/store/sceneStore.ts:4615`), which works out the whole set first and then fires one `DELETE /api/objects/{id}` per row (undoing a placement is the one exception: it removes just the object it created, `sceneStore.ts:2762`). The set:
+
+1. the requested objects, de-duplicated, minus the `locked` ones (skipped silently);
+2. every object whose `properties.rfCableEndpoints` A or B names a doomed object — the cable is **deleted**, not unlinked ([rf.md](rf.md) §7);
+3. every PPG plugged into a doomed object (`properties.ppgAttachment`);
+4. every legacy PPG whose rf_cables are all doomed — never one with none (`sceneStore.ts:4698`);
+5. per row, the backend (`backend/app/routers/objects.py:250` `remove_scene_object`) drops the PhysicsElement and a PPG's TimingProgram, and the FK cascades take the ObjectBindings, the collection membership, assembly relations, device state and link rows.
+
+Fibres and pigtails linked to a deleted object keep their dangling `fiberEndpoints` / `pigtailEndpoints` link; nothing is gated by kind (rf_cables and PPGs are kept out of the Outliner's tree, but a viewer selection deletes them); rigid groups move together but do not delete together. A 404 counts as success — the row is already gone.
+
+A second client gets the same cascade in one transaction from `POST /api/v3/objects/delete` (`backend/app/services/object_delete.py`; request, response, locks and `dryRun` in [api.md](api.md)). Two differences by design: a cascade that reaches a locked object is refused whole (409) instead of half-happening, and a requested id with no row is reported as deleted without anything cascading from it.

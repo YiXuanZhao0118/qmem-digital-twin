@@ -231,6 +231,22 @@ class RemovedObject:
     program_deleted: bool
 
 
+def bound_timing_program_id(element) -> uuid.UUID | None:
+    """The TimingProgram a PPG's PhysicsElement is bound to
+    (``kindParams.timingProgramId``), or ``None`` when the element is not a
+    PPG or names no parseable id — the program deleting that PPG takes
+    with it."""
+    if element is None or element.element_kind != "programmable_pulse_generator":
+        return None
+    raw = (element.kind_params or {}).get("timingProgramId")
+    if not raw:
+        return None
+    try:
+        return uuid.UUID(str(raw))
+    except (TypeError, ValueError):
+        return None
+
+
 async def remove_scene_object(session: AsyncSession, scene_object: SceneObject) -> RemovedObject:
     """Delete one SceneObject and what it takes with it — its PhysicsElement
     (FK cascade) and, for a Programmable Pulse Generator, its bound
@@ -241,20 +257,13 @@ async def remove_scene_object(session: AsyncSession, scene_object: SceneObject) 
     # PPG ↔ TimingProgram are 1:1 — deleting a PPG cascades to deleting its
     # bound TimingProgram so the Pulse & Timing catalog stays in sync with
     # the RF Link graph.
-    cascaded_program_id: uuid.UUID | None = None
     element = (
         await session.scalars(
             select(PhysicsElement).where(PhysicsElement.object_id == object_id)
         )
     ).first()
     had_physics_element = element is not None
-    if element is not None and element.element_kind == "programmable_pulse_generator":
-        raw = (element.kind_params or {}).get("timingProgramId")
-        if raw:
-            try:
-                cascaded_program_id = uuid.UUID(str(raw))
-            except (TypeError, ValueError):
-                cascaded_program_id = None
+    cascaded_program_id = bound_timing_program_id(element)
     await session.delete(scene_object)
     program_deleted = False
     if cascaded_program_id is not None:
