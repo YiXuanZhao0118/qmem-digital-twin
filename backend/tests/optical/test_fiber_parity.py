@@ -1,10 +1,18 @@
-"""The Python fibre / pigtail ports equal the TypeScript they were ported from.
+"""The Python fibre / pigtail flows still answer what the TypeScript did.
 
-``backend/tests/fixtures/fibers/*.json`` are written by the REAL TypeScript
-(``frontend/src/utils/__tests__/fiberParity.test.ts``, which also fails when
-they go stale): the pure helpers called directly, and the store flows run
-through the real zustand store with the REST layer mocked. Every case here
-feeds a fixture's input to the Python and compares with what the TS returned.
+``backend/tests/fixtures/fibers/*.json`` were written by the REAL TypeScript
+of the time (``frontend/src/utils/__tests__/fiberParity.test.ts``): the pure
+helpers called directly, and the store flows run through the real zustand
+store with the REST layer mocked. Every case here feeds a fixture's input to
+the Python and compares with what the TS returned.
+
+**They are FROZEN GOLDENS since 2026-09-23.** The web app now calls
+``POST /api/v3/fibers|pigtails/*`` and `utils/fiberAlignment.ts` +
+`utils/pigtailAlignment.ts` are deleted, so there is no second implementation
+to regenerate them from and the generator test went with it. Nothing can
+rewrite these files: an assertion that fails here is this module's own
+regression, not drift, and the fixture is the record of the behaviour the web
+shipped. Read one before changing it.
 
 Tolerance: 1e-9 on every number; choices (which candidates, their order, the
 link written, which key is present) must match exactly. Euler angles are

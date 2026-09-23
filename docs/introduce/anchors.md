@@ -92,7 +92,7 @@ MIRROR5's traced hit point and reflected direction (both backend outputs). See
 [mirror-coupling.md](mirror-coupling.md) for its first consumer. Since
 2026-09-22 the fibre-port sweep (`sceneStore.collectFiberPortsLab`) and the
 plugged-end re-snap (`resnapFibersLinkedTo`) use it too, instead of a local
-rotation copy that skipped the binding transform ([fiber.md](fiber.md#the-backend-port-2026-09-22)),
+rotation copy that skipped the binding transform ([fiber.md](fiber.md#the-endpoint-flows-2026-09-22-the-web-calls-them-since-2026-09-23)),
 and so does every RF port lookup — connect, resnap, align candidates, the PPG
 mount (both plugs) and the viewer's cable re-derive — through
 `rfCableAnchorResolver.rfPortPoses` / `resolveRfPortPose` (backend

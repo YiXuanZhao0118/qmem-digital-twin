@@ -638,6 +638,285 @@ export async function runModeMatchApi(req: {
 
 
 // =============================================================================
+// Fibre + pigtail ends — `POST /api/v3/fibers/*`, `/api/v3/pigtails/*`.
+//
+// The ONE implementation of "plug this patch cable into that instrument",
+// "park this end on a beam", "unplug" and "follow the instrument that just
+// moved". The web store used to carry a second copy in
+// `utils/fiberAlignment.ts` + `utils/pigtailAlignment.ts`; those are gone and
+// `sceneStore`'s eight fibre/pigtail actions call these.
+//
+// Shapes: `docs/introduce/api.md` ("Fibre and pigtail ends"); what they mean
+// physically: `docs/introduce/fiber.md` + `component.md`.
+// =============================================================================
+
+/** One traced beam segment in LAB mm, as `sceneStore.collectBeamSegmentsLab`
+ *  scrapes it off the live `__rayTraceDebug`. Which beam a face goes onto is
+ *  the user's pick, so the caller supplies the segments (same contract as
+ *  `/api/v3/align/*`). `beamId` is the dedup identity. */
+export type FiberBeamSegment = {
+  beamId: string;
+  aMm: [number, number, number];
+  bMm: [number, number, number];
+  displayLabel?: string;
+  emitterObjectId?: string;
+  aomOrder?: number | null;
+  branch?: string;
+  wavelengthNm?: number;
+  /** The object that emitted this segment — a part never snaps to its own
+   *  output. The web filters these out before sending, so it is optional. */
+  sourceObjectId?: string;
+};
+
+/** Identity of the fibre receptacle a candidate plugs into — what the web
+ *  persists as `SceneObject.properties.fiberEndpoints[end]`. */
+export type FiberPortLink = {
+  targetObjectId: string;
+  targetAnchorId: string;
+  targetAnchorName: string;
+};
+
+/** A receptacle named for `connect` / `apply`: the object plus the anchor's
+ *  `name ?? id`. `anchorId` disambiguates two anchors sharing a name. */
+export type FiberPortTarget = {
+  objectId: string;
+  anchorName: string;
+  anchorId?: string | null;
+};
+
+/** One picker entry for a fibre END. `port` is present only on a receptacle
+ *  candidate — applying one persists the link; a beam candidate clears it.
+ *
+ *  `beam` is NOT part of the wire shape: the store attaches the segment the
+ *  candidate came from, so applying a beam candidate can name the same
+ *  segment back to `/apply` (the endpoint recomputes from the target). */
+export type FiberAlignmentCandidate = {
+  beamId: string;
+  distMm: number;
+  projectedPortLab: [number, number, number];
+  newPosMmBody: [number, number, number];
+  newHandleMmBody: [number, number, number];
+  newOutwardBody: [number, number, number];
+  displayLabel?: string;
+  emitterObjectId?: string;
+  aomOrder?: number | null;
+  branch?: string;
+  wavelengthNm?: number;
+  port?: FiberPortLink;
+  beam?: FiberBeamSegment;
+};
+
+/** One picker entry for a PIGTAIL end. What moves is the port connector, so
+ *  the payload is where its mating face should land and look, not a spline
+ *  node. `beam` is the store-side attachment, as above. */
+export type PigtailAlignmentCandidate = {
+  key: string;
+  distMm: number;
+  targetPosLab: [number, number, number];
+  targetAxisXLab: [number, number, number];
+  displayLabel?: string;
+  emitterObjectId?: string;
+  aomOrder?: number | null;
+  branch?: string;
+  wavelengthNm?: number;
+  port?: FiberPortLink;
+  beam?: FiberBeamSegment;
+};
+
+export type FiberCandidatesResponse = {
+  objectId: string;
+  name: string;
+  locked: boolean;
+  end: "A" | "B";
+  toleranceMm: number | null;
+  candidates: FiberAlignmentCandidate[];
+};
+
+export type PigtailCandidatesResponse = {
+  objectId: string;
+  name: string;
+  locked: boolean;
+  end: "A" | "B";
+  portAnchor: string;
+  bindingId: string;
+  portLab: { posMm: [number, number, number]; axisXMm: [number, number, number] };
+  toleranceMm: number | null;
+  candidates: PigtailAlignmentCandidate[];
+};
+
+/** The apply/connect result: one transaction, the rows it touched. */
+export type FiberApplyResponse = {
+  object: SceneObject;
+  physicsElement: PhysicsElement | null;
+  candidate: FiberAlignmentCandidate;
+};
+
+export type PigtailApplyResponse = {
+  object: SceneObject;
+  objectBinding: import("../types/digitalTwin").ObjectBinding;
+  candidate: PigtailAlignmentCandidate;
+};
+
+export type FiberResnapResponse = {
+  resnapped: Array<{
+    objectId: string;
+    end: "A" | "B";
+    targetObjectId: string;
+    targetAnchorId: string;
+    targetAnchorName: string;
+  }>;
+  updated: SceneObject[];
+  physicsElements: PhysicsElement[];
+};
+
+export type PigtailResnapResponse = {
+  resnapped: Array<{
+    objectId: string;
+    end: "A" | "B";
+    portAnchor: string;
+    targetObjectId: string;
+    targetAnchorId: string;
+    targetAnchorName: string;
+  }>;
+  updated: SceneObject[];
+  objectBindings: import("../types/digitalTwin").ObjectBinding[];
+};
+
+/** `findFiberAlignmentCandidates` — compute-only. `toleranceMm: null` = no
+ *  distance limit. */
+export async function fiberCandidatesApi(
+  objectId: string,
+  payload: {
+    end: "A" | "B";
+    toleranceMm?: number | null;
+    beamSegments?: FiberBeamSegment[];
+  },
+): Promise<FiberCandidatesResponse> {
+  const response = await client.post<FiberCandidatesResponse>(
+    `/api/v3/fibers/${objectId}/candidates`,
+    { beamSegments: [], ...payload },
+  );
+  return response.data;
+}
+
+/** Plug one end into a receptacle. `toleranceMm` defaults to null server-side
+ *  (the caller named the port), matching the web's apply-a-picked-candidate. */
+export async function fiberConnectApi(
+  objectId: string,
+  payload: { end: "A" | "B"; target: FiberPortTarget; toleranceMm?: number | null },
+): Promise<FiberApplyResponse> {
+  const response = await client.post<FiberApplyResponse>(
+    `/api/v3/fibers/${objectId}/connect`,
+    payload,
+  );
+  return response.data;
+}
+
+/** Park one end on a beam segment — this CLEARS the end's link, because a
+ *  free-space placement is not a connection. */
+export async function fiberApplyBeamApi(
+  objectId: string,
+  payload: { end: "A" | "B"; beam: FiberBeamSegment; toleranceMm?: number | null },
+): Promise<FiberApplyResponse> {
+  const response = await client.post<FiberApplyResponse>(
+    `/api/v3/fibers/${objectId}/apply`,
+    {
+      end: payload.end,
+      target: { beam: payload.beam },
+      toleranceMm: payload.toleranceMm ?? null,
+    },
+  );
+  return response.data;
+}
+
+/** `clearFiberEndpointLink` — unplug in place; the cable stays where it is. */
+export async function fiberDisconnectApi(
+  objectId: string,
+  end: "A" | "B",
+): Promise<{ object: SceneObject; changed: boolean }> {
+  const response = await client.post<{ object: SceneObject; changed: boolean }>(
+    `/api/v3/fibers/${objectId}/disconnect`,
+    { end },
+  );
+  return response.data;
+}
+
+/** `resnapFibersLinkedTo` — re-derive every plugged end whose instrument is
+ *  in `movedObjectIds`. Never unlinks: an unresolvable link is skipped. */
+export async function fiberResnapApi(
+  movedObjectIds: readonly string[],
+): Promise<FiberResnapResponse> {
+  const response = await client.post<FiberResnapResponse>(
+    "/api/v3/fibers/resnap",
+    { movedObjectIds },
+  );
+  return response.data;
+}
+
+export async function pigtailCandidatesApi(
+  objectId: string,
+  payload: {
+    end: "A" | "B";
+    toleranceMm?: number | null;
+    beamSegments?: FiberBeamSegment[];
+  },
+): Promise<PigtailCandidatesResponse> {
+  const response = await client.post<PigtailCandidatesResponse>(
+    `/api/v3/pigtails/${objectId}/candidates`,
+    { beamSegments: [], ...payload },
+  );
+  return response.data;
+}
+
+/** Move one pigtail port connector onto a receptacle or a beam. The
+ *  instrument's own pose is never written — the connector moves as an
+ *  `ObjectBinding` delta. */
+export async function pigtailApplyApi(
+  objectId: string,
+  payload: {
+    end: "A" | "B";
+    target: { port: FiberPortTarget } | { beam: FiberBeamSegment };
+    toleranceMm?: number | null;
+  },
+): Promise<PigtailApplyResponse> {
+  const target =
+    "port" in payload.target
+      ? {
+          objectId: payload.target.port.objectId,
+          anchorName: payload.target.port.anchorName,
+          anchorId: payload.target.port.anchorId ?? null,
+        }
+      : { beam: payload.target.beam };
+  const response = await client.post<PigtailApplyResponse>(
+    `/api/v3/pigtails/${objectId}/apply`,
+    { end: payload.end, target, toleranceMm: payload.toleranceMm ?? null },
+  );
+  return response.data;
+}
+
+export async function pigtailDisconnectApi(
+  objectId: string,
+  end: "A" | "B",
+): Promise<{ object: SceneObject; changed: boolean }> {
+  const response = await client.post<{ object: SceneObject; changed: boolean }>(
+    `/api/v3/pigtails/${objectId}/disconnect`,
+    { end },
+  );
+  return response.data;
+}
+
+export async function pigtailResnapApi(
+  movedObjectIds: readonly string[],
+): Promise<PigtailResnapResponse> {
+  const response = await client.post<PigtailResnapResponse>(
+    "/api/v3/pigtails/resnap",
+    { movedObjectIds },
+  );
+  return response.data;
+}
+
+
+// =============================================================================
 // ComponentBinding (alembic 0062): catalog-level composition tree.
 // =============================================================================
 

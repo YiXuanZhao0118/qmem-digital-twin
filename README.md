@@ -769,7 +769,7 @@ optional `inspector` (React node). The backend reads the same data through
 | `rfLinkPorts.ts` (new) | Anchor domain & connector-family classification |
 | `timingEvaluation.ts` | Evaluate TimingProgram at `tNs`; auto-fit timeline max |
 | `ppgMounting.ts` (new) | Auto-instantiate a PPG + TimingProgram + rf_cable at a target ttl_in/trigger_in port |
-| `fiberAlignment.ts` / `fiberAnchorResolver.ts` / `fiberBodyEndpointResolver.ts` (new) | Fiber spline + ferrule-tip math + endpoint→anchor binding |
+| `fiberAnchorResolver.ts` / `fiberBodyEndpointResolver.ts` (new) | Fiber spline + ferrule-tip math + endpoint→anchor binding + the receptacle predicates. The endpoint ALIGN maths left for `POST /api/v3/fibers\|pigtails/*` on 2026-09-23 (`fiberAlignment.ts` / `pigtailAlignment.ts` deleted) |
 | `rfCableAlignment.ts` / `rfCableAnchorResolver.ts` | Same for RF cables |
 | `rigidGroup.ts` | Expand pose patch to all rigid-group members. `expandFiberBodyPose` adds an intrinsic fiber-body→ends cascade so moving the body translates / rotates both paired `fiber_end` SceneObjects as a unit (independent of any collection rigid_transform) |
 | `assetFrame.ts` (new, frame-anchor) | Low-level body-frame math: `bodyFramePositionMm(asset)`, `bodyFrameQuaternion(asset)`, `bodyFramePointToObjectLocalMm(p, asset)`, `bodyFrameDirectionToObjectLocal(d, asset)`, `bodyFrameMeshShiftMm(asset)`. Lifts body-frame vectors into object-local/CAD frame using the asset's `properties.bodyFramePositionMm` + `bodyFrameRotation`. Used by everything that needs to compose an anchor with a SceneObject pose |

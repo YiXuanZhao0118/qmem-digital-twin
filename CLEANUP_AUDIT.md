@@ -112,7 +112,7 @@
 - `optical/kinds/*/`：aom、aom-v3、dichroic-mirror、faraday-rotator、lens、mirror、pbs、polarizer、waveplate（各 physics.test.ts）
 - `store/__tests__/v3FeatureFlags.test.ts`
 - `three/`：deltaAlphaFromHit、lensOpticalGeometry、opticalBeams、__tests__/{beam_mesh_alignment, bindingRendererGate.swap, bindingTreeObject, labRoot.invariant, loadAsset.skipAutoCenter, pbs252.swap}
-- `utils/__tests__/`：anchorAccess、componentBindings、fiberAlignment、fiberBodyEndpointResolver、rfPropagation、rigidGroup.frame
+- `utils/__tests__/`：anchorAccess、componentBindings、fiberReceptacleAnchors、fiberBodyEndpointResolver、rfPropagation、rigidGroup.frame
 
 ### E2. backend 測試（`backend/tests/`，pytest）
 - 設定：`pytest.ini`、`tests/conftest.py`

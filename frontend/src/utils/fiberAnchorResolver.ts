@@ -16,7 +16,13 @@
 // `positionMmBodyLocal` / `directionBodyLocal` — same behaviour as
 // before kindParams existed.
 
-import { dirLabToBody, pointLabToBody, type V3Pose } from "../optical/pose";
+import {
+  dirBodyToLab,
+  dirLabToBody,
+  pointBodyToLab,
+  pointLabToBody,
+  type V3Pose,
+} from "../optical/pose";
 import type { Anchor } from "../types/digitalTwin";
 import { findCableRootAnchor, findMatingFaceAnchor } from "./connectorAnchors";
 
@@ -201,98 +207,6 @@ export function resolveFiberNodes(
   return undefined;
 }
 
-// ── Endpoint links (a fibre end plugged into an instrument's port) ────────
-
-type Vec3T = [number, number, number];
-
-/** Re-derive one fibre end's spline node + handle from the LIVE pose of the
- *  port it is linked to — the optical twin of `resolveLinkedRfCableEndpoint`.
- *
- *  This is what makes a plugged-in patch cable follow its instrument:
- *  `sceneStore.resnapFibersLinkedTo` persists the result whenever the
- *  instrument's pose change commits.
- *
- *  The port comes in already in LAB — resolve it with
- *  `anchorPose.resolveAnchorPosesLab`, i.e. through the target's binding tree
- *  and its SceneObject pose, the chain the tracer places the port with. (Until
- *  2026-09-22 this took the anchor in the target asset's own frame and lifted
- *  it with a local copy of the SceneObject rotation retired on 2026-06-01,
- *  ignoring the binding transform: fine for an identity-bound port on a part
- *  turned about Z by 0 or 180 deg, centimetres off on anything tilted — a
- *  cable that looked plugged in and traced unplugged.) The fibre's own frame
- *  is `optical/pose`, the same convention.
- *
- *  `tipMm` is the junction→face distance for THIS end's connector — pass the
- *  bound connector asset's `|connect_in − connect_out|` so the face lands
- *  exactly where the backend puts the synthesized `intercept_in/out`.
- *
- *  Returns null when the link can't be resolved (degenerate port direction);
- *  the caller then keeps the stored nodes so the fibre still renders. */
-export function resolveLinkedFiberEndpoint(args: {
-  endpoint: "A" | "B";
-  /** The fibre SceneObject's live pose. */
-  fiberPose: V3Pose;
-  /** The port anchor's origin in lab mm. */
-  portLabMm: Vec3T;
-  /** The port anchor's axisX in lab — its PROPAGATION direction. Need not
-   *  be normalised. */
-  portAxisXLab: Vec3T;
-  /** Junction → optical-face distance of this fibre end's connector.
-   *  Defaults to the FC 30126A9 housing length. */
-  tipMm?: number;
-  /** Handle magnitude to set on the linked endpoint. Defaults to 30 mm,
-   *  matching the RF resolver. */
-  handleMagnitudeMm?: number;
-}): { posMmBody: Vec3T; handleMmBody: Vec3T } | null {
-  const tipMm = args.tipMm ?? FIBER_FERRULE_TIP_MM;
-  const portLab = args.portLabMm;
-  const axLab = args.portAxisXLab;
-  const m = Math.hypot(axLab[0], axLab[1], axLab[2]);
-  if (m < 1e-9) return null;
-  // NOT the RF anti-parallel rule. An RF port's direction is a mechanical
-  // outward face normal, so a plug always faces into it. An OPTICAL anchor's
-  // axisX is the PROPAGATION direction (see anchors.md), so the face
-  // orientation follows the same rule the beam-align path uses:
-  //   End A is an entry — its face looks back up the beam  → outward = −axisX
-  //   End B is an exit  — its face looks along the beam    → outward = +axisX
-  // Plugging End B into a detector's `intercept_in` (axisX = into the body)
-  // therefore points the fibre the same way the light travels; plugging End A
-  // into a source's `intercept_out` points it back at the source. The wrong
-  // pairing (End A into a sink) comes out facing away, which is the visual
-  // tell that the cable is round the wrong way.
-  const sign = args.endpoint === "A" ? -1 : 1;
-  const newOutwardLab: Vec3T = [
-    (sign * axLab[0]) / m, (sign * axLab[1]) / m, (sign * axLab[2]) / m,
-  ];
-  // node = face − outward · tip, and face = port − outward · gap, so the
-  // optical face sits FIBER_MATING_GAP_MM short of the plane (see the
-  // constant for why it may not be zero).
-  const backOff = tipMm + FIBER_MATING_GAP_MM;
-  const newNodeLab: Vec3T = [
-    portLab[0] - newOutwardLab[0] * backOff,
-    portLab[1] - newOutwardLab[1] * backOff,
-    portLab[2] - newOutwardLab[2] * backOff,
-  ];
-  const nodeBody = pointLabToBody(
-    { x: newNodeLab[0], y: newNodeLab[1], z: newNodeLab[2] }, args.fiberPose,
-  );
-  const outBody = dirLabToBody(
-    { x: newOutwardLab[0], y: newOutwardLab[1], z: newOutwardLab[2] }, args.fiberPose,
-  );
-  const newOutwardBody: Vec3T = [outBody.x, outBody.y, outBody.z];
-  const mag = args.handleMagnitudeMm ?? 30;
-  return {
-    posMmBody: [nodeBody.x, nodeBody.y, nodeBody.z],
-    // Handle points into the cable body — the sign `endpointOutwardBody`
-    // expects when it reads the outward back out.
-    handleMmBody: [
-      -newOutwardBody[0] * mag,
-      -newOutwardBody[1] * mag,
-      -newOutwardBody[2] * mag,
-    ],
-  };
-}
-
 /** Junction → optical-face distance read off a bound fibre connector asset's
  *  own anchors: `|connect_in − connect_out|`. This is the SAME derivation the
  *  backend uses in `_connector_tip_and_aperture`, so frontend geometry and
@@ -313,4 +227,231 @@ export function fiberConnectorTipMmFromAnchors(
     cIn.positionMmBodyLocal.z - cOut.positionMmBodyLocal.z,
   );
   return d > 1e-6 ? d : FIBER_FERRULE_TIP_MM;
+}
+
+
+// ── Receptacle predicates ────────────────────────────────────────────────
+
+/** True when an anchor's `connectorType` names a fibre bulkhead, i.e. the
+ *  anchor is a receptacle a patch cable can be plugged into rather than a
+ *  free-space optical face. Deliberately prefix-based like
+ *  `connectorFamilyFromAnchor` in `rfLinkPorts.ts`, so adding `sc_*` /
+ *  `lc_*` to the union needs no change here.
+ *
+ *  **Female only** (2026-08-23). A receptacle is a socket on a chassis; the
+ *  ferrule on the end of a patch cable or a pigtail is a PLUG and carries
+ *  `*_male`. This matters because `sceneStore.collectFiberPortsLab` filters
+ *  on this predicate alone and never looks at the anchor id — once cable ends
+ *  declare their connector, a gender-blind test would list every one of them
+ *  as a socket and let two patch cables be plugged into each other.
+ *
+ *  The backend twin is `app/optical/fibers/scene.py`'s port sweep, which is
+ *  what actually decides a candidate list since 2026-09-23; this copy now
+ *  only feeds the Object panel's own port list and Align gating. */
+export function isFiberPortConnectorType(
+  connectorType: string | null | undefined,
+): boolean {
+  if (typeof connectorType !== "string") return false;
+  return /^(fc|sc|lc|st)_.*_female$/.test(connectorType);
+}
+
+/** Every optical anchor id that can carry light in or out of a part — the
+ *  set {@link isFiberReceptacleAnchor} is asked about. */
+export const OPTICAL_PORT_ANCHOR_IDS = [
+  "intercept_in", "intercept_out", "fiber_in",
+] as const;
+
+/** True when an anchor is somewhere a patch cable PLUGS IN rather than a
+ *  free-space face a beam can be flown onto.
+ *
+ *  Two ways to be one, and both are needed:
+ *    - `fiber_in` — a chassis socket by construction; that is what the id
+ *      means, so no connectorType test applies. It is the ONLY socket id:
+ *      `fiber_out` is a CONNECTOR's mating face (male) and `fiber_root` its
+ *      cable junction, neither of which anything plugs into.
+ *    - an `intercept_*` declaring a female fibre connector — the pre-0133
+ *      spelling, still the right answer for any part that has not moved.
+ *
+ *  Used by the Object panel to decide a part has nothing to align: light
+ *  reaches it down a cable, so translating the box onto a beam line is
+ *  meaningless. A part with BOTH a bulkhead and a bare face keeps Align for
+ *  the bare one, which is why this is per-anchor and the caller does the
+ *  `every`. */
+export function isFiberReceptacleAnchor(anchor: {
+  id: string;
+  connectorType?: string | null;
+}): boolean {
+  return anchor.id === "fiber_in" || isFiberPortConnectorType(anchor.connectorType);
+}
+
+
+// ── The per-end port pose (the Object panel's editor) ─────────────────────
+
+type Vec3T = [number, number, number];
+
+/** Current outward direction at a spline endpoint, in BODY frame: −handle
+ *  when present, else the direction toward the neighbour node, else +Y as a
+ *  last resort. The sign convention every fibre endpoint write uses — the
+ *  handle points INTO the cable, outward points out of the ferrule.
+ *
+ *  The backend twin is `optical/fibers/geometry.endpoint_outward_body`. */
+export function endpointOutwardBody(
+  nodes: FiberNodePersistent[],
+  end: "A" | "B",
+): Vec3T {
+  const idx = end === "A" ? 0 : nodes.length - 1;
+  const neighbourIdx = end === "A" ? 1 : nodes.length - 2;
+  const node = nodes[idx];
+  const handle = end === "A" ? node.handleOutMm : node.handleInMm;
+  if (handle && handle[0] ** 2 + handle[1] ** 2 + handle[2] ** 2 > 1e-9) {
+    const m = Math.hypot(handle[0], handle[1], handle[2]);
+    return [-handle[0] / m, -handle[1] / m, -handle[2] / m];
+  }
+  const np = nodes[neighbourIdx].posMm;
+  const dx = node.posMm[0] - np[0];
+  const dy = node.posMm[1] - np[1];
+  const dz = node.posMm[2] - np[2];
+  const m = Math.hypot(dx, dy, dz);
+  return m > 1e-9 ? [dx / m, dy / m, dz / m] : [0, 1, 0];
+}
+
+/** Read one fibre end's optical-port pose in LAB frame: the face position
+ *  (= node + outward·`tipMm`, body→lab) and the outward unit vector in lab.
+ *  Returns null when the spline is too short or undefined.
+ *
+ *  Used by the Object panel's per-end port-pose editor, so the user sees
+ *  WHERE the port sits in world coords and which way it faces without doing
+ *  the body↔lab transform in their head. {@link withFiberPortLabPose} is the
+ *  write half and MUST be given the same `tipMm`.
+ *
+ *  `tipMm` is the junction→optical-face distance of THIS end's bound
+ *  connector (`sceneStore.fiberEndConnectorTipMm`) — the length the backend's
+ *  `_synth_fiber_slot` puts the traced face at. It defaults to the FC housing
+ *  constant, which is right only for a fibre with no bound connector; before
+ *  2026-09-23 the editor used that constant unconditionally and so showed and
+ *  wrote a face ~23 mm (PM connectors) off the one the solver couples
+ *  through. */
+export function getFiberPortLabPose(
+  end: "A" | "B",
+  nodes: FiberNodePersistent[],
+  pose: V3Pose,
+  tipMm: number = FIBER_FERRULE_TIP_MM,
+): { posLab: Vec3T; outwardLab: Vec3T } | null {
+  if (!nodes || nodes.length < 2) return null;
+  const idx = end === "A" ? 0 : nodes.length - 1;
+  const outwardBody = endpointOutwardBody(nodes, end);
+  const node = nodes[idx];
+  const portLab = pointBodyToLab(
+    {
+      x: node.posMm[0] + outwardBody[0] * tipMm,
+      y: node.posMm[1] + outwardBody[1] * tipMm,
+      z: node.posMm[2] + outwardBody[2] * tipMm,
+    },
+    pose,
+  );
+  const outLab = dirBodyToLab(
+    { x: outwardBody[0], y: outwardBody[1], z: outwardBody[2] }, pose,
+  );
+  return {
+    posLab: [portLab.x, portLab.y, portLab.z],
+    outwardLab: [outLab.x, outLab.y, outLab.z],
+  };
+}
+
+/** Write a target optical-port pose in LAB frame for one fibre end. Returns a
+ *  fresh `nodes` array with the touched endpoint's node + handle back-derived:
+ *
+ *    outward_body = labDirToBody(targetOutwardLab)
+ *    node_body    = labToBody(targetPosLab) − outward_body · tipMm
+ *    handle_body  = −outward_body · |prev_handle|   (or fallback length)
+ *
+ *  The handle MAGNITUDE is preserved from the previous handle when present
+ *  (so the existing tension/bend stays intact), or falls back to
+ *  max(20 mm, segment_length·0.33). Interior nodes don't move.
+ *
+ *  This is the ONE fibre-endpoint write with no backend endpoint behind it:
+ *  it sets an arbitrary pose the user typed, not a projection onto a beam or
+ *  a mate into a receptacle, so there is nothing for
+ *  `POST /api/v3/fibers/{id}/apply` to recompute. It shares `tipMm` with
+ *  everything that does — see {@link getFiberPortLabPose}.
+ *
+ *  `targetOutwardLab` is normalised before use; below 1e-9 magnitude the
+ *  function returns `nodes` unchanged. */
+export function withFiberPortLabPose(opts: {
+  end: "A" | "B";
+  nodes: FiberNodePersistent[];
+  pose: V3Pose;
+  targetPosLab: Vec3T;
+  targetOutwardLab: Vec3T;
+  tipMm?: number;
+}): FiberNodePersistent[] {
+  const { end, nodes, pose, targetPosLab, targetOutwardLab } = opts;
+  if (!nodes || nodes.length < 2) return nodes;
+  const tipMm = opts.tipMm ?? FIBER_FERRULE_TIP_MM;
+  const outwardMag = Math.hypot(
+    targetOutwardLab[0], targetOutwardLab[1], targetOutwardLab[2],
+  );
+  if (outwardMag < 1e-9) return nodes;
+  const idx = end === "A" ? 0 : nodes.length - 1;
+  const neighbourIdx = end === "A" ? 1 : nodes.length - 2;
+  const outB = dirLabToBody(
+    {
+      x: targetOutwardLab[0] / outwardMag,
+      y: targetOutwardLab[1] / outwardMag,
+      z: targetOutwardLab[2] / outwardMag,
+    },
+    pose,
+  );
+  const outwardBody: Vec3T = [outB.x, outB.y, outB.z];
+  const portBody = pointLabToBody(
+    { x: targetPosLab[0], y: targetPosLab[1], z: targetPosLab[2] }, pose,
+  );
+  const newPosBody: Vec3T = [
+    portBody.x - outwardBody[0] * tipMm,
+    portBody.y - outwardBody[1] * tipMm,
+    portBody.z - outwardBody[2] * tipMm,
+  ];
+
+  // Preserve handle magnitude when the existing handle is non-zero.
+  const oldHandle = end === "A" ? nodes[idx].handleOutMm : nodes[idx].handleInMm;
+  let handleLen: number;
+  if (
+    oldHandle
+    && oldHandle[0] ** 2 + oldHandle[1] ** 2 + oldHandle[2] ** 2 > 1e-9
+  ) {
+    handleLen = Math.hypot(oldHandle[0], oldHandle[1], oldHandle[2]);
+  } else {
+    const np = nodes[neighbourIdx].posMm;
+    const segLen = Math.hypot(
+      np[0] - nodes[idx].posMm[0],
+      np[1] - nodes[idx].posMm[1],
+      np[2] - nodes[idx].posMm[2],
+    );
+    handleLen = Math.max(20, segLen * 0.33);
+  }
+  // Handle points INTO the spline; outward = −handle ⇒ handle = −outward.
+  const newHandle: Vec3T = [
+    -outwardBody[0] * handleLen,
+    -outwardBody[1] * handleLen,
+    -outwardBody[2] * handleLen,
+  ];
+
+  const newNode: FiberNodePersistent = {
+    posMm: newPosBody,
+    handleInMm:
+      end === "B"
+        ? newHandle
+        : nodes[idx].handleInMm
+          ? ([...nodes[idx].handleInMm] as Vec3T)
+          : undefined,
+    handleOutMm:
+      end === "A"
+        ? newHandle
+        : nodes[idx].handleOutMm
+          ? ([...nodes[idx].handleOutMm] as Vec3T)
+          : undefined,
+  };
+  const nextNodes = [...nodes];
+  nextNodes[idx] = newNode;
+  return nextNodes;
 }
