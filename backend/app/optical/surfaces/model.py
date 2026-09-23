@@ -17,6 +17,16 @@ from app.optical.surfaces.materials import ISOTROPIC, UNIAXIAL
 AIR = "air"
 OPAQUE = "opaque"
 
+# Kinds that keep their anchor op even when an asset carries a surface model
+# (docs/surface-optics.md, "Decisions"): the emitters and gain chip, the sinks,
+# fibre coupling, and the (fibre-pigtailed) EOM.
+OP_ONLY_KINDS = frozenset({
+    "tapered_amplifier", "laser_source",
+    "detector", "camera", "spectrometer", "wavemeter", "beam_dump",
+    "fiber", "fiber_coupler", "fiber_connector",
+    "eom",
+})
+
 
 def cross(a: Vec3, b: Vec3) -> Vec3:
     return Vec3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x)

@@ -553,6 +553,10 @@ export type V3LabSegment = {
     seedPowerMw: number;
     coupledPowerMw: number;
   } | null;
+  // The medium this segment runs through inside a part traced by its surface
+  // model (a surface-model media id, or "air" for a gap inside the part).
+  // Null/absent = free space between parts. See docs/surface-optics.md.
+  medium?: string | null;
 };
 
 export type V3SolverResult = {

@@ -2,7 +2,7 @@
 
 # Surface optics — tracing parts through their real faces (plan)
 
-> **Status (2026-09-23): Phase 0 (the `assets_3d.surface_model` column + its schema) and Phase 1 (the standalone surface engine, `backend/app/optical/surfaces/`) landed. Phases 2–4 are not started.** Nothing in the live tracer reads `surface_model` or calls the engine yet; every part still traces through its single anchor as described in [introduce/optics.md](introduce/optics.md).
+> **Status (2026-09-23): Phases 0–2 landed** — the `assets_3d.surface_model` column, the surface engine (`backend/app/optical/surfaces/`), and its wiring into the anchor tracer. **Phases 3–4 are not started, and no catalog asset carries a surface model yet**, so every part in the lab still traces through its anchor op as described in [introduce/optics.md](introduce/optics.md); an asset traces through its surfaces the moment one is written.
 
 ## Why
 
@@ -76,7 +76,7 @@ Not in the schema yet, on purpose (it lands with the phase that reads it): bulk 
 
 ### Physics per surface (Phase 1 — landed)
 
-`backend/app/optical/surfaces/`: `model.py` (parse the stored JSON), `materials.py`, `geometry.py` (intersection, normal, curvature), `interface.py` (one surface), `trace.py` (`trace_element`, the in-part loop). Everything works in the part's own body frame, on the same `BeamRay` the anchor tracer carries. **Standalone: the anchor tracer does not call it yet.**
+`backend/app/optical/surfaces/`: `model.py` (parse the stored JSON), `materials.py`, `geometry.py` (intersection, normal, curvature), `interface.py` (one surface), `trace.py` (`trace_element`, the in-part loop). Everything works in the part's own body frame, on the same `BeamRay` the anchor tracer carries; Phase 2 below is how the tracer calls it.
 
 The chief ray is traced exactly; the Gaussian envelope Q (the complex symmetric 2×2 beam matrix of [introduce/optics.md](introduce/optics.md), `E ∼ exp(−i·k/2·rᵀQ⁻¹r)`, in the canonical `beam_local_sp` frame) is carried paraxially about it, **reduced** (air-equivalent, `Q̂ = Q/n`), so every readout keeps using the vacuum λ and a ray leaving into air carries an ordinary Q.
 
@@ -109,12 +109,22 @@ The chief ray is traced exactly; the Gaussian envelope Q (the complex symmetric 
 - zero-order quartz HWP (780 nm): (1, 1)/√2 → (1, −1)/√2; retardance drift at 852 nm exact; tilt against the exact formula to 1e-3;
 - a missed ray comes back unchanged; a ray through the rim is lost with a reason; `conic` with k = 0 reproduces `sphere` off-axis to 1e-9.
 
-### Tracer integration (Phase 2)
+### Tracer integration (Phase 2 — landed)
 
-- A slot whose asset has a `surface_model` is hit-tested on its **outer surfaces** (those with `air` on one side) instead of its primary anchors; everything else is unchanged. The sub-trace runs inside the element and hands the exiting ray(s) back to the main loop, which only ever propagates through air — this is what removes the double-counted slab.
-- Segments inside the element are returned with a medium tag so the web frontend and the Blender add-on can draw them.
-- Assets without a surface model keep their anchor op; both paths coexist until Phase 3 is complete.
-- Done when: the whole backend suite is green, and a live `run-from-db` trace is identical before and after for a scene whose assets carry no surface model.
+- **Loader** (`db_scene_loader._surface_model`): `anchor_asset_to_snapshot` parses `surface_model` onto `V3AssetAnchorSnapshot.surface_model`. It stays None for the op-only kinds (`surfaces/model.py:OP_ONLY_KINDS` — the decision list above) and for a stored blob that no longer validates (logged; the part then traces through its anchors). An asset with a surface model but no anchors is still loaded. The component preview (`run-from-component`) goes through the same function.
+- **Hit test** (`anchor_tracer.nearest_surface_hit`): a slot with a surface model is hit-tested on **all** its surfaces and **none** of its anchors (`nearest_anchor_hit` skips it); the main loop takes whichever of the two hits is nearer. All surfaces, not just the air-facing ones, so a ray meeting the back of a mirror or a lens rim reaches `trace_element`, which absorbs or loses it.
+- **Surface path** (`anchor_tracer._trace_surface_part`): the ray goes into the body frame exactly as for an op (Q and Jones rotated lab→body), `trace_element` runs, and the exits come back to the lab through `_ray_body_to_lab` — **without** the incoming→outgoing `sp_rotation_between_directions` step the op path applies, because the engine already returns Q and Jones in the outgoing frame; doing both would rotate twice. Exits carry `exclude_face_key = "<object>/<binding>/surface_model"`: the in-part loop already exhausted the part's surfaces, so an exit never re-enters it, while a ray coming back from another part (a new key) does.
+- **Segments**: the approach segment (its `faceInId` is the entry surface id), then one segment per stretch inside the part with **`LabSegment.medium`** = the media id (or `"air"` for a gap inside the part), serialised as `medium` on every `labSegments` entry (null for ordinary free space; typed in `frontend/src/api/client.ts`). Its Q at start is the reduced Q, so the width readout inside glass is right with the vacuum λ.
+- **Lost rays** become `V3SolverResult.warnings` (`"<catalog_id> (<object>): <reason>"`) via the new `AnchorTraceResult.warnings`.
+- **API**: `PUT /api/v3/assets3d/{key}` refuses a non-null `surfaceModel` on an op-only kind with 422 (clearing it is always allowed).
+- Not surface-aware yet: the lens clear-aperture energy truncation and its `apertureTruncation` readout (anchor path only), and the align / mode-match services, which read `asset.anchors` directly. None of that matters until an asset carries a surface model.
+
+**Verified.**
+
+- **Live scene unchanged.** `run-from-db`'s solve, in process, before and after: the same scene digest (144 slots), the same 46 segments, byte-identical JSON once the new, always-null `medium` key is removed.
+- **Surface path ≡ op path** (`tests/optical/test_surface_tracer.py`): LA1509 under a rotated + translated pose, traced through its thick-lens op and through its surfaces, leaves at the same point (1e-12 mm), with the same Q (1e-12 relative), Jones (an elliptical input, 1e-12), power and path length. That pins the frame handling of the new path against the old one.
+- The in-glass segment runs vertex to vertex in the lab and carries `1/Q̂ = 1/q − (n−1)/R`; a stray anchor on a surface-model asset never fires; a surface plate + an op mirror behind it gives two in-glass segments, one each way; a rim ray becomes a solver warning; the loader cases (no anchors, op-only kinds, an invalid blob, no surface model); the 422.
+- Full backend suite: 3034 passed; the 4 `test_rf_cables_endpoints.py` failures are the same as on the untouched tree. Frontend `tsc` clean.
 
 ### Converting kinds (Phase 3)
 

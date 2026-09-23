@@ -41,6 +41,9 @@ from app.optical.pose import (
     point_body_to_lab_t, point_lab_to_body_t,
     dir_body_to_lab_t, dir_lab_to_body_t,
 )
+from app.optical.surfaces.geometry import intersect as intersect_surface
+from app.optical.surfaces.model import SurfaceModel
+from app.optical.surfaces.trace import trace_element
 
 
 # ─── Snapshot types ────────────────────────────────────────────────────────
@@ -72,6 +75,10 @@ class V3AssetAnchorSnapshot:
     kind: str
     anchors: list[V3Anchor]
     default_params: dict = field(default_factory=dict)
+    # Real surfaces + media (docs/surface-optics.md). When set, the tracer
+    # hit-tests these surfaces INSTEAD of the anchors and runs the surface
+    # engine rather than the kind's op. None for every op-only kind.
+    surface_model: Optional[SurfaceModel] = None
 
 
 @dataclass(frozen=True)
@@ -199,6 +206,8 @@ def nearest_anchor_hit(
     """
     best: Optional[AnchorHit] = None
     for slot in slots:
+        if slot.asset.surface_model is not None:
+            continue    # traced through its surfaces instead (nearest_surface_hit)
         origin_body = point_lab_to_body_t(ray_lab.origin, slot.effective_transform)
         dir_body = dir_lab_to_body_t(ray_lab.direction, slot.effective_transform)
         for anchor in slot.asset.anchors:
@@ -431,6 +440,10 @@ class LabSegment:
     # etaMode, polarizationOverlap, coupledFraction, seedPowerMw,
     # coupledPowerMw. None everywhere else.
     ta_seed_coupling: Optional[dict] = None
+    # The medium this segment runs through INSIDE a part traced by its
+    # surface model (a surface-model media id, or "air" for a gap between
+    # two of its surfaces). None = ordinary free space between parts.
+    medium: Optional[str] = None
 
 
 @dataclass
@@ -438,6 +451,8 @@ class AnchorTraceResult:
     final_rays: list[BeamRay] = field(default_factory=list)
     lab_segments: list[LabSegment] = field(default_factory=list)
     terminated: str = "escaped"        # 'escaped' | 'max_steps' | 'power_threshold'
+    # Rays a surface model lost (rim, open model, interaction budget).
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -449,6 +464,127 @@ class AnchorTraceOptions:
     max_steps: int = 96
     power_threshold_mw: float = 1e-9
     escape_distance_mm: float = 1000.0
+
+
+# ─── Surface-model parts (docs/surface-optics.md) ──────────────────────────
+
+# exclude_face_key suffix for a ray leaving a surface-model part: the in-part
+# trace already exhausted the part's surfaces, so its exits never re-enter it.
+SURFACE_MODEL_KEY = "surface_model"
+
+
+@dataclass(frozen=True)
+class SurfaceEntryHit:
+    slot: V3AnchorBindingSlot
+    surface_id: str
+    t_lab: float
+    hit_point_body: Vec3
+
+
+def nearest_surface_hit(
+    ray_lab: BeamRay,
+    slots: list[V3AnchorBindingSlot],
+    *,
+    exclude_key: Optional[str] = None,
+) -> Optional[SurfaceEntryHit]:
+    """Nearest surface of any surface-model part along the ray."""
+    best: Optional[SurfaceEntryHit] = None
+    for slot in slots:
+        model = slot.asset.surface_model
+        if model is None:
+            continue
+        if exclude_key == f"{slot.scene_object_id}/{slot.binding_id}/{SURFACE_MODEL_KEY}":
+            continue
+        origin_body = point_lab_to_body_t(ray_lab.origin, slot.effective_transform)
+        dir_body = dir_lab_to_body_t(ray_lab.direction, slot.effective_transform)
+        for surface in model.surfaces:
+            h = intersect_surface(surface, origin_body, dir_body)
+            if h is not None and (best is None or h.t < best.t_lab):
+                best = SurfaceEntryHit(slot, surface.id, h.t, h.point)
+    return best
+
+
+def _ray_body_to_lab(ray: BeamRay, transform: V3Transform) -> BeamRay:
+    """A body-frame ray whose Q / Jones sit in the canonical frame of its own
+    direction, re-expressed in the lab. No incoming→outgoing rotation: the
+    surface engine already hands Q and Jones back in the outgoing frame."""
+    def to_lab(v: Vec3) -> Vec3:
+        return dir_body_to_lab_t(v, transform)
+
+    dir_lab = to_lab(ray.direction)
+    rot = ray.rotated_frame(sp_rotation_body_to_lab(ray.direction, dir_lab, to_lab))
+    return rot.replaced(
+        origin=point_body_to_lab_t(ray.origin, transform),
+        direction=dir_lab,
+        jones=jones_body_to_lab(ray.jones, ray.direction, dir_lab, to_lab),
+    )
+
+
+def _segment(
+    ray: BeamRay, end: Vec3, slot: V3AnchorBindingSlot, surface_id: Optional[str],
+    ids: tuple[Optional[str], Optional[str], Optional[str]], medium: Optional[str],
+) -> LabSegment:
+    source_id, emitter_id, emission_id = ids
+    return LabSegment(
+        start=ray.origin, end=end,
+        wavelength_nm=ray.wavelength_nm, power_mw=ray.power_mw,
+        scene_object_id=slot.scene_object_id, binding_id=slot.binding_id,
+        asset_catalog_id=slot.asset.catalog_id, anchor_id=surface_id,
+        op_kind=slot.asset.kind, is_terminal=False,
+        emitter_scene_object_id=emitter_id, source_scene_object_id=source_id,
+        emission_key=emission_id,
+        jones_re_x=ray.jones[0].real, jones_im_x=ray.jones[0].imag,
+        jones_re_y=ray.jones[1].real, jones_im_y=ray.jones[1].imag,
+        qx_re_at_start=ray.qx.real, qx_im_at_start=ray.qx.imag,
+        qxy_re_at_start=ray.qxy.real, qxy_im_at_start=ray.qxy.imag,
+        qy_re_at_start=ray.qy.real, qy_im_at_start=ray.qy.imag,
+        path_length_mm_at_start=ray.path_length_mm,
+        freq_offset_hz_at_start=ray.freq_offset_hz,
+        width_mult_x_at_start=ray.width_mult_x, width_mult_y_at_start=ray.width_mult_y,
+        width_mult_xy_at_start=ray.width_mult_xy, m2_xy_at_start=ray.m2xy,
+        m2_x_at_start=ray.m2x, m2_y_at_start=ray.m2y,
+        medium=medium,
+    )
+
+
+def _trace_surface_part(
+    ray: BeamRay,
+    hit: SurfaceEntryHit,
+    ids: tuple[Optional[str], Optional[str], Optional[str]],
+) -> tuple[list[LabSegment], list[BeamRay], list[str]]:
+    """Run the surface engine on one part: the segment up to the part, the
+    segments inside it, and the rays leaving it (lab frame)."""
+    slot = hit.slot
+    transform = slot.effective_transform
+
+    def to_body(v: Vec3) -> Vec3:
+        return dir_lab_to_body_t(v, transform)
+
+    dir_body = to_body(ray.direction)
+    ray_body = ray.rotated_frame(
+        sp_rotation_lab_to_body(ray.direction, dir_body, to_body)
+    ).replaced(
+        origin=point_lab_to_body_t(ray.origin, transform),
+        direction=dir_body,
+        jones=jones_lab_to_body(ray.jones, ray.direction, dir_body, to_body),
+    )
+    part = trace_element(slot.asset.surface_model, ray_body)
+
+    segments = [_segment(
+        ray, point_body_to_lab_t(hit.hit_point_body, transform), slot, hit.surface_id, ids, None,
+    )]
+    for seg in part.segments:
+        segments.append(_segment(
+            _ray_body_to_lab(seg.ray, transform), point_body_to_lab_t(seg.end, transform),
+            slot, None, ids, seg.medium,
+        ))
+    key = f"{slot.scene_object_id}/{slot.binding_id}/{SURFACE_MODEL_KEY}"
+    exits = [
+        _ray_body_to_lab(r, transform).replaced(exclude_face_key=key)
+        for r in part.exits
+    ]
+    warnings = [f"{slot.asset.catalog_id} ({slot.scene_object_id}): {w}" for w in part.lost]
+    return segments, exits, warnings
 
 
 # ─── Main trace loop ───────────────────────────────────────────────────────
@@ -493,6 +629,25 @@ def trace_ray_anchor_scene(
             ray, scene.slots,
             exclude_anchor_key=ray.exclude_face_key,
         )
+        surface_hit = nearest_surface_hit(
+            ray, scene.slots, exclude_key=ray.exclude_face_key,
+        )
+        if surface_hit is not None and (hit is None or surface_hit.t_lab < hit.t_lab):
+            segments, exits, warnings = _trace_surface_part(
+                ray, surface_hit, (source_id, emitter_id, emission_id),
+            )
+            result.lab_segments.extend(segments)
+            result.warnings.extend(warnings)
+            for out_lab in exits:
+                if out_lab.power_mw < options.power_threshold_mw:
+                    result.final_rays.append(out_lab)
+                else:
+                    queue.append((
+                        out_lab, surface_hit.slot.scene_object_id, emitter_id,
+                        emission_id,
+                    ))
+            total_steps += 1
+            continue
 
         if hit is None:
             # Escape — render tail

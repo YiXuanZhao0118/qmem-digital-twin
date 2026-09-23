@@ -286,3 +286,14 @@ def test_locked_asset_rejects_a_surface_model(put):
 
 def test_update_schema_leaves_the_field_unset_when_absent():
     assert "surface_model" not in Asset3DV3Update.model_validate({"name": "x"}).model_fields_set
+
+
+@pytest.mark.parametrize("kind", ["tapered_amplifier", "laser_source", "eom", "fiber"])
+def test_op_only_kind_refuses_a_surface_model(put, kind):
+    row = _row()
+    row.kind_id = kind
+    r = put(row, {"surfaceModel": HWP})
+    assert r.status_code == 422
+    assert "keeps its anchor op" in r.json()["detail"]
+    assert row.surface_model is None
+    assert put(row, {"surfaceModel": None}).status_code == 200   # clearing is always fine

@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
 from app.lock_guard import assert_delete_allowed, assert_update_allowed
+from app.optical.surfaces.model import OP_ONLY_KINDS
 from app.services.device_seed import (
     load_device_record,
     materialize_device_anchors,
@@ -601,6 +602,14 @@ async def update_asset3d_by_catalog_id(
     if "frequency_range_mhz" in fields:
         row.frequency_range_mhz = payload.frequency_range_mhz
     if "surface_model" in fields:
+        if payload.surface_model is not None and row.kind_id in OP_ONLY_KINDS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"kind {row.kind_id!r} keeps its anchor op and takes no surface "
+                    "model (docs/surface-optics.md)"
+                ),
+            )
         row.surface_model = (
             payload.surface_model.model_dump(by_alias=True, exclude_none=True)
             if payload.surface_model is not None

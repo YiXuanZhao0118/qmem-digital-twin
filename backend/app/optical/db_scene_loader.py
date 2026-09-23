@@ -19,8 +19,10 @@ dedicated dynamic_sources column the lookup moves there.
 from __future__ import annotations
 
 import dataclasses
+import logging
 import math
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,6 +41,7 @@ from app.optical.anchor_tracer import (
     V3AssetAnchorSnapshot,
 )
 from app.optical.beam_ray import Vec3
+from app.optical.surfaces.model import OP_ONLY_KINDS, SurfaceModel, parse_surface_model
 from app.optical.pose import (
     V3Pose,
     binding_pose_to_transform,
@@ -50,6 +53,8 @@ from app.optical.pose import (
     pose_to_transform,
 )
 from app.optical.rf_resolve import hydrate_aom_rf_drive
+
+logger = logging.getLogger(__name__)
 
 
 _DYNAMIC_KEYS = {
@@ -218,6 +223,24 @@ def _derive_aom_interaction_center(anchors: list[dict]) -> dict | None:
 
 
 
+def _surface_model(asset: Asset3D) -> SurfaceModel | None:
+    """The asset's parsed surface model, or None: absent, an op-only kind
+    (docs/surface-optics.md), or a stored blob that no longer validates —
+    the PUT validates, so that means a write outside the API; the part then
+    traces through its anchors and the reason is logged."""
+    raw = getattr(asset, "surface_model", None)
+    if raw is None or asset.kind_id in OP_ONLY_KINDS:
+        return None
+    try:
+        return parse_surface_model(raw)
+    except ValidationError as exc:
+        logger.warning(
+            "asset %s: surface_model ignored, it does not validate: %s",
+            asset.catalog_id or asset.name, exc,
+        )
+        return None
+
+
 def anchor_asset_to_snapshot(asset: Asset3D) -> V3AssetAnchorSnapshot | None:
     """Build the anchor-centric snapshot from Asset3D, or None if no
     anchors are populated yet (Phase 9.1 backfill not run for this row).
@@ -228,11 +251,12 @@ def anchor_asset_to_snapshot(asset: Asset3D) -> V3AssetAnchorSnapshot | None:
     if not asset.kind_id:
         return None
     anchors = list(asset.anchors or [])
-    if not anchors:
+    surface_model = _surface_model(asset)
+    if not anchors and surface_model is None:
         return None
     # Only accept the NEW schema (anchors with axisX/Y/Z). Legacy v2
     # anchors (intercept_in / etc. without tri-axis) are ignored.
-    if not isinstance(anchors[0], dict) or "axisXBodyLocal" not in anchors[0]:
+    if anchors and (not isinstance(anchors[0], dict) or "axisXBodyLocal" not in anchors[0]):
         return None
     built = [_anchor_from_dict(a) for a in anchors]
     # AOM: derive interaction_center from intercept_in/out midpoint when
@@ -249,6 +273,7 @@ def anchor_asset_to_snapshot(asset: Asset3D) -> V3AssetAnchorSnapshot | None:
         catalog_id=asset.catalog_id or asset.name,
         kind=asset.kind_id,
         anchors=built,
+        surface_model=surface_model,
         default_params=asset.default_params or {},
     )
 

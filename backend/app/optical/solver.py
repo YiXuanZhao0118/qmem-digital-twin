@@ -121,6 +121,8 @@ class V3LabSegment:
     aperture_truncation: dict | None = None
     # TA seed coupling at the segment's end (see anchor_tracer.LabSegment).
     ta_seed_coupling: dict | None = None
+    # Medium inside a surface-model part (see anchor_tracer.LabSegment).
+    medium: str | None = None
 
 
 @dataclass
@@ -182,6 +184,7 @@ class V3SolverResult:
                     "freqOffsetHz": s.freq_offset_hz_at_start,
                     "apertureTruncation": s.aperture_truncation,
                     "taSeedCoupling": s.ta_seed_coupling,
+                    "medium": s.medium,
                 }
                 for s in self.lab_segments
             ],
@@ -271,9 +274,11 @@ def solve_anchor_scene(
                     m2_x_at_start=ls.m2_x_at_start, m2_y_at_start=ls.m2_y_at_start,
                     aperture_truncation=ls.aperture_truncation,
                     ta_seed_coupling=ls.ta_seed_coupling,
+                    medium=ls.medium,
                 ))
             for r in trace.final_rays:
                 result.final_rays.append(beam_ray_to_dict(r))
+            result.warnings.extend(trace.warnings)
             if trace.terminated == "max_steps":
                 result.warnings.append(f"{label}[{i}] terminated by max_steps cap")
 

@@ -25,7 +25,6 @@ import cmath
 import math
 from dataclasses import dataclass
 
-from app.optical.anchor_ops.pbs import _extinction_atten
 from app.optical.beam_ray import BeamRay, Mat2, QMatrix
 from app.optical.jones import beam_local_sp, jones_intensity, jones_rotation_angle, rotate_jones
 from app.optical.surfaces.geometry import SurfaceHit
@@ -110,6 +109,9 @@ def interact(
         branches = [(True, -math.sqrt(R), math.sqrt(R)),
                     (False, math.sqrt(1.0 - R), math.sqrt(1.0 - R))]
     elif c == "polarizing":
+        # Local import: anchor_ops imports the anchor tracer, which imports this.
+        from app.optical.anchor_ops.pbs import _extinction_atten
+
         att_p = _extinction_atten(surface.extinction_pp_db)
         att_s = _extinction_atten(surface.extinction_sp_db)
         branches = [(False, math.sqrt(att_p), math.sqrt(1.0 - att_s)),
