@@ -100,5 +100,11 @@ def test_fixtures_still_cover_the_rules():
     assert sum(1 for s, c in cases if c["deletedPrograms"]) > 50                   # a TimingProgram
     assert sum(1 for s, c in cases if any(locked(s, i) for i in c["deleted"])) > 10  # a 409
     assert sum(1 for s, c in cases if any(locked(s, i) for i in c["request"])) > 20  # a refusal
-    assert sum(1 for s, c in cases if not c["orderIndependent"]) > 3               # scene order matters
-    assert sum(1 for s, c in cases if c["orderIndependent"]) > 250
+    # EVERY case is order-independent since the cascade became a fixpoint
+    # (wave 3b, ``test_object_delete_cascade.py``), so every one of them is
+    # replayed through a real database by ``test_objects_delete_endpoint.py``.
+    # This used to require at least 3 order-DEPENDENT cases, because the
+    # single-pass cable rule produced them; they were the quirk, not a
+    # property worth keeping.
+    assert all(c["orderIndependent"] for _, c in cases)
+    assert len(cases) > 250

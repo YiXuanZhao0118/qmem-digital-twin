@@ -379,13 +379,15 @@ The panel's "Disconnect" on a PPG — the only sanctioned way to remove one: the
   "refused": [ { "objectId": "<MIRROR4, locked>", "reason": "locked" } ] }
 ```
 
-**The cascade**, exactly the web's, in the order the web issues its DELETEs (which is the order of `deletedObjectIds`):
+**The cascade**, in the order the DELETEs are issued (which is the order of `deletedObjectIds`):
 
-1. the requested objects, de-duplicated, minus the `locked` ones — the web skips those silently; here they come back in `refused` (`reason` is always `"locked"` today);
-2. every object whose `properties.rfCableEndpoints.A` or `.B` names a doomed object — ONE pass in scene order. A cable is **deleted**, never unlinked (a coax either joins two ports or does not exist, [rf.md](rf.md) §7);
-3. every PPG plugged into a doomed object (`properties.ppgAttachment`, `ports.ppg_attachments`, evaluated once);
-4. every LEGACY PPG (still wired through rf_cables) whose rf_cables are all doomed — and never one with no rf_cable at all (the `cables.length === 0` guard, `sceneStore.ts:4698`: a cable-less PPG lives by its attachment);
+1. the requested objects, de-duplicated, minus the `locked` ones — skipped silently, and reported in `refused` (`reason` is always `"locked"` today);
+2. every object whose `properties.rfCableEndpoints.A` or `.B` names a doomed object. A cable is **deleted**, never unlinked (a coax either joins two ports or does not exist, [rf.md](rf.md) §7);
+3. every PPG plugged into a doomed object (`properties.ppgAttachment`, `ports.ppg_attachments`);
+4. every LEGACY PPG (still wired through rf_cables) whose rf_cables are all doomed — and never one with no rf_cable at all (the `cables.length === 0` guard: a cable-less PPG lives by its attachment);
 5. per row, what `DELETE /api/objects/{id}` removes (`routers/objects.py:250` `remove_scene_object`): the PhysicsElement, and a PPG's bound TimingProgram (`kindParams.timingProgramId`, `bound_timing_program_id`, `:234`); the FK cascades take the object's ObjectBindings, collection membership, assembly relations, device state and connection / optical / RF link rows.
+
+**Steps 2–4 run to a fixpoint** — repeat until none of them adds anything — so the answer does not depend on the order the rows come back in, which no client controls. Each pass walks the scene in order, so the DELETE order is still deterministic. They ran once each, cables before attachments, until wave 3b; that left a dangling cable behind an attached-and-cabled PPG and caught a cable-to-cable chain only as far as the row order happened to run ([known-issues.md](known-issues.md), [rf.md](rf.md) §7).
 
 **Not touched**, as in the web: fibres and pigtails linked to a doomed object keep their now-dangling `fiberEndpoints` / `pigtailEndpoints` link (a loose patch cable is a real bench state; `POST /api/v3/fibers/{id}/disconnect` unlinks one if wanted). Nothing is gated by kind: an rf_cable or PPG named in `objectIds` is deleted, and so is one the cascade reaches. That is deliberate — RF Link's Disconnect asks for one by name. The web keeps them out of the Outliner and off the Delete key ("Managed", `capabilityProfile`), which is a rule about ENTRY POINTS, not about this endpoint. Rigid groups only move together; they do not delete together. Deleting a collection is `DELETE /api/collections/{id}` (the Outliner first deletes the objects under it, through `deleteObjects`, when asked to).
 

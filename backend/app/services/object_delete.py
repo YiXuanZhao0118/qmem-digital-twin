@@ -9,12 +9,14 @@ one transaction:
 1. the requested objects, de-duplicated, minus the ``locked`` ones (the web
    skips those silently; here they come back in ``refused``);
 2. every object whose ``properties.rfCableEndpoints`` A or B names a doomed
-   object — ONE pass in scene order (a cable is deleted, not unlinked: "a
-   cable either joins two ports or does not exist");
+   object (a cable is deleted, not unlinked: "a cable either joins two ports
+   or does not exist");
 3. every PPG plugged into a doomed object (``properties.ppgAttachment``);
 4. every LEGACY PPG (one still wired through rf_cables) whose rf_cables are
    all doomed — skipped when it has none (the ``cables.length === 0`` guard,
-   ``docs/introduce/rf.md`` §7);
+   ``docs/introduce/rf.md`` §7) — steps 2-4 run to a FIXPOINT, so the answer
+   does not depend on the order the rows come back in
+   (:func:`flows.plan_delete_objects`);
 5. through ``remove_scene_object`` (``routers/objects.py``, what ``DELETE
    /api/objects/{id}`` runs): each object's PhysicsElement, and a PPG's
    bound TimingProgram; the database's FK cascades take its ObjectBindings,
