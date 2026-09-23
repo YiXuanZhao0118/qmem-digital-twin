@@ -91,38 +91,52 @@ def main() -> int:
             print(f"{what} {SLUG} is locked — a human must unlock it first; nothing written.")
             return 1
 
+    # The two rows are checked and written independently: the first run of
+    # this script PATCHed the device by slug, but that route takes the row's
+    # UUID, so the asset landed and the device did not.
     anchors = json.loads(json.dumps(asset["anchors"]))
     anchor = next(a for a in anchors if a["id"] == "intercept_in")
-    if anchor["axisYBodyLocal"] == NEW_AXIS_Y:
-        print("already fixed — nothing to do.")
-        return 0
-    print(f"asset  intercept_in axisY {anchor['axisYBodyLocal']} -> {NEW_AXIS_Y}")
-    print(f"       intercept_in axisZ {anchor['axisZBodyLocal']} -> {NEW_AXIS_Z}")
+    asset_todo = anchor["axisYBodyLocal"] != NEW_AXIS_Y
+    if asset_todo:
+        print(f"asset  intercept_in axisY {anchor['axisYBodyLocal']} -> {NEW_AXIS_Y}")
+        print(f"       intercept_in axisZ {anchor['axisZBodyLocal']} -> {NEW_AXIS_Z}")
+    else:
+        print("asset  already fixed")
     anchor["axisYBodyLocal"], anchor["axisZBodyLocal"] = NEW_AXIS_Y, NEW_AXIS_Z
 
     params = json.loads(json.dumps(asset["defaultParams"]))
-    params["inputSpatialModeX"], params["inputSpatialModeY"] = (
-        params["inputSpatialModeY"], params["inputSpatialModeX"],
-    )
-    print(f"       inputSpatialModeX -> {params['inputSpatialModeX']}  (horizontal, = axisY)")
-    print(f"       inputSpatialModeY -> {params['inputSpatialModeY']}  (vertical, = axisZ)")
+    if asset_todo:
+        params["inputSpatialModeX"], params["inputSpatialModeY"] = (
+            params["inputSpatialModeY"], params["inputSpatialModeX"],
+        )
+        print(f"       inputSpatialModeX -> {params['inputSpatialModeX']}  (horizontal, = axisY)")
+        print(f"       inputSpatialModeY -> {params['inputSpatialModeY']}  (vertical, = axisZ)")
 
     dev_anchors = json.loads(json.dumps(device["anchors"]))
     dev_anchor = next(a for a in dev_anchors if a["role"] == "intercept_in")
-    print(f"device intercept_in axisYBodyLocal {dev_anchor.get('axisYBodyLocal')} -> {NEW_AXIS_Y}")
+    device_todo = dev_anchor.get("axisYBodyLocal") != NEW_AXIS_Y
+    print(f"device intercept_in axisYBodyLocal {dev_anchor.get('axisYBodyLocal')}"
+          f" -> {NEW_AXIS_Y}" if device_todo else "device already fixed")
     dev_anchor["axisYBodyLocal"] = NEW_AXIS_Y
+
+    if not (asset_todo or device_todo):
+        print("\nnothing to do.")
+        return 0
 
     before = ta_seed_coupling()
     if before:
-        print(f"\nnow:   pol {before['polarizationOverlap']:.3e} x mode {before['etaMode']:.4f} "
-              f"-> coupled {before['coupledPowerMw']:.3e} mW of {before['seedPowerMw']:.4f} mW")
+        print(f"\nnow:   pol {before['polarizationOverlap']:.5f} x mode {before['etaMode']:.4f} "
+              f"-> coupled {before['coupledPowerMw']:.4f} mW of {before['seedPowerMw']:.4f} mW")
 
     if not apply:
         print("\ndry run — pass --apply to write")
         return 0
 
-    call("PUT", f"/api/v3/assets3d/{SLUG}", {"anchors": anchors, "defaultParams": params})
-    call("PATCH", f"/api/devices/{SLUG}", {"anchors": dev_anchors})
+    if asset_todo:
+        call("PUT", f"/api/v3/assets3d/{SLUG}", {"anchors": anchors, "defaultParams": params})
+    if device_todo:
+        # PATCH /api/devices/{device_id} takes the row UUID, not the slug.
+        call("PATCH", f"/api/devices/{device['id']}", {"anchors": dev_anchors})
 
     check = next(a for a in call("GET", "/api/v3/assets3d") if a["catalogId"] == SLUG)
     got = next(a for a in check["anchors"] if a["id"] == "intercept_in")
