@@ -7,6 +7,7 @@ with a rotated + translated pose, must leave identically at normal incidence.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import math
 from types import SimpleNamespace
@@ -221,3 +222,39 @@ def test_loader_leaves_assets_without_a_surface_model_alone():
     }
     snap = anchor_asset_to_snapshot(_row(anchors=[stored], surface_model=None))
     assert snap.surface_model is None and [a.id for a in snap.anchors] == ["intercept_in"]
+
+
+# ---------------------------------------------------------------------------
+# Clear-aperture descriptor (BeamScope readout + POP)
+# ---------------------------------------------------------------------------
+
+def test_surface_lens_clips_and_reports_like_the_lens_op():
+    """A beam as wide as the 12.7 mm aperture through the LA1509: the surface
+    path must clip the same power as the thick-lens op (one aperture, at the
+    entry plane) and carry the same descriptor — except focalLengthMm, which
+    is the part's own ray-traced EFL instead of the nominal parameter."""
+    wide_anchor = dataclasses.replace(anchor("intercept_in"), aperture_mm=12.7)
+    ops_asset = dataclasses.replace(thick_lens_op_asset(), anchors=[wide_anchor])
+    srf_asset = surface_lens_asset()
+    ops = trace([slot(ops_asset)], on_axis_ray(waist=10.0))
+    srf = trace([slot(srf_asset)], on_axis_ray(waist=10.0))
+    a = ops.lab_segments[0].aperture_truncation
+    b = srf.lab_segments[0].aperture_truncation
+    assert 0.8 < a["transmittedFraction"] < 0.99
+    for key in ("apertureMm", "wEffMm", "decenterMm", "transmittedFraction",
+                "transmittance", "combinedFraction"):
+        assert b[key] == pytest.approx(a[key], rel=1e-12, abs=1e-12), key
+    assert b["focalLengthMm"] == pytest.approx(51.5 / (1.5168 - 1), rel=1e-7)
+    assert srf.final_rays[0].power_mw == pytest.approx(ops.final_rays[0].power_mw, rel=1e-12)
+
+
+def test_a_surface_plate_carries_no_lens_descriptor():
+    plate = V3AssetAnchorSnapshot(
+        catalog_id="plate", kind="window", anchors=[],
+        surface_model=parse_surface_model({
+            "media": {"glass": {"n": 1.5}},
+            "surfaces": [surf("A", 0.0, "glass", "air"), surf("B", 5.0, "air", "glass")],
+        }),
+    )
+    res = trace([slot(plate)], on_axis_ray())
+    assert all(s.aperture_truncation is None for s in res.lab_segments)

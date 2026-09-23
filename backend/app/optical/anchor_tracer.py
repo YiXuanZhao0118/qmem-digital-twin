@@ -43,7 +43,7 @@ from app.optical.pose import (
 )
 from app.optical.surfaces.geometry import intersect as intersect_surface
 from app.optical.surfaces.model import SurfaceModel
-from app.optical.surfaces.trace import trace_element
+from app.optical.surfaces.trace import effective_focal_length, trace_element
 
 
 # ─── Snapshot types ────────────────────────────────────────────────────────
@@ -573,6 +573,24 @@ def _trace_surface_part(
     segments = [_segment(
         ray, point_body_to_lab_t(hit.hit_point_body, transform), slot, hit.surface_id, ids, None,
     )]
+    # The same clear-aperture descriptor the lens op path records, so the
+    # BeamScope readout and its POP focal-plane view work unchanged: the
+    # entry aperture, the tightest-aperture fraction, the coating/Fresnel
+    # rest, and the part's own EFL along this ray (0 = none → no POP).
+    if slot.asset.kind in LENS_KINDS and part.clips and ray.power_mw > 0:
+        entry = part.clips[0]
+        t_ap = min(c.fraction for c in part.clips)
+        combined = sum(r.power_mw for r in part.exits) / ray.power_mw
+        efl = effective_focal_length(slot.asset.surface_model, ray_body)
+        segments[0].aperture_truncation = {
+            "apertureMm": entry.radius_mm,
+            "wEffMm": entry.w_eff_mm,
+            "decenterMm": entry.decenter_mm,
+            "transmittedFraction": t_ap,
+            "transmittance": combined / t_ap if t_ap > 0 else 0.0,
+            "combinedFraction": combined,
+            "focalLengthMm": efl or 0.0,
+        }
     for seg in part.segments:
         segments.append(_segment(
             _ray_body_to_lab(seg.ray, transform), point_body_to_lab_t(seg.end, transform),

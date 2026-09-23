@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Optional
 
+from app.optical.aperture import gaussian_circular_aperture_fraction, gaussian_width_mm
 from app.optical.beam_ray import BeamRay, QMatrix, Vec3
 from app.optical.jones import beam_local_sp, jones_rotation_angle, rotate_jones
 from app.optical.surfaces.geometry import SurfaceHit, intersect
@@ -30,6 +32,17 @@ class InternalSegment:
     medium: str
 
 
+@dataclass(frozen=True)
+class ApertureClip:
+    """The Gaussian power fraction one circular surface aperture passes, with
+    the same knife-edge model as the lens op (``aperture.py``)."""
+    surface_id: str
+    radius_mm: float
+    w_eff_mm: float
+    decenter_mm: float
+    fraction: float
+
+
 @dataclass
 class ElementTrace:
     exits: list[BeamRay] = field(default_factory=list)   # rays leaving into air
@@ -37,6 +50,9 @@ class ElementTrace:
     absorbed_mw: float = 0.0
     lost_mw: float = 0.0
     lost: list[str] = field(default_factory=list)
+    # Aperture clipping, one entry per circular surface met, in trace order.
+    clips: list[ApertureClip] = field(default_factory=list)
+    clipped_mw: float = 0.0
 
 
 def propagate_in_medium(ray: BeamRay, t: float, model: SurfaceModel, medium_id: str) -> BeamRay:
@@ -75,14 +91,34 @@ def _nearest(model: SurfaceModel, ray: BeamRay) -> tuple[Surface, SurfaceHit] | 
     return best
 
 
+def _clip(surface: Surface, hit: SurfaceHit, ray: BeamRay) -> Optional[ApertureClip]:
+    """Gaussian power through a circular aperture. Rectangle / ellipse
+    apertures clip the chief ray only (None here)."""
+    if surface.aperture != "circle":
+        return None
+    wl = ray.wavelength_nm
+    # Reduced Q + vacuum λ gives the physical width inside a medium too.
+    w_eff = math.sqrt(gaussian_width_mm(ray.qx, wl) * gaussian_width_mm(ray.qy, wl))
+    r_c = math.hypot(hit.u, hit.v)
+    frac = gaussian_circular_aperture_fraction(w_eff, surface.aperture_radius_mm, r_c)
+    return ApertureClip(surface.id, surface.aperture_radius_mm, w_eff, r_c, frac)
+
+
 def trace_element(model: SurfaceModel, ray: BeamRay) -> ElementTrace:
     """Trace ``ray`` (in air, body frame) through the part. A ray that meets
-    no surface comes back unchanged in ``exits``."""
+    no surface comes back unchanged in ``exits``.
+
+    Aperture energy clipping: each path through the part is attenuated by
+    its TIGHTEST circular aperture, not the product of all of them — the
+    knife-edge model assumes a full Gaussian arriving, and behind the first
+    aperture the wings are already gone, so multiplying would clip a lens'
+    two faces twice."""
     result = ElementTrace()
-    queue: list[tuple[BeamRay, str, bool]] = [(ray, AIR, False)]   # (ray, medium, inside?)
+    # (ray, medium, inside?, tightest aperture fraction passed so far)
+    queue: list[tuple[BeamRay, str, bool, float]] = [(ray, AIR, False, 1.0)]
     interactions = 0
     while queue:
-        r, medium, inside = queue.pop(0)
+        r, medium, inside, passed = queue.pop(0)
         found = _nearest(model, r)
         if found is None:
             if medium == AIR:
@@ -110,11 +146,46 @@ def trace_element(model: SurfaceModel, ray: BeamRay) -> ElementTrace:
         if inside:
             result.segments.append(InternalSegment(r, hit.point, medium))
         at_surface = propagate_in_medium(r, hit.t, model, medium)
+        clip = _clip(surface, hit, at_surface)
+        if clip is not None:
+            result.clips.append(clip)
+            if clip.fraction < passed:
+                kept = at_surface.power_mw * clip.fraction / passed
+                result.clipped_mw += at_surface.power_mw - kept
+                at_surface = at_surface.replaced(power_mw=kept)
+                passed = clip.fraction
         outs, dropped = interact(at_surface, hit, surface, model)
         result.lost.extend(dropped)
         for o in outs:
             if o.medium == OPAQUE:
                 result.absorbed_mw += o.ray.power_mw
             else:
-                queue.append((o.ray, o.medium, True))
+                queue.append((o.ray, o.medium, True, passed))
     return result
+
+
+def effective_focal_length(model: SurfaceModel, ray: BeamRay, h: float = 1e-3) -> Optional[float]:
+    """The part's EFL along this ray, ``−h/Δθ`` from exactly traced parallel
+    neighbour rays offset by ``h`` along each transverse axis — the true EFL
+    of a thick lens, not its back focal length. The geometric mean of the two
+    axes (signed; negative = diverging). None when the part has no single
+    exit for all three rays, or the two axes disagree in sign or are ~flat."""
+    chief = trace_element(model, ray)
+    if len(chief.exits) != 1:
+        return None
+    c = chief.exits[0].direction
+    powers = []
+    for axis in beam_local_sp(ray.direction):
+        n = trace_element(model, ray.replaced(origin=ray.origin + axis * h))
+        if len(n.exits) != 1:
+            return None
+        dd = n.exits[0].direction - c
+        dd_perp = dd - c * c.dot(dd)
+        ax_out = unit_or_none(axis - c * c.dot(axis))
+        if ax_out is None:
+            return None
+        powers.append(-dd_perp.dot(ax_out) / h)
+    p_s, p_t = powers
+    if p_s * p_t <= 0.0 or abs(p_s * p_t) < 1e-18:
+        return None
+    return math.copysign(1.0 / math.sqrt(p_s * p_t), p_s)

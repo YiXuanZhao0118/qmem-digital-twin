@@ -93,10 +93,15 @@ The chief ray is traced exactly; the Gaussian envelope Q (the complex symmetric 
    - The reflected fraction at a transmissive surface is not traced (no multiple reflections).
 6. **Inside a medium** — `Q̂ += t/n·I` and `path_length_mm += t` (geometric, as the anchor ops count it). **A uniaxial medium stays one ray in v1**: the chief ray refracts with n_o, and the medium applies the Jones retardance `2π·(n_e(θ) − n_o)·t/λ` on the extraordinary axis, with `1/n_e(θ)² = cos²θ/n_o² + sin²θ/n_e²` and θ measured from the optic axis. That is exact to first order in `n_e − n_o` — ample for waveplates (a tilted zero-order quartz HWP matches the exact `k₀L(√(n_e²−sin²θ) − √(n_o²−sin²θ))` to 1e-3 relative). It does **not** split o and e into two rays, so a Glan or Wollaston (large birefringence, TIR selection) needs the split model before those kinds convert (Phase 3). Poynting walk-off is not modelled.
 7. **The in-part loop** (`trace_element`) — a queue of (ray, medium). Each ray meets the nearest surface of the part; the side it arrives from must be the ray's current medium. A ray in air that finds nothing is an exit; a ray that arrives on an `opaque` side (the back of a mirror) is absorbed; any other mismatch (a ray in air meeting a lens face from its glass side — the part's rim) or a ray in glass that finds no surface is **lost** with a reason, as is anything past 32 interactions. Air gaps inside one asset work because a ray that re-enters air keeps looking for the part's surfaces. Internal segments are returned with their medium for drawing.
-8. **Apertures clip the chief ray only.** The Gaussian energy truncation the thin-lens op does ([introduce/optics.md](introduce/optics.md), "clear-aperture energy truncation") is not applied at surfaces yet.
+8. **Aperture energy clipping** (`trace._clip`, added 2026-09-23 after the LA1509 conversion). The chief ray must be inside a surface's aperture to hit it at all. A **circular** aperture also clips the Gaussian's power with the lens op's knife-edge function (`aperture.gaussian_circular_aperture_fraction`: `w_eff = √(w_x·w_y)` from the reduced Q at the surface, which is the physical width inside glass too, and the decentre `√(u² + v²)`).
+   - **Each path through a part is attenuated by its tightest aperture, not the product of all of them.** The knife-edge model assumes a full Gaussian arriving, and behind the first aperture the wings are already gone. Multiplying would clip a lens's two equal faces twice (0.865² = 0.75 instead of 0.865 for a beam as wide as the aperture).
+   - Every circular surface met is recorded in `ElementTrace.clips`, and the removed power in `clipped_mw`.
+   - Rectangle / ellipse apertures still clip the chief ray only.
 
 **Verified** (`tests/optical/test_surface_trace.py`, 26 cases; `test_surface_materials.py`, 9; `tests/test_surface_model.py`, 36):
 
+- aperture clipping (`test_surface_trace.py`): a wide beam through a two-face lens is clipped once, by the tighter face (exactly `1 − exp(−2a²/w²)` at the entry × the AR loss), and a smaller exit aperture takes over when it is the tighter one; a decentred beam uses the knife-edge; the ray-traced EFL of a plano-convex is `R/(n−1)` from either side (1e-7), of a biconvex the thick-lens formula, of a plate None, of a negative lens negative;
+- the tracer descriptor (`test_surface_tracer.py`): a beam clipped by ~15 % through the LA1509 gives the same `apertureMm` / `wEffMm` / `decenterMm` / `transmittedFraction` / `transmittance` / `combinedFraction` and the same output power as the thick-lens op path (1e-12), with `focalLengthMm` = `R/(n−1)`; end to end on the live API, `la1509_b_step` at 852 nm with a 10 mm beam reports clip 96.03 %, EFL 101.02 mm, and `POST /api/v3/pop` on that descriptor puts the first Airy null at 4.134 µm = `1.22λf/D`;
 - tilted plate at 0°/10°/30°/56.3°: lateral shift `L·sinθ·(1 − cosθ/√(n² − sin²θ))` to 1e-12 mm, direction unchanged, geometric path length exact; reverse traversal gives the same shift and power;
 - Brewster plate: p lossless, s losing `(1 − r_s²)²`, and Q equal to **Kogelnik's** effective lengths `L√(n²+1)/n²` (sagittal) and `L√(n²+1)/n⁴` (tangential) to 1e-9;
 - normal incidence: Fresnel `(1 − R)²` and AR `(1 − R)²` to 1e-14;
@@ -117,7 +122,13 @@ The chief ray is traced exactly; the Gaussian envelope Q (the complex symmetric 
 - **Segments**: the approach segment (its `faceInId` is the entry surface id), then one segment per stretch inside the part with **`LabSegment.medium`** = the media id (or `"air"` for a gap inside the part), serialised as `medium` on every `labSegments` entry (null for ordinary free space; typed in `frontend/src/api/client.ts`). Its Q at start is the reduced Q, so the width readout inside glass is right with the vacuum λ.
 - **Lost rays** become `V3SolverResult.warnings` (`"<catalog_id> (<object>): <reason>"`) via the new `AnchorTraceResult.warnings`.
 - **API**: `PUT /api/v3/assets3d/{key}` refuses a non-null `surfaceModel` on an op-only kind with 422 (clearing it is always allowed).
-- Not surface-aware yet: the lens clear-aperture energy truncation and its `apertureTruncation` readout (anchor path only), and the align / mode-match services, which read `asset.anchors` directly. None of that matters until an asset carries a surface model.
+- **Clear-aperture descriptor for lens kinds** (`_trace_surface_part`): the approach segment of a `LENS_KINDS` part carries the same `apertureTruncation` dict as the lens-op path, so BeamScope's "Aperture: X% through" and its POP focal-plane view work unchanged. The fields:
+  - `apertureMm` / `wEffMm` / `decenterMm`: the entry surface's clip.
+  - `transmittedFraction`: the tightest aperture along the path.
+  - `combinedFraction`: exit power over incident power.
+  - `transmittance`: combined over transmitted, i.e. the coating / Fresnel part.
+  - `focalLengthMm`: **the part's own EFL along this ray** (`trace.effective_focal_length`: `−h/Δθ` from exactly traced parallel neighbour rays in both transverse axes, geometric mean). This is the true EFL of a thick lens, not its BFL, and 0 when the part has no focal length (a plate), which switches POP off.
+- Not surface-aware yet: the align / mode-match services, which read `asset.anchors` and `focalLengthMm` directly.
 
 **Verified.**
 
@@ -138,7 +149,6 @@ In order: plate / window, polarizer, waveplate (HWP, QWP) → lenses (including 
 
 After a conversion, for that asset:
 - `defaultParams` are no longer read by the trace (`focalLengthMm`, `refractiveIndex`, `centerThicknessMm`, `transmittance` stay because the kind schema requires them).
-- The lens clear-aperture energy truncation and its `apertureTruncation` / POP readout no longer apply.
 - A mode-match focal-length swap (`mode_match_model`, `focalLengthMm` override) has no effect on it.
 
 To undo a conversion, `PUT` `{"surfaceModel": null}`.

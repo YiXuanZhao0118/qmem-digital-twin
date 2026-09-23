@@ -540,3 +540,102 @@ def test_la1509_b_step_matches_thick_lens_both_ways(lam, direction):
     assert out.origin.z == pytest.approx(exit_z, abs=1e-12)
     assert out.qx == pytest.approx(_q_after_abcd(q_front, a, b, c, dd), rel=1e-12)
     assert out.power_mw == pytest.approx(0.9975 ** 2, abs=1e-14)
+
+
+# ---------------------------------------------------------------------------
+# Aperture energy clipping and the effective focal length
+# ---------------------------------------------------------------------------
+
+def _lens(r_entry=12.7, r_exit=12.7, reflectance=0.0):
+    ar = {"type": "ar", "reflectance": reflectance}
+    return parse_surface_model({
+        "media": {"glass": {"n": 1.5168}},
+        "surfaces": [
+            surf("A", 0.0, "glass", "air", shape={"type": "sphere", "radiusMm": 51.5},
+                 radius=r_entry, coating=ar),
+            surf("B", 3.6, "air", "glass", radius=r_exit, coating=ar),
+        ],
+    })
+
+
+def _w_at(q, lam=LAM):
+    from app.optical.aperture import gaussian_width_mm
+    return gaussian_width_mm(q, lam)
+
+
+def test_a_wide_beam_is_clipped_once_by_the_tightest_aperture():
+    """Equal apertures: the converging beam is narrower at B, so A is the
+    tightest and the part passes exactly A's knife-edge fraction — not A's
+    times B's."""
+    ray = beam(waist=10.0)
+    res = trace_element(_lens(reflectance=0.01), ray)
+    out = only_exit(res)
+    w_a = _w_at(ray.qx + 20.0)
+    f_a = 1 - math.exp(-2 * 12.7 ** 2 / w_a ** 2)
+    assert 0.8 < f_a < 0.99                       # genuinely clipping
+    assert [c.surface_id for c in res.clips] == ["A", "B"]
+    assert res.clips[0].fraction == pytest.approx(f_a, rel=1e-12)
+    assert res.clips[1].fraction > f_a            # narrower at the exit
+    assert out.power_mw == pytest.approx(f_a * 0.99 ** 2, rel=1e-12)
+    assert res.clipped_mw == pytest.approx(1 - f_a, rel=1e-12)
+
+
+def test_a_tighter_exit_aperture_sets_the_clip():
+    ray = beam(waist=10.0)
+    res = trace_element(_lens(r_exit=9.0, reflectance=0.01), ray)
+    out = only_exit(res)
+    f_b = res.clips[1].fraction
+    assert f_b < res.clips[0].fraction
+    assert out.power_mw == pytest.approx(f_b * 0.99 ** 2, rel=1e-12)
+
+
+def test_a_decentred_beam_uses_the_knife_edge():
+    from app.optical.aperture import gaussian_circular_aperture_fraction
+
+    ray = beam(origin=Vec3(-20, 11.0, 0), waist=1.5)
+    res = trace_element(_lens(), ray)
+    clip = res.clips[0]
+    assert clip.decenter_mm == pytest.approx(11.0, abs=1e-9)
+    assert clip.fraction == pytest.approx(
+        gaussian_circular_aperture_fraction(clip.w_eff_mm, 12.7, 11.0), rel=1e-15)
+    assert clip.fraction < 0.999
+
+
+@pytest.mark.parametrize("direction", [1.0, -1.0])
+def test_efl_of_a_plano_convex_is_r_over_n_minus_1_either_way(direction):
+    """A plano-convex EFL does not depend on which side faces the beam (its
+    BFL does) — the ray-traced EFL must give R/(n−1) both ways."""
+    from app.optical.surfaces.materials import ISOTROPIC
+    from app.optical.surfaces.trace import effective_focal_length
+
+    ray = make_beam_ray(origin=Vec3(0, 0, -50.0 * direction), direction=Vec3(0, 0, direction),
+                        wavelength_nm=852.0)
+    efl = effective_focal_length(la1509_b_step(), ray)
+    assert efl == pytest.approx(51.5 / (ISOTROPIC["N-BK7"].n(852.0) - 1), rel=1e-7)
+
+
+def test_efl_of_a_biconvex_matches_the_thick_lens_formula():
+    from app.optical.surfaces.trace import effective_focal_length
+
+    n, r1, r2, d = 1.5168, 40.0, -60.0, 5.0
+    model = parse_surface_model({
+        "media": {"glass": {"n": n}},
+        "surfaces": [
+            surf("A", 0.0, "glass", "air", shape={"type": "sphere", "radiusMm": r1}),
+            surf("B", d, "air", "glass", shape={"type": "sphere", "radiusMm": r2}),
+        ],
+    })
+    lensmaker = 1 / ((n - 1) * (1 / r1 - 1 / r2 + (n - 1) * d / (n * r1 * r2)))
+    assert effective_focal_length(model, beam()) == pytest.approx(lensmaker, rel=1e-7)
+
+
+def test_efl_of_a_plate_is_none_and_of_a_negative_lens_is_negative():
+    from app.optical.surfaces.trace import effective_focal_length
+
+    assert effective_focal_length(plate(), beam()) is None
+    neg = parse_surface_model({
+        "media": {"glass": {"n": 1.5}},
+        "surfaces": [surf("A", 0.0, "glass", "air", shape={"type": "sphere", "radiusMm": -30.0}),
+                     surf("B", 2.0, "air", "glass")],
+    })
+    assert effective_focal_length(neg, beam()) == pytest.approx(-60.0, rel=1e-3)
