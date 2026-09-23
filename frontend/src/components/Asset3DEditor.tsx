@@ -73,6 +73,10 @@ import {
   readOptionalNumber,
   type DraftAnchor,
 } from "../utils/anchorDraft";
+import {
+  kindTemplateSeedPatch,
+  missingTemplateAnchorIds,
+} from "../utils/kindTemplateSeed";
 
 const stlLoader = new STLLoader();
 const gltfLoader = new GLTFLoader();
@@ -2702,85 +2706,37 @@ function AssetEditForm({
     };
   }, [draft.kindId]);
 
-  // Anchors are a kind-level contract: the editable anchor list is
-  // derived from the selected kind's anchorTemplate, not hand-authored.
-  // When a kind is chosen, auto-seed a blank row for every template
-  // anchor id (required + optional) the asset is missing, so a freshly
-  // imported asset — the backend creates STEP/GLB builds with
-  // anchors=[] (v3_catalog.create_asset3d) — shows the kind's anchors
-  // instead of an empty table; the user then positions them.
+  // Anchors are a kind-level contract: the editable anchor list is derived
+  // from the selected kind's anchorTemplate, not hand-authored. Seeding fills
+  // in a blank row for every template anchor id (required + optional) the
+  // asset is missing, so a freshly imported asset — the backend creates
+  // STEP/GLB builds with anchors=[] (v3_catalog.create_asset3d) — can be
+  // populated with the kind's anchors in one click; the user then positions
+  // them.
   //
-  // Additive only: never drops anchors. Synthesized ids that live
-  // outside the template (interaction_center for aom, optical_center for
-  // faraday/slab) must survive, and an already-seeded asset
-  // (thorlabs_bb1_e03) is left untouched once its template ids exist —
-  // so this converges in one pass and never fights the user.
-  useEffect(() => {
-    const kind = kinds.find((k) => k.name === draft.kindId);
-    if (!kind) return;
-    const present = new Set(draft.anchors.map((a) => a.id));
-    const missing = faceIdTemplate.all.filter((id) => !present.has(id));
-    if (missing.length === 0) return;
-
-    // Seed the kind's defaultParams alongside the anchors, but only while
-    // the asset still has none. Gating on `missing` means we touch
-    // defaultParams exactly once (this first seed pass), so the user can
-    // clear them afterwards without the effect re-seeding.
-    //
-    // wavelengthRangeNm is special: it has a dedicated top-level Asset
-    // column (V3Asset.wavelengthRangeNm) edited via the lambda min/max
-    // fields below, and on Save the column — not the defaultParams JSON —
-    // is authoritative (see toAssetUpdate). So strip it out of the JSON
-    // seed and route it to the lambda fields instead; otherwise it lands
-    // in defaultParams as a duplicate the lambda fields never reflect and
-    // the save silently drops.
-    const { wavelengthRangeNm: seedWavelength, ...kindParams } =
-      (kind.defaultParams ?? {}) as Record<string, unknown>;
-    const seedParams =
-      (draft.defaultParamsText.trim() === "" || draft.defaultParamsText.trim() === "{}")
-      && Object.keys(kindParams).length > 0;
-    const seedWavelengthFields =
-      Array.isArray(seedWavelength)
-      && draft.wavelengthMinNm.trim() === ""
-      && draft.wavelengthMaxNm.trim() === "";
-    // Seed the tunable set from the kind's declared state params (∩ the params
-    // actually seeded) the first time params land, so a new laser/RF asset is
-    // born with sensible per-instance knobs. Only when nothing tunable yet.
-    const stateKeys = (pluginForKind(draft.kindId)?.physics.stateParamKeys ?? []) as string[];
-    const seedTunable =
-      seedParams && draft.tunableParams.length === 0
-      && stateKeys.some((k) => k in kindParams);
-
-    setDraft({
-      ...draft,
-      anchors: [
-        ...draft.anchors,
-        ...missing.map((id): DraftAnchor => ({
-          id,
-          px: "0", py: "0", pz: "0",
-          nx: "0", ny: "0", nz: "1",
-          yx: "0", yy: "1", yz: "0",
-          apertureMm: "1",
-          apertureShape: "circle",
-          apertureWidthMm: "",
-          apertureHeightMm: "",
-          connectorType: "",
-          name: "",
-          // Invented here, not read from the asset — so it is never pristine
-          // and always serialises through the derivation.
-          pristine: null,
-        })),
-      ],
-      ...(seedParams ? { defaultParamsText: jsonText(kindParams) } : {}),
-      ...(seedTunable ? { tunableParams: stateKeys.filter((k) => k in kindParams) } : {}),
-      ...(seedWavelengthFields
-        ? {
-            wavelengthMinNm: n(seedWavelength[0] as number),
-            wavelengthMaxNm: n(seedWavelength[1] as number),
-          }
-        : {}),
+  // DELIBERATE ACTION, NOT AN EFFECT (2026-09-23). This used to run from a
+  // useEffect keyed on the whole draft, so merely OPENING an asset appended
+  // the rows — a blank `intercept_out` at the body origin on all 8 lens
+  // assets and blank rows on 12 more. `intercept_out` is in
+  // PRIMARY_ANCHOR_IDS, i.e. hit-tested, so saving a lens the user had only
+  // looked at dropped a fake 1 mm face into its beam path. See
+  // utils/kindTemplateSeed.ts.
+  const missingTemplateIds = useMemo(
+    () => missingTemplateAnchorIds(draft, faceIdTemplate.all),
+    [draft, faceIdTemplate],
+  );
+  const seedFromKindTemplate = () => {
+    const patch = kindTemplateSeedPatch(draft, {
+      templateAnchorIds: faceIdTemplate.all,
+      kindDefaultParams:
+        (kinds.find((k) => k.name === draft.kindId)?.defaultParams ?? {}) as Record<
+          string,
+          unknown
+        >,
+      stateParamKeys: (pluginForKind(draft.kindId)?.physics.stateParamKeys ?? []) as string[],
     });
-  }, [draft, kinds, faceIdTemplate]);
+    if (patch) setDraft({ ...draft, ...patch });
+  };
 
   // Geometry edits (mid-click cluster delete + "Revert geometry") stage
   // in draft.properties.viewerHints and only commit on Save Changes.
@@ -3142,10 +3098,31 @@ function AssetEditForm({
         );
       })()}
 
-      {/* Anchors are defined by the kind's anchorTemplate and auto-seeded
-          above — no manual add/remove. To change which anchors a kind
-          has, edit the kind in the Kinds editor. */}
-      <div style={SECTION_LABEL}>Anchors ({draft.anchors.length})</div>
+      {/* Anchors are defined by the kind's anchorTemplate — no manual
+          add/remove. To change which anchors a kind has, edit the kind in the
+          Kinds editor. Seeding the missing ones is an explicit click
+          (2026-09-23): it used to happen on open, which quietly put a blank
+          hit-tested `intercept_out` at the body origin into every lens's
+          draft, and from there into the next save. */}
+      <div style={{ ...SECTION_LABEL, display: "flex", alignItems: "center", gap: 8 }}>
+        <span>Anchors ({draft.anchors.length})</span>
+        {missingTemplateIds.length > 0 && (
+          <button
+            type="button"
+            onClick={seedFromKindTemplate}
+            title={
+              `Add a blank row for each anchor the "${draft.kindId}" kind declares `
+              + `and this asset does not have: ${missingTemplateIds.join(", ")}.\n\n`
+              + "Rows land at the body origin facing +Z with a 1 mm circular "
+              + "aperture — position them before saving. Nothing existing is "
+              + "touched."
+            }
+            style={{ ...ICON_BUTTON, width: "auto", padding: "0 8px", fontSize: 10 }}
+          >
+            + seed {missingTemplateIds.length} from kind
+          </button>
+        )}
+      </div>
 
       <table style={TABLE}>
         <thead>
