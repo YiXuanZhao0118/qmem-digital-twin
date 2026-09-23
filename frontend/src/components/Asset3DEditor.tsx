@@ -3467,7 +3467,7 @@ export function Asset3DEditor({
   const save = async () => {
     if (!selected || !draft) return;
     // Guardrail: an optical/RF physics asset whose primary anchor is still
-    // at the body origin (the auto-seed default) won't interact with beams
+    // at the body origin (where "+ seed N from kind" drops a row) won't interact with beams
     // until it's positioned on the real surface — exactly the trap behind a
     // "mirror that doesn't reflect". Warn (non-blocking) before saving.
     const savedKind = kinds.find((k) => k.name === draft.kindId);
