@@ -5,6 +5,9 @@
 //
 // Allowed files (raw access OK):
 //   - utils/anchorAccess.ts            (the canonical helper)
+//   - utils/anchorDraft.ts             (the PHY Editor's anchor read/write
+//                                       round-trip — raw by definition, it is
+//                                       the JSONB column's reader)
 //   - types/digitalTwin.ts             (schema definition)
 //   - utils/fiberAnchorResolver.ts     (returns body-local by design)
 //   - utils/rfCableAnchorResolver.ts   (returns body-local by design)
@@ -36,6 +39,7 @@ const ROOT = join(__dirname, "..", "src");
 
 const ALLOWED = new Set([
   "utils/anchorAccess.ts",
+  "utils/anchorDraft.ts",
   "types/digitalTwin.ts",
   "utils/fiberAnchorResolver.ts",
   "utils/rfCableAnchorResolver.ts",

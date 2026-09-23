@@ -5179,7 +5179,11 @@ export function DigitalTwinViewer({
           // Cable asset anchors are NOT where the rendered connectors sit
           // (those come from the spline nodes), so they'd be misleading.
           if (comp.kindId === "rf_cable" || comp.kindId === "sma_cable") continue;
-          const tree = resolveBindingTree(comp, obj, sceneData);
+          // honourAssetOverride: the markers must sit on the geometry that is
+          // actually drawn, and `buildSceneObjectFromBindings` resolves the
+          // instance's `asset3dIdOverride`. Without it a swapped instance
+          // would be marked with its catalog part's anchors.
+          const tree = resolveBindingTree(comp, obj, sceneData, { honourAssetOverride: true });
           if (tree.length === 0 && comp.asset3dId) {
             // Pre-binding legacy component (no binding rows at all): mark its
             // single asset directly at the component origin.

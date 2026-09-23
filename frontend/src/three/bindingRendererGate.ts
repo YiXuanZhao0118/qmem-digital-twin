@@ -169,7 +169,15 @@ export async function buildSceneObjectFromBindings(
     return group;
   }
 
-  const tree = resolveBindingTree(component, sceneObject, scene);
+  const tree = resolveBindingTree(component, sceneObject, scene, {
+    // Draw the asset this INSTANCE actually uses. ``asset3dIdOverride`` on an
+    // ObjectBinding swaps one binding's target for this object only, and the
+    // tracer's loader (``effectiveBindingAssetId``), the anchor-pose walk and
+    // every align path already resolve through it — the renderer was the one
+    // place that did not, so a swapped instance was drawn as its catalog part
+    // while it traced and aligned as the swapped one (2026-09-23).
+    honourAssetOverride: true,
+  });
   // Per-instance binding-override deltas are applied INSIDE
   // resolveBindingTree (via _effectiveTransform), which reads them off
   // ``scene.objectBindings`` filtered by ``sceneObject.id``. Callers

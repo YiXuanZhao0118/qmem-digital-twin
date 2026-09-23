@@ -10,9 +10,10 @@
  *
  * This module converts a `V3SolverResult.labSegments[]` snapshot into
  * TraceSegment-compatible objects, filling in defaults for fields the
- * v3 tracer doesn't yet track (e.g. `taSeedCoupling`, `aomSideband`,
- * `fiberCoupling` stay undefined; `branch` defaults to "main";
- * `depth = 0`). Power factor + nominal power are best-effort: powerMw
+ * v3 tracer doesn't yet track (e.g. `aomSideband`, `fiberCoupling` stay
+ * undefined; `branch` defaults to "main"; `depth = 0`). `taSeedCoupling`
+ * IS tracked and is carried through in the v3 shape — it is not the legacy
+ * field of the same name. Power factor + nominal power are best-effort: powerMw
  * on each segment is treated as absolute; `nominalPowerMwAtSource` is
  * carried from the originating segment in the chain.
  *
@@ -70,6 +71,16 @@ export type V3TraceSegment = {
    *  when the end optic doesn't clip. This segment's power is PRE-truncation;
    *  downstream segments carry the reduced power. */
   apertureTruncation: V3LabSegment["apertureTruncation"];
+  /** Seed coupling into a tapered amplifier, on the segment that ENDS on the
+   *  TA's input facet — the factors the TA op multiplies the seed by
+   *  (`misc_ops.ta_seed_coupling`). Null on every other segment.
+   *
+   *  Carried in the v3 shape, NOT remapped onto the legacy
+   *  `TraceSegment.taSeedCoupling`, which is a different set of fields on the
+   *  TA's OUTPUT segments and belongs to the retired in-browser tracer. The
+   *  one consumer (BeamScope's "TA seed" / "TA eta" block) reads this shape
+   *  directly; see docs/introduce/optics.md. */
+  taSeedCoupling: V3LabSegment["taSeedCoupling"];
 };
 
 function waistFromQ(qImMm: number, wavelengthNm: number): number {
@@ -222,6 +233,7 @@ function adaptOne(seg: V3LabSegment, sourceComponentId: string): V3TraceSegment 
     emitterObjectId: seg.emitterSceneObjectId ?? "",
     freqOffsetHz: seg.freqOffsetHz ?? 0,
     apertureTruncation: seg.apertureTruncation ?? null,
+    taSeedCoupling: seg.taSeedCoupling ?? null,
     dirLab: (() => {
       const dx = seg.end.x - seg.start.x;
       const dy = seg.end.y - seg.start.y;

@@ -24,7 +24,10 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
-from app.optical.aom_readout import aom_drive_efficiencies
+from app.optical.aom_readout import (
+    aom_drive_efficiencies,
+    scene_emitter_wavelength_nm,
+)
 from app.optical.db_scene_loader import load_anchor_scene_from_db
 from app.optical.rf_resolve import (
     RfReadout,
@@ -77,6 +80,15 @@ class RfPropagationOut(CamelModel):
     # emitter wavelength (``aom_readout``); absent only for an AOM the tracer
     # has no slot for.
     aom_drives: dict[str, dict[str, float]]
+    # The wavelength every ``aomDrives[*].eta`` above was evaluated at, in nm —
+    # the scene's emitter wavelength as the TRACER decides it
+    # (``aom_readout.scene_emitter_wavelength_nm``), or the 780 nm fallback when
+    # the scene emits several. ``None`` when no AOM drive was computed, so there
+    # is no eta to qualify. Reported because ``P_peak ∝ λ²``: a client that also
+    # shows "the drive that would peak this AOM" must use the SAME λ as the eta
+    # beside it, and it has no way to derive it (the web RF Link panel's own
+    # emitter scan is what drifted to 780 nm on the live bench — rf.md §3).
+    aom_eta_wavelength_nm: Optional[float] = None
     # Every timing-section boundary across all programs, plus 0 (sorted).
     section_starts_ns: list[float]
 
@@ -111,8 +123,9 @@ async def rf_propagation(
     session: AsyncSession = Depends(get_session),
 ) -> RfPropagationOut:
     """The RF signal at every port for one scrub time, plus the per-AOM drive
-    the optical trace uses at that instant and the first-order efficiency
-    that drive buys (``eta``). See the module docstring."""
+    the optical trace uses at that instant, the first-order efficiency that
+    drive buys (``eta``) and the wavelength it was evaluated at
+    (``aomEtaWavelengthNm``). See the module docstring."""
     inputs = await load_rf_inputs(session)
     readout = rf_readout_at(inputs, request.scrub_time_ns)
     out = readout_to_out(readout, request.scrub_time_ns)
@@ -126,4 +139,5 @@ async def rf_propagation(
             oid: {**drive, **({"eta": etas[oid]} if oid in etas else {})}
             for oid, drive in readout.aom_drives.items()
         }
+        out.aom_eta_wavelength_nm = scene_emitter_wavelength_nm(scene)
     return out

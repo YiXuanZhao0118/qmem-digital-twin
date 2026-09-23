@@ -63,44 +63,28 @@ import { useDevicesStore } from "../store/devicesStore";
 import type { DeviceAnchorTemplate } from "../api/client";
 import { isEditableValue } from "../utils/paramLeaves";
 import { cleanNumber } from "../utils/numberFormat";
+import {
+  anchorPayloadFromDraft,
+  deriveOrthonormalBasis,
+  draftAnchorFromStored,
+  n,
+  readDraftNumber,
+  readNumber,
+  readOptionalNumber,
+  type DraftAnchor,
+} from "../utils/anchorDraft";
+import {
+  kindTemplateSeedPatch,
+  missingTemplateAnchorIds,
+} from "../utils/kindTemplateSeed";
 
 const stlLoader = new STLLoader();
 const gltfLoader = new GLTFLoader();
 const objLoader = new OBJLoader();
 
-/** Draft row in the PHY Editor's Anchors table (Phase 9.8 — replaces
- *  the old Faces table). Each anchor has a position + two body-local
- *  axes the user edits directly:
- *    - axisX (nx/ny/nz): propagation / face normal
- *    - axisY (yx/yy/yz): transverse reference (slow axis for PM fiber,
- *                        fast axis for waveplate, transmission axis
- *                        for polarizer, acoustic axis for AOM, etc.)
- *  axisZ is derived as X ? Y on save (after Gram-Schmidt orthogonalizing
- *  Y against X), so we don't store it in the draft. */
-type DraftAnchor = {
-  id: string;
-  px: string;
-  py: string;
-  pz: string;
-  nx: string;
-  ny: string;
-  nz: string;
-  yx: string;
-  yy: string;
-  yz: string;
-  apertureMm: string;
-  apertureShape: "rectangle" | "ellipse" | "circle";
-  apertureWidthMm: string;
-  apertureHeightMm: string;
-  /** Coax connector on RF / TTL ports. Empty string = none (optical
-   *  anchors). Only edited when the anchor's domain is rf / ttl / trigger
-   *  (see the anchor table's per-row gating). */
-  connectorType: string;
-  /** Display name for anchors sharing an id (rf_switch RF1/RF2, AD9959
-   *  CH0..CH3). Empty string = no name (falls back to id on save). The
-   *  RF Link panel + solver key throws/channels by this. */
-  name: string;
-};
+/** The anchor draft row, its reader and its writer live in
+ *  `utils/anchorDraft.ts` — see that module's docstring for the
+ *  "an untouched anchor goes back exactly as read" invariant. */
 
 type DraftTransition = {
   in: string;
@@ -127,15 +111,6 @@ type AssetDraft = {
   /** Top-level defaultParams keys marked tunable per-instance (alembic 0113). */
   tunableParams: string[];
 };
-
-/** Number -> draft-field text. MUST stay lossless (`String`, not `toFixed`):
- * the draft fields are the anchor WRITE path, and anchor poses carry a
- * 1 µm / 0.1 µrad budget (docs/objectives.md O-1/O-2). A previous
- * `toFixed(3)` helper here quantised positions to 1 µm and direction
- * components to ~870 µrad — see docs/float64-audit.md §2.1. */
-function n(value: number | null | undefined): string {
-  return value === null || value === undefined ? "" : String(value);
-}
 
 /** Spinner increment for the anchor position + axis inputs. 0.001 = 1 µm per
  * arrow press on position (the O-1 budget) and ~1 mrad on a normalised axis
@@ -183,59 +158,7 @@ function draftFromAsset(asset: V3Asset): AssetDraft {
     wavelengthMinNm: n(minNm),
     wavelengthMaxNm: n(maxNm),
     properties: props,
-    anchors: (asset.anchors ?? []).map((rawAnchor) => {
-      // The anchors[] JSONB column has historical schema drift: clean
-      // Phase 9.1 rows use camelCase (`positionMmBodyLocal`,
-      // `axisXBodyLocal`), but older backfills wrote snake_case
-      // (`position_mm_body_local`, `direction_body_local`) plus extra
-      // `name` / `type` fields. Read both shapes, project down to the
-      // editor's draft form (position + axisX as the "normal").
-      const a = rawAnchor as Record<string, unknown>;
-      const pos = (a.positionMmBodyLocal ?? a.position_mm_body_local ?? {}) as {
-        x?: number; y?: number; z?: number;
-      };
-      const axisX = (a.axisXBodyLocal ?? a.direction_body_local ?? {}) as {
-        x?: number; y?: number; z?: number;
-      };
-      const axisY = (a.axisYBodyLocal ?? {}) as {
-        x?: number; y?: number; z?: number;
-      };
-      const apertureMm = (a.apertureMm ?? a.aperture_mm) as number | undefined;
-      const apertureShape = (a.apertureShape ?? a.aperture_shape) as
-        | DraftAnchor["apertureShape"]
-        | undefined;
-      const apertureWidthMm = (a.apertureWidthMm ?? a.aperture_width_mm) as
-        | number
-        | undefined;
-      const apertureHeightMm = (a.apertureHeightMm ?? a.aperture_height_mm) as
-        | number
-        | undefined;
-      const connectorType = (a.connectorType ?? a.connector_type) as
-        | string
-        | undefined;
-      const anchorName = a.name as string | undefined;
-      // axisY default = world +Y when unset. The serializer will
-      // Gram-Schmidt-orthogonalize it against axisX, so as long as Y
-      // isn't parallel to X the result is well-defined.
-      return {
-        id: String(a.id ?? ""),
-        px: n(pos.x),
-        py: n(pos.y),
-        pz: n(pos.z),
-        nx: n(axisX.x),
-        ny: n(axisX.y),
-        nz: n(axisX.z),
-        yx: n(axisY.x ?? 0),
-        yy: n(axisY.y ?? 1),
-        yz: n(axisY.z ?? 0),
-        apertureMm: n(apertureMm),
-        apertureShape: apertureShape ?? "circle",
-        apertureWidthMm: n(apertureWidthMm),
-        apertureHeightMm: n(apertureHeightMm),
-        connectorType: connectorType ?? "",
-        name: anchorName ?? "",
-      };
-    }),
+    anchors: (asset.anchors ?? []).map(draftAnchorFromStored),
     transitions: (asset.transitions ?? []).map((transition) => ({
       in: transition.in,
       viaText: (transition.via ?? []).join(", "),
@@ -248,19 +171,6 @@ function draftFromAsset(asset: V3Asset): AssetDraft {
     defaultParamsText: jsonText(defaultParamsRest),
     tunableParams: [...(asset.tunableParams ?? [])],
   };
-}
-
-function readNumber(value: string, label: string): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    throw new Error(`${label} must be a finite number`);
-  }
-  return parsed;
-}
-
-function readOptionalNumber(value: string, label: string): number | null {
-  if (value.trim() === "") return null;
-  return readNumber(value, label);
 }
 
 function readJsonObject(text: string, label: string): Record<string, unknown> {
@@ -282,12 +192,6 @@ function readOptionalJson<T>(text: string, label: string): T | undefined {
     throw new Error("abcd must be a JSON array");
   }
   return parsed;
-}
-
-function readDraftNumber(value: string): number | null {
-  if (value.trim() === "") return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
 }
 
 /** How an anchor field was authored. Derived by comparing the draft against
@@ -938,104 +842,16 @@ function makeFaceLabel(text: string, color: string): THREE.Sprite {
   return sprite;
 }
 
-/** Build an orthonormal body-local basis from user-provided axisX +
- *  axisY. axisX is normalized; axisY is Gram-Schmidt orthogonalized
- *  against axisX (any component along X is projected out) then
- *  normalized; axisZ = axisX ? axisY. The user-facing axisY *direction*
- *  is preserved as much as possible — this is the semantic axis (slow
- *  / fast / transmission / acoustic). If axisY is parallel to axisX
- *  (degenerate), fall back to world +Y or +Z whichever is less
- *  parallel to X. */
-function deriveOrthonormalBasis(
-  ax: { x: number; y: number; z: number },
-  ay: { x: number; y: number; z: number },
-): {
-  axisX: { x: number; y: number; z: number };
-  axisY: { x: number; y: number; z: number };
-  axisZ: { x: number; y: number; z: number };
-} {
-  const xLen = Math.hypot(ax.x, ax.y, ax.z);
-  if (xLen < 1e-9) {
-    throw new Error("axisX direction must be non-zero (set nx/ny/nz)");
-  }
-  const X = { x: ax.x / xLen, y: ax.y / xLen, z: ax.z / xLen };
-
-  // Pick the user's axisY; fall back to a world axis if degenerate.
-  let Yseed = ay;
-  if (Math.hypot(ay.x, ay.y, ay.z) < 1e-9) {
-    Yseed = Math.abs(X.y) > 0.95 ? { x: 0, y: 0, z: 1 } : { x: 0, y: 1, z: 0 };
-  }
-  // Gram-Schmidt: Y' = Yseed − (Yseed·X) X
-  let dotYX = Yseed.x * X.x + Yseed.y * X.y + Yseed.z * X.z;
-  let Yp = {
-    x: Yseed.x - dotYX * X.x,
-    y: Yseed.y - dotYX * X.y,
-    z: Yseed.z - dotYX * X.z,
-  };
-  let yLen = Math.hypot(Yp.x, Yp.y, Yp.z);
-  if (yLen < 1e-9) {
-    // axisY collapsed onto axisX — Yseed was parallel to X. Pick a
-    // world fallback that's not parallel to X.
-    Yseed = Math.abs(X.y) > 0.95 ? { x: 0, y: 0, z: 1 } : { x: 0, y: 1, z: 0 };
-    dotYX = Yseed.x * X.x + Yseed.y * X.y + Yseed.z * X.z;
-    Yp = {
-      x: Yseed.x - dotYX * X.x,
-      y: Yseed.y - dotYX * X.y,
-      z: Yseed.z - dotYX * X.z,
-    };
-    yLen = Math.hypot(Yp.x, Yp.y, Yp.z);
-  }
-  const Y = { x: Yp.x / yLen, y: Yp.y / yLen, z: Yp.z / yLen };
-  const Z = {
-    x: X.y * Y.z - X.z * Y.y,
-    y: X.z * Y.x - X.x * Y.z,
-    z: X.x * Y.y - X.y * Y.x,
-  };
-  return { axisX: X, axisY: Y, axisZ: Z };
-}
-
 function draftToPatch(draft: AssetDraft): V3AssetUpdate {
   // Phase 9.8 cutover: editor writes anchors[] only. faces[] and
   // transitions[] are no longer authored here (tracer reads anchors[]).
-  const anchors = draft.anchors.map((a, index) => {
-    const id = a.id.trim();
-    if (!id) throw new Error(`anchor ${index + 1} id is required`);
-    const width = readOptionalNumber(a.apertureWidthMm, `${id}.apertureWidthMm`);
-    const height = readOptionalNumber(a.apertureHeightMm, `${id}.apertureHeightMm`);
-    const { axisX, axisY, axisZ } = deriveOrthonormalBasis(
-      {
-        x: readNumber(a.nx, `${id}.axisX.x`),
-        y: readNumber(a.ny, `${id}.axisX.y`),
-        z: readNumber(a.nz, `${id}.axisX.z`),
-      },
-      {
-        x: readNumber(a.yx, `${id}.axisY.x`),
-        y: readNumber(a.yy, `${id}.axisY.y`),
-        z: readNumber(a.yz, `${id}.axisY.z`),
-      },
-    );
-    return {
-      id,
-      positionMmBodyLocal: {
-        x: readNumber(a.px, `${id}.position.x`),
-        y: readNumber(a.py, `${id}.position.y`),
-        z: readNumber(a.pz, `${id}.position.z`),
-      },
-      axisXBodyLocal: axisX,
-      axisYBodyLocal: axisY,
-      axisZBodyLocal: axisZ,
-      apertureMm: readNumber(a.apertureMm, `${id}.apertureMm`),
-      apertureShape: a.apertureShape,
-      ...(width !== null ? { apertureWidthMm: width } : {}),
-      ...(height !== null ? { apertureHeightMm: height } : {}),
-      // Only RF / TTL anchors carry a connector; optical anchors leave
-      // it empty and the field is omitted (stays null in the JSONB).
-      ...(a.connectorType.trim() ? { connectorType: a.connectorType.trim() } : {}),
-      // Preserve the per-anchor name (RF1/RF2/TTL, CH0..CH3). Omitted when
-      // empty so single-port anchors stay nameless and fall back to id.
-      ...(a.name.trim() ? { name: a.name.trim() } : {}),
-    };
-  });
+  // An anchor the user did not touch goes back EXACTLY as it was read —
+  // `anchorPayloadFromDraft` returns the stored object itself for such a row
+  // (utils/anchorDraft.ts). Save always sends the whole list, so without that
+  // every untouched row would be re-derived and drift.
+  const anchors = draft.anchors.map(
+    anchorPayloadFromDraft,
+  ) as unknown as NonNullable<V3AssetUpdate["anchors"]>;
 
   const wavelengthMin = readOptionalNumber(draft.wavelengthMinNm, "wavelength min");
   const wavelengthMax = readOptionalNumber(draft.wavelengthMaxNm, "wavelength max");
@@ -2890,82 +2706,37 @@ function AssetEditForm({
     };
   }, [draft.kindId]);
 
-  // Anchors are a kind-level contract: the editable anchor list is
-  // derived from the selected kind's anchorTemplate, not hand-authored.
-  // When a kind is chosen, auto-seed a blank row for every template
-  // anchor id (required + optional) the asset is missing, so a freshly
-  // imported asset — the backend creates STEP/GLB builds with
-  // anchors=[] (v3_catalog.create_asset3d) — shows the kind's anchors
-  // instead of an empty table; the user then positions them.
+  // Anchors are a kind-level contract: the editable anchor list is derived
+  // from the selected kind's anchorTemplate, not hand-authored. Seeding fills
+  // in a blank row for every template anchor id (required + optional) the
+  // asset is missing, so a freshly imported asset — the backend creates
+  // STEP/GLB builds with anchors=[] (v3_catalog.create_asset3d) — can be
+  // populated with the kind's anchors in one click; the user then positions
+  // them.
   //
-  // Additive only: never drops anchors. Synthesized ids that live
-  // outside the template (interaction_center for aom, optical_center for
-  // faraday/slab) must survive, and an already-seeded asset
-  // (thorlabs_bb1_e03) is left untouched once its template ids exist —
-  // so this converges in one pass and never fights the user.
-  useEffect(() => {
-    const kind = kinds.find((k) => k.name === draft.kindId);
-    if (!kind) return;
-    const present = new Set(draft.anchors.map((a) => a.id));
-    const missing = faceIdTemplate.all.filter((id) => !present.has(id));
-    if (missing.length === 0) return;
-
-    // Seed the kind's defaultParams alongside the anchors, but only while
-    // the asset still has none. Gating on `missing` means we touch
-    // defaultParams exactly once (this first seed pass), so the user can
-    // clear them afterwards without the effect re-seeding.
-    //
-    // wavelengthRangeNm is special: it has a dedicated top-level Asset
-    // column (V3Asset.wavelengthRangeNm) edited via the lambda min/max
-    // fields below, and on Save the column — not the defaultParams JSON —
-    // is authoritative (see toAssetUpdate). So strip it out of the JSON
-    // seed and route it to the lambda fields instead; otherwise it lands
-    // in defaultParams as a duplicate the lambda fields never reflect and
-    // the save silently drops.
-    const { wavelengthRangeNm: seedWavelength, ...kindParams } =
-      (kind.defaultParams ?? {}) as Record<string, unknown>;
-    const seedParams =
-      (draft.defaultParamsText.trim() === "" || draft.defaultParamsText.trim() === "{}")
-      && Object.keys(kindParams).length > 0;
-    const seedWavelengthFields =
-      Array.isArray(seedWavelength)
-      && draft.wavelengthMinNm.trim() === ""
-      && draft.wavelengthMaxNm.trim() === "";
-    // Seed the tunable set from the kind's declared state params (∩ the params
-    // actually seeded) the first time params land, so a new laser/RF asset is
-    // born with sensible per-instance knobs. Only when nothing tunable yet.
-    const stateKeys = (pluginForKind(draft.kindId)?.physics.stateParamKeys ?? []) as string[];
-    const seedTunable =
-      seedParams && draft.tunableParams.length === 0
-      && stateKeys.some((k) => k in kindParams);
-
-    setDraft({
-      ...draft,
-      anchors: [
-        ...draft.anchors,
-        ...missing.map((id): DraftAnchor => ({
-          id,
-          px: "0", py: "0", pz: "0",
-          nx: "0", ny: "0", nz: "1",
-          yx: "0", yy: "1", yz: "0",
-          apertureMm: "1",
-          apertureShape: "circle",
-          apertureWidthMm: "",
-          apertureHeightMm: "",
-          connectorType: "",
-          name: "",
-        })),
-      ],
-      ...(seedParams ? { defaultParamsText: jsonText(kindParams) } : {}),
-      ...(seedTunable ? { tunableParams: stateKeys.filter((k) => k in kindParams) } : {}),
-      ...(seedWavelengthFields
-        ? {
-            wavelengthMinNm: n(seedWavelength[0] as number),
-            wavelengthMaxNm: n(seedWavelength[1] as number),
-          }
-        : {}),
+  // DELIBERATE ACTION, NOT AN EFFECT (2026-09-23). This used to run from a
+  // useEffect keyed on the whole draft, so merely OPENING an asset appended
+  // the rows — a blank `intercept_out` at the body origin on all 8 lens
+  // assets and blank rows on 12 more. `intercept_out` is in
+  // PRIMARY_ANCHOR_IDS, i.e. hit-tested, so saving a lens the user had only
+  // looked at dropped a fake 1 mm face into its beam path. See
+  // utils/kindTemplateSeed.ts.
+  const missingTemplateIds = useMemo(
+    () => missingTemplateAnchorIds(draft, faceIdTemplate.all),
+    [draft, faceIdTemplate],
+  );
+  const seedFromKindTemplate = () => {
+    const patch = kindTemplateSeedPatch(draft, {
+      templateAnchorIds: faceIdTemplate.all,
+      kindDefaultParams:
+        (kinds.find((k) => k.name === draft.kindId)?.defaultParams ?? {}) as Record<
+          string,
+          unknown
+        >,
+      stateParamKeys: (pluginForKind(draft.kindId)?.physics.stateParamKeys ?? []) as string[],
     });
-  }, [draft, kinds, faceIdTemplate]);
+    if (patch) setDraft({ ...draft, ...patch });
+  };
 
   // Geometry edits (mid-click cluster delete + "Revert geometry") stage
   // in draft.properties.viewerHints and only commit on Save Changes.
@@ -3327,10 +3098,31 @@ function AssetEditForm({
         );
       })()}
 
-      {/* Anchors are defined by the kind's anchorTemplate and auto-seeded
-          above — no manual add/remove. To change which anchors a kind
-          has, edit the kind in the Kinds editor. */}
-      <div style={SECTION_LABEL}>Anchors ({draft.anchors.length})</div>
+      {/* Anchors are defined by the kind's anchorTemplate — no manual
+          add/remove. To change which anchors a kind has, edit the kind in the
+          Kinds editor. Seeding the missing ones is an explicit click
+          (2026-09-23): it used to happen on open, which quietly put a blank
+          hit-tested `intercept_out` at the body origin into every lens's
+          draft, and from there into the next save. */}
+      <div style={{ ...SECTION_LABEL, display: "flex", alignItems: "center", gap: 8 }}>
+        <span>Anchors ({draft.anchors.length})</span>
+        {missingTemplateIds.length > 0 && (
+          <button
+            type="button"
+            onClick={seedFromKindTemplate}
+            title={
+              `Add a blank row for each anchor the "${draft.kindId}" kind declares `
+              + `and this asset does not have: ${missingTemplateIds.join(", ")}.\n\n`
+              + "Rows land at the body origin facing +Z with a 1 mm circular "
+              + "aperture — position them before saving. Nothing existing is "
+              + "touched."
+            }
+            style={{ ...ICON_BUTTON, width: "auto", padding: "0 8px", fontSize: 10 }}
+          >
+            + seed {missingTemplateIds.length} from kind
+          </button>
+        )}
+      </div>
 
       <table style={TABLE}>
         <thead>
@@ -3675,7 +3467,7 @@ export function Asset3DEditor({
   const save = async () => {
     if (!selected || !draft) return;
     // Guardrail: an optical/RF physics asset whose primary anchor is still
-    // at the body origin (the auto-seed default) won't interact with beams
+    // at the body origin (where "+ seed N from kind" drops a row) won't interact with beams
     // until it's positioned on the real surface — exactly the trap behind a
     // "mirror that doesn't reflect". Warn (non-blocking) before saving.
     const savedKind = kinds.find((k) => k.name === draft.kindId);

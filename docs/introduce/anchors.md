@@ -125,10 +125,13 @@ is **missing**, not the catalog asset. Where it applies:
 - `resolveAnchorPosesLab` / `resolve_anchor_poses_lab` — always (they must pose
   the anchors the trace hits).
 - `resolveBindingTree(…, { honourAssetOverride: true })` /
-  `resolve_binding_tree(…, honour_asset_override=True)` — opt-in, **off by
-  default**, so the renderer and the Object-panel trees keep drawing the
-  catalog asset (the render path has never swapped assets; see
-  [rendering.md](rendering.md)).
+  `resolve_binding_tree(…, honour_asset_override=True)` — opt-in, still **off
+  by default**, but the **renderer turns it on since 2026-09-23**
+  (`bindingRendererGate.buildSceneObjectFromBindings`, plus the viewer's
+  anchor-debug overlay, which must mark the geometry that is drawn). Otherwise
+  a swapped instance was drawn as its catalog part while it traced and aligned
+  as the swapped one; see [rendering.md](rendering.md). The Object-panel trees
+  (`OpticalSettingPanel`'s sub-asset kind list) are still catalog-only.
 - `componentBindings.primaryAssetForObject` / `AlignScene.primary_asset(comp,
   object_id)` — the override-aware "main asset" the align paths use
   (`AlignToBeamControls`' primary-anchor fallback, the AOM check and Bragg
