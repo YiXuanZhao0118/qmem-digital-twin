@@ -11,7 +11,15 @@ from __future__ import annotations
 import uuid
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 from app.schemas import AssetLodOut, CamelModel, asset_file_version
 
@@ -345,7 +353,8 @@ class Asset3DV3Out(CamelModel):
     wavelength_range_nm: Optional[list[float]] = None
     frequency_range_mhz: Optional[list[float]] = None
     # Surface model (alembic 0141), returned raw like ``anchors`` so a row
-    # written outside the API can never 500 the catalog list. NULL = none.
+    # written outside the API can never 500 the catalog list. NULL = none —
+    # and also a stored blob that no longer validates (see the validator).
     surface_model: Optional[dict[str, Any]] = None
     properties: dict[str, Any]
     # Human-confirmed "frozen" flag (alembic 0112). Read-only editor + the
@@ -355,6 +364,22 @@ class Asset3DV3Out(CamelModel):
     # asset's tiers have been generated. Eager-loaded by the list route so a
     # single catalog fetch carries the whole manifest.
     lods: list[AssetLodOut] = []
+
+    @field_validator("surface_model", mode="before")
+    @classmethod
+    def _serve_invalid_surface_model_as_null(cls, value: Any) -> Any:
+        """Only a write outside the API can store a model that does not
+        validate (the PUT validates). The tracer ignores one
+        (``db_scene_loader._surface_model``), so serve it as null too: a
+        client never renders — or crashes on — a model the trace does not
+        use. Never raises, so the catalog list still cannot 500."""
+        if value is None:
+            return None
+        try:
+            SurfaceModelV3.model_validate(value)
+        except ValidationError:
+            return None
+        return value
 
     @computed_field(alias="fileVersion")
     @property

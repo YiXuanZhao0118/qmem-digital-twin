@@ -289,6 +289,19 @@ def test_locked_asset_rejects_a_surface_model(put):
     assert row.surface_model is None
 
 
+def test_a_stored_model_that_no_longer_validates_is_served_as_null(put):
+    # Only a write outside the API can store one (the PUT validates). The
+    # tracer ignores it (db_scene_loader._surface_model), so the API serves
+    # null too, rather than a blob a client would render or crash on; the
+    # row itself is left alone.
+    row = _row()
+    row.surface_model = {"media": {}, "surfaces": "not a list"}
+    r = put(row, {"name": "renamed"})
+    assert r.status_code == 200, r.text
+    assert r.json()["surfaceModel"] is None
+    assert row.surface_model == {"media": {}, "surfaces": "not a list"}
+
+
 def test_update_schema_leaves_the_field_unset_when_absent():
     assert "surface_model" not in Asset3DV3Update.model_validate({"name": "x"}).model_fields_set
 

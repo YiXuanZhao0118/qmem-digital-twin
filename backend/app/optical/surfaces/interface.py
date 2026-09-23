@@ -201,9 +201,9 @@ def interact(
     i_in = jones_intensity(jones_f)
     outs: list[Outgoing] = []
     dropped: list[str] = []
-    if m_out == OPAQUE and c in ("uncoated", "ar", "partial"):
+    if m_out == OPAQUE and c in ("uncoated", "ar", "hr", "partial"):
         # What the coating lets through is absorbed by the opaque body.
-        kept = 1.0 - R if c in ("ar", "partial") else 1.0
+        kept = 1.0 - R if c in ("ar", "hr", "partial") else 1.0
         outs.append(Outgoing(ray.replaced(origin=hit.point, power_mw=ray.power_mw * kept), OPAQUE))
     for a_s, a_p, modes, medium in channels:
         for m in modes:

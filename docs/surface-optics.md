@@ -41,7 +41,7 @@ A part with a surface model is **surfaces + media**, not an ordered list: each s
 
 ### Data: `assets_3d.surface_model` (Phase 0 — landed)
 
-Nullable JSONB (alembic `0141_asset_surface_model`); **NULL = no surface model**, the part keeps its anchor op. Validated by `SurfaceModelV3` in `backend/app/schemas_v3.py` on `PUT /api/v3/assets3d/{key}`; returned raw as `surfaceModel` on `Asset3DV3Out`. All geometry is asset-local mm, in the same frame as `anchors[]`.
+Nullable JSONB (alembic `0141_asset_surface_model`); **NULL = no surface model**, the part keeps its anchor op. Validated by `SurfaceModelV3` in `backend/app/schemas_v3.py` on `PUT /api/v3/assets3d/{key}`; returned raw as `surfaceModel` on `Asset3DV3Out`, except that a stored blob which no longer validates is served as null. Only a write outside the API can store one, and the tracer ignores it too (`Asset3DV3Out._serve_invalid_surface_model_as_null`). All geometry is asset-local mm, in the same frame as `anchors[]`.
 
 ```jsonc
 {
@@ -122,7 +122,7 @@ The chief ray is traced exactly; the Gaussian envelope Q (the complex symmetric 
 - LA1509 at normal incidence: exit Q equals the existing `_thick_lens_abcd` golden to 1e-12 relative, emitted at the back vertex;
 - decentred LA1509: deflection `−h/EFL` to 2e-3;
 - a tilted spherical surface (25°): the Q-derived sagittal and tangential foci equal Coddington's closed forms to 1e-6, **and** equal where exactly-traced neighbour rays cross the chief ray — 2e-12 sagittal, 7e-7 tangential (the residual is the fan's own coma, first order in its offset);
-- cylinder: the unpowered axis is exactly a slab; concave mirror: `f = R/2` to 1e-12; flat 45° mirror; the back of a mirror absorbs;
+- cylinder: the unpowered axis is exactly a slab; concave mirror: `f = R/2` to 1e-12; flat 45° mirror; the back of a mirror absorbs, and so does the `1 − R` an HR coating lets through to its `opaque` backing (it went unrecorded in `absorbed_mw` until 2026-09-23);
 - PBS cube: s reflected out the side face, p straight through, extinction leaking `10^(−ER/10)` into the other port;
 - zero-order quartz HWP (780 nm): (1, 1)/√2 → (1, −1)/√2; retardance drift at 852 nm exact; tilt against the exact formula to 1e-9 (5e-12 measured);
 - birefringence: a calcite plate at 30° splits a 45° beam into an s (e) and a p (o) beam, parallel, half the power each, separated by exactly `L·(tanθ_e − tanθ_o)·cosθ`; a Glan-type calcite pair with a 40° air gap sends the o ray out of the escape face by TIR (lossless) and the e ray straight through with the exact s Fresnel loss `(1 − R_s)²` of its two gap faces — the geometry of a Glan-Foucault, whose s-polarized e ray loses 55 % there; a crossed compound quartz plate retards by `k₀Δn(L₁ − L₂)`;

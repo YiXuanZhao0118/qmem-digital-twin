@@ -358,6 +358,12 @@ def test_back_of_a_mirror_absorbs():
     assert res.exits == [] and res.absorbed_mw == pytest.approx(1.0)
 
 
+def test_what_an_hr_coating_transmits_is_absorbed_by_its_opaque_backing():
+    res = trace_element(mirror(reflectance=0.99), beam())
+    assert only_exit(res).power_mw == pytest.approx(0.99, abs=1e-14)
+    assert res.absorbed_mw == pytest.approx(0.01, abs=1e-14)
+
+
 def pbs_cube(size=10.0, n=1.5168, pp_db=None, sp_db=None):
     s2 = math.sqrt(0.5)
     h = size / 2
