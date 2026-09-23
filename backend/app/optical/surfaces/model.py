@@ -7,6 +7,7 @@ and turns it into frozen dataclasses with ``Vec3`` axes, re-orthonormalised
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -40,6 +41,9 @@ class Medium:
     n_o: Optional[float] = None
     n_e: Optional[float] = None
     optic_axis: Optional[Vec3] = None
+    # Faraday rotation (rad per mm along magnetic_axis); see MediumV3.
+    faraday_rad_per_mm: float = 0.0
+    magnetic_axis: Optional[Vec3] = None
 
     @property
     def uniaxial(self) -> bool:
@@ -56,6 +60,16 @@ class Medium:
             return ISOTROPIC[self.material].n(wavelength_nm), None
         o, e = UNIAXIAL[self.material]
         return o.n(wavelength_nm), e.n(wavelength_nm)
+
+    def mode_index(self, mode: Optional[str], direction: Vec3, wavelength_nm: float) -> float:
+        """The index a ray of this eigenmode sees: n (isotropic), n_o, or
+        n_e(θ) with ``1/n_e(θ)² = cos²θ/n_o² + sin²θ/n_e²``, θ from the
+        optic axis to the wave vector."""
+        n_o, n_e = self.indices(wavelength_nm)
+        if n_e is None or mode != "e":
+            return n_o
+        c = self.optic_axis.dot(direction)
+        return 1.0 / math.sqrt(c * c / (n_o * n_o) + (1.0 - c * c) / (n_e * n_e))
 
 
 AIR_MEDIUM = Medium(AIR, n=1.0)
@@ -105,6 +119,8 @@ def parse_surface_model(raw: dict[str, Any]) -> SurfaceModel:
         mid: Medium(
             mid, n=md.n, material=md.material, n_o=md.n_o, n_e=md.n_e,
             optic_axis=_vec(md.optic_axis).normalized() if md.optic_axis else None,
+            faraday_rad_per_mm=math.radians(md.faraday_rotation_deg_per_mm or 0.0),
+            magnetic_axis=_vec(md.magnetic_axis).normalized() if md.magnetic_axis else None,
         )
         for mid, md in m.media.items()
     }
@@ -125,6 +141,26 @@ def parse_surface_model(raw: dict[str, Any]) -> SurfaceModel:
             extinction_sp_db=s.coating.extinction_ratio_sp_db,
         ))
     return SurfaceModel(media=media, surfaces=tuple(surfaces))
+
+
+def rotate_optic_axes(model: SurfaceModel, axis: Vec3, angle_rad: float) -> SurfaceModel:
+    """The model with every uniaxial medium's optic axis rotated by
+    ``angle_rad`` about ``axis`` (right-handed) — a waveplate's per-instance
+    ``fastAxisDeg``, which the waveplate op applies as axisY → axisZ about
+    axisX."""
+    if angle_rad == 0.0:
+        return model
+    k = axis.normalized()
+    c, s = math.cos(angle_rad), math.sin(angle_rad)
+
+    def rot(v: Vec3) -> Vec3:     # Rodrigues
+        return v * c + cross(k, v) * s + k * (k.dot(v) * (1.0 - c))
+
+    media = {
+        mid: dataclasses.replace(m, optic_axis=rot(m.optic_axis)) if m.optic_axis is not None else m
+        for mid, m in model.media.items()
+    }
+    return SurfaceModel(media=media, surfaces=model.surfaces)
 
 
 def unit_or_none(v: Vec3) -> Optional[Vec3]:

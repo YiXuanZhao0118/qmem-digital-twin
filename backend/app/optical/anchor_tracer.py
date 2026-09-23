@@ -42,7 +42,7 @@ from app.optical.pose import (
     dir_body_to_lab_t, dir_lab_to_body_t,
 )
 from app.optical.surfaces.geometry import intersect as intersect_surface
-from app.optical.surfaces.model import SurfaceModel
+from app.optical.surfaces.model import SurfaceModel, rotate_optic_axes
 from app.optical.surfaces.trace import effective_focal_length, trace_element
 
 
@@ -547,6 +547,24 @@ def _segment(
     )
 
 
+def _instance_model(slot: V3AnchorBindingSlot) -> SurfaceModel:
+    """The slot's surface model with its per-instance parameters applied —
+    the same ``default_params ⊕ dynamic_sources`` the ops read. Today that is
+    a waveplate's ``fastAxisDeg``: its optic axes turn by that angle about
+    the ``intercept_in`` anchor's axisX (axisY → axisZ), exactly as the
+    waveplate op turns its fast axis."""
+    model = slot.asset.surface_model
+    if slot.asset.kind != "waveplate":
+        return model
+    params = {**slot.asset.default_params, **(slot.dynamic_sources or {})}
+    raw = params.get("fastAxisDeg")
+    if not isinstance(raw, (int, float)) or raw == 0:
+        return model
+    anchor = next((a for a in slot.asset.anchors if a.id == "intercept_in"), None)
+    axis = anchor.axis_x_body if anchor is not None else model.surfaces[0].x
+    return rotate_optic_axes(model, axis, math.radians(float(raw)))
+
+
 def _trace_surface_part(
     ray: BeamRay,
     hit: SurfaceEntryHit,
@@ -568,7 +586,8 @@ def _trace_surface_part(
         direction=dir_body,
         jones=jones_lab_to_body(ray.jones, ray.direction, dir_body, to_body),
     )
-    part = trace_element(slot.asset.surface_model, ray_body)
+    model = _instance_model(slot)
+    part = trace_element(model, ray_body)
 
     segments = [_segment(
         ray, point_body_to_lab_t(hit.hit_point_body, transform), slot, hit.surface_id, ids, None,
@@ -581,7 +600,7 @@ def _trace_surface_part(
         entry = part.clips[0]
         t_ap = min(c.fraction for c in part.clips)
         combined = sum(r.power_mw for r in part.exits) / ray.power_mw
-        efl = effective_focal_length(slot.asset.surface_model, ray_body)
+        efl = effective_focal_length(model, ray_body)
         segments[0].aperture_truncation = {
             "apertureMm": entry.radius_mm,
             "wEffMm": entry.w_eff_mm,

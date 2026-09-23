@@ -280,3 +280,91 @@ def test_a_cylindrical_surface_lens_reports_its_clip_but_no_pop_focal_length():
     at = res.lab_segments[0].aperture_truncation
     assert at["apertureMm"] == 5.0 and at["focalLengthMm"] == 0.0
     assert 0.5 < at["transmittedFraction"] < 0.99
+
+
+# ---------------------------------------------------------------------------
+# Faraday rotation and a waveplate's fastAxisDeg, against their ops
+# ---------------------------------------------------------------------------
+
+def _rod(faraday=True):
+    medium = {"n": 1.95}
+    if faraday:
+        medium.update({"faradayRotationDegPerMm": 45.0 / 18.0, "magneticAxis": X})
+    return parse_surface_model({
+        "media": {"tgg": medium},
+        "surfaces": [surf("A", -9.0, "tgg", "air"), surf("B", 9.0, "air", "tgg")],
+    })
+
+
+@pytest.mark.parametrize("direction", [1.0, -1.0])
+def test_faraday_medium_rotates_like_the_faraday_op(direction):
+    """Forward and backward: the same Jones out as faraday_anchor_op (whose
+    handedness was reversed on 2026-06-12), so an isolator keeps working."""
+    op_asset = V3AssetAnchorSnapshot(
+        catalog_id="rot_op", kind="faraday_rotator", anchors=[anchor("optical_center")],
+        default_params={"rotationDeg": 45.0, "lengthMm": 18.0, "refractiveIndex": 1.95},
+    )
+    srf_asset = V3AssetAnchorSnapshot(catalog_id="rot_srf", kind="faraday_rotator",
+                                      anchors=[], surface_model=_rod())
+    jones = (complex(0.8, 0.1), complex(-0.2, 0.55))
+    ray = make_beam_ray(origin=Vec3(-30.0 * direction, 0, 0), direction=Vec3(direction, 0, 0),
+                        wavelength_nm=852.0, jones=jones)
+    (a,) = trace([slot(op_asset, V3Pose())], ray).final_rays
+    (b,) = trace([slot(srf_asset, V3Pose())], ray).final_rays
+    for ja, jb in zip(a.jones, b.jones):
+        assert jb == pytest.approx(ja, abs=1e-12)
+    assert b.power_mw == pytest.approx(a.power_mw, abs=1e-15)
+
+
+def test_faraday_round_trip_accumulates_twice_the_rotation():
+    """Non-reciprocal: out and back through 45° gives 90° — a polarization
+    along s comes back along p."""
+    from app.optical.surfaces import trace_element
+
+    fwd = make_beam_ray(origin=Vec3(-30, 0, 0), direction=Vec3(1, 0, 0),
+                        wavelength_nm=852.0, jones=(1 + 0j, 0j))
+    (out,) = trace_element(_rod(), fwd).exits
+    # Send the SAME physical field back: reversing the direction flips the
+    # canonical p axis (p = d × s, s stays world z), so E_p changes sign.
+    back = out.replaced(origin=Vec3(30, 0, 0), direction=Vec3(-1, 0, 0),
+                        jones=(out.jones[0], -out.jones[1]))
+    (ret,) = trace_element(_rod(), back).exits
+    assert abs(ret.jones[0]) < 1e-12 and abs(abs(ret.jones[1]) - 1.0) < 1e-12
+
+
+@pytest.mark.parametrize("where", ["default_params", "dynamic_sources"])
+def test_waveplate_fast_axis_deg_turns_the_optic_axis_like_the_op(where):
+    """A quartz plate (optic axis z, so the fast axis is y = the anchor's
+    axisY) with fastAxisDeg = 30 must give the waveplate op's Jones for the
+    retardance its own thickness makes."""
+    from app.optical.surfaces.materials import UNIAXIAL
+
+    o, e = UNIAXIAL["crystal_quartz"]
+    L = 1.07
+    delta_deg = math.degrees(2 * math.pi * (e.n(852.0) - o.n(852.0)) * L / (852.0 * 1e-6))
+    wp_anchor = V3Anchor(id="intercept_in", position_body=Vec3(0, 0, 0), axis_x_body=Vec3(1, 0, 0),
+                         axis_y_body=Vec3(0, 1, 0), axis_z_body=Vec3(0, 0, 1), aperture_mm=0.0)
+    op_asset = V3AssetAnchorSnapshot(
+        catalog_id="wp_op", kind="waveplate", anchors=[wp_anchor],
+        default_params={"retardanceDeg": delta_deg, "fastAxisDeg": 30.0, "lengthMm": L},
+    )
+    model = parse_surface_model({
+        "media": {"q": {"material": "crystal_quartz", "opticAxis": {"x": 0, "y": 0, "z": 1}}},
+        "surfaces": [surf("A", 0.0, "q", "air"), surf("B", L, "air", "q")],
+    })
+    params = {"fastAxisDeg": 30.0}
+    srf_asset = V3AssetAnchorSnapshot(
+        catalog_id="wp_srf", kind="waveplate", anchors=[wp_anchor], surface_model=model,
+        default_params=params if where == "default_params" else {},
+    )
+    srf_slot = V3AnchorBindingSlot(
+        scene_object_id="obj", binding_id="b", asset=srf_asset,
+        effective_transform=pose_to_transform(V3Pose()),
+        dynamic_sources=params if where == "dynamic_sources" else None,
+    )
+    jones = (complex(0.8, 0.0), complex(0.6, 0.0))
+    ray = make_beam_ray(origin=Vec3(-20, 0, 0), direction=Vec3(1, 0, 0), wavelength_nm=852.0, jones=jones)
+    (a,) = trace([slot(op_asset, V3Pose())], ray).final_rays
+    (b,) = trace([srf_slot], ray).final_rays
+    for ja, jb in zip(a.jones, b.jones):
+        assert jb == pytest.approx(ja, abs=1e-10)

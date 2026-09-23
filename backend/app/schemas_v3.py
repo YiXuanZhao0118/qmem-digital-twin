@@ -197,18 +197,31 @@ class MediumV3(CamelModel):
     """Exactly one of: ``n``, ``material`` (a name in
     ``app.optical.surfaces.materials``), or the uniaxial ``n_o`` + ``n_e``.
     A uniaxial medium — constant or a uniaxial material — needs
-    ``optic_axis``; an isotropic one must not have it."""
+    ``optic_axis``; an isotropic one must not have it.
+
+    Faraday rotation (an isotropic medium only): ``faraday_rotation_deg_per_mm``
+    along ``magnetic_axis`` — a ray travelling ``t`` along ``k`` has its Jones
+    vector re-expressed by ``rotate_jones(−ρ·t·(k·b̂))``, the faraday op's
+    handedness, so the rotation is non-reciprocal."""
     n: Optional[float] = Field(default=None, gt=0.0)
     material: Optional[str] = None
     n_o: Optional[float] = Field(default=None, gt=0.0)
     n_e: Optional[float] = Field(default=None, gt=0.0)
     optic_axis: Optional[Vec3V3] = None
+    faraday_rotation_deg_per_mm: Optional[float] = None
+    magnetic_axis: Optional[Vec3V3] = None
 
     @model_validator(mode="after")
     def _check(self) -> "MediumV3":
         from app.optical.surfaces.materials import MATERIALS, UNIAXIAL
 
+        if (self.faraday_rotation_deg_per_mm is None) != (self.magnetic_axis is None):
+            raise ValueError("faradayRotationDegPerMm and magneticAxis go together")
+        if self.magnetic_axis is not None and _norm(self.magnetic_axis) < 1e-9:
+            raise ValueError("magneticAxis must be non-zero")
         constant_uniaxial = self.n_o is not None or self.n_e is not None
+        if self.magnetic_axis is not None and (constant_uniaxial or self.material in UNIAXIAL):
+            raise ValueError("Faraday rotation is supported in an isotropic medium only")
         if sum([self.n is not None, self.material is not None, constant_uniaxial]) != 1:
             raise ValueError("a medium needs exactly one of n, material, or nO + nE")
         if self.material is not None and self.material not in MATERIALS:

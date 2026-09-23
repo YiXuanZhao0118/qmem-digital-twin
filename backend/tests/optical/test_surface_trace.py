@@ -447,10 +447,11 @@ def test_hwp_retardance_drifts_with_wavelength():
     assert cmath.phase(out.jones[0] / out.jones[1]) == pytest.approx(expect, abs=1e-9)
 
 
-def test_tilted_waveplate_retardance_matches_the_exact_formula_to_first_order():
+def test_tilted_waveplate_retardance_is_exact():
     """Tilt about the optic axis (k stays ⊥ c). Exact:
-    δ = k₀·L·(√(n_e² − sin²θ) − √(n_o² − sin²θ)). The single-chief-ray model
-    refracts with n_o and is exact to first order in (n_e − n_o)."""
+    δ = k₀·L·(√(n_e² − sin²θ) − √(n_o² − sin²θ)). The o and e rays refract
+    with their own indices, leave parallel ~µm apart and are recombined with
+    their phase referred to one wavefront — exact, not first order."""
     L = half_wave_thickness()
     n_o, n_e = quartz_indices()
     k0 = 2 * math.pi / (LAM * 1e-6)
@@ -460,7 +461,7 @@ def test_tilted_waveplate_retardance_matches_the_exact_formula_to_first_order():
         out = only_exit(trace_element(quartz_plate(L), beam(tilted(deg), jones=j)))
         got = cmath.phase(out.jones[0] / out.jones[1]) % (2 * math.pi)
         exact = k0 * L * (math.sqrt(n_e ** 2 - math.sin(th) ** 2) - math.sqrt(n_o ** 2 - math.sin(th) ** 2))
-        assert got == pytest.approx(exact, rel=1e-3)
+        assert got == pytest.approx(exact, rel=1e-9)
         assert got > math.pi   # tilting a zero-order plate adds retardance
 
 
@@ -754,3 +755,123 @@ def test_a_wide_beam_is_clipped_by_the_rectangle():
         gaussian_rect_aperture_fraction(entry.w_eff_mm, 10.0, 12.0), rel=1e-15)
     assert 0.5 < entry.fraction < 0.99
     assert only_exit(res).power_mw == pytest.approx(min(c.fraction for c in res.clips) * 0.9975 ** 2, rel=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# Birefringence: o/e split, TIR selection, compound plates
+# ---------------------------------------------------------------------------
+
+def calcite(axis):
+    return {"material": "calcite", "opticAxis": axis}
+
+
+def test_a_tilted_calcite_plate_splits_o_and_e_into_parallel_beams():
+    """Optic axis ⊥ the plane of incidence (along z; the plane is x–y), so
+    the e index is n_e for every direction. o and e refract to their own
+    angles and leave parallel, separated by L·(tanθ_e − tanθ_o)·cosθ — far
+    more than 1e-3 of the beam, so they stay two rays: s (along z = the
+    optic axis) is the e ray, p the o ray."""
+    from app.optical.surfaces.materials import UNIAXIAL
+
+    L, deg = 5.0, 30.0
+    model = parse_surface_model({
+        "media": {"cc": calcite(Z)},
+        "surfaces": [surf("A", 0.0, "cc", "air", coating={"type": "ar", "reflectance": 0.0}),
+                     surf("B", L, "air", "cc", coating={"type": "ar", "reflectance": 0.0})],
+    })
+    o, e = UNIAXIAL["calcite"]
+    n_o, n_e = o.n(LAM), e.n(LAM)
+    th = math.radians(deg)
+    d = tilted(deg)
+    ray = beam(d, waist=0.05, jones=(complex(math.sqrt(0.5)), complex(math.sqrt(0.5))))
+    res = trace_element(model, ray)
+    assert len(res.exits) == 2
+    for r in res.exits:
+        assert r.direction.dot(d) == pytest.approx(1.0, abs=1e-14)
+        assert r.power_mw == pytest.approx(0.5, abs=1e-12)
+    by_s = max(res.exits, key=lambda r: abs(r.jones[0]))        # the s-polarized ray
+    by_p = max(res.exits, key=lambda r: abs(r.jones[1]))
+    tan = lambda n: math.sin(th) / math.sqrt(n * n - math.sin(th) ** 2)
+    sep = L * (tan(n_e) - tan(n_o)) * math.cos(th)
+    rel = by_s.origin - by_p.origin
+    assert (rel - d * rel.dot(d)).length() == pytest.approx(abs(sep), rel=1e-9)
+    assert abs(by_s.jones[1]) < 1e-12 and abs(by_p.jones[0]) < 1e-12
+
+
+def glan(gap_deg=40.0):
+    """A Glan-type pair: two calcite prisms (optic axis along x, ⊥ the y–z
+    plane of incidence) with an air gap tilted gap_deg from normal
+    incidence, between the o (37.4°) and e (42.5°) critical angles at
+    852 nm. The o ray is totally reflected out through the side face y = −5."""
+    t = math.radians(gap_deg)
+    n = {"x": 0, "y": math.sin(t), "z": math.cos(t)}       # gap normal, gap_deg from +z
+    ay = {"x": 1, "y": 0, "z": 0}
+    gap = 0.02
+    ar = {"type": "ar", "reflectance": 0.0}
+    return parse_surface_model({
+        "media": {"p1": calcite(X), "p2": calcite(X)},
+        "surfaces": [
+            surf("in", 0.0, "p1", "air", normal=Z, axis_y=Y, pos={"x": 0, "y": 0, "z": 0}, radius=5.0, coating=ar),
+            {**surf("gap1", 0.0, "air", "p1", pos={"x": 0, "y": 0, "z": 10.0}, normal=n, axis_y=ay, radius=20.0),
+             "coating": {"type": "uncoated"}},
+            {**surf("gap2", 0.0, "p2", "air", pos={"x": 0, "y": gap * math.sin(t), "z": 10.0 + gap * math.cos(t)},
+                    normal=n, axis_y=ay, radius=20.0), "coating": {"type": "uncoated"}},
+            surf("out", 0.0, "air", "p2", normal=Z, axis_y=Y, pos={"x": 0, "y": 0, "z": 25.0}, radius=5.0, coating=ar),
+            surf("escape", 0.0, "air", "p1", normal={"x": 0, "y": -1, "z": 0}, axis_y=Z,
+                 pos={"x": 0, "y": -5.0, "z": 10.0}, radius=30.0, coating=ar),
+        ],
+    })
+
+
+def test_glan_passes_e_and_totally_reflects_o():
+    """Along +z the o ray (n_o = 1.647) is past its critical angle at the gap
+    and leaves through the escape face; the e ray (n_e = 1.481) crosses the
+    gap and leaves straight on. Which is which follows the optic axis (x):
+    e is polarized along x."""
+    beam_z = lambda j: make_beam_ray(origin=Vec3(0, 0, -20), direction=Vec3(0, 0, 1),
+                                     wavelength_nm=852.0, waist_radius_mm=0.3, jones=j)
+    s_axis, p_axis = beam_local_sp(Vec3(0, 0, 1))
+    assert abs(s_axis.x) == pytest.approx(1.0)          # canonical s = x = optic axis
+    e_pol = trace_element(glan(), beam_z((1 + 0j, 0j)))
+    o_pol = trace_element(glan(), beam_z((0j, 1 + 0j)))
+    from app.optical.surfaces.materials import UNIAXIAL
+
+    (e_out,) = e_pol.exits
+    assert e_out.direction.dot(Vec3(0, 0, 1)) == pytest.approx(1.0, abs=1e-12)
+    # With the optic axis ⊥ the plane of incidence the e ray is s-polarized
+    # at the gap (a Glan-Foucault, not a Glan-Taylor): 40° is close to its
+    # 42.5° critical angle, so each uncoated gap face reflects R_s.
+    n_e = UNIAXIAL["calcite"][1].n(852.0)
+    ci = math.cos(math.radians(40.0))
+    ct = math.sqrt(1 - (n_e * math.sin(math.radians(40.0))) ** 2)
+    r_s = (n_e * ci - ct) / (n_e * ci + ct)
+    assert e_out.power_mw == pytest.approx((1 - r_s ** 2) ** 2, rel=1e-9)
+    (o_out,) = o_pol.exits
+    assert o_out.direction.z < 0.5 and o_out.direction.y < 0  # thrown out the side
+    assert o_out.power_mw == pytest.approx(1.0, abs=1e-12)    # TIR is lossless, AR faces
+
+
+def test_a_crossed_compound_plate_retards_by_the_thickness_difference():
+    """A zero-order compound plate: two quartz plates with crossed optic axes
+    (z then y) — the net retardance is k₀·(n_e − n_o)·(L₁ − L₂) with the
+    slow axis on the thicker plate's optic axis."""
+    from app.optical.surfaces.materials import UNIAXIAL
+
+    o, e = UNIAXIAL["crystal_quartz"]
+    dn = e.n(LAM) - o.n(LAM)
+    l1 = 1.1
+    l2 = l1 - (LAM * 1e-6) / (2 * dn)                   # a half wave between them
+    ar = {"type": "ar", "reflectance": 0.0}
+    model = parse_surface_model({
+        "media": {"q1": {"material": "crystal_quartz", "opticAxis": Z},
+                  "q2": {"material": "crystal_quartz", "opticAxis": Y}},
+        "surfaces": [surf("A", 0.0, "q1", "air", coating=ar),
+                     surf("C", l1, "q2", "q1", coating=ar),
+                     surf("B", l1 + l2, "air", "q2", coating=ar)],
+    })
+    j = (complex(math.sqrt(0.5)), complex(math.sqrt(0.5)))    # 45° between s (z) and p (y)
+    res = trace_element(model, beam(jones=j))
+    (out,) = res.exits
+    # s is along z (plate 1's optic axis = slow there), p along −y or y
+    assert out.jones[1] / out.jones[0] == pytest.approx(-1.0, abs=1e-9)
+    assert out.power_mw == pytest.approx(1.0, abs=1e-12)

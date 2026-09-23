@@ -21,10 +21,10 @@ from app.optical.aperture import (
     gaussian_width_mm,
 )
 from app.optical.beam_ray import BeamRay, QMatrix, Vec3
-from app.optical.jones import beam_local_sp, jones_rotation_angle, rotate_jones
+from app.optical.jones import beam_local_sp, jones_intensity, rotate_jones
 from app.optical.surfaces.geometry import SurfaceHit, intersect
 from app.optical.surfaces.interface import interact
-from app.optical.surfaces.model import AIR, OPAQUE, Surface, SurfaceModel, cross, unit_or_none
+from app.optical.surfaces.model import AIR, OPAQUE, Surface, SurfaceModel, unit_or_none
 
 MAX_INTERACTIONS = 32
 
@@ -61,31 +61,73 @@ class ElementTrace:
     clipped_mw: float = 0.0
 
 
-def propagate_in_medium(ray: BeamRay, t: float, model: SurfaceModel, medium_id: str) -> BeamRay:
-    """Move the ray a geometric distance ``t`` through a medium: reduced Q
-    advances by ``t/n``, the path length by ``t``, and a uniaxial medium
-    retards the extraordinary component by ``2π·(n_e(θ) − n_o)·t/λ``."""
+def propagate_in_medium(
+    ray: BeamRay, t: float, model: SurfaceModel, medium_id: str, mode: Optional[str] = None,
+) -> BeamRay:
+    """Move the ray a geometric distance ``t`` through a medium, as the
+    eigenmode ``mode`` (its own index n): reduced Q advances by ``t/n``, the
+    path length by ``t``. A Faraday medium rotates the Jones vector by
+    ``rotate_jones(−ρ·t·(k·b̂))``, the faraday op's handedness."""
     medium = model.medium(medium_id)
-    n_o, n_e = medium.indices(ray.wavelength_nm)
-    step = t / n_o
+    n = medium.mode_index(mode, ray.direction, ray.wavelength_nm)
+    step = t / n
     q = ray.q_matrix
     out = ray.with_q_matrix(QMatrix(q.xx + step, q.yy + step, q.xy)).replaced(
         origin=ray.origin + ray.direction * t,
         path_length_mm=ray.path_length_mm + t,
     )
-    if n_e is None:
-        return out
-    d = ray.direction
-    e_o = unit_or_none(cross(d, medium.optic_axis))
-    if e_o is None:          # along the optic axis: no birefringence
-        return out
-    cos_th = d.dot(medium.optic_axis)
-    n_theta = 1.0 / math.sqrt(cos_th ** 2 / n_o ** 2 + (1.0 - cos_th ** 2) / n_e ** 2)
-    delta = 2.0 * math.pi * (n_theta - n_o) * t / (ray.wavelength_nm * 1e-6)
-    s_canon, _ = beam_local_sp(d)
-    phi = jones_rotation_angle(s_canon, e_o, d)
-    j_o, j_e = rotate_jones(out.jones, phi)          # (e_o, d × e_o) basis
-    return out.replaced(jones=rotate_jones((j_o, j_e * complex(math.cos(delta), math.sin(delta))), -phi))
+    if medium.magnetic_axis is not None:
+        theta = -medium.faraday_rad_per_mm * t * ray.direction.dot(medium.magnetic_axis)
+        out = out.replaced(jones=rotate_jones(out.jones, theta))
+    return out
+
+
+def _phase(ray: BeamRay, t: float, model: SurfaceModel, medium_id: str, mode: Optional[str]) -> float:
+    """Optical phase ``k₀·n·t`` gained over ``t`` — only compared between
+    the o and e rays of one part, to recombine them."""
+    n = model.medium(medium_id).mode_index(mode, ray.direction, ray.wavelength_nm)
+    return 2.0 * math.pi * n * t / (ray.wavelength_nm * 1e-6)
+
+
+def _merge_coherent(exits: list[tuple[BeamRay, float]]) -> list[BeamRay]:
+    """Recombine rays that leave the part parallel (within 1e-12 in cos) and
+    overlapping (lateral offset below 1e-3 of the beam radius) — the o and e
+    rays of a waveplate. The Jones vectors add with their phase difference
+    referred to one wavefront, so the retardance is exact at any tilt; the
+    lowest-phase (fast) ray keeps its phase, as the waveplate op does. The
+    power follows the summed Jones intensity; Q and the rest are the
+    strongest ray's."""
+    groups: list[list[tuple[BeamRay, float]]] = []
+    for r, ph in sorted(exits, key=lambda e: -e[0].power_mw):
+        for g in groups:
+            ref = g[0][0]
+            rel = r.origin - ref.origin
+            lateral = (rel - ref.direction * rel.dot(ref.direction)).length()
+            w = math.sqrt(gaussian_width_mm(ref.qx, ref.wavelength_nm)
+                          * gaussian_width_mm(ref.qy, ref.wavelength_nm))
+            if 1.0 - r.direction.dot(ref.direction) < 1e-12 and lateral < 1e-3 * w:
+                g.append((r, ph))
+                break
+        else:
+            groups.append([(r, ph)])
+    merged = []
+    for g in groups:
+        ref = g[0][0]
+        if len(g) == 1:
+            merged.append(ref)
+            continue
+        k0 = 2.0 * math.pi / (ref.wavelength_nm * 1e-6)
+        phases = [ph + k0 * (ref.origin - r.origin).dot(ref.direction) for r, ph in g]
+        p0 = min(phases)
+        js, jp = 0j, 0j
+        for (r, _), ph in zip(g, phases):
+            rot = complex(math.cos(ph - p0), math.sin(ph - p0))
+            js += r.jones[0] * rot
+            jp += r.jones[1] * rot
+        i_ref = jones_intensity(ref.jones)
+        power = ref.power_mw * jones_intensity((js, jp)) / i_ref if i_ref > 1e-30 else 0.0
+        merged.append(ref.replaced(jones=(js, jp), power_mw=power))
+    return merged
 
 
 def _nearest(model: SurfaceModel, ray: BeamRay) -> tuple[Surface, SurfaceHit] | None:
@@ -126,17 +168,25 @@ def trace_element(model: SurfaceModel, ray: BeamRay) -> ElementTrace:
     its TIGHTEST circular aperture, not the product of all of them — the
     knife-edge model assumes a full Gaussian arriving, and behind the first
     aperture the wings are already gone, so multiplying would clip a lens'
-    two faces twice."""
+    two faces twice.
+
+    Uniaxial media split light into o and e rays (``interface``); the ones
+    that leave parallel and overlapping are recombined coherently at the end
+    (``_merge_coherent``)."""
     result = ElementTrace()
-    # (ray, medium, inside?, tightest aperture fraction passed so far)
-    queue: list[tuple[BeamRay, str, bool, float]] = [(ray, AIR, False, 1.0)]
+    # (ray, medium, inside?, tightest aperture fraction passed so far,
+    #  eigenmode in a uniaxial medium, optical phase since entering the part)
+    queue: list[tuple[BeamRay, str, bool, float, Optional[str], float]] = [
+        (ray, AIR, False, 1.0, None, 0.0),
+    ]
+    exits: list[tuple[BeamRay, float]] = []
     interactions = 0
     while queue:
-        r, medium, inside, passed = queue.pop(0)
+        r, medium, inside, passed, mode, phase = queue.pop(0)
         found = _nearest(model, r)
         if found is None:
             if medium == AIR:
-                result.exits.append(r)
+                exits.append((r, phase))
             else:
                 result.lost_mw += r.power_mw
                 result.lost.append(f"left {medium!r} through no surface")
@@ -159,7 +209,8 @@ def trace_element(model: SurfaceModel, ray: BeamRay) -> ElementTrace:
             continue
         if inside:
             result.segments.append(InternalSegment(r, hit.point, medium))
-        at_surface = propagate_in_medium(r, hit.t, model, medium)
+        at_surface = propagate_in_medium(r, hit.t, model, medium, mode)
+        phase += _phase(r, hit.t, model, medium, mode)
         clip = _clip(surface, hit, at_surface)
         if clip is not None:
             result.clips.append(clip)
@@ -168,13 +219,14 @@ def trace_element(model: SurfaceModel, ray: BeamRay) -> ElementTrace:
                 result.clipped_mw += at_surface.power_mw - kept
                 at_surface = at_surface.replaced(power_mw=kept)
                 passed = clip.fraction
-        outs, dropped = interact(at_surface, hit, surface, model)
+        outs, dropped = interact(at_surface, hit, surface, model, mode)
         result.lost.extend(dropped)
         for o in outs:
             if o.medium == OPAQUE:
                 result.absorbed_mw += o.ray.power_mw
             else:
-                queue.append((o.ray, o.medium, True, passed))
+                queue.append((o.ray, o.medium, True, passed, o.mode, phase))
+    result.exits = _merge_coherent(exits)
     return result
 
 

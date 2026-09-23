@@ -196,6 +196,11 @@ def test_coating_rules(coating, match):
     ({"nO": 1.54, "nE": 1.55}, "non-zero opticAxis"),
     ({"n": 1.5, "opticAxis": _Y}, "belongs to a uniaxial"),
     ({"n": -1.5}, "greater than 0"),
+    ({"n": 1.95, "faradayRotationDegPerMm": 2.5}, "go together"),
+    ({"n": 1.95, "magneticAxis": _X}, "go together"),
+    ({"n": 1.95, "faradayRotationDegPerMm": 2.5, "magneticAxis": {"x": 0, "y": 0, "z": 0}}, "non-zero"),
+    ({"nO": 1.54, "nE": 1.55, "opticAxis": _Y, "faradayRotationDegPerMm": 2.5, "magneticAxis": _X},
+     "isotropic medium only"),
 ])
 def test_medium_rules(medium, match):
     m = _model()
@@ -297,3 +302,9 @@ def test_op_only_kind_refuses_a_surface_model(put, kind):
     assert "keeps its anchor op" in r.json()["detail"]
     assert row.surface_model is None
     assert put(row, {"surfaceModel": None}).status_code == 200   # clearing is always fine
+
+
+
+def test_a_faraday_medium_is_valid():
+    SurfaceModelV3.model_validate(_model(media={"quartz": {
+        "n": 1.95, "faradayRotationDegPerMm": 2.5, "magneticAxis": _X}}))
