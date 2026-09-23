@@ -13,12 +13,15 @@
  *
  *   1. `deriveOrthonormalBasis` re-normalised axisX and Gram-Schmidt'd axisY on
  *      every save. Float64 is not idempotent under that, so a no-op save moved
- *      4 of the live catalog's 76 anchors by ~1e-16 per component
- *      (`30126a9_step:fiber_out`, `intercept_face` on `pbs055` / `pbs122_step` /
- *      `pbs252_step`) — an anchor authored from a device template drifts off the
+ *      3 of the live catalog's 76 anchors by ~1e-16 per component
+ *      (`30126a9_step:fiber_out`, `intercept_face` on `pbs055` and on
+ *      `pbs122_step`) — an anchor authored from a device template drifts off the
  *      template and re-grades itself "overridden" (see `gradeAnchor`).
+ *      Whether a given frame survives comes down to its last bit:
+ *      `pbs252_step` carries the same 45° frame and happened to round-trip.
  *   2. `readNumber("")` is `Number("")` = 0, so a blank aperture field wrote
- *      `apertureMm: 0` onto the 5 anchors that carry no aperture at all.
+ *      `apertureMm: 0` — and a synthesised `apertureShape` — onto the 5 anchors
+ *      that carry no aperture at all. 8 rewritten rows in total.
  *
  *   `backend/scripts/wire_remaining_device_ids.py`'s docstring is the same
  *   lesson from the API side: it sends the stored anchors back verbatim
