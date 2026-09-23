@@ -53,7 +53,7 @@ class AlignPose:
 
 
 def cad_to_lab(cad: V, pose: V3Pose) -> V:
-    """Component CAD-frame point -> lab mm (TS ``isolatorAlign.cadToLab``),
+    """Component CAD-frame point -> lab mm (the TS ``cadToLab``),
     via the backend's ``pose.point_body_to_lab``."""
     p = point_body_to_lab(Vec3(cad.x, cad.y, cad.z), pose)
     return V(p.x, p.y, p.z)

@@ -1,8 +1,9 @@
 """The handful of three.js r170 / JavaScript primitives the align ports need.
 
-The align solvers in this package are ports of frontend TypeScript
-(``utils/mirrorCoupling.ts``, ``utils/isolatorAlign.ts``,
-``utils/aomAlign.ts``) and are pinned to it by golden fixtures at 1e-9
+The align solvers in this package were ported from frontend TypeScript
+(``utils/mirrorCoupling.ts``, ``utils/isolatorAlign.ts``, ``utils/aomAlign.ts``
+— deleted 2026-09-23, when the web app moved onto these endpoints) and are
+pinned to what it answered by golden fixtures at 1e-9
 (``backend/tests/fixtures/align/``). Most of that parity is plain algebra, but
 three things are branchy or formatted, and a "mathematically equivalent"
 rewrite would diverge on exactly the inputs that matter:
@@ -20,8 +21,10 @@ rewrite would diverge on exactly the inputs that matter:
 
 So each helper here is a line-for-line transcription of the three.js source
 (``node_modules/three/src/math/{Quaternion,Vector3,Matrix4}.js``, r170) or of
-the ECMAScript algorithm, NOT a re-derivation. Change them only together with
-the TypeScript they mirror.
+the ECMAScript algorithm, NOT a re-derivation. That is now load-bearing on its
+own account: with the TypeScript gone these transcriptions are what make the
+frozen fixtures meaningful, and rewriting one to be "equivalent" would diverge
+on exactly the inputs the fixtures pin.
 """
 
 from __future__ import annotations

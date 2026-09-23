@@ -1,4 +1,4 @@
-"""AOM Bragg positioning — port of ``frontend/src/utils/aomAlign.ts``.
+"""AOM Bragg positioning — was ``frontend/src/utils/aomAlign.ts``.
 
 Body frame (MT80-A1.5-IR in brackets): D1 = optical axis = intercept_out -
 intercept_in [+Y]; D2 = acoustic axis (``acoustic_axis`` anchor, else the
@@ -77,7 +77,7 @@ def _dot(a: V, b: V) -> float:
 
 
 def _read_vec3(raw: Any) -> V | None:
-    """``aomAlign.readVec3``: a >= 3-element array of finite numbers, or an
+    """The TS ``readVec3``: a >= 3-element array of finite numbers, or an
     ``{x, y, z}`` object."""
     if isinstance(raw, (list, tuple)) and len(raw) >= 3:
         head = raw[:3]

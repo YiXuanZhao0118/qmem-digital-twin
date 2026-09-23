@@ -2,9 +2,9 @@
 
 # Mirror coupling — two 45° mirrors into a port
 
-> The tool that answers "where do I bolt these two mounts so the seed lands on the TA's axis". Solver: [`frontend/src/utils/mirrorCoupling.ts`](../../frontend/src/utils/mirrorCoupling.ts) (pure, unit-tested). UI: [`frontend/src/components/optical/MirrorCouplingPanel.tsx`](../../frontend/src/components/optical/MirrorCouplingPanel.tsx). Anchor poses: [`frontend/src/utils/anchorPose.ts`](../../frontend/src/utils/anchorPose.ts). Frames in [anchors.md](anchors.md); the single-optic align it complements is in [placement.md](placement.md).
+> The tool that answers "where do I bolt these two mounts so the seed lands on the TA's axis". Solver: [`backend/app/optical/align/mirror_coupling.py`](../../backend/app/optical/align/mirror_coupling.py) (pure), served as `POST /api/v3/align/mirror-coupling` ([`backend/app/routers/v3_align.py`](../../backend/app/routers/v3_align.py)). UI: [`frontend/src/components/optical/MirrorCouplingPanel.tsx`](../../frontend/src/components/optical/MirrorCouplingPanel.tsx), which calls it through [`frontend/src/api/align.ts`](../../frontend/src/api/align.ts). Anchor poses: [`frontend/src/utils/anchorPose.ts`](../../frontend/src/utils/anchorPose.ts) on the web, [`anchor_poses.py`](../../backend/app/optical/align/anchor_poses.py) on the backend. Frames in [anchors.md](anchors.md); the single-optic align it complements is in [placement.md](placement.md).
 >
-> Added 2026-08-24 as a frontend-only tool. **Since 2026-09-22 it also has a backend port**, `POST /api/v3/align/mirror-coupling` (`backend/app/optical/align/mirror_coupling.py`), for clients other than the web app; the web app still runs the TypeScript, and the two copies are pinned to each other — see [The backend port and its parity pin](#the-backend-port-and-its-parity-pin).
+> Added 2026-08-24 as a frontend-only tool, ported to the backend 2026-09-22, and **since 2026-09-23 the web app CALLS that port and its TypeScript copy is deleted** — there is one implementation. See [One implementation, and what pins it](#one-implementation-and-what-pins-it).
 
 ## What it does
 
@@ -63,9 +63,9 @@ That is what happened to the live DBR → TA path on 2026-08-27 (it had worked o
                          -> "the two mirror centres come out on top of each other"
 ```
 
-Both answers are correct; only one is on a table. So the branch is chosen by **where the answer lands**, not by the angle ([`mirrorCoupling.ts:404`](../../frontend/src/utils/mirrorCoupling.ts#L404)): solve the unique branch first, and if either line parameter exceeds `MAX_SOLVE_SPAN_MM` (5 m, [`mirrorCoupling.ts:91`](../../frontend/src/utils/mirrorCoupling.ts#L91)) fall through to the free-DOF branch. `COLLINEAR_SIN_EPS` still guards the division itself.
+Both answers are correct; only one is on a table. So the branch is chosen by **where the answer lands**, not by the angle ([`mirror_coupling.py:254`](../../backend/app/optical/align/mirror_coupling.py#L254)): solve the unique branch first, and if either line parameter exceeds `MAX_SOLVE_SPAN_MM` (5 m, [`mirror_coupling.py:53`](../../backend/app/optical/align/mirror_coupling.py#L53)) fall through to the free-DOF branch. `COLLINEAR_SIN_EPS` still guards the division itself.
 
-What the fallback costs, and why it is stated rather than swallowed: `C_B = C_A + Δ⊥` puts `C_B` on the perpendicular to `L_in`, not on `L_tgt`, so with `d0` and `dT` not quite anti-parallel the beam reaches the port on a line **parallel to** its axis, offset by the residual. The outgoing *direction* is still exactly `dT` (`normalB = unit(dT − d1)` reflects `d1` onto `dT` for any `d1`), 45° stays exact on A, and B absorbs half the residual (44.99902° in the live case). The warning names the residual angle and the miss in mm — 0.005 mm here — because whether µm matter is the user's call, not the solver's. Pinned by *takes the free-DOF branch when the exact solve runs off the bench* and *keeps the exact answer when it is on the bench, however shallow* in [`mirrorCoupling.test.ts`](../../frontend/src/utils/__tests__/mirrorCoupling.test.ts).
+What the fallback costs, and why it is stated rather than swallowed: `C_B = C_A + Δ⊥` puts `C_B` on the perpendicular to `L_in`, not on `L_tgt`, so with `d0` and `dT` not quite anti-parallel the beam reaches the port on a line **parallel to** its axis, offset by the residual. The outgoing *direction* is still exactly `dT` (`normalB = unit(dT − d1)` reflects `d1` onto `dT` for any `d1`), 45° stays exact on A, and B absorbs half the residual (44.99902° in the live case). The warning names the residual angle and the miss in mm — 0.005 mm here — because whether µm matter is the user's call, not the solver's. Pinned by the `solve` cases of [`backend/tests/fixtures/align/mirror_coupling.json`](../../backend/tests/fixtures/align/mirror_coupling.json) (which include both *the exact solve runs off the bench* and *the exact answer is on the bench, however shallow*), asserted by [`test_align_parity.py`](../../backend/tests/optical/test_align_parity.py) and by `backend/tests/optical/test_align_endpoints.py`.
 
 The real fix for that scene is upstream: centre `LENS_BICONVEX0` and the lens inside MECHANICAL19, and `sinTheta` drops back to 1e-16 where the exact collinear branch runs.
 
@@ -100,7 +100,7 @@ Why gate on this at all: when a mirror is far out, a solve that satisfies the th
 
 ## Pass-through optics
 
-Only ONE line can be satisfied, so an optic between B and the port that is itself off-axis stays off-axis. The panel lists them with their miss, and a ticked-by-default **"Also centre pass-through optics on the new axis"** translates each onto the new line (`computeTranslateOnlyPose`) inside the same batch. Focusing kinds are flagged: a lens left off-centre will steer the chief ray, which the solve assumed nothing does.
+Only ONE line can be satisfied, so an optic between B and the port that is itself off-axis stays off-axis. The panel lists them with their miss, and a ticked-by-default **"Also centre pass-through optics on the new axis"** translates each onto the new line (`passThroughObjectIds` → the response's `passThroughMoves`, `align/point_dir.compute_translate_only_pose`) inside the same batch. Locked ones are skipped and reported in `passThroughSkipped`. Focusing kinds are flagged: a lens left off-centre will steer the chief ray, which the solve assumed nothing does.
 
 ## What this is NOT
 
@@ -129,27 +129,49 @@ target      TAPERED_AMPLIFIER0 · intercept_in at (−261.4350, −363.3235, 908
 
 ## Invariants worth defending
 
-- **`anchorPose.resolveAnchorPosesLab` must agree with the backend.** Asset body → Component CAD uses the binding's raw **XYZ** Euler (`bindingTreeObject.applyBindingLocalTransform`); Component CAD → lab uses the SceneObject's **YXZ-remapped** convention (`optical/frames.rotateLabDir`). Mixing them up puts every solved pose somewhere the tracer disagrees with. Pinned in `utils/__tests__/mirrorCoupling.test.ts` against MIRROR5's traced hit point and reflection — both backend outputs.
+- **`anchorPose.resolveAnchorPosesLab` must agree with the backend.** Asset body → Component CAD uses the binding's raw **XYZ** Euler (`bindingTreeObject.applyBindingLocalTransform`); Component CAD → lab uses the SceneObject's **YXZ-remapped** convention (`optical/frames.rotateLabDir`). Mixing them up puts every solved pose somewhere the tracer disagrees with. Pinned in `utils/__tests__/anchorPose.test.ts` against MIRROR5's traced hit point and reflection — both backend outputs — and, on the Python side, by `anchor_poses.json`.
 - **`apertureMm` is a RADIUS**, matching `anchor_tracer.intersect_anchor`.
 - **The free-DOF default must stay least-travel.** It is the only thing keeping a U-turn solve from sliding the pair an arbitrary distance down the beam.
 - **Never pick the branch on `sinTheta` alone.** It is `1 − c²` that the solve divides by, and a scene only needs a few thousandths of a degree of stray pointing to land in the band where the "unique" answer is real, useless, and self-refuting. Distance decides; see the section above.
 
-## The backend port and its parity pin
+## One implementation, and what pins it
 
-The align solvers used to live only in the web app. A second client of the backend (the qmem-blender add-on) needs them, and its rule is *no third implementation*: a solver it needs is ported into the backend and served, never rewritten in the client. So on 2026-09-22 three were ported, all compute-only (request / response shapes in [api.md](api.md#the-align-endpoints--post-apiv3align)):
+The align solvers used to live only in the web app. A second client of the backend (the qmem-blender add-on) needs them, and its rule is *no third implementation*: a solver it needs is ported into the backend and served, never rewritten in the client. Three were ported on **2026-09-22**, all compute-only (request / response shapes in [api.md](api.md#the-align-endpoints--post-apiv3align)); on **2026-09-23** the web app was rewired onto them and its TypeScript copies were **deleted**, so there is now exactly one implementation and nothing left to drift:
 
-| TypeScript | Python (`backend/app/optical/align/`) | Endpoint |
-|---|---|---|
-| `utils/mirrorCoupling.ts` + `MirrorCouplingPanel.tsx`'s face / target / pass-through picks | `mirror_coupling.py` + `service.mirror_coupling_align` (`service.py:220`) | `POST /api/v3/align/mirror-coupling` |
-| `utils/isolatorAlign.ts` + `AlignToBeamControls.resolved` | `point_dir.py` + `service.resolve_align_point_dir` (`service.py:323`) | `POST /api/v3/align/isolator` |
-| `utils/aomAlign.ts` + `AomBraggSection`'s parameter picks | `aom_bragg.py` + `service.aom_bragg_align` (`service.py:415`) | `POST /api/v3/align/aom-bragg` |
-| `utils/anchorPose.ts` + `componentBindings.resolveBindingTree` / `primaryAssetForObject` (per-instance asset swaps honoured as the loader does, see [anchors.md](anchors.md)) | `anchor_poses.py` (on `db_scene_loader._binding_tree_transform`) | — (shared by all three) |
+| Deleted TypeScript | Python (`backend/app/optical/align/`) | Endpoint | The web's caller |
+|---|---|---|---|
+| `utils/mirrorCoupling.ts` (635 lines) + `MirrorCouplingPanel.tsx`'s face / target / pass-through picks | `mirror_coupling.py` + `service.mirror_coupling_align` (`service.py:220`) | `POST /api/v3/align/mirror-coupling` | `api/align.alignMirrorCouplingApi` |
+| `utils/isolatorAlign.ts` (285 lines) + `AlignToBeamControls.resolved` | `point_dir.py` + `service.resolve_align_point_dir` (`service.py:323`) | `POST /api/v3/align/isolator` | `api/align.alignPointDirApi` |
+| `utils/aomAlign.ts` (263 lines) + `AomBraggSection`'s parameter picks | `aom_bragg.py` + `service.aom_bragg_align` (`service.py:415`) | `POST /api/v3/align/aom-bragg` | `api/align.alignAomBraggApi` |
+| — (`utils/anchorPose.ts` STAYS: the store, the RF cable resolver, the mode-matching panel and the align panels' own picking all read anchor poses with it) | `anchor_poses.py` (on `db_scene_loader._binding_tree_transform`) | — (shared by all three) | — |
 
-**Invariant: the TS and Python copies are pinned to each other by golden fixtures, and neither may change alone.** `frontend/src/utils/__tests__/alignParity.test.ts` runs the real TypeScript over every case the unit tests pin plus seeded-random ones (both solve branches, exact and near anti-parallel lines, ry = ±90° gimbal poses, anti-parallel `setFromUnitVectors` flips, the warning strings) and writes inputs + outputs to `backend/tests/fixtures/align/*.json`; `backend/tests/optical/test_align_parity.py` feeds the same inputs to the Python and requires equality within **1e-9** (measured: 1.8e-12 mm worst case, Euler angles bit-identical). The vitest side **fails when the committed fixtures are stale**, so a TS change cannot land without regenerating them (`UPDATE_ALIGN_FIXTURES=1 npx vitest run src/utils/__tests__/alignParity.test.ts`), which then fails pytest until the Python follows.
+### What stayed on the web side
 
-What makes 1e-9 achievable rather than approximate: the parts that branch or format are **transcribed**, not re-derived (`align/ts_compat.py`) — three.js r170's `setFromUnitVectors` (its anti-parallel axis choice picks WHICH 180° turn a reversed optic gets), `setFromRotationMatrix`, `Vector3.normalize` (multiply by `1/len`), `frames.sceneObjectEulerFromQuaternion` (conditioned at the gimbal pole since 2026-09-22, and pinned on its own by `euler.json`; before, its `asin` + fixed `|cos β| > 1e-8` cut read rounding noise at ry = ±90°, and the U-turn bench fixture `pairs[2]` planned mirror A with its normal **45° wrong** — both copies identically, so parity never noticed; see [anchors.md](anchors.md), Pose quantization), `Math.round` (ties to +∞) and `toFixed` (half away from zero on the exact binary value). Where the two sides place points and directions under a pose, the Python uses the backend's own chain (`pose.point_body_to_lab`), which is what [anchors.md](anchors.md) already requires the TS to equal.
+Picking, and only picking — which beam, which seed segment, the A/B order (rule R2 reads it off the trace), the target list and its ordering, the panels and their state. Everything those picks are fed INTO crossed:
 
-Checked end to end on the live scene too (2026-09-22, read-only): all 73 objects' anchor poses and role centres agree with `resolveAnchorPosesLab` within 1e-9, and the MIRROR5 / MIRROR7 → TAPERED_AMPLIFIER0 coupling, ISOLATOR0's align and AOM0's Bragg align come out identical to the web app's flow.
+- `MirrorCouplingPanel` sends `{mirrorAId, mirrorBId, inRay, target, foldMm, passThroughObjectIds}` and renders the response's `touch`, `plan`, `passThroughMoves` verbatim. It still resolves each mirror's `intercept_face` locally, but only to sort the target list by distance from B and to refuse a mirror with no usable face before a solve is attempted — never for geometry.
+- `AlignToBeamControls` gets `(point, direction)` from the isolator endpoint's `pointCadMm` / `dirCadMm` (that resolution is the endpoint's; the panel has no copy of it) and only lifts it into lab to measure beam candidates against. The per-object `reverse` / `rollDeg`, the AOM's diffraction order and its fine-tune value are the panel's controls and are **sent with every request**, so what is on screen and what the solver used cannot disagree — the panel persists them fire-and-forget, so the stored row can be a write behind.
+- The AOM's θ_B, drive frequency, Bragg frame and incidence readout all come from ONE `aom-bragg` call, so "where it should sit" and "where it sits now" are never measured by two different copies of the maths.
+
+### The async seam
+
+The solvers were synchronous calls; they are now HTTP. Both panels debounce by 200 ms, guard against an out-of-order answer with a sequence number, show the backend's own `detail` on a 4xx (`api/client.apiErrorMessage`), and clear `busy` in a `finally` so nothing can park on "Solving…". Mirror coupling disables Preview and Apply until a solve has landed. **Undo is untouched**: applying is still the same `updateSceneObjects` / `updateSceneObject` write it always was — one batch, one commit, one undo entry (R9) — the pose it writes merely arrives from the wire instead of from a local function.
+
+One consequence worth knowing: the endpoints read each object's pose from the **database**. The store writes through (`updateObjectApi` is awaited before the local scene is patched), so the two agree at rest, but an uncommitted pose — a drag in flight, a `previewObjectTransform` ghost — is invisible to them. That is the intent (a ghost is not where the object is), but it is a real difference from the in-process solvers, which read the store.
+
+### The parity fixtures are now frozen goldens
+
+`backend/tests/fixtures/align/*.json` were generated by `frontend/src/utils/__tests__/alignParity.test.ts` running the REAL TypeScript over every case the unit tests pinned plus seeded-random ones — both solve branches, exact and near anti-parallel lines, ry = ±90° gimbal poses, anti-parallel `setFromUnitVectors` flips, the warning strings. **That generator went with the TypeScript it ran.** The fixtures themselves are kept and **committed unchanged**: they are the frozen record of what the web app did before the rewire, and `backend/tests/optical/test_align_parity.py` (415 cases) still asserts the Python reproduces every one of them within **1e-9** (measured: 1.8e-12 mm worst case, Euler angles bit-identical).
+
+So the invariant changed shape rather than going away:
+
+- **Before**: two copies, regenerate the fixtures from the TS and make the Python follow.
+- **Now**: one copy, and the fixtures are a **regression pin on the Python**. Nothing regenerates them. A deliberate change to an align solver's behaviour must edit the affected fixture entries by hand (or re-record them from the new Python) **and say so in the commit** — an accidental change fails `test_align_parity.py` loudly, which is the whole point of keeping them.
+- `backend/tests/optical/test_align_endpoints.py` covers the HTTP layer the web now depends on (shapes, the 404/422 refusals, the U-turn case) and is the test to extend when an endpoint's contract changes.
+
+What made 1e-9 achievable rather than approximate, and why the Python still reads like a transcription: the parts that branch or format were **transcribed**, not re-derived (`align/ts_compat.py`) — three.js r170's `setFromUnitVectors` (its anti-parallel axis choice picks WHICH 180° turn a reversed optic gets), `setFromRotationMatrix`, `Vector3.normalize` (multiply by `1/len`), `frames.sceneObjectEulerFromQuaternion` (conditioned at the gimbal pole since 2026-09-22, and pinned on its own by `euler.json`; before, its `asin` + fixed `|cos β| > 1e-8` cut read rounding noise at ry = ±90°, and the U-turn bench fixture `pairs[2]` planned mirror A with its normal **45° wrong** — both copies identically, so parity never noticed; see [anchors.md](anchors.md), Pose quantization), `Math.round` (ties to +∞) and `toFixed` (half away from zero on the exact binary value). Those transcriptions are now load-bearing on their own account: they are what makes the fixtures meaningful as a record. Where the two sides place points and directions under a pose, the Python uses the backend's own chain (`pose.point_body_to_lab`), which is what [anchors.md](anchors.md) already requires `anchorPose.ts` to equal.
+
+Checked end to end on the live scene (2026-09-22, read-only): all 73 objects' anchor poses and role centres agreed with `resolveAnchorPosesLab` within 1e-9, and the MIRROR5 / MIRROR7 → TAPERED_AMPLIFIER0 coupling, ISOLATOR0's align and AOM0's Bragg align came out identical to the web app's then-TypeScript flow. That check is what licensed deleting the TypeScript a day later.
 
 ## Related
 

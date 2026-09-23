@@ -121,7 +121,7 @@ The port roles and signal domains of every **physics** kind, straight from the k
 
 ### The align endpoints — `POST /api/v3/align/*`
 
-Backend ports of the web app's align solvers: `utils/mirrorCoupling.ts`, `utils/isolatorAlign.ts`, `utils/aomAlign.ts`, plus the React call-site logic around them (which anchor, which point, which order / frequency — `MirrorCouplingPanel.tsx`, `AlignToBeamControls.tsx`). Router `backend/app/routers/v3_align.py`; solvers `backend/app/optical/align/` (pure modules + `service.py`, which loads the scene and follows the React call sites). The web app itself still runs its TypeScript copies; the two copies are **pinned to each other at 1e-9 by golden fixtures** — see [mirror-coupling.md](mirror-coupling.md#the-backend-port-and-its-parity-pin).
+**The only copy of the align solvers.** They began as web-app TypeScript (`utils/mirrorCoupling.ts`, `utils/isolatorAlign.ts`, `utils/aomAlign.ts`) plus the React call-site logic around them (which anchor, which point, which order / frequency — `MirrorCouplingPanel.tsx`, `AlignToBeamControls.tsx`); that was ported here on 2026-09-22 and the TypeScript was **deleted on 2026-09-23**, so the web app now calls these endpoints too (`frontend/src/api/align.ts`) and only the picking — which beam, which target, the panels' own state — is left on its side. Router `backend/app/routers/v3_align.py`; solvers `backend/app/optical/align/` (pure modules + `service.py`, which loads the scene and follows what the React call sites did). `backend/tests/fixtures/align/*.json` are the frozen record of the deleted TypeScript's answers and pin these solvers at **1e-9** (`test_align_parity.py`); the HTTP contract the web depends on is covered by `test_align_endpoints.py` — see [mirror-coupling.md](mirror-coupling.md#one-implementation-and-what-pins-it).
 
 Common to all three:
 
@@ -186,7 +186,7 @@ Two 45° steering mirrors that land the seed on a port's own axis ([mirror-coupl
 { "objectId": "<id>", "beam": { "dir": {...}, "ref": {...} }, "reverse": null, "rollDeg": null }
 ```
 
-`reverse` (direction along −beam) and `rollDeg` (clockwise about the beam, looking along the direction) default to the object's stored `properties.alignReverse` / `alignRollDeg`. The (point, direction) is resolved in the web app's order (`AlignToBeamControls.resolved`): the Component's `alignSpec` (`pointMm` + non-zero `directionMm`), else the binding tree's front / back polariser centres (`pickPolariserCentre`), else the primary asset's entry anchor with direction −axisX; none of them → 422.
+`reverse` (direction along −beam) and `rollDeg` (clockwise about the beam, looking along the direction) default to the object's stored `properties.alignReverse` / `alignRollDeg`. The (point, direction) is resolved in the order the web app used to (`resolve_align_point_dir`): the Component's `alignSpec` (`pointMm` + non-zero `directionMm`), else the binding tree's front / back polariser centres (`pickPolariserCentre`), else the primary asset's entry anchor with direction −axisX; none of them → 422.
 
 ```json
 {
