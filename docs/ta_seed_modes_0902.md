@@ -77,20 +77,27 @@ a fit of the *seed* beam of that day, not of the TA.
 | vertical (WFS y) | 0.510 mm | −457 mm | 1.460 (1.468) | 1.578 (1.570) |
 
 The twin emits from the facet and collimates with the separate
-`LENS_PLANO_CONVEX2` object (f 4.51, n 1.59, 2.75 mm thick, 4.98 mm from the
-facet), so the stored mode is the facet mode that makes **that model** produce
-the fitted beam: a least-squares fit on `(w₀, offset)` per axis against the
+`LENS_PLANO_CONVEX2` object, so the stored mode is the facet mode that makes
+**that model** produce the fitted beam. Since 2026-09-23 that model is the
+A230TM-B's own Zemax prescription (an S-NPH1_MOLD plano-convex asphere traced
+through its surfaces, [surface-optics.md](surface-optics.md)), with the flat
+**2.910 mm** from the facet anchor — the design's emitter distance. Before
+that it was a thick-lens equivalent (f 4.51, n 1.59, 2.75 mm thick) 4.98 mm
+from the facet, and the mode was {2.164, +0.032} / {3.278, +0.042}. The fit is: a least-squares fit on `(w₀, offset)` per axis against the
 tracer, bench hole 0 taken as the collimator's exit surface (a 5–8 mm
 ambiguity in that origin shifts a waist that sits 195–457 mm away, i.e. < 1 %
 in width anywhere on the bench).
 
 | | `waistUm` | `waistZOffsetMm` |
 |---|---|---|
-| `spatialModeX` (vertical) | **2.164** | **+0.032** |
-| `spatialModeY` (horizontal) | **3.278** | **+0.042** |
+| `spatialModeX` (vertical) | **2.1609** | **+0.0696** |
+| `spatialModeY` (horizontal) | **3.2702** | **+0.0800** |
 
-Live trace after the write: 1.458 × 1.333 mm at 525 and 1.576 × 1.545 mm at
-675 (vertical × horizontal). As with every mode in this catalog, `M² = 1` is
+The offsets are tens of µm, about the 84 µm air-equivalent shortening of the
+0.25 mm BK7 diode window, which the twin does not model. Live trace after the
+2026-09-23 write: 1.460 × 1.339 mm at 525 and 1.578 × 1.552 mm at 675
+(vertical × horizontal; the fit pins the post-lens q, so these are the joint
+fit's own widths). As with every mode in this catalog, `M² = 1` is
 pinned, not measured — `waistUm` here is an *effective* facet waist.
 
 Superseded: the 2026-08-20 single-plane values `{1.746 µm}` / `{1.896 µm}`

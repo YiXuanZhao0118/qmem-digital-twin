@@ -210,3 +210,55 @@ def test_tgg_rods_rotate_45_degrees(centre, axis, radius, ar_r):
     angle = math.degrees(math.atan2(abs(out.jones[1]), abs(out.jones[0])))
     assert angle == pytest.approx(45.0, abs=1e-9)
     assert out.power_mw == pytest.approx((1 - ar_r) ** 2, abs=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# A230TM-B — from Thorlabs' Zemax prescription (A230TM-B-Zemax, 2026-09-23)
+# ---------------------------------------------------------------------------
+
+# Zemax surface 2 (EVENASPH, S-NPH1_MOLD, 2.94 thick) then a flat, then
+# 1.991392 air + 0.25 BK7 diode window + 0.6686117 air to the emitter at the
+# design wavelength 780 nm. Zemax z runs collimated side → diode = −z here.
+A230_CURV = 2.874629639903769e-01
+A230_CONIC = -1.263039e-01
+A230_ALPHA = (-1.2606e-3, -1.09e-4, 3.2255631e-7, -7.8343862e-7)    # r⁴ … r¹⁰
+
+
+def a230tm_b():
+    z, y = v(0, 0, 1), v(0, 1, 0)
+    return {"media": {"glass": {"material": "S-NPH1_MOLD"}}, "surfaces": [
+        surf("flat", v(0, 0, 0), z, y, PLANE, circle(3.17), "glass", "air", AR),
+        surf("asphere", v(0, 0, 2.94), z, y,
+             {"type": "conic", "radiusMm": -1 / A230_CURV, "conic": A230_CONIC,
+              "asphericCoeffs": [-a for a in A230_ALPHA]},
+             circle(2.475), "air", "glass", AR),
+    ]}
+
+
+def test_a230_reproduces_the_zemax_design_focus():
+    """A collimated beam entering the asphere focuses behind the flat at the
+    Zemax design's air-equivalent emitter distance (through its BK7 window)
+    to 1 µm at 780 nm."""
+    n_bk7 = ISOTROPIC["N-BK7"].n(780.0)
+    design = 1.991392 + 0.25 / n_bk7 + 6.686116513083e-1
+    col = make_beam_ray(origin=Vec3(0, 0, 20), direction=Vec3(0, 0, -1), wavelength_nm=780.0,
+                        waist_radius_mm=1.0).replaced(qx=complex(0, 1e9), qy=complex(0, 1e9))
+    (out,) = exits(a230tm_b(), col)
+    assert -out.qx.real == pytest.approx(design, abs=1e-3)
+
+
+def test_a230_efl_is_4_51_at_852():
+    from app.optical.surfaces.trace import effective_focal_length
+
+    r = make_beam_ray(origin=Vec3(0, 0, -10), direction=Vec3(0, 0, 1), wavelength_nm=852.347)
+    assert effective_focal_length(parse_surface_model(a230tm_b()), r, h=1e-4) == pytest.approx(4.508, abs=1e-3)
+
+
+@pytest.mark.parametrize("r, z_mesh", [(0.5, 2.90353), (1.0, 2.79411), (1.5, 2.60953), (2.0, 2.34353)])
+def test_a230_asphere_matches_the_cad_dome(r, z_mesh):
+    """The Zemax sag against the asset's own GLB dome, inside the 2.475 mm
+    clear aperture: within 1 µm (the CAD's vertex is 0.6 µm lower)."""
+    from app.optical.surfaces.geometry import sag
+
+    asph = parse_surface_model(a230tm_b()).surfaces[1]
+    assert 2.94 + sag(asph, r, 0.0).w == pytest.approx(z_mesh, abs=1e-3)

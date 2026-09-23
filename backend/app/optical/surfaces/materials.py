@@ -5,6 +5,9 @@ Every entry is a Sellmeier-type dispersion formula in the general form
 
 - ``N-BK7``        — Schott datasheet (A = 1).
 - ``fused_silica`` — Malitson 1965 (A = 1).
+- ``S-NPH1_MOLD``  — Ohara S-NPH1 as molded by LightPath (the A230TM-B's
+  glass), Sellmeier 1 from the ``RPO.AGF`` catalogue inside Thorlabs'
+  A230TM-B Zemax archive (A = 1; catalogue n_d = 1.797892).
 - ``crystal_quartz`` / ``calcite`` — uniaxial, Ghosh 1999, one formula per
   eigen-index (o, e).
 
@@ -41,6 +44,11 @@ ISOTROPIC: dict[str, Sellmeier] = {
         1.0,
         (0.6961663, 0.4079426, 0.8974794),
         (0.0684043 ** 2, 0.1162414 ** 2, 9.896161 ** 2),
+    ),
+    "S-NPH1_MOLD": Sellmeier(
+        1.0,
+        (1.72039395, 0.35905958, 1.95245396),
+        (0.0137918186, 0.0669088725, 136.641902),
     ),
 }
 

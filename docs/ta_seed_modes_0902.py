@@ -66,8 +66,10 @@ for axis, (w0, z0) in DBR_FIT.items():
           % (axis, w0, z0, w2_at(q0, 525), DBR_MEAS[525][axis], w2_at(q0, 675), DBR_MEAS[675][axis]))
 
 # Facet mode stored on TS-2000-A (fitted with --fit against LENS_PLANO_CONVEX2,
-# f 4.51 / n 1.59 / 2.75 mm thick, 4.98 mm from the facet in the live scene):
-DBR_FACET = {"spatialModeX (vertical)": (2.164, +0.032), "spatialModeY (horizontal)": (3.278, +0.042)}
+# since 2026-09-23 the A230TM-B's Zemax prescription as a surface model with the
+# flat 2.910 mm from the facet; before that a thick-lens equivalent 4.98 mm out
+# gave {2.164, +0.032} / {3.278, +0.042}):
+DBR_FACET = {"spatialModeX (vertical)": (2.1609, +0.0696), "spatialModeY (horizontal)": (3.2702, +0.0800)}
 for k, v in DBR_FACET.items():
     print("   stored %s = {waistUm %.3f, waistZOffsetMm %+.3f}" % (k, *v))
 

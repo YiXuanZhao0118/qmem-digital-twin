@@ -2,11 +2,10 @@
 
 # Surface optics — tracing parts through their real faces (plan)
 
-> **Status (2026-09-23): Phases 0–2 landed** — the `assets_3d.surface_model` column, the surface engine (`backend/app/optical/surfaces/`), and its wiring into the anchor tracer. **Phase 3 is done except for one part:**
-> - **Converted (22):** 11 lenses (4 plano-convex, 6 cylindrical, the biconcave LD2297), both Casix waveplates, the BB1-E03 mirror, the four cubes, both Glan-laser prisms, and both Faraday rotators. See "Converted so far".
-> - **Held back:** `a230tm_b_step`, until its glass and asphere are confirmed.
+> **Status (2026-09-23): Phases 0–2 landed** — the `assets_3d.surface_model` column, the surface engine (`backend/app/optical/surfaces/`), and its wiring into the anchor tracer. **Phase 3 is done:**
+> - **Converted (23):** 12 lenses (the A230TM-B collimator, 4 plano-convex, 6 cylindrical, and the biconcave LD2297), both Casix waveplates, the BB1-E03 mirror, the four cubes, both Glan-laser prisms, and both Faraday rotators. See "Converted so far".
 > - **Kept on its op by decision:** the AOM.
-> - **The lab trace changed:** the mirrors, waveplates, isolator cubes and TGG rod on the seed path are now surface models (see "Effect on the lab trace").
+> - **The lab trace changed:** the whole seed path is now surface models, and the A230TM-B moved to its real spacing with the DBR mode re-fitted (see "Effect on the lab trace").
 > - **Phase 4 has begun:** the PHY Editor shows a surface model, read-only.
 
 ## Why
@@ -73,7 +72,7 @@ Conventions (enforced by the validator unless noted):
 - **Shape and sign of R:** `plane` (no radius) · `sphere` (`radiusMm`) · `cylinder` (`radiusMm`, curved along axisY only) · `conic` (`radiusMm`, `conic` k, optional `asphericCoeffs` = A₄, A₆, … in the even-asphere sag). **`radiusMm > 0` puts the centre of curvature on the +axisX side** (vertex + R·axisX). With axisX along the propagation direction this is the usual optics convention: a biconvex lens has R₁ > 0, R₂ < 0.
 - **Aperture:** `circle` needs `radiusMm` (explicitly a *radius* — the anchor field `apertureMm` is ambiguous, see [introduce/anchors.md](introduce/anchors.md)); `rectangle` / `ellipse` need full `widthMm` (along axisY) and `heightMm` (along axisZ). Measured in the surface's tangent plane.
 - **Medium:** exactly one of `n` (constant isotropic), `material` (a name in the library below), or the uniaxial pair `nO` + `nE`. A uniaxial medium — the constant pair or a uniaxial material — requires `opticAxis` (asset-local); an isotropic one refuses it.
-- **Materials** (`optical/surfaces/materials.py`, Sellmeier, λ in µm): `N-BK7` (Schott), `fused_silica` (Malitson 1965), and the uniaxial `crystal_quartz` / `calcite` (Ghosh 1999). All within 1e-4 of the handbook indices near 589 nm and at 1064 nm, except calcite n_e, where the fit is 2.7e-4 low (`tests/optical/test_surface_materials.py`).
+- **Materials** (`optical/surfaces/materials.py`, Sellmeier, λ in µm): `N-BK7` (Schott), `fused_silica` (Malitson 1965), and the uniaxial `crystal_quartz` / `calcite` (Ghosh 1999). All within 1e-4 of the handbook indices near 589 nm and at 1064 nm, except calcite n_e, where the fit is 2.7e-4 low (`tests/optical/test_surface_materials.py`). Plus `S-NPH1_MOLD`, the A230TM-B's molded glass, from the Zemax archive's own catalogue (n_d 1.797892 exactly).
 - **Coating:** `uncoated` (default; Fresnel from the indices) · `ar` (`reflectance` = residual R, angle-independent) · `hr` (`reflectance`) · `partial` (`reflectance` = R of a non-polarizing splitter) · `polarizing` (transmits p, reflects s; optional `extinctionRatioPpDb` / `extinctionRatioSpDb`, same names and meaning as the PBS op's params, `anchor_ops/pbs.py:193-194`).
 - **Structure:** at least one surface, unique surface ids, `front ≠ back`, and at least one surface touching `air` (otherwise light can never enter).
 
@@ -196,7 +195,27 @@ All four were **thin lenses** before (none had `radiusFrontMm`, so the op never 
 | `glan_laser_io3_850` / `io5_850` | **procedural (no mesh)**: from the params — length 5 / 7.5 mm, gap normal = `coatingNormalBodyLocal` (38.5° from z), gap corner to corner so a = L·\|n_z/n_x\| (6.3 / 9.4 mm), 20 µm air gap | two calcite prisms, optic axis x (Glan-Taylor/laser: e is p at the gap), escape faces at x = ±a/2 | the same polarization (x) passes; it now loses the p Fresnel of the two gap faces (4.7 % at 38.5°, past Brewster and near the e critical angle — real Glan-lasers pass ~90–95 %); the rejected ray refracts out of the escape face (the op gave its in-glass direction); extinction is now ideal (the op leaked 10^(−ER/10)) |
 | `io_5_850_hp_middle_piece`, `tornos_isolator_middle_piece` | **the GLB is only the housing**: a TGG rod from the params — `lengthMm` 18 centred on `optical_center`, along its axisX, the anchor's aperture | n = 1.95, 45°/18 mm Faraday along the anchor's axisX, AR = `arResidualR` (0.5 %) or 0.25 % | the op's Jones vector (1e-16), × AR |
 
-**Held back: `a230tm_b_step`** (A230TM-B, the seed laser's collimator — the most sensitive part in the lab). Its GLB holds only one curved face: a plano-convex asphere with its vertex at z = 2.939 and its flat back at z = 0. Fitting it gives R = 3.47–3.51 and k = −0.6 to −0.9, depending on the terms fitted, with a residual of 2 µm (10⁴ times worse than the other lenses). With that R, the spec EFL of 4.51 mm needs **n ≈ 1.78**, but the asset's thick-lens equivalent uses R₁ = 2.32, R₂ = 10.31 and n = 1.59. With the glass unknown and the vertex curvature uncertain at the percent level, converting it would move the seed collimation by tens of µm on a guess. It keeps its calibrated op until its glass and prescription are confirmed.
+**`a230tm_b_step` — from Thorlabs' Zemax prescription** (A230TM-B, the seed laser's collimator; converted 2026-09-23 after the user downloaded `A230TM-B-Zemax-ZMX.zmx` and `-ZAR.zar` and asked for the lens to go to its real spacing).
+
+- **Why not the CAD.** The GLB holds only the one curved face, and a fit of it is 2 µm off (the other lenses fit to 1e-7). With the glass unknown it would have been a guess, so the lens was held back until the prescription arrived.
+- **The prescription** (ZMX surfaces 2–3): an even asphere, CURV 0.2874630 (R = 3.4787 mm), conic −0.12630, r⁴ … r¹⁰ = −1.2606e-3, −1.09e-4, 3.2256e-7, −7.8344e-7, then **2.94 mm of S-NPH1_MOLD**, then a flat. The design has the collimated beam entering the asphere, then 1.991392 air + a 0.25 mm BK7 diode window + 0.668612 air to the emitter, at 780 nm. So **it is a plano-convex, flat side to the diode**, as the CAD shows.
+- **The glass.** The `.zar` is Zemax's archive: 48-byte headers, 600-byte UTF-16 names, and variable-width LZW entries. The decoder was checked by rebuilding the `.zmx` byte for byte. Its `RPO.AGF` gives S-NPH1_MOLD as Sellmeier 1: K = (1.72039395, 0.35905958, 1.95245396), L = (0.0137918186, 0.0669088725, 136.641902) µm², catalogue n_d 1.797892. That is now `materials.py:S-NPH1_MOLD` (n = 1.77623 at 780 nm, 1.77165 at 852.347 nm).
+- **The model.** Flat at z = 0 (aperture 3.17, the Zemax semi-diameter), asphere vertex at z = 2.94 (aperture 2.475, the Zemax stop = the mount's clear aperture). The radius and polynomial change sign because Zemax z runs toward the diode (−z here); the conic doesn't. AR 0.25 % per face.
+- **Checks** (`test_surface_catalog_parts.py`):
+  - Against the GLB dome: within 1 µm inside the clear aperture (the CAD vertex sits 0.6 µm lower).
+  - EFL: 4.4816 mm at 780 nm and **4.5082 mm at 852 nm** (Thorlabs: 4.51).
+  - A collimated beam focuses **2.82635 mm** behind the flat at 780 nm. The Zemax design's air-equivalent emitter distance is 2.82544 mm, so they agree to 0.9 µm.
+- **Why the old model was not a plano-convex.** The thick-lens equivalent (`radiusFrontMm` 2.3244 / `radiusBackMm` 10.308 / n 1.59, [introduce/optics.md](introduce/optics.md)) solved EFL = 4.51 **with BFL = WD = 2.53 mm** taken as a lens-surface distance. Thorlabs measures WD from the **mount's end face**, and the GLB has that face 0.381 mm in front of the flat. So 2.910 − 0.381 = **2.529**: the prescription, the CAD and the datasheet agree, and the lens is a plain plano-convex.
+
+**The real spacing and the re-fit** (the part that matters for a 4.5 mm collimator: a 10 µm error in the source distance moves the output waist by f²/Δz ≈ 2 m, so no model predicts collimation from nominal positions — it has to be calibrated against the measured beam, which this repo already does, [ta_seed_modes_0902.md](ta_seed_modes_0902.md)):
+
+1. **Moved.** The `LENS_PLANO_CONVEX2` object was moved along the beam from 4.980471 mm to **2.910000 mm** between the DBR's `intercept_out` and the flat, which is the design's emitter distance. That is y −516.615 → −518.685471 in the lab. The object's position lock was lifted for the move and put back.
+2. **Re-fitted.** The DBR facet mode on `ts_2000_a` (a locked row, unlocked at the user's request and left unlocked) was re-fitted exactly as `ta_seed_modes_0902.py --fit` does, against the WFS measurement. The waists barely change: **2.1609 µm / +0.0696 mm** vertical and **3.2702 µm / +0.0800 mm** horizontal, where they were 2.164 / +0.032 and 3.278 / +0.042. The offsets stay tens of µm, about the 84 µm air-equivalent shortening of the diode window the twin does not model.
+3. **Why both steps.** Converting the lens **without** re-fitting sends the TA mode overlap from 0.216 to **0.00025**. Converting it at the old 4.98 mm spacing and re-fitting keeps η but needs an unphysical +2.13 mm source offset. Doing both keeps η and the geometry true.
+
+After the change the collimated seed reads 1.460 × 1.339 mm at 525 mm and 1.578 × 1.552 mm at 675 mm (vertical × horizontal). Those are the bench fit's own widths, since the fit pins the post-lens q; the measurements were 1.468 × 1.317 and 1.570 × 1.571. `--fit` run afterwards returns the stored mode (cost 5.5e-22).
+
+The AOM is the only free-space part that keeps its op.
 
 **The AOM stays on its op.** Its physics — Bragg order selection with the per-order sinc², the RF drive resolved from the cable graph, the Doppler shift, the `acoustic_axis` anchor that the Bragg-alignment tooling reads — all lives in `anchor_ops/aom.py`. The crystal faces would add only Fresnel loss and a tiny refraction at near-normal incidence, and putting the op's external-angle convention inside a refracting crystal would take a translation layer that could get it wrong. `aom` joined `OP_ONLY_KINDS`, so the API refuses a surface model on it.
 
@@ -221,6 +240,8 @@ The seed path — A230TM → BB1-E03 → HWP → PBS055 / TGG / PBS055 isolator 
 | warnings / errors | none | none |
 
 The live `run-from-db` API gives the same numbers after the backend restart. To undo any one part, `PUT {"surfaceModel": null}`.
+
+**Then the A230TM-B** (same day, same scene plus the lens moved to its real spacing): lab segments 100 → 102, TA mode overlap η 0.21600 → **0.21568** (−0.15 %), seed at the facet 11.3684 → 11.3685 mW, coupled 2.4555 → 2.4519 mW, TA forward output 467.68 → **467.23 mW**; no warnings. The live API agrees.
 
 After a conversion, for that asset:
 - `defaultParams` are no longer read by the trace (`focalLengthMm`, `refractiveIndex`, `centerThicknessMm`, `transmittance` stay because the kind schema requires them).

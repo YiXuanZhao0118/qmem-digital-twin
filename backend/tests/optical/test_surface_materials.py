@@ -14,6 +14,7 @@ from app.schemas_v3 import MediumV3
     ("N-BK7", 632.8, 1.5151),
     ("fused_silica", 587.56, 1.4585),   # Malitson
     ("fused_silica", 1064.0, 1.4496),
+    ("S-NPH1_MOLD", 587.56, 1.797892),  # the catalogue n_d in RPO.AGF (Thorlabs A230TM-B Zemax archive)
 ])
 def test_isotropic(name, lam, n):
     assert ISOTROPIC[name].n(lam) == pytest.approx(n, abs=2e-4)
