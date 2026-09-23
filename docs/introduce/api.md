@@ -95,6 +95,18 @@ Every anchor in lab mm **exactly as the tracer's loader hands it to the tracer**
 - `apertureMm` is the clear-aperture **radius** the hit test clips at (`0` = none declared). A `fiber_connector` slot's own anchors (`fiber_out` / `fiber_root`, `connect_*`) are listed too — they are in the scene but never hit (not in `PRIMARY_ANCHOR_IDS`).
 - Order: the loader's (objects, then each object's asset bindings, then each asset's anchors; a synthesized fibre slot after its object's bindings).
 
+### `POST /api/v3/surfaces/fit` and `POST /api/v3/surfaces/sheets` (surface-model authoring)
+
+Served so no client carries its own fit or sag ([../surface-optics.md](../surface-optics.md), Phase 4; `routers/v3_surfaces.py`, `optical/surfaces/fit.py`). Neither writes anything.
+
+- **`/fit`** — body `{triangles: [x0,y0,z0, x1,…] (9 numbers per triangle, asset frame), seed: <clicked triangle index>}`. The smooth region around the seed (edges bending < 30°) is fitted robustly with a plane, a sphere and a cylinder, and the model that fits is picked (the web auto-pick's algorithm, `frontend/src/utils/surfaceFit.ts`). Returns:
+  - `shape`, `radiusMm` (unsigned), `rmsMm`, `triangles` (the kept ones);
+  - `position` / `normal` — the anchor pose: a cap's vertex on its axis, the middle of a cylindrical face's vertex line, a plane's area centre, with the normal out of the part (the mesh winding);
+  - `surface` — the same as a surface-model surface with `axisXBodyLocal` = that outward normal (so `front` is the air side), the radius **signed** by the model convention (> 0 = centre on +axisX; a lens's convex face comes out negative), a cylinder's `axisYBodyLocal` along its curvature, and `apertureCircle` / `apertureRectangle` / `shapeGuess` (the smallest centred aperture holding the kept vertices, and which one the region fills better). The caller adds `id`, `front` / `back` and `coating`.
+
+  422 when no model fits, or the soup is not a multiple of 9 numbers.
+- **`/sheets`** — body `{surfaceModel, rings?: 16, segments?: 48}` (validated like the PUT). Returns `{surfaces: [{id, vertices: [[x,y,z]…], faces: [[i,j,k]…]}]}`: each surface sampled over its aperture with the tracer's own `geometry.sag`, asset frame — what a client draws.
+
 ### `GET /api/kinds/roles`
 
 The port roles and signal domains of every **physics** kind, straight from the kinds manifest (`backend/data/kinds.json` via `kinds_manifest.load_manifest`, i.e. the export of `frontend/src/kinds/<kind>/index.ts`), in plugin registration order (= `element_kinds`). Router: `backend/app/routers/kinds.py:113`. No DB read. So a client reads the contract instead of copying `kinds.json` (the qmem-blender RF graph did). Passive (mechanical) plugins have no ports and are not listed, and neither are DB-only `kinds` rows (`isolator`, `mechanical`, `unclassified`, …), which have no plugin.
