@@ -23,8 +23,16 @@ couple. Sibling: [`optics.md`](optics.md) (the q-tracer this rides on),
   with `waistZOffsetMm` measured OUTWARD along the anchor's axisX (`Re q =
   −offset` at the facet). So a mode fitted from a WFS capture of the TA's
   back-emission reproduces that capture in the twin and is, unchanged, the
-  optimizer's target. (Mode X is the anchor's axisY — for
-  `sacher_tec400_852nm_ta`'s `intercept_in` that is body +z, **vertical**.)
+  optimizer's target. (Mode X is the anchor's axisY, Mode Y its axisZ. For
+  `sacher_tec400_852nm_ta`'s `intercept_in` that is body −x, **horizontal**,
+  and body +z, **vertical** — since 2026-09-23. It read "axisY = body +z,
+  vertical" before, because the anchor carried the FAST axis there; the same
+  axisY is the TA op's **TE gain axis**, so a horizontally polarized seed
+  coupled 1e-5 of its power. `intercept_out` always used this convention —
+  axisY horizontal (TE), Mode X horizontal. See
+  `backend/scripts/fix_ta_input_te_axis.py` and [known-issues.md](known-issues.md).
+  The 2026-09-02 fit itself is unchanged; only its two blocks swapped so each
+  stays on its physical axis.)
 - **The seed must be the time reverse of that beam** (bench derivation,
   2026-09-02): same spot sizes, every wavefront curvature flipped. In the
   tracer's frames the reverse segment shares `s` with the forward one and flips
