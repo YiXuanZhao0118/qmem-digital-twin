@@ -1,9 +1,11 @@
-"""The Python delete cascade equals the TypeScript ``deleteObjects``.
+"""The delete cascade still answers what the TypeScript ``deleteObjects`` did.
 
-``backend/tests/fixtures/delete/{pinned,random}.json`` are written by the REAL
-TypeScript (``frontend/src/store/__tests__/deleteParity.test.ts``, which also
-fails when they go stale, so a TS change forces a regeneration, which then
-fails here until the port follows). Each case is a scene, a request, the
+``backend/tests/fixtures/delete/{pinned,random}.json`` were written by the
+REAL TypeScript (``frontend/src/store/__tests__/deleteParity.test.ts``). That
+generator went in wave 3b, when the web app moved onto
+``POST /api/v3/objects/delete`` and deleted its cascade, so the fixtures are
+now **frozen goldens**: a change here that alters one has to be a deliberate
+regeneration, explained in its commit. Each case is a scene, a request, the
 DELETEs the web store issued (in order) and the TimingPrograms it dropped.
 
 Here the scene is handed to ``object_delete.plan_delete`` in fixture order,

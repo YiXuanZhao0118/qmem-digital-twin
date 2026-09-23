@@ -1,7 +1,7 @@
 """Scene objects — ``POST /api/v3/objects/delete``.
 
-The web store's ``deleteObjects`` served to a second client (the qmem-blender
-add-on): delete a set of SceneObjects together with everything the web's
+What ``sceneStore.deleteObjects`` calls (wave 3b) and what the qmem-blender
+add-on calls: delete a set of SceneObjects together with everything the
 cascade takes along — the rf_cables linked to them, the PPGs plugged into
 them, legacy PPGs left without a live cable, and those PPGs' TimingPrograms —
 in ONE transaction, broadcasting the same ``/ws/scene`` events as ``DELETE
@@ -9,9 +9,10 @@ in ONE transaction, broadcasting the same ``/ws/scene`` events as ``DELETE
 
 A ``locked`` object that was asked for is skipped and listed in ``refused``;
 a cascade that would reach one is refused whole: 409 with ``detail``
-``"locked: <message>"``. The rules and where they depart from the web:
-``app/services/object_delete.py``; parity with the TypeScript is pinned by
-``backend/tests/fixtures/delete/``.
+``"locked: <message>"``. The rules, and where they depart from the cascade
+the browser used to run: ``app/services/object_delete.py``;
+``backend/tests/fixtures/delete/`` are the goldens the TypeScript wrote
+before it was deleted.
 """
 
 from __future__ import annotations

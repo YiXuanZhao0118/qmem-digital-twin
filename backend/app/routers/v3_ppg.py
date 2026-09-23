@@ -1,15 +1,17 @@
 """Programmable Pulse Generators — ``POST /api/v3/ppg/*``.
 
-Backend ports of the RF Link panel's PPG lifecycle, the only one the web app
-permits (``docs/introduce/timing.md``):
+The RF Link panel's PPG lifecycle, the only one the web app permits
+(``docs/introduce/timing.md``):
 
-* ``/attach`` — ``createPpgAtPort`` + ``createProgrammablePulseGenerator``
-  behind ``canSpawnPpgHere``: a new PPG plugged straight into an empty
-  ``ttl_in`` / ``trigger_in`` (``properties.ppgAttachment``, no cable), with
-  its own TimingProgram, standing at its mounted pose
-  (``utils/ppgMounting.ts``);
+* ``/attach`` — what the web's ``createPpgAtPort`` calls, behind
+  ``canSpawnPpgHere``: a new PPG plugged straight into an empty ``ttl_in`` /
+  ``trigger_in`` (``properties.ppgAttachment``, no cable), with its own
+  TimingProgram, standing at its mounted pose (``utils/ppgMounting.ts``);
 * ``/{id}/detach`` — the panel's "Disconnect" on a PPG: the PPG is deleted,
-  its TimingProgram with it, through the web's delete cascade.
+  its TimingProgram with it, through the delete cascade. The web app reaches
+  the same cascade through ``POST /api/v3/objects/delete`` (its Disconnect
+  calls the generic ``deleteObject``), so this route is for a client that
+  only knows about PPGs.
 
 One transaction each (so a failed attach leaves no program / object /
 element behind), the usual ``/ws/scene`` events, 4xx ``detail`` =

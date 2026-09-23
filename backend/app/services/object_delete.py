@@ -1,9 +1,10 @@
-"""``POST /api/v3/objects/delete`` — the web store's ``deleteObjects``
-(``frontend/src/store/sceneStore.ts``) for a second client.
+"""``POST /api/v3/objects/delete`` — deleting objects with the whole cascade,
+for every client, the web app's ``sceneStore.deleteObjects`` included.
 
-The web app works out the whole delete cascade in the browser and then fires
-one ``DELETE /api/objects/{id}`` per row. This runs the SAME cascade on the
-backend, over the DB scene, in one transaction:
+The web app used to work the cascade out in the browser from its scene
+snapshot and fire one ``DELETE /api/objects/{id}`` per row; wave 3b pointed it
+at this endpoint and deleted that code. The cascade runs over the DB scene, in
+one transaction:
 
 1. the requested objects, de-duplicated, minus the ``locked`` ones (the web
    skips those silently; here they come back in ``refused``);
@@ -20,24 +21,25 @@ backend, over the DB scene, in one transaction:
    collection membership, assembly relations, device state and links.
 
 Steps 1-4 are ``flows.plan_delete_objects`` (``app/optical/rf_cables/
-flows.py``), the one Python port of ``deleteObjects``, which the RF-cable
-disconnect and PPG detach endpoints use too. Pinned to the TypeScript by
-``backend/tests/fixtures/delete/`` (written by
-``frontend/src/store/__tests__/deleteParity.test.ts``).
+flows.py``), the one implementation of the cascade, which the RF-cable
+disconnect and PPG detach endpoints use too. ``backend/tests/fixtures/
+delete/`` are the golden fixtures the real TypeScript wrote before wave 3b
+deleted it: a change to the cascade must be a deliberate fixture update.
 
-What the web does NOT do, and neither does this: fibres and pigtails linked
-to a doomed object keep their (now dangling) ``fiberEndpoints`` /
-``pigtailEndpoints`` link; nothing is gated by kind (the web's Delete key
-removes a selected cable or PPG too — the Outliner merely hides them).
+Not touched: fibres and pigtails linked to a doomed object keep their (now
+dangling) ``fiberEndpoints`` / ``pigtailEndpoints`` link; nothing is gated by
+kind — an rf_cable or PPG is deleted when the cascade reaches it, or when it
+is asked for by name (RF Link's Disconnect does exactly that), even though
+the web hides both from the Outliner and from the Delete key.
 
-Where the endpoint departs from the web (it cannot do what the web does
-halfway, because it is one transaction):
+Where this departs from the cascade the browser used to run, because it is
+one transaction and that was N parallel DELETEs:
 
 * a doomed object that is ``locked`` but was not skipped as a request (a
-  cable, PPG, ... the cascade reaches) makes the web's DELETE for it 409
+  cable, PPG, ... the cascade reaches) made the browser's DELETE for it 409
   AFTER the others went through; here the whole request is refused with
   409 and nothing is deleted;
-* a requested id with no row is "already gone", which the web counts as
+* a requested id with no row is "already gone", which the browser counted as
   success (a 404 is the outcome it wanted): it is listed in
   ``deletedObjectIds`` (after the real ones), nothing cascades from it and
   nothing is broadcast for it (whoever deleted it did).

@@ -84,15 +84,8 @@ export function ppgAttachments(
   return out;
 }
 
-/** SceneObject ids of every PPG attached to any of `targetObjectIds`.
- *  Drives the delete cascade: removing an instrument removes the PPGs
- *  plugged into it, the same way it removes cables that pointed at it. */
-export function ppgsAttachedTo(
-  objects: readonly SceneObject[],
-  physicsElements: readonly PhysicsElement[],
-  targetObjectIds: ReadonlySet<string>,
-): string[] {
-  return ppgAttachments(objects, physicsElements)
-    .filter((p) => targetObjectIds.has(p.attachment.targetObjectId))
-    .map((p) => p.ppgObjectId);
-}
+// `ppgsAttachedTo` lived here until wave 3b: it answered "which PPGs are
+// plugged into these doomed objects?" for the store's delete cascade. The
+// cascade is the backend's now (`flows.plan_delete_objects`, via
+// `POST /api/v3/objects/delete`), where the same question is `ppg_attachments`
+// filtered on the doomed set, so the helper had no caller left.

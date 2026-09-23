@@ -5,9 +5,9 @@
  *   A1. A well-formed `properties.ppgAttachment` parses; a partial one is
  *       rejected outright (a half-written record must never fabricate an
  *       edge — see the backend parity test of the same name).
- *   A2. `ppgsAttachedTo` finds the PPGs plugged into a doomed instrument.
- *       This drives the delete cascade, so a miss means an orphan PPG
- *       survives its host.
+ *   A2. (retired with `ppgsAttachedTo` in wave 3b — the delete cascade that
+ *       used it is the backend's, pinned by
+ *       `backend/tests/test_object_delete_cascade.py`.)
  *   A3. The attachment feeds the RF BFS as the edge a zero-length cable
  *       used to supply: a PPG on a switch's ttl_in gates the throw with
  *       no rf_cable anywhere in the scene.
@@ -15,7 +15,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { ppgAttachmentOf, ppgAttachments, ppgsAttachedTo } from "../ppgAttachment";
+import { ppgAttachmentOf, ppgAttachments } from "../ppgAttachment";
 import { buildRfPropagation, portKey } from "../rfPropagation";
 import type {
   Anchor,
@@ -60,27 +60,6 @@ describe("ppgAttachmentOf (A1)", () => {
     const objects = [obj("p", { ppgAttachment: ATT }), obj("c", { ppgAttachment: ATT })];
     const pes = [pe("p", "programmable_pulse_generator"), pe("c", "rf_cable")];
     expect(ppgAttachments(objects, pes).map((x) => x.ppgObjectId)).toEqual(["p"]);
-  });
-});
-
-describe("ppgsAttachedTo (A2)", () => {
-  const objects = [
-    obj("p1", { ppgAttachment: ATT }),
-    obj("p2", { ppgAttachment: { ...ATT, targetObjectId: "other" } }),
-    obj("host"),
-  ];
-  const pes = [
-    pe("p1", "programmable_pulse_generator"),
-    pe("p2", "programmable_pulse_generator"),
-    pe("host", "rf_switch"),
-  ];
-
-  it("finds PPGs plugged into a doomed instrument", () => {
-    expect(ppgsAttachedTo(objects, pes, new Set(["host"]))).toEqual(["p1"]);
-  });
-
-  it("leaves PPGs attached elsewhere alone", () => {
-    expect(ppgsAttachedTo(objects, pes, new Set(["unrelated"]))).toEqual([]);
   });
 });
 

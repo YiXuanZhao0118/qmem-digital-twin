@@ -1,8 +1,10 @@
-"""The web's RF-cable / PPG store flows as pure plans over an :class:`RfScene`.
+"""The RF-cable / PPG flows as pure plans over an :class:`RfScene`.
 
-Each ``plan_*`` answers "what would the web app write?" without touching
-the DB; :mod:`.service` applies the answer in one transaction. Ports of
-``store/sceneStore.ts``:
+Each ``plan_*`` answers "what does this flow write?" without touching the DB;
+:mod:`.service` applies the answer in one transaction. Originally ported from
+``store/sceneStore.ts``, which called them in the browser until wave 3b
+pointed the web at these endpoints and deleted its copy — the TS names below
+are what each flow was, not where it lives:
 
 =========================  ==================================================
 ``plan_connect``           ``createRfCableBetweenPorts`` behind the RF Link

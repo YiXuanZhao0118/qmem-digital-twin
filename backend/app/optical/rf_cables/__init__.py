@@ -1,27 +1,27 @@
-"""RF cables and Programmable Pulse Generators, served to a second client.
+"""RF cables and Programmable Pulse Generators — creating, re-snapping,
+aligning and removing them, for every client.
 
-The web app creates, re-snaps, aligns and removes coax cables and PPGs in the
-browser (``frontend/src/store/sceneStore.ts`` and the utils it calls). The
-qmem-blender add-on needs the same flows, and a third copy there would drift,
-so they are ported here and served as ``POST /api/v3/rf-cables/*`` and
-``POST /api/v3/ppg/*`` (routers ``app/routers/v3_rf_cables.py`` /
-``v3_ppg.py``).
+This began (2026-09-22) as a port of the web app's browser-side flows
+(``frontend/src/store/sceneStore.ts`` and the utils it called), so the
+qmem-blender add-on would not grow a third copy. In wave 3b the web app was
+pointed at ``POST /api/v3/rf-cables/*`` and ``POST /api/v3/ppg/*`` (routers
+``app/routers/v3_rf_cables.py`` / ``v3_ppg.py``) and its TypeScript deleted,
+so **this is now the only implementation**.
 
 Layout:
 
-* :mod:`.geometry` — the pure mating / alignment math
-  (``utils/rfCableAnchorResolver.ts``, ``utils/rfCableAlignment.ts``,
-  ``sceneStore.buildRfCableAlignmentProps``).
-* :mod:`.ppg_mount` — ``utils/ppgMounting.computePpgMountedThreePose``.
+* :mod:`.geometry` — the pure mating / alignment math.
+* :mod:`.ppg_mount` — the PPG's mounted pose. ``utils/ppgMounting.ts`` still
+  holds the web's copy, because the viewer re-derives the mount at render
+  time (between pose commits) while this persists it.
 * :mod:`.ports` — the scene slice, binding-tree anchor lookup, port domains,
   and the RF Link panel's port list / occupancy (``RfLinkPanel.tsx``).
-* :mod:`.flows` — the store flows as pure plans over a scene slice.
+* :mod:`.flows` — the flows as pure plans over a scene slice.
 * :mod:`.service` — DB load, one transaction per request, ``/ws/scene``
   broadcasts.
 
-Parity with the TypeScript is pinned by golden fixtures the real TypeScript
-generates (``frontend/src/utils/__tests__/rfCableParity.test.ts`` ->
-``backend/tests/fixtures/rf_cables/``), asserted by
-``backend/tests/optical/test_rf_cables_parity.py``. Change a port only
-together with the TypeScript it mirrors.
+``backend/tests/fixtures/rf_cables/`` are the golden fixtures the real
+TypeScript wrote before it was deleted, asserted by
+``backend/tests/optical/test_rf_cables_parity.py``: a change here must be a
+deliberate fixture update, explained in the commit.
 """

@@ -62,14 +62,16 @@ Master 不能被排——它是樹根，前後沒有位置；把 collection 拖�
 
 ## Deleting objects (the cascade)
 
-The web never deletes one row on its own. Every delete a user asks for — the Delete key on a Lab selection (`App.tsx:146`), the Outliner row and "delete collection with its objects", the Object panel's Remove, RF Link's Disconnect — goes through `sceneStore.deleteObjects` (`frontend/src/store/sceneStore.ts:4615`), which works out the whole set first and then fires one `DELETE /api/objects/{id}` per row (undoing a placement is the one exception: it removes just the object it created, `sceneStore.ts:2762`). The set:
+The web never deletes one row on its own. Every delete a user asks for — the Delete key on a Lab selection (`App.tsx:146`), the Outliner row and "delete collection with its objects", the Object panel's Remove, RF Link's Disconnect — goes through `sceneStore.deleteObjects`, which since wave 3b is **one `POST /api/v3/objects/delete`** plus the local store update (undoing a placement is the one exception: it removes just the object it created with `DELETE /api/objects/{id}`). The cascade is worked out over the database by `flows.plan_delete_objects` (`backend/app/optical/rf_cables/flows.py`) and applied in ONE transaction by `backend/app/services/object_delete.py`; the browser used to compute it from its scene snapshot and fire N parallel DELETEs. The set:
 
-1. the requested objects, de-duplicated, minus the `locked` ones (skipped silently);
+1. the requested objects, de-duplicated, minus the `locked` ones (skipped silently, and reported in `refused`);
 2. every object whose `properties.rfCableEndpoints` A or B names a doomed object — the cable is **deleted**, not unlinked ([rf.md](rf.md) §7);
 3. every PPG plugged into a doomed object (`properties.ppgAttachment`);
-4. every legacy PPG whose rf_cables are all doomed — never one with none (`sceneStore.ts:4698`);
-5. per row, the backend (`backend/app/routers/objects.py:250` `remove_scene_object`) drops the PhysicsElement and a PPG's TimingProgram, and the FK cascades take the ObjectBindings, the collection membership, assembly relations, device state and link rows.
+4. every legacy PPG whose rf_cables are all doomed — never one with none (the `cables.length === 0` guard);
+5. per row, `backend/app/routers/objects.py:250` `remove_scene_object` drops the PhysicsElement and a PPG's TimingProgram, and the FK cascades take the ObjectBindings, the collection membership, assembly relations, device state and link rows.
 
-Fibres and pigtails linked to a deleted object keep their dangling `fiberEndpoints` / `pigtailEndpoints` link; nothing is gated by kind (rf_cables and PPGs are kept out of the Outliner's tree, but a viewer selection deletes them); rigid groups move together but do not delete together. A 404 counts as success — the row is already gone.
+Steps 2–4 are **run to a fixpoint** and are therefore independent of the order the rows come back in; see [known-issues.md](known-issues.md) for the two quirks the browser's single pass had.
 
-A second client gets the same cascade in one transaction from `POST /api/v3/objects/delete` (`backend/app/services/object_delete.py`; request, response, locks and `dryRun` in [api.md](api.md)). Two differences by design: a cascade that reaches a locked object is refused whole (409) instead of half-happening, and a requested id with no row is reported as deleted without anything cascading from it.
+Fibres and pigtails linked to a deleted object keep their dangling `fiberEndpoints` / `pigtailEndpoints` link; nothing is gated by kind in the cascade itself (rf_cables and PPGs are kept out of the Outliner's tree and off the Delete key, but the cascade takes them by their links, and RF Link's Disconnect deletes them on purpose); rigid groups move together but do not delete together. A requested id with no row counts as success — it is reported in `deletedObjectIds` and nothing cascades from it.
+
+One difference from the browser's version, inherent to a single transaction: a cascade that reaches a `locked` object is refused whole (409, nothing deleted) instead of deleting everything else and 409-ing on that row. The store logs it and leaves the scene alone. Neither `rf_cable` nor `programmable_pulse_generator` is lockable in the UI (`capabilityProfile`), so reaching it takes a hand-locked row. Request, response, locks and `dryRun` are in [api.md](api.md); the web has no use for `dryRun` today (nothing previews a cascade before asking for it).

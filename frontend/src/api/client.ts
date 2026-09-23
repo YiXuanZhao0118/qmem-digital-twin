@@ -32,6 +32,7 @@ import type {
   OpticalLink,
   OpticalPort,
   RelationType,
+  RfCableAlignmentCandidate,
   SceneData,
   SceneObject,
   SceneObjectPatch,
@@ -1660,5 +1661,189 @@ function parseSseEvent(raw: string): AgentStreamEvent | null {
     return { event: eventName, ...data } as AgentStreamEvent;
   } catch {
     return null;
+  }
+}
+
+// ── RF cables / PPGs / object delete (POST /api/v3/{rf-cables,ppg,objects}) ──
+//
+// The web app used to work these flows out in the browser and then fire the
+// generic object / element / timing-program requests. Since 2026-09-22 the
+// backend serves them (`backend/app/optical/rf_cables/`,
+// `app/services/object_delete.py`) so a second client (the qmem-blender
+// add-on) need not grow a third copy; the web now calls them and its own copy
+// is gone, leaving ONE implementation. Shapes + error codes: docs/introduce/api.md.
+
+/** A port as the endpoints name it: the object plus `anchor.name ?? anchor.id`
+ *  (`CH0`, `RF1`, `rf_in`). `anchorId` disambiguates two ports of one object
+ *  sharing a name. */
+export type RfPortRefPayload = {
+  objectId: string;
+  anchorName: string;
+  anchorId?: string | null;
+};
+
+/** A rule the endpoint refused — the cases the web's own gates used to
+ *  swallow (`port_busy`, `domain_mismatch`, `no_ppg_component`, …). `code` is
+ *  stable, so callers branch on it; `isRefusal` is "the app would have done
+ *  nothing here", as opposed to an outage. */
+export class RfFlowError extends Error {
+  readonly status: number;
+  readonly code: string;
+
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.name = "RfFlowError";
+    this.status = status;
+    this.code = code;
+  }
+
+  /** 4xx = a rule, not an outage: the flow is refused, the scene unchanged. */
+  get isRefusal(): boolean {
+    return this.status >= 400 && this.status < 500;
+  }
+}
+
+/** `{"detail": "<code>: <message>"}` → `RfFlowError`; anything else → the
+ *  usual Error, so an outage still surfaces as one. */
+function rfFlowError(error: unknown): Error {
+  if (error instanceof AxiosError && error.response) {
+    const detail = (error.response.data as { detail?: unknown } | undefined)?.detail;
+    if (typeof detail === "string") {
+      const match = /^([a-z_]+): ([\s\S]*)$/.exec(detail);
+      if (match) return new RfFlowError(error.response.status, match[1], match[2]);
+    }
+  }
+  return new Error(apiErrorMessage(error));
+}
+
+export async function rfCableConnectApi(payload: {
+  a: RfPortRefPayload;
+  b: RfPortRefPayload;
+  collectionId?: string | null;
+}): Promise<SceneObject> {
+  try {
+    const response = await client.post<{ object: SceneObject }>(
+      "/api/v3/rf-cables/connect",
+      payload,
+    );
+    return response.data.object;
+  } catch (error) {
+    throw rfFlowError(error);
+  }
+}
+
+/** Unlink one end — which removes the cable, with everything the delete
+ *  cascade takes along. A no-op (that end had no link) answers with the
+ *  untouched cable and two empty lists. */
+export async function rfCableDisconnectApi(
+  cableId: string,
+  end: "A" | "B",
+): Promise<{
+  object: SceneObject | null;
+  deletedObjectIds: string[];
+  deletedTimingProgramIds: string[];
+}> {
+  try {
+    const response = await client.post<{
+      object: SceneObject | null;
+      deletedObjectIds: string[];
+      deletedTimingProgramIds: string[];
+    }>(`/api/v3/rf-cables/${cableId}/disconnect`, { end });
+    return response.data;
+  } catch (error) {
+    throw rfFlowError(error);
+  }
+}
+
+/** Re-mate every cable end linked to a moved object (and re-mount the PPGs
+ *  plugged into one). Returns only the rows that actually changed. */
+export async function rfCableResnapApi(
+  movedObjectIds: readonly string[],
+): Promise<SceneObject[]> {
+  try {
+    const response = await client.post<{ updated: SceneObject[] }>(
+      "/api/v3/rf-cables/resnap",
+      { movedObjectIds },
+    );
+    return response.data.updated;
+  } catch (error) {
+    throw rfFlowError(error);
+  }
+}
+
+/** The ports this cable end could snap onto, nearest first. Compute-only. */
+export async function rfCableAlignCandidatesApi(
+  cableId: string,
+  end: "A" | "B",
+  toleranceMm: number,
+): Promise<RfCableAlignmentCandidate[]> {
+  try {
+    const response = await client.post<{ candidates: RfCableAlignmentCandidate[] }>(
+      `/api/v3/rf-cables/${cableId}/align-candidates`,
+      { end, toleranceMm },
+    );
+    return response.data.candidates;
+  } catch (error) {
+    throw rfFlowError(error);
+  }
+}
+
+export async function rfCableAlignApi(
+  cableId: string,
+  end: "A" | "B",
+  target: RfPortRefPayload,
+  toleranceMm: number,
+): Promise<SceneObject> {
+  try {
+    const response = await client.post<{ object: SceneObject }>(
+      `/api/v3/rf-cables/${cableId}/align`,
+      { end, target, toleranceMm },
+    );
+    return response.data.object;
+  } catch (error) {
+    throw rfFlowError(error);
+  }
+}
+
+/** Plug a new PPG (+ its TimingProgram) into an empty gate input, at its
+ *  mounted pose. One transaction, so a refusal leaves nothing behind — the
+ *  rollback `createPpgAtPort` used to do by hand. */
+export async function ppgAttachApi(payload: {
+  target: RfPortRefPayload;
+  collectionId?: string | null;
+}): Promise<{ object: SceneObject; timingProgram: TimingProgram }> {
+  try {
+    const response = await client.post<{ object: SceneObject; timingProgram: TimingProgram }>(
+      "/api/v3/ppg/attach",
+      payload,
+    );
+    return response.data;
+  } catch (error) {
+    throw rfFlowError(error);
+  }
+}
+
+/** Delete objects with the web's whole cascade (linked rf_cables, plugged-in
+ *  PPGs, orphaned legacy PPGs, their TimingPrograms) in ONE transaction. A
+ *  requested `locked` object is skipped and listed in `refused`; a cascade
+ *  reaching one is a 409 that deletes nothing. `dryRun` answers exactly the
+ *  same and writes nothing. */
+export async function deleteObjectsApi(
+  objectIds: readonly string[],
+  opts: { dryRun?: boolean } = {},
+): Promise<{
+  deletedObjectIds: string[];
+  deletedTimingProgramIds: string[];
+  refused: { objectId: string; reason: string }[];
+}> {
+  try {
+    const response = await client.post<{
+      deletedObjectIds: string[];
+      deletedTimingProgramIds: string[];
+      refused: { objectId: string; reason: string }[];
+    }>("/api/v3/objects/delete", { objectIds, dryRun: opts.dryRun ?? false });
+    return response.data;
+  } catch (error) {
+    throw rfFlowError(error);
   }
 }
