@@ -6,7 +6,7 @@
 > - **Converted (23):** 12 lenses (the A230TM-B collimator, 4 plano-convex, 6 cylindrical, and the biconcave LD2297), both Casix waveplates, the BB1-E03 mirror, the four cubes, both Glan-laser prisms, and both Faraday rotators. See "Converted so far".
 > - **Kept on its op by decision:** the AOM.
 > - **The lab trace changed:** the whole seed path is now surface models, and the A230TM-B moved to its real spacing with the DBR mode re-fitted (see "Effect on the lab trace").
-> - **Phase 4 has begun:** the PHY Editor shows a surface model, read-only.
+> - **Phase 4 is under way:** the backend fits a clicked face and meshes a model (`POST /api/v3/surfaces/fit`, `/sheets`); the Blender add-on authors surface models with them; the web PHY Editor shows one, read-only.
 
 ## Why
 
@@ -257,7 +257,8 @@ Open questions to settle there:
 
 ### Authoring and display (Phase 4)
 
-- Blender add-on (`qmem-blender`): pick mesh faces, fit a sphere / plane (vertex, normal, R), and write a surface; draw the in-medium segments.
+- Backend, for every client (qmem-blender ARCHITECTURE.md rule 2): `POST /api/v3/surfaces/fit` fits a plane, sphere or cylinder to the smooth mesh region around a clicked triangle and returns a surface (vertex, axisX out of the part, signed R, a circle or rectangle aperture); `POST /api/v3/surfaces/sheets` meshes each surface of a model with its real sag, validating it with `SurfaceModelV3` first ([introduce/api.md](introduce/api.md)). Checked on the converted GLBs: clicking each stored face off-centre gives back its R to 1e-5 and its vertex to ~4e-5 mm (the mesh's own offset), every flat as a plane; the A230TM's asphere is not a model it knows (a sphere, rms 1.7e-2 mm).
+- Blender add-on (`qmem-blender`, `phy_asset` → **Surfaces**): **landed 2026-09-23** — click a face to add a surface (front `air`, back the part's medium) or refit the selected one; delete; media, coatings and conics as JSON; each surface drawn as a sheet from `/sheets`, which also shows a 422 before the save; saved as `surfaceModel` on the asset's PUT only when it changed; a locked asset is read-only. Its README has the details. In-medium segments draw like any other: its beams mirror the web's, and a distinct look is a decision for both viewers.
 - Web frontend: **showing it landed 2026-09-23, read-only** — the PHY Editor's ASSET3D form lists the surfaces and draws each one in its preview with its real sag, colour-coded and labelled on its air side, so a lens's two faces read apart ([introduce/asset.md](introduce/asset.md)). Still to do: editing `surfaceModel` there, and drawing the in-medium segments.
 
 ## Related
