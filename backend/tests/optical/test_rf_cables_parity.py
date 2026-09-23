@@ -1,9 +1,11 @@
-"""The Python RF-cable / PPG ports equal the TypeScript they were ported from.
+"""The RF-cable / PPG flows still answer what the TypeScript they replaced did.
 
-``backend/tests/fixtures/rf_cables/*.json`` are written by the REAL
-TypeScript (``frontend/src/utils/__tests__/rfCableParity.test.ts`` — which
-also fails when they go stale, so a TS change forces a regeneration, which
-then fails here until the port follows):
+``backend/tests/fixtures/rf_cables/*.json`` were written by the REAL
+TypeScript (``frontend/src/utils/__tests__/rfCableParity.test.ts``). That
+generator went in wave 3b, when the web app moved onto these endpoints and
+deleted its copy, so the fixtures are now **frozen goldens**: they are the
+behaviour the web app had, and a change here that alters them has to be a
+deliberate regeneration, explained in its commit. They hold:
 
 * ``pure.json`` — the pure utils (``resolveLinkedRfCableEndpoint``,
   ``findRfCableEndpointAlignmentCandidates``, ``connectorTipMmFromAnchors``,

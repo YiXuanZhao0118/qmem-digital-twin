@@ -1,7 +1,8 @@
 """RF coax cables — ``POST /api/v3/rf-cables/*``.
 
-Backend ports of the web app's cable flows (``store/sceneStore.ts``), for a
-second client (the qmem-blender add-on) that must not grow a third copy:
+The cable flows for every client: the web app's ``store/sceneStore.ts`` calls
+these (wave 3b), the qmem-blender add-on calls these, and there is no other
+copy. The store action each one serves:
 
 * ``/connect`` — ``createRfCableBetweenPorts`` behind the RF Link panel's
   drop gate: a new cable between two ports, variant picked from the ports'
@@ -15,10 +16,11 @@ second client (the qmem-blender add-on) that must not grow a third copy:
   ``findRfCableAlignmentCandidates`` / ``applyRfCableAlignmentCandidate``.
 
 Every write runs as ONE transaction and broadcasts the usual ``/ws/scene``
-events. A rule the web refuses is a 4xx whose ``detail`` is
-``"<code>: <message>"`` (codes in ``docs/introduce/api.md``). Pure logic:
-``app/optical/rf_cables/``; parity with the TypeScript is pinned by
-``backend/tests/fixtures/rf_cables/``.
+events. A refused rule is a 4xx whose ``detail`` is ``"<code>: <message>"``
+(codes in ``docs/introduce/api.md``); the web turns those into the silent
+no-op its browser gates used to produce. Pure logic:
+``app/optical/rf_cables/``; ``backend/tests/fixtures/rf_cables/`` are the
+goldens the TypeScript wrote before it was deleted.
 """
 
 from __future__ import annotations

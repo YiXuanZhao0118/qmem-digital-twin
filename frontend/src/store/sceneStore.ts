@@ -21,6 +21,7 @@ import {
   deleteCollectionApi,
   deleteComponentApi,
   deleteObjectApi,
+  deleteObjectsApi,
   deleteOpticalElementApi,
   deleteOpticalLinkApi,
   deleteEmProblemApi,
@@ -34,6 +35,13 @@ import {
   importLocalComponentAssetApi,
   moveObjectToCollectionApi,
   moveCollectionApi,
+  ppgAttachApi,
+  rfCableAlignApi,
+  rfCableAlignCandidatesApi,
+  rfCableConnectApi,
+  rfCableDisconnectApi,
+  rfCableResnapApi,
+  RfFlowError,
   runOpticalSimulationApi,
   runOpticalTransientApi,
   unlinkObjectFromCollectionApi,
@@ -92,6 +100,7 @@ import type {
   PhysicsElement,
   OpticalLink,
   RelationType,
+  RfCableAlignmentCandidate,
   SceneData,
   SceneEvent,
   SceneObject,
@@ -134,7 +143,6 @@ import {
 // force-showing an object whose collection is hidden".
 import { computeVisibleCollectionIds } from "../utils/visibility";
 import { quantizePosePatch } from "../optical/poseQuantize";
-import { dirBodyToLab, pointBodyToLab } from "../optical/pose";
 import {
   FIBER_FERRULE_TIP_MM,
   fiberConnectorTipMmFromAnchors,
@@ -151,18 +159,8 @@ import { expandPoseToRigidGroup, patchHasPoseChange } from "../utils/rigidGroup"
 import { resolveAnchorPosesLab } from "../utils/anchorPose";
 import { isComponentLocked } from "../utils/components";
 import { capabilityProfile } from "../kinds/_capabilityProfile";
-import {
-  deriveCablePropsFromConnectorBindings,
-  pigtailPortBindings,
-  primaryAsset,
-} from "../utils/componentBindings";
+import { pigtailPortBindings } from "../utils/componentBindings";
 import { TABLE_TOP_HEIGHT_MM } from "../three/photoRoom";
-import { ppgsAttachedTo } from "../utils/ppgAttachment";
-import {
-  connectorFamilyFromAnchor,
-  domainsAreCompatible,
-  resolveRfLinkPortDomain,
-} from "../utils/rfLinkPorts";
 
 type RelationDraftTarget = {
   objectAId: string;
@@ -868,18 +866,20 @@ type SceneStore = {
     scaleFactor?: number;
   }) => Promise<ComponentItem>;
   ensureObjectForComponent: (componentId: string) => Promise<void>;
-  createProgrammablePulseGenerator: (args: {
-    connectorType: "sma" | "bnc";
-  }) => Promise<{ objectId: string; timingProgramId: string } | null>;
-  /** End-to-end "create PPG at a receiving port": auto-creates a fresh
-   *  TimingProgram, materialises a PPG object whose rf_out matches the
-   *  target port's connector family, and lays an RF cable from the PPG
-   *  to the target ttl_in / trigger_in. Returns null when the target
-   *  port is occupied or has no defined connector family. */
+  /** End-to-end "create PPG at a receiving port" — `POST /api/v3/ppg/attach`.
+   *  The backend picks the PPG catalog Component whose connector family
+   *  matches the port, names it `CH<n>` (stepped past any name taken),
+   *  creates its TimingProgram, plugs it in (`properties.ppgAttachment`, no
+   *  cable) and stands it at its mounted pose — all in ONE transaction, so
+   *  a refusal leaves nothing behind. Returns null when the endpoint refuses
+   *  (`canSpawnPpgHere`'s rules: an empty ttl_in / trigger_in with a defined
+   *  SMA/BNC connector, and a usable PPG Component in the catalog). */
   createPpgAtPort: (args: {
     targetObjectId: string;
     targetAnchorId: string;
     targetAnchorName: string;
+    /** Only the caller's (the RF Link panel's) own gate reads this — the
+     *  endpoint derives the family from the port itself. */
     targetConnectorFamily: "sma" | "bnc";
   }) => Promise<{ objectId: string; timingProgramId: string } | null>;
   /** Spawn a free-form text annotation at the transform cursor. Creates a
@@ -1107,32 +1107,33 @@ type SceneStore = {
     end: "A" | "B",
     toleranceMm?: number,
   ) => Promise<{ offsetMm: number; targetName: string } | null>;
-  /** Two-phase rf_cable align: phase A — list ALL rf_in/rf_out targets
-   *  within `toleranceMm` of the cable's endpoint port (closest first),
-   *  each carrying the pre-computed body-local node + handle so phase B
-   *  is just a write. Used by the UI to show a picker dropdown when
-   *  several candidates cluster (e.g. AD9959's CH0..CH3 within mm). */
+  /** Two-phase rf_cable align: phase A — every rf_in / rf_out port within
+   *  `toleranceMm` of this end's connector mating face, closest first, each
+   *  carrying the body-local node + handle that would mate it, so phase B is
+   *  just a write. The UI auto-applies a lone candidate and shows a picker
+   *  when several cluster (an AD9959's CH0..CH3 within mm of each other).
+   *  Served by `POST /api/v3/rf-cables/{id}/align-candidates`. */
   findRfCableAlignmentCandidates: (
     objectId: string,
     end: "A" | "B",
     toleranceMm?: number,
-  ) => Promise<import("../utils/rfCableAlignment").RfCableAlignmentResult[]>;
-  /** Phase B of the two-phase align: apply a specific candidate to the
-   *  cable's endpoint node + handle. Takes the result object verbatim
-   *  from `findRfCableAlignmentCandidates` so no re-computation. */
+  ) => Promise<RfCableAlignmentCandidate[]>;
+  /** Phase B: snap the end onto one of those candidates and link it
+   *  (`POST /api/v3/rf-cables/{id}/align`, which names the port rather than
+   *  posting geometry back). */
   applyRfCableAlignmentCandidate: (
     objectId: string,
     end: "A" | "B",
-    candidate: import("../utils/rfCableAlignment").RfCableAlignmentResult,
+    candidate: RfCableAlignmentCandidate,
   ) => Promise<void>;
-  /** RF link panel drag-to-connect: instantiate a fresh rf_cable
-   *  SceneObject and immediately attach End A to `src` and End B to
-   *  `tgt` via `applyRfCableAlignmentCandidate`. The new cable's body
-   *  pose lands at the midpoint between the two ports (lab space) with
-   *  identity rotation; the spline node positions get back-derived so
-   *  the connector tips sit exactly on each port. Returns the new
-   *  SceneObject id on success, or null when no rf_cable Component
-   *  template is available in the catalog. */
+  /** RF link panel drag-to-connect (`POST /api/v3/rf-cables/connect`):
+   *  create an rf_cable of the variant whose connector families match the
+   *  two ports, at their midpoint with identity rotation, both ends linked
+   *  and mated (each spline node backed off its port by the bound
+   *  connector's own length, so the mating face lands ON the port).
+   *  Returns the new SceneObject id, or null when a drop rule refuses it
+   *  (same object, same role, a domain mismatch, no connector, a busy port,
+   *  or no rf_cable Component in the catalog). */
   createRfCableBetweenPorts: (args: {
     srcObjectId: string;
     srcAnchorId: string;
@@ -1141,12 +1142,15 @@ type SceneStore = {
     tgtAnchorId: string;
     tgtAnchorName: string;
   }) => Promise<string | null>;
-  /** Write-through re-snap: after any of `movedObjectIds` commits a pose
-   *  change, recompute every linked rf_cable end that targets one of them
-   *  and PERSIST the new node + handle (via applyRfCableAlignmentCandidate).
-   *  Keeps stored `rfCableNodes` equal to what the renderer derives, so a
-   *  fresh page load paints cables at the right ports immediately instead
-   *  of showing connect-time nodes until the live re-snap pass runs. */
+  /** Write-through re-snap (`POST /api/v3/rf-cables/resnap`): after any of
+   *  `movedObjectIds` commits a pose change, re-mate every linked rf_cable
+   *  end that targets one of them and PERSIST it. Keeps stored
+   *  `rfCableNodes` equal to what the renderer derives, so a fresh page load
+   *  paints cables at the right ports immediately instead of showing
+   *  connect-time nodes until the live re-snap pass runs. The endpoint also
+   *  re-mounts the PPGs plugged into a moved object — the web re-derives
+   *  that at render time, but keeping the stored pose right costs nothing
+   *  and is what a stored-pose client needs. */
   resnapRfCablesLinkedTo: (movedObjectIds: readonly string[]) => Promise<void>;
   /** Manually set one fiber endpoint's optical-port lab pose. The user
    *  supplies the desired ferrule-tip lab position and outward direction
@@ -1211,10 +1215,12 @@ type SceneStore = {
     opts?: { recordHistory?: boolean },
   ) => Promise<void>;
   deleteObject: (objectId: string) => Promise<void>;
-  /** Batch counterpart to `deleteObject` — fires every DELETE in parallel
-   *  and applies a SINGLE state update at the end. Locked objects are
-   *  filtered out before any network call to keep parity with the
-   *  single-object lock protection. */
+  /** Delete objects with the whole cascade — `POST /api/v3/objects/delete`:
+   *  the rf_cables linked to a doomed object, the PPGs plugged into one, the
+   *  legacy PPGs left with no live cable, and those PPGs' TimingPrograms, in
+   *  ONE transaction. Locked objects are skipped silently, as before; a
+   *  cascade that would reach one is refused whole (nothing is deleted).
+   *  `deleteObject` is the single-object spelling of the same call. */
   deleteObjects: (objectIds: ReadonlyArray<string>) => Promise<void>;
   /** Upsert a per-instance ObjectBinding override (alembic 0076). Keyed
    *  by (objectId, componentBindingId): if a row exists for that pair,
@@ -1716,70 +1722,54 @@ function markObjectWritesInFlight(ids: readonly string[]): () => void {
   };
 }
 
-/** Stitch one aligned rf_cable endpoint into the cable's stored
- *  properties. Pure so both the interactive single-end apply and the
- *  batched `resnapRfCablesLinkedTo` write-through can use it — the
- *  latter folds End A and End B of the same cable into ONE patch
- *  instead of issuing a PATCH (and a store commit) per end.
- *  Only the touched endpoint's posMm + matching handle change; the
- *  other handle on that node and every interior node are preserved. */
-function buildRfCableAlignmentProps(
-  objProperties: SceneObject["properties"] | undefined,
-  componentProperties: ComponentItem["properties"] | undefined,
-  end: "A" | "B",
-  candidate: import("../utils/rfCableAlignment").RfCableAlignmentResult,
-): SceneObject["properties"] {
-  const objProps = objProperties as { rfCableNodes?: FiberNodePersist[] } | undefined;
-  const lengthMm = (() => {
-    const v = (componentProperties as { lengthMm?: number } | undefined)?.lengthMm;
-    return typeof v === "number" ? v : 150;
-  })();
-  const nodes: FiberNodePersist[] =
-    (objProps?.rfCableNodes && objProps.rfCableNodes.length >= 2)
-      ? objProps.rfCableNodes
-      : [
-          { posMm: [-lengthMm / 2, 0, 0] },
-          { posMm: [lengthMm / 2, 0, 0] },
-        ];
-  const idx = end === "A" ? 0 : nodes.length - 1;
-  const newNode: FiberNodePersist = {
-    posMm: candidate.newPosMmBody,
-    handleInMm:
-      end === "B"
-        ? candidate.newHandleMmBody
-        : nodes[idx].handleInMm
-          ? ([...nodes[idx].handleInMm] as [number, number, number])
-          : undefined,
-    handleOutMm:
-      end === "A"
-        ? candidate.newHandleMmBody
-        : nodes[idx].handleOutMm
-          ? ([...nodes[idx].handleOutMm] as [number, number, number])
-          : undefined,
-  };
-  const nextNodes = [...nodes];
-  nextNodes[idx] = newNode;
-  // Persist the per-end link record alongside the node update so the
-  // renderer can re-derive cable End A / End B at draw time whenever
-  // the target SceneObject moves — the user's "logical connection"
-  // requirement (B). Stored under
-  //   SceneObject.properties.rfCableEndpoints[A|B]
-  // The matching node[idx].posMm + handle stay populated as a fallback
-  // for when the link can't be resolved (target deleted / archived).
-  const existingEndpoints = (objProperties as { rfCableEndpoints?: Record<string, unknown> } | undefined)
-    ?.rfCableEndpoints ?? {};
-  return {
-    ...(objProperties ?? {}),
-    rfCableNodes: nextNodes,
-    rfCableEndpoints: {
-      ...existingEndpoints,
-      [end]: {
-        targetObjectId: candidate.targetObjectId,
-        targetAnchorId: candidate.targetAnchorId,
-        targetAnchorName: candidate.targetAnchorName,
+/** Fold a backend delete outcome into the local store: `deleteObjects`,
+ *  the cable-end disconnect and the PPG removal all end in the same place.
+ *
+ *  The backend decides WHAT goes (`POST /api/v3/objects/delete` and the
+ *  cascades `/rf-cables/{id}/disconnect` runs); this is only the optimistic
+ *  local application of that answer, so the user does not see a stale
+ *  Pulse & Timing row or a dangling RF Link node between the response and
+ *  the websocket events (which are idempotent with it).
+ *
+ *  ONE state update — what the user asked for: 50 deletes = 1 re-render. */
+function applyDeletion(
+  set: (fn: (state: SceneStore) => Partial<SceneStore>) => void,
+  deletedObjectIds: readonly string[],
+  deletedTimingProgramIds: readonly string[],
+): void {
+  if (deletedObjectIds.length === 0 && deletedTimingProgramIds.length === 0) return;
+  const deletedSet = new Set(deletedObjectIds);
+  const deletedPrograms = new Set(deletedTimingProgramIds);
+  set((current) => {
+    const nextObjects = current.scene.objects.filter((object) => !deletedSet.has(object.id));
+    const nextObjectIdSet = new Set(nextObjects.map((object) => object.id));
+    const remainingSelectedIds = current.selectedObjectIds.filter(
+      (id) => !deletedSet.has(id) && nextObjectIdSet.has(id),
+    );
+    const activeWasDeleted =
+      current.selectedObjectId !== null && deletedSet.has(current.selectedObjectId);
+    // Selection rule: if the active object was deleted, clear the selection —
+    // don't auto-jump to an arbitrary survivor. (Previously fell back to
+    // `nextObjects[0]` + its componentId, which felt like a phantom click.)
+    return {
+      selectedObjectId: activeWasDeleted ? remainingSelectedIds[0] ?? null : current.selectedObjectId,
+      selectedObjectIds: remainingSelectedIds,
+      selectedComponentId: activeWasDeleted ? null : current.selectedComponentId,
+      scene: {
+        ...current.scene,
+        objects: nextObjects,
+        physicsElements: current.scene.physicsElements.filter(
+          (item) => !deletedSet.has(item.objectId),
+        ),
+        timingPrograms: (current.scene.timingPrograms ?? []).filter(
+          (p) => !deletedPrograms.has(p.id),
+        ),
+        assemblyRelations: current.scene.assemblyRelations.filter(
+          (relation) => !deletedSet.has(relation.objectAId) && !deletedSet.has(relation.objectBId),
+        ),
       },
-    },
-  };
+    };
+  });
 }
 
 /** Pure reducer for one broadcast SceneEvent. Extracted from
@@ -2893,176 +2883,54 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     }
   },
 
-  async createProgrammablePulseGenerator({ connectorType }) {
-    const state = get();
-    // PPG ↔ TimingProgram are 1:1. The program is created with just a name;
-    // channel ordering is now positional from the PPG list at solve time
-    // (no PB cap, no per-program channel_index column post-alembic 0051).
-    const ppgCount = state.scene.physicsElements.filter(
-      (pe) => pe.elementKind === "programmable_pulse_generator",
-    ).length;
-    // `CH<number of PPGs>`, stepped past any name already taken. Object names
-    // are unique case-insensitively (the backend compares lower()), and the
-    // count alone collides as soon as a PPG other than the last is deleted
-    // ({CH0, CH1} minus CH0 → count 1 → "CH1" again): the create then failed
-    // with a 409 and no PPG was made.
-    const takenNames = new Set(state.scene.objects.map((o) => o.name.toLowerCase()));
-    let channel = ppgCount;
-    while (takenNames.has(`ch${channel}`)) channel += 1;
-    const programName = `CH${channel}`;
-
-    // Pick a PPG catalog component matching the requested connector family
-    // AND that actually has a usable asset (primary Asset3D with an rf_out
-    // anchor). Empty stub PPG components — no binding, no asset — would
-    // otherwise be selected and then silently fail: the PPG materialises
-    // with no rf_out port, so createRfCableBetweenPorts returns null and
-    // createPpgAtPort rolls the whole thing back ("nothing happened").
-    const ppgHasUsableAsset = (candidate: ComponentItem): boolean => {
-      const asset = primaryAsset(candidate, {
-        componentBindings: state.scene.componentBindings,
-        assets: state.scene.assets,
-      });
-      return (
-        !!asset
-        && Array.isArray(asset.anchors)
-        && asset.anchors.some((a) => a.id === "rf_out")
-      );
-    };
-    const component = state.scene.components.find((candidate) => {
-      if (candidate.kindId !== "programmable_pulse_generator") return false;
-      const props = candidate.properties as Record<string, unknown>;
-      return props.connectorType === connectorType && ppgHasUsableAsset(candidate);
-    });
-    if (!component) return null;
-
-    const program = await createTimingProgramApi({
-      name: programName,
-      intervals: [],
-    });
-
-    // From here on the program row exists in the DB. Any failure below must
-    // delete it again — otherwise it lingers as a phantom "CHn" in the
-    // Pulse & Timing panel with no PPG behind it (seen live 2026-07-04:
-    // a mid-create backend outage left one behind).
-    let obj: SceneObject;
-    let element: PhysicsElement;
-    try {
-      obj = await createObjectApi({
-        // PPG SceneObject.name is the user-facing identity of this channel
-        // (Pulse & Timing left column, RF Link node header). Set it to a
-        // short positional label rather than letting the backend auto-name
-        // it ``programmable_pulse_generator_bnc_object_4`` — the user can
-        // rename it from either panel later.
-        name: programName,
-        componentId: component.id,
-        collectionId: get().activeCollectionId,
-        ...cursorSpawnPatch(get().transformCursorMm.left, state.scene.objects.length),
-        visible: true,
-        locked: false,
-      });
-
-      const kindParams = {
-        connectorType,
-        timingProgramId: program.id,
-        outputDomain: "rfout" as const,
-        highVoltageV: 3.2,
-      };
-      try {
-        element = await updateOpticalElementApi(obj.id, {
-          elementKind: "programmable_pulse_generator",
-          kindParams,
-        });
-      } catch {
-        element = await createOpticalElementApi({
-          objectId: obj.id,
-          elementKind: "programmable_pulse_generator",
-          kindParams,
-        });
-      }
-    } catch (err) {
-      await deleteTimingProgramApi(program.id).catch(() => {});
-      throw err;
-    }
-
-    set((current) => ({
-      selectedComponentId: null,
-      selectedObjectId: obj.id ?? null,
-      selectedObjectIds: obj.id ? [obj.id] : [],
-      scene: {
-        ...current.scene,
-        // upsert, not append: the websocket `timing_program.created`
-        // broadcast lands independently, and a raw push made the same
-        // program id appear twice — Pulse & Timing then listed two "CH0"
-        // rows for one PPG (the phantom-channel symptom, this time from
-        // duplication rather than a leaked row).
-        timingPrograms: upsertById(current.scene.timingPrograms ?? [], program),
-        objects: upsertObject(current.scene.objects, obj),
-        physicsElements: upsertById(
-          current.scene.physicsElements.filter((item) => item.objectId !== element.objectId),
-          element,
-        ),
-      },
-    }));
-    return { objectId: obj.id, timingProgramId: program.id };
-  },
-
   async createPpgAtPort({
     targetObjectId,
     targetAnchorId,
     targetAnchorName,
     targetConnectorFamily,
   }) {
-    const created = await get().createProgrammablePulseGenerator({
-      connectorType: targetConnectorFamily,
-    });
-    if (!created) return null;
-    // The PPG plugs STRAIGHT into the port — no cable. Record the
-    // relationship on the PPG itself (`utils/ppgAttachment.ts`); the mount
-    // math, the RF BFS (both sides) and the RF Link panel all read it as the
-    // zero-length edge a cable used to stand in for. See that module's header
-    // for why the old real-rf_cable approach had to go.
-    let attached = false;
+    // ONE request (`POST /api/v3/ppg/attach`) for what used to be five:
+    // create the TimingProgram, create the object, upsert its PhysicsElement,
+    // PUT the `ppgAttachment`, and unwind all of it by hand when a later step
+    // failed. The backend runs the same rules (`canSpawnPpgHere`, the
+    // `ppgHasUsableAsset` gate, `CH<n>` stepped past any name taken) in one
+    // transaction, so the rollback this function used to carry — and the
+    // ghost TimingProgram it existed to prevent — cannot arise.
+    //
+    // `targetConnectorFamily` is the caller's own gate; the endpoint reads the
+    // family off the port, which is where it came from in the first place.
+    void targetConnectorFamily;
+    let attached: Awaited<ReturnType<typeof ppgAttachApi>>;
     try {
-      const attachment = { targetObjectId, targetAnchorId, targetAnchorName };
-      const updated = await updateObjectApi(created.objectId, {
-        properties: {
-          ...((get().scene.objects.find((o) => o.id === created.objectId)?.properties
-            ?? {}) as Record<string, unknown>),
-          ppgAttachment: attachment,
+      attached = await ppgAttachApi({
+        target: {
+          objectId: targetObjectId,
+          anchorName: targetAnchorName,
+          anchorId: targetAnchorId,
         },
+        collectionId: get().activeCollectionId,
       });
-      set((s) => ({
-        scene: { ...s.scene, objects: upsertObject(s.scene.objects, updated) },
-      }));
-      attached = true;
-    } catch {
-      attached = false;
+    } catch (err) {
+      // A refused rule is the old "returns null" outcome (the panel then
+      // does nothing); an outage still throws.
+      if (err instanceof RfFlowError && err.isRefusal) return null;
+      throw err;
     }
-    if (!attached) {
-      // PPG materialised but the attachment write failed — roll back the PPG
-      // (and the cascaded TimingProgram) so we don't leave dangling state.
-      await get().deleteObject(created.objectId).catch(() => {});
-      // Belt and braces: when the backend is healthy the delete's
-      // ``timing_program.deleted`` broadcast prunes the program from the
-      // store. But if the delete itself failed (server hiccup — exactly
-      // when the cable step is failing too), the optimistic rows would
-      // linger as a phantom "CHn" channel until reload. Prune locally;
-      // idempotent with the websocket event.
-      set((s) => ({
-        scene: {
-          ...s.scene,
-          objects: s.scene.objects.filter((o) => o.id !== created.objectId),
-          physicsElements: s.scene.physicsElements.filter(
-            (pe) => pe.objectId !== created.objectId,
-          ),
-          timingPrograms: (s.scene.timingPrograms ?? []).filter(
-            (p) => p.id !== created.timingProgramId,
-          ),
-        },
-      }));
-      return null;
-    }
-    return created;
+    set((current) => ({
+      selectedComponentId: null,
+      selectedObjectId: attached.object.id,
+      selectedObjectIds: [attached.object.id],
+      scene: {
+        ...current.scene,
+        // upsert, not append: the websocket `timing_program.updated` /
+        // `object.created` broadcasts land independently, and a raw push made
+        // the same program id appear twice — Pulse & Timing then listed two
+        // "CH0" rows for one PPG.
+        timingPrograms: upsertById(current.scene.timingPrograms ?? [], attached.timingProgram),
+        objects: upsertObject(current.scene.objects, attached.object),
+      },
+    }));
+    return { objectId: attached.object.id, timingProgramId: attached.timingProgram.id };
   },
 
   async addTextAnnotation(text) {
@@ -3359,22 +3227,28 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   },
   async clearRfCableEndpointLink(objectId, end) {
     // Per the user-facing cable contract ("if either end of a cable is
-    // unlinked, remove the cable"): unlinking either end now DELETES the cable object outright
-    // instead of leaving it dangling with one anchored end and one free
-    // end. The two-mode design (free spline gizmo + linked endpoint) was
-    // confusing the user because a freed end snapped to (0, 0, 0) by
-    // default, looking like the cable had teleported into the corner of
-    // the table. End-state simplification: cables either connect two
-    // ports or they don't exist.
-    const state = get();
-    const obj = state.scene.objects.find((o) => o.id === objectId);
-    if (!obj) return;
-    const baseProps = (obj.properties ?? {}) as Record<string, unknown> & {
-      rfCableEndpoints?: { A?: unknown; B?: unknown };
-    };
-    if (!baseProps.rfCableEndpoints?.[end]) return; // nothing to unlink
-    // Delegate to the batch deleter so the scene update is one set().
-    await get().deleteObjects([objectId]);
+    // unlinked, remove the cable"): unlinking either end DELETES the cable
+    // object outright instead of leaving it dangling with one anchored end
+    // and one free end. The two-mode design (free spline gizmo + linked
+    // endpoint) was confusing the user because a freed end snapped to
+    // (0, 0, 0) by default, looking like the cable had teleported into the
+    // corner of the table. End-state simplification: cables either connect
+    // two ports or they don't exist.
+    //
+    // `POST /api/v3/rf-cables/{id}/disconnect` carries that contract whole,
+    // including the precondition: an end with NO link is a no-op, because a
+    // destructive action may only follow from a fact positively established
+    // (the 2026-08-14 data-loss lesson, docs/introduce/rf.md §7). The cable
+    // goes through the same delete cascade as `deleteObjects`.
+    try {
+      const out = await rfCableDisconnectApi(objectId, end);
+      applyDeletion(set, out.deletedObjectIds, out.deletedTimingProgramIds);
+    } catch (err) {
+      // No such cable, not a cable, or a locked row the cascade reached —
+      // all of which this left the scene untouched for before the endpoint.
+      if (err instanceof RfFlowError && err.isRefusal) return;
+      throw err;
+    }
   },
   async insertRfCableNode(objectId, index, node) {
     const state = get();
@@ -3656,119 +3530,55 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   },
 
   async findRfCableAlignmentCandidates(objectId, end, toleranceMm = 25) {
-    // Gather RF ports from every OTHER SceneObject (own ports skipped),
-    // transform body-local → lab via the owner's pose, and delegate the
-    // distance + new-node math to `findRfCableEndpointAlignmentCandidates`
-    // in utils/rfCableAlignment.ts. Returns a sorted list of candidates
-    // — UI auto-applies the first when length === 1 and shows a picker
-    // when length >= 2 (AD9959-style clustered CH0..CH3 case).
-    const state = get();
-    const obj = state.scene.objects.find((o) => o.id === objectId);
-    if (!obj) return [];
-    const component = state.scene.components.find((c) => c.id === obj.componentId);
-    if (!component) return [];
-    if (component.kindId !== "rf_cable" && component.kindId !== "sma_cable") {
-      return [];
+    // `POST /api/v3/rf-cables/{id}/align-candidates` — compute-only. The port
+    // gathering (every rf_in / rf_out anywhere in another object's binding
+    // tree, posed through its binding chain) and the distance + new-node math
+    // used to live here and in `utils/rfCableAlignment.ts`; both are now the
+    // backend's `flows.align_candidates`, so the web and the Blender add-on
+    // measure with one implementation. The UI contract is unchanged: sorted
+    // nearest first, auto-applied when there is exactly one, a picker when
+    // there are several (the AD9959's clustered CH0..CH3).
+    try {
+      return await rfCableAlignCandidatesApi(objectId, end, toleranceMm);
+    } catch (err) {
+      // "not an rf_cable" / "no such object" answered [] here before the
+      // endpoint existed, and the picker treats [] as "nothing in range".
+      if (err instanceof RfFlowError && err.isRefusal) return [];
+      throw err;
     }
-    const objProps = obj.properties as { rfCableNodes?: FiberNodePersist[] } | undefined;
-    const lengthMm = (() => {
-      const v = (component.properties as { lengthMm?: number } | undefined)?.lengthMm;
-      return typeof v === "number" ? v : 150;
-    })();
-    const nodes: FiberNodePersist[] =
-      (objProps?.rfCableNodes && objProps.rfCableNodes.length >= 2)
-        ? objProps.rfCableNodes
-        : [
-            { posMm: [-lengthMm / 2, 0, 0] },
-            { posMm: [lengthMm / 2, 0, 0] },
-          ];
-
-    type Vec3T = [number, number, number];
-    // Port body -> lab through the SceneObject's REAL rotation
-    // (`optical/pose`, the transform the tracer, the renderer and
-    // `resolveLinkedRfCableEndpoint` use). This used to be an inline
-    // `Rz·Rx·Ry` with positive angles, which is not the SceneObject
-    // convention (it is its mirror image, in another order): every port of
-    // an instrument rotated about x or y — the DDS and switches at rx −90 —
-    // was placed wrong, so the candidate list measured to, and mated onto,
-    // a point where the port is not.
-    const makeOwnerTransforms = (ownerPose: { xMm: number; yMm: number; zMm: number; rxDeg: number; ryDeg: number; rzDeg: number }) => ({
-      bodyToLab: (v: Vec3T): Vec3T => {
-        const p = pointBodyToLab({ x: v[0], y: v[1], z: v[2] }, ownerPose);
-        return [p.x, p.y, p.z];
-      },
-      bodyToLabDir: (v: Vec3T): Vec3T => {
-        const d = dirBodyToLab({ x: v[0], y: v[1], z: v[2] }, ownerPose);
-        return [d.x, d.y, d.z];
-      },
-    });
-
-    const ports: import("../utils/rfCableAlignment").RfPortLab[] = [];
-    const { rfPortPoses } = await import("../utils/rfCableAnchorResolver");
-    for (const other of state.scene.objects) {
-      if (other.id === objectId) continue;
-      const otherComp = state.scene.components.find((c) => c.id === other.componentId);
-      if (!otherComp) continue;
-      // Whole binding tree, not just the "main" asset: reading asset3dId
-      // directly missed every binding-backed RF object, and `primaryAsset`
-      // still misses a multi-root one (EOM + its two FC/APC connectors),
-      // so a cable end found no port to snap to. Each port is posed through
-      // its binding chain (`rfPortPoses`) — axisX-first, so a port whose
-      // face normal isn't +X still snaps the end to its real outward.
-      const { bodyToLab, bodyToLabDir } = makeOwnerTransforms(other);
-      for (const p of rfPortPoses(otherComp, other, state.scene)) {
-        if (p.anchorId !== "rf_in" && p.anchorId !== "rf_out") continue;
-        ports.push({
-          labPosMm: bodyToLab([p.posCad.x, p.posCad.y, p.posCad.z]),
-          labDirOutward: bodyToLabDir([p.dirCad.x, p.dirCad.y, p.dirCad.z]),
-          targetName: other.name,
-          targetObjectId: other.id,
-          targetAnchorName: p.anchorName,
-          targetAnchorId: p.anchorId,
-        });
-      }
-    }
-    if (ports.length === 0) return [];
-
-    // This end's connector length = its bound connector asset's own
-    // |connect_in − connect_out|, the same lookup connect and resnap use —
-    // not the procedural 15.5 mm, which made an aligned SMA end's mating
-    // face overshoot its port by 9.95 mm (25.45 − 15.5).
-    const { connectorTipMmFromAnchors } = await import("../utils/rfCableAnchorResolver");
-    const connBinding = (state.scene.componentBindings ?? []).find(
-      (b) => b.componentId === component.id
-        && b.role === (end === "A" ? "end_a" : "end_b")
-        && b.targetKind === "asset",
-    );
-    const connAsset = connBinding?.asset3dId
-      ? state.scene.assets.find((a) => a.id === connBinding.asset3dId)
-      : undefined;
-    const { findRfCableEndpointAlignmentCandidates } = await import("../utils/rfCableAlignment");
-    return findRfCableEndpointAlignmentCandidates({
-      endpoint: end,
-      cablePose: {
-        xMm: obj.xMm, yMm: obj.yMm, zMm: obj.zMm,
-        rxDeg: obj.rxDeg, ryDeg: obj.ryDeg, rzDeg: obj.rzDeg,
-      },
-      cableNodes: nodes,
-      ports,
-      toleranceMm,
-      connectorTipMm: connectorTipMmFromAnchors(connAsset?.anchors, null),
-    });
   },
 
   async applyRfCableAlignmentCandidate(objectId, end, candidate) {
-    // Phase B: stitch the precomputed candidate back into the rf_cable's
-    // node array and write through `updateRfCableNodes`. Only the touched
-    // endpoint's posMm + the matching handle change; the other handle on
-    // this node and every interior node are preserved verbatim.
-    const state = get();
-    const obj = state.scene.objects.find((o) => o.id === objectId);
-    if (!obj) return;
-    const component = state.scene.components.find((c) => c.id === obj.componentId);
-    if (!component) return;
-    const nextProps = buildRfCableAlignmentProps(obj.properties, component.properties, end, candidate);
-    const updated = await updateObjectApi(obj.id, { properties: nextProps });
+    // `POST /api/v3/rf-cables/{id}/align`: the endpoint re-derives the
+    // candidate list and writes the one naming this target, so the node,
+    // handle and link record are computed in exactly one place. The candidate
+    // is named by (object, anchorId, anchorName) rather than shipped back
+    // verbatim, which is also what makes it safe to hand a candidate the UI
+    // has been holding while the scene moved under it.
+    //
+    // Tolerance: the candidate came out of a list built with some tolerance we
+    // no longer have, so ask for one that certainly still contains it — the
+    // endpoint matches by identity, not by distance, so a wider window cannot
+    // select a different port.
+    const toleranceMm = Math.max(25, candidate.distMm * 1.000001 + 1e-6);
+    let updated: SceneObject;
+    try {
+      updated = await rfCableAlignApi(
+        objectId,
+        end,
+        {
+          objectId: candidate.targetObjectId,
+          anchorName: candidate.targetAnchorName,
+          anchorId: candidate.targetAnchorId,
+        },
+        toleranceMm,
+      );
+    } catch (err) {
+      // The cable or the port is gone (the picker's list went stale): the
+      // pre-endpoint code returned without writing anything.
+      if (err instanceof RfFlowError && err.isRefusal) return;
+      throw err;
+    }
     set((s) => ({
       scene: { ...s.scene, objects: upsertById(s.scene.objects, updated) },
     }));
@@ -3776,355 +3586,59 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
 
   async resnapRfCablesLinkedTo(movedObjectIds) {
     // Write-through half of the cable-follows-instrument behaviour. The
-    // renderer already re-derives cable ends live (viewer applyLink), but
-    // the STORED rfCableNodes stay at connect-time values — so a page
-    // reload first paints the old geometry until the live pass catches up.
-    // Persisting the recomputed end here makes stored data == derived data.
-    // Math mirrors createRfCableBetweenPorts' buildCandidate (same body
-    // frame, same tip derivation) so connect-time and re-snap agree.
+    // renderer already re-derives cable ends live (viewer applyLink), but the
+    // STORED rfCableNodes stay at connect-time values — so a page reload first
+    // paints the old geometry until the live pass catches up. Persisting the
+    // recomputed end makes stored data == derived data.
     //
-    // Accumulated, not applied per end: a group move re-snaps both ends
-    // of several cables at once, and one PATCH + commit per end meant
-    // 2×N extra scene rebuilds trailing the move. Fold every end of
-    // every affected cable into one properties patch per cable, then
-    // commit the lot through `updateSceneObjects` (a single commit).
-    const moved = new Set(movedObjectIds);
-    if (moved.size === 0) return;
-    const state = get();
-    const nextPropsByCable = new Map<string, SceneObject["properties"]>();
-    const { resolveLinkedRfCableEndpoint, connectorTipMmFromAnchors, resolveRfPortPose } =
-      await import("../utils/rfCableAnchorResolver");
-    for (const cable of state.scene.objects) {
-      const comp = state.scene.components.find((c) => c.id === cable.componentId);
-      if (!comp || (comp.kindId !== "rf_cable" && comp.kindId !== "sma_cable")) continue;
-      const endpoints = (cable.properties as {
-        rfCableEndpoints?: Record<"A" | "B", {
-          targetObjectId: string;
-          targetAnchorId: string;
-          targetAnchorName: string;
-        } | undefined>;
-      } | undefined)?.rfCableEndpoints;
-      if (!endpoints) continue;
-      for (const end of ["A", "B"] as const) {
-        const link = endpoints[end];
-        if (!link || !moved.has(link.targetObjectId)) continue;
-        const targetObj = get().scene.objects.find((o) => o.id === link.targetObjectId);
-        if (!targetObj) continue;
-        const targetComp = state.scene.components.find((c) => c.id === targetObj.componentId);
-        if (!targetComp) continue;
-        // Whole binding tree, not just the "main" asset — a multi-root
-        // Component (EOM + its two FC/APC connectors) keeps its rf_in on
-        // one of the roots, and `primaryAsset` answers null for those —
-        // posed through the port's binding chain (`resolveRfPortPose`).
-        const port = resolveRfPortPose(
-          targetComp, targetObj, state.scene, link.targetAnchorId, link.targetAnchorName,
-        );
-        if (!port) continue;
-        const connBinding = (state.scene.componentBindings ?? []).find(
-          (b) => b.componentId === comp.id
-            && b.role === (end === "A" ? "end_a" : "end_b")
-            && b.targetKind === "asset",
-        );
-        const connAsset = connBinding?.asset3dId
-          ? state.scene.assets.find((a) => a.id === connBinding.asset3dId)
-          : undefined;
-        const resolved = resolveLinkedRfCableEndpoint({
-          endpoint: end,
-          cablePose: {
-            xMm: cable.xMm, yMm: cable.yMm, zMm: cable.zMm,
-            rxDeg: cable.rxDeg, ryDeg: cable.ryDeg, rzDeg: cable.rzDeg,
-          },
-          targetPose: {
-            xMm: targetObj.xMm, yMm: targetObj.yMm, zMm: targetObj.zMm,
-            rxDeg: targetObj.rxDeg, ryDeg: targetObj.ryDeg, rzDeg: targetObj.rzDeg,
-          },
-          targetAnchorPosBodyMm: [port.posCad.x, port.posCad.y, port.posCad.z],
-          targetAnchorDirBody: [port.dirCad.x, port.dirCad.y, port.dirCad.z],
-          connectorTipMm: connectorTipMmFromAnchors(connAsset?.anchors, null),
-        });
-        if (!resolved) continue;
-        // Fold onto whatever the other end of THIS cable already wrote,
-        // so End B doesn't clobber End A's nodes.
-        nextPropsByCable.set(
-          cable.id,
-          buildRfCableAlignmentProps(
-            nextPropsByCable.get(cable.id) ?? cable.properties,
-            comp.properties,
-            end,
-            {
-              targetObjectId: link.targetObjectId,
-              targetAnchorId: link.targetAnchorId,
-              targetAnchorName: link.targetAnchorName,
-              targetName: targetObj.name,
-              distMm: 0,
-              newPosMmBody: resolved.posMmBody,
-              newHandleMmBody: resolved.handleMmBody,
-            },
-          ),
-        );
-      }
-    }
-    if (nextPropsByCable.size === 0) return;
-    // Derived write — the move that triggered it already recorded a
-    // history entry, and undoing that move re-runs this pass.
-    await get().updateSceneObjects(
-      [...nextPropsByCable].map(([objectId, properties]) => ({ objectId, patch: { properties } })),
-      { recordHistory: false },
-    );
+    // `POST /api/v3/rf-cables/resnap` does the whole sweep in one transaction
+    // (it also re-mounts the PPGs plugged into a moved object, which the web
+    // does not need — it draws the mount live — but which keeps the stored
+    // pose honest for a client that cannot). It replaces the local scan +
+    // per-cable properties patch this used to fold into `updateSceneObjects`,
+    // and stays a DERIVED write: the move that triggered it already recorded
+    // the history entry, and undoing that move re-runs this pass.
+    if (movedObjectIds.length === 0) return;
+    const updated = await rfCableResnapApi([...new Set(movedObjectIds)]);
+    if (updated.length === 0) return;
+    set((s) => {
+      let objects = s.scene.objects;
+      for (const so of updated) objects = upsertById(objects, so);
+      return { scene: { ...s.scene, objects } };
+    });
   },
 
   async createRfCableBetweenPorts(args) {
     const { srcObjectId, srcAnchorId, srcAnchorName, tgtObjectId, tgtAnchorId, tgtAnchorName } = args;
-    const state = get();
-    if (srcObjectId === tgtObjectId) return null;
-    const { resolveRfPortPose } = await import("../utils/rfCableAnchorResolver");
-
-    // 2. Resolve each endpoint's port lab position so the new SceneObject
-    //    can land at the midpoint (the spline nodes will then be re-derived
-    //    via applyRfCableAlignmentCandidate; the body pose just provides
-    //    a sensible centre point + rotation = identity).
+    // `POST /api/v3/rf-cables/connect`. Everything this used to do in the
+    // browser — pose both ports through their binding chains, pick the catalog
+    // cable whose end A / B connector families match (direct, else A/B
+    // swapped, else the first rf_cable), place the body at the two ports'
+    // midpoint with identity rotation, and back-derive each spline node so the
+    // bound connector's mating face lands ON its port — is `flows.plan_connect`,
+    // written in ONE transaction instead of a create followed by two PUTs.
     //
-    //    Also extracts each endpoint's `connectorType` so the cable-variant
-    //    picker below can match SMA / BNC families end-for-end.
-    type Vec3 = [number, number, number];
-    type ConnectorFamily = "sma" | "bnc" | null;
-    type PortResolved = {
-      labPos: Vec3;
-      labDir: Vec3;
-      anchorPosBody: Vec3;
-      anchorDirBody: Vec3;
-      targetName: string;
-      connectorFamily: ConnectorFamily;
-      domain: "rf" | "ttl" | "trigger" | "rfout" | null;
-    };
-    const resolvePort = (
-      objectId: string,
-      anchorId: string,
-      anchorName: string,
-    ): PortResolved | null => {
-      const obj = state.scene.objects.find((o) => o.id === objectId);
-      if (!obj) return null;
-      const comp = state.scene.components.find((c) => c.id === obj.componentId);
-      if (!comp) return null;
-      // Resolve the anchor across the whole binding tree, not just the
-      // Component's "main" asset. In binding-backed scenes asset3dId is
-      // null, and `primaryAsset` additionally gives up on a MULTI-ROOT
-      // Component (the EOSpace EOM: modulator + two FC/APC connectors) —
-      // either way resolvePort returned null and the whole connect
-      // silently no-op'd, with the panel showing the ports and no cable
-      // ever being created.
-      //
-      // Posed through the port's binding chain (`resolveRfPortPose`: the
-      // binding transforms, this instance's ObjectBinding deltas and asset
-      // swaps — the tracer's chain). It used to take the anchor in its own
-      // asset's frame, exact only on an identity root binding. Primary
-      // direction = axisX first (device-materialized anchors carry ONLY
-      // axisX; reading the legacy directionBodyLocal alone defaulted every
-      // RF port to +X — the connector then aligned 90° off whenever the
-      // real face normal wasn't +X, e.g. ad9959 CH0 faces +Z).
-      const port = resolveRfPortPose(comp, obj, state.scene, anchorId, anchorName);
-      if (!port) return null;
-      const { anchor } = port;
-      const pe = state.scene.physicsElements.find((e) => e.objectId === objectId) ?? null;
-      const kind = pe?.elementKind ?? null;
-      const domain = resolveRfLinkPortDomain({ kind, anchorId });
-      const anchorPosBody: Vec3 = [port.posCad.x, port.posCad.y, port.posCad.z];
-      const anchorDirBody: Vec3 = [port.dirCad.x, port.dirCad.y, port.dirCad.z];
-      const connectorFamily = connectorFamilyFromAnchor(anchor);
-      // Body → lab through the owner's REAL rotation (`optical/pose`), as
-      // in findRfCableAlignmentCandidates — an inline `Rz·Rx·Ry` used to
-      // put the new cable's midpoint in the wrong place for an instrument
-      // rotated about x or y.
-      const labPos = pointBodyToLab({ x: anchorPosBody[0], y: anchorPosBody[1], z: anchorPosBody[2] }, obj);
-      const labDir = dirBodyToLab({ x: anchorDirBody[0], y: anchorDirBody[1], z: anchorDirBody[2] }, obj);
-      return {
-        labPos: [labPos.x, labPos.y, labPos.z] as Vec3,
-        labDir: [labDir.x, labDir.y, labDir.z] as Vec3,
-        anchorPosBody,
-        anchorDirBody,
-        targetName: obj.name,
-        connectorFamily,
-        domain,
-      };
-    };
-
-    const src = resolvePort(srcObjectId, srcAnchorId, srcAnchorName);
-    const tgt = resolvePort(tgtObjectId, tgtAnchorId, tgtAnchorName);
-    if (!src || !tgt) return null;
-    if (!src.domain || !tgt.domain) return null;
-    if (!domainsAreCompatible(src.domain, tgt.domain)) return null;
-    // Connector family on both ends must be defined. Same-family routes
-    // pick the direct catalog cable; cross-family (SMA ↔ BNC) is allowed
-    // when the catalog ships an asymmetric variant (e.g. `rf_cable_sma_to_bnc`).
-    // The cablePick branch below resolves both cases.
-    if (!src.connectorFamily || !tgt.connectorFamily) return null;
-
-    // 1. Pick the right catalog cable variant based on the two endpoints'
-    //    connector families (SMA vs BNC). Catalog cable rows now carry
-    //    `properties.endAConnector` / `endBConnector` (the BNC variants);
-    //    legacy rows like Thorlabs CA2906 use `properties.connectorType`
-    //    as a single family for both ends. When the cable is asymmetric
-    //    (sma_to_bnc) and the drag direction reverses it, we swap which
-    //    spline endpoint (A vs B) attaches to src vs tgt so the rendered
-    //    SMA / BNC connector geometry lands on the matching physical port.
-    const familyFromToken = (t: unknown): ConnectorFamily => {
-      if (typeof t !== "string") return null;
-      if (t.startsWith("sma")) return "sma";
-      if (t.startsWith("bnc")) return "bnc";
-      return null;
-    };
-    const cableEndFamily = (
-      c: ComponentItem,
-      end: "endAConnector" | "endBConnector",
-    ): ConnectorFamily => {
-      // The family lives on the cable's bound connector ASSETS (end_a/end_b
-      // → rf_cable_connector asset, defaultParams.family). Derive it the same
-      // way the renderer / ComponentsEditor does — the catalog cable rows'
-      // own `properties.endAConnector` are empty, so reading them made every
-      // cross-family drag fall through to the sma-sma fallback below. The
-      // derived tokens are gendered (e.g. "bnc_male"), so prefix-match.
-      const derived = deriveCablePropsFromConnectorBindings(c, {
-        componentBindings: state.scene.componentBindings,
-        assets: state.scene.assets,
+    // Argument order does not matter to the endpoint: it sorts the pair by
+    // role, the OUT port being the source.
+    let cable: SceneObject;
+    try {
+      cable = await rfCableConnectApi({
+        a: { objectId: srcObjectId, anchorName: srcAnchorName, anchorId: srcAnchorId },
+        b: { objectId: tgtObjectId, anchorName: tgtAnchorName, anchorId: tgtAnchorId },
+        collectionId: get().activeCollectionId,
       });
-      const props = (c.properties ?? {}) as Record<string, unknown>;
-      return familyFromToken(derived?.[end] ?? props[end] ?? props.connectorType);
-    };
-    const rfCables = state.scene.components.filter(
-      (c) =>
-        (c.kindId === "rf_cable" || c.kindId === "sma_cable")
-        && !c.archivedAt,
-    );
-    const cablePick = (() => {
-      const sFam = src.connectorFamily;
-      const tFam = tgt.connectorFamily;
-      if (sFam && tFam) {
-        // Direct orientation: cable end A → src, end B → tgt.
-        const direct = rfCables.find(
-          (c) =>
-            cableEndFamily(c, "endAConnector") === sFam
-            && cableEndFamily(c, "endBConnector") === tFam,
-        );
-        if (direct) return { component: direct, swap: false };
-        // Reverse orientation: cable end A → tgt, end B → src. Picks
-        // an asymmetric cable (e.g. sma_to_bnc) when the drag direction
-        // is the opposite of the catalog row's A/B convention.
-        const reverse = rfCables.find(
-          (c) =>
-            cableEndFamily(c, "endAConnector") === tFam
-            && cableEndFamily(c, "endBConnector") === sFam,
-        );
-        if (reverse) return { component: reverse, swap: true };
-      }
-      // No connector data on one or both anchors, or no matching cable
-      // in the catalog — fall back to the first rf_cable row (legacy
-      // behaviour). User can still swap to a matching variant later.
-      const fallback =
-        rfCables[0]
-        ?? state.scene.components.find((c) => c.kindId === "rf_cable")
-        ?? state.scene.components.find((c) => c.kindId === "sma_cable");
-      return fallback ? { component: fallback, swap: false } : null;
-    })();
-    if (!cablePick) return null;
-    const cableComponent = cablePick.component;
-    const cableSwap = cablePick.swap;
-
-    // 3. Create the new cable SceneObject at the midpoint. Identity
-    //    rotation — the spline nodes carry the actual end-to-end vector
-    //    so the cable's body frame doesn't need to be tilted.
-    const midX = (src.labPos[0] + tgt.labPos[0]) / 2;
-    const midY = (src.labPos[1] + tgt.labPos[1]) / 2;
-    const midZ = (src.labPos[2] + tgt.labPos[2]) / 2;
-    const cableObj = await createObjectApi({
-      componentId: cableComponent.id,
-      collectionId: get().activeCollectionId,
-      xMm: midX, yMm: midY, zMm: midZ,
-      rxDeg: 0, ryDeg: 0, rzDeg: 0,
-      visible: true,
-      locked: false,
-    } as Parameters<typeof createObjectApi>[0]);
-    // Push into the store immediately so the subsequent
-    // applyRfCableAlignmentCandidate calls can read the cable back from
-    // get().scene.objects without waiting for the next websocket tick.
+    } catch (err) {
+      // Every drop rule the panel already enforces (different objects,
+      // opposite roles, the same signal domain, connectors on both, a free
+      // target) answered null here; so does the one it only shows in the
+      // cursor — a busy SOURCE port, which the endpoint refuses outright.
+      if (err instanceof RfFlowError && err.isRefusal) return null;
+      throw err;
+    }
     set((s) => ({
-      scene: { ...s.scene, objects: upsertById(s.scene.objects, cableObj) },
+      scene: { ...s.scene, objects: upsertById(s.scene.objects, cable) },
     }));
-
-    // 4. Attach both ends via the existing align helper. We construct
-    //    a synthetic candidate per end — `resolveLinkedRfCableEndpoint`
-    //    in rfCableAnchorResolver.ts back-derives the body-local node +
-    //    handle that puts the connector tip exactly on the target port.
-    const { resolveLinkedRfCableEndpoint, connectorTipMmFromAnchors } =
-      await import("../utils/rfCableAnchorResolver");
-    const cablePose = {
-      xMm: midX, yMm: midY, zMm: midZ,
-      rxDeg: 0, ryDeg: 0, rzDeg: 0,
-    };
-    // Tip offset per cable end = the bound connector asset's own
-    // |connect_in − connect_out| (where the bake puts the mating face), so
-    // connect_in lands ON the target port. The hardcoded family constant
-    // (the old default) matches only the procedural connectors, not the
-    // imported device GLBs — that's the ~10 mm (SMA) / ~16 mm (BNC) overshoot.
-    const cableEndConnectorTipMm = (end: "A" | "B"): number => {
-      const role = end === "A" ? "end_a" : "end_b";
-      const binding = (get().scene.componentBindings ?? []).find(
-        (b) => b.componentId === cableComponent.id && b.role === role && b.targetKind === "asset",
-      );
-      const connAsset = binding?.asset3dId
-        ? get().scene.assets.find((a) => a.id === binding.asset3dId)
-        : undefined;
-      return connectorTipMmFromAnchors(connAsset?.anchors, null);
-    };
-    const buildCandidate = (
-      end: "A" | "B",
-      port: PortResolved,
-      targetObjectId: string,
-      targetAnchorId: string,
-      targetAnchorName: string,
-    ) => {
-      const targetPose = (() => {
-        const o = get().scene.objects.find((oo) => oo.id === targetObjectId);
-        return {
-          xMm: o?.xMm ?? 0, yMm: o?.yMm ?? 0, zMm: o?.zMm ?? 0,
-          rxDeg: o?.rxDeg ?? 0, ryDeg: o?.ryDeg ?? 0, rzDeg: o?.rzDeg ?? 0,
-        };
-      })();
-      const result = resolveLinkedRfCableEndpoint({
-        endpoint: end,
-        cablePose,
-        targetPose,
-        targetAnchorPosBodyMm: port.anchorPosBody,
-        targetAnchorDirBody: port.anchorDirBody,
-        connectorTipMm: cableEndConnectorTipMm(end),
-      });
-      if (!result) return null;
-      return {
-        targetObjectId,
-        targetAnchorId,
-        targetAnchorName,
-        targetName: port.targetName,
-        distMm: 0,
-        newPosMmBody: result.posMmBody,
-        newHandleMmBody: result.handleMmBody,
-      } as import("../utils/rfCableAlignment").RfCableAlignmentResult;
-    };
-    // When the picked cable runs A→B opposite to the drag's src→tgt
-    // (`cableSwap === true`), end A attaches to the TARGET port and end
-    // B to the SOURCE so the catalog row's SMA / BNC geometry per end
-    // lines up with the physical connector family at each side.
-    const aPort = cableSwap ? tgt : src;
-    const bPort = cableSwap ? src : tgt;
-    const aObjectId = cableSwap ? tgtObjectId : srcObjectId;
-    const aAnchorId = cableSwap ? tgtAnchorId : srcAnchorId;
-    const aAnchorName = cableSwap ? tgtAnchorName : srcAnchorName;
-    const bObjectId = cableSwap ? srcObjectId : tgtObjectId;
-    const bAnchorId = cableSwap ? srcAnchorId : tgtAnchorId;
-    const bAnchorName = cableSwap ? srcAnchorName : tgtAnchorName;
-    const candA = buildCandidate("A", aPort, aObjectId, aAnchorId, aAnchorName);
-    const candB = buildCandidate("B", bPort, bObjectId, bAnchorId, bAnchorName);
-    if (candA) await get().applyRfCableAlignmentCandidate(cableObj.id, "A", candA);
-    if (candB) await get().applyRfCableAlignmentCandidate(cableObj.id, "B", candB);
-    return cableObj.id;
+    return cable.id;
   },
 
   async alignRfCableEndToPort(objectId, end, toleranceMm = 25) {
@@ -4580,179 +4094,49 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   },
 
   async deleteObject(objectId) {
-    // Locked objects can't be removed — same protection that blocks pose
-    // mutation in stripLockedTransformPatch. Silently no-op so that a
-    // multi-select delete (Promise.all over deleteObject(...)) skips locked
-    // members and removes only the unlocked ones, matching the user-facing
-    // spec: "if multiple objects are selected and a locked one is among
-    // them, executing delete will not delete the locked objects". Backend also returns 409 on locked as defense-in-depth.
-    //
-    // Implementation note: delegates to `deleteObjects` so the single-
-    // object path goes through the same set() reducer as bulk delete.
-    // Avoids two copies of "compute next selection / next scene" drift.
+    // Delegates to `deleteObjects` so the single-object path goes through the
+    // same request and the same reducer as a bulk delete — no second copy of
+    // "compute next selection / next scene" to drift.
     await get().deleteObjects([objectId]);
   },
 
   async deleteObjects(objectIds) {
-    // Filter once up front: locked objects are skipped silently (same
-    // contract as the single-object path), and we de-duplicate so a
-    // caller that hands us [id, id] doesn't fire two DELETEs.
-    const state = get();
-    const objsById = new Map(state.scene.objects.map((o) => [o.id, o]));
-    const toDelete: string[] = [];
-    const seen = new Set<string>();
-    for (const id of objectIds) {
-      if (seen.has(id)) continue;
-      seen.add(id);
-      const target = objsById.get(id);
-      if (target && !target.locked) toDelete.push(id);
-    }
-    if (toDelete.length === 0) return;
-    // Cable contract: any rf_cable that points to a doomed object via
-    // either of its endpoint links would be left dangling, and our
-    // user-facing rule is "if either end of a cable is unlinked, remove the cable". Walk the cable
-    // list ONCE, gather cables whose A or B targets a deleted object,
-    // and roll them into the same delete batch. Closure over `toDelete`
-    // is intentional — we add to it before issuing API calls.
-    const doomedSet = new Set<string>(toDelete);
-    for (const obj of state.scene.objects) {
-      if (doomedSet.has(obj.id)) continue;
-      const props = (obj.properties ?? {}) as {
-        rfCableEndpoints?: {
-          A?: { targetObjectId?: string };
-          B?: { targetObjectId?: string };
-        };
-      };
-      const eps = props.rfCableEndpoints;
-      if (!eps) continue;
-      const aTarget = eps.A?.targetObjectId;
-      const bTarget = eps.B?.targetObjectId;
-      if ((aTarget && doomedSet.has(aTarget)) || (bTarget && doomedSet.has(bTarget))) {
-        toDelete.push(obj.id);
-        doomedSet.add(obj.id);
+    // `POST /api/v3/objects/delete`. The cascade this used to walk in the
+    // browser — the rf_cables whose `rfCableEndpoints` point at a doomed
+    // object (deleted, not unlinked: a coax either joins two ports or does
+    // not exist), the PPGs plugged into one, the legacy PPGs left with no
+    // live cable behind the `cables.length === 0` guard, and those PPGs'
+    // TimingPrograms — is `flows.plan_delete_objects`, run over the database
+    // in ONE transaction instead of N parallel DELETEs. Same rules, one
+    // implementation; the disconnect / detach endpoints share it.
+    //
+    // Carried over from the browser version:
+    //   - locked objects are skipped silently. They come back in `refused`,
+    //     which nothing in the UI shows today (the Outliner hides the delete
+    //     on a locked row, and the Delete key filters them out first);
+    //   - an id with no row counts as deleted — a 404 is the outcome the
+    //     caller wanted, and rethrowing it used to leave the object in the
+    //     store forever, which the ComponentPanel's dangling-link cleanup
+    //     then retried on every render (the 404 ghost loop).
+    // The one departure, inherent to a single transaction: a cascade that
+    // reaches a LOCKED object is refused whole (409) instead of deleting
+    // everything else and 409-ing on that row. Neither rf_cable nor PPG is
+    // lockable in the UI, so this needs a hand-locked cable to hit.
+    if (objectIds.length === 0) return;
+    let outcome: Awaited<ReturnType<typeof deleteObjectsApi>>;
+    try {
+      outcome = await deleteObjectsApi(objectIds);
+    } catch (err) {
+      if (err instanceof RfFlowError && err.code === "locked") {
+        // Nothing was deleted. Report rather than throw: every caller fires
+        // this and forgets (`void state.deleteObjects(...)`).
+        // eslint-disable-next-line no-console
+        console.warn(`[sceneStore] delete refused: ${err.message}`);
+        return;
       }
+      throw err;
     }
-    // PPG ↔ instrument cascade: a Programmable Pulse Generator's only
-    // reason to exist is to drive a downstream TTL / Trigger input. If
-    // every cable attached to its rf_out is in the doomed set (either
-    // because the user directly disconnected the cable or because the
-    // sink instrument is being deleted), the PPG is now orphan and
-    // should follow. Backend then cascades its bound TimingProgram, so
-    // Pulse & Timing stays in sync without any extra work here.
-    const peByObjectId = new Map<string, PhysicsElement>();
-    for (const pe of state.scene.physicsElements) peByObjectId.set(pe.objectId, pe);
-    // Cable-less PPGs (the current model — `properties.ppgAttachment`) have
-    // no cable to go dangling, so the orphan test below can't see them.
-    // Delete a PPG when the instrument it is plugged into is doomed.
-    for (const ppgId of ppgsAttachedTo(state.scene.objects, state.scene.physicsElements, doomedSet)) {
-      if (doomedSet.has(ppgId)) continue;
-      toDelete.push(ppgId);
-      doomedSet.add(ppgId);
-    }
-    const cablesPerPpg = new Map<string, string[]>();
-    for (const obj of state.scene.objects) {
-      const pe = peByObjectId.get(obj.id);
-      if (pe?.elementKind !== "rf_cable") continue;
-      const eps = (obj.properties as {
-        rfCableEndpoints?: {
-          A?: { targetObjectId?: string };
-          B?: { targetObjectId?: string };
-        };
-      })?.rfCableEndpoints;
-      for (const link of [eps?.A, eps?.B]) {
-        const targetId = link?.targetObjectId;
-        if (!targetId) continue;
-        if (peByObjectId.get(targetId)?.elementKind !== "programmable_pulse_generator") continue;
-        const arr = cablesPerPpg.get(targetId) ?? [];
-        arr.push(obj.id);
-        cablesPerPpg.set(targetId, arr);
-      }
-    }
-    for (const obj of state.scene.objects) {
-      if (doomedSet.has(obj.id)) continue;
-      if (peByObjectId.get(obj.id)?.elementKind !== "programmable_pulse_generator") continue;
-      const cables = cablesPerPpg.get(obj.id) ?? [];
-      // LEGACY PPGs ONLY (those still wired through a real rf_cable). A
-      // cable-less PPG has no cables at all, which would read as "every
-      // cable is doomed" and delete it on ANY unrelated delete — its
-      // lifetime is governed by the ppgAttachment cascade above instead.
-      if (cables.length === 0) continue;
-      const aliveCables = cables.filter((cableId) => !doomedSet.has(cableId));
-      if (aliveCables.length === 0) {
-        toDelete.push(obj.id);
-        doomedSet.add(obj.id);
-      }
-    }
-    // Fire every DELETE in parallel — the API is idempotent per-row and
-    // there's no inter-row ordering constraint. A 404 means the row is
-    // ALREADY gone from the DB, which is the outcome we wanted, so it must
-    // count as success: rethrowing left the object in the local store
-    // forever, and any caller that re-fires on scene change (the cable
-    // panel's dangling-link cleanup) then retried the same dead id on every
-    // render — an endless 404 loop against a ghost row. Other failures
-    // still surface.
-    await Promise.all(
-      toDelete.map((id) =>
-        deleteObjectApi(id).catch((err: unknown) => {
-          const status = (err as { response?: { status?: number } })?.response?.status;
-          if (status === 404) return;
-          throw err;
-        }),
-      ),
-    );
-    // Cross-table cascade: when a PPG is among the doomed set, also drop
-    // its bound TimingProgram and PhysicsElement locally. Backend
-    // cascades + broadcasts the same — this optimistic update closes the
-    // gap so the user doesn't see a stale Pulse & Timing row or a
-    // dangling RF Link node between the API ack and the WS event.
-    const stateNow = get();
-    const cascadedProgramIds = new Set<string>();
-    for (const id of toDelete) {
-      const pe = stateNow.scene.physicsElements.find((p) => p.objectId === id);
-      if (pe?.elementKind !== "programmable_pulse_generator") continue;
-      const programId = (pe.kindParams as { timingProgramId?: string } | undefined)
-        ?.timingProgramId;
-      if (typeof programId === "string" && programId) cascadedProgramIds.add(programId);
-    }
-    // ONE state update — what the user wanted: 50 deletes = 1 re-render.
-    const deletedSet = new Set<string>(toDelete);
-    set((current) => {
-      const nextObjects = current.scene.objects.filter((object) => !deletedSet.has(object.id));
-      const nextObjectIdSet = new Set(nextObjects.map((object) => object.id));
-      const remainingSelectedIds = current.selectedObjectIds.filter(
-        (id) => !deletedSet.has(id) && nextObjectIdSet.has(id),
-      );
-      const activeWasDeleted =
-        current.selectedObjectId !== null && deletedSet.has(current.selectedObjectId);
-      // Selection rule: if the active object was deleted, clear the
-      // selection — don't auto-jump to an arbitrary survivor. (Previously
-      // fell back to `nextObjects[0]` + its componentId, which felt like
-      // a phantom click to the user.)
-      const nextSelectedObjectIds = remainingSelectedIds;
-      return {
-        selectedObjectId: activeWasDeleted
-          ? nextSelectedObjectIds[0] ?? null
-          : current.selectedObjectId,
-        selectedObjectIds: nextSelectedObjectIds,
-        selectedComponentId: activeWasDeleted
-          ? null
-          : current.selectedComponentId,
-        scene: {
-          ...current.scene,
-          objects: nextObjects,
-          physicsElements: current.scene.physicsElements.filter(
-            (item) => !deletedSet.has(item.objectId),
-          ),
-          timingPrograms: (current.scene.timingPrograms ?? []).filter(
-            (p) => !cascadedProgramIds.has(p.id),
-          ),
-          assemblyRelations: current.scene.assemblyRelations.filter(
-            (relation) =>
-              !deletedSet.has(relation.objectAId) && !deletedSet.has(relation.objectBId),
-          ),
-        },
-      };
-    });
+    applyDeletion(set, outcome.deletedObjectIds, outcome.deletedTimingProgramIds);
   },
 
   async upsertObjectBinding(objectId, payload) {

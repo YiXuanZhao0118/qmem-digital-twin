@@ -15,9 +15,9 @@
 - `/api/timing-programs` (`POST` and `PUT` both reject an unordered / overlapping `intervals` list with 422, see [timing.md](timing.md)), `/api/rf-chains/nodes`, `/api/coils`, `/api/magnetics-problems`, `/api/simulation-runs`, `/api/touchstone/parse`, `/api/app-settings/{key}`
 - `POST /api/v3/rf/propagation` — the RF readout at one scrub time (compute-only, see below)
 - `POST /api/v3/align/mirror-coupling`, `/api/v3/align/isolator`, `/api/v3/align/aom-bragg` — proposed poses from the align solvers (compute-only, see below)
-- `POST /api/v3/rf-cables/connect`, `/resnap`, `/{id}/disconnect`, `/{id}/align-candidates`, `/{id}/align` and `POST /api/v3/ppg/attach`, `/{id}/detach` — the web's RF-cable / PPG store flows, served to a second client (these WRITE; see the last section)
-- `POST /api/v3/fibers/{id}/{candidates,connect,apply,disconnect}`, `POST /api/v3/fibers/resnap`, `POST /api/v3/pigtails/{id}/{candidates,apply,disconnect}`, `POST /api/v3/pigtails/resnap` — patch-cable and pigtail ends: plug in, park on a beam, unplug, follow a moved instrument. **The web app calls these too since 2026-09-23** — there is no TypeScript copy (these WRITE, see below)
-- `POST /api/v3/objects/delete` — delete objects together with the web's cascade (linked rf_cables, plugged-in PPGs, orphaned legacy PPGs, their TimingPrograms) in one transaction; `dryRun` answers without deleting (this WRITES, see below)
+- `POST /api/v3/rf-cables/connect`, `/resnap`, `/{id}/disconnect`, `/{id}/align-candidates`, `/{id}/align` and `POST /api/v3/ppg/attach`, `/{id}/detach` — the RF-cable / PPG flows, which the web app calls too (these WRITE; see the last section)
+- `POST /api/v3/fibers/{id}/{candidates,connect,apply,disconnect}`, `POST /api/v3/fibers/resnap`, `POST /api/v3/pigtails/{id}/{candidates,apply,disconnect}`, `POST /api/v3/pigtails/resnap` — patch-cable and pigtail ends: plug in, park on a beam, unplug, follow a moved instrument (these WRITE, see below)
+- `POST /api/v3/objects/delete` — delete objects together with the cascade (linked rf_cables, plugged-in PPGs, orphaned legacy PPGs, their TimingPrograms) in one transaction, for every client including the web; `dryRun` answers without deleting (this WRITES, see below)
 - `POST /api/v3/anchors/traced` — every anchor pose exactly as the tracer receives it (compute-only, see below)
 - Static: `/assets/files/...`; Swagger: `/docs`; WebSocket: `/ws/scene`
 - Conventions: every persisted id is a UUIDv7; CamelModel (DB snake_case ↔ API camelCase).
@@ -233,9 +233,9 @@ Defaults, as `AomBraggSection` resolves them: `order` ← `dynamicSources.diffra
 
 `readout` measures the CURRENT pose, `readoutAfter` the proposed one (so `readoutAfter.matchedOrder` shows the CONV-2 flip when the cell runs reversed). Order 0 returns no `pose` and `"error": "Order 0 is the undiffracted beam — …"`. A primary asset that is not an `aom`, or one with no intercept pair / acoustic direction, is 422.
 
-## Write endpoints for a second client: RF cables and PPGs
+## Write endpoints: RF cables and PPGs
 
-Backend ports of the web app's coax-cable and Programmable Pulse Generator flows (`store/sceneStore.ts` and the utils they call), served so the qmem-blender add-on does not grow a third copy. Routers `backend/app/routers/v3_rf_cables.py` / `v3_ppg.py`; pure plans `backend/app/optical/rf_cables/flows.py`; DB side `rf_cables/service.py`. The web app itself still runs its TypeScript; the two are **pinned to each other by golden fixtures the real TypeScript writes** (`frontend/src/utils/__tests__/rfCableParity.test.ts` → `backend/tests/fixtures/rf_cables/{pure,flows}.json`, asserted by `backend/tests/optical/test_rf_cables_parity.py`: 1e-9 on poses / nodes, exact on the cable variant, the PPG component, rule rejections and delete sets). Behaviour and the TS quirks carried over are in [rf.md](rf.md) §7 and [cable.md](cable.md).
+**The coax-cable and Programmable Pulse Generator flows, for every client.** They began (2026-09-22) as backend ports of the web app's `store/sceneStore.ts`, so the qmem-blender add-on would not grow a third copy; in wave 3b the web app was pointed at them and its TypeScript deleted, so this is now the only implementation. Routers `backend/app/routers/v3_rf_cables.py` / `v3_ppg.py`; pure plans `backend/app/optical/rf_cables/flows.py`; DB side `rf_cables/service.py`. The web calls them from `frontend/src/api/client.ts` (`rfCableConnectApi`, `rfCableDisconnectApi`, `rfCableResnapApi`, `rfCableAlignCandidatesApi`, `rfCableAlignApi`, `ppgAttachApi`) — one call per store action, plus an optimistic local update. `backend/tests/fixtures/rf_cables/{pure,flows}.json` are kept as the **frozen goldens the real TypeScript wrote** before it was deleted, asserted by `backend/tests/optical/test_rf_cables_parity.py` (1e-9 on poses / nodes, exact on the cable variant, the PPG component, rule rejections and delete sets), so a Python change still has to be a deliberate fixture update. Behaviour and the quirks carried over are in [rf.md](rf.md) §7 and [cable.md](cable.md).
 
 Common to all of them:
 
@@ -357,7 +357,7 @@ Written in one transaction: the TimingProgram (named `CH<number of PPGs>`, stepp
 
 ### `POST /api/v3/ppg/{id}/detach`
 
-The panel's "Disconnect" on a PPG — the only sanctioned way to remove one: the PPG is deleted through the web's delete cascade and its TimingProgram with it. No body.
+The panel's "Disconnect" on a PPG — the only sanctioned way to remove one: the PPG is deleted through the delete cascade and its TimingProgram with it. No body. (**The web app does not call this one**: its "Disconnect" goes through the generic `deleteObject` → `POST /api/v3/objects/delete`, which runs the very same `flows.plan_delete_objects` on the same PPG. This route exists so a client that only knows about PPGs does not have to reach for the object API.)
 
 ```json
 { "deletedObjectIds": ["<ppg>"], "deletedTimingProgramIds": ["<program>"] }
@@ -365,7 +365,7 @@ The panel's "Disconnect" on a PPG — the only sanctioned way to remove one: the
 
 ## Deleting objects — `POST /api/v3/objects/delete` (this WRITES)
 
-The web store's `deleteObjects` (`frontend/src/store/sceneStore.ts:4615`) served to a second client: delete a set of SceneObjects with everything the web's cascade takes along, in ONE transaction. Router `backend/app/routers/v3_objects.py:55`; plan `backend/app/services/object_delete.py:89` (`plan_delete`, on top of `rf_cables/flows.py:393` `plan_delete_objects` — the one Python port of the cascade, which `/rf-cables/{id}/disconnect` and `/ppg/{id}/detach` use too); DB side `object_delete.py:122`.
+**Every client's delete, the web's included since wave 3b** (`sceneStore.deleteObjects` → `deleteObjectsApi`, `frontend/src/api/client.ts`): delete a set of SceneObjects with everything the cascade takes along, in ONE transaction. Router `backend/app/routers/v3_objects.py:55`; plan `backend/app/services/object_delete.py:89` (`plan_delete`, on top of `rf_cables/flows.py` `plan_delete_objects` — the one implementation of the cascade, which `/rf-cables/{id}/disconnect` and `/ppg/{id}/detach` use too); DB side `object_delete.py:122`.
 
 ```json
 { "objectIds": ["<RF_SWITCH0>", "<MIRROR4, locked>", "<an id already deleted>"], "dryRun": false }
@@ -379,15 +379,17 @@ The web store's `deleteObjects` (`frontend/src/store/sceneStore.ts:4615`) served
   "refused": [ { "objectId": "<MIRROR4, locked>", "reason": "locked" } ] }
 ```
 
-**The cascade**, exactly the web's, in the order the web issues its DELETEs (which is the order of `deletedObjectIds`):
+**The cascade**, in the order the DELETEs are issued (which is the order of `deletedObjectIds`):
 
-1. the requested objects, de-duplicated, minus the `locked` ones — the web skips those silently; here they come back in `refused` (`reason` is always `"locked"` today);
-2. every object whose `properties.rfCableEndpoints.A` or `.B` names a doomed object — ONE pass in scene order. A cable is **deleted**, never unlinked (a coax either joins two ports or does not exist, [rf.md](rf.md) §7);
-3. every PPG plugged into a doomed object (`properties.ppgAttachment`, `ppgsAttachedTo`, evaluated once);
-4. every LEGACY PPG (still wired through rf_cables) whose rf_cables are all doomed — and never one with no rf_cable at all (the `cables.length === 0` guard, `sceneStore.ts:4698`: a cable-less PPG lives by its attachment);
+1. the requested objects, de-duplicated, minus the `locked` ones — skipped silently, and reported in `refused` (`reason` is always `"locked"` today);
+2. every object whose `properties.rfCableEndpoints.A` or `.B` names a doomed object. A cable is **deleted**, never unlinked (a coax either joins two ports or does not exist, [rf.md](rf.md) §7);
+3. every PPG plugged into a doomed object (`properties.ppgAttachment`, `ports.ppg_attachments`);
+4. every LEGACY PPG (still wired through rf_cables) whose rf_cables are all doomed — and never one with no rf_cable at all (the `cables.length === 0` guard: a cable-less PPG lives by its attachment);
 5. per row, what `DELETE /api/objects/{id}` removes (`routers/objects.py:250` `remove_scene_object`): the PhysicsElement, and a PPG's bound TimingProgram (`kindParams.timingProgramId`, `bound_timing_program_id`, `:234`); the FK cascades take the object's ObjectBindings, collection membership, assembly relations, device state and connection / optical / RF link rows.
 
-**Not touched**, as in the web: fibres and pigtails linked to a doomed object keep their now-dangling `fiberEndpoints` / `pigtailEndpoints` link (a loose patch cable is a real bench state; `POST /api/v3/fibers/{id}/disconnect` unlinks one if wanted). Nothing is gated by kind: the web hides rf_cables and PPGs from the Outliner ("Managed", `capabilityProfile`) but its store — and its Delete key on a viewer selection — deletes them, so this does too. Rigid groups only move together; they do not delete together. Deleting a collection is `DELETE /api/collections/{id}` (the Outliner first deletes the objects under it, through `deleteObjects`, when asked to).
+**Steps 2–4 run to a fixpoint** — repeat until none of them adds anything — so the answer does not depend on the order the rows come back in, which no client controls. Each pass walks the scene in order, so the DELETE order is still deterministic. They ran once each, cables before attachments, until wave 3b; that left a dangling cable behind an attached-and-cabled PPG and caught a cable-to-cable chain only as far as the row order happened to run ([known-issues.md](known-issues.md), [rf.md](rf.md) §7).
+
+**Not touched**, as in the web: fibres and pigtails linked to a doomed object keep their now-dangling `fiberEndpoints` / `pigtailEndpoints` link (a loose patch cable is a real bench state; `POST /api/v3/fibers/{id}/disconnect` unlinks one if wanted). Nothing is gated by kind: an rf_cable or PPG named in `objectIds` is deleted, and so is one the cascade reaches. That is deliberate — RF Link's Disconnect asks for one by name. The web keeps them out of the Outliner and off the Delete key ("Managed", `capabilityProfile`), which is a rule about ENTRY POINTS, not about this endpoint. Rigid groups only move together; they do not delete together. Deleting a collection is `DELETE /api/collections/{id}` (the Outliner first deletes the objects under it, through `deleteObjects`, when asked to).
 
 - `deletedTimingProgramIds`: the programs those rows took along, each once, only rows that existed.
 - **Locked**: a cascade that reaches a `locked` object (step 2–4; a requested locked object is only skipped) is refused whole — `409 {"detail": "locked: deleting these would also delete locked object(s) RF_CABLE3 (<id>); unlock them first."}` — and nothing is deleted. `dryRun` answers the same 409.
@@ -396,9 +398,9 @@ The web store's `deleteObjects` (`frontend/src/store/sceneStore.ts:4615`) served
 - `dryRun: true` returns exactly what the real call would (409 included) and writes and broadcasts nothing — for a confirmation dialog.
 - 422 when `objectIds` is missing or an id is not a UUID. An empty list is a 200 with three empty lists.
 
-**Where it departs from the web**, both because it is one transaction: the web DELETEs a locked cascaded object and gets a 409 for that row while the rest go through (in parallel), so the request half-happens and the store's own update is skipped (only the websocket events reconcile it); here the request is refused before anything is written. And the web can only count as "already gone" an object its snapshot still holds (then it also cascades from it); the backend's scene is the database, so an id with no row cascades nothing.
+**Where it departs from the cascade the browser used to run**, both because it is one transaction: the browser DELETEd a locked cascaded object and got a 409 for that row while the rest went through (in parallel), so the request half-happened and the store's own update was skipped (only the websocket events reconciled it); here the request is refused before anything is written, and `sceneStore.deleteObjects` logs it and leaves the scene alone. And the browser could only count as "already gone" an object its snapshot still held (then it also cascaded from it); the backend's scene is the database, so an id with no row cascades nothing.
 
-**Parity**: `frontend/src/store/__tests__/deleteParity.test.ts` runs the real `deleteObjects` against a recording fake of `api/client` and writes `backend/tests/fixtures/delete/{pinned,random}.json` (63 hand-picked requests — the unit-test pins, a live-shaped bench, locks, malformed links, the TS quirks — and 255 on 120 seeded-random scenes), failing when they go stale (`UPDATE_DELETE_FIXTURES=1` regenerates). `backend/tests/test_objects_delete_parity.py` asserts the Python plan issues the same deletes in the same order; `test_objects_delete_endpoint.py` inserts every scene as real rows and replays each request whose outcome does not depend on scene order (306 of 318) through the endpoint — dry run, then for real — and checks the rows, plus dryRun / 409 / one-transaction / event tests. Cross-checked once on the live snapshot (2026-09-22: 73 single-object deletes and delete-all): identical.
+**Tests**: `backend/tests/fixtures/delete/{pinned,random}.json` are the **frozen goldens the real TypeScript wrote** before wave 3b deleted it (63 hand-picked requests — the unit-test pins, a live-shaped bench, locks, malformed links, the quirks — and 255 on 120 seeded-random scenes). `backend/tests/test_objects_delete_parity.py` asserts the plan issues the same deletes in the same order, so a change to the cascade has to be a deliberate fixture update; `test_objects_delete_endpoint.py` inserts every scene as real rows and replays each request whose outcome does not depend on row order through the endpoint — dry run, then for real — and checks the rows, plus dryRun / 409 / one-transaction / event tests. Cross-checked once on the live snapshot (2026-09-22: 73 single-object deletes and delete-all): identical.
 
 ## Fibre and pigtail ends — `POST /api/v3/fibers/*`, `/api/v3/pigtails/*` (these WRITE)
 

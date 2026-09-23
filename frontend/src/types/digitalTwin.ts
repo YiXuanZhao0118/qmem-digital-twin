@@ -115,6 +115,27 @@ export type RfCableEndpointLink = {
   targetAnchorName: string;
 };
 
+/** One port an rf_cable end could snap onto, as
+ *  `POST /api/v3/rf-cables/{id}/align-candidates` returns it (backend
+ *  `flows.align_candidates`): the distance from the end's current connector
+ *  mating face, and the spline node + handle that would mate that face onto
+ *  the port. The geometry used to be computed in the browser
+ *  (`utils/rfCableAlignment.ts`, deleted in wave 3b) — the field names are
+ *  the endpoint's, which are the ones the deleted helper used. */
+export type RfCableAlignmentCandidate = {
+  distMm: number;
+  /** New spline node body-local position (nodes[idx].posMm). */
+  newPosMmBody: [number, number, number];
+  /** New handle vector — `handleOutMm` for End A, `handleInMm` for End B. */
+  newHandleMmBody: [number, number, number];
+  targetName: string;
+  targetObjectId: string;
+  targetAnchorName: string;
+  /** `rf_in` / `rf_out`: the picker labels each candidate with it, and it is
+   *  what tells CH0..CH3 of one AD9959 apart when they cluster. */
+  targetAnchorId: string;
+};
+
 /** Per-instance fibre endpoint link record — the optical twin of
  *  {@link RfCableEndpointLink}. Persisted under
  *  `SceneObject.properties.fiberEndpoints[A|B]` when the user aligns a

@@ -22,8 +22,9 @@ Ports of the read side the web flows stand on:
 * the RF Link panel's port list and occupancy (``RfLinkPanel.tsx``
   ``rfLinkPortsOf`` / ``rfLinkFallbackPorts`` / ``occupiedPortKeys``) —
   what decides which ports a connect / PPG attach may name;
-* ``ppgAttachment.ts`` (``ppgAttachmentOf`` / ``ppgAttachments`` /
-  ``ppgsAttachedTo``).
+* ``ppgAttachment.ts`` (``ppgAttachmentOf`` / ``ppgAttachments``; its
+  ``ppgsAttachedTo`` went with the browser's delete cascade in wave 3b, and
+  is :func:`ppg_attachments` filtered on the doomed set here).
 
 Rows are duck-typed (ORM rows in the service, ``SimpleNamespace`` in the
 parity tests); ids are compared as ``str``.

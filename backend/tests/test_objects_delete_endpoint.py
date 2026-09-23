@@ -1,12 +1,13 @@
 """``POST /api/v3/objects/delete`` against a real database.
 
-``test_objects_delete_parity.py`` pins the pure plan to the TypeScript. This
+``test_objects_delete_parity.py`` pins the pure plan to the goldens. This
 file pins what the endpoint adds on top, on real rows:
 
-* the TypeScript's own fixture scenes, inserted verbatim, give the same
-  answer through the endpoint (as sets — the database hands rows back in
-  its own order, so only the cases the fixtures mark ``orderIndependent``
-  are replayed), and the rows really go: the objects, their
+* the fixture scenes, inserted verbatim, give the same answer through the
+  endpoint (as sets — the database hands rows back in its own order, so
+  only the cases the fixtures mark ``orderIndependent`` are replayed;
+  since the cascade became a fixpoint in wave 3b that is all of them),
+  and the rows really go: the objects, their
   PhysicsElements, the PPGs' TimingPrograms; everything else is untouched;
 * ``dryRun`` answers exactly what the real call then does, and writes and
   broadcasts nothing;

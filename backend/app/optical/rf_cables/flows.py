@@ -1,8 +1,10 @@
-"""The web's RF-cable / PPG store flows as pure plans over an :class:`RfScene`.
+"""The RF-cable / PPG flows as pure plans over an :class:`RfScene`.
 
-Each ``plan_*`` answers "what would the web app write?" without touching
-the DB; :mod:`.service` applies the answer in one transaction. Ports of
-``store/sceneStore.ts``:
+Each ``plan_*`` answers "what does this flow write?" without touching the DB;
+:mod:`.service` applies the answer in one transaction. Originally ported from
+``store/sceneStore.ts``, which called them in the browser until wave 3b
+pointed the web at these endpoints and deleted its copy — the TS names below
+are what each flow was, not where it lives:
 
 =========================  ==================================================
 ``plan_connect``           ``createRfCableBetweenPorts`` behind the RF Link
@@ -390,11 +392,34 @@ def _target_of(link: Any) -> str | None:
 
 
 def plan_delete_objects(scene: RfScene, object_ids: list[str]) -> list[str]:
-    """``deleteObjects``' doomed set, in the order the web issues the
-    DELETEs: the requested (unlocked) objects, then every object whose
-    ``rfCableEndpoints`` points at a doomed one (one pass, scene order),
-    every PPG plugged into a doomed object, and every LEGACY PPG whose
-    cables are all doomed."""
+    """The doomed set, in the order the DELETEs are issued: the requested
+    (unlocked) objects, then — **to a fixpoint** — every object whose
+    ``rfCableEndpoints`` points at a doomed one, every PPG plugged into a
+    doomed object, and every LEGACY PPG whose rf_cables are all doomed.
+
+    Iterating is the fix for the two quirks the TypeScript this was ported
+    from had, kept for parity until the TypeScript was deleted (wave 3b) and
+    then repaired here, where the rule now lives once:
+
+    * it ran each pass ONCE, cables before attachments, so **a PPG that is
+      both attached and still wired by an rf_cable** went with its host while
+      the cable on it stayed behind, dangling — the cable pass had run before
+      its PPG joined the doomed set;
+    * the cable pass being one pass in SCENE ORDER, **a cable whose end names
+      another cable** was caught only when the scene happened to list the
+      target first. That made the answer depend on row order, which no client
+      controls: the endpoint walks the database's order, a browser walked its
+      snapshot's.
+
+    Both are the same defect — a single pass over a rule that can feed
+    itself. The loop runs the three passes until none of them adds anything,
+    which converges because the doomed set only grows inside a finite scene,
+    and makes the answer **independent of the order the rows come in**
+    (pinned by ``backend/tests/test_object_delete_cascade.py``). Each pass
+    still walks the scene in order, so the DELETE order stays deterministic:
+    requested first, then round 1's cables / attachments / orphans, then
+    round 2's.
+    """
     to_delete: list[str] = []
     seen: set[str] = set()
     for oid in object_ids:
@@ -407,28 +432,12 @@ def plan_delete_objects(scene: RfScene, object_ids: list[str]) -> list[str]:
     if not to_delete:
         return []
     doomed = set(to_delete)
-    for obj in scene.objects:
-        oid = str(obj.id)
-        if oid in doomed:
-            continue
-        eps = props_of(obj).get("rfCableEndpoints")
-        if not js_truthy(eps):
-            continue
-        a_target = _target_of(eps.get("A")) if isinstance(eps, dict) else None
-        b_target = _target_of(eps.get("B")) if isinstance(eps, dict) else None
-        if (js_truthy(a_target) and a_target in doomed) or (js_truthy(b_target) and b_target in doomed):
-            to_delete.append(oid)
-            doomed.add(oid)
-    # `ppgsAttachedTo` is evaluated once, against the set as it stands here.
-    attached = [str(ppg.id) for ppg, att in ppg_attachments(scene) if att["targetObjectId"] in doomed]
-    for ppg_id in attached:
-        if ppg_id in doomed:
-            continue
-        to_delete.append(ppg_id)
-        doomed.add(ppg_id)
+
     pe_by_object: dict[str, Any] = {}
     for pe in scene.physics_elements:
         pe_by_object[str(pe.object_id)] = pe  # a Map built in a loop: last wins
+    # Which rf_cables name each PPG. A property of the scene, not of the
+    # doomed set, so it is built once and read by every round.
     cables_per_ppg: dict[str, list[str]] = {}
     for obj in scene.objects:
         pe = pe_by_object.get(str(obj.id))
@@ -443,20 +452,47 @@ def plan_delete_objects(scene: RfScene, object_ids: list[str]) -> list[str]:
             if target_pe is None or target_pe.element_kind != PPG_KIND:
                 continue
             cables_per_ppg.setdefault(str(target_id), []).append(str(obj.id))
-    for obj in scene.objects:
-        oid = str(obj.id)
-        if oid in doomed:
-            continue
-        pe = pe_by_object.get(oid)
-        if pe is None or pe.element_kind != PPG_KIND:
-            continue
-        cables = cables_per_ppg.get(oid, [])
-        if not cables:
-            continue  # a cable-less PPG lives by its attachment, not by cables
-        if all(c in doomed for c in cables):
-            to_delete.append(oid)
-            doomed.add(oid)
-    return to_delete
+
+    def take(oid: str) -> None:
+        to_delete.append(oid)
+        doomed.add(oid)
+
+    while True:
+        before = len(to_delete)
+        # Anything whose endpoint link names a doomed object: the cable is
+        # deleted, never unlinked (a coax joins two ports or does not exist).
+        for obj in scene.objects:
+            oid = str(obj.id)
+            if oid in doomed:
+                continue
+            eps = props_of(obj).get("rfCableEndpoints")
+            if not js_truthy(eps):
+                continue
+            a_target = _target_of(eps.get("A")) if isinstance(eps, dict) else None
+            b_target = _target_of(eps.get("B")) if isinstance(eps, dict) else None
+            if (js_truthy(a_target) and a_target in doomed) or (js_truthy(b_target) and b_target in doomed):
+                take(oid)
+        # Every PPG plugged into a doomed object.
+        for ppg, att in ppg_attachments(scene):
+            ppg_id = str(ppg.id)
+            if ppg_id not in doomed and att["targetObjectId"] in doomed:
+                take(ppg_id)
+        # Every LEGACY PPG (one still wired through rf_cables) all of whose
+        # cables are doomed. A PPG with NO cable is skipped: it lives by its
+        # attachment, and "all zero of its cables are doomed" would otherwise
+        # take it along with any unrelated delete.
+        for obj in scene.objects:
+            oid = str(obj.id)
+            if oid in doomed:
+                continue
+            pe = pe_by_object.get(oid)
+            if pe is None or pe.element_kind != PPG_KIND:
+                continue
+            cables = cables_per_ppg.get(oid, [])
+            if cables and all(c in doomed for c in cables):
+                take(oid)
+        if len(to_delete) == before:
+            return to_delete
 
 
 def disconnect_link(scene: RfScene, cable_id: str, end: str) -> Any:

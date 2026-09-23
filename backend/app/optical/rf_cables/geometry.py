@@ -1,10 +1,13 @@
-"""The pure RF-cable mating / alignment math — ports of
-``frontend/src/utils/rfCableAnchorResolver.ts``,
-``frontend/src/utils/rfCableAlignment.ts`` and
-``sceneStore.buildRfCableAlignmentProps``.
+"""The pure RF-cable mating / alignment math.
 
-Line-for-line transcriptions, not re-derivations: the fixtures in
-``backend/tests/fixtures/rf_cables/pure.json`` pin them at 1e-9.
+Line-for-line transcriptions of the TypeScript this was ported from
+(``frontend/src/utils/rfCableAnchorResolver.ts``, ``utils/rfCableAlignment.ts``
+and ``sceneStore.buildRfCableAlignmentProps``), not re-derivations: the
+fixtures in ``backend/tests/fixtures/rf_cables/pure.json`` pin them at 1e-9.
+The ``rfCableAlignment.*`` / ``buildRfCableAlignmentProps`` names below are
+provenance — wave 3b deleted them when the web moved onto the endpoints, and
+only ``rfCableAnchorResolver.ts`` (the viewer's render-time re-derive) is
+still a live file.
 
 Every point / direction is placed under a SceneObject pose with the canonical
 rotation (``app.optical.pose``, TS ``optical/pose.ts``) — what the tracer and

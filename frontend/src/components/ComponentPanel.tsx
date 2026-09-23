@@ -1387,7 +1387,7 @@ function RfCableEditor({ component }: { component: ComponentItem }) {
   const [alignFeedback, setAlignFeedback] = useState<string | null>(null);
   const [picker, setPicker] = useState<{
     end: "A" | "B";
-    candidates: import("../utils/rfCableAlignment").RfCableAlignmentResult[];
+    candidates: import("../types/digitalTwin").RfCableAlignmentCandidate[];
   } | null>(null);
 
   const isThisCableSelected = selectedObject?.componentId === component.id;
@@ -1483,7 +1483,7 @@ function RfCableEditor({ component }: { component: ComponentItem }) {
 
   const applyCandidate = async (
     end: "A" | "B",
-    c: import("../utils/rfCableAlignment").RfCableAlignmentResult,
+    c: import("../types/digitalTwin").RfCableAlignmentCandidate,
   ) => {
     if (!selectedObject) return;
     await applyRfCableAlignmentCandidate(selectedObject.id, end, c);
