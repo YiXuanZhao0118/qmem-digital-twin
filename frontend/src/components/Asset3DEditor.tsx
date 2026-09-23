@@ -41,6 +41,9 @@ import {
   type V3AssetUsage,
   type V3Face,
   type V3FaceDomain,
+  type V3Medium,
+  type V3Surface,
+  type V3SurfaceModel,
   type V3Transition,
   type V3Vec3,
   useV3Catalog,
@@ -62,7 +65,8 @@ import { SchemaParamEditor } from "./physics/SchemaParamEditor";
 import { useDevicesStore } from "../store/devicesStore";
 import type { DeviceAnchorTemplate } from "../api/client";
 import { isEditableValue } from "../utils/paramLeaves";
-import { cleanNumber } from "../utils/numberFormat";
+import { cleanFixed, cleanNumber } from "../utils/numberFormat";
+import { surfaceSagMm } from "../utils/surfaceSag";
 import {
   anchorPayloadFromDraft,
   deriveOrthonormalBasis,
@@ -840,6 +844,166 @@ function makeFaceLabel(text: string, color: string): THREE.Sprite {
   }));
   sprite.scale.set(4.2, 1.6, 1);
   return sprite;
+}
+
+/** One colour per surface-model surface, shared by the 3D preview and the
+ *  Surfaces table so a row and its face match. */
+const SURFACE_COLORS = ["#e11d48", "#0d9488", "#9333ea", "#65a30d"];
+
+/** A surface-model surface drawn where the tracer sees it: a translucent
+ *  sheet bent by its real sag over its aperture, the aperture rim, and its
+ *  id out on the side where it meets air — so a plano-convex lens shows
+ *  `flat` on one side and `convex` on the other. Display only: never added
+ *  to the pick lists. Local frame as `faceOrientation`: x = axisY,
+ *  y = axisZ, z = axisX (the normal). */
+function buildSurfaceMarker(surface: V3Surface, color: string, labelDistance: number): THREE.Group {
+  const { axisX, axisY, axisZ } = deriveOrthonormalBasis(surface.axisXBodyLocal, surface.axisYBodyLocal);
+  const group = new THREE.Group();
+  const p = surface.positionMmBodyLocal;
+  group.position.set(p.x, p.y, p.z);
+  group.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+    new THREE.Vector3(axisY.x, axisY.y, axisY.z),
+    new THREE.Vector3(axisZ.x, axisZ.y, axisZ.z),
+    new THREE.Vector3(axisX.x, axisX.y, axisX.z),
+  ));
+
+  const { shape: apShape, radiusMm = 0, widthMm = 0, heightMm = 0 } = surface.aperture;
+  const halfU = apShape === "circle" ? radiusMm : widthMm / 2;
+  const halfV = apShape === "circle" ? radiusMm : heightMm / 2;
+  const sag = (u: number, v: number) => surfaceSagMm(surface.shape, u, v) ?? 0;
+
+  const sheet = apShape === "rectangle"
+    ? new THREE.PlaneGeometry(2 * halfU, 2 * halfV, 24, 24)
+    : new THREE.RingGeometry(0, 1, 64, 16).scale(halfU, halfV, 1);
+  const pos = sheet.attributes.position;
+  for (let i = 0; i < pos.count; i += 1) pos.setZ(i, sag(pos.getX(i), pos.getY(i)));
+  const fill = new THREE.Mesh(sheet, new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity: 0.3,
+    side: THREE.DoubleSide,
+    depthTest: false,
+    depthWrite: false,
+  }));
+  fill.renderOrder = 26;
+  group.add(fill);
+
+  const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+  const rimUv = apShape === "rectangle"
+    ? corners.flatMap(([a, b], i) => {
+        const [c, d] = corners[(i + 1) % 4];
+        return Array.from({ length: 24 }, (_, j) => [a + ((c - a) * j) / 24, b + ((d - b) * j) / 24]);
+      })
+    : Array.from({ length: 96 }, (_, i) => [Math.cos((i / 96) * 2 * Math.PI), Math.sin((i / 96) * 2 * Math.PI)]);
+  const rim = rimUv.map(([a, b]) => new THREE.Vector3(a * halfU, b * halfV, sag(a * halfU, b * halfV)));
+  const outline = new THREE.LineLoop(
+    new THREE.BufferGeometry().setFromPoints(rim),
+    new THREE.LineBasicMaterial({ color, depthTest: false, depthWrite: false }),
+  );
+  outline.renderOrder = 27;
+  group.add(outline);
+
+  const label = makeFaceLabel(surface.id, color);
+  // At least a third of the aperture wide, so it reads at the zoom that frames the part.
+  label.scale.multiplyScalar(Math.max(1, (2 * Math.max(halfU, halfV)) / 3 / label.scale.x));
+  label.position.set(0, 0, (surface.back === "air" ? -1 : 1) * labelDistance);
+  label.renderOrder = 31;
+  group.add(label);
+  return group;
+}
+
+function surfaceShapeText(shape: V3Surface["shape"]): string {
+  if (shape.type === "plane") return "plane";
+  const r = `R ${cleanFixed(shape.radiusMm ?? 0, 3)}`;
+  if (shape.type === "cylinder") return `cylinder ${r} (curved along axisY)`;
+  if (shape.type === "conic") {
+    const asph = shape.asphericCoeffs?.length ? `, ${shape.asphericCoeffs.length} asph. terms` : "";
+    return `conic ${r}, k ${shape.conic ?? 0}${asph}`;
+  }
+  return `sphere ${r}`;
+}
+
+function surfaceApertureText(aperture: V3Surface["aperture"]): string {
+  return aperture.shape === "circle"
+    ? `circle r ${aperture.radiusMm}`
+    : `${aperture.shape} ${aperture.widthMm} × ${aperture.heightMm}`;
+}
+
+function surfaceCoatingText(coating: V3Surface["coating"]): string {
+  const r = `R ${cleanNumber((coating.reflectance ?? 0) * 100, 4)} %`;
+  switch (coating.type) {
+    case "ar": return `AR, ${r}`;
+    case "hr": return `HR, ${r}`;
+    case "partial": return `partial, ${r}`;
+    case "polarizing": return "polarizing (T p, R s)";
+    default: return "uncoated (Fresnel)";
+  }
+}
+
+function mediumText(medium: V3Medium): string {
+  if (medium.material) return medium.material;
+  if (medium.n !== undefined) return `n ${medium.n}`;
+  return `nO ${medium.nO} / nE ${medium.nE}`;
+}
+
+/** Read-only view of `assets_3d.surface_model` (docs/surface-optics.md).
+ *  Authored by script (`PUT /api/v3/assets3d/{key}`), never saved from here. */
+function SurfaceModelTable({ model }: { model: V3SurfaceModel }) {
+  const media = Object.entries(model.media ?? {});
+  return (
+    <>
+      <div style={SECTION_LABEL}>Surfaces ({model.surfaces.length})</div>
+      <div style={{ fontSize: 10, color: MUTED, marginBottom: 6 }}>
+        The tracer hit-tests these surfaces instead of the anchors above, and
+        does not run the kind's op. Colours match the 3D preview. R &gt; 0
+        puts the centre of curvature on the +X side. Read-only.
+      </div>
+      <table style={TABLE}>
+        <thead>
+          <tr>
+            <th style={{ ...TH, width: 110 }}>surface</th>
+            <th style={TH}>shape</th>
+            <th style={TH}>vertex x/y/z</th>
+            <th style={TH}>normal (axisX)</th>
+            <th style={TH}>−X side → +X side</th>
+            <th style={TH}>aperture</th>
+            <th style={TH}>coating</th>
+          </tr>
+        </thead>
+        <tbody>
+          {model.surfaces.map((surface, index) => (
+            <tr key={surface.id}>
+              <td style={TD}>
+                <span
+                  style={{
+                    display: "inline-block",
+                    width: 10,
+                    height: 10,
+                    borderRadius: 2,
+                    marginRight: 6,
+                    verticalAlign: "middle",
+                    background: SURFACE_COLORS[index % SURFACE_COLORS.length],
+                  }}
+                />
+                <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 600 }}>{surface.id}</span>
+              </td>
+              <td style={TD}>{surfaceShapeText(surface.shape)}</td>
+              <td style={TD}>{vec3Str(surface.positionMmBodyLocal)}</td>
+              <td style={TD}>{vec3Str(surface.axisXBodyLocal)}</td>
+              <td style={TD}>{surface.back} → {surface.front}</td>
+              <td style={TD}>{surfaceApertureText(surface.aperture)}</td>
+              <td style={TD}>{surfaceCoatingText(surface.coating)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {media.length > 0 && (
+        <div style={{ fontSize: 11, color: MUTED, marginTop: 4 }}>
+          media: {media.map(([id, medium]) => `${id} = ${mediumText(medium)}`).join(" · ")}
+        </div>
+      )}
+    </>
+  );
 }
 
 function draftToPatch(draft: AssetDraft): V3AssetUpdate {
@@ -1776,6 +1940,10 @@ function FaceLocator3D({
       root.add(group);
     });
 
+    asset.surfaceModel?.surfaces.forEach((surface, index) => {
+      root.add(buildSurfaceMarker(surface, SURFACE_COLORS[index % SURFACE_COLORS.length], normalLength * 0.5));
+    });
+
     function saveCameraState() {
       if (!cameraStateRef.current) {
         cameraStateRef.current = {
@@ -2389,7 +2557,7 @@ function FaceLocator3D({
       });
       mount.removeChild(renderer.domElement);
     };
-  }, [asset.filePath, viewerHintsKey, lockedCentroidsKey, showLocks, draft.anchors, selectedAnchorIndex]);
+  }, [asset.filePath, asset.surfaceModel, viewerHintsKey, lockedCentroidsKey, showLocks, draft.anchors, selectedAnchorIndex]);
 
   const selected = selectedAnchorIndex !== null ? draft.anchors[selectedAnchorIndex] : null;
   const canDeleteGeometry = Boolean(onDeleteCluster);
@@ -3237,14 +3405,26 @@ function AssetEditForm({
         </tbody>
       </table>
 
+      {asset.surfaceModel && <SurfaceModelTable model={asset.surfaceModel} />}
+
       {/* defaultParams are catalog-level (used by the kind's ABCD formula)
           — Binding dev only. Kinds with a scalar param schema get a
           structured, kind-constrained editor (same as the Object panel — you can only
           set params the kind defines); schema-less / nested-only kinds fall
-          back to the raw JSON textarea. */}
+          back to the raw JSON textarea. Dimmed, not disabled, on a
+          surface-model asset: the trace ignores them, but the kind schema
+          still requires them and mode matching still reads focalLengthMm. */}
       {isBindingDev && (
-        <>
+        <div style={asset.surfaceModel ? { opacity: 0.55 } : undefined}>
           <div style={SECTION_LABEL}>defaultParams</div>
+          {asset.surfaceModel && (
+            <div style={{ fontSize: 11, color: "#92400e", marginBottom: 6 }}>
+              Not read by the trace for this asset — it goes through the
+              surfaces above.
+              {asset.defaultParams?.focalLengthMm !== undefined
+                && " Mode matching still reads focalLengthMm."}
+            </div>
+          )}
           {pluginForKind(draft.kindId)?.physics.paramSchema ? (
             <DefaultParamsSchemaFields
               kindId={draft.kindId}
@@ -3297,7 +3477,7 @@ function AssetEditForm({
               />
             </>
           )}
-        </>
+        </div>
       )}
     </>
   );

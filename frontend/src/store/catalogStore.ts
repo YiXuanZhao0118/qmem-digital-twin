@@ -72,6 +72,53 @@ export type V3Anchor = {
   name?: string | null;
 };
 
+/** One surface of a surface model (`SurfaceV3`, backend/app/schemas_v3.py).
+ *  `front` is the medium on the +axisX side, `back` the one on the −axisX
+ *  side; `radiusMm > 0` puts the centre of curvature on the +axisX side. */
+export type V3Surface = {
+  id: string;
+  positionMmBodyLocal: V3Vec3;
+  axisXBodyLocal: V3Vec3;
+  axisYBodyLocal: V3Vec3;
+  shape: {
+    type: "plane" | "sphere" | "cylinder" | "conic";
+    radiusMm?: number;
+    conic?: number;
+    asphericCoeffs?: number[];
+  };
+  aperture: {
+    shape: "circle" | "rectangle" | "ellipse";
+    radiusMm?: number;
+    widthMm?: number;
+    heightMm?: number;
+  };
+  front: string;
+  back: string;
+  coating: {
+    type: "uncoated" | "ar" | "hr" | "partial" | "polarizing";
+    reflectance?: number;
+    extinctionRatioPpDb?: number;
+    extinctionRatioSpDb?: number;
+  };
+};
+
+/** Exactly one of `n`, `material`, or the uniaxial `nO` + `nE` (`MediumV3`). */
+export type V3Medium = {
+  n?: number;
+  material?: string;
+  nO?: number;
+  nE?: number;
+  opticAxis?: V3Vec3;
+};
+
+/** A part as real surfaces with media between them (alembic 0141,
+ *  docs/surface-optics.md). `air` and `opaque` are reserved media ids and
+ *  never appear in `media`. */
+export type V3SurfaceModel = {
+  media: Record<string, V3Medium>;
+  surfaces: V3Surface[];
+};
+
 export type V3Asset = {
   id: string;
   catalogId: string;
@@ -113,6 +160,11 @@ export type V3Asset = {
    *  `uploadAssetLod`, deliberately not through the asset PUT so that a
    *  locked asset can still have its derived geometry regenerated. */
   lods: V3AssetLod[];
+  /** Surface optics (alembic 0141). Non-null = the tracer hit-tests these
+   *  surfaces instead of the anchors and ignores the kind's op. Read-only
+   *  in the PHY Editor — deliberately absent from `V3AssetUpdate`, so a
+   *  Save never sends it and the PUT leaves it untouched. */
+  surfaceModel?: V3SurfaceModel | null;
 };
 
 /** One LOD tier of an asset. `errorMm` is the tier's measured max deviation

@@ -2,7 +2,7 @@
 
 # Surface optics — tracing parts through their real faces (plan)
 
-> **Status (2026-09-23): Phases 0–2 landed** — the `assets_3d.surface_model` column, the surface engine (`backend/app/optical/surfaces/`), and its wiring into the anchor tracer. **Phase 3 is under way: ten lenses carry surface models — four plano-convex (LA1509, LA1027, LA1131, LA1951) and six cylindrical (LJ1328L2, LJ1402L1, LJ1934L1, LJ1960L1, LK1426L1, LK1900L1); see "Converted so far". None is in a scene object, so the lab trace is unchanged.** Every other part still traces through its anchor op as described in [introduce/optics.md](introduce/optics.md). Phase 4 is not started.
+> **Status (2026-09-23): Phases 0–2 landed** — the `assets_3d.surface_model` column, the surface engine (`backend/app/optical/surfaces/`), and its wiring into the anchor tracer. **Phase 3 is under way: ten lenses carry surface models — four plano-convex (LA1509, LA1027, LA1131, LA1951) and six cylindrical (LJ1328L2, LJ1402L1, LJ1934L1, LJ1960L1, LK1426L1, LK1900L1); see "Converted so far". None is in a scene object, so the lab trace is unchanged.** Every other part still traces through its anchor op as described in [introduce/optics.md](introduce/optics.md). Phase 4 has begun: the PHY Editor shows a surface model, read-only.
 
 ## Why
 
@@ -186,7 +186,7 @@ Open questions to settle there:
 ### Authoring and display (Phase 4)
 
 - Blender add-on (`qmem-blender`): pick mesh faces, fit a sphere / plane (vertex, normal, R), and write a surface; draw the in-medium segments.
-- Web frontend: show and edit `surfaceModel` in the PHY Editor; draw the in-medium segments.
+- Web frontend: **showing it landed 2026-09-23, read-only** — the PHY Editor's ASSET3D form lists the surfaces and draws each one in its preview with its real sag, colour-coded and labelled on its air side, so a lens's two faces read apart ([introduce/asset.md](introduce/asset.md)). Still to do: editing `surfaceModel` there, and drawing the in-medium segments.
 
 ## Related
 
