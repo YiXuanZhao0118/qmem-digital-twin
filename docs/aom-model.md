@@ -8,7 +8,7 @@ truth shared by the production anchor op, the v3 kind op, the panel, and the
   RF readers), `app/optical/aom_sideband.py` (multi-order spread),
   `anchor_ops/aom.py` (production trace), `kinds/aom/physics.py` (v3 op).
 - Frontend: `optical/kinds/aom/physics.ts` (shared model + panel fallback +
-  parity), `optical/kinds/aom-v3/physics.ts`, `utils/aomAlign.ts` (positioning
+  parity), `optical/kinds/aom-v3/physics.ts`, `backend/app/optical/align/aom_bragg.py` (positioning
   geometry), `components/physics/AlignToBeamControls.tsx` (`AomBraggSection`).
 - Asset params: `kinds/aom/index.ts` defaults; per-asset in `assets_3d.default_params`
   (migrations `0100`–`0102`).
@@ -64,7 +64,7 @@ stages, matching `docs/aom_align_*.py`:
 2. **Stage 2** — rotate `+m·θ_B` about `D3 = D1 × D2` around that centre, so the
    beam lands on the matched incidence for the selected order.
 
-Body triad (`utils/aomAlign.resolveAomBraggFrame`): `D1` = intercept_in →
+Body triad (`optical/align/aom_bragg.resolve_aom_bragg_frame`): `D1` = intercept_in →
 intercept_out, `D2` = the `acoustic_axis` anchor's axisX (else the
 `rfPropagationDirectionBodyLocal` / `acousticAxisBodyLocal` param), re-orthogonalised
 against `D1`; `D3 = D1 × D2`. MT80: `D1 = +Y`, `D2 = −X`, `D3 = +Z`.
@@ -80,25 +80,36 @@ against `D1`; `D3 = D1 × D2`. MT80: `D1 = +Y`, `D2 = −X`, `D3 = +Z`.
   `alignReverse` (beam through the cell backwards) that same tilt Bragg-matches
   order **−m** — physically what a reversed cell does. The panel reports
   `matchedOrder` and warns when it differs from the selected order.
-- **Backend port (2026-09-22)**: the same two-stage align is served as
-  `POST /api/v3/align/aom-bragg` (`backend/app/optical/align/aom_bragg.py` +
-  `service.aom_bragg_align`) for clients other than the web app, pinned to
-  `utils/aomAlign.ts` at 1e-9 by golden fixtures (see
-  [introduce/mirror-coupling.md](introduce/mirror-coupling.md#the-backend-port-and-its-parity-pin);
-  shapes in [introduce/api.md](introduce/api.md)). Its readout uses the backend's
-  own `aom_physics` (the functions the AOM op runs). **One deliberate
-  difference — the RF frequency**: `AomBraggSection` takes it from
-  `utils/aomRfDrive.resolveAomRfDriveFromScene`, a legacy resolver that reads
-  `comp.asset3dId` and therefore returns nothing in a binding-backed scene (so
-  the panel falls through to `dynamicSources.aomFreqMhz` / the asset's
-  `centerFreqMhz`); the endpoint instead takes the carrier arriving at `rf_in`
-  in the RF snapshot the trace itself uses (`rf_resolve.rf_snapshot_at`) and
-  reports which source won in `freqSource`. The two agree whenever no carrier
-  reaches the AOM's `rf_in`; when one does, the endpoint's θ_B follows the RF
-  link — the frequency the trace actually diffracts with — while the web panel
-  still computes θ_B from the stored value. Moving the panel onto
-  `rf_resolve`'s answer is left for the step that rewires the web app onto
-  these endpoints.
+- **One implementation (2026-09-22 ported, 2026-09-23 rewired)**: the two-stage
+  align is served as `POST /api/v3/align/aom-bragg`
+  (`backend/app/optical/align/aom_bragg.py` + `service.aom_bragg_align`), and
+  the web app calls it — `utils/aomAlign.ts` is **deleted**. `AomBraggSection`
+  now sends the order, the fine-tune value and the chosen beam and renders the
+  response's `frame`, `thetaBRad`, `freqMhz`, `freqSource` and `readout`, so
+  "where the cell should sit" and "where it sits now" come from one call. The
+  frozen fixtures under `backend/tests/fixtures/align/aom_bragg.json` pin the
+  Python to what that TypeScript answered, at 1e-9 (see
+  [introduce/mirror-coupling.md](introduce/mirror-coupling.md#one-implementation-and-what-pins-it);
+  shapes in [introduce/api.md](introduce/api.md)). Its readout uses the
+  backend's own `aom_physics` (the functions the AOM op runs).
+- **What the rewire changed, deliberately — the RF frequency**: the deleted
+  panel took it from `utils/aomRfDrive.resolveAomRfDriveFromScene`, a legacy
+  resolver that reads `comp.asset3dId` and therefore returns nothing in a
+  binding-backed scene, so it fell through to `dynamicSources.aomFreqMhz` /
+  the asset's `centerFreqMhz` and labelled the readout "(default)". The
+  endpoint takes the carrier arriving at `rf_in` in the RF snapshot the trace
+  itself uses (`rf_resolve.rf_snapshot_at`, at the rest snapshot — the panel
+  sends no `scrubTimeNs`, matching what the TypeScript did) and reports which
+  source won in `freqSource`; the panel prints "(RF link)" for `rfLink` and
+  "(default)" for everything else. On the live bench (2026-09-23) **both AOMs
+  are binding-backed with `comp.asset3dId = null`, so the old panel showed
+  "(default)"; the endpoint answers `rfLink` at 80.000 MHz — the same number
+  the stored `centerFreqMhz` carries, so θ_B is unchanged at 7.4286 mrad and
+  only the label flips.** The readout now follows the DDS if the channel is
+  re-tuned, which is the point. Second difference, same direction: the
+  endpoint skips a **manual-mode** AOM's RF link (`rf_link_freq_mhz` returns
+  `None` when `aom.manual`), as the tracer does, where the old panel would
+  have shown the link's carrier; neither live AOM is in manual mode.
 
 ## Efficiency
 

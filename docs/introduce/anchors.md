@@ -57,7 +57,7 @@ Measured afterwards: MIRROR2's pose sits exactly on ry = −90°, and its direct
 Pinned by:
 
 - `frontend/src/optical/frames.test.ts` and `backend/tests/test_euler_pole.py`, independently on each side.
-- `backend/tests/fixtures/align/euler.json` plus the MIRROR2 cases in `point_dir.json`, for TS↔Python parity at 1e-9 (see [mirror-coupling.md](mirror-coupling.md#the-backend-port-and-its-parity-pin)).
+- `backend/tests/fixtures/align/euler.json` plus the MIRROR2 cases in `point_dir.json`, for TS↔Python parity at 1e-9 (see [mirror-coupling.md](mirror-coupling.md#one-implementation-and-what-pins-it)).
 
 ## Reading an anchor's pose in lab mm
 
@@ -87,7 +87,7 @@ Two conventions meet inside it and must not be swapped:
 Invariant: the result must equal the backend's
 (`db_scene_loader._binding_tree_transform` composed with
 `pose.pose_to_transform`), or a pose solved from these numbers lands where the
-tracer disagrees. Pinned in `utils/__tests__/mirrorCoupling.test.ts` against
+tracer disagrees. Pinned in `utils/__tests__/anchorPose.test.ts` against
 MIRROR5's traced hit point and reflected direction (both backend outputs). See
 [mirror-coupling.md](mirror-coupling.md) for its first consumer. Since
 2026-09-22 the fibre-port sweep (`sceneStore.collectFiberPortsLab`) and the
@@ -109,7 +109,7 @@ with no per-instance deltas, `id|name` dedupe first-wins, the legacy
 `_binding_tree_transform` + `pose_to_transform` themselves. The two are pinned
 by `backend/tests/fixtures/align/anchor_poses.json`, generated from
 `resolveAnchorPosesLab` over composite and random binding trees (see
-[mirror-coupling.md](mirror-coupling.md#the-backend-port-and-its-parity-pin)),
+[mirror-coupling.md](mirror-coupling.md#one-implementation-and-what-pins-it)),
 and agreed within 1e-9 on all 73 objects of the live scene.
 
 **`ObjectBinding.asset_3d_id_override` is honoured (2026-09-22)**, the way the

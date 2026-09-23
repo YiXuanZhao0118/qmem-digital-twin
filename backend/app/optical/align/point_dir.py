@@ -1,4 +1,4 @@
-"""Point + direction align — port of ``frontend/src/utils/isolatorAlign.ts``.
+"""Point + direction align — was ``frontend/src/utils/isolatorAlign.ts``.
 
 Rotate a SceneObject so a Component-frame direction lies along a beam (or
 against it), optionally rolled about the beam and tilted off it, then
@@ -7,10 +7,10 @@ case feeds it the front / back polariser centres; every other pass-through
 optic feeds it the Component's ``alignSpec`` or its entry anchor (see
 ``service.resolve_align_point_dir``).
 
-Pure: no DB. Pinned to the TypeScript by
-``backend/tests/fixtures/align/point_dir.json`` (generated from the real TS by
-``frontend/src/utils/__tests__/alignParity.test.ts``). Keep the two in
-lockstep — a change to either side must regenerate the fixtures.
+Pure: no DB. Pinned by ``backend/tests/fixtures/align/point_dir.json`` — the
+frozen record of what that TypeScript answered, kept after it was deleted
+(2026-09-23) and now a one-way regression pin. Changing behaviour here means
+re-recording the affected fixture entries deliberately.
 """
 
 from __future__ import annotations

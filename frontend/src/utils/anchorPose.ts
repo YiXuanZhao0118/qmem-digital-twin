@@ -7,7 +7,7 @@
  * owning ASSET's body frame — correct for identity questions, wrong for
  * geometry, because a binding's local transform still sits between the asset
  * and the Component CAD frame. Call sites that needed the pose each
- * re-implemented part of the walk (`collectRoleCentres` for role centres,
+ * re-implemented part of the walk (the isolator's role-centre collector,
  * `AlignToBeamControls` for its single-asset fallback), and neither composed
  * nested bindings.
  *
@@ -22,7 +22,8 @@
  * (`db_scene_loader._binding_tree_transform` composed with
  * `pose.pose_to_transform`), or anything that solves a pose from these
  * numbers lands where the ray tracer disagrees. Pinned end-to-end in
- * `utils/__tests__/mirrorCoupling.test.ts` against a traced hit point.
+ * `utils/__tests__/anchorPose.test.ts` against a traced hit point (and on the
+ * Python side by `backend/tests/fixtures/align/anchor_poses.json`).
  * The same goes for WHICH asset's anchors: a per-instance
  * `ObjectBinding.asset3dIdOverride` is honoured, as the loader honours it.
  */
@@ -41,7 +42,7 @@ export type AnchorPoseLab = {
   asset: Asset3D;
   anchor: Anchor;
   /** Anchor origin in the Component CAD frame (mm). Feed this to
-   *  `computePointDirAlignPose` / `computeTranslateOnlyPose`. */
+   *  the align endpoints as `pointCadMm` (`api/align.ts`). */
   posCad: Vec3;
   /** Primary direction (axisX, else legacy directionBodyLocal) in the
    *  Component CAD frame, unit. null when the anchor declares none. */
@@ -80,9 +81,8 @@ function unit(v: Vec3): Vec3 | null {
 }
 
 /** Component CAD-frame point -> lab mm under a SceneObject pose. The same
- *  path `isolatorAlign.cadToLab` takes; kept local so this module does not
- *  depend on the align family (which already imports binding types from the
- *  other direction). */
+ *  path the backend's `align/frames.cad_to_lab` takes; kept local so this
+ *  module stands on `optical/frames` alone. */
 function cadPointToLab(cad: Vec3, sceneObject: SceneObject): Vec3 {
   const r = rotateLabDir(cad, sceneObject);
   return { x: sceneObject.xMm + r.x, y: sceneObject.yMm + r.y, z: sceneObject.zMm + r.z };

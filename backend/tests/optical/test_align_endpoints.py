@@ -84,7 +84,7 @@ def _scene(objects, components, bindings, assets) -> AlignScene:
 
 
 def _bench() -> AlignScene:
-    """The U-turn of ``mirrorCoupling.test.ts``: seed down -y from the origin,
+    """The U-turn of the deleted ``mirrorCoupling.test.ts``: seed down -y from the origin,
     port at x = 40 taking light along +y; mirrors roughed in by a few mm. A
     lens sits a little off the port axis between B and the port; a second,
     locked one too; an isolator, an optic with an alignSpec, a bare lens and

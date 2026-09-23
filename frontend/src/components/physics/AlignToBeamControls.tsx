@@ -10,57 +10,69 @@
  *     front/back centres (isolator), else the asset's primary intercept
  *     anchor (point = anchor, direction = −axisX so the optic axis faces
  *     the beam — matches the legacy transmissive align).
- *   - the per-object beam↔direction angle (`alignBeamAngleDeg`) lives on
- *     the SceneObject and is edited here, so each instance can sit at its
- *     own angle to the beam (0 = direction on the beam).
+ *   - the per-object direction / roll choices (`alignReverse`,
+ *     `alignRollDeg`) live on the SceneObject and are edited here, so each
+ *     instance can sit at its own orientation on the beam.
  *
  * When several beams pass near the align point (AOM diffraction orders,
  * crossing paths, retro-reflections) a beam picker appears so the user can
  * choose WHICH beam to align to — parity with the legacy fiber / rf_cable
  * two-phase align. With a single nearby beam it auto-aligns to it.
  *
- * The action rotates + translates the SceneObject so the direction makes
- * the configured angle with the chosen beam and the point lands on the beam
- * line. Frame-sensitive maths lives in utils/isolatorAlign (unit-tested).
+ * ── Where the maths lives ─────────────────────────────────────────────────
+ *
+ * Nowhere in this file. Both the (point, direction) resolution and the pose
+ * come from `POST /api/v3/align/isolator` (`api/align.ts`), and the AOM's
+ * Bragg frame / tilt / readout from `POST /api/v3/align/aom-bragg`. The
+ * TypeScript copies (`utils/isolatorAlign.ts`, `utils/aomAlign.ts`) were
+ * deleted once the backend port existed, so there is one implementation for
+ * the web app and the qmem-blender add-on to share.
+ *
+ * What is still decided here, because it is the USER's choice and not
+ * geometry: which beam (the clustering below), the diffraction order, the
+ * fine-tune value, forward / reverse and roll. Those are sent with every
+ * request, so what the panel shows and what the solver used never disagree.
+ *
+ * The one consequence to keep in mind: the solvers are now a round trip away,
+ * so the align point arrives asynchronously. The panel renders its controls
+ * immediately, shows the backend's own `detail` when a call fails, and never
+ * parks in a "solving" state — every path clears `busy` in `finally`.
  *
  * AOMs get an extra Bragg section (`AomBraggSection`): a cell only diffracts
  * into the order you asked for if it is ROTATED to that order's Bragg angle,
  * so the plain "direction ∥ beam" align is not enough. It adds the ±θ_B tilt
  * for the selected diffraction order, a mrad fine-tune knob (the software
  * rotation stage), and a live measurement of where the cell actually sits.
- * Geometry in utils/aomAlign, efficiency model in optical/kinds/aom/physics.
+ * Efficiency model: optical/kinds/aom/physics (mirrored by the backend).
  */
-import { useEffect, useMemo, useState } from "react";
-import * as THREE from "three";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useSceneStore } from "../../store/sceneStore";
 import type { SceneObject } from "../../types/digitalTwin";
-import { threeToLabPointMm } from "../../optical/frames";
-import { primaryAssetForObject, resolveBindingTree } from "../../utils/componentBindings";
-import { anchorObjectLocalPos, anchorObjectLocalPrimaryDir } from "../../utils/anchorAccess";
+import { rotateLabDir, threeToLabPointMm } from "../../optical/frames";
+import { primaryAssetForObject } from "../../utils/componentBindings";
 import {
-  cadToLab,
-  collectRoleCentres,
-  computePointDirAlignPose,
-  pickPolariserCentre,
-  type RoleCentre,
-  type Vec3,
-} from "../../utils/isolatorAlign";
-import {
-  aomBraggReadout,
-  braggTiltRad,
-  computeAomBraggAlignPose,
-  computeAomTiltNudgePose,
-  resolveAomBraggFrame,
-} from "../../utils/aomAlign";
-import { braggAngleRad } from "../../optical/kinds/aom/physics";
-import { resolveAomRfDriveFromScene } from "../../utils/aomRfDrive";
+  alignAomBraggApi,
+  alignPointDirApi,
+  type AlignBeam,
+  type AlignVec3,
+  type AomBraggResult,
+} from "../../api/align";
 
 const ALIGN_TOLERANCE_MM = 25;
-// Preference order for the single-asset fallback's reference anchor.
-const PRIMARY_ANCHOR_IDS = ["intercept_in", "intercept_face", "in", "seed", "tip", "intercept_out"];
 
-type AlignSpecProps = { pointMm?: number[]; directionMm?: number[] };
+/** How long the panel waits for the scene to settle before re-asking the
+ *  backend. Every store write replaces `scene`, and a drag writes often. */
+const SOLVE_DEBOUNCE_MS = 200;
+
+/** A stand-in beam for the calls that only read what does NOT depend on one:
+ *  the align point / direction, the Bragg frame, θ_B and the drive frequency.
+ *  Both endpoints require a non-zero beam direction (it is what they solve a
+ *  pose against), and the pose / readout those calls come back with is simply
+ *  ignored. */
+const PROBE_BEAM: AlignBeam = { dir: { x: 1, y: 0, z: 0 }, ref: { x: 0, y: 0, z: 0 } };
+
+type Vec3 = AlignVec3;
 type BeamCandidate = {
   key: string;
   sourceName: string;
@@ -70,10 +82,19 @@ type BeamCandidate = {
   wavelengthNm?: number;
 };
 
-function vec3FromArray(a: number[] | undefined): Vec3 | null {
-  return a && a.length === 3 && a.every((n) => typeof n === "number" && Number.isFinite(n))
-    ? { x: a[0], y: a[1], z: a[2] }
-    : null;
+/** The align point / direction, in the Component CAD frame, as resolved by
+ *  `POST /api/v3/align/isolator`. */
+type AlignPointDir =
+  | { status: "loading" }
+  | { status: "ok"; point: Vec3; dir: Vec3 }
+  | { status: "error"; message: string };
+
+/** Component CAD frame (mm) → lab mm under a SceneObject pose — the same path
+ *  the backend's `pose.point_body_to_lab` takes. Used only to put the align
+ *  point where the beam picker can measure candidates against it. */
+function cadToLab(cad: Vec3, sceneObject: SceneObject): Vec3 {
+  const r = rotateLabDir(cad, sceneObject);
+  return { x: sceneObject.xMm + r.x, y: sceneObject.yMm + r.y, z: sceneObject.zMm + r.z };
 }
 
 export function AlignToBeamControls({
@@ -109,49 +130,53 @@ export function AlignToBeamControls({
     persistProp({ alignRollDeg: v });
   };
 
-  /** Resolve (point, direction) in the Component CAD frame:
-   *    1. explicit alignSpec on the Component (non-zero direction),
-   *    2. composite binding-tree front/back centres (isolator),
-   *    3. single-asset primary intercept anchor (point = anchor,
-   *       direction = −axisX so the optic axis faces the beam). */
-  const resolved = useMemo((): { point: Vec3; dir: Vec3 } | { error: string } => {
-    const component = scene.components.find((c) => c.id === sceneObject.componentId);
-    if (!component) return { error: "Component row not found in scene store." };
-
-    const spec = (component.properties as { alignSpec?: AlignSpecProps } | null)?.alignSpec;
-    const specPoint = vec3FromArray(spec?.pointMm);
-    const specDir = vec3FromArray(spec?.directionMm);
-    if (specPoint && specDir && Math.hypot(specDir.x, specDir.y, specDir.z) > 1e-6) {
-      return { point: specPoint, dir: specDir };
-    }
-
-    const tree = resolveBindingTree(component, sceneObject, scene, { honourAssetOverride: true });
-    const centres: RoleCentre[] = [];
-    collectRoleCentres(tree, new THREE.Vector3(), new THREE.Quaternion(), centres);
-    const front = pickPolariserCentre(centres, "front");
-    const back = pickPolariserCentre(centres, "back");
-    if (front && back) {
-      return {
-        point: { x: front.x, y: front.y, z: front.z },
-        dir: { x: back.x - front.x, y: back.y - front.y, z: back.z - front.z },
-      };
-    }
-
-    const asset = primaryAssetForObject(component, sceneObject, scene);
-    const anchors = asset?.anchors ?? [];
-    const anchor =
-      PRIMARY_ANCHOR_IDS.map((id) => anchors.find((x) => x.id === id)).find(Boolean) ?? null;
-    if (anchor) {
-      const pos = anchorObjectLocalPos(anchor, asset);
-      const axis = anchorObjectLocalPrimaryDir(anchor, asset);
-      if (axis) return { point: pos, dir: { x: -axis.x, y: -axis.y, z: -axis.z } };
-    }
-    return {
-      error:
-        "No align point/direction. Define point + direction in PHY Editor → Component (Align), " +
-        "or check the asset's intercept anchor.",
+  /** (point, direction) in the Component CAD frame, from the backend: the
+   *  Component's alignSpec, else the binding tree's front/back polariser
+   *  centres (an isolator), else the primary asset's entry anchor. It does
+   *  not depend on the object's POSE, so it is refetched when the catalog
+   *  behind it could have moved — debounced, and only committed to state when
+   *  the answer actually changed, so a dragging object does not re-render the
+   *  beam picker on every frame. */
+  const [resolved, setResolved] = useState<AlignPointDir>({ status: "loading" });
+  const resolvedRef = useRef(false);
+  // A different object is a different align point: drop the previous answer
+  // rather than clustering beams against it for a round trip.
+  useEffect(() => {
+    resolvedRef.current = false;
+    setResolved({ status: "loading" });
+  }, [sceneObject.id]);
+  useEffect(() => {
+    let cancelled = false;
+    // First fetch immediately, refreshes debounced — a scene that keeps
+    // changing can delay an update but can never starve the panel of its
+    // first answer by resetting the timer forever.
+    const handle = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const out = await alignPointDirApi({ objectId: sceneObject.id, beam: PROBE_BEAM });
+          if (cancelled) return;
+          resolvedRef.current = true;
+          setResolved((prev) =>
+            prev.status === "ok"
+            && prev.point.x === out.pointCadMm.x
+            && prev.point.y === out.pointCadMm.y
+            && prev.point.z === out.pointCadMm.z
+            && prev.dir.x === out.dirCadMm.x
+            && prev.dir.y === out.dirCadMm.y
+            && prev.dir.z === out.dirCadMm.z
+              ? prev
+              : { status: "ok", point: out.pointCadMm, dir: out.dirCadMm },
+          );
+        } catch (err) {
+          if (!cancelled) setResolved({ status: "error", message: (err as Error).message });
+        }
+      })();
+    }, resolvedRef.current ? SOLVE_DEBOUNCE_MS : 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
     };
-  }, [scene, sceneObject]);
+  }, [sceneObject.id, scene]);
 
   // Candidate beams within tolerance of the align centre, one per source
   // object, nearest first. Reads the live V3 trace (window.__rayTraceDebug).
@@ -159,7 +184,7 @@ export function AlignToBeamControls({
     candidates: BeamCandidate[];
     closestMiss: number;
   } => {
-    if ("error" in resolved) return { candidates: [], closestMiss: Number.POSITIVE_INFINITY };
+    if (resolved.status !== "ok") return { candidates: [], closestMiss: Number.POSITIVE_INFINITY };
     const { point, dir } = resolved;
     const midLab = cadToLab(
       { x: point.x + dir.x * 0.5, y: point.y + dir.y * 0.5, z: point.z + dir.z * 0.5 },
@@ -242,8 +267,12 @@ export function AlignToBeamControls({
     setBusy(true);
     setFeedback(null);
     try {
-      if ("error" in resolved) {
-        setFeedback(resolved.error);
+      if (resolved.status === "error") {
+        setFeedback(resolved.message);
+        return;
+      }
+      if (resolved.status === "loading") {
+        setFeedback("Still reading this object's align point — try again in a moment.");
         return;
       }
       if (!chosen) {
@@ -255,20 +284,22 @@ export function AlignToBeamControls({
         return;
       }
 
-      const pose = computePointDirAlignPose({
-        pointCadMm: resolved.point,
-        dirCadMm: resolved.dir,
-        sceneObject,
-        beamDir: chosen.dir,
-        beamRef: chosen.ref,
+      // reverse / rollDeg are sent explicitly: the panel persists them
+      // fire-and-forget, so the row the backend would read may still be a
+      // write behind what the user is looking at.
+      const out = await alignPointDirApi({
+        objectId: sceneObject.id,
+        beam: { dir: chosen.dir, ref: chosen.ref },
         reverse,
         rollDeg,
       });
-      if (!pose) {
-        setFeedback("Align direction is degenerate — check the Component's alignSpec / axis.");
+      if (!out.pose) {
+        setFeedback(
+          out.error ?? "Align direction is degenerate — check the Component's alignSpec / axis.",
+        );
         return;
       }
-      await updateSceneObject(sceneObject.id, pose);
+      await updateSceneObject(sceneObject.id, out.pose);
 
       const note = `${reverse ? "reverse" : ""}${rollDeg !== 0 ? ` roll ${rollDeg}°` : ""}`.trim();
       const angleNote = note ? ` (${note})` : "";
@@ -359,6 +390,12 @@ const MRAD = 1000;
  * diffracted beam always leaves on the same side of the table. Running the
  * beam through backwards (Direction = Reverse) therefore Bragg-matches −m for
  * that same tilt — the readout says which order the pose actually matches.
+ *
+ * The geometry, θ_B, the drive frequency and the readout all come from
+ * `POST /api/v3/align/aom-bragg` in one call, so "where it should sit" and
+ * "where it sits now" are never measured by two different copies of the
+ * maths. The order and the fine-tune value stay here — they are the panel's
+ * controls — and are sent with every request.
  */
 function AomBraggSection({
   sceneObject,
@@ -379,56 +416,79 @@ function AomBraggSection({
   const [fineDraft, setFineDraft] = useState(fineMrad.toString());
   useEffect(() => setFineDraft(fineMrad.toString()), [fineMrad]);
 
+  // The diffraction-order select's value. Resolved here rather than taken
+  // from the response so the control answers the click immediately; it is
+  // sent with every request, so the backend solves for what is on screen.
   const asset = useMemo(() => {
     const component = scene.components.find((c) => c.id === sceneObject.componentId);
     return component ? primaryAssetForObject(component, sceneObject, scene) : null;
   }, [scene, sceneObject]);
-  const frame = useMemo(() => resolveAomBraggFrame(asset), [asset]);
-
   const params = (asset?.defaultParams ?? {}) as Record<string, unknown>;
   const num = (v: unknown, fallback: number) =>
     typeof v === "number" && Number.isFinite(v) ? v : fallback;
   const order = Math.round(num(dyn.diffractionOrder, num(params.diffractionOrder, 1)));
-  const vAcoustic = num(params.acousticVelocityMps, 4200);
-  const refractiveIndex = num(params.refractiveIndex, 2.26);
-  const crystalLengthMm = num(params.crystalLengthMm, 22.4);
-  const wavelengthNm = num(beam?.wavelengthNm, 780);
 
-  // Same resolution order the trace uses: the live RF chain wins, then the
-  // per-instance override, then the asset's design centre.
-  const rfDrive = useMemo(
-    () => resolveAomRfDriveFromScene(
-      sceneObject.id, scene.objects, scene.components, scene.assets, scene.physicsElements,
-    ),
-    [scene, sceneObject.id],
-  );
-  const freqMhz = rfDrive?.frequencyMhz
-    ?? num(dyn.aomFreqMhz, num(params.centerFreqMhz, 80));
-  const thetaB = braggAngleRad(
-    { centerFreqMhz: freqMhz, acousticVelocityMps: vAcoustic }, wavelengthNm,
-  );
+  /** The beam sent with a request. Without one nearby, the readout is
+   *  meaningless (and hidden) but θ_B / the drive frequency still are not, so
+   *  the call goes out with the probe beam and the readout is ignored. */
+  const requestBeam: AlignBeam = beam
+    ? { dir: beam.dir, ref: beam.ref, wavelengthNm: beam.wavelengthNm ?? null }
+    : PROBE_BEAM;
 
-  const readout = useMemo(() => {
-    if (!frame || !beam) return null;
-    return aomBraggReadout({
-      frame, sceneObject, beamDir: beam.dir, thetaBRad: thetaB,
-      wavelengthNm, freqMhz, acousticVelocityMps: vAcoustic,
-      refractiveIndex, crystalLengthMm,
-      orders: order === 0 ? [1, -1] : [order, -order],
-    });
-  }, [frame, beam, sceneObject, thetaB, wavelengthNm, freqMhz, vAcoustic,
-    refractiveIndex, crystalLengthMm, order]);
+  const [solved, setSolved] = useState<
+    { status: "loading" } | { status: "ok"; out: AomBraggResult } | { status: "error"; message: string }
+  >({ status: "loading" });
+  // Guards against an out-of-order response overwriting a newer one.
+  const solveSeqRef = useRef(0);
+  const solvedRef = useRef(false);
+  useEffect(() => {
+    solvedRef.current = false;
+    setSolved({ status: "loading" });
+  }, [sceneObject.id]);
+  useEffect(() => {
+    const seq = (solveSeqRef.current += 1);
+    // First call immediate, refreshes debounced — see the note on the panel's
+    // own resolve effect. The previous answer stays on screen meanwhile, so
+    // the readout does not blank every time the cell is nudged.
+    const handle = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const out = await alignAomBraggApi({
+            objectId: sceneObject.id,
+            beam: requestBeam,
+            order,
+            fineTuneMrad: fineMrad,
+          });
+          if (solveSeqRef.current !== seq) return;
+          solvedRef.current = true;
+          setSolved({ status: "ok", out });
+        } catch (err) {
+          if (solveSeqRef.current === seq) {
+            setSolved({ status: "error", message: (err as Error).message });
+          }
+        }
+      })();
+    }, solvedRef.current ? SOLVE_DEBOUNCE_MS : 0);
+    return () => window.clearTimeout(handle);
+    // `sceneObject` covers the pose the readout is measured at.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    sceneObject, order, fineMrad,
+    requestBeam.dir.x, requestBeam.dir.y, requestBeam.dir.z,
+    requestBeam.ref.x, requestBeam.ref.y, requestBeam.ref.z,
+    requestBeam.wavelengthNm,
+  ]);
 
-  if (!frame) {
+  if (solved.status === "error") {
     return (
       <div className="snap-to-beam-feedback" style={{ marginTop: 6 }}>
-        No Bragg geometry: the AOM asset needs intercept_in / intercept_out and an
-        acoustic direction (acoustic_axis anchor or rfPropagationDirectionBodyLocal).
+        {solved.message}
       </div>
     );
   }
 
-  const tiltRad = braggTiltRad(order, thetaB) + fineMrad / MRAD;
+  const out = solved.status === "ok" ? solved.out : null;
+  const readout = out && beam ? out.readout : null;
   const selected = readout?.orders.find((o) => o.order === order) ?? null;
 
   const braggAlign = async () => {
@@ -439,26 +499,21 @@ function AomBraggSection({
         setFeedback("No beam nearby to Bragg-align to.");
         return;
       }
-      if (order === 0) {
-        setFeedback("Order 0 is the undiffracted beam — nothing to Bragg-align. Pick ±1.");
-        return;
-      }
-      const pose = computeAomBraggAlignPose({
-        frame,
-        sceneObject,
-        beamDir: beam.dir,
-        beamRef: beam.ref,
+      const res = await alignAomBraggApi({
+        objectId: sceneObject.id,
+        beam: { dir: beam.dir, ref: beam.ref, wavelengthNm: beam.wavelengthNm ?? null },
+        order,
+        fineTuneMrad: fineMrad,
         reverse: objProps.alignReverse === true,
         rollDeg: typeof objProps.alignRollDeg === "number" ? objProps.alignRollDeg : 0,
-        tiltRad,
       });
-      if (!pose) {
-        setFeedback("Bragg align failed — degenerate AOM geometry.");
+      if (!res.pose) {
+        setFeedback(res.error ?? "Bragg align failed — degenerate AOM geometry.");
         return;
       }
-      await updateSceneObject(sceneObject.id, pose);
+      await updateSceneObject(sceneObject.id, res.pose);
       setFeedback(
-        `Tilted ${(braggTiltRad(order, thetaB) * MRAD).toFixed(2)} mrad`
+        `Tilted ${(res.order * res.thetaBRad * MRAD).toFixed(2)} mrad`
         + (fineMrad !== 0 ? ` ${fineMrad > 0 ? "+" : ""}${fineMrad} mrad fine` : "")
         + ` for order ${order > 0 ? "+" : ""}${order} on the ${beam.sourceName} beam.`,
       );
@@ -474,13 +529,27 @@ function AomBraggSection({
   const commitFine = async (raw: string) => {
     const next = Number(raw);
     if (!Number.isFinite(next) || next === fineMrad) return;
-    const pose = computeAomTiltNudgePose({
-      frame, sceneObject, deltaRad: (next - fineMrad) / MRAD,
-    });
-    await updateSceneObject(sceneObject.id, {
-      ...pose,
-      properties: { ...objProps, aomBraggFineTuneMrad: next } as SceneObject["properties"],
-    });
+    try {
+      const res = await alignAomBraggApi({
+        objectId: sceneObject.id,
+        beam: requestBeam,
+        order,
+        fineTuneMrad: fineMrad,
+        nudgeMrad: next - fineMrad,
+      });
+      if (!res.nudgePose) {
+        setFeedback(res.error ?? "Fine tune failed — degenerate AOM geometry.");
+        setFineDraft(fineMrad.toString());
+        return;
+      }
+      await updateSceneObject(sceneObject.id, {
+        ...res.nudgePose,
+        properties: { ...objProps, aomBraggFineTuneMrad: next } as SceneObject["properties"],
+      });
+    } catch (err) {
+      setFeedback(`Fine tune failed: ${(err as Error).message}`);
+      setFineDraft(fineMrad.toString());
+    }
   };
 
   const setOrder = (next: number) => {
@@ -519,11 +588,16 @@ function AomBraggSection({
         />
       </label>
       <div style={{ fontSize: 11, opacity: 0.85, marginBottom: 6, lineHeight: 1.5 }}>
-        <div>
-          θ_B {(thetaB * MRAD).toFixed(2)} mrad
-          {" · "}λ {wavelengthNm.toFixed(0)} nm
-          {" · "}f {freqMhz.toFixed(2)} MHz{rfDrive ? " (RF link)" : " (default)"}
-        </div>
+        {out ? (
+          <div>
+            θ_B {(out.thetaBRad * MRAD).toFixed(2)} mrad
+            {" · "}λ {out.wavelengthNm.toFixed(0)} nm
+            {" · "}f {out.freqMhz.toFixed(2)} MHz
+            {out.freqSource === "rfLink" ? " (RF link)" : " (default)"}
+          </div>
+        ) : (
+          <div>Reading the cell's Bragg geometry…</div>
+        )}
         {readout ? (
           <>
             <div>
@@ -551,7 +625,7 @@ function AomBraggSection({
             )}
           </>
         ) : (
-          <div>No beam nearby — the incidence readout needs a beam through the cell.</div>
+          out && <div>No beam nearby — the incidence readout needs a beam through the cell.</div>
         )}
       </div>
       <button
@@ -571,3 +645,23 @@ function AomBraggSection({
     </div>
   );
 }
+
+/** Optical ElementKinds that align to a beam — drives where the unified
+ *  "Align to beam" control (Object panel) and the alignSpec editor (PHY
+ *  Editor → Component) appear. Mirrors the per-kind `alignVariant !== "none"`
+ *  set. Isolators (kindId "none") are detected separately via their
+ *  binding-tree front/back composite roles. Fiber is excluded — it aligns
+ *  per-end (Align A/B), which the single (point, direction) model doesn't
+ *  fit. So is `eom`: a fibre-pigtailed modulator aligns per port connector
+ *  (`PigtailEndAlignControls`) for the same reason.
+ *
+ *  It lives beside the control it gates (it used to sit in the deleted
+ *  `utils/isolatorAlign.ts`); the backend's copy of the same gate is the
+ *  align endpoints' own 422. */
+export const OPTICAL_ALIGN_KINDS = new Set<string>([
+  "mirror", "dichroic_mirror", "beam_splitter",
+  "lens_biconvex", "lens_plano_convex", "lens_cylindrical",
+  "fiber_coupler", "polarizer", "glan_polarizer", "waveplate",
+  "beam_dump", "detector", "camera", "spectrometer", "wavemeter",
+  "saturable_absorber", "nonlinear_crystal", "aom", "tapered_amplifier",
+]);

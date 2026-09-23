@@ -5,9 +5,11 @@ poses. Nothing is written; applying a pose is an ordinary
 ``PATCH /api/objects/{id}`` by the caller (who also owns the locked-object
 refusal, as the web app's store does).
 
-These are backend ports of solvers that used to exist only in the web app's
-TypeScript (see ``app/optical/align/__init__.py``), so a second client (the
-qmem-blender add-on) calls the backend instead of growing a third copy.
+These are the only copy of solvers that used to live in the web app's
+TypeScript (see ``app/optical/align/__init__.py``): a second client (the
+qmem-blender add-on) calls the backend instead of growing a third copy, and
+since 2026-09-23 the web app calls them too (``frontend/src/api/align.ts``)
+with its TypeScript copies deleted.
 Request / response shapes: ``docs/introduce/api.md``.
 """
 
@@ -129,7 +131,7 @@ async def mirror_coupling(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Two 45 deg mirrors that put the seed on the port's axis
-    (``utils/mirrorCoupling.ts``). ``plan`` is null (with ``error``) when no
+    (was ``utils/mirrorCoupling.ts``). ``plan`` is null (with ``error``) when no
     pair exists; the web app refuses to apply unless ``touch.ok``."""
     scene = await load_align_scene(session)
     try:
@@ -153,7 +155,7 @@ async def isolator(
     request: IsolatorAlignRequest,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Point + direction align onto a beam (``utils/isolatorAlign.ts``) — the
+    """Point + direction align onto a beam (was ``utils/isolatorAlign.ts``) — the
     isolator's front/back bore, or any optic's alignSpec / entry anchor."""
     scene = await load_align_scene(session)
     try:
@@ -174,7 +176,7 @@ async def aom_bragg(
     request: AomBraggRequest,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Two-stage AOM Bragg align for the selected order (``utils/aomAlign.ts``)."""
+    """Two-stage AOM Bragg align for the selected order (was ``utils/aomAlign.ts``)."""
     scene = await load_align_scene(session)
     rf_freq = None
     if request.freq_mhz is None:

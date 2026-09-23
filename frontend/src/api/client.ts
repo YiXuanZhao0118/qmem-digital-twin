@@ -71,7 +71,10 @@ export const client = axios.create({
   timeout: 12000,
 });
 
-function apiErrorMessage(error: unknown): string {
+/** FastAPI's `detail` (string or validation list) out of an AxiosError, so a
+ *  4xx reaches the user as the backend's own sentence. Exported for the API
+ *  modules that live beside this one (`api/align.ts`). */
+export function apiErrorMessage(error: unknown): string {
   if (error instanceof AxiosError) {
     const detail = error.response?.data?.detail;
     if (Array.isArray(detail)) {

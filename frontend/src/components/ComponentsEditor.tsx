@@ -90,7 +90,7 @@ import {
   PIGTAIL_JACKET_COLOR,
 } from "../three/bindingTreeObject";
 import { CableAppearanceEditor } from "./CableAppearanceEditor";
-import { OPTICAL_ALIGN_KINDS } from "../utils/isolatorAlign";
+import { OPTICAL_ALIGN_KINDS } from "./physics/AlignToBeamControls";
 import { getNumericProperty } from "../three/transformUtils";
 import type {
   Anchor,

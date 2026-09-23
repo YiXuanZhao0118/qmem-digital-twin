@@ -1,10 +1,22 @@
-"""The Python align ports equal the TypeScript they were ported from.
+"""The align solvers still answer what the deleted TypeScript answered.
 
-``backend/tests/fixtures/align/*.json`` are written by the REAL TypeScript
-(``frontend/src/utils/__tests__/alignParity.test.ts`` — which also fails when
-they go stale, so a TS change forces a regeneration, which then fails here
-until the port follows). Every case below feeds a fixture's input to the
-Python and compares with what the TS returned.
+``backend/tests/fixtures/align/*.json`` were written by the REAL TypeScript
+(``frontend/src/utils/__tests__/alignParity.test.ts``, which ran
+``utils/mirrorCoupling.ts`` / ``isolatorAlign.ts`` / ``aomAlign.ts`` over the
+cases their unit tests pinned plus seeded-random ones). Those modules and that
+generator were **deleted on 2026-09-23**, when the web app moved onto
+``POST /api/v3/align/*``; the fixtures were kept, unchanged.
+
+So this file changed meaning rather than going away. It used to be half of a
+two-way parity pin; it is now a **one-way regression pin** and the only record
+of what the web app did before the rewire. Nothing regenerates these fixtures:
+an accidental change to ``app/optical/align/`` fails here loudly, and a
+DELIBERATE behaviour change has to re-record the affected entries by hand and
+say so in the commit. ``test_align_endpoints.py`` covers the HTTP contract the
+web app depends on.
+
+Every case below feeds a fixture's input to the Python and compares with what
+the TypeScript returned.
 
 Tolerance: 1e-9 on every number. Two refinements, both about what a number
 MEANS rather than about loosening it:

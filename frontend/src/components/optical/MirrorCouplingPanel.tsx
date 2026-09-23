@@ -17,9 +17,29 @@
  * is "rough the mounts in by hand first", not a solve that would fling a mount
  * across the table, so the panel says which cell failed and by how much.
  *
- * The maths is in `utils/mirrorCoupling.ts` (pure, unit-tested). This file is
- * scene plumbing: which beam, which port, what else is in the way, preview,
- * and one batched write.
+ * ── Where the maths lives ─────────────────────────────────────────────────
+ *
+ * `POST /api/v3/align/mirror-coupling` (`api/align.ts`). The touch matrix, the
+ * geometry, both mirror poses and the pass-through re-centring all come back
+ * from one compute-only call; the TypeScript copy (`utils/mirrorCoupling.ts`)
+ * was deleted once the backend port existed, so the web app and the
+ * qmem-blender add-on run the same solver.
+ *
+ * This file is scene plumbing, and that is now the whole of it: which beam,
+ * which port, what else is in the way, preview, and one batched write. The
+ * picks are the USER's and stay here; everything the picks are fed INTO
+ * crossed to the backend.
+ *
+ * The solve is a round trip, so: the first one fires immediately and refreshes
+ * are debounced (a scene that keeps changing can delay an update but can never
+ * starve the panel of its first answer); a sequence number keeps a slow answer
+ * from landing on top of a newer one; the last result stays on screen while a
+ * newer one is in flight, so the readouts do not blank on every keystroke in
+ * the fold box, but Apply and Preview are disabled the whole time it is in
+ * flight, so a stale plan can be read and never applied; a 4xx shows the
+ * backend's own `detail`. Undo is untouched — Apply is still the same single
+ * `updateSceneObjects` batch (rule R9), only the pose it writes arrives from
+ * the wire.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Crosshair, RotateCcw, X } from "lucide-react";
@@ -30,19 +50,14 @@ import { threeToLabPointMm } from "../../optical/frames";
 import { FloatingPanel } from "../workspace/FloatingPanel";
 import { useWorkspace } from "../workspace/WorkspaceProvider";
 import { resolveAnchorPosesLab, type AnchorPoseLab } from "../../utils/anchorPose";
-import { computeTranslateOnlyPose, type AlignPose, type Vec3 } from "../../utils/isolatorAlign";
 import {
-  checkMirrorTouch,
-  isSolveError,
-  mirrorFactsFromObject,
-  planMirrorCoupling,
-  reflect as reflectDir,
-  type CouplingPlan,
-  type MirrorFacts,
-  type Ray,
-  type SpotHit,
-  type TouchMatrix,
-} from "../../utils/mirrorCoupling";
+  alignMirrorCouplingApi,
+  type AlignRay,
+  type AlignVec3,
+  type MirrorCouplingResult,
+  type MirrorSpotHit,
+  type MirrorTouchMatrix,
+} from "../../api/align";
 
 /** Kinds this tool will steer with. */
 const STEERING_KINDS = new Set(["mirror", "dichroic_mirror"]);
@@ -50,6 +65,12 @@ const STEERING_KINDS = new Set(["mirror", "dichroic_mirror"]);
 /** Anchors that can serve as a coupling destination — a face light goes INTO.
  *  `intercept_out` is deliberately absent: that is an emitter's exit face. */
 const TARGET_ANCHOR_IDS = ["intercept_in", "fiber_in", "seed"];
+
+/** The reflective-face anchor every `mirror` / `dichroic_mirror` asset
+ *  carries. Only used here to sort the target list by distance from mirror B
+ *  and to catch a mirror that has no usable face before a solve is attempted;
+ *  the solver reads the same anchor on its own side. */
+const MIRROR_FACE_ANCHOR_ID = "intercept_face";
 
 /** Kinds whose optical power steers the chief ray once it stops being
  *  centred. Not a blocker (a centred lens bends nothing), but the reason the
@@ -64,6 +85,12 @@ const FOCUSING_KINDS = new Set([
  *  something in the span bends the beam, so "the target line" is not the
  *  destination anchor's axis and the solve would be wrong. */
 const DEVIATION_TOL_DEG = 0.05;
+
+/** How long the panel waits for the picks / the scene to settle before
+ *  re-asking the backend. */
+const SOLVE_DEBOUNCE_MS = 200;
+
+type Vec3 = AlignVec3;
 
 type TraceSeg = {
   hitObjectId?: string | null;
@@ -89,11 +116,29 @@ type SceneSlice = Pick<
   "componentBindings" | "objectBindings" | "assets" | "components"
 >;
 
+/** One of the two steering mirrors, as far as the PANEL needs to know it.
+ *  Everything geometric about it (centre, normal, aperture) is the solver's
+ *  to report. */
+type MirrorPick = {
+  objectId: string;
+  name: string;
+  locked: boolean;
+  /** Reflective-face centre in lab mm — the sort key for the target list. */
+  faceLab: Vec3;
+};
+
 const sub = (a: Vec3, b: Vec3): Vec3 => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
 const dot = (a: Vec3, b: Vec3): number => a.x * b.x + a.y * b.y + a.z * b.z;
 const len = (a: Vec3): number => Math.hypot(a.x, a.y, a.z);
 const fmt = (n: number | null | undefined, d = 2): string =>
   typeof n === "number" && Number.isFinite(n) ? n.toFixed(d) : "—";
+
+/** Ideal reflection off a plane with unit normal `n` — the ghost polyline's
+ *  last leg only. The solved geometry all comes from the endpoint. */
+const reflect = (d: Vec3, n: Vec3): Vec3 => {
+  const k = 2 * dot(d, n);
+  return { x: d.x - n.x * k, y: d.y - n.y * k, z: d.z - n.z * k };
+};
 
 function readTrace(): LabSeg[] {
   const raw: TraceSeg[] =
@@ -131,25 +176,37 @@ function traceSignature(segs: LabSeg[]): string {
   return `${segs.length}|${f.start.x.toFixed(3)},${f.start.y.toFixed(3)}|${l.end.x.toFixed(3)},${l.end.y.toFixed(3)}`;
 }
 
-/** Align point for a pass-through optic, Component CAD frame. Same order
- *  `AlignToBeamControls` resolves in: explicit alignSpec first, then the
- *  primary entry anchor. */
-function passThroughAlignPointCad(
-  component: ComponentItem,
+/** The mirror's reflective face in lab mm, or the reason it cannot steer.
+ *  Deliberately the same two sentences the solver answers 422 with — the
+ *  panel has to know before it can even build the target list, which is
+ *  sorted by distance from mirror B. */
+function mirrorPickFromObject(
   sceneObject: SceneObject,
   scene: SceneSlice,
-): Vec3 | null {
-  const spec = (component.properties as { alignSpec?: { pointMm?: number[] } } | null)?.alignSpec;
-  const p = spec?.pointMm;
-  if (Array.isArray(p) && p.length === 3 && p.every((n) => typeof n === "number")) {
-    return { x: p[0], y: p[1], z: p[2] };
-  }
+): MirrorPick | { error: string } {
+  const component: ComponentItem | undefined = (scene.components ?? []).find(
+    (c) => c.id === sceneObject.componentId,
+  );
+  if (!component) return { error: `${sceneObject.name}: Component row not in the scene store.` };
+
   const anchors = resolveAnchorPosesLab(component, sceneObject, scene);
-  const hit =
-    anchors.find((a) => a.anchorId === "intercept_in")
-    ?? anchors.find((a) => a.anchorId === "intercept_face")
-    ?? anchors[0];
-  return hit ? hit.posCad : null;
+  const face = anchors.find((a) => a.anchorId === MIRROR_FACE_ANCHOR_ID);
+  if (!face) {
+    return { error: `${sceneObject.name}: no \`${MIRROR_FACE_ANCHOR_ID}\` anchor in its binding tree.` };
+  }
+  if (!face.axisXLab || !face.axisXCad) {
+    return {
+      error:
+        `${sceneObject.name}: \`${MIRROR_FACE_ANCHOR_ID}\` declares no direction. `
+        + "Set the face normal (axisX) in PHY Editor -> Optical.",
+    };
+  }
+  return {
+    objectId: sceneObject.id,
+    name: sceneObject.name,
+    locked: !!sceneObject.locked,
+    faceLab: face.posLab,
+  };
 }
 
 /** One optic sitting between mirror B and the destination port. */
@@ -162,24 +219,43 @@ type PassThroughItem = {
   missMm: number | null;
 };
 
+type TargetOption = {
+  key: string;
+  label: string;
+  objectId: string;
+  anchorId: string;
+  anchorName: string;
+  ray: AlignRay;
+  distanceMm: number;
+};
+
 type Resolution =
   | { kind: "hint"; message: string }
   | {
       kind: "ready";
-      a: MirrorFacts;
-      b: MirrorFacts;
-      seedCandidates: { key: string; label: string; ray: Ray }[];
+      a: MirrorPick;
+      b: MirrorPick;
+      seedCandidates: { key: string; label: string; ray: AlignRay }[];
       seedKey: string;
-      inRay: Ray;
-      targetOptions: { key: string; label: string; objectId: string; ray: Ray; distanceMm: number }[];
+      inRay: AlignRay;
+      targetOptions: TargetOption[];
       targetKey: string;
-      targetRay: Ray;
-      touch: TouchMatrix;
+      target: TargetOption;
       /** Objects between mirror B and the destination port, in path order. */
       passThrough: PassThroughItem[];
       /** A blocker found while walking B -> destination, if any. */
       spanBlocker: string | null;
     };
+
+/** The last answer, plus whether a newer one is on the way. `result` is kept
+ *  across a re-solve so the readouts do not blank on every keystroke in the
+ *  fold box; `solving` is what blocks Apply, so a stale table can be looked at
+ *  but never applied. */
+type SolveState = {
+  result: MirrorCouplingResult | null;
+  error: string | null;
+  solving: boolean;
+};
 
 export function MirrorCouplingPanel() {
   const scene = useSceneStore((s) => s.scene);
@@ -253,10 +329,10 @@ export function MirrorCouplingPanel() {
       return { kind: "hint", message: `${nonMirror.name} is not a mirror — select two mirrors.` };
     }
 
-    const facts = picked.map((o) => mirrorFactsFromObject(o, scene));
-    const bad = facts.find(isSolveError);
-    if (bad && isSolveError(bad)) return { kind: "hint", message: bad.error };
-    const [f0, f1] = facts as MirrorFacts[];
+    const picks = picked.map((o) => mirrorPickFromObject(o, scene));
+    const bad = picks.find((p): p is { error: string } => "error" in p);
+    if (bad) return { kind: "hint", message: bad.error };
+    const [f0, f1] = picks as MirrorPick[];
 
     const trace = readTrace();
     if (trace.length === 0) {
@@ -267,8 +343,8 @@ export function MirrorCouplingPanel() {
     }
 
     // Order the pair by the beam, not by click order.
-    let a: MirrorFacts;
-    let b: MirrorFacts;
+    let a: MirrorPick;
+    let b: MirrorPick;
     if (trace.some((s) => s.hitObjectId === f1.objectId && s.sourceObjectId === f0.objectId)) {
       a = f0;
       b = f1;
@@ -293,7 +369,7 @@ export function MirrorCouplingPanel() {
         label:
           `${scene.objects.find((o) => o.id === s.sourceObjectId)?.name ?? "source"}`
           + (typeof s.wavelengthNm === "number" ? ` @ ${s.wavelengthNm.toFixed(0)} nm` : ""),
-        ray: { origin: s.start, dir: s.dir } as Ray,
+        ray: { origin: s.start, dir: s.dir } as AlignRay,
         seg: s,
       }));
     if (seedCandidates.length === 0) {
@@ -352,9 +428,7 @@ export function MirrorCouplingPanel() {
 
     // Target ports: every "light goes in here" anchor downstream, nearest to
     // mirror B first, with the traced destination promoted to the top.
-    const targetOptions: {
-      key: string; label: string; objectId: string; ray: Ray; distanceMm: number;
-    }[] = [];
+    const targetOptions: TargetOption[] = [];
     for (const obj of scene.objects) {
       if (obj.id === a.objectId || obj.id === b.objectId) continue;
       if (upstreamIds.has(obj.id)) continue;
@@ -374,13 +448,15 @@ export function MirrorCouplingPanel() {
             `${obj.name} · ${an.anchorId}`
             + (obj.id === destinationId ? " — traced destination" : ""),
           objectId: obj.id,
+          anchorId: an.anchorId,
+          anchorName: an.anchorName,
           ray: {
             origin: an.posLab,
             // axisX on an entry face is the OUTWARD normal, so light travels
             // into the port along -axisX.
             dir: { x: -an.axisXLab.x, y: -an.axisXLab.y, z: -an.axisXLab.z },
           },
-          distanceMm: len(sub(an.posLab, b.centreLab)),
+          distanceMm: len(sub(an.posLab, b.faceLab)),
         });
       }
     }
@@ -434,8 +510,7 @@ export function MirrorCouplingPanel() {
       inRay: seed.ray,
       targetOptions,
       targetKey: target.key,
-      targetRay: target.ray,
-      touch: checkMirrorTouch({ inRay: seed.ray, targetRay: target.ray, a, b }),
+      target,
       passThrough: between,
       spanBlocker,
     };
@@ -443,33 +518,107 @@ export function MirrorCouplingPanel() {
 
   const ready = resolution.kind === "ready" ? resolution : null;
 
+  // ── the solve ────────────────────────────────────────────────────────────
+  //
+  // One compute-only call answers the touch matrix, the plan and the
+  // pass-through poses. The request is keyed on everything it contains, so a
+  // re-render that changed nothing does not re-solve; a sequence number keeps
+  // a slow answer from landing on top of a newer one.
+  const [solve, setSolve] = useState<SolveState>({
+    result: null, error: null, solving: false,
+  });
+  const solveSeqRef = useRef(0);
+  // Every optic in the span is offered; the solver skips the locked ones and
+  // says so in `passThroughSkipped`, which is the same decision the list above
+  // renders as "locked, will not move".
+  const passThroughIds = useMemo(
+    () => (ready && recentre ? ready.passThrough.map((p) => p.object.id) : []),
+    [ready, recentre],
+  );
+  const request = useMemo(() => {
+    if (!ready) return null;
+    const fold = foldDraft.trim() === "" ? null : Number(foldDraft);
+    return {
+      mirrorAId: ready.a.objectId,
+      mirrorBId: ready.b.objectId,
+      inRay: ready.inRay,
+      target: {
+        objectId: ready.target.objectId,
+        anchorId: ready.target.anchorId,
+        anchorName: ready.target.anchorName,
+      },
+      foldMm: Number.isFinite(fold as number) ? (fold as number) : null,
+      passThroughObjectIds: passThroughIds,
+    };
+  }, [ready, foldDraft, passThroughIds]);
+  const requestKey = request ? JSON.stringify(request) : null;
+
+  const hasResultRef = useRef(false);
+  useEffect(() => {
+    if (!visible || !requestKey || !request) {
+      hasResultRef.current = false;
+      solveSeqRef.current += 1;
+      setSolve({ result: null, error: null, solving: false });
+      return;
+    }
+    const seq = (solveSeqRef.current += 1);
+    setSolve((prev) => ({ ...prev, solving: true }));
+    // The FIRST solve fires immediately. Only refreshes wait, so a scene that
+    // keeps changing can delay an update but can never starve the panel of
+    // its first answer by resetting the timer forever.
+    const handle = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const result = await alignMirrorCouplingApi(request);
+          if (solveSeqRef.current !== seq) return;
+          hasResultRef.current = true;
+          setSolve({ result, error: null, solving: false });
+        } catch (err) {
+          if (solveSeqRef.current !== seq) return;
+          setSolve({ result: null, error: (err as Error).message, solving: false });
+        }
+      })();
+    }, hasResultRef.current ? SOLVE_DEBOUNCE_MS : 0);
+    return () => window.clearTimeout(handle);
+    // `requestKey` is the full request by value; `request` is only read inside.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, requestKey]);
+
+  const result = solve.result;
+  const touch: MirrorTouchMatrix | null = result?.touch ?? null;
+  const goodPlan = result?.plan ?? null;
+
   // Draw the reverse reference ray in the viewer while the panel is open:
   // destination port -> mirror B -> mirror A -> a stub beyond, using the
   // mirrors' CURRENT poses. It is the thing the touch table measures, so
   // seeing it next to the real beam is what tells the user whether "rough it
   // in by hand first" means nudge or shove.
   useEffect(() => {
-    if (!visible || !ready) {
+    if (!visible || !result) {
       setMirrorCouplingGhost(null);
       return;
     }
-    const reverse: Ray = {
-      origin: ready.targetRay.origin,
-      dir: { x: -ready.targetRay.dir.x, y: -ready.targetRay.dir.y, z: -ready.targetRay.dir.z },
+    const reverse: AlignRay = {
+      origin: result.targetRay.origin,
+      dir: {
+        x: -result.targetRay.dir.x,
+        y: -result.targetRay.dir.y,
+        z: -result.targetRay.dir.z,
+      },
     };
     const pts: [number, number, number][] = [
       [reverse.origin.x, reverse.origin.y, reverse.origin.z],
     ];
-    const hitB = ready.touch.targetOnB;
+    const hitB = result.touch.targetOnB;
     if (hitB && hitB.tMm > 0) {
       pts.push([hitB.pointLab.x, hitB.pointLab.y, hitB.pointLab.z]);
-      const hitA = ready.touch.targetOnA;
+      const hitA = result.touch.targetOnA;
       if (hitA && hitA.tMm > 0) {
         pts.push([hitA.pointLab.x, hitA.pointLab.y, hitA.pointLab.z]);
         // A stub past mirror A so the ray reads as continuing upstream.
-        const d = reflectDir(
-          reflectDir(reverse.dir, ready.b.normalLab),
-          ready.a.normalLab,
+        const d = reflect(
+          reflect(reverse.dir, result.mirrorB.normalLab),
+          result.mirrorA.normalLab,
         );
         pts.push([
           hitA.pointLab.x + d.x * 60,
@@ -486,61 +635,22 @@ export function MirrorCouplingPanel() {
       ]);
     }
     setMirrorCouplingGhost({ pointsLabMm: pts });
-  }, [visible, ready, setMirrorCouplingGhost]);
+  }, [visible, result, setMirrorCouplingGhost]);
 
   useEffect(() => () => setMirrorCouplingGhost(null), [setMirrorCouplingGhost]);
 
-
-  const plan: CouplingPlan | { error: string } | null = useMemo(() => {
-    if (!ready) return null;
-    const fold = foldDraft.trim() === "" ? undefined : Number(foldDraft);
-    return planMirrorCoupling({
-      inRay: ready.inRay,
-      targetRay: ready.targetRay,
-      a: ready.a,
-      b: ready.b,
-      foldMm: Number.isFinite(fold as number) ? (fold as number) : undefined,
-      touch: ready.touch,
-    });
-  }, [ready, foldDraft]);
-
-  const goodPlan = plan && !isSolveError(plan) ? plan : null;
-
-  // Poses for the pass-through optics, translated onto the destination axis.
-  const passThroughMoves = useMemo((): { objectId: string; name: string; pose: AlignPose }[] => {
-    if (!ready || !goodPlan || !recentre) return [];
-    const out: { objectId: string; name: string; pose: AlignPose }[] = [];
-    for (const p of ready.passThrough) {
-      if (p.object.locked) continue;
-      const pointCad = passThroughAlignPointCad(p.component, p.object, scene);
-      if (!pointCad) continue;
-      out.push({
-        objectId: p.object.id,
-        name: p.object.name,
-        pose: computeTranslateOnlyPose({
-          pointCadMm: pointCad,
-          sceneObject: p.object,
-          beamDir: ready.targetRay.dir,
-          beamRef: ready.targetRay.origin,
-        }),
-      });
-    }
-    return out;
-  }, [ready, goodPlan, recentre, scene]);
-
   const allMoves = useMemo(() => {
-    if (!goodPlan) return [];
+    if (!result || !goodPlan) return [];
     return [
       { objectId: goodPlan.moveA.objectId, name: goodPlan.moveA.name, pose: goodPlan.moveA.pose },
       { objectId: goodPlan.moveB.objectId, name: goodPlan.moveB.name, pose: goodPlan.moveB.pose },
-      ...passThroughMoves,
+      ...result.passThroughMoves,
     ];
-  }, [goodPlan, passThroughMoves]);
+  }, [result, goodPlan]);
 
-  const blocked = !!ready?.spanBlocker || !ready?.touch.ok || !goodPlan;
-  const lockedNames = ready
-    ? [ready.a, ready.b].filter((m) => m.sceneObject.locked).map((m) => m.name)
-    : [];
+  const blocked =
+    !!ready?.spanBlocker || solve.solving || !!solve.error || !touch?.ok || !goodPlan;
+  const lockedNames = ready ? [ready.a, ready.b].filter((m) => m.locked).map((m) => m.name) : [];
 
   const togglePreview = () => {
     if (previewing) {
@@ -572,8 +682,8 @@ export function MirrorCouplingPanel() {
               >),
               placedRelativeTo: {
                 kind: "mirror_couple",
-                refObjectId: ready?.targetOptions.find((t) => t.key === ready.targetKey)?.objectId,
-                refAnchorId: ready?.targetKey.split("|")[1],
+                refObjectId: ready?.target.objectId,
+                refAnchorId: ready?.target.anchorId,
                 recordedAt: new Date().toISOString(),
               },
             } as SceneObject["properties"],
@@ -581,7 +691,7 @@ export function MirrorCouplingPanel() {
         })),
       );
       setFeedback(
-        `Coupled into ${ready?.targetOptions.find((t) => t.key === ready.targetKey)?.label}. `
+        `Coupled into ${ready?.target.label}. `
         + `${allMoves.length} object${allMoves.length === 1 ? "" : "s"} moved in one step (undo restores all).`,
       );
     } catch (err) {
@@ -631,24 +741,29 @@ export function MirrorCouplingPanel() {
               </select>
             </label>
 
-            <TouchTable touch={ready.touch} aName={ready.a.name} bName={ready.b.name} />
+            {touch && <TouchTable touch={touch} aName={ready.a.name} bName={ready.b.name} />}
+            {!touch && !solve.error && (
+              <p className="mirror-coupling-hint">Solving…</p>
+            )}
+
+            {solve.error && <p className="mirror-coupling-error">{solve.error}</p>}
 
             {ready.spanBlocker && (
               <p className="mirror-coupling-error">{ready.spanBlocker}</p>
             )}
-            {!ready.touch.ok && !ready.spanBlocker && (
+            {touch && !touch.ok && !ready.spanBlocker && (
               <div className="mirror-coupling-error">
                 <strong>Both beams must touch both mirrors before this can solve.</strong>
                 <ul>
-                  {ready.touch.failures.map((f) => (
+                  {touch.failures.map((f) => (
                     <li key={f}>{f}</li>
                   ))}
                 </ul>
               </div>
             )}
 
-            {plan && isSolveError(plan) && (
-              <p className="mirror-coupling-error">{plan.error}</p>
+            {result?.error && (
+              <p className="mirror-coupling-error">{result.error}</p>
             )}
 
             {goodPlan && goodPlan.geometry.freeDof && (
@@ -674,7 +789,7 @@ export function MirrorCouplingPanel() {
               </div>
             )}
 
-            {goodPlan && (
+            {goodPlan && touch && (
               <table className="mirror-coupling-readout">
                 <tbody>
                   <tr>
@@ -687,7 +802,7 @@ export function MirrorCouplingPanel() {
                   <tr>
                     <th>Angle of incidence</th>
                     <td>
-                      {fmt(ready.touch.seedOnA?.aoiDeg)} / {fmt(ready.touch.seedOnB?.aoiDeg)}°
+                      {fmt(touch.seedOnA?.aoiDeg)} / {fmt(touch.seedOnB?.aoiDeg)}°
                     </td>
                     <td className="mc-after">→ 45.00 / 45.00°</td>
                   </tr>
@@ -781,7 +896,7 @@ export function MirrorCouplingPanel() {
                 disabled={blocked || busy || lockedNames.length > 0}
                 title="Move both mirrors (and any ticked pass-through optics) in a single undoable step."
               >
-                <Check size={14} /> {busy ? "Applying…" : "Apply"}
+                <Check size={14} /> {busy ? "Applying…" : solve.solving ? "Solving…" : "Apply"}
               </button>
             </div>
           </>
@@ -845,11 +960,11 @@ function TouchTable({
   aName,
   bName,
 }: {
-  touch: TouchMatrix;
+  touch: MirrorTouchMatrix;
   aName: string;
   bName: string;
 }) {
-  const cell = (hit: SpotHit | null) => {
+  const cell = (hit: MirrorSpotHit | null) => {
     if (!hit) return <td className="mc-bad">—</td>;
     const ok = hit.tMm > 0 && hit.inAperture;
     return (

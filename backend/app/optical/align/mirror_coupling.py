@@ -1,15 +1,16 @@
-"""Two-mirror coupling — port of ``frontend/src/utils/mirrorCoupling.ts``.
+"""Two-mirror coupling — was ``frontend/src/utils/mirrorCoupling.ts``.
 
 Put mirror A and mirror B where the beam meets each at exactly 45 deg, on
 each mirror's centre, and leaves B along a destination port's own axis.
 Closed form, nothing iterated; the geometry, the both-beams-touch-both-mirrors
 precondition and the distance-not-angle branch choice are explained in
-``docs/introduce/mirror-coupling.md`` and in the TS header — read those, this
-file only transcribes.
+``docs/introduce/mirror-coupling.md`` — read that; this file transcribes the
+TypeScript it replaced (deleted 2026-09-23).
 
-Pure (no DB). Pinned to the TypeScript by
-``backend/tests/fixtures/align/mirror_coupling.json``; the warning / failure
-strings are part of that pin (``js_to_fixed`` reproduces ``toFixed``).
+Pure (no DB). Pinned by ``backend/tests/fixtures/align/mirror_coupling.json``,
+the frozen record of that TypeScript's answers; the warning / failure strings
+are part of that pin (``js_to_fixed`` reproduces ``toFixed``), because the web
+app renders them verbatim.
 """
 
 from __future__ import annotations
@@ -49,7 +50,7 @@ DEFAULT_MIRROR_APERTURE_MM = 6.35
 COLLINEAR_SIN_EPS = 1e-6
 
 # Beyond this distance the unique branch's answer is off the bench, and the
-# free-DOF branch answers instead (mirrorCoupling.ts:91).
+# free-DOF branch answers instead.
 MAX_SOLVE_SPAN_MM = 5_000
 
 # Perpendicular offsets below this make the two collinear lines coincide.
