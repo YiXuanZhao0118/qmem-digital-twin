@@ -13,11 +13,12 @@
 //     IS the single source of truth — the backend solver resolves the
 //     resulting freq/power live from the upstream link via
 //     `hydrate_aom_rf_drive`, so no auto-sync write to the AOM is needed.
-//   - aom rf_in port → computed "need ≥ Vpp" hint derived from the AOM's
-//     M² / L / W and a default 780 nm optical wavelength. Vpp is the
-//     50 Ω-load peak-to-peak that delivers the RF power needed for full
-//     diffraction efficiency. Acts as a sanity check against the actual
-//     upstream Vpp.
+//   - aom rf_in port → the incoming signal, the first-order efficiency η it
+//     buys, and a graded badge. η is the TRACER's own number, read from
+//     `POST /api/v3/rf/propagation` (`aomDrives[*].eta`) rather than
+//     re-derived here — see the `tracerRfReadout` block. The tooltip's
+//     "peak η at ≈ X Vpp" is still a local suggestion, evaluated at the λ the
+//     same readout reports.
 //   - any other port → plain anchor-name label, click-selectable.
 //
 // Vpp ↔ amplitudeScale: AD9959 single-ended into 50 Ω at default Rset has
@@ -61,6 +62,7 @@ import { assetsInBindingTree, primaryAsset } from "../utils/componentBindings";
 import { cableSplineLengthMm } from "../three/loadAsset/fiber/curve";
 import type { FiberNode } from "../three/loadAsset/fiber/types";
 import { ppgAttachments } from "../utils/ppgAttachment";
+import { fetchRfPropagationApi, type V3RfPropagationResult } from "../api/client";
 import {
   connectorFamilyFromAnchor,
   kindParticipatesInRfLink,
@@ -1130,14 +1132,21 @@ export function RfLinkPanel() {
     return m;
   }, [physicsElements, objects, assetByObjectId]);
 
-  /** Optical wavelength the AOM readout is evaluated at. P_peak scales as λ²,
-   *  so this materially moves the efficiency: the MT80 needs 1.32 W at 852 nm
-   *  but only 1.11 W at 780 nm. Taken from the scene's emitters
-   *  (`dynamicSources.centerWavelengthNm` → asset `defaultParams`, mirroring
-   *  `emit_laser_source.py`); a scene with several different wavelengths has no
-   *  single answer here, so it falls back to the nominal constant rather than
-   *  picking one arbitrarily. */
-  const sceneWavelengthNm = useMemo(() => {
+  /** Optical wavelength the AOM readout is evaluated at, as a LOCAL guess.
+   *  P_peak scales as λ², so it materially moves the efficiency: the MT80 needs
+   *  1.32 W at 852 nm but only 1.11 W at 780 nm. Taken from the scene's
+   *  emitters (`dynamicSources.centerWavelengthNm` → asset `defaultParams`); a
+   *  scene with several different wavelengths has no single answer here, so it
+   *  falls back to the nominal constant rather than picking one arbitrarily.
+   *
+   *  ⚠️ This is NOT how the tracer picks it, and on the live bench the two
+   *  disagree: counting every `tapered_amplifier` puts the Sacher TA's nominal
+   *  852 alongside the DBR's 852.347, two wavelengths, so this falls to 780 —
+   *  while the tracer's rays at the AOM are at 852.347 (a SEEDED TA emits
+   *  nothing of its own). It is kept only as the pre-response fallback: the
+   *  displayed λ and the η badge both come from the backend readout below,
+   *  which counts emitters the way the tracer does. See rf.md §3. */
+  const localWavelengthGuessNm = useMemo(() => {
     const objById = new Map(objects.map((o) => [o.id, o]));
     const found = new Set<number>();
     for (const pe of physicsElements) {
@@ -1183,6 +1192,67 @@ export function RfLinkPanel() {
     () => getRfSnapshotAt(rfPropagationSchedule, scrubTimeNs),
     [rfPropagationSchedule, scrubTimeNs],
   );
+
+  /** The TRACER's own AOM readout for this instant: `POST /api/v3/rf/propagation`
+   *  (compute-only). Per RF-driven AOM it carries `eta`, the on-Bragg
+   *  first-order efficiency the tracer's AOM op applies with the drive the
+   *  solver merges onto that AOM, plus `aomEtaWavelengthNm`, the wavelength it
+   *  was evaluated at.
+   *
+   *  Why fetch it at all, when the panel already has the drive locally: η is
+   *  physics, and computing physics in a UI file is exactly how the badge
+   *  ended up disagreeing with the beam it describes. The panel's `P_peak(λ)`
+   *  model is right; its λ was not, because the emitter scan counts a seeded TA
+   *  that emits nothing. The backend decides "which wavelength does this scene
+   *  emit" the way `solver.solve_anchor_scene` decides it, so this is the same
+   *  number the drawn diffraction uses (rf.md §3).
+   *
+   *  The local BFS stays in charge of the per-port Vpp rows — it is pinned to
+   *  this same backend by parity fixtures (rf.md §4) and re-renders instantly
+   *  as the user drags the scrub bar. */
+  const [tracerRfReadout, setTracerRfReadout] = useState<V3RfPropagationResult | null>(null);
+  const hasAom = aomByObjectId.size > 0;
+  useEffect(() => {
+    if (!hasAom) {
+      setTracerRfReadout(null);
+      return;
+    }
+    let cancelled = false;
+    // Debounced: dragging the scrub bar changes `scrubTimeNs` every frame and
+    // each call re-loads the scene server-side. The local BFS keeps the Vpp
+    // rows live meanwhile; only the η chip waits.
+    const timer = window.setTimeout(() => {
+      fetchRfPropagationApi(scrubTimeNs)
+        .then((result) => {
+          if (!cancelled) setTracerRfReadout(result);
+        })
+        .catch(() => {
+          // Offline / backend down: the badge falls back to the local model at
+          // `localWavelengthGuessNm`, which is what it always did.
+          if (!cancelled) setTracerRfReadout(null);
+        });
+    }, 150);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+    // `rfPropagationSchedule` is the panel's scene-change signal: it is a memo
+    // over objects / components / assets / bindings / physicsElements /
+    // timingPrograms, i.e. every input the backend readout also depends on.
+  }, [rfPropagationSchedule, scrubTimeNs, hasAom]);
+
+  /** λ the η values below were evaluated at. The backend's when it has
+   *  answered, the local guess only until then. */
+  const sceneWavelengthNm = tracerRfReadout?.aomEtaWavelengthNm ?? localWavelengthGuessNm;
+  /** `{aom objectId: η}` straight from the tracer. Empty until the first
+   *  response, and an AOM the tracer has no slot for is absent. */
+  const tracerEtaByAomId = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const [oid, drive] of Object.entries(tracerRfReadout?.aomDrives ?? {})) {
+      if (typeof drive.eta === "number" && Number.isFinite(drive.eta)) m.set(oid, drive.eta);
+    }
+    return m;
+  }, [tracerRfReadout]);
 
   /** RfAmplifier kindParams keyed by SceneObject id — pulled out so the
    *  rf_in/rf_out rows can show gain alongside the Vpp transformation. */
@@ -1283,14 +1353,17 @@ export function RfLinkPanel() {
     if (node.kind === "aom" && port.role === "in") {
       const aom = aomByObjectId.get(node.objectId);
       const signal = rfPropagation.signalAtPort.get(rfPortKey(node.objectId, port.anchorName));
-      const { efficiency } = aom
-        ? aomDriveReadout(
+      // Width estimate only — it just needs to know WHETHER an η chip renders,
+      // so it mirrors the same "tracer first, local fallback" resolution.
+      const efficiency = aom
+        ? tracerEtaByAomId.get(node.objectId)
+          ?? aomDriveReadout(
             aom as AomPhysicsParams,
             signal ? (signal.vpp * signal.vpp) / (8 * Z_OHM) : null,
             signal ? signal.frequencyMhz : null,
             sceneWavelengthNm,
-          )
-        : { efficiency: null };
+          ).efficiency
+        : null;
       const sourceName = signal
         ? objects.find((o) => o.id === signal.sourceObjectId)?.name ?? null
         : null;
@@ -1835,14 +1908,20 @@ export function RfLinkPanel() {
                         // (and saturation clamps), so the incoming reading
                         // matches what the Bragg solver / backend will see.
                         const signal = rfPropagation.signalAtPort.get(rfPortKey(n.objectId, port.anchorName)) as RfSignalState | undefined;
-                        // Same model + same params the tracer runs, so the
-                        // readout and the drawn diffraction can't disagree.
-                        const { peakPowerW, efficiency } = aomDriveReadout(
+                        // η is the TRACER's own number (`aomDrives[*].eta`),
+                        // not a UI re-derivation, so the badge and the drawn
+                        // diffraction cannot disagree. The local model is the
+                        // pre-response fallback and still supplies `peakPowerW`
+                        // — the "what drive would peak it" suggestion, which
+                        // the readout has no equivalent for — evaluated at the
+                        // λ the backend reports so the two agree.
+                        const { peakPowerW, efficiency: localEfficiency } = aomDriveReadout(
                           aom as AomPhysicsParams,
                           signal ? (signal.vpp * signal.vpp) / (8 * Z_OHM) : null,
                           signal ? signal.frequencyMhz : null,
                           sceneWavelengthNm,
                         );
+                        const efficiency = tracerEtaByAomId.get(n.objectId) ?? localEfficiency;
                         // Resolve the originating rf_source object name so
                         // the AOM row can show provenance ("← AD9959 · CH0").
                         const sourceObjectName = signal
@@ -2169,7 +2248,11 @@ export function RfLinkPanel() {
           <span><span style={{ color: "#62a3ff" }}>●</span> rf_in (computed Vpp)</span>
           <span>Amplifier rows show Vpp_in → +gain dB → Vpp_out (clamped at P_max).</span>
           <span>Drag a block to reposition · drag a port to create a cable.</span>
-          <span>AD9959 full-scale ≈ {VPP_FULL_SCALE.toFixed(1)} Vpp @ 50 Ω · AOM η from the solver model at λ = {sceneWavelengthNm.toFixed(1)} nm.</span>
+          <span>
+            AD9959 full-scale ≈ {VPP_FULL_SCALE.toFixed(1)} Vpp @ 50 Ω · AOM η{" "}
+            {tracerRfReadout ? "from the trace" : "from the local model"} at λ ={" "}
+            {sceneWavelengthNm.toFixed(3)} nm.
+          </span>
           {nodeOffsets.size > 0 && (
             <button
               type="button"

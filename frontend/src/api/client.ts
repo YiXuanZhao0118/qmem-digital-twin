@@ -226,6 +226,66 @@ export async function fetchPopLensFocalApi(
 }
 
 
+// ── RF propagation readout (the tracer's own AOM drive + efficiency) ───────
+//
+// The web app has its own RF BFS (`utils/rfPropagation.ts`) and keeps using it
+// for the panel's live per-port Vpp. What it CANNOT derive is what the optical
+// tracer does with that drive, so the AOM η badge reads it from here instead of
+// re-deriving the physics in a UI file (docs/introduce/rf.md §3).
+
+/** One AOM's drive as the solver merges it onto that AOM, plus what it buys.
+ *  Keys are passed through verbatim from `aom_drives_from_snapshot`. */
+export type V3AomDrive = {
+  aomFreqMhz?: number;
+  rfDrivePowerW?: number;
+  /** On-Bragg first-order efficiency the tracer's AOM op applies with this
+   *  drive, at `aomEtaWavelengthNm`. Absent for an AOM the tracer has no slot
+   *  for (an asset with no anchors). */
+  eta?: number;
+};
+
+export type V3RfPropagationResult = {
+  /** Echo of the request, so a debounced caller can drop a stale reply. */
+  scrubTimeNs: number | null;
+  /** Keyed "<objectId>|<anchorName>". */
+  signalAtPort: Record<string, {
+    frequencyMhz: number;
+    vpp: number;
+    powerW: number;
+    sourceObjectId: string;
+    sourceAnchorName: string;
+    cumulativeGainDb: number;
+    passthroughObjectIds: string[];
+    saturated: boolean;
+  }>;
+  connectedPorts: string[];
+  ppgGateHighObjectIds: string[];
+  /** AOM SceneObject id -> drive. Manual-mode and unwired AOMs are absent. */
+  aomDrives: Record<string, V3AomDrive>;
+  /** The wavelength every `eta` above was evaluated at (nm), decided the way
+   *  the tracer decides it. Null when no AOM drive was computed. `P_peak ∝ λ²`,
+   *  so any "what drive would peak this AOM" readout shown beside an `eta` must
+   *  use THIS λ. */
+  aomEtaWavelengthNm: number | null;
+  sectionStartsNs: number[];
+};
+
+/** The RF signal at every port at one scrub time, plus the per-AOM drive the
+ *  optical trace uses at that instant and the efficiency it buys. Compute-only
+ *  (writes nothing). Backend: POST /api/v3/rf/propagation
+ *  (app/routers/v3_rf.py). `scrubTimeNs = null` samples the "scrub stopped"
+ *  rest snapshot, the same meaning the solver gives it. */
+export async function fetchRfPropagationApi(
+  scrubTimeNs: number | null,
+): Promise<V3RfPropagationResult> {
+  const response = await client.post<V3RfPropagationResult>(
+    "/api/v3/rf/propagation",
+    { scrubTimeNs },
+  );
+  return response.data;
+}
+
+
 // =============================================================================
 // Kind catalog (alembic 0086). See docs/asset-physics-model.md §6.
 // =============================================================================

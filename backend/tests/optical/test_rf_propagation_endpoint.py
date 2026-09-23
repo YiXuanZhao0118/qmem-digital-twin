@@ -186,7 +186,8 @@ def test_shape(client) -> None:
     out = _post(client, {"scrubTimeNs": 1500})
     assert set(out) == {
         "scrubTimeNs", "signalAtPort", "connectedPorts",
-        "ppgGateHighObjectIds", "aomDrives", "sectionStartsNs",
+        "ppgGateHighObjectIds", "aomDrives", "aomEtaWavelengthNm",
+        "sectionStartsNs",
     }
     assert out["scrubTimeNs"] == 1500
     sig = out["signalAtPort"][port_key("sw", "rf_in")]
@@ -289,6 +290,34 @@ def test_eta_falls_back_to_780_nm_without_one_emitter_wavelength(client) -> None
     assert out["aomDrives"]["aomA"]["eta"] == on_bragg_first_order_efficiency(
         {**AOM_PARAMS, **dyn}, dyn, 780.0,
     )
+
+
+@pytest.mark.parametrize("t", [None, 500.0, 1500.0])
+def test_reports_the_wavelength_eta_was_evaluated_at(client, t) -> None:
+    """``aomEtaWavelengthNm`` qualifies every ``eta`` beside it.
+
+    A client that also shows "the drive that would peak this AOM" has to use
+    the SAME lambda as the eta it sits next to, because P_peak scales as
+    lambda^2 -- 780 vs 852 nm is 1.11 W vs 1.32 W on the MT80, ~2 Vpp of
+    advice. It cannot derive that lambda itself: deciding which wavelength a
+    scene emits means knowing that a SEEDED tapered amplifier emits nothing of
+    its own, which is a tracer rule, not a scene-graph one. The web RF Link
+    panel's own emitter scan is exactly what got this wrong on the live bench.
+    """
+    out = _post(client, {"scrubTimeNs": t})
+    assert out["aomEtaWavelengthNm"] == pytest.approx(LASER_NM)
+    # It really is the lambda the etas were computed at, not a constant.
+    for oid, drive in out["aomDrives"].items():
+        dyn = _without_eta(out["aomDrives"])[oid]
+        assert drive["eta"] == on_bragg_first_order_efficiency(
+            {**AOM_PARAMS, **dyn}, dyn, out["aomEtaWavelengthNm"],
+        )
+
+
+def test_reported_wavelength_follows_the_780_nm_fallback(client) -> None:
+    client.state["laser_nm"] = None  # type: ignore[attr-defined]
+    out = _post(client, {"scrubTimeNs": 500})
+    assert out["aomEtaWavelengthNm"] == pytest.approx(780.0)
 
 
 @pytest.mark.parametrize("t", [None, -10.0, 0.0, 500.0, 1000.0, 1500.0, 1999.999, 2000.0, 1e9])

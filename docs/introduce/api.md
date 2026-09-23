@@ -57,6 +57,7 @@ Response:
     "<aomObjectId>": { "aomFreqMhz": 80.0, "rfDrivePowerW": 0.0496, "eta": 0.0764 },
     "<gatedOffAomId>": { "rfDrivePowerW": 0.0, "eta": 0.0 }
   },
+  "aomEtaWavelengthNm": 852.347,
   "sectionStartsNs": [0.0, 1000.0, 2000.0]
 }
 ```
@@ -66,6 +67,7 @@ Response:
 - `connectedPorts` (sorted) is topology — every port with a cable or a PPG attachment, whether or not a carrier arrives.
 - `aomDrives` is passed through verbatim from the resolver the solver uses, so it equals what the trace merged onto each AOM at this time. An AOM in manual mode (`properties.aomRfDriveMode == "manual"`) or with nothing plugged into `rf_in` is **absent** (it keeps its own / rated drive); a wired AOM that no carrier reaches at this instant gets `{"rfDrivePowerW": 0.0}` with no frequency key.
 - `aomDrives[*].eta` (2026-09-22) is the **on-Bragg first-order efficiency** the tracer's AOM op applies with that drive: the op's own `on_bragg_first_order_efficiency` (`anchor_ops/aom.py:139`, `η = baseEfficiency·sin²((π/2)√(P/P_peak(λ)))·G(f)`), over the AOM slot exactly as `load_anchor_scene_from_db` hands it to the tracer at this `scrubTimeNs` (asset `default_params` + the slot's dynamic sources, the drive merged in). The op takes λ per ray; the readout takes the scene's emitter wavelength — the single wavelength the laser sources emit (as the tracer emits them: hidden emissions skipped, dynamic sources over the asset), a TA's own wavelength only when there is no laser emission, else **780 nm** (`aom_readout.scene_emitter_wavelength_nm`, [rf.md](rf.md) §3). Per-order angle detune is NOT in it (that depends on the beam's incidence, which only a trace knows). Absent only for an AOM the tracer has no slot for (an asset with no anchors).
+- `aomEtaWavelengthNm` (2026-09-23) is the λ every `eta` above was evaluated at — `scene_emitter_wavelength_nm`'s answer, i.e. 780 when it fell back. `null` when no AOM drive was computed. It is reported because `P_peak ∝ λ²`, so a client that shows "the drive that would peak this AOM" beside an `eta` has to use the **same** λ (780 vs 852 nm is 1.11 W vs 1.32 W on the MT80, ≈2 Vpp of advice) and cannot derive it: deciding which wavelength a scene emits requires the tracer's rule that a *seeded* TA emits nothing of its own. The web RF Link panel's own emitter scan is precisely what got that wrong ([rf.md](rf.md) §3).
 - `sectionStartsNs` (sorted) is every block boundary across all TimingPrograms, plus 0.
 
 ### `POST /api/v3/anchors/traced`
