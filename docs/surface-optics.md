@@ -2,7 +2,7 @@
 
 # Surface optics — tracing parts through their real faces (plan)
 
-> **Status (2026-09-23): Phase 0 landed (the `assets_3d.surface_model` column + its schema). Phases 1–4 are not started.** Nothing in the live tracer reads `surface_model` yet; every part still traces through its single anchor as described in [introduce/optics.md](introduce/optics.md).
+> **Status (2026-09-23): Phase 0 (the `assets_3d.surface_model` column + its schema) and Phase 1 (the standalone surface engine, `backend/app/optical/surfaces/`) landed. Phases 2–4 are not started.** Nothing in the live tracer reads `surface_model` or calls the engine yet; every part still traces through its single anchor as described in [introduce/optics.md](introduce/optics.md).
 
 ## Why
 
@@ -67,34 +67,47 @@ Conventions (enforced by the validator unless noted):
 - **Axes:** `axisX` is the surface normal at the vertex; `axisY` is the transverse reference (the curvature direction of a `cylinder`, the width of a `rectangle` aperture); `axisZ = axisX × axisY` is derived, not stored. Both stored axes must be unit length and orthogonal (tolerance 1e-4).
 - **Shape and sign of R:** `plane` (no radius) · `sphere` (`radiusMm`) · `cylinder` (`radiusMm`, curved along axisY only) · `conic` (`radiusMm`, `conic` k, optional `asphericCoeffs` = A₄, A₆, … in the even-asphere sag). **`radiusMm > 0` puts the centre of curvature on the +axisX side** (vertex + R·axisX). With axisX along the propagation direction this is the usual optics convention: a biconvex lens has R₁ > 0, R₂ < 0.
 - **Aperture:** `circle` needs `radiusMm` (explicitly a *radius* — the anchor field `apertureMm` is ambiguous, see [introduce/anchors.md](introduce/anchors.md)); `rectangle` / `ellipse` need full `widthMm` (along axisY) and `heightMm` (along axisZ). Measured in the surface's tangent plane.
-- **Medium:** exactly one of `n` (constant isotropic), `material` (a library name — not checked until the Phase 1 library exists), or the uniaxial pair `nO` + `nE`, which requires `opticAxis` (asset-local).
+- **Medium:** exactly one of `n` (constant isotropic), `material` (a name in the library below), or the uniaxial pair `nO` + `nE`. A uniaxial medium — the constant pair or a uniaxial material — requires `opticAxis` (asset-local); an isotropic one refuses it.
+- **Materials** (`optical/surfaces/materials.py`, Sellmeier, λ in µm): `N-BK7` (Schott), `fused_silica` (Malitson 1965), and the uniaxial `crystal_quartz` / `calcite` (Ghosh 1999). All within 1e-4 of the handbook indices near 589 nm and at 1064 nm, except calcite n_e, where the fit is 2.7e-4 low (`tests/optical/test_surface_materials.py`).
 - **Coating:** `uncoated` (default; Fresnel from the indices) · `ar` (`reflectance` = residual R, angle-independent) · `hr` (`reflectance`) · `partial` (`reflectance` = R of a non-polarizing splitter) · `polarizing` (transmits p, reflects s; optional `extinctionRatioPpDb` / `extinctionRatioSpDb`, same names and meaning as the PBS op's params, `anchor_ops/pbs.py:193-194`).
 - **Structure:** at least one surface, unique surface ids, `front ≠ back`, and at least one surface touching `air` (otherwise light can never enter).
 
-Not in the schema yet, on purpose (each lands with the phase that reads it): bulk effects inside a medium (Faraday rotation, the AOM interaction plane — Phase 3), the material library (Phase 1).
+Not in the schema yet, on purpose (it lands with the phase that reads it): bulk effects inside a medium (Faraday rotation, the AOM interaction plane — Phase 3).
 
-### Physics per surface (Phase 1)
+### Physics per surface (Phase 1 — landed)
 
-The chief ray is traced exactly; the Gaussian envelope Q (the complex symmetric 2×2 beam matrix of [introduce/optics.md](introduce/optics.md), `E ∼ exp(−i·k/2·rᵀQ⁻¹r)`) is carried paraxially about it, **reduced** (air-equivalent, `Q̂ = Q/n`) so every readout keeps using the vacuum λ.
+`backend/app/optical/surfaces/`: `model.py` (parse the stored JSON), `materials.py`, `geometry.py` (intersection, normal, curvature), `interface.py` (one surface), `trace.py` (`trace_element`, the in-part loop). Everything works in the part's own body frame, on the same `BeamRay` the anchor tracer carries. **Standalone: the anchor tracer does not call it yet.**
 
-1. **Intersection** — plane and sphere in closed form, cylinder in closed form in its curved section, conic/asphere by Newton iteration on the sag. Aperture check in the tangent plane.
-2. **Local frame** — unit normal `N` and curvature tensor `K` (2×2, in the tangent plane) at the hit point. Hitting off-vertex tilts `N`, which is what makes a decentred lens steer the beam.
-3. **Direction** — vector Snell with `μ = n₁/n₂`, `cosθᵢ = −N·d`: `d' = μd + (μcosθᵢ − cosθₜ)N`; `sin²θₜ > 1` → total internal reflection. **Reflection is the same formula with n₂ = −n₁**, so HR coatings and TIR reuse the refraction code.
-4. **Q** — in the plane-of-incidence frame (tangential t, sagittal s), with `Aᵢ = diag(cosθᵢ, 1)`, `Aₜ = diag(cosθₜ, 1)`, phase matching on the surface gives
-   `Aₜ·Q̂₂⁻¹·Aₜ = Aᵢ·Q̂₁⁻¹·Aᵢ − (n₂cosθₜ − n₁cosθᵢ)·K`.
-   At normal incidence on a sphere this reduces to the textbook `1/q₂ = (n₁/n₂)/q₁ − (n₂−n₁)/(n₂R)`; at oblique incidence it is Coddington's pair (tangential and sagittal focal lengths). `K` is rotated into the (t, s) frame first, so a tilted or cylindrical surface fills Q's off-diagonal.
-5. **Jones and power** — Fresnel `t_s`, `t_p` (or the coating's) in the (s, p) frame of *this* plane of incidence; power × T. The reflected fraction is dropped (no multiple reflections).
-6. **Inside a medium** — `Q̂ += L/n·I`, `path_length += n·L`. A uniaxial medium resolves the ray into o and e (`1/n_e(θ)² = cos²θ/n_o² + sin²θ/n_e²`, θ from the optic axis). Where the two directions coincide within the beam (a waveplate near normal incidence) they stay **one ray** and the medium applies the Jones retardance `2π·(n_e(θ) − n_o)·L/λ`; where they separate (Glan, Wollaston) they become two rays. The exact threshold is a Phase 1 decision; Poynting walk-off is not modelled in v1.
-7. **Termination** — a ray that enters `opaque` is absorbed; a ray that finds no bounding surface inside its medium, or exceeds a small internal-hit budget, is dropped and reported (a malformed surface model, not a physics result).
+The chief ray is traced exactly; the Gaussian envelope Q (the complex symmetric 2×2 beam matrix of [introduce/optics.md](introduce/optics.md), `E ∼ exp(−i·k/2·rᵀQ⁻¹r)`, in the canonical `beam_local_sp` frame) is carried paraxially about it, **reduced** (air-equivalent, `Q̂ = Q/n`), so every readout keeps using the vacuum λ and a ray leaving into air carries an ordinary Q.
 
-Phase 1 is a standalone module (`optical/surfaces/`), **not wired into the tracer**. Done when these pass:
+1. **Intersection** (`geometry.intersect`) — plane, sphere and cylinder in closed form, keeping only the sheet that contains the vertex; conic/asphere by Newton on the sag from the plane hit. Aperture test in the tangent plane. Self-hits are rejected with the anchor tracer's `t_min = 1e-9`.
+2. **Local frame** — unit normal from the sag gradient, and the curvature tensor `K` as the second fundamental form in an orthonormal tangent basis — exact off-vertex, not just the vertex curvature. `K > 0` curves toward +axisX. Hitting off-vertex tilts the normal, which is what steers a decentred lens.
+3. **Direction** — with `N` oriented along the propagation and `cosθᵢ = N·d`: refraction `d' = μd + (cosθₜ − μcosθᵢ)N` (`μ = n₁/n₂`), reflection `d' = d − 2cosθᵢN`; `sin²θₜ > 1` → total internal reflection.
+4. **Q** — in the plane-of-incidence frame (`e_s = d × N`, `p = d × e_s`; the canonical s at normal incidence), with `A = diag(1, e_t·p)` mapping tangent-plane coordinates onto the beam's transverse ones:
+   `A₂·Q̂₂⁻¹·A₂ = A₁·Q̂₁⁻¹·A₁ − Δ·K`, `Δ = n_out·(N·d_out) − n_in·(N·d_in)`.
+   One law for refraction and reflection. At normal incidence on a sphere it is the textbook `1/q₂ = (n₁/n₂)/q₁ − (n₂−n₁)/(n₂R)`; a concave mirror gets `f = R/2`; at oblique incidence it is Coddington's pair. `K` is rotated into the (s, t) frame first, so a tilted or cylindrical surface fills Q's off-diagonal.
+5. **Jones and power** — per branch, amplitudes in the (s, p) frame of *this* plane of incidence; `power_mw` scales by the Jones intensity ratio and the Jones vector is not renormalised (as every anchor op does). A zero-power branch is dropped.
+   - `uncoated`: Fresnel, with the transmitted amplitude scaled so `|τ|²` is the power transmittance. `r_p = (n₂cosθᵢ − n₁cosθₜ)/(n₂cosθᵢ + n₁cosθₜ)` for `p = d × e_s` on both sides (so `r_p = −r_s` at normal incidence).
+   - `ar`: `√(1 − R)` on both components. `hr`: reflect with `(−√R, +√R)` — the perfect-conductor limit of Fresnel in this basis (the mirror op's `(+1, −1)` is the same up to a global phase). `partial`: reflect `(−√R, +√R)` and transmit `√(1−R)`. `polarizing`: transmit `(√att_p, √(1−att_s))`, reflect `(−√(1−att_p), +√att_s)`, with `att` from the PBS op's `_extinction_atten`.
+   - Total internal reflection overrides every coating but `hr`: one reflected branch with the Fresnel TIR coefficients (`cosθₜ = +i·√(sin²θₜ − 1)`, the sign that matches the waveplate op's `e^{+iδ}` on the slow axis). A transmitted branch into `opaque` is absorbed.
+   - The reflected fraction at a transmissive surface is not traced (no multiple reflections).
+6. **Inside a medium** — `Q̂ += t/n·I` and `path_length_mm += t` (geometric, as the anchor ops count it). **A uniaxial medium stays one ray in v1**: the chief ray refracts with n_o, and the medium applies the Jones retardance `2π·(n_e(θ) − n_o)·t/λ` on the extraordinary axis, with `1/n_e(θ)² = cos²θ/n_o² + sin²θ/n_e²` and θ measured from the optic axis. That is exact to first order in `n_e − n_o` — ample for waveplates (a tilted zero-order quartz HWP matches the exact `k₀L(√(n_e²−sin²θ) − √(n_o²−sin²θ))` to 1e-3 relative). It does **not** split o and e into two rays, so a Glan or Wollaston (large birefringence, TIR selection) needs the split model before those kinds convert (Phase 3). Poynting walk-off is not modelled.
+7. **The in-part loop** (`trace_element`) — a queue of (ray, medium). Each ray meets the nearest surface of the part; the side it arrives from must be the ray's current medium. A ray in air that finds nothing is an exit; a ray that arrives on an `opaque` side (the back of a mirror) is absorbed; any other mismatch (a ray in air meeting a lens face from its glass side — the part's rim) or a ray in glass that finds no surface is **lost** with a reason, as is anything past 32 interactions. Air gaps inside one asset work because a ray that re-enters air keeps looking for the part's surfaces. Internal segments are returned with their medium for drawing.
+8. **Apertures clip the chief ray only.** The Gaussian energy truncation the thin-lens op does ([introduce/optics.md](introduce/optics.md), "clear-aperture energy truncation") is not applied at surfaces yet.
 
-- tilted plate: lateral shift `L·sinθ·(1 − cosθ/√(n² − sin²θ))`, direction unchanged, path length exact;
-- Brewster: `R_p = 0` at `θ_B = atan(n₂/n₁)`; TIR past the critical angle;
-- LA1509 at normal incidence (R = 51.5 / ∞, n = 1.5168, d = 3.6): same Q as the existing thick-lens golden (`_thick_lens_abcd`);
-- tilted lens: tangential/sagittal focal lengths vs Coddington;
-- decentred lens: deflection ≈ `d/f`;
-- zero-order quartz HWP at normal incidence: retardance π at the design λ, and its drift with λ and tilt.
+**Verified** (`tests/optical/test_surface_trace.py`, 26 cases; `test_surface_materials.py`, 9; `tests/test_surface_model.py`, 36):
+
+- tilted plate at 0°/10°/30°/56.3°: lateral shift `L·sinθ·(1 − cosθ/√(n² − sin²θ))` to 1e-12 mm, direction unchanged, geometric path length exact; reverse traversal gives the same shift and power;
+- Brewster plate: p lossless, s losing `(1 − r_s²)²`, and Q equal to **Kogelnik's** effective lengths `L√(n²+1)/n²` (sagittal) and `L√(n²+1)/n⁴` (tangential) to 1e-9;
+- normal incidence: Fresnel `(1 − R)²` and AR `(1 − R)²` to 1e-14;
+- right-angle prism: 90° turn by TIR, power = the two entry/exit faces only; TIR s–p phase = the textbook `2·atan(cosθ√(sin²θ − 1/n²)/sin²θ)` to 1e-12;
+- LA1509 at normal incidence: exit Q equals the existing `_thick_lens_abcd` golden to 1e-12 relative, emitted at the back vertex;
+- decentred LA1509: deflection `−h/EFL` to 2e-3;
+- a tilted spherical surface (25°): the Q-derived sagittal and tangential foci equal Coddington's closed forms to 1e-6, **and** equal where exactly-traced neighbour rays cross the chief ray — 2e-12 sagittal, 7e-7 tangential (the residual is the fan's own coma, first order in its offset);
+- cylinder: the unpowered axis is exactly a slab; concave mirror: `f = R/2` to 1e-12; flat 45° mirror; the back of a mirror absorbs;
+- PBS cube: s reflected out the side face, p straight through, extinction leaking `10^(−ER/10)` into the other port;
+- zero-order quartz HWP (780 nm): (1, 1)/√2 → (1, −1)/√2; retardance drift at 852 nm exact; tilt against the exact formula to 1e-3;
+- a missed ray comes back unchanged; a ray through the rim is lost with a reason; `conic` with k = 0 reproduces `sphere` off-axis to 1e-9.
 
 ### Tracer integration (Phase 2)
 

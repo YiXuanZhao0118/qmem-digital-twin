@@ -194,8 +194,10 @@ class SurfaceCoatingV3(CamelModel):
 
 
 class MediumV3(CamelModel):
-    """Exactly one of: ``n``, ``material`` (library name, checked once the
-    library exists), or the uniaxial ``n_o`` + ``n_e`` with ``optic_axis``."""
+    """Exactly one of: ``n``, ``material`` (a name in
+    ``app.optical.surfaces.materials``), or the uniaxial ``n_o`` + ``n_e``.
+    A uniaxial medium — constant or a uniaxial material — needs
+    ``optic_axis``; an isotropic one must not have it."""
     n: Optional[float] = Field(default=None, gt=0.0)
     material: Optional[str] = None
     n_o: Optional[float] = Field(default=None, gt=0.0)
@@ -204,12 +206,18 @@ class MediumV3(CamelModel):
 
     @model_validator(mode="after")
     def _check(self) -> "MediumV3":
-        uniaxial = self.n_o is not None or self.n_e is not None
-        if sum([self.n is not None, self.material is not None, uniaxial]) != 1:
+        from app.optical.surfaces.materials import MATERIALS, UNIAXIAL
+
+        constant_uniaxial = self.n_o is not None or self.n_e is not None
+        if sum([self.n is not None, self.material is not None, constant_uniaxial]) != 1:
             raise ValueError("a medium needs exactly one of n, material, or nO + nE")
-        if uniaxial:
-            if self.n_o is None or self.n_e is None:
-                raise ValueError("a uniaxial medium needs both nO and nE")
+        if self.material is not None and self.material not in MATERIALS:
+            raise ValueError(
+                f"unknown material {self.material!r}; known: {sorted(MATERIALS)}"
+            )
+        if constant_uniaxial and (self.n_o is None or self.n_e is None):
+            raise ValueError("a uniaxial medium needs both nO and nE")
+        if constant_uniaxial or self.material in UNIAXIAL:
             if self.optic_axis is None or _norm(self.optic_axis) < 1e-9:
                 raise ValueError("a uniaxial medium needs a non-zero opticAxis")
         elif self.optic_axis is not None:
