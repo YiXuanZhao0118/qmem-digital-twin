@@ -501,10 +501,22 @@ def test_conic_with_zero_k_equals_the_sphere():
     assert a.qxy == pytest.approx(b.qxy, abs=1e-9)
 
 
-def la1509_b_step():
-    """The surface model written to the `la1509_b_step` asset (2026-09-23),
-    from its CAD mesh: flat face at z = 0, a sphere-fit dome (R = 51.500,
-    residual 1.7e-7 mm) with its apex at z = 3.59, N-BK7."""
+# The plano-convex catalog lenses converted to surface models (2026-09-23):
+# catalog id -> (centre thickness = convex vertex z, |R|), measured from each
+# asset's CAD mesh — flat face at z = 0, a sphere fit of the dome (max
+# residual < 6e-7 mm, centre on the axis). docs/surface-optics.md.
+PLANO_CONVEX_ASSETS = {
+    "la1509_b_step": (3.59, 51.5),
+    "la1027_b_step": (7.23, 18.02),
+    "la1131_b_step": (5.34, 25.75),
+    "la1951_b_step": (11.74, 13.08),
+}
+
+
+def plano_convex_asset(catalog_id):
+    """The surface model written to that asset: N-BK7, AR 0.25 % per face,
+    both apertures r = 12.7."""
+    tc, r = PLANO_CONVEX_ASSETS[catalog_id]
     ar = {"type": "ar", "reflectance": 0.0025}
     zax, yax = {"x": 0, "y": 0, "z": 1}, {"x": 0, "y": 1, "z": 0}
     return parse_surface_model({
@@ -512,25 +524,30 @@ def la1509_b_step():
         "surfaces": [
             surf("flat", 0.0, "glass", "air", pos={"x": 0, "y": 0, "z": 0.0},
                  normal=zax, axis_y=yax, coating=ar),
-            surf("convex", 0.0, "air", "glass", pos={"x": 0, "y": 0, "z": 3.59},
-                 normal=zax, axis_y=yax, shape={"type": "sphere", "radiusMm": -51.5}, coating=ar),
+            surf("convex", 0.0, "air", "glass", pos={"x": 0, "y": 0, "z": tc},
+                 normal=zax, axis_y=yax, shape={"type": "sphere", "radiusMm": -r}, coating=ar),
         ],
     })
 
 
+def la1509_b_step():
+    return plano_convex_asset("la1509_b_step")
+
+
+@pytest.mark.parametrize("catalog_id", sorted(PLANO_CONVEX_ASSETS))
 @pytest.mark.parametrize("lam", [780.0, 852.0])
 @pytest.mark.parametrize("direction", [1.0, -1.0])
-def test_la1509_b_step_matches_thick_lens_both_ways(lam, direction):
-    """Flat side first (+z) is R₂ = −51.5 at the exit; convex side first (−z)
-    is R₁ = +51.5 at the entry. Both must equal the thick-lens ABCD with the
+def test_catalog_plano_convex_matches_thick_lens_both_ways(catalog_id, lam, direction):
+    """Flat side first (+z) is R₂ = −R at the exit; convex side first (−z) is
+    R₁ = +R at the entry. Both must equal the thick-lens ABCD with the
     dispersive N-BK7 index, and lose 0.25 % per face."""
     from app.optical.surfaces.materials import ISOTROPIC
 
     n = ISOTROPIC["N-BK7"].n(lam)
-    d, R = 3.59, 51.5
+    d, R = PLANO_CONVEX_ASSETS[catalog_id]
     ray = make_beam_ray(origin=Vec3(0, 0, -50.0 * direction), direction=Vec3(0, 0, direction),
                         wavelength_nm=lam, waist_radius_mm=1.0)
-    out = only_exit(trace_element(la1509_b_step(), ray))
+    out = only_exit(trace_element(plano_convex_asset(catalog_id), ray))
     if direction > 0:
         a, b, c, dd = _thick_lens_abcd(None, -R, n, d)
         q_front, exit_z = ray.qx + 50.0, d
