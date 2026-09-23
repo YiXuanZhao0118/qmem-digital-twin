@@ -1,35 +1,60 @@
 /**
- * The store half of the fibre endpoint link — "plug this patch cable into
- * that instrument" (2026-08-21, the optical twin of `rfCableEndpoints`).
+ * The store half of the fibre and pigtail endpoint flows, after wave 3b moved
+ * the geometry behind `POST /api/v3/fibers/*` and `/api/v3/pigtails/*`
+ * (2026-09-23) and deleted `utils/fiberAlignment.ts` + `utils/pigtailAlignment.ts`.
  *
- * The pure mating geometry is pinned in
- * `utils/__tests__/fiberPortAlignment.test.ts`. What is only reachable here
- * is the wiring, and every one of these is a way the feature can look like it
- * works while doing nothing:
- *   - a port is DISCOVERED at all (an optical anchor carrying a fibre
- *     `connectorType`, found by walking the binding tree — reading
- *     `asset3dId` finds nothing in a binding-backed scene);
- *   - a free-space face (no connectorType) is NOT offered as a port;
- *   - applying a port candidate PERSISTS `properties.fiberEndpoints`, which
- *     is what makes the end follow the part;
- *   - applying a BEAM candidate clears it again, and so does a hand-drag —
- *     manual override beats link;
- *   - `resnapFibersLinkedTo` moves a plugged end when its target moves.
+ * What is pinned HERE is the wiring — every one of these is a way the feature
+ * can look like it works while doing nothing:
+ *   - the picker sends THIS client's live beam segments (the server cannot
+ *     know which beams exist) and hands back what came off the wire;
+ *   - a beam candidate carries its segment, because applying one has to name
+ *     the segment back — the endpoint recomputes from the target;
+ *   - a port candidate goes to `/connect`, a beam candidate to `/apply`;
+ *   - the response's SceneObject AND fibre PhysicsElement are both committed
+ *     (the PE is what the solver reads — `_synth_fiber_slot`);
+ *   - the undo entry the old `upsertOpticalElement` path recorded still
+ *     appears, with the same description and the same inverse;
+ *   - a re-snap of a part nothing is plugged into costs no round trip;
+ *   - a hand-drag still unplugs locally (that path never went to the server).
+ *
+ * What is NOT here any more: the mating geometry itself (End B facing along
+ * the port's axisX, the 10 µm gap, the dedup, the connector tip). There is
+ * one implementation of it now and it is Python —
+ * `backend/tests/optical/test_fiber_endpoints.py` and the golden fixtures in
+ * `backend/tests/fixtures/fibers/`. The one exception is the per-end port-pose
+ * editor, which has no endpoint and keeps its maths in TypeScript; its
+ * connector-tip fix is pinned at the bottom of this file.
  */
 
-import * as THREE from "three";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { dirBodyToLab, pointBodyToLab } from "../../optical/pose";
-import { FIBER_MATING_GAP_MM } from "../../utils/fiberAnchorResolver";
+import { getFiberPortLabPose } from "../../utils/fiberAnchorResolver";
 
 const updateObjectApiMock = vi.fn();
 const upsertOpticalElementMock = vi.fn();
+const fiberCandidatesMock = vi.fn();
+const fiberConnectMock = vi.fn();
+const fiberApplyBeamMock = vi.fn();
+const fiberDisconnectMock = vi.fn();
+const fiberResnapMock = vi.fn();
+const pigtailCandidatesMock = vi.fn();
+const pigtailApplyMock = vi.fn();
+const pigtailDisconnectMock = vi.fn();
+const pigtailResnapMock = vi.fn();
 
 vi.mock("../../api/client", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   updateObjectApi: (id: string, patch: Record<string, unknown>) =>
     updateObjectApiMock(id, patch),
+  fiberCandidatesApi: (...a: unknown[]) => fiberCandidatesMock(...a),
+  fiberConnectApi: (...a: unknown[]) => fiberConnectMock(...a),
+  fiberApplyBeamApi: (...a: unknown[]) => fiberApplyBeamMock(...a),
+  fiberDisconnectApi: (...a: unknown[]) => fiberDisconnectMock(...a),
+  fiberResnapApi: (...a: unknown[]) => fiberResnapMock(...a),
+  pigtailCandidatesApi: (...a: unknown[]) => pigtailCandidatesMock(...a),
+  pigtailApplyApi: (...a: unknown[]) => pigtailApplyMock(...a),
+  pigtailDisconnectApi: (...a: unknown[]) => pigtailDisconnectMock(...a),
+  pigtailResnapApi: (...a: unknown[]) => pigtailResnapMock(...a),
 }));
 
 const { useSceneStore } = await import("../sceneStore");
@@ -44,8 +69,8 @@ const FIBER_ID = "fiber-1";
 const FIBER_COMP = "comp-fiber";
 const DET_ID = "det-1";
 const DET_COMP = "comp-det";
-const MIRROR_ID = "mirror-1";
-const MIRROR_COMP = "comp-mirror";
+const EOM_ID = "eom-1";
+const EOM_COMP = "comp-eom";
 
 const IDENTITY_BINDING_POSE = {
   localXMm: 0, localYMm: 0, localZMm: 0, localRxDeg: 0, localRyDeg: 0, localRzDeg: 0,
@@ -66,27 +91,19 @@ const obj = (id: string, componentId: string, extra: Record<string, unknown> = {
   ...extra,
 });
 
-/** An optical anchor. `connectorType` present ⇒ it is a fibre receptacle. */
-const anchor = (
-  id: string,
-  posMm: [number, number, number],
-  axisX: [number, number, number],
-  connectorType?: string,
-) => ({
-  id,
-  name: id === "fiber_in" ? "OPTICAL IN (FC/PC)" : id,
-  positionMmBodyLocal: { x: posMm[0], y: posMm[1], z: posMm[2] },
-  axisXBodyLocal: { x: axisX[0], y: axisX[1], z: axisX[2] },
-  apertureMm: 1.25,
-  ...(connectorType ? { connectorType } : {}),
-});
+/** The link record a `/connect` response carries back. */
+const PORT_LINK = {
+  targetObjectId: DET_ID,
+  targetAnchorId: "fiber_in",
+  targetAnchorName: "OPTICAL IN (FC/PC)",
+};
 
 /** The connector the fibre's End B binds, and how that binding is keyed.
  *  Catalog fibres are inconsistent: `Fiber SM PC` uses `role: "end_b"`,
- *  `Fiber PM PC-APC` uses `properties.splineEnd: "B"`. The backend's
- *  `_connector_asset` accepts both, so the store must too — matching only
- *  `role` silently falls back to the 36.28 mm FC constant and mates the face
- *  ~23 mm from where the solver couples. */
+ *  `Fiber PM PC-APC` uses `properties.splineEnd: "B"`. `_connector_asset`
+ *  accepts both, so `fiberEndConnectorTipMm` must too — matching only `role`
+ *  silently falls back to the 36.28 mm FC constant, i.e. ~23 mm from where
+ *  the solver couples. */
 const CONNECTOR_TIP_MM = 59.333;
 const connectorAsset = () => ({
   id: "a-conn",
@@ -99,49 +116,52 @@ const connectorAsset = () => ({
 
 function seed(opts: {
   fiberNodes: Node[];
-  detAt?: [number, number, number];
   /** How the fibre's End B connector binding is keyed, if present. */
   endBBindingKey?: "splineEnd" | "role";
-}) {
+  /** Pre-existing links on the fibre / the pigtailed instrument. */
+  fiberEndpoints?: Record<string, unknown>;
+  pigtailEndpoints?: Record<string, unknown>;
+  /** Give the fibre a PhysicsElement so the PE half is exercised. */
+  fiberKindParams?: Record<string, unknown>;
+} = { fiberNodes: [] }) {
   const state = useSceneStore.getState();
-  const det = opts.detAt ?? [500, 0, 0];
   useSceneStore.setState({
     scene: {
       ...state.scene,
       objects: [
-        obj(FIBER_ID, FIBER_COMP, { properties: { fiberNodes: opts.fiberNodes } }),
-        obj(DET_ID, DET_COMP, { ...pose(det[0], det[1], det[2]) }),
-        obj(MIRROR_ID, MIRROR_COMP, { ...pose(505, 0, 0) }),
+        obj(FIBER_ID, FIBER_COMP, {
+          properties: {
+            fiberNodes: opts.fiberNodes,
+            ...(opts.fiberEndpoints ? { fiberEndpoints: opts.fiberEndpoints } : {}),
+          },
+        }),
+        obj(DET_ID, DET_COMP, { ...pose(500, 0, 0) }),
+        obj(EOM_ID, EOM_COMP, {
+          properties: opts.pigtailEndpoints
+            ? { pigtailEndpoints: opts.pigtailEndpoints }
+            : {},
+        }),
       ] as never,
       components: [
         { id: FIBER_COMP, name: "Fiber SM PC", kindId: "fiber", properties: {} },
         { id: DET_COMP, name: "RF PMT RXM15EF", kindId: "detector", properties: {} },
-        { id: MIRROR_COMP, name: "Mirror", kindId: "mirror", properties: {} },
+        { id: EOM_COMP, name: "EOSpace EOM", kindId: "eom", properties: {} },
       ] as never,
-      // Binding-backed, like the real scene: the asset hangs off a binding
-      // and `component.asset3dId` is null.
       componentBindings: [
-        // `parentBindingId: null` is what makes these ROOT bindings —
-        // `rootBindingsOf` filters on `=== null`, so leaving it undefined
-        // yields an empty tree and no ports at all. The local pose is part of
-        // the row (the columns are NOT NULL): ports are placed through it.
         { id: "b-det", componentId: DET_COMP, parentBindingId: null, sortOrder: 0, role: "root", targetKind: "asset", asset3dId: "a-det", ...IDENTITY_BINDING_POSE },
-        { id: "b-mir", componentId: MIRROR_COMP, parentBindingId: null, sortOrder: 0, role: "root", targetKind: "asset", asset3dId: "a-mir", ...IDENTITY_BINDING_POSE },
         ...(opts.endBBindingKey
-          ? [
-              {
-                id: "b-fib-b",
-                componentId: FIBER_COMP,
-                parentBindingId: null,
-                sortOrder: 0,
-                targetKind: "asset",
-                asset3dId: "a-conn",
-                role: opts.endBBindingKey === "role" ? "end_b" : "pm_780_apc",
-                properties:
-                  opts.endBBindingKey === "splineEnd" ? { splineEnd: "B" } : {},
-                ...IDENTITY_BINDING_POSE,
-              },
-            ]
+          ? [{
+              id: "b-fib-b",
+              componentId: FIBER_COMP,
+              parentBindingId: null,
+              sortOrder: 0,
+              targetKind: "asset",
+              asset3dId: "a-conn",
+              role: opts.endBBindingKey === "role" ? "end_b" : "pm_780_apc",
+              properties:
+                opts.endBBindingKey === "splineEnd" ? { splineEnd: "B" } : {},
+              ...IDENTITY_BINDING_POSE,
+            }]
           : []),
       ] as never,
       objectBindings: [] as never,
@@ -149,19 +169,25 @@ function seed(opts: {
         {
           id: "a-det",
           catalogId: "rxm15ef_step",
-          // Light travels −X into the receiver; the bulkhead declares a
-          // FEMALE FC/PC socket.
-          anchors: [anchor("fiber_in", [0, 0, 0], [-1, 0, 0], "fc_pc_female")],
-        },
-        {
-          id: "a-mir",
-          catalogId: "mirror_step",
-          // A free-space face: same anchor id, NO connectorType.
-          anchors: [anchor("fiber_in", [0, 0, 0], [-1, 0, 0])],
+          anchors: [{
+            id: "fiber_in",
+            name: "OPTICAL IN (FC/PC)",
+            positionMmBodyLocal: { x: 0, y: 0, z: 0 },
+            axisXBodyLocal: { x: -1, y: 0, z: 0 },
+            apertureMm: 1.25,
+            connectorType: "fc_pc_female",
+          }],
         },
         connectorAsset(),
       ] as never,
-      physicsElements: [] as never,
+      physicsElements: (opts.fiberKindParams
+        ? [{
+            id: "pe-fiber",
+            objectId: FIBER_ID,
+            elementKind: "fiber",
+            kindParams: opts.fiberKindParams,
+          }]
+        : []) as never,
       collections: [],
       collectionMembers: [],
     },
@@ -175,287 +201,450 @@ const straight = (x0: number, x1: number): Node[] => [
   { posMm: [x1, 0, 0], handleInMm: [-30, 0, 0] },
 ];
 
+const objectOf = (id: string) =>
+  useSceneStore.getState().scene.objects.find((o) => o.id === id);
+
 const linksOf = (id = FIBER_ID) =>
-  (useSceneStore.getState().scene.objects.find((o) => o.id === id)?.properties as
-    | { fiberEndpoints?: Record<string, unknown> }
-    | undefined)?.fiberEndpoints;
+  (objectOf(id)?.properties as { fiberEndpoints?: Record<string, unknown> } | undefined)
+    ?.fiberEndpoints;
 
 const nodesOf = (id = FIBER_ID) =>
-  (useSceneStore.getState().scene.objects.find((o) => o.id === id)?.properties as
-    | { fiberNodes?: Node[] }
-    | undefined)?.fiberNodes;
+  (objectOf(id)?.properties as { fiberNodes?: Node[] } | undefined)?.fiberNodes;
+
+/** The object row `/connect` would answer with. */
+const connectedObject = (nodes: Node[]) => ({
+  ...obj(FIBER_ID, FIBER_COMP, {
+    properties: { fiberNodes: nodes, fiberEndpoints: { B: PORT_LINK } },
+  }),
+});
+
+const PORT_CANDIDATE = {
+  beamId: `port:${DET_ID}:fiber_in`,
+  distMm: 4,
+  projectedPortLab: [500, 0, 0] as [number, number, number],
+  newPosMmBody: [536.29, 0, 0] as [number, number, number],
+  newHandleMmBody: [-30, 0, 0] as [number, number, number],
+  newOutwardBody: [1, 0, 0] as [number, number, number],
+  displayLabel: "🔌 DET-1 · OPTICAL IN (FC/PC)",
+  port: PORT_LINK,
+};
+
+const beamCandidate = (over: Record<string, unknown> = {}) => ({
+  beamId: "trace:emit0001:o0:src00001",
+  distMm: 2,
+  projectedPortLab: [400, 0, 0] as [number, number, number],
+  newPosMmBody: [436.28, 0, 0] as [number, number, number],
+  newHandleMmBody: [-30, 0, 0] as [number, number, number],
+  newOutwardBody: [1, 0, 0] as [number, number, number],
+  emitterObjectId: "emit0001",
+  aomOrder: 0,
+  branch: "main",
+  ...over,
+});
+
+/** One `__rayTraceDebug` segment. Three.js world units are 100 mm. */
+const traceSeg = (
+  aX: number, bX: number, over: Record<string, unknown> = {},
+) => ({
+  startThree: { x: aX / 100, y: 0, z: 0 },
+  endThree: { x: bX / 100, y: 0, z: 0 },
+  emitterObjectId: "emit0001",
+  sourceObjectId: "src00001",
+  branch: "main",
+  aomSideband: { order: 0 },
+  wavelengthNm: 852,
+  ...over,
+});
 
 beforeEach(() => {
-  updateObjectApiMock.mockReset();
-  upsertOpticalElementMock.mockReset();
+  for (const m of [
+    updateObjectApiMock, upsertOpticalElementMock, fiberCandidatesMock,
+    fiberConnectMock, fiberApplyBeamMock, fiberDisconnectMock, fiberResnapMock,
+    pigtailCandidatesMock, pigtailApplyMock, pigtailDisconnectMock, pigtailResnapMock,
+  ]) m.mockReset();
   updateObjectApiMock.mockImplementation(
-    async (id: string, patch: Record<string, unknown>) => {
-      const current = useSceneStore.getState().scene.objects.find((o) => o.id === id);
-      return { ...(current ?? { id }), ...patch };
-    },
+    async (id: string, patch: Record<string, unknown>) => ({
+      ...(objectOf(id) ?? { id }), ...patch,
+    }),
   );
   useSceneStore.setState({ upsertOpticalElement: upsertOpticalElementMock as never });
-  // No live trace in a unit test → no beam candidates, so anything the
-  // picker returns here came from the port sweep.
-  (globalThis as { __rayTraceDebug?: unknown }).__rayTraceDebug = [];
+  // `collectBeamSegmentsLab` reads `window.__rayTraceDebug` — the viewer's
+  // live trace. The default vitest environment here is node, so stub the one
+  // global it touches rather than paying for a whole DOM.
+  vi.stubGlobal("window", { __rayTraceDebug: [] });
 });
 
-describe("finding fibre ports", () => {
-  it("offers a receptacle found through the binding tree", async () => {
+describe("findFiberAlignmentCandidates", () => {
+  it("sends this client's beam segments and returns what came off the wire", async () => {
     seed({ fiberNodes: straight(0, 400) });
-    const list = await useSceneStore
-      .getState()
-      .findFiberAlignmentCandidates(FIBER_ID, "B", 200);
-    expect(list).toHaveLength(1);
-    expect(list[0].port).toEqual({
-      targetObjectId: DET_ID,
-      targetAnchorId: "fiber_in",
-      targetAnchorName: "OPTICAL IN (FC/PC)",
-    });
-    expect(list[0].displayLabel).toContain("DET-1");
-  });
+    vi.stubGlobal("window", { __rayTraceDebug: [traceSeg(300, 600)] });
+    fiberCandidatesMock.mockResolvedValue({ candidates: [PORT_CANDIDATE] });
 
-  it("does NOT offer a free-space face — only anchors that declare a connector", async () => {
-    seed({ fiberNodes: straight(0, 400) });
-    const list = await useSceneStore
-      .getState()
-      .findFiberAlignmentCandidates(FIBER_ID, "B", 200);
-    // The mirror sits 5 mm BEYOND the detector, well inside tolerance, and
-    // carries an identically-shaped fiber_in. Its only difference is the
-    // missing connectorType — which must be enough to exclude it.
-    expect(list.map((c) => c.port?.targetObjectId)).not.toContain(MIRROR_ID);
-  });
-
-  it("rejects a port outside tolerance", async () => {
-    seed({ fiberNodes: straight(0, 100) });
-    const list = await useSceneStore
-      .getState()
+    const list = await useSceneStore.getState()
       .findFiberAlignmentCandidates(FIBER_ID, "B", 25);
-    expect(list).toEqual([]);
+
+    expect(fiberCandidatesMock).toHaveBeenCalledTimes(1);
+    const [id, payload] = fiberCandidatesMock.mock.calls[0];
+    expect(id).toBe(FIBER_ID);
+    expect(payload.end).toBe("B");
+    expect(payload.toleranceMm).toBe(25);
+    expect(payload.beamSegments).toEqual([
+      expect.objectContaining({ aMm: [300, 0, 0], bMm: [600, 0, 0], aomOrder: 0 }),
+    ]);
+    expect(list).toEqual([PORT_CANDIDATE]);
+  });
+
+  it("drops segments the fibre itself emitted, as the picker always has", async () => {
+    seed({ fiberNodes: straight(0, 400) });
+    vi.stubGlobal("window", { __rayTraceDebug: [
+      traceSeg(300, 600, { sourceObjectId: FIBER_ID }),
+    ] });
+    fiberCandidatesMock.mockResolvedValue({ candidates: [] });
+    await useSceneStore.getState().findFiberAlignmentCandidates(FIBER_ID, "B", 25);
+    expect(fiberCandidatesMock.mock.calls[0][1].beamSegments).toEqual([]);
+  });
+
+  it("attaches the originating segment to a BEAM candidate, not to a port one", async () => {
+    seed({ fiberNodes: straight(0, 400) });
+    vi.stubGlobal("window", { __rayTraceDebug: [traceSeg(300, 600)] });
+    fiberCandidatesMock.mockResolvedValue({
+      candidates: [beamCandidate(), PORT_CANDIDATE],
+    });
+
+    const [beam, port] = await useSceneStore.getState()
+      .findFiberAlignmentCandidates(FIBER_ID, "B", 25);
+    expect(beam.beam).toEqual(
+      expect.objectContaining({ aMm: [300, 0, 0], bMm: [600, 0, 0] }),
+    );
+    expect(port.beam).toBeUndefined();
+  });
+
+  it("picks the right segment when a splitter emits two legs under one beamId", async () => {
+    seed({ fiberNodes: straight(0, 400) });
+    vi.stubGlobal("window", { __rayTraceDebug: [
+      traceSeg(300, 600, { branch: "transmitted" }),
+      traceSeg(300, 600, { branch: "reflected", startThree: { x: 3, y: 1, z: 0 }, endThree: { x: 6, y: 1, z: 0 } }),
+    ] });
+    fiberCandidatesMock.mockResolvedValue({
+      candidates: [beamCandidate({ branch: "reflected", projectedPortLab: [400, 100, 0] })],
+    });
+    const [cand] = await useSceneStore.getState()
+      .findFiberAlignmentCandidates(FIBER_ID, "B", 25);
+    expect(cand.beam?.aMm).toEqual([300, 100, 0]);
+  });
+
+  it("answers an empty picker — not a throw — when the endpoint refuses", async () => {
+    seed({ fiberNodes: [] });
+    fiberCandidatesMock.mockRejectedValue(new Error("422 no fibre spline"));
+    await expect(
+      useSceneStore.getState().findFiberAlignmentCandidates(FIBER_ID, "B", 25),
+    ).resolves.toEqual([]);
   });
 });
 
-describe("plugging in and unplugging", () => {
-  it("persists the link when a port candidate is applied", async () => {
-    seed({ fiberNodes: straight(0, 400) });
-    const store = useSceneStore.getState();
-    const [cand] = await store.findFiberAlignmentCandidates(FIBER_ID, "B", 200);
-    await store.applyFiberAlignmentCandidate(FIBER_ID, "B", cand);
-    expect(linksOf()).toEqual({
-      B: {
-        targetObjectId: DET_ID,
-        targetAnchorId: "fiber_in",
-        targetAnchorName: "OPTICAL IN (FC/PC)",
+describe("applyFiberAlignmentCandidate", () => {
+  it("plugs a port candidate in through /connect and commits object + PE", async () => {
+    seed({
+      fiberNodes: straight(0, 400),
+      fiberKindParams: { endB: { posMm: [400, 0, 0], tensionHandleMm: [-30, 0, 0] } },
+    });
+    const newPe = {
+      id: "pe-fiber", objectId: FIBER_ID, elementKind: "fiber",
+      kindParams: { endB: { posMm: [536.29, 0, 0], tensionHandleMm: [-30, 0, 0] } },
+    };
+    fiberConnectMock.mockResolvedValue({
+      object: connectedObject(straight(0, 536.29)),
+      physicsElement: newPe,
+      candidate: PORT_CANDIDATE,
+    });
+
+    await useSceneStore.getState()
+      .applyFiberAlignmentCandidate(FIBER_ID, "B", PORT_CANDIDATE);
+
+    expect(fiberApplyBeamMock).not.toHaveBeenCalled();
+    expect(fiberConnectMock).toHaveBeenCalledWith(FIBER_ID, {
+      end: "B",
+      target: {
+        objectId: DET_ID,
+        anchorName: "OPTICAL IN (FC/PC)",
+        anchorId: "fiber_in",
       },
     });
-    // End A was never touched.
-    expect(linksOf()!.A).toBeUndefined();
+    expect(linksOf()).toEqual({ B: PORT_LINK });
+    expect(nodesOf()![1].posMm[0]).toBe(536.29);
+    // The PE is the write the SOLVER reads; committing it is what keeps the
+    // viewer and the next trace in step with the link.
+    expect(
+      useSceneStore.getState().scene.physicsElements.find((e) => e.objectId === FIBER_ID),
+    ).toEqual(newPe);
   });
 
-  it("a BEAM candidate clears the link — a free-space placement is not a connection", async () => {
-    seed({ fiberNodes: straight(0, 400) });
-    const store = useSceneStore.getState();
-    const [cand] = await store.findFiberAlignmentCandidates(FIBER_ID, "B", 200);
-    await store.applyFiberAlignmentCandidate(FIBER_ID, "B", cand);
-    expect(linksOf()!.B).toBeDefined();
-
-    await useSceneStore.getState().applyFiberAlignmentCandidate(FIBER_ID, "B", {
-      // Same payload shape, no `port` — i.e. what a beam segment produces.
-      beamId: "trace:abc",
-      distMm: 1,
-      projectedPortLab: [0, 0, 0],
-      newPosMmBody: [111, 0, 0],
-      newHandleMmBody: [-30, 0, 0],
-      newOutwardBody: [1, 0, 0],
+  it("records the same 'Edit physics' undo entry the old PE write did", async () => {
+    const oldKindParams = { endB: { posMm: [400, 0, 0], tensionHandleMm: [-30, 0, 0] } };
+    seed({ fiberNodes: straight(0, 400), fiberKindParams: oldKindParams });
+    fiberConnectMock.mockResolvedValue({
+      object: connectedObject(straight(0, 536.29)),
+      physicsElement: {
+        id: "pe-fiber", objectId: FIBER_ID, elementKind: "fiber",
+        kindParams: { endB: { posMm: [536.29, 0, 0], tensionHandleMm: [-30, 0, 0] } },
+      },
+      candidate: PORT_CANDIDATE,
     });
-    expect(linksOf()!.B).toBeUndefined();
+
+    await useSceneStore.getState()
+      .applyFiberAlignmentCandidate(FIBER_ID, "B", PORT_CANDIDATE);
+
+    const stack = useSceneStore.getState().undoStack;
+    expect(stack).toHaveLength(1);
+    expect(stack[0].description).toBe("Edit physics: FIBER-1");
   });
 
-  it("a hand-drag of the endpoint unplugs it", async () => {
+  it("records nothing when the fibre had no PhysicsElement — as before", async () => {
     seed({ fiberNodes: straight(0, 400) });
-    const store = useSceneStore.getState();
-    const [cand] = await store.findFiberAlignmentCandidates(FIBER_ID, "B", 200);
-    await store.applyFiberAlignmentCandidate(FIBER_ID, "B", cand);
+    fiberConnectMock.mockResolvedValue({
+      object: connectedObject(straight(0, 536.29)),
+      physicsElement: null,
+      candidate: PORT_CANDIDATE,
+    });
+    await useSceneStore.getState()
+      .applyFiberAlignmentCandidate(FIBER_ID, "B", PORT_CANDIDATE);
+    expect(useSceneStore.getState().undoStack).toEqual([]);
+  });
+
+  it("sends a BEAM candidate to /apply with the segment it came from", async () => {
+    seed({ fiberNodes: straight(0, 400) });
+    const cand = { ...beamCandidate(), beam: { beamId: "trace:emit0001:o0:src00001", aMm: [300, 0, 0], bMm: [600, 0, 0] } };
+    fiberApplyBeamMock.mockResolvedValue({
+      object: obj(FIBER_ID, FIBER_COMP, { properties: { fiberNodes: straight(0, 436.28) } }),
+      physicsElement: null,
+      candidate: cand,
+    });
+
+    await useSceneStore.getState()
+      .applyFiberAlignmentCandidate(FIBER_ID, "B", cand as never);
+
+    expect(fiberConnectMock).not.toHaveBeenCalled();
+    expect(fiberApplyBeamMock).toHaveBeenCalledWith(FIBER_ID, {
+      end: "B", beam: cand.beam,
+    });
+    // A beam placement is a free-space placement, not a connection: the
+    // endpoint drops the link and the store commits that.
+    expect(linksOf()).toBeUndefined();
+  });
+
+  it("writes nothing for a beam candidate whose segment went missing", async () => {
+    seed({ fiberNodes: straight(0, 400) });
+    await useSceneStore.getState()
+      .applyFiberAlignmentCandidate(FIBER_ID, "B", beamCandidate() as never);
+    expect(fiberApplyBeamMock).not.toHaveBeenCalled();
+    expect(fiberConnectMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("clearFiberEndpointLink", () => {
+  it("unplugs through /disconnect and leaves the cable where it is", async () => {
+    seed({ fiberNodes: straight(0, 536.29), fiberEndpoints: { B: PORT_LINK } });
+    fiberDisconnectMock.mockResolvedValue({
+      object: obj(FIBER_ID, FIBER_COMP, {
+        properties: { fiberNodes: straight(0, 536.29), fiberEndpoints: {} },
+      }),
+      changed: true,
+    });
+
+    await useSceneStore.getState().clearFiberEndpointLink(FIBER_ID, "B");
+
+    expect(fiberDisconnectMock).toHaveBeenCalledWith(FIBER_ID, "B");
+    expect(linksOf()!.B).toBeUndefined();
+    // Contrast clearRfCableEndpointLink, which deletes the cable outright —
+    // a dangling patch cable is a real bench state.
+    expect(nodesOf()![1].posMm[0]).toBe(536.29);
+    expect(objectOf(FIBER_ID)).toBeDefined();
+  });
+
+  it("commits nothing when that end had no link (changed: false)", async () => {
+    seed({ fiberNodes: straight(0, 400) });
+    fiberDisconnectMock.mockResolvedValue({
+      object: obj("someone-else", FIBER_COMP), changed: false,
+    });
+    await useSceneStore.getState().clearFiberEndpointLink(FIBER_ID, "B");
+    expect(objectOf("someone-else")).toBeUndefined();
+  });
+});
+
+describe("resnapFibersLinkedTo", () => {
+  it("costs no round trip when nothing is plugged into the moved part", async () => {
+    seed({ fiberNodes: straight(0, 400) });
+    await useSceneStore.getState().resnapFibersLinkedTo([DET_ID]);
+    expect(fiberResnapMock).not.toHaveBeenCalled();
+  });
+
+  it("re-snaps and commits both rows when a plugged end's part moved", async () => {
+    seed({ fiberNodes: straight(0, 536.29), fiberEndpoints: { B: PORT_LINK } });
+    const moved = obj(FIBER_ID, FIBER_COMP, {
+      properties: { fiberNodes: straight(0, 586.29), fiberEndpoints: { B: PORT_LINK } },
+    });
+    fiberResnapMock.mockResolvedValue({
+      resnapped: [{ objectId: FIBER_ID, end: "B", ...PORT_LINK }],
+      updated: [moved],
+      physicsElements: [],
+    });
+
+    await useSceneStore.getState().resnapFibersLinkedTo([DET_ID]);
+
+    expect(fiberResnapMock).toHaveBeenCalledWith([DET_ID]);
+    expect(nodesOf()![1].posMm[0]).toBe(586.29);
+    // Still plugged in — a re-snap must not read as a manual move.
+    expect(linksOf()!.B).toEqual(PORT_LINK);
+  });
+
+  it("does not ask about a part the link does not name", async () => {
+    seed({ fiberNodes: straight(0, 536.29), fiberEndpoints: { B: PORT_LINK } });
+    await useSceneStore.getState().resnapFibersLinkedTo(["someone-else"]);
+    expect(fiberResnapMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("a hand-drag still unplugs locally", () => {
+  it("clearEndpointLink on updateFiberNodes drops the link in the same PUT", async () => {
+    seed({ fiberNodes: straight(0, 536.29), fiberEndpoints: { B: PORT_LINK } });
     await useSceneStore.getState().updateFiberNodes(FIBER_ID, straight(0, 123), "B");
     expect(linksOf()!.B).toBeUndefined();
     expect(nodesOf()![1].posMm[0]).toBe(123);
-  });
-
-  it("clearFiberEndpointLink unplugs WITHOUT moving the cable", async () => {
-    seed({ fiberNodes: straight(0, 400) });
-    const store = useSceneStore.getState();
-    const [cand] = await store.findFiberAlignmentCandidates(FIBER_ID, "B", 200);
-    await store.applyFiberAlignmentCandidate(FIBER_ID, "B", cand);
-    const parked = nodesOf()![1].posMm[0];
-    await useSceneStore.getState().clearFiberEndpointLink(FIBER_ID, "B");
-    expect(linksOf()!.B).toBeUndefined();
-    // Contrast clearRfCableEndpointLink, which deletes the cable outright.
-    expect(nodesOf()![1].posMm[0]).toBe(parked);
-    expect(useSceneStore.getState().scene.objects.some((o) => o.id === FIBER_ID)).toBe(true);
+    // Manual override beats link, and it never needed the server to say so.
+    expect(fiberDisconnectMock).not.toHaveBeenCalled();
   });
 });
 
-describe("the mated face uses the bound connector's own tip length", () => {
-  // node = port − outward·(tip + gap), and outward here is −X (the port's
-  // axisX is −X and End B faces along it), so node sits at
-  // port + (tip + gap) on the X axis.
-  const expectedNodeX = (tip: number) => 500 + tip + 0.01;
+describe("pigtail ends", () => {
+  it("apply moves the connector through /apply and commits the ObjectBinding", async () => {
+    seed({ fiberNodes: [] });
+    const cand = { key: `port:${DET_ID}:fiber_in`, distMm: 3,
+      targetPosLab: [500, 0, 0] as [number, number, number],
+      targetAxisXLab: [-1, 0, 0] as [number, number, number],
+      port: PORT_LINK };
+    const binding = { id: "ob-1", objectId: EOM_ID, componentBindingId: "b-port-out" };
+    pigtailApplyMock.mockResolvedValue({
+      object: obj(EOM_ID, EOM_COMP, {
+        properties: { pigtailEndpoints: { intercept_out: PORT_LINK } },
+      }),
+      objectBinding: binding,
+      candidate: cand,
+    });
+
+    await useSceneStore.getState().applyPigtailAlignmentCandidate(EOM_ID, "B", cand);
+
+    expect(pigtailApplyMock).toHaveBeenCalledWith(EOM_ID, {
+      end: "B",
+      target: {
+        port: {
+          objectId: DET_ID,
+          anchorName: "OPTICAL IN (FC/PC)",
+          anchorId: "fiber_in",
+        },
+      },
+    });
+    expect(
+      (objectOf(EOM_ID)?.properties as { pigtailEndpoints?: Record<string, unknown> })
+        ?.pigtailEndpoints,
+    ).toEqual({ intercept_out: PORT_LINK });
+    expect(useSceneStore.getState().scene.objectBindings).toContainEqual(binding);
+  });
+
+  it("candidates answers an empty picker when the part has no connector there", async () => {
+    seed({ fiberNodes: [] });
+    pigtailCandidatesMock.mockRejectedValue(new Error("422 no pigtail connector"));
+    await expect(
+      useSceneStore.getState().findPigtailAlignmentCandidates(EOM_ID, "A", 25),
+    ).resolves.toEqual([]);
+  });
+
+  it("disconnect commits only when the endpoint says something changed", async () => {
+    seed({ fiberNodes: [], pigtailEndpoints: { intercept_out: PORT_LINK } });
+    pigtailDisconnectMock.mockResolvedValue({
+      object: obj(EOM_ID, EOM_COMP, { properties: { pigtailEndpoints: {} } }),
+      changed: true,
+    });
+    await useSceneStore.getState().clearPigtailEndpointLink(EOM_ID, "B");
+    expect(pigtailDisconnectMock).toHaveBeenCalledWith(EOM_ID, "B");
+    expect(
+      (objectOf(EOM_ID)?.properties as { pigtailEndpoints?: Record<string, unknown> })
+        ?.pigtailEndpoints,
+    ).toEqual({});
+  });
+
+  it("resnap costs no round trip when no pigtail names the moved part", async () => {
+    seed({ fiberNodes: [] });
+    await useSceneStore.getState().resnapPigtailsLinkedTo([DET_ID]);
+    expect(pigtailResnapMock).not.toHaveBeenCalled();
+  });
+
+  it("resnap asks and commits when one does", async () => {
+    seed({ fiberNodes: [], pigtailEndpoints: { intercept_out: PORT_LINK } });
+    const binding = { id: "ob-1", objectId: EOM_ID, componentBindingId: "b-port-out" };
+    pigtailResnapMock.mockResolvedValue({
+      resnapped: [{ objectId: EOM_ID, end: "B", portAnchor: "intercept_out", ...PORT_LINK }],
+      updated: [obj(EOM_ID, EOM_COMP, {
+        properties: { pigtailEndpoints: { intercept_out: PORT_LINK } },
+      })],
+      objectBindings: [binding],
+    });
+    await useSceneStore.getState().resnapPigtailsLinkedTo([DET_ID]);
+    expect(pigtailResnapMock).toHaveBeenCalledWith([DET_ID]);
+    expect(useSceneStore.getState().scene.objectBindings).toContainEqual(binding);
+  });
+});
+
+describe("the per-end port-pose editor uses the bound connector's tip (2026-09-23)", () => {
+  // The one fibre endpoint flow with no backend endpoint behind it: the user
+  // types a lab pose, which is neither a projection onto a beam nor a mate
+  // into a receptacle. It therefore keeps its maths in TypeScript — and until
+  // this fix it kept the 36.28 mm FC constant as well, so for a
+  // connector-bound cable the face it showed and wrote was NOT the face the
+  // solver couples through (`known-issues.md`).
+  //
+  // node = labToBody(targetPos) − outward_body · tip, so with an identity pose
+  // and outward = +X the node lands at targetPos.x − tip.
+  const placeAt500 = async () => {
+    await useSceneStore.getState()
+      .setFiberPortLabPose(FIBER_ID, "B", [500, 0, 0], [1, 0, 0]);
+  };
 
   it.each(["splineEnd", "role"] as const)(
     "resolves the connector binding keyed by %s",
     async (key) => {
       seed({ fiberNodes: straight(0, 400), endBBindingKey: key });
-      const store = useSceneStore.getState();
-      const [cand] = await store.findFiberAlignmentCandidates(FIBER_ID, "B", 200);
-      await store.applyFiberAlignmentCandidate(FIBER_ID, "B", cand);
-      expect(nodesOf()![1].posMm[0]).toBeCloseTo(expectedNodeX(CONNECTOR_TIP_MM), 6);
+      await placeAt500();
+      expect(nodesOf()![1].posMm[0]).toBeCloseTo(500 - CONNECTOR_TIP_MM, 9);
     },
   );
 
   it("falls back to the FC housing constant when no connector is bound", async () => {
     seed({ fiberNodes: straight(0, 400) });
-    const store = useSceneStore.getState();
-    const [cand] = await store.findFiberAlignmentCandidates(FIBER_ID, "B", 200);
-    await store.applyFiberAlignmentCandidate(FIBER_ID, "B", cand);
-    expect(nodesOf()![1].posMm[0]).toBeCloseTo(expectedNodeX(36.28), 6);
-  });
-});
-
-describe("resnapFibersLinkedTo", () => {
-  it("carries a plugged end along when its instrument moves", async () => {
-    seed({ fiberNodes: straight(0, 400) });
-    const store = useSceneStore.getState();
-    const [cand] = await store.findFiberAlignmentCandidates(FIBER_ID, "B", 200);
-    await store.applyFiberAlignmentCandidate(FIBER_ID, "B", cand);
-    const before = nodesOf()![1].posMm[0];
-
-    // Slide the receiver 50 mm down +X, as a committed pose change would.
-    useSceneStore.setState((s) => ({
-      scene: {
-        ...s.scene,
-        objects: s.scene.objects.map((o) =>
-          o.id === DET_ID ? { ...o, xMm: 550 } : o,
-        ) as never,
-      },
-    }));
-    await useSceneStore.getState().resnapFibersLinkedTo([DET_ID]);
-
-    expect(nodesOf()![1].posMm[0]).toBeCloseTo(before + 50, 6);
-    // Still plugged in afterwards — the resnap must not look like a manual move.
-    expect(linksOf()!.B).toBeDefined();
+    await placeAt500();
+    expect(nodesOf()![1].posMm[0]).toBeCloseTo(500 - 36.28, 9);
   });
 
-  it("ignores fibres whose target did not move", async () => {
-    seed({ fiberNodes: straight(0, 400) });
-    const store = useSceneStore.getState();
-    const [cand] = await store.findFiberAlignmentCandidates(FIBER_ID, "B", 200);
-    await store.applyFiberAlignmentCandidate(FIBER_ID, "B", cand);
-    const before = nodesOf()![1].posMm[0];
-    await useSceneStore.getState().resnapFibersLinkedTo([MIRROR_ID]);
-    expect(nodesOf()![1].posMm[0]).toBe(before);
-  });
-});
-
-describe("a beam placement uses the bound connector's tip too (2026-09-22)", () => {
-  // The traced face of a connector-bound fibre is node + outward · tip, with
-  // tip = the connector's own |mating face − cable root| (the backend's
-  // _synth_fiber_slot). A beam placement must back the node out by that same
-  // tip or the face lands `tip − 36.28` mm along the beam from the picked
-  // point — it used to back out by the FC constant regardless.
-  const beamAlongX = (y: number) => [{
-    startThree: { x: 3, y: y / 100, z: 0 },
-    endThree: { x: 6, y: y / 100, z: 0 },
-    emitterObjectId: "src", sourceObjectId: "src",
-  }];
-
-  it.each([
-    ["with a PM connector bound", "role" as const, CONNECTOR_TIP_MM],
-    ["with no connector bound", undefined, 36.28],
-  ])("puts the traced face on the picked point, %s", async (_label, key, tip) => {
-    seed({ fiberNodes: straight(0, 400), endBBindingKey: key });
-    (globalThis as { window?: unknown }).window = { __rayTraceDebug: beamAlongX(5) };
-    try {
-      const store = useSceneStore.getState();
-      const cand = (await store.findFiberAlignmentCandidates(FIBER_ID, "B", 25)).find((c) => !c.port);
-      expect(cand).toBeDefined();
-      // Measured from the REAL current face (x = 400 + tip), 5 mm off the line.
-      expect(cand!.distMm).toBeCloseTo(5, 9);
-      expect(cand!.projectedPortLab[0]).toBeCloseTo(400 + tip, 9);
-      await store.applyFiberAlignmentCandidate(FIBER_ID, "B", cand!);
-      const n = nodesOf()![1];
-      const outward = new THREE.Vector3(...n.handleInMm!).normalize().negate();
-      const face = new THREE.Vector3(...n.posMm).addScaledVector(outward, tip);
-      expect(face.distanceTo(new THREE.Vector3(...cand!.projectedPortLab))).toBeLessThan(1e-9);
-    } finally {
-      delete (globalThis as { window?: unknown }).window;
-    }
-  });
-});
-
-describe("a tilted receiver bound through a rotated binding (2026-09-22)", () => {
-  // The port must land where the TRACER hit-tests it: the port anchor lifted
-  // by its binding (raw XYZ Euler, as the backend's _binding_tree_transform)
-  // and then by the SceneObject pose (optical/pose, the backend's
-  // pose._rotation_of). The retired local rotation copy the store used to
-  // place ports with missed this receiver by centimetres.
-  const DET_POSE = { xMm: 400, yMm: 50, zMm: 900, rxDeg: 135, ryDeg: 10, rzDeg: 30 };
-  const BIND = { x: 3, y: -2, z: 5, rx: 20, ry: -35, rz: 60 };
-
-  const portLab = (detPose: typeof DET_POSE) => {
-    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(
-      THREE.MathUtils.degToRad(BIND.rx), THREE.MathUtils.degToRad(BIND.ry),
-      THREE.MathUtils.degToRad(BIND.rz), "XYZ",
-    ));
-    const pComp = new THREE.Vector3(BIND.x, BIND.y, BIND.z); // anchor at the asset origin
-    const aComp = new THREE.Vector3(-1, 0, 0).applyQuaternion(q);
-    const p = pointBodyToLab({ x: pComp.x, y: pComp.y, z: pComp.z }, detPose);
-    const a = dirBodyToLab({ x: aComp.x, y: aComp.y, z: aComp.z }, detPose);
-    return { p: new THREE.Vector3(p.x, p.y, p.z), a: new THREE.Vector3(a.x, a.y, a.z).normalize() };
-  };
-
-  const tilt = (detPose: typeof DET_POSE) =>
-    useSceneStore.setState((s) => ({
-      scene: {
-        ...s.scene,
-        objects: s.scene.objects.map((o) => (o.id === DET_ID ? { ...o, ...detPose } : o)) as never,
-        componentBindings: (s.scene.componentBindings ?? []).map((b) =>
-          b.id === "b-det"
-            ? { ...b, localXMm: BIND.x, localYMm: BIND.y, localZMm: BIND.z, localRxDeg: BIND.rx, localRyDeg: BIND.ry, localRzDeg: BIND.rz }
-            : b,
-        ) as never,
-      },
-    }));
-
-  /** End B's optical face in lab (the fibre sits at the identity pose, and
-   *  no connector is bound, so the FC constant is its tip). */
-  const faceBLab = () => {
-    const nodes = nodesOf()!;
-    const n = nodes[nodes.length - 1];
-    const outward = new THREE.Vector3(...n.handleInMm!).normalize().negate();
-    return new THREE.Vector3(...n.posMm).addScaledVector(outward, 36.28);
-  };
-
-  it("mates End B one gap short of where the tracer has the port", async () => {
-    seed({ fiberNodes: straight(0, 400) });
-    tilt(DET_POSE);
-    const { p, a } = portLab(DET_POSE);
-    const store = useSceneStore.getState();
-    const cand = (await store.findFiberAlignmentCandidates(FIBER_ID, "B", 5000)).find((c) => c.port);
-    expect(cand?.port?.targetObjectId).toBe(DET_ID);
-    await store.applyFiberAlignmentCandidate(FIBER_ID, "B", cand!);
-    expect(faceBLab().distanceTo(p.clone().addScaledVector(a, -FIBER_MATING_GAP_MM))).toBeLessThan(1e-9);
+  it("the panel's READ half agrees with what the write half stored", async () => {
+    seed({ fiberNodes: straight(0, 400), endBBindingKey: "splineEnd" });
+    await placeAt500();
+    const readBack = getFiberPortLabPose(
+      "B", nodesOf()! as never, pose(), CONNECTOR_TIP_MM,
+    );
+    expect(readBack!.posLab[0]).toBeCloseTo(500, 9);
+    expect(readBack!.outwardLab[0]).toBeCloseTo(1, 9);
   });
 
-  it("follows it through a re-snap", async () => {
-    seed({ fiberNodes: straight(0, 400) });
-    tilt(DET_POSE);
-    const store = useSceneStore.getState();
-    const cand = (await store.findFiberAlignmentCandidates(FIBER_ID, "B", 5000)).find((c) => c.port);
-    await store.applyFiberAlignmentCandidate(FIBER_ID, "B", cand!);
-    const moved = { ...DET_POSE, xMm: 425.5, rzDeg: 70 };
-    tilt(moved);
-    await useSceneStore.getState().resnapFibersLinkedTo([DET_ID]);
-    const { p, a } = portLab(moved);
-    expect(faceBLab().distanceTo(p.clone().addScaledVector(a, -FIBER_MATING_GAP_MM))).toBeLessThan(1e-9);
+  it("still writes the endpoint through to the PE, keeping its undo entry", async () => {
+    seed({
+      fiberNodes: straight(0, 400), endBBindingKey: "splineEnd",
+      fiberKindParams: { endB: { posMm: [400, 0, 0], tensionHandleMm: [-30, 0, 0] } },
+    });
+    await placeAt500();
+    // `upsertOpticalElement` is the history-recording path and has always
+    // been how this editor reached the solver's copy of the endpoint.
+    expect(upsertOpticalElementMock).toHaveBeenCalledTimes(1);
+    const payload = upsertOpticalElementMock.mock.calls[0][0];
+    expect(payload.elementKind).toBe("fiber");
+    expect(payload.kindParams.endB.posMm[0]).toBeCloseTo(500 - CONNECTOR_TIP_MM, 9);
   });
 });

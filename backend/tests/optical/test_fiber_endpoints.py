@@ -313,6 +313,65 @@ async def test_candidates_list_ports_and_write_nothing(bench) -> None:
     assert (await _row(SceneObject, bench["fib"])).properties == before
 
 
+async def test_the_web_clients_candidates_feed_straight_back_into_connect_and_apply(bench) -> None:
+    """The exact contract ``sceneStore`` speaks since 2026-09-23, when the web
+    app stopped carrying its own copy of this and started calling here.
+
+    Two halves, and both have to hold or the picker shows something the apply
+    cannot act on:
+
+    * ``/candidates`` takes the ``beamSegments`` the web scrapes off its live
+      trace (``collectBeamSegmentsLab``, the ``BeamSegmentLab`` shape) and
+      answers candidates carrying every key the TS ``FiberAlignmentCandidate``
+      reads, label fields included;
+    * a candidate's ``port`` fed straight back to ``/connect``, and a beam
+      candidate's own segment fed back to ``/apply``, are exactly what
+      ``applyFiberAlignmentCandidate`` sends. The endpoint recomputes from the
+      target rather than trusting a client-made candidate, which is WHY the
+      store has to keep the segment around at all.
+    """
+    port, axis = await _traced_anchor(bench["det"], "fiber_in")
+    segment = {
+        "beamId": "trace:emit0001:o0:src00001",
+        "aMm": [port.x - 300 * axis.x, port.y - 300 * axis.y, port.z - 300 * axis.z],
+        "bMm": [port.x + 300 * axis.x, port.y + 300 * axis.y, port.z + 300 * axis.z],
+        "displayLabel": "TA0 0-order @ 852 nm",
+        "emitterObjectId": "emit0001",
+        "aomOrder": 0,
+        "branch": "main",
+        "wavelengthNm": 852.3,
+    }
+    r = await _post(f"/api/v3/fibers/{bench['fib']}/candidates",
+                    {"end": "B", "toleranceMm": None, "beamSegments": [segment]})
+    assert r.status_code == 200, r.text
+    cands = r.json()["candidates"]
+    port_c = next(c for c in cands if c.get("port"))
+    beam_c = next(c for c in cands if not c.get("port"))
+    for c in (port_c, beam_c):
+        assert {"beamId", "distMm", "projectedPortLab", "newPosMmBody",
+                "newHandleMmBody", "newOutwardBody", "displayLabel"} <= set(c)
+    assert set(port_c["port"]) == {"targetObjectId", "targetAnchorId", "targetAnchorName"}
+    # The label fields the store matches a candidate back to its segment on —
+    # a beam splitter emits two legs under one beamId and different `branch`.
+    assert (beam_c["beamId"], beam_c["branch"], beam_c["aomOrder"], beam_c["emitterObjectId"]) == (
+        segment["beamId"], "main", 0, "emit0001")
+
+    p = port_c["port"]
+    r = await _post(f"/api/v3/fibers/{bench['fib']}/connect", {
+        "end": "B",
+        "target": {"objectId": p["targetObjectId"], "anchorName": p["targetAnchorName"],
+                   "anchorId": p["targetAnchorId"]},
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["object"]["properties"]["fiberEndpoints"]["B"] == p
+
+    r = await _post(f"/api/v3/fibers/{bench['fib']}/apply",
+                    {"end": "B", "target": {"beam": segment}, "toleranceMm": None})
+    assert r.status_code == 200, r.text
+    # A beam placement is a free-space placement, not a connection.
+    assert "B" not in r.json()["object"]["properties"].get("fiberEndpoints", {})
+
+
 @pytest.mark.parametrize(
     ("body", "status", "needle"),
     [

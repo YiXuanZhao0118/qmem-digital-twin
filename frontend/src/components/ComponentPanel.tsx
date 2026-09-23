@@ -6,6 +6,7 @@ import { resolveAssetUrl } from "../api/client";
 import { isAd9959PcbAsset } from "../three/loadAsset/stl_builders";
 import {
   useSceneStore,
+  fiberEndConnectorTipMm,
   resolveEffectiveFiberNodes,
   type FiberNodePersist,
   type LabPoint,
@@ -21,7 +22,7 @@ import {
   getFiberPortLabPose,
   isFiberReceptacleAnchor,
   OPTICAL_PORT_ANCHOR_IDS,
-} from "../utils/fiberAlignment";
+} from "../utils/fiberAnchorResolver";
 import { Ad9959ObjectControls } from "./Ad9959ObjectControls";
 import { DdsChassisObjectControls } from "./DdsChassisObjectControls";
 import { CollapsibleSection } from "./CollapsibleSection";
@@ -938,11 +939,19 @@ function FiberPortPoseEditor({
 }) {
   const setFiberPortLabPose = useSceneStore((state) => state.setFiberPortLabPose);
   const physicsElements = useSceneStore((state) => state.scene.physicsElements);
+  const scene = useSceneStore((state) => state.scene);
   // Shared resolver: falls back to PE.kindParams.endA/endB so the port-pose
   // editor works for connector-component fibers (no cached fiberNodes) too.
   const nodes = resolveEffectiveFiberNodes(fiberSceneObject, component, physicsElements);
   if (!fiberSceneObject || !nodes || nodes.length < 2) return null;
 
+  // The BOUND connector's own junction→face length, not the 36.28 mm FC
+  // housing constant (fixed 2026-09-23): this editor shows and writes the
+  // optical face, and for a connector-bound cable the face the solver couples
+  // through sits at the connector's tip — ~59 mm on the PM ferrules, so the
+  // constant put the panel ~23 mm away from the trace. `setFiberPortLabPose`
+  // derives the same number for the write half.
+  const tipMm = fiberEndConnectorTipMm(scene, fiberSceneObject.componentId, end);
   const portPose = getFiberPortLabPose(end, nodes, {
     xMm: fiberSceneObject.xMm,
     yMm: fiberSceneObject.yMm,
@@ -950,7 +959,7 @@ function FiberPortPoseEditor({
     rxDeg: fiberSceneObject.rxDeg,
     ryDeg: fiberSceneObject.ryDeg,
     rzDeg: fiberSceneObject.rzDeg,
-  });
+  }, tipMm);
   if (!portPose) return null;
   const { rxDeg, ryDeg, rzDeg } = outwardLabToEulerDeg(portPose.outwardLab);
 
@@ -1036,7 +1045,7 @@ function FiberEditor({
   const [alignFeedback, setAlignFeedback] = useState<string | null>(null);
   const [picker, setPicker] = useState<{
     end: "A" | "B";
-    candidates: import("../utils/fiberAlignment").FiberAlignmentCandidate[];
+    candidates: import("../api/client").FiberAlignmentCandidate[];
   } | null>(null);
 
   const clearFiberEndpointLink = useSceneStore(
@@ -1055,7 +1064,7 @@ function FiberEditor({
 
   const applyCandidate = async (
     end: "A" | "B",
-    c: import("../utils/fiberAlignment").FiberAlignmentCandidate,
+    c: import("../api/client").FiberAlignmentCandidate,
   ) => {
     if (!sceneObject) return;
     await applyFiberAlignmentCandidate(sceneObject.id, end, c);

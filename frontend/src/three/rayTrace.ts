@@ -82,8 +82,10 @@ import {
   anchorObjectLocalPos,
   anchorObjectLocalPrimaryDir,
 } from "../utils/anchorAccess";
-import { FIBER_FERRULE_TIP_MM } from "../utils/fiberAnchorResolver";
-import { endpointOutwardBody } from "../utils/fiberAlignment";
+import {
+  endpointOutwardBody,
+  FIBER_FERRULE_TIP_MM,
+} from "../utils/fiberAnchorResolver";
 import { emissionFromObject } from "./opticalBeams";
 import {
   type AomTraversalSign,

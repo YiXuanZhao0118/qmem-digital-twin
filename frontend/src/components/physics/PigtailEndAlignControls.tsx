@@ -24,8 +24,10 @@ import { useState } from "react";
 import { useSceneStore } from "../../store/sceneStore";
 import type { SceneObject } from "../../types/digitalTwin";
 import { pigtailPortBindings } from "../../utils/componentBindings";
-import type { PigtailAlignmentCandidate } from "../../utils/pigtailAlignment";
-import type { FiberPortLink } from "../../utils/fiberAlignment";
+import type {
+  FiberPortLink,
+  PigtailAlignmentCandidate,
+} from "../../api/client";
 
 const TOLERANCE_MM = 25;
 
