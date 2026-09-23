@@ -15,7 +15,11 @@ import math
 from dataclasses import dataclass, field
 from typing import Optional
 
-from app.optical.aperture import gaussian_circular_aperture_fraction, gaussian_width_mm
+from app.optical.aperture import (
+    gaussian_circular_aperture_fraction,
+    gaussian_rect_aperture_fraction,
+    gaussian_width_mm,
+)
 from app.optical.beam_ray import BeamRay, QMatrix, Vec3
 from app.optical.jones import beam_local_sp, jones_rotation_angle, rotate_jones
 from app.optical.surfaces.geometry import SurfaceHit, intersect
@@ -34,8 +38,10 @@ class InternalSegment:
 
 @dataclass(frozen=True)
 class ApertureClip:
-    """The Gaussian power fraction one circular surface aperture passes, with
-    the same knife-edge model as the lens op (``aperture.py``)."""
+    """The Gaussian power fraction one surface aperture passes (``aperture.py``:
+    the lens op's knife-edge for a circle, two exact slits for a rectangle).
+    ``radius_mm`` is the circle's radius, or a rectangle's inscribed-circle
+    radius (half its smaller side) — the number the BeamScope readout shows."""
     surface_id: str
     radius_mm: float
     w_eff_mm: float
@@ -50,7 +56,7 @@ class ElementTrace:
     absorbed_mw: float = 0.0
     lost_mw: float = 0.0
     lost: list[str] = field(default_factory=list)
-    # Aperture clipping, one entry per circular surface met, in trace order.
+    # Aperture clipping, one entry per circle / rectangle surface met, in order.
     clips: list[ApertureClip] = field(default_factory=list)
     clipped_mw: float = 0.0
 
@@ -92,16 +98,24 @@ def _nearest(model: SurfaceModel, ray: BeamRay) -> tuple[Surface, SurfaceHit] | 
 
 
 def _clip(surface: Surface, hit: SurfaceHit, ray: BeamRay) -> Optional[ApertureClip]:
-    """Gaussian power through a circular aperture. Rectangle / ellipse
-    apertures clip the chief ray only (None here)."""
-    if surface.aperture != "circle":
+    """Gaussian power through a circular or rectangular aperture, measured in
+    the surface's tangent plane (u along axisY, v along axisZ). An ellipse
+    clips the chief ray only (None here)."""
+    if surface.aperture == "ellipse":
         return None
     wl = ray.wavelength_nm
     # Reduced Q + vacuum λ gives the physical width inside a medium too.
     w_eff = math.sqrt(gaussian_width_mm(ray.qx, wl) * gaussian_width_mm(ray.qy, wl))
     r_c = math.hypot(hit.u, hit.v)
-    frac = gaussian_circular_aperture_fraction(w_eff, surface.aperture_radius_mm, r_c)
-    return ApertureClip(surface.id, surface.aperture_radius_mm, w_eff, r_c, frac)
+    if surface.aperture == "circle":
+        radius = surface.aperture_radius_mm
+        frac = gaussian_circular_aperture_fraction(w_eff, radius, r_c)
+    else:
+        radius = 0.5 * min(surface.aperture_width_mm, surface.aperture_height_mm)
+        frac = gaussian_rect_aperture_fraction(
+            w_eff, surface.aperture_width_mm, surface.aperture_height_mm, hit.u, hit.v,
+        )
+    return ApertureClip(surface.id, radius, w_eff, r_c, frac)
 
 
 def trace_element(model: SurfaceModel, ray: BeamRay) -> ElementTrace:
@@ -169,7 +183,9 @@ def effective_focal_length(model: SurfaceModel, ray: BeamRay, h: float = 1e-3) -
     neighbour rays offset by ``h`` along each transverse axis — the true EFL
     of a thick lens, not its back focal length. The geometric mean of the two
     axes (signed; negative = diverging). None when the part has no single
-    exit for all three rays, or the two axes disagree in sign or are ~flat."""
+    exit for all three rays, the two axes disagree in sign, or either axis has
+    no power (a plate; a cylindrical lens, whose unpowered axis is only
+    rounding noise — a round POP Airy pattern is meaningless for it anyway)."""
     chief = trace_element(model, ray)
     if len(chief.exits) != 1:
         return None
@@ -186,6 +202,6 @@ def effective_focal_length(model: SurfaceModel, ray: BeamRay, h: float = 1e-3) -
             return None
         powers.append(-dd_perp.dot(ax_out) / h)
     p_s, p_t = powers
-    if p_s * p_t <= 0.0 or abs(p_s * p_t) < 1e-18:
+    if min(abs(p_s), abs(p_t)) < 1e-9 or p_s * p_t <= 0.0:   # |f| > 1e9 mm: no power
         return None
     return math.copysign(1.0 / math.sqrt(p_s * p_t), p_s)

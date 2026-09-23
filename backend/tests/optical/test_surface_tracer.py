@@ -258,3 +258,25 @@ def test_a_surface_plate_carries_no_lens_descriptor():
     )
     res = trace([slot(plate)], on_axis_ray())
     assert all(s.aperture_truncation is None for s in res.lab_segments)
+
+
+def test_a_cylindrical_surface_lens_reports_its_clip_but_no_pop_focal_length():
+    """A round-aperture Airy pattern is meaningless for a cylindrical lens:
+    the descriptor keeps the clip readout but focalLengthMm = 0 (POP off)."""
+    cyl = V3AssetAnchorSnapshot(
+        catalog_id="cyl", kind="lens_cylindrical", anchors=[],
+        surface_model=parse_surface_model({
+            "media": {"glass": {"n": 1.5}},
+            "surfaces": [
+                {**surf("A", 0.0, "glass", "air", shape={"type": "cylinder", "radiusMm": 20.0}),
+                 "aperture": {"shape": "rectangle", "widthMm": 10.0, "heightMm": 12.0}},
+                {**surf("B", 3.0, "air", "glass"),
+                 "aperture": {"shape": "rectangle", "widthMm": 10.0, "heightMm": 12.0}},
+            ],
+        }),
+    )
+    res = trace([slot(cyl, V3Pose())], make_beam_ray(
+        origin=Vec3(-20, 0, 0), direction=Vec3(1, 0, 0), wavelength_nm=780.0, waist_radius_mm=4.0))
+    at = res.lab_segments[0].aperture_truncation
+    assert at["apertureMm"] == 5.0 and at["focalLengthMm"] == 0.0
+    assert 0.5 < at["transmittedFraction"] < 0.99

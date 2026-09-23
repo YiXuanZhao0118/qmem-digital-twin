@@ -68,5 +68,25 @@ def gaussian_circular_aperture_fraction(
     return _clamp01(0.5 * (1.0 + math.erf(math.sqrt(2.0) * s / w)))
 
 
+def gaussian_rect_aperture_fraction(
+    w_eff_mm: float, width_mm: float, height_mm: float, u_mm: float = 0.0, v_mm: float = 0.0,
+) -> float:
+    """Fraction (0..1) of a round Gaussian's power passing an axis-aligned
+    rectangle ``width × height`` whose centre sits at ``(−u, −v)`` from the
+    beam centre. Separable, so exact: the product of two 1-D slits,
+    ``½·[erf(√2·(h − u)/w) + erf(√2·(h + u)/w)]`` with ``h`` the half-size.
+    Used by the surface engine (docs/surface-optics.md); the lens op still
+    treats a rectangle as its inscribed circle."""
+    w = w_eff_mm
+    if width_mm <= 0.0 or height_mm <= 0.0 or w <= 1e-12:
+        return 1.0
+    k = math.sqrt(2.0) / w
+
+    def slit(half: float, off: float) -> float:
+        return 0.5 * (math.erf(k * (half - off)) + math.erf(k * (half + off)))
+
+    return _clamp01(slit(0.5 * width_mm, u_mm) * slit(0.5 * height_mm, v_mm))
+
+
 def _clamp01(x: float) -> float:
     return 0.0 if x < 0.0 else 1.0 if x > 1.0 else x

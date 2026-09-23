@@ -656,3 +656,101 @@ def test_efl_of_a_plate_is_none_and_of_a_negative_lens_is_negative():
                      surf("B", 2.0, "air", "glass")],
     })
     assert effective_focal_length(neg, beam()) == pytest.approx(-60.0, rel=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# Rectangular apertures and the catalog cylindrical lenses
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("w, width, height, u, v", [
+    (2.0, 3.0, 5.0, 0.0, 0.0),
+    (2.0, 3.0, 5.0, 1.2, -0.7),
+    (1.0, 10.0, 12.0, 4.6, 0.0),     # near one edge
+    (8.0, 10.0, 12.0, 0.0, 0.0),     # wider than the rectangle
+])
+def test_rect_fraction_is_the_2d_integral(w, width, height, u, v):
+    """The separable slit product must equal a direct 2-D integration of the
+    Gaussian intensity exp(−2r²/w²) over the offset rectangle. The trapezoid
+    error falls as 1/N², so a Richardson step on N and 2N removes it."""
+    import numpy as np
+    from app.optical.aperture import gaussian_rect_aperture_fraction
+
+    def integral(n):
+        xs = np.linspace(-width / 2 - u, width / 2 - u, n)
+        ys = np.linspace(-height / 2 - v, height / 2 - v, n)
+        X, Y = np.meshgrid(xs, ys)
+        inside = np.trapezoid(np.trapezoid(np.exp(-2 * (X ** 2 + Y ** 2) / w ** 2), ys, axis=0), xs)
+        return inside / (math.pi * w * w / 2)
+
+    richardson = (4 * integral(2001) - integral(1001)) / 3
+    assert gaussian_rect_aperture_fraction(w, width, height, u, v) == pytest.approx(richardson, abs=1e-8)
+
+
+# The cylindrical catalog lenses converted to surface models (2026-09-23):
+# catalog id -> (vertex z, signed R along +z: − convex LJ / + concave LK,
+# width along y, height along x), from a RANSAC circle fit of each GLB's
+# cylinder (residual ≤ 1.6e-7 mm; cylinder axis body x, curvature body y,
+# flat face at z = 0). docs/surface-optics.md.
+CYLINDRICAL_ASSETS = {
+    "lj1328l2_b_step": (5.22, -10.34, 15.0, 30.0),
+    "lj1402l1_b_step": (2.61, -20.67, 10.0, 12.0),
+    "lj1934l1_b_step": (3.64, -77.52, 20.0, 22.0),
+    "lj1960l1_b_step": (3.29, -10.34, 10.0, 12.0),
+    "lk1426l1_b_step": (2.0, 12.86, 10.0, 12.0),
+    "lk1900l1_b_step": (2.0, 13.12, 16.0, 18.0),
+}
+
+
+def cylindrical_asset(catalog_id):
+    tc, r, width, height = CYLINDRICAL_ASSETS[catalog_id]
+    ar = {"type": "ar", "reflectance": 0.0025}
+    zax, yax = {"x": 0, "y": 0, "z": 1}, {"x": 0, "y": 1, "z": 0}
+    ap = {"shape": "rectangle", "widthMm": width, "heightMm": height}
+    flat = surf("flat", 0.0, "glass", "air", pos={"x": 0, "y": 0, "z": 0.0},
+                normal=zax, axis_y=yax, coating=ar)
+    curved = surf("cylinder", 0.0, "air", "glass", pos={"x": 0, "y": 0, "z": tc},
+                  normal=zax, axis_y=yax, shape={"type": "cylinder", "radiusMm": r}, coating=ar)
+    flat["aperture"] = curved["aperture"] = ap
+    return parse_surface_model({"media": {"glass": {"material": "N-BK7"}}, "surfaces": [flat, curved]})
+
+
+@pytest.mark.parametrize("catalog_id", sorted(CYLINDRICAL_ASSETS))
+@pytest.mark.parametrize("direction", [1.0, -1.0])
+def test_catalog_cylindrical_lens_powers_one_axis_only(catalog_id, direction):
+    """For a beam along ±z the canonical p axis is body y — the curvature
+    direction: it must follow the thick-lens ABCD (the model's signed R is R₂
+    flat side first, −R is R₁ curved side first), while s (body x, along the
+    cylinder) crosses a plain slab, with no cross term and no EFL."""
+    from app.optical.surfaces.materials import ISOTROPIC
+    from app.optical.surfaces.trace import effective_focal_length
+
+    n = ISOTROPIC["N-BK7"].n(852.0)
+    tc, r, _w, _h = CYLINDRICAL_ASSETS[catalog_id]
+    model = cylindrical_asset(catalog_id)
+    ray = make_beam_ray(origin=Vec3(0, 0, -50.0 * direction), direction=Vec3(0, 0, direction),
+                        wavelength_nm=852.0, waist_radius_mm=1.0)
+    out = only_exit(trace_element(model, ray))
+    if direction > 0:
+        abcd, q_front = _thick_lens_abcd(None, r, n, tc), ray.qy + 50.0
+    else:
+        abcd, q_front = _thick_lens_abcd(-r, None, n, tc), ray.qy + 50.0 - tc
+    assert out.qy == pytest.approx(_q_after_abcd(q_front, *abcd), rel=1e-12)
+    assert out.qx == pytest.approx(q_front + tc / n, rel=1e-12)
+    assert abs(out.qxy) < 1e-12
+    assert out.power_mw == pytest.approx(0.9975 ** 2, abs=1e-14)
+    assert effective_focal_length(model, ray) is None
+
+
+def test_a_wide_beam_is_clipped_by_the_rectangle():
+    from app.optical.aperture import gaussian_rect_aperture_fraction
+
+    model = cylindrical_asset("lj1402l1_b_step")    # 10 (y) × 12 (x)
+    ray = make_beam_ray(origin=Vec3(0, 0, -50), direction=Vec3(0, 0, 1),
+                        wavelength_nm=852.0, waist_radius_mm=4.0)
+    res = trace_element(model, ray)
+    entry = res.clips[0]
+    assert entry.radius_mm == 5.0                    # inscribed circle, for the readout
+    assert entry.fraction == pytest.approx(
+        gaussian_rect_aperture_fraction(entry.w_eff_mm, 10.0, 12.0), rel=1e-15)
+    assert 0.5 < entry.fraction < 0.99
+    assert only_exit(res).power_mw == pytest.approx(min(c.fraction for c in res.clips) * 0.9975 ** 2, rel=1e-12)
