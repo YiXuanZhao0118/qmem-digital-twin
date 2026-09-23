@@ -539,8 +539,9 @@ export type V3LabSegment = {
   // intercept_in — the values the TA op multiplies the seed by
   // (`misc_ops.ta_seed_coupling`). Null/absent on every other segment.
   // NOT the legacy `TraceSegment.taSeedCoupling` (rayTrace.ts, a different
-  // shape on the TA's OUTPUT segments); v3TraceAdapter does not map this
-  // onto it, so BeamScope's "TA eta" block is unchanged.
+  // shape on the TA's OUTPUT segments). `v3TraceAdapter` carries THIS shape
+  // through under the same name (it does not remap it), and BeamScope's
+  // "TA seed" / "TA eta" block reads it — see docs/introduce/optics.md.
   taSeedCoupling?: {
     etaMode: number;
     polarizationOverlap: number;

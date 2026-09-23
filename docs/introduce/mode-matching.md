@@ -42,9 +42,12 @@ couple. Sibling: [`optics.md`](optics.md) (the q-tracer this rides on),
   (`misc_ops._mode_match_eta`, reported on the trace as
   `labSegments[*].taSeedCoupling.etaMode` since 2026-09-22 — see
   [optics.md](optics.md)), so the panel's η and the traced amplified power
-  agree. (The BeamScope panel's client-side "TA eta: mode" readout
-  (`rayTrace.ts::taSeedModeOverlap`) belongs to the legacy in-browser tracer;
-  `v3TraceAdapter` never fills it, so it does not show on the v3 trace.)
+  agree. **BeamScope shows the same `etaMode` since 2026-09-23**: probe the
+  segment arriving at the TA's input facet and its "TA eta: mode" is the
+  optimizer's η for the current layout, so a plan can be read off against
+  what the bench is doing. (Until then that readout declared the retired
+  in-browser tracer's differently-shaped field of the same name, which
+  `v3TraceAdapter` never filled, so it never rendered.)
 
 The overlap is the general-astigmatism power coupling of two Gaussian beam
 matrices (`mode_match.py`):

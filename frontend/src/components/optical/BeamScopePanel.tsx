@@ -394,6 +394,24 @@ function axisPair(
   );
 }
 
+/** A fraction as a percentage, dropping to exponential rather than rounding a
+ *  real value to "0.0%". The TA seed-coupling terms genuinely span decades — a
+ *  seed arriving cross-polarised to the amplifier's acceptance axis has a
+ *  polarization overlap of ~1e-5, which is the readout's whole point. */
+function smallPct(fraction: number): string {
+  if (!Number.isFinite(fraction)) return "—";
+  const pct = fraction * 100;
+  if (pct !== 0 && Math.abs(pct) < 0.05) return `${pct.toExponential(1)}%`;
+  return `${pct.toFixed(1)}%`;
+}
+
+/** Milliwatts, same rule: never print a nonzero power as "0.00". */
+function smallMw(mw: number): string {
+  if (!Number.isFinite(mw)) return "—";
+  if (mw !== 0 && Math.abs(mw) < 0.005) return mw.toExponential(2);
+  return mw.toFixed(2);
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 
 /** Inner UI of the beam scope: snapshot computation + summary line +
@@ -599,15 +617,30 @@ export function BeamScopeContents() {
       ? bestSegNominal
       : (params.nominalPowerMw ?? 1.0);
     const powerMw = segNominal * upstreamFactor;
+    // Seed coupling into a tapered amplifier, from the TRACE: the factors the
+    // TA op multiplies the seed by, on the segment that ENDS on the TA's input
+    // facet (`misc_ops.ta_seed_coupling` → `labSegments[*].taSeedCoupling`,
+    // carried through by v3TraceAdapter). Probe the beam ARRIVING at the TA to
+    // read it.
+    //
+    // This block used to declare the retired in-browser tracer's field of the
+    // same name — a different set of keys (`rawSeedPowerMw` /
+    // `effectiveSeedPowerMw` / `modeOverlap` / `distanceToInputMm`) living on
+    // the TA's OUTPUT segments. Nothing has written those since the v3 tracer
+    // became the only source, so the readout had been dead rather than wrong.
     const taSeedCoupling = (bestSeg as {
       taSeedCoupling?: {
-        rawSeedPowerMw: number;
-        effectiveSeedPowerMw: number;
-        modeOverlap: number;
+        /** Mode overlap between the arriving beam and the TA's input mode. */
+        etaMode: number;
+        /** |<e_seed | e_TA>|², the TA input polarization acceptance. */
         polarizationOverlap: number;
-        distanceToInputMm: number;
-      };
-    } | null)?.taSeedCoupling;
+        /** etaMode · polarizationOverlap — what the seed is multiplied by. */
+        coupledFraction: number;
+        /** Power arriving at the facet (mW) and what couples in. */
+        seedPowerMw: number;
+        coupledPowerMw: number;
+      } | null;
+    } | null)?.taSeedCoupling ?? null;
     const fiberCoupling = (bestSeg as {
       fiberCoupling?: {
         etaMode: number;
@@ -1074,13 +1107,13 @@ export function BeamScopeContents() {
         {taSeedCoupling && (
           <>
             <div>
-              <strong>TA seed</strong>: {taSeedCoupling.effectiveSeedPowerMw.toFixed(2)} mW
+              <strong>TA seed</strong>: {smallMw(taSeedCoupling.coupledPowerMw)} mW
               <span className="beam-scope-power-frac">
-                {" "}({taSeedCoupling.rawSeedPowerMw.toFixed(2)} mW raw)
+                {" "}({taSeedCoupling.seedPowerMw.toFixed(2)} mW raw)
               </span>
             </div>
             <div>
-              <strong>TA eta</strong>: mode {(taSeedCoupling.modeOverlap * 100).toFixed(1)}%, pol {(taSeedCoupling.polarizationOverlap * 100).toFixed(1)}%
+              <strong>TA eta</strong>: mode {smallPct(taSeedCoupling.etaMode)}, pol {smallPct(taSeedCoupling.polarizationOverlap)}
             </div>
           </>
         )}
