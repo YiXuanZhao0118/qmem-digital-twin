@@ -114,6 +114,11 @@ class Asset3D(Base):
     tunable_params: Mapped[JsonList] = mapped_column(
         JSONB, nullable=False, default=list, server_default="[]"
     )
+    # Surface model (alembic 0141): the part as real surfaces with media
+    # between them, validated by schemas_v3.SurfaceModelV3. NULL = the part
+    # traces through its anchor op. Not read by the tracer yet — see
+    # docs/surface-optics.md.
+    surface_model: Mapped[JsonDict | None] = mapped_column(JSONB)
     # Human-confirmed "frozen" flag (alembic 0112). True = reviewed +
     # complete; the PHY Editor renders the row read-only and the API rejects
     # any write that changes a field other than ``locked``. Also signals

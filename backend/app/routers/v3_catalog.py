@@ -600,6 +600,12 @@ async def update_asset3d_by_catalog_id(
         row.wavelength_range_nm = payload.wavelength_range_nm
     if "frequency_range_mhz" in fields:
         row.frequency_range_mhz = payload.frequency_range_mhz
+    if "surface_model" in fields:
+        row.surface_model = (
+            payload.surface_model.model_dump(by_alias=True, exclude_none=True)
+            if payload.surface_model is not None
+            else None
+        )
     if "properties" in fields:
         # Whole-dict overwrite (caller is expected to send the merged
         # state). Keep None as "no-op" rather than blanking the column.

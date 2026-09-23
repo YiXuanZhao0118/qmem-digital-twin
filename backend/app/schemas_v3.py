@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from app.schemas import AssetLodOut, CamelModel, asset_file_version
 
@@ -116,6 +116,165 @@ class AnchorV3(CamelModel):
 
 
 # ---------------------------------------------------------------------------
+# Surface model (alembic 0141) — docs/surface-optics.md
+# ---------------------------------------------------------------------------
+
+# Media ids every surface model may use without declaring them: the ambient
+# (n = 1) and an absorber (a ray transmitted into it is dropped).
+RESERVED_MEDIA = ("air", "opaque")
+_AXIS_TOL = 1e-4
+
+
+def _norm(v: Vec3V3) -> float:
+    return (v.x * v.x + v.y * v.y + v.z * v.z) ** 0.5
+
+
+class SurfaceShapeV3(CamelModel):
+    """``radius_mm > 0`` puts the centre of curvature on the +axisX side.
+    ``cylinder`` is curved along the surface's axisY only."""
+    type: Literal["plane", "sphere", "cylinder", "conic"]
+    radius_mm: Optional[float] = None
+    conic: Optional[float] = None
+    aspheric_coeffs: Optional[list[float]] = None
+
+    @model_validator(mode="after")
+    def _check(self) -> "SurfaceShapeV3":
+        if self.type == "plane":
+            if self.radius_mm is not None:
+                raise ValueError("a plane has no radiusMm")
+        elif not self.radius_mm:
+            raise ValueError(f"a {self.type} needs a non-zero radiusMm")
+        if self.type != "conic" and (
+            self.conic is not None or self.aspheric_coeffs is not None
+        ):
+            raise ValueError("conic / asphericCoeffs belong to a conic surface")
+        return self
+
+
+class SurfaceApertureV3(CamelModel):
+    """Measured in the surface's tangent plane. ``radius_mm`` is a radius;
+    ``width_mm`` (along axisY) / ``height_mm`` (along axisZ) are full sizes."""
+    shape: Literal["circle", "rectangle", "ellipse"]
+    radius_mm: Optional[float] = None
+    width_mm: Optional[float] = None
+    height_mm: Optional[float] = None
+
+    @model_validator(mode="after")
+    def _check(self) -> "SurfaceApertureV3":
+        if self.shape == "circle":
+            if not self.radius_mm or self.radius_mm <= 0:
+                raise ValueError("a circle aperture needs radiusMm > 0")
+        elif not (
+            self.width_mm and self.width_mm > 0
+            and self.height_mm and self.height_mm > 0
+        ):
+            raise ValueError(f"a {self.shape} aperture needs widthMm and heightMm > 0")
+        return self
+
+
+class SurfaceCoatingV3(CamelModel):
+    type: Literal["uncoated", "ar", "hr", "partial", "polarizing"] = "uncoated"
+    reflectance: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    # Same names and meaning as the PBS op's params (anchor_ops/pbs.py).
+    extinction_ratio_pp_db: Optional[float] = None
+    extinction_ratio_sp_db: Optional[float] = None
+
+    @model_validator(mode="after")
+    def _check(self) -> "SurfaceCoatingV3":
+        if self.type in ("ar", "hr", "partial") and self.reflectance is None:
+            raise ValueError(f"an {self.type} coating needs a reflectance")
+        if self.type in ("uncoated", "polarizing") and self.reflectance is not None:
+            raise ValueError(f"an {self.type} coating takes no reflectance")
+        if self.type != "polarizing" and (
+            self.extinction_ratio_pp_db is not None
+            or self.extinction_ratio_sp_db is not None
+        ):
+            raise ValueError("extinction ratios belong to a polarizing coating")
+        return self
+
+
+class MediumV3(CamelModel):
+    """Exactly one of: ``n``, ``material`` (library name, checked once the
+    library exists), or the uniaxial ``n_o`` + ``n_e`` with ``optic_axis``."""
+    n: Optional[float] = Field(default=None, gt=0.0)
+    material: Optional[str] = None
+    n_o: Optional[float] = Field(default=None, gt=0.0)
+    n_e: Optional[float] = Field(default=None, gt=0.0)
+    optic_axis: Optional[Vec3V3] = None
+
+    @model_validator(mode="after")
+    def _check(self) -> "MediumV3":
+        uniaxial = self.n_o is not None or self.n_e is not None
+        if sum([self.n is not None, self.material is not None, uniaxial]) != 1:
+            raise ValueError("a medium needs exactly one of n, material, or nO + nE")
+        if uniaxial:
+            if self.n_o is None or self.n_e is None:
+                raise ValueError("a uniaxial medium needs both nO and nE")
+            if self.optic_axis is None or _norm(self.optic_axis) < 1e-9:
+                raise ValueError("a uniaxial medium needs a non-zero opticAxis")
+        elif self.optic_axis is not None:
+            raise ValueError("opticAxis belongs to a uniaxial medium")
+        return self
+
+
+class SurfaceV3(CamelModel):
+    """One optical surface. ``front`` is the medium on the +axisX side,
+    ``back`` the one on the −axisX side; axisZ = axisX × axisY."""
+    id: str
+    position_mm_body_local: Vec3V3
+    axis_x_body_local: Vec3V3
+    axis_y_body_local: Vec3V3
+    shape: SurfaceShapeV3
+    aperture: SurfaceApertureV3
+    front: str
+    back: str
+    coating: SurfaceCoatingV3 = Field(default_factory=SurfaceCoatingV3)
+
+    @model_validator(mode="after")
+    def _check(self) -> "SurfaceV3":
+        x, y = self.axis_x_body_local, self.axis_y_body_local
+        if abs(_norm(x) - 1.0) > _AXIS_TOL or abs(_norm(y) - 1.0) > _AXIS_TOL:
+            raise ValueError(f"surface {self.id!r}: axisX and axisY must be unit vectors")
+        if abs(x.x * y.x + x.y * y.y + x.z * y.z) > _AXIS_TOL:
+            raise ValueError(f"surface {self.id!r}: axisX and axisY must be orthogonal")
+        if self.front == self.back:
+            raise ValueError(f"surface {self.id!r}: front and back are the same medium")
+        return self
+
+
+class SurfaceModelV3(CamelModel):
+    """A part as real surfaces with media between them. See
+    docs/surface-optics.md; nothing in the tracer reads this yet."""
+    media: dict[str, MediumV3] = Field(default_factory=dict)
+    surfaces: list[SurfaceV3]
+
+    @model_validator(mode="after")
+    def _check(self) -> "SurfaceModelV3":
+        if not self.surfaces:
+            raise ValueError("a surface model needs at least one surface")
+        reserved = set(RESERVED_MEDIA) & set(self.media)
+        if reserved:
+            raise ValueError(f"reserved media ids cannot be declared: {sorted(reserved)}")
+        ids = [s.id for s in self.surfaces]
+        dupes = {i for i in ids if ids.count(i) > 1}
+        if dupes:
+            raise ValueError(f"duplicate surface ids: {sorted(dupes)}")
+        known = set(self.media) | set(RESERVED_MEDIA)
+        used: set[str] = set()
+        for s in self.surfaces:
+            for side in (s.front, s.back):
+                if side not in known:
+                    raise ValueError(f"surface {s.id!r}: unknown medium {side!r}")
+                used.add(side)
+        unused = set(self.media) - used
+        if unused:
+            raise ValueError(f"media not used by any surface: {sorted(unused)}")
+        if "air" not in used:
+            raise ValueError("no surface touches air, so light can never enter")
+        return self
+
+
+# ---------------------------------------------------------------------------
 # Asset3D v3
 # ---------------------------------------------------------------------------
 
@@ -164,6 +323,9 @@ class Asset3DV3Out(CamelModel):
     tunable_params: Optional[list[str]] = None
     wavelength_range_nm: Optional[list[float]] = None
     frequency_range_mhz: Optional[list[float]] = None
+    # Surface model (alembic 0141), returned raw like ``anchors`` so a row
+    # written outside the API can never 500 the catalog list. NULL = none.
+    surface_model: Optional[dict[str, Any]] = None
     properties: dict[str, Any]
     # Human-confirmed "frozen" flag (alembic 0112). Read-only editor + the
     # PUT below rejects any field change but ``locked`` while it is true.
@@ -197,6 +359,8 @@ class Asset3DV3Update(CamelModel):
     tunable_params: Optional[list[str]] = None
     wavelength_range_nm: Optional[list[float]] = None
     frequency_range_mhz: Optional[list[float]] = None
+    # Surface model (alembic 0141): whole-object overwrite; null clears it.
+    surface_model: Optional[SurfaceModelV3] = None
     # Callers should send the full merged dict; partial keys would`r`n    # clobber unrelated entries.
     properties: Optional[dict[str, Any]] = None
     locked: Optional[bool] = None
