@@ -2,7 +2,12 @@
 
 # Surface optics — tracing parts through their real faces (plan)
 
-> **Status (2026-09-23): Phases 0–2 landed** — the `assets_3d.surface_model` column, the surface engine (`backend/app/optical/surfaces/`), and its wiring into the anchor tracer. **Phase 3 is under way: ten lenses carry surface models — four plano-convex (LA1509, LA1027, LA1131, LA1951) and six cylindrical (LJ1328L2, LJ1402L1, LJ1934L1, LJ1960L1, LK1426L1, LK1900L1); see "Converted so far". None is in a scene object, so the lab trace is unchanged.** Every other part still traces through its anchor op as described in [introduce/optics.md](introduce/optics.md). Phase 4 has begun: the PHY Editor shows a surface model, read-only.
+> **Status (2026-09-23): Phases 0–2 landed** — the `assets_3d.surface_model` column, the surface engine (`backend/app/optical/surfaces/`), and its wiring into the anchor tracer. **Phase 3 is done except for one part:**
+> - **Converted (22):** 11 lenses (4 plano-convex, 6 cylindrical, the biconcave LD2297), both Casix waveplates, the BB1-E03 mirror, the four cubes, both Glan-laser prisms, and both Faraday rotators. See "Converted so far".
+> - **Held back:** `a230tm_b_step`, until its glass and asphere are confirmed.
+> - **Kept on its op by decision:** the AOM.
+> - **The lab trace changed:** the mirrors, waveplates, isolator cubes and TGG rod on the seed path are now surface models (see "Effect on the lab trace").
+> - **Phase 4 has begun:** the PHY Editor shows a surface model, read-only.
 
 ## Why
 
@@ -20,7 +25,7 @@ The goal: a part is a set of **real surfaces with media between them**, and the 
 
 | Question | Decision |
 |---|---|
-| Which kinds move to surfaces | Every free-space optical part. **Kept on today's op:** `tapered_amplifier`, `laser_source`, the sinks (`detector`, `camera`, `spectrometer`, `wavemeter`, `beam_dump`), `fiber` / `fiber_coupler` / `fiber_connector` (Marcuse overlap coupling stays), and `eom` (the only EOM asset, `eospace_pm_0k1_nir`, is fibre-pigtailed). |
+| Which kinds move to surfaces | Every free-space optical part. **Kept on today's op:** `tapered_amplifier`, `laser_source`, the sinks (`detector`, `camera`, `spectrometer`, `wavemeter`, `beam_dump`), `fiber` / `fiber_coupler` / `fiber_connector` (Marcuse overlap coupling stays), `eom` (the only EOM asset, `eospace_pm_0k1_nir`, is fibre-pigtailed), and — decided when converting, 2026-09-23 — `aom` (see "Converting kinds"). |
 | Multiple reflections (etalon / ghosts) | **Not in v1.** One transmitted (or one reflected) pass; the power a partial reflection takes is lost, and the ghost ray is not traced. |
 | Why this is not a return to the retired `faces[]` | 0106 retired the face path for consolidation (the anchor tracer had become the only caller), not because the physics was wrong. The one physics reason on record — `optics.md` "Why one anchor rather than two surfaces": the tracer propagates q as **air** between anchors — is exactly what the sub-trace below removes: the medium between faces is traced inside the element, never by the main loop. |
 | Aberrations | Out of scope. The Gaussian beam is propagated paraxially **about an exactly-traced chief ray**, so focus, tilt/decentre astigmatism, displacement and Fresnel are captured; spherical aberration and coma are not. The Collins/POP solver (`solvers/`, not wired to the tracer) is the escalation path if needed. |
@@ -150,7 +155,7 @@ The chief ray is traced exactly; the Gaussian envelope Q (the complex symmetric 
 
 ### Converting kinds (Phase 3)
 
-In order: plate / window, polarizer, waveplate (HWP, QWP) → lenses (including cylindrical) → mirror (one HR surface over `opaque`; curved mirrors come for free) → PBS / beam splitter (hypotenuse coating) → Faraday rotator and AOM (need the bulk effects added to `media`). Each conversion authors `surface_model` on the catalog assets of that kind. **Take the geometry from the asset's own mesh**, not the catalog JSONs' retired `faces`: for LA1509-B the JSON assumed the convex side at the entry anchor, and the mesh has it the other way round. Note that the two Glan-Laser prisms (`glan_laser_io3_850`, `glan_laser_io5_850`) are `beam_splitter` kind, and they need the o/e split model before they can convert.
+In order: plate / window, polarizer, waveplate (HWP, QWP) → lenses (including cylindrical) → mirror (one HR surface over `opaque`; curved mirrors come for free) → PBS / beam splitter (hypotenuse coating) → Faraday rotator and AOM (need the bulk effects added to `media`). Each conversion authors `surface_model` on the catalog assets of that kind. **Take the geometry from the asset's own mesh**, not the catalog JSONs' retired `faces`: for LA1509-B the JSON assumed the convex side at the entry anchor, and the mesh has it the other way round. The two Glan-Laser prisms (`glan_laser_io3_850`, `glan_laser_io5_850`) are `beam_splitter` kind; they converted once the o/e split landed.
 
 #### Converted so far
 
@@ -179,6 +184,43 @@ In order: plate / window, polarizer, waveplate (HWP, QWP) → lenses (including 
 - **Verification:** each lens was dry-run before it was written: the powered axis against `_thick_lens_abcd` (1e-12, both directions), the unpowered axis against a pure slab `q + d/n`, no cross term, no EFL. The live component previews agree, each reporting the clip with `focalLengthMm` = 0.
 
 All four were **thin lenses** before (none had `radiusFrontMm`, so the op never took its thick branch). The before/after foci are for an 852 nm beam with a 1 mm waist, starting 50 mm out, with the asset at identity pose. Every conversion was dry-run against `_thick_lens_abcd` in both directions (1e-12) before it was written; the `GET` rows from before each write are kept outside the repo, and the live `run-from-db` trace was byte-identical afterwards. The measuring and converting scripts were one-off and are not in the repo: `measure_lens.py` classifies the GLB's triangles by normal and fits a free sphere, reporting the centre offset from the axis.
+
+**The rest** (2026-09-23; all unlocked by Claude at the user's explicit request — "全部幫我做完" after "你直接解鎖" — and left unlocked). Each was dry-run against its own op before writing: the split ratios, extinction leakage and output directions match, and so do the Jones vectors up to a global phase and the AR amplitude — mirror 3e-16, waveplates ≤ 3e-12, TGG rods 1e-16. The models are pinned in `tests/optical/test_surface_catalog_parts.py`.
+
+| Asset | Geometry (source) | Model | vs its op |
+|---|---|---|---|
+| `ld2297_b_step` | GLB: biconcave, vertices z = ∓1.5, R = 39.57 both (fit 1.4e-7) | N-BK7, AR 0.25 % | **f ≈ −38 mm**, not the −25 of its `focalLengthMm` (and its kind says `lens_biconvex`) — the model follows the CAD |
+| `casix_zowp_852_hwp` / `_qwp` | GLB: 2.1 mm plate, faces z = ±1.05 | **cemented compound zero-order**: two quartz plates with crossed optic axes (y then x), L₁ + L₂ = 2.1, L₁ − L₂ = λ/2Δn (λ/4Δn) at 852 nm; fast axis x = the anchor's axisY; aperture the anchor's 11.43 | retardance exactly 180° / 90° at 852 nm (the op's `retardanceDeg`), now dispersive and tilt-exact; the crossed interface reflects 8e-6 |
+| `bb1_e03_step` | GLB: coated face z = 0 (the anchor plane), 6 mm thick | one `hr` surface R = 0.99 over `opaque` | identical (the back now absorbs instead of reflecting) |
+| `bs041_step`, `pbs055`, `pbs122_step`, `pbs252_step` | GLB: cubes of 12.7 / 5 / 12.7 / 25.4 mm about the origin; hypotenuse through it with the anchor's normal | four AR side faces + a `partial` (R = 0.1) or `polarizing` hypotenuse; BS041 N-BK7, the PBSs n = 1.693 | same split and directions, × AR |
+| `glan_laser_io3_850` / `io5_850` | **procedural (no mesh)**: from the params — length 5 / 7.5 mm, gap normal = `coatingNormalBodyLocal` (38.5° from z), gap corner to corner so a = L·\|n_z/n_x\| (6.3 / 9.4 mm), 20 µm air gap | two calcite prisms, optic axis x (Glan-Taylor/laser: e is p at the gap), escape faces at x = ±a/2 | the same polarization (x) passes; it now loses the p Fresnel of the two gap faces (4.7 % at 38.5°, past Brewster and near the e critical angle — real Glan-lasers pass ~90–95 %); the rejected ray refracts out of the escape face (the op gave its in-glass direction); extinction is now ideal (the op leaked 10^(−ER/10)) |
+| `io_5_850_hp_middle_piece`, `tornos_isolator_middle_piece` | **the GLB is only the housing**: a TGG rod from the params — `lengthMm` 18 centred on `optical_center`, along its axisX, the anchor's aperture | n = 1.95, 45°/18 mm Faraday along the anchor's axisX, AR = `arResidualR` (0.5 %) or 0.25 % | the op's Jones vector (1e-16), × AR |
+
+**Held back: `a230tm_b_step`** (A230TM-B, the seed laser's collimator — the most sensitive part in the lab). Its GLB holds only one curved face: a plano-convex asphere with its vertex at z = 2.939 and its flat back at z = 0. Fitting it gives R = 3.47–3.51 and k = −0.6 to −0.9, depending on the terms fitted, with a residual of 2 µm (10⁴ times worse than the other lenses). With that R, the spec EFL of 4.51 mm needs **n ≈ 1.78**, but the asset's thick-lens equivalent uses R₁ = 2.32, R₂ = 10.31 and n = 1.59. With the glass unknown and the vertex curvature uncertain at the percent level, converting it would move the seed collimation by tens of µm on a guess. It keeps its calibrated op until its glass and prescription are confirmed.
+
+**The AOM stays on its op.** Its physics — Bragg order selection with the per-order sinc², the RF drive resolved from the cable graph, the Doppler shift, the `acoustic_axis` anchor that the Bragg-alignment tooling reads — all lives in `anchor_ops/aom.py`. The crystal faces would add only Fresnel loss and a tiny refraction at near-normal incidence, and putting the op's external-angle convention inside a refracting crystal would take a translation layer that could get it wrong. `aom` joined `OP_ONLY_KINDS`, so the API refuses a surface model on it.
+
+**Data issues found on the way** (reported, not changed — the rows are the user's):
+- `pbs122_step` carries calcite indices (`refractiveIndex_o/e` = 1.66 / 1.48) and the Glan prisms' extinction ratios. It is modelled as an N-SF1 cube (n = 1.693) like PBS055/PBS252.
+- `pbs055` and `pbs252_step` have `coatingNormalBodyLocal` = (1, 1, 0)/√2, while their mesh and `intercept_face` anchor have the hypotenuse at (1, −1, 0)/√2. The mesh and anchor win.
+- `ld2297_b_step`: see the table.
+- `lj1960l1_b_step`'s 1 mm anchor aperture: see the cylindrical block.
+
+#### Effect on the lab trace (2026-09-23, same scene before and after, 236 slots)
+
+The seed path — A230TM → BB1-E03 → HWP → PBS055 / TGG / PBS055 isolator → HWP → PBS122 → mirrors → BS041 → mirrors → the TA — now runs through surface models everywhere except the A230TM, the TA and the laser.
+
+| | before | after |
+|---|---|---|
+| lab segments | 46 | 100 (the in-glass stretches are drawn) |
+| seed power at the TA facet | 11.893 mW | **11.368 mW** (−4.4 %: the 0.25 % AR assumed on each of ~18 faces the op path treated as lossless) |
+| TA mode-overlap η | 0.2137 | **0.2160** (+1 %: the beam now crosses real glass) |
+| coupled seed | 2.542 mW | 2.456 mW |
+| TA forward output | 478.2 mW | **467.7 mW** (−2.2 %) |
+| isolator-port detector | 24.63 mW | 24.38 mW |
+| warnings / errors | none | none |
+
+The live `run-from-db` API gives the same numbers after the backend restart. To undo any one part, `PUT {"surfaceModel": null}`.
 
 After a conversion, for that asset:
 - `defaultParams` are no longer read by the trace (`focalLengthMm`, `refractiveIndex`, `centerThicknessMm`, `transmittance` stay because the kind schema requires them).

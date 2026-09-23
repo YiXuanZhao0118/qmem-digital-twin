@@ -20,12 +20,14 @@ OPAQUE = "opaque"
 
 # Kinds that keep their anchor op even when an asset carries a surface model
 # (docs/surface-optics.md, "Decisions"): the emitters and gain chip, the sinks,
-# fibre coupling, and the (fibre-pigtailed) EOM.
+# fibre coupling, the (fibre-pigtailed) EOM, and the AOM — its Bragg orders,
+# RF drive and Doppler shift live in the op and its alignment tooling reads
+# its anchors, while the crystal faces would add only Fresnel and a tiny bend.
 OP_ONLY_KINDS = frozenset({
     "tapered_amplifier", "laser_source",
     "detector", "camera", "spectrometer", "wavemeter", "beam_dump",
     "fiber", "fiber_coupler", "fiber_connector",
-    "eom",
+    "eom", "aom",
 })
 
 

@@ -201,7 +201,7 @@ def test_loader_parses_the_surface_model_even_without_anchors():
     assert [s.id for s in snap.surface_model.surfaces] == ["A", "B"]
 
 
-@pytest.mark.parametrize("kind", ["tapered_amplifier", "laser_source", "detector", "fiber", "eom"])
+@pytest.mark.parametrize("kind", ["tapered_amplifier", "laser_source", "detector", "fiber", "eom", "aom"])
 def test_loader_ignores_a_surface_model_on_an_op_only_kind(kind):
     assert anchor_asset_to_snapshot(_row(kind=kind)) is None
 

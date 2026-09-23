@@ -293,7 +293,7 @@ def test_update_schema_leaves_the_field_unset_when_absent():
     assert "surface_model" not in Asset3DV3Update.model_validate({"name": "x"}).model_fields_set
 
 
-@pytest.mark.parametrize("kind", ["tapered_amplifier", "laser_source", "eom", "fiber"])
+@pytest.mark.parametrize("kind", ["tapered_amplifier", "laser_source", "eom", "fiber", "aom"])
 def test_op_only_kind_refuses_a_surface_model(put, kind):
     row = _row()
     row.kind_id = kind
