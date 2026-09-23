@@ -27,6 +27,7 @@ import { DockZones } from "./components/workspace/DockZones";
 import { ScrubTimeBar } from "./components/workspace/ScrubTimeBar";
 import { TopBar } from "./components/workspace/TopBar";
 import { WorkspaceProvider } from "./components/workspace/WorkspaceProvider";
+import { capabilityProfile } from "./kinds/_capabilityProfile";
 import { useSceneStore } from "./store/sceneStore";
 import { useV3Catalog } from "./store/catalogStore";
 import { invalidateRfConnectorCache } from "./three/loadAsset/rf_cable/connectorModels";
@@ -148,14 +149,32 @@ export default function App() {
         // (a plain click leaves exactly one id in it), so one call covers
         // both the single- and multi-object cases and goes through the same
         // batch path the Outliner uses — locked members are skipped and
-        // cables / PPGs cascade with their peers. Deletes are NOT on the
-        // undo stack, hence the confirm. PHY Editor has its own selection
-        // model, so the key stays Lab-only.
+        // cables / PPGs linked to a doomed instrument still cascade with it.
+        // Deletes are NOT on the undo stack, hence the confirm. PHY Editor
+        // has its own selection model, so the key stays Lab-only.
+        //
+        // The key removes only what the Outliner would let you remove. An
+        // rf_cable and a PPG are managed by the RF Link panel — their
+        // `capabilityProfile` turns off both the Outliner row and the Object
+        // panel's Remove button, and `timing.md` says outright that a PPG
+        // "can only be removed from there". This key did not honour that:
+        // clicking a cable in the 3D viewport and pressing Delete removed
+        // it — and, through the orphan rule, the PPG on it — which is the
+        // out-of-band deletion those profiles exist to prevent. Deleting
+        // one is still possible, from RF Link's Disconnect, which asks for
+        // it by name.
         if (state.editorMode !== "scene") return;
         const objectsById = new Map(state.scene.objects.map((o) => [o.id, o]));
+        const kindByObjectId = new Map(
+          state.scene.physicsElements.map((pe) => [pe.objectId, pe.elementKind]),
+        );
+        const removableByKey = (o: SceneObject): boolean => {
+          const profile = capabilityProfile(kindByObjectId.get(o.id));
+          return profile.outlinerVisible && profile.showRemoveObjectButton;
+        };
         const doomed = state.selectedObjectIds
           .map((id) => objectsById.get(id))
-          .filter((o): o is SceneObject => o !== undefined && !o.locked);
+          .filter((o): o is SceneObject => o !== undefined && !o.locked && removableByKey(o));
         if (doomed.length === 0) return;
         event.preventDefault();
         const label = doomed.length === 1 ? `"${doomed[0].name}"` : `${doomed.length} objects`;
