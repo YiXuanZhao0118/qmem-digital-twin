@@ -2,7 +2,7 @@
 
 # Surface optics — tracing parts through their real faces (plan)
 
-> **Status (2026-09-23): Phases 0–2 landed** — the `assets_3d.surface_model` column, the surface engine (`backend/app/optical/surfaces/`), and its wiring into the anchor tracer. **Phases 3–4 are not started, and no catalog asset carries a surface model yet**, so every part in the lab still traces through its anchor op as described in [introduce/optics.md](introduce/optics.md); an asset traces through its surfaces the moment one is written.
+> **Status (2026-09-23): Phases 0–2 landed** — the `assets_3d.surface_model` column, the surface engine (`backend/app/optical/surfaces/`), and its wiring into the anchor tracer. **Phase 3 has started: one asset, `la1509_b_step`, carries a surface model (see "Converted so far"); it is in no scene object, so the lab trace is unchanged.** Every other part still traces through its anchor op as described in [introduce/optics.md](introduce/optics.md). Phase 4 is not started.
 
 ## Why
 
@@ -128,7 +128,20 @@ The chief ray is traced exactly; the Gaussian envelope Q (the complex symmetric 
 
 ### Converting kinds (Phase 3)
 
-In order: plate / window, polarizer, waveplate (HWP, QWP) → lenses (including cylindrical) → mirror (one HR surface over `opaque`; curved mirrors come for free) → PBS / beam splitter (hypotenuse coating) → Faraday rotator and AOM (need the bulk effects added to `media`). Each conversion authors `surface_model` on the catalog assets of that kind — the catalog JSONs still carry the retired `faces` data, a usable starting point for positions.
+In order: plate / window, polarizer, waveplate (HWP, QWP) → lenses (including cylindrical) → mirror (one HR surface over `opaque`; curved mirrors come for free) → PBS / beam splitter (hypotenuse coating) → Faraday rotator and AOM (need the bulk effects added to `media`). Each conversion authors `surface_model` on the catalog assets of that kind. **Take the geometry from the asset's own mesh**, not the catalog JSONs' retired `faces`: for LA1509-B the JSON assumed the convex side at the entry anchor, and the mesh has it the other way round. Note that the two Glan-Laser prisms (`glan_laser_io3_850`, `glan_laser_io5_850`) are `beam_splitter` kind, and they need the o/e split model before they can convert.
+
+#### Converted so far
+
+| Asset | Converted | Surface model | Before → after |
+|---|---|---|---|
+| `la1509_b_step` (LA1509-B, used by the "Opt PCX 100.00" component, in no scene object) | 2026-09-23, via `PUT /api/v3/assets3d/la1509_b_step` after the user unlocked it; left unlocked | From the GLB (asset frame = component frame): `flat` plane at z = 0 (glass on +z), `convex` sphere R = −51.5 with its vertex at z = 3.59 (least-squares sphere fit of the dome, R = 51.500, residual 1.7e-7 mm; rim top at z = 1.9995 = the 2.0 mm edge). Both apertures r = 12.7. `N-BK7`. AR 0.25 % per face, keeping today's 0.995 total. The model is pinned in `tests/optical/test_surface_trace.py::la1509_b_step`. | Component preview, 852 nm, 1 mm waist, from 50 mm out. **Flat side first (+z):** focus z = 99.96 → **104.57**; exit moves from the anchor plane (z = 0) to the convex vertex (z = 3.59). **Convex side first (−z):** focus z = −99.96 → **−98.60**. It was a thin lens (its `defaultParams` never had `radiusFrontMm`, so `_is_thick` was false); now it is a thick lens with EFL 101.02 mm at 852 nm (dispersion: 99.65 at n_d), and it is orientation-dependent. Both directions equal `_thick_lens_abcd` to 4e-18. A ray 3 mm off axis now crosses the axis at z = 104.22, 0.35 mm short of the paraxial focus: longitudinal spherical aberration, which the thin lens could not show (it sent that ray to exactly z = 100.0). Live `run-from-db` trace unchanged. |
+
+After a conversion, for that asset:
+- `defaultParams` are no longer read by the trace (`focalLengthMm`, `refractiveIndex`, `centerThicknessMm`, `transmittance` stay because the kind schema requires them).
+- The lens clear-aperture energy truncation and its `apertureTruncation` / POP readout no longer apply.
+- A mode-match focal-length swap (`mode_match_model`, `focalLengthMm` override) has no effect on it.
+
+To undo a conversion, `PUT` `{"surfaceModel": null}`.
 
 Open questions to settle there:
 

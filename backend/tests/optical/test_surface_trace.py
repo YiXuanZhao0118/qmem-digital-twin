@@ -499,3 +499,44 @@ def test_conic_with_zero_k_equals_the_sphere():
     assert a.direction.dot(b.direction) == pytest.approx(1.0, abs=1e-14)
     assert a.qx == pytest.approx(b.qx, rel=1e-9) and a.qy == pytest.approx(b.qy, rel=1e-9)
     assert a.qxy == pytest.approx(b.qxy, abs=1e-9)
+
+
+def la1509_b_step():
+    """The surface model written to the `la1509_b_step` asset (2026-09-23),
+    from its CAD mesh: flat face at z = 0, a sphere-fit dome (R = 51.500,
+    residual 1.7e-7 mm) with its apex at z = 3.59, N-BK7."""
+    ar = {"type": "ar", "reflectance": 0.0025}
+    zax, yax = {"x": 0, "y": 0, "z": 1}, {"x": 0, "y": 1, "z": 0}
+    return parse_surface_model({
+        "media": {"glass": {"material": "N-BK7"}},
+        "surfaces": [
+            surf("flat", 0.0, "glass", "air", pos={"x": 0, "y": 0, "z": 0.0},
+                 normal=zax, axis_y=yax, coating=ar),
+            surf("convex", 0.0, "air", "glass", pos={"x": 0, "y": 0, "z": 3.59},
+                 normal=zax, axis_y=yax, shape={"type": "sphere", "radiusMm": -51.5}, coating=ar),
+        ],
+    })
+
+
+@pytest.mark.parametrize("lam", [780.0, 852.0])
+@pytest.mark.parametrize("direction", [1.0, -1.0])
+def test_la1509_b_step_matches_thick_lens_both_ways(lam, direction):
+    """Flat side first (+z) is R₂ = −51.5 at the exit; convex side first (−z)
+    is R₁ = +51.5 at the entry. Both must equal the thick-lens ABCD with the
+    dispersive N-BK7 index, and lose 0.25 % per face."""
+    from app.optical.surfaces.materials import ISOTROPIC
+
+    n = ISOTROPIC["N-BK7"].n(lam)
+    d, R = 3.59, 51.5
+    ray = make_beam_ray(origin=Vec3(0, 0, -50.0 * direction), direction=Vec3(0, 0, direction),
+                        wavelength_nm=lam, waist_radius_mm=1.0)
+    out = only_exit(trace_element(la1509_b_step(), ray))
+    if direction > 0:
+        a, b, c, dd = _thick_lens_abcd(None, -R, n, d)
+        q_front, exit_z = ray.qx + 50.0, d
+    else:
+        a, b, c, dd = _thick_lens_abcd(R, None, n, d)
+        q_front, exit_z = ray.qx + 50.0 - d, 0.0
+    assert out.origin.z == pytest.approx(exit_z, abs=1e-12)
+    assert out.qx == pytest.approx(_q_after_abcd(q_front, a, b, c, dd), rel=1e-12)
+    assert out.power_mw == pytest.approx(0.9975 ** 2, abs=1e-14)
