@@ -102,7 +102,11 @@ It was applied on **three write paths** (not display formatting — it wrote int
 
 ### 2.2 Breach B — face-picking derives anchors from a float32 mesh
 
-`detectFaceCenterFromHit` ([`Asset3DEditor.tsx:375-571`](../frontend/src/components/Asset3DEditor.tsx#L375)) reads vertices with `target.fromBufferAttribute(positionAttr, vertIdx)` ([:405](../frontend/src/components/Asset3DEditor.tsx#L405)) — and `positionAttr` is a `Float32Array`. Both the centre and the normal are computed from those float32 vertices and then written into the anchor by `autoPlaceFace`.
+> **Update 2026-09-23 — auto-pick now fits the face.** `detectFaceCenterFromHit` is gone. Auto-pick runs `fitSurfaceAtTriangle` (`frontend/src/utils/surfaceFit.ts`): it fits a plane, sphere or cylinder to the whole clicked face and places the anchor at the fitted centre or vertex, with the normal along the fitted axis. It uses the mesh **vertices**, which CAD tessellators put on the true surface, so the triangulation row of the table below no longer applies to those three shapes. The float32 row still does: vertices are read into float64, but they were stored as float32.
+>
+> Measured against the four catalog lenses' own surface models (LA1509, LA1951, LJ1402L1, LK1426L1, clicked off-centre on each face): positions agree within 4e-5 mm, radii to 1e-5 mm, and every normal's transverse components are below 5e-7, which was the printout's resolution. **O-2's 0.1 µrad has not been shown for a fitted axis**, so the conclusion below still stands: an axis that must meet O-2 comes from the device registry. Any other face shape is reported as a poor fit and keeps the old limit.
+>
+> The original analysis follows. `detectFaceCenterFromHit` ([`Asset3DEditor.tsx:375-571`](../frontend/src/components/Asset3DEditor.tsx#L375)) read vertices with `target.fromBufferAttribute(positionAttr, vertIdx)` ([:405](../frontend/src/components/Asset3DEditor.tsx#L405)) — and `positionAttr` is a `Float32Array`. Both the centre and the normal are computed from those float32 vertices and then written into the anchor by `autoPlaceFace`.
 
 **Quantified term by term:**
 

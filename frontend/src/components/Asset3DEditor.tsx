@@ -66,6 +66,7 @@ import { useDevicesStore } from "../store/devicesStore";
 import type { DeviceAnchorTemplate } from "../api/client";
 import { isEditableValue } from "../utils/paramLeaves";
 import { cleanFixed, cleanNumber } from "../utils/numberFormat";
+import { FIT_TOL_MM, fitSurfaceAtTriangle } from "../utils/surfaceFit";
 import { surfaceSagMm } from "../utils/surfaceSag";
 import {
   anchorPayloadFromDraft,
@@ -134,6 +135,25 @@ const ANCHOR_STEP = "0.001";
 function vec3Str(v?: V3Vec3 | null): string {
   if (!v) return "-";
   return `(${v.x.toFixed(2)}, ${v.y.toFixed(2)}, ${v.z.toFixed(2)})`;
+}
+
+/** How `properties.confirmedAnchors` names an anchor: its id, plus its name
+ *  where ids repeat (AD9959 CH0..CH3, rf_switch RF1/RF2). */
+function anchorConfirmKey(anchor: DraftAnchor): string {
+  return anchor.name ? `${anchor.id}:${anchor.name}` : anchor.id;
+}
+
+/** Read-only (x, y, z) of three draft fields, to 0.1 µm. */
+function DraftVecText({ x, y, z }: { x: string; y: string; z: string }) {
+  const f = (s: string) => {
+    const v = readDraftNumber(s);
+    return v === null ? "—" : String(cleanNumber(v, 4));
+  };
+  return (
+    <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 11, whiteSpace: "nowrap" }}>
+      ({f(x)}, {f(y)}, {f(z)})
+    </span>
+  );
 }
 
 function jsonText(value: unknown): string {
@@ -396,212 +416,23 @@ function faceOrientation(anchor: DraftAnchor): THREE.Quaternion {
   return new THREE.Quaternion().setFromRotationMatrix(m);
 }
 
-/**
- * Flood-fill connected coplanar triangles starting from a raycaster hit, then
- * return the boundary-loop centroid + averaged normal of that region.
- *
- * Boundary-loop centroid: for flat patches this is the geometric centre; for
- * curved patches bounded by a closed edge loop (e.g. a lens dome rim) this is
- * the centre of that rim — exactly what "click face -> position to centre"
- * should mean for both flat and round optical surfaces.
- */
-function detectFaceCenterFromHit(
-  hit: THREE.Intersection,
-  options: { angleToleranceDeg?: number; vertexEpsilon?: number } = {},
-): { center: THREE.Vector3; normal: THREE.Vector3; regionVertices: Float32Array } | null {
-  const mesh = hit.object as THREE.Mesh;
-  if (!(mesh.geometry instanceof THREE.BufferGeometry)) return null;
-  if (!hit.face) return null;
-  const positionAttr = mesh.geometry.getAttribute("position");
-  if (!positionAttr) return null;
-
-  const indexAttr = mesh.geometry.index;
-  const triCount = indexAttr ? indexAttr.count / 3 : positionAttr.count / 3;
-  if (triCount === 0) return null;
-
-  const startTri =
-    typeof hit.faceIndex === "number"
-      ? hit.faceIndex
-      : Math.floor((hit.face.a ?? 0) / 3);
-
-  const angleTol = (options.angleToleranceDeg ?? 4) * (Math.PI / 180);
-  const cosTol = Math.cos(angleTol);
-
-  const matrixWorld = mesh.matrixWorld;
-
-  // Triangle vertex indices in the geometry buffer.
-  const vi = (tri: number, corner: 0 | 1 | 2): number =>
-    indexAttr ? indexAttr.getX(tri * 3 + corner) : tri * 3 + corner;
-
-  // World-space vertex fetch into a scratch vector.
-  const readVertex = (target: THREE.Vector3, vertIdx: number): void => {
-    target.fromBufferAttribute(positionAttr, vertIdx);
-    target.applyMatrix4(matrixWorld);
-  };
-
-  // Quantise positions so triangles that share a vertex (but differ at FP
-  // noise level) still register as connected. Epsilon defaults to 1e-4 of the
-  // bounding box max dimension or 1e-4 absolute, whichever is larger.
-  if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
-  const bboxSize = mesh.geometry.boundingBox!.getSize(new THREE.Vector3());
-  const scale = Math.max(bboxSize.x, bboxSize.y, bboxSize.z, 1);
-  const eps = options.vertexEpsilon ?? scale * 1e-4;
-  const quantize = (v: number) => Math.round(v / eps);
-  const vertexKey = (v: THREE.Vector3) =>
-    `${quantize(v.x)},${quantize(v.y)},${quantize(v.z)}`;
-
-  // Build per-vertex-key -> triangle list (adjacency via shared corner).
-  const vertexToTris = new Map<string, number[]>();
-  const triVertKeys: [string, string, string][] = new Array(triCount);
-  const triNormals: THREE.Vector3[] = new Array(triCount);
-  const triCentroids: THREE.Vector3[] = new Array(triCount);
-  const v0 = new THREE.Vector3();
-  const v1 = new THREE.Vector3();
-  const v2 = new THREE.Vector3();
-  const edge1 = new THREE.Vector3();
-  const edge2 = new THREE.Vector3();
-  for (let t = 0; t < triCount; t++) {
-    readVertex(v0, vi(t, 0));
-    readVertex(v1, vi(t, 1));
-    readVertex(v2, vi(t, 2));
-    edge1.subVectors(v1, v0);
-    edge2.subVectors(v2, v0);
-    const n = new THREE.Vector3().crossVectors(edge1, edge2);
-    if (n.lengthSq() < 1e-20) {
-      triNormals[t] = new THREE.Vector3(0, 0, 1);
-      triCentroids[t] = new THREE.Vector3();
-      triVertKeys[t] = ["", "", ""];
-      continue;
-    }
-    triNormals[t] = n.normalize();
-    triCentroids[t] = new THREE.Vector3(
-      (v0.x + v1.x + v2.x) / 3,
-      (v0.y + v1.y + v2.y) / 3,
-      (v0.z + v1.z + v2.z) / 3,
-    );
-    const k0 = vertexKey(v0);
-    const k1 = vertexKey(v1);
-    const k2 = vertexKey(v2);
-    triVertKeys[t] = [k0, k1, k2];
-    for (const k of [k0, k1, k2]) {
-      const list = vertexToTris.get(k);
-      if (list) list.push(t);
-      else vertexToTris.set(k, [t]);
-    }
+/** The mesh's triangles as a soup in the editor frame (body-local mm), in
+ *  the geometry's triangle order, so a raycast `faceIndex` indexes it — the
+ *  input of the auto-pick fit (`utils/surfaceFit.ts`). */
+function worldTriangleSoup(mesh: THREE.Mesh): Float64Array {
+  const geometry = mesh.geometry as THREE.BufferGeometry;
+  const position = geometry.getAttribute("position");
+  const index = geometry.index;
+  const corners = index ? index.count : position.count;
+  const soup = new Float64Array(corners * 3);
+  const v = new THREE.Vector3();
+  for (let i = 0; i < corners; i += 1) {
+    v.fromBufferAttribute(position, index ? index.getX(i) : i).applyMatrix4(mesh.matrixWorld);
+    soup[3 * i] = v.x;
+    soup[3 * i + 1] = v.y;
+    soup[3 * i + 2] = v.z;
   }
-
-  // Flood fill from startTri through neighbours whose normal is close enough.
-  const seedNormal = triNormals[startTri];
-  if (!seedNormal) return null;
-  const inRegion = new Uint8Array(triCount);
-  const queue: number[] = [startTri];
-  inRegion[startTri] = 1;
-  while (queue.length > 0) {
-    const t = queue.pop()!;
-    const keys = triVertKeys[t];
-    for (const k of keys) {
-      const neighbours = vertexToTris.get(k);
-      if (!neighbours) continue;
-      for (const n of neighbours) {
-        if (inRegion[n]) continue;
-        if (triNormals[n].dot(seedNormal) < cosTol) continue;
-        inRegion[n] = 1;
-        queue.push(n);
-      }
-    }
-  }
-
-  // Compute the boundary loop: edges of region triangles that aren't shared by
-  // another region triangle. Boundary vertices are the unique endpoints of
-  // those edges, deduplicated by quantised key.
-  const edgeCount = new Map<string, number>();
-  const edgeKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
-  for (let t = 0; t < triCount; t++) {
-    if (!inRegion[t]) continue;
-    const [ka, kb, kc] = triVertKeys[t];
-    for (const [a, b] of [[ka, kb], [kb, kc], [kc, ka]] as const) {
-      const key = edgeKey(a, b);
-      edgeCount.set(key, (edgeCount.get(key) ?? 0) + 1);
-    }
-  }
-  const boundaryVerts = new Map<string, THREE.Vector3>();
-  for (let t = 0; t < triCount; t++) {
-    if (!inRegion[t]) continue;
-    const [ka, kb, kc] = triVertKeys[t];
-    const edges: [string, string, 0 | 1 | 2, 0 | 1 | 2][] = [
-      [ka, kb, 0, 1],
-      [kb, kc, 1, 2],
-      [kc, ka, 2, 0],
-    ];
-    for (const [a, b, ai, bi] of edges) {
-      const key = edgeKey(a, b);
-      if ((edgeCount.get(key) ?? 0) === 1) {
-        if (!boundaryVerts.has(a)) {
-          const target = new THREE.Vector3();
-          readVertex(target, vi(t, ai));
-          boundaryVerts.set(a, target);
-        }
-        if (!boundaryVerts.has(b)) {
-          const target = new THREE.Vector3();
-          readVertex(target, vi(t, bi));
-          boundaryVerts.set(b, target);
-        }
-      }
-    }
-  }
-
-  const center = new THREE.Vector3();
-  if (boundaryVerts.size > 0) {
-    for (const p of boundaryVerts.values()) center.add(p);
-    center.divideScalar(boundaryVerts.size);
-  } else {
-    // Fully closed region (e.g. whole sphere) — fall back to centroid average.
-    let count = 0;
-    for (let t = 0; t < triCount; t++) {
-      if (!inRegion[t]) continue;
-      center.add(triCentroids[t]);
-      count++;
-    }
-    if (count === 0) return null;
-    center.divideScalar(count);
-  }
-
-  // Averaged outward normal across the region (already direction-coherent
-  // because we only added triangles with positive dot to the seed).
-  const normal = new THREE.Vector3();
-  let regionCount = 0;
-  for (let t = 0; t < triCount; t++) {
-    if (!inRegion[t]) continue;
-    normal.add(triNormals[t]);
-    regionCount++;
-  }
-  if (regionCount === 0 || normal.lengthSq() < 1e-20) {
-    normal.copy(seedNormal);
-  } else {
-    normal.normalize();
-  }
-
-  // Collect all region triangle vertices in world space for wireframe overlay.
-  const regionVertices = new Float32Array(regionCount * 9);
-  let offset = 0;
-  for (let t = 0; t < triCount; t++) {
-    if (!inRegion[t]) continue;
-    readVertex(v0, vi(t, 0));
-    readVertex(v1, vi(t, 1));
-    readVertex(v2, vi(t, 2));
-    regionVertices[offset + 0] = v0.x;
-    regionVertices[offset + 1] = v0.y;
-    regionVertices[offset + 2] = v0.z;
-    regionVertices[offset + 3] = v1.x;
-    regionVertices[offset + 4] = v1.y;
-    regionVertices[offset + 5] = v1.z;
-    regionVertices[offset + 6] = v2.x;
-    regionVertices[offset + 7] = v2.y;
-    regionVertices[offset + 8] = v2.z;
-    offset += 9;
-  }
-
-  return { center, normal, regionVertices };
+  return soup;
 }
 
 function maxBoxDimension(object: THREE.Object3D): number {
@@ -1645,6 +1476,7 @@ function FaceLocator3D({
   onToggleLockCluster,
   onAddLockCluster,
   showLocks = true,
+  confirmedAnchorIndices,
 }: {
   asset: V3Asset;
   draft: AssetDraft;
@@ -1672,9 +1504,18 @@ function FaceLocator3D({
    *  true so existing callers (e.g. PHY Editor) see the overlay
    *  whenever locks are present. */
   showLocks?: boolean;
+  /** Anchors confirmed in the table (🔒): selectable, but neither a drag
+   *  nor auto-pick moves them. */
+  confirmedAnchorIndices?: ReadonlySet<number>;
 }) {
   const readOnlyGeometryRef = useRef(readOnlyGeometry);
   readOnlyGeometryRef.current = readOnlyGeometry;
+  const confirmedRef = useRef<ReadonlySet<number>>(new Set());
+  confirmedRef.current = confirmedAnchorIndices ?? new Set();
+  // What the last auto-pick fitted, shown under the header so a poor fit is
+  // visible before it is saved.
+  const [fitNote, setFitNote] = useState<{ text: string; warn: boolean } | null>(null);
+  useEffect(() => setFitNote(null), [asset.id]);
   const onDeleteClusterRef = useRef(onDeleteCluster);
   onDeleteClusterRef.current = onDeleteCluster;
   const onToggleLockClusterRef = useRef(onToggleLockCluster);
@@ -2404,16 +2245,35 @@ function FaceLocator3D({
         const selectedIdx = selectedAnchorIndexRef.current;
         if (selectedIdx === null || modelMeshes.length === 0) return;
         const meshHit = raycaster.intersectObjects(modelMeshes, true)[0];
-        if (!meshHit) return;
-        const result = detectFaceCenterFromHit(meshHit);
-        if (!result) return;
+        if (!meshHit || typeof meshHit.faceIndex !== "number") return;
+        if (confirmedRef.current.has(selectedIdx)) {
+          setFitNote({ text: `${draft.anchors[selectedIdx]?.id} is confirmed (🔒) — unlock it in the table to re-pick`, warn: true });
+          return;
+        }
+        // Fit a plane / sphere / cylinder to the whole face clicked and put the
+        // anchor at its centre / vertex (utils/surfaceFit.ts).
+        const soup = worldTriangleSoup(meshHit.object as THREE.Mesh);
+        const fit = fitSurfaceAtTriangle(soup, meshHit.faceIndex);
+        if (!fit) {
+          setFitNote({ text: "no plane, sphere or cylinder fits this face — place the anchor by hand", warn: true });
+          return;
+        }
+        const vertices = new Float32Array(fit.triangles.length * 9);
+        fit.triangles.forEach((t, i) => vertices.set(soup.subarray(9 * t, 9 * t + 9), 9 * i));
         pickedFaceWireframeRef.current = {
-          vertices: result.regionVertices,
+          vertices,
           faceIndex: selectedIdx,
           forFilePath: asset.filePath,
         };
         applyPickedFaceOverlay();
-        callbacksRef.current.onAutoPlaceFace(selectedIdx, result.center, result.normal);
+        const radius = fit.radiusMm === null ? "" : ` R ${fit.radiusMm.toFixed(4)} mm ·`;
+        const poor = fit.rmsMm > FIT_TOL_MM;
+        setFitNote({
+          text: `fit: ${fit.shape}${radius} rms ${fit.rmsMm.toExponential(1)} mm · ${fit.triangles.length} triangles`
+            + (poor ? " — poor fit: this face is not a plane, sphere or cylinder; check the anchor" : ""),
+          warn: poor,
+        });
+        callbacksRef.current.onAutoPlaceFace(selectedIdx, new THREE.Vector3(...fit.position), new THREE.Vector3(...fit.normal));
         return;
       }
 
@@ -2424,7 +2284,7 @@ function FaceLocator3D({
       // Marker drag commits a new face position — only allowed when
       // geometry is editable (PHY Editor). Binding dev still lets the
       // user click to select but not move.
-      if (readOnlyGeometryRef.current) return;
+      if (readOnlyGeometryRef.current || confirmedRef.current.has(faceIndex)) return;
       const group = markerGroups[faceIndex];
       if (!group) return;
       renderer.domElement.setPointerCapture(event.pointerId);
@@ -2621,7 +2481,9 @@ function FaceLocator3D({
                     : "Load a model (STL/GLB/GLTF/OBJ) to enable auto-pick"
                   : selectedAnchorIndex === null
                     ? "Select a face marker first"
-                    : "Click a triangle or closed loop on the model to auto-center the selected anchor"
+                    : "Click a face of the model: a plane, sphere or cylinder is fitted to the whole face and the "
+                      + "selected anchor goes to its centre (plane) or vertex (sphere / cylinder), normal along "
+                      + "the axis. The anchor keeps its propagation direction; ⇄ in the table flips it."
               }
               style={{
                 padding: "3px 8px",
@@ -2653,6 +2515,20 @@ function FaceLocator3D({
           )}
         </div>
       </div>
+      {fitNote && (
+        <div
+          style={{
+            padding: "4px 8px",
+            fontSize: 11,
+            fontFamily: "ui-monospace, monospace",
+            borderBottom: "1px solid #e9ece9",
+            color: fitNote.warn ? "#92400e" : "#166534",
+            background: fitNote.warn ? "#fef3c7" : "#f0fdf4",
+          }}
+        >
+          {fitNote.text}
+        </div>
+      )}
       <div
         ref={mountRef}
         style={{
@@ -3042,15 +2918,53 @@ function AssetEditForm({
     });
   };
   const autoPlaceFace = (index: number, position: THREE.Vector3, normal: THREE.Vector3) => {
+    // A fit gives the face's normal line, not which way light crosses it:
+    // keep the anchor's propagation sign (⇄ in the table flips it).
+    const axis = normal.dot(faceNormal(draft.anchors[index])) < 0 ? normal.clone().negate() : normal;
     updateAnchor(index, {
       px: n(position.x),
       py: n(position.y),
       pz: n(position.z),
-      nx: n(normal.x),
-      ny: n(normal.y),
-      nz: n(normal.z),
+      nx: n(axis.x),
+      ny: n(axis.y),
+      nz: n(axis.z),
     });
   };
+  // Reverses the propagation direction. Negates the draft values exactly, so
+  // flipping twice gives back the stored anchor untouched.
+  const flipAxisX = (index: number) => {
+    const a = draft.anchors[index];
+    const neg = (s: string) => {
+      const v = readDraftNumber(s);
+      return v === null ? s : n(-v);
+    };
+    updateAnchor(index, { nx: neg(a.nx), ny: neg(a.ny), nz: neg(a.nz) });
+  };
+
+  // Anchors a human has confirmed (🔒): read-only in the table, and neither a
+  // marker drag nor auto-pick moves them. Kept in properties.confirmedAnchors,
+  // so it is saved with the asset; an editor aid, not an API lock (that is
+  // the row's `locked`).
+  const confirmedKeys = new Set(
+    Array.isArray(draft.properties.confirmedAnchors) ? (draft.properties.confirmedAnchors as string[]) : [],
+  );
+  const confirmedIndices = new Set(
+    draft.anchors.flatMap((a, i) => (confirmedKeys.has(anchorConfirmKey(a)) ? [i] : [])),
+  );
+  const toggleConfirmed = (index: number) => {
+    const key = anchorConfirmKey(draft.anchors[index]);
+    const next = new Set(confirmedKeys);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    const { confirmedAnchors: _previous, ...rest } = draft.properties;
+    setDraft({
+      ...draft,
+      properties: next.size > 0 ? { ...rest, confirmedAnchors: [...next].sort() } : rest,
+    });
+  };
+  // Position / axis numbers are set by auto-pick or the device template;
+  // typing them is the fallback, so the inputs start hidden.
+  const [showNumbers, setShowNumbers] = useState(false);
 
   return (
     <>
@@ -3155,6 +3069,7 @@ function AssetEditForm({
         onToggleLockCluster={handleToggleLockCluster}
         onAddLockCluster={handleAddLockCluster}
         showLocks={showLocks}
+        confirmedAnchorIndices={confirmedIndices}
       />
 
       {/* Identity ??physics_kind is catalog identity, wavelength range
@@ -3290,6 +3205,17 @@ function AssetEditForm({
             + seed {missingTemplateIds.length} from kind
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => setShowNumbers((v) => !v)}
+          title={
+            "Position and axes come from auto-pick (3D face locator) or the device template. "
+            + "Open the number inputs only to fix an anchor by hand; confirmed (🔒) anchors stay read-only."
+          }
+          style={{ ...ICON_BUTTON, width: "auto", padding: "0 8px", fontSize: 10 }}
+        >
+          {showNumbers ? "hide number inputs" : "✎ edit numbers"}
+        </button>
       </div>
 
       <table style={TABLE}>
@@ -3309,11 +3235,17 @@ function AssetEditForm({
           {draft.anchors.map((anchor, index) => {
             const ff = anchorFieldsOf(anchor.id);
             const grade = gradeAnchor(anchor, deviceAnchorFor(anchor));
+            const confirmed = confirmedIndices.has(index);
+            const editNumbers = showNumbers && !confirmed;
+            const apertureEditable = ff.showAperture && !confirmed;
+            const connectorEditable = ff.showConnector && !confirmed;
             return (
             <tr
               key={`${anchor.id}-${index}`}
               onClick={() => setSelectedAnchorIndex(index)}
-              style={{ background: index === selectedAnchorIndex ? "#f3f4f1" : "transparent" }}
+              style={{
+                background: index === selectedAnchorIndex ? "#f3f4f1" : confirmed ? "#f0fdf4" : "transparent",
+              }}
             >
               {/* anchor_id is fixed by the kind's anchor template
                   (kinds.face_template) ??Phase 9.8 enforces a 1:1
@@ -3323,6 +3255,29 @@ function AssetEditForm({
                   axisX on save (deriveOrthonormalBasis). */}
               <td style={TD}>
                 <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 600 }}>{anchor.id}</span>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    toggleConfirmed(index);
+                  }}
+                  title={
+                    confirmed
+                      ? "Confirmed: read-only, and auto-pick / marker drag leave it alone. Click to unlock."
+                      : "Confirm this anchor: freeze its position, axes and aperture (saved with the asset)."
+                  }
+                  style={{
+                    marginLeft: 6,
+                    padding: 0,
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                    verticalAlign: "middle",
+                    color: confirmed ? SUCCESS_BORDER : "#9ca3af",
+                  }}
+                >
+                  {confirmed ? <Lock size={12} /> : <Unlock size={12} />}
+                </button>
                 {/* Authoring grade, derived live from the device template —
                     it flips to "overridden" the moment a face-pick or a
                     typed value replaces what the device declared, which is
@@ -3340,35 +3295,64 @@ function AssetEditForm({
                   preserves its channel/throw names; the column is just
                   hidden (optical anchors never use it). */}
               <td style={TD}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
-                  <input value={anchor.px} onChange={(event) => updateAnchor(index, { px: event.target.value })} style={INPUT} type="number" step={ANCHOR_STEP} />
-                  <input value={anchor.py} onChange={(event) => updateAnchor(index, { py: event.target.value })} style={INPUT} type="number" step={ANCHOR_STEP} />
-                  <input value={anchor.pz} onChange={(event) => updateAnchor(index, { pz: event.target.value })} style={INPUT} type="number" step={ANCHOR_STEP} />
-                </div>
+                {editNumbers ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
+                    <input value={anchor.px} onChange={(event) => updateAnchor(index, { px: event.target.value })} style={INPUT} type="number" step={ANCHOR_STEP} />
+                    <input value={anchor.py} onChange={(event) => updateAnchor(index, { py: event.target.value })} style={INPUT} type="number" step={ANCHOR_STEP} />
+                    <input value={anchor.pz} onChange={(event) => updateAnchor(index, { pz: event.target.value })} style={INPUT} type="number" step={ANCHOR_STEP} />
+                  </div>
+                ) : (
+                  <DraftVecText x={anchor.px} y={anchor.py} z={anchor.pz} />
+                )}
               </td>
               <td style={TD}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
-                  <input value={anchor.nx} onChange={(event) => updateAnchor(index, { nx: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={INPUT} type="number" step={ANCHOR_STEP} />
-                  <input value={anchor.ny} onChange={(event) => updateAnchor(index, { ny: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={INPUT} type="number" step={ANCHOR_STEP} />
-                  <input value={anchor.nz} onChange={(event) => updateAnchor(index, { nz: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={INPUT} type="number" step={ANCHOR_STEP} />
-                </div>
+                {editNumbers ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
+                    <input value={anchor.nx} onChange={(event) => updateAnchor(index, { nx: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={INPUT} type="number" step={ANCHOR_STEP} />
+                    <input value={anchor.ny} onChange={(event) => updateAnchor(index, { ny: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={INPUT} type="number" step={ANCHOR_STEP} />
+                    <input value={anchor.nz} onChange={(event) => updateAnchor(index, { nz: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={INPUT} type="number" step={ANCHOR_STEP} />
+                  </div>
+                ) : (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <DraftVecText x={anchor.nx} y={anchor.ny} z={anchor.nz} />
+                    {!confirmed && (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          flipAxisX(index);
+                        }}
+                        title="Reverse the propagation direction (auto-pick fits the face's normal line, not which way light crosses it)"
+                        style={{ ...ICON_BUTTON, width: "auto", height: "auto", padding: "0 6px", fontSize: 11 }}
+                      >
+                        ⇄
+                      </button>
+                    )}
+                  </span>
+                )}
               </td>
               <td style={TD}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
-                  <input value={ff.showAxisY ? anchor.yx : ""} disabled={!ff.showAxisY} onChange={(event) => updateAnchor(index, { yx: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={ff.showAxisY ? INPUT : INPUT_DISABLED} type="number" step={ANCHOR_STEP} />
-                  <input value={ff.showAxisY ? anchor.yy : ""} disabled={!ff.showAxisY} onChange={(event) => updateAnchor(index, { yy: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={ff.showAxisY ? INPUT : INPUT_DISABLED} type="number" step={ANCHOR_STEP} />
-                  <input value={ff.showAxisY ? anchor.yz : ""} disabled={!ff.showAxisY} onChange={(event) => updateAnchor(index, { yz: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={ff.showAxisY ? INPUT : INPUT_DISABLED} type="number" step={ANCHOR_STEP} />
-                </div>
+                {editNumbers ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
+                    <input value={ff.showAxisY ? anchor.yx : ""} disabled={!ff.showAxisY} onChange={(event) => updateAnchor(index, { yx: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={ff.showAxisY ? INPUT : INPUT_DISABLED} type="number" step={ANCHOR_STEP} />
+                    <input value={ff.showAxisY ? anchor.yy : ""} disabled={!ff.showAxisY} onChange={(event) => updateAnchor(index, { yy: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={ff.showAxisY ? INPUT : INPUT_DISABLED} type="number" step={ANCHOR_STEP} />
+                    <input value={ff.showAxisY ? anchor.yz : ""} disabled={!ff.showAxisY} onChange={(event) => updateAnchor(index, { yz: event.target.value })} onBlur={() => orthogonalizeAnchorY(index)} style={ff.showAxisY ? INPUT : INPUT_DISABLED} type="number" step={ANCHOR_STEP} />
+                  </div>
+                ) : ff.showAxisY ? (
+                  <DraftVecText x={anchor.yx} y={anchor.yy} z={anchor.yz} />
+                ) : (
+                  <span style={{ color: "#9ca3af" }}>—</span>
+                )}
               </td>
               <td style={TD}>
-                <input value={ff.showAperture ? anchor.apertureMm : ""} disabled={!ff.showAperture} onChange={(event) => updateAnchor(index, { apertureMm: event.target.value })} style={ff.showAperture ? INPUT : INPUT_DISABLED} type="number" step="0.01" />
+                <input value={ff.showAperture ? anchor.apertureMm : ""} disabled={!apertureEditable} onChange={(event) => updateAnchor(index, { apertureMm: event.target.value })} style={apertureEditable ? INPUT : INPUT_DISABLED} type="number" step="0.01" />
               </td>
               <td style={TD}>
                 <select
                   value={anchor.apertureShape}
-                  disabled={!ff.showAperture}
+                  disabled={!apertureEditable}
                   onChange={(event) => updateAnchor(index, { apertureShape: event.target.value as V3Face["apertureShape"] })}
-                  style={ff.showAperture ? INPUT : INPUT_DISABLED}
+                  style={apertureEditable ? INPUT : INPUT_DISABLED}
                 >
                   <option value="circle">circle</option>
                   <option value="ellipse">ellipse</option>
@@ -3377,8 +3361,8 @@ function AssetEditForm({
               </td>
               <td style={TD}>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
-                  <input value={ff.showAperture ? anchor.apertureWidthMm : ""} disabled={!ff.showAperture} onChange={(event) => updateAnchor(index, { apertureWidthMm: event.target.value })} style={ff.showAperture ? INPUT : INPUT_DISABLED} type="number" step="0.01" placeholder="w" />
-                  <input value={ff.showAperture ? anchor.apertureHeightMm : ""} disabled={!ff.showAperture} onChange={(event) => updateAnchor(index, { apertureHeightMm: event.target.value })} style={ff.showAperture ? INPUT : INPUT_DISABLED} type="number" step="0.01" placeholder="h" />
+                  <input value={ff.showAperture ? anchor.apertureWidthMm : ""} disabled={!apertureEditable} onChange={(event) => updateAnchor(index, { apertureWidthMm: event.target.value })} style={apertureEditable ? INPUT : INPUT_DISABLED} type="number" step="0.01" placeholder="w" />
+                  <input value={ff.showAperture ? anchor.apertureHeightMm : ""} disabled={!apertureEditable} onChange={(event) => updateAnchor(index, { apertureHeightMm: event.target.value })} style={apertureEditable ? INPUT : INPUT_DISABLED} type="number" step="0.01" placeholder="h" />
                 </div>
               </td>
               <td style={TD}>
@@ -3389,9 +3373,9 @@ function AssetEditForm({
                   // whole form read-only via the wrapping pointerEvents:none.
                   // The options are exactly the values the backend `Anchor`
                   // schema's Literal accepts (a bare "sma" / "fc" would 422).
-                  disabled={!ff.showConnector}
+                  disabled={!connectorEditable}
                   onChange={(event) => updateAnchor(index, { connectorType: event.target.value })}
-                  style={ff.showConnector ? INPUT : INPUT_DISABLED}
+                  style={connectorEditable ? INPUT : INPUT_DISABLED}
                 >
                   <option value="">—</option>
                   {ff.connectorOptions.map((opt) => (
