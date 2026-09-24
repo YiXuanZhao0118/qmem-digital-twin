@@ -38,7 +38,12 @@ from app.models import (
 )
 from app.optical.beam_ray import Vec3
 from app.optical.pose import V3Pose, dir_body_to_lab, point_body_to_lab
+from app.optical.rf_cables.flows import ppg_has_usable_asset
+from app.optical.rf_cables.geometry import CABLE_KIND_IDS
+from app.optical.rf_cables.ports import PPG_KIND, cable_end_family
+from app.optical.rf_cables.service import load_rf_scene
 from app.websocket import manager
+from tests.optical.rf_bench_cleanup import purge_bench
 
 SMA_TIP = 25.45  # |connect_in - connect_out| of the catalog `sma male`
 BNC_TIP = 43.5   # ... of `BNC Male`
@@ -186,18 +191,14 @@ class Lab:
             self.obj = {k: r.id for k, (r, _) in zip(("dds", "switch", "amp", "switch_mr"), rows)}
 
     async def cleanup(self) -> None:
+        """Everything the bench and the endpoints under test wrote. The
+        objects on the bench's Components are the hosts; what connect /
+        attach hung on them is swept by LINK (``rf_bench_cleanup``), because
+        on the dev database the endpoints pick the catalog's cable / PPG
+        Components, not the bench's."""
         async with AsyncSessionLocal() as db:
             objs = (await db.scalars(select(SceneObject).where(SceneObject.component_id.in_(self.component_ids)))).all()
-            obj_ids = [o.id for o in objs]
-            if obj_ids:
-                pes = (await db.scalars(select(PhysicsElement).where(PhysicsElement.object_id.in_(obj_ids)))).all()
-                tps = [
-                    uuid.UUID(p.kind_params["timingProgramId"]) for p in pes
-                    if p.element_kind == "programmable_pulse_generator" and (p.kind_params or {}).get("timingProgramId")
-                ]
-                await db.execute(delete(SceneObject).where(SceneObject.id.in_(obj_ids)))
-                if tps:
-                    await db.execute(delete(TimingProgram).where(TimingProgram.id.in_(tps)))
+            await purge_bench(db, [o.id for o in objs])
             await db.execute(delete(ComponentBinding).where(ComponentBinding.component_id.in_(self.component_ids)))
             await db.execute(delete(Component).where(Component.id.in_(self.component_ids)))
             await db.execute(delete(Asset3D).where(Asset3D.id.in_(self.asset_ids)))
@@ -274,6 +275,33 @@ async def _next_ppg_name() -> str:
     return f"CH{n}"
 
 
+async def _cable_families(cable: dict) -> tuple[str | None, str | None]:
+    """(end A, end B) connector families of the Component the connect
+    picked. The rule is the first catalog rf_cable whose families match,
+    else the first matching the other way round: on the dev database that
+    is the catalog's own ``RF cable SMA`` / ``RF cable BNC SMA``, on a
+    fresh one the bench's, so the test pins the families, not the row."""
+    async with AsyncSessionLocal() as db:
+        scene = await load_rf_scene(db)
+    comp = scene.component_by_id[cable["componentId"]]
+    assert comp.kind_id in CABLE_KIND_IDS
+    return cable_end_family(scene, comp, "endAConnector"), cable_end_family(scene, comp, "endBConnector")
+
+
+async def _assert_bnc_ppg(ppg: dict) -> None:
+    """The attach picked a PPG Component with ``connectorType`` bnc and an
+    asset carrying ``rf_out`` (``flows.plan_ppg_attach``): the catalog's
+    ``PPG BNC MALE`` on the dev database, the bench's on a fresh one. Both
+    put ``rf_out`` at (0, 0, 4.8) with a 9 mm protrusion, which the mount
+    checks rely on."""
+    async with AsyncSessionLocal() as db:
+        scene = await load_rf_scene(db)
+    comp = scene.component_by_id[ppg["componentId"]]
+    assert comp.kind_id == PPG_KIND
+    assert (comp.properties or {}).get("connectorType") == "bnc"
+    assert ppg_has_usable_asset(scene, comp)
+
+
 # ─── connect ────────────────────────────────────────────────────────────────
 
 async def test_connect_creates_one_mated_cable(lab, events):
@@ -281,7 +309,7 @@ async def test_connect_creates_one_mated_cable(lab, events):
         r = await c.post("/api/v3/rf-cables/connect", json={"a": _port(lab, "dds", "CH0"), "b": _port(lab, "amp", "rf_in")})
     assert r.status_code == 200, r.text
     cable = r.json()["object"]
-    assert cable["componentId"] == str(lab.comp["cable_sma"])
+    assert await _cable_families(cable) == ("sma", "sma")
     assert cable["name"].startswith("RF_CABLE")
     assert (cable["rxDeg"], cable["ryDeg"], cable["rzDeg"]) == (0, 0, 0)
     eps = cable["properties"]["rfCableEndpoints"]
@@ -307,7 +335,7 @@ async def test_connect_cross_family_takes_the_swapped_adapter_cable(lab):
         })
     assert r.status_code == 200, r.text
     cable = r.json()["object"]
-    assert cable["componentId"] == str(lab.comp["cable_bnc_sma"])
+    assert await _cable_families(cable) == ("bnc", "sma")
     eps = cable["properties"]["rfCableEndpoints"]
     # The catalog row is BNC at A: A goes on the BNC switch input.
     assert eps["A"]["targetObjectId"] == str(lab.obj["switch"])
@@ -461,7 +489,7 @@ async def test_ppg_attach_plugs_a_new_ppg_into_the_gate_input(lab, events, key):
     assert r.status_code == 200, r.text
     body = r.json()
     ppg, program = body["object"], body["timingProgram"]
-    assert ppg["componentId"] == str(lab.comp["ppg"])
+    await _assert_bnc_ppg(ppg)
     assert ppg["name"] == program["name"] == name
     assert program["intervals"] == []
     assert ppg["properties"] == {"ppgAttachment": {

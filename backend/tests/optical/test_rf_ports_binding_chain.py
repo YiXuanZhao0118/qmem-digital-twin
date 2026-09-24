@@ -39,7 +39,6 @@ from app.models import (
     ObjectBinding,
     PhysicsElement,
     SceneObject,
-    TimingProgram,
 )
 from app.optical.beam_ray import Vec3
 from app.optical.db_scene_loader import load_anchor_scene_from_db
@@ -48,6 +47,7 @@ from app.optical.rf_cables.geometry import pose_of
 from app.optical.rf_cables.ports import find_port_pose
 from app.optical.rf_cables.service import load_rf_scene
 from app.routers.v3_anchors import traced_anchor_poses
+from tests.optical.rf_bench_cleanup import purge_bench
 
 SMA_TIP = 25.45
 PPG_PROTRUSION = 9.0
@@ -185,17 +185,10 @@ async def bench():
     finally:
         async with AsyncSessionLocal() as db:
             objs = (await db.scalars(select(SceneObject).where(SceneObject.component_id.in_(ids["components"])))).all()
-            obj_ids = [o.id for o in objs]
-            pes = (await db.scalars(select(PhysicsElement).where(PhysicsElement.object_id.in_(obj_ids)))).all()
-            programs = [
-                uuid.UUID(p.kind_params["timingProgramId"]) for p in pes
-                if (p.kind_params or {}).get("timingProgramId")
-            ]
-            await db.execute(delete(ObjectBinding).where(ObjectBinding.object_id.in_(obj_ids)))
-            await db.execute(delete(PhysicsElement).where(PhysicsElement.object_id.in_(obj_ids)))
-            await db.execute(delete(SceneObject).where(SceneObject.id.in_(obj_ids)))
-            if programs:
-                await db.execute(delete(TimingProgram).where(TimingProgram.id.in_(programs)))
+            # The hosts, plus what connect / attach hung on them - swept by
+            # LINK, since on the dev database the endpoints pick the
+            # catalog's cable / PPG Components (rf_bench_cleanup).
+            await purge_bench(db, [o.id for o in objs])
             await db.execute(delete(ComponentBinding).where(ComponentBinding.id.in_(ids["bindings"])))
             await db.execute(delete(Component).where(Component.id.in_(ids["components"])))
             await db.execute(delete(Asset3D).where(Asset3D.id.in_(ids["assets"])))

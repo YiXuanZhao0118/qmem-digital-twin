@@ -24,6 +24,6 @@ frontend/node_modules/.bin/vite.cmd                 # Vite → 5173 (do NOT use 
 
 **Seed**: the live DB is seeded by `backend/scripts/seed_v3_assets.py` + the v3 catalog; the old `seed.py` is deprecated (it carries a banner and is not in the live DB).
 
-**Tooling**: pytest (backend), vitest (frontend), `tsc --noEmit`, `vite build`.
+**Tooling**: pytest (backend), vitest (frontend), `tsc --noEmit`, `vite build`. Backend pytest **writes to the dev database** by default (`backend/tests/conftest.py` sets `DATABASE_URL` to :55432 unless the environment has one), so a DB-backed test must tear down everything it AND the endpoints it calls created — keyed by what the endpoint links, not by what the test seeded (see the RF cables / PPG tests in [api.md](api.md)). `python backend/scripts/purge_rf_orphans.py` audits the live scene for the dangling cables / PPGs a leaking test leaves; it should print `nothing to do`.
 
 > Windows / tooling traps: PowerShell `Set-Content` defaults to cp950, which mojibakes JSON containing Chinese → pass `-Encoding UTF8`; uvicorn `--reload` file watching is unreliable on Windows, so restart by hand when needed; PS 5.1 has no `??`; Asset3D JSON must not contain `+`-prefixed numbers; only scipy `from_euler` "YXZ" (intrinsic) matches three.js.
